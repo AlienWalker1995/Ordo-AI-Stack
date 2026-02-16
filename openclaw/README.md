@@ -1,15 +1,15 @@
 # OpenClaw — Personal AI Assistant
 
-[OpenClaw](https://docs.openclaw.ai) is a self-hosted personal AI assistant that runs in Docker. This folder provides a ready-to-use setup integrated with the local-llm-docker project.
+[OpenClaw](https://docs.openclaw.ai) is a self-hosted personal AI assistant that runs in Docker. This folder provides a ready-to-use setup integrated with the LLM-toolkit project.
 
 ## Quick Start
 
 ### 1. Prepare directories and workspace
 
-From the **repo root** (e.g. `F:\local-llm-docker`):
+From the **repo root** (e.g. `F:\LLM-toolkit`):
 
 ```powershell
-$env:BASE_PATH = "F:/local-llm-docker"
+$env:BASE_PATH = "F:/LLM-toolkit"
 .\scripts\ensure_dirs.ps1
 .\openclaw\scripts\ensure_openclaw_workspace.ps1
 ```
@@ -23,7 +23,7 @@ copy .env.example .env
 
 Edit `.env` and set:
 
-- `BASE_PATH` — repo root (e.g. `F:/local-llm-docker`)
+- `BASE_PATH` — repo root (e.g. `F:/LLM-toolkit`)
 - `OPENCLAW_GATEWAY_TOKEN` — generate with `openssl rand -hex 32`
 - At least one model API key: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, or `OPENROUTER_API_KEY`
 

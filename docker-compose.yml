@@ -1,3 +1,5 @@
+name: llm-toolkit
+
 # Profiles make services optional. Run only what you need:
 #   ollama + openclaw:  docker compose --profile ollama --profile openclaw up -d
 #   + webui:            docker compose --profile ollama --profile openclaw --profile webui up -d

@@ -1,6 +1,6 @@
 # Scripts
 
-Setup and maintenance scripts for the local-llm-docker stack.
+Setup and maintenance scripts for the LLM-toolkit stack.
 
 ## Setup
 
@@ -20,8 +20,8 @@ From the repo root:
 
 ```powershell
 # Set project path (Windows)
-$env:BASE_PATH = "F:/local-llm-docker"
-$env:DATA_PATH = "F:/local-llm-docker/data"   # optional override
+$env:BASE_PATH = "F:/LLM-toolkit"
+$env:DATA_PATH = "F:/LLM-toolkit/data"   # optional override
 
 # Create directories
 .\scripts\ensure_dirs.ps1

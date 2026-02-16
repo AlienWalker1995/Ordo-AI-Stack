@@ -1,4 +1,4 @@
-# Local LLM Stack (Docker)
+# LLM-toolkit
 
 Ollama + Open WebUI + ComfyUI + N8N in Docker. One command, all on one drive.
 
@@ -19,10 +19,10 @@ Ollama + Open WebUI + ComfyUI + N8N in Docker. One command, all on one drive.
 ## Quick start
 
 ```powershell
-# 1. Clone / copy to your target drive
-cd F:\local-llm-docker
+# 1. Clone / copy to your target drive (repo name: LLM-toolkit)
+cd F:\LLM-toolkit
 
-# 2. Create .env (edit BASE_PATH if needed)
+# 2. Create .env (edit BASE_PATH to match your install path)
 copy .env.example .env
 
 # 3. Create data directories
@@ -91,13 +91,13 @@ All data is stored under `BASE_PATH` via bind mounts — no Docker named volumes
 
 ## OpenClaw
 
-[OpenClaw](openclaw/) is a personal AI assistant, now integrated in the main compose. Use `--profile openclaw` (with `--profile ollama`). It defaults to the local Ollama model `qwen2.5:3b`; see [openclaw/README.md](openclaw/README.md) for token setup.
+[OpenClaw](openclaw/) is a personal AI assistant, now integrated in the main compose. Use `--profile openclaw` (with `--profile ollama`). See [openclaw/README.md](openclaw/README.md) for token setup.
 
 ## Commands
 
 ```powershell
 docker compose --profile ollama --profile openclaw up -d   # Ollama + OpenClaw
 docker compose logs -f ollama                              # View logs
-docker exec local-llm-docker-ollama-1 ollama pull <model>   # Pull a model
+docker exec llm-toolkit-ollama-1 ollama pull <model>   # Pull a model
 docker compose down                                        # Stop
 ```

@@ -1,7 +1,7 @@
 # Repository Structure
 
 ```
-local-llm-docker/
+LLM-toolkit/
 ├── docker-compose.yml      # Main stack: Ollama, Open WebUI, ComfyUI, n8n
 ├── .env.example            # Copy to .env — BASE_PATH, MODELS
 ├── README.md               # Quick start, services, commands
