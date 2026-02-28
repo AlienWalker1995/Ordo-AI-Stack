@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>LLM-toolkit Dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2358a6ff'><path d='M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet">
@@ -11,13 +12,18 @@
     :root {
       --bg: #0d1117;
       --surface: #161b22;
+      --surface-hover: #21262d;
       --border: #30363d;
       --text: #e6edf3;
       --muted: #8b949e;
       --accent: #58a6ff;
+      --accent-dim: rgba(88,166,255,0.15);
       --success: #3fb950;
+      --success-dim: rgba(63,185,80,0.15);
       --warning: #d29922;
       --danger: #f85149;
+      --radius: 10px;
+      --radius-sm: 6px;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -27,21 +33,39 @@
       min-height: 100vh;
       line-height: 1.5;
     }
-    .container { max-width: 1100px; margin: 0 auto; padding: 2rem; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
     h1 {
       font-size: 1.75rem;
       font-weight: 600;
-      margin-bottom: 0.5rem;
       background: linear-gradient(135deg, #fff 0%, #8b949e 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
     }
-    .subtitle { color: var(--muted); font-size: 0.95rem; margin-bottom: 2rem; }
+    .subtitle { color: var(--muted); font-size: 0.95rem; margin-top: 0.25rem; }
+    .header-actions { display: flex; gap: 0.5rem; align-items: center; }
+    .btn-icon {
+      width: 36px; height: 36px;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); color: var(--muted);
+      cursor: pointer; transition: all 0.2s;
+    }
+    .btn-icon:hover { color: var(--text); border-color: var(--accent); background: var(--accent-dim); }
+    .btn-icon.loading { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
     section {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 12px;
+      border-radius: var(--radius);
       padding: 1.5rem;
       margin-bottom: 1.5rem;
     }
@@ -53,37 +77,56 @@
     }
     .services {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
       gap: 0.75rem;
     }
     .service {
       display: flex;
       align-items: center;
       gap: 0.75rem;
-      padding: 0.75rem 1rem;
+      padding: 1rem 1.25rem;
       background: var(--bg);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       text-decoration: none;
       color: var(--text);
-      transition: border-color 0.2s, background 0.2s;
+      transition: all 0.2s;
     }
-    .service:hover { border-color: var(--accent); background: rgba(88,166,255,0.08); }
+    .service:hover {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+      transform: translateY(-1px);
+    }
     .service .status {
-      width: 8px; height: 8px;
+      width: 10px; height: 10px;
       border-radius: 50%;
       background: var(--muted);
+      flex-shrink: 0;
     }
-    .service .status.ok { background: var(--success); }
-    .service span { font-size: 0.9rem; }
+    .service .status.ok { background: var(--success); box-shadow: 0 0 8px var(--success); }
+    .service .label { flex: 1; font-size: 0.95rem; }
+    .service .external { opacity: 0.5; font-size: 0.75rem; }
     .models-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 1.5rem;
     }
-    @media (max-width: 768px) { .models-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 900px) { .models-grid { grid-template-columns: 1fr; } }
+    .model-panel {
+      background: var(--bg);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .model-panel h3 {
+      font-size: 0.95rem;
+      font-weight: 500;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--muted);
+    }
     .model-list {
-      max-height: 280px;
+      max-height: 260px;
       overflow-y: auto;
       font-family: 'JetBrains Mono', monospace;
       font-size: 0.85rem;
@@ -91,178 +134,329 @@
     .model-item {
       display: flex;
       justify-content: space-between;
-      padding: 0.5rem 0.75rem;
+      align-items: center;
+      padding: 0.6rem 1.25rem;
       border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
     }
     .model-item:last-child { border-bottom: none; }
+    .model-item:hover { background: var(--surface-hover); }
     .model-item .name { color: var(--text); }
     .model-item .meta { color: var(--muted); font-size: 0.8rem; }
+    .model-category { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-top: 0.25rem; }
+    .pull-area {
+      padding: 1rem 1.25rem;
+      border-top: 1px solid var(--border);
+    }
     .pull-row {
       display: flex;
-      gap: 0.75rem;
-      margin-top: 1rem;
+      gap: 0.5rem;
       flex-wrap: wrap;
     }
+    .quick-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-bottom: 0.75rem;
+    }
+    .pill {
+      padding: 0.35rem 0.65rem;
+      font-size: 0.8rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .pill:hover { border-color: var(--accent); color: var(--accent); }
     input[type="text"] {
       flex: 1;
-      min-width: 200px;
-      padding: 0.6rem 1rem;
+      min-width: 180px;
+      padding: 0.65rem 1rem;
       background: var(--bg);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       color: var(--text);
       font-family: 'JetBrains Mono', monospace;
       font-size: 0.9rem;
     }
     input:focus { outline: none; border-color: var(--accent); }
     button {
-      padding: 0.6rem 1.25rem;
+      padding: 0.65rem 1.25rem;
       background: var(--accent);
       border: none;
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       color: var(--bg);
       font-weight: 500;
       font-family: inherit;
+      font-size: 0.9rem;
       cursor: pointer;
-      transition: opacity 0.2s;
+      transition: all 0.2s;
     }
-    button:hover { opacity: 0.9; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button:hover { opacity: 0.9; filter: brightness(1.05); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; filter: none; }
     button.secondary {
       background: var(--surface);
       color: var(--text);
       border: 1px solid var(--border);
     }
-    .log {
+    .progress-area {
       margin-top: 1rem;
       padding: 1rem;
       background: var(--bg);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
+    .progress-bar {
+      height: 6px;
+      background: var(--border);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-bottom: 0.75rem;
+    }
+    .progress-bar .fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 999px;
+      transition: width 0.3s;
+    }
+    .log {
       font-family: 'JetBrains Mono', monospace;
       font-size: 0.8rem;
       white-space: pre-wrap;
-      max-height: 200px;
+      max-height: 160px;
       overflow-y: auto;
       color: var(--muted);
     }
-    .empty { color: var(--muted); padding: 1rem; }
-    .badge {
-      display: inline-block;
-      padding: 0.2rem 0.5rem;
-      font-size: 0.7rem;
-      border-radius: 4px;
-      background: var(--border);
+    .empty {
+      padding: 2rem 1.25rem;
+      text-align: center;
       color: var(--muted);
-      margin-left: 0.5rem;
+      font-size: 0.9rem;
     }
-    .spinner {
-      display: inline-block;
-      width: 14px; height: 14px;
-      border: 2px solid var(--border);
-      border-top-color: var(--accent);
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
+    .empty .hint { margin-top: 0.5rem; font-size: 0.85rem; opacity: 0.8; }
+    .toast-container {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    .toast {
+      padding: 0.9rem 1.25rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      animation: toastIn 0.3s ease;
+    }
+    .toast.success { border-color: var(--success); background: var(--success-dim); }
+    .toast.error { border-color: var(--danger); }
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .skeleton {
+      background: linear-gradient(90deg, var(--border) 25%, var(--surface) 50%, var(--border) 75%);
+      background-size: 200% 100%;
+      animation: skeleton 1.5s ease-in-out infinite;
+      border-radius: var(--radius-sm);
+    }
+    @keyframes skeleton {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    .skeleton-line { height: 1rem; margin-bottom: 0.5rem; }
+    .skeleton-line.short { width: 60%; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>LLM-toolkit Dashboard</h1>
-    <p class="subtitle">Unified model management — Ollama, ComfyUI, and services</p>
+    <header>
+      <div>
+        <h1>LLM-toolkit Dashboard</h1>
+        <p class="subtitle">Unified model management — Ollama, ComfyUI, and services</p>
+      </div>
+      <div class="header-actions">
+        <button class="btn-icon" id="refresh-btn" title="Refresh">↻</button>
+      </div>
+    </header>
 
     <section>
       <h2>Services</h2>
-      <div class="services" id="services"></div>
+      <div class="services" id="services">
+        <div class="skeleton skeleton-line" style="height:52px;width:100%;"></div>
+        <div class="skeleton skeleton-line" style="height:52px;width:100%;"></div>
+        <div class="skeleton skeleton-line" style="height:52px;width:100%;"></div>
+      </div>
     </section>
 
     <section>
       <h2>Model Library</h2>
       <div class="models-grid">
-        <div>
-          <h3 style="font-size:1rem;margin-bottom:0.75rem;">Ollama (LLM, embeddings)</h3>
-          <div class="model-list" id="ollama-models"></div>
-          <div class="pull-row">
-            <input type="text" id="ollama-model" placeholder="e.g. llama3.2, deepseek-r1:7b" list="ollama-suggestions">
-          <datalist id="ollama-suggestions">
-            <option value="llama3.2">llama3.2</option>
-            <option value="deepseek-r1:7b">deepseek-r1:7b</option>
-            <option value="deepseek-coder:6.7b">deepseek-coder:6.7b</option>
-            <option value="nomic-embed-text">nomic-embed-text</option>
-            <option value="qwen2.5:7b">qwen2.5:7b</option>
-            <option value="mistral">mistral</option>
-          </datalist>
-            <button id="ollama-pull">Pull</button>
+        <div class="model-panel">
+          <h3>Ollama — LLM & embeddings</h3>
+          <div class="model-list" id="ollama-models">
+            <div class="skeleton skeleton-line"></div>
+            <div class="skeleton skeleton-line short"></div>
+            <div class="skeleton skeleton-line"></div>
           </div>
-          <div id="ollama-progress" class="log" style="display:none;"></div>
+          <div class="pull-area">
+            <div class="quick-pills" id="ollama-pills">
+              <span class="pill" data-model="llama3.2">llama3.2</span>
+              <span class="pill" data-model="deepseek-r1:7b">deepseek-r1</span>
+              <span class="pill" data-model="nomic-embed-text">nomic-embed</span>
+            </div>
+            <div class="pull-row">
+              <input type="text" id="ollama-model" placeholder="Model name (e.g. qwen2.5:7b)" list="ollama-suggestions">
+              <datalist id="ollama-suggestions">
+                <option value="llama3.2">llama3.2</option>
+                <option value="deepseek-r1:7b">deepseek-r1:7b</option>
+                <option value="deepseek-coder:6.7b">deepseek-coder:6.7b</option>
+                <option value="nomic-embed-text">nomic-embed-text</option>
+                <option value="qwen2.5:7b">qwen2.5:7b</option>
+                <option value="mistral">mistral</option>
+              </datalist>
+              <button id="ollama-pull">Pull</button>
+            </div>
+            <div id="ollama-progress" class="progress-area" style="display:none;">
+              <div class="progress-bar"><div class="fill" id="ollama-progress-bar" style="width:0%"></div></div>
+              <div class="log" id="ollama-log"></div>
+            </div>
+          </div>
         </div>
-        <div>
-          <h3 style="font-size:1rem;margin-bottom:0.75rem;">ComfyUI (LTX-2, image gen)</h3>
-          <div class="model-list" id="comfyui-models"></div>
-          <div class="pull-row">
-            <button id="comfyui-pull">Pull LTX-2 models</button>
+        <div class="model-panel">
+          <h3>ComfyUI — LTX-2 image gen</h3>
+          <div class="model-list" id="comfyui-models">
+            <div class="skeleton skeleton-line"></div>
+            <div class="skeleton skeleton-line short"></div>
           </div>
-          <div id="comfyui-progress" class="log" style="display:none;"></div>
+          <div class="pull-area">
+            <div class="pull-row">
+              <button id="comfyui-pull">Pull LTX-2 models (~60 GB)</button>
+            </div>
+            <div id="comfyui-progress" class="progress-area" style="display:none;">
+              <div class="log" id="comfyui-log"></div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
   </div>
 
+  <div class="toast-container" id="toasts"></div>
+
   <script>
     const api = (path, opts = {}) => fetch(path, { ...opts, headers: { 'Accept': 'application/json', ...opts.headers } });
 
+    function toast(msg, type = '') {
+      const el = document.createElement('div');
+      el.className = `toast ${type}`;
+      el.textContent = msg;
+      document.getElementById('toasts').appendChild(el);
+      setTimeout(() => el.remove(), 4000);
+    }
+
+    function formatSize(bytes) {
+      if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+      if (bytes >= 1e6) return (bytes / 1e6).toFixed(0) + ' MB';
+      return (bytes / 1e3).toFixed(0) + ' KB';
+    }
+
     async function loadServices() {
-      const r = await api('/api/services');
-      const d = await r.json();
       const el = document.getElementById('services');
-      el.innerHTML = d.services.map(s => `
-        <a href="${s.url}" target="_blank" class="service">
-          <span class="status ${s.ok ? 'ok' : ''}"></span>
-          <span>${s.name}</span>
-        </a>
-      `).join('');
+      try {
+        const r = await api('/api/services');
+        const d = await r.json();
+        el.innerHTML = d.services.map(s => `
+          <a href="${s.url}" target="_blank" rel="noopener" class="service">
+            <span class="status ${s.ok ? 'ok' : ''}"></span>
+            <span class="label">${s.name}</span>
+            <span class="external">↗</span>
+          </a>
+        `).join('');
+      } catch (e) {
+        el.innerHTML = '<div class="empty">Could not load services. Is the dashboard running?</div>';
+      }
     }
 
     async function loadOllamaModels() {
-      const r = await api('/api/ollama/models');
-      const d = await r.json();
       const el = document.getElementById('ollama-models');
-      if (!d.ok || !d.models?.length) {
-        el.innerHTML = '<div class="empty">No models yet. Pull one below.</div>';
-        return;
+      try {
+        const r = await api('/api/ollama/models');
+        const d = await r.json();
+        if (!d.ok) {
+          el.innerHTML = '<div class="empty">Ollama unreachable.<span class="hint">Start with: docker compose --profile dashboard up -d</span></div>';
+          return;
+        }
+        if (!d.models?.length) {
+          el.innerHTML = '<div class="empty">No models yet.<span class="hint">Pick one below and click Pull.</span></div>';
+          return;
+        }
+        el.innerHTML = d.models.map(m => `
+          <div class="model-item">
+            <span class="name">${m.name}</span>
+            <span class="meta">${formatSize(m.size || 0)}</span>
+          </div>
+        `).join('');
+      } catch (e) {
+        el.innerHTML = '<div class="empty">Failed to load models.</div>';
       }
-      el.innerHTML = d.models.map(m => `
-        <div class="model-item">
-          <span class="name">${m.name}</span>
-          <span class="meta">${(m.size / 1e9).toFixed(1)} GB</span>
-        </div>
-      `).join('');
     }
 
     async function loadComfyuiModels() {
-      const r = await api('/api/comfyui/models');
-      const d = await r.json();
       const el = document.getElementById('comfyui-models');
-      if (!d.ok || !d.models?.length) {
-        el.innerHTML = '<div class="empty">No ComfyUI models. Click Pull LTX-2 models.</div>';
-        return;
+      try {
+        const r = await api('/api/comfyui/models');
+        const d = await r.json();
+        if (!d.ok || !d.models?.length) {
+          el.innerHTML = '<div class="empty">No ComfyUI models.<span class="hint">Click Pull LTX-2 models to download (~60 GB).</span></div>';
+          return;
+        }
+        const byCat = {};
+        d.models.forEach(m => {
+          if (!byCat[m.category]) byCat[m.category] = [];
+          byCat[m.category].push(m);
+        });
+        el.innerHTML = Object.entries(byCat).map(([cat, models]) => `
+          ${models.map(m => `
+            <div class="model-item">
+              <div>
+                <span class="name">${m.name}</span>
+                <div class="model-category">${cat.replace(/_/g, ' ')}</div>
+              </div>
+              <span class="meta">${m.size_mb} MB</span>
+            </div>
+          `).join('')}
+        `).join('');
+      } catch (e) {
+        el.innerHTML = '<div class="empty">Failed to load models.</div>';
       }
-      el.innerHTML = d.models.map(m => `
-        <div class="model-item">
-          <span class="name">${m.name}</span>
-          <span class="meta">${m.category} · ${m.size_mb} MB</span>
-        </div>
-      `).join('');
     }
+
+    document.getElementById('ollama-pills').onclick = (e) => {
+      const model = e.target.dataset.model;
+      if (model) {
+        document.getElementById('ollama-model').value = model;
+        document.getElementById('ollama-model').focus();
+      }
+    };
 
     document.getElementById('ollama-pull').onclick = async () => {
       const name = document.getElementById('ollama-model').value.trim();
-      if (!name) return;
+      if (!name) { toast('Enter a model name', 'error'); return; }
       const btn = document.getElementById('ollama-pull');
       const prog = document.getElementById('ollama-progress');
+      const logEl = document.getElementById('ollama-log');
+      const barEl = document.getElementById('ollama-progress-bar');
       btn.disabled = true;
       prog.style.display = 'block';
-      prog.textContent = 'Pulling...';
+      logEl.textContent = 'Connecting...';
+      barEl.style.width = '0%';
+      let lastPct = 0;
       try {
         const r = await fetch('/api/ollama/pull', {
           method: 'POST',
@@ -283,16 +477,23 @@
             try {
               const j = JSON.parse(line);
               if (j.status) out += j.status + '\n';
-              if (j.completed != null && j.total) out += `Progress: ${(j.completed/j.total*100).toFixed(0)}%\n`;
+              if (j.completed != null && j.total && j.total > 0) {
+                const pct = Math.round((j.completed / j.total) * 100);
+                lastPct = pct;
+                barEl.style.width = pct + '%';
+              }
             } catch (_) {}
           }
-          prog.textContent = out;
-          prog.scrollTop = prog.scrollHeight;
+          logEl.textContent = out || 'Pulling...';
+          logEl.scrollTop = logEl.scrollHeight;
         }
-        prog.textContent += '\nDone.';
+        barEl.style.width = '100%';
+        logEl.textContent += '\n✓ Done.';
+        toast(`Pulled ${name}`, 'success');
         loadOllamaModels();
       } catch (e) {
-        prog.textContent += '\nError: ' + e.message;
+        logEl.textContent += '\nError: ' + e.message;
+        toast('Pull failed: ' + e.message, 'error');
       }
       btn.disabled = false;
     };
@@ -300,18 +501,20 @@
     document.getElementById('comfyui-pull').onclick = async () => {
       const btn = document.getElementById('comfyui-pull');
       const prog = document.getElementById('comfyui-progress');
+      const logEl = document.getElementById('comfyui-log');
       btn.disabled = true;
       prog.style.display = 'block';
-      prog.textContent = 'Starting pull...';
+      logEl.textContent = 'Starting download...';
       try {
         await api('/api/comfyui/pull', { method: 'POST' });
         const poll = () => {
           api('/api/comfyui/pull/status').then(r => r.json()).then(s => {
-            prog.textContent = s.output || 'Waiting...';
-            prog.scrollTop = prog.scrollHeight;
-            if (s.running) setTimeout(poll, 2000);
+            logEl.textContent = s.output || 'Preparing...';
+            logEl.scrollTop = logEl.scrollHeight;
+            if (s.running) setTimeout(poll, 1500);
             else {
-              prog.textContent += '\n' + (s.success ? 'Done.' : 'Failed.');
+              logEl.textContent += '\n' + (s.success ? '✓ Done.' : '✗ Failed.');
+              toast(s.success ? 'LTX-2 models ready' : 'Download failed', s.success ? 'success' : 'error');
               btn.disabled = false;
               loadComfyuiModels();
             }
@@ -319,18 +522,23 @@
         };
         poll();
       } catch (e) {
-        prog.textContent += '\nError: ' + e.message;
+        logEl.textContent += '\nError: ' + e.message;
+        toast('Failed to start pull', 'error');
         btn.disabled = false;
       }
     };
 
-    async function init() {
-      loadServices();
-      loadOllamaModels();
-      loadComfyuiModels();
+    async function refresh() {
+      const btn = document.getElementById('refresh-btn');
+      btn.classList.add('loading');
+      await Promise.all([loadServices(), loadOllamaModels(), loadComfyuiModels()]);
+      btn.classList.remove('loading');
     }
-    init();
-    setInterval(() => { loadServices(); loadOllamaModels(); loadComfyuiModels(); }, 30000);
+
+    document.getElementById('refresh-btn').onclick = refresh;
+
+    refresh();
+    setInterval(refresh, 45000);
   </script>
 </body>
 </html>
