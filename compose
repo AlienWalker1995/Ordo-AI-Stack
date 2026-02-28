@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# One-command compose: auto-detects hardware, then runs docker compose.
+# Usage: ./compose up -d  |  ./compose down  |  ./compose logs -f ollama
+set -e
+base="${BASE_PATH:-$(pwd)}"
+base="${base//\\/\/}"
+export BASE_PATH="$base"
+detect="$base/scripts/detect_hardware.py"
+[[ -f "$detect" ]] && python3 "$detect" 2>/dev/null || true
+exec docker compose "$@"

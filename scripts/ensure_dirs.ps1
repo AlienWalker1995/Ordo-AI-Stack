@@ -47,4 +47,12 @@ OPENCLAW_GATEWAY_TOKEN=$token
     Write-Host "OK openclaw/.env ($(if ($needsCreate) { 'created' } else { 'token fixed' }))"
 }
 
+# Auto-detect GPU and generate docker-compose.compute.yml
+$detectScript = Join-Path $base "scripts\detect_hardware.py"
+if (Test-Path $detectScript) {
+    $env:BASE_PATH = $base -replace '\\', '/'
+    python $detectScript 2>$null
+    if ($LASTEXITCODE -eq 0) { Write-Host "OK Hardware detected (docker-compose.compute.yml)" }
+}
+
 Write-Host "Directories ready."

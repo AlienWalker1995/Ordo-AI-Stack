@@ -60,4 +60,10 @@ if [[ "$needs_create" == "true" || "$needs_token" == "true" ]]; then
   echo "OK openclaw/.env ($([[ "$needs_create" == "true" ]] && echo 'created' || echo 'token fixed'))"
 fi
 
+# Auto-detect GPU and generate docker-compose.compute.yml
+detect_script="$base/scripts/detect_hardware.py"
+if [[ -f "$detect_script" ]]; then
+  BASE_PATH="$base" python3 "$detect_script" 2>/dev/null && echo "OK Hardware detected (docker-compose.compute.yml)"
+fi
+
 echo "Directories ready."

@@ -3,7 +3,7 @@ name: ai-toolkit
 # All services start by default. Run: docker compose up -d
 services:
   ollama:
-    image: ollama/ollama:0.17.4
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.17.4}
     restart: unless-stopped
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
@@ -11,13 +11,7 @@ services:
       - "11434:11434"
     volumes:
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/ollama:/root/.ollama
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # GPU: add deploy via docker-compose.compute.yml (run scripts/detect_hardware.py)
 
   dashboard:
     build: ./dashboard
@@ -90,27 +84,19 @@ services:
     command: ["python3", "/scripts/comfyui/pull_comfyui_models.py"]
 
   comfyui:
-    image: yanwk/comfyui-boot:cu128-slim
+    image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot:cpu}
     container_name: comfyui
     restart: unless-stopped
-    # ComfyUI starts independently; pull LTX-2 models via dashboard or: docker compose run --rm comfyui-model-puller
-    # Requires NVIDIA GPU. No GPU? Comment out the deploy block below.
+    # ComfyUI: run scripts/detect_hardware.py to auto-configure GPU (NVIDIA/AMD/Intel) or CPU
     ports:
       - "8188:8188"
     environment:
-      - CLI_ARGS=--disable-xformers --lowvram
-      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,pinned_use_cuda_host_register:True
+      - CLI_ARGS=--cpu
+      - PYTORCH_CUDA_ALLOC_CONF=
     volumes:
       - ${BASE_PATH:-.}/data/comfyui-storage:/root
       - ${BASE_PATH:-.}/models/comfyui:/root/ComfyUI/models
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/comfyui-output:/root/ComfyUI/output
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
   n8n:
     image: docker.n8n.io/n8nio/n8n
@@ -127,6 +113,7 @@ services:
   mcp-gateway:
     build: ./mcp
     image: ai-toolkit-mcp-gateway:latest
+    pull_policy: build
     container_name: mcp-gateway
     restart: unless-stopped
     environment:

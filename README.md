@@ -2,7 +2,7 @@
 
 Hey, I am Cam, I made this repo to simplify my local-LLM setup. I wanted a bunch of tools setup in a single spot -- and of course, all dockerized. 
 
-Ollama + Open WebUI + ComfyUI + N8N in Docker. One command, all on one drive.
+Ollama + Open WebUI + ComfyUI + N8N in Docker. One command (`./compose up -d`), auto-detects hardware for best performance.
 
 → [Repository structure](docs/STRUCTURE.md) · [Getting started](docs/GETTING_STARTED.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
 
@@ -24,22 +24,26 @@ Ollama + Open WebUI + ComfyUI + N8N in Docker. One command, all on one drive.
 
 1. **Clone** the repo to your target drive (e.g. `F:\AI-toolkit` or `~/AI-toolkit`).
 2. **Create `.env`** — copy `.env.example` to `.env` and set `BASE_PATH` to your install path.
-3. **Create directories** — run the setup script for your OS:
+3. **Create directories** — run the setup script (also auto-detects GPU and configures compute):
    - **Windows (PowerShell):** `.\scripts\ensure_dirs.ps1`
    - **Linux/Mac:** `./scripts/ensure_dirs.sh`
-4. **Start services:** `docker compose up -d`
+4. **Start services:** `.\compose.ps1 up -d` (Windows) or `./compose up -d` (Linux/Mac)
 5. **Open the dashboard** at [localhost:8080](http://localhost:8080).
 6. **Pull models** — use the "Starter pack" button or select models from the dropdown.
 7. **Chat** — open [localhost:3000](http://localhost:3000) (Open WebUI).
 
-**No GPU?** Start only the core stack: `docker compose up -d ollama dashboard open-webui` — see [Troubleshooting](docs/TROUBLESHOOTING.md).
+**No GPU?** Start only the core stack: `.\compose.ps1 up -d ollama dashboard open-webui` — see [Troubleshooting](docs/TROUBLESHOOTING.md).
 
 ## Daily use
 
+One command — auto-detects hardware and starts with best settings:
+
+```powershell
+.\compose.ps1 up -d      # Windows
+```
+
 ```bash
-docker compose up -d      # Start all services
-# Open dashboard: localhost:8080
-# Chat: localhost:3000
+./compose up -d          # Linux/Mac
 ```
 
 ## Quick start (copy-paste)
@@ -49,7 +53,7 @@ docker compose up -d      # Start all services
 cd F:\AI-toolkit
 copy .env.example .env
 .\scripts\ensure_dirs.ps1
-docker compose up -d
+.\compose.ps1 up -d
 ```
 
 **Linux/Mac:**
@@ -57,17 +61,17 @@ docker compose up -d
 cd ~/AI-toolkit
 cp .env.example .env
 ./scripts/ensure_dirs.sh
-docker compose up -d
+./compose up -d
 ```
 
 All services start by default. Open the **dashboard** at [localhost:8080](http://localhost:8080) to manage models and see service status.
 
-**If ComfyUI or OpenClaw fail:** The dashboard shows troubleshooting hints. ComfyUI requires an NVIDIA GPU; OpenClaw needs `openclaw/.env` (created by step 3). See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+**If ComfyUI or OpenClaw fail:** The dashboard shows troubleshooting hints. ComfyUI uses auto-detected compute (NVIDIA/AMD/Intel/CPU); OpenClaw needs `openclaw/.env` (created by step 3). See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 **On-demand commands** (run when you want to pull models):
-- `docker compose run --rm model-puller` — pull Ollama models from `.env`
-- `docker compose run --rm comfyui-model-puller` — download LTX-2 models (~60 GB)
-- `docker compose run --rm openclaw-cli onboard` — OpenClaw setup
+- `.\compose.ps1 run --rm model-puller` / `./compose run --rm model-puller` — pull Ollama models from `.env`
+- `.\compose.ps1 run --rm comfyui-model-puller` — download LTX-2 models (~60 GB)
+- `.\compose.ps1 run --rm openclaw-cli onboard` — OpenClaw setup
 
 ## Dashboard
 
@@ -77,7 +81,7 @@ The **dashboard** at [localhost:8080](http://localhost:8080) gives you a single 
 - **Pull models** — searchable dropdown with 150+ Ollama models; or type any model name
 - **Jump to services** — Open WebUI, ComfyUI, N8N, OpenClaw, MCP Gateway
 
-**Not seeing updates?** After pulling code changes, rebuild: `docker compose build dashboard && docker compose up -d`
+**Not seeing updates?** After pulling code changes, rebuild: `.\compose.ps1 build dashboard` then `.\compose.ps1 up -d`
 
 ## Ollama models
 
@@ -90,7 +94,7 @@ Default models (set in `.env`):
 **Pull via dashboard** (recommended) or via CLI:
 
 ```bash
-docker compose run --rm model-puller   # on-demand from .env
+./compose run --rm model-puller   # on-demand from .env
 # Or use the dashboard at localhost:8080
 ```
 
@@ -103,7 +107,7 @@ ComfyUI starts independently. LTX-2 models (~60 GB) are downloaded on demand —
 **Pull via dashboard** (recommended) or:
 
 ```bash
-docker compose run --rm comfyui-model-puller
+./compose run --rm comfyui-model-puller
 ```
 
 ## Security
@@ -112,11 +116,20 @@ docker compose run --rm comfyui-model-puller
 - **OpenClaw** requires a gateway token — generate with `openssl rand -hex 32`.
 - Never commit `.env` or `openclaw/.env`. See [SECURITY.md](SECURITY.md) for details.
 
-## GPU
+## GPU / compute
 
-The `ollama` and `comfyui` services are configured for NVIDIA GPU via the Container Toolkit.
+**Auto-detection:** The setup script (`ensure_dirs`) runs `scripts/detect_hardware.py`, which detects your GPU and generates `docker-compose.compute.yml`:
 
-**No GPU?** Run the minimal stack (chat only): `docker compose up -d ollama dashboard open-webui`. Remove the `deploy` block from `comfyui` in `docker-compose.yml` if you want ComfyUI without GPU (CPU mode, slower). See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+| Detected | Ollama | ComfyUI |
+|----------|--------|---------|
+| **NVIDIA** | GPU (NVIDIA Container Toolkit) | CUDA 12.8 |
+| **AMD** | ROCm | ROCm |
+| **Intel** | CPU | XPU |
+| **CPU** | CPU | CPU (slower) |
+
+The `compose` wrapper runs detection before every command, so `.\compose.ps1 up -d` or `./compose up -d` always uses the best settings.
+
+**No GPU?** Run the minimal stack: `.\compose.ps1 up -d ollama dashboard open-webui`. ComfyUI will use CPU by default (slower). See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 ## Data
 
@@ -143,7 +156,7 @@ The [MCP Gateway](mcp/) exposes shared MCP tools (web search, GitHub, etc.) to a
 ## Commands
 
 ```powershell
-docker compose up -d      # Start all services
-docker compose logs -f ollama
-docker compose down       # Stop
+.\compose.ps1 up -d       # Start all services (auto-detects hardware)
+.\compose.ps1 logs -f ollama
+.\compose.ps1 down        # Stop
 ```
