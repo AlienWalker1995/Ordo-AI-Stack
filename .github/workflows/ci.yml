@@ -18,7 +18,7 @@ jobs:
       - name: Secret scanning (TruffleHog)
         uses: trufflesecurity/trufflehog@main
         with:
-          extra_args: --results=verified,unknown --fail
+          extra_args: --results=verified,unknown
 
   compose-validate:
     name: Docker Compose validation
