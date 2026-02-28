@@ -1,6 +1,7 @@
 # LLM-toolkit
 
-Hey, I am Cam, I made this repo to simplify my
+Hey, I am Cam, I made this repo to simplify my local-LLM setup.
+
 Ollama + Open WebUI + ComfyUI + N8N in Docker. One command, all on one drive.
 
 → [Repository structure](docs/STRUCTURE.md)
