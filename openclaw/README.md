@@ -1,15 +1,15 @@
 # OpenClaw — Personal AI Assistant
 
-[OpenClaw](https://docs.openclaw.ai) is a self-hosted personal AI assistant that runs in Docker. This folder provides a ready-to-use setup integrated with the LLM-toolkit project.
+[OpenClaw](https://docs.openclaw.ai) is a self-hosted personal AI assistant that runs in Docker. This folder provides a ready-to-use setup integrated with the AI-toolkit project.
 
 ## Quick Start
 
 ### 1. Prepare directories and workspace
 
-From the **repo root** (e.g. `F:\LLM-toolkit`):
+From the **repo root** (e.g. `F:\AI-toolkit`):
 
 ```powershell
-$env:BASE_PATH = "F:/LLM-toolkit"
+$env:BASE_PATH = "F:/AI-toolkit"
 .\scripts\ensure_dirs.ps1
 .\openclaw\scripts\ensure_openclaw_workspace.ps1
 ```
@@ -23,7 +23,7 @@ copy .env.example .env
 
 Edit `.env` and set:
 
-- `BASE_PATH` — repo root (e.g. `F:/LLM-toolkit`)
+- `BASE_PATH` — repo root (e.g. `F:/AI-toolkit`)
 - `OPENCLAW_GATEWAY_TOKEN` — generate with `openssl rand -hex 32`
 - At least one model API key: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, or `OPENROUTER_API_KEY`
 
@@ -45,7 +45,7 @@ Use the token from `.env` when prompted.
 
 Open **http://localhost:18789/** in your browser. Paste the gateway token into Settings → Token.
 
-**Not reachable?** When using the main LLM-toolkit compose, the gateway is configured with `OPENCLAW_GATEWAY_BIND=lan` so it accepts connections from the host. If you run OpenClaw standalone from `openclaw/`, add `OPENCLAW_GATEWAY_BIND=lan` to your `.env`. Then verify: `docker compose ps` (gateway running), `docker compose logs openclaw-gateway` (no errors).
+**Not reachable?** When using the main AI-toolkit compose, the gateway is configured with `OPENCLAW_GATEWAY_BIND=lan` so it accepts connections from the host. If you run OpenClaw standalone from `openclaw/`, add `OPENCLAW_GATEWAY_BIND=lan` to your `.env`. Then verify: `docker compose ps` (gateway running), `docker compose logs openclaw-gateway` (no errors).
 
 ## Workspace Files
 

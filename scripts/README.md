@@ -1,6 +1,6 @@
 # Scripts
 
-Setup and maintenance scripts for the LLM-toolkit stack.
+Setup and maintenance scripts for the AI-toolkit stack.
 
 ## Setup
 
@@ -28,13 +28,13 @@ From the repo root:
 
 **Windows (PowerShell):**
 ```powershell
-$env:BASE_PATH = "F:/LLM-toolkit"
+$env:BASE_PATH = "F:/AI-toolkit"
 .\scripts\ensure_dirs.ps1
 ```
 
 **Linux/Mac:**
 ```bash
-export BASE_PATH="$HOME/LLM-toolkit"
+export BASE_PATH="$HOME/AI-toolkit"
 ./scripts/ensure_dirs.sh
 ```
 

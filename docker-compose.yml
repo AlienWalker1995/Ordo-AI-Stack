@@ -1,4 +1,4 @@
-name: llm-toolkit
+name: ai-toolkit
 
 # All services start by default. Run: docker compose up -d
 services:
@@ -126,7 +126,7 @@ services:
 
   mcp-gateway:
     build: ./mcp
-    image: llm-toolkit-mcp-gateway:latest
+    image: ai-toolkit-mcp-gateway:latest
     container_name: mcp-gateway
     restart: unless-stopped
     environment:

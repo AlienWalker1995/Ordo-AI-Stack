@@ -1,4 +1,4 @@
-# Contributing to LLM-toolkit
+# Contributing to AI-toolkit
 
 Thank you for your interest in contributing.
 

@@ -1,4 +1,4 @@
-# LLM-toolkit
+# AI-toolkit
 
 Hey, I am Cam, I made this repo to simplify my local-LLM setup. I wanted a bunch of tools setup in a single spot -- and of course, all dockerized. 
 
@@ -22,7 +22,7 @@ Ollama + Open WebUI + ComfyUI + N8N in Docker. One command, all on one drive.
 
 ## First-time setup
 
-1. **Clone** the repo to your target drive (e.g. `F:\LLM-toolkit` or `~/LLM-toolkit`).
+1. **Clone** the repo to your target drive (e.g. `F:\AI-toolkit` or `~/AI-toolkit`).
 2. **Create `.env`** — copy `.env.example` to `.env` and set `BASE_PATH` to your install path.
 3. **Create directories** — run the setup script for your OS:
    - **Windows (PowerShell):** `.\scripts\ensure_dirs.ps1`
@@ -46,7 +46,7 @@ docker compose up -d      # Start all services
 
 **Windows (PowerShell):**
 ```powershell
-cd F:\LLM-toolkit
+cd F:\AI-toolkit
 copy .env.example .env
 .\scripts\ensure_dirs.ps1
 docker compose up -d
@@ -54,7 +54,7 @@ docker compose up -d
 
 **Linux/Mac:**
 ```bash
-cd ~/LLM-toolkit
+cd ~/AI-toolkit
 cp .env.example .env
 ./scripts/ensure_dirs.sh
 docker compose up -d

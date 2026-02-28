@@ -1,4 +1,4 @@
-"""LLM-toolkit Dashboard — unified model management and service hub."""
+"""AI-toolkit Dashboard — unified model management and service hub."""
 from __future__ import annotations
 
 import os
@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from httpx import AsyncClient
 from pydantic import BaseModel
 
-app = FastAPI(title="LLM-toolkit Dashboard", version="1.0.0")
+app = FastAPI(title="AI-toolkit Dashboard", version="1.0.0")
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
 MODELS_DIR = Path(os.environ.get("MODELS_DIR", "/models"))

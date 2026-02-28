@@ -1,6 +1,6 @@
 # MCP Module — Shared Model Context Protocol Gateway
 
-The [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) lets AI applications connect to external tools and data. This module runs Docker's [MCP Gateway](https://github.com/docker/mcp-gateway), giving all your LLM-toolkit services access to the same MCP servers through one endpoint.
+The [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) lets AI applications connect to external tools and data. This module runs Docker's [MCP Gateway](https://github.com/docker/mcp-gateway), giving all your AI-toolkit services access to the same MCP servers through one endpoint.
 
 ## Best experience: Docker Desktop MCP Toolkit
 
