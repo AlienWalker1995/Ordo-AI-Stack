@@ -1,6 +1,12 @@
 .env
+openclaw/.env
 models/
 data/
+
+# Secrets / keys (never commit)
+*.pem
+*.key
+*.kubeconfig
 
 # Debug / temporary
 comfyui-logs.txt

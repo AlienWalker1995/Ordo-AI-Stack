@@ -1,5 +1,6 @@
 # LLM-toolkit
 
+Hey, I am Cam, I made this repo to simplify my
 Ollama + Open WebUI + ComfyUI + N8N in Docker. One command, all on one drive.
 
 → [Repository structure](docs/STRUCTURE.md)
@@ -70,6 +71,12 @@ Re-pull models:
 ```bash
 docker compose up -d comfyui-model-puller
 ```
+
+## Security
+
+- **Open WebUI** runs with `WEBUI_AUTH=False` by default (no login). Suitable for local/single-user use. If exposing to a network, set `WEBUI_AUTH=True` in the environment.
+- **OpenClaw** requires a gateway token — generate with `openssl rand -hex 32`.
+- Never commit `.env` or `openclaw/.env`. See [SECURITY.md](SECURITY.md) for details.
 
 ## GPU
 

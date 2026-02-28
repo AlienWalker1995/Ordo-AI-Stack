@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  secret-scan:
+    name: Secret scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  compose-validate:
+    name: Docker Compose validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker-compose
+        run: |
+          # Create minimal .env for validation (BASE_PATH required)
+          echo "BASE_PATH=." > .env
+          echo "OPENCLAW_GATEWAY_TOKEN=placeholder-for-ci" >> .env
+          mkdir -p openclaw
+          cp openclaw/.env.example openclaw/.env 2>/dev/null || true
+          docker compose config
