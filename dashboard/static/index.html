@@ -96,10 +96,16 @@
     section h2 {
       font-size: 1rem;
       font-weight: 600;
-      margin-bottom: 1.25rem;
+      margin-bottom: 0.5rem;
       color: var(--text-soft);
       text-transform: uppercase;
       letter-spacing: 0.08em;
+    }
+    .section-desc {
+      font-size: 0.875rem;
+      color: var(--muted);
+      margin-bottom: 1rem;
+      line-height: 1.5;
     }
     .services {
       display: grid;
@@ -179,15 +185,6 @@
     }
     .status-summary.all-ok { border-left: 4px solid var(--success); }
     .status-summary.has-issues { border-left: 4px solid var(--warning); }
-    .setup-banner {
-      padding: 1.125rem 1.5rem;
-      background: var(--accent-dim);
-      border: 1px solid var(--accent);
-      border-radius: var(--radius-sm);
-      margin-bottom: 1.5rem;
-      font-size: 0.9rem;
-    }
-    .setup-banner code { background: var(--bg); padding: 0.25rem 0.5rem; border-radius: 6px; font-size: 0.85em; font-family: 'JetBrains Mono', monospace; }
     .models-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -468,16 +465,14 @@
         <p class="subtitle">Unified model management — Ollama, ComfyUI, and services</p>
       </div>
       <div class="header-actions">
-        <button class="btn-icon btn-text" id="rebuild-hint" title="docker compose build dashboard && docker compose up -d">↻ Rebuild</button>
-        <button class="btn-icon" id="refresh-btn" title="Refresh">↻</button>
+        <button class="btn-icon btn-text" id="rebuild-hint" title="Copy rebuild command">↻ Rebuild</button>
+        <button class="btn-icon" id="refresh-btn" title="Refresh status" aria-label="Refresh">↻</button>
       </div>
     </header>
 
-    <div class="setup-banner" id="setup-banner" style="display:none;">
-      <strong>First time?</strong> Run: <code>.\scripts\ensure_dirs.ps1</code> then <code>docker compose up -d</code>
-    </div>
     <section>
       <h2>Services</h2>
+      <p class="section-desc">Click a service to open it. MCP Gateway provides shared tools for Open WebUI, Cursor, and OpenClaw.</p>
       <div class="status-summary" id="status-summary" style="display:none;"></div>
       <div class="services" id="services">
         <div class="skeleton skeleton-line" style="height:52px;width:100%;"></div>
@@ -488,6 +483,7 @@
 
     <section>
       <h2>Model Library</h2>
+      <p class="section-desc">Pull Ollama LLMs and ComfyUI LTX-2 models. Use the dashboard or run model-puller on demand.</p>
       <div class="models-grid">
         <div class="model-panel">
           <h3>Ollama — LLM & embeddings</h3>
@@ -577,8 +573,7 @@
         summaryEl.className = 'status-summary ' + (okCount === total ? 'all-ok' : 'has-issues');
         summaryEl.innerHTML = okCount === total
           ? `✓ All ${total} services running`
-          : `${okCount}/${total} services running — check hints below`;
-        document.getElementById('setup-banner').style.display = okCount < total ? 'block' : 'none';
+          : `${okCount}/${total} services running — see hints on failed cards`;
         el.innerHTML = services.map(s => `
           <div class="service-card ${s.ok ? '' : 'fail'}">
             <div class="row">
