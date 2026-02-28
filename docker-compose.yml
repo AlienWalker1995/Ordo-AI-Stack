@@ -133,6 +133,7 @@ services:
     container_name: openclaw-gateway
     depends_on:
       - ollama
+      - mcp-gateway
     env_file:
       - openclaw/.env
     environment:
@@ -141,6 +142,9 @@ services:
       NODE_ENV: production
       OPENCLAW_SKIP_SERVICE_CHECK: "true"
       OPENCLAW_GATEWAY_BIND: "lan"
+      # Ollama: expose local models to OpenClaw (native API, no /v1)
+      OLLAMA_API_KEY: "ollama-local"
+      OLLAMA_BASE_URL: "http://ollama:11434"
     volumes:
       - ${OPENCLAW_CONFIG_DIR:-${BASE_PATH:-.}/data/openclaw}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR:-${BASE_PATH:-.}/data/openclaw/workspace}:/home/node/.openclaw/workspace
@@ -165,6 +169,8 @@ services:
       TERM: xterm-256color
       NODE_ENV: production
       BROWSER: echo
+      OLLAMA_API_KEY: "ollama-local"
+      OLLAMA_BASE_URL: "http://ollama:11434"
     volumes:
       - ${OPENCLAW_CONFIG_DIR:-${BASE_PATH:-.}/data/openclaw}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR:-${BASE_PATH:-.}/data/openclaw/workspace}:/home/node/.openclaw/workspace

@@ -25,7 +25,8 @@ Edit `.env` and set:
 
 - `BASE_PATH` — repo root (e.g. `F:/AI-toolkit`)
 - `OPENCLAW_GATEWAY_TOKEN` — generate with `openssl rand -hex 32`
-- At least one model API key: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, or `OPENROUTER_API_KEY`
+- **Ollama** — enabled by default when using the main compose; models from `ollama` are auto-discovered
+- Optional cloud APIs: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, or `OPENROUTER_API_KEY`
 
 ### 3. Start OpenClaw
 
@@ -43,7 +44,7 @@ Use the token from `.env` when prompted.
 
 ### 5. Access the UI
 
-Open **http://localhost:18789/** in your browser. Paste the gateway token into Settings → Token.
+Open **http://localhost:18789/** in your browser. Paste the gateway token into Settings → Token. In Settings → Model, choose an Ollama model (e.g. `ollama/deepseek-r1:7b`) — models are auto-discovered from the local Ollama instance. MCP tools (web search, etc.) from the gateway at `http://mcp-gateway:8811/mcp` are configured as a tool list — the agent can call them automatically. **Existing config?** Add the `mcp` block from [mcp/README.md](../mcp/README.md#openclaw) to your `data/openclaw/openclaw.json`.
 
 **Not reachable?** When using the main AI-toolkit compose, the gateway is configured with `OPENCLAW_GATEWAY_BIND=lan` so it accepts connections from the host. If you run OpenClaw standalone from `openclaw/`, add `OPENCLAW_GATEWAY_BIND=lan` to your `.env`. Then verify: `docker compose ps` (gateway running), `docker compose logs openclaw-gateway` (no errors).
 

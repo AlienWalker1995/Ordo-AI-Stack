@@ -29,6 +29,14 @@ for d in "${dirs[@]}"; do
   echo "OK $d"
 done
 
+# Bootstrap openclaw.json with Ollama provider if config doesn't exist
+openclaw_config="$data/openclaw/openclaw.json"
+openclaw_config_example="$base/openclaw/openclaw.json.example"
+if [[ ! -f "$openclaw_config" && -f "$openclaw_config_example" ]]; then
+  cp "$openclaw_config_example" "$openclaw_config"
+  echo "OK openclaw config (Ollama provider)"
+fi
+
 # Ensure openclaw/.env exists with a valid token (required for OpenClaw service)
 openclaw_env="$base/openclaw/.env"
 openclaw_example="$base/openclaw/.env.example"

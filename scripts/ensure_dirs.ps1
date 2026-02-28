@@ -22,6 +22,14 @@ foreach ($d in $dirs) {
     Write-Host "OK $d"
 }
 
+# Bootstrap openclaw.json with Ollama provider if config doesn't exist
+$openclawConfig = Join-Path $data "openclaw\openclaw.json"
+$openclawConfigExample = Join-Path $base "openclaw\openclaw.json.example"
+if (-not (Test-Path $openclawConfig) -and (Test-Path $openclawConfigExample)) {
+    Copy-Item $openclawConfigExample $openclawConfig -Force
+    Write-Host "OK openclaw config (Ollama provider)"
+}
+
 # Ensure openclaw/.env exists with a valid token (required for OpenClaw service)
 $openclawEnv = Join-Path $base "openclaw\.env"
 $openclawExample = Join-Path $base "openclaw\.env.example"

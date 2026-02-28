@@ -1,0 +1,19 @@
+{
+  "models": {
+    "providers": {
+      "ollama": {
+        "baseUrl": "http://ollama:11434",
+        "apiKey": "ollama-local",
+        "api": "ollama"
+      }
+    }
+  },
+  "mcp": {
+    "servers": {
+      "gateway": {
+        "url": "http://mcp-gateway:8811/mcp",
+        "transport": "streamable-http"
+      }
+    }
+  }
+}
