@@ -232,10 +232,14 @@ async def _check_service(url: str) -> tuple[bool, str]:
 
 MCP_GATEWAY_SERVERS = os.environ.get("MCP_GATEWAY_SERVERS", "duckduckgo")
 MCP_CONFIG_PATH = os.environ.get("MCP_CONFIG_PATH")
+# Suggested servers (dropdown). Users can also add any valid server name via custom input.
 MCP_CATALOG = [
     "duckduckgo", "fetch", "dockerhub", "github-official", "brave", "playwright",
     "mongodb", "postgres", "stripe", "notion", "grafana", "elasticsearch",
     "documentation", "perplexity", "excalidraw", "miro", "neo4j",
+    "time", "slack", "filesystem", "puppeteer", "context7", "memory",
+    "firecrawl", "github", "git", "atlassian", "obsidian", "n8n",
+    "hugging-face",
 ]
 
 
@@ -247,13 +251,30 @@ def _mcp_config_path() -> Path | None:
     return p if p.parent.exists() else None
 
 
+def _normalize_server(s: str) -> str:
+    """Parse URL to server ID, or return as-is if already valid."""
+    parsed = _parse_mcp_server_input(s)
+    return parsed if parsed else s
+
+
 def _read_mcp_servers() -> list[str]:
-    """Read enabled servers from config file or env."""
+    """Read enabled servers from config file or env. Normalizes URLs to server IDs and deduplicates."""
     path = _mcp_config_path()
     if path:
         if path.exists():
             raw = path.read_text().strip().replace("\r", "").replace("\n", ",")
-            return [s.strip() for s in raw.split(",") if s.strip()]
+            raw_list = [s.strip() for s in raw.split(",") if s.strip()]
+            normalized = []
+            seen = set()
+            for s in raw_list:
+                n = _normalize_server(s)
+                if n and n not in seen:
+                    normalized.append(n)
+                    seen.add(n)
+            # Persist cleanup if we changed anything (URLs → IDs)
+            if normalized != raw_list:
+                _write_mcp_servers(normalized)
+            return normalized
         # Migrate: init file from .env on first run
         path.parent.mkdir(parents=True, exist_ok=True)
         initial = ",".join(s.strip() for s in MCP_GATEWAY_SERVERS.split(",") if s.strip()) or "duckduckgo"
@@ -288,14 +309,44 @@ class McpRemoveRequest(BaseModel):
     server: str
 
 
+def _valid_mcp_server_name(name: str) -> bool:
+    """Allow alphanumeric, hyphens, underscores, slashes, colons (Docker refs)."""
+    if not name or len(name) > 200:
+        return False
+    return all(c.isalnum() or c in "-_/:." for c in name)
+
+
+def _parse_mcp_server_input(raw: str) -> str | None:
+    """Extract server ID from input. Accepts:
+    - Docker Hub URL: https://hub.docker.com/mcp/server/hugging-face/overview
+    - Raw server name: hugging-face, fetch, mcp/firecrawl
+    """
+    s = raw.strip()
+    if not s:
+        return None
+    # Docker Hub MCP URL: hub.docker.com/mcp/server/<server-id>/...
+    if "hub.docker.com" in s and "/mcp/server/" in s:
+        try:
+            # Extract segment after /mcp/server/
+            idx = s.find("/mcp/server/")
+            if idx >= 0:
+                rest = s[idx + len("/mcp/server/"):]
+                server_id = rest.split("/")[0].split("?")[0]
+                if server_id and _valid_mcp_server_name(server_id):
+                    return server_id
+        except (IndexError, ValueError):
+            pass
+    return s if _valid_mcp_server_name(s) else None
+
+
 @app.post("/api/mcp/add")
 async def mcp_add(req: McpAddRequest):
-    """Add an MCP server. Takes effect in ~10s without container restart."""
-    server = req.server.strip().lower()
+    """Add an MCP server. Takes effect in ~10s without container restart.
+    Accepts: server name (fetch, hugging-face), Docker ref (mcp/firecrawl),
+    or Docker Hub URL (https://hub.docker.com/mcp/server/hugging-face/overview)."""
+    server = _parse_mcp_server_input(req.server)
     if not server:
-        raise HTTPException(status_code=400, detail="Server name required")
-    if server not in MCP_CATALOG:
-        raise HTTPException(status_code=400, detail=f"Unknown server. Use one of: {', '.join(MCP_CATALOG)}")
+        raise HTTPException(status_code=400, detail="Invalid server name or URL. Use a name (e.g. hugging-face) or paste a Docker Hub MCP URL.")
     servers = _read_mcp_servers()
     if server in servers:
         return {"status": "already_enabled", "servers": servers}
@@ -307,7 +358,7 @@ async def mcp_add(req: McpAddRequest):
 @app.post("/api/mcp/remove")
 async def mcp_remove(req: McpRemoveRequest):
     """Remove an MCP server. Takes effect in ~10s without container restart."""
-    server = req.server.strip().lower()
+    server = _parse_mcp_server_input(req.server) or req.server.strip()
     if not server:
         raise HTTPException(status_code=400, detail="Server name required")
     servers = _read_mcp_servers()
