@@ -1296,14 +1296,34 @@
       }
     }
 
+    function isEmbeddingModel(name) {
+      const n = (name || '').toLowerCase();
+      return /embed|bge|mxbai|arctic-embed|granite-embedding|paraphrase-multilingual/.test(n);
+    }
     function populateThroughputModelSelect() {
       const sel = document.getElementById('throughput-model-select');
       if (!sel) return;
-      if (!ollamaModels.length) {
-        sel.innerHTML = '<option value="">No models — pull one first</option>';
+      const llms = ollamaModels.filter(m => !isEmbeddingModel(m.name));
+      if (!llms.length) {
+        sel.innerHTML = '<option value="">No LLMs — pull one (embedding models excluded)</option>';
         return;
       }
-      sel.innerHTML = ollamaModels.map(m => `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`).join('');
+      sel.innerHTML = llms.map(m => `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`).join('');
+    }
+
+    function showLastBenchmark(b) {
+      if (!b) return;
+      const resultsEl = document.getElementById('throughput-results');
+      const errorEl = document.getElementById('throughput-error');
+      const loadingEl = document.getElementById('throughput-loading');
+      if (!resultsEl) return;
+      document.getElementById('throughput-tps').textContent = (b.output_tokens_per_sec ?? 0) + ' tok/s';
+      document.getElementById('throughput-output-tokens').textContent = String(b.output_tokens ?? '—');
+      document.getElementById('throughput-eval-ms').textContent = (typeof b.eval_duration_ms === 'number' ? b.eval_duration_ms + ' ms' : '—');
+      document.getElementById('throughput-load-ms').textContent = (typeof b.load_duration_ms === 'number' ? b.load_duration_ms + ' ms' : '—');
+      resultsEl.style.display = 'grid';
+      if (errorEl) errorEl.style.display = 'none';
+      if (loadingEl) loadingEl.style.display = 'none';
     }
 
     async function loadThroughputStats() {
@@ -1326,6 +1346,7 @@
       try {
         const r = await api('/api/throughput/stats');
         const d = await r.json();
+        if (d.last_benchmark) showLastBenchmark(d.last_benchmark);
         if (!d.ok || !d.models || Object.keys(d.models).length === 0) {
           grid.innerHTML = '<div class="throughput-empty" id="throughput-stats-empty">No data yet. Run a benchmark or use models via the Model Gateway.</div>';
           return;
@@ -1404,7 +1425,8 @@
       const errorEl = document.getElementById('throughput-error');
       const loadingEl = document.getElementById('throughput-loading');
       const modelSel = document.getElementById('throughput-model-select');
-      const model = modelSel?.value?.trim() || ollamaModels[0]?.name || 'llama3.2';
+      const llms = ollamaModels.filter(m => !isEmbeddingModel(m.name));
+      const model = modelSel?.value?.trim() || llms[0]?.name || 'llama3.2';
       resultsEl.style.display = 'none';
       errorEl.style.display = 'none';
       errorEl.textContent = '';

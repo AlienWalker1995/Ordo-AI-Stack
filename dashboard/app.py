@@ -438,6 +438,9 @@ async def health():
 _throughput_samples: dict[str, list[float]] = {}
 _MAX_SAMPLES_PER_MODEL = 500
 
+# Last benchmark result (persists across page refresh until dashboard restart)
+_last_benchmark: dict | None = None
+
 # Service usage: list of { model, service, tps, ts } for "which service uses which model"
 _service_usage: list[dict] = []
 _MAX_SERVICE_USAGE = 500
@@ -528,7 +531,7 @@ async def throughput_service_usage():
 
 @app.get("/api/throughput/stats")
 async def throughput_stats():
-    """Return per-model throughput stats: peak, p50, p95, p99, latest, sample_count."""
+    """Return per-model throughput stats: peak, p50, p95, p99, latest, sample_count. Includes last_benchmark if available."""
     result: dict[str, dict] = {}
     for model, samples in list(_throughput_samples.items()):
         if not samples:
@@ -542,7 +545,10 @@ async def throughput_stats():
             "p99": round(_percentile(sorted_s, 99), 1),
             "sample_count": len(samples),
         }
-    return {"models": result, "ok": True}
+    out: dict = {"models": result, "ok": True}
+    if _last_benchmark:
+        out["last_benchmark"] = _last_benchmark
+    return out
 
 
 @app.get("/api/ollama/ps")
@@ -557,19 +563,40 @@ async def ollama_ps():
             raise HTTPException(status_code=502, detail=f"Ollama request failed: {e}")
 
 
+# Embedding models don't support /api/generate — exclude from throughput benchmark
+_EMBED_MODEL_PATTERNS = ("embed", "bge", "mxbai", "arctic-embed", "granite-embedding", "paraphrase-multilingual")
+
+
+def _is_embedding_model(name: str) -> bool:
+    n = name.lower()
+    return any(p in n for p in _EMBED_MODEL_PATTERNS)
+
+
 @app.post("/api/throughput/benchmark")
 async def throughput_benchmark(req: ThroughputBenchmarkRequest):
     """Run a quick benchmark against Ollama. Returns tokens/sec and related metrics."""
     model = req.model.strip() or "llama3.2"
+    if _is_embedding_model(model):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model '{model}' is an embedding model and does not support text generation. Choose an LLM (e.g. llama3.2, deepseek-r1:7b).",
+        )
     prompt = "Say 'ok' and nothing else."
+    url = f"{OLLAMA_URL.rstrip('/')}/api/generate"
     async with AsyncClient(timeout=60.0) as client:
         try:
-            r = await client.post(
-                f"{OLLAMA_URL}/api/generate",
-                json={"model": model, "prompt": prompt, "stream": False},
-            )
+            r = await client.post(url, json={"model": model, "prompt": prompt, "stream": False})
+            if r.status_code == 400:
+                try:
+                    err = r.json()
+                    msg = err.get("error", r.text) or "Bad request"
+                except Exception:
+                    msg = r.text or "Bad request"
+                raise HTTPException(status_code=400, detail=f"Ollama: {msg}")
             r.raise_for_status()
             data = r.json()
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Ollama request failed: {e}")
 
@@ -593,7 +620,7 @@ async def throughput_benchmark(req: ThroughputBenchmarkRequest):
     if len(_throughput_samples[model]) > _MAX_SAMPLES_PER_MODEL:
         _throughput_samples[model] = _throughput_samples[model][-_MAX_SAMPLES_PER_MODEL:]
 
-    return {
+    payload = {
         "ok": True,
         "model": model,
         "prompt_tokens": prompt_eval_count,
@@ -604,6 +631,9 @@ async def throughput_benchmark(req: ThroughputBenchmarkRequest):
         "load_duration_ms": round(load_duration_ns / 1e6, 1),
         "total_duration_ms": round(total_duration_ns / 1e6, 1),
     }
+    global _last_benchmark
+    _last_benchmark = payload
+    return payload
 
 
 # --- Ops Controller proxy ---
