@@ -41,6 +41,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
+      - name: Create minimal .env for compose tests
+        run: |
+          echo "BASE_PATH=." > .env
+          echo "OPS_CONTROLLER_TOKEN=placeholder-for-ci" >> .env
+          echo "OPENCLAW_GATEWAY_TOKEN=placeholder-for-ci" >> .env
+
       - name: Run tests
         run: python -m pytest tests/ -v
         env:

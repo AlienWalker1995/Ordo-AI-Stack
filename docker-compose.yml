@@ -171,15 +171,17 @@ services:
       timeout: 10s
       retries: 3
     environment:
-      # Use model gateway for OpenAI-compatible API (recommended), or Ollama directly
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
-      - OPENAI_API_BASE=${OPENAI_API_BASE:-http://model-gateway:11435/v1}
-      # Auth: True by default. Set WEBUI_AUTH=False in .env for single-user local use.
+      # Route all model requests through the gateway (unified provider)
+      - OLLAMA_BASE_URL=
+      - OPENAI_API_BASE_URL=${OPENAI_API_BASE:-http://model-gateway:11435/v1}
+      - OPENAI_API_KEY=ollama-local
+      # Auth: False = single-user local / Tailscale use.
       - WEBUI_AUTH=${WEBUI_AUTH:-False}
     volumes:
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/open-webui:/app/backend/data
     networks:
       - frontend
+      - backend
 
   model-puller:
     profiles: [models]
