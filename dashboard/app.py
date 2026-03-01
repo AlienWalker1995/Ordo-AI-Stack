@@ -431,6 +431,126 @@ async def health():
     return {"ok": all_ok, "services": results}
 
 
+# --- Token Throughput ---
+
+# In-memory store: model -> list of output_tokens_per_sec (rolling, max 500)
+_throughput_samples: dict[str, list[float]] = {}
+_MAX_SAMPLES_PER_MODEL = 500
+
+
+def _percentile(sorted_arr: list[float], p: float) -> float:
+    """Compute percentile (0–100). Returns 0 if empty."""
+    if not sorted_arr:
+        return 0.0
+    k = (len(sorted_arr) - 1) * (p / 100)
+    f = int(k)
+    c = f + 1 if f + 1 < len(sorted_arr) else f
+    return sorted_arr[f] + (k - f) * (sorted_arr[c] - sorted_arr[f]) if c > f else sorted_arr[f]
+
+
+class ThroughputBenchmarkRequest(BaseModel):
+    model: str = ""
+
+
+class ThroughputRecordRequest(BaseModel):
+    model: str = ""
+    output_tokens_per_sec: float = 0.0
+
+
+@app.post("/api/throughput/record")
+async def throughput_record(req: ThroughputRecordRequest):
+    """Record a throughput sample from real-world usage (e.g. model gateway). Fire-and-forget."""
+    model = req.model.strip()
+    if not model or req.output_tokens_per_sec <= 0:
+        return {"ok": True}
+    if model not in _throughput_samples:
+        _throughput_samples[model] = []
+    _throughput_samples[model].append(req.output_tokens_per_sec)
+    if len(_throughput_samples[model]) > _MAX_SAMPLES_PER_MODEL:
+        _throughput_samples[model] = _throughput_samples[model][-_MAX_SAMPLES_PER_MODEL:]
+    return {"ok": True}
+
+
+@app.get("/api/throughput/stats")
+async def throughput_stats():
+    """Return per-model throughput stats: peak, p50, p95, p99, latest, sample_count."""
+    result: dict[str, dict] = {}
+    for model, samples in list(_throughput_samples.items()):
+        if not samples:
+            continue
+        sorted_s = sorted(samples)
+        result[model] = {
+            "latest": round(samples[-1], 1),
+            "peak": round(max(samples), 1),
+            "p50": round(_percentile(sorted_s, 50), 1),
+            "p95": round(_percentile(sorted_s, 95), 1),
+            "p99": round(_percentile(sorted_s, 99), 1),
+            "sample_count": len(samples),
+        }
+    return {"models": result, "ok": True}
+
+
+@app.get("/api/ollama/ps")
+async def ollama_ps():
+    """List models currently loaded in Ollama (from /api/ps)."""
+    async with AsyncClient(timeout=10.0) as client:
+        try:
+            r = await client.get(f"{OLLAMA_URL.rstrip('/')}/api/ps")
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Ollama request failed: {e}")
+
+
+@app.post("/api/throughput/benchmark")
+async def throughput_benchmark(req: ThroughputBenchmarkRequest):
+    """Run a quick benchmark against Ollama. Returns tokens/sec and related metrics."""
+    model = req.model.strip() or "llama3.2"
+    prompt = "Say 'ok' and nothing else."
+    async with AsyncClient(timeout=60.0) as client:
+        try:
+            r = await client.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={"model": model, "prompt": prompt, "stream": False},
+            )
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Ollama request failed: {e}")
+
+    eval_count = data.get("eval_count", 0)
+    eval_duration_ns = data.get("eval_duration", 0) or 1
+    prompt_eval_count = data.get("prompt_eval_count", 0)
+    prompt_eval_duration_ns = data.get("prompt_eval_duration", 0) or 1
+    load_duration_ns = data.get("load_duration", 0)
+    total_duration_ns = data.get("total_duration", 0)
+
+    eval_duration_sec = eval_duration_ns / 1e9
+    prompt_eval_duration_sec = prompt_eval_duration_ns / 1e9
+
+    output_tokens_per_sec = eval_count / eval_duration_sec if eval_duration_sec > 0 else 0
+    input_tokens_per_sec = prompt_eval_count / prompt_eval_duration_sec if prompt_eval_duration_sec > 0 else 0
+
+    # Store sample for stats (peak, percentiles)
+    if model not in _throughput_samples:
+        _throughput_samples[model] = []
+    _throughput_samples[model].append(output_tokens_per_sec)
+    if len(_throughput_samples[model]) > _MAX_SAMPLES_PER_MODEL:
+        _throughput_samples[model] = _throughput_samples[model][-_MAX_SAMPLES_PER_MODEL:]
+
+    return {
+        "ok": True,
+        "model": model,
+        "prompt_tokens": prompt_eval_count,
+        "output_tokens": eval_count,
+        "output_tokens_per_sec": round(output_tokens_per_sec, 1),
+        "input_tokens_per_sec": round(input_tokens_per_sec, 1),
+        "eval_duration_ms": round(eval_duration_ns / 1e6, 1),
+        "load_duration_ms": round(load_duration_ns / 1e6, 1),
+        "total_duration_ms": round(total_duration_ns / 1e6, 1),
+    }
+
+
 # --- Ops Controller proxy ---
 
 OPS_CONTROLLER_URL = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000")

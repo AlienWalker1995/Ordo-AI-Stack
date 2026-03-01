@@ -1,11 +1,12 @@
 """Model Gateway — OpenAI-compatible proxy for Ollama and future providers."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from httpx import AsyncClient
 
@@ -13,6 +14,7 @@ app = FastAPI(title="Model Gateway", version="1.0.0")
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434").rstrip("/")
 DEFAULT_PROVIDER = os.environ.get("DEFAULT_PROVIDER", "ollama")
+DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "").rstrip("/")
 
 
 def _ollama_model_id(name: str) -> str:
@@ -20,6 +22,26 @@ def _ollama_model_id(name: str) -> str:
     if "/" in name:
         return name.split("/", 1)[1]
     return name
+
+
+def _record_throughput(model: str, eval_count: int, eval_duration_ns: int) -> None:
+    """Fire-and-forget: record throughput to dashboard for real-world stats."""
+    if not DASHBOARD_URL or eval_count <= 0 or eval_duration_ns <= 0:
+        return
+    eval_duration_sec = eval_duration_ns / 1e9
+    tps = eval_count / eval_duration_sec
+
+    async def _post():
+        try:
+            async with AsyncClient(timeout=5.0) as client:
+                await client.post(
+                    f"{DASHBOARD_URL}/api/throughput/record",
+                    json={"model": model, "output_tokens_per_sec": round(tps, 1)},
+                )
+        except Exception:
+            pass
+
+    asyncio.create_task(_post())
 
 
 # --- Models ---
@@ -95,6 +117,8 @@ async def chat_completions(body: dict[str, Any]):
     if stream:
         async def generate():
             prev = ""
+            last_eval_count = 0
+            last_eval_duration = 0
             async with AsyncClient(timeout=3600.0) as client:
                 async with client.stream(
                     "POST", f"{OLLAMA_URL}/api/chat", json=ollama_body
@@ -104,6 +128,9 @@ async def chat_completions(body: dict[str, Any]):
                             continue
                         try:
                             data = json.loads(line)
+                            if data.get("done"):
+                                last_eval_count = data.get("eval_count", 0)
+                                last_eval_duration = data.get("eval_duration", 0)
                             msg = data.get("message", {})
                             content = msg.get("content", "")
                             if isinstance(content, list):
@@ -127,6 +154,8 @@ async def chat_completions(body: dict[str, Any]):
                                 yield _stream_chunk_openai(chunk)
                         except json.JSONDecodeError:
                             continue
+            if last_eval_count and last_eval_duration:
+                _record_throughput(model_id, last_eval_count, last_eval_duration)
             yield _stream_chunk_openai({"choices": [{"delta": {}, "finish_reason": "stop"}]})
             yield "data: [DONE]\n\n"
 
@@ -141,6 +170,10 @@ async def chat_completions(body: dict[str, Any]):
         r = await client.post(f"{OLLAMA_URL}/api/chat", json=ollama_body)
         r.raise_for_status()
         data = r.json()
+    eval_count = data.get("eval_count", 0)
+    eval_duration = data.get("eval_duration", 0)
+    if eval_count and eval_duration:
+        _record_throughput(model_id, eval_count, eval_duration)
     msg = data.get("message", {})
     content = msg.get("content", "")
     if isinstance(content, list):

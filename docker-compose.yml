@@ -20,9 +20,11 @@ services:
     restart: unless-stopped
     depends_on:
       - ollama
+      - dashboard
     environment:
       - OLLAMA_URL=http://ollama:11434
       - DEFAULT_PROVIDER=ollama
+      - DASHBOARD_URL=http://dashboard:8080
     ports:
       - "${MODEL_GATEWAY_PORT:-11435}:11435"
 
