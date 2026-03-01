@@ -266,7 +266,6 @@ async def chat_completions(request: Request, body: dict[str, Any]):
         async def generate():
             chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
             first_sent = False
-            prev = ""
             last_eval_count = 0
             last_eval_duration = 0
             async with AsyncClient(timeout=3600.0) as client:
@@ -294,11 +293,9 @@ async def chat_completions(request: Request, body: dict[str, Any]):
                                 )
                             else:
                                 content = str(content)
-                            # Ollama sends cumulative content; emit delta only
-                            delta_text = content[len(prev):] if len(content) >= len(prev) else content
-                            prev = content
-                            if delta_text:
-                                delta = {"content": delta_text}
+                            # Ollama sends per-token content, not cumulative
+                            if content:
+                                delta = {"content": content}
                                 if not first_sent:
                                     delta["role"] = "assistant"
                                     first_sent = True
@@ -434,7 +431,103 @@ async def responses_api(request: Request, body: dict[str, Any]):
     chat_response = await chat_completions(request, chat_body)
 
     if stream or isinstance(chat_response, StreamingResponse):
-        return chat_response
+        # OpenClaw with openai-responses expects Responses API streaming format,
+        # not chat completions. Transform the stream.
+        async def _to_responses_stream():
+            resp_id = f"resp-{uuid.uuid4().hex[:12]}"
+            item_id = f"msg-{uuid.uuid4().hex[:12]}"
+            seq = 0
+            model = body.get("model", "")
+            # response.created
+            yield _stream_chunk_openai({
+                "type": "response.created",
+                "response": {"id": resp_id, "created_at": int(time.time()), "model": model, "status": "in_progress"},
+                "sequence_number": seq,
+            })
+            seq += 1
+            # response.output_item.added (message with empty content)
+            yield _stream_chunk_openai({
+                "type": "response.output_item.added",
+                "item": {"type": "message", "id": item_id, "role": "assistant", "content": []},
+                "output_index": 0,
+                "sequence_number": seq,
+            })
+            seq += 1
+            # response.content_part.added (create output_text slot for streaming)
+            yield _stream_chunk_openai({
+                "type": "response.content_part.added",
+                "content_index": 0,
+                "item_id": item_id,
+                "output_index": 0,
+                "part": {"type": "output_text", "text": ""},
+                "sequence_number": seq,
+            })
+            seq += 1
+            # Consume chat stream, emit response.output_text.delta for each content
+            buf = ""
+            full_text = ""
+            async for chunk in chat_response.body_iterator:
+                buf += chunk if isinstance(chunk, str) else chunk.decode("utf-8", errors="replace")
+                while "\n\n" in buf:
+                    block, buf = buf.split("\n\n", 1)
+                    for line in block.strip().split("\n"):
+                        line = line.strip()
+                        if line.startswith("data: ") and line != "data: [DONE]":
+                            try:
+                                data = json.loads(line[6:])
+                                delta = (data.get("choices") or [{}])[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    full_text += content
+                                    yield _stream_chunk_openai({
+                                        "type": "response.output_text.delta",
+                                        "delta": content,
+                                        "item_id": item_id,
+                                        "output_index": 0,
+                                        "content_index": 0,
+                                        "sequence_number": seq,
+                                    })
+                                    seq += 1
+                            except json.JSONDecodeError:
+                                pass
+            # response.output_text.done, response.content_part.done, response.output_item.done, response.done
+            # Include full text so client doesn't overwrite with empty
+            yield _stream_chunk_openai({
+                "type": "response.output_text.done",
+                "item_id": item_id,
+                "output_index": 0,
+                "content_index": 0,
+                "text": full_text,
+                "sequence_number": seq,
+            })
+            seq += 1
+            yield _stream_chunk_openai({
+                "type": "response.content_part.done",
+                "content_index": 0,
+                "item_id": item_id,
+                "output_index": 0,
+                "part": {"type": "output_text", "text": full_text},
+                "sequence_number": seq,
+            })
+            seq += 1
+            yield _stream_chunk_openai({
+                "type": "response.output_item.done",
+                "item": {"type": "message", "id": item_id, "role": "assistant", "content": [{"type": "output_text", "text": full_text}]},
+                "output_index": 0,
+                "sequence_number": seq,
+            })
+            seq += 1
+            yield _stream_chunk_openai({
+                "type": "response.done",
+                "response": {"id": resp_id, "created_at": int(time.time()), "model": model, "status": "completed"},
+                "sequence_number": seq,
+            })
+
+        return StreamingResponse(
+            _to_responses_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     resp_id = f"resp-{uuid.uuid4().hex[:12]}"
     choice = chat_response.get("choices", [{}])[0] if isinstance(chat_response, dict) else {}
