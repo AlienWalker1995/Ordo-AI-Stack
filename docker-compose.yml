@@ -168,12 +168,26 @@ services:
     # secrets: [mcp_secrets]
     # Uncomment and create mcp/.env with GITHUB_PERSONAL_ACCESS_TOKEN etc.
 
+  openclaw-workspace-sync:
+    image: alpine:3
+    restart: "no"
+    volumes:
+      - ${BASE_PATH:-.}/openclaw/workspace:/templates:ro
+      - ${OPENCLAW_WORKSPACE_DIR:-${BASE_PATH:-.}/data/openclaw/workspace}:/workspace
+    entrypoint: ["/bin/sh", "-c", "cp -f /templates/SOUL.md /templates/AGENTS.md /templates/TOOLS.md /workspace/ 2>/dev/null || true"]
+
   openclaw-gateway:
     image: ${OPENCLAW_IMAGE:-ghcr.io/phioranex/openclaw-docker:latest}
     container_name: openclaw-gateway
     depends_on:
-      - ollama
-      - mcp-gateway
+      ollama:
+        condition: service_started
+      model-gateway:
+        condition: service_started
+      mcp-gateway:
+        condition: service_started
+      openclaw-workspace-sync:
+        condition: service_completed_successfully
     env_file:
       - openclaw/.env
     environment:

@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -437,6 +438,10 @@ async def health():
 _throughput_samples: dict[str, list[float]] = {}
 _MAX_SAMPLES_PER_MODEL = 500
 
+# Service usage: list of { model, service, tps, ts } for "which service uses which model"
+_service_usage: list[dict] = []
+_MAX_SERVICE_USAGE = 500
+
 
 def _percentile(sorted_arr: list[float], p: float) -> float:
     """Compute percentile (0–100). Returns 0 if empty."""
@@ -455,6 +460,7 @@ class ThroughputBenchmarkRequest(BaseModel):
 class ThroughputRecordRequest(BaseModel):
     model: str = ""
     output_tokens_per_sec: float = 0.0
+    service: str = ""
 
 
 @app.post("/api/throughput/record")
@@ -468,7 +474,56 @@ async def throughput_record(req: ThroughputRecordRequest):
     _throughput_samples[model].append(req.output_tokens_per_sec)
     if len(_throughput_samples[model]) > _MAX_SAMPLES_PER_MODEL:
         _throughput_samples[model] = _throughput_samples[model][-_MAX_SAMPLES_PER_MODEL:]
+    # Service usage (which service is taxing which model)
+    service = (req.service or "unknown").strip()[:64]
+    _service_usage.append({
+        "model": model,
+        "service": service,
+        "tps": round(req.output_tokens_per_sec, 1),
+        "ts": time.time(),
+    })
+    if len(_service_usage) > _MAX_SERVICE_USAGE:
+        _service_usage[:] = _service_usage[-_MAX_SERVICE_USAGE:]
     return {"ok": True}
+
+
+@app.get("/api/throughput/service-usage")
+async def throughput_service_usage():
+    """Return recent service usage: which service used which model (from model gateway traffic)."""
+    now = time.time()
+    # Last 24h, grouped by model -> services
+    recent = [u for u in _service_usage if (now - u["ts"]) < 86400]
+    by_model: dict[str, list[dict]] = {}
+    for u in recent:
+        m = u["model"]
+        if m not in by_model:
+            by_model[m] = []
+        by_model[m].append({
+            "service": u["service"],
+            "tps": u["tps"],
+            "ts": u["ts"],
+        })
+    # Per model: unique services, last activity, last tps per service
+    result: dict[str, dict] = {}
+    for model, usages in by_model.items():
+        by_svc: dict[str, list] = {}
+        for u in usages:
+            s = u["service"]
+            if s not in by_svc:
+                by_svc[s] = []
+            by_svc[s].append({"tps": u["tps"], "ts": u["ts"]})
+        result[model] = {
+            "services": [
+                {
+                    "name": svc,
+                    "last_tps": max(u["tps"] for u in vals),
+                    "last_ts": max(u["ts"] for u in vals),
+                    "count": len(vals),
+                }
+                for svc, vals in by_svc.items()
+            ],
+        }
+    return {"by_model": result, "ok": True}
 
 
 @app.get("/api/throughput/stats")

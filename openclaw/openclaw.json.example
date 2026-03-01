@@ -1,15 +1,15 @@
 {
   "models": {
     "providers": {
-      "ollama": {
-        "baseUrl": "http://ollama:11434",
-        "apiKey": "ollama-local",
-        "api": "ollama"
-      },
       "gateway": {
         "baseUrl": "http://model-gateway:11435/v1",
         "apiKey": "ollama-local",
         "api": "openai"
+      },
+      "ollama": {
+        "baseUrl": "http://ollama:11434",
+        "apiKey": "ollama-local",
+        "api": "ollama"
       }
     }
   },

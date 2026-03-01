@@ -1,54 +1,17 @@
-# TOOLS.md - Local Notes
+# TOOLS.md
 
-Skills define _how_ tools work. This file is for _your_ specifics — the stuff that's unique to your setup.
+Environment-specific notes. Skills define how tools work; this file is for your setup.
 
-## AI-toolkit Stack (Controller-side)
-
-You run in the AI-toolkit OpenClaw setup. These are available to you:
+## AI-toolkit Stack
 
 | Service        | Purpose                                      |
 |----------------|----------------------------------------------|
 | **Ollama**     | Local LLMs at `http://ollama:11434`          |
-| **Model Gateway** | OpenAI-compatible proxy at `http://model-gateway:11435/v1` |
-| **MCP Gateway**   | Shared tools at `http://mcp-gateway:8811/mcp` — web search (duckduckgo), fetch, GitHub, etc. |
+| **Model Gateway** | OpenAI-compatible at `http://model-gateway:11435/v1` |
+| **MCP Gateway**   | Tools at `http://mcp-gateway:8811/mcp`       |
 
-MCP tools are controller-side. You call them; they don't call you. Add/remove tools via the dashboard at localhost:8080.
-
-**Trust boundary:** Credentials and privileged API calls stay in the controller. A browser worker (if used for web crawling) is untrusted — it gets browse jobs, not your keys.
-
-## What Goes Here
-
-Things like:
-
-- Camera names and locations
-- SSH hosts and aliases
-- Preferred voices for TTS
-- Speaker/room names
-- Device nicknames
-- Anything environment-specific
-
-## Examples
-
-```markdown
-### Cameras
-
-- living-room → Main area, 180° wide angle
-- front-door → Entrance, motion-triggered
-
-### SSH
-
-- home-server → 192.168.1.100, user: admin
-
-### TTS
-
-- Preferred voice: "Nova" (warm, slightly British)
-- Default speaker: Kitchen HomePod
-```
-
-## Why Separate?
-
-Skills are shared. Your setup is yours. Keeping them apart means you can update skills without losing your notes, and share skills without leaking your infrastructure.
+Trust boundary: credentials stay in the controller. Browser worker (if used) is untrusted.
 
 ---
 
-Add whatever helps you do your job. This is your cheat sheet.
+Add your specifics: camera names, SSH hosts, TTS voices, device nicknames, etc.

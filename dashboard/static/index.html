@@ -363,6 +363,19 @@
     }
     .status-summary.all-ok { border-left: 4px solid var(--success); }
     .status-summary.has-issues { border-left: 4px solid var(--warning); }
+    .throughput-subsection {
+      margin-bottom: var(--space-6);
+    }
+    .throughput-subsection h3 {
+      font-size: var(--text-base);
+      font-weight: 600;
+      margin: 0 0 var(--space-1);
+    }
+    .subsection-desc {
+      font-size: var(--text-sm);
+      color: var(--muted);
+      margin: 0 0 var(--space-3);
+    }
     .throughput-panel {
       padding: var(--space-5);
       background: var(--bg-elevated);
@@ -426,14 +439,7 @@
       padding-top: var(--space-5);
       border-top: 1px solid var(--border-subtle);
     }
-    .throughput-stats-title {
-      font-size: var(--text-sm);
-      font-weight: 600;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin: 0 0 var(--space-4);
-    }
+    .throughput-stats-title { display: none; }
     .throughput-stats-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -477,6 +483,30 @@
       font-size: var(--text-sm);
       grid-column: 1 / -1;
     }
+    .throughput-service-usage {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: var(--space-4);
+    }
+    .throughput-service-card {
+      background: var(--surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: var(--space-4);
+    }
+    .throughput-service-card h4 {
+      font-size: var(--text-sm);
+      font-weight: 600;
+      margin: 0 0 var(--space-3);
+    }
+    .throughput-service-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: var(--text-sm);
+      margin-bottom: var(--space-1);
+    }
+    .throughput-service-row .label { color: var(--muted); }
+    .throughput-service-row .value { font-family: var(--font-mono); font-weight: 500; }
     .models-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -928,40 +958,61 @@
 
     <section id="throughput-section">
       <h2>Token Throughput</h2>
-      <p class="section-desc">How fast your models are running — peaks, percentiles, and current speed. Run benchmarks to collect samples.</p>
-      <div class="throughput-panel">
-        <div class="throughput-controls">
-          <div class="model-select-wrap" style="max-width:280px;">
-            <select id="throughput-model-select" aria-label="Model for benchmark">
-              <option value="">Loading models...</option>
-            </select>
+      <p class="section-desc">Benchmark models, monitor performance, and see which services are using them.</p>
+
+      <div class="throughput-subsection">
+        <h3>1. Benchmark</h3>
+        <p class="subsection-desc">Run a quick test to measure inference speed.</p>
+        <div class="throughput-panel">
+          <div class="throughput-controls">
+            <div class="model-select-wrap" style="max-width:280px;">
+              <select id="throughput-model-select" aria-label="Model for benchmark">
+                <option value="">Loading models...</option>
+              </select>
+            </div>
+            <button type="button" id="throughput-run-btn">Run benchmark</button>
           </div>
-          <button type="button" id="throughput-run-btn">Run benchmark</button>
+          <div id="throughput-results" class="throughput-results" style="display:none;">
+            <div class="throughput-metric">
+              <span class="throughput-value" id="throughput-tps">—</span>
+              <span class="throughput-label">Output tokens/sec</span>
+            </div>
+            <div class="throughput-metric">
+              <span class="throughput-value" id="throughput-output-tokens">—</span>
+              <span class="throughput-label">Output tokens</span>
+            </div>
+            <div class="throughput-metric">
+              <span class="throughput-value" id="throughput-eval-ms">—</span>
+              <span class="throughput-label">Eval time (ms)</span>
+            </div>
+            <div class="throughput-metric">
+              <span class="throughput-value" id="throughput-load-ms">—</span>
+              <span class="throughput-label">Load time (ms)</span>
+            </div>
+          </div>
+          <div id="throughput-error" class="throughput-error" style="display:none;"></div>
+          <div id="throughput-loading" class="throughput-loading" style="display:none;">Running benchmark...</div>
         </div>
-        <div id="throughput-results" class="throughput-results" style="display:none;">
-          <div class="throughput-metric">
-            <span class="throughput-value" id="throughput-tps">—</span>
-            <span class="throughput-label">Output tokens/sec</span>
-          </div>
-          <div class="throughput-metric">
-            <span class="throughput-value" id="throughput-output-tokens">—</span>
-            <span class="throughput-label">Output tokens</span>
-          </div>
-          <div class="throughput-metric">
-            <span class="throughput-value" id="throughput-eval-ms">—</span>
-            <span class="throughput-label">Eval time (ms)</span>
-          </div>
-          <div class="throughput-metric">
-            <span class="throughput-value" id="throughput-load-ms">—</span>
-            <span class="throughput-label">Load time (ms)</span>
+      </div>
+
+      <div class="throughput-subsection">
+        <h3>2. Model status & performance</h3>
+        <p class="subsection-desc">Current loaded models and historical throughput (peak, percentiles). Data from benchmarks and real usage via Model Gateway.</p>
+        <div class="throughput-panel">
+          <div id="throughput-stats" class="throughput-stats">
+            <div id="throughput-stats-grid" class="throughput-stats-grid">
+              <div class="throughput-empty" id="throughput-stats-empty">No data yet. Run a benchmark or use models via the Model Gateway.</div>
+            </div>
           </div>
         </div>
-        <div id="throughput-error" class="throughput-error" style="display:none;"></div>
-        <div id="throughput-loading" class="throughput-loading" style="display:none;">Running benchmark...</div>
-        <div id="throughput-stats" class="throughput-stats">
-          <h3 class="throughput-stats-title">Throughput stats (from benchmarks)</h3>
-          <div id="throughput-stats-grid" class="throughput-stats-grid">
-            <div class="throughput-empty" id="throughput-stats-empty">No data yet. Run a benchmark above.</div>
+      </div>
+
+      <div class="throughput-subsection">
+        <h3>3. Service usage</h3>
+        <p class="subsection-desc">Which services are taxing which models. Tracked for requests through the Model Gateway (Open WebUI, N8N, etc.).</p>
+        <div class="throughput-panel">
+          <div id="throughput-service-usage" class="throughput-service-usage">
+            <div class="throughput-empty" id="throughput-service-usage-empty">No service usage yet. Use models via the Model Gateway (e.g. Open WebUI with OPENAI_API_BASE).</div>
           </div>
         </div>
       </div>
@@ -1276,7 +1327,7 @@
         const r = await api('/api/throughput/stats');
         const d = await r.json();
         if (!d.ok || !d.models || Object.keys(d.models).length === 0) {
-          grid.innerHTML = '<div class="throughput-empty" id="throughput-stats-empty">No data yet. Run a benchmark above.</div>';
+          grid.innerHTML = '<div class="throughput-empty" id="throughput-stats-empty">No data yet. Run a benchmark or use models via the Model Gateway.</div>';
           return;
         }
         const models = Object.entries(d.models);
@@ -1311,6 +1362,42 @@
       }
     }
 
+    async function loadThroughputServiceUsage() {
+      const container = document.getElementById('throughput-service-usage');
+      const empty = document.getElementById('throughput-service-usage-empty');
+      if (!container) return;
+      try {
+        const r = await api('/api/throughput/service-usage');
+        const d = await r.json();
+        if (!d.ok || !d.by_model || Object.keys(d.by_model).length === 0) {
+          container.innerHTML = '<div class="throughput-empty" id="throughput-service-usage-empty">No service usage yet. Use models via the Model Gateway (e.g. Open WebUI with OPENAI_API_BASE).</div>';
+          return;
+        }
+        container.innerHTML = '';
+        const entries = Object.entries(d.by_model).sort((a, b) => b[0].localeCompare(a[0]));
+        entries.forEach(([model, info]) => {
+          const card = document.createElement('div');
+          card.className = 'throughput-service-card';
+          const services = info.services || [];
+          const lastTs = services.length ? Math.max(...services.map(s => s.last_ts || 0)) : 0;
+          const ago = lastTs ? (Date.now() / 1000 - lastTs < 60 ? 'just now' : Math.round((Date.now() / 1000 - lastTs) / 60) + 'm ago') : '';
+          card.innerHTML = `
+            <h4>${escapeHtml(model)}</h4>
+            ${services.map(s => `
+              <div class="throughput-service-row">
+                <span class="label">${escapeHtml(s.name)}</span>
+                <span class="value">${s.last_tps} tok/s (${s.count}×)</span>
+              </div>
+            `).join('')}
+            ${ago ? `<div class="throughput-service-row"><span class="label">Last</span><span class="value">${ago}</span></div>` : ''}
+          `;
+          container.appendChild(card);
+        });
+      } catch (_) {
+        container.innerHTML = '<div class="throughput-empty" id="throughput-service-usage-empty">Failed to load service usage.</div>';
+      }
+    }
+
     async function runThroughputBenchmark() {
       const btn = document.getElementById('throughput-run-btn');
       const resultsEl = document.getElementById('throughput-results');
@@ -1337,6 +1424,7 @@
         document.getElementById('throughput-load-ms').textContent = d.load_duration_ms + ' ms';
         resultsEl.style.display = 'grid';
         loadThroughputStats();
+        loadThroughputServiceUsage();
       } catch (err) {
         errorEl.textContent = err.message || 'Benchmark failed';
         errorEl.style.display = 'block';
@@ -1575,6 +1663,7 @@
       if (!ollamaLibrary.length) await loadOllamaLibrary();
       await Promise.all([loadServices(), loadOllamaModels(), loadComfyuiModels(), loadMcpServers()]);
       loadThroughputStats();
+      loadThroughputServiceUsage();
       btn.classList.remove('loading');
     }
 

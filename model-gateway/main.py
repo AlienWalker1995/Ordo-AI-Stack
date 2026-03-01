@@ -24,7 +24,31 @@ def _ollama_model_id(name: str) -> str:
     return name
 
 
-def _record_throughput(model: str, eval_count: int, eval_duration_ns: int) -> None:
+def _service_from_headers(origin: str | None, x_service: str | None) -> str:
+    """Derive service name from Origin or X-Service-Name header."""
+    if x_service and x_service.strip():
+        return x_service.strip()[:64]
+    if not origin:
+        return "unknown"
+    o = origin.lower()
+    if ":3000" in o or "open-webui" in o:
+        return "open-webui"
+    if ":5678" in o or "n8n" in o:
+        return "n8n"
+    if ":8080" in o and "dashboard" not in o:
+        return "dashboard"
+    if "openclaw" in o or ":18789" in o or ":18790" in o:
+        return "openclaw"
+    # Fallback: host:port
+    try:
+        return origin.replace("http://", "").replace("https://", "").split("/")[0][:64]
+    except Exception:
+        return "unknown"
+
+
+def _record_throughput(
+    model: str, eval_count: int, eval_duration_ns: int, service: str = ""
+) -> None:
     """Fire-and-forget: record throughput to dashboard for real-world stats."""
     if not DASHBOARD_URL or eval_count <= 0 or eval_duration_ns <= 0:
         return
@@ -36,7 +60,11 @@ def _record_throughput(model: str, eval_count: int, eval_duration_ns: int) -> No
             async with AsyncClient(timeout=5.0) as client:
                 await client.post(
                     f"{DASHBOARD_URL}/api/throughput/record",
-                    json={"model": model, "output_tokens_per_sec": round(tps, 1)},
+                    json={
+                        "model": model,
+                        "output_tokens_per_sec": round(tps, 1),
+                        "service": service or "unknown",
+                    },
                 )
         except Exception:
             pass
@@ -105,9 +133,13 @@ def _stream_chunk_openai(obj: dict) -> str:
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(body: dict[str, Any]):
+async def chat_completions(request: Request, body: dict[str, Any]):
     """Chat completion. Proxies to Ollama /api/chat."""
     model = body.get("model", "")
+    service = _service_from_headers(
+        request.headers.get("Origin"),
+        request.headers.get("X-Service-Name") or request.headers.get("X-Client-Id"),
+    )
     messages = body.get("messages", [])
     stream = body.get("stream", False)
     model_id = _ollama_model_id(model)
@@ -155,7 +187,7 @@ async def chat_completions(body: dict[str, Any]):
                         except json.JSONDecodeError:
                             continue
             if last_eval_count and last_eval_duration:
-                _record_throughput(model_id, last_eval_count, last_eval_duration)
+                _record_throughput(model_id, last_eval_count, last_eval_duration, service)
             yield _stream_chunk_openai({"choices": [{"delta": {}, "finish_reason": "stop"}]})
             yield "data: [DONE]\n\n"
 
@@ -173,7 +205,7 @@ async def chat_completions(body: dict[str, Any]):
     eval_count = data.get("eval_count", 0)
     eval_duration = data.get("eval_duration", 0)
     if eval_count and eval_duration:
-        _record_throughput(model_id, eval_count, eval_duration)
+        _record_throughput(model_id, eval_count, eval_duration, service)
     msg = data.get("message", {})
     content = msg.get("content", "")
     if isinstance(content, list):

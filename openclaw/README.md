@@ -44,9 +44,11 @@ Use the token from `.env` when prompted.
 
 ### 5. Access the UI
 
-Open **http://localhost:18789/** in your browser. Paste the gateway token into Settings → Token. In Settings → Model, choose an Ollama model (e.g. `ollama/deepseek-r1:7b`) — models are auto-discovered from the local Ollama instance. MCP tools (web search, etc.) from the gateway at `http://mcp-gateway:8811/mcp` are configured as a tool list — the agent can call them automatically. **Existing config?** Add the `mcp` block from [mcp/README.md](../mcp/README.md#openclaw) to your `data/openclaw/openclaw.json`.
+Open **http://localhost:18789/** in your browser. Paste the gateway token into Settings → Token. In Settings → Model, choose a model from the **gateway** provider (e.g. `gateway/ollama/deepseek-r1:7b`) — this routes through the Model Gateway so dashboard monitoring shows performance. MCP tools (web search, etc.) from the gateway at `http://mcp-gateway:8811/mcp` are configured as a tool list — the agent can call them automatically. **Existing config?** Add the `mcp` block from [mcp/README.md](../mcp/README.md#openclaw) to your `data/openclaw/openclaw.json`.
 
 **Not reachable?** When using the main AI-toolkit compose, the gateway is configured with `OPENCLAW_GATEWAY_BIND=lan` so it accepts connections from the host. If you run OpenClaw standalone from `openclaw/`, add `OPENCLAW_GATEWAY_BIND=lan` to your `.env`. Then verify: `docker compose ps` (gateway running), `docker compose logs openclaw-gateway` (no errors).
+
+**Dashboard performance monitoring:** To see OpenClaw throughput in the dashboard (Token Throughput section), use the **gateway** provider for models. In Settings → Model, pick a model prefixed with `gateway/` (e.g. `gateway/ollama/deepseek-r1:7b`). If you only see `ollama/` models, add the gateway provider to `data/openclaw/openclaw.json` — copy the `gateway` block from `openclaw/openclaw.json.example` into `models.providers`.
 
 ## Workspace Files
 
