@@ -3,7 +3,7 @@
 Detect GPU hardware and generate docker-compose compute overrides.
 Run before first `docker compose up` to auto-configure for best performance.
 
-Detects: NVIDIA > AMD (ROCm) > Intel (XPU) > CPU fallback
+Detects: NVIDIA > AMD (ROCm) > Intel (XPU) > Apple Silicon (ARM64) > CPU fallback
 """
 from __future__ import annotations
 
@@ -58,14 +58,24 @@ def detect_intel() -> bool:
     )
 
 
+def detect_apple_silicon() -> bool:
+    """Check for Apple Silicon (M1/M2/M3) on macOS."""
+    if platform.system() != "Darwin":
+        return False
+    machine = platform.machine().lower()
+    return machine in ("arm64", "aarch64")
+
+
 def detect() -> str:
-    """Return: nvidia | amd | intel | cpu."""
+    """Return: nvidia | amd | intel | apple_silicon | cpu."""
     if detect_nvidia():
         return "nvidia"
     if detect_amd():
         return "amd"
     if detect_intel():
         return "intel"
+    if detect_apple_silicon():
+        return "apple_silicon"
     return "cpu"
 
 
@@ -130,6 +140,14 @@ def main() -> int:
                 "devices": ["/dev/dri"],
             },
         },
+        "apple_silicon": {
+            "ollama": {},
+            "comfyui": {
+                "image": "thiagoin/comfyui:arm64",
+                "platform": "linux/arm64",
+                "environment": {"CLI_ARGS": "--cpu"},
+            },
+        },
         "cpu": {
             "ollama": {},
             "comfyui": {
@@ -150,6 +168,8 @@ def main() -> int:
                     continue
                 if k == "image":
                     lines.append(f"    image: {v}")
+                elif k == "platform":
+                    lines.append(f"    platform: {v}")
                 elif k == "environment":
                     lines.append("    environment:")
                     for ek, ev in v.items():

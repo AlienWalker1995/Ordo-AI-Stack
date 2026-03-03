@@ -56,6 +56,15 @@ curl -s http://localhost:8811/mcp
 - **Causes**: Token mismatch, Docker socket not mounted
 - **Fix**: Set same token in both; ensure `/var/run/docker.sock` is mounted in ops-controller
 
+### ComfyUI on Mac Silicon (M1/M2/M3)
+
+- **Cause:** The default ComfyUI image (`yanwk/comfyui-boot:cpu`) is amd64-only and does not run natively on Apple Silicon.
+- **Fix:** Run hardware detection so the stack uses an ARM64 image:
+  ```bash
+  ./scripts/detect_hardware.py
+  ```
+  On macOS with Apple Silicon this selects `apple_silicon` and writes a compute override that uses `thiagoin/comfyui:arm64` with `platform: linux/arm64`. Then start the stack: `docker compose up -d`. ComfyUI will pull and run the ARM64 image that works on Mac.
+
 ### ComfyUI / N8N out of memory
 
 - **Check**: `docker stats`
