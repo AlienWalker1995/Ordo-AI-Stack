@@ -1,7 +1,25 @@
 #!/usr/bin/env bash
 # One-command compose: auto-detects hardware, then runs docker compose.
-# Usage: ./compose up -d  |  ./compose down  |  ./compose logs -f ollama
+# Usage: ./compose <command> [args]
+#
+# Examples:
+#   ./compose up -d                                             # start all services
+#   ./compose up -d ollama dashboard open-webui                # start core only
+#   ./compose down                                             # stop all
+#   ./compose logs -f ollama                                   # tail logs
+#   ./compose run --rm model-puller                            # pull Ollama models
+#
+# Compose overrides (in overrides/):
+#   ./compose -f docker-compose.yml -f overrides/ollama-expose.yml up -d
+#   ./compose -f docker-compose.yml -f overrides/openclaw-secure.yml up -d
+#   ./compose -f docker-compose.yml -f overrides/vllm.yml --profile vllm up -d
 set -e
+
+if [[ $# -eq 0 || "$1" == "--help" || "$1" == "-h" ]]; then
+  sed -n 's/^# \{0,1\}//p' "$0" | sed -n '2,/^$/p'
+  exit 0
+fi
+
 base="${BASE_PATH:-$(pwd)}"
 base="${base//\\/\/}"
 export BASE_PATH="$base"

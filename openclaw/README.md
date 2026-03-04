@@ -50,6 +50,8 @@ Open **http://localhost:18789/** in your browser. Paste the gateway token into S
 
 **Dashboard performance monitoring:** To see OpenClaw throughput in the dashboard (Token Throughput section), use the **gateway** provider for models. In Settings → Model, pick a model prefixed with `gateway/` (e.g. `gateway/ollama/deepseek-r1:7b`). If you only see `ollama/` models, add the gateway provider to `data/openclaw/openclaw.json` — copy the `gateway` block from `openclaw/openclaw.json.example` into `models.providers`.
 
+**Security & Tailscale:** To bind the UI to localhost only (Tailscale Serve recommended), see [OPENCLAW_SECURE.md](OPENCLAW_SECURE.md).
+
 ## Workspace Files
 
 The agent reads these files at session start:

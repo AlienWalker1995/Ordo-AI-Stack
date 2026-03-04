@@ -1,0 +1,3 @@
+# Test dependencies. Install: pip install -r tests/requirements.txt
+-r dashboard/requirements.txt
+pytest>=7.0.0

@@ -44,9 +44,7 @@ Set in `.env` or use the secure override:
 
 ```bash
 # Use the secure override (recommended):
-docker compose -f openclaw/docker-compose.yml \
-               -f docker-compose.openclaw-secure.yml \
-               --project-directory openclaw up -d
+docker compose -f docker-compose.yml -f overrides/openclaw-secure.yml up -d
 ```
 
 Or manually in `.env`:

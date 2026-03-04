@@ -1,4 +1,4 @@
-# Optional vLLM service — use with: docker compose -f docker-compose.yml -f docker-compose.vllm.yml --profile vllm up -d
+# Optional vLLM service — use with: docker compose -f docker-compose.yml -f overrides/vllm.yml --profile vllm up -d
 # Then set VLLM_URL=http://vllm:8000 for model-gateway (e.g. in .env) so /v1/models and chat route to vLLM.
 # Model gateway routes requests with model prefix "vllm/<name>" to this service.
 name: ai-toolkit

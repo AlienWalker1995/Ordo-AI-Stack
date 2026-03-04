@@ -4,7 +4,7 @@ Hey, I am Cam, I made this repo to simplify my local-LLM setup. I wanted a bunch
 
 Ollama + Open WebUI + ComfyUI + N8N in Docker. One command (`./compose up -d`), auto-detects hardware for best performance.
 
-→ [Getting started](docs/GETTING_STARTED.md) · [Troubleshooting](docs/runbooks/TROUBLESHOOTING.md) · [Architecture RFC](docs/ARCHITECTURE_RFC.md) · [Repository state](REPOSITORY_STATE.md)
+→ [Getting started](docs/GETTING_STARTED.md) · [Troubleshooting](docs/runbooks/TROUBLESHOOTING.md) · [Architecture RFC](docs/ARCHITECTURE_RFC.md)
 
 ## Services
 
@@ -115,14 +115,14 @@ ComfyUI starts independently. LTX-2 models (~60 GB) are downloaded on demand —
 
 ## Security
 
-- **Open WebUI** runs with `WEBUI_AUTH=False` by default (no login). Suitable for local/single-user use. If exposing to a network, set `WEBUI_AUTH=True` in the environment.
-- **OpenClaw** requires a gateway token — generate with `openssl rand -hex 32`. For Tailscale-only access, use `docker-compose.openclaw-secure.yml` to bind to localhost. See [openclaw/OPENCLAW_SECURE.md](openclaw/OPENCLAW_SECURE.md).
-- **Ops Controller** requires `OPS_CONTROLLER_TOKEN` for dashboard start/stop/restart. Generate: `openssl rand -hex 32`.
-- Never commit `.env`. See [SECURITY.md](SECURITY.md) for details.
+- **Open WebUI** — set `WEBUI_AUTH=True` in `.env` when exposing to a network.
+- **OpenClaw** — requires `OPENCLAW_GATEWAY_TOKEN`. For Tailscale-only access, use `overrides/openclaw-secure.yml`. See [OPENCLAW_SECURE.md](openclaw/OPENCLAW_SECURE.md).
+- **Ops Controller** — requires `OPS_CONTROLLER_TOKEN` for dashboard start/stop/restart.
+- Never commit `.env`. Full threat model: [SECURITY.md](SECURITY.md).
 
 ## GPU / compute
 
-**Auto-detection:** The setup script (`ensure_dirs`) runs `scripts/detect_hardware.py`, which detects your GPU and generates `docker-compose.compute.yml`:
+**Auto-detection:** The setup script (`ensure_dirs`) runs `scripts/detect_hardware.py`, which detects your GPU and generates `docker-compose.compute.yml` (auto-generated, gitignored):
 
 | Detected | Ollama | ComfyUI |
 |----------|--------|---------|

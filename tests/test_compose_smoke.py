@@ -15,7 +15,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
-COMPOSE_VLLM = REPO_ROOT / "docker-compose.vllm.yml"
+COMPOSE_VLLM = REPO_ROOT / "overrides" / "vllm.yml"
 
 # Services that must be healthy for "smoke" (long-running core stack)
 SMOKE_SERVICES = ["ollama", "model-gateway", "dashboard"]
@@ -52,7 +52,7 @@ def test_compose_config_includes_networks():
     assert "ai-toolkit-backend" in out or "backend" in out
 
 
-@pytest.mark.skipif(not COMPOSE_VLLM.exists(), reason="docker-compose.vllm.yml not present")
+@pytest.mark.skipif(not COMPOSE_VLLM.exists(), reason="overrides/vllm.yml not present")
 def test_compose_vllm_override_config_valid():
     """With vllm override, compose config still valid (vllm profile)."""
     r = _compose_cmd("config", "--quiet", extra_env={"COMPOSE_PROFILES": "vllm"})

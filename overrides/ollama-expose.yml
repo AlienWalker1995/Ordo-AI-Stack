@@ -1,5 +1,5 @@
 # Optional: expose Ollama on host port 11434 (for Cursor, direct CLI, etc.).
-# Use: docker compose -f docker-compose.yml -f docker-compose.ollama-expose.yml up -d
+# Use: docker compose -f docker-compose.yml -f overrides/ollama-expose.yml up -d
 # Default stack keeps Ollama backend-only (no host port).
 
 services:
