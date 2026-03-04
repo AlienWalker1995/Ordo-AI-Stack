@@ -225,7 +225,11 @@ async def chat_completions(request: Request, body: dict[str, Any]):
         request.headers.get("X-Service-Name") or request.headers.get("X-Client-Id"),
     )
     req_id = request.headers.get("X-Request-ID") or f"req-{uuid.uuid4().hex[:12]}"
-    messages = body.get("messages", [])
+    # Remap "developer" role → "system" (Ollama doesn't support developer role)
+    messages = [
+        {**m, "role": "system"} if m.get("role") == "developer" else m
+        for m in body.get("messages", [])
+    ]
     stream = body.get("stream", False)
 
     # vLLM: native OpenAI format — proxy directly
@@ -260,7 +264,26 @@ async def chat_completions(request: Request, body: dict[str, Any]):
 
     # Ollama: strip provider prefix (ollama/qwen2.5:7b -> qwen2.5:7b)
     ollama_model = _ollama_model_id(model_id)
-    ollama_body = {"model": ollama_model, "messages": messages, "stream": stream}
+    ollama_body: dict[str, Any] = {"model": ollama_model, "messages": messages, "stream": stream}
+    # Forward tools — Ollama's /api/chat accepts the same OpenAI tools format
+    if body.get("tools"):
+        ollama_body["tools"] = body["tools"]
+    if "tool_choice" in body:
+        ollama_body["tool_choice"] = body["tool_choice"]
+
+    def _ollama_tc_to_openai(tc: dict) -> dict:
+        """Convert Ollama tool_call to OpenAI format.
+        Ollama arguments are a dict; OpenAI expects a JSON string."""
+        func = tc.get("function", {})
+        args = func.get("arguments", {})
+        return {
+            "id": f"call_{uuid.uuid4().hex[:12]}",
+            "type": "function",
+            "function": {
+                "name": func.get("name", ""),
+                "arguments": json.dumps(args) if isinstance(args, dict) else str(args),
+            },
+        }
 
     if stream:
         async def generate():
@@ -268,6 +291,8 @@ async def chat_completions(request: Request, body: dict[str, Any]):
             first_sent = False
             last_eval_count = 0
             last_eval_duration = 0
+            pending_tool_calls: list[dict] = []
+
             async with AsyncClient(timeout=3600.0) as client:
                 async with client.stream(
                     "POST", f"{OLLAMA_URL}/api/chat", json=ollama_body
@@ -284,7 +309,12 @@ async def chat_completions(request: Request, body: dict[str, Any]):
                             if data.get("done"):
                                 last_eval_count = data.get("eval_count", 0)
                                 last_eval_duration = data.get("eval_duration", 0)
+                                continue  # done chunk carries no new content
                             msg = data.get("message", {})
+                            # Ollama delivers tool_calls in a non-done chunk (not the done chunk)
+                            tcs = msg.get("tool_calls")
+                            if tcs:
+                                pending_tool_calls = tcs
                             content = msg.get("content", "")
                             if isinstance(content, list):
                                 content = "".join(
@@ -293,30 +323,52 @@ async def chat_completions(request: Request, body: dict[str, Any]):
                                 )
                             else:
                                 content = str(content)
-                            # Ollama sends per-token content, not cumulative
                             if content:
-                                delta = {"content": content}
+                                delta: dict[str, Any] = {"content": content}
                                 if not first_sent:
                                     delta["role"] = "assistant"
                                     first_sent = True
-                                chunk = {
+                                yield _stream_chunk_openai({
                                     "id": chunk_id,
                                     "object": "chat.completion.chunk",
                                     "created": int(time.time()),
                                     "model": model,
                                     "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
-                                }
-                                yield _stream_chunk_openai(chunk)
+                                })
                         except json.JSONDecodeError:
                             continue
+
             if last_eval_count and last_eval_duration:
                 _record_throughput(model_id, last_eval_count, last_eval_duration, service)
+
+            # Emit tool calls as OpenAI streaming chunks
+            for i, tc in enumerate(pending_tool_calls):
+                openai_tc = _ollama_tc_to_openai(tc)
+                init_delta: dict[str, Any] = {
+                    "tool_calls": [{"index": i, "id": openai_tc["id"], "type": "function",
+                                    "function": {"name": openai_tc["function"]["name"], "arguments": ""}}]
+                }
+                if not first_sent:
+                    init_delta["role"] = "assistant"
+                    first_sent = True
+                yield _stream_chunk_openai({
+                    "id": chunk_id, "object": "chat.completion.chunk",
+                    "created": int(time.time()), "model": model,
+                    "choices": [{"index": 0, "delta": init_delta, "finish_reason": None}],
+                })
+                yield _stream_chunk_openai({
+                    "id": chunk_id, "object": "chat.completion.chunk",
+                    "created": int(time.time()), "model": model,
+                    "choices": [{"index": 0, "delta": {
+                        "tool_calls": [{"index": i, "function": {"arguments": openai_tc["function"]["arguments"]}}]
+                    }, "finish_reason": None}],
+                })
+
+            finish_reason = "tool_calls" if pending_tool_calls else "stop"
             yield _stream_chunk_openai({
-                "id": chunk_id,
-                "object": "chat.completion.chunk",
-                "created": int(time.time()),
-                "model": model,
-                "choices": [{"delta": {}, "finish_reason": "stop"}],
+                "id": chunk_id, "object": "chat.completion.chunk",
+                "created": int(time.time()), "model": model,
+                "choices": [{"delta": {}, "finish_reason": finish_reason}],
             })
             yield "data: [DONE]\n\n"
 
@@ -341,17 +393,17 @@ async def chat_completions(request: Request, body: dict[str, Any]):
         content = "".join(
             p.get("text", "") if isinstance(p, dict) else str(p) for p in content
         )
+    resp_message: dict[str, Any] = {"role": "assistant", "content": content}
+    ollama_tool_calls = msg.get("tool_calls") or []
+    finish_reason = "stop"
+    if ollama_tool_calls:
+        resp_message["tool_calls"] = [_ollama_tc_to_openai(tc) for tc in ollama_tool_calls]
+        finish_reason = "tool_calls"
     return {
         "id": "chatcmpl-gateway",
         "object": "chat.completion",
         "model": model,
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": content},
-                "finish_reason": "stop",
-            }
-        ],
+        "choices": [{"index": 0, "message": resp_message, "finish_reason": finish_reason}],
         "usage": {
             "prompt_tokens": data.get("prompt_eval_count", 0),
             "completion_tokens": eval_count,
@@ -388,9 +440,10 @@ async def completions_compat(request: Request, body: dict[str, Any]):
 async def responses_api(request: Request, body: dict[str, Any]):
     """OpenAI Responses API — convert to chat completions and proxy, preserving tools."""
     raw_tools = body.get("tools") or []
+    tool_names = [t.get("name") or (t.get("function") or {}).get("name","?") for t in raw_tools]
     logger.info(
-        ">>> /v1/responses called; converting to chat format. model=%s stream=%s tools=%d",
-        body.get("model", ""), body.get("stream", False), len(raw_tools),
+        ">>> /v1/responses called; converting to chat format. model=%s stream=%s tools=%s",
+        body.get("model", ""), body.get("stream", False), tool_names,
     )
 
     messages: list[dict] = []
@@ -429,12 +482,21 @@ async def responses_api(request: Request, body: dict[str, Any]):
                     tool_calls: list[dict] = []
                     while idx < len(inp) and isinstance(inp[idx], dict) and inp[idx].get("type") == "function_call":
                         fc = inp[idx]
+                        # Responses API stores arguments as JSON string; Ollama expects a dict
+                        args_raw = fc.get("arguments", "{}")
+                        if isinstance(args_raw, str):
+                            try:
+                                args_dict = json.loads(args_raw)
+                            except (json.JSONDecodeError, ValueError):
+                                args_dict = {}
+                        else:
+                            args_dict = args_raw
                         tool_calls.append({
                             "id": fc.get("call_id") or f"call_{uuid.uuid4().hex[:12]}",
                             "type": "function",
                             "function": {
                                 "name": fc.get("name", ""),
-                                "arguments": fc.get("arguments", "{}"),
+                                "arguments": args_dict,
                             },
                         })
                         idx += 1
@@ -448,6 +510,9 @@ async def responses_api(request: Request, body: dict[str, Any]):
                     })
                 else:
                     role = item.get("role", "user")
+                    # Ollama doesn't support "developer" role (OpenAI-only); treat as system.
+                    if role == "developer":
+                        role = "system"
                     messages.append({"role": role, "content": _content_to_str(item.get("content"))})
             elif isinstance(item, str):
                 messages.append({"role": "user", "content": item})
