@@ -1121,7 +1121,7 @@
           </div>
           <div class="mcp-section" style="margin-top:var(--space-6);padding-top:var(--space-4);border-top:1px solid var(--border-subtle);">
             <div class="mcp-section-label">Connect</div>
-            <p>Open WebUI → Admin Settings → External Tools → MCP (Streamable HTTP) → <code>http://localhost:8811/mcp</code>. N8N: MCP Client Tool node → <code>http://mcp-gateway:8811/mcp</code>. Cursor/Claude: <code>http://localhost:8811/mcp</code>.</p>
+            <p>Open WebUI → Admin Settings → External Tools → MCP (Streamable HTTP) → <code class="mcp-ext-url">http://localhost:8811/mcp</code>. N8N: MCP Client Tool node → <code>http://mcp-gateway:8811/mcp</code>. Cursor/Claude: <code class="mcp-ext-url">http://localhost:8811/mcp</code>.</p>
             <p><a href="https://hub.docker.com/mcp" target="_blank" rel="noopener">Browse 200+ tools in Docker MCP Catalog ↗</a></p>
           </div>
         </div>
@@ -1460,14 +1460,24 @@
       }
     }
 
+    function serviceUrl(host, port) {
+      return `http://${host}:${port}`;
+    }
+
     async function loadServices() {
       const el = document.getElementById('services');
       const summaryEl = document.getElementById('status-summary');
+      const host = window.location.hostname || 'localhost';
       await checkOpsAvailable();
       try {
         const r = await api('/api/services');
         const d = await r.json();
         const services = d.services || [];
+        const mcpSvc = services.find(s => s.id === 'mcp');
+        if (mcpSvc) {
+          const mcpUrl = serviceUrl(host, mcpSvc.port || 8811) + '/mcp';
+          document.querySelectorAll('.mcp-ext-url').forEach(el => { el.textContent = mcpUrl; });
+        }
         const okCount = services.filter(s => s.ok).length;
         const total = services.length;
         summaryEl.style.display = 'block';
@@ -1483,7 +1493,7 @@
               ${s.port ? `<span class="service-port">:${s.port}</span>` : ''}
             </div>
             <div class="row">
-              <a href="${s.url}" target="_blank" rel="noopener" class="service" style="flex:1;text-decoration:none;color:inherit;min-width:0;" aria-label="Open ${s.name} (opens in new tab)">
+              <a href="${serviceUrl(host, s.port)}" target="_blank" rel="noopener" class="service" style="flex:1;text-decoration:none;color:inherit;min-width:0;" aria-label="Open ${s.name} (opens in new tab)">
                 <span class="status ${s.ok ? 'ok' : 'fail'}" aria-hidden="true"></span>
                 <span class="label">${s.ok ? 'Running' : 'Offline'}</span>
                 <span class="external" aria-hidden="true">↗</span>
