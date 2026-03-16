@@ -65,16 +65,22 @@ def _ollama_model_id(name: str) -> str:
 
 
 def _ollama_model_id_with_hf_fallback(name: str) -> str:
-    """Resolve Ollama model ID. If model looks like org/model (missing hf.co) and
-    HuggingFace models require it, return hf.co/org/model. Used when upstream
-    (e.g. OpenClaw) sends shortened IDs like unsloth/Qwen3.5-9B-GGUF:latest."""
+    """Resolve Ollama model ID. For org/model names (e.g. unsloth/Qwen3.5-9B-GGUF:latest),
+    check the model cache first — if the bare name is known to Ollama (community model),
+    use it as-is. Otherwise prepend hf.co/ for HuggingFace GGUF models."""
     model = _ollama_model_id(name)
     model_lower = model.lower()
-    if "/" in model and not (
-        model_lower.startswith("hf.co/") or model_lower.startswith("huggingface.co/")
-    ) and not model_lower.startswith("library/"):
-        return f"hf.co/{model}"
-    return model
+    # Already fully qualified
+    if not ("/" in model) or model_lower.startswith("hf.co/") or model_lower.startswith("huggingface.co/") or model_lower.startswith("library/"):
+        return model
+    # Check model cache: if the bare name is already known, don't add hf.co/
+    known_ids = {m.get("id", "").lower() for m in _model_cache} if _model_cache else set()
+    if model_lower in known_ids or not known_ids:
+        # Bare name is known, or cache is empty (try bare name first — Ollama
+        # community models like jaahas/... are more common than bare HF paths)
+        return model
+    # Not in cache — assume HuggingFace
+    return f"hf.co/{model}"
 
 
 def _service_from_headers(origin: str | None, x_service: str | None) -> str:

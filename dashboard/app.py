@@ -503,7 +503,8 @@ SERVICES = [
      "hint": "ComfyUI uses auto-detected compute (NVIDIA/AMD/Intel/CPU). Run ./compose up -d. Pull LTX-2 via dashboard."},
     {"id": "n8n", "name": "N8N", "port": 5678, "url": "http://localhost:5678", "check": "http://n8n:5678",
      "hint": "Check: docker compose logs n8n"},
-    {"id": "openclaw", "name": "OpenClaw", "port": 18791, "url": "http://localhost:18791",
+    {"id": "openclaw", "name": "OpenClaw", "port": 18789,
+     "url": f"http://localhost:18789/?token={os.environ.get('OPENCLAW_GATEWAY_TOKEN', '')}" if os.environ.get("OPENCLAW_GATEWAY_TOKEN") else "http://localhost:18789",
      "check": "http://host.docker.internal:18789/",
      "hint": "Run ensure_dirs.ps1 (Windows) or ensure_dirs.sh (Linux/Mac) to ensure .env has OPENCLAW_GATEWAY_TOKEN. Check: docker compose logs openclaw-gateway"},
     {"id": "qdrant", "name": "Qdrant", "port": 6333, "url": "http://localhost:6333",
@@ -1283,7 +1284,8 @@ async def sync_openclaw_models(request: Request):
         raise HTTPException(status_code=502, detail=f"Cannot reach model-gateway: {e}")
 
     items = raw.get("data", []) if isinstance(raw, dict) else []
-    new_models = [_make_openclaw_model(m) for m in items if m.get("id")]
+    # Skip ollama/-prefixed duplicates; bare IDs route fine through the gateway
+    new_models = [_make_openclaw_model(m) for m in items if m.get("id") and not m["id"].startswith("ollama/")]
 
     # Read + patch openclaw.json
     try:

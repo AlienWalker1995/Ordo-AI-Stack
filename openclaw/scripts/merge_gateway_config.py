@@ -17,18 +17,19 @@ GATEWAY_PROVIDER = {
 }
 
 # Default models when model-gateway is unreachable. First entry is the default.
+# Use bare IDs (no ollama/ prefix) — the gateway resolves provider from the ID.
 DEFAULT_GATEWAY_MODELS = [
-    {"id": "ollama/qwen3:8b", "name": "Qwen3 8B", "reasoning": True, "input": ["text"],
+    {"id": "qwen3:8b", "name": "Qwen3 8B", "reasoning": True, "input": ["text"],
      "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": 131072, "maxTokens": 8192},
-    {"id": "ollama/deepseek-r1:7b", "name": "DeepSeek R1 7B", "reasoning": True, "input": ["text"],
+    {"id": "deepseek-r1:7b", "name": "DeepSeek R1 7B", "reasoning": True, "input": ["text"],
      "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": 65536, "maxTokens": 8192},
-    {"id": "ollama/qwen3:14b", "name": "Qwen3 14B", "reasoning": True, "input": ["text"],
+    {"id": "qwen3:14b", "name": "Qwen3 14B", "reasoning": True, "input": ["text"],
      "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": 131072, "maxTokens": 8192},
-    {"id": "ollama/deepseek-coder:6.7b", "name": "DeepSeek Coder 6.7B", "reasoning": False, "input": ["text"],
+    {"id": "deepseek-coder:6.7b", "name": "DeepSeek Coder 6.7B", "reasoning": False, "input": ["text"],
      "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": 32768, "maxTokens": 8192},
-    {"id": "ollama/llama3.2-vision:11b", "name": "Llama 3.2 Vision 11B", "reasoning": False, "input": ["text", "image"],
+    {"id": "llama3.2-vision:11b", "name": "Llama 3.2 Vision 11B", "reasoning": False, "input": ["text", "image"],
      "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": 131072, "maxTokens": 8192},
-    {"id": "ollama/nomic-embed-text:latest", "name": "Nomic Embed", "reasoning": False, "input": ["text"],
+    {"id": "nomic-embed-text:latest", "name": "Nomic Embed", "reasoning": False, "input": ["text"],
      "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": 8192, "maxTokens": 8192},
 ]
 
@@ -56,6 +57,9 @@ def _fetch_models_from_gateway() -> list[dict] | None:
     for m in items:
         mid = m.get("id") or m.get("name", "")
         if not mid:
+            continue
+        # Skip ollama/-prefixed duplicates; the bare ID routes fine through the gateway
+        if mid.startswith("ollama/"):
             continue
         # Derive name from id (ollama/qwen2.5:7b -> Qwen 2.5 7B)
         name = mid.split("/")[-1] if "/" in mid else mid
@@ -152,6 +156,17 @@ def main() -> int:
             modified = True
             msg = "injected gateway token from OPENCLAW_GATEWAY_TOKEN"
 
+    # Bind to all interfaces so Docker port mapping works (container runs in isolation)
+    if gateway.get("bind") != "lan":
+        gateway["bind"] = "lan"
+        modified = True
+
+    # Disable device pairing (not needed in Docker — token auth is sufficient)
+    control_ui = gateway.setdefault("controlUi", {})
+    if isinstance(control_ui, dict) and not control_ui.get("dangerouslyDisableDeviceAuth"):
+        control_ui["dangerouslyDisableDeviceAuth"] = True
+        modified = True
+
     if not modified:
         return 0
     try:
@@ -160,6 +175,37 @@ def main() -> int:
     except OSError as e:
         print(f"merge_gateway_config: write failed: {e}", file=sys.stderr)
         return 1
+
+    # Pre-create auth-profiles.json for the default agent so OpenClaw finds the
+    # gateway API key immediately on first boot (avoids startup race).
+    # Format: { "version": 1, "profiles": { "<id>": { "provider": "...", "type": "api_key", "key": "..." } } }
+    agent_dir = config_path.parent / "agents" / "main" / "agent"
+    auth_path = agent_dir / "auth-profiles.json"
+    api_key = GATEWAY_PROVIDER["apiKey"]
+    try:
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        existing = {}
+        if auth_path.exists():
+            try:
+                existing = json.loads(auth_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+        profiles = existing.get("profiles", {}) if isinstance(existing, dict) else {}
+        # Check if a valid gateway profile already exists
+        has_gateway = any(
+            p.get("provider") == "gateway" and p.get("key") == api_key
+            for p in profiles.values() if isinstance(p, dict)
+        )
+        if not has_gateway:
+            profiles["gateway-local"] = {
+                "provider": "gateway",
+                "type": "api_key",
+                "key": api_key,
+            }
+            auth_path.write_text(json.dumps({"version": 1, "profiles": profiles}, indent=2), encoding="utf-8")
+            print(f"merge_gateway_config: wrote auth-profiles.json for default agent")
+    except OSError as e:
+        print(f"merge_gateway_config: auth-profiles.json write skipped: {e}", file=sys.stderr)
 
     return 0
 

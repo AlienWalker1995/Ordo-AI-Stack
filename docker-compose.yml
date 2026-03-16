@@ -3,7 +3,7 @@ name: ai-toolkit
 # All services start by default. Run: docker compose up -d
 services:
   ollama:
-    image: ${OLLAMA_IMAGE:-ollama/ollama:0.17.4}
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.18.0}
     restart: unless-stopped
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
@@ -17,12 +17,8 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          memory: 8G
-    # GPU + RAM limit: overridden by overrides/compute.yml (run scripts/detect_hardware.py)
-    # Pin digest: OLLAMA_IMAGE=ollama/ollama:0.17.4@sha256:1edb4ab90ebbe34b484bb120ab8de22601f463834bfeca7f5a2de2ca6dad13ee
+    # GPU config: overridden by overrides/compute.yml (run scripts/detect_hardware.py)
+    # Pin digest: OLLAMA_IMAGE=ollama/ollama:0.18.0
     networks:
       - backend
 
@@ -63,10 +59,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    deploy:
-      resources:
-        limits:
-          memory: 512M
     logging:
       driver: json-file
       options:
@@ -83,10 +75,6 @@ services:
     restart: unless-stopped
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    deploy:
-      resources:
-        limits:
-          memory: 256M
     environment:
       - COMPOSE_PROJECT_DIR=/workspace
       - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:-}
@@ -128,10 +116,6 @@ services:
         condition: service_healthy
     ports:
       - "8080:8080"
-    deploy:
-      resources:
-        limits:
-          memory: 2G
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -160,6 +144,7 @@ services:
       # OpenClaw model management: dashboard reads/writes openclaw.json to sync models
       - MODEL_GATEWAY_URL=http://model-gateway:11435
       - OPENCLAW_CONFIG_PATH=/openclaw-config/openclaw.json
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
       - DASHBOARD_DATA_PATH=/data/dashboard
     volumes:
       - ${BASE_PATH:-.}/models/comfyui:/models
@@ -180,10 +165,6 @@ services:
       - qdrant
     ports:
       - "3000:8080"
-    deploy:
-      resources:
-        limits:
-          memory: 1G
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/"]
       start_period: 120s
@@ -254,11 +235,6 @@ services:
     image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot:cpu}
     container_name: comfyui
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          # LTX models with --lowvram offload to RAM; 4G causes OOM. Use 16G+ for LTX.
-          memory: ${COMFYUI_MEMORY_LIMIT:-16G}
     # ComfyUI: run scripts/detect_hardware.py to auto-configure GPU (NVIDIA/AMD/Intel) or CPU
     # Bound to localhost only (no auth). Use SSH tunnel for remote access.
     ports:
@@ -294,10 +270,6 @@ services:
     # Bound to localhost only (no auth). Use SSH tunnel for remote access.
     ports:
       - "127.0.0.1:5678:5678"
-    deploy:
-      resources:
-        limits:
-          memory: 1G
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5678/"]
       interval: 30s
@@ -333,10 +305,6 @@ services:
     pull_policy: build
     container_name: mcp-gateway
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 512M
     environment:
       - MCP_CONFIG_FILE=/mcp-config/servers.txt
       - MCP_GATEWAY_PORT=8811
@@ -375,7 +343,7 @@ services:
     restart: "no"
     depends_on:
       model-gateway:
-        condition: service_started
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -461,10 +429,6 @@ services:
     tty: true
     init: true
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 2G
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:18789"]
       start_period: 60s
@@ -520,10 +484,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    deploy:
-      resources:
-        limits:
-          memory: 512M
     logging:
       driver: json-file
       options:
@@ -555,10 +515,6 @@ services:
     depends_on:
       - model-gateway
       - qdrant
-    deploy:
-      resources:
-        limits:
-          memory: 256M
     logging:
       driver: json-file
       options:
