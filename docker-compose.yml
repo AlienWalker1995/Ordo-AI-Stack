@@ -237,9 +237,8 @@ services:
     container_name: comfyui
     restart: unless-stopped
     # ComfyUI: run scripts/detect_hardware.py to auto-configure GPU (NVIDIA/AMD/Intel) or CPU
-    # Bound to localhost only (no auth). Use SSH tunnel for remote access.
     ports:
-      - "127.0.0.1:8188:8188"
+      - "8188:8188"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8188/"]
       start_period: 120s
@@ -268,9 +267,8 @@ services:
     user: "1000:1000"
     depends_on:
       - mcp-gateway
-    # Bound to localhost only (no auth). Use SSH tunnel for remote access.
     ports:
-      - "127.0.0.1:5678:5678"
+      - "5678:5678"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5678/"]
       interval: 30s
@@ -423,9 +421,10 @@ services:
       - ${OPENCLAW_CONFIG_DIR:-${BASE_PATH:-.}/data/openclaw}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR:-${BASE_PATH:-.}/data/openclaw/workspace}:/home/node/.openclaw/workspace
     ports:
-      - "${OPENCLAW_GATEWAY_PORT:-6680}:${OPENCLAW_GATEWAY_PORT:-6680}"
-      - "${OPENCLAW_BRIDGE_PORT:-6681}:${OPENCLAW_BRIDGE_PORT:-6681}"
-      - "${OPENCLAW_UI_PORT:-6682}:${OPENCLAW_UI_PORT:-6682}"
+      - "${OPENCLAW_GATEWAY_PORT:-6680}:6680"
+      - "${OPENCLAW_BRIDGE_PORT:-6681}:6681"
+      # UI port maps to socat proxy (6685) which forwards to OpenClaw's loopback-only UI (127.0.0.1:6682)
+      - "${OPENCLAW_UI_PORT:-6682}:6685"
     stdin_open: true
     tty: true
     init: true
@@ -446,6 +445,23 @@ services:
     networks:
       - frontend
       - backend
+
+  # Socat proxy: OpenClaw's browser UI binds to 127.0.0.1:6682 (loopback-only) inside the container,
+  # so Docker port forwarding can't reach it. This sidecar shares the network namespace and bridges
+  # 0.0.0.0:6685 -> 127.0.0.1:6682, allowing the openclaw-gateway port mapping above to work.
+  openclaw-ui-proxy:
+    image: alpine/socat:1.8.0.0
+    network_mode: "service:openclaw-gateway"
+    command: TCP-LISTEN:6685,fork,reuseaddr TCP:127.0.0.1:6682
+    depends_on:
+      openclaw-gateway:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "1"
 
   openclaw-cli:
     profiles: [openclaw-cli]

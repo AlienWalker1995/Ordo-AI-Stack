@@ -163,9 +163,14 @@ def main() -> int:
 
     # Disable device pairing (not needed in Docker — token auth is sufficient)
     control_ui = gateway.setdefault("controlUi", {})
-    if isinstance(control_ui, dict) and not control_ui.get("dangerouslyDisableDeviceAuth"):
-        control_ui["dangerouslyDisableDeviceAuth"] = True
-        modified = True
+    if isinstance(control_ui, dict):
+        if not control_ui.get("dangerouslyDisableDeviceAuth"):
+            control_ui["dangerouslyDisableDeviceAuth"] = True
+            modified = True
+        # Remove stale allowedOrigins (OpenClaw regenerates them with wrong ports on restart)
+        if "allowedOrigins" in control_ui:
+            del control_ui["allowedOrigins"]
+            modified = True
 
     if not modified:
         return 0

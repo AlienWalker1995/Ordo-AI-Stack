@@ -34,16 +34,18 @@ Add to your shell profile (`~/.bashrc`, `~/.zshrc`, or PowerShell `$PROFILE`):
 ```bash
 # Bash / Zsh — add to ~/.bashrc or ~/.zshrc
 export ANTHROPIC_AUTH_TOKEN="ollama"
-export ANTHROPIC_API_KEY="ollama"
+export ANTHROPIC_API_KEY=""
 export ANTHROPIC_BASE_URL="http://localhost:11435"
 ```
 
 ```powershell
 # PowerShell — add to $PROFILE
 $env:ANTHROPIC_AUTH_TOKEN = "ollama"
-$env:ANTHROPIC_API_KEY = "ollama"
+$env:ANTHROPIC_API_KEY = ""
 $env:ANTHROPIC_BASE_URL = "http://localhost:11435"
 ```
+
+> **Important:** `ANTHROPIC_API_KEY` must be an empty string (`""`), not unset. This tells Claude Code to use the auth token path, which allows custom model names.
 
 Then reload your shell:
 
@@ -80,12 +82,18 @@ claude
 Point Claude Code at the machine running the gateway:
 
 ```bash
+export ANTHROPIC_AUTH_TOKEN="ollama"
+export ANTHROPIC_API_KEY=""
 export ANTHROPIC_BASE_URL="http://<gateway-host-ip>:11435"
-export ANTHROPIC_API_KEY="ollama"
-claude --model devstral-small-2
+claude --model glm-4.7-flash:Q4_K_M
 ```
 
 Replace `<gateway-host-ip>` with the IP or hostname of the machine running the AI toolkit. Port `11435` must be reachable (check firewall).
+
+**Verify connectivity first:**
+```bash
+curl http://<gateway-host-ip>:11435/health
+```
 
 ### How it works
 
