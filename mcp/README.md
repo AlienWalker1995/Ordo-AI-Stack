@@ -130,7 +130,7 @@ If the gateway reports an unrecognized key or fails to start, remove the `mcp` b
 
 ## Secrets
 
-MCP servers like `github-official` or `brave` need API keys. Use Docker secrets:
+MCP servers like `github-official` need API keys. Use Docker secrets:
 
 1. Create `mcp/.env` with your keys (do **not** commit)
 2. Uncomment the `secrets` block in `docker-compose.yml` for `mcp-gateway`

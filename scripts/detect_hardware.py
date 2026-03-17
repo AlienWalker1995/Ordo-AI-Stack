@@ -331,6 +331,13 @@ def main() -> int:
                     }
                 }
             },
+            "dashboard": {
+                "deploy": {
+                    "resources": {
+                        "reservations": {"devices": nvidia_gpu},
+                    }
+                }
+            },
             "comfyui": {
                 "image": "yanwk/comfyui-boot:cu128-slim",
                 "environment": {

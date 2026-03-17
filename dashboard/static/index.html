@@ -301,8 +301,22 @@
       grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
       gap: var(--space-4);
     }
-    @media (max-width: 768px) { .services { grid-template-columns: repeat(2, 1fr); gap: var(--space-3); } }
-    @media (max-width: 600px) { .services { grid-template-columns: 1fr; } }
+    @media (max-width: 768px) {
+      .services { grid-template-columns: repeat(2, 1fr); gap: var(--space-3); }
+      .container { padding: var(--space-5) var(--space-4); }
+      header { flex-direction: column; gap: var(--space-4); }
+      .header-actions { width: 100%; justify-content: center; margin-top: var(--space-3); }
+    }
+    @media (max-width: 600px) {
+      .services { grid-template-columns: 1fr; }
+      .container { padding: var(--space-4); }
+      h1 { font-size: var(--text-2xl); }
+      .btn-icon { width: 36px; height: 36px; }
+      .throughput-controls { gap: var(--space-2); }
+      .throughput-controls select { min-width: 160px; }
+      .throughput-results { grid-template-columns: 1fr 1fr; }
+      .throughput-stat-card { padding: var(--space-3); }
+    }
     .service {
       display: flex;
       align-items: center;
@@ -1270,8 +1284,12 @@
             <div class="skeleton skeleton-line short"></div>
           </div>
           <div class="pull-area">
+            <div id="comfyui-packs" style="margin-bottom:var(--space-3);">
+              <div class="skeleton skeleton-line" style="width:70%"></div>
+              <div class="skeleton skeleton-line" style="width:55%"></div>
+            </div>
             <div class="pull-row">
-              <button id="comfyui-pull">Pull LTX-2.3 models (~80 GB)</button>
+              <button id="comfyui-pull">Download Selected Packs</button>
             </div>
             <div id="comfyui-progress" class="progress-area" style="display:none;" role="region" aria-label="ComfyUI pull progress">
               <div class="log" id="comfyui-log" role="log" aria-live="polite"></div>
@@ -1909,7 +1927,7 @@
         const r = await api('/api/comfyui/models');
         const d = await r.json();
         if (!d.ok || !d.models?.length) {
-          el.innerHTML = '<div class="empty">No ComfyUI models.<span class="hint">Click Pull LTX-2.3 models to download (~80 GB).</span></div>';
+          el.innerHTML = '<div class="empty">No ComfyUI models.<span class="hint">Select packs below and click Download.</span></div>';
           return;
         }
         const byCat = {};
@@ -1931,6 +1949,38 @@
         `).join('');
       } catch (e) {
         el.innerHTML = '<div class="empty">Failed to load models.</div>';
+      }
+    }
+
+    async function loadComfyuiPacks() {
+      const el = document.getElementById('comfyui-packs');
+      try {
+        const d = await api('/api/comfyui/packs').then(r => r.json());
+        if (!d.ok || !Object.keys(d.packs || {}).length) {
+          el.innerHTML = '<div class="empty" style="font-size:var(--text-sm);">No packs available.</div>';
+          return;
+        }
+        const defaults = new Set(d.defaults || []);
+        el.innerHTML = Object.entries(d.packs).map(([name, pack]) => {
+          const all = pack.installed_count >= pack.model_count && pack.model_count > 0;
+          const partial = pack.installed_count > 0 && !all;
+          const badge = all
+            ? '<span style="color:var(--success,#4caf50);font-size:0.75em;margin-left:6px;">✓ installed</span>'
+            : partial
+            ? `<span style="color:var(--fg-muted);font-size:0.75em;margin-left:6px;">${pack.installed_count}/${pack.model_count} files</span>`
+            : '';
+          return `
+            <label style="display:flex;align-items:flex-start;gap:var(--space-2);padding:var(--space-2) 0;cursor:pointer;">
+              <input type="checkbox" name="comfyui-pack" value="${escapeHtml(name)}"${defaults.has(name) && !all ? ' checked' : ''}
+                style="margin-top:3px;flex-shrink:0;" />
+              <span>
+                <span style="font-size:var(--text-sm);font-weight:500;">${escapeHtml(name)}${badge}</span>
+                <span style="display:block;font-size:0.75em;color:var(--fg-muted);margin-top:2px;">${escapeHtml(pack.description)}</span>
+              </span>
+            </label>`;
+        }).join('');
+      } catch (e) {
+        el.innerHTML = '<div class="empty" style="font-size:var(--text-sm);">Failed to load packs.</div>';
       }
     }
 
@@ -2088,11 +2138,14 @@
       const btn = document.getElementById('comfyui-pull');
       const prog = document.getElementById('comfyui-progress');
       const logEl = document.getElementById('comfyui-log');
+      const selected = [...document.querySelectorAll('input[name="comfyui-pack"]:checked')].map(el => el.value);
+      if (!selected.length) { toast('Select at least one pack', 'error'); return; }
       btn.disabled = true;
       prog.style.display = 'block';
       logEl.textContent = 'Starting download...';
       try {
-        await api('/api/comfyui/pull', { method: 'POST' });
+        const qs = '?packs=' + encodeURIComponent(selected.join(','));
+        await api('/api/comfyui/pull' + qs, { method: 'POST' });
         const poll = () => {
           api('/api/comfyui/pull/status').then(r => r.json()).then(s => {
             logEl.textContent = s.output || 'Preparing...';
@@ -2100,9 +2153,10 @@
             if (s.running) setTimeout(poll, 1500);
             else {
               logEl.textContent += '\n' + (s.success ? '✓ Done.' : '✗ Failed.');
-              toast(s.success ? 'LTX-2.3 models ready' : 'Download failed', s.success ? 'success' : 'error');
+              toast(s.success ? 'Models ready' : 'Download failed', s.success ? 'success' : 'error');
               btn.disabled = false;
               loadComfyuiModels();
+              loadComfyuiPacks();
             }
           });
         };
@@ -2349,7 +2403,7 @@
       const btn = document.getElementById('refresh-btn');
       btn.classList.add('loading');
       if (!ollamaLibrary.length) await loadOllamaLibrary();
-      await Promise.all([loadServices(), loadOllamaModels(), loadComfyuiModels(), loadMcpServers(), loadOpenclawModels()]);
+      await Promise.all([loadServices(), loadOllamaModels(), loadComfyuiModels(), loadComfyuiPacks(), loadMcpServers(), loadOpenclawModels()]);
       loadThroughputStats();
       loadThroughputServiceUsage();
       btn.classList.remove('loading');
@@ -2510,7 +2564,9 @@
         if (d.gpu) {
           const vramPct = (d.gpu.vram_used_mb / d.gpu.vram_total_mb) * 100;
           document.getElementById('hw-gpu-name').textContent = d.gpu.name.replace(/NVIDIA /i, '');
-          document.getElementById('hw-vram').textContent = (d.gpu.vram_used_mb / 1024).toFixed(1) + ' / ' + (d.gpu.vram_total_mb / 1024).toFixed(0) + ' GB';
+          let vramText = (d.gpu.vram_used_mb / 1024).toFixed(1) + ' / ' + (d.gpu.vram_total_mb / 1024).toFixed(0) + ' GB';
+          if (d.gpu.utilization_pct != null) vramText += ' · ' + d.gpu.utilization_pct + '% util';
+          document.getElementById('hw-vram').textContent = vramText;
           setBar(document.getElementById('hw-vram-bar'), vramPct);
           document.getElementById('hw-gpu-sep').style.display = '';
           document.getElementById('hw-gpu-wrap').style.display = '';
@@ -2534,9 +2590,10 @@
             if (s.running) setTimeout(poll, 1500);
             else {
               logEl.textContent += '\n' + (s.success ? '✓ Done.' : '✗ Failed.');
-              toast(s.success ? 'LTX-2.3 models ready' : 'Download failed', s.success ? 'success' : 'error');
+              toast(s.success ? 'Models ready' : 'Download failed', s.success ? 'success' : 'error');
               btn.disabled = false;
               loadComfyuiModels();
+              loadComfyuiPacks();
             }
           });
           poll();

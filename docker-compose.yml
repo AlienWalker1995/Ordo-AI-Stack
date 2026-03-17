@@ -288,7 +288,7 @@ services:
     ports:
       - "5678:5678"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5678/"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:5678/"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -336,7 +336,6 @@ services:
       - MCP_GATEWAY_PORT=8811
       # MCP server API keys — set these in the root .env file
       - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PERSONAL_ACCESS_TOKEN:-}
-      - BRAVE_API_KEY=${BRAVE_API_KEY:-}
       # n8n MCP server (mcp/n8n) — for workflow tools when n8n API key is set
       - N8N_API_URL=${N8N_API_URL:-http://n8n:5678}
       - N8N_API_KEY=${N8N_API_KEY:-}
@@ -608,7 +607,7 @@ services:
     volumes:
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/qdrant:/qdrant/storage
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/readyz"]
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
       interval: 30s
       timeout: 10s
       retries: 3

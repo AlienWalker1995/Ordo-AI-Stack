@@ -536,11 +536,22 @@ async def comfyui_packs():
     try:
         import json as _json
         config = _json.loads(config_path.read_text(encoding="utf-8"))
+        default_quant = config.get("defaults", {}).get("quant", "Q4_K_M")
+        try:
+            installed = {(m["category"], m["name"]) for m in _scan_comfyui_models()}
+        except Exception:
+            installed = set()
         packs = {}
         for name, pack in config.get("packs", {}).items():
+            models = pack.get("models", [])
+            installed_count = sum(
+                1 for m in models
+                if (m.get("dest", "checkpoints"), Path(m["file"].replace("{quant}", default_quant)).name) in installed
+            )
             packs[name] = {
                 "description": pack.get("description", ""),
-                "model_count": len(pack.get("models", [])),
+                "model_count": len(models),
+                "installed_count": installed_count,
             }
         return {"packs": packs, "defaults": config.get("defaults", {}).get("packs", []), "ok": True}
     except Exception as e:
@@ -781,6 +792,14 @@ def _read_mcp_registry() -> dict:
 MCP_GATEWAY_URL = os.environ.get("MCP_GATEWAY_URL", "http://mcp-gateway:8811")
 
 
+def _get_active_mcp_servers() -> list[str]:
+    """Get enabled MCP servers from configuration file."""
+    try:
+        return _read_mcp_servers()
+    except Exception:
+        return []
+
+
 def _mcp_catalog_from_registry() -> list[str]:
     """Build catalog from registry.json when present; otherwise use MCP_CATALOG."""
     reg = _read_mcp_registry()
@@ -792,12 +811,20 @@ def _mcp_catalog_from_registry() -> list[str]:
 
 @app.get("/api/mcp/servers")
 async def mcp_servers():
-    """List enabled MCP servers and catalog for adding."""
-    servers = _read_mcp_servers()
+    """List enabled MCP servers (discovered from gateway) and catalog for adding."""
+    active_servers = _get_active_mcp_servers()
+    configured_servers = _read_mcp_servers()
     dynamic = _mcp_config_path() is not None
     registry = _read_mcp_registry()
     catalog = _mcp_catalog_from_registry()
-    return {"enabled": servers, "catalog": catalog, "dynamic": dynamic, "registry": registry, "ok": True}
+    return {
+        "enabled": active_servers,
+        "configured": configured_servers,
+        "catalog": catalog,
+        "dynamic": dynamic,
+        "registry": registry,
+        "ok": True,
+    }
 
 
 @app.get("/api/mcp/health")
@@ -1548,15 +1575,23 @@ async def hardware_stats():
     try:
         import pynvml  # optional; only present when nvidia-ml-py is installed
         pynvml.nvmlInit()
-        h = pynvml.nvmlDeviceGetHandleByIndex(0)
-        mi = pynvml.nvmlDeviceGetMemoryInfo(h)
-        ut = pynvml.nvmlDeviceGetUtilizationRates(h)
-        gpu = {
-            "name": pynvml.nvmlDeviceGetName(h),
-            "vram_used_mb": mi.used // 1024 // 1024,
-            "vram_total_mb": mi.total // 1024 // 1024,
-            "utilization_pct": ut.gpu,
-        }
+        try:
+            h = pynvml.nvmlDeviceGetHandleByIndex(0)
+            mi = pynvml.nvmlDeviceGetMemoryInfo(h)
+            ut = pynvml.nvmlDeviceGetUtilizationRates(h)
+            name = pynvml.nvmlDeviceGetName(h)
+            if isinstance(name, bytes):
+                name = name.decode("utf-8", errors="replace").strip()
+            else:
+                name = str(name).strip()
+            gpu = {
+                "name": name or "GPU",
+                "vram_used_mb": mi.used // 1024 // 1024,
+                "vram_total_mb": mi.total // 1024 // 1024,
+                "utilization_pct": ut.gpu,
+            }
+        finally:
+            pynvml.nvmlShutdown()
     except Exception as e:
         logger.debug("GPU stats unavailable: %s", e)
 

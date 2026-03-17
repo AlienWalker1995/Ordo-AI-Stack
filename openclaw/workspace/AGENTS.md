@@ -35,7 +35,11 @@ Commonly enabled tools (called directly by their namespaced name):
 - **gateway__playwright_*** — Preferred browser tool. Navigate, screenshot, click, fill forms, snapshot.
 - **gateway__n8n_*** — n8n workflow tools (list, create, execute workflows). Needs `N8N_API_KEY` for full access.
 - **gateway__comfyui_*** — Image/audio/video generation. `generate_image`, `list_models`, `list_assets`.
-  For full ComfyUI management beyond these tools, call the HTTP API directly at `http://comfyui:8188`:
+  To generate video with LTX-2.3: read `ltx_t2v.json` from the workspace, substitute `PARAM_*` values
+  (PARAM_PROMPT, PARAM_NEGATIVE_PROMPT, PARAM_INT_SEED, PARAM_INT_FRAMES, PARAM_INT_WIDTH, PARAM_INT_HEIGHT),
+  then POST `{"prompt": <workflow_json>}` to `http://comfyui:8188/prompt`. Poll `GET /history/{prompt_id}`
+  until the entry appears, then retrieve output with `GET /view?filename=…&type=output`.
+  For full ComfyUI management call the HTTP API directly at `http://comfyui:8188`:
   - `GET  /queue` — view pending/running jobs
   - `POST /queue` — cancel jobs (`{"delete": [prompt_id]}` or `{"clear": true}`)
   - `GET  /history` — completed job history (append `/{prompt_id}` for one job)

@@ -172,6 +172,11 @@ The [MCP Gateway](mcp/) exposes shared MCP tools (web search, GitHub, etc.) to a
 ## Commands
 
 ```powershell
+# Project management CLI
+./ai-toolkit initialize   # Bootstrap directories, generate tokens, detect hardware, start services
+./ai-toolkit help
+
+# Docker compose wrapper
 .\compose.ps1 up -d       # Start all services (auto-detects hardware)
 .\compose.ps1 logs -f ollama
 .\compose.ps1 down        # Stop
