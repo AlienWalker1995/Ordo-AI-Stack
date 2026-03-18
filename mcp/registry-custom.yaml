@@ -1,5 +1,8 @@
 # Custom MCP registry — ComfyUI (not in Docker MCP catalog).
 # Copied to data/mcp/ by ensure_dirs. Gateway uses --additional-registry to load it.
+# ComfyUI MCP uses stdio (see comfyui-mcp/Dockerfile CMD) so the gateway can communicate.
 servers:
   comfyui:
     image: ai-toolkit-comfyui-mcp:latest
+    env:
+      COMFYUI_URL: http://comfyui:8188

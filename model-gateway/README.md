@@ -58,7 +58,7 @@ source ~/.bashrc   # or source ~/.zshrc
 ```bash
 claude --model devstral-small-2
 claude --model glm-4.7-flash:Q4_K_M
-claude --model qwen3:8b
+claude --model qwen3.5-uncensored:27b
 ```
 
 Any Ollama model name works — the gateway passes it through to Ollama as-is.

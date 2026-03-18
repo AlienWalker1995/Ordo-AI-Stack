@@ -40,6 +40,44 @@ curl -s http://localhost:8811/mcp
 - **Causes**: Empty servers.txt, registry.json parse error, Docker socket permission
 - **Fix**: Add servers via dashboard or `echo "n8n,playwright,comfyui" > data/mcp/servers.txt`; ensure `registry.json` is valid JSON if present
 
+### OpenClaw: "Tool not found: gateway__comfyui_*" / ComfyUI MCP failing
+
+**Symptoms:** OpenClaw agent tries to call ComfyUI MCP tools (`gateway__comfyui_list_models`, `gateway__comfyui_generate_image`, etc.) and gets "Tool not found". Same pattern for `gateway__playwright`, `gateway__list`, etc.
+
+**Root causes (check in order):**
+
+1. **ComfyUI MCP server not running** — The ComfyUI MCP container must connect to ComfyUI at startup. If ComfyUI (`comfyui:8188`) is not reachable, the MCP server exits immediately.
+   - **Check:** `docker compose ps comfyui` — ComfyUI must be running.
+   - **Check:** `docker compose logs mcp-gateway` — look for comfyui container spawn errors or "ComfyUI is not available".
+   - **Fix:** Start ComfyUI first: `docker compose up -d comfyui`, wait for it to be healthy, then restart: `docker compose restart mcp-gateway`.
+
+2. **ComfyUI MCP image not built** — The gateway uses `ai-toolkit-comfyui-mcp:latest` from the custom registry.
+   - **Check:** `docker images ai-toolkit-comfyui-mcp`
+   - **Fix:** `docker compose build comfyui-mcp-image` then `docker compose up -d mcp-gateway`
+
+3. **Custom registry not loaded** — The gateway loads `data/mcp/registry-custom.yaml` for the ComfyUI server.
+   - **Check:** `data/mcp/registry-custom.yaml` exists and contains `servers.comfyui.image: ai-toolkit-comfyui-mcp:latest`
+   - **Fix:** Run `.\scripts\ensure_dirs.ps1` to bootstrap; restart mcp-gateway.
+
+4. **Tool naming mismatch** — Docker MCP Gateway may prefix tools with `servername__` (double underscore). The joenorton/comfyui-mcp-server exposes `list_models`, `view_image`, etc. (no comfyui_ prefix). If the gateway uses tool-name-prefix, tools become `comfyui__list_models`, `comfyui__view_image`. OpenClaw would then see `gateway__comfyui__list_models` (double underscore before `list_models`).
+   - **Check:** Dashboard → MCP tab, or call the gateway's tools/list endpoint to see actual tool names.
+   - **Fix:** Update `data/openclaw/workspace/AGENTS.md` to document the correct names (e.g. `gateway__comfyui__list_models` if your gateway uses that format).
+
+**Quick diagnostic:**
+```powershell
+# Is ComfyUI running?
+docker compose ps comfyui
+
+# Is the ComfyUI MCP image built?
+docker images ai-toolkit-comfyui-mcp
+
+# What does the MCP gateway log?
+docker compose logs mcp-gateway --tail=100
+
+# Is servers.txt correct?
+Get-Content data\mcp\servers.txt
+```
+
 ### MCP filesystem: "ENOENT no such file or directory, stat ''"
 
 - **Cause:** The `filesystem` MCP server expects a root directory to be configured. When the gateway starts it without a path (default), it tries to stat an empty path and fails.

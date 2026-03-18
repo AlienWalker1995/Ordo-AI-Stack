@@ -3,7 +3,7 @@ name: ai-toolkit
 # All services start by default. Run: docker compose up -d
 services:
   ollama:
-    image: ${OLLAMA_IMAGE:-ollama/ollama:0.18.0}
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.18.1}
     restart: unless-stopped
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
@@ -275,6 +275,20 @@ services:
     restart: "no"
     command: ["true"]
 
+  # Standalone ComfyUI MCP server — OpenClaw connects directly (gateway doesn't load custom registry)
+  comfyui-mcp:
+    image: ai-toolkit-comfyui-mcp:latest
+    pull_policy: build
+    restart: unless-stopped
+    depends_on:
+      comfyui:
+        condition: service_healthy
+    command: ["python", "server.py"]
+    environment:
+      - COMFYUI_URL=http://comfyui:8188
+    networks:
+      - backend
+
   n8n:
     image: ${N8N_IMAGE:-docker.n8n.io/n8nio/n8n:2.10.2}
     restart: unless-stopped
@@ -505,6 +519,8 @@ services:
     container_name: openclaw-gateway
     depends_on:
       model-gateway:
+        condition: service_started
+      comfyui-mcp:
         condition: service_started
       mcp-gateway:
         condition: service_started

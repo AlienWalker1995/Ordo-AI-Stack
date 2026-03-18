@@ -1075,6 +1075,7 @@
       <div class="hw-stat" id="hw-disk-wrap" style="display:none">
         <span class="hw-stat-label">Disk</span>
         <span class="hw-stat-val" id="hw-disk">—</span>
+        <div class="hw-bar-fill" id="hw-disk-bar"><span></span></div>
       </div>
       <div class="hw-stat" id="hw-gpu-wrap" style="display:none">
         <span class="hw-stat-label" id="hw-gpu-name">GPU VRAM</span>
@@ -2552,24 +2553,36 @@
     async function refreshHardware() {
       try {
         const d = await fetch('/api/hardware', { cache: 'no-store' }).then(r => r.json());
-        document.getElementById('hw-cpu').textContent = d.cpu_pct.toFixed(0) + '%';
-        setBar(document.getElementById('hw-cpu-bar'), d.cpu_pct);
-        document.getElementById('hw-ram').textContent = d.ram_used_gb + ' / ' + d.ram_total_gb + ' GB';
-        setBar(document.getElementById('hw-ram-bar'), d.ram_pct);
-        if (d.disk_used_gb != null) {
+        const cpu = d.cpu_pct != null ? d.cpu_pct : 0;
+        document.getElementById('hw-cpu').textContent = cpu.toFixed(0) + '%';
+        setBar(document.getElementById('hw-cpu-bar'), cpu);
+        const ramUsed = d.ram_used_gb != null ? d.ram_used_gb : 0;
+        const ramTotal = d.ram_total_gb != null ? d.ram_total_gb : 0;
+        const ramPct = d.ram_pct != null ? d.ram_pct : 0;
+        document.getElementById('hw-ram').textContent = ramUsed + ' / ' + ramTotal + ' GB';
+        setBar(document.getElementById('hw-ram-bar'), ramPct);
+        if (d.disk_used_gb != null && d.disk_total_gb != null) {
           document.getElementById('hw-disk').textContent = d.disk_used_gb + ' / ' + d.disk_total_gb + ' GB';
+          const diskPct = d.disk_pct != null ? d.disk_pct : (d.disk_total_gb > 0 ? (d.disk_used_gb / d.disk_total_gb) * 100 : 0);
+          setBar(document.getElementById('hw-disk-bar'), diskPct);
           document.getElementById('hw-disk-sep').style.display = '';
           document.getElementById('hw-disk-wrap').style.display = '';
+        } else {
+          document.getElementById('hw-disk-sep').style.display = 'none';
+          document.getElementById('hw-disk-wrap').style.display = 'none';
         }
-        if (d.gpu) {
+        if (d.gpu && d.gpu.vram_total_mb > 0) {
           const vramPct = (d.gpu.vram_used_mb / d.gpu.vram_total_mb) * 100;
-          document.getElementById('hw-gpu-name').textContent = d.gpu.name.replace(/NVIDIA /i, '');
+          document.getElementById('hw-gpu-name').textContent = (d.gpu.name || 'GPU').replace(/NVIDIA /i, '');
           let vramText = (d.gpu.vram_used_mb / 1024).toFixed(1) + ' / ' + (d.gpu.vram_total_mb / 1024).toFixed(0) + ' GB';
           if (d.gpu.utilization_pct != null) vramText += ' · ' + d.gpu.utilization_pct + '% util';
           document.getElementById('hw-vram').textContent = vramText;
           setBar(document.getElementById('hw-vram-bar'), vramPct);
           document.getElementById('hw-gpu-sep').style.display = '';
           document.getElementById('hw-gpu-wrap').style.display = '';
+        } else {
+          document.getElementById('hw-gpu-sep').style.display = 'none';
+          document.getElementById('hw-gpu-wrap').style.display = 'none';
         }
       } catch (e) { /* silently skip if not available */ }
     }

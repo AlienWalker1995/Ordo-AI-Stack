@@ -34,7 +34,7 @@ All tools via gateway at `http://mcp-gateway:8811/mcp`. Add/remove via dashboard
 Commonly enabled tools (called directly by their namespaced name):
 - **gateway__playwright_*** — Preferred browser tool. Navigate, screenshot, click, fill forms, snapshot.
 - **gateway__n8n_*** — n8n workflow tools (list, create, execute workflows). Needs `N8N_API_KEY` for full access.
-- **gateway__comfyui_*** — Image/audio/video generation. `generate_image`, `list_models`, `list_assets`.
+- **comfyui__*** — Image/audio/video generation (standalone MCP). `list_models`, `generate_image`, `view_image`, `get_job`, `list_assets`.
   To generate video with LTX-2.3: read `ltx_t2v.json` from the workspace, substitute `PARAM_*` values
   (PARAM_PROMPT, PARAM_NEGATIVE_PROMPT, PARAM_INT_SEED, PARAM_INT_FRAMES, PARAM_INT_WIDTH, PARAM_INT_HEIGHT),
   then POST `{"prompt": <workflow_json>}` to `http://comfyui:8188/prompt`. Poll `GET /history/{prompt_id}`
@@ -75,12 +75,11 @@ Add more via the dashboard MCP tab. See `data/mcp/servers.txt` for what's curren
 
 ## Model selection
 
-The primary model is `qwen3:8b` — fast, strong reasoning, 128K context. Good for most tasks.
+The primary model is `qwen3.5-uncensored:27b` — balanced speed and reasoning with 128K context. Good for most tasks.
 
 Switch models when:
 - Complex multi-step reasoning → `deepseek-r1:7b` (explicit chain-of-thought)
 - Coding tasks → `deepseek-coder:6.7b` (fine-tuned for code)
-- Long documents or large context → `qwen3:14b` (same 128K context, more capacity)
 
 Use `config.patch` to switch the active model mid-session if needed.
 

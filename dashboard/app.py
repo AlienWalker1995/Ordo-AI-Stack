@@ -1566,10 +1566,12 @@ async def hardware_stats():
         disk = await asyncio.to_thread(psutil.disk_usage, BASE_PATH_ENV)
         disk_used_gb = round(disk.used / 1e9, 1)
         disk_total_gb = round(disk.total / 1e9, 1)
+        disk_pct = round(disk.percent, 1) if disk.total > 0 else 0
     except Exception as e:
         logger.warning("Disk usage check failed for %s: %s", BASE_PATH_ENV, e)
         disk_used_gb = None
         disk_total_gb = None
+        disk_pct = None
 
     gpu = None
     try:
@@ -1602,6 +1604,7 @@ async def hardware_stats():
         "ram_pct": mem.percent,
         "disk_used_gb": disk_used_gb,
         "disk_total_gb": disk_total_gb,
+        "disk_pct": disk_pct,
         "gpu": gpu,
     }
 

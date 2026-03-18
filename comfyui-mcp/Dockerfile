@@ -8,10 +8,11 @@ WORKDIR /app
 RUN apt-get update -qq && apt-get install -y -qq git curl && rm -rf /var/lib/apt/lists/* \
   && git clone --depth 1 https://github.com/joenorton/comfyui-mcp-server.git . \
   && pip install --no-cache-dir -r requirements.txt \
-  && sed -i 's/mcp\.run(transport="streamable-http")/mcp.run(transport="streamable-http", host="0.0.0.0")/' server.py
+  && sed -i 's/port=9000,/port=9000, host="0.0.0.0",/' server.py
 
 # Server binds to 0.0.0.0:9000; ComfyUI at comfyui:8188
 ENV COMFYUI_URL=http://comfyui:8188
 EXPOSE 9000
 
-CMD ["python", "server.py"]
+# Use stdio so Docker MCP Gateway can communicate (it spawns containers and uses stdin/stdout)
+CMD ["python", "server.py", "--stdio"]

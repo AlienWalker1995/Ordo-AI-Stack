@@ -27,13 +27,12 @@ To add a tool: dashboard → MCP tab → add from catalog or paste a Hub URL.
 
 ## Models
 
-Primary model: **qwen3:8b** (`gateway/ollama/qwen3:8b`)
-- 128K context window, built-in reasoning/thinking mode
+Primary model: **qwen3.5-uncensored:27b** (`gateway/ollama/qwen3.5-uncensored:27b`)
+- 128K context window, balanced speed and reasoning
 - Good for: general questions, research, agentic tasks, coding
 
 Other models (switch via config.patch or model selector):
 - `gateway/ollama/deepseek-r1:7b` — explicit chain-of-thought reasoning
-- `gateway/ollama/qwen3:14b` — more capacity for large documents
 - `gateway/ollama/deepseek-coder:6.7b` — code-focused fine-tune
 
 ## RAG (documents)

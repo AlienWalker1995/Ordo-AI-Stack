@@ -69,8 +69,23 @@ def resolve_packs(config):
     return config.get("defaults", {}).get("packs", list(config["packs"].keys()))
 
 
-def download_model(repo_id: str, filename: str, subdir: str, dest_name: str | None = None) -> bool:
+def download_model(repo_id: str, filename: str, subdir: str, dest_name: str | None = None, url: str | None = None) -> bool:
     filename = filename.format(quant=QUANT)
+
+    # If full URL provided, parse it to extract repo and filename
+    if url:
+        try:
+            # Parse: https://huggingface.co/{repo_id}/resolve/main/{file_path}
+            url_parts = url.replace("https://huggingface.co/", "").replace("http://huggingface.co/", "").split("/")
+            if len(url_parts) >= 3:
+                parsed_repo = "/".join(url_parts[:2])
+                parsed_file = "/".join(url_parts[3:])  # Skip "resolve"
+                if repo_id == parsed_repo or not repo_id:
+                    repo_id = parsed_repo
+                if filename == parsed_file or not filename:
+                    filename = parsed_file
+        except Exception as e:
+            print(f"  Warning: Could not parse URL: {e}", flush=True)
     dest_name = dest_name or Path(filename).name
     dest_dir = MODELS_DIR / subdir
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -154,7 +169,13 @@ def main() -> int:
     ok = True
     for i, (pack_name, m) in enumerate(models, 1):
         print(f"[{i}/{len(models)}] {pack_name}:", flush=True)
-        if not download_model(m["repo"], m["file"], m["dest"], m.get("name")):
+        if not download_model(
+            m["repo"],
+            m["file"],
+            m["dest"],
+            m.get("name"),
+            m.get("url")
+        ):
             ok = False
 
     if ok:

@@ -3,7 +3,26 @@
     "allow": [
       "Bash(curl:*)",
       "Bash(python3:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(cmd.exe /c \"echo %USERPROFILE%\" 2>/dev/null | tr -d '\\\\r')",
+      "Bash(powershell.exe -Command \"[System.Environment]::GetFolderPath\\('UserProfile'\\)\")",
+      "Bash(powershell.exe -Command \"$content = \\\\\"[wsl2]\\\\`nmemory=120GB\\\\`nswap=0\\\\`n\\\\`n[experimental]\\\\`nautoMemoryReclaim=gradual\\\\\"; Set-Content -Path 'C:\\\\Users\\\\lynch\\\\.wslconfig' -Value \\\\$content -Encoding UTF8; Write-Output 'done'\")",
+      "Bash(python3.exe -c \"content = '[wsl2]\\\\nmemory=120GB\\\\nswap=0\\\\n\\\\n[experimental]\\\\nautoMemoryReclaim=gradual\\\\n'; open\\('C:/Users/lynch/.wslconfig', 'w'\\).write\\(content\\)\" 2>&1 || py -c \"content = '[wsl2]\\\\nmemory=120GB\\\\nswap=0\\\\n\\\\n[experimental]\\\\nautoMemoryReclaim=gradual\\\\n'; open\\('C:/Users/lynch/.wslconfig', 'w'\\).write\\(content\\)\" && echo \"done\")",
+      "Bash(cd:*)",
+      "Bash(find:*)",
+      "Bash(sleep:*)",
+      "Bash(docker logs:*)",
+      "Bash(source:*)",
+      "Bash(docker ps:*)",
+      "WebFetch(domain:docs.openclaw.ai)",
+      "Bash(docker exec:*)",
+      "Bash(docker compose:*)",
+      "WebSearch",
+      "Bash(grep:*)",
+      "WebFetch(domain:min-max.tech)",
+      "Bash(docker volume:*)",
+      "Bash(docker restart:*)",
+      "Bash(docker network:*)"
     ]
   }
 }
