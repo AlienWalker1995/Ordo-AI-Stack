@@ -39,10 +39,16 @@ COMPOSE_FILE_ENV = os.environ.get("COMPOSE_FILE", "docker-compose.yml")
 # Model download (ComfyUI files)
 COMFYUI_MODELS_DIR = Path(os.environ.get("COMFYUI_MODELS_DIR", "/models/comfyui"))
 COMFYUI_CATEGORIES = ("checkpoints", "loras", "text_encoders", "latent_upscale_models")
+HF_TOKEN = os.environ.get("HF_TOKEN", "").strip() or os.environ.get("HUGGING_FACE_HUB_TOKEN", "").strip()
 _dl_lock = threading.Lock()
 _dl_status: dict = {
     "running": False, "output": "", "done": True, "success": None,
     "progress": 0, "filename": "", "category": "",
+}
+_pull_lock = threading.Lock()
+_pull_status: dict = {
+    "running": False, "output": "", "done": True, "success": None,
+    "pack": "",
 }
 
 
@@ -442,13 +448,25 @@ def _run_model_download(url: str, category: str, filename: str, correlation_id: 
     try:
         start_byte = temp_path.stat().st_size if temp_path.exists() else 0
         req_headers = {"User-Agent": "AI-toolkit/1.0"}
+        if HF_TOKEN and ("huggingface.co" in url or "hf-mirror.com" in url):
+            req_headers["Authorization"] = f"Bearer {HF_TOKEN}"
         if start_byte > 0:
             req_headers["Range"] = f"bytes={start_byte}-"
         with httpx.Client(timeout=60.0, follow_redirects=True) as client:
             with client.stream("GET", url, headers=req_headers) as r:
                 ct = (r.headers.get("Content-Type") or "").lower()
                 if filename.endswith(".safetensors") and ct and "octet-stream" not in ct and "safetensors" not in ct:
-                    raise ValueError(f"Unexpected Content-Type {ct!r}; expected octet-stream")
+                    body_preview = ""
+                    try:
+                        for chunk in r.iter_bytes(chunk_size=512):
+                            body_preview = chunk.decode("utf-8", errors="replace").strip()[:200]
+                            break
+                    except Exception:
+                        pass
+                    hint = " (gated model? Agree to license at huggingface.co, ensure HF_TOKEN is valid)"
+                    if body_preview:
+                        hint = f" — response: {body_preview[:150]}..."
+                    raise ValueError(f"Unexpected Content-Type {ct!r}; expected octet-stream{hint}")
                 r.raise_for_status()
                 total_header = r.headers.get("Content-Range") or r.headers.get("Content-Length")
                 total = 0
@@ -528,3 +546,94 @@ async def models_download_status(_: None = Depends(verify_token)):
     """Poll active download progress. Auth required."""
     with _dl_lock:
         return dict(_dl_status)
+
+
+def _run_model_pull(pack: str, correlation_id: str = "") -> None:
+    """Run comfyui-model-puller via docker compose. Uses the same logic as manual pull (works for gated models)."""
+    with _pull_lock:
+        _pull_status.update({"running": True, "output": f"Starting pack: {pack}", "done": False, "success": None, "pack": pack})
+    compose_files = [f.strip() for f in COMPOSE_FILE_ENV.split(";") if f.strip()]
+    cmd = ["docker-compose"]
+    for cf in compose_files:
+        cmd += ["-f", f"/workspace/{cf}"]
+    cmd += ["--profile", "comfyui-models", "run", "--rm", "-e", f"COMFYUI_PACKS={pack}", "comfyui-model-puller"]
+    env = {**os.environ, "BASE_PATH": BASE_PATH, "DATA_PATH": os.environ.get("DATA_PATH", BASE_PATH + "/data")}
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            cwd="/workspace",
+            env=env,
+        )
+        output_lines = []
+        for line in proc.stdout:
+            output_lines.append(line.rstrip())
+            with _pull_lock:
+                _pull_status["output"] = "\n".join(output_lines[-20:])
+        proc.wait()
+        ok = proc.returncode == 0
+        _audit("model_pull", pack, "ok" if ok else "error", f"exit={proc.returncode}", correlation_id=correlation_id)
+        with _pull_lock:
+            _pull_status["success"] = ok
+            _pull_status["output"] = "\n".join(output_lines[-30:])
+            if not ok:
+                _pull_status["output"] += f"\nExit code: {proc.returncode}"
+    except Exception as e:
+        logger.error("Model pull failed: %s", e)
+        _audit("model_pull", pack, "error", str(e)[:200], correlation_id=correlation_id)
+        with _pull_lock:
+            _pull_status["success"] = False
+            _pull_status["output"] += f"\nError: {e}"
+    finally:
+        with _pull_lock:
+            _pull_status["running"] = False
+            _pull_status["done"] = True
+
+
+class ModelPullRequest(BaseModel):
+    pack: str
+    confirm: bool = False
+
+
+def _valid_packs() -> set[str]:
+    """Load valid pack names from models.json."""
+    try:
+        path = Path("/workspace/scripts/comfyui/models.json")
+        if path.exists():
+            data = json.loads(path.read_text())
+            return set(data.get("packs", {}).keys())
+    except Exception:
+        pass
+    return {"flux1-dev", "flux-schnell", "sd15", "sd35-medium", "sdxl"}
+
+
+@app.post("/models/pull")
+async def models_pull(body: ModelPullRequest, request: Request, _: None = Depends(verify_token)):
+    """Run comfyui-model-puller for a pack (e.g. flux1-dev). Works for gated models. Auth required."""
+    pack = body.pack.strip().lower()
+    if not pack:
+        raise HTTPException(status_code=400, detail="pack is required")
+    valid = _valid_packs()
+    if pack not in valid:
+        raise HTTPException(status_code=400, detail=f"Unknown pack. Valid: {', '.join(sorted(valid))}")
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="Set confirm: true to execute")
+    with _pull_lock:
+        if _pull_status.get("running"):
+            raise HTTPException(status_code=409, detail="A pull is already in progress")
+    thread = threading.Thread(
+        target=_run_model_pull,
+        args=(pack, _correlation_id(request)),
+        daemon=True,
+    )
+    thread.start()
+    return {"status": "started", "pack": pack}
+
+
+@app.get("/models/pull/status")
+async def models_pull_status(_: None = Depends(verify_token)):
+    """Poll pack pull progress. Auth required."""
+    with _pull_lock:
+        return dict(_pull_status)

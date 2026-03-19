@@ -478,7 +478,7 @@ services:
 - `GET /api/mcp/health` — probes each enabled server against MCP gateway; returns `{ok, checked_at}` per server
 - Dashboard UI shows health badges per tool
 - `filesystem` removed from default `servers.txt`; in registry with `allow_clients: []`
-- MCP secrets (`GITHUB_PERSONAL_ACCESS_TOKEN`, `BRAVE_API_KEY`) passed via compose env from root `.env`
+- MCP secrets (`GITHUB_PERSONAL_ACCESS_TOKEN`) passed via compose env from root `.env`
 
 **Current policy model:**
 - `allow_clients: ["*"]` = all clients get the tool (default for enabled tools)
@@ -1135,7 +1135,6 @@ prevent injected instructions from escalating privileges:
 | `RAG_CHUNK_SIZE` | rag-ingestion | Token chunk size for document splitting | `400` |
 | `RAG_CHUNK_OVERLAP` | rag-ingestion | Token overlap between chunks | `50` |
 | `GITHUB_PERSONAL_ACCESS_TOKEN` | mcp-gateway | GitHub MCP server token | *(optional)* |
-| `BRAVE_API_KEY` | mcp-gateway | Brave Search MCP server key | *(optional)* |
 
 ---
 

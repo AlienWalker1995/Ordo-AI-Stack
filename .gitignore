@@ -17,3 +17,12 @@ comfyui-logs.txt
 __pycache__
 *.pyc
 .claude/settings.local.json
+
+# OpenClaw personalized workspace (copy from *.example)
+openclaw/workspace/AGENTS.md
+openclaw/workspace/SOUL.md
+openclaw/workspace/TOOLS.md
+openclaw/OPENCLAW_SECURE.md
+
+# Local dev (personal notes, full troubleshooting)
+context/

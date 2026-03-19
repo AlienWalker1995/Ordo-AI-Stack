@@ -21,12 +21,20 @@ logger = logging.getLogger("gateway")
 
 
 @app.middleware("http")
-async def log_requests(request: Request, call_next):
+async def request_middleware(request: Request, call_next):
+    correlation_id = request.headers.get("X-Correlation-ID") or uuid.uuid4().hex[:8]
+    request.state.correlation_id = correlation_id
     if request.url.path != "/health":
-        logger.info(">>> %s %s from=%s", request.method, request.url.path, request.client.host if request.client else "?")
+        service = request.headers.get("X-Service-Name", "")
+        logger.info(">>> %s %s from=%s service=%s cid=%s",
+                    request.method, request.url.path,
+                    request.client.host if request.client else "?",
+                    service, correlation_id)
     response = await call_next(request)
+    response.headers["X-Correlation-ID"] = correlation_id
     if request.url.path != "/health":
-        logger.info("<<< %s %s status=%s", request.method, request.url.path, response.status_code)
+        logger.info("<<< %s %s status=%s cid=%s",
+                    request.method, request.url.path, response.status_code, correlation_id)
     return response
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434").rstrip("/")

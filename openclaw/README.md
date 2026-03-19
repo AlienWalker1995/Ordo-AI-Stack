@@ -50,7 +50,7 @@ Open **http://localhost:18789/** in your browser. Paste the gateway token into S
 
 **Dashboard performance monitoring:** To see OpenClaw throughput in the dashboard (Token Throughput section), use the **gateway** provider for models. In Settings → Model, pick a model prefixed with `gateway/` (e.g. `gateway/ollama/deepseek-r1:7b`). If you only see `ollama/` models, add the gateway provider to `data/openclaw/openclaw.json` — copy the `gateway` block from `openclaw/openclaw.json.example` into `models.providers`.
 
-**Security & Tailscale:** To bind the UI to localhost only (Tailscale Serve recommended), see [OPENCLAW_SECURE.md](OPENCLAW_SECURE.md).
+**Security & Tailscale:** To bind the UI to localhost only (Tailscale Serve recommended), see [OPENCLAW_SECURE.md.example](OPENCLAW_SECURE.md.example).
 
 ## Workspace Files
 
@@ -62,7 +62,7 @@ The agent reads these files at session start:
 | `AGENTS.md` | Session rules, memory system, safety guidelines        |
 | `TOOLS.md`  | Your environment-specific notes (SSH, cameras, TTS, etc.) |
 
-Templates live in `openclaw/workspace/`. On first setup, `ensure_openclaw_workspace.ps1` copies them to `data/openclaw/workspace/`. Edit them there—they persist in your data folder.
+Templates live in `openclaw/workspace/*.example`. On first setup, `ensure_openclaw_workspace.ps1` copies them to `data/openclaw/workspace/` (as `AGENTS.md`, `SOUL.md`, `TOOLS.md`). Edit them in `data/openclaw/workspace/`—they persist in your data folder. The originals in `openclaw/workspace/` are gitignored so you can keep personalized copies there for sync (`docker compose up openclaw-workspace-sync`).
 
 ## Data Paths
 

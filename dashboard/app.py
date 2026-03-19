@@ -28,8 +28,9 @@ from pydantic import BaseModel
 
 app = FastAPI(title="AI-toolkit Dashboard", version="1.0.0")
 
-# Dashboard auth (token or password for Tailscale/group use)
+# Dashboard auth (login/password or bearer token)
 DASHBOARD_AUTH_TOKEN = os.environ.get("DASHBOARD_AUTH_TOKEN", "").strip()
+DASHBOARD_LOGIN_ID = os.environ.get("DASHBOARD_LOGIN_ID", "").strip()
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "").strip()
 _AUTH_REQUIRED = bool(DASHBOARD_AUTH_TOKEN or DASHBOARD_PASSWORD)
 
@@ -47,8 +48,10 @@ def _verify_auth(request: Request) -> bool:
     if DASHBOARD_PASSWORD and auth.startswith("Basic "):
         try:
             decoded = base64.b64decode(auth[6:].strip()).decode()
-            _, password = decoded.split(":", 1)
-            return password == DASHBOARD_PASSWORD
+            username, password = decoded.split(":", 1)
+            password_ok = password == DASHBOARD_PASSWORD
+            login_ok = (not DASHBOARD_LOGIN_ID) or (username == DASHBOARD_LOGIN_ID)
+            return password_ok and login_ok
         except Exception:
             return False
     return False
@@ -93,6 +96,15 @@ async def auth_middleware(request: Request, call_next):
             )
         return JSONResponse(status_code=401, content={"detail": "Bearer token required"})
     return await call_next(request)
+
+@app.on_event("startup")
+async def _startup_warnings():
+    if not _AUTH_REQUIRED:
+        logger.warning(
+            "Dashboard is running WITHOUT authentication. "
+            "Set DASHBOARD_LOGIN_ID + DASHBOARD_PASSWORD (or DASHBOARD_AUTH_TOKEN) in .env to secure it."
+        )
+
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
 MODEL_GATEWAY_URL = os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435").rstrip("/")
@@ -584,6 +596,11 @@ class ModelDownloadRequest(BaseModel):
     filename: str = ""
 
 
+class ModelPullRequest(BaseModel):
+    pack: str
+    confirm: bool = False
+
+
 def _hf_url_to_ollama(raw: str) -> str:
     """Convert a HuggingFace GGUF URL to Ollama's hf.co/owner/repo format.
     Non-HF strings (model names, hf.co/ refs) are returned as-is.
@@ -648,6 +665,27 @@ async def models_download(req: ModelDownloadRequest, request: Request):
 async def models_download_status(request: Request):
     """Poll ComfyUI file download progress (proxied from ops-controller)."""
     code, data = await _ops_request("GET", "/models/download/status", request=request)
+    if code >= 400:
+        raise HTTPException(status_code=code, detail=data.get("detail", data))
+    return data
+
+
+@app.post("/api/models/pull")
+async def models_pull(req: ModelPullRequest, request: Request):
+    """Run comfyui-model-puller for a pack (e.g. flux1-dev). Works for gated models. Proxied to ops-controller."""
+    code, data = await _ops_request(
+        "POST", "/models/pull", request=request,
+        json={"pack": req.pack.strip(), "confirm": req.confirm},
+    )
+    if code >= 400:
+        raise HTTPException(status_code=code, detail=data.get("detail", data))
+    return {**data, "target": "comfyui"}
+
+
+@app.get("/api/models/pull/status")
+async def models_pull_status(request: Request):
+    """Poll pack pull progress (proxied from ops-controller)."""
+    code, data = await _ops_request("GET", "/models/pull/status", request=request)
     if code >= 400:
         raise HTTPException(status_code=code, detail=data.get("detail", data))
     return data
@@ -962,6 +1000,7 @@ async def auth_config():
     return {
         "auth_required": True,
         "auth_type": "bearer" if DASHBOARD_AUTH_TOKEN else "basic",
+        "login_id_required": bool(DASHBOARD_LOGIN_ID),
     }
 
 

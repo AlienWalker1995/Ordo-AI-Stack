@@ -107,6 +107,66 @@
           "url": "https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/loras/gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors"
         }
       ]
+    },
+    "sd15": {
+      "description": "SD 1.5 v1-5-pruned-emaonly — default for ComfyUI MCP generate_image (4 GB)",
+      "models": [
+        {
+          "repo": "runwayml/stable-diffusion-v1-5",
+          "file": "v1-5-pruned-emaonly.ckpt",
+          "dest": "checkpoints",
+          "type": "checkpoints",
+          "url": "https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.ckpt"
+        }
+      ]
+    },
+    "sd35-medium": {
+      "description": "SD 3.5 Medium FP8 — higher quality than SD 1.5, all-in-one with text encoders (11.6 GB). Use for blog images.",
+      "models": [
+        {
+          "repo": "Comfy-Org/stable-diffusion-3.5-fp8",
+          "file": "sd3.5_medium_incl_clips_t5xxlfp8scaled.safetensors",
+          "dest": "checkpoints",
+          "type": "checkpoints",
+          "url": "https://huggingface.co/Comfy-Org/stable-diffusion-3.5-fp8/resolve/main/sd3.5_medium_incl_clips_t5xxlfp8scaled.safetensors"
+        }
+      ]
+    },
+    "sdxl": {
+      "description": "SDXL Base 1.0 — higher quality than SD 1.5, detailed illustrations (6.5 GB). Use for blog images.",
+      "models": [
+        {
+          "repo": "stabilityai/stable-diffusion-xl-base-1.0",
+          "file": "sd_xl_base_1.0.safetensors",
+          "dest": "checkpoints",
+          "type": "checkpoints",
+          "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors"
+        }
+      ]
+    },
+    "flux-schnell": {
+      "description": "Flux.1-schnell — 12B param, 1–4 steps, Apache 2.0. Best quality for blog images. FP8 = 17 GB.",
+      "models": [
+        {
+          "repo": "Comfy-Org/flux1-schnell",
+          "file": "flux1-schnell-fp8.safetensors",
+          "dest": "checkpoints",
+          "type": "checkpoints",
+          "url": "https://huggingface.co/Comfy-Org/flux1-schnell/resolve/main/flux1-schnell-fp8.safetensors"
+        }
+      ]
+    },
+    "flux1-dev": {
+      "description": "FLUX.1 [dev] — 12B param, higher quality than schnell. Gated model — HF_TOKEN required. FP8 = 17 GB.",
+      "models": [
+        {
+          "repo": "Comfy-Org/flux1-dev",
+          "file": "flux1-dev-fp8.safetensors",
+          "dest": "checkpoints",
+          "type": "checkpoints",
+          "url": "https://huggingface.co/Comfy-Org/flux1-dev/resolve/main/flux1-dev-fp8.safetensors"
+        }
+      ]
     }
   },
   "defaults": {
