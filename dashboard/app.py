@@ -1490,6 +1490,34 @@ async def rag_status():
 BASE_PATH_ENV = os.environ.get("BASE_PATH", "/")
 
 
+def _top_processes_by_cpu(limit: int = 12) -> list[dict[str, int | float | str]]:
+    """Top processes by CPU % (snapshot). Skips processes we cannot read."""
+    for proc in psutil.process_iter(["pid", "name"]):
+        try:
+            proc.cpu_percent(interval=None)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    time.sleep(0.15)
+    rows: list[dict[str, int | float | str]] = []
+    for proc in psutil.process_iter(["pid", "name"]):
+        try:
+            cpu = proc.cpu_percent(interval=None)
+            mem = proc.memory_percent()
+            name = (proc.info.get("name") or proc.name() or "?")[:80]
+            rows.append(
+                {
+                    "pid": proc.pid,
+                    "name": name,
+                    "cpu_pct": round(cpu, 1),
+                    "mem_pct": round(mem, 1),
+                }
+            )
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    rows.sort(key=lambda x: float(x["cpu_pct"]), reverse=True)
+    return rows[:limit]
+
+
 @app.get("/api/hardware")
 async def hardware_stats():
     """System resource stats. No auth required (read-only). Blocking calls run in thread pool (R7)."""
@@ -1530,6 +1558,12 @@ async def hardware_stats():
     except Exception as e:
         logger.debug("GPU stats unavailable: %s", e)
 
+    top_processes: list[dict[str, int | float | str]] = []
+    try:
+        top_processes = await asyncio.to_thread(_top_processes_by_cpu, 12)
+    except Exception as e:
+        logger.warning("Top process list failed: %s", e)
+
     return {
         "cpu_pct": cpu_pct,
         "ram_used_gb": round(mem.used / 1e9, 1),
@@ -1539,6 +1573,7 @@ async def hardware_stats():
         "disk_total_gb": disk_total_gb,
         "disk_pct": disk_pct,
         "gpu": gpu,
+        "top_processes": top_processes,
     }
 
 

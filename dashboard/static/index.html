@@ -375,17 +375,6 @@
       width: 1.5rem;
       text-align: center;
     }
-    .service-port {
-      font-size: var(--text-xs);
-      font-family: var(--font-mono);
-      color: var(--muted);
-      background: var(--surface);
-      border: 1px solid var(--border-subtle);
-      border-radius: 4px;
-      padding: 1px 5px;
-      margin-left: auto;
-      flex-shrink: 0;
-    }
     .service-card .service-name {
       font-size: var(--text-base);
       font-weight: 600;
@@ -1040,6 +1029,72 @@
     .hw-bar-fill.warn span { background: var(--warning); }
     .hw-bar-fill.danger span { background: var(--danger); }
 
+    .hw-procs {
+      margin-bottom: var(--space-6);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0;
+    }
+    .hw-procs-summary {
+      padding: var(--space-3) var(--space-4);
+      font-size: var(--text-sm);
+      font-weight: 600;
+      color: var(--fg-muted);
+      cursor: pointer;
+      list-style: none;
+    }
+    .hw-procs-summary::-webkit-details-marker { display: none; }
+    .hw-procs-summary::before {
+      content: '▸ ';
+      display: inline-block;
+      transition: transform 0.15s;
+      color: var(--muted);
+    }
+    .hw-procs[open] .hw-procs-summary::before { transform: rotate(90deg); }
+    .hw-procs-inner { padding: 0 var(--space-4) var(--space-4); overflow-x: auto; }
+    .hw-procs-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: var(--text-sm);
+    }
+    .hw-procs-table th {
+      text-align: left;
+      font-size: var(--text-xs);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      font-weight: 600;
+      padding: var(--space-2) var(--space-3) var(--space-2) 0;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .hw-procs-table td {
+      padding: var(--space-2) var(--space-3) var(--space-2) 0;
+      border-bottom: 1px solid var(--border-subtle);
+      vertical-align: middle;
+    }
+    .hw-procs-table tr:last-child td { border-bottom: none; }
+    .hw-proc-name {
+      max-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--fg);
+    }
+    .hw-proc-num {
+      font-variant-numeric: tabular-nums;
+      color: var(--fg-muted);
+      white-space: nowrap;
+      width: 4rem;
+    }
+    .hw-procs-muted {
+      color: var(--muted);
+      font-style: italic;
+      font-size: var(--text-sm);
+    }
+
   </style>
 </head>
 <body>
@@ -1083,6 +1138,25 @@
         <div class="hw-bar-fill" id="hw-vram-bar"><span></span></div>
       </div>
     </div>
+
+    <details class="hw-procs" id="hw-procs-wrap" open>
+      <summary class="hw-procs-summary">Top processes by CPU</summary>
+      <div class="hw-procs-inner">
+        <table class="hw-procs-table" id="hw-procs-table" aria-label="Processes using CPU and memory">
+          <thead>
+            <tr>
+              <th scope="col">Process</th>
+              <th scope="col">CPU</th>
+              <th scope="col">RAM</th>
+            </tr>
+          </thead>
+          <tbody id="hw-procs-body">
+            <tr><td colspan="3" class="hw-procs-muted">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+
     <span id="hw-disk-sep" style="display:none" aria-hidden="true"></span>
     <span id="hw-gpu-sep" style="display:none" aria-hidden="true"></span>
 
@@ -1554,7 +1628,6 @@
             <div class="service-name">
               <span class="service-icon" aria-hidden="true">${SERVICE_ICONS[s.id] || '●'}</span>
               ${escapeHtml(s.name)}
-              ${s.port ? `<span class="service-port">:${s.port}</span>` : ''}
             </div>
             <a href="${serviceOpenHref(s, host)}" target="_blank" rel="noopener" class="service" style="text-decoration:none;color:inherit;" aria-label="Open ${s.name} (opens in new tab)">
               <span class="status ${s.ok ? 'ok' : 'fail'}" aria-hidden="true"></span>
@@ -2595,6 +2668,21 @@
         } else {
           document.getElementById('hw-gpu-sep').style.display = 'none';
           document.getElementById('hw-gpu-wrap').style.display = 'none';
+        }
+        const tbody = document.getElementById('hw-procs-body');
+        if (tbody) {
+          const procs = d.top_processes;
+          if (Array.isArray(procs) && procs.length) {
+            tbody.innerHTML = procs.map(p => `
+              <tr>
+                <td class="hw-proc-name" title="PID ${escapeHtml(String(p.pid))}">${escapeHtml(String(p.name || '?'))}</td>
+                <td class="hw-proc-num">${escapeHtml(String(p.cpu_pct))}%</td>
+                <td class="hw-proc-num">${escapeHtml(String(p.mem_pct))}%</td>
+              </tr>
+            `).join('');
+          } else {
+            tbody.innerHTML = '<tr><td colspan="3" class="hw-procs-muted">No process data</td></tr>';
+          }
         }
       } catch (e) { /* silently skip if not available */ }
     }
