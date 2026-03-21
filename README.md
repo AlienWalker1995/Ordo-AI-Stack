@@ -182,12 +182,19 @@ The [MCP Gateway](mcp/) exposes shared MCP tools (web search, GitHub, etc.) to a
 .\compose.ps1 down        # Stop
 ```
 
-## Tests
+## Tests and lint
+
+Install test deps once (includes `pytest` and `ruff`):
 
 ```powershell
+pip install -r tests/requirements.txt
 python -m pytest tests/ -v
 # Or: make test   (Linux/Mac)
+python -m ruff check dashboard tests model-gateway ops-controller rag-ingestion scripts
+# Or: make lint   (Linux/Mac)
 ```
+
+CI runs the same **pytest** and **ruff** steps (see `.github/workflows/ci.yml`).
 
 **Smoke test** (bring up services and verify health):
 
