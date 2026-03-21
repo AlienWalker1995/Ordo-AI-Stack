@@ -38,10 +38,11 @@ All tools via gateway at `http://mcp-gateway:8811/mcp`. Add/remove via dashboard
 - **gateway__call** — For MCP gateway tools. Pass `tool` with double underscore: `playwright__browser_navigate`, `playwright__browser_snapshot`, `duckduckgo__search`, `comfyui__list_models`, `comfyui__generate_image`, `n8n__workflow_list`, etc. Do NOT use single underscores (e.g. `playwright_navigate` will fail).
 - **comfyui__call** — For ComfyUI standalone. Pass `tool` without prefix: `list_models`, `generate_image`, `view_image`, `get_job`, `list_assets`.
 
-Commonly enabled tools (via gateway__call with correct tool names):
-- **gateway__playwright_*** — Preferred browser. Use `gateway__call` with `tool: "playwright__browser_navigate"`, `tool: "playwright__browser_snapshot"`, etc.
+Commonly enabled tools (via `gateway__call` with `tool: "server__toolname"` — there is no top-level `gateway__playwright__...` tool):
+- **Playwright (browser)** — `gateway__call` with `tool: "playwright__browser_navigate"`, `tool: "playwright__browser_snapshot"`, etc.
 - **gateway__n8n_*** — n8n workflows. Use `gateway__call` with `tool: "n8n__workflow_list"`, etc. Needs `N8N_API_KEY`.
 - **comfyui__*** — Image/audio/video. Use `comfyui__call` with `tool: "list_models"`, `tool: "generate_image"`, etc., or `gateway__call` with `tool: "comfyui__list_models"`.
+  **Custom workflows:** save ComfyUI **API-format** JSON as `/comfyui-workflows/<id>.json` (host `data/comfyui-workflows/`) — not under workspace only; see full `AGENTS.md` in the repo template.
   To generate video with LTX-2.3: read `ltx_t2v.json` from the workspace, substitute `PARAM_*` values
   (PARAM_PROMPT, PARAM_NEGATIVE_PROMPT, PARAM_INT_SEED, PARAM_INT_FRAMES, PARAM_INT_WIDTH, PARAM_INT_HEIGHT),
   then POST `{"prompt": <workflow_json>}` to `http://comfyui:8188/prompt`. Poll `GET /history/{prompt_id}`
@@ -59,7 +60,7 @@ Commonly enabled tools (via gateway__call with correct tool names):
   Use `gateway__fetch_content` with `method` and `body` args for POST requests.
 - **gateway__fetch_content** — Fetch and parse a URL. Use `gateway__call` with `tool: "fetch__fetch_content"` or the actual fetch tool name from the gateway.
 - **gateway__github_*** — GitHub issues, PRs, repos. Use `gateway__call` with `tool: "github__..."` (check gateway tools). Needs `GITHUB_PERSONAL_ACCESS_TOKEN`.
-- **Web search** — Use `gateway__call` with `tool: "duckduckgo__search"` (MCP). No API key needed if DuckDuckGo is in servers.txt.
+- **Web search** — Use `gateway__call` with `tool: "duckduckgo__search"` (MCP). Not `gateway__duckduckgo__search`. Native `web_search` needs `BRAVE_API_KEY` unless you use DuckDuckGo MCP.
 
 Add more via the dashboard MCP tab. See `data/mcp/servers.txt` for what's currently active.
 

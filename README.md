@@ -156,6 +156,7 @@ All data is stored under `BASE_PATH` via bind mounts — no Docker named volumes
 | `data/ollama` | Ollama models |
 | `data/open-webui` | Users, chats, settings |
 | `data/comfyui-output` | Generated images/video |
+| `data/comfyui-workflows` | ComfyUI MCP API-format workflows (shared with `comfyui-mcp` and OpenClaw gateway mount `/comfyui-workflows`) |
 | `data/n8n-data` | Workflows |
 | `data/n8n-files` | Shared files |
 | `data/openclaw` | OpenClaw config + workspace (SOUL.md, AGENTS.md, TOOLS.md) |

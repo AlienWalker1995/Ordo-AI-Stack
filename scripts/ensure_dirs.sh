@@ -15,6 +15,7 @@ dirs=(
   "$data/open-webui"
   "$data/comfyui-storage"
   "$data/comfyui-output"
+  "$data/comfyui-workflows"
   "$data/n8n-data"
   "$data/n8n-files"
   "$data/dashboard"
@@ -35,8 +36,8 @@ done
 mcp_servers="$data/mcp/servers.txt"
 mcp_registry="$data/mcp/registry-custom.yaml"
 if [[ ! -f "$mcp_servers" ]]; then
-  echo "n8n,playwright,comfyui" > "$mcp_servers"
-  echo "OK $mcp_servers (n8n,playwright,comfyui)"
+  echo "n8n,playwright,comfyui,duckduckgo" > "$mcp_servers"
+  echo "OK $mcp_servers (n8n,playwright,comfyui,duckduckgo)"
 fi
 # Bootstrap custom registry for ComfyUI (gateway uses --additional-registry)
 if [[ ! -f "$mcp_registry" ]] && [[ -f "$base/mcp/registry-custom.yaml" ]]; then

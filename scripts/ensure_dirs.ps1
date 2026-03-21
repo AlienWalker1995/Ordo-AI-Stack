@@ -9,6 +9,7 @@ $dirs = @(
     (Join-Path $data "open-webui"),
     (Join-Path $data "comfyui-storage"),
     (Join-Path $data "comfyui-output"),
+    (Join-Path $data "comfyui-workflows"),
     (Join-Path $data "n8n-data"),
     (Join-Path $data "n8n-files"),
     (Join-Path $data "dashboard"),
@@ -28,8 +29,8 @@ foreach ($d in $dirs) {
 $mcpServers = Join-Path $data "mcp\servers.txt"
 $mcpRegistry = Join-Path $data "mcp\registry-custom.yaml"
 if (-not (Test-Path $mcpServers)) {
-    Set-Content -Path $mcpServers -Value "n8n,playwright,comfyui" -NoNewline
-    Write-Host "OK $mcpServers (n8n,playwright,comfyui)"
+    Set-Content -Path $mcpServers -Value "n8n,playwright,comfyui,duckduckgo" -NoNewline
+    Write-Host "OK $mcpServers (n8n,playwright,comfyui,duckduckgo)"
 }
 # Bootstrap custom registry for ComfyUI (gateway uses --additional-registry)
 $registryTemplate = Join-Path $base "mcp\registry-custom.yaml"

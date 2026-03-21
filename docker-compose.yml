@@ -556,6 +556,8 @@ services:
       - ${OPENCLAW_WORKSPACE_DIR:-${BASE_PATH:-.}/data/openclaw/workspace}:/home/node/.openclaw/workspace
       # MCP config so agent can read data/mcp/servers.txt (cron job, TOOLS.md)
       - ${BASE_PATH:-.}/data/mcp:/home/node/.openclaw/workspace/data/mcp
+      # Same bind mount as comfyui-mcp:/workflows — agents write API-format JSON here so list_workflows/run_workflow see it
+      - ${BASE_PATH:-.}/data/comfyui-workflows:/comfyui-workflows
       # Named volume for extensions — Windows bind mounts force 0777 which
       # OpenClaw's safe-open rejects. A named volume has proper Linux perms.
       - openclaw-extensions:/home/node/.openclaw/extensions
