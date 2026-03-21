@@ -288,8 +288,6 @@ services:
     environment:
       - COMFYUI_URL=http://comfyui:8188
       - COMFY_MCP_WORKFLOW_DIR=/workflows
-      - COMFY_MCP_MAX_WAIT_SEC=${COMFY_MCP_MAX_WAIT_SEC:-600}
-      - COMFY_MCP_HTTP_TIMEOUT_SEC=${COMFY_MCP_HTTP_TIMEOUT_SEC:-180}
     volumes:
       # API-format workflows only — do NOT share with ComfyUI UI's workflow dir.
       # ComfyUI UI stores visual-format JSON (id/nodes/links); comfyui-mcp requires API-format (node_id → dict).
@@ -510,7 +508,7 @@ services:
             const p = d.plugins = d.plugins || {};
             const e = p.entries = p.entries || {};
             if (e['openclaw-mcp-bridge']) { process.exit(0); }
-            e['openclaw-mcp-bridge'] = {enabled:true,config:{servers:{gateway:{url:'$$MCP_URL',requestTimeoutMs:180000},comfyui:{url:'http://comfyui-mcp:9000/mcp',requestTimeoutMs:600000}},debug:false}};
+            e['openclaw-mcp-bridge'] = {enabled:true,config:{servers:{gateway:{url:'$$MCP_URL'}},debug:false}};
             p.enabled = true;
             fs.writeFileSync('$$CONFIG', JSON.stringify(d,null,2));
             console.log('add_mcp_plugin_config: added openclaw-mcp-bridge to plugins.entries');

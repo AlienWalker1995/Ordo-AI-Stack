@@ -375,25 +375,16 @@
       width: 1.5rem;
       text-align: center;
     }
-    .service-status-pill {
+    .service-port {
       font-size: var(--text-xs);
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      border-radius: 999px;
-      padding: 2px 8px;
+      font-family: var(--font-mono);
+      color: var(--muted);
+      background: var(--surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      padding: 1px 5px;
       margin-left: auto;
       flex-shrink: 0;
-    }
-    .service-status-pill.ok {
-      color: var(--success);
-      background: rgba(34, 197, 94, 0.12);
-      border: 1px solid rgba(34, 197, 94, 0.35);
-    }
-    .service-status-pill.fail {
-      color: var(--danger);
-      background: var(--danger-dim);
-      border: 1px solid rgba(239, 68, 68, 0.35);
     }
     .service-card .service-name {
       font-size: var(--text-base);
@@ -1048,21 +1039,6 @@
     }
     .hw-bar-fill.warn span { background: var(--warning); }
     .hw-bar-fill.danger span { background: var(--danger); }
-    .hw-top-list {
-      list-style: none;
-      margin: var(--space-2) 0 0 0;
-      padding: 0;
-      font-size: 0.7rem;
-      line-height: 1.45;
-      color: var(--muted);
-      font-family: var(--font-mono);
-    }
-    .hw-top-list li {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .hw-top-list.hw-top-empty { color: var(--border); font-style: italic; }
 
   </style>
 </head>
@@ -1090,13 +1066,11 @@
         <span class="hw-stat-label">CPU</span>
         <span class="hw-stat-val" id="hw-cpu">—</span>
         <div class="hw-bar-fill" id="hw-cpu-bar"><span></span></div>
-        <ul class="hw-top-list" id="hw-cpu-top" aria-label="Top CPU processes"></ul>
       </div>
       <div class="hw-stat">
         <span class="hw-stat-label">RAM</span>
         <span class="hw-stat-val" id="hw-ram">—</span>
         <div class="hw-bar-fill" id="hw-ram-bar"><span></span></div>
-        <ul class="hw-top-list" id="hw-ram-top" aria-label="Top RAM processes"></ul>
       </div>
       <div class="hw-stat" id="hw-disk-wrap" style="display:none">
         <span class="hw-stat-label">Disk</span>
@@ -1107,7 +1081,6 @@
         <span class="hw-stat-label" id="hw-gpu-name">GPU VRAM</span>
         <span class="hw-stat-val" id="hw-vram">—</span>
         <div class="hw-bar-fill" id="hw-vram-bar"><span></span></div>
-        <ul class="hw-top-list" id="hw-gpu-top" aria-label="Top GPU memory processes"></ul>
       </div>
     </div>
     <span id="hw-disk-sep" style="display:none" aria-hidden="true"></span>
@@ -1554,8 +1527,7 @@
         const services = d.services || [];
         const mcpSvc = services.find(s => s.id === 'mcp');
         if (mcpSvc) {
-          const mcpPort = mcpSvc.host_port != null ? mcpSvc.host_port : mcpSvc.port;
-          const mcpUrl = serviceUrl(host, mcpPort || 8811) + '/mcp';
+          const mcpUrl = serviceUrl(host, mcpSvc.port || 8811) + '/mcp';
           document.querySelectorAll('.mcp-ext-url').forEach(el => { el.textContent = mcpUrl; });
         }
         const okCount = services.filter(s => s.ok).length;
@@ -1565,19 +1537,16 @@
         summaryEl.innerHTML = okCount === total
           ? `✓ All ${total} services running`
           : `${okCount}/${total} services running — see hints on failed cards`;
-        el.innerHTML = services.map(s => {
-          const port = s.host_port != null ? s.host_port : s.port;
-          const openUrl = serviceUrl(host, port);
-          return `
+        el.innerHTML = services.map(s => `
           <div class="service-card ${s.ok ? 'ok-status' : 'fail'}" data-service-id="${escapeHtml(s.id)}">
             <div class="service-name">
               <span class="service-icon" aria-hidden="true">${SERVICE_ICONS[s.id] || '●'}</span>
               ${escapeHtml(s.name)}
-              <span class="service-status-pill ${s.ok ? 'ok' : 'fail'}">${s.ok ? 'Reachable' : 'Unreachable'}</span>
+              ${s.port ? `<span class="service-port">:${s.port}</span>` : ''}
             </div>
-            <a href="${openUrl}" target="_blank" rel="noopener" class="service" style="text-decoration:none;color:inherit;" title="${escapeHtml(openUrl)}" aria-label="Open ${escapeHtml(s.name)} (opens in new tab)">
+            <a href="${serviceUrl(host, s.port)}" target="_blank" rel="noopener" class="service" style="text-decoration:none;color:inherit;" aria-label="Open ${s.name} (opens in new tab)">
               <span class="status ${s.ok ? 'ok' : 'fail'}" aria-hidden="true"></span>
-              <span class="label">${s.ok ? 'Open' : 'Unavailable'}</span>
+              <span class="label">${s.ok ? 'Running' : 'Offline'}</span>
               <span class="external" aria-hidden="true">↗</span>
             </a>
             ${opsAvailable ? `
@@ -1590,8 +1559,7 @@
             ` : ''}
             ${!s.ok && s.hint ? `<div class="hint">${s.hint}</div>` : ''}
           </div>
-        `;
-        }).join('');
+        `).join('');
         el.querySelectorAll('.btn-ops-start').forEach(btn => {
           btn.addEventListener('click', async (e) => {
             e.preventDefault();
@@ -2582,42 +2550,17 @@
       barEl.classList.toggle('danger', pct >= 90);
     }
 
-    function fillHwTopList(elId, rows, emptyHint) {
-      const el = document.getElementById(elId);
-      if (!el) return;
-      if (!rows || !rows.length) {
-        el.className = 'hw-top-list hw-top-empty';
-        el.innerHTML = '<li>' + escapeHtml(emptyHint || '—') + '</li>';
-        return;
-      }
-      el.className = 'hw-top-list';
-      el.innerHTML = rows.map(function (r) {
-        if (r.cpu_pct != null) {
-          return '<li>' + escapeHtml(r.name) + ' · ' + Number(r.cpu_pct).toFixed(1) + '%</li>';
-        }
-        if (r.ram_mb != null) {
-          return '<li>' + escapeHtml(r.name) + ' · ' + Math.round(r.ram_mb) + ' MB</li>';
-        }
-        if (r.vram_mb != null) {
-          return '<li>' + escapeHtml(r.name) + ' · ' + Math.round(r.vram_mb) + ' MB VRAM</li>';
-        }
-        return '<li>' + escapeHtml(r.name || '?') + '</li>';
-      }).join('');
-    }
-
     async function refreshHardware() {
       try {
         const d = await fetch('/api/hardware', { cache: 'no-store' }).then(r => r.json());
         const cpu = d.cpu_pct != null ? d.cpu_pct : 0;
         document.getElementById('hw-cpu').textContent = cpu.toFixed(0) + '%';
         setBar(document.getElementById('hw-cpu-bar'), cpu);
-        fillHwTopList('hw-cpu-top', d.top_cpu, 'No process data');
         const ramUsed = d.ram_used_gb != null ? d.ram_used_gb : 0;
         const ramTotal = d.ram_total_gb != null ? d.ram_total_gb : 0;
         const ramPct = d.ram_pct != null ? d.ram_pct : 0;
         document.getElementById('hw-ram').textContent = ramUsed + ' / ' + ramTotal + ' GB';
         setBar(document.getElementById('hw-ram-bar'), ramPct);
-        fillHwTopList('hw-ram-top', d.top_ram, 'No process data');
         if (d.disk_used_gb != null && d.disk_total_gb != null) {
           document.getElementById('hw-disk').textContent = d.disk_used_gb + ' / ' + d.disk_total_gb + ' GB';
           const diskPct = d.disk_pct != null ? d.disk_pct : (d.disk_total_gb > 0 ? (d.disk_used_gb / d.disk_total_gb) * 100 : 0);
@@ -2635,7 +2578,6 @@
           if (d.gpu.utilization_pct != null) vramText += ' · ' + d.gpu.utilization_pct + '% util';
           document.getElementById('hw-vram').textContent = vramText;
           setBar(document.getElementById('hw-vram-bar'), vramPct);
-          fillHwTopList('hw-gpu-top', d.top_gpu, 'No process on GPU');
           document.getElementById('hw-gpu-sep').style.display = '';
           document.getElementById('hw-gpu-wrap').style.display = '';
         } else {

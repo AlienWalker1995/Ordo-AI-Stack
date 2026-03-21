@@ -709,23 +709,23 @@ OPS_SERVICE_MAP = {
 }
 
 SERVICES = [
-    {"id": "ollama", "name": "Ollama", "host_port": 11434, "url": "http://localhost:11434", "check": "http://ollama:11434/api/version",
+    {"id": "ollama", "name": "Ollama", "port": 11434, "url": "http://localhost:11434", "check": "http://ollama:11434/api/version",
      "hint": "Run: docker compose up -d ollama"},
-    {"id": "model-gateway", "name": "Model Gateway", "host_port":11435, "url": "http://localhost:11435", "check": "http://model-gateway:11435/health",
+    {"id": "model-gateway", "name": "Model Gateway", "port": 11435, "url": "http://localhost:11435", "check": "http://model-gateway:11435/health",
      "hint": "OpenAI-compatible proxy. Set OPENAI_API_BASE to use."},
-    {"id": "webui", "name": "Open WebUI", "host_port":3000, "url": "http://localhost:3000", "check": "http://open-webui:8080",
+    {"id": "webui", "name": "Open WebUI", "port": 3000, "url": "http://localhost:3000", "check": "http://open-webui:8080",
      "hint": "Depends on Ollama. Check: docker compose logs open-webui"},
-    {"id": "mcp", "name": "MCP Gateway", "host_port":8811, "url": "http://localhost:8811", "check": "http://mcp-gateway:8811/mcp",
+    {"id": "mcp", "name": "MCP Gateway", "port": 8811, "url": "http://localhost:8811", "check": "http://mcp-gateway:8811/mcp",
      "hint": "Add/remove tools from the dashboard. Connect at http://localhost:8811/mcp — see mcp/README.md"},
-    {"id": "comfyui", "name": "ComfyUI", "host_port":8188, "url": "http://localhost:8188", "check": "http://comfyui:8188",
+    {"id": "comfyui", "name": "ComfyUI", "port": 8188, "url": "http://localhost:8188", "check": "http://comfyui:8188",
      "hint": "ComfyUI uses auto-detected compute (NVIDIA/AMD/Intel/CPU). Run ./compose up -d. Pull LTX-2 via dashboard."},
-    {"id": "n8n", "name": "N8N", "host_port":5678, "url": "http://localhost:5678", "check": "http://n8n:5678",
+    {"id": "n8n", "name": "N8N", "port": 5678, "url": "http://localhost:5678", "check": "http://n8n:5678",
      "hint": "Check: docker compose logs n8n"},
-    {"id": "openclaw", "name": "OpenClaw", "host_port":int(OPENCLAW_UI_PORT),
+    {"id": "openclaw", "name": "OpenClaw", "port": int(OPENCLAW_UI_PORT),
      "url": f"http://localhost:{OPENCLAW_UI_PORT}/?token={OPENCLAW_GATEWAY_TOKEN}" if OPENCLAW_GATEWAY_TOKEN else f"http://localhost:{OPENCLAW_UI_PORT}",
      "check": f"http://openclaw-gateway:{OPENCLAW_GATEWAY_PORT}/",
      "hint": f"Open Control UI on port {OPENCLAW_UI_PORT}. Token: {OPENCLAW_GATEWAY_TOKEN or '(not set)'}. Check: docker compose logs openclaw-gateway"},
-    {"id": "qdrant", "name": "Qdrant", "host_port":6333, "url": "http://localhost:6333",
+    {"id": "qdrant", "name": "Qdrant", "port": 6333, "url": "http://localhost:6333",
      "check": "http://qdrant:6333/readyz",
      "hint": "Vector DB for RAG. Drop files in data/rag-input/ (with --profile rag) or upload via Open WebUI Documents tab."},
 ]
@@ -1597,85 +1597,15 @@ async def rag_status():
 # --- Hardware ---
 
 BASE_PATH_ENV = os.environ.get("BASE_PATH", "/")
-_HW_TOP_N = int(os.environ.get("DASHBOARD_HW_TOP_N", "4"))
 
 
-def _short_proc_name(name: str, max_len: int = 22) -> str:
-    n = (name or "?").strip() or "?"
-    return n if len(n) <= max_len else n[: max_len - 1] + "…"
-
-
-def _top_processes_cpu(limit: int) -> list[dict]:
-    """Top processes by CPU % (snapshot after a short interval)."""
-    procs: list[psutil.Process] = []
-    for p in psutil.process_iter():
-        try:
-            p.cpu_percent(interval=None)
-            procs.append(p)
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            continue
-    time.sleep(0.12)
-    rows: list[dict] = []
-    for p in procs:
-        try:
-            cpu = p.cpu_percent(interval=None)
-            name = _short_proc_name(p.name())
-            rows.append({"pid": p.pid, "name": name, "cpu_pct": round(cpu, 1)})
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            continue
-    rows.sort(key=lambda x: x["cpu_pct"], reverse=True)
-    return rows[:limit]
-
-
-def _top_processes_ram(limit: int) -> list[dict]:
-    """Top processes by resident set size."""
-    rows: list[dict] = []
-    for p in psutil.process_iter(["pid", "name"]):
-        try:
-            rss = p.memory_info().rss
-            name = _short_proc_name(p.info.get("name") or "?")
-            rows.append({"pid": p.info["pid"], "name": name, "ram_mb": round(rss / (1024 * 1024), 0)})
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            continue
-    rows.sort(key=lambda x: x["ram_mb"], reverse=True)
-    return rows[:limit]
-
-
-def _top_processes_gpu_vram(handle, limit: int) -> list[dict]:
-    """Top PIDs by reported GPU memory (compute + graphics)."""
-    import pynvml
-
-    merged: dict[int, int] = {}
-    getters = [pynvml.nvmlDeviceGetComputeRunningProcesses]
-    if hasattr(pynvml, "nvmlDeviceGetGraphicsRunningProcesses"):
-        getters.append(pynvml.nvmlDeviceGetGraphicsRunningProcesses)
-    for getter in getters:
-        try:
-            for proc in getter(handle):
-                pid = int(proc.pid)
-                merged[pid] = merged.get(pid, 0) + int(proc.usedGpuMemory or 0)
-        except Exception:
-            continue
-    rows: list[dict] = []
-    for pid, used_b in merged.items():
-        vram_mb = used_b // (1024 * 1024)
-        name = "?"
-        try:
-            if psutil.pid_exists(pid):
-                name = _short_proc_name(psutil.Process(pid).name())
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            name = f"pid {pid}"
-        rows.append({"pid": pid, "name": name, "vram_mb": vram_mb})
-    rows.sort(key=lambda x: x["vram_mb"], reverse=True)
-    return rows[:limit]
-
-
-def _hardware_stats_sync() -> dict:
-    """Collect CPU/RAM/disk/GPU and top consumer processes (blocking)."""
-    cpu_pct = psutil.cpu_percent(0.1)
-    mem = psutil.virtual_memory()
+@app.get("/api/hardware")
+async def hardware_stats():
+    """System resource stats. No auth required (read-only). Blocking calls run in thread pool (R7)."""
+    cpu_pct = await asyncio.to_thread(psutil.cpu_percent, 0.1)
+    mem = await asyncio.to_thread(psutil.virtual_memory)
     try:
-        disk = psutil.disk_usage(BASE_PATH_ENV)
+        disk = await asyncio.to_thread(psutil.disk_usage, BASE_PATH_ENV)
         disk_used_gb = round(disk.used / 1e9, 1)
         disk_total_gb = round(disk.total / 1e9, 1)
         disk_pct = round(disk.percent, 1) if disk.total > 0 else 0
@@ -1685,16 +1615,7 @@ def _hardware_stats_sync() -> dict:
         disk_total_gb = None
         disk_pct = None
 
-    top_cpu: list[dict] = []
-    top_ram: list[dict] = []
-    try:
-        top_cpu = _top_processes_cpu(_HW_TOP_N)
-        top_ram = _top_processes_ram(_HW_TOP_N)
-    except Exception as e:
-        logger.debug("Top process sampling failed: %s", e)
-
     gpu = None
-    top_gpu: list[dict] = []
     try:
         import pynvml  # optional; only present when nvidia-ml-py is installed
         pynvml.nvmlInit()
@@ -1707,7 +1628,6 @@ def _hardware_stats_sync() -> dict:
                 name = name.decode("utf-8", errors="replace").strip()
             else:
                 name = str(name).strip()
-            top_gpu = _top_processes_gpu_vram(h, _HW_TOP_N)
             gpu = {
                 "name": name or "GPU",
                 "vram_used_mb": mi.used // 1024 // 1024,
@@ -1728,16 +1648,7 @@ def _hardware_stats_sync() -> dict:
         "disk_total_gb": disk_total_gb,
         "disk_pct": disk_pct,
         "gpu": gpu,
-        "top_cpu": top_cpu,
-        "top_ram": top_ram,
-        "top_gpu": top_gpu,
     }
-
-
-@app.get("/api/hardware")
-async def hardware_stats():
-    """System resource stats. No auth required (read-only). Blocking work runs in a worker thread."""
-    return await asyncio.to_thread(_hardware_stats_sync)
 
 
 # --- Static ---

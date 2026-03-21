@@ -188,17 +188,11 @@ def main() -> int:
             modified = True
         # Ensure both gateway port (6680) and UI port (6682) are in allowedOrigins
         # so the browser UI can make requests to the gateway without CORS errors.
-        # Set LAN_IP (e.g. Tailscale/host IP) when accessing from another machine — no default.
-        lan_ip = os.environ.get("LAN_IP", "").strip()
+        lan_ip = os.environ.get("LAN_IP", "192.0.2.1")
         required_origins = {
-            "http://localhost:6680", "http://127.0.0.1:6680",
-            "http://localhost:6682", "http://127.0.0.1:6682",
+            "http://localhost:6680", "http://127.0.0.1:6680", f"http://{lan_ip}:6680",
+            "http://localhost:6682", "http://127.0.0.1:6682", f"http://{lan_ip}:6682",
         }
-        if lan_ip:
-            required_origins |= {
-                f"http://{lan_ip}:6680",
-                f"http://{lan_ip}:6682",
-            }
         existing = set(control_ui.get("allowedOrigins") or [])
         if not required_origins.issubset(existing):
             control_ui["allowedOrigins"] = sorted(required_origins | existing)

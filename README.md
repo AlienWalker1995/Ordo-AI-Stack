@@ -116,7 +116,7 @@ ComfyUI starts independently. LTX-2 models (~60 GB) are downloaded on demand —
 ## Security
 
 - **Open WebUI** — set `WEBUI_AUTH=True` in `.env` when exposing to a network.
-- **OpenClaw** — requires `OPENCLAW_GATEWAY_TOKEN`. For Tailscale-only access, use `overrides/openclaw-secure.yml`. See [OPENCLAW_SECURE.md.example](openclaw/OPENCLAW_SECURE.md.example) (copy to a local `OPENCLAW_SECURE.md` if you want a persistent reference).
+- **OpenClaw** — requires `OPENCLAW_GATEWAY_TOKEN`. For Tailscale-only access, use `overrides/openclaw-secure.yml`. See [OPENCLAW_SECURE.md](openclaw/OPENCLAW_SECURE.md).
 - **Ops Controller** — requires `OPS_CONTROLLER_TOKEN` for dashboard start/stop/restart.
 - Never commit `.env`. Full threat model: [SECURITY.md](SECURITY.md).
 

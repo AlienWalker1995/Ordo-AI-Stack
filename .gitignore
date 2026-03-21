@@ -5,18 +5,10 @@ overrides/compute.yml
 models/
 data/
 
-# Env variants (never commit real secrets; keep .env.example tracked)
-.env.*
-!.env.example
-
 # Secrets / keys (never commit)
 *.pem
 *.key
 *.kubeconfig
-credentials.json
-**/auth-profiles.json
-**/sessions/*.jsonl
-.token
 
 # Debug / temporary
 .claude

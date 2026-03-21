@@ -1,5 +1,3 @@
-<!-- Copy to TOOLS.md and customize for your environment -->
-
 # TOOLS.md
 
 Environment-specific notes for this AI-toolkit install.
@@ -16,7 +14,7 @@ Environment-specific notes for this AI-toolkit install.
 
 ## MCP tools
 
-Check what's active: `data/mcp/servers.txt` or the dashboard MCP tab.
+Check what's active: `data/mcp/servers.txt` (at `workspace/data/mcp/servers.txt` in container) or the dashboard MCP tab. If read fails, use `gateway__call` with `duckduckgo__search` directly — DuckDuckGo is enabled by default.
 
 **Typical setup (all via MCP gateway):**
 - `n8n` — workflow automation. Set `N8N_API_KEY` in `.env` for full access.
