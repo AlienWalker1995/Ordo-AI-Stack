@@ -4,6 +4,7 @@ mcp/.env
 overrides/compute.yml
 models/
 data/
+data
 
 # Secrets / keys (never commit)
 *.pem
@@ -11,14 +12,12 @@ data/
 *.kubeconfig
 
 # Debug / temporary
-.claude
 comfyui-logs.txt
 comfyui*.log
 openclaw*.log
 .pytest_cache
 __pycache__
 *.pyc
-.claude/settings.local.json
 
 # OpenClaw personalized workspace (copy from *.example)
 openclaw/workspace/AGENTS.md

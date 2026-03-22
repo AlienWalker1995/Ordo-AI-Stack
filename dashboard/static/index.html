@@ -429,6 +429,38 @@
     }
     .status-summary.all-ok { border-left: 4px solid var(--success); }
     .status-summary.has-issues { border-left: 4px solid var(--warning); }
+    .deps-wrap { overflow-x: auto; margin-top: var(--space-3); }
+    .deps-summary { margin-bottom: var(--space-3); }
+    .deps-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: var(--text-sm);
+    }
+    .deps-table th, .deps-table td {
+      padding: var(--space-2) var(--space-3);
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .deps-table th {
+      color: var(--muted);
+      font-weight: 600;
+      font-size: var(--text-xs);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .deps-table .deps-name { font-weight: 600; color: var(--fg); font-family: inherit; }
+    .deps-table .deps-mono { font-family: var(--font-mono); font-size: 0.8rem; }
+    .deps-table .deps-okline { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+    .deps-table .deps-hint {
+      display: block;
+      font-size: var(--text-xs);
+      color: var(--muted);
+      font-weight: 400;
+      margin-top: var(--space-1);
+      max-width: 28rem;
+    }
+    .deps-table .deps-err { color: var(--danger); word-break: break-word; }
     .throughput-subsection {
       margin-bottom: var(--space-6);
     }
@@ -1106,6 +1138,7 @@
         <p class="subtitle">Unified model management — Ollama, ComfyUI, and services</p>
         <nav class="nav-anchors" aria-label="Page sections">
           <a href="#services-section">⚡ Services</a>
+          <a href="#dependencies-section">🔗 Dependencies</a>
           <a href="#throughput-section">📊 Throughput</a>
           <a href="#models-section">📦 Models</a>
         </nav>
@@ -1210,6 +1243,14 @@
           </div>
         </div>
       </details>
+    </section>
+
+    <section id="dependencies-section">
+      <h2>Dependencies</h2>
+      <p class="section-desc">Canonical registry (M7): live HTTP probes from this dashboard. URLs use Docker DNS names as seen from the dashboard container; use <code>scripts/doctor</code> from the host for localhost ports.</p>
+      <div class="deps-wrap" id="dependencies-wrap">
+        <div class="skeleton skeleton-line" style="height:120px;width:100%;"></div>
+      </div>
     </section>
 
     <section id="throughput-section">
@@ -1739,6 +1780,63 @@
       }
     }
 
+    function fmtDepLatency(ms) {
+      if (ms == null || ms === '') return '—';
+      const n = Number(ms);
+      return Number.isFinite(n) ? `${n.toFixed(1)}ms` : '—';
+    }
+
+    async function loadDependencies() {
+      const wrap = document.getElementById('dependencies-wrap');
+      if (!wrap) return;
+      try {
+        const r = await api('/api/dependencies');
+        const d = await r.json();
+        const entries = d.entries || [];
+        const okN = entries.filter(e => e.ok).length;
+        const total = entries.length;
+        const sumClass = total === 0 ? 'has-issues' : (okN === total ? 'all-ok' : 'has-issues');
+        const summary = `<div class="deps-summary status-summary ${sumClass}" role="status" aria-live="polite">${total === 0 ? 'No entries' : `${okN}/${total} dependencies reachable`}</div>`;
+        const head = `<thead><tr>
+          <th scope="col">Name</th>
+          <th scope="col">Category</th>
+          <th scope="col">OpenClaw</th>
+          <th scope="col">Health</th>
+          <th scope="col">Ready</th>
+          <th scope="col">Hint</th>
+        </tr></thead>`;
+        const body = entries.map((e) => {
+          const name = escapeHtml(e.name || e.id || '—');
+          const idAttr = escapeHtml(e.id || '');
+          const cat = escapeHtml(e.category || '—');
+          const oc = e.openclaw_critical
+            ? '<span class="badge badge-warn" title="On critical path for OpenClaw">Yes</span>'
+            : '<span class="badge badge-muted">—</span>';
+          const healthLine = e.ok
+            ? `<div class="deps-okline"><span class="status ok" aria-hidden="true"></span><span>OK</span> <span class="deps-mono" style="color:var(--muted);">${fmtDepLatency(e.latency_ms)}</span></div>`
+            : `<div class="deps-okline"><span class="status fail" aria-hidden="true"></span><span class="deps-err">${escapeHtml(e.error || 'Unreachable')}</span></div>`;
+          let readyCell = '<span class="deps-mono" style="color:var(--muted);">—</span>';
+          if (e.ready_url) {
+            readyCell = e.ready_ok
+              ? `<div class="deps-okline"><span class="status ok" aria-hidden="true"></span><span>OK</span> <span class="deps-mono" style="color:var(--muted);">${fmtDepLatency(e.ready_latency_ms)}</span></div>`
+              : `<div class="deps-okline"><span class="status fail" aria-hidden="true"></span><span class="deps-err">${escapeHtml(e.ready_error || 'Not ready')}</span></div>`;
+          }
+          const hint = e.hint ? `<span class="deps-hint">${escapeHtml(e.hint)}</span>` : '';
+          return `<tr>
+            <td><span class="deps-name" title="${idAttr}">${name}</span></td>
+            <td class="deps-mono">${cat}</td>
+            <td>${oc}</td>
+            <td>${healthLine}</td>
+            <td>${readyCell}</td>
+            <td>${hint || '—'}</td>
+          </tr>`;
+        }).join('');
+        wrap.innerHTML = summary + `<table class="deps-table" aria-label="Dependency probes">${head}<tbody>${body}</tbody></table>`;
+      } catch (err) {
+        wrap.innerHTML = '<div class="empty">Could not load dependencies. <span class="hint">Check that the dashboard API is up.</span></div>';
+      }
+    }
+
     function buildOllamaDropdown(filter = '') {
       const installed = new Set(ollamaModels.map(m => m.name));
       const optionsEl = document.getElementById('ollama-select-options');
@@ -1817,6 +1915,15 @@
       } catch (e) { /* ignore */ }
     }
 
+    function apiErrorDetail(d) {
+      if (!d || typeof d !== 'object') return 'Request failed';
+      const det = d.detail;
+      if (typeof det === 'string') return det;
+      if (Array.isArray(det)) return det.map((x) => (x && x.msg) ? x.msg : JSON.stringify(x)).join('; ');
+      if (det != null) return JSON.stringify(det);
+      return 'Unknown error';
+    }
+
     document.getElementById('default-model-btn')?.addEventListener('click', async () => {
       const sel = document.getElementById('default-model-select');
       const statusEl = document.getElementById('default-model-status');
@@ -1831,13 +1938,21 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ model }),
         });
-        const d = await r.json();
+        let d = {};
+        try { d = await r.json(); } catch (e) { /* empty body */ }
+        if (!r.ok) {
+          const msg = apiErrorDetail(d);
+          statusEl.textContent = 'Error: ' + msg;
+          toast('Failed to set default model — ' + msg, 'error');
+          return;
+        }
         if (d.ok) {
           statusEl.textContent = `✓ Default set to ${model}. Open WebUI restarting…`;
           toast('Default model updated: ' + model, 'success');
         } else {
-          statusEl.textContent = 'Error: ' + (d.webui_error || 'Unknown error');
-          toast('Failed to set default model', 'error');
+          const err = d.webui_error || d.detail || 'Unknown error';
+          statusEl.textContent = 'Error: ' + (typeof err === 'string' ? err : JSON.stringify(err));
+          toast('Failed to set default model — ' + (typeof err === 'string' ? err : 'see status'), 'error');
         }
       } catch (e) {
         statusEl.textContent = 'Error: ' + (e.message || e);
@@ -2489,7 +2604,7 @@
       const btn = document.getElementById('refresh-btn');
       btn.classList.add('loading');
       if (!ollamaLibrary.length) await loadOllamaLibrary();
-      await Promise.all([loadServices(), loadOllamaModels(), loadComfyuiModels(), loadComfyuiPacks(), loadMcpServers(), loadOpenclawModels()]);
+      await Promise.all([loadServices(), loadDependencies(), loadOllamaModels(), loadComfyuiModels(), loadComfyuiPacks(), loadMcpServers(), loadOpenclawModels()]);
       loadThroughputStats();
       loadThroughputServiceUsage();
       btn.classList.remove('loading');

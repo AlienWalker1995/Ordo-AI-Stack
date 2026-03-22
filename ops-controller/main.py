@@ -363,6 +363,24 @@ async def env_set(body: EnvSetBody, request: Request, _: None = Depends(verify_t
     return {"ok": True, "key": body.key}
 
 
+@app.get("/env/{key}")
+async def env_get(key: str, _: None = Depends(verify_token)):
+    """Read a single allowed key from /workspace/.env (same file env_set writes)."""
+    if key not in ENV_ALLOWED_KEYS:
+        raise HTTPException(status_code=400, detail=f"Key not in allowlist: {key!r}")
+    env_path = Path("/workspace/.env")
+    if not env_path.exists():
+        return {"key": key, "value": ""}
+    content = env_path.read_text(encoding="utf-8")
+    pattern = rf"^{re.escape(key)}=(.*)$"
+    m = re.search(pattern, content, re.MULTILINE)
+    raw = m.group(1).rstrip() if m else ""
+    # Strip optional surrounding quotes (common in .env examples)
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+        raw = raw[1:-1]
+    return {"key": key, "value": raw}
+
+
 @app.post("/services/{service_id}/recreate")
 async def service_recreate(
     service_id: str, body: ConfirmBody, request: Request,

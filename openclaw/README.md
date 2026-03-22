@@ -71,7 +71,7 @@ Templates live in `openclaw/workspace/*.example`. On first setup, `ensure_opencl
 ## Data Paths
 
 - **Config:** `data/openclaw/` (openclaw.json, agents, etc.)
-- **Workspace:** `data/openclaw/workspace/` (SOUL.md, AGENTS.md, TOOLS.md, memory/)
+- **Workspace:** `data/openclaw/workspace/` (SOUL.md, AGENTS.md, TOOLS.md, MEMORY.md, `memory/`)
 
 ## Discord (default channel)
 

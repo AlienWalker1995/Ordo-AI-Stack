@@ -76,11 +76,17 @@ async def security_headers_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    """Require auth for /api/* except /api/health and /api/auth/config."""
+    """Require auth for /api/* except health/hub read-only endpoints."""
     path = request.url.path
     if not path.startswith("/api/"):
         return await call_next(request)
-    if path in ("/api/health", "/api/auth/config", "/api/hardware", "/api/rag/status"):
+    if path in (
+        "/api/health",
+        "/api/dependencies",
+        "/api/auth/config",
+        "/api/hardware",
+        "/api/rag/status",
+    ):
         return await call_next(request)
     # /api/throughput/record: requires THROUGHPUT_RECORD_TOKEN when set (model-gateway internal; PRD §3.E)
     if path == "/api/throughput/record":
@@ -1252,8 +1258,12 @@ class DefaultModelRequest(BaseModel):
 
 
 @app.get("/api/config/default-model")
-async def get_default_model():
-    """Return the current DEFAULT_MODEL value."""
+async def get_default_model(request: Request):
+    """Return DEFAULT_MODEL from project .env (via ops-controller) when configured."""
+    if OPS_CONTROLLER_TOKEN:
+        code, data = await _ops_request("GET", "/env/DEFAULT_MODEL", request=request)
+        if code == 200 and isinstance(data, dict):
+            return {"default_model": (data.get("value") or "").strip()}
     return {"default_model": os.environ.get("DEFAULT_MODEL", "")}
 
 

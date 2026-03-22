@@ -1,8 +1,8 @@
 # AI Platform-in-a-Box — Product Requirements Document
 
-**Status:** Living document — updated 2026-03-04
+**Status:** Living document — updated 2026-03-22
 **Scope:** Local-first AI platform: unified model access, shared tools, secure ops, RAG, and agentic runtime.
-**Prior revision:** 2026-03-01. All M0–M5 milestones delivered. New capabilities: RAG/Qdrant, Responses API, hardware dashboard.
+**Prior revision:** 2026-03-04. All M0–M5 milestones delivered. **2026-03-22:** Added Section 10 — reliability layer, service contracts, and OpenClaw-as-mesh-client framing (strategic roadmap M7).
 
 ---
 
@@ -56,12 +56,21 @@ A self-hosted AI platform that any developer can run with `./compose up -d`. Cor
 | `openclaw.json` contains plaintext tokens on disk | Medium | Accepted — gitignored `data/`; documented in SECURITY.md |
 | MCP per-client policy (`allow_clients`) not enforced at gateway level | Medium | Planned — requires Docker MCP Gateway `X-Client-ID` support |
 | No CI pipeline for compose smoke tests | Low | Tracked — M6 |
+| No first-class runtime contract between OpenClaw and dependencies | High | **Strategic — Section 10 / M7:** health semantics, circuit breakers, config validation |
+
+### 0.4 Strategic priority: reliability layer (not “more OpenClaw features”)
+
+The platform’s next major quality bar is a **reliability spine**: guarantees that OpenClaw (and other clients) can **reach, authenticate to, and recover from failures** across the shared stack—especially **Model Gateway `:11435`**, **MCP Gateway `:8811`**, and **browser/tool bridges** behind them.
+
+**Design stance:** OpenClaw is **one client** on a **shared service mesh**, not the architectural center. That is the right shape; the consequence is that **service-to-service reliability and dependency management** become the dominant failure mode when they are weak (“OpenClaw feels flaky” even when the OpenClaw process is healthy).
+
+Section 10 defines what “very strong” means for this repo, the **missing contract layer**, concrete requirements for model/MCP/browser paths, observability, config, security/reliability balance, a **phased roadmap**, and **anti-patterns** to avoid.
 
 ---
 
 ## SECTION 1 — Current State (Grounded)
 
-*Last verified: 2026-03-04 against `model-gateway/main.py`, `ops-controller/main.py`, `dashboard/app.py`, `docker-compose.yml`, `rag-ingestion/`, `tests/`.*
+*Last verified: 2026-03-04 against `model-gateway/main.py`, `ops-controller/main.py`, `dashboard/app.py`, `docker-compose.yml`, `rag-ingestion/`, `tests/`.* **2026-03-22:** Section 10 / M7 reliability requirements added (not yet implemented).
 
 ### 1.1 Architecture Diagram (Current)
 
@@ -131,6 +140,7 @@ A self-hosted AI platform that any developer can run with `./compose up -d`. Cor
 | No CI pipeline | G5 | Smoke tests exist but no GitHub Actions workflow to run them | Low |
 | `openclaw.json` plaintext tokens | G4 | Telegram token, skill API keys on disk in gitignored `data/` | Low |
 | mcp-gateway on frontend network | G5 | Should be backend-only for internal services; currently has host port | Low |
+| Reliability / readiness contracts | G1–G2, orchestration | Health today is partly architectural; OpenClaw does not consume a unified, machine-readable **dependency registry** with L1–L3 checks, retry budgets, or circuit breakers (Section 10) | High |
 
 ### 1.4 OpenClaw: Current Integration Map (Confirmed)
 
@@ -159,6 +169,7 @@ A self-hosted AI platform that any developer can run with `./compose up -d`. Cor
 10. **Minimize breaking changes:** Existing `OLLAMA_BASE_URL` continues working. OpenClaw `ollama` provider still works; gateway is the preferred path. `servers.txt` still works; registry adds metadata on top.
 11. **Observable:** Structured JSON logs from all custom services. Request IDs (`X-Request-ID`) propagated across model→ops→tool calls. Audit log as primary observability artifact for privileged actions.
 12. **Explicit trade-offs:** Model gateway adds ~2–5ms proxy latency for interoperability. Controller-via-docker.sock is a high-value target but isolated behind auth and no host port. We accept the complexity for safe ops.
+13. **Reliability is a first-class contract:** Clients (including OpenClaw) depend on **machine-readable** readiness, consistent timeouts/retries, and traceable failures across model gateway, MCP gateway, and optional bridges—without making the dashboard or ops-controller part of the normal request path (Section 10).
 
 ---
 
@@ -730,6 +741,7 @@ LLM-toolkit/
 | **M5** | ✅ Done | Dashboard MCP health dots (green/yellow/red); SSRF egress scripts; hardware stats; throughput benchmark; default-model management |
 | **M5-ext** | ✅ Done | RAG pipeline (Qdrant + rag-ingestion); Open WebUI → Qdrant; RAG status endpoint; Responses API + completions compat; cache-bust endpoint; openclaw-cli profile |
 | **M6** | 🔲 Planned | `WEBUI_AUTH` default → True; mcp-gateway backend-only; CI pipeline; MCP per-client policy; audit log rotation; openclaw.json token externalization |
+| **M7** | 🔲 Planned | **Reliability spine** (Section 10): dependency registry + typed readiness; L1–L3 health; timeouts/retry policy; model-gateway fallbacks + warmup/streaming/schema hardening; MCP circuit breakers + schema validation + execution classes; browser session lifecycle; golden trace + failure taxonomy + SLO-style reporting; stack “doctor” / config validation |
 
 ---
 
@@ -858,6 +870,18 @@ Security/audit checklist for M3:
 | openclaw.json token externalization | Move Telegram token + skill API keys from JSON to `.env` via `merge_gateway_config.py` | M |
 | RBAC (read-only role) | View logs/health without start/stop access | L |
 
+### M7 — Reliability spine (planned — see Section 10)
+
+**Outcome:** When OpenClaw or any client fails, operators can tell **which hop** failed (OpenClaw vs model gateway vs Ollama/vLLM vs MCP vs browser bridge) and whether the failure is **retryable** or **operator-action-required**.
+
+**Phase 1 (failures visible):** Typed `/health` and `/ready` (or equivalent) for model gateway, MCP gateway, and browser bridge; **dependency registry** in config + dashboard surface; **`X-Request-ID` / correlation** end-to-end; **failure taxonomy**; dashboard dependency status; **OpenClaw startup validation** (bridge plugin, gateway URL, token, default model); **smoke tests**: OpenClaw → model gateway → inference; OpenClaw → MCP → sample tool.
+
+**Phase 2 (degradation & recovery):** Provider **fallback chains** in model gateway; **per-tool / per-server circuit breakers** in MCP path; cold/warm model state in health; **standardized timeout & retry budgets**; auto-disable/quarantine unhealthy tools after threshold; **ops-controller** restart hooks (recovery only); browser bridge **session health / recycle**.
+
+**Phase 3 (operator-grade):** SLO dashboard; version-pinned bundles; rollback; `BASE_PATH` backup/restore; config migration engine; expanded integration test matrix.
+
+**Explicit non-goals:** Monolithic OpenClaw fork; dashboard as **required** runtime dependency for normal requests; ops-controller in the **hot path** for chat/tool calls; new services before contracts harden; “restart fixes it” as primary strategy.
+
 ---
 
 ## SECTION 6 — "First PR" (Do Now — M6)
@@ -980,6 +1004,7 @@ docker inspect $(docker compose ps -q model-gateway) --format '{{.HostConfig.Cap
 | 9 | **Smoke test in CI** | 🔲 Open — no CI pipeline yet; M6 item |
 | 10 | **N8N LLM node** | 🔲 Open — use OpenAI-compat node with `baseURL: http://model-gateway:11435/v1`; needs example workflow doc |
 | 11 | **RAG embed model pull** | 🔲 Open — `nomic-embed-text` must be pulled before `rag-ingestion` can embed; add to model-puller default list or document in GETTING_STARTED |
+| 12 | **Reliability spine (M7):** dependency registry schema, `/ready` vs `/health` split, circuit-breaker semantics | 🔲 Open — requirements in Section 10; APIs TBD |
 
 ---
 
@@ -1101,6 +1126,132 @@ prevent injected instructions from escalating privileges:
 
 ---
 
+## SECTION 10 — Reliability Layer & Service Contracts (Strategic)
+
+This section captures the **developer/operator view** of what AI-toolkit needs next to be **operationally strong** around **OpenClaw hitting the rest of the stack**. It is **product requirements**, not an implementation spec; APIs and payloads will be designed in follow-on engineering plans.
+
+### 10.1 Positioning: OpenClaw as mesh client
+
+OpenClaw is **not** the center of the architecture; it is **one consumer** of:
+
+- **Model Gateway** (`:11435`) — single OpenAI-compatible surface to Ollama / vLLM.
+- **MCP Gateway** (`:8811`) — shared tools via `openclaw-mcp-bridge` and other clients.
+- **Browser / CDP bridges** — optional capability; easy to misconfigure (e.g. bridge port vs UI port).
+
+**Effective paths (simplified):**
+
+```
+User → OpenClaw UI/Gateway → Model Gateway → Ollama / vLLM
+User → OpenClaw UI/Gateway → OpenClaw MCP bridge → MCP Gateway → tool servers
+```
+
+Reliability is constrained by **every hop**: model list, inference, tool enumeration, tool execution, and browser sessions. Weak **contracts** anywhere surface as “the assistant is flaky.”
+
+### 10.2 What “very strong” means for this repo
+
+All of the following should eventually hold:
+
+1. **Preflight** — OpenClaw (and tooling) knows whether downstream services are **healthy** before attempting dependent actions.
+2. **Isolation** — One bad MCP server, one model timeout, or one broken bridge does **not** poison all tool or model usage.
+3. **Traceability** — Every user-visible failure is attributable to a **layer** (OpenClaw, model gateway, provider, MCP gateway, tool server, browser bridge).
+4. **Recovery** — **Automatic** retry/backoff for transient failures; **explicit** operator steps for auth/config/provider-down cases.
+5. **Versioned contracts** — Config and service expectations are **validated** so semantics do not silently drift.
+6. **Security ↔ reliability** — Guardrails (auth, policy, SSRF) **do not** break legitimate recovery paths; reliability mechanisms **do not** weaken security.
+
+**Existing ingredients (to build on):** single model endpoint, MCP gateway, ops controller, dashboard, structured logging, health concepts, `X-Request-ID` propagation (see Section 1, WS1–WS3).
+
+### 10.3 The gap: first-class service contract layer
+
+Documentation today describes **ports and intent**; a **runtime contract** between OpenClaw and dependencies is not yet first-class. “Very strong” requires:
+
+**A. Explicit readiness states (machine-readable)**  
+Not only “container running.” Callers need signals such as: model gateway can answer **now**; which providers are live; default model; warm vs cold hints; MCP gateway reachable; which tools/servers are healthy; browser bridge reachable; whether failure is **retryable** vs **operator required**.
+
+**B. Consume dependency state before action selection**  
+Policy examples: do not start a model call if no live provider; do not invoke a degraded tool without surfacing degradation; do not assume browser actions if the bridge is down; warn when starting long flows in a degraded state.
+
+### 10.4 Reliability spine (building blocks)
+
+**1) Dependency registry (canonical)**  
+One registry listing every runtime dependency OpenClaw (and optionally other clients) rely on: model gateway, backends (Ollama/vLLM), MCP gateway, MCP servers/tools, browser bridge, optional RAG, optional ops controller (as **observer/recovery**, not hot path).
+
+Per dependency (conceptual fields): name, endpoint, auth mode, health endpoint(s), version, timeout budget, retry policy, circuit-breaker policy, fallback target, last healthy timestamp, degraded reason. **Rendered in dashboard** and **consumed** by gateways/agents where appropriate.
+
+**2) Health depth: L1 / L2 / L3**
+
+| Level | Meaning (examples) |
+|-------|---------------------|
+| **L1** | Reachability: TCP/HTTP up; auth token accepted |
+| **L2** | Functional: model gateway lists models; MCP enumerates tools; browser bridge creates session |
+| **L3** | Transactional: tiny inference succeeds; safe tool noop; minimal browser metadata fetch |
+
+Most stacks stop at L1; L2/L3 are required for “feels reliable.”
+
+**3) Timeouts, retries, backoff**  
+Per **class** of operation (model list vs chat stream vs MCP discovery vs tool exec vs browser): budgets, retry only on **network / 502 / 503 / gateway timeout**, no retry on **auth / schema / policy**, exponential backoff with jitter, caps by operation type.
+
+### 10.5 Model Gateway reliability (OpenClaw’s highest-leverage path)
+
+- **Provider metadata:** type (Ollama/vLLM), supported APIs (chat, responses, embeddings, streaming), concurrency, warm/cold hints, latency signals, last failure, context limits, load/unload behavior.
+- **Fallback chains:** Prefer capability-based routing (e.g. primary model → fallback models/providers per policy) when a target is unavailable or overloaded.
+- **Warmup / preflight:** Optional prewarm of default model; queue depth or cold-start flags in health; user-visible **degraded** mode when lazy-loading.
+- **Streaming robustness:** Preserve stream semantics; clean recovery when upstream closes; annotate incomplete generations; avoid hung sockets on stall.
+- **Schema normalization:** Stable error envelope, finish reasons, tool-call shapes, token accounting, embeddings format—reduce OpenClaw fragility from provider quirks.
+
+### 10.6 MCP Gateway reliability
+
+- **Curated tool surface to OpenClaw:** enabled tools only; healthy tools only; tools allowed for **this** client/agent; stable schemas; versioned metadata—**not** raw chaos for the model to debug.
+- **Per-tool / per-server circuit breakers:** failure counts; open/half-open/closed; quarantine; auto recheck; user-visible degradation.
+- **Schema validation:** On registration and periodically—reject or quarantine drift.
+- **Execution classes:** fast stateless vs network-bound vs long-running vs side-effecting—distinct timeouts, confirmation policy, retries.
+- **Provenance:** `request_id`, `session_id`, `agent_id`, tool name, server version, duration, result code, **failure category**—extend correlation story beyond today’s `X-Request-ID`.
+
+**Alignment:** PRD already plans auto-disable after repeated health failures (M6); treat as **mandatory** for production-grade MCP, not optional polish.
+
+### 10.7 Browser / bridge reliability
+
+Typical failures: stale sessions, expired auth, headless crashes, navigation hangs, DOM mismatch vs tool expectations.
+
+**Requirements (directional):** explicit browser **session lifecycle** APIs; health check **separate** from OpenClaw UI; idle timeouts / leases; diagnostics events; recycle crashed sessions; operator metrics (“last successful browser action”). **Browser automation is an optional module**, not a hard dependency for ordinary chat.
+
+### 10.8 Ops controller: recovery, not hot path
+
+**Rule:** Normal model and tool traffic flows **OpenClaw → model gateway** and **OpenClaw → MCP gateway** directly. **Dashboard** observes and administers. **Ops controller** restarts services, surfaces logs, coordinates upgrades. **No user request should require ops-controller success** to complete a chat or tool call.
+
+### 10.9 Observability (elite bar)
+
+- **Golden trace:** One `request_id` from OpenClaw ingress through model selection, model gateway, provider, MCP bridge, MCP gateway, tool server, optional browser bridge—dashboard can show **where time went** and **where failure occurred**.
+- **Failure taxonomy:** e.g. network, auth, config, dependency unavailable, timeout, schema mismatch, policy denied, provider overload, internal bug—actionable signal, not raw log soup.
+- **SLO-style reporting:** model gateway success rate, p50/p95 latency, MCP tool success rate, top failing tools, OpenClaw request success rate, degraded-session rate, restarts per service.
+
+### 10.10 Configuration management
+
+- Version and **validate** config on startup; deprecations and safe auto-migration where possible; risky migrations require explicit confirmation; export/import of known-good configs.
+- **OpenClaw integration checks:** bridge plugin present, model gateway endpoint, tokens, default model exists, browser port assumptions, secure override compatibility.
+- **Stack “doctor”** command (high value): one diagnostic entrypoint for the whole toolkit.
+
+### 10.11 Security and reliability together
+
+Items that are both security and reliability problems: Open WebUI auth default, MCP per-client enforcement gaps, plaintext tokens in `openclaw.json`. **Improvements:** auth on by default for remotely reachable UIs; env-based secret resolution where possible; explicit per-client policy at MCP gateway; tool registration workflow; immutable audit trail for config changes.
+
+### 10.12 Roadmap summary (maps to M7)
+
+| Phase | Focus | Outcome |
+|-------|--------|---------|
+| **1** | Visibility | Typed readiness, registry, correlation, taxonomy, dashboard dependency page, OpenClaw startup validation, E2E smoke tests |
+| **2** | Degradation & recovery | Fallbacks, circuit breakers, warm/cold reporting, retries, auto-disable bad tools, ops-assisted restart, browser recycle |
+| **3** | Operator-grade | SLOs, pinned bundles, rollback, `BASE_PATH` backup/restore, config migrations, release/integration matrix |
+
+### 10.13 What not to do
+
+- Turn AI-toolkit into a **monolithic OpenClaw fork**.
+- Make the **dashboard** a **required** runtime dependency for normal inference or tools.
+- Put **ops-controller** on the **hot path** for every user action.
+- Add **more services** before **dependency contracts** are hardened.
+- Rely on **restart** as the primary reliability strategy.
+
+---
+
 ## Appendix A — Environment Variables Reference
 
 | Variable | Service | Description | Default |
@@ -1148,7 +1299,6 @@ prevent injected instructions from escalating privileges:
 8. **RAG:** `docker compose stop rag-ingestion qdrant`; remove `VECTOR_DB=qdrant` from Open WebUI env → Open WebUI uses built-in vector store. Qdrant data preserved in `data/qdrant/`.
 9. **Invalidate model cache:** `curl -X DELETE http://localhost:11435/v1/cache` — forces fresh fetch from Ollama on next `/v1/models` call.
 10. **Safe mode:** `docker compose stop mcp-gateway openclaw-gateway comfyui rag-ingestion` → Ollama + Open WebUI + dashboard only.
-8. **Safe mode:** `docker compose stop mcp-gateway openclaw-gateway` → use ollama + open-webui only.
 
 ---
 

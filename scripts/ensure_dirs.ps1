@@ -10,6 +10,7 @@ $dirs = @(
     (Join-Path $data "comfyui-storage"),
     (Join-Path $data "comfyui-output"),
     (Join-Path $data "comfyui-workflows"),
+    (Join-Path $data "comfyui-storage\ComfyUI\user\default\workflows"),
     (Join-Path $data "n8n-data"),
     (Join-Path $data "n8n-files"),
     (Join-Path $data "dashboard"),
@@ -23,6 +24,19 @@ $dirs = @(
 foreach ($d in $dirs) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
     Write-Host "OK $d"
+}
+
+# Seed data/comfyui-workflows from repo templates (data/ is gitignored; COMFY_MCP_DEFAULT_WORKFLOW_ID defaults to blog_flux_dev)
+$wfTemplateDir = Join-Path $base "workflow-templates\comfyui-workflows"
+$wfDataDir = Join-Path $data "comfyui-workflows"
+if (Test-Path $wfTemplateDir) {
+    Get-ChildItem $wfTemplateDir -Filter *.json | ForEach-Object {
+        $dest = Join-Path $wfDataDir $_.Name
+        if (-not (Test-Path $dest)) {
+            Copy-Item $_.FullName $dest -Force
+            Write-Host "OK bootstrap comfyui-workflows/$($_.Name)"
+        }
+    }
 }
 
 # Bootstrap MCP servers.txt with default tools (gateway hot-reloads)

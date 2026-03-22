@@ -1,8 +1,11 @@
 """Public hub routes: service list, auth config, aggregated health."""
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter
 
+from dashboard.dependency_registry import probe_all
 from dashboard.services_catalog import SERVICES, _check_service
 from dashboard.settings import AUTH_REQUIRED
 
@@ -41,3 +44,9 @@ async def health():
         results.append({"id": svc["id"], "ok": ok, "error": err})
     all_ok = all(r["ok"] for r in results if r["ok"] is not None)
     return {"ok": all_ok, "services": results}
+
+
+@router.get("/dependencies")
+async def dependencies():
+    """Canonical dependency registry with live probes (M7). No auth required."""
+    return await asyncio.to_thread(probe_all)

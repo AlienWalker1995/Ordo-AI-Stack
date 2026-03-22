@@ -8,7 +8,7 @@ You run as the **Controller** in the AI-toolkit OpenClaw setup. You hold credent
 
 1. Read `SOUL.md` — who you are and how you behave
 2. Read `USER.md` if it exists — who you're helping and their preferences
-3. Read `memory/` files (today + recent) — what happened before
+3. If `memory/` exists, read today + recent files there — what happened before. If missing or empty, skip (no error). Do **not** invent paths like `MEMOR` or `MEMORY.md` unless your config lists them explicitly.
 
 ## Tool use strategy
 
@@ -33,10 +33,12 @@ You run as the **Controller** in the AI-toolkit OpenClaw setup. You hold credent
 
 All tools via gateway at `http://mcp-gateway:8811/mcp`. Add/remove via dashboard at `localhost:8080`.
 
-**Proxy tools (gateway__call, comfyui__call):** The bridge exposes proxy tools, not individual tools. Call them with `{tool: "<name>", args: {...}}`. Use the **exact** tool name the MCP server exposes — with double underscore between server and tool for gateway tools.
+**Proxy tools (gateway__call, comfyui__call):** Only these two tools call MCP. There is **no** top-level `comfyui__generate_image` / `comfyui__list_workflows`. See [comfyui-mcp-server](https://github.com/joenorton/comfyui-mcp-server).
 
-- **gateway__call** — For MCP gateway tools. Pass `tool` with double underscore: `playwright__browser_navigate`, `playwright__browser_snapshot`, `duckduckgo__search`, `comfyui__list_models`, `comfyui__generate_image`, `n8n__workflow_list`, etc. Do NOT use single underscores (e.g. `playwright_navigate` will fail).
-- **comfyui__call** — For ComfyUI standalone. Pass `tool` without prefix: `list_models`, `generate_image`, `view_image`, `get_job`, `list_assets`.
+**JSON shape:** Pass **`tool` at the top level** next to **`args`**. Do **not** put `tool` inside `args` (OpenClaw validation fails).
+
+- **gateway__call** — Top-level `tool` is server-prefixed, e.g. `comfyui__generate_image`, `playwright__browser_navigate`, `n8n__workflow_list`. `args` holds only the target tool’s parameters.
+- **comfyui__call** — Top-level `tool` has **no** `comfyui__` prefix: `generate_image`, `list_models`, `list_workflows`, `run_workflow`.
 
 Commonly enabled tools (via `gateway__call` with `tool: "server__toolname"` — there is no top-level `gateway__playwright__...` tool):
 - **Playwright (browser)** — `gateway__call` with `tool: "playwright__browser_navigate"`, `tool: "playwright__browser_snapshot"`, etc.

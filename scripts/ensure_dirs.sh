@@ -16,6 +16,7 @@ dirs=(
   "$data/comfyui-storage"
   "$data/comfyui-output"
   "$data/comfyui-workflows"
+  "$data/comfyui-storage/ComfyUI/user/default/workflows"
   "$data/n8n-data"
   "$data/n8n-files"
   "$data/dashboard"
@@ -31,6 +32,20 @@ for d in "${dirs[@]}"; do
   mkdir -p "$d"
   echo "OK $d"
 done
+
+# Seed data/comfyui-workflows from repo templates (data/ is gitignored; COMFY_MCP_DEFAULT_WORKFLOW_ID defaults to blog_flux_dev)
+wf_template="$base/workflow-templates/comfyui-workflows"
+wf_data="$data/comfyui-workflows"
+if [[ -d "$wf_template" ]]; then
+  for f in "$wf_template"/*.json; do
+    [[ -f "$f" ]] || continue
+    fname=$(basename "$f")
+    if [[ ! -f "$wf_data/$fname" ]]; then
+      cp "$f" "$wf_data/$fname"
+      echo "OK bootstrap comfyui-workflows/$fname"
+    fi
+  done
+fi
 
 # Bootstrap MCP servers.txt with default tools (gateway hot-reloads)
 mcp_servers="$data/mcp/servers.txt"

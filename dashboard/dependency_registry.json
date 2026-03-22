@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "description": "Canonical dependency list for AI-toolkit (M7 reliability spine). Probed by GET /api/dependencies.",
+  "entries": [
+    {
+      "id": "model-gateway",
+      "name": "Model Gateway",
+      "category": "inference",
+      "openclaw_critical": true,
+      "check_url": "http://model-gateway:11435/health",
+      "ready_url": "http://model-gateway:11435/ready",
+      "hint": "OpenAI-compatible API. OpenClaw uses models.providers.gateway → this service."
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama",
+      "category": "inference",
+      "openclaw_critical": true,
+      "check_url": "http://ollama:11434/api/version",
+      "hint": "LLM backend; model-gateway proxies here."
+    },
+    {
+      "id": "mcp-gateway",
+      "name": "MCP Gateway",
+      "category": "tools",
+      "openclaw_critical": true,
+      "check_url": "http://mcp-gateway:8811/mcp",
+      "hint": "Shared MCP tools; openclaw-mcp-bridge connects here."
+    },
+    {
+      "id": "openclaw-gateway",
+      "name": "OpenClaw Gateway",
+      "category": "agent",
+      "openclaw_critical": false,
+      "check_url": "http://openclaw-gateway:6680/",
+      "hint": "Agent runtime; depends on model-gateway + MCP."
+    },
+    {
+      "id": "ops-controller",
+      "name": "Ops Controller",
+      "category": "ops",
+      "openclaw_critical": false,
+      "check_url": "http://ops-controller:9000/health",
+      "hint": "Lifecycle/recovery; not on hot path for chat."
+    },
+    {
+      "id": "qdrant",
+      "name": "Qdrant",
+      "category": "rag",
+      "openclaw_critical": false,
+      "check_url": "http://qdrant:6333/readyz",
+      "hint": "Vector DB for RAG (--profile rag)."
+    },
+    {
+      "id": "comfyui",
+      "name": "ComfyUI",
+      "category": "media",
+      "openclaw_critical": false,
+      "check_url": "http://comfyui:8188/",
+      "hint": "Image generation; optional."
+    },
+    {
+      "id": "dashboard",
+      "name": "Dashboard",
+      "category": "control",
+      "openclaw_critical": false,
+      "check_url": "http://localhost:8080/api/health",
+      "hint": "Self-check only works when probe runs inside dashboard container (uses localhost)."
+    }
+  ]
+}

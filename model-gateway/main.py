@@ -9,7 +9,7 @@ import uuid
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from httpx import AsyncClient
 from pydantic import BaseModel
 
@@ -25,7 +25,7 @@ logger = logging.getLogger("gateway")
 async def request_middleware(request: Request, call_next):
     correlation_id = request.headers.get("X-Correlation-ID") or uuid.uuid4().hex[:8]
     request.state.correlation_id = correlation_id
-    if request.url.path != "/health":
+    if request.url.path not in ("/health", "/ready"):
         service = request.headers.get("X-Service-Name", "")
         logger.info(">>> %s %s from=%s service=%s cid=%s",
                     request.method, request.url.path,
@@ -33,7 +33,7 @@ async def request_middleware(request: Request, call_next):
                     service, correlation_id)
     response = await call_next(request)
     response.headers["X-Correlation-ID"] = correlation_id
-    if request.url.path != "/health":
+    if request.url.path not in ("/health", "/ready"):
         logger.info("<<< %s %s status=%s cid=%s",
                     request.method, request.url.path, response.status_code, correlation_id)
     return response
@@ -354,24 +354,137 @@ async def api_show(request: Request):
         return {"error": "model not found"}
 
 
+async def _probe_ollama_l1(client: AsyncClient) -> dict:
+    """Reachability + version (L1)."""
+    t0 = time.monotonic()
+    try:
+        r = await client.get(f"{OLLAMA_URL}/api/version")
+        ms = round((time.monotonic() - t0) * 1000, 1)
+        ok = r.status_code < 500
+        body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        return {
+            "ok": ok,
+            "status_code": r.status_code,
+            "latency_ms": ms,
+            "version": body.get("version"),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+async def _probe_vllm_l1(client: AsyncClient) -> dict:
+    if not VLLM_URL:
+        return {"ok": False, "skipped": True, "reason": "VLLM_URL unset"}
+    t0 = time.monotonic()
+    try:
+        r = await client.get(f"{VLLM_URL}/health")
+        ms = round((time.monotonic() - t0) * 1000, 1)
+        ok = r.status_code < 500
+        return {"ok": ok, "status_code": r.status_code, "latency_ms": ms}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/health")
 async def health():
-    """Gateway health check. OK if at least one provider is reachable."""
+    """L1 gateway health: provider reachability, latency, model-cache freshness hints.
+
+    Use ``/ready`` for L2 (can enumerate models / accept inference routing).
+    """
+    providers: dict[str, Any] = {}
     ok = False
-    try:
-        async with AsyncClient(timeout=3.0) as client:
-            r = await client.get(f"{OLLAMA_URL}/api/version")
-            ok = ok or r.status_code < 500
-    except Exception:
-        pass
-    if VLLM_URL:
+    async with AsyncClient(timeout=3.0) as client:
+        providers["ollama"] = await _probe_ollama_l1(client)
+        ok = ok or providers["ollama"].get("ok") is True
+        providers["vllm"] = await _probe_vllm_l1(client)
+        if not providers["vllm"].get("skipped"):
+            ok = ok or providers["vllm"].get("ok") is True
+
+    cache_age = None
+    if _model_cache and _model_cache_ts > 0:
+        cache_age = round(time.monotonic() - _model_cache_ts, 1)
+
+    return {
+        "ok": ok,
+        "service": "model-gateway",
+        "default_provider": DEFAULT_PROVIDER,
+        "providers": providers,
+        "model_cache": {
+            "ttl_sec": MODEL_CACHE_TTL,
+            "entries": len(_model_cache),
+            "age_sec": cache_age,
+        },
+    }
+
+
+@app.get("/ready")
+async def ready():
+    """L2 readiness: at least one backend is up **and** at least one model is listed
+    (Ollama /api/tags or vLLM /v1/models). Returns HTTP 503 when not ready for inference.
+    """
+    providers: dict[str, Any] = {}
+    any_l1 = False
+    model_count = 0
+
+    async with AsyncClient(timeout=5.0) as client:
+        providers["ollama"] = await _probe_ollama_l1(client)
+        any_l1 = any_l1 or providers["ollama"].get("ok") is True
         try:
-            async with AsyncClient(timeout=3.0) as client:
-                r = await client.get(f"{VLLM_URL}/health")
-                ok = ok or r.status_code < 500
-        except Exception:
-            pass
-    return {"ok": ok}
+            r = await client.get(f"{OLLAMA_URL}/api/tags")
+            if r.status_code < 500:
+                data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+                model_count += len(data.get("models") or [])
+                providers["ollama"]["tags_ok"] = True
+                providers["ollama"]["model_count"] = len(data.get("models") or [])
+            else:
+                providers["ollama"]["tags_ok"] = False
+        except Exception as e:
+            providers["ollama"]["tags_ok"] = False
+            providers["ollama"]["tags_error"] = str(e)
+
+        providers["vllm"] = await _probe_vllm_l1(client)
+        if not providers["vllm"].get("skipped") and providers["vllm"].get("ok"):
+            any_l1 = True
+            try:
+                r2 = await client.get(f"{VLLM_URL}/v1/models")
+                if r2.status_code < 500:
+                    data2 = r2.json()
+                    n = len(data2.get("data") or [])
+                    model_count += n
+                    providers["vllm"]["model_count"] = n
+                    providers["vllm"]["models_ok"] = True
+                else:
+                    providers["vllm"]["models_ok"] = False
+            except Exception as e:
+                providers["vllm"]["models_ok"] = False
+                providers["vllm"]["models_error"] = str(e)
+
+    # Ready if any provider lists at least one model, or Ollama up with tags (empty = degraded but could still mean fresh install)
+    l2_ok = model_count > 0
+    degraded = any_l1 and not l2_ok
+    ready_flag = any_l1 and l2_ok
+    reason = None
+    if not any_l1:
+        reason = "dependency_unavailable"
+    elif degraded:
+        reason = "no_models_configured"
+
+    payload = {
+        "ready": ready_flag,
+        "level": "l2" if ready_flag else ("l1" if any_l1 else "none"),
+        "degraded": degraded,
+        "reason": reason,
+        "model_count": model_count,
+        "providers": providers,
+        "default_provider": DEFAULT_PROVIDER,
+    }
+
+    if not ready_flag and not degraded:
+        return JSONResponse(status_code=503, content=payload)
+    if degraded:
+        payload["ready"] = False
+        return JSONResponse(status_code=503, content=payload)
+    return payload
 
 
 # --- Chat ---

@@ -55,6 +55,9 @@ jobs:
         env:
           RUN_COMPOSE_SMOKE: "0"
 
+      - name: Validate OpenClaw config (fixture)
+        run: python scripts/validate_openclaw_config.py tests/fixtures/openclaw_valid.json
+
   compose-validate:
     name: Docker Compose validation
     runs-on: ubuntu-latest

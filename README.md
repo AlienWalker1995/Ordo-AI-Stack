@@ -26,7 +26,7 @@ Ollama + Open WebUI + ComfyUI + N8N in Docker. One command (`./compose up -d`), 
 
 1. **Clone** the repo to your target drive (e.g. `F:\AI-toolkit` or `~/AI-toolkit`).
 2. **Create `.env`** — copy `.env.example` to `.env` and set `BASE_PATH` to your install path.
-3. **Create directories** — run the setup script (also auto-detects GPU and configures compute):
+3. **Create directories** — run the setup script (also auto-detects GPU and configures compute, and seeds ComfyUI MCP workflows from `workflow-templates/comfyui-workflows/` into `data/comfyui-workflows/` when missing):
    - **Windows (PowerShell):** `.\scripts\ensure_dirs.ps1`
    - **Linux/Mac:** `./scripts/ensure_dirs.sh`
 4. **Start services:** `.\compose.ps1 up -d` (Windows) or `./compose up -d` (Linux/Mac)
@@ -156,7 +156,7 @@ All data is stored under `BASE_PATH` via bind mounts — no Docker named volumes
 | `data/ollama` | Ollama models |
 | `data/open-webui` | Users, chats, settings |
 | `data/comfyui-output` | Generated images/video |
-| `data/comfyui-workflows` | ComfyUI MCP API-format workflows (shared with `comfyui-mcp` and OpenClaw gateway mount `/comfyui-workflows`) |
+| `data/comfyui-workflows` | API-format workflows for MCP (`list_workflows` / `run_workflow`), OpenClaw (`/comfyui-workflows`), and ComfyUI UI sidebar under **Workflow → mcp-api** |
 | `data/n8n-data` | Workflows |
 | `data/n8n-files` | Shared files |
 | `data/openclaw` | OpenClaw config + workspace (SOUL.md, AGENTS.md, TOOLS.md) |
@@ -195,7 +195,30 @@ python -m ruff check dashboard tests model-gateway ops-controller rag-ingestion 
 # Or: make lint   (Linux/Mac)
 ```
 
-CI runs the same **pytest** and **ruff** steps (see `.github/workflows/ci.yml`).
+CI runs **pytest**, **ruff**, and a **fixture-based** `validate_openclaw_config.py` check (see `.github/workflows/ci.yml`).
+
+### Health checks (M7)
+
+Use these when something fails to start or OpenClaw cannot reach models:
+
+| What | Purpose |
+|------|---------|
+| **Doctor script** | Probes dashboard, model-gateway (`/health`, `/ready`), Ollama, MCP, then runs OpenClaw config validation. |
+| **`GET /api/dependencies`** | Dashboard JSON: live probes for every entry in the dependency registry (same data as the **Dependencies** section in the UI). |
+| **Model Gateway `GET /ready`** | L2 readiness (models listed); HTTP **503** if backends are down or no models are configured. |
+| **`scripts/validate_openclaw_config.py`** | Ensures `openclaw.json` wires `models.providers.gateway` to the model-gateway OpenAI endpoint. |
+
+```powershell
+.\scripts\doctor.ps1
+# Or: ./scripts/doctor.sh
+# Optional: DOCTOR_DEPS_TIMEOUT_SEC — max seconds for GET /api/dependencies (default 120).
+# Validate a specific file (optional --require in CI when the file must exist):
+python scripts/validate_openclaw_config.py data/openclaw/openclaw.json
+```
+
+**Doctor output:** **WARN** on HTTP **404** for `/api/dependencies` or model-gateway `/ready` usually means the **container image is behind the repo** — run `docker compose build dashboard model-gateway` (or your compose wrapper) and recreate. **Ollama** (`localhost:11434`) and **MCP** (`localhost:8811`) are **WARN** by default: the main compose file keeps them **backend-only** (no host port). Use `overrides/ollama-expose.yml` and `overrides/mcp-expose.yml` if you want those URLs on localhost; set **`DOCTOR_STRICT=1`** to treat those probes as hard failures. The script reads `DASHBOARD_AUTH_TOKEN` from `.env` when probing the dashboard.
+
+More copy-paste diagnostics (including `curl` for `/api/dependencies` and `/ready`): [TROUBLESHOOTING.md — Quick Diagnostics](docs/runbooks/TROUBLESHOOTING.md).
 
 **Smoke test** (bring up services and verify health):
 
