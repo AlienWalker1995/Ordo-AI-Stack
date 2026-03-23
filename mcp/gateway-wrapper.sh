@@ -22,12 +22,29 @@ read_servers() {
   printf '%s' "${content:-n8n,playwright,comfyui}"
 }
 
+resolve_registry_custom() {
+  reg_dir="$(dirname "$CONFIG_FILE")"
+  src="$reg_dir/registry-custom.yaml"
+  dst="$reg_dir/registry-custom.docker.yaml"
+  if [ ! -f "$src" ]; then
+    return 0
+  fi
+  # Inject OPS_CONTROLLER_TOKEN from mcp-gateway environment (same .env as stack).
+  if command -v sed >/dev/null 2>&1; then
+    sed "s|PLACEHOLDER_OPS_CONTROLLER_TOKEN|${OPS_CONTROLLER_TOKEN:-}|g" "$src" >"$dst"
+  else
+    cp "$src" "$dst"
+  fi
+}
+
 start_gateway() {
   servers=$(read_servers)
   servers=${servers:-n8n,playwright,comfyui}
   echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Starting gateway with servers: $servers"
   extra=""
-  [ -f "$(dirname "$CONFIG_FILE")/registry-custom.yaml" ] && extra="--additional-registry $(dirname "$CONFIG_FILE")/registry-custom.yaml"
+  resolve_registry_custom
+  reg_dir="$(dirname "$CONFIG_FILE")"
+  [ -f "$reg_dir/registry-custom.docker.yaml" ] && extra="--additional-registry $reg_dir/registry-custom.docker.yaml"
   "$GATEWAY_BIN" gateway run --transport=streaming --port="$PORT" --servers="$servers" $extra &
   echo $!
 }

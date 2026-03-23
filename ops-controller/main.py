@@ -1,6 +1,7 @@
 """Ops Controller — secure Docker Compose control plane."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -37,7 +38,11 @@ COMPOSE_FILE_ENV = os.environ.get("COMPOSE_FILE", "docker-compose.yml")
 
 # Model download (ComfyUI files)
 COMFYUI_MODELS_DIR = Path(os.environ.get("COMFYUI_MODELS_DIR", "/models/comfyui"))
+# Same layout as docker-compose: ${BASE_PATH}/data/comfyui-storage → comfyui /root
+COMFYUI_CUSTOM_NODES_DIR = Path("/workspace/data/comfyui-storage/ComfyUI/custom_nodes")
+COMFYUI_CONTAINER_NAME = os.environ.get("COMFYUI_CONTAINER_NAME", "comfyui")
 COMFYUI_CATEGORIES = ("checkpoints", "loras", "text_encoders", "latent_upscale_models")
+_NODE_PATH_SEGMENTS = re.compile(r"^[a-zA-Z0-9._-]+$")
 HF_TOKEN = os.environ.get("HF_TOKEN", "").strip() or os.environ.get("HUGGING_FACE_HUB_TOKEN", "").strip()
 _dl_lock = threading.Lock()
 _dl_status: dict = {
@@ -422,6 +427,91 @@ async def audit(limit: int = 50, _: None = Depends(verify_token)):
         except json.JSONDecodeError:
             continue
     return {"entries": list(reversed(entries))}
+
+
+def _validate_custom_node_path(node_path: str) -> str:
+    """Relative path under ComfyUI custom_nodes; POSIX segments, no traversal."""
+    s = node_path.strip().strip("/").replace("\\", "/")
+    if not s or len(s) > 240:
+        raise HTTPException(status_code=400, detail="Invalid node_path")
+    if ".." in s:
+        raise HTTPException(status_code=400, detail="Invalid node_path")
+    for seg in s.split("/"):
+        if not seg or not _NODE_PATH_SEGMENTS.match(seg):
+            raise HTTPException(status_code=400, detail=f"Invalid path segment: {seg!r}")
+    return s
+
+
+def _comfyui_pip_install_sync(node_path: str) -> dict:
+    """Run pip install -r inside the comfyui container. Called via asyncio.to_thread."""
+    req_host = COMFYUI_CUSTOM_NODES_DIR / node_path / "requirements.txt"
+    if not req_host.is_file():
+        return {
+            "ok": False,
+            "http_status": 404,
+            "detail": f"No requirements.txt at custom_nodes/{node_path}/requirements.txt",
+        }
+    req_container = f"/root/ComfyUI/custom_nodes/{node_path}/requirements.txt"
+    try:
+        client = _docker_client()
+        container = client.containers.get(COMFYUI_CONTAINER_NAME)
+    except docker.errors.NotFound:
+        return {
+            "ok": False,
+            "http_status": 503,
+            "detail": f"Container {COMFYUI_CONTAINER_NAME!r} not found — start comfyui first",
+        }
+    except Exception as e:
+        return {"ok": False, "http_status": 503, "detail": f"Docker: {e}"}
+    try:
+        er = container.exec_run(["pip", "install", "-r", req_container], demux=False)
+        exit_code = getattr(er, "exit_code", None)
+        output = getattr(er, "output", b"")
+        if exit_code is None and isinstance(er, tuple):
+            exit_code, output = er[0], er[1]
+    except Exception as e:
+        return {"ok": False, "http_status": 500, "detail": f"exec failed: {e}"}
+    text = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else str(output or "")
+    if len(text) > 12000:
+        text = text[:12000] + "\n… [truncated]"
+    return {
+        "ok": bool(exit_code == 0),
+        "exit_code": int(exit_code) if exit_code is not None else -1,
+        "output": text,
+        "node_path": node_path,
+    }
+
+
+class InstallNodeRequirementsBody(BaseModel):
+    node_path: str
+    confirm: bool = False
+
+
+@app.post("/comfyui/install-node-requirements")
+async def comfyui_install_node_requirements(
+    body: InstallNodeRequirementsBody,
+    request: Request,
+    _: None = Depends(verify_token),
+):
+    """Install Python deps for a custom node pack (pip -r) inside the running comfyui container."""
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="Set confirm: true to execute")
+    node_path = _validate_custom_node_path(body.node_path)
+    result = await asyncio.to_thread(_comfyui_pip_install_sync, node_path)
+    if result.get("http_status"):
+        detail = result.get("detail", result)
+        raise HTTPException(status_code=int(result["http_status"]), detail=detail)
+    _audit(
+        "comfyui_pip_install",
+        node_path,
+        "ok" if result.get("ok") else "error",
+        (result.get("output") or "")[:300],
+        correlation_id=_correlation_id(request),
+        metadata={"exit_code": result.get("exit_code")},
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=500, detail=result)
+    return result
 
 
 # --- Model downloads (ComfyUI files) ---

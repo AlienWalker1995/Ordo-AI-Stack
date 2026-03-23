@@ -97,7 +97,7 @@ Returns CPU%, RAM, disk, and GPU stats (no auth required).
 
 **Verify (HTTP, no Docker CLI):** `wget -q -O - http://comfyui:8188/object_info` (from any container on `backend`) or check `http://comfyui:8188/system_stats` after restart.
 
-**Python `pip` for custom nodes:** The OpenClaw gateway **cannot** run `docker compose exec` or install into the ComfyUI venv. After node files are in **`workspace/comfyui-custom-nodes/`**, install requirements **on the host**: `scripts/comfyui/install_node_requirements.sh` / `.ps1` (see **`workspace/agents/comfyui-assets.md`**), then restart **`comfyui`** via this API.
+**Python `pip` for custom nodes:** Prefer **MCP**: **`gateway__call`** with **`tool`**: **`install_custom_node_requirements`** / **`restart_comfyui`** (see **`TOOLS.md`**). Otherwise **`POST`** **`$DASHBOARD_URL/api/comfyui/install-node-requirements`** + **`…/api/ops/services/comfyui/restart`** with **`DASHBOARD_AUTH_TOKEN`**. Host-only fallback: **`scripts/comfyui/install_node_requirements.sh`** / **`.ps1`**. Details: **`workspace/agents/comfyui-assets.md`**.
 
 **Private GitHub clones** inside the container still need credentials or a public fork — “could not read Username” is not fixed by path changes.
 

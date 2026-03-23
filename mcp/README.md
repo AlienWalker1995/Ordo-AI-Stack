@@ -46,7 +46,7 @@ The scripts update the config file and the gateway reloads automatically.
 |--------|---------|
 | `n8n` | Workflow automation. Set `N8N_API_KEY` in `.env` for full access. |
 | `playwright` | **Preferred browser tool** — navigate, screenshot, click, fill forms. |
-| `comfyui` | Image/audio/video generation via ComfyUI (custom registry). |
+| `comfyui` | Image/audio/video generation via ComfyUI (custom registry). Also exposes **`install_custom_node_requirements`** and **`restart_comfyui`** (ops-controller) when **`OPS_CONTROLLER_TOKEN`** is set — see **`mcp/registry-custom.yaml`** and **`gateway-wrapper.sh`**. |
 
 ### Other catalog servers
 

@@ -170,6 +170,13 @@ Automated tools and agents calling the dashboard from **inside** the stack shoul
 
 **`ltx-2.3-22b`** is not a generic SD1.5 checkpoint graph: plain **`CLIPTextEncode`** off **`CheckpointLoaderSimple`** often yields **no CLIP**. Use the **LTX / Gemma text path** your ComfyUI build documents (e.g. **`LTXAVTextEncoderLoader`** + **`CLIPTextEncodeFlux`** wired to that CLIP), or **`gateway__call`** with **`tool`**: **`run_workflow`** (and a **`workflow_id`** that matches your nodes) — see **`TOOLS.md`** and packaged workflows under **`data/comfyui-workflows/`**.
 
+### ComfyUI — MCP `install_custom_node_requirements` / `restart_comfyui` missing or token error
+
+These tools are registered by the **ComfyUI MCP** image (`comfyui-mcp`). They call **ops-controller** and require **`OPS_CONTROLLER_TOKEN`** in `.env`.
+
+- **`mcp-gateway`** must receive **`OPS_CONTROLLER_TOKEN`** and a **`registry-custom.yaml`** that includes **`OPS_CONTROLLER_TOKEN: PLACEHOLDER_OPS_CONTROLLER_TOKEN`** (repo template: **`mcp/registry-custom.yaml`**). The gateway **entrypoint** substitutes the token into **`registry-custom.docker.yaml`**. If you created **`data/mcp/registry-custom.yaml`** before this layout, **merge** those lines from the repo template or delete the file and re-run **`scripts/ensure_dirs`** so a fresh copy is created (then re-add **`comfyui`** to **`servers.txt`** if needed).
+- Rebuild the ComfyUI MCP image after pulling: **`docker compose build comfyui-mcp-image`** (or **`docker compose build comfyui-mcp`**) and restart **`mcp-gateway`** and **`openclaw-gateway`**.
+
 ### ComfyUI — `Tool not found` for `gateway__comfyui__run_workflow` / OpenClaw
 
 The MCP bridge registers **`gateway__call`** first. For ComfyUI, pass the **inner** tool name from the ComfyUI MCP server (usually plain names: **`run_workflow`**, **`list_workflows`**, **`generate_image`**):
@@ -192,13 +199,14 @@ Community packs (e.g. Juno) often ship **ComfyUI UI** format (`"nodes": [ ... ]`
 
 `exec`/`read`/`edit` in the **OpenClaw gateway** container must **not** install into **`/app/ComfyUI/...`** — that path is **not** the ComfyUI service. Use **`workspace/comfyui-custom-nodes/`**, which binds to **`data/comfyui-storage/ComfyUI/custom_nodes/`** (the same directory the **`comfyui`** container loads). Restart **`comfyui`** after adding nodes. See **`workspace/agents/docker-ops.md`**.
 
-### ComfyUI — `docker: Permission denied` / agent cannot `pip install` in ComfyUI
+### ComfyUI — `docker: Permission denied` / agent cannot run `docker exec`
 
-The **OpenClaw gateway** has **no** Docker socket. **`docker`**, **`docker compose exec`**, and **`gateway__run_command`** will not work for installing Python deps into **`comfyui`**.
+The **OpenClaw gateway** has **no** Docker socket. **`docker`**, **`docker compose exec`**, and **`gateway__run_command`** will not work for **`comfyui`**.
 
 1. **Files:** place or edit custom node trees under **`data/comfyui-storage/ComfyUI/custom_nodes/`** (same as **`workspace/comfyui-custom-nodes/`** in the gateway).
-2. **Python requirements:** from the **host** repo root, run **`scripts/comfyui/install_node_requirements.sh`** or **`install_node_requirements.ps1`** with the **`path-under-custom_nodes`** (folder that contains **`requirements.txt`**).
-3. **Restart** **`comfyui`** (Dashboard API with **`DASHBOARD_AUTH_TOKEN`**, or host **`docker compose restart comfyui`**).
+2. **Python requirements (from OpenClaw):** **`POST`** **`http://dashboard:8080/api/comfyui/install-node-requirements`** with **`Authorization: Bearer <DASHBOARD_AUTH_TOKEN>`** and JSON **`{"node_path":"<folder-under-custom_nodes>","confirm":true}`**. Requires **`OPS_CONTROLLER_TOKEN`** (dashboard → ops-controller). **`comfyui`** must be running.
+3. **Restart** **`comfyui`:** **`POST`** **`/api/ops/services/comfyui/restart`** with the same Bearer token.
+4. **Host fallback:** **`scripts/comfyui/install_node_requirements.sh`** / **`.ps1`**, or **`docker compose restart comfyui`**.
 
 Full playbook: **`openclaw/workspace/agents/comfyui-assets.md`** (synced into **`data/openclaw/workspace/agents/`** when **`openclaw-workspace-sync`** runs).
 

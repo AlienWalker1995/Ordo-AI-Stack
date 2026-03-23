@@ -72,6 +72,7 @@ The **dashboard** at [localhost:8080](http://localhost:8080) gives you a single 
 
 - **View all models** — Ollama (LLM) and ComfyUI (LTX-2) in one place
 - **Restart services** — when `OPS_CONTROLLER_TOKEN` is set in `.env`
+- **ComfyUI custom-node Python deps** — authenticated `POST /api/comfyui/install-node-requirements` (proxied to ops-controller; OpenClaw can call this with `DASHBOARD_AUTH_TOKEN` — see `openclaw/workspace/agents/comfyui-assets.md`)
 - **Pull models** — searchable dropdown with 150+ Ollama models; or type any model name
 - **Jump to services** — Open WebUI, ComfyUI, N8N, OpenClaw, MCP Gateway
 - **RAG** — `docker compose --profile rag up -d`, drop files in `data/rag-input/`; details in [Getting started — RAG](docs/GETTING_STARTED.md#rag-documents-in-chat)

@@ -2,7 +2,7 @@
 
 **When to use:** Installing or updating **custom nodes**, **Python deps**, verifying nodes load, or explaining why **`docker`** / **`docker compose exec`** from the gateway fails.
 
-**Read this file** (with **`docker-ops.md`**) before promising “I will install pip packages in ComfyUI” from inside the OpenClaw gateway.
+**Read this file** (with **`docker-ops.md`**) for the full ComfyUI lifecycle: files in **`comfyui-custom-nodes/`**, **MCP** tools **`install_custom_node_requirements`** / **`restart_comfyui`** (same gateway as **`run_workflow`**), optional Dashboard HTTP fallback.
 
 ---
 
@@ -20,28 +20,41 @@
 
 ## What the gateway agent cannot do
 
-- Run **`docker`**, **`docker compose`**, or **`docker exec`** — no socket in **`openclaw-gateway`** (`Permission denied` / `not found` is expected).
+- Run **`docker`**, **`docker compose`**, or **`docker exec`** directly — no socket in **`openclaw-gateway`** (`Permission denied` / `not found` is expected).
 - Use **`gateway__run_command`** — **not** a real tool; do not invent it.
 - Read **`docker-compose.yml`** from **`/home/node/`** or **`/app/`** — the compose project lives on the **host** repo, not inside this image.
-- **`pip install`** into the **`comfyui`** container’s Python — that runs **inside** the ComfyUI image; the gateway only shares **files** via the bind mount, not the venv.
 
 ---
 
-## What the gateway agent can do
+## What the gateway agent can do (manage ComfyUI end-to-end)
+
+**Preferred — MCP (same as other tools):** use **`gateway__call`** with the ComfyUI server’s inner tool names (see **`TOOLS.md`**):
+
+- **`install_custom_node_requirements`** — args **`node_path`**, **`confirm: true`** (runs **`pip install -r`** via ops-controller).
+- **`restart_comfyui`** — args **`confirm: true`** (restarts the **`comfyui`** service).
+
+Flat tools may appear as **`gateway__comfyui__install_custom_node_requirements`** and **`gateway__comfyui__restart_comfyui`**. Requires **`OPS_CONTROLLER_TOKEN`** in `.env` so the ComfyUI MCP container can call ops-controller (see **`mcp/registry-custom.yaml`**; gateway substitutes the token at startup).
 
 1. **Read / write / unpack** under **`workspace/comfyui-custom-nodes/`** (same as host `data/comfyui-storage/ComfyUI/custom_nodes/`).
-2. **Restart `comfyui`** via **Dashboard API** (requires **`DASHBOARD_AUTH_TOKEN`** in the gateway environment — see **`docker-ops.md`**):
-   - `POST` **`$DASHBOARD_URL/api/ops/services/comfyui/restart`** with **`Authorization: Bearer $DASHBOARD_AUTH_TOKEN`**.
-3. **Verify** ComfyUI over HTTP from the backend network (no Docker):
-   - e.g. **`wget -q -O - http://comfyui:8188/object_info`** and search for node class names.
+2. **Verify** nodes: **`wget -q -O - http://comfyui:8188/object_info`** and search for expected class names.
+
+**Fallback — Dashboard HTTP** (if MCP tools unavailable): **`POST`** **`$DASHBOARD_URL/api/comfyui/install-node-requirements`** and **`POST`** **`…/api/ops/services/comfyui/restart`** with **`Authorization: Bearer $DASHBOARD_AUTH_TOKEN`** — see **`docker-ops.md`**.
+
+Example (**`exec`** wget fallback):
+
+```bash
+wget -q -O - \
+  --header="Authorization: Bearer $DASHBOARD_AUTH_TOKEN" \
+  --header="Content-Type: application/json" \
+  --post-data='{"node_path":"juno-comfyui-nodes-main","confirm":true}' \
+  "$DASHBOARD_URL/api/comfyui/install-node-requirements"
+```
 
 ---
 
-## Python dependencies for a custom node pack
+## Python dependencies (host fallback)
 
-After the pack’s folder exists under **`comfyui-custom-nodes/`**, dependencies must be installed **in the ComfyUI container**:
-
-**Host (operator)** — from the AI-toolkit repo root:
+If Dashboard auth or ops is unavailable, from the **host** repo root:
 
 ```bash
 ./scripts/comfyui/install_node_requirements.sh "<path-under-custom_nodes>"
@@ -51,11 +64,7 @@ After the pack’s folder exists under **`comfyui-custom-nodes/`**, dependencies
 .\scripts\comfyui\install_node_requirements.ps1 -NodePath "<path-under-custom_nodes>"
 ```
 
-Example: if Juno lives in `custom_nodes/juno-comfyui-nodes-main`, pass **`juno-comfyui-nodes-main`**. The script runs **`docker compose exec comfyui pip install -r .../requirements.txt`**.
-
-Then **restart `comfyui`** (Dashboard API or host `docker compose restart comfyui`).
-
-**Tell the user** to run the script if **`DASHBOARD_AUTH_TOKEN`** is unset or you cannot complete **`exec`**-equivalent work — do not loop on **`docker`** errors inside the gateway.
+Do **not** loop on **`docker`** errors **inside** the gateway — use **MCP** or the Dashboard **`POST`** when **`OPS_CONTROLLER_TOKEN`** is configured.
 
 ---
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Install Python requirements for a custom_nodes subfolder into the running comfyui container.
+# Prefer (from OpenClaw): POST $DASHBOARD_URL/api/comfyui/install-node-requirements with DASHBOARD_AUTH_TOKEN — see workspace/agents/comfyui-assets.md
 # Usage (from repo root): ./scripts/comfyui/install_node_requirements.sh "MyNodePack"
 # Requires: docker compose, comfyui service up; BASE_PATH optional (defaults to repo root).
 set -euo pipefail

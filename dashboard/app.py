@@ -582,6 +582,31 @@ async def comfyui_pull_status():
         return dict(_comfyui_status)
 
 
+class ComfyuiInstallNodeRequirementsRequest(BaseModel):
+    node_path: str
+    confirm: bool = False
+
+
+@app.post("/api/comfyui/install-node-requirements")
+async def comfyui_install_node_requirements_api(
+    body: ComfyuiInstallNodeRequirementsRequest,
+    request: Request,
+):
+    """Run pip install -r for a pack under ComfyUI custom_nodes (ops-controller → comfyui container)."""
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="Set confirm: true to execute")
+    code, data = await _ops_request(
+        "POST",
+        "/comfyui/install-node-requirements",
+        request=request,
+        json={"node_path": body.node_path.strip(), "confirm": True},
+        timeout=600.0,
+    )
+    if code >= 400:
+        raise HTTPException(status_code=code, detail=data.get("detail", data))
+    return data
+
+
 class ModelDownloadRequest(BaseModel):
     url: str
     category: str = ""
@@ -1170,7 +1195,12 @@ OPS_CONTROLLER_TOKEN = os.environ.get("OPS_CONTROLLER_TOKEN", "")
 
 
 async def _ops_request(
-    method: str, path: str, request: Request | None = None, **kwargs
+    method: str,
+    path: str,
+    request: Request | None = None,
+    *,
+    timeout: float = 30.0,
+    **kwargs,
 ) -> tuple[int, dict]:
     """Proxy request to ops controller. Returns (status_code, json_body).
     Forwards X-Request-ID when present for audit correlation.
@@ -1183,7 +1213,7 @@ async def _ops_request(
         extra = {**extra, "X-Request-ID": request.headers["X-Request-ID"]}
     headers = {"Authorization": f"Bearer {OPS_CONTROLLER_TOKEN}", **extra}
     try:
-        async with AsyncClient(timeout=30.0) as client:
+        async with AsyncClient(timeout=timeout) as client:
             r = await client.request(method, url, headers=headers, **kwargs)
             try:
                 data = r.json()

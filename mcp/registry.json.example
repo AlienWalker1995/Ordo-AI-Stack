@@ -20,7 +20,7 @@
       "image": "ai-toolkit-comfyui-mcp:latest",
       "scopes": ["image"],
       "allow_clients": ["*"],
-      "description": "Image/audio/video generation via ComfyUI"
+      "description": "ComfyUI workflows (run_workflow) + custom-node pip/restart via ops-controller when OPS_CONTROLLER_TOKEN is set"
     },
     "github-official": {
       "image": "mcp/github-official",

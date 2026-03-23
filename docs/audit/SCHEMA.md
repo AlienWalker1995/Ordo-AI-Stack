@@ -33,6 +33,7 @@ Audit events record privileged actions (service lifecycle, model ops, MCP change
 | `mcp_remove` | tool name | `fetch` |
 | `model_pull` | model name | `deepseek-r1:7b` |
 | `model_delete` | model name | `llama3.2` |
+| `comfyui_pip_install` | custom_nodes subpath | `juno-comfyui-nodes-main` |
 
 ## Examples
 

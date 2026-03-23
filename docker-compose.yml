@@ -293,6 +293,8 @@ services:
       - COMFY_MCP_WORKFLOW_DIR=/workflows
       # When the agent omits workflow_id but sends prompt/width/etc. at top level, use this workflow file stem.
       - COMFY_MCP_DEFAULT_WORKFLOW_ID=${COMFY_MCP_DEFAULT_WORKFLOW_ID:-generate_image}
+      - OPS_CONTROLLER_URL=http://ops-controller:9000
+      - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:-}
     volumes:
       # API-format workflows only (same host dir as ComfyUI → user/default/workflows/mcp-api).
       # Do not put visual-format JSON (id/nodes/links) here — comfyui-mcp WorkflowManager crashes on that.
@@ -366,6 +368,8 @@ services:
       - N8N_API_KEY=${N8N_API_KEY:-}
       # ComfyUI MCP (custom registry) — passed to spawned comfyui container
       - COMFYUI_URL=http://comfyui:8188
+      - OPS_CONTROLLER_URL=http://ops-controller:9000
+      - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/mcp:/mcp-config

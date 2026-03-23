@@ -339,6 +339,16 @@ class WorkflowManager:
                 logger.error("Skipping workflow %s due to JSON error: %s", workflow_path.name, exc)
                 continue
 
+            if not isinstance(workflow, dict):
+                logger.error("Skipping workflow %s: root JSON must be an object", workflow_path.name)
+                continue
+            if WorkflowManager.is_ui_workflow_export(workflow):
+                logger.info(
+                    "Skipping workflow %s: UI/editor export (use API-format JSON for MCP)",
+                    workflow_path.name,
+                )
+                continue
+
             parameters = self._extract_parameters(workflow)
             if not parameters:
                 logger.info(
@@ -417,6 +427,8 @@ class WorkflowManager:
     def _extract_parameters(self, workflow: Dict[str, Any]):
         parameters: "OrderedDict[str, WorkflowParameter]" = OrderedDict()
         for node_id, node in workflow.items():
+            if not isinstance(node, dict):
+                continue
             inputs = node.get("inputs", {})
             if not isinstance(inputs, dict):
                 continue
@@ -505,6 +517,8 @@ class WorkflowManager:
     
     def _guess_output_preferences(self, workflow: Dict[str, Any]):
         for node in workflow.values():
+            if not isinstance(node, dict):
+                continue
             class_type = str(node.get("class_type", "")).lower()
             if "audio" in class_type:
                 return AUDIO_OUTPUT_KEYS

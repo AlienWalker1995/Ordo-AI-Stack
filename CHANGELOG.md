@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format is loosely b
 
 ### Added
 
+- **ComfyUI MCP — stack management tools:** **`comfyui-mcp/tools/management.py`** registers **`install_custom_node_requirements`** and **`restart_comfyui`** (HTTP to ops-controller). **`comfyui-mcp/Dockerfile`** patches upstream **`server.py`** to load them. **`docker-compose`** passes **`OPS_CONTROLLER_URL`** / **`OPS_CONTROLLER_TOKEN`** into **`comfyui-mcp`** and **`mcp-gateway`**. **`mcp/registry-custom.yaml`** + **`gateway-wrapper.sh`** substitute **`PLACEHOLDER_OPS_CONTROLLER_TOKEN`** at gateway startup for spawned ComfyUI MCP containers. **TOOLS.md** / **comfyui-assets** / **TROUBLESHOOTING** document **`gateway__call`** + inner tool names (same paradigm as n8n).
+
+- **Dashboard + ops-controller — ComfyUI `pip` from OpenClaw:** **`POST /api/comfyui/install-node-requirements`** (JSON **`node_path`**, **`confirm`**) proxies to ops-controller, which runs **`pip install -r`** inside the **`comfyui`** container (Docker API). OpenClaw can manage custom-node Python deps using **`DASHBOARD_AUTH_TOKEN`** + **`wget`/`exec`**, no Docker socket on the gateway. Requires **`OPS_CONTROLLER_TOKEN`**. **`docs/audit/SCHEMA.md`** documents audit action **`comfyui_pip_install`**.
+
 - **ComfyUI asset orchestration:** **`openclaw/workspace/agents/comfyui-assets.md`** — paths (shared `custom_nodes`), what the gateway cannot do (Docker, `pip` in the ComfyUI venv), Dashboard restarts, LiteLLM/`localhost` caveats, cron cleanup. Host scripts **`scripts/comfyui/install_node_requirements.sh`** / **`.ps1`** run **`docker compose exec comfyui pip install -r ...`** for a node pack. **`TOOLS.md.example`**, **`AGENTS.md.example`**, **`docker-ops.md`**, **`TROUBLESHOOTING`**, and **`openclaw/README.md`** updated to point agents at this flow instead of looping on **`docker`** errors inside the gateway.
 
 - **OpenClaw MCP bridge fork:** [`openclaw/extensions/openclaw-mcp-bridge/`](openclaw/extensions/openclaw-mcp-bridge/README-AI-TOOLKIT.md) (based on npm `openclaw-mcp-bridge@0.2.0`) registers **each namespaced MCP tool** as a first-class OpenClaw tool (e.g. `gateway__duckduckgo__search`), not only `gateway__call`. `openclaw-plugin-config` installs from the repo fork when mounted at `/fork-openclaw-mcp-bridge`. After pulling, run `docker compose run --rm openclaw-plugin-config` then restart `openclaw-gateway`.
@@ -14,6 +18,8 @@ All notable changes to this project are documented here. The format is loosely b
 - **Housekeeping:** This changelog; PRD milestone updates for M6 (partial, non-auth) and resolved open questions where features already exist (CI, audit rotation, M7 spine).
 
 ### Changed
+
+- **ComfyUI MCP `workflow_manager`:** Skips UI/editor workflow exports and ignores non-dict top-level keys when scanning `*.json`, so stray metadata files (e.g. `id`/`name` stubs) or Juno UI JSON under `data/comfyui-workflows/` no longer crash server startup.
 
 - **OpenClaw MCP:** `openclaw-mcp-bridge` uses **one** URL — the Docker **MCP gateway** (`http://mcp-gateway:8811/mcp`). ComfyUI tools are aggregated there; do not add a second `comfyui` server URL. `merge_gateway_config.py` / `add_mcp_plugin_config.py` **remove** a legacy `servers.comfyui` entry if present. **TOOLS.md** / **AGENTS** / **TROUBLESHOOTING** document **`gateway__call`** (and flat **`gateway__comfyui__*`** tools) instead of **`comfyui__call`**.
 - **ComfyUI MCP:** `workflow_manager` discovers **`*.json`** recursively under `data/comfyui-workflows/`; **`workflow_id`** may be a **nested POSIX path** (no `.json` suffix). **UI-format** workflow exports are rejected with a clear error; **`/prompt`** requires **API-format** JSON. **TROUBLESHOOTING** documents **`gateway__call`** + **`tool: "run_workflow"`** vs wrong **`gateway__comfyui__run_workflow`** flat tool ids, FL2V vs T2V, and API export.
