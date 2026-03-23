@@ -52,27 +52,49 @@ class WorkflowManager:
         self._workflow_cache: Dict[str, Dict[str, Any]] = {}
         self._workflow_mtime: Dict[str, float] = {}  # Track file modification times for cache invalidation
         self.tool_definitions = self._load_workflows()
-    
+
+    @staticmethod
+    def is_ui_workflow_export(workflow: Dict[str, Any]) -> bool:
+        """True if JSON is ComfyUI's visual editor format (not /prompt API format)."""
+        nodes = workflow.get("nodes")
+        if not isinstance(nodes, list) or not nodes:
+            return False
+        n0 = nodes[0]
+        return isinstance(n0, dict) and "type" in n0 and "class_type" not in n0
+
     def _safe_workflow_path(self, workflow_id: str) -> Optional[Path]:
-        """Resolve workflow ID to file path with path traversal protection"""
-        # Normalize workflow_id (remove any path separators and dangerous characters)
-        safe_id = workflow_id.replace("/", "_").replace("\\", "_").replace("..", "_")
-        # Remove any remaining path-like characters
-        safe_id = "".join(c for c in safe_id if c.isalnum() or c in ("_", "-"))
-        if not safe_id:
-            logger.warning(f"Invalid workflow_id after sanitization: {workflow_id}")
+        """Resolve workflow ID to file path with path traversal protection.
+
+        Supports:
+        - **Flat** ids (legacy): ``generate_image`` → ``<workflows_dir>/generate_image.json``
+        - **Nested** ids: ``ltx-video/LTX-2.3_-_T2V_Basic`` → relative path under workflows_dir
+        """
+        root = self.workflows_dir.resolve()
+        raw = workflow_id.strip().replace("\\", "/")
+        if not raw or raw.startswith("/"):
             return None
-        
-        workflow_path = (self.workflows_dir / f"{safe_id}.json").resolve()
-        
-        # Ensure the resolved path is within workflows_dir
+        if ".." in raw.split("/"):
+            logger.warning("Path traversal attempt in workflow_id: %s", workflow_id)
+            return None
+
+        if "/" in raw:
+            rel = raw[:-5] if raw.lower().endswith(".json") else raw
+            workflow_path = (self.workflows_dir / rel).with_suffix(".json").resolve()
+        else:
+            safe_id = raw.replace("..", "_")
+            safe_id = "".join(c for c in safe_id if c.isalnum() or c in ("_", "-"))
+            if not safe_id:
+                logger.warning("Invalid workflow_id after sanitization: %s", workflow_id)
+                return None
+            workflow_path = (self.workflows_dir / f"{safe_id}.json").resolve()
+
         try:
-            workflow_path.relative_to(self.workflows_dir.resolve())
+            workflow_path.relative_to(root)
         except ValueError:
-            logger.warning(f"Path traversal attempt detected: {workflow_id}")
+            logger.warning("Path traversal attempt detected: %s", workflow_id)
             return None
-        
-        return workflow_path if workflow_path.exists() else None
+
+        return workflow_path if workflow_path.is_file() else None
     
     def _load_workflow_metadata(self, workflow_path: Path) -> Dict[str, Any]:
         """Load sidecar metadata if present.
@@ -103,13 +125,15 @@ class WorkflowManager:
         catalog = []
         if not self.workflows_dir.exists():
             return catalog
-        
-        for workflow_path in sorted(self.workflows_dir.glob("*.json")):
+
+        paths = sorted(self.workflows_dir.rglob("*.json"))
+        for workflow_path in paths:
             # Skip metadata files
             if workflow_path.name.endswith(".meta.json"):
                 continue
-            
-            workflow_id = workflow_path.stem
+
+            rel = workflow_path.relative_to(self.workflows_dir)
+            workflow_id = str(rel.with_suffix("")).replace("\\", "/")
             try:
                 with open(workflow_path, "r", encoding="utf-8") as f:
                     workflow = json.load(f)
@@ -305,7 +329,9 @@ class WorkflowManager:
             logger.info("Workflow directory %s does not exist yet", self.workflows_dir)
             return definitions
 
-        for workflow_path in sorted(self.workflows_dir.glob("*.json")):
+        for workflow_path in sorted(self.workflows_dir.rglob("*.json")):
+            if workflow_path.name.endswith(".meta.json"):
+                continue
             try:
                 with open(workflow_path, "r", encoding="utf-8") as handle:
                     workflow = json.load(handle)
@@ -322,9 +348,11 @@ class WorkflowManager:
                 )
                 continue
 
+            rel = workflow_path.relative_to(self.workflows_dir)
+            nested_id = str(rel.with_suffix("")).replace("\\", "/")
             tool_name = self._dedupe_tool_name(self._derive_tool_name(workflow_path.stem))
             definition = WorkflowToolDefinition(
-                workflow_id=workflow_path.stem,
+                workflow_id=nested_id,
                 tool_name=tool_name,
                 description=self._derive_description(workflow_path.stem),
                 template=workflow,
@@ -333,7 +361,7 @@ class WorkflowManager:
             )
             # Store initial mtime for cache invalidation
             try:
-                self._workflow_mtime[workflow_path.stem] = workflow_path.stat().st_mtime
+                self._workflow_mtime[nested_id] = workflow_path.stat().st_mtime
             except OSError:
                 pass
             logger.info(

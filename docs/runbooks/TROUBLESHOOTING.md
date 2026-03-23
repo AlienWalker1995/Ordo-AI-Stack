@@ -129,7 +129,7 @@ Symptoms in **job run history** or the Control UI often **do not match** what yo
 
 ### MCP tools — `Tool not found` / `Mcp-Session-Id` / `missing_brave_api_key`
 
-**`Tool not found` for names like `gateway__duckduckgo__search`:** On **upstream** `openclaw-mcp-bridge`, only **`gateway__call`** / **`comfyui__call`** exist at the top level; inner MCP names go in **`tool`** + **`args`**. This repo ships a **fork** ([`openclaw/extensions/openclaw-mcp-bridge`](../../openclaw/extensions/openclaw-mcp-bridge/README-AI-TOOLKIT.md)) that also registers each namespaced MCP tool as its own OpenClaw tool — run `docker compose run --rm openclaw-plugin-config` after pull, then restart **`openclaw-gateway`**. **`gateway__comfyui__generate_image`**-style names may still be wrong if ComfyUI uses a different inner tool id.
+**`Tool not found` for names like `gateway__duckduckgo__search`:** On **upstream** `openclaw-mcp-bridge`, only **`gateway__call`** exists at the top level for a given MCP server; inner MCP names go in **`tool`** + **`args`**. This repo ships a **fork** ([`openclaw/extensions/openclaw-mcp-bridge`](../../openclaw/extensions/openclaw-mcp-bridge/README-AI-TOOLKIT.md)) that also registers each namespaced MCP tool as its own OpenClaw tool — run `docker compose run --rm openclaw-plugin-config` after pull, then restart **`openclaw-gateway`**. Use **one** URL: the Docker MCP gateway (`http://mcp-gateway:8811/mcp`); ComfyUI tools are aggregated there (e.g. **`gateway__comfyui__run_workflow`** or **`gateway__call`** with **`tool`**: **`comfyui__run_workflow`**). **`gateway__comfyui__generate_image`**-style names may still be wrong if ComfyUI uses a different inner tool id.
 
 **Same error for `gateway__n8n__workflow_list`:** Identical mistake — use **`gateway__call`** with inner `tool: "n8n__workflow_list"` (and valid n8n API auth if that tool requires it).
 
@@ -168,7 +168,39 @@ Automated tools and agents calling the dashboard from **inside** the stack shoul
 
 ### ComfyUI — LTX 2.3 video and `clip input is invalid: None`
 
-**`ltx-2.3-22b`** is not a generic SD1.5 checkpoint graph: plain **`CLIPTextEncode`** off **`CheckpointLoaderSimple`** often yields **no CLIP**. Use the **LTX / Gemma text path** your ComfyUI build documents (e.g. **`LTXAVTextEncoderLoader`** + **`CLIPTextEncodeFlux`** wired to that CLIP), or **`comfyui__call` `run_workflow`** with a workflow id that already matches your nodes — see **`TOOLS.md`** §D–E and packaged workflows under **`data/comfyui-workflows/`**.
+**`ltx-2.3-22b`** is not a generic SD1.5 checkpoint graph: plain **`CLIPTextEncode`** off **`CheckpointLoaderSimple`** often yields **no CLIP**. Use the **LTX / Gemma text path** your ComfyUI build documents (e.g. **`LTXAVTextEncoderLoader`** + **`CLIPTextEncodeFlux`** wired to that CLIP), or **`gateway__call`** with **`tool`**: **`run_workflow`** (and a **`workflow_id`** that matches your nodes) — see **`TOOLS.md`** and packaged workflows under **`data/comfyui-workflows/`**.
+
+### ComfyUI — `Tool not found` for `gateway__comfyui__run_workflow` / OpenClaw
+
+The MCP bridge registers **`gateway__call`** first. For ComfyUI, pass the **inner** tool name from the ComfyUI MCP server (usually plain names: **`run_workflow`**, **`list_workflows`**, **`generate_image`**):
+
+- **`gateway__call`** with **`tool`**: **`run_workflow`** and **`args`**: `{ "workflow_id": "…", … }` — this resolves to **`gateway__run_workflow`** (not `gateway__comfyui__run_workflow`).
+
+If **`gateway__run_workflow`** still fails, the Docker MCP gateway may prefix tool names with the backend id — try **`tool`**: **`comfyui__run_workflow`**. After changing MCP servers, restart **`openclaw-gateway`** so flat tools re-register.
+
+### ComfyUI — `missing_node_type` / UI workflow JSON
+
+Community packs (e.g. Juno) often ship **ComfyUI UI** format (`"nodes": [ ... ]` with `type`, `widgets_values`). The **`/prompt`** API needs **API** format (top-level keys are node ids, each value has **`class_type`** and **`inputs`**). **Do not** paste UI JSON into MCP. In ComfyUI: load the graph → **Save (API format)** → put that file under **`data/comfyui-workflows/`**. The comfyui-mcp server rejects UI exports with a clear error.
+
+**FL2V / first–last-frame** graphs need **input images**; for **text-only** video use a **T2V** or **I2V/T2V Basic** workflow (see the workflow’s title/description), not FL2V.
+
+### ComfyUI — workflows in subfolders
+
+`list_workflows` includes **`*.json`** under **`data/comfyui-workflows/`** recursively. Use **`workflow_id`** as the **POSIX path without `.json`**, e.g. `juno-comfyui-workflows-main/juno-comfyui-workflows-main/ltx-video/LTX-2.3_-_T2V_Basic` (slashes, not backslashes).
+
+### ComfyUI — custom nodes installed in the wrong place (OpenClaw vs ComfyUI)
+
+`exec`/`read`/`edit` in the **OpenClaw gateway** container must **not** install into **`/app/ComfyUI/...`** — that path is **not** the ComfyUI service. Use **`workspace/comfyui-custom-nodes/`**, which binds to **`data/comfyui-storage/ComfyUI/custom_nodes/`** (the same directory the **`comfyui`** container loads). Restart **`comfyui`** after adding nodes. See **`workspace/agents/docker-ops.md`**.
+
+### ComfyUI — `docker: Permission denied` / agent cannot `pip install` in ComfyUI
+
+The **OpenClaw gateway** has **no** Docker socket. **`docker`**, **`docker compose exec`**, and **`gateway__run_command`** will not work for installing Python deps into **`comfyui`**.
+
+1. **Files:** place or edit custom node trees under **`data/comfyui-storage/ComfyUI/custom_nodes/`** (same as **`workspace/comfyui-custom-nodes/`** in the gateway).
+2. **Python requirements:** from the **host** repo root, run **`scripts/comfyui/install_node_requirements.sh`** or **`install_node_requirements.ps1`** with the **`path-under-custom_nodes`** (folder that contains **`requirements.txt`**).
+3. **Restart** **`comfyui`** (Dashboard API with **`DASHBOARD_AUTH_TOKEN`**, or host **`docker compose restart comfyui`**).
+
+Full playbook: **`openclaw/workspace/agents/comfyui-assets.md`** (synced into **`data/openclaw/workspace/agents/`** when **`openclaw-workspace-sync`** runs).
 
 ## Escalation
 

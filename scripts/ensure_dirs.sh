@@ -14,6 +14,7 @@ dirs=(
   "$data/ops-controller"
   "$data/open-webui"
   "$data/comfyui-storage"
+  "$data/comfyui-storage/ComfyUI/custom_nodes"
   "$data/comfyui-output"
   "$data/comfyui-workflows"
   "$data/comfyui-storage/ComfyUI/user/default/workflows"
@@ -34,7 +35,7 @@ for d in "${dirs[@]}"; do
   echo "OK $d"
 done
 
-# Seed data/comfyui-workflows from repo templates (data/ is gitignored; COMFY_MCP_DEFAULT_WORKFLOW_ID defaults to blog_flux_dev)
+# Seed data/comfyui-workflows from repo templates (data/ is gitignored; COMFY_MCP_DEFAULT_WORKFLOW_ID defaults to generate_image)
 wf_template="$base/workflow-templates/comfyui-workflows"
 wf_data="$data/comfyui-workflows"
 if [[ -d "$wf_template" ]]; then

@@ -292,7 +292,7 @@ services:
       - COMFYUI_URL=http://comfyui:8188
       - COMFY_MCP_WORKFLOW_DIR=/workflows
       # When the agent omits workflow_id but sends prompt/width/etc. at top level, use this workflow file stem.
-      - COMFY_MCP_DEFAULT_WORKFLOW_ID=${COMFY_MCP_DEFAULT_WORKFLOW_ID:-blog_flux_dev}
+      - COMFY_MCP_DEFAULT_WORKFLOW_ID=${COMFY_MCP_DEFAULT_WORKFLOW_ID:-generate_image}
     volumes:
       # API-format workflows only (same host dir as ComfyUI → user/default/workflows/mcp-api).
       # Do not put visual-format JSON (id/nodes/links) here — comfyui-mcp WorkflowManager crashes on that.
@@ -598,6 +598,8 @@ services:
       - ${BASE_PATH:-.}/data/mcp:/home/node/.openclaw/workspace/data/mcp
       # Same bind mount as comfyui-mcp:/workflows — agents write API-format JSON here so list_workflows/run_workflow see it
       - ${BASE_PATH:-.}/data/comfyui-workflows:/comfyui-workflows
+      # Same host path as comfyui:/root/ComfyUI/custom_nodes — install LTX/Juno/etc. here (NOT under /app in this image)
+      - ${BASE_PATH:-.}/data/comfyui-storage/ComfyUI/custom_nodes:/home/node/.openclaw/workspace/comfyui-custom-nodes
       # Named volume for extensions — Windows bind mounts force 0777 which
       # OpenClaw's safe-open rejects. A named volume has proper Linux perms.
       - openclaw-extensions:/home/node/.openclaw/extensions

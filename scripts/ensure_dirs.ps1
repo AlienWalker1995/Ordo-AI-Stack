@@ -8,6 +8,7 @@ $dirs = @(
     (Join-Path $data "ops-controller"),
     (Join-Path $data "open-webui"),
     (Join-Path $data "comfyui-storage"),
+    (Join-Path $data "comfyui-storage\ComfyUI\custom_nodes"),
     (Join-Path $data "comfyui-output"),
     (Join-Path $data "comfyui-workflows"),
     (Join-Path $data "comfyui-storage\ComfyUI\user\default\workflows"),
@@ -27,7 +28,7 @@ foreach ($d in $dirs) {
     Write-Host "OK $d"
 }
 
-# Seed data/comfyui-workflows from repo templates (data/ is gitignored; COMFY_MCP_DEFAULT_WORKFLOW_ID defaults to blog_flux_dev)
+# Seed data/comfyui-workflows from repo templates (data/ is gitignored; COMFY_MCP_DEFAULT_WORKFLOW_ID defaults to generate_image)
 $wfTemplateDir = Join-Path $base "workflow-templates\comfyui-workflows"
 $wfDataDir = Join-Path $data "comfyui-workflows"
 if (Test-Path $wfTemplateDir) {

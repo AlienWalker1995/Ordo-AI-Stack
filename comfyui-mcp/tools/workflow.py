@@ -44,7 +44,7 @@ def _merge_run_workflow_args(
         wid = default_wf
     if not wid:
         raise ValueError(
-            "workflow_id is required. Pass workflow_id (e.g. blog_flux_dev) or set "
+            "workflow_id is required. Pass workflow_id (e.g. generate_image) or set "
             "COMFY_MCP_DEFAULT_WORKFLOW_ID when sending prompt/width in flat form."
         )
     return wid, merged, options, return_inline_preview
@@ -94,7 +94,7 @@ def register_workflow_tools(
         """Run a saved ComfyUI workflow with constrained parameter overrides.
 
         Args:
-            workflow_id: The workflow ID (filename stem, e.g., "blog_flux_dev").
+            workflow_id: The workflow ID (filename stem, e.g., "generate_image").
             overrides: Optional dict of parameter overrides (e.g., {"prompt": "a cat", "width": 1024}).
             options: Optional dict of execution options (reserved for future use)
             return_inline_preview: If True, include a small thumbnail base64 in response (256px, ~100KB)
@@ -132,6 +132,16 @@ def register_workflow_tools(
         workflow = workflow_manager.load_workflow(wid)
         if not workflow:
             return {"error": f"Workflow '{wid}' not found"}
+
+        if workflow_manager.is_ui_workflow_export(workflow):
+            return {
+                "error": (
+                    "This JSON is a ComfyUI UI/workflow-editor export (has a 'nodes' array). "
+                    "The MCP server must send API-format graphs to /prompt. "
+                    "In ComfyUI: load the workflow → Save (API format) or use 'Save API Format', "
+                    "then place that file under the workflows directory and use its path as workflow_id."
+                )
+            }
 
         try:
             workflow = workflow_manager.apply_workflow_overrides(

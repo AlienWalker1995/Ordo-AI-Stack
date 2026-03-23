@@ -126,6 +126,20 @@ def _fetch_models_from_gateway() -> list[dict] | None:
     return models if models else None
 
 
+def _normalize_mcp_bridge_servers(data: dict) -> bool:
+    """Ensure openclaw-mcp-bridge uses only the Docker MCP gateway (no separate comfyui URL)."""
+    script_dir = Path(__file__).resolve().parent
+    if str(script_dir) not in sys.path:
+        sys.path.insert(0, str(script_dir))
+    try:
+        import add_mcp_plugin_config as amp  # noqa: PLC0415
+
+        return amp.normalize_mcp_bridge_servers(data)
+    except Exception as e:
+        print(f"merge_gateway_config: mcp bridge normalize skipped: {e}", file=sys.stderr)
+        return False
+
+
 def main() -> int:
     config_path = Path(os.environ.get("OPENCLAW_CONFIG_PATH", "/config/openclaw.json"))
     if not config_path.exists():
@@ -140,6 +154,8 @@ def main() -> int:
     providers = data.setdefault("models", {}).setdefault("providers", {})
     modified = False
     msg = ""
+    if _normalize_mcp_bridge_servers(data):
+        modified = True
     did_channel_refs = _inject_channel_secret_refs(data)
     if did_channel_refs:
         modified = True

@@ -43,6 +43,7 @@ These files are **persistent** — they survive container restarts because they 
 | ops-controller | `models/comfyui/` | `/models/comfyui/` | bind mount | ComfyUI model weights |
 | mcp-gateway | `data/mcp/` | `/mcp-config/` | bind mount | Server registry |
 | openclaw-gateway | `data/openclaw/` | `/home/node/.openclaw/` | bind mount | Full OpenClaw workspace |
+| openclaw-gateway | `data/comfyui-storage/ComfyUI/custom_nodes/` | `/home/node/.openclaw/workspace/comfyui-custom-nodes` | bind mount | Same folder as ComfyUI `custom_nodes` (agents install LTX/Juno nodes here) |
 | openclaw-gateway | — | `/home/node/.openclaw/extensions/` | named volume (`openclaw-extensions`) | Plugin extensions |
 | qdrant | `data/qdrant/` | `/qdrant/storage/` | bind mount | Vector DB storage |
 | rag-ingestion | `data/rag-input/` | `/watch/` | bind mount | RAG input files |

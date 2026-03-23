@@ -87,6 +87,20 @@ Returns CPU%, RAM, disk, and GPU stats (no auth required).
 
 ---
 
+## ComfyUI custom nodes (critical)
+
+**Wrong container:** The OpenClaw gateway image uses `/app` for Node — that is **not** ComfyUI. Never `git clone` into `/app/ComfyUI/custom_nodes` from `exec` here; those files are **not** read by the ComfyUI service.
+
+**Correct path:** The `comfyui` service uses host `data/comfyui-storage/` → `/root/`. Custom nodes belong in **`data/comfyui-storage/ComfyUI/custom_nodes/`** (same files the ComfyUI container loads from `/root/ComfyUI/custom_nodes`).
+
+**From this workspace:** **`comfyui-custom-nodes/`** is bind-mounted to that host directory — install or clone repos **there** (e.g. `comfyui-custom-nodes/ComfyUI-LTXVideo`). Then **restart `comfyui`** via Dashboard API so the server rescans nodes.
+
+**Verify (HTTP, no Docker CLI):** `wget -q -O - http://comfyui:8188/object_info` (from any container on `backend`) or check `http://comfyui:8188/system_stats` after restart.
+
+**Python `pip` for custom nodes:** The OpenClaw gateway **cannot** run `docker compose exec` or install into the ComfyUI venv. After node files are in **`workspace/comfyui-custom-nodes/`**, install requirements **on the host**: `scripts/comfyui/install_node_requirements.sh` / `.ps1` (see **`workspace/agents/comfyui-assets.md`**), then restart **`comfyui`** via this API.
+
+**Private GitHub clones** inside the container still need credentials or a public fork — “could not read Username” is not fixed by path changes.
+
 ## Rules
 
 - **Always check health first** — never restart a healthy service without cause

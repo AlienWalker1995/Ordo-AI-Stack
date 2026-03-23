@@ -61,7 +61,7 @@ After a fix is applied, verify it resolves the issue:
 
 - `exec` — read-only commands (grep, cat, ls, curl GET, wget GET, git log)
 - `gateway__call` with: `playwright__browser_snapshot`, `duckduckgo__search`, `fetch__fetch_content`
-- `comfyui__call` with: `list_models`, `get_job`
+- `gateway__call` with inner `tool` for ComfyUI (e.g. `comfyui__list_models`, `comfyui__get_job`) — same MCP gateway as DuckDuckGo
 - Dashboard API: GET only (logs, health, services list)
 
 **Do not** call service restart, model download, or env_set without returning to Primus role first and confirming with the user.
@@ -73,7 +73,7 @@ After a fix is applied, verify it resolves the issue:
 | Symptom | First check |
 |---|---|
 | Service won't start | `docker-compose.yml` depends_on and env vars |
-| Model error / not found | `comfyui__call list_models`, then ComfyUI MCP: Error Recovery |
+| Model error / not found | `gateway__call` with `tool: "comfyui__list_models"`, then ComfyUI MCP: Error Recovery |
 | 401 errors | Token env vars set? `env \| grep TOKEN` |
 | Connection refused | Service healthy? `wget $DASHBOARD_URL/api/health` |
 | Python traceback | Read the file at the line number; check imports and env var reads |

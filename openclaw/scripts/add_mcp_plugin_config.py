@@ -6,6 +6,7 @@ openclaw.plugin.json, so we create it here to unblock OpenClaw's plugin loader.
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import sys
@@ -17,7 +18,8 @@ MCP_PLUGIN_CONFIG = {
     "enabled": True,
     "config": {
         "servers": {
-            "gateway": {"url": _mcp_url}
+            # Single endpoint: Docker MCP Gateway (aggregates n8n, playwright, comfyui, …).
+            "gateway": {"url": _mcp_url},
         },
         "debug": False,
     },
@@ -45,6 +47,35 @@ PLUGIN_MANIFEST = {
 }
 
 EXTENSIONS_DIR = Path("/config/extensions/openclaw-mcp-bridge")
+
+
+def normalize_mcp_bridge_servers(data: dict) -> bool:
+    """Remove a legacy second MCP URL so only the Docker MCP gateway remains.
+
+    ComfyUI and other catalog servers are reached through ``mcp-gateway``; do not
+    configure a separate ``comfyui`` URL on the bridge.
+    """
+    plugins = data.get("plugins")
+    if not isinstance(plugins, dict):
+        return False
+    entries = plugins.get("entries")
+    if not isinstance(entries, dict):
+        return False
+    bridge = entries.get(MCP_PLUGIN_ID)
+    if not isinstance(bridge, dict):
+        return False
+    cfg = bridge.get("config")
+    if not isinstance(cfg, dict):
+        return False
+    servers = cfg.get("servers")
+    if not isinstance(servers, dict):
+        return False
+
+    modified = False
+    if "comfyui" in servers:
+        del servers["comfyui"]
+        modified = True
+    return modified
 
 
 def _ensure_plugin_manifest() -> None:
@@ -80,15 +111,20 @@ def main() -> int:
     if not isinstance(entries, dict):
         return 0
 
-    if MCP_PLUGIN_ID in entries:
-        return 0
+    modified = False
+    if MCP_PLUGIN_ID not in entries:
+        entries[MCP_PLUGIN_ID] = copy.deepcopy(MCP_PLUGIN_CONFIG)
+        plugins["enabled"] = True
+        modified = True
+    if normalize_mcp_bridge_servers(data):
+        modified = True
 
-    entries[MCP_PLUGIN_ID] = MCP_PLUGIN_CONFIG
-    plugins["enabled"] = True
+    if not modified:
+        return 0
 
     try:
         config_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        print(f"add_mcp_plugin_config: added {MCP_PLUGIN_ID} to plugins.entries")
+        print(f"add_mcp_plugin_config: updated {MCP_PLUGIN_ID} (single MCP gateway)")
     except OSError as e:
         print(f"add_mcp_plugin_config: write failed: {e}", file=sys.stderr)
         return 1
