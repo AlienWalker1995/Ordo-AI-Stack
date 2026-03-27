@@ -10,7 +10,7 @@ Copy `.env.example` to `.env` and configure the following:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `BASE_PATH` | `.` | Repository root path (use forward slashes on Windows, e.g., `C:/dev/AI-toolkit`) |
+| `BASE_PATH` | `.` | Repository root path (use forward slashes on Windows, e.g., `C:/dev/ordo-ai-stack`) |
 | `OPENCLAW_GATEWAY_TOKEN` | *(empty)* | **OpenClaw gateway authentication token** (required for OpenClaw integration) |
 
 ### Optional

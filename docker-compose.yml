@@ -1,4 +1,4 @@
-name: ai-toolkit
+name: ordo-ai-stack
 
 # All services start by default. Run: docker compose up -d
 services:
@@ -24,7 +24,7 @@ services:
 
   model-gateway:
     build: ./model-gateway
-    image: ai-toolkit-model-gateway:latest
+    image: ordo-ai-stack-model-gateway:latest
     pull_policy: build
     restart: unless-stopped
     user: "1000:1000"
@@ -75,7 +75,7 @@ services:
 
   ops-controller:
     build: ./ops-controller
-    image: ai-toolkit-ops-controller:latest
+    image: ordo-ai-stack-ops-controller:latest
     pull_policy: build
     restart: unless-stopped
     cap_drop: [ALL]
@@ -300,7 +300,7 @@ services:
   # Build ComfyUI MCP image for gateway-spawned containers (exits immediately after build)
   comfyui-mcp-image:
     build: ./comfyui-mcp
-    image: ai-toolkit-comfyui-mcp:latest
+    image: ordo-ai-stack-comfyui-mcp:latest
     pull_policy: build
     restart: "no"
     command: ["true"]
@@ -308,14 +308,14 @@ services:
   # Stable orchestration MCP (fixed verbs → dashboard HTTP). Optional build for gateway catalog.
   orchestration-mcp-image:
     build: ./orchestration-mcp
-    image: ai-toolkit-orchestration-mcp:latest
+    image: ordo-ai-stack-orchestration-mcp:latest
     pull_policy: build
     restart: "no"
     command: ["true"]
 
   # Long-running ComfyUI MCP (same image as gateway-spawned). OpenClaw uses **mcp-gateway:8811** only — see TOOLS.md.
   comfyui-mcp:
-    image: ai-toolkit-comfyui-mcp:latest
+    image: ordo-ai-stack-comfyui-mcp:latest
     pull_policy: build
     restart: unless-stopped
     depends_on:
@@ -385,7 +385,7 @@ services:
 
   mcp-gateway:
     build: ./mcp
-    image: ai-toolkit-mcp-gateway:latest
+    image: ordo-ai-stack-mcp-gateway:latest
     pull_policy: build
     container_name: mcp-gateway
     restart: unless-stopped
@@ -555,7 +555,7 @@ services:
       - ${OPENCLAW_CONFIG_DIR:-${BASE_PATH:-.}/data/openclaw}:/config
       - openclaw-extensions:/extensions
       - ${BASE_PATH:-.}/openclaw/scripts:/scripts:ro
-      # Forked MCP bridge (namespaced tools as first-class OpenClaw tools); see openclaw/extensions/openclaw-mcp-bridge/README-AI-TOOLKIT.md
+      # Forked MCP bridge (namespaced tools as first-class OpenClaw tools); see openclaw/extensions/openclaw-mcp-bridge/README-ORDO-AI-STACK.md
       - ${BASE_PATH:-.}/openclaw/extensions/openclaw-mcp-bridge:/fork-openclaw-mcp-bridge:ro
     entrypoint: ["sh", "-c"]
     command:
@@ -566,9 +566,9 @@ services:
         MANIFEST="$$PLUGIN_DIR/openclaw.plugin.json"
         MCP_URL="$${MCP_GATEWAY_URL:-http://mcp-gateway:8811/mcp}"
 
-        # Prefer AI-toolkit fork (registers namespaced MCP tools); else npm pack upstream
+        # Prefer Ordo AI Stack fork (registers namespaced MCP tools); else npm pack upstream
         if [ -f /fork-openclaw-mcp-bridge/dist/index.js ]; then
-          echo "Installing AI-toolkit forked openclaw-mcp-bridge from repo..."
+          echo "Installing Ordo AI Stack forked openclaw-mcp-bridge from repo..."
           rm -rf "$$PLUGIN_DIR"
           mkdir -p "$$PLUGIN_DIR"
           cp -a /fork-openclaw-mcp-bridge/. "$$PLUGIN_DIR/"
@@ -829,9 +829,9 @@ volumes:
 
 networks:
   frontend:
-    name: ai-toolkit-frontend
+    name: ordo-ai-stack-frontend
   backend:
-    name: ai-toolkit-backend
+    name: ordo-ai-stack-backend
     # internal: false required for Ollama to pull models from registry.ollama.ai.
     # Set internal: true for air-gapped security (model pulls will fail).
     internal: false

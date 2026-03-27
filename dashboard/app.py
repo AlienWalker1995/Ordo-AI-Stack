@@ -1,4 +1,4 @@
-"""AI-toolkit Dashboard — unified model management and service hub."""
+"""Ordo AI Stack Dashboard — unified model management and service hub."""
 from __future__ import annotations
 
 import asyncio
@@ -48,7 +48,7 @@ async def _lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="AI-toolkit Dashboard", version="1.0.0", lifespan=_lifespan)
+app = FastAPI(title="Ordo AI Stack Dashboard", version="1.0.0", lifespan=_lifespan)
 app.include_router(hub_router)
 app.include_router(orchestration_router)
 

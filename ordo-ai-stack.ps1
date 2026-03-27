@@ -1,5 +1,5 @@
-# ai-toolkit -- project management CLI
-# Usage: .\ai-toolkit.ps1 <command>
+# ordo-ai-stack -- project management CLI
+# Usage: .\ordo-ai-stack.ps1 <command>
 #
 # Commands:
 #   initialize   Bootstrap directories, config, hardware profile, then rebuild/recreate and start the full default stack
@@ -29,16 +29,19 @@ function Invoke-Initialize {
     $composeFile = Join-Path $base "docker-compose.yml"
     if (-not (Test-Path $composeFile)) {
         err "No docker-compose.yml under: $base"
-        err "Set BASE_PATH to your AI-toolkit repo root, or run this script from the repo (.\ai-toolkit.ps1 initialize)."
+        err "Set BASE_PATH to your Ordo AI Stack repo root, or run this script from the repo (.\ordo-ai-stack.ps1 initialize)."
         exit 1
     }
 
     Write-Host ""
-    Write-Host "   ___    ___   _____           _ _    _ _   " -ForegroundColor Yellow
-    Write-Host "  / _ \  |_ _| |_   _|__   ___ | | | _(_) |_ " -ForegroundColor Yellow
-    Write-Host " / /_\ \  | |    | |/ _ \ / _ \| | |/ / | __|" -ForegroundColor Yellow
-    Write-Host "/  _  /  | |    | | (_) | (_) | |   <| | |_ " -ForegroundColor Yellow
-    Write-Host "\_| |_/ |___|   |_|\___/ \___/|_|_|\_\_|\__|" -ForegroundColor Yellow
+    $ordoBanner = @'
+  ___          _       
+ / _ \ _ __ __| | ___  
+| | | | '__/ _` |/ _ \ 
+| |_| | | | (_| | (_) |
+ \___/|_|  \__,_|\___/
+'@
+    Write-Host $ordoBanner -ForegroundColor Yellow
     $dataPath = if ($env:DATA_PATH) { $env:DATA_PATH -replace '\\', '/' } else { "$base/data" }
     Write-Host "base=$base  data=$dataPath" -ForegroundColor DarkGray
 
@@ -105,7 +108,7 @@ switch ($Command) {
     }
     default {
         err "Unknown command: $Command"
-        Write-Host "  Run .\ai-toolkit.ps1 help for usage."
+        Write-Host "  Run .\ordo-ai-stack.ps1 help for usage."
         exit 1
     }
 }

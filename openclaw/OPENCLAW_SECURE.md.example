@@ -80,10 +80,10 @@ If OpenClaw uses a browser worker for dynamic sites, block private ranges.
 **Manual iptables (host firewall / DOCKER-USER chain):**
 ```bash
 # Find openclaw subnet:
-SUBNET=$(docker network inspect ai-toolkit-openclaw 2>/dev/null \
+SUBNET=$(docker network inspect ordo-ai-stack-openclaw 2>/dev/null \
   | jq -r '.[0].IPAM.Config[0].Subnet // empty')
 # Fall back to frontend network if openclaw-specific network not in use:
-[ -z "$SUBNET" ] && SUBNET=$(docker network inspect ai-toolkit-frontend \
+[ -z "$SUBNET" ] && SUBNET=$(docker network inspect ordo-ai-stack-frontend \
   | jq -r '.[0].IPAM.Config[0].Subnet // empty')
 
 sudo iptables -I DOCKER-USER -s "$SUBNET" -d 10.0.0.0/8       -j DROP

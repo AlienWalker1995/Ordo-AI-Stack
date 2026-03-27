@@ -23,7 +23,7 @@
       "description": "Tavily API — tavily_search, tavily_extract, tavily_crawl, tavily_map, tavily_research (set TAVILY_API_KEY in .env)"
     },
     "comfyui": {
-      "image": "ai-toolkit-comfyui-mcp:latest",
+      "image": "ordo-ai-stack-comfyui-mcp:latest",
       "scopes": ["image"],
       "allow_clients": ["*"],
       "description": "ComfyUI workflows (run_workflow) + custom-node pip/restart via ops-controller when OPS_CONTROLLER_TOKEN is set"

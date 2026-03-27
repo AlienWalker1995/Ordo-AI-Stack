@@ -1,4 +1,4 @@
-# AI-toolkit fork of `openclaw-mcp-bridge`
+# Ordo AI Stack fork of `openclaw-mcp-bridge`
 
 **Upstream:** npm `openclaw-mcp-bridge@0.2.0`
 

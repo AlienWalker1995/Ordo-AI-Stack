@@ -10,11 +10,11 @@ RUN apt-get update -qq && apt-get install -y -qq git curl && rm -rf /var/lib/apt
   && pip install --no-cache-dir -r requirements.txt \
   && sed -i 's/port=9000,/port=9000, host="0.0.0.0",/' server.py
 
-# AI-toolkit: accept flat run_workflow args + optional default workflow_id (see tools/workflow.py)
+# Ordo AI Stack: accept flat run_workflow args + optional default workflow_id (see tools/workflow.py)
 COPY tools/workflow.py tools/workflow.py
-# AI-toolkit: catalog + overrides when workflow JSON uses literals (ComfyUI UI) instead of PARAM_ placeholders
+# Ordo AI Stack: catalog + overrides when workflow JSON uses literals (ComfyUI UI) instead of PARAM_ placeholders
 COPY managers/workflow_manager.py managers/workflow_manager.py
-# AI-toolkit: MCP tools for custom-node pip + comfyui restart (ops-controller)
+# Ordo AI Stack: MCP tools for custom-node pip + comfyui restart (ops-controller)
 COPY tools/management.py tools/management.py
 RUN python3 <<'PY'
 from pathlib import Path

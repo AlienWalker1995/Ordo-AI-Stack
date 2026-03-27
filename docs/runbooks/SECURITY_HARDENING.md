@@ -1,6 +1,6 @@
 # Security Hardening Runbook
 
-Operational guidance for hardening the AI-toolkit stack beyond the defaults.
+Operational guidance for hardening the Ordo AI Stack beyond the defaults.
 
 **See also:** [SECURITY.md](../../SECURITY.md) · [Product Requirements Document](../Product%20Requirements%20Document.md)
 
@@ -21,13 +21,13 @@ malicious or misconfigured tool can reach internal services (Ollama, ops-control
 ./scripts/ssrf-egress-block.sh --remove    # remove rules
 ```
 
-The script auto-detects the Docker network subnet (`ai-toolkit_frontend` or `ai-toolkit_default`), or you can pass it: `./scripts/ssrf-egress-block.sh 172.18.0.0/16`.
+The script auto-detects the Docker network subnet (`ordo-ai-stack-frontend` or `ordo-ai-stack_default`), or you can pass it: `./scripts/ssrf-egress-block.sh 172.18.0.0/16`.
 
 **Manual commands** (if you prefer):
 
 ```bash
 # Find the subnet used by MCP containers.
-docker network inspect ai-toolkit_frontend | jq '.[0].IPAM.Config[].Subnet'
+docker network inspect ordo-ai-stack-frontend | jq '.[0].IPAM.Config[].Subnet'
 # Example output: "172.18.0.0/16"
 MCP_SUBNET="172.18.0.0/16"   # replace with your subnet
 
@@ -83,7 +83,7 @@ The ops controller runs without a host port by default (internal Docker network 
 
 To verify no host port is exposed:
 ```bash
-docker inspect ai-toolkit-ops-controller-1 --format '{{json .HostConfig.PortBindings}}'
+docker inspect ordo-ai-stack-ops-controller-1 --format '{{json .HostConfig.PortBindings}}'
 # Expected: {} (empty)
 ```
 
@@ -180,7 +180,7 @@ trivy image ollama/ollama:0.17.4
 
 # Scan custom builds
 docker compose build model-gateway
-trivy image ai-toolkit-model-gateway:latest
+trivy image ordo-ai-stack-model-gateway:latest
 ```
 
 For pinned digests, see the comment in `docker-compose.yml` under `ollama`:

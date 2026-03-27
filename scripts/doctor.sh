@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Doctor: quick health probes + optional openclaw.json validation (M7).
 # Usage: ./scripts/doctor.sh
-# Env: MODEL_GATEWAY_URL, MCP_GATEWAY_URL, DASHBOARD_URL, OPENCLAW_CONFIG_PATH, AI_TOOLKIT_ROOT
+# Env: MODEL_GATEWAY_URL, MCP_GATEWAY_URL, DASHBOARD_URL, OPENCLAW_CONFIG_PATH, ORDO_AI_STACK_ROOT
 #      DOCTOR_DEPS_TIMEOUT_SEC - max seconds for GET /api/dependencies (default 120)
 #      DOCTOR_STRICT=1 - optional Ollama/MCP host probes fail hard if unreachable
 set -euo pipefail
@@ -120,7 +120,7 @@ probe_mcp_gateway_optional() {
   fi
 }
 
-echo "==> AI-toolkit doctor (M7)"
+echo "==> Ordo AI Stack doctor (M7)"
 echo "==> Probes (published host ports)"
 probe "dashboard /api/health"      "$DASH/api/health"
 probe_dependencies "dashboard /api/dependencies" "$DASH/api/dependencies"

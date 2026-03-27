@@ -1,6 +1,6 @@
 # MCP Module — Shared Model Context Protocol Gateway
 
-The [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) lets AI applications connect to external tools and data. This module runs Docker's [MCP Gateway](https://github.com/docker/mcp-gateway), giving all your AI-toolkit services access to the same MCP servers through one endpoint.
+The [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) lets AI applications connect to external tools and data. This module runs Docker's [MCP Gateway](https://github.com/docker/mcp-gateway), giving all your Ordo AI Stack services access to the same MCP servers through one endpoint.
 
 ## Layout (everything MCP lives under `mcp/`)
 
@@ -8,7 +8,7 @@ The [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) lets AI app
 |------|------|
 | **[gateway/](gateway/)** | Image entrypoint (`gateway-wrapper.sh`) and **template** `registry-custom.yaml` (catalog fragment: **`registry.comfyui`**). The wrapper injects secrets into **`registry-custom.docker.yaml`** and passes it as **`--additional-catalog`** (not **`--additional-registry`** — with **`--servers`**, registry files are not used for server definitions). `ensure_dirs` copies the template into **`data/mcp/`**. DuckDuckGo, n8n, and Tavily come from the online catalog; **`TAVILY_API_KEY`** is on **`mcp-gateway`** via compose. |
 | **[docs/](docs/)** | MCP-specific architecture (e.g. [ComfyUI + OpenClaw](docs/comfyui-openclaw.md)). |
-| **`Dockerfile`** | Builds `ai-toolkit-mcp-gateway` from `docker/mcp-gateway` + the wrapper above. |
+| **`Dockerfile`** | Builds `ordo-ai-stack-mcp-gateway` from `docker/mcp-gateway` + the wrapper above. |
 
 **Runtime state** (not in git): **`data/mcp/`** — `servers.txt`, `registry-custom.yaml` (from template), generated `registry-custom.docker.yaml`, optional `registry.json` for policy metadata.
 

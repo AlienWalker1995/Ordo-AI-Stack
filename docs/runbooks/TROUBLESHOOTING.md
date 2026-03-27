@@ -97,7 +97,7 @@ If the gateway fails healthchecks or exits: confirm **`openclaw-config-sync`** c
 OpenClaw defaults to **`channels.discord.groupPolicy: "allowlist"`**. With allowlist, **your server must appear under `channels.discord.guilds`**, or **every guild channel** (including `#general`) is denied for messages **and native slash commands** like `/new`.
 
 1. Get your **guild (server) ID** from a channel URL: `https://discord.com/channels/<GUILD_ID>/<CHANNEL_ID>` — use **`GUILD_ID`** (not the channel id unless you are configuring per-channel overrides).
-2. **AI-toolkit:** set **`OPENCLAW_DISCORD_GUILD_IDS=<GUILD_ID>`** in `.env` (comma-separated for multiple servers), then:
+2. **Ordo AI Stack:** set **`OPENCLAW_DISCORD_GUILD_IDS=<GUILD_ID>`** in `.env` (comma-separated for multiple servers), then:
    ```bash
    docker compose run --rm openclaw-config-sync
    docker compose up -d openclaw-gateway
@@ -178,7 +178,7 @@ Symptoms in **job run history** or the Control UI often **do not match** what yo
 | `error: "⚠️ ✉️ Message failed"` | **Discord API rejected** the `message` tool call (permissions, content rules, size, rate limit). | Confirm the bot has **Send Messages** (and **Embed Links** if you use links) in that channel. Shorten the post (Discord default **2000 characters** per message). Split into two messages if needed. |
 | `error: "Discord recipient is required…"` | The **`message`** tool was called **without** `to`, or with wrong shape. | Use **`to: "channel:<snowflake>"`** exactly (e.g. `channel:1483464800464797697`). Do not paste only the numeric ID. |
 | **`model 'default' not found`** (cron / scheduled job) | **`data/openclaw/cron/jobs.json`** had **`payload.model": "default"`** — that is not a real gateway model id. | Set **`payload.model`** to the same string as **`agents.defaults.model.primary`** in **`openclaw.json`** (e.g. **`gateway/nemotron-cascade-2:latest`**). After changing the primary model, update cron jobs to match. |
-| Agent says “search unavailable” / `Tool not found` for `gateway__duckduckgo__search` | With the **stock** npm bridge, that id was never registered (only `gateway__call`). This repo’s **forked** bridge registers namespaced tools — reinstall plugin per [openclaw/extensions/openclaw-mcp-bridge/README-AI-TOOLKIT.md](../../openclaw/extensions/openclaw-mcp-bridge/README-AI-TOOLKIT.md). Otherwise use **`gateway__call`** with **`tool: "duckduckgo__search"`**. |
+| Agent says “search unavailable” / `Tool not found` for `gateway__duckduckgo__search` | With the **stock** npm bridge, that id was never registered (only `gateway__call`). This repo’s **forked** bridge registers namespaced tools — reinstall plugin per [openclaw/extensions/openclaw-mcp-bridge/README-ORDO-AI-STACK.md](../../openclaw/extensions/openclaw-mcp-bridge/README-ORDO-AI-STACK.md). Otherwise use **`gateway__call`** with **`tool: "duckduckgo__search"`**. |
 
 **Job payload tips (ai-daily-news style):**
 
@@ -188,7 +188,7 @@ Symptoms in **job run history** or the Control UI often **do not match** what yo
 
 ### MCP tools — `Tool not found` / `Mcp-Session-Id` / `missing_brave_api_key`
 
-**`Tool not found` for names like `gateway__duckduckgo__search`:** On **upstream** `openclaw-mcp-bridge`, only **`gateway__call`** exists at the top level for a given MCP server; inner MCP names go in **`tool`** + **`args`**. This repo ships a **fork** ([`openclaw/extensions/openclaw-mcp-bridge`](../../openclaw/extensions/openclaw-mcp-bridge/README-AI-TOOLKIT.md)) that also registers each namespaced MCP tool as its own OpenClaw tool — run `docker compose run --rm openclaw-plugin-config` after pull, then restart **`openclaw-gateway`**. Use **one** URL: the Docker MCP gateway (`http://mcp-gateway:8811/mcp`); ComfyUI tools are aggregated there (e.g. **`gateway__comfyui__run_workflow`** or **`gateway__call`** with **`tool`**: **`comfyui__run_workflow`**). **`gateway__comfyui__generate_image`**-style names may still be wrong if ComfyUI uses a different inner tool id.
+**`Tool not found` for names like `gateway__duckduckgo__search`:** On **upstream** `openclaw-mcp-bridge`, only **`gateway__call`** exists at the top level for a given MCP server; inner MCP names go in **`tool`** + **`args`**. This repo ships a **fork** ([`openclaw/extensions/openclaw-mcp-bridge`](../../openclaw/extensions/openclaw-mcp-bridge/README-ORDO-AI-STACK.md)) that also registers each namespaced MCP tool as its own OpenClaw tool — run `docker compose run --rm openclaw-plugin-config` after pull, then restart **`openclaw-gateway`**. Use **one** URL: the Docker MCP gateway (`http://mcp-gateway:8811/mcp`); ComfyUI tools are aggregated there (e.g. **`gateway__comfyui__run_workflow`** or **`gateway__call`** with **`tool`**: **`comfyui__run_workflow`**). **`gateway__comfyui__generate_image`**-style names may still be wrong if ComfyUI uses a different inner tool id.
 
 **Same error for `gateway__n8n__workflow_list`:** Identical mistake — use **`gateway__call`** with inner `tool: "n8n__workflow_list"` (and valid n8n API auth if that tool requires it).
 
@@ -277,7 +277,7 @@ The ComfyUI server name must appear **between** `gateway` and the tool id.
 
 ### ComfyUI — `mcp-gateway` lists only **30** tools (no ComfyUI spawn)
 
-**Symptom:** `docker compose logs mcp-gateway` shows **`> 30 tools listed`** (or similar) and **`Running mcp/...`** lines for **duckduckgo**, **n8n**, **tavily** only — **no** line spawning **`ai-toolkit-comfyui-mcp`** / **no** `> comfyui: (N tools)`. Then **every** `comfyui__*` tool is missing for OpenClaw — not a wrong tool name.
+**Symptom:** `docker compose logs mcp-gateway` shows **`> 30 tools listed`** (or similar) and **`Running mcp/...`** lines for **duckduckgo**, **n8n**, **tavily** only — **no** line spawning **`ordo-ai-stack-comfyui-mcp`** / **no** `> comfyui: (N tools)`. Then **every** `comfyui__*` tool is missing for OpenClaw — not a wrong tool name.
 
 **Cause:** The Docker **MCP Gateway** (`docker/mcp-gateway`) is not actually **starting** the ComfyUI MCP server from **`data/mcp/registry-custom.docker.yaml`**, so those tools never appear in **`tools/list`** and the forked bridge cannot register **`gateway__comfyui__…`**.
 
@@ -295,7 +295,7 @@ You want either a **spawn** line for ComfyUI or a **tool count > 30** once Comfy
 
 **If only 30 tools:** use **dashboard** / **ops-controller** for pulls (**`POST /api/comfyui/pull`**, etc.) or **`docker compose --profile comfyui-models run --rm comfyui-model-puller`** — same backends as MCP; see **`agents/docker-ops.md`**.
 
-**Debug:** set **`MCP_GATEWAY_VERBOSE=1`** in **`.env`** (compose passes it into **`mcp-gateway`**) and restart **`mcp-gateway`** — gateway wrapper adds **`--verbose`** so Docker MCP logs **why** a server was skipped. Ensure **`ai-toolkit-comfyui-mcp:latest`** exists (**`docker compose build comfyui-mcp-image`** or service **`comfyui-mcp`**) and **`/var/run/docker.sock`** is mounted on **`mcp-gateway`**.
+**Debug:** set **`MCP_GATEWAY_VERBOSE=1`** in **`.env`** (compose passes it into **`mcp-gateway`**) and restart **`mcp-gateway`** — gateway wrapper adds **`--verbose`** so Docker MCP logs **why** a server was skipped. Ensure **`ordo-ai-stack-comfyui-mcp:latest`** exists (**`docker compose build comfyui-mcp-image`** or service **`comfyui-mcp`**) and **`/var/run/docker.sock`** is mounted on **`mcp-gateway`**.
 
 ### ComfyUI — `Tool not found` for `gateway__run_workflow` / OpenClaw
 

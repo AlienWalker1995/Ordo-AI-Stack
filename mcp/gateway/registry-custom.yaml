@@ -8,7 +8,7 @@ registry:
     description: ComfyUI MCP for AI Toolkit (workflows, images, model pull via ops-controller).
     title: ComfyUI
     type: server
-    image: ai-toolkit-comfyui-mcp:latest
+    image: ordo-ai-stack-comfyui-mcp:latest
     env:
       - name: COMFYUI_URL
         value: http://comfyui:8188
@@ -20,7 +20,7 @@ registry:
     description: Stable orchestration adapter (fixed verbs; dashboard HTTP, not shifting gateway tool names).
     title: Orchestration
     type: server
-    image: ai-toolkit-orchestration-mcp:latest
+    image: ordo-ai-stack-orchestration-mcp:latest
     env:
       - name: ORCHESTRATION_DASHBOARD_URL
         value: http://dashboard:8080

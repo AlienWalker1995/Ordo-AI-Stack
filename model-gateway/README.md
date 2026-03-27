@@ -89,7 +89,7 @@ export ANTHROPIC_BASE_URL="http://<gateway-host-ip>:11435"
 claude --model glm-4.7-flash:Q4_K_M
 ```
 
-Replace `<gateway-host-ip>` with the IP or hostname of the machine running the AI toolkit. Port `11435` must be reachable (check firewall).
+Replace `<gateway-host-ip>` with the IP or hostname of the machine running Ordo AI Stack. Port `11435` must be reachable (check firewall).
 
 **Verify connectivity first:**
 ```bash

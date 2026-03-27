@@ -76,7 +76,7 @@ Section 10 defines what “very strong” means for this repo, the **missing con
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────┐
-│  Host  (network: ai-toolkit-frontend = host-accessible)                        │
+│  Host  (network: ordo-ai-stack-frontend = host-accessible)                        │
 │                                                                                │
 │  ┌─────────────┐  ┌──────────┐  ┌──────────────────────────────────────────┐  │
 │  │ Open WebUI  │  │   N8N    │  │  OpenClaw Gateway  :6680/:6681 (def.; secure: 18789/18790) │  │
@@ -95,7 +95,7 @@ Section 10 defines what “very strong” means for this repo, the **missing con
 │  └──────────────────────────────────────────────────────────────────────┘    │
 │                                                                                │
 │  ┌──────────────────────────────────────────────────────────────────────────┐  │
-│  │  network: ai-toolkit-backend (internal — no direct host access)          │  │
+│  │  network: ordo-ai-stack-backend (internal — no direct host access)          │  │
 │  │                                                                          │  │
 │  │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐             │  │
 │  │  │ Ollama :11434   │  │ Ops Controller  │  │ Qdrant :6333 │             │  │
@@ -215,14 +215,14 @@ Audit query:      Dashboard → GET /audit (auth) → Controller reads JSONL
 │  └──────┬──────┘ └────┬─────┘                             │                  │
 │         │             │           OPENAI_API_BASE         │ gateway provider │
 │  ┌──────▼─────────────▼───────────────────────────────────▼──────────────┐   │
-│  │  network: ai-toolkit-frontend (public-facing services)                │   │
+│  │  network: ordo-ai-stack-frontend (public-facing services)                │   │
 │  │  ┌─────────────────────────────────────────────────────────────────┐  │   │
 │  │  │  Model Gateway :11435                                           │  │   │
 │  │  │  /v1/models (TTL cached)  /v1/chat/completions  /v1/embeddings  │  │   │
 │  │  └──────────────────────┬──────────────────────────────────────────┘  │   │
 │  └─────────────────────────┼──────────────────────────────────────────────┘  │
 │  ┌─────────────────────────┼──────────────────────────────────────────────┐   │
-│  │  network: ai-toolkit-backend (internal)                               │   │
+│  │  network: ordo-ai-stack-backend (internal)                               │   │
 │  │  ┌──────────────────────▼─────┐  ┌────────────┐  ┌─────────────────┐ │   │
 │  │  │ Ollama :11434 (no host port)│  │ vLLM (opt) │  │ Ops Controller  │ │   │
 │  │  └────────────────────────────┘  └────────────┘  │ :9000 (int)     │ │   │
@@ -631,7 +631,7 @@ SSRF scripts live at `scripts/ssrf-egress-block.sh` (Linux/WSL2) and `scripts/ss
 | Resource limits | All services including `openclaw-gateway` (2G), `qdrant` (512M), `rag-ingestion` (256M) ✓ |
 | Log rotation | All services including `n8n`, `comfyui`, `openclaw-gateway`, `qdrant`, `rag-ingestion` ✓ |
 | Pinned images | `ollama:0.17.4`, `open-webui:v0.8.4`, `curlimages/curl:8.10.1`, `python:3.12.8-slim`, `qdrant:v1.13.4` ✓ |
-| Explicit networks | `ai-toolkit-frontend`, `ai-toolkit-backend` declared; Ollama backend-only ✓ |
+| Explicit networks | `ordo-ai-stack-frontend`, `ordo-ai-stack-backend` declared; Ollama backend-only ✓ |
 | Named volumes | Bind mounts used (intentional for local-first; backup documented) ✓ |
 | `restart: unless-stopped` | All long-running services ✓ |
 | One-shot `restart: "no"` | pullers, sync services ✓ |
@@ -811,7 +811,7 @@ Security/audit checklist for M3:
 ### M4 — Networks + Correlation + vLLM + Smoke Tests ✅ (Done)
 
 **User-visible outcomes (implemented):**
-- Explicit `ai-toolkit-frontend` / `ai-toolkit-backend` networks; services assigned; Ollama/ops-controller on backend only
+- Explicit `ordo-ai-stack-frontend` / `ordo-ai-stack-backend` networks; services assigned; Ollama/ops-controller on backend only
 - Request IDs: `X-Request-ID` forwarded dashboard → ops-controller and stored in audit entries; `datetime.now(timezone.utc)` in audit
 - vLLM: `overrides/vllm.yml` with profile `vllm`; GETTING_STARTED.md updated
 - Smoke tests: `tests/test_compose_smoke.py` (config valid, networks present, vllm override valid; optional `RUN_COMPOSE_SMOKE=1` runtime check)
@@ -956,7 +956,7 @@ jobs:
 ### M6 Acceptance Criteria
 
 - **Given** `docker compose up -d`, **When** env does not set `WEBUI_AUTH`, **Then** Open WebUI requires login
-- **Given** `docker inspect mcp-gateway`, **Then** `NetworkSettings.Networks` contains only `ai-toolkit-backend`
+- **Given** `docker inspect mcp-gateway`, **Then** `NetworkSettings.Networks` contains only `ordo-ai-stack-backend`
 - **Given** audit log exceeds 10MB, **When** next privileged action occurs, **Then** old log renamed to `audit.log.1` and new log started
 - **Given** push to main branch, **When** CI runs, **Then** all contract + smoke tests pass
 
@@ -1091,7 +1091,7 @@ requests. Without egress controls, a malicious page or prompt injection can reac
 Apply RFC1918 + metadata blocks via `scripts/ssrf-egress-block.sh`:
 
 ```bash
-# Block the openclaw network specifically (auto-detects ai-toolkit-openclaw subnet):
+# Block the openclaw network specifically (auto-detects ordo-ai-stack-openclaw subnet):
 ./scripts/ssrf-egress-block.sh --target openclaw
 
 # Block both MCP and openclaw in one pass:
@@ -1134,7 +1134,7 @@ prevent injected instructions from escalating privileges:
 
 ## SECTION 10 — Reliability Layer & Service Contracts (Strategic)
 
-This section captures the **developer/operator view** of what AI-toolkit needs next to be **operationally strong** around **OpenClaw hitting the rest of the stack**. It is **product requirements**, not an implementation spec; APIs and payloads will be designed in follow-on engineering plans.
+This section captures the **developer/operator view** of what Ordo AI Stack needs next to be **operationally strong** around **OpenClaw hitting the rest of the stack**. It is **product requirements**, not an implementation spec; APIs and payloads will be designed in follow-on engineering plans.
 
 ### 10.1 Positioning: OpenClaw as mesh client
 
@@ -1234,7 +1234,7 @@ Typical failures: stale sessions, expired auth, headless crashes, navigation han
 
 - Version and **validate** config on startup; deprecations and safe auto-migration where possible; risky migrations require explicit confirmation; export/import of known-good configs.
 - **OpenClaw integration checks:** bridge plugin present, model gateway endpoint, tokens, default model exists, browser port assumptions, secure override compatibility.
-- **Stack “doctor”** command (high value): one diagnostic entrypoint for the whole toolkit.
+- **Stack “doctor”** command (high value): one diagnostic entrypoint for the whole stack.
 
 ### 10.11 Security and reliability together
 
@@ -1250,7 +1250,7 @@ Items that are both security and reliability problems: Open WebUI auth default, 
 
 ### 10.13 What not to do
 
-- Turn AI-toolkit into a **monolithic OpenClaw fork**.
+- Turn Ordo AI Stack into a **monolithic OpenClaw fork**.
 - Make the **dashboard** a **required** runtime dependency for normal inference or tools.
 - Put **ops-controller** on the **hot path** for every user action.
 - Add **more services** before **dependency contracts** are hardened.

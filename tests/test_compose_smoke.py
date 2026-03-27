@@ -48,8 +48,8 @@ def test_compose_config_includes_networks():
     r = _compose_cmd("config")
     assert r.returncode == 0
     out = r.stdout
-    assert "ai-toolkit-frontend" in out or "frontend" in out
-    assert "ai-toolkit-backend" in out or "backend" in out
+    assert "ordo-ai-stack-frontend" in out or "frontend" in out
+    assert "ordo-ai-stack-backend" in out or "backend" in out
 
 
 @pytest.mark.skipif(not COMPOSE_VLLM.exists(), reason="overrides/vllm.yml not present")

@@ -1,6 +1,6 @@
 # Data Schemas, Lifecycle, and Persistence
 
-This document describes data sources, schemas, lifecycle, and persistence rules for the ai-toolkit.
+This document describes data sources, schemas, lifecycle, and persistence rules for Ordo AI Stack.
 
 ## Data Sources and Sinks
 
@@ -149,7 +149,7 @@ This document describes data sources, schemas, lifecycle, and persistence rules 
 
 ### 1. Initialization
 
-**Trigger:** `./ai-toolkit initialize` or `ensure_dirs` script
+**Trigger:** `./ordo-ai-stack initialize` or `ensure_dirs` script
 
 **Actions:**
 - Create `data/` subdirectories
@@ -280,13 +280,13 @@ This document describes data sources, schemas, lifecycle, and persistence rules 
 **Option 1: Full Directory Backup**
 ```bash
 # Backup all data
-tar -czf ai-toolkit-backup.tar.gz data/ models/
+tar -czf ordo-ai-stack-backup.tar.gz data/ models/
 ```
 
 **Option 2: Selective Backup**
 ```bash
 # Backup critical data only
-tar -czf ai-toolkit-critical-backup.tar.gz \
+tar -czf ordo-ai-stack-critical-backup.tar.gz \
   data/openclaw/workspace/ \
   data/openclaw/openclaw.json \
   data/ops-controller/audit.log
@@ -307,7 +307,7 @@ ls data/qdrant/snapshots/
 
 2. **Restore data from backup:**
    ```bash
-   tar -xzf ai-toolkit-backup.tar.gz
+   tar -xzf ordo-ai-stack-backup.tar.gz
    ```
 
 3. **Restart services:**

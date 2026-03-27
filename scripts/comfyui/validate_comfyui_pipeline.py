@@ -5,7 +5,7 @@ Prints one JSON object to stdout.
 
 Usage:
   python scripts/comfyui/validate_comfyui_pipeline.py
-  python scripts/comfyui/validate_comfyui_pipeline.py --base-path C:/dev/AI-toolkit --workflow generate_image --model v1-5-pruned-emaonly.ckpt
+  python scripts/comfyui/validate_comfyui_pipeline.py --base-path C:/dev/ordo-ai-stack --workflow generate_image --model v1-5-pruned-emaonly.ckpt
   COMFYUI_URL=http://127.0.0.1:8188 python scripts/comfyui/validate_comfyui_pipeline.py
 """
 from __future__ import annotations

@@ -19,7 +19,7 @@ from pydantic import BaseModel
 app = FastAPI(title="Ops Controller", version="1.0.0")
 logger = logging.getLogger(__name__)
 
-COMPOSE_PROJECT = os.environ.get("COMPOSE_PROJECT", "ai-toolkit")
+COMPOSE_PROJECT = os.environ.get("COMPOSE_PROJECT", "ordo-ai-stack")
 OPS_CONTROLLER_TOKEN = os.environ.get("OPS_CONTROLLER_TOKEN", "")
 AUDIT_LOG_PATH = Path(os.environ.get("AUDIT_LOG_PATH", "/data/audit.log"))
 AUDIT_LOG_MAX_BYTES = int(os.environ.get("AUDIT_LOG_MAX_BYTES", "10485760"))  # 10MB default
@@ -556,7 +556,7 @@ def _run_model_download(url: str, category: str, filename: str, correlation_id: 
     temp_path = dest.with_suffix(dest.suffix + ".tmp")
     try:
         start_byte = temp_path.stat().st_size if temp_path.exists() else 0
-        req_headers = {"User-Agent": "AI-toolkit/1.0"}
+        req_headers = {"User-Agent": "ordo-ai-stack/1.0"}
         if HF_TOKEN and ("huggingface.co" in url or "hf-mirror.com" in url):
             req_headers["Authorization"] = f"Bearer {HF_TOKEN}"
         if start_byte > 0:

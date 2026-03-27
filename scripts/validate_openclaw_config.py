@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate openclaw.json for AI-toolkit conventions (gateway provider, M7).
+"""Validate openclaw.json for Ordo AI Stack conventions (gateway provider, M7).
 
 Exit 0 if valid or if config path is missing and not explicitly required.
 Exit 1 on validation errors or unreadable JSON.
@@ -17,7 +17,8 @@ def _default_config_path() -> Path:
     env = os.environ.get("OPENCLAW_CONFIG_PATH", "").strip()
     if env:
         return Path(env)
-    base = Path(os.environ.get("AI_TOOLKIT_ROOT", "")).resolve() if os.environ.get("AI_TOOLKIT_ROOT") else None
+    root = os.environ.get("ORDO_AI_STACK_ROOT", "").strip() or os.environ.get("AI_TOOLKIT_ROOT", "").strip()
+    base = Path(root).resolve() if root else None
     if base and base.is_dir():
         return base / "data" / "openclaw" / "openclaw.json"
     # Repo layout: scripts/.. /data/openclaw/openclaw.json
@@ -63,7 +64,7 @@ def validate(data: dict) -> list[str]:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Validate openclaw.json for AI-toolkit gateway wiring.")
+    p = argparse.ArgumentParser(description="Validate openclaw.json for Ordo AI Stack gateway wiring.")
     p.add_argument(
         "config",
         nargs="?",

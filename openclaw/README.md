@@ -1,6 +1,6 @@
 # OpenClaw — Personal AI Assistant
 
-[OpenClaw](https://docs.openclaw.ai) is a self-hosted personal AI assistant that runs in Docker. This folder provides a ready-to-use setup integrated with the AI-toolkit project.
+[OpenClaw](https://docs.openclaw.ai) is a self-hosted personal AI assistant that runs in Docker. This folder provides a ready-to-use setup integrated with the Ordo AI Stack project.
 
 **Manual sync (re-run `merge_gateway_config`, workspace seed, MCP plugin config):** see [Configuration — Re-run OpenClaw sync](../docs/configuration.md#re-run-openclaw-sync-manual) for exact `docker compose run --rm …` service names (there is no `openclaw-merge-config`).
 
@@ -8,12 +8,12 @@
 
 ### 1. Prepare directories and workspace
 
-From the **repo root** (e.g. `F:\AI-toolkit`), the **main** path is **`.\ai-toolkit.ps1 initialize`** (runs `ensure_dirs`, OpenClaw workspace seeding, then full compose — see root [README.md](../README.md)).
+From the **repo root** (e.g. `F:\ordo-ai-stack`), the **main** path is **`.\ordo-ai-stack.ps1 initialize`** (runs `ensure_dirs`, OpenClaw workspace seeding, then full compose — see root [README.md](../README.md)).
 
 Manual equivalent:
 
 ```powershell
-$env:BASE_PATH = "F:/AI-toolkit"
+$env:BASE_PATH = "F:/ordo-ai-stack"
 .\scripts\ensure_dirs.ps1
 .\openclaw\scripts\ensure_openclaw_workspace.ps1
 ```
@@ -29,7 +29,7 @@ copy .env.example .env
 
 Edit `.env` and set:
 
-- `BASE_PATH` — repo root (e.g. `F:/AI-toolkit`)
+- `BASE_PATH` — repo root (e.g. `F:/ordo-ai-stack`)
 - `OPENCLAW_GATEWAY_TOKEN` — generate with `openssl rand -hex 32`
 - **Ollama** — enabled by default when using the main compose; models from `ollama` are auto-discovered
 - Optional cloud APIs: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, or `OPENROUTER_API_KEY`
@@ -51,7 +51,7 @@ Use the token from `.env` when prompted.
 
 ### 5. Access the UI
 
-With the **main** `docker-compose.yml`, the web Control UI is on the **gateway** port (default **6680**). Open **`http://localhost:6680/?token=<OPENCLAW_GATEWAY_TOKEN>`** (token from `.env`). In Settings → Model, choose a model from the **gateway** provider (e.g. `gateway/ollama/deepseek-r1:7b`) — this routes through the Model Gateway so dashboard monitoring shows performance. MCP tools (web search, etc.) from the gateway at `http://mcp-gateway:8811/mcp` are exposed via a **forked** **openclaw-mcp-bridge** (see [`extensions/openclaw-mcp-bridge/README-AI-TOOLKIT.md`](extensions/openclaw-mcp-bridge/README-AI-TOOLKIT.md)) — namespaced tools such as `gateway__duckduckgo__search` are registered as first-class OpenClaw tools, not only `gateway__call`. **Do not use :6682** for this UI — that port is the browser/CDP bridge only.
+With the **main** `docker-compose.yml`, the web Control UI is on the **gateway** port (default **6680**). Open **`http://localhost:6680/?token=<OPENCLAW_GATEWAY_TOKEN>`** (token from `.env`). In Settings → Model, choose a model from the **gateway** provider (e.g. `gateway/ollama/deepseek-r1:7b`) — this routes through the Model Gateway so dashboard monitoring shows performance. MCP tools (web search, etc.) from the gateway at `http://mcp-gateway:8811/mcp` are exposed via a **forked** **openclaw-mcp-bridge** (see [`extensions/openclaw-mcp-bridge/README-ORDO-AI-STACK.md`](extensions/openclaw-mcp-bridge/README-ORDO-AI-STACK.md)) — namespaced tools such as `gateway__duckduckgo__search` are registered as first-class OpenClaw tools, not only `gateway__call`. **Do not use :6682** for this UI — that port is the browser/CDP bridge only.
 
 If you use **`overrides/openclaw-secure.yml`**, the mapped gateway port is typically **18789** on localhost — see [OPENCLAW_SECURE.md.example](OPENCLAW_SECURE.md.example).
 
@@ -59,7 +59,7 @@ If you use **`overrides/openclaw-secure.yml`**, the mapped gateway port is typic
 
 **Updating the gateway (Docker):** Default image is **`ghcr.io/openclaw/openclaw`** (official [GHCR package](https://github.com/openclaw/openclaw/pkgs/container/openclaw)); compose pins a release tag (e.g. **`2026.3.23`**). Override with **`OPENCLAW_IMAGE`** in `.env` if needed. The Control UI **Update** button runs **`openclaw update`**-style flows (npm/git) that **cannot replace** the gateway binary inside the image, so it often **hangs on “Updating…”**. This stack disables in-app update checks in **`openclaw.json`** (`update.checkOnStart` / `update.auto.enabled`) via **`openclaw/scripts/merge_gateway_config.py`**. To upgrade: **`docker compose pull`** then **`docker compose up -d openclaw-gateway`**, or bump the pinned tag in **`docker-compose.yml`**. Set **`OPENCLAW_ALLOW_IN_APP_UPDATE=1`** in `.env` only if you intentionally re-enable UI-driven updates (still unlikely to work in a standard image-only setup). See [Updating](https://docs.openclaw.ai/updating) for native installs.
 
-**Not reachable?** When using the main AI-toolkit compose, the gateway is configured with `OPENCLAW_GATEWAY_BIND=lan` so it accepts connections from the host. If you run OpenClaw standalone from `openclaw/`, add `OPENCLAW_GATEWAY_BIND=lan` to your `.env`. Then verify: `docker compose ps` (gateway running), `docker compose logs openclaw-gateway` (no errors).
+**Not reachable?** When using the main Ordo AI Stack compose, the gateway is configured with `OPENCLAW_GATEWAY_BIND=lan` so it accepts connections from the host. If you run OpenClaw standalone from `openclaw/`, add `OPENCLAW_GATEWAY_BIND=lan` to your `.env`. Then verify: `docker compose ps` (gateway running), `docker compose logs openclaw-gateway` (no errors).
 
 **Dashboard performance monitoring:** To see OpenClaw throughput in the dashboard (Token Throughput section), use the **gateway** provider for models. In Settings → Model, pick a model prefixed with `gateway/` (e.g. `gateway/ollama/deepseek-r1:7b`). If you only see `ollama/` models, add the gateway provider to `data/openclaw/openclaw.json` — copy the `gateway` block from `openclaw/openclaw.json.example` into `models.providers`.
 
@@ -99,7 +99,7 @@ The template **`openclaw.json.example`** sets **`tools.web.search.enabled: false
 
 Discord is the default client for interacting with OpenClaw.
 
-**Recommended (AI-toolkit compose):** put the bot token in the **repo root** `.env` as `DISCORD_TOKEN`. Compose maps it to `DISCORD_BOT_TOKEN` inside `openclaw-gateway`, and `merge_gateway_config.py` (run by `openclaw-config-sync` before the gateway starts) updates `openclaw.json` to reference that env var instead of saving the token in the file.
+**Recommended (Ordo AI Stack compose):** put the bot token in the **repo root** `.env` as `DISCORD_TOKEN`. Compose maps it to `DISCORD_BOT_TOKEN` inside `openclaw-gateway`, and `merge_gateway_config.py` (run by `openclaw-config-sync` before the gateway starts) updates `openclaw.json` to reference that env var instead of saving the token in the file.
 
 **Alternative:** interactive login via CLI (writes config for you):
 

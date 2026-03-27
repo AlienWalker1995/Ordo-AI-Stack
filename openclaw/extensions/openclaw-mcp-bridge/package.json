@@ -1,7 +1,7 @@
 {
   "name": "openclaw-mcp-bridge",
-  "version": "0.2.1-ai-toolkit",
-  "description": "MCP client plugin for OpenClaw (AI-toolkit fork: registers namespaced MCP tools as first-class OpenClaw tools)",
+  "version": "0.2.1-ordo-ai-stack",
+  "description": "MCP client plugin for OpenClaw (Ordo AI Stack fork: registers namespaced MCP tools as first-class OpenClaw tools)",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

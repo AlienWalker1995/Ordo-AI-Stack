@@ -1,5 +1,5 @@
 [project]
-name = "ai-toolkit"
+name = "ordo-ai-stack"
 version = "0"
 description = "Local LLM stack (Docker); tooling is per-service requirements.txt"
 readme = "README.md"

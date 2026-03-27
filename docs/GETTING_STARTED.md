@@ -25,7 +25,7 @@ No GPU required for chat (Ollama runs on CPU, slower but works).
 
 ### Full stack
 
-**Recommended:** `./ai-toolkit initialize` (Linux/Mac/Git Bash) or `.\ai-toolkit.ps1 initialize` (Windows) — bootstraps data dirs and config, then rebuilds/recreates and starts all default services.
+**Recommended:** `./ordo-ai-stack initialize` (Linux/Mac/Git Bash) or `.\ordo-ai-stack.ps1 initialize` (Windows) — bootstraps data dirs and config, then rebuilds/recreates and starts all default services.
 
 Alternatively: `docker compose up -d` — same services without the full bootstrap/rebuild step (use the `compose` wrapper if you want auto hardware detection).
 
@@ -76,7 +76,7 @@ See [overrides/vllm.yml](../overrides/vllm.yml) for `VLLM_MODEL` and resource li
 
 For single user or small group over Tailscale:
 
-1. Install Tailscale on the host running AI-toolkit
+1. Install Tailscale on the host running Ordo AI Stack
 2. Services bind to `0.0.0.0` — reach them via `http://<tailscale-ip>:<port>`
 3. **Single user:** `WEBUI_AUTH=False` is fine (only your devices on the mesh)
 4. **Group (family/team):** Set `WEBUI_AUTH=True` in `.env` so each user has their own Open WebUI account

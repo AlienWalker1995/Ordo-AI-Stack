@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for contributing to AI-toolkit.
+Thanks for contributing to Ordo AI Stack.
 
 ## What not to commit
 

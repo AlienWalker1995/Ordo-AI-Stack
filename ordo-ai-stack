@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ai-toolkit — project management CLI
-# Usage: ./ai-toolkit <command>
+# ordo-ai-stack — project management CLI
+# Usage: ./ordo-ai-stack <command>
 #
 # Commands:
 #   initialize   Bootstrap directories, config, hardware profile, then rebuild/recreate and start the full default stack
@@ -36,16 +36,19 @@ cmd_initialize() {
 
   if [[ ! -f "$base/docker-compose.yml" ]]; then
     err "No docker-compose.yml under: $base"
-    err "Set BASE_PATH to your AI-toolkit repo root, or run this script from the repo (./ai-toolkit initialize)."
+    err "Set BASE_PATH to your Ordo AI Stack repo root, or run this script from the repo (./ordo-ai-stack initialize)."
     exit 1
   fi
 
   printf "\n${YELLOW}"
-  printf "   ___    ___   _____           _ _    _ _   \n"
-  printf "  / _ \  |_ _| |_   _|__   ___ | | | _(_) |_ \n"
-  printf " / /_\ \  | |    | |/ _ \ / _ \| | |/ / | __|\n"
-  printf "/  _  /  | |    | | (_) | (_) | |   <| | |_ \n"
-  printf "\_| |_/ |___|   |_|\___/ \___/|_|_|\_\_|\__|\n"
+  # shellcheck disable=SC2016 # figlet "standard" wordmark; quotes/backticks must stay literal
+  cat <<'BANNER'
+  ___          _       
+ / _ \ _ __ __| | ___  
+| | | | '__/ _` |/ _ \ 
+| |_| | | | (_| | (_) |
+ \___/|_|  \__,_|\___/
+BANNER
   printf "${NC}"
   printf "${DIM}  base=%s  data=%s${NC}\n" "$base" "$data"
 
@@ -89,7 +92,7 @@ case "$cmd" in
     ;;
   *)
     err "Unknown command: $cmd"
-    printf "Run ${BOLD}./ai-toolkit help${NC} for usage.\n"
+    printf "Run ${BOLD}./ordo-ai-stack help${NC} for usage.\n"
     exit 1
     ;;
 esac

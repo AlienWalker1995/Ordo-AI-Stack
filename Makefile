@@ -1,4 +1,4 @@
-# AI-toolkit Makefile
+# Ordo AI Stack Makefile
 .PHONY: test test-audit test-dashboard test-gateway smoke-test lint help
 
 help:

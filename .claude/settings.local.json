@@ -2,8 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(docker exec:*)",
-      "Bash(grep -n \"dashboard-screenshot\\\\|set_defaults\\\\|checkpoint\" /c/dev/AI-toolkit/data/openclaw/workspace/blog/ai-toolkit/images/*.png)",
-      "Bash(ls -la /c/dev/AI-toolkit/data/openclaw/workspace/blog/ai-toolkit/images/blog_img_*.png)",
+      "Bash(grep -n \"dashboard-screenshot\\\\|set_defaults\\\\|checkpoint\" /c/dev/ordo-ai-stack/data/openclaw/workspace/blog/ordo-ai-stack/images/*.png)",
+      "Bash(ls -la /c/dev/ordo-ai-stack/data/openclaw/workspace/blog/ordo-ai-stack/images/blog_img_*.png)",
       "Bash(docker restart:*)",
       "Bash(./compose build:*)",
       "Bash(./compose up:*)",

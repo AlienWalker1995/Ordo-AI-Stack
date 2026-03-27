@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Canonical dependency list for AI-toolkit (M7 reliability spine). Probed by GET /api/dependencies.",
+  "description": "Canonical dependency list for Ordo AI Stack (M7 reliability spine). Probed by GET /api/dependencies.",
   "entries": [
     {
       "id": "model-gateway",

@@ -154,7 +154,7 @@ class WorkflowManager:
                 }
                 for name, param in parameters.items()
             }
-            # AI-toolkit: literal API JSON (valid in ComfyUI UI) has no PARAM_ placeholders.
+            # Ordo AI Stack: literal API JSON (valid in ComfyUI UI) has no PARAM_ placeholders.
             # Sidecar .wfmeta (or legacy .meta.json) supplies override_mappings + available_inputs for MCP catalog.
             if not available_inputs and metadata.get("available_inputs"):
                 available_inputs = metadata["available_inputs"]

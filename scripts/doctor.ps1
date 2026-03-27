@@ -1,6 +1,6 @@
 # Doctor: quick health probes + optional openclaw.json validation (M7).
 # Usage: .\scripts\doctor.ps1
-# Env: MODEL_GATEWAY_URL, MCP_GATEWAY_URL, DASHBOARD_URL, OPENCLAW_CONFIG_PATH, AI_TOOLKIT_ROOT
+# Env: MODEL_GATEWAY_URL, MCP_GATEWAY_URL, DASHBOARD_URL, OPENCLAW_CONFIG_PATH, ORDO_AI_STACK_ROOT
 #      DOCTOR_DEPS_TIMEOUT_SEC - max seconds for GET /api/dependencies (default 120; many sequential probes)
 #      DOCTOR_STRICT=1 - treat optional Ollama/MCP host probes as FAIL if unreachable (default: WARN only)
 
@@ -163,7 +163,7 @@ function Test-ProbeMcpGatewayHost {
     }
 }
 
-Write-Host "==> AI-toolkit doctor (M7)"
+Write-Host "==> Ordo AI Stack doctor (M7)"
 Write-Host "==> Probes (published host ports)"
 Test-Probe "dashboard /api/health"      "$dash/api/health"
 Test-ProbeDependencies "dashboard /api/dependencies" "$dash/api/dependencies"

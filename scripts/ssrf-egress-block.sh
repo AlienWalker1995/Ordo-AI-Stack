@@ -67,14 +67,14 @@ get_subnet_for_target() {
 
   case "$target" in
     mcp)
-      subnet=$(detect_subnet "ai-toolkit-frontend")
-      [ -z "$subnet" ] && subnet=$(detect_subnet "ai-toolkit_default")
+      subnet=$(detect_subnet "ordo-ai-stack-frontend")
+      [ -z "$subnet" ] && subnet=$(detect_subnet "ordo-ai-stack_default")
       ;;
     openclaw)
-      subnet=$(detect_subnet "ai-toolkit-openclaw")
+      subnet=$(detect_subnet "ordo-ai-stack-openclaw")
       # Fall back to frontend if no dedicated openclaw network exists yet
-      [ -z "$subnet" ] && subnet=$(detect_subnet "ai-toolkit-frontend")
-      [ -z "$subnet" ] && subnet=$(detect_subnet "ai-toolkit_default")
+      [ -z "$subnet" ] && subnet=$(detect_subnet "ordo-ai-stack-frontend")
+      [ -z "$subnet" ] && subnet=$(detect_subnet "ordo-ai-stack_default")
       ;;
   esac
 

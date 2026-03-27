@@ -1,6 +1,6 @@
 # Scripts
 
-Setup and maintenance scripts for the AI-toolkit stack.
+Setup and maintenance scripts for the Ordo AI Stack.
 
 ## Setup
 
@@ -28,13 +28,13 @@ From the repo root:
 
 **Windows (PowerShell):**
 ```powershell
-$env:BASE_PATH = "F:/AI-toolkit"
+$env:BASE_PATH = "F:/ordo-ai-stack"
 .\scripts\ensure_dirs.ps1
 ```
 
 **Linux/Mac:**
 ```bash
-export BASE_PATH="$HOME/AI-toolkit"
+export BASE_PATH="$HOME/ordo-ai-stack"
 ./scripts/ensure_dirs.sh
 ```
 

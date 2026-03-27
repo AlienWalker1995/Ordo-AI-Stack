@@ -1,10 +1,10 @@
-# Agentic Design Patterns — insights & AI-toolkit mapping
+# Agentic Design Patterns — insights & Ordo AI Stack mapping
 
 This note **summarizes** themes and practical insights from *Agentic Design Patterns* by **Antonio Gulli** and **Mauro Sauco**, compiled by **Tom Mathews** in the open repository:
 
 **[github.com/Mathews-Tom/Agentic-Design-Patterns](https://github.com/Mathews-Tom/Agentic-Design-Patterns)** (MIT License)
 
-It is **not** a substitute for reading the book (≈424 pages, code examples, appendices). Use it to connect each part of the book to **OpenClaw**, **MCP**, and this **AI-toolkit** compose stack.
+It is **not** a substitute for reading the book (≈424 pages, code examples, appendices). Use it to connect each part of the book to **OpenClaw**, **MCP**, and this **Ordo AI Stack** compose stack.
 
 ---
 
@@ -165,7 +165,7 @@ It emphasizes **implementable** patterns: tool use, memory, exception logic, res
 
 ---
 
-## AI-toolkit / OpenClaw checklist (from the patterns above)
+## Ordo AI Stack / OpenClaw checklist (from the patterns above)
 
 1. **One MCP URL** — `http://mcp-gateway:8811/mcp` in **openclaw-mcp-bridge** plugin.  
 2. **Correct tool ids** — `gateway__<server>__<tool>` **once**; use **`gateway__call`** if unsure.  

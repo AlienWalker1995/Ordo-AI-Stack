@@ -1,9 +1,9 @@
 ```
-    ___    ____     __              ____   _ __
-   /   |  /  _/    / /_____  ____  / / /__(_) /_
-  / /| |  / /_____/ __/ __ \/ __ \/ / //_/ / __/
- / ___ |_/ /_____/ /_/ /_/ / /_/ / / ,< / / /_  
-/_/  |_/___/     \__/\____/\____/_/_/|_/_/\__/
+  ___          _       
+ / _ \ _ __ __| | ___  
+| | | | '__/ _` |/ _ \ 
+| |_| | | | (_| | (_) |
+ \___/|_|  \__,_|\___/
 
 ──────────────────────────────────────────────────
 Docker Compose stack for local LLMs, chat UI, image/video (ComfyUI), automation (n8n), and OpenClaw — with a unified dashboard.
@@ -16,7 +16,7 @@ Docker Compose stack for local LLMs, chat UI, image/video (ComfyUI), automation 
 
 ## Overview
 
-**AI-toolkit** packages a **local-first** stack: Ollama-backed models behind an **OpenAI-compatible** model-gateway, **Open WebUI** for chat, **ComfyUI** for diffusion workflows, **n8n** for workflows, **OpenClaw** as an optional assistant layer, and an **MCP gateway** for shared tools. A **dashboard** provides a single place to inspect dependencies, pull models, and (with tokens set) control parts of the stack.
+**Ordo AI Stack** packages a **local-first** stack: Ollama-backed models behind an **OpenAI-compatible** model-gateway, **Open WebUI** for chat, **ComfyUI** for diffusion workflows, **n8n** for workflows, **OpenClaw** as an optional assistant layer, and an **MCP gateway** for shared tools. A **dashboard** provides a single place to inspect dependencies, pull models, and (with tokens set) control parts of the stack.
 
 **Who it is for:** Operators running the stack on their own machine or LAN; contributors changing Python services, tests, and Compose definitions.
 
@@ -53,15 +53,15 @@ Docker Compose stack for local LLMs, chat UI, image/video (ComfyUI), automation 
    **Windows (PowerShell):**
 
    ```powershell
-   cd C:\path\to\AI-toolkit
-   .\ai-toolkit.ps1 initialize
+   cd C:\path\to\ordo-ai-stack
+   .\ordo-ai-stack.ps1 initialize
    ```
 
    **Linux / macOS:**
 
    ```bash
-   cd ~/path/to/AI-toolkit
-   ./ai-toolkit initialize
+   cd ~/path/to/ordo-ai-stack
+   ./ordo-ai-stack initialize
    ```
 
 4. Open the **dashboard** at [http://localhost:8080](http://localhost:8080) and **Open WebUI** at [http://localhost:3000](http://localhost:3000).
@@ -107,7 +107,7 @@ Auto-generated: **`overrides/compute.yml`** (from hardware detection). Do not co
 
 ## Usage
 
-- **Daily restart / full rebuild:** same as Quickstart step 3 (`ai-toolkit initialize`).
+- **Daily restart / full rebuild:** same as Quickstart step 3 (`ordo-ai-stack initialize`).
 - **On-demand one-off containers:**
 
   ```bash
@@ -237,4 +237,4 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)**. Report security issues per **[SECURI
 
 ## License
 
-[MIT License](LICENSE) — Copyright (c) 2026 AI-toolkit contributors.
+[MIT License](LICENSE) — Copyright (c) 2026 Ordo AI Stack contributors.

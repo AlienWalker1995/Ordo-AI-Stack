@@ -14,7 +14,7 @@ This repo **does not** ship turnkey “post everywhere” code. It **does** prov
 | **4. Publish** | Upload + metadata per platform | **Platform APIs** (OAuth, upload endpoints) — usually **n8n** for retries, OAuth refresh, branching |
 | **5. Observe** | Logs, failures, rate limits | n8n + OpenClaw notifications; Discord/Telegram |
 
-## How AI-toolkit services fit
+## How Ordo AI Stack services fit
 
 | Service | Role |
 |---------|------|
