@@ -108,6 +108,21 @@ Claude Code doesn't know it's talking to a local model — the gateway is a tran
 
 `GET /v1/models` lists **real** Ollama (and optional vLLM) models only, unless you set **`CLAUDE_CODE_ADVERTISE_ALIASES=1`**. Older versions always appended placeholder `claude-sonnet-*` ids when `CLAUDE_CODE_LOCAL_MODEL` was set, which confused OpenClaw’s “active models” list — that is now opt-in.
 
+### Web Search, Fetch, and MCP (read this)
+
+Claude Code’s **built-in Web Search** is wired to **Anthropic’s infrastructure** when you use the real Claude API. With **`ANTHROPIC_BASE_URL`** set to this gateway, chat goes to your **local** model only — **Web Search often completes with “Did 0 searches”** and provides no snippets. That is **expected**, not a misconfiguration.
+
+**Do not** treat empty search results as “research completed,” and **do not** invent sources. For real web search in this project:
+
+1. Ensure **`mcp-gateway`** is running (`docker compose up -d mcp-gateway`).
+2. Set **`TAVILY_API_KEY`** in `.env` (see **`mcp/README.md`**) if you use Tavily.
+3. In Claude Code, add an MCP server: **Streamable HTTP** URL **`http://localhost:8811/mcp`** (or your host’s IP if remote).
+4. Use **`tavily_search`** / **`duckduckgo__search`** (or **`gateway__call`** with the inner tool name) instead of built-in Web Search.
+
+**Fetch** to URLs like Hugging Face may return **401** without auth; gated models need **`HF_TOKEN`** and/or browser login — see **`openclaw/workspace/TOOLS.md`**.
+
+Project-level reminder for Claude Code: **`CLAUDE.md`** at the repo root.
+
 ### Changing the default model
 
 Edit `CLAUDE_CODE_LOCAL_MODEL` in `.env` and restart:

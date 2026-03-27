@@ -38,8 +38,16 @@ def _merge_run_workflow_args(
             merged[k] = v
     wid = (workflow_id or "").strip() or None
     default_wf = os.environ.get("COMFY_MCP_DEFAULT_WORKFLOW_ID", "").strip() or None
-    if not wid and default_wf and (
-        merged.get("prompt") or merged.get("width") or merged.get("height")
+    allow_default = os.environ.get("COMFY_MCP_ALLOW_DEFAULT_WORKFLOW_ID", "1").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if (
+        not wid
+        and allow_default
+        and default_wf
+        and (merged.get("prompt") or merged.get("width") or merged.get("height"))
     ):
         wid = default_wf
     if not wid:

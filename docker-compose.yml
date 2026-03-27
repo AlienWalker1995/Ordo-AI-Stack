@@ -142,7 +142,9 @@ services:
       - MCP_CONFIG_PATH=/mcp-config/servers.txt
       - MCP_GATEWAY_URL=http://mcp-gateway:8811
       # Must include comfyui so mcp-gateway loads ComfyUI tools (registry-custom.yaml). Matches data/mcp/servers.txt default.
-      - MCP_GATEWAY_SERVERS=${MCP_GATEWAY_SERVERS:-duckduckgo,n8n,tavily,comfyui}
+      - MCP_GATEWAY_SERVERS=${MCP_GATEWAY_SERVERS:-duckduckgo,n8n,tavily,comfyui,orchestration}
+      # Read-only: same host dir as comfyui-mcp (API-format workflows only)
+      - COMFYUI_WORKFLOWS_DIR=/comfyui-workflows
       - OPS_CONTROLLER_URL=http://ops-controller:9000
       - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:-}
       - DASHBOARD_AUTH_TOKEN=${DASHBOARD_AUTH_TOKEN:-}
@@ -160,12 +162,15 @@ services:
       - OPENCLAW_GATEWAY_INTERNAL_PORT=${OPENCLAW_GATEWAY_INTERNAL_PORT:-6680}
       - OPENCLAW_UI_PORT=${OPENCLAW_UI_PORT:-6682}
       - DASHBOARD_DATA_PATH=/data/dashboard
+      # n8n webhook for publish_enqueue (or pass per-request); n8n owns retries/OAuth
+      - N8N_PUBLISH_WEBHOOK_URL=${N8N_PUBLISH_WEBHOOK_URL:-}
     volumes:
       - ${BASE_PATH:-.}/models/comfyui:/models
       - ${BASE_PATH:-.}/scripts:/scripts:ro
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/dashboard:/data/dashboard
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/mcp:/mcp-config
       - ${OPENCLAW_CONFIG_DIR:-${BASE_PATH:-.}/data/openclaw}:/openclaw-config
+      - ${BASE_PATH:-.}/data/comfyui-workflows:/comfyui-workflows:ro
     networks:
       - frontend
       - backend
@@ -297,6 +302,14 @@ services:
     restart: "no"
     command: ["true"]
 
+  # Stable orchestration MCP (fixed verbs → dashboard HTTP). Optional build for gateway catalog.
+  orchestration-mcp-image:
+    build: ./orchestration-mcp
+    image: ai-toolkit-orchestration-mcp:latest
+    pull_policy: build
+    restart: "no"
+    command: ["true"]
+
   # Long-running ComfyUI MCP (same image as gateway-spawned). OpenClaw uses **mcp-gateway:8811** only — see TOOLS.md.
   comfyui-mcp:
     image: ai-toolkit-comfyui-mcp:latest
@@ -311,6 +324,8 @@ services:
       - COMFY_MCP_WORKFLOW_DIR=/workflows
       # When the agent omits workflow_id but sends prompt/width/etc. at top level, use this workflow file stem.
       - COMFY_MCP_DEFAULT_WORKFLOW_ID=${COMFY_MCP_DEFAULT_WORKFLOW_ID:-generate_image}
+      # Require explicit workflow_id for autonomous runs (no silent default) — set to 1 to allow legacy default.
+      - COMFY_MCP_ALLOW_DEFAULT_WORKFLOW_ID=${COMFY_MCP_ALLOW_DEFAULT_WORKFLOW_ID:-0}
       - OPS_CONTROLLER_URL=http://ops-controller:9000
       - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:-}
     volumes:
@@ -376,6 +391,9 @@ services:
         # Build-only container; failure here means ComfyUI MCP won't work but other MCPs should still start
         condition: service_completed_successfully
         required: false
+      orchestration-mcp-image:
+        condition: service_completed_successfully
+        required: false
     environment:
       - MCP_CONFIG_FILE=/mcp-config/servers.txt
       - MCP_GATEWAY_PORT=8811
@@ -391,6 +409,8 @@ services:
       - COMFYUI_URL=http://comfyui:8188
       - OPS_CONTROLLER_URL=http://ops-controller:9000
       - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:-}
+      # Injected into registry-custom.yaml for orchestration MCP (dashboard Bearer)
+      - DASHBOARD_AUTH_TOKEN=${DASHBOARD_AUTH_TOKEN:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/mcp:/mcp-config
@@ -408,6 +428,35 @@ services:
         max-file: "3"
     networks:
       - backend
+
+  # Barrier: model-gateway + MCP reachable (dashboard /api/orchestration/readiness) before OpenClaw jobs.
+  wait-orchestration:
+    image: curlimages/curl:8.10.1
+    restart: "no"
+    depends_on:
+      dashboard:
+        condition: service_healthy
+      mcp-gateway:
+        condition: service_healthy
+      model-gateway:
+        condition: service_healthy
+    networks:
+      - backend
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        i=1
+        while [ "$$i" -le 72 ]; do
+          if curl -sf "http://dashboard:8080/api/orchestration/readiness" >/dev/null; then
+            echo "orchestration readiness ok"
+            exit 0
+          fi
+          sleep 5
+          i=$$((i+1))
+        done
+        echo "orchestration readiness timeout"
+        exit 1
 
   openclaw-workspace-sync:
     image: alpine:3
@@ -611,6 +660,8 @@ services:
       openclaw-config-sync:
         condition: service_completed_successfully
       openclaw-plugin-config:
+        condition: service_completed_successfully
+      wait-orchestration:
         condition: service_completed_successfully
     env_file:
       - .env

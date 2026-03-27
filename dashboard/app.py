@@ -26,6 +26,7 @@ from httpx import AsyncClient
 from pydantic import BaseModel
 
 from dashboard.routes_hub import router as hub_router
+from dashboard.routes_orchestration import router as orchestration_router
 from dashboard.services_catalog import OPS_SERVICE_MAP
 from dashboard.settings import AUTH_REQUIRED as _AUTH_REQUIRED
 from dashboard.settings import DASHBOARD_AUTH_TOKEN, OPENCLAW_CONFIG_PATH
@@ -49,6 +50,7 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="AI-toolkit Dashboard", version="1.0.0", lifespan=_lifespan)
 app.include_router(hub_router)
+app.include_router(orchestration_router)
 
 
 def _verify_auth(request: Request) -> bool:
@@ -90,6 +92,7 @@ async def auth_middleware(request: Request, call_next):
         "/api/auth/config",
         "/api/hardware",
         "/api/rag/status",
+        "/api/orchestration/readiness",
     ):
         return await call_next(request)
     # /api/throughput/record: requires THROUGHPUT_RECORD_TOKEN when set (model-gateway internal; PRD §3.E)

@@ -42,7 +42,7 @@ jobs:
         run: pip install -r tests/requirements.txt
 
       - name: Ruff lint
-        run: python -m ruff check dashboard tests model-gateway ops-controller rag-ingestion scripts
+        run: python -m ruff check dashboard tests model-gateway ops-controller rag-ingestion scripts comfyui-mcp orchestration-mcp
 
       - name: Create minimal .env for compose tests
         run: |
@@ -96,3 +96,53 @@ jobs:
         env:
           RUN_COMPOSE_SMOKE: "1"
         timeout-minutes: 10
+
+  orchestration-stack-e2e:
+    name: Orchestration stack E2E (path-gated)
+    runs-on: ubuntu-latest
+    needs: [pytest, compose-validate]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            stack:
+              - 'docker-compose.yml'
+              - 'mcp/**'
+              - 'comfyui-mcp/**'
+              - 'dashboard/**'
+              - 'orchestration-mcp/**'
+              - 'openclaw/**'
+              - '.github/workflows/ci.yml'
+
+      - name: Set up Python
+        if: steps.filter.outputs.stack == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        if: steps.filter.outputs.stack == 'true'
+        run: pip install -r tests/requirements.txt
+
+      - name: Create .env
+        if: steps.filter.outputs.stack == 'true'
+        run: |
+          echo "BASE_PATH=." > .env
+          echo "OPENCLAW_GATEWAY_TOKEN=placeholder" >> .env
+          echo "OPS_CONTROLLER_TOKEN=placeholder" >> .env
+
+      - name: Compose smoke (required when stack paths change)
+        if: steps.filter.outputs.stack == 'true'
+        run: python -m pytest tests/test_compose_smoke.py tests/test_orchestration_api.py -v
+        env:
+          RUN_COMPOSE_SMOKE: "1"
+        timeout-minutes: 15
+
+      - name: Skip (no stack paths in this change)
+        if: steps.filter.outputs.stack != 'true'
+        run: echo "Skipping compose E2E — no changes under orchestration stack paths."

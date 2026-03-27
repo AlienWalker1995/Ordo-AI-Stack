@@ -16,3 +16,13 @@ registry:
         value: http://ops-controller:9000
       - name: OPS_CONTROLLER_TOKEN
         value: PLACEHOLDER_OPS_CONTROLLER_TOKEN
+  orchestration:
+    description: Stable orchestration adapter (fixed verbs; dashboard HTTP, not shifting gateway tool names).
+    title: Orchestration
+    type: server
+    image: ai-toolkit-orchestration-mcp:latest
+    env:
+      - name: ORCHESTRATION_DASHBOARD_URL
+        value: http://dashboard:8080
+      - name: DASHBOARD_AUTH_TOKEN
+        value: PLACEHOLDER_DASHBOARD_AUTH_TOKEN

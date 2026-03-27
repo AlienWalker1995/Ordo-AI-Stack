@@ -12,7 +12,7 @@ GATEWAY_BIN="/docker-mcp"
 # Ensure config exists with default
 mkdir -p "$(dirname "$CONFIG_FILE")"
 if [ ! -f "$CONFIG_FILE" ]; then
-  echo "duckduckgo,n8n,tavily,comfyui" > "$CONFIG_FILE"
+  echo "duckduckgo,n8n,tavily,comfyui,orchestration" > "$CONFIG_FILE"
 fi
 
 read_servers() {
@@ -20,7 +20,7 @@ read_servers() {
   if [ -z "$content" ] && [ -f "$REGISTRY_FILE" ] && command -v jq >/dev/null 2>&1; then
     content=$(jq -r '.servers | keys | join(",")' "$REGISTRY_FILE" 2>/dev/null)
   fi
-  printf '%s' "${content:-duckduckgo,n8n,tavily,comfyui}"
+  printf '%s' "${content:-duckduckgo,n8n,tavily,comfyui,orchestration}"
 }
 
 resolve_registry_custom() {
@@ -33,7 +33,8 @@ resolve_registry_custom() {
   # Inject secrets from mcp-gateway environment (same .env as stack).
   if command -v sed >/dev/null 2>&1; then
     sed -e "s|PLACEHOLDER_OPS_CONTROLLER_TOKEN|${OPS_CONTROLLER_TOKEN:-}|g" \
-        -e "s|PLACEHOLDER_TAVILY_API_KEY|${TAVILY_API_KEY:-}|g" "$src" >"$dst"
+        -e "s|PLACEHOLDER_TAVILY_API_KEY|${TAVILY_API_KEY:-}|g" \
+        -e "s|PLACEHOLDER_DASHBOARD_AUTH_TOKEN|${DASHBOARD_AUTH_TOKEN:-}|g" "$src" >"$dst"
   else
     cp "$src" "$dst"
   fi
@@ -41,7 +42,7 @@ resolve_registry_custom() {
 
 start_gateway() {
   servers=$(read_servers)
-  servers=${servers:-duckduckgo,n8n,tavily,comfyui}
+  servers=${servers:-duckduckgo,n8n,tavily,comfyui,orchestration}
   echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Starting gateway with servers: $servers"
   extra=""
   resolve_registry_custom
@@ -63,8 +64,8 @@ last_content=$(read_servers)
 
 while true; do
   sleep 10
-  content=$(read_servers 2>/dev/null || echo "duckduckgo,n8n,tavily,comfyui")
-  [ -z "$content" ] && content="duckduckgo,n8n,tavily,comfyui"
+  content=$(read_servers 2>/dev/null || echo "duckduckgo,n8n,tavily,comfyui,orchestration")
+  [ -z "$content" ] && content="duckduckgo,n8n,tavily,comfyui,orchestration"
   if [ "$content" != "$last_content" ]; then
     echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Config changed. Reloading gateway..."
     kill "$pid" 2>/dev/null || true

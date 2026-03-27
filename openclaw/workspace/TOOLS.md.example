@@ -6,6 +6,8 @@ Which tools exist here and how to invoke them.
 
 **MCP (primary):** Configure **one** URL: the Docker **MCP gateway** (`servers.gateway` → `http://mcp-gateway:8811/mcp`). The plugin names that server **`gateway`**, so each flat tool id is **`gateway__`** + the aggregate MCP tool name (e.g. **`gateway__duckduckgo__search`**). **Never** stack another **`gateway__`** in front of that — it is not a registered tool. This stack uses a forked `openclaw-mcp-bridge` that exposes **`gateway__call`** and **flat** tools matching whatever the gateway loads (e.g. **`gateway__tavily__tavily_search`**, **`gateway__comfyui__run_workflow`**). Use **`gateway__call`** with **`tool`** + **`args`**, or flat tools when listed. **Invalid** top-level names include **`gateway__run_workflow`** / **`comfyui__call`** — see **TROUBLESHOOTING** if tools are missing.
 
+**Do not guess ComfyUI inner names:** use **`list_workflows`** / **`comfyui__list_workflows`**, not `list_comfyui_workflows`. **Ports:** **`6680`** = OpenClaw gateway; **`11435`** = model-gateway **`/v1`**; **`11434`** = Ollama — do not conflate them. Details: **`mcp/docs/openclaw-bridge-deep-dive.md`**.
+
 **Search:** **`TAVILY_API_KEY`** in **`.env`** → **Tavily** tools (**`tavily_search`**, **`tavily_extract`**, …). Also **`gateway__duckduckgo__search`**. Do not use native **`web_search`**.
 
 **Other MCP servers (catalog):** n8n, ComfyUI, etc. — **`gateway__call`** with the live tool id and args, or flat **`gateway__…`** tools when present.
