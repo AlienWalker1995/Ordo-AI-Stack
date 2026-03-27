@@ -168,6 +168,32 @@
         }
       ]
     },
+    "flux1-dev-gguf": {
+      "description": "FLUX.1 [dev] GGUF workflow — T5 XXL + UNet GGUF (city96) + ae.safetensors (ffxvs/vae-flux mirror; same weights as BFL, ~335 MB). ~22 GB total. UNet path: models/unet/FLUX/flux1-dev-Q5_K_S.gguf (matches workflows using FLUX/flux1-dev-Q5_K_S.gguf).",
+      "models": [
+        {
+          "repo": "city96/t5-v1_1-xxl-encoder-gguf",
+          "file": "t5-v1_1-xxl-encoder-Q8_0.gguf",
+          "dest": "text_encoders",
+          "type": "text_encoders",
+          "url": "https://huggingface.co/city96/t5-v1_1-xxl-encoder-gguf/resolve/main/t5-v1_1-xxl-encoder-Q8_0.gguf"
+        },
+        {
+          "repo": "city96/FLUX.1-dev-gguf",
+          "file": "flux1-dev-Q5_K_S.gguf",
+          "dest": "unet/FLUX",
+          "type": "unet",
+          "url": "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q5_K_S.gguf"
+        },
+        {
+          "repo": "ffxvs/vae-flux",
+          "file": "ae.safetensors",
+          "dest": "vae",
+          "type": "vae",
+          "url": "https://huggingface.co/ffxvs/vae-flux/resolve/main/ae.safetensors"
+        }
+      ]
+    },
     "ltx-2.3-t2v-basic": {
       "description": "Weights for bundled LTX-2.3_*_Basic workflows (fpmixed Gemma + Kijai VAE/UNET/projection paths). ~40+ GB.",
       "models": [

@@ -4,7 +4,7 @@
 
 Core behavior, priorities, and response style for this workspace.
 
-- **MCP:** Use **one** MCP gateway URL (`servers.gateway`); use **`gateway__call`** with inner **`tool`** + **`args`**, or any **flat** tool the bridge lists (e.g. **`gateway__duckduckgo__search`**, **`gateway__tavily__tavily_search`**). Details: **`TOOLS.md`**.
+- **MCP:** Use **one** MCP gateway URL (`servers.gateway`); use **`gateway__call`** with inner **`tool`** + **`args`**, or any **flat** tool the bridge lists (e.g. **`gateway__duckduckgo__search`**, **`gateway__tavily__tavily_search`**, **`gateway__comfyui__run_workflow`**). The plugin’s server name is **`gateway`**, so each flat id starts with exactly one **`gateway__`** — never add another **`gateway__`** after it. Details: **`TOOLS.md`**.
 - **Web:** **Tavily MCP** (**`gateway__tavily__tavily_*`**) + optional DuckDuckGo; built-in **`browser`** is denied in Docker. No Playwright MCP in default stack.
 - Read `SOUL.md`, `USER.md`, `MEMORY.md`, and today’s `memory/YYYY-MM-DD.md` when your build loads them; on `/new` or explicit reset, drop prior task context unless the user continues it.
 - Lead with the deliverable; keep answers as short as the task allows.
@@ -14,6 +14,6 @@ Core behavior, priorities, and response style for this workspace.
 - Confirm once before destructive or irreversible actions.
 - Keep credentials and tokens in this controller; do not pass them to browser workers or untrusted surfaces.
 - For scheduled channel work, treat the **target channel’s messages** as the record of what was delivered.
-- For specialized modes, read `workspace/agents/<role>.md` for that task only, then return to default behavior.
+- For specialized modes, read **`agents/<role>.md`** (e.g. **`agents/docker-ops.md`**) — not **`/app/…`** or **`workspace/agents/…`**.
 
 Tool names, service URLs, and MCP shapes: **`TOOLS.md`** only.

@@ -46,8 +46,15 @@ start_gateway() {
   extra=""
   resolve_registry_custom
   reg_dir="$(dirname "$CONFIG_FILE")"
-  [ -f "$reg_dir/registry-custom.docker.yaml" ] && extra="--additional-registry $reg_dir/registry-custom.docker.yaml"
-  "$GATEWAY_BIN" gateway run --transport=streaming --port="$PORT" --servers="$servers" $extra &
+  # Must be --additional-catalog (not --additional-registry): when --servers is set, the gateway
+  # does not read registry.yaml paths for server definitions — only catalog merges apply.
+  [ -f "$reg_dir/registry-custom.docker.yaml" ] && extra="--additional-catalog $reg_dir/registry-custom.docker.yaml"
+  verbose=""
+  if [ "${MCP_GATEWAY_VERBOSE:-0}" = "1" ] || [ "${MCP_GATEWAY_VERBOSE:-}" = "true" ]; then
+    verbose="--verbose"
+  fi
+  # shellcheck disable=SC2086
+  "$GATEWAY_BIN" gateway run --transport=streaming --port="$PORT" --servers="$servers" $extra $verbose &
   echo $!
 }
 

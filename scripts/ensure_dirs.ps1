@@ -57,7 +57,7 @@ if (-not (Test-Path $mcpServers)) {
     Set-Content -Path $mcpServers -Value "duckduckgo,n8n,tavily,comfyui" -NoNewline
     Write-Host "OK $mcpServers (duckduckgo,n8n,tavily,comfyui)"
 }
-# Bootstrap custom registry for ComfyUI (gateway uses --additional-registry)
+# Bootstrap catalog fragment for ComfyUI (gateway uses --additional-catalog)
 $registryTemplate = Join-Path $base "mcp\gateway\registry-custom.yaml"
 if (-not (Test-Path $mcpRegistry) -and (Test-Path $registryTemplate)) {
     Copy-Item $registryTemplate $mcpRegistry -Force

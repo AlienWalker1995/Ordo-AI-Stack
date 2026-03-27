@@ -1,5 +1,7 @@
 # Docker stack ops (models, ComfyUI, MCP)
 
+**Path:** In the OpenClaw gateway, read this file as **`agents/docker-ops.md`** (workspace root = OpenClaw workspace mount). Do **not** use **`/app/agents/…`** or **`workspace/agents/…`** — those paths are wrong in the container.
+
 Use this when **`AGENTS.md`** / **`TOOLS.md`** point here for **compose**, **model pulls**, and **ops-controller** — not from guessed OpenClaw CLI names.
 
 ## Ollama / chat models (OpenClaw `gateway/…`)
@@ -16,9 +18,18 @@ Use this when **`AGENTS.md`** / **`TOOLS.md`** point here for **compose**, **mod
 - **`gateway__comfyui__pull_comfyui_models`** with **`packs`**, **`confirm: true`**
 - **`gateway__comfyui__get_comfyui_model_pull_status`**
 
-**Or** **`gateway__call`** with **`tool`**: **`comfyui__pull_comfyui_models`** and matching **`args`**.
+**Or** **`gateway__call`** with **`tool`**: **`comfyui__pull_comfyui_models`** and **`args`**: **`{ "packs": "ltx-2.3-t2v-basic,ltx-2.3-extras", "confirm": true }`** (same **`comfyui__…`** prefix as **`comfyui__run_workflow`** in **mcp/docs/comfyui-openclaw.md** — not the bare Python function name alone).
 
-**Requirements:** **`OPS_CONTROLLER_TOKEN`** in **`.env`** (passed to **`mcp-gateway`** and registry); **`comfyui`** in **`data/mcp/servers.txt`** / **`MCP_GATEWAY_SERVERS`**; **`HF_TOKEN`** for gated Hugging Face repos.
+### If *all* `gateway__comfyui__*` tools are “Tool not found”
+
+Flat tools only register after the MCP bridge **discovers** tools from **`mcp-gateway`**. **`gateway__call`** also fails if the registry is empty.
+
+1. **Host:** `docker compose ps` — **`mcp-gateway`**, **`comfyui`**, **`openclaw-gateway`** up; **`data/mcp/servers.txt`** includes **`comfyui`** (comma-separated).
+2. **Rebuild / plugin:** `docker compose build comfyui-mcp-image` (or your compose service name for ComfyUI MCP), then `docker compose --profile openclaw-setup run --rm openclaw-plugin-config` so the **forked** **`openclaw-mcp-bridge`** from **`openclaw/extensions/`** installs into the extensions volume, then **`docker compose restart mcp-gateway openclaw-gateway`**.
+3. **Wait** ~10–30s after **`mcp-gateway`** is healthy so tool lists are non-empty.
+4. **Fallback:** run **`comfyui-model-puller`** on the host (below) or **dashboard** pull with **`DASHBOARD_AUTH_TOKEN`**.
+
+**ACP / subagent errors** (“target agent is not configured”) are **unrelated** to MCP tool names — do not use subagents for ComfyUI pulls unless **`acp.defaultAgent`** is configured.
 
 **LTX-2.3 “Basic” (Kijai-style graphs):** packs **`ltx-2.3-t2v-basic`**, **`ltx-2.3-extras`** — see **`scripts/comfyui/models.json`**.
 

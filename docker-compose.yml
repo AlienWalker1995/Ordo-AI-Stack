@@ -240,6 +240,9 @@ services:
     environment:
       - MODELS_DIR=/models
       - HF_TOKEN=${HF_TOKEN:-}
+      # Host: $env:COMFYUI_PACKS="flux1-dev-gguf" (PowerShell) — forwarded into the container
+      - COMFYUI_PACKS=${COMFYUI_PACKS:-}
+      - COMFYUI_QUANT=${COMFYUI_QUANT:-}
     volumes:
       - ${BASE_PATH:-.}/models/comfyui:/models
       - ${BASE_PATH:-.}/scripts:/scripts:ro
@@ -269,7 +272,8 @@ services:
         max-file: "3"
     environment:
       # --enable-manager: ComfyUI-Manager (node installs, model UI) — see docs.comfy.org/manager/install
-      - CLI_ARGS=--cpu --enable-manager
+      # Override via COMFYUI_CLI_ARGS in .env (GPU defaults in overrides/compute.yml include --normalvram)
+      - CLI_ARGS=${COMFYUI_CLI_ARGS:---cpu --enable-manager}
       - PYTORCH_CUDA_ALLOC_CONF=
       # Hugging Face downloads (gated models) from Manager or built-in fetchers
       - HF_TOKEN=${HF_TOKEN:-}
@@ -375,6 +379,8 @@ services:
     environment:
       - MCP_CONFIG_FILE=/mcp-config/servers.txt
       - MCP_GATEWAY_PORT=8811
+      # Set to 1 for docker/mcp-gateway --verbose (see TROUBLESHOOTING — ComfyUI tools missing)
+      - MCP_GATEWAY_VERBOSE=${MCP_GATEWAY_VERBOSE:-0}
       # MCP server API keys — set these in the root .env file
       - TAVILY_API_KEY=${TAVILY_API_KEY:-}
       - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PERSONAL_ACCESS_TOKEN:-}
@@ -629,8 +635,6 @@ services:
       - ${OPENCLAW_WORKSPACE_DIR:-${BASE_PATH:-.}/data/openclaw/workspace}:/home/node/.openclaw/workspace
       # MCP config so agent can read data/mcp/servers.txt (cron job, TOOLS.md)
       - ${BASE_PATH:-.}/data/mcp:/home/node/.openclaw/workspace/data/mcp
-      # Same bind mount as comfyui-mcp:/workflows — agents write API-format JSON here so list_workflows/run_workflow see it
-      - ${BASE_PATH:-.}/data/comfyui-workflows:/comfyui-workflows
       # Named volume for extensions — Windows bind mounts force 0777 which
       # OpenClaw's safe-open rejects. A named volume has proper Linux perms.
       - openclaw-extensions:/home/node/.openclaw/extensions

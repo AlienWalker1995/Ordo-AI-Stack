@@ -1,18 +1,18 @@
-# Custom MCP registry — merges with the Docker MCP catalog (override / add servers).
+# Catalog fragment — merged via --additional-catalog with Docker’s online MCP catalog.
 # Template: mcp/gateway/registry-custom.yaml — copied to data/mcp/ by ensure_dirs.
-# PLACEHOLDER_* values are replaced at mcp-gateway startup (gateway-wrapper.sh).
-#
-# Tavily: https://app.tavily.com — set TAVILY_API_KEY in repo root .env (passed into mcp-gateway).
-servers:
-  duckduckgo:
-    image: mcp/duckduckgo
-  tavily:
-    image: mcp/tavily
-    env:
-      TAVILY_API_KEY: PLACEHOLDER_TAVILY_API_KEY
+# Use the catalog key `registry:` (same as v3 catalog.yaml). Do not use --additional-registry
+# for this file: with --servers set, the gateway does not merge registry.yaml for definitions.
+# PLACEHOLDER_* replaced at mcp-gateway startup (gateway-wrapper.sh).
+registry:
   comfyui:
+    description: ComfyUI MCP for AI Toolkit (workflows, images, model pull via ops-controller).
+    title: ComfyUI
+    type: server
     image: ai-toolkit-comfyui-mcp:latest
     env:
-      COMFYUI_URL: http://comfyui:8188
-      OPS_CONTROLLER_URL: http://ops-controller:9000
-      OPS_CONTROLLER_TOKEN: PLACEHOLDER_OPS_CONTROLLER_TOKEN
+      - name: COMFYUI_URL
+        value: http://comfyui:8188
+      - name: OPS_CONTROLLER_URL
+        value: http://ops-controller:9000
+      - name: OPS_CONTROLLER_TOKEN
+        value: PLACEHOLDER_OPS_CONTROLLER_TOKEN

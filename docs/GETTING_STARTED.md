@@ -50,6 +50,8 @@ Use local files as context in **Open WebUI** via Qdrant + the `rag-ingestion` se
 
 Env knobs (optional, in `.env`): `EMBED_MODEL`, `RAG_COLLECTION`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP` — see `.env.example` **RAG** section. The dashboard **RAG** section shows Qdrant collection point count when the stack can reach Qdrant. See the PRD **WS6: RAG Pipeline** for the full picture.
 
+**Optional — [Agentic Design Patterns](https://github.com/Mathews-Tom/Agentic-Design-Patterns) (MIT book text):** clone or copy the `.md` tree into `data/rag-input/` (for example `git clone --depth 1 https://github.com/Mathews-Tom/Agentic-Design-Patterns.git data/rag-input/agentic-design-patterns`), then run the steps above so `rag-ingestion` can index it. The companion **`agents/agentic-design-patterns.md`** in the OpenClaw workspace is a stack mapping only, not a substitute for the book.
+
 ### Direct Ollama (Cursor, CLI)
 
 By default Ollama is backend-only (no host port). To expose it on the host (e.g. for Cursor or `ollama run` from your machine):

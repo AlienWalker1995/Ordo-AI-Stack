@@ -26,7 +26,7 @@ def _ops_get(path: str, timeout: int = 60) -> dict:
             "ok": False,
             "error": (
                 "OPS_CONTROLLER_TOKEN is not set on the ComfyUI MCP server. "
-                "Set it in .env and pass it through mcp/gateway/registry-custom.yaml."
+                "Set it in .env and pass it through mcp/gateway/registry-custom.yaml (catalog fragment for mcp-gateway --additional-catalog)."
             ),
         }
     url = f"{OPS_CONTROLLER_URL}{path}"
@@ -53,7 +53,7 @@ def _ops_post(path: str, body: Dict[str, Any], timeout: int = 600) -> dict:
             "ok": False,
             "error": (
                 "OPS_CONTROLLER_TOKEN is not set on the ComfyUI MCP server. "
-                "Set it in .env and pass it through mcp/gateway/registry-custom.yaml (and mcp-gateway env) "
+                "Set it in .env and pass it through mcp/gateway/registry-custom.yaml (and mcp-gateway env; --additional-catalog) "
                 "so spawned MCP containers can reach ops-controller."
             ),
         }

@@ -4,7 +4,7 @@
 
 Which tools exist here and how to invoke them.
 
-**MCP (primary):** Configure **one** URL: the Docker **MCP gateway** (`servers.gateway` → `http://mcp-gateway:8811/mcp`). This stack uses a forked `openclaw-mcp-bridge` that exposes **`gateway__call`** and **flat** tools matching whatever the gateway loads (e.g. **`gateway__duckduckgo__search`**, **`gateway__tavily__tavily_search`**, **`gateway__comfyui__run_workflow`**). Use **`gateway__call`** with **`tool`** + **`args`**, or flat tools when listed. **Invalid** top-level names include **`gateway__run_workflow`** / **`comfyui__call`** — see **TROUBLESHOOTING** if tools are missing.
+**MCP (primary):** Configure **one** URL: the Docker **MCP gateway** (`servers.gateway` → `http://mcp-gateway:8811/mcp`). The plugin names that server **`gateway`**, so each flat tool id is **`gateway__`** + the aggregate MCP tool name (e.g. **`gateway__duckduckgo__search`**). **Never** stack another **`gateway__`** in front of that — it is not a registered tool. This stack uses a forked `openclaw-mcp-bridge` that exposes **`gateway__call`** and **flat** tools matching whatever the gateway loads (e.g. **`gateway__tavily__tavily_search`**, **`gateway__comfyui__run_workflow`**). Use **`gateway__call`** with **`tool`** + **`args`**, or flat tools when listed. **Invalid** top-level names include **`gateway__run_workflow`** / **`comfyui__call`** — see **TROUBLESHOOTING** if tools are missing.
 
 **Search:** **`TAVILY_API_KEY`** in **`.env`** → **Tavily** tools (**`tavily_search`**, **`tavily_extract`**, …). Also **`gateway__duckduckgo__search`**. Do not use native **`web_search`**.
 
@@ -12,7 +12,7 @@ Which tools exist here and how to invoke them.
 
 **Browser:** Built-in **`browser`** denied; no Playwright MCP by default. Use **Tavily** + **`web_fetch`**.
 
-**ComfyUI:** Workflows through **ComfyUI tools on the MCP gateway**. API-format JSON under **`data/comfyui-workflows/`** ( **`/comfyui-workflows/`** for MCP). See **mcp/docs/comfyui-openclaw.md**.
+**ComfyUI:** Use **ComfyUI tools on the MCP gateway** (`list_workflows`, `run_workflow`, …). Workflow JSON for comfyui-mcp lives on the host at **`data/comfyui-workflows/`** (same tree **`comfyui-mcp`** mounts as `/workflows`) — **not** under **`data/openclaw/workspace/`**. See **mcp/docs/comfyui-openclaw.md**.
 
 **Files and shell:** **`read`** / **`edit`** / **`exec`** per runtime for paths allowed in this workspace.
 
@@ -32,4 +32,4 @@ Which tools exist here and how to invoke them.
 
 **Privileged stack ops:** **`DASHBOARD_AUTH_TOKEN`** + **`http://dashboard:8080`** API routes. See **mcp/docs/openclaw-hardening-and-operations.md**.
 
-**Compose / host repairs:** **`workspace/agents/docker-ops.md`** (if present).
+**Compose / host repairs:** **`agents/docker-ops.md`** (if present).

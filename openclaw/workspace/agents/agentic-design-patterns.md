@@ -55,7 +55,7 @@ It emphasizes **implementable** patterns: tool use, memory, exception logic, res
 ### Chapter 5 — Tool use (function calling)
 
 - **Insight:** Tools must have **clear schemas**, **discoverable names**, and **robust error surfaces**; the model should recover from tool errors without hallucinating success.
-- **Stack:** Prefer **`gateway__call`** with explicit **`tool`** + **`args`** when flat tool names are missing or wrong. **Never** double-prefix **`gateway__gateway__…`**. Validate tool names against the **Control UI** list.
+- **Stack:** Prefer **`gateway__call`** with explicit **`tool`** + **`args`** when flat tool names are missing or wrong. **Never** add a second **`gateway__`** after the OpenClaw plugin prefix (server name **`gateway`**). Validate tool names against the **Control UI** list.
 
 ### Chapter 6 — Planning
 

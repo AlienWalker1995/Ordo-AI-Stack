@@ -130,12 +130,13 @@ def ollama_memory_limit(total_ram_gb: float) -> str:
 def comfyui_memory_limit(mode: str, total_ram_gb: float) -> str:
     """
     Compute ComfyUI container memory limit from mode and host RAM.
-    GPU+lowvram offloads weights to RAM (LTX needs ~12-16 GB); CPU mode uses less.
+    GPU: LTX + VideoVAE can spike host RAM during load (mmap, pinned buffers); too low
+    and the cgroup OOM killer SIGKILLs the process (docker logs: "Killed" after VideoVAE).
     """
     available = int(total_ram_gb) - OS_HEADROOM_GB
     if mode in ("nvidia", "amd", "intel"):
-        # Scale generously: ComfyUI offloads model weights to RAM under lowvram
-        target = max(12, min(48, int(total_ram_gb * 0.25)))
+        # ~42% RAM, floor 32G, cap 96G — was 25%/48G max and caused OOM at VideoVAE on 128G hosts.
+        target = max(32, min(96, int(total_ram_gb * 0.42)))
     else:
         target = max(4, min(16, int(total_ram_gb * 0.4)))
     return f"{min(target, available)}G"
@@ -222,6 +223,18 @@ def detect() -> str:
     if detect_apple_silicon():
         return "apple_silicon"
     return "cpu"
+
+
+def ensure_comfyui_cli_args_in_env(env_path: Path, mode: str) -> None:
+    """Append COMFYUI_CLI_ARGS for GPU modes when unset (explicit .env control of --normalvram vs --lowvram)."""
+    if mode not in ("nvidia", "amd", "intel"):
+        return
+    content = env_path.read_text(encoding="utf-8")
+    if re.search(r"^COMFYUI_CLI_ARGS=", content, re.MULTILINE):
+        return
+    line = "COMFYUI_CLI_ARGS=--disable-xformers --normalvram --enable-manager\n"
+    env_path.write_text(content.rstrip() + "\n" + line, encoding="utf-8")
+    print(f"  Appended COMFYUI_CLI_ARGS to {env_path}")
 
 
 def update_env(env_path: Path, mode: str, sep: str) -> None:
@@ -341,8 +354,10 @@ def main() -> int:
             "comfyui": {
                 "image": "yanwk/comfyui-boot:cu128-slim",
                 "environment": {
-                    "CLI_ARGS": "--disable-xformers --lowvram --enable-manager",
-                    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,pinned_use_cuda_host_register:True",
+                    # normalvram: keep more weights on GPU (lowvram offloads heavily to CPU — slow LTX text encode).
+                    "CLI_ARGS": "${COMFYUI_CLI_ARGS:---disable-xformers --normalvram --enable-manager}",
+                    # Override in .env: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True (no pinned) if LTX Gemma hits cudaErrorInvalidValue on GPU→CPU copy.
+                    "PYTORCH_CUDA_ALLOC_CONF": "${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,pinned_use_cuda_host_register:True}",
                     "HF_TOKEN": "${HF_TOKEN:-}",
                     "GITHUB_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN:-}",
                 },
@@ -364,7 +379,7 @@ def main() -> int:
             "comfyui": {
                 "image": "yanwk/comfyui-boot:rocm",
                 "environment": {
-                    "CLI_ARGS": "--disable-xformers --lowvram --enable-manager",
+                    "CLI_ARGS": "${COMFYUI_CLI_ARGS:---disable-xformers --normalvram --enable-manager}",
                     "HF_TOKEN": "${HF_TOKEN:-}",
                     "GITHUB_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN:-}",
                 },
@@ -380,7 +395,7 @@ def main() -> int:
             "comfyui": {
                 "image": "yanwk/comfyui-boot:xpu",
                 "environment": {
-                    "CLI_ARGS": "--disable-xformers --lowvram --enable-manager",
+                    "CLI_ARGS": "${COMFYUI_CLI_ARGS:---disable-xformers --normalvram --enable-manager}",
                     "HF_TOKEN": "${HF_TOKEN:-}",
                     "GITHUB_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN:-}",
                 },
@@ -396,7 +411,7 @@ def main() -> int:
                 "image": "thiagoin/comfyui:arm64",
                 "platform": "linux/arm64",
                 "environment": {
-                    "CLI_ARGS": "--cpu --enable-manager",
+                    "CLI_ARGS": "${COMFYUI_CLI_ARGS:---cpu --enable-manager}",
                     "HF_TOKEN": "${HF_TOKEN:-}",
                     "GITHUB_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN:-}",
                 },
@@ -410,7 +425,7 @@ def main() -> int:
             "comfyui": {
                 "image": "yanwk/comfyui-boot:cpu",
                 "environment": {
-                    "CLI_ARGS": "--cpu --enable-manager",
+                    "CLI_ARGS": "${COMFYUI_CLI_ARGS:---cpu --enable-manager}",
                     "HF_TOKEN": "${HF_TOKEN:-}",
                     "GITHUB_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN:-}",
                 },
@@ -430,10 +445,14 @@ def main() -> int:
     sep = ";" if platform.system() == "Windows" else ":"
     if env_path.exists():
         update_env(env_path, mode, sep)
+        ensure_comfyui_cli_args_in_env(env_path, mode)
     else:
         env_compute = base / ".env.compute"
+        gpu_cli = ""
+        if mode in ("nvidia", "amd", "intel"):
+            gpu_cli = "COMFYUI_CLI_ARGS=--disable-xformers --normalvram --enable-manager\n"
         env_compute.write_text(
-            f"# Auto-generated\nCOMPUTE_MODE={mode}\nCOMPOSE_FILE=docker-compose.yml{sep}overrides/compute.yml\n",
+            f"# Auto-generated\nCOMPUTE_MODE={mode}\nCOMPOSE_FILE=docker-compose.yml{sep}overrides/compute.yml\n{gpu_cli}",
             encoding="utf-8",
         )
         print(f"  Wrote {env_compute} (create .env from .env.example, then re-run)")

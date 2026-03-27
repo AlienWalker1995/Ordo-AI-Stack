@@ -45,7 +45,7 @@ Use **`gateway__call`** with **`tool`** set to the **exact** name from the live 
 
 ## Parity with n8n (aware, manage, create, run, consume)
 
-**Goal:** Treat ComfyUI similarly to n8n via the **same MCP gateway** plus **workspace files** (ComfyUI is graph-on-disk, not a REST CRUD API).
+**Goal:** Treat ComfyUI similarly to n8n via the **same MCP gateway** plus **disk-backed workflow JSON** (ComfyUI is graph-on-disk, not a REST CRUD API). Those files live under **`data/comfyui-workflows/`** on the host for **comfyui-mcp** / ComfyUI — **not** under **`data/openclaw/workspace/`**.
 
 n8n’s catalog server (name: **`n8n`**, with **`N8N_API_KEY`**) exposes many tools. ComfyUI’s surface is **graphs + checkpoints + GPU** — parity is **conceptual**.
 
@@ -53,7 +53,7 @@ n8n’s catalog server (name: **`n8n`**, with **`N8N_API_KEY`**) exposes many to
 |--------|-----|----------------------|
 | **Discover** | `search_nodes`, `n8n_*` API tools | **`comfyui__list_workflows`**; per-workflow tools for **`PARAM_*`** graphs |
 | **Run** | `n8n_trigger_webhook_workflow`, etc. | **`comfyui__run_workflow`** or **`comfyui__generate_image`**-style tools |
-| **Create / edit** | MCP + n8n API | **Write** API-format JSON under **`/comfyui-workflows/`** (host: `data/comfyui-workflows/`) |
+| **Create / edit** | MCP + n8n API | **Write** API-format JSON on the host under **`data/comfyui-workflows/`** (comfyui-mcp: **`/workflows`**). OpenClaw does **not** mount this path inside **`…/openclaw/workspace/`** — use MCP from the agent, or edit files on the host. |
 | **Delete** | n8n API | Delete the JSON file |
 | **Manage deps** | — | **`comfyui__install_custom_node_requirements`**, **`comfyui__restart_comfyui`** ( **`OPS_CONTROLLER_TOKEN`** ) |
 | **Models** | — | Dashboard **`/api/comfyui/models`**, **`/api/comfyui/pull`**, puller profile |
@@ -82,4 +82,4 @@ Thin wrappers in **comfyui-mcp** around Comfy HTTP: queue status, **`get_history
 ## Related
 
 - [automated-social-content-pipeline.md](../../docs/architecture/automated-social-content-pipeline.md) — video → social posting
-- [README.md](../README.md) (MCP module), [TROUBLESHOOTING.md](../../docs/runbooks/TROUBLESHOOTING.md), `workspace/agents/docker-ops.md` (workspace)
+- [README.md](../README.md) (MCP module), [TROUBLESHOOTING.md](../../docs/runbooks/TROUBLESHOOTING.md), **`agents/docker-ops.md`** (OpenClaw workspace)

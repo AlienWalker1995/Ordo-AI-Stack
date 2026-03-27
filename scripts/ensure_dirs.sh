@@ -65,7 +65,7 @@ if [[ ! -f "$mcp_servers" ]]; then
   echo "duckduckgo,n8n,tavily,comfyui" > "$mcp_servers"
   echo "OK $mcp_servers (duckduckgo,n8n,tavily,comfyui)"
 fi
-# Bootstrap custom registry for ComfyUI (gateway uses --additional-registry)
+# Bootstrap catalog fragment for ComfyUI (gateway uses --additional-catalog)
 if [[ ! -f "$mcp_registry" ]] && [[ -f "$base/mcp/gateway/registry-custom.yaml" ]]; then
   cp "$base/mcp/gateway/registry-custom.yaml" "$mcp_registry"
   echo "OK $mcp_registry"

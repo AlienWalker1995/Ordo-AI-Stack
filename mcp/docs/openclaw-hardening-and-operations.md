@@ -51,7 +51,7 @@ So **“entirely manageable via OpenClaw”** means: **MCP for interactive tools
 | Goal | How the agent does it |
 |------|-------------------------|
 | **List / run workflows** | MCP **`comfyui__…`** tools via **`gateway__call`**; prompts and overrides in **`args`**. |
-| **Create / edit workflow files** | Write **API-format** JSON under **`data/comfyui-workflows/`** (mounted for ComfyUI and MCP). |
+| **Create / edit workflow files** | On the host: **`data/comfyui-workflows/`** (ComfyUI + comfyui-mcp). **Not** under **`data/openclaw/workspace/`** — agents use MCP tools; operators edit files on the host or via ComfyUI. |
 | **Pull models** | Dashboard APIs above (**not** usually a single MCP “pull everything” tool). |
 | **Custom nodes / pip** | Dashboard **`install-node-requirements`** or ComfyUI MCP **management** tools (if enabled), with **ops-controller** auth. |
 | **Progress** | **Pull**: poll dashboard status endpoints. **Generation**: use **`run_workflow`** response; for long jobs, ComfyUI queue/history patterns as documented in **TROUBLESHOOTING** / Comfy docs (full “live progress streaming” may still need extra tooling). |

@@ -75,7 +75,7 @@ Layering (see templates in `openclaw/workspace/`). **In git:** only `*.md.exampl
 | `USER.md` | Operator profile and preferences (optional; from `USER.md.example`) |
 | `IDENTITY.md` | Optional display name / avatar notes (from `IDENTITY.md.example`) |
 | `AGENTS.md` | Operating policy; **starts with non-negotiables** (MCP names, Discord/cron truth, message length) so they survive bootstrap truncation |
-| `TOOLS.md` | **Short canonical contract:** single MCP gateway (**`gateway__call`** / flat **`gateway__…`** tools), core service URLs, cron+Discord; service/API ops in **`workspace/agents/docker-ops.md`** and **TROUBLESHOOTING** |
+| `TOOLS.md` | **Short canonical contract:** single MCP gateway (**`gateway__call`** / flat **`gateway__…`** tools), core service URLs, cron+Discord; service/API ops in **`agents/docker-ops.md`** and **TROUBLESHOOTING** |
 | `MEMORY.md` | Curated long-term notes (main session) |
 | `HEARTBEAT.md` | Optional operator checklist (from `HEARTBEAT.md.example`) |
 | `memory/` | Dated episodic notes (`YYYY-MM-DD.md`) |

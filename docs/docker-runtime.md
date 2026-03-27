@@ -53,6 +53,8 @@ These files are **persistent** — they survive container restarts because they 
 
 **ComfyUI-Manager:** `scripts/ensure_dirs` seeds `data/comfyui-storage/ComfyUI/user/__manager/config.ini` (once) with `security_level = weak` so git installs, pip, and model/node downloads work while ComfyUI listens on all interfaces in Docker. Set `HF_TOKEN` / `GITHUB_PERSONAL_ACCESS_TOKEN` in `.env` for gated Hugging Face models and GitHub API limits. Compose passes `--enable-manager` via `CLI_ARGS`.
 
+**GPU / VRAM:** Set **`COMFYUI_CLI_ARGS`** in **`.env`** (see **`.env.example`**) — e.g. **`--disable-xformers --normalvram --enable-manager`** — or run **`scripts/detect_hardware.py`**, which appends that line for NVIDIA/AMD/Intel when missing. Compose resolves **`CLI_ARGS=${COMFYUI_CLI_ARGS:-…}`** so the GPU override defaults to **`--normalvram`** (not **`--lowvram`**), keeping more of the stack on the GPU. If you hit CUDA OOM, set **`--lowvram`** in **`COMFYUI_CLI_ARGS`**. **Host RAM / cgroup:** If **`docker logs comfyui`** shows **`Killed`** right after **`Requested to load VideoVAE`**, the **container memory limit** is too low — set **`COMFYUI_MEMORY_LIMIT`** (e.g. **`64G`**) and re-run **`python scripts/detect_hardware.py`**, then restart **`comfyui`** (see **TROUBLESHOOTING**). Restart **`comfyui`** after changes.
+
 ### Docker Socket Mounts
 
 | Service | Mount | Purpose |

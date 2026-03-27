@@ -252,7 +252,7 @@ ComfyUI listens on **non-loopback** addresses in Docker, so ComfyUI-Manager defa
 
 These tools are registered by the **ComfyUI MCP** image (`comfyui-mcp`). They call **ops-controller** and require **`OPS_CONTROLLER_TOKEN`** in `.env`.
 
-- **`mcp-gateway`** must receive **`OPS_CONTROLLER_TOKEN`** and a **`registry-custom.yaml`** that includes **`OPS_CONTROLLER_TOKEN: PLACEHOLDER_OPS_CONTROLLER_TOKEN`** (repo template: **`mcp/gateway/registry-custom.yaml`**). The gateway **entrypoint** substitutes the token into **`registry-custom.docker.yaml`**. If you created **`data/mcp/registry-custom.yaml`** before this layout, **merge** those lines from the repo template or delete the file and re-run **`scripts/ensure_dirs`** so a fresh copy is created (then re-add **`comfyui`** to **`servers.txt`** if needed).
+- **`mcp-gateway`** must receive **`OPS_CONTROLLER_TOKEN`** and a **`registry-custom.yaml`** whose **`registry.comfyui.env`** includes **`OPS_CONTROLLER_TOKEN`** with value **`PLACEHOLDER_OPS_CONTROLLER_TOKEN`** (repo template: **`mcp/gateway/registry-custom.yaml`**). The gateway **entrypoint** substitutes the token into **`registry-custom.docker.yaml`** and passes that file as **`--additional-catalog`**. If you created **`data/mcp/registry-custom.yaml`** before this layout, **merge** those lines from the repo template or delete the file and re-run **`scripts/ensure_dirs`** so a fresh copy is created (then re-add **`comfyui`** to **`servers.txt`** if needed).
 - Rebuild the ComfyUI MCP image after pulling: **`docker compose build comfyui-mcp-image`** (or **`docker compose build comfyui-mcp`**) and restart **`mcp-gateway`** and **`openclaw-gateway`**.
 
 ### ComfyUI — `Tool not found` for `gateway__list_comfyui_model_packs` / `gateway__pull_comfyui_models`
@@ -268,6 +268,34 @@ The ComfyUI server name must appear **between** `gateway` and the tool id.
 **OpenClaw CLI** has **no** `list-model-packs` / `pull-model-pack` subcommands — those errors are expected. **`openclaw gateway <anything>`** also fails (the `gateway` command takes **no** extra arguments in current CLI).
 
 **“Value not in list” / empty ComfyUI dropdowns** for LTX-2.3 (Gemma, projection, VAE, UNET, upscaler): weights are not on disk yet. Pull packs **`ltx-2.3-t2v-basic`** and **`ltx-2.3-extras`** (see **`scripts/comfyui/models.json`**), with **`HF_TOKEN`** if Hugging Face gates the repo. **Host fallback:** `docker compose --profile comfyui-models run --rm comfyui-model-puller` (set **`COMFYUI_PACKS`** / env per **`docker-compose.yml`**) or use the **dashboard** model download UI.
+
+**Workflow stops at `Requested to load VideoVAE` / `docker logs comfyui` shows `Killed`:** The Linux **OOM killer** hit the **ComfyUI container memory limit** (not a CUDA “out of memory” message). LTX + VideoVAE loading spikes **host RAM** (mmap, buffers). **Fix:** set **`COMFYUI_MEMORY_LIMIT`** in **`.env`** (e.g. **`64G`**) and re-run **`python scripts/detect_hardware.py`** to rewrite **`overrides/compute.yml`**, then **`docker compose up -d comfyui`**. Or raise the limit only in **`overrides/compute.yml`** under **`comfyui`** → **`deploy.resources.limits.memory`**. Defaults from **`detect_hardware.py`** were increased for GPU; older overrides may still cap too low.
+
+**LTX Gemma / `cudaErrorInvalidValue` in `sd1_clip.py` / `lt.py` (`torch.cat(...).to(intermediate_device())`):** By default **`intermediate_device()`** is **CPU**, so ComfyUI **GPU → CPU** copies the Gemma output. On some drivers / **RTX 50xx** + **PyTorch cu128** + **pinned allocator** (`pinned_use_cuda_host_register`), that copy can fail with **`cudaErrorInvalidValue`** (often after a prior CUDA error). **Try in order:** (1) **Restart ComfyUI** so the CUDA context is clean. (2) In **`.env`**, set **`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`** (omit **`pinned_use_cuda_host_register`** — **`overrides/compute.yml`** supports **`${PYTORCH_CUDA_ALLOC_CONF:-…}`**). **Restart comfyui.** (3) Add **`--gpu-only`** to **`COMFYUI_CLI_ARGS`** so intermediates stay on GPU (uses more VRAM). (4) One-off debug: **`CUDA_LAUNCH_BLOCKING=1`** in the comfyui service env for a clearer stack trace.
+
+**Every `gateway__comfyui__*` including `gateway__comfyui__pull_comfyui_models` fails:** MCP tool discovery is empty or the forked bridge never registered flat tools. **`gateway__call`** with **`tool`**: **`comfyui__pull_comfyui_models`** and matching **`args`** still requires the same registry — fix **mcp-gateway** + **ComfyUI MCP** (see **`agents/docker-ops.md`** checklist: **`comfyui`** in **`servers.txt`**, `docker compose build` for **comfyui-mcp** image, **`openclaw-plugin-config`** for forked bridge, restart **`mcp-gateway`** and **`openclaw-gateway`**). **Wrong `read` path:** agent docs live at **`agents/docker-ops.md`** under the workspace root — not **`/app/agents/…`** or **`workspace/agents/…`**.
+
+### ComfyUI — `mcp-gateway` lists only **30** tools (no ComfyUI spawn)
+
+**Symptom:** `docker compose logs mcp-gateway` shows **`> 30 tools listed`** (or similar) and **`Running mcp/...`** lines for **duckduckgo**, **n8n**, **tavily** only — **no** line spawning **`ai-toolkit-comfyui-mcp`** / **no** `> comfyui: (N tools)`. Then **every** `comfyui__*` tool is missing for OpenClaw — not a wrong tool name.
+
+**Cause:** The Docker **MCP Gateway** (`docker/mcp-gateway`) is not actually **starting** the ComfyUI MCP server from **`data/mcp/registry-custom.docker.yaml`**, so those tools never appear in **`tools/list`** and the forked bridge cannot register **`gateway__comfyui__…`**.
+
+**Root cause:** The gateway wrapper must pass the custom file as **`--additional-catalog`**, not **`--additional-registry`**. With **`--servers`** set, Docker MCP Gateway **does not** load **`registry.yaml`** paths for server definitions — only **catalog** merges define images/env for named servers ([`configuration.go` / `readOnce`](https://github.com/docker/mcp-gateway/blob/main/pkg/gateway/configuration.go)). **`--additional-registry`** was effectively ignored for **`comfyui`**, so only catalog servers (~30 tools) appeared.
+
+**YAML:** The fragment must use the catalog key **`registry:`** (not **`servers:`**), same as [Docker’s MCP catalog](https://desktop.docker.com/mcp/catalog/v3/catalog.yaml). Fix **`mcp/gateway/registry-custom.yaml`** / **`data/mcp/registry-custom.yaml`**, ensure **`gateway-wrapper.sh`** uses **`--additional-catalog`**, then restart **`mcp-gateway`**.
+
+**Verify:**
+
+```bash
+docker compose logs mcp-gateway 2>&1 | findstr /i "tools listed Running comfyui"
+```
+
+You want either a **spawn** line for ComfyUI or a **tool count > 30** once ComfyUI is included.
+
+**If only 30 tools:** use **dashboard** / **ops-controller** for pulls (**`POST /api/comfyui/pull`**, etc.) or **`docker compose --profile comfyui-models run --rm comfyui-model-puller`** — same backends as MCP; see **`agents/docker-ops.md`**.
+
+**Debug:** set **`MCP_GATEWAY_VERBOSE=1`** in **`.env`** (compose passes it into **`mcp-gateway`**) and restart **`mcp-gateway`** — gateway wrapper adds **`--verbose`** so Docker MCP logs **why** a server was skipped. Ensure **`ai-toolkit-comfyui-mcp:latest`** exists (**`docker compose build comfyui-mcp-image`** or service **`comfyui-mcp`**) and **`/var/run/docker.sock`** is mounted on **`mcp-gateway`**.
 
 ### ComfyUI — `Tool not found` for `gateway__run_workflow` / OpenClaw
 
@@ -303,7 +331,7 @@ The **OpenClaw gateway** has **no** Docker socket. **`docker`**, **`docker compo
 2. **Restart** **`comfyui`:** **`POST`** **`/api/ops/services/comfyui/restart`** with the same Bearer token.
 3. **Host fallback:** **`scripts/comfyui/install_node_requirements.sh`** / **`.ps1`**, or **`docker compose restart comfyui`**.
 
-See **`workspace/agents/docker-ops.md`** for compose and ops-controller usage.
+See **`agents/docker-ops.md`** (in the OpenClaw workspace) for compose and ops-controller usage.
 
 ## Escalation
 

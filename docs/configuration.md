@@ -127,6 +127,8 @@ Then update `COMPOSE_FILE` in `.env`:
 COMPOSE_FILE=docker-compose.yml;overrides/compute.yml
 ```
 
+**ComfyUI `CLI_ARGS`:** Set `COMFYUI_CLI_ARGS` in `.env` (or accept the default from `scripts/detect_hardware.py`) so GPU runs use **`--normalvram`** — e.g. `--disable-xformers --normalvram --enable-manager`. The compose base default without this variable is **`--cpu --enable-manager`**; `overrides/compute.yml` supplies a GPU default when unset.
+
 ## Data Persistence Rules
 
 | Directory | Purpose | Persists Across Restarts? |

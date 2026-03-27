@@ -4,9 +4,23 @@ All notable changes to this project are documented here. The format is loosely b
 
 ## [Unreleased]
 
+### Changed
+
+- **ComfyUI (GPU):** **`COMFYUI_CLI_ARGS`** in **`.env`** drives **`CLI_ARGS`** (defaults: **`--normalvram`** for GPU **`overrides/compute.yml`**, **`--cpu`** for base compose). **`scripts/detect_hardware.py`** appends **`COMFYUI_CLI_ARGS=--disable-xformers --normalvram --enable-manager`** when missing on NVIDIA/AMD/Intel. Juno **`ltx-video`**: **ImageResizeKJv2** **`cpu` → `cuda`**. OOM: set **`--lowvram`** in **`COMFYUI_CLI_ARGS`** and **`docker compose restart comfyui`**.
+- **ComfyUI container RAM cap (GPU):** **`comfyui_memory_limit()`** in **`scripts/detect_hardware.py`** now targets **~42%** of host RAM (floor **32G**, cap **96G**) instead of **25%** / **48G** max — avoids Linux **OOM killer** (**`Killed`** in **`docker logs`** after **`Requested to load VideoVAE`**) on LTX workflows. Override with **`COMFYUI_MEMORY_LIMIT`** in **`.env`**.
+- **ComfyUI / LTX Gemma `cudaErrorInvalidValue`:** NVIDIA **`overrides/compute.yml`** — **`PYTORCH_CUDA_ALLOC_CONF`** is **`${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,pinned_use_cuda_host_register:True}`** so **`.env`** can set **`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`** (omit pinned) when **`sd1_clip.py`** / **`lt.py`** fails on **`torch.cat(...).to(intermediate_device())`**. **TROUBLESHOOTING** documents **`--gpu-only`** as an alternative.
+
+### Fixed
+
+- **MCP gateway — ComfyUI missing from `tools/list`:** With **`--servers`** set, the gateway merges **catalog** files for MCP server definitions and does **not** apply **`--additional-registry`** (registry.yaml) for that purpose. **`gateway-wrapper.sh`** now passes **`registry-custom.docker.yaml`** as **`--additional-catalog`**. The fragment uses the catalog top-level key **`registry:`** (not **`servers:`**) and a proper **`comfyui`** entry (**`type`**, **`title`**, **`description`**, **`env`**). Tavily/DuckDuckGo overrides were removed from the custom file (online catalog + compose env).
+
+- **OpenClaw workspace paths:** Runtime workspace root is the mount root — role docs are **`agents/<name>.md`** (e.g. **`agents/docker-ops.md`**), not **`workspace/agents/…`**. **`TOOLS.md`**, **`AGENTS.md`**, **`docker-ops.md`**, **TROUBLESHOOTING**, and **`.example`** templates updated so agents stop **`read`**/`ENOENT` on **`/app/agents/`** — addresses chat where **all** **`gateway__comfyui__*`** tools were missing and **`gateway__call`** JSON for **`comfyui__pull_comfyui_models`** was documented.
+
 ### Added
 
-- **OpenClaw workspace — `docker-ops.md`:** Documents correct **ComfyUI model pull** MCP ids (**`gateway__comfyui__pull_comfyui_models`**, not **`gateway__list_comfyui_*`**), **`COMFYUI_PACKS`** / **`comfyui-model-puller`**, and that **`openclaw`** has no **`list-model-packs`** CLI. **`TOOLS.md`** and **TROUBLESHOOTING** include a wrong/correct tool table for LTX / ops issues.
+- **MCP gateway — `MCP_GATEWAY_VERBOSE`:** **`mcp/gateway/gateway-wrapper.sh`** passes **`--verbose`** to **`docker/mcp-gateway`** when **`MCP_GATEWAY_VERBOSE=1`**. **`TROUBLESHOOTING.md`** documents **`mcp-gateway` listing only 30 tools** when ComfyUI MCP never spawns — root cause of **`gateway__comfyui__*` Tool not found** in OpenClaw.
+
+- **OpenClaw workspace — `docker-ops.md`:** Documents correct **ComfyUI model pull** MCP ids, **`COMFYUI_PACKS`** / **`comfyui-model-puller`**, **`gateway__call`** JSON, infra checklist when flat tools are missing, and that **`openclaw`** has no **`list-model-packs`** CLI. **`TOOLS.md`** and **TROUBLESHOOTING** include wrong/correct tool tables for LTX / ops issues.
 
 - **ComfyUI-Manager (Docker):** Seed **`config/comfyui-manager-seed.ini`** into **`data/comfyui-storage/ComfyUI/user/__manager/config.ini`** on first **`ensure_dirs`** ( **`security_level = weak`**, **`network_mode = public`** ) so git installs, pip, and downloads work with **`--listen`**. Compose passes **`GITHUB_TOKEN`** from **`GITHUB_PERSONAL_ACCESS_TOKEN`**. **`ops-controller`** / host scripts use **`python3 -m pip`** for custom-node requirements.
 
