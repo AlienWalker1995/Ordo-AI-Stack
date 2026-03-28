@@ -52,7 +52,7 @@ def _merge_run_workflow_args(
         wid = default_wf
     if not wid:
         raise ValueError(
-            "workflow_id is required. Pass workflow_id (e.g. generate_image) or set "
+            "workflow_id is required. Pass workflow_id (e.g. mcp-api/generate_image) or set "
             "COMFY_MCP_DEFAULT_WORKFLOW_ID when sending prompt/width in flat form."
         )
     return wid, merged, options, return_inline_preview
@@ -102,7 +102,7 @@ def register_workflow_tools(
         """Run a saved ComfyUI workflow with constrained parameter overrides.
 
         Args:
-            workflow_id: The workflow ID (filename stem, e.g., "generate_image").
+            workflow_id: The workflow ID (path under the workflows dir, e.g., "mcp-api/generate_image").
             overrides: Optional dict of parameter overrides (e.g., {"prompt": "a cat", "width": 1024}).
             options: Optional dict of execution options (reserved for future use)
             return_inline_preview: If True, include a small thumbnail base64 in response (256px, ~100KB)

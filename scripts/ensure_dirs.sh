@@ -17,8 +17,8 @@ dirs=(
   "$data/comfyui-storage/ComfyUI/custom_nodes"
   "$data/comfyui-storage/ComfyUI/user/__manager"
   "$data/comfyui-output"
-  "$data/comfyui-workflows"
   "$data/comfyui-storage/ComfyUI/user/default/workflows"
+  "$data/comfyui-storage/ComfyUI/user/default/workflows/mcp-api"
   "$data/n8n-data"
   "$data/n8n-files"
   "$data/dashboard"
@@ -44,16 +44,27 @@ if [[ -f "$manager_seed" ]] && [[ ! -f "$manager_cfg" ]]; then
   echo "OK $manager_cfg (ComfyUI-Manager security_level=weak)"
 fi
 
-# Seed data/comfyui-workflows from repo templates (data/ is gitignored; COMFY_MCP_DEFAULT_WORKFLOW_ID defaults to generate_image)
+# Seed ComfyUI user workflows (data/ is gitignored). API graphs under mcp-api/ (default COMFY_MCP_DEFAULT_WORKFLOW_ID=mcp-api/generate_image).
 wf_template="$base/workflow-templates/comfyui-workflows"
-wf_data="$data/comfyui-workflows"
+wf_mcp_api="$data/comfyui-storage/ComfyUI/user/default/workflows/mcp-api"
+legacy_wf="$data/comfyui-workflows"
+if [[ -d "$legacy_wf" ]]; then
+  for f in "$legacy_wf"/*.json; do
+    [[ -f "$f" ]] || continue
+    fname=$(basename "$f")
+    if [[ ! -f "$wf_mcp_api/$fname" ]]; then
+      cp "$f" "$wf_mcp_api/$fname"
+      echo "OK migrate legacy comfyui-workflows/$fname -> .../workflows/mcp-api/"
+    fi
+  done
+fi
 if [[ -d "$wf_template" ]]; then
   for f in "$wf_template"/*.json; do
     [[ -f "$f" ]] || continue
     fname=$(basename "$f")
-    if [[ ! -f "$wf_data/$fname" ]]; then
-      cp "$f" "$wf_data/$fname"
-      echo "OK bootstrap comfyui-workflows/$fname"
+    if [[ ! -f "$wf_mcp_api/$fname" ]]; then
+      cp "$f" "$wf_mcp_api/$fname"
+      echo "OK bootstrap workflows/mcp-api/$fname"
     fi
   done
 fi

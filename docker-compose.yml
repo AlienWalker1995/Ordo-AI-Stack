@@ -146,7 +146,7 @@ services:
       - MCP_GATEWAY_URL=http://mcp-gateway:8811
       # Must include comfyui so mcp-gateway loads ComfyUI tools (registry-custom.yaml). Matches data/mcp/servers.txt default.
       - MCP_GATEWAY_SERVERS=${MCP_GATEWAY_SERVERS:-duckduckgo,n8n,tavily,comfyui,orchestration}
-      # Read-only: same host dir as comfyui-mcp (API-format workflows only)
+      # Read-only: ComfyUI user workflows (host: data/comfyui-storage/ComfyUI/user/default/workflows)
       - COMFYUI_WORKFLOWS_DIR=/comfyui-workflows
       - OPS_CONTROLLER_URL=http://ops-controller:9000
       - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:-}
@@ -173,7 +173,7 @@ services:
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/dashboard:/data/dashboard
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/mcp:/mcp-config
       - ${OPENCLAW_CONFIG_DIR:-${BASE_PATH:-.}/data/openclaw}:/openclaw-config
-      - ${BASE_PATH:-.}/data/comfyui-workflows:/comfyui-workflows:ro
+      - ${BASE_PATH:-.}/data/comfyui-storage/ComfyUI/user/default/workflows:/comfyui-workflows:ro
     networks:
       - frontend
       - backend
@@ -261,7 +261,8 @@ services:
 
   comfyui:
     image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot:cpu}
-    container_name: comfyui
+    # No fixed container_name — avoids "name already in use" when another project
+    # owns `comfyui`; Docker DNS still resolves the service name `comfyui` on this network.
     restart: unless-stopped
     # Backend network so MCP gateway-spawned comfyui container can reach it
     # ComfyUI: run scripts/detect_hardware.py to auto-configure GPU (NVIDIA/AMD/Intel) or CPU
@@ -291,8 +292,6 @@ services:
       - ${BASE_PATH:-.}/data/comfyui-storage:/root
       - ${BASE_PATH:-.}/models/comfyui:/root/ComfyUI/models
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/comfyui-output:/root/ComfyUI/output
-      # ComfyUI lists every *.json here as a workflow tab — use *.wfmeta for MCP metadata (not *.json). Workflow sidebar → mcp-api.
-      - ${BASE_PATH:-.}/data/comfyui-workflows:/root/ComfyUI/user/default/workflows/mcp-api
     networks:
       - frontend
       - backend
@@ -325,16 +324,16 @@ services:
     environment:
       - COMFYUI_URL=http://comfyui:8188
       - COMFY_MCP_WORKFLOW_DIR=/workflows
-      # When the agent omits workflow_id but sends prompt/width/etc. at top level, use this workflow file stem.
-      - COMFY_MCP_DEFAULT_WORKFLOW_ID=${COMFY_MCP_DEFAULT_WORKFLOW_ID:-generate_image}
+      # Host: data/comfyui-storage/ComfyUI/user/default/workflows (seeded API graphs under mcp-api/)
+      # When the agent omits workflow_id but sends prompt/width/etc. at top level, use this workflow id (path under workflows dir).
+      - COMFY_MCP_DEFAULT_WORKFLOW_ID=${COMFY_MCP_DEFAULT_WORKFLOW_ID:-mcp-api/generate_image}
       # Require explicit workflow_id for autonomous runs (no silent default) — set to 1 to allow legacy default.
       - COMFY_MCP_ALLOW_DEFAULT_WORKFLOW_ID=${COMFY_MCP_ALLOW_DEFAULT_WORKFLOW_ID:-0}
       - OPS_CONTROLLER_URL=http://ops-controller:9000
       - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:-}
     volumes:
-      # API-format workflows only (same host dir as ComfyUI → user/default/workflows/mcp-api).
-      # Do not put visual-format JSON (id/nodes/links) here — comfyui-mcp WorkflowManager crashes on that.
-      - ${BASE_PATH:-.}/data/comfyui-workflows:/workflows
+      # Same host tree as ComfyUI user/default/workflows. API-format JSON for /prompt; UI exports are listed but cannot run via MCP.
+      - ${BASE_PATH:-.}/data/comfyui-storage/ComfyUI/user/default/workflows:/workflows:ro
     networks:
       - backend
 
@@ -387,7 +386,7 @@ services:
     build: ./mcp
     image: ordo-ai-stack-mcp-gateway:latest
     pull_policy: build
-    container_name: mcp-gateway
+    # No fixed container_name — avoids conflicts when another stack already uses `mcp-gateway`.
     restart: unless-stopped
     depends_on:
       comfyui-mcp-image:
@@ -419,11 +418,13 @@ services:
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/mcp:/mcp-config
     # No host port by default (backend-only per PRD M6). For external MCP access: -f overrides/mcp-expose.yml
     healthcheck:
-      # MCP endpoint requires POST+Accept headers; just verify the port is accepting connections.
-      test: ["CMD-SHELL", "nc -z localhost 8811"]
-      interval: 30s
+      # Verify gateway is listening AND has loaded its tool catalog (tools/list returns >0 tools).
+      # Falls back to port check if curl is unavailable.
+      test: ["CMD-SHELL", "sh /mcp-scripts/healthcheck.sh"]
+      start_period: 60s
+      interval: 15s
       timeout: 10s
-      retries: 3
+      retries: 5
     logging:
       driver: json-file
       options:
@@ -652,12 +653,14 @@ services:
   openclaw-gateway:
     # Pin to digest when available; only :latest published upstream
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:2026.3.23}
-    container_name: openclaw-gateway
+    # No fixed container_name — same rationale as mcp-gateway / comfyui on shared Docker hosts.
     depends_on:
       model-gateway:
-        condition: service_started
+        condition: service_healthy
       mcp-gateway:
-        condition: service_started
+        # service_healthy = tool catalog loaded (not just port open).
+        # Prevents the MCP bridge from racing against gateway server loading.
+        condition: service_healthy
       openclaw-workspace-sync:
         condition: service_completed_successfully
       openclaw-config-sync:

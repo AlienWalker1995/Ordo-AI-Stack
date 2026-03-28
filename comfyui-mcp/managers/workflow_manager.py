@@ -62,14 +62,9 @@ class WorkflowManager:
         n0 = nodes[0]
         return isinstance(n0, dict) and "type" in n0 and "class_type" not in n0
 
-    def _safe_workflow_path(self, workflow_id: str) -> Optional[Path]:
-        """Resolve workflow ID to file path with path traversal protection.
-
-        Supports:
-        - **Flat** ids (legacy): ``generate_image`` → ``<workflows_dir>/generate_image.json``
-        - **Nested** ids: ``ltx-video/LTX-2.3_-_T2V_Basic`` → relative path under workflows_dir
-        """
-        root = self.workflows_dir.resolve()
+    def _safe_workflow_path_under_root(self, workflow_id: str, root: Path) -> Optional[Path]:
+        """Resolve workflow ID under a single root (path traversal safe)."""
+        root = root.resolve()
         raw = workflow_id.strip().replace("\\", "/")
         if not raw or raw.startswith("/"):
             return None
@@ -79,14 +74,14 @@ class WorkflowManager:
 
         if "/" in raw:
             rel = raw[:-5] if raw.lower().endswith(".json") else raw
-            workflow_path = (self.workflows_dir / rel).with_suffix(".json").resolve()
+            workflow_path = (root / rel).with_suffix(".json").resolve()
         else:
             safe_id = raw.replace("..", "_")
             safe_id = "".join(c for c in safe_id if c.isalnum() or c in ("_", "-"))
             if not safe_id:
                 logger.warning("Invalid workflow_id after sanitization: %s", workflow_id)
                 return None
-            workflow_path = (self.workflows_dir / f"{safe_id}.json").resolve()
+            workflow_path = (root / f"{safe_id}.json").resolve()
 
         try:
             workflow_path.relative_to(root)
@@ -95,6 +90,15 @@ class WorkflowManager:
             return None
 
         return workflow_path if workflow_path.is_file() else None
+
+    def _safe_workflow_path(self, workflow_id: str) -> Optional[Path]:
+        """Resolve workflow ID to file path with path traversal protection.
+
+        Supports:
+        - **Flat** ids: ``generate_image`` → ``<workflows_dir>/generate_image.json``
+        - **Nested** ids: ``mcp-api/generate_image`` → relative path under workflows_dir
+        """
+        return self._safe_workflow_path_under_root(workflow_id, self.workflows_dir)
     
     def _load_workflow_metadata(self, workflow_path: Path) -> Dict[str, Any]:
         """Load sidecar metadata if present.
@@ -128,7 +132,6 @@ class WorkflowManager:
 
         paths = sorted(self.workflows_dir.rglob("*.json"))
         for workflow_path in paths:
-            # Skip metadata files
             if workflow_path.name.endswith(".meta.json"):
                 continue
 
@@ -161,11 +164,7 @@ class WorkflowManager:
             
             # Get workflow defaults from metadata or infer from workflow_id
             workflow_defaults = metadata.get("defaults", {})
-            if not workflow_defaults and workflow_id in ["generate_image", "generate_song", "generate_video"]:
-                # Use namespace-based defaults
-                namespace = self._determine_namespace(workflow_id)
-                # This will be populated by defaults_manager when needed
-            
+
             catalog.append({
                 "id": workflow_id,
                 "name": metadata.get("name", workflow_id.replace("_", " ").title()),
@@ -369,7 +368,6 @@ class WorkflowManager:
                 parameters=parameters,
                 output_preferences=self._guess_output_preferences(workflow),
             )
-            # Store initial mtime for cache invalidation
             try:
                 self._workflow_mtime[nested_id] = workflow_path.stat().st_mtime
             except OSError:
@@ -508,12 +506,12 @@ class WorkflowManager:
 
     def _determine_namespace(self, workflow_id: str) -> str:
         """Determine namespace based on workflow ID."""
-        if workflow_id == "generate_song":
+        tail = workflow_id.rsplit("/", 1)[-1]
+        if tail == "generate_song":
             return "audio"
-        elif workflow_id == "generate_video":
+        if tail == "generate_video":
             return "video"
-        else:
-            return "image"  # default fallback
+        return "image"  # default fallback
     
     def _guess_output_preferences(self, workflow: Dict[str, Any]):
         for node in workflow.values():

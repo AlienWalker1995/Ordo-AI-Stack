@@ -5,7 +5,7 @@ Prints one JSON object to stdout.
 
 Usage:
   python scripts/comfyui/validate_comfyui_pipeline.py
-  python scripts/comfyui/validate_comfyui_pipeline.py --base-path C:/dev/ordo-ai-stack --workflow generate_image --model v1-5-pruned-emaonly.ckpt
+  python scripts/comfyui/validate_comfyui_pipeline.py --base-path C:/dev/ordo-ai-stack --workflow mcp-api/generate_image --model v1-5-pruned-emaonly.ckpt
   COMFYUI_URL=http://127.0.0.1:8188 python scripts/comfyui/validate_comfyui_pipeline.py
 """
 from __future__ import annotations
@@ -21,6 +21,15 @@ from pathlib import Path
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _workflow_json_path(workflows_dir: Path, workflow_id: str) -> Path:
+    """Resolve workflow id to JSON path (flat stem or nested e.g. mcp-api/generate_image)."""
+    raw = workflow_id.strip().replace("\\", "/")
+    if "/" in raw:
+        rel = raw[:-5] if raw.lower().endswith(".json") else raw
+        return (workflows_dir / rel).with_suffix(".json")
+    return workflows_dir / f"{raw}.json"
 
 
 def _list_checkpoints(models_root: Path) -> list[str]:
@@ -68,19 +77,24 @@ def _comfy_get(url: str, timeout: float = 5.0) -> tuple[int, str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Validate ComfyUI model paths, workflow, and output")
     ap.add_argument("--base-path", type=Path, default=None, help="Repo root (default: infer from script)")
-    ap.add_argument("--workflow", type=str, default="generate_image", help="Workflow id stem under data/comfyui-workflows")
+    ap.add_argument(
+        "--workflow",
+        type=str,
+        default="mcp-api/generate_image",
+        help="Workflow id under data/comfyui-storage/ComfyUI/user/default/workflows (e.g. mcp-api/generate_image)",
+    )
     ap.add_argument("--model", type=str, default="", help="Checkpoint filename to verify (e.g. v1-5-pruned-emaonly.ckpt)")
     args = ap.parse_args()
 
     root = (args.base_path or _repo_root()).resolve()
     models_root = Path(os.environ.get("COMFYUI_MODELS_HOST", str(root / "models" / "comfyui")))
-    workflows_dir = root / "data" / "comfyui-workflows"
+    workflows_dir = root / "data" / "comfyui-storage" / "ComfyUI" / "user" / "default" / "workflows"
     output_dir = Path(os.environ.get("COMFYUI_OUTPUT_HOST", str(root / "data" / "comfyui-output")))
     comfy_url = (os.environ.get("COMFYUI_URL") or "http://127.0.0.1:8188").rstrip("/")
 
     checkpoints = _list_checkpoints(models_root)
 
-    wf_path = workflows_dir / f"{args.workflow}.json"
+    wf_path = _workflow_json_path(workflows_dir, args.workflow)
     wf_ckpts: list[str] = []
     if wf_path.is_file():
         wf_ckpts = _extract_ckpt_names_from_workflow(wf_path)

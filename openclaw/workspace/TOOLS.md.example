@@ -14,7 +14,7 @@ Which tools exist here and how to invoke them.
 
 **Browser:** Built-in **`browser`** denied; no Playwright MCP by default. Use **Tavily** + **`web_fetch`**.
 
-**ComfyUI:** Use **ComfyUI tools on the MCP gateway** (`list_workflows`, `run_workflow`, …). Workflow JSON for comfyui-mcp lives on the host at **`data/comfyui-workflows/`** (same tree **`comfyui-mcp`** mounts as `/workflows`) — **not** under **`data/openclaw/workspace/`**. See **mcp/docs/comfyui-openclaw.md**.
+**ComfyUI:** Use **ComfyUI tools on the MCP gateway** (`list_workflows`, `run_workflow`, …). Workflows are only under **`data/comfyui-storage/ComfyUI/user/default/workflows/`** (e.g. **`mcp-api/generate_image`**).
 
 **Files and shell:** **`read`** / **`edit`** / **`exec`** per runtime for paths allowed in this workspace.
 

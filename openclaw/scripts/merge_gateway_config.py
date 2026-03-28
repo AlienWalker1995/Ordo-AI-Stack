@@ -12,6 +12,32 @@ import sys
 import urllib.request
 from pathlib import Path
 
+
+def _repo_root() -> Path:
+    """openclaw/scripts -> repo root."""
+    return Path(__file__).resolve().parent.parent.parent
+
+
+def _load_env_file(path: Path) -> None:
+    """Set os.environ from a simple KEY=VAL .env file (only keys not already set)."""
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+            val = val[1:-1]
+        os.environ[key] = val
+
+
+_load_env_file(_repo_root() / ".env")
+
 GATEWAY_PROVIDER = {
     "baseUrl": "http://model-gateway:11435/v1",
     "apiKey": "ollama-local",
@@ -359,7 +385,12 @@ def _normalize_mcp_bridge_servers(data: dict) -> bool:
 
 
 def main() -> int:
-    config_path = Path(os.environ.get("OPENCLAW_CONFIG_PATH", "/config/openclaw.json"))
+    raw_path = os.environ.get("OPENCLAW_CONFIG_PATH", "/config/openclaw.json")
+    config_path = Path(raw_path)
+    if not config_path.exists() and raw_path == "/config/openclaw.json":
+        host_candidate = _repo_root() / "data" / "openclaw" / "openclaw.json"
+        if host_candidate.is_file():
+            config_path = host_candidate
     if not config_path.exists():
         return 0  # No config yet; ensure_dirs or first run will create it
 

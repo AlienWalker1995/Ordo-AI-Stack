@@ -94,13 +94,24 @@ function register(api) {
     let flatToolsRegistered = false;
     /** Avoid infinite hooks if gateway never exposes tools. */
     let flatToolsRegistrationAttempts = 0;
-    const MAX_FLAT_REGISTRATION_ATTEMPTS = 12;
+    const MAX_FLAT_REGISTRATION_ATTEMPTS = 24;
+    /** Delay helper */
+    const _delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const registerFlatMcpTools = async () => {
         if (flatToolsRegistered) {
             return;
         }
         try {
             await ensureConnected();
+            // On first attempt after connection, refresh tools from the gateway
+            // to pick up servers that loaded after the initial connectAll().
+            if (flatToolsRegistrationAttempts > 0) {
+                try {
+                    await mcpManager.refreshTools();
+                } catch (_refreshErr) {
+                    // Refresh failed — fall through to check registry as-is
+                }
+            }
             const discovered = mcpManager.getRegisteredTools();
             if (discovered.length === 0) {
                 flatToolsRegistrationAttempts += 1;
@@ -114,7 +125,9 @@ function register(api) {
                 }
                 api.logger.warn("[mcp-bridge] registerFlatMcpTools: 0 tools in registry (attempt " +
                     String(flatToolsRegistrationAttempts) + "/" + String(MAX_FLAT_REGISTRATION_ATTEMPTS) +
-                    "). Retrying on next hook — MCP gateway may still be loading servers.");
+                    "). Retrying in 5s — MCP gateway may still be loading servers.");
+                // Schedule a timed retry instead of waiting for the next hook
+                setTimeout(() => { registerFlatMcpTools().catch(() => {}); }, 5000);
                 return;
             }
             for (const rt of discovered) {
@@ -159,6 +172,14 @@ function register(api) {
     };
     api.registerHook("gateway_start", flatToolsHook, { name: "mcp-flat-tools-gateway", description: "Expose namespaced MCP tools as OpenClaw tools" });
     api.registerHook("session_start", flatToolsHook, { name: "mcp-flat-tools-session", description: "Fallback if gateway_start is unavailable" });
+    // Eager: kick off flat tool discovery synchronously (as a floating promise).
+    // Hooks may not fire on all OpenClaw versions; calling directly ensures discovery runs.
+    api.logger.info("[mcp-bridge] starting eager flat tool discovery");
+    registerFlatMcpTools().then(() => {
+        api.logger.info("[mcp-bridge] eager discovery done, registered=" + String(flatToolsRegistered));
+    }).catch((err) => {
+        api.logger.warn("[mcp-bridge] eager discovery error: " + String(err));
+    });
     // Register shutdown hook
     api.registerHook("gateway_stop", async () => {
         if (connected) {

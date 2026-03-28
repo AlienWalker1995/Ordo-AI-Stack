@@ -28,6 +28,27 @@ DATA_DIR = Path(os.environ.get("DASHBOARD_DATA_PATH", "/data/dashboard")).resolv
 WORKFLOWS_DIR = Path(os.environ.get("COMFYUI_WORKFLOWS_DIR", "/comfyui-workflows")).resolve()
 N8N_PUBLISH_WEBHOOK_URL = os.environ.get("N8N_PUBLISH_WEBHOOK_URL", "").strip()
 
+
+def _resolve_workflow_under_root(workflow_id: str, root: Path) -> Path | None:
+    root = root.resolve()
+    raw = workflow_id.strip().replace("\\", "/")
+    if not raw or raw.startswith("/") or ".." in raw.split("/"):
+        return None
+    if "/" in raw:
+        rel = raw[:-5] if raw.lower().endswith(".json") else raw
+        p = (root / rel).with_suffix(".json").resolve()
+    else:
+        safe = "".join(c for c in raw if c.isalnum() or c in ("_", "-"))
+        if not safe:
+            return None
+        p = (root / f"{safe}.json").resolve()
+    try:
+        p.relative_to(root)
+    except ValueError:
+        return None
+    return p if p.is_file() else None
+
+
 OPS_CONTROLLER_URL = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000").rstrip("/")
 OPS_CONTROLLER_TOKEN = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
 
@@ -96,23 +117,7 @@ async def validate_workflow(body: ValidateBody):
 
 
 def _safe_workflow_path(workflow_id: str) -> Path | None:
-    raw = workflow_id.strip().replace("\\", "/")
-    if not raw or raw.startswith("/") or ".." in raw.split("/"):
-        return None
-    root = WORKFLOWS_DIR.resolve()
-    if "/" in raw:
-        rel = raw[:-5] if raw.lower().endswith(".json") else raw
-        p = (WORKFLOWS_DIR / rel).with_suffix(".json").resolve()
-    else:
-        safe = "".join(c for c in raw if c.isalnum() or c in ("_", "-"))
-        if not safe:
-            return None
-        p = (WORKFLOWS_DIR / f"{safe}.json").resolve()
-    try:
-        p.relative_to(root)
-    except ValueError:
-        return None
-    return p if p.is_file() else None
+    return _resolve_workflow_under_root(workflow_id, WORKFLOWS_DIR)
 
 
 class FromTemplateBody(BaseModel):

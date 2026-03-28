@@ -16,7 +16,32 @@
       "Bash(mv /tmp/juno-move/* .)",
       "Bash(curl -s http://localhost:8188/object_info)",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(''''\\\\n''''.join\\(sorted\\(d.keys\\(\\)\\)[:50]\\)\\)\")",
-      "WebSearch"
+      "WebSearch",
+      "Bash(grep:*)",
+      "Bash(find . -name server.py -o -name __init__.py -path */comfyui*)",
+      "Bash(python -m pytest tests/test_orchestration_api.py -v)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(docker stop:*)",
+      "Bash(docker rm:*)",
+      "Bash(docker ps:*)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec ordo-ai-stack-mcp-gateway-1 sh /mcp-scripts/healthcheck.sh)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec ordo-ai-stack-mcp-gateway-1 curl -sf -X POST http://localhost:8811/mcp -H \"Content-Type: application/json\" -H \"Accept: application/json, text/event-stream\" -d '{\"\"\"\"jsonrpc\"\"\"\":\"\"\"\"2.0\"\"\"\",\"\"\"\"method\"\"\"\":\"\"\"\"tools/list\"\"\"\",\"\"\"\"id\"\"\"\":1}' --max-time 5)",
+      "Bash(xargs -r docker rm -f)",
+      "Bash(python:*)",
+      "Bash(ls:*)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec ordo-ai-stack-openclaw-gateway-1 cat /home/node/.openclaw/openclaw.json)",
+      "Bash(MSYS_NO_PATHCONV=1 docker cp /tmp/openclaw_debug.json ordo-ai-stack-openclaw-gateway-1:/home/node/.openclaw/openclaw.json)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec ordo-ai-stack-openclaw-gateway-1 sh -c 'cat /home/node/.openclaw/openclaw.json | sed \"s/\\\\\"debug\\\\\": false/\\\\\"debug\\\\\": true/\" > /tmp/oc.json && cp /tmp/oc.json /home/node/.openclaw/openclaw.json' 2>&1)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec ordo-ai-stack-openclaw-gateway-1 cat /tmp/openclaw/openclaw-2026-03-28.log)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec ordo-ai-stack-openclaw-gateway-1 grep -c \"eager\" /home/node/.openclaw/extensions/openclaw-mcp-bridge/dist/index.js 2>&1)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec ordo-ai-stack-openclaw-gateway-1 sed -n '169,185p' /home/node/.openclaw/extensions/openclaw-mcp-bridge/dist/index.js 2>&1)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec ordo-ai-stack-openclaw-gateway-1 grep -n \"eager\" /home/node/.openclaw/extensions/openclaw-mcp-bridge/dist/index.js 2>&1)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec ordo-ai-stack-openclaw-gateway-1 grep -c \"eager\" /home/node/.openclaw/extensions/openclaw-mcp-bridge/dist/index.js)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec ordo-ai-stack-openclaw-gateway-1 cat /home/node/.openclaw/extensions/openclaw-mcp-bridge/dist/index.js)",
+      "Bash(docker volume:*)",
+      "Bash(MSYS_NO_PATHCONV=1 docker exec ordo-ai-stack-openclaw-gateway-1 md5sum /home/node/.openclaw/extensions/openclaw-mcp-bridge/dist/index.js)",
+      "Bash(curl:*)"
     ]
   }
 }

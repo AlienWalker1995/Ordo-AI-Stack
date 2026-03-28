@@ -1,7 +1,7 @@
 {
   "id": "generate_image",
   "description": "Compile operator-authored API-format workflow (PARAM_* placeholders) with validated parameters.",
-  "workflow_file": "generate_image.json",
+  "workflow_file": "mcp-api/generate_image.json",
   "parameter_schema": {
     "type": "object",
     "required": ["prompt"],

@@ -37,6 +37,9 @@ def test_readiness_ok_when_probes_pass():
     with patch(
         "dashboard.orchestration_readiness._probe_get",
         return_value=(True, None),
+    ), patch(
+        "dashboard.orchestration_readiness._probe_mcp_tools",
+        return_value=(True, 5, None),
     ):
         r = compute_readiness()
     assert r["ok"] is True

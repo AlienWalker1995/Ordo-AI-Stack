@@ -14,8 +14,10 @@ if (-not $line -or -not $line.Matches.Groups[1].Value) {
     Write-Error "OPENCLAW_GATEWAY_TOKEN not found in .env"
 }
 $token = $line.Matches.Groups[1].Value.Trim()
-# Must match gateway listen port inside the container (default compose: 6680; openclaw-secure override may use 18789).
-$gatewayUrl = "ws://openclaw-gateway:6680"
+$portLine = Get-Content $envPath -Raw | Select-String -Pattern 'OPENCLAW_GATEWAY_INTERNAL_PORT=(\d+)' -AllMatches
+$gwPort = if ($portLine -and $portLine.Matches.Groups[1].Value) { $portLine.Matches.Groups[1].Value.Trim() } else { "6680" }
+# Must match gateway listen port inside the container (default compose: 6680; set OPENCLAW_GATEWAY_INTERNAL_PORT in .env if you use openclaw-secure.yml).
+$gatewayUrl = "ws://openclaw-gateway:$gwPort"
 $dockerArgs = @("compose", "--profile", "openclaw-cli", "run", "--rm", "openclaw-cli") + @($CliArgs) + @("--url", $gatewayUrl, "--token", $token)
 Push-Location $base
 try {

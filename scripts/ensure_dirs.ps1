@@ -11,8 +11,8 @@ $dirs = @(
     (Join-Path $data "comfyui-storage\ComfyUI\custom_nodes"),
     (Join-Path $data "comfyui-storage\ComfyUI\user\__manager"),
     (Join-Path $data "comfyui-output"),
-    (Join-Path $data "comfyui-workflows"),
     (Join-Path $data "comfyui-storage\ComfyUI\user\default\workflows"),
+    (Join-Path $data "comfyui-storage\ComfyUI\user\default\workflows\mcp-api"),
     (Join-Path $data "n8n-data"),
     (Join-Path $data "n8n-files"),
     (Join-Path $data "dashboard"),
@@ -37,15 +37,25 @@ if ((Test-Path $managerSeed) -and -not (Test-Path $managerCfg)) {
     Write-Host ('OK ' + $managerCfg + ' (ComfyUI-Manager security_level=weak)')
 }
 
-# Seed data/comfyui-workflows from repo templates (data/ is gitignored; COMFY_MCP_DEFAULT_WORKFLOW_ID defaults to generate_image)
+# Seed ComfyUI user workflows (data/ is gitignored). API graphs live under mcp-api/ (compose default COMFY_MCP_DEFAULT_WORKFLOW_ID=mcp-api/generate_image).
 $wfTemplateDir = Join-Path $base "workflow-templates\comfyui-workflows"
-$wfDataDir = Join-Path $data "comfyui-workflows"
-if (Test-Path $wfTemplateDir) {
-    Get-ChildItem $wfTemplateDir -Filter *.json | ForEach-Object {
-        $dest = Join-Path $wfDataDir $_.Name
+$wfMcpApi = Join-Path $data "comfyui-storage\ComfyUI\user\default\workflows\mcp-api"
+$legacyWf = Join-Path $data "comfyui-workflows"
+if (Test-Path $legacyWf) {
+    Get-ChildItem $legacyWf -Filter *.json -ErrorAction SilentlyContinue | ForEach-Object {
+        $dest = Join-Path $wfMcpApi $_.Name
         if (-not (Test-Path $dest)) {
             Copy-Item $_.FullName $dest -Force
-            Write-Host "OK bootstrap comfyui-workflows/$($_.Name)"
+            Write-Host "OK migrate legacy comfyui-workflows/$($_.Name) -> .../workflows/mcp-api/"
+        }
+    }
+}
+if (Test-Path $wfTemplateDir) {
+    Get-ChildItem $wfTemplateDir -Filter *.json | ForEach-Object {
+        $dest = Join-Path $wfMcpApi $_.Name
+        if (-not (Test-Path $dest)) {
+            Copy-Item $_.FullName $dest -Force
+            Write-Host "OK bootstrap workflows/mcp-api/$($_.Name)"
         }
     }
 }
