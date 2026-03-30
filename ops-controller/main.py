@@ -26,7 +26,7 @@ AUDIT_LOG_MAX_BYTES = int(os.environ.get("AUDIT_LOG_MAX_BYTES", "10485760"))  # 
 
 # Services we allow operations on (allowlist)
 ALLOWED_SERVICES = {
-    "ollama", "dashboard", "open-webui", "model-gateway", "mcp-gateway",
+    "llamacpp", "llamacpp-embed", "dashboard", "open-webui", "model-gateway", "mcp-gateway",
     "comfyui", "n8n", "openclaw-gateway", "qdrant",
 }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge gateway provider into openclaw.json. Fetches models from model-gateway (Ollama).
+"""Merge gateway provider into openclaw.json. Fetches models from model-gateway (llama.cpp via gateway).
 Injects OPENCLAW_GATEWAY_TOKEN from env when set.
 When DISCORD_TOKEN / DISCORD_BOT_TOKEN or TELEGRAM_BOT_TOKEN is set in the environment,
 rewrites channel secrets to OpenClaw SecretRef form so tokens are not stored plaintext in JSON."""
@@ -40,18 +40,15 @@ _load_env_file(_repo_root() / ".env")
 
 GATEWAY_PROVIDER = {
     "baseUrl": "http://model-gateway:11435/v1",
-    "apiKey": "ollama-local",
+    "apiKey": "local",
     "api": "openai-responses",
     "headers": {"X-Service-Name": "openclaw"},
 }
 
 MODEL_GATEWAY_URL = os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435")
-# Use the actual Ollama context cap — not the model's theoretical maximum.
-# OpenClaw uses contextWindow to decide when to compact; if it's set too high,
-# compaction never fires but Ollama silently truncates at OLLAMA_NUM_CTX.
-# OLLAMA_NUM_CTX=0 in model-gateway means "model max"; for OpenClaw we still use a positive default.
-_ctx_raw = os.environ.get("OLLAMA_NUM_CTX", "16384").strip()
-OLLAMA_NUM_CTX = int(_ctx_raw) if _ctx_raw.isdigit() and int(_ctx_raw) > 0 else 16384
+# Match llama-server --ctx-size (LLAMACPP_CTX_SIZE) for OpenClaw compaction.
+_ctx_raw = os.environ.get("LLAMACPP_CTX_SIZE", "131072").strip()
+LLAMACPP_CTX = int(_ctx_raw) if _ctx_raw.isdigit() and int(_ctx_raw) > 0 else 131072
 
 # OpenClaw 2026.3.x: tools.elevated.allowFrom.<provider> is a string[] (sender allowlist), not boolean.
 _ELEVATED_ALLOW_ALL_SENDERS = ["*"]
@@ -93,17 +90,17 @@ def _set_elevated_allow_from_all(allow_from: dict, key: str) -> bool:
 # Use bare IDs (no ollama/ prefix) — the gateway resolves provider from the ID.
 DEFAULT_GATEWAY_MODELS = [
     {"id": "qwen3:8b", "name": "Qwen3 8B", "reasoning": True, "input": ["text"],
-     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": OLLAMA_NUM_CTX, "maxTokens": 8192},
+     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": LLAMACPP_CTX, "maxTokens": 8192},
     {"id": "deepseek-r1:7b", "name": "DeepSeek R1 7B", "reasoning": True, "input": ["text"],
-     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": OLLAMA_NUM_CTX, "maxTokens": 8192},
+     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": LLAMACPP_CTX, "maxTokens": 8192},
     {"id": "qwen3:14b", "name": "Qwen3 14B", "reasoning": True, "input": ["text"],
-     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": OLLAMA_NUM_CTX, "maxTokens": 8192},
+     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": LLAMACPP_CTX, "maxTokens": 8192},
     {"id": "deepseek-coder:6.7b", "name": "DeepSeek Coder 6.7B", "reasoning": False, "input": ["text"],
-     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": OLLAMA_NUM_CTX, "maxTokens": 8192},
+     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": LLAMACPP_CTX, "maxTokens": 8192},
     {"id": "llama3.2-vision:11b", "name": "Llama 3.2 Vision 11B", "reasoning": False, "input": ["text", "image"],
-     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": OLLAMA_NUM_CTX, "maxTokens": 8192},
+     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": LLAMACPP_CTX, "maxTokens": 8192},
     {"id": "nomic-embed-text:latest", "name": "Nomic Embed", "reasoning": False, "input": ["text"],
-     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": min(OLLAMA_NUM_CTX, 8192), "maxTokens": 8192},
+     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}, "contextWindow": min(LLAMACPP_CTX, 8192), "maxTokens": 8192},
 ]
 
 
@@ -364,7 +361,7 @@ def _fetch_models_from_gateway() -> list[dict] | None:
             "reasoning": is_reasoning,
             "input": ["text", "image"] if has_vision else ["text"],
             "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-            "contextWindow": OLLAMA_NUM_CTX,
+            "contextWindow": LLAMACPP_CTX,
             "maxTokens": 8192,
         })
     return models if models else None

@@ -9,7 +9,7 @@ base="${base//\\/\/}"
 data="${DATA_PATH:-$base/data}"
 
 dirs=(
-  "$base/models/ollama"
+  "$base/models/gguf"
   "$data/mcp"
   "$data/ops-controller"
   "$data/open-webui"
@@ -162,7 +162,7 @@ if command -v claude >/dev/null 2>&1; then
     else
       echo "OK Claude Code already configured in shell rc"
     fi
-    echo "   Usage: claude --model <ollama-model-name>"
+    echo "   Usage: claude --model <gguf-model-id-from-/v1/models>"
   else
     echo "Claude Code: local Model Gateway routing disabled (data/dashboard/claude_code_env_overwrite.json). Remove ANTHROPIC_* from ~/.bashrc or ~/.zshrc if you no longer want local routing."
   fi

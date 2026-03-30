@@ -31,9 +31,9 @@ from dashboard.services_catalog import OPS_SERVICE_MAP
 from dashboard.settings import AUTH_REQUIRED as _AUTH_REQUIRED
 from dashboard.settings import DASHBOARD_AUTH_TOKEN, OPENCLAW_CONFIG_PATH
 
-# Match model-gateway num_ctx + merge_gateway_config.py (OpenClaw compaction vs Ollama truncation).
-_ctx_raw = os.environ.get("OLLAMA_NUM_CTX", "16384").strip()
-OPENCLAW_CONTEXT_WINDOW = int(_ctx_raw) if _ctx_raw.isdigit() and int(_ctx_raw) > 0 else 16384
+# Match llama-server --ctx-size + merge_gateway_config.py (OpenClaw compaction).
+_ctx_raw = os.environ.get("LLAMACPP_CTX_SIZE", "131072").strip()
+OPENCLAW_CONTEXT_WINDOW = int(_ctx_raw) if _ctx_raw.isdigit() and int(_ctx_raw) > 0 else 131072
 
 # Dashboard auth (optional bearer token only; see dashboard.settings)
 
@@ -106,7 +106,6 @@ async def auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
 MODEL_GATEWAY_URL = os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435").rstrip("/")
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://comfyui:8188").rstrip("/")
 MODELS_DIR = Path(os.environ.get("MODELS_DIR", "/models"))
@@ -1408,7 +1407,7 @@ async def put_claude_code_env_overwrite(req: ClaudeCodeEnvOverwriteRequest):
 # Gateway provider base written into openclaw.json (must match merge_gateway_config.py)
 _OPENCLAW_GATEWAY_BASE = {
     "baseUrl": "http://model-gateway:11435/v1",
-    "apiKey": "ollama-local",
+    "apiKey": "local",
     "api": "openai-responses",
     "headers": {"X-Service-Name": "openclaw"},
 }

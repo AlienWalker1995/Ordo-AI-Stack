@@ -2,23 +2,55 @@ name: ordo-ai-stack
 
 # All services start by default. Run: docker compose up -d
 services:
-  ollama:
-    image: ${OLLAMA_IMAGE:-ollama/ollama:0.18.1}
+  llamacpp:
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
     restart: unless-stopped
-    environment:
-      - OLLAMA_HOST=0.0.0.0:11434
-    # Host port not exposed by default (backend-only). To expose for Cursor/direct use: -f overrides/ollama-expose.yml
+    platform: linux/amd64
+    command: >
+      --host 0.0.0.0 --port 8080
+      --model /models/${LLAMACPP_MODEL:-model.gguf}
+      --ctx-size ${LLAMACPP_CTX_SIZE:-131072}
+      --n-gpu-layers ${LLAMACPP_GPU_LAYERS:--1}
+      --flash-attn auto
     volumes:
-      - ${BASE_PATH:-.}/models/ollama:/root/.ollama
+      - ${BASE_PATH:-.}/models/gguf:/models:ro
     healthcheck:
-      # Image has no curl/wget; use ollama CLI to probe the server
-      test: ["CMD", "ollama", "list"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       start_period: 120s
       interval: 15s
       timeout: 10s
       retries: 5
     # GPU config: overridden by overrides/compute.yml (run scripts/detect_hardware.py)
-    # Pin digest: OLLAMA_IMAGE=ollama/ollama:0.18.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - backend
+
+  # Use CUDA image so linux/amd64 is available (plain :server manifest can resolve to arm64 on Docker Desktop).
+  llamacpp-embed:
+    image: ${LLAMACPP_EMBED_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    restart: unless-stopped
+    platform: linux/amd64
+    command: >
+      --host 0.0.0.0 --port 8080
+      --model /models/${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}
+      --ctx-size 8192 --embeddings
+    volumes:
+      - ${BASE_PATH:-.}/models/gguf:/models:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      start_period: 60s
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - backend
 
@@ -34,28 +66,26 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     depends_on:
-      ollama:
+      llamacpp:
+        condition: service_healthy
+      llamacpp-embed:
         condition: service_healthy
       dashboard:
         condition: service_started
     environment:
-      - OLLAMA_URL=http://ollama:11434
+      - LLAMACPP_URL=http://llamacpp:8080
+      - LLAMACPP_EMBED_URL=http://llamacpp-embed:8080
       - VLLM_URL=${VLLM_URL:-}
-      - DEFAULT_PROVIDER=ollama
+      - DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-llamacpp}
       - DASHBOARD_URL=http://dashboard:8080
       - THROUGHPUT_RECORD_TOKEN=${THROUGHPUT_RECORD_TOKEN:-}
       - MODEL_CACHE_TTL_SEC=${MODEL_CACHE_TTL_SEC:-60}
-      # Cap Ollama KV cache. Ollama pre-allocates the full model max (often 128K+)
-      # even for short prompts, killing CPU throughput. 16384 tokens covers most
-      # conversations; OpenClaw compaction flushes at ~15K tokens anyway.
-      # Set to 0 to use Ollama's default (max context, slow on CPU).
-      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-16384}
       # Local model used when Claude Code sends a "claude-*" model name
       - CLAUDE_CODE_LOCAL_MODEL=${CLAUDE_CODE_LOCAL_MODEL:-}
       # Set to 1 only if a client requires claude-* ids in GET /v1/models (pollutes OpenClaw sync if on)
       - CLAUDE_CODE_ADVERTISE_ALIASES=${CLAUDE_CODE_ADVERTISE_ALIASES:-0}
-      # Claude Code web_search_* tools: gateway strips them (Ollama cannot run Anthropic server tools) and
-      # injects Tavily results into the system prompt when TAVILY_API_KEY is set (same key as mcp-gateway).
+      # Claude Code web_search_* tools: gateway strips them and injects Tavily results
+      # into the system prompt when TAVILY_API_KEY is set (same key as mcp-gateway).
       - TAVILY_API_KEY=${TAVILY_API_KEY:-}
     ports:
       - "${MODEL_GATEWAY_PORT:-11435}:11435"
@@ -122,7 +152,7 @@ services:
       - SETUID
       - SETGID
     depends_on:
-      ollama:
+      llamacpp:
         condition: service_healthy
     ports:
       - "8080:8080"
@@ -139,8 +169,9 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
-      - OLLAMA_URL=http://ollama:11434
+      - LLAMACPP_URL=http://llamacpp:8080
       - MODELS_DIR=/models
+      - GGUF_MODELS_DIR=/gguf-models
       - SCRIPTS_DIR=/scripts
       - MCP_CONFIG_PATH=/mcp-config/servers.txt
       - MCP_GATEWAY_URL=http://mcp-gateway:8811
@@ -156,8 +187,8 @@ services:
       - COMFYUI_URL=http://comfyui:8188
       # OpenClaw model management: dashboard reads/writes openclaw.json to sync models
       - MODEL_GATEWAY_URL=http://model-gateway:11435
-      # OpenClaw contextWindow in synced models (must match model-gateway OLLAMA_NUM_CTX)
-      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-16384}
+      # OpenClaw contextWindow in synced models (must match llama.cpp --ctx-size)
+      - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-131072}
       - OPENCLAW_CONFIG_PATH=/openclaw-config/openclaw.json
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
       - OPENCLAW_GATEWAY_PORT=${OPENCLAW_GATEWAY_PORT:-6680}
@@ -169,6 +200,7 @@ services:
       - N8N_PUBLISH_WEBHOOK_URL=${N8N_PUBLISH_WEBHOOK_URL:-}
     volumes:
       - ${BASE_PATH:-.}/models/comfyui:/models
+      - ${BASE_PATH:-.}/models/gguf:/gguf-models
       - ${BASE_PATH:-.}/scripts:/scripts:ro
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/dashboard:/data/dashboard
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/mcp:/mcp-config
@@ -182,7 +214,7 @@ services:
     image: ${OPEN_WEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.8.4}
     restart: unless-stopped
     depends_on:
-      - ollama
+      - llamacpp
       - model-gateway
       - qdrant
     ports:
@@ -197,7 +229,7 @@ services:
       # Route all model requests through the gateway (unified provider)
       - OLLAMA_BASE_URL=
       - OPENAI_API_BASE_URL=${OPENAI_API_BASE:-http://model-gateway:11435/v1}
-      - OPENAI_API_KEY=ollama-local
+      - OPENAI_API_KEY=local
       # Auth: False = single-user local / Tailscale use.
       - WEBUI_AUTH=${WEBUI_AUTH:-False}
       # Default model shown in chat UI (updated by dashboard "Set Default" control)
@@ -212,33 +244,19 @@ services:
       - frontend
       - backend
 
-  model-puller:
+  gguf-puller:
     profiles: [models]
-    image: curlimages/curl:8.10.1
-    depends_on:
-      - ollama
+    image: python:3.12-slim
     restart: "no"
     environment:
-      - OLLAMA_URL=http://ollama:11434
-      - MODELS=${MODELS:-deepseek-r1:7b,deepseek-coder:6.7b,nomic-embed-text}
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -eu
-        echo "Waiting for Ollama ..."
-        until curl -fsS "$$OLLAMA_URL/api/version" >/dev/null; do sleep 2; done
-        echo "Pulling: $$MODELS"
-        IFS=','; for m in $$MODELS; do
-          m="$$(echo "$$m" | tr -d ' ')"
-          [ -z "$$m" ] && continue
-          echo "==> $$m"
-          curl -fsS "$$OLLAMA_URL/api/pull" \
-            -H "Content-Type: application/json" \
-            -d "{\"model\":\"$$m\",\"stream\":false}"
-        done
-        echo "Done."
+      - HF_TOKEN=${HF_TOKEN:-}
+      - GGUF_MODELS=${GGUF_MODELS:-}
+    volumes:
+      - ${BASE_PATH:-.}/models/gguf:/models
+      - ${BASE_PATH:-.}/scripts:/scripts:ro
+    command: ["sh", "-c", "pip install -q huggingface_hub && python3 /scripts/pull_gguf_models.py"]
     networks:
-      - backend
+      - frontend
 
   comfyui-model-puller:
     profiles: [comfyui-models]
@@ -365,7 +383,7 @@ services:
       # Route all model traffic through Model Gateway (dashboard tracking, unified provider)
       - OLLAMA_HOST=http://model-gateway:11435
       - OPENAI_API_BASE_URL=${OPENAI_API_BASE:-http://model-gateway:11435/v1}
-      - OPENAI_API_KEY=ollama-local
+      - OPENAI_API_KEY=local
       # OAuth callbacks + inbound webhooks require a public URL.
       # Recommended: tailscale funnel --set-path /rest/oauth2-credential/callback 5678
       #              tailscale funnel --set-path /webhook 5678
@@ -505,7 +523,7 @@ services:
     environment:
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
       - MODEL_GATEWAY_URL=http://model-gateway:11435
-      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-16384}
+      - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-131072}
       # Comma-separated Discord guild snowflake IDs → channels.discord.guilds (required for allowlist policy)
       - OPENCLAW_DISCORD_GUILD_IDS=${OPENCLAW_DISCORD_GUILD_IDS:-}
       # Permissive exec + elevated in gateway container (see overrides/openclaw-gateway-root.yml for root)
@@ -755,7 +773,7 @@ services:
     profiles: [openclaw-cli]
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:2026.3.23}
     depends_on:
-      - ollama
+      - llamacpp
       - openclaw-gateway
     env_file:
       - .env
@@ -764,8 +782,8 @@ services:
       TERM: xterm-256color
       NODE_ENV: production
       BROWSER: echo
-      OLLAMA_API_KEY: "ollama-local"
-      OLLAMA_BASE_URL: "http://ollama:11434"
+      OPENAI_API_KEY: "local"
+      OPENAI_BASE_URL: "http://model-gateway:11435/v1"
     volumes:
       - ${OPENCLAW_CONFIG_DIR:-${BASE_PATH:-.}/data/openclaw}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR:-${BASE_PATH:-.}/data/openclaw/workspace}:/home/node/.openclaw/workspace
@@ -839,7 +857,7 @@ networks:
     name: ordo-ai-stack-frontend
   backend:
     name: ordo-ai-stack-backend
-    # internal: false required for Ollama to pull models from registry.ollama.ai.
+    # internal: false required for llama.cpp and HuggingFace model downloads.
     # Set internal: true for air-gapped security (model pulls will fail).
     internal: false
 

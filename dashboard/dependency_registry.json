@@ -12,12 +12,12 @@
       "hint": "OpenAI-compatible API. OpenClaw uses models.providers.gateway → this service."
     },
     {
-      "id": "ollama",
-      "name": "Ollama",
+      "id": "llamacpp",
+      "name": "llama.cpp (llama-server)",
       "category": "inference",
       "openclaw_critical": true,
-      "check_url": "http://ollama:11434/api/version",
-      "hint": "LLM backend; model-gateway proxies here."
+      "check_url": "http://llamacpp:8080/health",
+      "hint": "GGUF inference; model-gateway proxies OpenAI /v1 to this service."
     },
     {
       "id": "mcp-gateway",

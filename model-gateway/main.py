@@ -1,4 +1,4 @@
-"""Model Gateway — OpenAI-compatible proxy for Ollama, vLLM, and future providers."""
+"""Model Gateway — OpenAI-compatible proxy for llama.cpp (llama-server), vLLM, and future providers."""
 from __future__ import annotations
 
 import asyncio
@@ -38,61 +38,43 @@ async def request_middleware(request: Request, call_next):
                     request.method, request.url.path, response.status_code, correlation_id)
     return response
 
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434").rstrip("/")
+LLAMACPP_URL = os.environ.get("LLAMACPP_URL", "http://llamacpp:8080").rstrip("/")
+LLAMACPP_EMBED_URL = os.environ.get("LLAMACPP_EMBED_URL", "http://llamacpp-embed:8080").rstrip("/")
 VLLM_URL = os.environ.get("VLLM_URL", "").rstrip("/")  # e.g. http://vllm:8000
-DEFAULT_PROVIDER = os.environ.get("DEFAULT_PROVIDER", "ollama")
+DEFAULT_PROVIDER = os.environ.get("DEFAULT_PROVIDER", "llamacpp")
 DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "").rstrip("/")
 THROUGHPUT_RECORD_TOKEN = os.environ.get("THROUGHPUT_RECORD_TOKEN", "").strip()
 MODEL_CACHE_TTL = float(os.environ.get("MODEL_CACHE_TTL_SEC", "60"))
-# Context window cap. Ollama defaults to a model's max (often 128K+) which pre-allocates
-# a huge KV cache even for short prompts — severely hurting CPU throughput.
-# Set to 0 to leave Ollama's default unchanged.
-OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "16384"))
 # When Claude Code sends a "claude-*" model name, remap it to this local model.
 CLAUDE_CODE_LOCAL_MODEL = os.environ.get("CLAUDE_CODE_LOCAL_MODEL", "")
 # If true, append synthetic claude-* ids to /v1/models (for clients that validate against the list).
 # Default off — those fake Sonnet names pollute Open WebUI / OpenClaw "active models" sync.
 CLAUDE_CODE_ADVERTISE_ALIASES = os.environ.get("CLAUDE_CODE_ADVERTISE_ALIASES", "").strip() == "1"
 
-# TTL model list cache: avoids hitting Ollama on every /v1/models call.
+# TTL model list cache: avoids hitting llama-server on every /v1/models call.
 _model_cache: list = []
 _model_cache_ts: float = 0.0
 
 
 def _model_provider_and_id(name: str) -> tuple[str, str]:
-    """Return (provider, model_id). Provider: ollama, vllm.
-    Only 'vllm/' and 'ollama/' are treated as explicit provider prefixes.
-    HF-style paths (hf.co/org/model, org/model) are passed through as-is."""
+    """Return (provider, model_id). Provider: llamacpp, vllm.
+    Explicit prefixes: vllm/, llamacpp/, ollama/ (legacy), gateway/ (OpenClaw provider id)."""
     if name.startswith("vllm/") and VLLM_URL:
         return ("vllm", name[5:])
+    if name.startswith("llamacpp/"):
+        return ("llamacpp", name[9:])
     if name.startswith("ollama/"):
-        return ("ollama", name[7:])
+        return ("llamacpp", name[7:])
+    # OpenClaw uses agents.defaults.model.primary like "gateway/<modelId>" while /v1/models lists bare ids.
+    if name.startswith("gateway/"):
+        return (DEFAULT_PROVIDER, name[8:])
     return (DEFAULT_PROVIDER, name)
 
 
-def _ollama_model_id(name: str) -> str:
-    """Strip provider prefix if present (ollama/deepseek-r1:7b -> deepseek-r1:7b)."""
+def _inference_model_id(name: str) -> str:
+    """Strip provider prefix; result is the model id sent to llama-server / vLLM."""
     _, model_id = _model_provider_and_id(name)
     return model_id
-
-
-def _ollama_model_id_with_hf_fallback(name: str) -> str:
-    """Resolve Ollama model ID. For org/model names (e.g. unsloth/Qwen3.5-9B-GGUF:latest),
-    check the model cache first — if the bare name is known to Ollama (community model),
-    use it as-is. Otherwise prepend hf.co/ for HuggingFace GGUF models."""
-    model = _ollama_model_id(name)
-    model_lower = model.lower()
-    # Already fully qualified
-    if "/" not in model or model_lower.startswith("hf.co/") or model_lower.startswith("huggingface.co/") or model_lower.startswith("library/"):
-        return model
-    # Check model cache: if the bare name is already known, don't add hf.co/
-    known_ids = {m.get("id", "").lower() for m in _model_cache} if _model_cache else set()
-    if model_lower in known_ids or not known_ids:
-        # Bare name is known, or cache is empty (try bare name first — Ollama
-        # community models like jaahas/... are more common than bare HF paths)
-        return model
-    # Not in cache — assume HuggingFace
-    return f"hf.co/{model}"
 
 
 def _service_from_headers(origin: str | None, x_service: str | None) -> str:
@@ -152,8 +134,8 @@ def _record_throughput(
 
 @app.get("/v1/models")
 async def list_models():
-    """List models in OpenAI format. Aggregates from Ollama and vLLM (when configured).
-    Results are cached for MODEL_CACHE_TTL_SEC seconds to reduce Ollama load.
+    """List models in OpenAI format. Aggregates from llama-server and vLLM (when configured).
+    Results are cached for MODEL_CACHE_TTL_SEC seconds.
     """
     global _model_cache, _model_cache_ts
 
@@ -163,25 +145,21 @@ async def list_models():
 
     objects = []
 
-    # Ollama
+    # llama.cpp server (OpenAI /v1/models)
     async with AsyncClient(timeout=30.0) as client:
         try:
-            r = await client.get(f"{OLLAMA_URL}/api/tags")
-            r.raise_for_status()
-            data = r.json()
-            for m in data.get("models", []):
-                name = m.get("name", "")
-                if name:
-                    ts = m.get("modified_at", 0) or 0
-                    # Single canonical id per model — the same string the gateway uses when
-                    # forwarding to Ollama. Do not also emit ollama/{name}; that duplicated entries
-                    # in Open WebUI / OpenClaw (hf.co/... and ollama/hf.co/... for the same model).
-                    objects.append({
-                        "id": name,
-                        "object": "model",
-                        "created": ts,
-                        "owned_by": "ollama",
-                    })
+            r = await client.get(f"{LLAMACPP_URL}/v1/models")
+            if r.status_code < 500:
+                data = r.json()
+                for m in data.get("data", []):
+                    mid = m.get("id", "")
+                    if mid:
+                        objects.append({
+                            "id": mid,
+                            "object": "model",
+                            "created": m.get("created", 0) or 0,
+                            "owned_by": "llamacpp",
+                        })
         except Exception:
             pass
 
@@ -234,136 +212,245 @@ async def invalidate_cache():
     return {"ok": True, "message": "Model list cache invalidated"}
 
 
-# --- Ollama proxy (dashboard model ops — PRD Principle 4: route via gateway) ---
+# --- Ollama-shaped compatibility (n8n / legacy clients → llama-server) ---
+
+
+async def _ollama_tags_from_llamacpp() -> dict:
+    async with AsyncClient(timeout=30.0) as client:
+        r = await client.get(f"{LLAMACPP_URL}/v1/models")
+        r.raise_for_status()
+        data = r.json()
+        models = []
+        for m in data.get("data", []):
+            mid = m.get("id", "")
+            if mid:
+                models.append({"name": mid, "modified_at": m.get("created", 0) or 0})
+        return {"models": models}
 
 
 @app.get("/api/tags")
 async def ollama_tags():
-    """Proxy Ollama /api/tags. Dashboard uses this instead of direct Ollama."""
-    async with AsyncClient(timeout=30.0) as client:
-        r = await client.get(f"{OLLAMA_URL}/api/tags")
-        r.raise_for_status()
-        return r.json()
+    """Ollama-shaped tag list from llama-server /v1/models."""
+    return await _ollama_tags_from_llamacpp()
 
 
 @app.get("/api/ps")
 async def ollama_ps():
-    """Proxy Ollama /api/ps (loaded models)."""
-    async with AsyncClient(timeout=10.0) as client:
-        r = await client.get(f"{OLLAMA_URL}/api/ps")
-        r.raise_for_status()
-        return r.json()
+    """Ollama-shaped loaded models (from /v1/models)."""
+    data = await _ollama_tags_from_llamacpp()
+    return {"models": [{"name": m["name"], "size": 0, "digest": "", "details": {}} for m in data.get("models", [])]}
 
 
 @app.delete("/api/delete")
 async def ollama_delete(request: Request):
-    """Proxy Ollama /api/delete."""
-    body = await request.json()
-    async with AsyncClient(timeout=60.0) as client:
-        r = await client.request("DELETE", f"{OLLAMA_URL}/api/delete", json=body)
-        r.raise_for_status()
-        return r.json() if r.content else {"ok": True}
+    """GGUF files are managed on disk / dashboard — Ollama delete not supported."""
+    return JSONResponse(
+        status_code=501,
+        content={"error": "use dashboard GGUF management or delete files under models/gguf/"},
+    )
 
 
 @app.post("/api/pull")
 async def ollama_pull(request: Request):
-    """Proxy Ollama /api/pull (streaming)."""
-    body = await request.json()
-    async def stream():
-        async with AsyncClient(timeout=3600.0) as client:
-            async with client.stream("POST", f"{OLLAMA_URL}/api/pull", json=body) as resp:
-                async for chunk in resp.aiter_bytes():
-                    yield chunk
-    return StreamingResponse(
-        stream(),
-        media_type="application/x-ndjson",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    """Ollama pull not supported — use profile models + GGUF puller."""
+    return JSONResponse(
+        status_code=501,
+        content={"error": "run: docker compose --profile models run --rm gguf-puller (GGUF_MODELS=...)"},
     )
 
 
 @app.post("/api/generate")
 async def ollama_generate(request: Request):
-    """Proxy Ollama /api/generate (non-streaming)."""
+    """Map legacy generate to OpenAI /v1/completions on llama-server."""
     body = await request.json()
-    async with AsyncClient(timeout=60.0) as client:
-        r = await client.post(f"{OLLAMA_URL}/api/generate", json=body)
+    prompt = body.get("prompt", "")
+    if isinstance(prompt, list):
+        prompt = "\n".join(str(p) for p in prompt)
+    fwd = {
+        "model": body.get("model", ""),
+        "prompt": prompt,
+        "stream": bool(body.get("stream", False)),
+    }
+    for k in ("max_tokens", "temperature", "top_p", "stop"):
+        if k in body and body[k] is not None:
+            fwd[k] = body[k]
+    async with AsyncClient(timeout=600.0) as client:
+        r = await client.post(f"{LLAMACPP_URL}/v1/completions", json=fwd, headers={"Content-Type": "application/json"})
         r.raise_for_status()
         return r.json()
 
 
 @app.post("/api/chat")
 async def ollama_chat(request: Request):
-    """Proxy Ollama /api/chat (n8n Ollama nodes, etc.)."""
+    """Ollama /api/chat → OpenAI chat completions on llama-server (non-stream); stream passes SSE→NDJSON-ish."""
     body = await request.json()
-    if body.get("stream"):
-        async def stream():
-            async with AsyncClient(timeout=300.0) as client:
-                async with client.stream("POST", f"{OLLAMA_URL}/api/chat", json=body) as resp:
-                    async for chunk in resp.aiter_bytes():
-                        yield chunk
-        return StreamingResponse(
-            stream(),
-            media_type="application/x-ndjson",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-    async with AsyncClient(timeout=300.0) as client:
-        r = await client.post(f"{OLLAMA_URL}/api/chat", json=body)
-        r.raise_for_status()
-        return r.json()
+    model = body.get("model", "")
+    messages = body.get("messages") or []
+    stream = bool(body.get("stream", False))
+    chat_body: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": stream,
+    }
+    if body.get("tools"):
+        chat_body["tools"] = body["tools"]
+    if "tool_choice" in body:
+        chat_body["tool_choice"] = body["tool_choice"]
+    for k in ("max_tokens", "temperature", "top_p", "stop"):
+        if k in body and body[k] is not None:
+            chat_body[k] = body[k]
+
+    if not stream:
+        async with AsyncClient(timeout=600.0) as client:
+            r = await client.post(
+                f"{LLAMACPP_URL}/v1/chat/completions",
+                json=chat_body,
+                headers={"Content-Type": "application/json"},
+            )
+            r.raise_for_status()
+            data = r.json()
+        choice = (data.get("choices") or [{}])[0]
+        msg = choice.get("message", {}) or {}
+        content = msg.get("content", "") or ""
+        usage = data.get("usage") or {}
+        ollama_msg: dict[str, Any] = {"role": "assistant", "content": content}
+        if msg.get("tool_calls"):
+            ollama_tcs = []
+            for tc in msg["tool_calls"]:
+                fn = tc.get("function") or {}
+                args_raw = fn.get("arguments", "{}")
+                try:
+                    args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+                except (json.JSONDecodeError, ValueError):
+                    args = {}
+                ollama_tcs.append({
+                    "id": tc.get("id", ""),
+                    "type": "function",
+                    "function": {"name": fn.get("name", ""), "arguments": args},
+                })
+            ollama_msg["tool_calls"] = ollama_tcs
+        return {
+            "model": model,
+            "created_at": data.get("created", ""),
+            "message": ollama_msg,
+            "done": True,
+            "prompt_eval_count": usage.get("prompt_tokens", 0),
+            "eval_count": usage.get("completion_tokens", 0),
+            "eval_duration": int(1e9),
+        }
+
+    async def ollama_stream():
+        async with AsyncClient(timeout=600.0) as client:
+            async with client.stream(
+                "POST",
+                f"{LLAMACPP_URL}/v1/chat/completions",
+                json=chat_body,
+                headers={"Content-Type": "application/json"},
+            ) as resp:
+                if resp.status_code >= 400:
+                    err = (await resp.aread()).decode("utf-8", errors="replace")[:500]
+                    yield json.dumps({"error": err, "done": True}) + "\n"
+                    return
+                buf = b""
+                async for chunk in resp.aiter_bytes():
+                    buf += chunk
+                    while b"\n\n" in buf:
+                        line, buf = buf.split(b"\n\n", 1)
+                        for part in line.split(b"\n"):
+                            if not part.startswith(b"data: "):
+                                continue
+                            payload = part[6:].strip()
+                            if payload == b"[DONE]":
+                                yield json.dumps({"done": True, "eval_count": 0, "eval_duration": 0}) + "\n"
+                                return
+                            try:
+                                d = json.loads(payload)
+                            except json.JSONDecodeError:
+                                continue
+                            c0 = (d.get("choices") or [{}])[0]
+                            delta = c0.get("delta", {})
+                            text = delta.get("content") or ""
+                            if text:
+                                yield json.dumps({
+                                    "model": model,
+                                    "message": {"role": "assistant", "content": text},
+                                    "done": False,
+                                }) + "\n"
+                            if c0.get("finish_reason"):
+                                yield json.dumps({"done": True, "eval_count": 0, "eval_duration": 0}) + "\n"
+                                return
+
+    return StreamingResponse(
+        ollama_stream(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/api/embed")
 async def ollama_embed(request: Request):
-    """Proxy Ollama /api/embed (n8n Embeddings Ollama, etc.)."""
+    """Ollama /api/embed → OpenAI /v1/embeddings on embed server."""
     body = await request.json()
-    async with AsyncClient(timeout=60.0) as client:
-        r = await client.post(f"{OLLAMA_URL}/api/embed", json=body)
+    inp = body.get("input", "")
+    if isinstance(inp, str):
+        inp = [inp]
+    fwd = {"model": body.get("model", ""), "input": inp}
+    async with AsyncClient(timeout=120.0) as client:
+        r = await client.post(
+            f"{LLAMACPP_EMBED_URL}/v1/embeddings",
+            json=fwd,
+            headers={"Content-Type": "application/json"},
+        )
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+    vecs = []
+    for i, item in enumerate(data.get("data", [])):
+        emb = item.get("embedding", [])
+        vecs.append(emb)
+    return {"model": body.get("model", ""), "embeddings": vecs}
 
 
 @app.get("/")
 async def root():
-    """Ollama-compatible root endpoint."""
-    return "Ollama is running"
+    return "llama.cpp (via model-gateway)"
 
 
 @app.get("/api/version")
 async def api_version():
-    """Proxy Ollama version (Claude Code checks this for compatibility)."""
-    try:
-        async with AsyncClient(timeout=3.0) as client:
-            r = await client.get(f"{OLLAMA_URL}/api/version")
-            return r.json()
-    except Exception:
-        return {"version": "0.18.0"}
+    return {"version": "0.0.0-llamacpp"}
 
 
 @app.post("/api/show")
 async def api_show(request: Request):
-    """Proxy Ollama model info."""
     try:
         raw = await request.json()
+        name = raw.get("name", "")
         async with AsyncClient(timeout=10.0) as client:
-            r = await client.post(f"{OLLAMA_URL}/api/show", json=raw)
-            return r.json()
+            r = await client.get(f"{LLAMACPP_URL}/v1/models")
+            if r.status_code < 500:
+                for m in r.json().get("data", []):
+                    if m.get("id") == name:
+                        return {"modelfile": "", "parameters": "", "template": "", "details": {"family": "gguf", "name": name}}
     except Exception:
-        return {"error": "model not found"}
+        pass
+    return {"error": "model not found"}
 
 
-async def _probe_ollama_l1(client: AsyncClient) -> dict:
-    """Reachability + version (L1)."""
+async def _probe_llamacpp_l1(client: AsyncClient) -> dict:
     t0 = time.monotonic()
     try:
-        r = await client.get(f"{OLLAMA_URL}/api/version")
+        r = await client.get(f"{LLAMACPP_URL}/health")
         ms = round((time.monotonic() - t0) * 1000, 1)
         ok = r.status_code < 500
-        body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        try:
+            body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        except Exception:
+            body = {}
         return {
-            "ok": ok,
+            "ok": ok and (not body or body.get("status") in (None, "ok")),
             "status_code": r.status_code,
             "latency_ms": ms,
-            "version": body.get("version"),
+            "status": body.get("status"),
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -391,8 +478,8 @@ async def health():
     providers: dict[str, Any] = {}
     ok = False
     async with AsyncClient(timeout=3.0) as client:
-        providers["ollama"] = await _probe_ollama_l1(client)
-        ok = ok or providers["ollama"].get("ok") is True
+        providers["llamacpp"] = await _probe_llamacpp_l1(client)
+        ok = ok or providers["llamacpp"].get("ok") is True
         providers["vllm"] = await _probe_vllm_l1(client)
         if not providers["vllm"].get("skipped"):
             ok = ok or providers["vllm"].get("ok") is True
@@ -416,28 +503,27 @@ async def health():
 
 @app.get("/ready")
 async def ready():
-    """L2 readiness: at least one backend is up **and** at least one model is listed
-    (Ollama /api/tags or vLLM /v1/models). Returns HTTP 503 when not ready for inference.
-    """
+    """L2 readiness: llama-server (or vLLM) up and at least one model listed."""
     providers: dict[str, Any] = {}
     any_l1 = False
     model_count = 0
 
     async with AsyncClient(timeout=5.0) as client:
-        providers["ollama"] = await _probe_ollama_l1(client)
-        any_l1 = any_l1 or providers["ollama"].get("ok") is True
+        providers["llamacpp"] = await _probe_llamacpp_l1(client)
+        any_l1 = any_l1 or providers["llamacpp"].get("ok") is True
         try:
-            r = await client.get(f"{OLLAMA_URL}/api/tags")
+            r = await client.get(f"{LLAMACPP_URL}/v1/models")
             if r.status_code < 500:
                 data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
-                model_count += len(data.get("models") or [])
-                providers["ollama"]["tags_ok"] = True
-                providers["ollama"]["model_count"] = len(data.get("models") or [])
+                n = len(data.get("data") or [])
+                model_count += n
+                providers["llamacpp"]["models_ok"] = True
+                providers["llamacpp"]["model_count"] = n
             else:
-                providers["ollama"]["tags_ok"] = False
+                providers["llamacpp"]["models_ok"] = False
         except Exception as e:
-            providers["ollama"]["tags_ok"] = False
-            providers["ollama"]["tags_error"] = str(e)
+            providers["llamacpp"]["models_ok"] = False
+            providers["llamacpp"]["models_error"] = str(e)
 
         providers["vllm"] = await _probe_vllm_l1(client)
         if not providers["vllm"].get("skipped") and providers["vllm"].get("ok"):
@@ -456,7 +542,6 @@ async def ready():
                 providers["vllm"]["models_ok"] = False
                 providers["vllm"]["models_error"] = str(e)
 
-    # Ready if any provider lists at least one model, or Ollama up with tags (empty = degraded but could still mean fresh install)
     l2_ok = model_count > 0
     degraded = any_l1 and not l2_ok
     ready_flag = any_l1 and l2_ok
@@ -487,16 +572,72 @@ async def ready():
 # --- Chat ---
 
 
-def _ollama_to_openai_message(msg: dict) -> dict:
-    """Convert Ollama message to OpenAI format."""
-    role = msg.get("role", "assistant")
-    content = msg.get("content", "")
-    if isinstance(content, list):
-        # Ollama can return content as list of parts
-        text = "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in content)
-    else:
-        text = str(content)
-    return {"role": role, "content": text}
+def _normalize_messages_openai(msgs: list[dict]) -> list[dict]:
+    """Normalize messages to OpenAI chat format for llama-server (string tool arguments)."""
+    out: list[dict[str, Any]] = []
+    for m in msgs:
+        role = m.get("role", "")
+        content = m.get("content")
+
+        if isinstance(content, list):
+            parts = []
+            for p in content:
+                if isinstance(p, dict):
+                    if p.get("type") in ("text", "output_text") and "text" in p:
+                        parts.append(str(p["text"]))
+                    elif p.get("type") == "tool_result":
+                        inner = p.get("content", "")
+                        if isinstance(inner, list):
+                            inner = "".join(
+                                x.get("text", "") if isinstance(x, dict) else str(x)
+                                for x in inner
+                            )
+                        parts.append(str(inner))
+                    else:
+                        for k in ("text", "content", "value"):
+                            if k in p:
+                                parts.append(str(p[k]))
+                                break
+                elif isinstance(p, str):
+                    parts.append(p)
+            content = "\n".join(parts)
+
+        if content is None:
+            content = ""
+
+        msg_out: dict[str, Any] = {"role": role, "content": content}
+        if "tool_call_id" in m:
+            msg_out["tool_call_id"] = m["tool_call_id"]
+
+        raw_tcs = m.get("tool_calls")
+        if raw_tcs:
+            normalized_tcs = []
+            for tc in raw_tcs:
+                func = (tc.get("function") or {})
+                args = func.get("arguments", {})
+                if isinstance(args, dict):
+                    args_str = json.dumps(args)
+                elif args is None:
+                    args_str = "{}"
+                else:
+                    args_str = str(args)
+                normalized_tcs.append({
+                    "id": tc.get("id", f"call_{uuid.uuid4().hex[:12]}"),
+                    "type": "function",
+                    "function": {"name": func.get("name", ""), "arguments": args_str},
+                })
+            msg_out["tool_calls"] = normalized_tcs
+
+        out.append(msg_out)
+    return out
+
+
+def _record_usage_throughput(model_id: str, usage: dict | None, service: str) -> None:
+    if not usage:
+        return
+    ct = int(usage.get("completion_tokens") or 0)
+    if ct > 0:
+        _record_throughput(model_id, ct, int(1e9), service)
 
 
 class ChatMessage(BaseModel):
@@ -558,7 +699,7 @@ def _stream_chunk_openai(obj: dict) -> str:
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
-    """Chat completion. Proxies to Ollama or vLLM based on model prefix."""
+    """Chat completion. Proxies to llama-server or vLLM based on model prefix."""
     body = ChatCompletionRequest.model_validate(await request.json()).model_dump(exclude_none=True)
     return await _chat_completions_impl(request, body)
 
@@ -572,7 +713,6 @@ async def _chat_completions_impl(request: Request, body: dict[str, Any]):
         request.headers.get("X-Service-Name") or request.headers.get("X-Client-Id"),
     )
     req_id = request.headers.get("X-Request-ID") or f"req-{uuid.uuid4().hex[:12]}"
-    # Remap "developer" role → "system" (Ollama doesn't support developer role)
     messages = [
         {**m, "role": "system"} if m.get("role") == "developer" else m
         for m in body.get("messages", [])
@@ -598,7 +738,6 @@ async def _chat_completions_impl(request: Request, body: dict[str, Any]):
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-Request-ID": req_id},
             )
-        # vLLM non-streaming
         async with AsyncClient(timeout=600.0) as client:
             r = await client.post(
                 f"{VLLM_URL}/v1/chat/completions",
@@ -610,263 +749,54 @@ async def _chat_completions_impl(request: Request, body: dict[str, Any]):
             resp["_request_id"] = req_id
             return resp
 
-    # Ollama: strip provider prefix (ollama/qwen2.5:7b -> qwen2.5:7b)
-    ollama_model = _ollama_model_id_with_hf_fallback(model_id)
-
-    def _normalize_for_ollama(msgs: list[dict]) -> list[dict]:
-        """Normalize OpenAI-format messages to Ollama-compatible format.
-
-        Key differences:
-        - OpenAI tool_calls.function.arguments is a JSON *string*; Ollama expects a *dict*.
-        - OpenAI content can be a list of parts; Ollama expects a plain string.
-        - assistant messages with only tool_calls may have content=null; Ollama wants content="".
-        """
-        out = []
-        for m in msgs:
-            role = m.get("role", "")
-            content = m.get("content")
-
-            # Flatten list content → string
-            if isinstance(content, list):
-                parts = []
-                for p in content:
-                    if isinstance(p, dict):
-                        # text part
-                        if p.get("type") in ("text", "output_text") and "text" in p:
-                            parts.append(str(p["text"]))
-                        # tool_result part (Anthropic-style user message)
-                        elif p.get("type") == "tool_result":
-                            inner = p.get("content", "")
-                            if isinstance(inner, list):
-                                inner = "".join(
-                                    x.get("text", "") if isinstance(x, dict) else str(x)
-                                    for x in inner
-                                )
-                            parts.append(str(inner))
-                        else:
-                            # Fallback: any string-like value in the part
-                            for k in ("text", "content", "value"):
-                                if k in p:
-                                    parts.append(str(p[k]))
-                                    break
-                    elif isinstance(p, str):
-                        parts.append(p)
-                content = "\n".join(parts)
-
-            # Null content → empty string (Ollama rejects null)
-            if content is None:
-                content = ""
-
-            msg_out: dict[str, Any] = {"role": role, "content": content}
-
-            # Carry over tool_call_id for tool-result messages
-            if "tool_call_id" in m:
-                msg_out["tool_call_id"] = m["tool_call_id"]
-
-            # Normalize tool_calls: OpenAI sends arguments as a JSON string; Ollama needs a dict
-            raw_tcs = m.get("tool_calls")
-            if raw_tcs:
-                normalized_tcs = []
-                for tc in raw_tcs:
-                    func = (tc.get("function") or {})
-                    args = func.get("arguments", {})
-                    if isinstance(args, str):
-                        try:
-                            args = json.loads(args)
-                        except (json.JSONDecodeError, ValueError):
-                            args = {}
-                    normalized_tcs.append({
-                        "id": tc.get("id", f"call_{uuid.uuid4().hex[:12]}"),
-                        "type": "function",
-                        "function": {"name": func.get("name", ""), "arguments": args},
-                    })
-                msg_out["tool_calls"] = normalized_tcs
-
-            out.append(msg_out)
-        return out
-
-    ollama_body: dict[str, Any] = {"model": ollama_model, "messages": _normalize_for_ollama(messages), "stream": stream}
-    # Forward tools — Ollama's /api/chat accepts the same OpenAI tools format
+    backend_model = _inference_model_id(model)
+    fwd: dict[str, Any] = {
+        "model": backend_model,
+        "messages": _normalize_messages_openai(messages),
+        "stream": stream,
+    }
     if body.get("tools"):
-        ollama_body["tools"] = body["tools"]
+        fwd["tools"] = body["tools"]
     if "tool_choice" in body:
-        ollama_body["tool_choice"] = body["tool_choice"]
-
-    # Ollama performance options.
-    # num_ctx: cap the KV cache to avoid Ollama pre-allocating the full model max
-    # (often 128K+) even for short prompts — dramatically improves CPU throughput.
-    # think=False for Qwen3+tools: suppresses the extended reasoning phase that
-    # causes a long silent pause before any output appears, making the request
-    # look hung. Tool calls rarely benefit from the extra thinking overhead.
-    _opts: dict[str, Any] = {}
-    if OLLAMA_NUM_CTX > 0:
-        _opts["num_ctx"] = OLLAMA_NUM_CTX
-    _lm = ollama_model.lower()
-    if ollama_body.get("tools") and ("qwen3" in _lm or "qwen-3" in _lm):
-        _opts["think"] = False
-    if _opts:
-        # Per-request options (if any passed in body) override our defaults.
-        ollama_body["options"] = {**_opts, **(ollama_body.get("options") or {})}
-
-    def _ollama_tc_to_openai(tc: dict) -> dict:
-        """Convert Ollama tool_call to OpenAI format.
-        Ollama arguments are a dict; OpenAI expects a JSON string."""
-        func = tc.get("function", {})
-        args = func.get("arguments", {})
-        return {
-            "id": f"call_{uuid.uuid4().hex[:12]}",
-            "type": "function",
-            "function": {
-                "name": func.get("name", ""),
-                "arguments": json.dumps(args) if isinstance(args, dict) else str(args),
-            },
-        }
+        fwd["tool_choice"] = body["tool_choice"]
+    for k in ("max_tokens", "temperature", "top_p", "stop"):
+        if k in body and body[k] is not None:
+            fwd[k] = body[k]
 
     if stream:
-        async def generate():
-            chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-            first_sent = False
-            last_eval_count = 0
-            last_eval_duration = 0
-            pending_tool_calls: list[dict] = []
-
+        async def passthrough():
             async with AsyncClient(timeout=3600.0) as client:
                 async with client.stream(
-                    "POST", f"{OLLAMA_URL}/api/chat", json=ollama_body
+                    "POST",
+                    f"{LLAMACPP_URL}/v1/chat/completions",
+                    json=fwd,
+                    headers={"Content-Type": "application/json"},
                 ) as resp:
                     if resp.status_code >= 400:
-                        err_body = await resp.aread()
-                        err_text = err_body.decode("utf-8", errors="replace")[:300]
-                        logger.error("Ollama chat error status=%d body=%s", resp.status_code, err_text)
-                        yield _stream_chunk_openai({
-                            "id": chunk_id, "object": "chat.completion.chunk",
-                            "created": int(time.time()), "model": model,
-                            "choices": [{"index": 0, "delta": {"role": "assistant",
-                                "content": f"[Model error {resp.status_code}: {err_text}]"},
-                                "finish_reason": "stop"}],
-                        })
-                        yield "data: [DONE]\n\n"
+                        err = (await resp.aread()).decode("utf-8", errors="replace")[:500]
+                        logger.error("llama-server chat stream error status=%s body=%s", resp.status_code, err)
+                        yield f"data: {json.dumps({'error': {'message': err}})}\n\n".encode()
                         return
-                    try:
-                        async for line in resp.aiter_lines():
-                            if not line or line == "data: [DONE]":
-                                continue
-                            try:
-                                data = json.loads(line)
-                                if data.get("done"):
-                                    last_eval_count = data.get("eval_count", 0)
-                                    last_eval_duration = data.get("eval_duration", 0)
-                                    continue  # done chunk carries no new content
-                                msg = data.get("message", {})
-                                # Ollama delivers tool_calls in a non-done chunk (not the done chunk)
-                                tcs = msg.get("tool_calls")
-                                if tcs:
-                                    pending_tool_calls = tcs
-                                content = msg.get("content", "")
-                                if isinstance(content, list):
-                                    content = "".join(
-                                        p.get("text", "") if isinstance(p, dict) else str(p)
-                                        for p in content
-                                    )
-                                else:
-                                    content = str(content)
-                                if content:
-                                    delta: dict[str, Any] = {"content": content}
-                                    if not first_sent:
-                                        delta["role"] = "assistant"
-                                        first_sent = True
-                                    yield _stream_chunk_openai({
-                                        "id": chunk_id,
-                                        "object": "chat.completion.chunk",
-                                        "created": int(time.time()),
-                                        "model": model,
-                                        "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
-                                    })
-                            except json.JSONDecodeError:
-                                continue
-                    except Exception as stream_exc:
-                        logger.error("Ollama stream read error: %s", stream_exc)
-                        if not first_sent:
-                            yield _stream_chunk_openai({
-                                "id": chunk_id, "object": "chat.completion.chunk",
-                                "created": int(time.time()), "model": model,
-                                "choices": [{"index": 0, "delta": {"role": "assistant",
-                                    "content": f"[Stream error: {stream_exc}]"},
-                                    "finish_reason": "stop"}],
-                            })
-
-            if last_eval_count and last_eval_duration:
-                _record_throughput(model_id, last_eval_count, last_eval_duration, service)
-
-            # Emit tool calls as OpenAI streaming chunks
-            for i, tc in enumerate(pending_tool_calls):
-                openai_tc = _ollama_tc_to_openai(tc)
-                init_delta: dict[str, Any] = {
-                    "tool_calls": [{"index": i, "id": openai_tc["id"], "type": "function",
-                                    "function": {"name": openai_tc["function"]["name"], "arguments": ""}}]
-                }
-                if not first_sent:
-                    init_delta["role"] = "assistant"
-                    first_sent = True
-                yield _stream_chunk_openai({
-                    "id": chunk_id, "object": "chat.completion.chunk",
-                    "created": int(time.time()), "model": model,
-                    "choices": [{"index": 0, "delta": init_delta, "finish_reason": None}],
-                })
-                yield _stream_chunk_openai({
-                    "id": chunk_id, "object": "chat.completion.chunk",
-                    "created": int(time.time()), "model": model,
-                    "choices": [{"index": 0, "delta": {
-                        "tool_calls": [{"index": i, "function": {"arguments": openai_tc["function"]["arguments"]}}]
-                    }, "finish_reason": None}],
-                })
-
-            finish_reason = "tool_calls" if pending_tool_calls else "stop"
-            yield _stream_chunk_openai({
-                "id": chunk_id, "object": "chat.completion.chunk",
-                "created": int(time.time()), "model": model,
-                "choices": [{"delta": {}, "finish_reason": finish_reason}],
-            })
-            yield "data: [DONE]\n\n"
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
 
         return StreamingResponse(
-            generate(),
+            passthrough(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-Request-ID": req_id},
         )
 
-    # Non-streaming
     async with AsyncClient(timeout=600.0) as client:
-        r = await client.post(f"{OLLAMA_URL}/api/chat", json=ollama_body)
+        r = await client.post(
+            f"{LLAMACPP_URL}/v1/chat/completions",
+            json=fwd,
+            headers={"Content-Type": "application/json"},
+        )
         r.raise_for_status()
         data = r.json()
-    eval_count = data.get("eval_count", 0)
-    eval_duration = data.get("eval_duration", 0)
-    if eval_count and eval_duration:
-        _record_throughput(model_id, eval_count, eval_duration, service)
-    msg = data.get("message", {})
-    content = msg.get("content", "")
-    if isinstance(content, list):
-        content = "".join(
-            p.get("text", "") if isinstance(p, dict) else str(p) for p in content
-        )
-    resp_message: dict[str, Any] = {"role": "assistant", "content": content}
-    ollama_tool_calls = msg.get("tool_calls") or []
-    finish_reason = "stop"
-    if ollama_tool_calls:
-        resp_message["tool_calls"] = [_ollama_tc_to_openai(tc) for tc in ollama_tool_calls]
-        finish_reason = "tool_calls"
-    return {
-        "id": "chatcmpl-gateway",
-        "object": "chat.completion",
-        "model": model,
-        "choices": [{"index": 0, "message": resp_message, "finish_reason": finish_reason}],
-        "usage": {
-            "prompt_tokens": data.get("prompt_eval_count", 0),
-            "completion_tokens": eval_count,
-            "total_tokens": data.get("prompt_eval_count", 0) + eval_count,
-        },
-    }
+    _record_usage_throughput(model_id, data.get("usage"), service)
+    data["_request_id"] = req_id
+    return data
 
 
 # --- Legacy Completions (redirect to chat) ---
@@ -1533,7 +1463,7 @@ async def anthropic_messages(request: Request):
 
 @app.post("/v1/embeddings")
 async def embeddings(body: EmbeddingRequest):
-    """Embeddings. Proxies to Ollama or vLLM based on model prefix."""
+    """Embeddings. Proxies to llama-server (embed) or vLLM based on model prefix."""
     model = body.model
     provider, model_id = _model_provider_and_id(model)
     inp = body.input
@@ -1543,7 +1473,6 @@ async def embeddings(body: EmbeddingRequest):
     if not inp:
         return {"object": "list", "data": [], "model": model}
 
-    # vLLM: native OpenAI format
     if provider == "vllm" and VLLM_URL:
         async with AsyncClient(timeout=120.0) as client:
             r = await client.post(
@@ -1554,20 +1483,13 @@ async def embeddings(body: EmbeddingRequest):
             r.raise_for_status()
             return r.json()
 
-    # Ollama: strip provider prefix (ollama/qwen2.5:7b -> qwen2.5:7b)
-    ollama_model = _ollama_model_id_with_hf_fallback(model_id)
-    ollama_body = {"model": ollama_model, "input": inp}
+    embed_model = _inference_model_id(model)
+    payload = {"model": embed_model, "input": inp}
     async with AsyncClient(timeout=120.0) as client:
-        r = await client.post(f"{OLLAMA_URL}/api/embed", json=ollama_body)
+        r = await client.post(
+            f"{LLAMACPP_EMBED_URL}/v1/embeddings",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+        )
         r.raise_for_status()
-        data = r.json()
-
-    embeds = data.get("embeddings", [])
-    objects = []
-    for i, emb in enumerate(embeds):
-        objects.append({
-            "object": "embedding",
-            "embedding": emb,
-            "index": i,
-        })
-    return {"object": "list", "data": objects, "model": model}
+        return r.json()

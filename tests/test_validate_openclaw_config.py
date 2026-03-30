@@ -27,7 +27,7 @@ def test_valid_example_passes(tmp_path):
                     "providers": {
                         "gateway": {
                             "baseUrl": "http://model-gateway:11435/v1",
-                            "apiKey": "ollama-local",
+                            "apiKey": "local",
                             "api": "openai-responses",
                             "headers": {"X-Service-Name": "openclaw"},
                         }

@@ -116,10 +116,10 @@ def get_windows_home() -> Path | None:
     return None
 
 
-def ollama_memory_limit(total_ram_gb: float) -> str:
+def llamacpp_memory_limit(total_ram_gb: float) -> str:
     """
-    Compute Ollama container memory limit.
-    Ollama needs as much RAM as possible to hold large model weights that spill from VRAM.
+    Compute llama.cpp (llama-server) container memory limit.
+    Large host RAM helps when weights spill from VRAM.
     Leaves OS_HEADROOM_GB for Windows + CONTAINER_HEADROOM_GB for other containers.
     """
     available = int(total_ram_gb) - OS_HEADROOM_GB - CONTAINER_HEADROOM_GB
@@ -320,11 +320,11 @@ def main() -> int:
             if stripped.startswith("COMFYUI_MEMORY_LIMIT="):
                 comfyui_override = stripped.split("=", 1)[1].strip().strip('"\'')
 
-    ollama_mem = ollama_memory_limit(ram_gb)
+    llamacpp_mem = llamacpp_memory_limit(ram_gb)
     comfyui_mem = comfyui_override if comfyui_override else comfyui_memory_limit(mode, ram_gb)
 
     print(f"Detected: compute={mode}, RAM={ram_gb:.0f} GB")
-    print(f"  Ollama limit : {ollama_mem}  (RAM minus {OS_HEADROOM_GB}GB OS + {CONTAINER_HEADROOM_GB}GB containers)")
+    print(f"  llama.cpp limit : {llamacpp_mem}  (RAM minus {OS_HEADROOM_GB}GB OS + {CONTAINER_HEADROOM_GB}GB containers)")
     print(f"  ComfyUI limit: {comfyui_mem}")
 
     # Write .wslconfig (Windows/WSL only — skipped on macOS/native Linux)
@@ -336,10 +336,10 @@ def main() -> int:
     nvidia_gpu = [{"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}]
     overrides = {
         "nvidia": {
-            "ollama": {
+            "llamacpp": {
                 "deploy": {
                     "resources": {
-                        "limits": {"memory": ollama_mem},
+                        "limits": {"memory": llamacpp_mem},
                         "reservations": {"devices": nvidia_gpu},
                     }
                 }
@@ -370,9 +370,9 @@ def main() -> int:
             },
         },
         "amd": {
-            "ollama": {
-                "image": "ollama/ollama:rocm",
-                "deploy": {"resources": {"limits": {"memory": ollama_mem}}},
+            "llamacpp": {
+                "image": "${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}",
+                "deploy": {"resources": {"limits": {"memory": llamacpp_mem}}},
                 "devices": ["/dev/kfd", "/dev/dri"],
                 "security_opt": ["seccomp:unconfined"],
             },
@@ -389,8 +389,8 @@ def main() -> int:
             },
         },
         "intel": {
-            "ollama": {
-                "deploy": {"resources": {"limits": {"memory": ollama_mem}}},
+            "llamacpp": {
+                "deploy": {"resources": {"limits": {"memory": llamacpp_mem}}},
             },
             "comfyui": {
                 "image": "yanwk/comfyui-boot:xpu",
@@ -404,8 +404,8 @@ def main() -> int:
             },
         },
         "apple_silicon": {
-            "ollama": {
-                "deploy": {"resources": {"limits": {"memory": ollama_mem}}},
+            "llamacpp": {
+                "deploy": {"resources": {"limits": {"memory": llamacpp_mem}}},
             },
             "comfyui": {
                 "image": "thiagoin/comfyui:arm64",
@@ -419,8 +419,8 @@ def main() -> int:
             },
         },
         "cpu": {
-            "ollama": {
-                "deploy": {"resources": {"limits": {"memory": ollama_mem}}},
+            "llamacpp": {
+                "deploy": {"resources": {"limits": {"memory": llamacpp_mem}}},
             },
             "comfyui": {
                 "image": "yanwk/comfyui-boot:cpu",

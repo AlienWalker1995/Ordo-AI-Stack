@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $base = if ($env:BASE_PATH) { $env:BASE_PATH -replace '\\', '/' } else { (Get-Location).Path }
 $data = if ($env:DATA_PATH) { $env:DATA_PATH -replace '\\', '/' } else { Join-Path $base "data" }
 $dirs = @(
-    (Join-Path $base "models\ollama"),
+    (Join-Path $base "models\gguf"),
     (Join-Path $data "mcp"),
     (Join-Path $data "ops-controller"),
     (Join-Path $data "open-webui"),
@@ -138,7 +138,7 @@ if (Get-Command claude -ErrorAction SilentlyContinue) {
         [System.Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", "local", "User")
         [System.Environment]::SetEnvironmentVariable("ANTHROPIC_BASE_URL", "http://localhost:$port", "User")
         Write-Host "OK Claude Code configured -> http://localhost:$port (restart terminal to apply)"
-        Write-Host "   Usage: claude --model <ollama-model-name>"
+        Write-Host "   Usage: claude --model <gguf-model-id-from-/v1/models>"
     } else {
         $curKey = [System.Environment]::GetEnvironmentVariable("ANTHROPIC_API_KEY", "User")
         $curUrl = [System.Environment]::GetEnvironmentVariable("ANTHROPIC_BASE_URL", "User")

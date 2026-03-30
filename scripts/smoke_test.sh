@@ -40,7 +40,6 @@ check() {
 echo "==> Checking health endpoints..."
 check "dashboard"      "http://localhost:8080/api/health"
 check "model-gateway"  "http://localhost:11435/health"
-check "ollama"         "http://localhost:11434/api/version"
 check "mcp-gateway"    "http://localhost:8811/mcp"
 
 echo "==> Service status"

@@ -18,7 +18,7 @@ COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
 COMPOSE_VLLM = REPO_ROOT / "overrides" / "vllm.yml"
 
 # Services that must be healthy for "smoke" (long-running core stack)
-SMOKE_SERVICES = ["ollama", "model-gateway", "dashboard"]
+SMOKE_SERVICES = ["llamacpp", "llamacpp-embed", "model-gateway", "dashboard"]
 
 
 def _compose_cmd(*args, extra_env=None):
@@ -63,7 +63,7 @@ def test_compose_vllm_override_config_valid():
 def test_compose_up_and_services_healthy():
     """Bring up stack and assert core services become healthy (Docker daemon required)."""
     # Bring up only core services to limit resource use
-    up = _compose_cmd("up", "-d", "ollama", "model-gateway", "dashboard")
+    up = _compose_cmd("up", "-d", "llamacpp", "llamacpp-embed", "model-gateway", "dashboard")
     assert up.returncode == 0, f"compose up failed: {up.stderr or up.stdout}"
 
     try:
@@ -78,7 +78,7 @@ def test_compose_up_and_services_healthy():
             if "healthy" in out or "running" in out:
                 # Quick sanity: at least one service running
                 r2 = _compose_cmd("ps", "--status", "running")
-                if r2.returncode == 0 and "ollama" in (r2.stdout or ""):
+                if r2.returncode == 0 and "llamacpp" in (r2.stdout or ""):
                     break
             time.sleep(5)
         else:

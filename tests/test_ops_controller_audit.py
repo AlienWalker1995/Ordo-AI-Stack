@@ -23,7 +23,7 @@ def test_audit_schema_fields():
         audit_path = Path(tmp) / "audit.log"
         oc.AUDIT_LOG_PATH = audit_path
 
-        oc._audit("restart", "ollama", "ok", "")
+        oc._audit("restart", "llamacpp", "ok", "")
 
         assert audit_path.exists()
         lines = audit_path.read_text().strip().splitlines()
@@ -31,7 +31,7 @@ def test_audit_schema_fields():
         entry = json.loads(lines[0])
         assert "ts" in entry
         assert entry["action"] == "restart"
-        assert entry["resource"] == "ollama"
+        assert entry["resource"] == "llamacpp"
         assert entry["actor"] == "dashboard"
         assert entry["result"] == "ok"
         assert entry["detail"] == ""
@@ -44,7 +44,7 @@ def test_audit_schema_error_result():
         audit_path = Path(tmp) / "audit.log"
         oc.AUDIT_LOG_PATH = audit_path
 
-        oc._audit("restart", "ollama", "error", "container not found")
+        oc._audit("restart", "llamacpp", "error", "container not found")
 
         lines = audit_path.read_text().strip().splitlines()
         entry = json.loads(lines[0])

@@ -17,19 +17,22 @@ def _load_gateway():
 
 
 @pytest.fixture
-def mock_ollama_response():
-    """Mock response for Ollama /api/tags."""
+def mock_llamacpp_models_response():
+    """Mock response for llama-server /v1/models."""
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = {"models": [{"name": "deepseek-r1:7b", "modified_at": 1234567890}]}
+    resp.json.return_value = {
+        "object": "list",
+        "data": [{"id": "deepseek-r1-7b.Q4_K_M.gguf", "object": "model", "created": 1234567890}],
+    }
     resp.raise_for_status = MagicMock()
     return resp
 
 
-def test_v1_models_returns_openai_format(mock_ollama_response):
+def test_v1_models_returns_openai_format(mock_llamacpp_models_response):
     """GET /v1/models returns OpenAI-compatible list format."""
     mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_ollama_response)
+    mock_client.get = AsyncMock(return_value=mock_llamacpp_models_response)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 

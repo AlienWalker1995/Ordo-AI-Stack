@@ -17,19 +17,19 @@ def _load_gateway():
     return mod
 
 
-def _mock_client_for_health_ready(tags_models: list | None = None):
-    """AsyncClient mock: /api/version, /api/tags, optional vLLM."""
-    tags_models = tags_models if tags_models is not None else [{"name": "m:latest"}]
+def _mock_client_for_health_ready(openai_models: list | None = None):
+    """AsyncClient mock: llama-server /health, /v1/models, optional vLLM."""
+    openai_models = openai_models if openai_models is not None else [{"id": "m.gguf", "object": "model", "created": 0}]
 
     async def get_side_effect(url: str, **kwargs):
         r = MagicMock()
         r.headers = {"content-type": "application/json"}
-        if url.endswith("/api/version"):
+        if url.endswith("/health"):
             r.status_code = 200
-            r.json.return_value = {"version": "0.5.0"}
-        elif url.endswith("/api/tags"):
+            r.json.return_value = {"status": "ok"}
+        elif "/v1/models" in url and "vllm" not in url.lower():
             r.status_code = 200
-            r.json.return_value = {"models": tags_models}
+            r.json.return_value = {"object": "list", "data": openai_models}
         elif "/v1/models" in url:
             r.status_code = 200
             r.json.return_value = {"data": []}
@@ -60,7 +60,7 @@ def test_health_returns_gateway_shape():
     assert data.get("service") == "model-gateway"
     assert "ok" in data
     assert "providers" in data
-    assert "ollama" in data["providers"]
+    assert "llamacpp" in data["providers"]
     assert "vllm" in data["providers"]
     assert data["providers"]["vllm"].get("skipped") is True
     assert "model_cache" in data
@@ -82,10 +82,10 @@ def test_ready_returns_200_when_models_listed():
 
 
 def test_ready_returns_503_when_no_models():
-    """GET /ready returns 503 when Ollama is up but model list is empty."""
+    """GET /ready returns 503 when llama-server is up but model list is empty."""
     gateway = _load_gateway()
     with patch.dict(os.environ, {"VLLM_URL": ""}, clear=False):
-        with patch.object(gateway, "AsyncClient", return_value=_mock_client_for_health_ready(tags_models=[])):
+        with patch.object(gateway, "AsyncClient", return_value=_mock_client_for_health_ready(openai_models=[])):
             client = TestClient(gateway.app)
             r = client.get("/ready")
     assert r.status_code == 503

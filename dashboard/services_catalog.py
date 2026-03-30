@@ -18,7 +18,7 @@ from dashboard.settings import (
 
 # Map dashboard service id -> ops-controller service id
 OPS_SERVICE_MAP = {
-    "ollama": "ollama",
+    "llamacpp": "llamacpp",
     "model-gateway": "model-gateway",
     "webui": "open-webui",
     "mcp": "mcp-gateway",
@@ -29,12 +29,12 @@ OPS_SERVICE_MAP = {
 }
 
 SERVICES = [
-    {"id": "ollama", "name": "Ollama", "port": 11434, "url": "http://localhost:11434", "check": "http://ollama:11434/api/version",
-     "hint": "Run: docker compose up -d ollama"},
+    {"id": "llamacpp", "name": "llama.cpp", "port": 8080, "url": "http://localhost:8080", "check": "http://llamacpp:8080/health",
+     "hint": "Backend-only; use model-gateway :11435 from host. Run: docker compose up -d llamacpp"},
     {"id": "model-gateway", "name": "Model Gateway", "port": 11435, "url": "http://localhost:11435", "check": "http://model-gateway:11435/health",
      "hint": "OpenAI-compatible proxy. Set OPENAI_API_BASE to use."},
     {"id": "webui", "name": "Open WebUI", "port": 3000, "url": "http://localhost:3000", "check": "http://open-webui:8080",
-     "hint": "Depends on Ollama. Check: docker compose logs open-webui"},
+     "hint": "Uses model-gateway for chat. Check: docker compose logs open-webui"},
     {"id": "mcp", "name": "MCP Gateway", "port": 8811, "url": "http://localhost:8811", "check": "http://mcp-gateway:8811/mcp",
      "hint": "Add/remove tools from the dashboard. Connect at http://localhost:8811/mcp — see mcp/README.md"},
     {"id": "comfyui", "name": "ComfyUI", "port": 8188, "url": "http://localhost:8188", "check": "http://comfyui:8188",

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ordo-mcp-gateway": {
+      "url": "http://localhost:8811/mcp",
+      "disabled": false
+    }
+  }
+}
