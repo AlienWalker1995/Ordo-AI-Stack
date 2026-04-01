@@ -200,6 +200,7 @@ services:
       - DASHBOARD_DATA_PATH=/data/dashboard
       # n8n webhook for publish_enqueue (or pass per-request); n8n owns retries/OAuth
       - N8N_PUBLISH_WEBHOOK_URL=${N8N_PUBLISH_WEBHOOK_URL:-}
+      - COMFYUI_OUTPUT_DIR=/comfyui-output
     volumes:
       - ${BASE_PATH:-.}/models/comfyui:/models
       - ${BASE_PATH:-.}/models/gguf:/gguf-models
@@ -210,6 +211,33 @@ services:
       - ${BASE_PATH:-.}/data/comfyui-storage/ComfyUI/user/default/workflows:/comfyui-workflows:ro
     networks:
       - frontend
+      - backend
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      dashboard:
+        condition: service_healthy
+      comfyui:
+        condition: service_healthy
+    environment:
+      - DASHBOARD_DATA_PATH=/data/dashboard
+      - COMFYUI_URL=http://comfyui:8188
+      - COMFYUI_WORKFLOWS_DIR=/comfyui-workflows
+      - COMFYUI_OUTPUT_DIR=/comfyui-output
+      - WORKER_POLL_INTERVAL_SEC=2
+      - WORKER_SCHEDULE_CHECK_SEC=30
+      - WORKER_MAX_JOB_RETRIES=2
+      - WORKER_PUBLISH_MAX_ATTEMPTS=5
+      - N8N_PUBLISH_WEBHOOK_URL=${N8N_PUBLISH_WEBHOOK_URL:-}
+    volumes:
+      - ${DATA_PATH:-${BASE_PATH:-.}/data}/dashboard:/data/dashboard
+      - ${BASE_PATH:-.}/data/comfyui-storage/ComfyUI/user/default/workflows:/comfyui-workflows:ro
+      - ${DATA_PATH:-${BASE_PATH:-.}/data}/comfyui-output:/comfyui-output:ro
+    networks:
       - backend
 
   open-webui:
@@ -713,10 +741,6 @@ services:
       - ${OPENCLAW_WORKSPACE_DIR:-${BASE_PATH:-.}/data/openclaw/workspace}:/home/node/.openclaw/workspace
       # MCP config so agent can read data/mcp/servers.txt (cron job, TOOLS.md)
       - ${BASE_PATH:-.}/data/mcp:/home/node/.openclaw/workspace/data/mcp
-      # ComfyUI data — read-only access so the agent can browse workflows, outputs, and models directly
-      - ${BASE_PATH:-.}/data/comfyui-storage/ComfyUI/user/default/workflows:/home/node/.openclaw/workspace/comfyui-workflows:ro
-      - ${DATA_PATH:-${BASE_PATH:-.}/data}/comfyui-output:/home/node/.openclaw/workspace/comfyui-output:ro
-      - ${BASE_PATH:-.}/models/comfyui:/home/node/.openclaw/workspace/comfyui-models:ro
       # Named volume for extensions — Windows bind mounts force 0777 which
       # OpenClaw's safe-open rejects. A named volume has proper Linux perms.
       - openclaw-extensions:/home/node/.openclaw/extensions

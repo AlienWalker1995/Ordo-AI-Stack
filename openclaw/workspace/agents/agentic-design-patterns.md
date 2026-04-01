@@ -181,7 +181,11 @@ It emphasizes **implementable** patterns: tool use, memory, exception logic, res
 ## Cron and scheduled agents (recap)
 
 - **`payload.model`** in **`data/openclaw/cron/jobs.json`** must match a real **`gateway/…`** id (same family as **`agents.defaults.model.primary`** in **`openclaw.json`**).  
-- **Discord:** require **`message`** with **`to: "channel:<snowflake>"`** — see **TROUBLESHOOTING** (cron + Discord).
+- **Discord delivery in cron jobs:** The `delivery.to` field **must** use the `"channel:<snowflake>"` format — not the bare numeric ID. Bare IDs (`"1483464800464797697"`) are silently unresolvable and produce `deliveryStatus: "not-delivered"` with `status: "ok"` (the run succeeds but nothing posts). Always set `"to": "channel:1483464800464797697"`.
+- **`delivery.channel`** takes the raw snowflake (no prefix). **`delivery.to`** takes `"channel:<snowflake>"` (with prefix). These are different fields.
+- **`message` tool format:** same — `to: "channel:<snowflake>"` inside the agent turn.
+- **`crontab` shell command is not available** in the OpenClaw container. Use the cron MCP API (`gateway__call` with cron tools) or edit `data/openclaw/cron/jobs.json` directly.
+- **Do not use `sessionTarget: "isolated"` and expect channel context inheritance.** Isolated sessions have no prior context; the `delivery` object in the job config is the only delivery path. Ensure it is correctly set before relying on it.
 
 ---
 

@@ -680,12 +680,72 @@ def _normalize_messages_openai(msgs: list[dict]) -> list[dict]:
     return out
 
 
-def _record_usage_throughput(model_id: str, usage: dict | None, service: str) -> None:
+def _record_usage_throughput(
+    model_id: str, usage: dict | None, service: str, elapsed_ns: int
+) -> None:
+    """Record real tokens/sec using wall time for the request/stream (not a fake 1s duration)."""
     if not usage:
         return
     ct = int(usage.get("completion_tokens") or 0)
-    if ct > 0:
-        _record_throughput(model_id, ct, int(1e9), service)
+    if ct <= 0:
+        return
+    dur = max(int(elapsed_ns), 1)
+    _record_throughput(model_id, ct, dur, service)
+
+
+async def _stream_llamacpp_chat_with_throughput(
+    model_id: str,
+    service: str,
+    fwd: dict[str, Any],
+    req_id: str,
+):
+    """Proxy llama chat SSE; parse final usage chunk and record throughput over full stream duration."""
+    t0 = time.perf_counter()
+    text_buf = ""
+    last_usage: dict | None = None
+    async with AsyncClient(timeout=3600.0) as client:
+        async with client.stream(
+            "POST",
+            f"{LLAMACPP_URL}/v1/chat/completions",
+            json=fwd,
+            headers={"Content-Type": "application/json"},
+        ) as resp:
+            if resp.status_code >= 400:
+                err = (await resp.aread()).decode("utf-8", errors="replace")[:500]
+                logger.error("llama-server chat stream error status=%s body=%s", resp.status_code, err)
+                yield f"data: {json.dumps({'error': {'message': err}})}\n\n".encode()
+                return
+            async for chunk in resp.aiter_bytes():
+                yield chunk
+                text_buf += chunk.decode("utf-8", errors="replace")
+                while "\n\n" in text_buf:
+                    block, text_buf = text_buf.split("\n\n", 1)
+                    for line in block.split("\n"):
+                        line = line.strip()
+                        if not line.startswith("data: ") or line == "data: [DONE]":
+                            continue
+                        try:
+                            data = json.loads(line[6:])
+                            u = data.get("usage")
+                            if isinstance(u, dict) and int(u.get("completion_tokens") or 0) > 0:
+                                last_usage = u
+                        except json.JSONDecodeError:
+                            pass
+    # Trailing buffer (some servers omit final \n\n before EOF)
+    for line in text_buf.split("\n"):
+        line = line.strip()
+        if not line.startswith("data: ") or line == "data: [DONE]":
+            continue
+        try:
+            data = json.loads(line[6:])
+            u = data.get("usage")
+            if isinstance(u, dict) and int(u.get("completion_tokens") or 0) > 0:
+                last_usage = u
+        except json.JSONDecodeError:
+            pass
+    elapsed_ns = max(int((time.perf_counter() - t0) * 1e9), 1)
+    if last_usage:
+        _record_usage_throughput(model_id, last_usage, service, elapsed_ns)
 
 
 class ChatMessage(BaseModel):
@@ -812,28 +872,16 @@ async def _chat_completions_impl(request: Request, body: dict[str, Any]):
             fwd[k] = body[k]
 
     if stream:
-        async def passthrough():
-            async with AsyncClient(timeout=3600.0) as client:
-                async with client.stream(
-                    "POST",
-                    f"{LLAMACPP_URL}/v1/chat/completions",
-                    json=fwd,
-                    headers={"Content-Type": "application/json"},
-                ) as resp:
-                    if resp.status_code >= 400:
-                        err = (await resp.aread()).decode("utf-8", errors="replace")[:500]
-                        logger.error("llama-server chat stream error status=%s body=%s", resp.status_code, err)
-                        yield f"data: {json.dumps({'error': {'message': err}})}\n\n".encode()
-                        return
-                    async for chunk in resp.aiter_bytes():
-                        yield chunk
-
+        so = dict(body.get("stream_options") or {})
+        so.setdefault("include_usage", True)
+        fwd["stream_options"] = so
         return StreamingResponse(
-            passthrough(),
+            _stream_llamacpp_chat_with_throughput(model_id, service, fwd, req_id),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-Request-ID": req_id},
         )
 
+    t0 = time.perf_counter()
     async with AsyncClient(timeout=600.0) as client:
         r = await client.post(
             f"{LLAMACPP_URL}/v1/chat/completions",
@@ -842,7 +890,8 @@ async def _chat_completions_impl(request: Request, body: dict[str, Any]):
         )
         r.raise_for_status()
         data = r.json()
-    _record_usage_throughput(model_id, data.get("usage"), service)
+    elapsed_ns = max(int((time.perf_counter() - t0) * 1e9), 1)
+    _record_usage_throughput(model_id, data.get("usage"), service, elapsed_ns)
     data["_request_id"] = req_id
     return data
 

@@ -17,4 +17,6 @@ Core behavior, priorities, and response style for this workspace.
 - For scheduled channel work, treat the **target channel’s messages** as the record of what was delivered.
 - For specialized modes, read **`agents/<role>.md`** (e.g. **`agents/docker-ops.md`**) — not **`/app/…`** or **`workspace/agents/…`**.
 
+**Full stack control:** Use MCP (**`gateway__call`**, **`gateway__comfyui__*`**, n8n tools) for ComfyUI and automation — not **`exec`** + HTTP to **`/prompt`**. Optional: **`OPENCLAW_UNRESTRICTED_GATEWAY_CONTAINER=1`** in **`.env`** + **`openclaw-config-sync`** for max exec/elevated. **`agents/stack-ops.md`** for service restarts.
+
 Tool names, service URLs, and MCP shapes: **`TOOLS.md`** only.

@@ -456,34 +456,141 @@
     }
     .throughput-error { color: var(--danger); font-size: var(--text-sm); margin-top: var(--space-3); }
     .throughput-loading { color: var(--muted); font-size: var(--text-sm); margin-top: var(--space-3); }
+    /* ===== Throughput Section ===== */
     .throughput-stats {
       margin-top: var(--space-6);
-      padding-top: var(--space-5); border-top: 1px solid var(--border-subtle);
+      padding-top: var(--space-5);
+      border-top: 1px solid var(--border-subtle);
     }
-    .throughput-stats-title { display: none; }
+    .throughput-stats-title {
+      display: block;
+      font-size: var(--text-xs);
+      font-weight: 700;
+      color: var(--muted);
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      margin-bottom: var(--space-4);
+    }
     .throughput-stats-grid {
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--space-4);
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: var(--space-4);
     }
+
+    /* Model stat cards */
     .throughput-stat-card {
-      background: var(--surface); border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-sm); padding: var(--space-4); transition: border-color .2s;
+      background: linear-gradient(135deg, var(--surface) 0%, rgba(0,201,255,.03) 100%);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: var(--space-4);
+      transition: all .25s ease;
+      position: relative;
+      overflow: hidden;
     }
-    .throughput-stat-card:hover { border-color: rgba(0,201,255,.2); }
-    .throughput-stat-card.loaded { border-left: 2px solid var(--accent); }
+    .throughput-stat-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(0,201,255,.3), transparent);
+    }
+    .throughput-stat-card:hover {
+      border-color: rgba(0,201,255,.4);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0,201,255,.12);
+    }
+    .throughput-stat-card.loaded {
+      border-left: 3px solid var(--accent);
+      background: linear-gradient(135deg, var(--surface) 0%, rgba(0,201,255,.06) 100%);
+    }
     .throughput-stat-model {
-      font-weight: 600; font-size: var(--text-sm); margin-bottom: var(--space-3);
-      display: flex; align-items: center; gap: var(--space-2);
+      font-weight: 600;
+      font-size: var(--text-sm);
+      margin-bottom: var(--space-3);
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
       font-family: var(--font-mono);
     }
     .throughput-stat-badge {
-      font-size: .6rem; padding: 2px 6px; background: var(--accent); color: #000;
-      border-radius: var(--radius-sm); font-weight: 700;
-      text-transform: uppercase; letter-spacing: .04em;
+      font-size: .6rem;
+      padding: 2px 6px;
+      background: var(--accent);
+      color: #000;
+      border-radius: var(--radius-sm);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .04em;
     }
-    .throughput-stat-row { display: flex; justify-content: space-between; font-size: var(--text-sm); margin-bottom: var(--space-1); }
-    .throughput-stat-row .label { color: var(--muted); }
-    .throughput-stat-row .value { font-family: var(--font-mono); font-weight: 500; }
-    .throughput-empty { color: var(--muted); font-size: var(--text-sm); grid-column: 1 / -1; }
+    .status-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      display: inline-block;
+      margin-right: 6px;
+      box-shadow: 0 0 8px var(--success);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: .5; }
+    }
+
+    /* Throughput metrics with bars */
+    .throughput-stat-row {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      margin-bottom: var(--space-2);
+    }
+    .throughput-stat-row .label { color: var(--muted); font-size: var(--text-xs); min-width: 50px; }
+    .throughput-stat-row .value { font-family: var(--font-mono); font-weight: 600; color: var(--fg); min-width: 70px; text-align: right; }
+
+    /* Progress bars */
+    .throughput-bar {
+      flex: 1;
+      height: 6px;
+      background: var(--surface);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .throughput-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width .3s ease;
+      position: relative;
+    }
+    .throughput-bar-fill::after {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: linear-gradient(90deg, rgba(255,255,255,.15) 0%, rgba(255,255,255,.05) 50%, transparent 100%);
+      animation: shimmer 2s infinite;
+    }
+    @keyframes shimmer {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+
+    /* Performance level colors */
+    .perf-excellent { background: linear-gradient(135deg, #00c853, #00e676); }
+    .perf-good { background: linear-gradient(135deg, #64dd17, #aeea00); }
+    .perf-fair { background: linear-gradient(135deg, #ffbd2e, #ffd60a); }
+    .perf-slow { background: linear-gradient(135deg, #ff6d00, #ff9100); }
+    .perf-very-slow { background: linear-gradient(135deg, #d50000, #ff1744); }
+
+    /* Empty state */
+    .throughput-empty {
+      color: var(--muted);
+      font-size: var(--text-sm);
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: var(--space-6);
+      border: 1px dashed var(--border-subtle);
+      border-radius: var(--radius-sm);
+    }
+
     .throughput-service-usage {
       display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--space-4);
     }
@@ -491,12 +598,33 @@
       background: var(--surface); border: 1px solid var(--border-subtle);
       border-radius: var(--radius-sm); padding: var(--space-4);
     }
-    .throughput-service-card h4 { font-size: var(--text-sm); font-weight: 600; margin: 0 0 var(--space-3); font-family: var(--font-mono); }
+    .throughput-service-card h4 {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-mono);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.throughput-service-card h4::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+}
     .throughput-service-row { display: flex; justify-content: space-between; font-size: var(--text-sm); margin-bottom: var(--space-1); }
     .throughput-service-row .label { color: var(--muted); }
     .throughput-service-row .value { font-family: var(--font-mono); font-weight: 500; }
     .models-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-5); }
     @media (max-width: 900px) { .models-grid { grid-template-columns: 1fr; gap: var(--space-4); } }
+    @media (max-width: 768px) {
+      .throughput-stats-grid { grid-template-columns: 1fr !important; }
+      .throughput-stat-row .value { min-width: auto; }
+      .throughput-bar { max-width: 150px; }
+    }
     .claude-env-toggle {
       display: inline-flex; align-items: center; gap: var(--space-3);
       cursor: pointer; user-select: none; font-size: var(--text-sm); color: var(--fg);
@@ -793,43 +921,6 @@
     }
     .hw-bar-fill.warn span { background: var(--warning); }
     .hw-bar-fill.danger span { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
-    .hw-procs {
-      margin-bottom: var(--space-5); background: var(--bg-elevated);
-      border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0;
-    }
-    .hw-procs-summary {
-      padding: var(--space-3) var(--space-4);
-      font-size: var(--text-xs); font-weight: 600;
-      color: var(--muted); cursor: pointer; list-style: none;
-      text-transform: uppercase; letter-spacing: .08em; transition: color .2s;
-    }
-    .hw-procs-summary:hover { color: var(--fg-muted); }
-    .hw-procs-summary::-webkit-details-marker { display: none; }
-    .hw-procs-summary::before { content: '▸ '; display: inline-block; transition: transform .15s; color: var(--muted); }
-    .hw-procs[open] .hw-procs-summary::before { transform: rotate(90deg); }
-    .hw-procs-inner { padding: 0 var(--space-4) var(--space-4); overflow-x: auto; }
-    .hw-procs-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
-    .hw-procs-table th {
-      text-align: left; font-size: var(--text-xs);
-      text-transform: uppercase; letter-spacing: .07em;
-      color: var(--muted); font-weight: 600;
-      padding: var(--space-2) var(--space-3) var(--space-2) 0;
-      border-bottom: 1px solid var(--border-subtle);
-    }
-    .hw-procs-table td {
-      padding: var(--space-2) var(--space-3) var(--space-2) 0;
-      border-bottom: 1px solid var(--border-subtle); vertical-align: middle;
-    }
-    .hw-procs-table tr:last-child td { border-bottom: none; }
-    .hw-proc-name {
-      max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      font-family: var(--font-mono); font-size: .78rem; color: var(--fg);
-    }
-    .hw-proc-num {
-      font-variant-numeric: tabular-nums; color: var(--fg-muted);
-      white-space: nowrap; width: 4rem; font-family: var(--font-mono); font-size: .78rem;
-    }
-    .hw-procs-muted { color: var(--muted); font-style: italic; font-size: var(--text-sm); }
 
     /* ── Code elements ── */
     code {
@@ -884,24 +975,6 @@
         <div class="hw-bar-fill" id="hw-vram-bar"><span></span></div>
       </div>
     </div>
-
-    <details class="hw-procs" id="hw-procs-wrap" open>
-      <summary class="hw-procs-summary">Top processes by CPU</summary>
-      <div class="hw-procs-inner">
-        <table class="hw-procs-table" id="hw-procs-table" aria-label="Processes using CPU and memory">
-          <thead>
-            <tr>
-              <th scope="col">Process</th>
-              <th scope="col">CPU</th>
-              <th scope="col">RAM</th>
-            </tr>
-          </thead>
-          <tbody id="hw-procs-body">
-            <tr><td colspan="3" class="hw-procs-muted">Loading…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </details>
 
     <span id="hw-disk-sep" style="display:none" aria-hidden="true"></span>
     <span id="hw-gpu-sep" style="display:none" aria-hidden="true"></span>
@@ -1018,6 +1091,7 @@
         <p class="subsection-desc">Current loaded models and historical throughput (peak, percentiles). Data from benchmarks and real usage via Model Gateway.</p>
         <div class="throughput-panel">
           <div id="throughput-stats" class="throughput-stats">
+            <div class="throughput-stats-title">Model Performance</div>
             <div id="throughput-stats-grid" class="throughput-stats-grid">
               <div class="throughput-empty" id="throughput-stats-empty">No data yet. Run a benchmark or use models via the Model Gateway.</div>
             </div>
@@ -1261,6 +1335,14 @@
       const div = document.createElement('div');
       div.textContent = s;
       return div.innerHTML;
+    }
+
+    function getPerfLevel(tps) {
+      if (tps >= 30) return { class: 'perf-excellent', label: 'Excellent' };
+      if (tps >= 15) return { class: 'perf-good', label: 'Good' };
+      if (tps >= 8) return { class: 'perf-fair', label: 'Fair' };
+      if (tps >= 3) return { class: 'perf-slow', label: 'Slow' };
+      return { class: 'perf-very-slow', label: 'Very Slow' };
     }
 
     async function loadMcpServers() {
@@ -1777,24 +1859,72 @@
           return !card || card.dataset.model !== name;
         })) {
           grid.innerHTML = '';
-          models.forEach(([name, s]) => {
-            const card = document.createElement('div');
-            card.className = 'throughput-stat-card' + (loadedModels.has(name.split(':')[0]) ? ' loaded' : '');
-            card.dataset.model = name;
-            card.innerHTML = `
-              <div class="throughput-stat-model">
-                ${escapeHtml(name)}
-                ${loadedModels.has(name.split(':')[0]) ? '<span class="throughput-stat-badge">loaded</span>' : ''}
-              </div>
-              <div class="throughput-stat-row"><span class="label">Current</span><span class="value">${s.latest} tok/s</span></div>
-              <div class="throughput-stat-row"><span class="label">Peak</span><span class="value">${s.peak} tok/s</span></div>
-              <div class="throughput-stat-row"><span class="label">p50</span><span class="value">${s.p50} tok/s</span></div>
-              <div class="throughput-stat-row"><span class="label">p95</span><span class="value">${s.p95} tok/s</span></div>
-              <div class="throughput-stat-row"><span class="label">p99</span><span class="value">${s.p99} tok/s</span></div>
-              <div class="throughput-stat-row"><span class="label">Samples</span><span class="value">${s.sample_count}</span></div>
-            `;
-            grid.appendChild(card);
-          });
+          // Helper to determine performance level and bar color
+            function getPerfLevel(tps) {
+              if (tps >= 30) return { class: 'perf-excellent', label: 'Excellent' };
+              if (tps >= 15) return { class: 'perf-good', label: 'Good' };
+              if (tps >= 8) return { class: 'perf-fair', label: 'Fair' };
+              if (tps >= 3) return { class: 'perf-slow', label: 'Slow' };
+              return { class: 'perf-very-slow', label: 'Very Slow' };
+            }
+
+            models.forEach(([name, s]) => {
+              const card = document.createElement('div');
+              card.className = 'throughput-stat-card' + (loadedModels.has(name.split(':')[0]) ? ' loaded' : '');
+              card.dataset.model = name;
+
+              const currentPerf = getPerfLevel(s.latest || 0);
+              const peakPerf = getPerfLevel(s.peak || 0);
+              const p50Perf = getPerfLevel(s.p50 || 0);
+              const p95Perf = getPerfLevel(s.p95 || 0);
+              const p99Perf = getPerfLevel(s.p99 || 0);
+
+              const latestSamples = s.sample_count || 0;
+              const samplesStatus = latestSamples >= 10
+                ? '<span class="status-indicator"></span> Stable'
+                : '<span class="status-indicator" style="background:var(--warning);box-shadow:0 0 8px var(--warning);"></span> Limited data';
+
+              card.innerHTML = `
+                <div class="throughput-stat-model">
+                  <span class="status-indicator"></span>${escapeHtml(name)}
+                  ${loadedModels.has(name.split(':')[0]) ? '<span class="throughput-stat-badge">loaded</span>' : ''}
+                </div>
+                <div class="throughput-stat-row" style="margin-bottom:var(--space-2)">
+                  <span class="label">Status</span>
+                  <span class="value" style="font-size:var(--text-xs);color:var(--muted)">${samplesStatus}</span>
+                </div>
+                <div class="throughput-stat-row">
+                  <span class="label">Current</span>
+                  <span class="value">${s.latest} tok/s</span>
+                </div>
+                <div class="throughput-bar"><div class="throughput-bar-fill ${currentPerf.class}" style="width:${Math.min(100, Math.max(5, (s.latest || 0) / 40 * 100))}"></div></div>
+                <div class="throughput-stat-row">
+                  <span class="label">Peak</span>
+                  <span class="value">${s.peak} tok/s</span>
+                </div>
+                <div class="throughput-bar"><div class="throughput-bar-fill ${peakPerf.class}" style="width:${Math.min(100, Math.max(5, (s.peak || 0) / 40 * 100))}"></div></div>
+                <div class="throughput-stat-row">
+                  <span class="label">p50</span>
+                  <span class="value">${s.p50} tok/s</span>
+                </div>
+                <div class="throughput-bar"><div class="throughput-bar-fill ${p50Perf.class}" style="width:${Math.min(100, Math.max(5, (s.p50 || 0) / 40 * 100))}"></div></div>
+                <div class="throughput-stat-row">
+                  <span class="label">p95</span>
+                  <span class="value">${s.p95} tok/s</span>
+                </div>
+                <div class="throughput-bar"><div class="throughput-bar-fill ${p95Perf.class}" style="width:${Math.min(100, Math.max(5, (s.p95 || 0) / 40 * 100))}"></div></div>
+                <div class="throughput-stat-row">
+                  <span class="label">p99</span>
+                  <span class="value">${s.p99} tok/s</span>
+                </div>
+                <div class="throughput-bar"><div class="throughput-bar-fill ${p99Perf.class}" style="width:${Math.min(100, Math.max(5, (s.p99 || 0) / 40 * 100))}"></div></div>
+                <div class="throughput-stat-row" style="margin-top:var(--space-3);border-top:1px solid var(--border-subtle);padding-top:var(--space-2)">
+                  <span class="label">Samples</span>
+                  <span class="value">${latestSamples}</span>
+                </div>
+              `;
+              grid.appendChild(card);
+            });
         }
       } catch (_) {
         grid.innerHTML = '<div class="throughput-empty" id="throughput-stats-empty">Failed to load stats.</div>';
@@ -1821,14 +1951,22 @@
           const lastTs = services.length ? Math.max(...services.map(s => s.last_ts || 0)) : 0;
           const ago = lastTs ? (Date.now() / 1000 - lastTs < 60 ? 'just now' : Math.round((Date.now() / 1000 - lastTs) / 60) + 'm ago') : '';
           card.innerHTML = `
-            <h4>${escapeHtml(model)}</h4>
+            <h4 style="font-size:var(--text-sm);font-weight:600;margin:0 0 var(--space-3);font-family:var(--font-mono);display:flex;align-items:center;gap:var(--space-2)">
+              <span class="status-indicator"></span>${escapeHtml(model)}
+            </h4>
             ${services.map(s => `
-              <div class="throughput-service-row">
+              <div class="throughput-service-row" style="margin-bottom:var(--space-2)">
                 <span class="label">${escapeHtml(s.name)}</span>
-                <span class="value">${s.last_tps} tok/s (${s.count}×)</span>
+                <div style="flex:1;display:flex;align-items:center;gap:var(--space-2)">
+                  <span class="value" style="font-family:var(--font-mono);font-weight:600">${s.last_tps} tok/s</span>
+                  <div class="throughput-bar" style="flex:1;max-width:120px">
+                    <div class="throughput-bar-fill ${getPerfLevel(s.last_tps).class}" style="width:${Math.min(100, Math.max(5, (s.last_tps || 0) / 40 * 100))}"></div>
+                  </div>
+                </div>
               </div>
             `).join('')}
-            ${ago ? `<div class="throughput-service-row"><span class="label">Last</span><span class="value">${ago}</span></div>` : ''}
+            ${ago ? `<div class="throughput-service-row" style="margin-top:var(--space-2);border-top:1px solid var(--border-subtle);padding-top:var(--space-2)"><span class="label">Last activity</span><span class="value">${ago}</span></div>` : ''}
+            ${services.length === 0 ? `<div style="color:var(--muted);font-size:var(--text-xs);margin-top:var(--space-2)">No recent activity</div>` : ''}
           `;
           container.appendChild(card);
         });
@@ -2544,10 +2682,14 @@
           document.getElementById('hw-disk-sep').style.display = 'none';
           document.getElementById('hw-disk-wrap').style.display = 'none';
         }
-        if (d.gpu && d.gpu.vram_total_mb > 0) {
-          const vramPct = (d.gpu.vram_used_mb / d.gpu.vram_total_mb) * 100;
+        const vTotGb = d.gpu && d.gpu.vram_total_gb != null ? Number(d.gpu.vram_total_gb) : 0;
+        if (d.gpu && vTotGb > 0) {
+          const vUsedGb = Number(d.gpu.vram_used_gb);
+          const u = Number.isFinite(vUsedGb) ? vUsedGb : 0;
+          const t = vTotGb;
+          const vramPct = t > 0 ? (u / t) * 100 : 0;
           document.getElementById('hw-gpu-name').textContent = (d.gpu.name || 'GPU').replace(/NVIDIA /i, '');
-          let vramText = (d.gpu.vram_used_mb / 1024).toFixed(1) + ' / ' + (d.gpu.vram_total_mb / 1024).toFixed(0) + ' GB';
+          let vramText = u.toFixed(1) + ' / ' + t.toFixed(1) + ' GB';
           if (d.gpu.utilization_pct != null) vramText += ' · ' + d.gpu.utilization_pct + '% util';
           document.getElementById('hw-vram').textContent = vramText;
           setBar(document.getElementById('hw-vram-bar'), vramPct);
@@ -2556,21 +2698,6 @@
         } else {
           document.getElementById('hw-gpu-sep').style.display = 'none';
           document.getElementById('hw-gpu-wrap').style.display = 'none';
-        }
-        const tbody = document.getElementById('hw-procs-body');
-        if (tbody) {
-          const procs = d.top_processes;
-          if (Array.isArray(procs) && procs.length) {
-            tbody.innerHTML = procs.map(p => `
-              <tr>
-                <td class="hw-proc-name" title="PID ${escapeHtml(String(p.pid))}">${escapeHtml(String(p.name || '?'))}</td>
-                <td class="hw-proc-num">${escapeHtml(String(p.cpu_pct))}%</td>
-                <td class="hw-proc-num">${escapeHtml(String(p.mem_pct))}%</td>
-              </tr>
-            `).join('');
-          } else {
-            tbody.innerHTML = '<tr><td colspan="3" class="hw-procs-muted">No process data</td></tr>';
-          }
         }
       } catch (e) { /* silently skip if not available */ }
     }

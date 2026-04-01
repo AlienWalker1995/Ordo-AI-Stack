@@ -1662,32 +1662,25 @@ async def rag_status():
 BASE_PATH_ENV = os.environ.get("BASE_PATH", "/")
 
 
-def _top_processes_by_cpu(limit: int = 12) -> list[dict[str, int | float | str]]:
-    """Top processes by CPU % (snapshot). Skips processes we cannot read."""
-    for proc in psutil.process_iter(["pid", "name"]):
-        try:
-            proc.cpu_percent(interval=None)
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-    time.sleep(0.15)
-    rows: list[dict[str, int | float | str]] = []
-    for proc in psutil.process_iter(["pid", "name"]):
-        try:
-            cpu = proc.cpu_percent(interval=None)
-            mem = proc.memory_percent()
-            name = (proc.info.get("name") or proc.name() or "?")[:80]
-            rows.append(
-                {
-                    "pid": proc.pid,
-                    "name": name,
-                    "cpu_pct": round(cpu, 1),
-                    "mem_pct": round(mem, 1),
-                }
-            )
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-    rows.sort(key=lambda x: float(x["cpu_pct"]), reverse=True)
-    return rows[:limit]
+def _nvml_vram_to_gpu_dict(
+    name: str,
+    used_b: int,
+    total_b: int,
+    util_pct: int,
+) -> dict | None:
+    """Build gpu payload with decimal GB only (UI shows these strings — no client-side byte math)."""
+    total_b = int(total_b)
+    if total_b <= 0:
+        return None
+    used_b = max(0, int(used_b))
+    if used_b > total_b:
+        used_b = total_b
+    return {
+        "name": name or "GPU",
+        "vram_used_gb": round(used_b / 1e9, 1),
+        "vram_total_gb": round(total_b / 1e9, 1),
+        "utilization_pct": int(util_pct),
+    }
 
 
 @app.get("/api/hardware")
@@ -1719,22 +1712,11 @@ async def hardware_stats():
                 name = name.decode("utf-8", errors="replace").strip()
             else:
                 name = str(name).strip()
-            gpu = {
-                "name": name or "GPU",
-                "vram_used_mb": mi.used // 1024 // 1024,
-                "vram_total_mb": mi.total // 1024 // 1024,
-                "utilization_pct": ut.gpu,
-            }
+            gpu = _nvml_vram_to_gpu_dict(name, int(mi.used), int(mi.total), ut.gpu)
         finally:
             pynvml.nvmlShutdown()
     except Exception as e:
         logger.debug("GPU stats unavailable: %s", e)
-
-    top_processes: list[dict[str, int | float | str]] = []
-    try:
-        top_processes = await asyncio.to_thread(_top_processes_by_cpu, 12)
-    except Exception as e:
-        logger.warning("Top process list failed: %s", e)
 
     return {
         "cpu_pct": cpu_pct,
@@ -1745,7 +1727,6 @@ async def hardware_stats():
         "disk_total_gb": disk_total_gb,
         "disk_pct": disk_pct,
         "gpu": gpu,
-        "top_processes": top_processes,
     }
 
 

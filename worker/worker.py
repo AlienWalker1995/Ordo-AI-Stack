@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""Durable job worker: polls SQLite queue, executes ComfyUI jobs, delivers publish outbox, fires schedules.
+
+Runs as a separate container. Shares /data/dashboard volume with dashboard (SQLite WAL mode).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+# ── Bootstrap path so we can import dashboard modules ─────────────────────────
+sys.path.insert(0, "/app")
+
+from dashboard.orchestration_db import (
+    JobState,
+    OrchestrationJob,
+    claim_next_job,
+    create_job,
+    get_due_schedules,
+    get_job,
+    get_pending_outbox,
+    list_jobs,
+    mark_outbox_delivered,
+    record_outbox_attempt,
+    recover_stale_running_jobs,
+    tick_schedule,
+    update_job,
+    load_store,
+)
+from dashboard.param_placeholders import apply_param_placeholders
+from dashboard.workflow_boundary import assert_api_workflow
+from dashboard.workflow_templates import compile_template, load_template
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [worker] %(levelname)s %(message)s",
+    stream=sys.stdout,
+)
+logger = logging.getLogger("worker")
+
+DATA_DIR = Path(os.environ.get("DASHBOARD_DATA_PATH", "/data/dashboard")).resolve()
+COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://comfyui:8188").rstrip("/")
+WORKFLOWS_DIR = Path(os.environ.get("COMFYUI_WORKFLOWS_DIR", "/comfyui-workflows")).resolve()
+WORKER_POLL_SEC = float(os.environ.get("WORKER_POLL_INTERVAL_SEC", "2"))
+SCHEDULE_CHECK_SEC = float(os.environ.get("WORKER_SCHEDULE_CHECK_SEC", "30"))
+MAX_RETRIES = int(os.environ.get("WORKER_MAX_JOB_RETRIES", "2"))
+PUBLISH_MAX_ATTEMPTS = int(os.environ.get("WORKER_PUBLISH_MAX_ATTEMPTS", "5"))
+
+
+# ── ComfyUI HTTP (inline; no async needed in worker) ─────────────────────────
+
+def _comfyui_post_prompt(workflow: dict[str, Any], client_id: str) -> str:
+    body = {"prompt": workflow, "client_id": client_id}
+    r = httpx.post(f"{COMFYUI_URL}/prompt", json=body, timeout=30)
+    r.raise_for_status()
+    data = r.json()
+    pid = data.get("prompt_id")
+    if not pid:
+        raise RuntimeError(f"No prompt_id in response: {data}")
+    return str(pid)
+
+
+def _comfyui_wait_outputs(prompt_id: str, timeout: int = 600) -> dict[str, Any]:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            r = httpx.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=15)
+            r.raise_for_status()
+            history = r.json()
+            entry = history.get(prompt_id, {})
+            if entry.get("outputs"):
+                return entry
+        except Exception:
+            pass
+        time.sleep(3)
+    raise TimeoutError(f"ComfyUI did not finish prompt {prompt_id} within {timeout}s")
+
+
+# ── Job execution ─────────────────────────────────────────────────────────────
+
+def _resolve_workflow_path(workflow_id: str) -> Path | None:
+    root = WORKFLOWS_DIR.resolve()
+    raw = workflow_id.strip().replace("\\", "/")
+    if not raw or raw.startswith("/") or ".." in raw.split("/"):
+        return None
+    if "/" in raw:
+        rel = raw[:-5] if raw.lower().endswith(".json") else raw
+        p = (root / rel).with_suffix(".json").resolve()
+    else:
+        safe = "".join(c for c in raw if c.isalnum() or c in ("_", "-"))
+        p = (root / f"{safe}.json").resolve()
+    try:
+        p.relative_to(root)
+    except ValueError:
+        return None
+    return p if p.is_file() else None
+
+
+def execute_job(job: OrchestrationJob) -> None:
+    import uuid as _uuid
+
+    jid = job.job_id
+    logger.info("Executing job %s (template=%s workflow=%s)", jid, job.template_id, job.workflow_id)
+
+    # Check for cancellation before starting
+    fresh = get_job(DATA_DIR, jid)
+    if fresh and fresh.state == JobState.cancelling:
+        update_job(DATA_DIR, jid, state=JobState.cancelled)
+        logger.info("Job %s cancelled before execution", jid)
+        return
+
+    try:
+        # Compile workflow
+        update_job(DATA_DIR, jid, state=JobState.validated)
+
+        if job.compiled_workflow:
+            # Pre-compiled (e.g. retry or scheduled)
+            wf = json.loads(job.compiled_workflow) if isinstance(job.compiled_workflow, str) else job.compiled_workflow
+        elif job.template_id:
+            tpl = load_template(job.template_id)
+            params = json.loads(job.params_json) if job.params_json else {}
+            wf = compile_template(tpl, params, workflows_dir=WORKFLOWS_DIR)
+        elif job.workflow_id:
+            path = _resolve_workflow_path(job.workflow_id)
+            if not path:
+                raise ValueError(f"Invalid workflow_id: {job.workflow_id!r}")
+            wf = json.loads(path.read_text(encoding="utf-8"))
+            assert_api_workflow(wf)
+            params = json.loads(job.params_json) if job.params_json else {}
+            wf = apply_param_placeholders(wf, params)
+        else:
+            raise ValueError("Job has neither template_id, workflow_id, nor compiled_workflow")
+
+        # Store compiled workflow for retry durability
+        update_job(DATA_DIR, jid, state=JobState.running,
+                   compiled_workflow=json.dumps(wf) if isinstance(wf, dict) else wf)
+
+        client_id = str(_uuid.uuid4())
+        pid = _comfyui_post_prompt(wf, client_id)
+        update_job(DATA_DIR, jid, prompt_id=pid)
+
+        entry = _comfyui_wait_outputs(pid)
+        update_job(DATA_DIR, jid, state=JobState.artifact_ready, outputs=entry.get("outputs", {}))
+        logger.info("Job %s completed successfully (prompt_id=%s)", jid, pid)
+
+    except Exception as exc:
+        logger.exception("Job %s failed", jid)
+        retry_count = (job.retry_count or 0) + 1
+        if retry_count <= MAX_RETRIES:
+            # Re-queue with incremented retry_count (compiled workflow already stored)
+            update_job(DATA_DIR, jid, state=JobState.failed,
+                       error=f"attempt {retry_count - 1} failed: {exc}")
+            create_job(
+                DATA_DIR,
+                template_id=job.template_id,
+                workflow_id=job.workflow_id,
+                params=json.loads(job.params_json) if job.params_json else {},
+                compiled_workflow=json.loads(job.compiled_workflow) if job.compiled_workflow else None,
+                extra={"retried_from": jid, "retry_count": retry_count},
+            )
+            # Store retry_count in the new job
+            all_jobs = list_jobs(DATA_DIR, state=JobState.queued.value, limit=1)
+            for nj in all_jobs:
+                if nj.extra.get("retried_from") == jid:
+                    update_job(DATA_DIR, nj.job_id, **{"retry_count": retry_count})
+                    break
+            logger.info("Job %s failed; requeued (attempt %d/%d)", jid, retry_count, MAX_RETRIES + 1)
+        else:
+            update_job(DATA_DIR, jid, state=JobState.failed, error=str(exc))
+            logger.error("Job %s permanently failed after %d attempts", jid, retry_count)
+
+
+# ── Outbox delivery ───────────────────────────────────────────────────────────
+
+def process_outbox() -> None:
+    entries = get_pending_outbox(DATA_DIR, max_attempts=PUBLISH_MAX_ATTEMPTS)
+    for entry in entries:
+        key = entry.get("idempotency_key")
+        row_id = entry["id"]
+        try:
+            r = httpx.post(
+                entry["webhook_url"],
+                json=json.loads(entry["payload_json"]),
+                timeout=30,
+                headers={"X-Idempotency-Key": key or ""},
+            )
+            r.raise_for_status()
+            mark_outbox_delivered(DATA_DIR, key)
+            # Transition job to published
+            job = get_job(DATA_DIR, entry["job_id"])
+            if job and job.state == JobState.publish_enqueued:
+                update_job(DATA_DIR, entry["job_id"], state=JobState.published,
+                           publish_status="published")
+            logger.info("Outbox entry %d delivered for job %s", row_id, entry["job_id"])
+        except Exception as exc:
+            record_outbox_attempt(DATA_DIR, row_id, error=str(exc))
+            logger.warning("Outbox entry %d delivery failed: %s", row_id, exc)
+
+
+# ── Schedule firing ───────────────────────────────────────────────────────────
+
+def fire_due_schedules() -> None:
+    due = get_due_schedules(DATA_DIR)
+    for sched in due:
+        sid = sched["schedule_id"]
+        try:
+            params = json.loads(sched.get("params_json") or "{}")
+            create_job(
+                DATA_DIR,
+                template_id=sched.get("template_id"),
+                workflow_id=sched.get("workflow_id"),
+                params=params,
+                extra={"fired_by_schedule": sid},
+            )
+            tick_schedule(DATA_DIR, sid, sched["cron_expr"])
+            logger.info("Fired schedule %s", sid)
+        except Exception as exc:
+            logger.error("Failed to fire schedule %s: %s", sid, exc)
+
+
+# ── Main loop ─────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    logger.info("Worker starting. DATA_DIR=%s COMFYUI_URL=%s", DATA_DIR, COMFYUI_URL)
+    load_store(DATA_DIR)
+
+    recovered = recover_stale_running_jobs(DATA_DIR)
+    if recovered:
+        logger.warning("Recovered %d stale running/validated jobs → requeued", recovered)
+
+    last_schedule_check = 0.0
+
+    while True:
+        # 1. Process one queued job per loop tick
+        job = claim_next_job(DATA_DIR)
+        if job:
+            execute_job(job)
+
+        # 2. Deliver pending outbox entries
+        try:
+            process_outbox()
+        except Exception as exc:
+            logger.error("Outbox processing error: %s", exc)
+
+        # 3. Check schedules (less frequent)
+        if time.time() - last_schedule_check >= SCHEDULE_CHECK_SEC:
+            try:
+                fire_due_schedules()
+            except Exception as exc:
+                logger.error("Schedule check error: %s", exc)
+            last_schedule_check = time.time()
+
+        time.sleep(WORKER_POLL_SEC)
+
+
+if __name__ == "__main__":
+    main()

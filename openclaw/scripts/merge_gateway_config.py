@@ -162,6 +162,15 @@ def _sanitize_channel_env_secret_refs(data: dict) -> bool:
     return modified
 
 
+def _remove_legacy_integrations_key(data: dict) -> bool:
+    """OpenClaw 2026.3.23+ rejects top-level 'integrations'. Compose injects
+    OPS_CONTROLLER_TOKEN / DASHBOARD_AUTH_TOKEN into the gateway container env."""
+    if "integrations" not in data:
+        return False
+    del data["integrations"]
+    return True
+
+
 def _inject_channel_secret_refs(data: dict) -> bool:
     """If env provides Discord/Telegram tokens, set channels.* to env-backed SecretRef."""
     modified = False
@@ -407,6 +416,9 @@ def main() -> int:
         modified = True
     if _normalize_mcp_bridge_servers(data):
         modified = True
+    did_strip_integrations = _remove_legacy_integrations_key(data)
+    if did_strip_integrations:
+        modified = True
     did_channel_refs = _inject_channel_secret_refs(data)
     if did_channel_refs:
         modified = True
@@ -553,6 +565,8 @@ def main() -> int:
     try:
         config_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         summary_parts: list[str] = []
+        if did_strip_integrations:
+            summary_parts.append("removed legacy integrations key")
         if did_channel_refs:
             summary_parts.append("channel SecretRefs from env")
         if did_guild_allowlist:
