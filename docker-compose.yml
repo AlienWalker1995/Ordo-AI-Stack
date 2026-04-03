@@ -9,7 +9,7 @@ services:
     command: >
       --host 0.0.0.0 --port 8080
       --model /models/${LLAMACPP_MODEL:-model.gguf}
-      --ctx-size ${LLAMACPP_CTX_SIZE:-131072}
+      --ctx-size ${LLAMACPP_CTX_SIZE:-262144}
       --n-gpu-layers ${LLAMACPP_GPU_LAYERS:--1}
       --flash-attn auto
       --jinja
@@ -82,6 +82,10 @@ services:
       - DASHBOARD_URL=http://dashboard:8080
       - THROUGHPUT_RECORD_TOKEN=${THROUGHPUT_RECORD_TOKEN:-}
       - MODEL_CACHE_TTL_SEC=${MODEL_CACHE_TTL_SEC:-60}
+      - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-262144}
+      - MODEL_GATEWAY_ADVERTISE_CHAT_PROFILE=${MODEL_GATEWAY_ADVERTISE_CHAT_PROFILE:-1}
+      - MODEL_GATEWAY_CHAT_PROFILE_SUFFIX=${MODEL_GATEWAY_CHAT_PROFILE_SUFFIX:-:chat}
+      - MODEL_GATEWAY_CHAT_CONTEXT_WINDOW=${MODEL_GATEWAY_CHAT_CONTEXT_WINDOW:-32768}
       # Local model used when Claude Code sends a "claude-*" model name
       - CLAUDE_CODE_LOCAL_MODEL=${CLAUDE_CODE_LOCAL_MODEL:-}
       # Set to 1 only if a client requires claude-* ids in GET /v1/models (pollutes OpenClaw sync if on)
@@ -189,8 +193,10 @@ services:
       - COMFYUI_URL=http://comfyui:8188
       # OpenClaw model management: dashboard reads/writes openclaw.json to sync models
       - MODEL_GATEWAY_URL=http://model-gateway:11435
-      # OpenClaw contextWindow in synced models (must match llama.cpp --ctx-size)
-      - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-131072}
+      # OpenClaw contextWindow in synced models. Default matches llama.cpp --ctx-size; override only if
+      # you intentionally want OpenClaw to compact earlier than the server hard cap.
+      - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-262144}
+      - OPENCLAW_CONTEXT_WINDOW=${OPENCLAW_CONTEXT_WINDOW:-${LLAMACPP_CTX_SIZE:-262144}}
       - OPENCLAW_CONFIG_PATH=/openclaw-config/openclaw.json
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
       - OPENCLAW_GATEWAY_PORT=${OPENCLAW_GATEWAY_PORT:-6680}
@@ -229,6 +235,7 @@ services:
       - COMFYUI_WORKFLOWS_DIR=/comfyui-workflows
       - COMFYUI_OUTPUT_DIR=/comfyui-output
       - WORKER_POLL_INTERVAL_SEC=2
+      - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-2}
       - WORKER_SCHEDULE_CHECK_SEC=30
       - WORKER_MAX_JOB_RETRIES=2
       - WORKER_PUBLISH_MAX_ATTEMPTS=5
@@ -262,12 +269,16 @@ services:
       - OPENAI_API_KEY=local
       # Auth: False = single-user local / Tailscale use.
       - WEBUI_AUTH=${WEBUI_AUTH:-False}
-      # Default model shown in chat UI (updated by dashboard "Set Default" control)
-      - DEFAULT_MODELS=${DEFAULT_MODEL:-}
+      # Default model shown in chat UI. Dashboard writes OPEN_WEBUI_DEFAULT_MODEL to prefer the low-context :chat alias.
+      - DEFAULT_MODELS=${OPEN_WEBUI_DEFAULT_MODEL:-${DEFAULT_MODEL:-}}
       # RAG: use Qdrant for vector storage
       - VECTOR_DB=qdrant
       - QDRANT_URI=http://qdrant:6333
       - QDRANT_URL=http://qdrant:6333
+      - RAG_EMBEDDING_ENGINE=openai
+      - RAG_OPENAI_API_BASE_URL=http://model-gateway:11435/v1
+      - RAG_OPENAI_API_KEY=${DASHBOARD_AUTH_TOKEN:-local}
+      - RAG_EMBEDDING_MODEL=${EMBED_MODEL:-${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}}
     volumes:
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/open-webui:/app/backend/data
     networks:
@@ -307,11 +318,36 @@ services:
     networks:
       - frontend
 
+  # Ensures ComfyUI-Manager is cloned before ComfyUI starts. Safe to re-run — skips if already present.
+  comfyui-manager-setup:
+    image: alpine:3.21
+    restart: "no"
+    volumes:
+      - ${BASE_PATH:-.}/data/comfyui-storage:/root
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        apk add --no-cache git >/dev/null 2>&1
+        TARGET=/root/ComfyUI/custom_nodes/ComfyUI-Manager
+        if [ ! -d "$$TARGET/.git" ]; then
+          echo "Cloning ComfyUI-Manager..."
+          mkdir -p /root/ComfyUI/custom_nodes
+          git clone --depth=1 https://github.com/Comfy-Org/ComfyUI-Manager.git "$$TARGET"
+          echo "ComfyUI-Manager installed."
+        else
+          echo "ComfyUI-Manager already present, skipping."
+        fi
+
   comfyui:
     image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot:cpu}
     # No fixed container_name — avoids "name already in use" when another project
     # owns `comfyui`; Docker DNS still resolves the service name `comfyui` on this network.
     restart: unless-stopped
+    depends_on:
+      comfyui-manager-setup:
+        condition: service_completed_successfully
     # Backend network so MCP gateway-spawned comfyui container can reach it
     # ComfyUI: run scripts/detect_hardware.py to auto-configure GPU (NVIDIA/AMD/Intel) or CPU
     ports:
@@ -556,14 +592,18 @@ services:
     environment:
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
       - MODEL_GATEWAY_URL=http://model-gateway:11435
-      - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-131072}
+      - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-262144}
+      - OPENCLAW_CONTEXT_WINDOW=${OPENCLAW_CONTEXT_WINDOW:-${LLAMACPP_CTX_SIZE:-262144}}
       # Comma-separated Discord guild snowflake IDs → channels.discord.guilds (required for allowlist policy)
       - OPENCLAW_DISCORD_GUILD_IDS=${OPENCLAW_DISCORD_GUILD_IDS:-}
+      # Optional comma-separated Discord user snowflake IDs → each allowed guild's users allowlist
+      - OPENCLAW_DISCORD_USER_IDS=${OPENCLAW_DISCORD_USER_IDS:-}
       # Permissive exec + elevated in gateway container (see overrides/openclaw-gateway-root.yml for root)
       - OPENCLAW_UNRESTRICTED_GATEWAY_CONTAINER=${OPENCLAW_UNRESTRICTED_GATEWAY_CONTAINER:-}
     volumes:
       - ${OPENCLAW_CONFIG_DIR:-${BASE_PATH:-.}/data/openclaw}:/config
       - ${BASE_PATH:-.}/openclaw/scripts:/scripts:ro
+      - ${GGUF_MODELS_DIR:-${BASE_PATH:-.}/models/gguf}:/gguf-models:ro
     entrypoint:
       - /bin/sh
       - -c
@@ -576,7 +616,7 @@ services:
   # Install MCP bridge plugin (optional; npm package v0.1.0 has manifest bug — we use
   # plugin-config instead). Run manually: docker compose run --rm openclaw-plugin-install
   openclaw-plugin-install:
-    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:2026.3.23}
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:2026.4.1}
     restart: "no"
     profiles:
       - openclaw-setup
@@ -651,7 +691,7 @@ services:
 
         # OpenClaw blocks world-writable extension paths (npm on Docker volume often yields 777)
         if [ -d "$$PLUGIN_DIR" ]; then
-          chown -R 1000:1000 "$$PLUGIN_DIR" 2>/dev/null || true
+          chown -R 0:0 "$$PLUGIN_DIR" 2>/dev/null || true
           chmod -R go-w "$$PLUGIN_DIR" 2>/dev/null || true
         fi
 
@@ -712,7 +752,10 @@ services:
 
   openclaw-gateway:
     # Pin to digest when available; only :latest published upstream
-    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:2026.3.23}
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:2026.4.1}
+    # Windows bind-mounted OpenClaw state regularly trips EACCES for the node user.
+    # Run as root so channel runtimes and model/session state can write reliably.
+    user: "0:0"
     # No fixed container_name — same rationale as mcp-gateway / comfyui on shared Docker hosts.
     depends_on:
       model-gateway:
@@ -809,7 +852,7 @@ services:
 
   openclaw-cli:
     profiles: [openclaw-cli]
-    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:2026.3.23}
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:2026.4.1}
     depends_on:
       - llamacpp
       - openclaw-gateway
@@ -866,12 +909,13 @@ services:
       retries: 3
     environment:
       - MODEL_GATEWAY_URL=http://model-gateway:11435
-      - EMBED_MODEL=${EMBED_MODEL:-nomic-embed-text}
+      - EMBED_MODEL=${EMBED_MODEL:-${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}}
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_COLLECTION=${RAG_COLLECTION:-documents}
       - WATCH_DIR=/watch
       - CHUNK_SIZE=${RAG_CHUNK_SIZE:-400}
       - CHUNK_OVERLAP=${RAG_CHUNK_OVERLAP:-50}
+      - SCAN_INTERVAL_SEC=${RAG_SCAN_INTERVAL_SEC:-15}
     volumes:
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/rag-input:/watch
     depends_on:

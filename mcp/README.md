@@ -78,6 +78,7 @@ The scripts update the config file and the gateway reloads automatically.
 
 Servers that need API keys require extra setup (see [Secrets](#secrets)).
 
+
 ## Connecting Services
 
 ### Open WebUI

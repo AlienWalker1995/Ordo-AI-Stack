@@ -52,6 +52,7 @@ The **MCP gateway** service exposes one **MCP HTTP endpoint** (backend port **88
 
 **Note:** `allow_clients: []` disables by default. `allow_clients: ["*"]` is explicit opt-in.
 
+
 ## Policy API (Dashboard `/api/mcp`)
 
 - `GET /api/mcp/servers` — enabled list merged with registry metadata + catalog

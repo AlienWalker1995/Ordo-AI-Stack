@@ -414,217 +414,178 @@
       font-weight: 400; margin-top: var(--space-1); max-width: 28rem;
     }
     .deps-table .deps-err { color: var(--danger); word-break: break-word; }
-    .throughput-subsection { margin-bottom: var(--space-6); }
-    .throughput-subsection h3 {
-      font-size: var(--text-sm); font-weight: 700; margin: 0 0 var(--space-1);
-      color: var(--fg); display: flex; align-items: center; gap: var(--space-2);
+    /* ═══════════════════════════════════════════════════════
+       INFERENCE TELEMETRY — Performance Section
+    ═══════════════════════════════════════════════════════ */
+    .perf-kpi-strip {
+      display: grid; grid-template-columns: repeat(5, 1fr);
+      gap: 1px; background: var(--border-subtle);
+      border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
+      overflow: hidden; margin-bottom: var(--space-6);
     }
-    .throughput-subsection h3::before {
-      content: ''; display: inline-block;
-      width: 2px; height: .9em; background: var(--accent);
-      border-radius: 2px; flex-shrink: 0; box-shadow: 0 0 6px var(--accent);
+    @media (max-width: 900px) { .perf-kpi-strip { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 480px) { .perf-kpi-strip { grid-template-columns: repeat(2, 1fr); } }
+    .perf-kpi-tile {
+      background: var(--bg-elevated); padding: var(--space-4) var(--space-5);
+      position: relative; overflow: hidden;
     }
-    .subsection-desc { font-size: var(--text-sm); color: var(--muted); margin: 0 0 var(--space-3); }
-    .throughput-panel {
+    .perf-kpi-tile::after {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+      background: var(--accent); transform: scaleX(0); transform-origin: left;
+      transition: transform .6s ease;
+    }
+    .perf-kpi-tile.loaded::after { transform: scaleX(1); }
+    .perf-kpi-label {
+      font-size: .58rem; font-weight: 700; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: var(--space-2);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .perf-kpi-value {
+      font-family: var(--font-mono); font-size: 1.7rem; font-weight: 600;
+      color: var(--fg); line-height: 1; letter-spacing: -.02em;
+    }
+    .perf-kpi-value.hi { color: var(--accent); }
+    .perf-kpi-unit { font-size: .62rem; color: var(--muted); margin-top: 4px; font-family: var(--font-mono); }
+
+    /* ── Benchmark Panel ── */
+    .bench-panel {
       padding: var(--space-5); background: var(--bg-elevated);
-      border: 1px solid var(--border-subtle); border-radius: var(--radius);
+      border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
     }
-    .throughput-controls {
-      display: flex; gap: var(--space-3); align-items: center;
-      flex-wrap: wrap; margin-bottom: var(--space-5);
-    }
-    .throughput-controls select {
+    .bench-controls { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; }
+    .bench-controls select {
+      flex: 1; min-width: 200px; max-width: 340px;
       padding: var(--space-2) var(--space-4); background: var(--bg);
       border: 1px solid var(--border); border-radius: var(--radius-sm);
-      color: var(--fg); font-family: var(--font-mono); font-size: var(--text-sm); min-width: 200px;
+      color: var(--fg); font-family: var(--font-mono); font-size: var(--text-sm);
     }
-    .throughput-results {
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--space-4);
+    .bench-fire-btn {
+      padding: var(--space-2) var(--space-6); background: transparent;
+      border: 1px solid var(--accent); color: var(--accent);
+      font-family: var(--font-display); font-size: var(--text-base); font-weight: 700;
+      letter-spacing: .12em; text-transform: uppercase; cursor: pointer;
+      border-radius: var(--radius-sm); transition: background .15s, color .15s, box-shadow .15s;
+      white-space: nowrap;
     }
-    .throughput-metric {
-      padding: var(--space-3) var(--space-4); background: var(--surface);
-      border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);
-      border-left: 2px solid var(--accent);
+    .bench-fire-btn:hover:not(:disabled) { background: var(--accent); color: #000; box-shadow: 0 0 20px rgba(0,201,255,.25); }
+    .bench-fire-btn:disabled { border-color: var(--muted); color: var(--muted); cursor: not-allowed; }
+    .bench-fire-btn.running { border-color: var(--warning); color: var(--warning); animation: benchPulse 1s ease-in-out infinite; }
+    @keyframes benchPulse { 0%,100%{opacity:1}50%{opacity:.45} }
+    .bench-results {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-3);
+      margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--border-subtle);
     }
-    .throughput-value {
-      display: block; font-family: var(--font-mono);
-      font-size: var(--text-xl); font-weight: 600; color: var(--accent);
+    @media (max-width: 600px) { .bench-results { grid-template-columns: repeat(2, 1fr); } }
+    .bench-metric { text-align: center; padding: var(--space-3) var(--space-2); }
+    .bench-metric-value {
+      font-family: var(--font-mono); font-size: var(--text-xl); font-weight: 700;
+      color: var(--accent); display: block; letter-spacing: -.02em;
     }
-    .throughput-label {
-      font-size: var(--text-xs); color: var(--muted);
-      text-transform: uppercase; letter-spacing: .06em; margin-top: var(--space-1);
+    .bench-metric-label { font-size: .58rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-top: 5px; display: block; }
+    .bench-error { color: var(--danger); font-size: var(--text-sm); margin-top: var(--space-3); }
+    .bench-loading {
+      display: flex; align-items: center; gap: var(--space-2);
+      color: var(--muted); font-size: var(--text-sm); margin-top: var(--space-3);
     }
-    .throughput-error { color: var(--danger); font-size: var(--text-sm); margin-top: var(--space-3); }
-    .throughput-loading { color: var(--muted); font-size: var(--text-sm); margin-top: var(--space-3); }
-    /* ===== Throughput Section ===== */
-    .throughput-stats {
-      margin-top: var(--space-6);
-      padding-top: var(--space-5);
-      border-top: 1px solid var(--border-subtle);
+    .bench-loading::before {
+      content: ''; width: 10px; height: 10px;
+      border: 2px solid var(--border); border-top-color: var(--accent);
+      border-radius: 50%; animation: spinR .7s linear infinite; flex-shrink: 0;
     }
-    .throughput-stats-title {
-      display: block;
-      font-size: var(--text-xs);
-      font-weight: 700;
-      color: var(--muted);
-      letter-spacing: .1em;
-      text-transform: uppercase;
-      margin-bottom: var(--space-4);
+    @keyframes spinR { to { transform: rotate(360deg); } }
+
+    /* ── Performance Table ── */
+    .perf-table-outer { border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); overflow: hidden; }
+    .perf-table-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: var(--space-3) var(--space-4); background: var(--bg);
+      border-bottom: 1px solid var(--border-subtle);
     }
-    .throughput-stats-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-      gap: var(--space-4);
+    .perf-table-title { font-size: .58rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+    .perf-table-count {
+      font-family: var(--font-mono); font-size: var(--text-xs); color: var(--accent);
+      background: var(--accent-dim); border: 1px solid rgba(0,201,255,.15);
+      padding: 1px 8px; border-radius: 20px;
+    }
+    .perf-table-scroll { overflow-x: auto; }
+    .perf-table { width: 100%; border-collapse: collapse; }
+    .perf-table th {
+      padding: var(--space-2) var(--space-3); background: rgba(7,8,14,.9);
+      color: var(--muted); font-size: .58rem; font-weight: 700;
+      letter-spacing: .1em; text-transform: uppercase;
+      text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border-subtle);
+    }
+    .perf-table th:first-child { text-align: left; padding-left: var(--space-4); }
+    .perf-table th:last-child { padding-right: var(--space-4); }
+    .perf-table td {
+      padding: var(--space-3); text-align: right; font-family: var(--font-mono);
+      font-size: var(--text-xs); color: var(--fg-muted);
+      border-bottom: 1px solid var(--border-subtle); white-space: nowrap;
+      background: var(--bg-elevated);
+    }
+    .perf-table tr:last-child td { border-bottom: none; }
+    .perf-table tr:hover td { background: var(--surface); }
+    .perf-table td:first-child { text-align: left; padding-left: var(--space-4); font-family: var(--font-sans); color: var(--fg); }
+    .perf-table td:last-child { padding-right: var(--space-4); }
+    .perf-tps { font-size: var(--text-sm); font-weight: 600; }
+    .perf-live-row td:first-child { border-left: 2px solid var(--accent); }
+    /* Tier colors */
+    .t-x{color:#00e676} .t-g{color:#b2ff59} .t-f{color:#ffd740} .t-s{color:#ff9100} .t-v{color:#ff4444} .t-n{color:var(--muted)}
+    /* Dist sparkline */
+    .dist-spark { display:inline-flex; align-items:flex-end; gap:2px; height:20px; vertical-align:middle; }
+    .dist-spark-bar { width:5px; border-radius:1px 1px 0 0; min-height:2px; background:var(--accent); opacity:.22; }
+    .dist-spark-bar.hi { opacity:.85; }
+    /* Live dot */
+    .live-dot {
+      display:inline-block; width:6px; height:6px; border-radius:50%;
+      background:var(--success); box-shadow:0 0 6px var(--success);
+      animation:livePulse 2s ease-in-out infinite; vertical-align:middle; flex-shrink:0;
+    }
+    @keyframes livePulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.75)}}
+    .live-badge {
+      display:inline-block; font-size:.55rem; font-weight:700; letter-spacing:.06em;
+      text-transform:uppercase; padding:1px 5px; background:var(--accent); color:#000;
+      border-radius:3px; vertical-align:middle; margin-left:4px;
+    }
+    .perf-model-name {
+      max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      display:inline-block; vertical-align:middle; font-size:var(--text-xs); font-family:var(--font-mono);
     }
 
-    /* Model stat cards */
-    .throughput-stat-card {
-      background: linear-gradient(135deg, var(--surface) 0%, rgba(0,201,255,.03) 100%);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-sm);
-      padding: var(--space-4);
-      transition: all .25s ease;
-      position: relative;
-      overflow: hidden;
+    /* ── Service Activity ── */
+    .service-activity { border:1px solid var(--border-subtle); border-radius:var(--radius-sm); overflow:hidden; }
+    .svc-row {
+      display:grid; grid-template-columns:1fr auto auto;
+      align-items:center; gap:var(--space-4);
+      padding:var(--space-3) var(--space-4); background:var(--bg-elevated);
+      border-bottom:1px solid var(--border-subtle);
     }
-    .throughput-stat-card::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(0,201,255,.3), transparent);
-    }
-    .throughput-stat-card:hover {
-      border-color: rgba(0,201,255,.4);
-      transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(0,201,255,.12);
-    }
-    .throughput-stat-card.loaded {
-      border-left: 3px solid var(--accent);
-      background: linear-gradient(135deg, var(--surface) 0%, rgba(0,201,255,.06) 100%);
-    }
-    .throughput-stat-model {
-      font-weight: 600;
-      font-size: var(--text-sm);
-      margin-bottom: var(--space-3);
-      display: flex;
-      align-items: center;
-      gap: var(--space-2);
-      font-family: var(--font-mono);
-    }
-    .throughput-stat-badge {
-      font-size: .6rem;
-      padding: 2px 6px;
-      background: var(--accent);
-      color: #000;
-      border-radius: var(--radius-sm);
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .04em;
-    }
-    .status-indicator {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--success);
-      display: inline-block;
-      margin-right: 6px;
-      box-shadow: 0 0 8px var(--success);
-      animation: pulse 2s infinite;
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: .5; }
-    }
+    .svc-row:last-child { border-bottom:none; }
+    .svc-row:hover { background:var(--surface); }
+    .svc-info { min-width:0; }
+    .svc-model { font-family:var(--font-mono); font-size:var(--text-xs); color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .svc-name { font-size:.58rem; color:var(--muted); letter-spacing:.06em; text-transform:uppercase; margin-top:2px; }
+    .svc-bar-wrap { width:80px; }
+    .svc-bar-track { height:4px; background:var(--border); border-radius:2px; overflow:hidden; }
+    .svc-bar-fill { height:100%; border-radius:2px; transition:width .5s ease; }
+    .svc-tps { font-family:var(--font-mono); font-size:var(--text-xs); font-weight:600; color:var(--fg); text-align:right; white-space:nowrap; min-width:70px; }
+    .svc-ago { color:var(--muted); font-weight:400; display:block; font-size:.58rem; }
 
-    /* Throughput metrics with bars */
-    .throughput-stat-row {
-      display: flex;
-      align-items: center;
-      gap: var(--space-3);
-      margin-bottom: var(--space-2);
+    /* Shared empties + subsections */
+    .perf-empty { text-align:center; padding:var(--space-8) var(--space-4); color:var(--muted); font-size:var(--text-sm); background:var(--bg-elevated); }
+    .perf-subsection { margin-bottom:var(--space-8); }
+    .perf-subsection-header { display:flex; align-items:center; gap:var(--space-3); margin-bottom:var(--space-3); }
+    .perf-subsection-label {
+      font-size:.6rem; font-weight:700; letter-spacing:.14em;
+      text-transform:uppercase; color:var(--muted); display:flex; align-items:center; gap:var(--space-2);
     }
-    .throughput-stat-row .label { color: var(--muted); font-size: var(--text-xs); min-width: 50px; }
-    .throughput-stat-row .value { font-family: var(--font-mono); font-weight: 600; color: var(--fg); min-width: 70px; text-align: right; }
-
-    /* Progress bars */
-    .throughput-bar {
-      flex: 1;
-      height: 6px;
-      background: var(--surface);
-      border-radius: 3px;
-      overflow: hidden;
+    .perf-subsection-label::before {
+      content:''; display:inline-block; width:2px; height:.85em;
+      background:var(--accent); box-shadow:0 0 6px var(--accent); border-radius:1px;
     }
-    .throughput-bar-fill {
-      height: 100%;
-      border-radius: 3px;
-      transition: width .3s ease;
-      position: relative;
-    }
-    .throughput-bar-fill::after {
-      content: '';
-      position: absolute;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: linear-gradient(90deg, rgba(255,255,255,.15) 0%, rgba(255,255,255,.05) 50%, transparent 100%);
-      animation: shimmer 2s infinite;
-    }
-    @keyframes shimmer {
-      0% { transform: translateX(-100%); }
-      100% { transform: translateX(100%); }
-    }
-
-    /* Performance level colors */
-    .perf-excellent { background: linear-gradient(135deg, #00c853, #00e676); }
-    .perf-good { background: linear-gradient(135deg, #64dd17, #aeea00); }
-    .perf-fair { background: linear-gradient(135deg, #ffbd2e, #ffd60a); }
-    .perf-slow { background: linear-gradient(135deg, #ff6d00, #ff9100); }
-    .perf-very-slow { background: linear-gradient(135deg, #d50000, #ff1744); }
-
-    /* Empty state */
-    .throughput-empty {
-      color: var(--muted);
-      font-size: var(--text-sm);
-      grid-column: 1 / -1;
-      text-align: center;
-      padding: var(--space-6);
-      border: 1px dashed var(--border-subtle);
-      border-radius: var(--radius-sm);
-    }
-
-    .throughput-service-usage {
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--space-4);
-    }
-    .throughput-service-card {
-      background: var(--surface); border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-sm); padding: var(--space-4);
-    }
-    .throughput-service-card h4 {
-  font-size: var(--text-sm);
-  font-weight: 600;
-  margin: 0 0 var(--space-3);
-  font-family: var(--font-mono);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.throughput-service-card h4::before {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--success);
-  box-shadow: 0 0 8px var(--success);
-}
-    .throughput-service-row { display: flex; justify-content: space-between; font-size: var(--text-sm); margin-bottom: var(--space-1); }
-    .throughput-service-row .label { color: var(--muted); }
-    .throughput-service-row .value { font-family: var(--font-mono); font-weight: 500; }
+    .perf-subsection-desc { font-size:var(--text-xs); color:var(--muted); margin-bottom:var(--space-3); }
     .models-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-5); }
     @media (max-width: 900px) { .models-grid { grid-template-columns: 1fr; gap: var(--space-4); } }
-    @media (max-width: 768px) {
-      .throughput-stats-grid { grid-template-columns: 1fr !important; }
-      .throughput-stat-row .value { min-width: auto; }
-      .throughput-bar { max-width: 150px; }
-    }
     .claude-env-toggle {
       display: inline-flex; align-items: center; gap: var(--space-3);
       cursor: pointer; user-select: none; font-size: var(--text-sm); color: var(--fg);
@@ -649,7 +610,7 @@
       background: var(--bg-elevated); border-radius: var(--radius);
       border: 1px solid var(--border-subtle); overflow: visible; transition: border-color .2s;
     }
-    .model-panel:hover { border-color: rgba(0,201,255,.12); }
+    .model-panel:hover { border-color: rgba(0,201,255,.14); }
     .models-grid .model-panel:first-child { position: relative; z-index: 2; }
     .model-panel h3 {
       font-size: .62rem; font-weight: 700;
@@ -665,21 +626,42 @@
       border-radius: 1px; box-shadow: 0 0 5px var(--accent);
     }
     .model-list {
-      min-height: 120px; max-height: 260px; overflow-y: auto;
+      min-height: 80px; max-height: 240px; overflow-y: auto;
       font-family: var(--font-mono); font-size: var(--text-sm);
     }
-    .model-list::-webkit-scrollbar { width: 4px; }
+    .model-list::-webkit-scrollbar { width: 3px; }
     .model-list::-webkit-scrollbar-track { background: transparent; }
     .model-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
     .model-item {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: var(--space-2) var(--space-4);
+      display: grid; grid-template-columns: 1fr auto auto auto;
+      align-items: center; gap: 8px;
+      padding: 7px var(--space-4);
       border-bottom: 1px solid var(--border-subtle); transition: background .15s;
     }
     .model-item:last-child { border-bottom: none; }
     .model-item:hover { background: var(--surface-hover); }
-    .model-item .name { color: var(--fg); }
-    .model-item .meta { color: var(--muted); font-size: var(--text-xs); }
+    .model-item .name {
+      color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: .82rem;
+    }
+    .model-item .meta { color: var(--muted); font-size: .72rem; white-space: nowrap; }
+    .model-badge-active {
+      font-size: .58rem !important; padding: 2px 7px !important;
+      letter-spacing: .06em; white-space: nowrap;
+    }
+    .btn-model-switch {
+      font-size: .62rem; padding: 2px 9px;
+      background: transparent; border: 1px solid var(--accent);
+      color: var(--accent); border-radius: 3px; cursor: pointer;
+      white-space: nowrap; font-family: var(--font-mono);
+      letter-spacing: .04em; line-height: 1.6;
+      transition: background .15s, color .15s, box-shadow .15s;
+    }
+    .btn-model-switch:hover:not(:disabled) {
+      background: var(--accent); color: #000;
+      box-shadow: 0 0 8px var(--accent-glow); transform: none;
+    }
+    .btn-model-switch:disabled { opacity: .35; cursor: not-allowed; }
     .btn-model-delete {
       flex-shrink: 0; width: 22px; height: 22px; padding: 0; border: none;
       background: transparent; color: var(--muted); font-size: 16px; line-height: 1;
@@ -687,7 +669,40 @@
     }
     .btn-model-delete:hover { color: var(--danger); background: var(--danger-dim); }
     .model-category { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-top: 2px; }
-    .pull-area { padding: var(--space-4); border-top: 1px solid var(--border-subtle); }
+    .pull-area { padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border-subtle); }
+    .model-hub-dl-panel {
+      margin-bottom: var(--space-5);
+    }
+    .model-hub-dl-panel .pull-area {
+      border-top: none; padding: var(--space-4);
+    }
+    .model-hub-dl-row {
+      display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center;
+    }
+    .model-hub-dl-row input[type="text"] { flex: 1; min-width: 240px; }
+    .model-hub-dl-hint {
+      font-size: .75rem; color: var(--muted); margin-top: var(--space-2); line-height: 1.5;
+    }
+    .model-hub-dl-hint code { font-family: var(--font-mono); color: var(--fg-muted); }
+    .default-model-row {
+      display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center;
+    }
+    .default-model-row select {
+      flex: 1; min-width: 160px;
+      padding: var(--space-2) var(--space-3); background: var(--bg);
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      color: var(--fg); font-size: var(--text-sm);
+    }
+    .default-model-label {
+      font-size: .72rem; color: var(--muted); margin-bottom: var(--space-2);
+      text-transform: uppercase; letter-spacing: .06em;
+    }
+    .default-model-status {
+      font-size: .75rem; color: var(--fg-muted); margin-top: var(--space-1); min-height: 1.2em;
+    }
+    .openclaw-sync-status {
+      font-size: .75rem; color: var(--fg-muted); margin-top: var(--space-2); min-height: 1.2em;
+    }
     .pull-row { display: flex; gap: var(--space-2); flex-wrap: wrap; }
     .quick-pills { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-bottom: var(--space-3); }
     .pill {
@@ -878,10 +893,10 @@
       .mcp-add-row select { width: 100%; }
       .toast-container { left: var(--space-4); right: var(--space-4); bottom: var(--space-4); }
       .toast { padding: var(--space-3) var(--space-4); }
-      .throughput-controls { gap: var(--space-2); }
-      .throughput-controls select { min-width: 160px; }
-      .throughput-results { grid-template-columns: 1fr 1fr; }
-      .throughput-stat-card { padding: var(--space-3); }
+      .bench-controls { gap: var(--space-2); }
+      .bench-controls select { min-width: 160px; }
+      .bench-results { grid-template-columns: 1fr 1fr; }
+      .perf-model-name { max-width: 140px; }
     }
     @media (max-width: 600px) { .services { grid-template-columns: 1fr; } }
     @media (max-width: 480px) {
@@ -1048,64 +1063,118 @@
     </section>
 
     <section id="throughput-section">
-      <h2>Token Throughput</h2>
-      <p class="section-desc">Benchmark models, monitor performance, and see which services are using them.</p>
+      <h2>Inference Telemetry</h2>
+      <p class="section-desc">Real-time performance monitoring — benchmark models, track throughput, see which services drive load.</p>
 
-      <div class="throughput-subsection">
-        <h3>1. Benchmark</h3>
-        <p class="subsection-desc">Run a quick test to measure inference speed.</p>
-        <div class="throughput-panel">
-          <div class="throughput-controls">
-            <div class="model-select-wrap" style="max-width:280px;">
+      <!-- KPI Strip -->
+      <div class="perf-kpi-strip">
+        <div class="perf-kpi-tile" id="kpi-tile-models">
+          <div class="perf-kpi-label">Models Tracked</div>
+          <div class="perf-kpi-value" id="kpi-models">—</div>
+          <div class="perf-kpi-unit">with data</div>
+        </div>
+        <div class="perf-kpi-tile" id="kpi-tile-p95">
+          <div class="perf-kpi-label">Best P95</div>
+          <div class="perf-kpi-value hi" id="kpi-p95">—</div>
+          <div class="perf-kpi-unit">tok / sec</div>
+        </div>
+        <div class="perf-kpi-tile" id="kpi-tile-ttft">
+          <div class="perf-kpi-label">Best TTFT p50</div>
+          <div class="perf-kpi-value" id="kpi-ttft">—</div>
+          <div class="perf-kpi-unit">milliseconds</div>
+        </div>
+        <div class="perf-kpi-tile" id="kpi-tile-events">
+          <div class="perf-kpi-label">Service Events</div>
+          <div class="perf-kpi-value" id="kpi-events">—</div>
+          <div class="perf-kpi-unit">last 24 hours</div>
+        </div>
+        <div class="perf-kpi-tile" id="kpi-tile-ctx">
+          <div class="perf-kpi-label">Context Window</div>
+          <div class="perf-kpi-value" id="kpi-ctx">—</div>
+          <div class="perf-kpi-unit">tokens (llamacpp)</div>
+        </div>
+      </div>
+
+      <!-- Benchmark -->
+      <div class="perf-subsection">
+        <div class="perf-subsection-header">
+          <span class="perf-subsection-label">Benchmark</span>
+        </div>
+        <p class="perf-subsection-desc">Run a timed inference pass to measure raw throughput of the active model.</p>
+        <div class="bench-panel">
+          <div class="bench-controls">
+            <div class="model-select-wrap" style="max-width:340px;flex:1;">
               <select id="throughput-model-select" aria-label="Model for benchmark">
                 <option value="">Loading models...</option>
               </select>
             </div>
-            <button type="button" id="throughput-run-btn">Run benchmark</button>
+            <button type="button" id="throughput-run-btn" class="bench-fire-btn">▶ Run Benchmark</button>
           </div>
-          <div id="throughput-results" class="throughput-results" style="display:none;">
-            <div class="throughput-metric">
-              <span class="throughput-value" id="throughput-tps">—</span>
-              <span class="throughput-label">Output tokens/sec</span>
+          <div id="throughput-results" class="bench-results" style="display:none;">
+            <div class="bench-metric">
+              <span class="bench-metric-value" id="throughput-tps">—</span>
+              <span class="bench-metric-label">Output tok/s</span>
             </div>
-            <div class="throughput-metric">
-              <span class="throughput-value" id="throughput-output-tokens">—</span>
-              <span class="throughput-label">Output tokens</span>
+            <div class="bench-metric">
+              <span class="bench-metric-value" id="throughput-output-tokens">—</span>
+              <span class="bench-metric-label">Tokens generated</span>
             </div>
-            <div class="throughput-metric">
-              <span class="throughput-value" id="throughput-eval-ms">—</span>
-              <span class="throughput-label">Eval time (ms)</span>
+            <div class="bench-metric">
+              <span class="bench-metric-value" id="throughput-eval-ms">—</span>
+              <span class="bench-metric-label">Eval time</span>
             </div>
-            <div class="throughput-metric">
-              <span class="throughput-value" id="throughput-load-ms">—</span>
-              <span class="throughput-label">Load time (ms)</span>
+            <div class="bench-metric">
+              <span class="bench-metric-value" id="throughput-load-ms">—</span>
+              <span class="bench-metric-label">Load time</span>
             </div>
           </div>
-          <div id="throughput-error" class="throughput-error" style="display:none;"></div>
-          <div id="throughput-loading" class="throughput-loading" style="display:none;">Running benchmark...</div>
+          <div id="throughput-error" class="bench-error" style="display:none;"></div>
+          <div id="throughput-loading" class="bench-loading" style="display:none;">Running benchmark…</div>
         </div>
       </div>
 
-      <div class="throughput-subsection">
-        <h3>2. Model status & performance</h3>
-        <p class="subsection-desc">Current loaded models and historical throughput (peak, percentiles). Data from benchmarks and real usage via Model Gateway.</p>
-        <div class="throughput-panel">
-          <div id="throughput-stats" class="throughput-stats">
-            <div class="throughput-stats-title">Model Performance</div>
-            <div id="throughput-stats-grid" class="throughput-stats-grid">
-              <div class="throughput-empty" id="throughput-stats-empty">No data yet. Run a benchmark or use models via the Model Gateway.</div>
-            </div>
+      <!-- Model Performance Table -->
+      <div class="perf-subsection">
+        <div class="perf-subsection-header">
+          <span class="perf-subsection-label">Model Performance</span>
+        </div>
+        <p class="perf-subsection-desc">Throughput percentiles from benchmarks and live gateway traffic. All values in tok/s unless noted.</p>
+        <div class="perf-table-outer" id="throughput-stats">
+          <div class="perf-table-header">
+            <span class="perf-table-title">Throughput Matrix</span>
+            <span class="perf-table-count" id="perf-model-count">—</span>
+          </div>
+          <div class="perf-table-scroll">
+            <table class="perf-table">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th title="Most recent sample">Latest</th>
+                  <th title="Peak observed">Peak</th>
+                  <th title="50th percentile">P50</th>
+                  <th title="95th percentile">P95</th>
+                  <th title="99th percentile">P99</th>
+                  <th title="Time to first token, p50 / p95">TTFT</th>
+                  <th title="Sample count">N</th>
+                  <th title="Distribution shape: p50 / p95 / p99 / peak">Dist</th>
+                </tr>
+              </thead>
+              <tbody id="throughput-stats-grid">
+                <tr><td colspan="9"><div class="perf-empty" id="throughput-stats-empty">No data yet — run a benchmark or use models via the Model Gateway.</div></td></tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
 
-      <div class="throughput-subsection">
-        <h3>3. Service usage</h3>
-        <p class="subsection-desc">Which services are taxing which models. Tracked for requests through the Model Gateway (Open WebUI, N8N, etc.).</p>
-        <div class="throughput-panel">
-          <div id="throughput-service-usage" class="throughput-service-usage">
-            <div class="throughput-empty" id="throughput-service-usage-empty">No service usage yet. Use models via the Model Gateway (e.g. Open WebUI with OPENAI_API_BASE).</div>
-          </div>
+      <!-- Service Activity -->
+      <div class="perf-subsection">
+        <div class="perf-subsection-header">
+          <span class="perf-subsection-label">Service Activity</span>
+        </div>
+        <p class="perf-subsection-desc">Request traffic by service via the Model Gateway — Open WebUI, Claude Code, n8n, and others.</p>
+        <div id="throughput-service-usage" class="service-activity">
+          <div class="perf-empty" id="throughput-service-usage-empty">No service activity yet — traffic from Open WebUI, Claude Code, and n8n appears here.</div>
         </div>
       </div>
     </section>
@@ -1115,29 +1184,27 @@
       <p class="section-desc">Download from Hugging Face or any URL — auto-routes to GGUF pull (LLMs) or ComfyUI (diffusion). Sync models to OpenClaw.</p>
 
       <!-- Unified download row -->
-      <div class="model-panel" style="margin-bottom:var(--space-6);">
-        <h3>Download from HuggingFace / URL</h3>
-        <div style="font-size:var(--text-sm);color:var(--fg-muted);margin-bottom:var(--space-3);">
-          <strong>LLM (GGUF)</strong>: Hugging Face repo id (<code>bartowski/Llama-3.2-3B-Instruct-GGUF</code>), <code>hf.co/…</code> / page URL, or <code>.env</code> to pull all <code>GGUF_MODELS</code>. Diffusion files use the ComfyUI path below.<br>
-          <strong>ComfyUI</strong>: paste a direct <code>.safetensors</code> / <code>.ckpt</code> URL — downloaded by the ops-controller (no permission issues).
-        </div>
-        <div class="pull-row" style="flex-wrap:wrap;gap:var(--space-2);align-items:center;">
-          <input type="text" id="hub-dl-input" placeholder="Model name, hf.co/owner/repo, or https://... URL"
-            style="flex:1;min-width:260px;padding:var(--space-2) var(--space-3);background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--fg);font-size:var(--text-sm);font-family:var(--font-mono);"
-            aria-label="Model name or URL">
-          <select id="hub-dl-category" style="padding:var(--space-2) var(--space-3);background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--fg);font-size:var(--text-sm);" aria-label="ComfyUI category (for diffusion files only)">
-            <option value="">Category: auto-detect</option>
-            <option value="checkpoints">checkpoints</option>
-            <option value="loras">loras</option>
-            <option value="text_encoders">text_encoders</option>
-            <option value="latent_upscale_models">latent_upscale_models</option>
-          </select>
-          <div id="hub-dl-target-badge" style="font-size:0.75rem;padding:2px 8px;border-radius:4px;background:var(--surface);color:var(--fg-muted);border:1px solid var(--border);white-space:nowrap;">auto</div>
-          <button id="hub-dl-btn">Download / Pull</button>
-        </div>
-        <div id="hub-dl-progress" class="progress-area" style="display:none;" role="region" aria-label="Download progress">
-          <div class="progress-bar"><div class="fill" id="hub-dl-bar" style="width:0%" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
-          <div class="log" id="hub-dl-log" role="log" aria-live="polite"></div>
+      <div class="model-panel model-hub-dl-panel">
+        <h3>Download Model</h3>
+        <div class="pull-area">
+          <div class="model-hub-dl-row">
+            <input type="text" id="hub-dl-input" placeholder="HF repo (org/name), hf.co/… URL, or https://… direct link"
+              aria-label="Model name or URL">
+            <select id="hub-dl-category" style="padding:var(--space-2) var(--space-3);background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--fg);font-size:var(--text-sm);" aria-label="ComfyUI category (for diffusion files only)">
+              <option value="">Category: auto-detect</option>
+              <option value="checkpoints">checkpoints</option>
+              <option value="loras">loras</option>
+              <option value="text_encoders">text_encoders</option>
+              <option value="latent_upscale_models">latent_upscale_models</option>
+            </select>
+            <div id="hub-dl-target-badge" style="font-size:0.75rem;padding:2px 8px;border-radius:4px;background:var(--surface);color:var(--fg-muted);border:1px solid var(--border);white-space:nowrap;">auto</div>
+            <button id="hub-dl-btn">Pull</button>
+          </div>
+          <p class="model-hub-dl-hint">GGUF: HF repo id or <code>hf.co/owner/repo</code> URL → downloaded to <code>/gguf-models</code>.&ensp;Diffusion: direct <code>.safetensors</code> / <code>.ckpt</code> URL → ComfyUI model dir.&ensp;Or type <code>.env</code> to pull all <code>GGUF_MODELS</code>.</p>
+          <div id="hub-dl-progress" class="progress-area" style="display:none;" role="region" aria-label="Download progress">
+            <div class="progress-bar"><div class="fill" id="hub-dl-bar" style="width:0%" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
+            <div class="log" id="hub-dl-log" role="log" aria-live="polite"></div>
+          </div>
         </div>
       </div>
 
@@ -1158,34 +1225,33 @@
                 </div>
                 <div class="model-select-dropdown" id="ollama-select-dropdown" role="listbox" aria-labelledby="ollama-select-label" style="display:none;">
                   <div class="model-select-search">
-                    <input type="text" id="ollama-library-search" placeholder="Search catalog (reference only)…" autocomplete="off" aria-label="Search model catalog">
+                    <input type="text" id="ollama-library-search" placeholder="Search catalog…" autocomplete="off" aria-label="Search model catalog">
                   </div>
-                  <div class="section-label">Public registry names (pull uses HF repo ids — see custom field)</div>
+                  <div class="section-label">Registry (pull uses HF repo ids — see custom field)</div>
                   <div id="ollama-select-options"></div>
                   <div class="model-select-custom">
                     <input type="text" id="ollama-model-custom" placeholder="HF repo (org/name), .env, or huggingface.co URL" aria-label="Hugging Face repo or URL">
                   </div>
                 </div>
               </div>
-              <button id="ollama-starter-pack" class="secondary" title="Runs gguf-puller with GGUF_MODELS from .env">Pull .env GGUF_MODELS</button>
+              <button id="ollama-starter-pack" class="secondary" title="Runs gguf-puller with GGUF_MODELS from .env">Pull .env Models</button>
               <button id="ollama-pull">Pull</button>
             </div>
-            <p class="section-desc" style="margin:0.5rem 0 0;font-size:0.8rem;">Starter pack: reasoning + coding + embedding (deepseek-r1:7b, deepseek-coder:6.7b, nomic-embed-text)</p>
             <div class="last-updated" id="ollama-last-updated"></div>
             <div id="ollama-progress" class="progress-area" style="display:none;" role="region" aria-label="Pull progress">
               <div class="progress-bar"><div class="fill" id="ollama-progress-bar" style="width:0%" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
               <div class="log" id="ollama-log" role="log" aria-live="polite"></div>
             </div>
           </div>
-          <div class="pull-area" id="default-model-area" style="display:none;margin-top:var(--space-3);border-top:1px solid var(--border);padding-top:var(--space-3);">
-            <div style="font-size:var(--text-sm);color:var(--fg-muted);margin-bottom:var(--space-2);">Default model <span style="color:var(--muted);font-size:0.8em;">(Open WebUI chat default)</span></div>
-            <div class="pull-row">
-              <select id="default-model-select" style="flex:1;padding:var(--space-2) var(--space-3);background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--fg);font-size:var(--text-sm);" aria-label="Select default model">
+          <div class="pull-area" id="default-model-area" style="display:none;">
+            <div class="default-model-label">Open WebUI default model</div>
+            <div class="default-model-row">
+              <select id="default-model-select" aria-label="Select default model">
                 <option value="">— not set —</option>
               </select>
               <button id="default-model-btn" class="secondary" title="Write to .env and restart Open WebUI">Set Default</button>
             </div>
-            <div id="default-model-status" style="font-size:0.8rem;color:var(--fg-muted);margin-top:var(--space-1);min-height:1.2em;"></div>
+            <div id="default-model-status" class="default-model-status"></div>
           </div>
         </div>
         <div class="model-panel">
@@ -1209,26 +1275,25 @@
         </div>
         <div class="model-panel">
           <h3>OpenClaw — active models</h3>
-          <p class="section-desc" style="margin:0 0 var(--space-3);">Models available in OpenClaw's agent UI. Sync after you add or change GGUF files.</p>
           <div class="model-list" id="openclaw-models">
             <div class="skeleton skeleton-line"></div>
             <div class="skeleton skeleton-line short"></div>
           </div>
-          <div class="pull-area" style="margin-top:var(--space-3);">
+          <div class="pull-area">
             <div class="pull-row">
               <button id="openclaw-sync-btn">Sync to OpenClaw</button>
             </div>
-            <div id="openclaw-sync-status" style="font-size:0.8rem;color:var(--fg-muted);margin-top:var(--space-2);min-height:1.2em;" aria-live="polite"></div>
+            <div id="openclaw-sync-status" class="openclaw-sync-status" aria-live="polite"></div>
           </div>
-          <div class="pull-area" id="openclaw-default-area" style="margin-top:var(--space-3);border-top:1px solid var(--border);padding-top:var(--space-3);">
-            <div style="font-size:var(--text-sm);color:var(--fg-muted);margin-bottom:var(--space-2);">Default model <span style="color:var(--muted);font-size:0.8em;">(agent primary)</span></div>
-            <div class="pull-row">
-              <select id="openclaw-default-select" style="flex:1;padding:var(--space-2) var(--space-3);background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--fg);font-size:var(--text-sm);" aria-label="Select OpenClaw default model">
+          <div class="pull-area" id="openclaw-default-area">
+            <div class="default-model-label">Agent default model</div>
+            <div class="default-model-row">
+              <select id="openclaw-default-select" aria-label="Select OpenClaw default model">
                 <option value="">— not set —</option>
               </select>
               <button id="openclaw-default-btn" class="secondary" title="Set as OpenClaw agent default">Set Default</button>
             </div>
-            <div id="openclaw-default-status" style="font-size:0.8rem;color:var(--fg-muted);margin-top:var(--space-1);min-height:1.2em;"></div>
+            <div id="openclaw-default-status" class="default-model-status"></div>
           </div>
         </div>
         <div class="model-panel claude-env-panel" style="grid-column: 1 / -1;">
@@ -1717,13 +1782,28 @@
           return;
         }
         document.getElementById('ollama-last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
-        el.innerHTML = ollamaModels.map(m => `
+        // Fetch currently loaded model to show active badge
+        let activeModel = '';
+        try {
+          const ps = await api('/api/ollama/ps');
+          if (ps.ok) {
+            const psData = await ps.json();
+            activeModel = (psData.models?.[0]?.name || '').split(':')[0];
+          }
+        } catch (_) {}
+        el.innerHTML = ollamaModels.map(m => {
+          const isActive = activeModel && (m.name === activeModel || m.name.split(':')[0] === activeModel);
+          return `
           <div class="model-item">
             <span class="name">${escapeHtml(m.name)}</span>
             <span class="meta">${formatSize(m.size || 0)}</span>
+            ${isActive
+              ? '<span class="badge badge-ok model-badge-active">ACTIVE</span>'
+              : `<button type="button" class="btn-model-switch" data-model="${escapeHtml(m.name)}" title="Switch llamacpp to this model (restarts inference server)">Switch</button>`
+            }
             <button type="button" class="btn-model-delete" data-model="${escapeHtml(m.name)}" title="Delete model" aria-label="Delete ${escapeHtml(m.name)}">×</button>
-          </div>
-        `).join('');
+          </div>`;
+        }).join('');
         populateThroughputModelSelect();
         populateDefaultModelSelect();
       } catch (e) {
@@ -1811,6 +1891,43 @@
       sel.innerHTML = llms.map(m => `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`).join('');
     }
 
+    function tpsClass(tps) {
+      if (!tps) return 't-n';
+      if (tps >= 30) return 't-x';
+      if (tps >= 15) return 't-g';
+      if (tps >= 8)  return 't-f';
+      if (tps >= 3)  return 't-s';
+      return 't-v';
+    }
+    function tpsBarColor(tps) {
+      if (!tps) return 'var(--muted)';
+      if (tps >= 30) return '#00e676';
+      if (tps >= 15) return '#b2ff59';
+      if (tps >= 8)  return '#ffd740';
+      if (tps >= 3)  return '#ff9100';
+      return '#ff4444';
+    }
+    function fmtTps(v) { return v ? v + '' : '—'; }
+    function fmtTtft(v) { return (v && v > 0) ? v + 'ms' : '—'; }
+    function fmtAgo(ts) {
+      if (!ts) return '';
+      const secs = Date.now() / 1000 - ts;
+      if (secs < 60) return 'just now';
+      if (secs < 3600) return Math.round(secs / 60) + 'm ago';
+      return Math.round(secs / 3600) + 'h ago';
+    }
+    function distSpark(s) {
+      const peak = s.peak || 0;
+      if (!peak) return '';
+      const vals = [s.p50 || 0, s.p95 || 0, s.p99 || 0, peak];
+      const latest = s.latest || 0;
+      return '<span class="dist-spark">' + vals.map(v => {
+        const h = Math.max(2, Math.round(v / peak * 18));
+        const hi = (v === latest || v === peak) ? ' hi' : '';
+        return `<span class="dist-spark-bar${hi}" style="height:${h}px"></span>`;
+      }).join('') + '</span>';
+    }
+
     function showLastBenchmark(b) {
       if (!b) return;
       const resultsEl = document.getElementById('throughput-results');
@@ -1826,9 +1943,40 @@
       if (loadingEl) loadingEl.style.display = 'none';
     }
 
+    async function loadPerfKPIs() {
+      try {
+        const r = await api('/api/performance/summary');
+        const d = await r.json();
+        if (!d.ok) return;
+        const top = d.throughput?.top_models || [];
+        const tracked = d.throughput?.tracked_models ?? 0;
+        const events = d.throughput?.service_events_24h ?? 0;
+        const ctx = d.llamacpp_ctx_size ?? 0;
+        const bestP95 = top.length ? Math.max(...top.map(m => m.p95_tps || 0)) : 0;
+        const bestTtft = top.filter(m => m.latest_ttft_ms > 0);
+        const ttftVal = bestTtft.length ? Math.min(...bestTtft.map(m => m.latest_ttft_ms)) : 0;
+        const setKpi = (id, val, tileId) => {
+          const el = document.getElementById(id);
+          if (el) el.textContent = val;
+          const tile = document.getElementById(tileId);
+          if (tile && val !== '—') tile.classList.add('loaded');
+        };
+        setKpi('kpi-models', tracked || '—', 'kpi-tile-models');
+        setKpi('kpi-p95', bestP95 ? bestP95 + '' : '—', 'kpi-tile-p95');
+        setKpi('kpi-ttft', ttftVal ? ttftVal + '' : '—', 'kpi-tile-ttft');
+        setKpi('kpi-events', events !== undefined ? events + '' : '—', 'kpi-tile-events');
+        if (ctx) {
+          const ctxEl = document.getElementById('kpi-ctx');
+          if (ctxEl) ctxEl.textContent = ctx >= 1000 ? Math.round(ctx / 1000) + 'K' : ctx + '';
+          document.getElementById('kpi-tile-ctx')?.classList.add('loaded');
+        }
+      } catch (_) {}
+    }
+
     async function loadThroughputStats() {
-      const grid = document.getElementById('throughput-stats-grid');
-      if (!grid) return;
+      const tbody = document.getElementById('throughput-stats-grid');
+      const countEl = document.getElementById('perf-model-count');
+      if (!tbody) return;
       let loadedModels = new Set();
       try {
         const ps = await api('/api/ollama/ps');
@@ -1836,10 +1984,7 @@
           const d = await ps.json();
           (d.models || []).forEach(m => {
             const n = (m.name || m.model || '').trim();
-            if (n) {
-              loadedModels.add(n);
-              loadedModels.add(n.split(':')[0]);
-            }
+            if (n) { loadedModels.add(n); loadedModels.add(n.split(':')[0]); }
           });
         }
       } catch (_) {}
@@ -1848,130 +1993,81 @@
         const d = await r.json();
         if (d.last_benchmark) showLastBenchmark(d.last_benchmark);
         if (!d.ok || !d.models || Object.keys(d.models).length === 0) {
-          grid.innerHTML = '<div class="throughput-empty" id="throughput-stats-empty">No data yet. Run a benchmark or use models via the Model Gateway.</div>';
+          tbody.innerHTML = '<tr><td colspan="9"><div class="perf-empty" id="throughput-stats-empty">No data yet — run a benchmark or use models via the Model Gateway.</div></td></tr>';
+          if (countEl) countEl.textContent = '0 models';
           return;
         }
         const models = Object.entries(d.models);
         models.sort((a, b) => (b[1].latest || 0) - (a[1].latest || 0));
-        const existing = grid.querySelectorAll('.throughput-stat-card');
-        if (existing.length !== models.length || models.some(([name], i) => {
-          const card = existing[i];
-          return !card || card.dataset.model !== name;
-        })) {
-          grid.innerHTML = '';
-          // Helper to determine performance level and bar color
-            function getPerfLevel(tps) {
-              if (tps >= 30) return { class: 'perf-excellent', label: 'Excellent' };
-              if (tps >= 15) return { class: 'perf-good', label: 'Good' };
-              if (tps >= 8) return { class: 'perf-fair', label: 'Fair' };
-              if (tps >= 3) return { class: 'perf-slow', label: 'Slow' };
-              return { class: 'perf-very-slow', label: 'Very Slow' };
-            }
-
-            models.forEach(([name, s]) => {
-              const card = document.createElement('div');
-              card.className = 'throughput-stat-card' + (loadedModels.has(name.split(':')[0]) ? ' loaded' : '');
-              card.dataset.model = name;
-
-              const currentPerf = getPerfLevel(s.latest || 0);
-              const peakPerf = getPerfLevel(s.peak || 0);
-              const p50Perf = getPerfLevel(s.p50 || 0);
-              const p95Perf = getPerfLevel(s.p95 || 0);
-              const p99Perf = getPerfLevel(s.p99 || 0);
-
-              const latestSamples = s.sample_count || 0;
-              const samplesStatus = latestSamples >= 10
-                ? '<span class="status-indicator"></span> Stable'
-                : '<span class="status-indicator" style="background:var(--warning);box-shadow:0 0 8px var(--warning);"></span> Limited data';
-
-              card.innerHTML = `
-                <div class="throughput-stat-model">
-                  <span class="status-indicator"></span>${escapeHtml(name)}
-                  ${loadedModels.has(name.split(':')[0]) ? '<span class="throughput-stat-badge">loaded</span>' : ''}
-                </div>
-                <div class="throughput-stat-row" style="margin-bottom:var(--space-2)">
-                  <span class="label">Status</span>
-                  <span class="value" style="font-size:var(--text-xs);color:var(--muted)">${samplesStatus}</span>
-                </div>
-                <div class="throughput-stat-row">
-                  <span class="label">Current</span>
-                  <span class="value">${s.latest} tok/s</span>
-                </div>
-                <div class="throughput-bar"><div class="throughput-bar-fill ${currentPerf.class}" style="width:${Math.min(100, Math.max(5, (s.latest || 0) / 40 * 100))}"></div></div>
-                <div class="throughput-stat-row">
-                  <span class="label">Peak</span>
-                  <span class="value">${s.peak} tok/s</span>
-                </div>
-                <div class="throughput-bar"><div class="throughput-bar-fill ${peakPerf.class}" style="width:${Math.min(100, Math.max(5, (s.peak || 0) / 40 * 100))}"></div></div>
-                <div class="throughput-stat-row">
-                  <span class="label">p50</span>
-                  <span class="value">${s.p50} tok/s</span>
-                </div>
-                <div class="throughput-bar"><div class="throughput-bar-fill ${p50Perf.class}" style="width:${Math.min(100, Math.max(5, (s.p50 || 0) / 40 * 100))}"></div></div>
-                <div class="throughput-stat-row">
-                  <span class="label">p95</span>
-                  <span class="value">${s.p95} tok/s</span>
-                </div>
-                <div class="throughput-bar"><div class="throughput-bar-fill ${p95Perf.class}" style="width:${Math.min(100, Math.max(5, (s.p95 || 0) / 40 * 100))}"></div></div>
-                <div class="throughput-stat-row">
-                  <span class="label">p99</span>
-                  <span class="value">${s.p99} tok/s</span>
-                </div>
-                <div class="throughput-bar"><div class="throughput-bar-fill ${p99Perf.class}" style="width:${Math.min(100, Math.max(5, (s.p99 || 0) / 40 * 100))}"></div></div>
-                <div class="throughput-stat-row" style="margin-top:var(--space-3);border-top:1px solid var(--border-subtle);padding-top:var(--space-2)">
-                  <span class="label">Samples</span>
-                  <span class="value">${latestSamples}</span>
-                </div>
-              `;
-              grid.appendChild(card);
-            });
-        }
+        if (countEl) countEl.textContent = models.length + ' model' + (models.length !== 1 ? 's' : '');
+        tbody.innerHTML = '';
+        models.forEach(([name, s]) => {
+          const isLive = loadedModels.has(name) || loadedModels.has(name.split(':')[0]);
+          const tr = document.createElement('tr');
+          if (isLive) tr.classList.add('perf-live-row');
+          tr.dataset.model = name;
+          const ttftCell = (s.ttft_p50_ms || s.ttft_p95_ms)
+            ? `<span class="t-f">${fmtTtft(s.ttft_p50_ms)}</span><span style="color:var(--muted);font-size:.58rem"> / ${fmtTtft(s.ttft_p95_ms)}</span>`
+            : '<span class="t-n">—</span>';
+          tr.innerHTML = `
+            <td>
+              ${isLive ? '<span class="live-dot"></span> ' : ''}
+              <span class="perf-model-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+              ${isLive ? '<span class="live-badge">live</span>' : ''}
+            </td>
+            <td class="perf-tps ${tpsClass(s.latest)}">${fmtTps(s.latest)}</td>
+            <td class="${tpsClass(s.peak)}">${fmtTps(s.peak)}</td>
+            <td class="${tpsClass(s.p50)}">${fmtTps(s.p50)}</td>
+            <td class="${tpsClass(s.p95)}">${fmtTps(s.p95)}</td>
+            <td class="${tpsClass(s.p99)}">${fmtTps(s.p99)}</td>
+            <td>${ttftCell}</td>
+            <td style="color:var(--muted)">${s.sample_count || 0}</td>
+            <td>${distSpark(s)}</td>
+          `;
+          tbody.appendChild(tr);
+        });
       } catch (_) {
-        grid.innerHTML = '<div class="throughput-empty" id="throughput-stats-empty">Failed to load stats.</div>';
+        tbody.innerHTML = '<tr><td colspan="9"><div class="perf-empty" id="throughput-stats-empty">Failed to load stats.</div></td></tr>';
       }
     }
 
     async function loadThroughputServiceUsage() {
       const container = document.getElementById('throughput-service-usage');
-      const empty = document.getElementById('throughput-service-usage-empty');
       if (!container) return;
       try {
         const r = await api('/api/throughput/service-usage');
         const d = await r.json();
         if (!d.ok || !d.by_model || Object.keys(d.by_model).length === 0) {
-          container.innerHTML = '<div class="throughput-empty" id="throughput-service-usage-empty">No service usage yet. Use models via the Model Gateway (e.g. Open WebUI with OPENAI_API_BASE).</div>';
+          container.innerHTML = '<div class="perf-empty" id="throughput-service-usage-empty">No service activity yet — traffic from Open WebUI, Claude Code, and n8n appears here.</div>';
           return;
         }
-        container.innerHTML = '';
-        const entries = Object.entries(d.by_model).sort((a, b) => b[0].localeCompare(a[0]));
-        entries.forEach(([model, info]) => {
-          const card = document.createElement('div');
-          card.className = 'throughput-service-card';
-          const services = info.services || [];
-          const lastTs = services.length ? Math.max(...services.map(s => s.last_ts || 0)) : 0;
-          const ago = lastTs ? (Date.now() / 1000 - lastTs < 60 ? 'just now' : Math.round((Date.now() / 1000 - lastTs) / 60) + 'm ago') : '';
-          card.innerHTML = `
-            <h4 style="font-size:var(--text-sm);font-weight:600;margin:0 0 var(--space-3);font-family:var(--font-mono);display:flex;align-items:center;gap:var(--space-2)">
-              <span class="status-indicator"></span>${escapeHtml(model)}
-            </h4>
-            ${services.map(s => `
-              <div class="throughput-service-row" style="margin-bottom:var(--space-2)">
-                <span class="label">${escapeHtml(s.name)}</span>
-                <div style="flex:1;display:flex;align-items:center;gap:var(--space-2)">
-                  <span class="value" style="font-family:var(--font-mono);font-weight:600">${s.last_tps} tok/s</span>
-                  <div class="throughput-bar" style="flex:1;max-width:120px">
-                    <div class="throughput-bar-fill ${getPerfLevel(s.last_tps).class}" style="width:${Math.min(100, Math.max(5, (s.last_tps || 0) / 40 * 100))}"></div>
-                  </div>
-                </div>
-              </div>
-            `).join('')}
-            ${ago ? `<div class="throughput-service-row" style="margin-top:var(--space-2);border-top:1px solid var(--border-subtle);padding-top:var(--space-2)"><span class="label">Last activity</span><span class="value">${ago}</span></div>` : ''}
-            ${services.length === 0 ? `<div style="color:var(--muted);font-size:var(--text-xs);margin-top:var(--space-2)">No recent activity</div>` : ''}
-          `;
-          container.appendChild(card);
+        const rows = [];
+        Object.entries(d.by_model).forEach(([model, info]) => {
+          (info.services || []).forEach(svc => {
+            rows.push({ model, svc });
+          });
         });
+        rows.sort((a, b) => (b.svc.last_ts || 0) - (a.svc.last_ts || 0));
+        const maxTps = Math.max(1, ...rows.map(r => r.svc.last_tps || 0));
+        container.innerHTML = rows.map(({ model, svc }) => `
+          <div class="svc-row">
+            <div class="svc-info">
+              <div class="svc-model" title="${escapeHtml(model)}">${escapeHtml(model)}</div>
+              <div class="svc-name">${escapeHtml(svc.name || '')}</div>
+            </div>
+            <div class="svc-bar-wrap">
+              <div class="svc-bar-track">
+                <div class="svc-bar-fill" style="width:${Math.round((svc.last_tps || 0) / maxTps * 100)}%;background:${tpsBarColor(svc.last_tps)}"></div>
+              </div>
+            </div>
+            <div class="svc-tps">
+              <span class="${tpsClass(svc.last_tps)}">${svc.last_tps || 0} tok/s</span>
+              <span class="svc-ago">${fmtAgo(svc.last_ts)}</span>
+            </div>
+          </div>
+        `).join('') || '<div class="perf-empty">No recent activity.</div>';
       } catch (_) {
-        container.innerHTML = '<div class="throughput-empty" id="throughput-service-usage-empty">Failed to load service usage.</div>';
+        container.innerHTML = '<div class="perf-empty" id="throughput-service-usage-empty">Failed to load service activity.</div>';
       }
     }
 
@@ -2003,6 +2099,7 @@
         resultsEl.style.display = 'grid';
         loadThroughputStats();
         loadThroughputServiceUsage();
+        loadPerfKPIs();
       } catch (err) {
         errorEl.textContent = err.message || 'Benchmark failed';
         errorEl.style.display = 'block';
@@ -2518,6 +2615,7 @@
       await Promise.all([loadServices(), loadDependencies(), loadRagStatus(), loadOllamaModels(), loadComfyuiModels(), loadComfyuiPacks(), loadMcpServers(), loadOpenclawModels(), loadClaudeCodeEnvOverwrite()]);
       loadThroughputStats();
       loadThroughputServiceUsage();
+      loadPerfKPIs();
       btn.classList.remove('loading');
     }
 
@@ -2601,6 +2699,33 @@
     document.getElementById('throughput-run-btn').onclick = runThroughputBenchmark;
 
     document.getElementById('ollama-models')?.addEventListener('click', async (e) => {
+      // Switch handler
+      const switchBtn = e.target.closest('.btn-model-switch[data-model]');
+      if (switchBtn) {
+        e.preventDefault();
+        const model = switchBtn.dataset.model;
+        if (!model || !confirm(`Switch llamacpp to "${model}"?\n\nThe inference server will restart — requests will fail for ~30–60 seconds while the model loads.`)) return;
+        switchBtn.disabled = true;
+        switchBtn.textContent = 'Switching…';
+        try {
+          const r = await api('/api/llamacpp/switch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) });
+          const d = await r.json();
+          if (r.ok && d.ok) {
+            toast(`Switching to ${model} — llamacpp restarting…`);
+            setTimeout(() => loadOllamaModels(), 8000);
+          } else {
+            toast((d.detail || 'Switch failed') + '', 'error');
+            switchBtn.disabled = false;
+            switchBtn.textContent = 'Switch';
+          }
+        } catch (err) {
+          toast('Switch failed: ' + (err.message || err), 'error');
+          switchBtn.disabled = false;
+          switchBtn.textContent = 'Switch';
+        }
+        return;
+      }
+
       const btn = e.target.closest('.btn-model-delete[data-model]');
       if (!btn) return;
       e.preventDefault();

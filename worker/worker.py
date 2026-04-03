@@ -6,7 +6,7 @@ Runs as a separate container. Shares /data/dashboard volume with dashboard (SQLi
 
 from __future__ import annotations
 
-import asyncio
+import concurrent.futures
 import json
 import logging
 import os
@@ -23,6 +23,7 @@ sys.path.insert(0, "/app")
 from dashboard.orchestration_db import (
     JobState,
     OrchestrationJob,
+    checkpoint_wal,
     claim_next_job,
     create_job,
     get_due_schedules,
@@ -34,6 +35,7 @@ from dashboard.orchestration_db import (
     recover_stale_running_jobs,
     tick_schedule,
     update_job,
+    vacuum_db,
     load_store,
 )
 from dashboard.param_placeholders import apply_param_placeholders
@@ -51,7 +53,10 @@ DATA_DIR = Path(os.environ.get("DASHBOARD_DATA_PATH", "/data/dashboard")).resolv
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://comfyui:8188").rstrip("/")
 WORKFLOWS_DIR = Path(os.environ.get("COMFYUI_WORKFLOWS_DIR", "/comfyui-workflows")).resolve()
 WORKER_POLL_SEC = float(os.environ.get("WORKER_POLL_INTERVAL_SEC", "2"))
+WORKER_CONCURRENCY = max(1, int(os.environ.get("WORKER_CONCURRENCY", "1")))
 SCHEDULE_CHECK_SEC = float(os.environ.get("WORKER_SCHEDULE_CHECK_SEC", "30"))
+WAL_CHECKPOINT_SEC = float(os.environ.get("WORKER_WAL_CHECKPOINT_SEC", "300"))
+VACUUM_SEC = float(os.environ.get("WORKER_VACUUM_SEC", "86400"))
 MAX_RETRIES = int(os.environ.get("WORKER_MAX_JOB_RETRIES", "2"))
 PUBLISH_MAX_ATTEMPTS = int(os.environ.get("WORKER_PUBLISH_MAX_ATTEMPTS", "5"))
 
@@ -230,7 +235,12 @@ def fire_due_schedules() -> None:
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    logger.info("Worker starting. DATA_DIR=%s COMFYUI_URL=%s", DATA_DIR, COMFYUI_URL)
+    logger.info(
+        "Worker starting. DATA_DIR=%s COMFYUI_URL=%s CONCURRENCY=%s",
+        DATA_DIR,
+        COMFYUI_URL,
+        WORKER_CONCURRENCY,
+    )
     load_store(DATA_DIR)
 
     recovered = recover_stale_running_jobs(DATA_DIR)
@@ -238,28 +248,51 @@ def main() -> None:
         logger.warning("Recovered %d stale running/validated jobs → requeued", recovered)
 
     last_schedule_check = 0.0
+    last_wal_checkpoint = 0.0
+    last_vacuum = time.time()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=WORKER_CONCURRENCY) as pool:
+        inflight: dict[concurrent.futures.Future[None], str] = {}
 
-    while True:
-        # 1. Process one queued job per loop tick
-        job = claim_next_job(DATA_DIR)
-        if job:
-            execute_job(job)
+        while True:
+            done = [future for future in inflight if future.done()]
+            for future in done:
+                jid = inflight.pop(future, "")
+                try:
+                    future.result()
+                except Exception:
+                    logger.exception("Worker thread crashed while processing job %s", jid)
 
-        # 2. Deliver pending outbox entries
-        try:
-            process_outbox()
-        except Exception as exc:
-            logger.error("Outbox processing error: %s", exc)
+            while len(inflight) < WORKER_CONCURRENCY:
+                job = claim_next_job(DATA_DIR)
+                if not job:
+                    break
+                future = pool.submit(execute_job, job)
+                inflight[future] = job.job_id
 
-        # 3. Check schedules (less frequent)
-        if time.time() - last_schedule_check >= SCHEDULE_CHECK_SEC:
             try:
-                fire_due_schedules()
+                process_outbox()
             except Exception as exc:
-                logger.error("Schedule check error: %s", exc)
-            last_schedule_check = time.time()
+                logger.error("Outbox processing error: %s", exc)
 
-        time.sleep(WORKER_POLL_SEC)
+            if time.time() - last_schedule_check >= SCHEDULE_CHECK_SEC:
+                try:
+                    fire_due_schedules()
+                except Exception as exc:
+                    logger.error("Schedule check error: %s", exc)
+                last_schedule_check = time.time()
+
+            if time.time() - last_wal_checkpoint >= WAL_CHECKPOINT_SEC:
+                try:
+                    checkpoint_wal(DATA_DIR)
+                except Exception as exc:
+                    logger.error("WAL checkpoint error: %s", exc)
+                last_wal_checkpoint = time.time()
+
+            if time.time() - last_vacuum >= VACUUM_SEC:
+                pool.submit(vacuum_db, DATA_DIR)
+                last_vacuum = time.time()
+
+            time.sleep(WORKER_POLL_SEC)
 
 
 if __name__ == "__main__":

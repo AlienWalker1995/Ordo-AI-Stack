@@ -117,20 +117,25 @@ def test_cache_invalidated_via_delete_endpoint():
 
 
 def _streaming_client():
-    """Mock OpenAI SSE stream from llama-server /v1/chat/completions."""
-    async def aiter_bytes():
-        yield b'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'
-        yield b'data: [DONE]\n\n'
-
+    """Mock backend non-stream chat response for the normalized restreaming path."""
     fake_resp = MagicMock()
     fake_resp.status_code = 200
-    fake_resp.aiter_bytes = aiter_bytes
+    fake_resp.json.return_value = {
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "model.gguf",
+        "choices": [{
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {"role": "assistant", "content": "Hi"},
+        }],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
     fake_resp.raise_for_status = MagicMock()
-    fake_resp.__aenter__ = AsyncMock(return_value=fake_resp)
-    fake_resp.__aexit__ = AsyncMock(return_value=None)
 
     mock = AsyncMock()
-    mock.stream = MagicMock(return_value=fake_resp)
+    mock.post = AsyncMock(return_value=fake_resp)
     mock.__aenter__ = AsyncMock(return_value=mock)
     mock.__aexit__ = AsyncMock(return_value=None)
     return mock

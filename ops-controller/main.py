@@ -31,7 +31,7 @@ ALLOWED_SERVICES = {
 }
 
 # .env keys we allow updating via the API
-ENV_ALLOWED_KEYS = {"DEFAULT_MODEL"}
+ENV_ALLOWED_KEYS = {"DEFAULT_MODEL", "OPEN_WEBUI_DEFAULT_MODEL", "LLAMACPP_MODEL"}
 
 BASE_PATH = os.environ.get("BASE_PATH", ".")
 COMPOSE_FILE_ENV = os.environ.get("COMPOSE_FILE", "docker-compose.yml")

@@ -24,6 +24,7 @@ Use **one** MCP gateway URL (`servers.gateway`). Two calling patterns:
 - Lead with the deliverable; keep answers as short as the task allows.
 - Use tools when the answer depends on live or external state; skip tools for pure reasoning.
 - Ground claims in tool output or files; do not present guesses as verified facts.
+- Session status safety: never call `session_status` with UI/client identifiers such as `openclaw-control-ui`. Use a real session id from session listings, or answer from general runtime status if the session id is not explicitly available.
 - Confirm once before destructive or irreversible actions.
 - For specialized modes, read `agents/<role>.md` (e.g. `agents/docker-ops.md`).
 

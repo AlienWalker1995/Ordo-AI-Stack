@@ -58,7 +58,7 @@ If you use **`overrides/openclaw-secure.yml`**, the mapped gateway port is typic
 
 **Existing config?** Ensure `plugins.entries["openclaw-mcp-bridge"]` is set as in [mcp/README.md](../mcp/README.md#openclaw); this repo’s `data/openclaw/openclaw.json` already includes it.
 
-**Updating the gateway (Docker):** Default image is **`ghcr.io/openclaw/openclaw`** (official [GHCR package](https://github.com/openclaw/openclaw/pkgs/container/openclaw)); compose pins a release tag (e.g. **`2026.3.23`**). Override with **`OPENCLAW_IMAGE`** in `.env` if needed. The Control UI **Update** button runs **`openclaw update`**-style flows (npm/git) that **cannot replace** the gateway binary inside the image, so it often **hangs on “Updating…”**. This stack disables in-app update checks in **`openclaw.json`** (`update.checkOnStart` / `update.auto.enabled`) via **`openclaw/scripts/merge_gateway_config.py`**. To upgrade: **`docker compose pull`** then **`docker compose up -d openclaw-gateway`**, or bump the pinned tag in **`docker-compose.yml`**. Set **`OPENCLAW_ALLOW_IN_APP_UPDATE=1`** in `.env` only if you intentionally re-enable UI-driven updates (still unlikely to work in a standard image-only setup). See [Updating](https://docs.openclaw.ai/updating) for native installs.
+**Updating the gateway (Docker):** Default image is **`ghcr.io/openclaw/openclaw`** (official [GHCR package](https://github.com/openclaw/openclaw/pkgs/container/openclaw)); compose now pins **`2026.4.1`** by default. Override with **`OPENCLAW_IMAGE`** in `.env` if needed. The Control UI **Update** button runs **`openclaw update`**-style flows (npm/git) that **cannot replace** the gateway binary inside the image, so it often **hangs on “Updating…”**. This stack disables in-app update checks in **`openclaw.json`** (`update.checkOnStart` / `update.auto.enabled`) via **`openclaw/scripts/merge_gateway_config.py`**. To upgrade: **`docker compose pull`** then **`docker compose up -d openclaw-gateway`**, or bump the pinned tag in **`docker-compose.yml`**. Set **`OPENCLAW_ALLOW_IN_APP_UPDATE=1`** in `.env` only if you intentionally re-enable UI-driven updates (still unlikely to work in a standard image-only setup). See [Updating](https://docs.openclaw.ai/updating) for native installs.
 
 **Not reachable?** When using the main Ordo AI Stack compose, the gateway is configured with `OPENCLAW_GATEWAY_BIND=lan` so it accepts connections from the host. If you run OpenClaw standalone from `openclaw/`, add `OPENCLAW_GATEWAY_BIND=lan` to your `.env`. Then verify: `docker compose ps` (gateway running), `docker compose logs openclaw-gateway` (no errors).
 
@@ -101,6 +101,8 @@ The template **`openclaw.json.example`** sets **`tools.web.search.enabled: false
 Discord is the default client for interacting with OpenClaw.
 
 **Recommended (Ordo AI Stack compose):** put the bot token in the **repo root** `.env` as `DISCORD_TOKEN`. Compose maps it to `DISCORD_BOT_TOKEN` inside `openclaw-gateway`, and `merge_gateway_config.py` (run by `openclaw-config-sync` before the gateway starts) updates `openclaw.json` to reference that env var instead of saving the token in the file.
+
+**Important:** if the official GHCR image still reports **`Unsupported channel: discord`** from `openclaw channels login --channel discord --verbose`, the repo config is not the blocker; use a source-built image (`OPENCLAW_IMAGE=openclaw:local`) or another verified image tag before debugging guild allowlists or slash-command routing.
 
 **Alternative:** interactive login via CLI (writes config for you):
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 import uuid
 from typing import Any
@@ -50,25 +51,186 @@ CLAUDE_CODE_LOCAL_MODEL = os.environ.get("CLAUDE_CODE_LOCAL_MODEL", "")
 # If true, append synthetic claude-* ids to /v1/models (for clients that validate against the list).
 # Default off — those fake Sonnet names pollute Open WebUI / OpenClaw "active models" sync.
 CLAUDE_CODE_ADVERTISE_ALIASES = os.environ.get("CLAUDE_CODE_ADVERTISE_ALIASES", "").strip() == "1"
+DEFAULT_CONTEXT_WINDOW = int(os.environ.get("LLAMACPP_CTX_SIZE", "262144") or 262144)
+CHAT_PROFILE_ENABLED = os.environ.get("MODEL_GATEWAY_ADVERTISE_CHAT_PROFILE", "1").strip() != "0"
+CHAT_PROFILE_SUFFIX = os.environ.get("MODEL_GATEWAY_CHAT_PROFILE_SUFFIX", ":chat").strip() or ":chat"
+CHAT_PROFILE_CONTEXT_WINDOW = int(os.environ.get("MODEL_GATEWAY_CHAT_CONTEXT_WINDOW", "32768") or 32768)
 
 # TTL model list cache: avoids hitting llama-server on every /v1/models call.
 _model_cache: list = []
 _model_cache_ts: float = 0.0
+
+# Strip both <thinking> (Claude/OpenClaw format) and <think> (Qwen3/Gemma4 format).
+_THINKING_BLOCK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.IGNORECASE | re.DOTALL)
+# Only extract <result> when scoped inside an <attempt_completion> wrapper (Cline agent format).
+_ATTEMPT_COMPLETION_RE = re.compile(
+    r"<attempt_completion>\s*<result>\s*(.*?)\s*</result>\s*</attempt_completion>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _is_embedding_model_id(model_id: str) -> bool:
+    lower = model_id.lower()
+    return "embed" in lower or lower.startswith("text-embedding")
+
+
+def _chat_profile_id(model_id: str) -> str:
+    if model_id.endswith(CHAT_PROFILE_SUFFIX):
+        return model_id
+    return f"{model_id}{CHAT_PROFILE_SUFFIX}"
+
+
+def _strip_chat_profile_suffix(model_id: str) -> str:
+    if CHAT_PROFILE_ENABLED and model_id.endswith(CHAT_PROFILE_SUFFIX):
+        return model_id[: -len(CHAT_PROFILE_SUFFIX)]
+    return model_id
+
+
+def _profiled_model_entries(model_id: str, created: int, owned_by: str) -> list[dict[str, Any]]:
+    items = [{
+        "id": model_id,
+        "object": "model",
+        "created": created,
+        "owned_by": owned_by,
+        "context_window": DEFAULT_CONTEXT_WINDOW,
+        "profile": "long",
+        "base_model": model_id,
+    }]
+    if CHAT_PROFILE_ENABLED and not _is_embedding_model_id(model_id):
+        items.append({
+            "id": _chat_profile_id(model_id),
+            "object": "model",
+            "created": created,
+            "owned_by": owned_by,
+            "context_window": min(DEFAULT_CONTEXT_WINDOW, CHAT_PROFILE_CONTEXT_WINDOW),
+            "profile": "chat",
+            "base_model": model_id,
+        })
+    return items
+
+
+def _is_likely_cline_request(request: Request) -> bool:
+    """Best-effort detection for Cline's OpenAI-compatible client."""
+    ua = (request.headers.get("user-agent") or "").lower()
+    return (
+        bool(request.headers.get("x-stainless-lang"))
+        and "openai/js" in ua
+        and not request.headers.get("X-Service-Name")
+    )
+
+
+def _sanitize_assistant_content(content: Any, preserve_agent_markup: bool = False) -> Any:
+    """Normalize leaked agent-control wrappers into client-safe assistant text."""
+    if not isinstance(content, str):
+        return content
+
+    text = content.strip()
+    if not text:
+        return content
+
+    text = _THINKING_BLOCK_RE.sub("", text).strip()
+    if preserve_agent_markup:
+        return text
+
+    attempt_match = _ATTEMPT_COMPLETION_RE.search(text)
+    if attempt_match:
+        return attempt_match.group(1).strip()
+
+    return text
+
+
+def _sanitize_openai_chat_response(
+    data: dict[str, Any],
+    preserve_agent_markup: bool = False,
+) -> dict[str, Any]:
+    """Return a stricter OpenAI chat payload for clients with fragile parsers."""
+    if not isinstance(data, dict):
+        return data
+
+    choices = data.get("choices")
+    if not isinstance(choices, list):
+        return data
+
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            continue
+        if "reasoning_content" in message:
+            message.pop("reasoning_content", None)
+        if "content" in message:
+            message["content"] = _sanitize_assistant_content(
+                message["content"],
+                preserve_agent_markup=preserve_agent_markup,
+            )
+
+    return data
+
+
+def _sanitize_openai_stream_event(data: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize streamed chat chunks to a conservative OpenAI-compatible subset."""
+    if not isinstance(data, dict):
+        return data
+
+    choices = data.get("choices")
+    if not isinstance(choices, list):
+        return data
+
+    sanitized_choices: list[dict[str, Any]] = []
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        sanitized_choice = dict(choice)
+
+        delta = sanitized_choice.get("delta")
+        if isinstance(delta, dict):
+            delta = dict(delta)
+            delta.pop("reasoning_content", None)
+            if not delta:
+                sanitized_choice.pop("delta", None)
+            else:
+                sanitized_choice["delta"] = delta
+
+        message = sanitized_choice.get("message")
+        if isinstance(message, dict):
+            message = dict(message)
+            message.pop("reasoning_content", None)
+            if "content" in message:
+                message["content"] = _sanitize_assistant_content(message["content"])
+            sanitized_choice["message"] = message
+
+        has_payload = any(
+            sanitized_choice.get(key) not in (None, "", [], {})
+            for key in ("delta", "message", "finish_reason")
+        )
+        if has_payload:
+            sanitized_choices.append(sanitized_choice)
+
+    if not sanitized_choices and not data.get("usage"):
+        return None
+
+    data["choices"] = sanitized_choices
+    return data
+
+
+def _stream_chunk_bytes(obj: dict[str, Any]) -> bytes:
+    return f"data: {json.dumps(obj)}\n\n".encode()
 
 
 def _model_provider_and_id(name: str) -> tuple[str, str]:
     """Return (provider, model_id). Provider: llamacpp, vllm.
     Explicit prefixes: vllm/, llamacpp/, ollama/ (legacy), gateway/ (OpenClaw provider id)."""
     if name.startswith("vllm/") and VLLM_URL:
-        return ("vllm", name[5:])
+        return ("vllm", _strip_chat_profile_suffix(name[5:]))
     if name.startswith("llamacpp/"):
-        return ("llamacpp", name[9:])
+        return ("llamacpp", _strip_chat_profile_suffix(name[9:]))
     if name.startswith("ollama/"):
-        return ("llamacpp", name[7:])
+        return ("llamacpp", _strip_chat_profile_suffix(name[7:]))
     # OpenClaw uses agents.defaults.model.primary like "gateway/<modelId>" while /v1/models lists bare ids.
     if name.startswith("gateway/"):
-        return (DEFAULT_PROVIDER, name[8:])
-    return (DEFAULT_PROVIDER, name)
+        return (DEFAULT_PROVIDER, _strip_chat_profile_suffix(name[8:]))
+    return (DEFAULT_PROVIDER, _strip_chat_profile_suffix(name))
 
 
 def _inference_model_id(name: str) -> str:
@@ -100,7 +262,7 @@ def _service_from_headers(origin: str | None, x_service: str | None) -> str:
 
 
 def _record_throughput(
-    model: str, eval_count: int, eval_duration_ns: int, service: str = ""
+    model: str, eval_count: int, eval_duration_ns: int, service: str = "", ttft_ms: float = 0.0
 ) -> None:
     """Fire-and-forget: record throughput to dashboard for real-world stats."""
     if not DASHBOARD_URL or eval_count <= 0 or eval_duration_ns <= 0:
@@ -120,6 +282,7 @@ def _record_throughput(
                         "model": model,
                         "output_tokens_per_sec": round(tps, 1),
                         "service": service or "unknown",
+                        "ttft_ms": round(ttft_ms, 1) if ttft_ms > 0 else 0.0,
                     },
                     headers=headers if headers else None,
                 )
@@ -154,12 +317,7 @@ async def list_models():
                 for m in data.get("data", []):
                     mid = m.get("id", "")
                     if mid:
-                        objects.append({
-                            "id": mid,
-                            "object": "model",
-                            "created": m.get("created", 0) or 0,
-                            "owned_by": "llamacpp",
-                        })
+                        objects.extend(_profiled_model_entries(mid, m.get("created", 0) or 0, "llamacpp"))
         except Exception:
             pass
 
@@ -173,12 +331,8 @@ async def list_models():
                     for m in data.get("data", []):
                         mid = m.get("id", "")
                         if mid:
-                            objects.append({
-                                "id": f"vllm/{mid}" if "/" not in mid else mid,
-                                "object": "model",
-                                "created": m.get("created", 0) or 0,
-                                "owned_by": "vllm",
-                            })
+                            resolved_id = f"vllm/{mid}" if "/" not in mid else mid
+                            objects.extend(_profiled_model_entries(resolved_id, m.get("created", 0) or 0, "vllm"))
         except Exception:
             pass
 
@@ -681,7 +835,7 @@ def _normalize_messages_openai(msgs: list[dict]) -> list[dict]:
 
 
 def _record_usage_throughput(
-    model_id: str, usage: dict | None, service: str, elapsed_ns: int
+    model_id: str, usage: dict | None, service: str, elapsed_ns: int, ttft_ms: float = 0.0
 ) -> None:
     """Record real tokens/sec using wall time for the request/stream (not a fake 1s duration)."""
     if not usage:
@@ -690,62 +844,93 @@ def _record_usage_throughput(
     if ct <= 0:
         return
     dur = max(int(elapsed_ns), 1)
-    _record_throughput(model_id, ct, dur, service)
+    _record_throughput(model_id, ct, dur, service, ttft_ms=ttft_ms)
 
 
-async def _stream_llamacpp_chat_with_throughput(
+async def _restream_llamacpp_chat_from_nonstream(
     model_id: str,
     service: str,
     fwd: dict[str, Any],
     req_id: str,
+    preserve_agent_markup: bool = False,
 ):
-    """Proxy llama chat SSE; parse final usage chunk and record throughput over full stream duration."""
+    """Emit a minimal, sanitized OpenAI SSE stream from one non-stream backend call."""
+    nonstream_fwd = dict(fwd)
+    nonstream_fwd["stream"] = False
+    nonstream_fwd.pop("stream_options", None)
+
     t0 = time.perf_counter()
-    text_buf = ""
-    last_usage: dict | None = None
-    async with AsyncClient(timeout=3600.0) as client:
-        async with client.stream(
-            "POST",
+    async with AsyncClient(timeout=600.0) as client:
+        r = await client.post(
             f"{LLAMACPP_URL}/v1/chat/completions",
-            json=fwd,
+            json=nonstream_fwd,
             headers={"Content-Type": "application/json"},
-        ) as resp:
-            if resp.status_code >= 400:
-                err = (await resp.aread()).decode("utf-8", errors="replace")[:500]
-                logger.error("llama-server chat stream error status=%s body=%s", resp.status_code, err)
-                yield f"data: {json.dumps({'error': {'message': err}})}\n\n".encode()
-                return
-            async for chunk in resp.aiter_bytes():
-                yield chunk
-                text_buf += chunk.decode("utf-8", errors="replace")
-                while "\n\n" in text_buf:
-                    block, text_buf = text_buf.split("\n\n", 1)
-                    for line in block.split("\n"):
-                        line = line.strip()
-                        if not line.startswith("data: ") or line == "data: [DONE]":
-                            continue
-                        try:
-                            data = json.loads(line[6:])
-                            u = data.get("usage")
-                            if isinstance(u, dict) and int(u.get("completion_tokens") or 0) > 0:
-                                last_usage = u
-                        except json.JSONDecodeError:
-                            pass
-    # Trailing buffer (some servers omit final \n\n before EOF)
-    for line in text_buf.split("\n"):
-        line = line.strip()
-        if not line.startswith("data: ") or line == "data: [DONE]":
-            continue
-        try:
-            data = json.loads(line[6:])
-            u = data.get("usage")
-            if isinstance(u, dict) and int(u.get("completion_tokens") or 0) > 0:
-                last_usage = u
-        except json.JSONDecodeError:
-            pass
+        )
+        if r.status_code >= 400:
+            err = r.text[:500]
+            logger.error("llama-server chat non-stream error status=%s body=%s", r.status_code, err)
+            yield _stream_chunk_bytes({"error": {"message": err}})
+            yield b"data: [DONE]\n\n"
+            return
+        data = _sanitize_openai_chat_response(
+            r.json(),
+            preserve_agent_markup=preserve_agent_markup,
+        )
+
     elapsed_ns = max(int((time.perf_counter() - t0) * 1e9), 1)
-    if last_usage:
-        _record_usage_throughput(model_id, last_usage, service, elapsed_ns)
+    # ttft_ms is not measurable from a non-stream backend call; omit rather than misreport.
+    usage = data.get("usage")
+    if usage:
+        _record_usage_throughput(model_id, usage, service, elapsed_ns)
+
+    choice = (data.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    content = message.get("content") or ""
+    tool_calls = message.get("tool_calls") or []
+    model_name = data.get("model", model_id)
+    created = data.get("created", int(time.time()))
+    chunk_id = data.get("id", f"chatcmpl-{uuid.uuid4().hex[:12]}")
+
+    yield _stream_chunk_bytes({
+        "id": chunk_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model_name,
+        "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+    })
+
+    if tool_calls:
+        yield _stream_chunk_bytes({
+            "id": chunk_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model_name,
+            "choices": [{"index": 0, "delta": {"tool_calls": tool_calls}, "finish_reason": None}],
+        })
+    elif content:
+        yield _stream_chunk_bytes({
+            "id": chunk_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model_name,
+            "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
+        })
+
+    final_chunk: dict[str, Any] = {
+        "id": chunk_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model_name,
+        "choices": [{
+            "index": 0,
+            "delta": {},
+            "finish_reason": choice.get("finish_reason") or ("tool_calls" if tool_calls else "stop"),
+        }],
+    }
+    if usage:
+        final_chunk["usage"] = usage
+    yield _stream_chunk_bytes(final_chunk)
+    yield b"data: [DONE]\n\n"
 
 
 class ChatMessage(BaseModel):
@@ -820,6 +1005,7 @@ async def _chat_completions_impl(request: Request, body: dict[str, Any]):
         request.headers.get("Origin"),
         request.headers.get("X-Service-Name") or request.headers.get("X-Client-Id"),
     )
+    preserve_agent_markup = _is_likely_cline_request(request)
     req_id = request.headers.get("X-Request-ID") or f"req-{uuid.uuid4().hex[:12]}"
     messages = [
         {**m, "role": "system"} if m.get("role") == "developer" else m
@@ -876,7 +1062,13 @@ async def _chat_completions_impl(request: Request, body: dict[str, Any]):
         so.setdefault("include_usage", True)
         fwd["stream_options"] = so
         return StreamingResponse(
-            _stream_llamacpp_chat_with_throughput(model_id, service, fwd, req_id),
+            _restream_llamacpp_chat_from_nonstream(
+                model_id,
+                service,
+                fwd,
+                req_id,
+                preserve_agent_markup=preserve_agent_markup,
+            ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-Request-ID": req_id},
         )
@@ -890,6 +1082,10 @@ async def _chat_completions_impl(request: Request, body: dict[str, Any]):
         )
         r.raise_for_status()
         data = r.json()
+    data = _sanitize_openai_chat_response(
+        data,
+        preserve_agent_markup=preserve_agent_markup,
+    )
     elapsed_ns = max(int((time.perf_counter() - t0) * 1e9), 1)
     _record_usage_throughput(model_id, data.get("usage"), service, elapsed_ns)
     data["_request_id"] = req_id

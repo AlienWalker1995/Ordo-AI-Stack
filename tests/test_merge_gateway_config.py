@@ -58,7 +58,7 @@ def test_inject_discord_from_discord_token(monkeypatch: pytest.MonkeyPatch) -> N
     assert data["channels"]["discord"]["token"] == {
         "source": "env",
         "provider": "default",
-        "id": "DISCORD_BOT_TOKEN",
+        "id": "DISCORD_TOKEN",
     }
 
 
@@ -133,6 +133,44 @@ def test_merge_discord_guild_allowlist_on(monkeypatch: pytest.MonkeyPatch) -> No
     assert mg._merge_discord_guild_allowlist_from_env(data) is True
     assert data["channels"]["discord"]["guilds"]["111111111111111111"]["requireMention"] is False
     assert data["channels"]["discord"]["guilds"]["222222222222222222"]["requireMention"] is False
+
+
+def test_merge_discord_guild_allowlist_removes_stale(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guilds removed from OPENCLAW_DISCORD_GUILD_IDS are removed from openclaw.json."""
+    monkeypatch.setenv("OPENCLAW_DISCORD_GUILD_IDS", "111111111111111111")
+    data: dict = {"channels": {"discord": {"guilds": {
+        "111111111111111111": {"requireMention": False},
+        "999999999999999999": {"requireMention": False},  # stale — not in env
+    }}}}
+    assert mg._merge_discord_guild_allowlist_from_env(data) is True
+    guilds = data["channels"]["discord"]["guilds"]
+    assert "111111111111111111" in guilds
+    assert "999999999999999999" not in guilds
+
+
+def test_merge_discord_user_allowlist_scoped_to_env_guilds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """User IDs are applied only to env-managed guilds, not to auto-discovered ones."""
+    monkeypatch.setenv("OPENCLAW_DISCORD_GUILD_IDS", "111111111111111111")
+    monkeypatch.setenv("OPENCLAW_DISCORD_USER_IDS", "555555555555555555")
+    data: dict = {"channels": {"discord": {"guilds": {
+        "111111111111111111": {"requireMention": False},   # env-managed
+        "888888888888888888": {"requireMention": False},   # auto-discovered — must not be touched
+    }}}}
+    assert mg._merge_discord_user_allowlist_from_env(data) is True
+    guilds = data["channels"]["discord"]["guilds"]
+    assert guilds["111111111111111111"].get("users") == ["555555555555555555"]
+    assert "users" not in guilds["888888888888888888"]
+
+
+def test_merge_discord_user_allowlist_replaces_not_appends(monkeypatch: pytest.MonkeyPatch) -> None:
+    """User list is set to exactly the env value, not accumulated across runs."""
+    monkeypatch.setenv("OPENCLAW_DISCORD_GUILD_IDS", "111111111111111111")
+    monkeypatch.setenv("OPENCLAW_DISCORD_USER_IDS", "555555555555555555")
+    data: dict = {"channels": {"discord": {"guilds": {
+        "111111111111111111": {"requireMention": False, "users": ["555555555555555555", "old_user"]},
+    }}}}
+    mg._merge_discord_user_allowlist_from_env(data)
+    assert data["channels"]["discord"]["guilds"]["111111111111111111"]["users"] == ["555555555555555555"]
 
 
 def test_merge_unrestricted_gateway_container_off(monkeypatch: pytest.MonkeyPatch) -> None:

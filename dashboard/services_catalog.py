@@ -47,7 +47,7 @@ SERVICES = [
      "hint": (
          f"Control UI: port {_OPENCLAW_GATEWAY_PORT} with ?token=. "
          f"Not :{_OPENCLAW_UI_PORT} (browser/CDP bridge). Logs: docker compose logs openclaw-gateway"
-     )},
+    )},
     {"id": "qdrant", "name": "Qdrant", "port": 6333, "url": "http://localhost:6333",
      "check": "http://qdrant:6333/readyz",
      "hint": "Vector DB for RAG. Drop files in data/rag-input/ (with --profile rag) or upload via Open WebUI Documents tab."},

@@ -31,10 +31,11 @@ from dashboard.routes_orchestration import router as orchestration_router
 from dashboard.services_catalog import OPS_SERVICE_MAP
 from dashboard.settings import AUTH_REQUIRED as _AUTH_REQUIRED
 from dashboard.settings import DASHBOARD_AUTH_TOKEN, OPENCLAW_CONFIG_PATH
+from dashboard.orchestration_db import get_job_counts, get_outbox_stats, load_store
 
-# Match llama-server --ctx-size + merge_gateway_config.py (OpenClaw compaction).
-_ctx_raw = os.environ.get("LLAMACPP_CTX_SIZE", "131072").strip()
-OPENCLAW_CONTEXT_WINDOW = int(_ctx_raw) if _ctx_raw.isdigit() and int(_ctx_raw) > 0 else 131072
+# Default OpenClaw model metadata to the server cap unless a lower compaction target is set explicitly.
+_ctx_raw = os.environ.get("OPENCLAW_CONTEXT_WINDOW", os.environ.get("LLAMACPP_CTX_SIZE", "262144")).strip()
+OPENCLAW_CONTEXT_WINDOW = int(_ctx_raw) if _ctx_raw.isdigit() and int(_ctx_raw) > 0 else 262144
 
 # Dashboard auth (optional bearer token only; see dashboard.settings)
 
@@ -197,9 +198,28 @@ async def ollama_library():
     return {"models": models, "ok": True}
 
 
+_GGUF_MODELS_DIR = Path(os.environ.get("GGUF_MODELS_DIR", "/gguf-models"))
+
+
+def _scan_gguf_models() -> list[dict]:
+    """Return all .gguf files on disk with their sizes."""
+    models = []
+    try:
+        for p in sorted(_GGUF_MODELS_DIR.iterdir()):
+            if p.suffix.lower() == ".gguf" and p.is_file():
+                models.append({"name": p.name, "size": p.stat().st_size, "modified_at": int(p.stat().st_mtime)})
+    except Exception:
+        pass
+    return models
+
+
 @app.get("/api/ollama/models")
 async def ollama_models():
-    """List models available in Ollama (via model-gateway per PRD Principle 4)."""
+    """List GGUF models available on disk (primary) merged with gateway active-model info."""
+    disk_models = await asyncio.to_thread(_scan_gguf_models)
+    if disk_models:
+        return {"models": disk_models, "ok": True}
+    # Fallback: ask model-gateway (only returns the currently loaded model)
     async with AsyncClient(timeout=30.0) as client:
         try:
             r = await client.get(f"{MODEL_GATEWAY_URL}/api/tags")
@@ -231,6 +251,32 @@ async def ollama_delete(req: PullRequest):
             raise
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Ollama request failed: {e}")
+
+
+@app.post("/api/llamacpp/switch")
+async def llamacpp_switch_model(req: PullRequest, request: Request):
+    """Switch the active llamacpp model: writes LLAMACPP_MODEL to .env via ops-controller, then recreates llamacpp."""
+    model = (req.model or "").strip()
+    if not model or ".." in model or "/" in model:
+        raise HTTPException(status_code=400, detail="Invalid model filename")
+    if not model.lower().endswith(".gguf"):
+        raise HTTPException(status_code=400, detail="Model must be a .gguf filename")
+
+    # 1. Update LLAMACPP_MODEL in .env
+    code, data = await _ops_request(
+        "POST", "/env/set", request=request,
+        json={"key": "LLAMACPP_MODEL", "value": model, "confirm": True},
+    )
+    if code not in (200, 201):
+        raise HTTPException(status_code=502, detail=f"Failed to update .env: {data}")
+
+    # 2. Recreate llamacpp so the new env var takes effect
+    code2, data2 = await _ops_request(
+        "POST", "/services/llamacpp/recreate", request=request,
+        json={"confirm": True},
+    )
+    started = code2 in (200, 201, 202)
+    return {"ok": True, "model": model, "llamacpp_restarting": started}
 
 
 def _run_ollama_pull(model: str):
@@ -814,7 +860,7 @@ MCP_CATALOG = [
     "mongodb", "postgres", "stripe", "notion", "grafana", "elasticsearch",
     "documentation", "perplexity", "excalidraw", "miro", "neo4j",
     "time", "slack", "filesystem", "puppeteer", "context7", "memory",
-    "firecrawl", "github", "git", "atlassian", "obsidian",
+    "firecrawl", "github", "git", "atlassian",
     "hugging-face",
 ]
 
@@ -1042,6 +1088,7 @@ async def mcp_remove(req: McpRemoveRequest):
 
 # In-memory store: model -> list of output_tokens_per_sec (rolling, max 500)
 _throughput_samples: dict[str, list[float]] = {}
+_ttft_samples: dict[str, list[float]] = {}
 _MAX_SAMPLES_PER_MODEL = 500
 
 # Last benchmark result (persists across page refresh until dashboard restart)
@@ -1051,7 +1098,8 @@ _last_benchmark: dict | None = None
 _service_usage: list[dict] = []
 _MAX_SERVICE_USAGE = 500
 
-DASHBOARD_DATA_PATH = Path(os.environ.get("DASHBOARD_DATA_PATH", "/tmp"))
+DASHBOARD_DATA_PATH = Path(os.environ.get("DASHBOARD_DATA_PATH", "./data/dashboard")).resolve()
+DASHBOARD_DATA_PATH.mkdir(parents=True, exist_ok=True)
 _THROUGHPUT_FILE = DASHBOARD_DATA_PATH / "throughput.json"
 CLAUDE_CODE_ENV_OVERWRITE_FILE = DASHBOARD_DATA_PATH / "claude_code_env_overwrite.json"
 
@@ -1085,12 +1133,13 @@ def _save_claude_code_env_overwrite_enabled(enabled: bool) -> None:
 
 def _load_throughput_state() -> None:
     """Load throughput samples and last benchmark from disk (R4)."""
-    global _throughput_samples, _last_benchmark, _service_usage
+    global _throughput_samples, _ttft_samples, _last_benchmark, _service_usage
     if not _THROUGHPUT_FILE.exists():
         return
     try:
         data = json.loads(_THROUGHPUT_FILE.read_text())
         _throughput_samples = {k: v for k, v in (data.get("samples") or {}).items() if isinstance(v, list)}
+        _ttft_samples = {k: v for k, v in (data.get("ttft_samples") or {}).items() if isinstance(v, list)}
         _last_benchmark = data.get("last_benchmark") if isinstance(data.get("last_benchmark"), dict) else None
         _service_usage = [u for u in (data.get("service_usage") or []) if isinstance(u, dict)][-_MAX_SERVICE_USAGE:]
     except Exception as e:
@@ -1103,6 +1152,7 @@ def _save_throughput_state() -> None:
         _THROUGHPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
         _THROUGHPUT_FILE.write_text(json.dumps({
             "samples": _throughput_samples,
+            "ttft_samples": _ttft_samples,
             "last_benchmark": _last_benchmark,
             "service_usage": _service_usage[-_MAX_SERVICE_USAGE:],
         }))
@@ -1131,6 +1181,7 @@ class ThroughputRecordRequest(BaseModel):
     model: str = ""
     output_tokens_per_sec: float = 0.0
     service: str = ""
+    ttft_ms: float = 0.0
 
 
 @app.post("/api/throughput/record")
@@ -1145,12 +1196,19 @@ async def throughput_record(req: ThroughputRecordRequest):
         _throughput_samples[model].append(req.output_tokens_per_sec)
         if len(_throughput_samples[model]) > _MAX_SAMPLES_PER_MODEL:
             _throughput_samples[model] = _throughput_samples[model][-_MAX_SAMPLES_PER_MODEL:]
+        if req.ttft_ms > 0:
+            if model not in _ttft_samples:
+                _ttft_samples[model] = []
+            _ttft_samples[model].append(req.ttft_ms)
+            if len(_ttft_samples[model]) > _MAX_SAMPLES_PER_MODEL:
+                _ttft_samples[model] = _ttft_samples[model][-_MAX_SAMPLES_PER_MODEL:]
         # Service usage (which service is taxing which model)
         service = (req.service or "unknown").strip()[:64]
         _service_usage.append({
             "model": model,
             "service": service,
             "tps": round(req.output_tokens_per_sec, 1),
+            "ttft_ms": round(req.ttft_ms, 1) if req.ttft_ms > 0 else 0.0,
             "ts": time.time(),
         })
         if len(_service_usage) > _MAX_SERVICE_USAGE:
@@ -1191,6 +1249,7 @@ async def throughput_service_usage():
                 {
                     "name": svc,
                     "last_tps": max(u["tps"] for u in vals),
+                    "last_ttft_ms": max(u.get("ttft_ms", 0.0) for u in vals),
                     "last_ts": max(u["ts"] for u in vals),
                     "count": len(vals),
                 }
@@ -1206,23 +1265,79 @@ async def throughput_stats():
     result: dict[str, dict] = {}
     with _state_lock:
         snapshot = {m: list(s) for m, s in _throughput_samples.items()}
+        ttft_snapshot = {m: list(s) for m, s in _ttft_samples.items()}
         benchmark = dict(_last_benchmark) if _last_benchmark else None
     for model, samples in snapshot.items():
         if not samples:
             continue
         sorted_s = sorted(samples)
+        ttfts = ttft_snapshot.get(model, [])
+        sorted_ttfts = sorted(ttfts)
         result[model] = {
             "latest": round(samples[-1], 1),
             "peak": round(max(samples), 1),
             "p50": round(_percentile(sorted_s, 50), 1),
             "p95": round(_percentile(sorted_s, 95), 1),
             "p99": round(_percentile(sorted_s, 99), 1),
+            "ttft_p50_ms": round(_percentile(sorted_ttfts, 50), 1) if sorted_ttfts else 0.0,
+            "ttft_p95_ms": round(_percentile(sorted_ttfts, 95), 1) if sorted_ttfts else 0.0,
             "sample_count": len(samples),
         }
     out: dict = {"models": result, "ok": True}
     if benchmark:
         out["last_benchmark"] = benchmark
     return out
+
+
+@app.get("/api/performance/summary")
+async def performance_summary():
+    """Compact performance summary for dashboards, automation, and audits."""
+    with _state_lock:
+        snapshot = {m: list(s) for m, s in _throughput_samples.items()}
+        ttft_snapshot = {m: list(s) for m, s in _ttft_samples.items()}
+        benchmark = dict(_last_benchmark) if _last_benchmark else None
+        recent_usage = list(_service_usage)
+    now = time.time()
+    recent_usage = [u for u in recent_usage if (now - u["ts"]) < 86400]
+    top_models = []
+    for model, samples in snapshot.items():
+        if not samples:
+            continue
+        sorted_s = sorted(samples)
+        ttfts = ttft_snapshot.get(model, [])
+        sorted_ttfts = sorted(ttfts)
+        top_models.append(
+            {
+                "model": model,
+                "latest_tps": round(samples[-1], 1),
+                "p95_tps": round(_percentile(sorted_s, 95), 1),
+                "latest_ttft_ms": round(ttfts[-1], 1) if ttfts else 0.0,
+                "p95_ttft_ms": round(_percentile(sorted_ttfts, 95), 1) if sorted_ttfts else 0.0,
+                "sample_count": len(samples),
+            }
+        )
+    top_models.sort(key=lambda item: item["sample_count"], reverse=True)
+    try:
+        rag = await asyncio.wait_for(rag_status(), timeout=2.0)
+    except asyncio.TimeoutError:
+        rag = {"ok": False, "error": "timeout"}
+    return {
+        "ok": True,
+        "llamacpp_ctx_size": int(os.environ.get("LLAMACPP_CTX_SIZE", "262144") or 262144),
+        "openclaw_context_window": OPENCLAW_CONTEXT_WINDOW,
+        "worker_concurrency": int(os.environ.get("WORKER_CONCURRENCY", "1") or 1),
+        "throughput": {
+            "tracked_models": len(top_models),
+            "top_models": top_models[:10],
+            "last_benchmark": benchmark,
+            "service_events_24h": len(recent_usage),
+        },
+        "orchestration": {
+            "jobs": get_job_counts(DASHBOARD_DATA_PATH),
+            "outbox": get_outbox_stats(DASHBOARD_DATA_PATH),
+        },
+        "rag": rag,
+    }
 
 
 @app.get("/api/ollama/ps")
@@ -1415,21 +1530,41 @@ class DefaultModelRequest(BaseModel):
 
 @app.get("/api/config/default-model")
 async def get_default_model(request: Request):
-    """Return DEFAULT_MODEL from project .env (via ops-controller) when configured."""
+    """Return DEFAULT_MODEL plus the Open WebUI-specific default from project .env when configured."""
     if OPS_CONTROLLER_TOKEN:
         code, data = await _ops_request("GET", "/env/DEFAULT_MODEL", request=request)
         if code == 200 and isinstance(data, dict):
-            return {"default_model": (data.get("value") or "").strip()}
-    return {"default_model": os.environ.get("DEFAULT_MODEL", "")}
+            code2, data2 = await _ops_request("GET", "/env/OPEN_WEBUI_DEFAULT_MODEL", request=request)
+            return {
+                "default_model": (data.get("value") or "").strip(),
+                "open_webui_default_model": (data2.get("value") or "").strip()
+                if code2 == 200 and isinstance(data2, dict)
+                else "",
+            }
+    return {
+        "default_model": os.environ.get("DEFAULT_MODEL", ""),
+        "open_webui_default_model": os.environ.get("OPEN_WEBUI_DEFAULT_MODEL", ""),
+    }
+
+
+def _open_webui_default_model(name: str) -> str:
+    model = (name or "").strip()
+    if not model:
+        return ""
+    lower = model.lower()
+    if model.endswith(":chat") or "embed" in lower:
+        return model
+    return f"{model}:chat"
 
 
 @app.post("/api/config/default-model")
 async def set_default_model(req: DefaultModelRequest, request: Request):
-    """Write DEFAULT_MODEL to .env and recreate open-webui so the change takes effect."""
+    """Write DEFAULT_MODEL and OPEN_WEBUI_DEFAULT_MODEL to .env and recreate open-webui."""
     # Ollama allows namespaced ids: owner/model:tag (slashes required). Only reject empty / traversal.
     name = (req.model or "").strip()
     if not name or ".." in name:
         raise HTTPException(status_code=400, detail="Invalid model name")
+    open_webui_model = _open_webui_default_model(name)
 
     # 1. Write to .env
     code, data = await _ops_request(
@@ -1438,6 +1573,12 @@ async def set_default_model(req: DefaultModelRequest, request: Request):
     )
     if code >= 400:
         raise HTTPException(status_code=502, detail=f"env/set failed: {data.get('detail', data)}")
+    code_ui, data_ui = await _ops_request(
+        "POST", "/env/set", request=request,
+        json={"key": "OPEN_WEBUI_DEFAULT_MODEL", "value": open_webui_model, "confirm": True},
+    )
+    if code_ui >= 400:
+        raise HTTPException(status_code=502, detail=f"env/set failed: {data_ui.get('detail', data_ui)}")
 
     # 2. Recreate open-webui so DEFAULT_MODELS env var is picked up
     code2, data2 = await _ops_request(
@@ -1452,6 +1593,7 @@ async def set_default_model(req: DefaultModelRequest, request: Request):
     return {
         "ok": code2 in (200, 201),
         "model": name,
+        "open_webui_model": open_webui_model,
         "webui_recreated": code2 in (200, 201),
         "openclaw_restarted": code3 in (200, 201),
         "webui_error": data2.get("detail") if code2 >= 400 else None,
@@ -1495,16 +1637,21 @@ def _make_openclaw_model(item: dict) -> dict:
     name = mid.split("/")[-1] if "/" in mid else mid
     name = name.replace(":", " ").replace("-", " ").replace(".", " ")
     name = " ".join(w.capitalize() for w in name.split())
+    if item.get("profile") == "chat":
+        name = f"{name} Chat"
     lower = mid.lower()
     has_vision = "vision" in lower or "llava" in lower or "puppy" in lower
     is_reasoning = "r1" in lower or "reasoning" in lower or "qwen3" in lower or "qwen-3" in lower
+    context_window = item.get("context_window")
+    if not isinstance(context_window, int) or context_window <= 0:
+        context_window = OPENCLAW_CONTEXT_WINDOW
     return {
         "id": mid,
         "name": name,
         "reasoning": is_reasoning,
         "input": ["text", "image"] if has_vision else ["text"],
         "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-        "contextWindow": OPENCLAW_CONTEXT_WINDOW,
+        "contextWindow": context_window,
         "maxTokens": 8192,
     }
 

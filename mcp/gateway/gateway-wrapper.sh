@@ -8,6 +8,8 @@ CONFIG_FILE="${MCP_CONFIG_FILE:-/mcp-config/servers.txt}"
 REGISTRY_FILE="$(dirname "$CONFIG_FILE")/registry.json"
 PORT="${MCP_GATEWAY_PORT:-8811}"
 GATEWAY_BIN="/docker-mcp"
+POLL_SEC="${MCP_GATEWAY_POLL_SEC:-5}"
+RELOAD_DEBOUNCE_SEC="${MCP_GATEWAY_RELOAD_DEBOUNCE_SEC:-20}"
 
 # Ensure config exists with default
 mkdir -p "$(dirname "$CONFIG_FILE")"
@@ -40,6 +42,39 @@ resolve_registry_custom() {
   fi
 }
 
+config_fingerprint() {
+  reg_dir="$(dirname "$CONFIG_FILE")"
+  custom_src="$reg_dir/registry-custom.yaml"
+  custom_dst="$reg_dir/registry-custom.docker.yaml"
+  servers="$(read_servers)"
+  resolve_registry_custom
+  src_sum=""
+  dst_sum=""
+  if [ -f "$custom_src" ]; then
+    src_sum="$(cksum "$custom_src" 2>/dev/null | awk '{print $1":"$2}')"
+  fi
+  if [ -f "$custom_dst" ]; then
+    dst_sum="$(cksum "$custom_dst" 2>/dev/null | awk '{print $1":"$2}')"
+  fi
+  printf '%s|%s|%s' "$servers" "$src_sum" "$dst_sum"
+}
+
+graceful_restart() {
+  old_pid="$1"
+  kill "$old_pid" 2>/dev/null || true
+  i=1
+  while [ "$i" -le 30 ]; do
+    if ! kill -0 "$old_pid" 2>/dev/null; then
+      wait "$old_pid" 2>/dev/null || true
+      return 0
+    fi
+    sleep 1
+    i=$((i+1))
+  done
+  kill -9 "$old_pid" 2>/dev/null || true
+  wait "$old_pid" 2>/dev/null || true
+}
+
 start_gateway() {
   servers=$(read_servers)
   servers=${servers:-duckduckgo,n8n,tavily,comfyui,orchestration}
@@ -60,23 +95,37 @@ start_gateway() {
 }
 
 pid=$(start_gateway)
-last_content=$(read_servers)
+last_fingerprint=$(config_fingerprint)
+pending_fingerprint=""
+pending_since=0
 
 while true; do
-  sleep 10
-  content=$(read_servers 2>/dev/null || echo "duckduckgo,n8n,tavily,comfyui,orchestration")
-  [ -z "$content" ] && content="duckduckgo,n8n,tavily,comfyui,orchestration"
-  if [ "$content" != "$last_content" ]; then
-    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Config changed. Reloading gateway..."
-    kill "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
-    last_content="$content"
-    pid=$(start_gateway)
+  sleep "$POLL_SEC"
+  current_fingerprint=$(config_fingerprint)
+  if [ "$current_fingerprint" != "$last_fingerprint" ]; then
+    now=$(date +%s)
+    if [ "$pending_fingerprint" != "$current_fingerprint" ]; then
+      pending_fingerprint="$current_fingerprint"
+      pending_since="$now"
+      echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Config change detected. Waiting ${RELOAD_DEBOUNCE_SEC}s for it to settle..."
+    elif [ $((now - pending_since)) -ge "$RELOAD_DEBOUNCE_SEC" ]; then
+      echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Config stable. Reloading gateway..."
+      graceful_restart "$pid"
+      pid=$(start_gateway)
+      last_fingerprint="$current_fingerprint"
+      pending_fingerprint=""
+      pending_since=0
+    fi
+  else
+    pending_fingerprint=""
+    pending_since=0
   fi
   # Check if gateway died unexpectedly
   if ! kill -0 "$pid" 2>/dev/null; then
     echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Gateway exited. Restarting..."
-    last_content=""
+    last_fingerprint=""
+    pending_fingerprint=""
+    pending_since=0
     pid=$(start_gateway)
   fi
 done

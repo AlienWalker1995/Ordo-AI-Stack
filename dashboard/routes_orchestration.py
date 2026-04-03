@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/orchestration", tags=["orchestration"])
 
-DATA_DIR = Path(os.environ.get("DASHBOARD_DATA_PATH", "/data/dashboard")).resolve()
+DATA_DIR = Path(os.environ.get("DASHBOARD_DATA_PATH", "./data/dashboard")).resolve()
 WORKFLOWS_DIR = Path(os.environ.get("COMFYUI_WORKFLOWS_DIR", "/comfyui-workflows")).resolve()
 N8N_PUBLISH_WEBHOOK_URL = os.environ.get("N8N_PUBLISH_WEBHOOK_URL", "").strip()
 OPS_CONTROLLER_URL = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000").rstrip("/")
@@ -84,6 +84,7 @@ def _ops_headers(request: Request | None) -> dict[str, str]:
     return h
 
 
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 load_store(DATA_DIR)
 
 

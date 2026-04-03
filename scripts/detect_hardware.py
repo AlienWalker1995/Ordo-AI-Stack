@@ -142,6 +142,21 @@ def comfyui_memory_limit(mode: str, total_ram_gb: float) -> str:
     return f"{min(target, available)}G"
 
 
+def small_service_memory_limit(total_ram_gb: float, *, floor_gb: int, ratio: float, cap_gb: int) -> str:
+    """Bound memory for non-inference services so they cannot crowd out core workloads."""
+    target = int(total_ram_gb * ratio)
+    target = max(floor_gb, min(cap_gb, target))
+    return f"{target}G"
+
+
+def cpu_limit(logical_cpus: int | None, *, floor: int, divisor: int, cap: int) -> str:
+    """Compute a conservative Compose CPU quota for sidecar services."""
+    total = logical_cpus or os.cpu_count() or floor
+    target = max(floor, total // divisor)
+    target = min(cap, target)
+    return str(target)
+
+
 def write_wslconfig(total_ram_gb: float) -> None:
     """
     Write (or update) ~/.wslconfig with memory sized to actual host RAM.
@@ -272,6 +287,8 @@ def format_override(cfg: dict) -> str:
                 lines.append(f"    image: {v}")
             elif k == "platform":
                 lines.append(f"    platform: {v}")
+            elif k in ("mem_limit", "cpus", "shm_size", "gpus"):
+                lines.append(f"    {k}: {v}")
             elif k == "environment":
                 lines.append("    environment:")
                 for ek, ev in v.items():
@@ -322,6 +339,19 @@ def main() -> int:
 
     llamacpp_mem = llamacpp_memory_limit(ram_gb)
     comfyui_mem = comfyui_override if comfyui_override else comfyui_memory_limit(mode, ram_gb)
+    embed_mem = small_service_memory_limit(ram_gb, floor_gb=4, ratio=0.05, cap_gb=12)
+    openwebui_mem = small_service_memory_limit(ram_gb, floor_gb=2, ratio=0.06, cap_gb=8)
+    n8n_mem = small_service_memory_limit(ram_gb, floor_gb=1, ratio=0.03, cap_gb=4)
+    gateway_mem = small_service_memory_limit(ram_gb, floor_gb=1, ratio=0.02, cap_gb=2)
+    mcp_mem = small_service_memory_limit(ram_gb, floor_gb=1, ratio=0.02, cap_gb=2)
+    qdrant_mem = small_service_memory_limit(ram_gb, floor_gb=1, ratio=0.03, cap_gb=4)
+    worker_mem = small_service_memory_limit(ram_gb, floor_gb=1, ratio=0.02, cap_gb=3)
+    logical_cpus = os.cpu_count() or 8
+    gateway_cpus = cpu_limit(logical_cpus, floor=2, divisor=8, cap=4)
+    openwebui_cpus = cpu_limit(logical_cpus, floor=2, divisor=6, cap=4)
+    n8n_cpus = cpu_limit(logical_cpus, floor=1, divisor=12, cap=2)
+    worker_cpus = cpu_limit(logical_cpus, floor=2, divisor=8, cap=4)
+    qdrant_cpus = cpu_limit(logical_cpus, floor=1, divisor=12, cap=2)
 
     print(f"Detected: compute={mode}, RAM={ram_gb:.0f} GB")
     print(f"  llama.cpp limit : {llamacpp_mem}  (RAM minus {OS_HEADROOM_GB}GB OS + {CONTAINER_HEADROOM_GB}GB containers)")
@@ -334,102 +364,139 @@ def main() -> int:
 
     # Compose overrides per GPU mode
     nvidia_gpu = [{"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}]
+    # Utility-only access for monitoring (pynvml/NVML) — no compute allocation, no VRAM reserved.
+    nvidia_utility = [{"driver": "nvidia", "count": "all", "capabilities": ["utility"]}]
+
+    common_sidecars = {
+        "model-gateway": {"mem_limit": gateway_mem, "cpus": gateway_cpus},
+        "mcp-gateway": {"mem_limit": mcp_mem, "cpus": "1"},
+        "open-webui": {"mem_limit": openwebui_mem, "shm_size": "1g", "cpus": openwebui_cpus},
+        "n8n": {"mem_limit": n8n_mem, "cpus": n8n_cpus},
+        "worker": {"mem_limit": worker_mem, "cpus": worker_cpus},
+        "qdrant": {"mem_limit": qdrant_mem, "cpus": qdrant_cpus},
+    }
     overrides = {
         "nvidia": {
             "llamacpp": {
-                "deploy": {
-                    "resources": {
-                        "limits": {"memory": llamacpp_mem},
-                        "reservations": {"devices": nvidia_gpu},
-                    }
-                }
+                "mem_limit": llamacpp_mem,
+                "shm_size": "2g",
+                "deploy": {"resources": {"reservations": {"devices": nvidia_gpu}}},
             },
+            "llamacpp-embed": {
+                "mem_limit": embed_mem,
+                "shm_size": "1g",
+                "deploy": {"resources": {"reservations": {"devices": nvidia_gpu}}},
+            },
+            # Dashboard needs utility capability to read NVML GPU stats (no compute allocation).
             "dashboard": {
-                "deploy": {
-                    "resources": {
-                        "reservations": {"devices": nvidia_gpu},
-                    }
-                }
+                "deploy": {"resources": {"reservations": {"devices": nvidia_utility}}},
             },
+            **common_sidecars,
             "comfyui": {
                 "image": "yanwk/comfyui-boot:cu128-slim",
+                "mem_limit": comfyui_mem,
+                "shm_size": "8g",
                 "environment": {
-                    # normalvram: keep more weights on GPU (lowvram offloads heavily to CPU — slow LTX text encode).
                     "CLI_ARGS": "${COMFYUI_CLI_ARGS:---disable-xformers --normalvram --enable-manager}",
-                    # Override in .env: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True (no pinned) if LTX Gemma hits cudaErrorInvalidValue on GPU→CPU copy.
                     "PYTORCH_CUDA_ALLOC_CONF": "${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,pinned_use_cuda_host_register:True}",
                     "HF_TOKEN": "${HF_TOKEN:-}",
                     "GITHUB_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN:-}",
                 },
-                "deploy": {
-                    "resources": {
-                        "limits": {"memory": comfyui_mem},
-                        "reservations": {"devices": nvidia_gpu},
-                    }
-                },
+                "deploy": {"resources": {"reservations": {"devices": nvidia_gpu}}},
             },
         },
         "amd": {
             "llamacpp": {
                 "image": "${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}",
-                "deploy": {"resources": {"limits": {"memory": llamacpp_mem}}},
+                "mem_limit": llamacpp_mem,
+                "shm_size": "2g",
                 "devices": ["/dev/kfd", "/dev/dri"],
                 "security_opt": ["seccomp:unconfined"],
             },
+            "llamacpp-embed": {
+                "image": "${LLAMACPP_EMBED_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}",
+                "mem_limit": embed_mem,
+                "shm_size": "1g",
+                "devices": ["/dev/kfd", "/dev/dri"],
+                "security_opt": ["seccomp:unconfined"],
+            },
+            **common_sidecars,
             "comfyui": {
                 "image": "yanwk/comfyui-boot:rocm",
+                "mem_limit": comfyui_mem,
+                "shm_size": "8g",
                 "environment": {
                     "CLI_ARGS": "${COMFYUI_CLI_ARGS:---disable-xformers --normalvram --enable-manager}",
                     "HF_TOKEN": "${HF_TOKEN:-}",
                     "GITHUB_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN:-}",
                 },
-                "deploy": {"resources": {"limits": {"memory": comfyui_mem}}},
                 "devices": ["/dev/kfd", "/dev/dri"],
                 "security_opt": ["seccomp:unconfined"],
             },
         },
         "intel": {
             "llamacpp": {
-                "deploy": {"resources": {"limits": {"memory": llamacpp_mem}}},
+                "mem_limit": llamacpp_mem,
+                "shm_size": "2g",
             },
+            "llamacpp-embed": {
+                "mem_limit": embed_mem,
+                "shm_size": "1g",
+            },
+            **common_sidecars,
             "comfyui": {
                 "image": "yanwk/comfyui-boot:xpu",
+                "mem_limit": comfyui_mem,
+                "shm_size": "8g",
                 "environment": {
                     "CLI_ARGS": "${COMFYUI_CLI_ARGS:---disable-xformers --normalvram --enable-manager}",
                     "HF_TOKEN": "${HF_TOKEN:-}",
                     "GITHUB_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN:-}",
                 },
-                "deploy": {"resources": {"limits": {"memory": comfyui_mem}}},
                 "devices": ["/dev/dri"],
             },
         },
         "apple_silicon": {
             "llamacpp": {
-                "deploy": {"resources": {"limits": {"memory": llamacpp_mem}}},
+                "mem_limit": llamacpp_mem,
+                "shm_size": "2g",
             },
+            "llamacpp-embed": {
+                "mem_limit": embed_mem,
+                "shm_size": "1g",
+            },
+            **common_sidecars,
             "comfyui": {
                 "image": "thiagoin/comfyui:arm64",
                 "platform": "linux/arm64",
+                "mem_limit": comfyui_mem,
+                "shm_size": "8g",
                 "environment": {
                     "CLI_ARGS": "${COMFYUI_CLI_ARGS:---cpu --enable-manager}",
                     "HF_TOKEN": "${HF_TOKEN:-}",
                     "GITHUB_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN:-}",
                 },
-                "deploy": {"resources": {"limits": {"memory": comfyui_mem}}},
             },
         },
         "cpu": {
             "llamacpp": {
-                "deploy": {"resources": {"limits": {"memory": llamacpp_mem}}},
+                "mem_limit": llamacpp_mem,
+                "shm_size": "2g",
             },
+            "llamacpp-embed": {
+                "mem_limit": embed_mem,
+                "shm_size": "1g",
+            },
+            **common_sidecars,
             "comfyui": {
                 "image": "yanwk/comfyui-boot:cpu",
+                "mem_limit": comfyui_mem,
+                "shm_size": "8g",
                 "environment": {
                     "CLI_ARGS": "${COMFYUI_CLI_ARGS:---cpu --enable-manager}",
                     "HF_TOKEN": "${HF_TOKEN:-}",
                     "GITHUB_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN:-}",
                 },
-                "deploy": {"resources": {"limits": {"memory": comfyui_mem}}},
             },
         },
     }

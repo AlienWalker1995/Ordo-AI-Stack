@@ -347,6 +347,47 @@ def recover_stale_running_jobs(data_dir: Path) -> int:
         return result.rowcount
 
 
+def get_job_counts(data_dir: Path) -> dict[str, int]:
+    with _connect(data_dir) as conn:
+        rows = conn.execute(
+            "SELECT state, COUNT(*) AS count FROM jobs GROUP BY state"
+        ).fetchall()
+    counts = {state.value: 0 for state in JobState}
+    for row in rows:
+        counts[str(row["state"])] = int(row["count"])
+    return counts
+
+
+def get_outbox_stats(data_dir: Path) -> dict[str, int]:
+    with _connect(data_dir) as conn:
+        pending = conn.execute(
+            "SELECT COUNT(*) FROM publish_outbox WHERE delivered_at IS NULL"
+        ).fetchone()[0]
+        delivered = conn.execute(
+            "SELECT COUNT(*) FROM publish_outbox WHERE delivered_at IS NOT NULL"
+        ).fetchone()[0]
+    return {"pending": int(pending), "delivered": int(delivered)}
+
+
+def checkpoint_wal(data_dir: Path) -> dict[str, Any]:
+    with _connect(data_dir) as conn:
+        row = conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+    if not row:
+        return {"ok": False}
+    return {
+        "ok": True,
+        "busy": int(row[0]),
+        "log_frames": int(row[1]),
+        "checkpointed_frames": int(row[2]),
+    }
+
+
+def vacuum_db(data_dir: Path) -> None:
+    with _connect(data_dir) as conn:
+        conn.execute("VACUUM")
+        conn.commit()
+
+
 # ── Publish outbox ─────────────────────────────────────────────────────────────
 
 def _outbox_key(job_id: str, webhook_url: str) -> str:

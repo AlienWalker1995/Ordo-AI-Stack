@@ -1,5 +1,6 @@
 """Contract test for Model Gateway API (OpenAI-compatible)."""
 import importlib.util
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -52,3 +53,173 @@ def test_v1_models_returns_openai_format(mock_llamacpp_models_response):
         assert "id" in m
         assert "object" in m
         assert m["object"] == "model"
+
+
+def test_v1_models_advertises_chat_profile_alias():
+    """GET /v1/models includes a lower-context chat alias for non-embedding models."""
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=MagicMock(
+        status_code=200,
+        json=MagicMock(return_value={
+            "object": "list",
+            "data": [{"id": "qwen3-14b.gguf", "object": "model", "created": 0}],
+        }),
+    ))
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch.dict(os.environ, {"MODEL_GATEWAY_CHAT_CONTEXT_WINDOW": "32768"}, clear=False):
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            gateway = _load_gateway()
+            client = TestClient(gateway.app)
+            r = client.get("/v1/models")
+
+    assert r.status_code == 200
+    items = {m["id"]: m for m in r.json()["data"]}
+    assert "qwen3-14b.gguf" in items
+    assert "qwen3-14b.gguf:chat" in items
+    assert items["qwen3-14b.gguf"]["context_window"] == gateway.DEFAULT_CONTEXT_WINDOW
+    assert items["qwen3-14b.gguf:chat"]["context_window"] == 32768
+
+
+def test_chat_profile_alias_resolves_to_base_model():
+    """Synthetic chat aliases should resolve back to the underlying backend model id."""
+    gateway = _load_gateway()
+    provider, model_id = gateway._model_provider_and_id("gateway/qwen3-14b.gguf:chat")
+    assert provider == gateway.DEFAULT_PROVIDER
+    assert model_id == "qwen3-14b.gguf"
+
+
+def _chat_completion_client(payload: dict):
+    """httpx.AsyncClient mock for a non-streaming chat completion response."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = payload
+    resp.raise_for_status = MagicMock()
+
+    mock = AsyncMock()
+    mock.post = AsyncMock(return_value=resp)
+    mock.__aenter__ = AsyncMock(return_value=mock)
+    mock.__aexit__ = AsyncMock(return_value=None)
+    return mock
+
+
+def test_chat_completions_strips_reasoning_and_agent_wrappers():
+    """POST /v1/chat/completions returns plain assistant text for fragile clients."""
+    gateway = _load_gateway()
+    payload = {
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "model.gguf",
+        "choices": [{
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+                "role": "assistant",
+                "content": (
+                    "<thinking>internal chain</thinking>\n"
+                    "<attempt_completion><result>Hello from the model.</result></attempt_completion>"
+                ),
+                "reasoning_content": "internal chain",
+            },
+        }],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+    }
+
+    with patch.object(gateway, "AsyncClient", return_value=_chat_completion_client(payload)):
+        client = TestClient(gateway.app)
+        r = client.post(
+            "/v1/chat/completions",
+            json={"model": "model.gguf", "messages": [{"role": "user", "content": "hi"}]},
+        )
+
+    assert r.status_code == 200
+    data = r.json()
+    message = data["choices"][0]["message"]
+    assert message["content"] == "Hello from the model."
+    assert "reasoning_content" not in message
+
+
+def _reasoning_streaming_client():
+    """Mock backend chat completion used by the normalized restreaming path."""
+    fake_resp = MagicMock()
+    fake_resp.status_code = 200
+    fake_resp.json.return_value = {
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "model.gguf",
+        "choices": [{
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+                "role": "assistant",
+                "content": "Hello",
+                "reasoning_content": "internal",
+            },
+        }],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
+    fake_resp.raise_for_status = MagicMock()
+
+    mock = AsyncMock()
+    mock.post = AsyncMock(return_value=fake_resp)
+    mock.__aenter__ = AsyncMock(return_value=mock)
+    mock.__aexit__ = AsyncMock(return_value=None)
+    return mock
+
+
+def test_streaming_chat_completions_omit_reasoning_only_chunks():
+    """Streaming /v1/chat/completions drops reasoning-only deltas for strict clients."""
+    gateway = _load_gateway()
+
+    with patch.object(gateway, "AsyncClient", return_value=_reasoning_streaming_client()):
+        client = TestClient(gateway.app)
+        r = client.post(
+            "/v1/chat/completions",
+            json={"model": "model.gguf", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+        )
+
+    assert r.status_code == 200
+    body = r.text
+    assert "reasoning_content" not in body
+    assert '"content": "Hello"' in body or '"content":"Hello"' in body
+
+
+def test_cline_requests_preserve_attempt_completion_markup():
+    """Cline-compatible requests keep XML control tags while dropping reasoning noise."""
+    gateway = _load_gateway()
+    payload = {
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "model.gguf",
+        "choices": [{
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+                "role": "assistant",
+                "content": (
+                    "<thinking>internal chain</thinking>\n"
+                    "<attempt_completion><result>Hello from the model.</result></attempt_completion>"
+                ),
+                "reasoning_content": "internal chain",
+            },
+        }],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+    }
+
+    with patch.object(gateway, "AsyncClient", return_value=_chat_completion_client(payload)):
+        client = TestClient(gateway.app)
+        r = client.post(
+            "/v1/chat/completions",
+            json={"model": "model.gguf", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"user-agent": "OpenAI/JS 4.96.0", "x-stainless-lang": "js"},
+        )
+
+    assert r.status_code == 200
+    data = r.json()
+    message = data["choices"][0]["message"]
+    assert "<attempt_completion>" in message["content"]
+    assert "reasoning_content" not in message

@@ -46,9 +46,9 @@ GATEWAY_PROVIDER = {
 }
 
 MODEL_GATEWAY_URL = os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435")
-# Match llama-server --ctx-size (LLAMACPP_CTX_SIZE) for OpenClaw compaction.
-_ctx_raw = os.environ.get("LLAMACPP_CTX_SIZE", "131072").strip()
-LLAMACPP_CTX = int(_ctx_raw) if _ctx_raw.isdigit() and int(_ctx_raw) > 0 else 131072
+# Default OpenClaw model metadata to the server cap unless a lower compaction target is set explicitly.
+_ctx_raw = os.environ.get("OPENCLAW_CONTEXT_WINDOW", os.environ.get("LLAMACPP_CTX_SIZE", "262144")).strip()
+LLAMACPP_CTX = int(_ctx_raw) if _ctx_raw.isdigit() and int(_ctx_raw) > 0 else 262144
 
 # OpenClaw 2026.3.x: tools.elevated.allowFrom.<provider> is a string[] (sender allowlist), not boolean.
 _ELEVATED_ALLOW_ALL_SENDERS = ["*"]
@@ -178,14 +178,16 @@ def _inject_channel_secret_refs(data: dict) -> bool:
     if not isinstance(channels, dict):
         return False
 
-    discord_env = (
-        os.environ.get("DISCORD_TOKEN", "").strip()
-        or os.environ.get("DISCORD_BOT_TOKEN", "").strip()
-    )
-    if discord_env:
+    discord_env_id = ""
+    if os.environ.get("DISCORD_BOT_TOKEN", "").strip():
+        discord_env_id = "DISCORD_BOT_TOKEN"
+    elif os.environ.get("DISCORD_TOKEN", "").strip():
+        discord_env_id = "DISCORD_TOKEN"
+
+    if discord_env_id:
         cd = channels.setdefault("discord", {})
         if isinstance(cd, dict):
-            ref = _secret_ref("DISCORD_BOT_TOKEN")
+            ref = _secret_ref(discord_env_id)
             if cd.get("token") != ref:
                 cd["token"] = ref
                 modified = True
@@ -311,11 +313,12 @@ def _merge_unrestricted_gateway_container(data: dict) -> bool:
 
 
 def _merge_discord_guild_allowlist_from_env(data: dict) -> bool:
-    """Register guild IDs in channels.discord.guilds when OPENCLAW_DISCORD_GUILD_IDS is set.
+    """Reconcile channels.discord.guilds against OPENCLAW_DISCORD_GUILD_IDS.
 
-    With groupPolicy allowlist (OpenClaw default), messages and slash commands are rejected
-    until each server is listed under channels.discord.guilds. Per upstream docs, if a guild
-    has no per-channel `channels` block, all channels in that guild are allowed.
+    Adds guilds not yet present and removes any that are no longer in the env list,
+    making the env var the authoritative source when it is set. Guilds that were
+    manually added (not via this function) are removed if they are absent from the env.
+    When the env var is unset, nothing is touched.
     """
     raw = os.environ.get("OPENCLAW_DISCORD_GUILD_IDS", "").strip()
     if not raw:
@@ -338,12 +341,128 @@ def _merge_discord_guild_allowlist_from_env(data: dict) -> bool:
         guilds = {}
         disc["guilds"] = guilds
     modified = False
+    # Add guilds not yet present.
     for gid in ids:
         if gid not in guilds:
             # Private-server default: respond without @mention; adjust in JSON if needed.
             guilds[gid] = {"requireMention": False}
             modified = True
+    # Remove guilds no longer in the env list.
+    stale = [gid for gid in list(guilds) if gid not in ids]
+    for gid in stale:
+        del guilds[gid]
+        modified = True
     return modified
+
+
+def _merge_discord_user_allowlist_from_env(data: dict) -> bool:
+    """Set the users allowlist on env-managed guilds from OPENCLAW_DISCORD_USER_IDS.
+
+    Only guilds listed in OPENCLAW_DISCORD_GUILD_IDS are touched; guilds that OpenClaw
+    auto-discovered outside that list are left unchanged. This prevents user IDs from
+    leaking into guilds the operator never explicitly allowed.
+    When OPENCLAW_DISCORD_GUILD_IDS is unset, falls back to applying to all guilds.
+    """
+    raw = os.environ.get("OPENCLAW_DISCORD_USER_IDS", "").strip()
+    if not raw:
+        return False
+    user_ids = []
+    for part in raw.split(","):
+        p = part.strip()
+        if p.isdigit():
+            user_ids.append(p)
+    if not user_ids:
+        return False
+
+    # Determine which guilds are env-managed (empty set = apply to all).
+    env_guild_ids: set[str] = set()
+    raw_guilds = os.environ.get("OPENCLAW_DISCORD_GUILD_IDS", "").strip()
+    if raw_guilds:
+        for part in raw_guilds.split(","):
+            p = part.strip()
+            if p.isdigit():
+                env_guild_ids.add(p)
+
+    channels = data.get("channels")
+    if not isinstance(channels, dict):
+        return False
+    disc = channels.get("discord")
+    if not isinstance(disc, dict):
+        return False
+    guilds = disc.get("guilds")
+    if not isinstance(guilds, dict) or not guilds:
+        print(
+            "merge_gateway_config: OPENCLAW_DISCORD_USER_IDS is set but no guild entries exist in "
+            "channels.discord.guilds — user IDs not applied. Set OPENCLAW_DISCORD_GUILD_IDS to "
+            "register guilds first, or add them manually to openclaw.json.",
+            file=sys.stderr,
+        )
+        return False
+    modified = False
+    for gid, guild_cfg in guilds.items():
+        if env_guild_ids and gid not in env_guild_ids:
+            continue
+        if not isinstance(guild_cfg, dict):
+            continue
+        if guild_cfg.get("users") != user_ids:
+            guild_cfg["users"] = list(user_ids)
+            modified = True
+    return modified
+
+
+def _ensure_openclaw_state_dirs(config_root: Path) -> None:
+    """Bootstrap core state directories expected after a clean wipe."""
+    required = [
+        config_root / "agents" / "main" / "agent",
+        config_root / "agents" / "main" / "sessions",
+        config_root / "canvas",
+        config_root / "cron",
+        config_root / "devices",
+        config_root / "identity",
+        config_root / "logs",
+        config_root / "memory",
+    ]
+    for path in required:
+        path.mkdir(parents=True, exist_ok=True)
+
+
+def _gguf_model_entry(filename: str, context_window: int = LLAMACPP_CTX) -> dict:
+    """Build an OpenClaw model dict from a bare GGUF filename."""
+    lower = filename.lower()
+    has_vision = "vision" in lower or "llava" in lower or "puppy" in lower
+    is_embed = "embed" in lower or "embedding" in lower
+    is_reasoning = (
+        "r1" in lower or "reasoning" in lower
+        or "qwen3" in lower  # Qwen3 family has built-in thinking mode
+        or "gemma" in lower  # Gemma 4 family has thinking mode
+    )
+    name = filename.replace("-", " ").replace("_", " ").replace(".", " ")
+    name = " ".join(w.capitalize() for w in name.split())
+    return {
+        "id": filename,
+        "name": name,
+        "reasoning": is_reasoning and not is_embed,
+        "input": ["text", "image"] if has_vision else ["text"],
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": min(context_window, 8192) if is_embed else context_window,
+        "maxTokens": 8192,
+    }
+
+
+def _scan_gguf_models_from_disk() -> list[dict] | None:
+    """Scan GGUF_MODELS_DIR for .gguf files and return model dicts. Returns None if dir not available."""
+    gguf_dir = Path(os.environ.get("GGUF_MODELS_DIR", "/gguf-models"))
+    if not gguf_dir.is_dir():
+        return None
+    models = []
+    try:
+        for p in sorted(gguf_dir.iterdir()):
+            if p.suffix.lower() == ".gguf" and p.is_file():
+                models.append(_gguf_model_entry(p.name))
+    except Exception as e:
+        print(f"merge_gateway_config: could not scan GGUF dir {gguf_dir}: {e}", file=sys.stderr)
+        return None
+    return models if models else None
 
 
 def _fetch_models_from_gateway() -> list[dict] | None:
@@ -371,24 +490,30 @@ def _fetch_models_from_gateway() -> list[dict] | None:
         # Skip ollama/-prefixed duplicates; the bare ID routes fine through the gateway
         if mid.startswith("ollama/"):
             continue
-        # Derive name from id (ollama/qwen2.5:7b -> Qwen 2.5 7B)
-        name = mid.split("/")[-1] if "/" in mid else mid
-        name = name.replace(":", " ").replace("-", " ").replace(".", " ")
-        name = " ".join(w.capitalize() for w in name.split())
-        # Vision/embed heuristic
+        # Skip :chat profile aliases — these are UI convenience aliases for Open WebUI,
+        # not separate models. OpenClaw should use the base model ID.
+        if m.get("profile") == "chat":
+            continue
         lower_id = mid.lower()
         has_vision = "vision" in lower_id or "llava" in lower_id or "puppy" in lower_id
         is_reasoning = (
             "r1" in lower_id or "reasoning" in lower_id
-            or "qwen3" in lower_id  # Qwen3 family has built-in thinking mode
+            or "qwen3" in lower_id
+            or "gemma" in lower_id
         )
+        name = mid.split("/")[-1] if "/" in mid else mid
+        name = name.replace(":", " ").replace("-", " ").replace(".", " ")
+        name = " ".join(w.capitalize() for w in name.split())
+        context_window = m.get("context_window")
+        if not isinstance(context_window, int) or context_window <= 0:
+            context_window = LLAMACPP_CTX
         models.append({
             "id": mid,
             "name": name,
             "reasoning": is_reasoning,
             "input": ["text", "image"] if has_vision else ["text"],
             "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-            "contextWindow": LLAMACPP_CTX,
+            "contextWindow": context_window,
             "maxTokens": 8192,
         })
     return models if models else None
@@ -415,14 +540,15 @@ def main() -> int:
         host_candidate = _repo_root() / "data" / "openclaw" / "openclaw.json"
         if host_candidate.is_file():
             config_path = host_candidate
-    if not config_path.exists():
-        return 0  # No config yet; ensure_dirs or first run will create it
-
-    try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
-        print(f"merge_gateway_config: skip (read error): {e}", file=sys.stderr)
-        return 0
+    if config_path.exists():
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"merge_gateway_config: skip (read error): {e}", file=sys.stderr)
+            return 0
+    else:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        data = {}
 
     providers = data.setdefault("models", {}).setdefault("providers", {})
     modified = False
@@ -444,6 +570,8 @@ def main() -> int:
     if _merge_discord_guild_allowlist_from_env(data):
         modified = True
         did_guild_allowlist = True
+    if _merge_discord_user_allowlist_from_env(data):
+        modified = True
 
     did_unrestricted_container = False
 
@@ -462,13 +590,19 @@ def main() -> int:
         modified = True
         msg = "removed direct ollama provider (all models via gateway)"
 
-    # Fetch models from model-gateway (Ollama); fallback to defaults if unreachable
-    gateway_models = _fetch_models_from_gateway()
-    if gateway_models:
-        msg = f"synced {len(gateway_models)} models from model-gateway"
+    # Prefer disk scan (all GGUFs) over gateway fetch (only loaded model).
+    # Fall back to gateway, then static defaults.
+    disk_models = _scan_gguf_models_from_disk()
+    if disk_models:
+        gateway_models = disk_models
+        msg = f"synced {len(gateway_models)} models from GGUF disk scan"
     else:
-        gateway_models = [m.copy() for m in DEFAULT_GATEWAY_MODELS]
-        msg = f"using {len(gateway_models)} default models (gateway unreachable)"
+        gateway_models = _fetch_models_from_gateway()
+        if gateway_models:
+            msg = f"synced {len(gateway_models)} models from model-gateway"
+        else:
+            gateway_models = [m.copy() for m in DEFAULT_GATEWAY_MODELS]
+            msg = f"using {len(gateway_models)} default models (gateway unreachable)"
 
     if "gateway" not in providers:
         providers["gateway"] = {
@@ -494,6 +628,9 @@ def main() -> int:
 
     # Inject gateway auth token from env so it lives in .env, not in committed config
     gateway = data.setdefault("gateway", {})
+    if gateway.get("mode") != "local":
+        gateway["mode"] = "local"
+        modified = True
     auth = gateway.setdefault("auth", {})
     if isinstance(auth, dict):
         token = os.environ.get("OPENCLAW_GATEWAY_TOKEN", "").strip()
@@ -578,6 +715,8 @@ def main() -> int:
             if isinstance(auto, dict) and auto.get("enabled") is not False:
                 auto["enabled"] = False
                 modified = True
+
+    _ensure_openclaw_state_dirs(config_path.parent)
 
     if not modified:
         return 0
