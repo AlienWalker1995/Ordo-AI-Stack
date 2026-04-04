@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Normalize OpenClaw cron job delivery fields to safe stack conventions."""
+"""Normalize OpenClaw cron job delivery fields and model IDs to safe stack conventions."""
 from __future__ import annotations
 
 import json
@@ -62,13 +62,24 @@ def main() -> int:
             changed = True
             normalized += 1
         job_id = job.get("id", "<unknown>")
-        payload = job.get("payload") or {}
-        model = payload.get("model") if isinstance(payload, dict) else None
-        if not model or not str(model).startswith("gateway/"):
-            print(
-                f"normalize_cron_jobs: WARNING: job '{job_id}' has payload.model={model!r}"
-                " — must be a gateway/… id (e.g. gateway/my-model.gguf); cron will fail at runtime"
-            )
+        payload = job.get("payload") if isinstance(job.get("payload"), dict) else None
+        if payload is None:
+            continue
+        # Remove explicit payload.model so the job uses agents.defaults.model.primary.
+        # llamacpp is single-model; hardcoding a specific model in each job causes stale
+        # references whenever the active model changes.
+        if "model" in payload:
+            print(f"normalize_cron_jobs: removing payload.model from job '{job_id}' → will use agent default")
+            del payload["model"]
+            changed = True
+            normalized += 1
+        # Remove thinking override — Qwen3 thinking tokens add latency for simple tasks.
+        # Let agent defaults govern; omitting thinking = no forced reasoning mode.
+        if "thinking" in payload:
+            print(f"normalize_cron_jobs: removing payload.thinking from job '{job_id}' → will use agent default")
+            del payload["thinking"]
+            changed = True
+            normalized += 1
 
     if changed:
         JOBS_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

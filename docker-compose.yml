@@ -13,6 +13,7 @@ services:
       --n-gpu-layers ${LLAMACPP_GPU_LAYERS:--1}
       --flash-attn auto
       --jinja
+      --no-mmap
     volumes:
       - ${BASE_PATH:-.}/models/gguf:/models:ro
     # Large GGUFs can take many minutes before /health returns 200; 503 during load fails curl -f.
@@ -592,6 +593,7 @@ services:
     environment:
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
       - MODEL_GATEWAY_URL=http://model-gateway:11435
+      - LLAMACPP_MODEL=${LLAMACPP_MODEL:-}
       - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-262144}
       - OPENCLAW_CONTEXT_WINDOW=${OPENCLAW_CONTEXT_WINDOW:-${LLAMACPP_CTX_SIZE:-262144}}
       # Comma-separated Discord guild snowflake IDs → channels.discord.guilds (required for allowlist policy)
@@ -610,6 +612,7 @@ services:
       - |
         set -eu
         python3 /scripts/merge_gateway_config.py
+        python3 /scripts/normalize_cron_jobs.py
     networks:
       - frontend
 

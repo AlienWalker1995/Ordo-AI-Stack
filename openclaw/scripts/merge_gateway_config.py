@@ -450,15 +450,26 @@ def _gguf_model_entry(filename: str, context_window: int = LLAMACPP_CTX) -> dict
 
 
 def _scan_gguf_models_from_disk() -> list[dict] | None:
-    """Scan GGUF_MODELS_DIR for .gguf files and return model dicts. Returns None if dir not available."""
+    """Scan GGUF_MODELS_DIR for .gguf files.
+
+    If LLAMACPP_MODEL is set, returns only that one file (the loaded model).
+    Embed/embedding models are always excluded — they are not chat models.
+    """
     gguf_dir = Path(os.environ.get("GGUF_MODELS_DIR", "/gguf-models"))
     if not gguf_dir.is_dir():
         return None
+    active_model = os.environ.get("LLAMACPP_MODEL", "").strip()
     models = []
     try:
         for p in sorted(gguf_dir.iterdir()):
-            if p.suffix.lower() == ".gguf" and p.is_file():
-                models.append(_gguf_model_entry(p.name))
+            if p.suffix.lower() != ".gguf" or not p.is_file():
+                continue
+            lower = p.name.lower()
+            if "embed" in lower or "embedding" in lower:
+                continue
+            if active_model and p.name != active_model:
+                continue
+            models.append(_gguf_model_entry(p.name))
     except Exception as e:
         print(f"merge_gateway_config: could not scan GGUF dir {gguf_dir}: {e}", file=sys.stderr)
         return None
@@ -652,6 +663,17 @@ def main() -> int:
     compaction = agents_defaults.setdefault("compaction", {})
     if compaction.get("mode") != "default":
         compaction["mode"] = "default"
+        modified = True
+    # Ensure cron/isolated sessions have enough runway for Tavily + LLM generation.
+    if agents_defaults.get("timeoutSeconds") != 300:
+        agents_defaults["timeoutSeconds"] = 300
+        modified = True
+    # Disable idle-token timeout — large MoE/reasoning models can pause many seconds during
+    # prompt prefill before the first token streams. Default 60 s kills valid generations.
+    # Set to 0 to rely on timeoutSeconds only.
+    llm_defaults = agents_defaults.setdefault("llm", {})
+    if llm_defaults.get("idleTimeoutSeconds") != 0:
+        llm_defaults["idleTimeoutSeconds"] = 0
         modified = True
 
     # Native web_search (Brave, etc.): keep disabled — use MCP gateway__call + duckduckgo__search.

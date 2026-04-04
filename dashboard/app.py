@@ -336,7 +336,7 @@ async def set_active_model(req: PullRequest, request: Request):
     )
     results["open_webui_restarting"] = code3 in (200, 201, 202)
 
-    # 3. Update OpenClaw agents.defaults.model.primary + restart openclaw-gateway
+    # 3. Update OpenClaw agents.defaults.model.primary + model list + restart openclaw-gateway
     openclaw_model = f"gateway/{bare_name}"
     if OPENCLAW_CONFIG_PATH.exists():
         try:
@@ -344,6 +344,18 @@ async def set_active_model(req: PullRequest, request: Request):
             model_cfg = cfg.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})
             model_cfg["primary"] = openclaw_model
             model_cfg.setdefault("fallbacks", [])
+            # Keep gateway model list to only the active model — llamacpp is single-model
+            active_entry = _make_openclaw_model({"id": model, "context_window": OPENCLAW_CONTEXT_WINDOW})
+            providers = cfg.setdefault("models", {}).setdefault("providers", {})
+            if "gateway" not in providers:
+                providers["gateway"] = {**_OPENCLAW_GATEWAY_BASE, "models": [active_entry]}
+            else:
+                gw = providers["gateway"]
+                if isinstance(gw, dict):
+                    for k, v in _OPENCLAW_GATEWAY_BASE.items():
+                        if k != "models":
+                            gw[k] = v
+                    gw["models"] = [active_entry]
             OPENCLAW_CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
             code4, _ = await _ops_request(
                 "POST", "/services/openclaw-gateway/restart", request=request, json={"confirm": True}

@@ -958,6 +958,13 @@
     }
     .hw-bar-fill.warn span { background: var(--warning); }
     .hw-bar-fill.danger span { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+    .hw-stat-gpu { flex: 2; min-width: 180px; }
+    .hw-stat-gpu-free { font-size: .6rem; color: var(--muted); font-family: var(--font-mono); margin-top: 1px; }
+    .hw-stat-sublabel {
+      font-size: .55rem; text-transform: uppercase; letter-spacing: .1em;
+      color: var(--muted); font-weight: 600; margin-top: var(--space-2);
+    }
+    .hw-bar-fill.gpu-util span { background: #7c6fcd; }
 
     /* ── Code elements ── */
     code {
@@ -1006,10 +1013,13 @@
         <span class="hw-stat-val" id="hw-disk">—</span>
         <div class="hw-bar-fill" id="hw-disk-bar"><span></span></div>
       </div>
-      <div class="hw-stat" id="hw-gpu-wrap" style="display:none">
+      <div class="hw-stat hw-stat-gpu" id="hw-gpu-wrap" style="display:none">
         <span class="hw-stat-label" id="hw-gpu-name">GPU VRAM</span>
         <span class="hw-stat-val" id="hw-vram">—</span>
+        <span class="hw-stat-gpu-free" id="hw-vram-free"></span>
         <div class="hw-bar-fill" id="hw-vram-bar"><span></span></div>
+        <span class="hw-stat-sublabel">GPU Compute</span>
+        <div class="hw-bar-fill gpu-util" id="hw-gpu-util-bar"><span></span></div>
       </div>
     </div>
 
@@ -2742,10 +2752,11 @@
           const t = vTotGb;
           const vramPct = t > 0 ? (u / t) * 100 : 0;
           document.getElementById('hw-gpu-name').textContent = (d.gpu.name || 'GPU').replace(/NVIDIA /i, '');
-          let vramText = u.toFixed(1) + ' / ' + t.toFixed(1) + ' GB';
-          if (d.gpu.utilization_pct != null) vramText += ' · ' + d.gpu.utilization_pct + '% util';
-          document.getElementById('hw-vram').textContent = vramText;
+          document.getElementById('hw-vram').textContent = u.toFixed(1) + ' / ' + t.toFixed(1) + ' GB';
+          document.getElementById('hw-vram-free').textContent = (t - u).toFixed(1) + ' GB free';
           setBar(document.getElementById('hw-vram-bar'), vramPct);
+          const utilPct = d.gpu.utilization_pct != null ? Number(d.gpu.utilization_pct) : 0;
+          setBar(document.getElementById('hw-gpu-util-bar'), utilPct);
           document.getElementById('hw-gpu-sep').style.display = '';
           document.getElementById('hw-gpu-wrap').style.display = '';
         } else {
