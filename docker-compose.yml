@@ -89,9 +89,7 @@ services:
       - THROUGHPUT_RECORD_TOKEN=${THROUGHPUT_RECORD_TOKEN:-}
       - MODEL_CACHE_TTL_SEC=${MODEL_CACHE_TTL_SEC:-60}
       - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-262144}
-      - MODEL_GATEWAY_ADVERTISE_CHAT_PROFILE=${MODEL_GATEWAY_ADVERTISE_CHAT_PROFILE:-1}
-      - MODEL_GATEWAY_CHAT_PROFILE_SUFFIX=${MODEL_GATEWAY_CHAT_PROFILE_SUFFIX:-:chat}
-      - MODEL_GATEWAY_CHAT_CONTEXT_WINDOW=${MODEL_GATEWAY_CHAT_CONTEXT_WINDOW:-32768}
+      - OPENCLAW_MAX_INPUT_TOKENS=${OPENCLAW_MAX_INPUT_TOKENS:-30720}
       # Local model used when Claude Code sends a "claude-*" model name
       - CLAUDE_CODE_LOCAL_MODEL=${CLAUDE_CODE_LOCAL_MODEL:-}
       # Set to 1 only if a client requires claude-* ids in GET /v1/models (pollutes OpenClaw sync if on)
@@ -655,6 +653,8 @@ services:
         condition: service_started
     environment:
       - MCP_GATEWAY_URL=http://mcp-gateway:${MCP_GATEWAY_PORT:-8811}/mcp
+      - OPENCLAW_MCP_CONNECT_TIMEOUT_MS=${OPENCLAW_MCP_CONNECT_TIMEOUT_MS:-10000}
+      - OPENCLAW_MCP_REQUEST_TIMEOUT_MS=${OPENCLAW_MCP_REQUEST_TIMEOUT_MS:-900000}
     volumes:
       - ${OPENCLAW_CONFIG_DIR:-${BASE_PATH:-.}/data/openclaw}:/config
       - openclaw-extensions:/extensions
@@ -669,6 +669,8 @@ services:
         PLUGIN_DIR=/extensions/openclaw-mcp-bridge
         MANIFEST="$$PLUGIN_DIR/openclaw.plugin.json"
         MCP_URL="$${MCP_GATEWAY_URL:-http://mcp-gateway:8811/mcp}"
+        MCP_CONNECT_TIMEOUT_MS="$${OPENCLAW_MCP_CONNECT_TIMEOUT_MS:-10000}"
+        MCP_REQUEST_TIMEOUT_MS="$${OPENCLAW_MCP_REQUEST_TIMEOUT_MS:-900000}"
 
         # Prefer Ordo AI Stack fork (registers namespaced MCP tools); else npm pack upstream
         if [ -f /fork-openclaw-mcp-bridge/dist/index.js ]; then
@@ -723,7 +725,9 @@ services:
                     "url": { "type": "string" },
                     "enabled": { "type": "boolean" },
                     "apiKey": { "type": "string" },
-                    "toolPrefix": { "type": "string" }
+                    "toolPrefix": { "type": "string" },
+                    "connectTimeoutMs": { "type": "number" },
+                    "requestTimeoutMs": { "type": "number" }
                   },
                   "required": ["url"]
                 }
@@ -745,7 +749,19 @@ services:
             const p = d.plugins = d.plugins || {};
             const e = p.entries = p.entries || {};
             if (e['openclaw-mcp-bridge']) { process.exit(0); }
-            e['openclaw-mcp-bridge'] = {enabled:true,config:{servers:{gateway:{url:'$$MCP_URL'}},debug:false}};
+            e['openclaw-mcp-bridge'] = {
+              enabled:true,
+              config:{
+                servers:{
+                  gateway:{
+                    url:'$$MCP_URL',
+                    connectTimeoutMs:Number('$$MCP_CONNECT_TIMEOUT_MS'),
+                    requestTimeoutMs:Number('$$MCP_REQUEST_TIMEOUT_MS')
+                  }
+                },
+                debug:false
+              }
+            };
             p.enabled = true;
             fs.writeFileSync('$$CONFIG', JSON.stringify(d,null,2));
             console.log('add_mcp_plugin_config: added openclaw-mcp-bridge to plugins.entries');
@@ -879,6 +895,38 @@ services:
     tty: true
     init: true
     entrypoint: ["node", "/app/dist/index.js"]
+    networks:
+      - frontend
+
+  openclaude-cli:
+    profiles: [openclaude-cli]
+    build:
+      context: .
+      dockerfile: openclaude/Dockerfile
+      args:
+        OPENCLAUDE_NPM_VERSION: ${OPENCLAUDE_NPM_VERSION:-latest}
+    depends_on:
+      model-gateway:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      HOME: /home/node
+      TERM: xterm-256color
+      NODE_ENV: production
+      BROWSER: echo
+      CLAUDE_CODE_USE_OPENAI: "1"
+      OPENAI_API_KEY: ${OPENCLAUDE_OPENAI_API_KEY:-local}
+      OPENAI_BASE_URL: http://model-gateway:${MODEL_GATEWAY_PORT:-11435}/v1
+      OPENAI_MODEL: ${OPENCLAUDE_MODEL:-${DEFAULT_MODEL:-model.gguf}}
+    volumes:
+      - ${BASE_PATH:-.}:/workspace
+      - ${BASE_PATH:-.}/data/openclaude:/home/node/.claude
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    init: true
+    restart: "no"
     networks:
       - frontend
 

@@ -33,14 +33,10 @@ def _post_json(url: str, body: dict[str, Any]) -> tuple[int, dict[str, Any], flo
         return resp.status, json.loads(resp.read().decode("utf-8")), elapsed
 
 
-def _pick_model(models: list[dict[str, Any]], prefer_chat: bool) -> str:
+def _pick_model(models: list[dict[str, Any]]) -> str:
     ids = [str(item.get("id", "")) for item in models if item.get("id")]
-    if prefer_chat:
-        for model_id in ids:
-            if model_id.endswith(":chat"):
-                return model_id
     for model_id in ids:
-        if ":chat" not in model_id and "embed" not in model_id.lower():
+        if "embed" not in model_id.lower():
             return model_id
     if ids:
         return ids[0]
@@ -76,12 +72,11 @@ def main() -> int:
     parser.add_argument("--requests", type=int, default=4)
     parser.add_argument("--concurrency", type=int, default=2)
     parser.add_argument("--max-tokens", type=int, default=256)
-    parser.add_argument("--prefer-chat-profile", action="store_true")
     args = parser.parse_args()
 
     models_payload = _get_json(f"{args.gateway_url.rstrip('/')}/v1/models")
     models = models_payload.get("data", []) if isinstance(models_payload, dict) else []
-    model = args.model or _pick_model(models, prefer_chat=args.prefer_chat_profile)
+    model = args.model or _pick_model(models)
 
     results: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=max(1, args.concurrency)) as pool:

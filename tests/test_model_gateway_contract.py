@@ -1,6 +1,5 @@
 """Contract test for Model Gateway API (OpenAI-compatible)."""
 import importlib.util
-import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -55,39 +54,19 @@ def test_v1_models_returns_openai_format(mock_llamacpp_models_response):
         assert m["object"] == "model"
 
 
-def test_v1_models_advertises_chat_profile_alias():
-    """GET /v1/models includes a lower-context chat alias for non-embedding models."""
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=MagicMock(
-        status_code=200,
-        json=MagicMock(return_value={
-            "object": "list",
-            "data": [{"id": "qwen3-14b.gguf", "object": "model", "created": 0}],
-        }),
-    ))
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-
-    with patch.dict(os.environ, {"MODEL_GATEWAY_CHAT_CONTEXT_WINDOW": "32768"}, clear=False):
-        with patch("httpx.AsyncClient", return_value=mock_client):
-            gateway = _load_gateway()
-            client = TestClient(gateway.app)
-            r = client.get("/v1/models")
-
-    assert r.status_code == 200
-    items = {m["id"]: m for m in r.json()["data"]}
-    assert "qwen3-14b.gguf" in items
-    assert "qwen3-14b.gguf:chat" in items
-    assert items["qwen3-14b.gguf"]["context_window"] == gateway.DEFAULT_CONTEXT_WINDOW
-    assert items["qwen3-14b.gguf:chat"]["context_window"] == 32768
-
-
-def test_chat_profile_alias_resolves_to_base_model():
-    """Synthetic chat aliases should resolve back to the underlying backend model id."""
+def test_openclaw_trim_messages_to_budget():
+    """_trim_messages_to_budget reduces messages when they exceed the budget."""
     gateway = _load_gateway()
-    provider, model_id = gateway._model_provider_and_id("gateway/qwen3-14b.gguf:chat")
-    assert provider == gateway.DEFAULT_PROVIDER
-    assert model_id == "qwen3-14b.gguf"
+    messages = [
+        {"role": "system", "content": "You are helpful."},
+        {"role": "user", "content": "x " * 5000},
+        {"role": "assistant", "content": "Sure, here is a response."},
+        {"role": "user", "content": "Follow up question."},
+    ]
+    trimmed, stats = gateway._trim_messages_to_budget(messages, 512)
+    assert stats["after"] <= 512
+    assert stats["after"] < stats["before"]
+    assert stats["before"] > 512
 
 
 def _chat_completion_client(payload: dict):

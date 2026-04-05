@@ -114,6 +114,7 @@ Auto-generated: **`overrides/compute.yml`** (from hardware detection). Do not co
   ./compose run --rm model-puller
   ./compose run --rm comfyui-model-puller
   ./compose run --rm openclaw-cli onboard
+  ./compose --profile openclaude-cli run --rm openclaude-cli
   ```
 
 - **RAG:** `docker compose --profile rag up -d` and ingest paths per [Getting started — RAG](docs/GETTING_STARTED.md#rag-documents-in-chat).

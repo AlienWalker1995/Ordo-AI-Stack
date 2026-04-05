@@ -48,7 +48,8 @@
       "Bash(find /c/dev/AI-toolkit/data/openclaw -name \"*.json\" ! -path \"*/sessions/*\" ! -path \"*/__pycache__/*\" -exec wc -l {} +)",
       "Bash(wc -c \"C:\\\\dev\\\\AI-toolkit\\\\data\\\\openclaw\\\\agents\\\\main\\\\sessions/\"*.jsonl*)",
       "Bash(du -sh \"C:\\\\dev\\\\AI-toolkit\\\\data\\\\openclaw\\\\workspace/\"*/)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(cp:*)"
     ]
   }
 }

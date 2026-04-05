@@ -52,9 +52,9 @@ CLAUDE_CODE_LOCAL_MODEL = os.environ.get("CLAUDE_CODE_LOCAL_MODEL", "")
 # Default off — those fake Sonnet names pollute Open WebUI / OpenClaw "active models" sync.
 CLAUDE_CODE_ADVERTISE_ALIASES = os.environ.get("CLAUDE_CODE_ADVERTISE_ALIASES", "").strip() == "1"
 DEFAULT_CONTEXT_WINDOW = int(os.environ.get("LLAMACPP_CTX_SIZE", "262144") or 262144)
-CHAT_PROFILE_ENABLED = os.environ.get("MODEL_GATEWAY_ADVERTISE_CHAT_PROFILE", "1").strip() != "0"
-CHAT_PROFILE_SUFFIX = os.environ.get("MODEL_GATEWAY_CHAT_PROFILE_SUFFIX", ":chat").strip() or ":chat"
-CHAT_PROFILE_CONTEXT_WINDOW = int(os.environ.get("MODEL_GATEWAY_CHAT_CONTEXT_WINDOW", "32768") or 32768)
+# Hard input-token budget for OpenClaw requests. Prevents slow decode by trimming prompts before
+# they reach llama.cpp, regardless of the model's full context window.
+OPENCLAW_MAX_INPUT_TOKENS = int(os.environ.get("OPENCLAW_MAX_INPUT_TOKENS", "30720") or 30720)
 
 # TTL model list cache: avoids hitting llama-server on every /v1/models call.
 _model_cache: list = []
@@ -65,7 +65,6 @@ _THINKING_BLOCK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.IGNORE
 
 # Gemma 4 emits literal special tokens (<|"|>, <|'|>, etc.) in tool call arguments
 # instead of the actual characters. Replace them so JSON parses correctly.
-_GEMMA_SPECIAL_TOKEN_RE = re.compile(r'<\|("\|>)')
 
 
 def _clean_gemma_special_tokens(text: str) -> str:
@@ -102,6 +101,204 @@ def _sanitize_tool_calls(tool_calls: list[dict]) -> list[dict]:
                 except json.JSONDecodeError:
                     func["arguments"] = cleaned  # pass through best-effort
     return tool_calls
+
+
+def _estimate_text_tokens(text: str) -> int:
+    if not text:
+        return 0
+    return max(1, (len(text) + 3) // 4)
+
+
+def _stringify_message_payload(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                for key in ("text", "content", "value", "output"):
+                    payload = item.get(key)
+                    if isinstance(payload, str) and payload:
+                        parts.append(payload)
+                        break
+        return "\n".join(parts)
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except TypeError:
+        return str(value)
+
+
+def _message_token_cost(message: dict[str, Any]) -> int:
+    cost = 8
+    cost += _estimate_text_tokens(_stringify_message_payload(message.get("content")))
+    if message.get("tool_calls"):
+        cost += _estimate_text_tokens(_stringify_message_payload(message.get("tool_calls")))
+    if message.get("tool_call_id"):
+        cost += 4
+    return cost
+
+
+def _truncate_message_text(text: str, token_budget: int, keep_tail: bool = False) -> str:
+    if token_budget <= 0:
+        return ""
+    max_chars = max(32, token_budget * 4)
+    if len(text) <= max_chars:
+        return text
+    if keep_tail:
+        return "... " + text[-(max_chars - 4):]
+    return text[: max_chars - 4] + " ..."
+
+
+def _truncate_message_to_budget(message: dict[str, Any], token_budget: int) -> dict[str, Any] | None:
+    if token_budget <= 8:
+        return None
+    trimmed = dict(message)
+    role = str(trimmed.get("role") or "")
+    keep_tail = role not in {"system", "developer"}
+    text_budget = max(1, token_budget - 8)
+
+    if trimmed.get("content") is not None:
+        text = _stringify_message_payload(trimmed.get("content"))
+        trimmed["content"] = _truncate_message_text(text, text_budget, keep_tail=keep_tail)
+    if trimmed.get("tool_calls"):
+        trimmed["tool_calls"] = None
+    return trimmed
+
+
+def _trim_messages_to_budget(messages: list[dict[str, Any]], budget: int) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    if not messages:
+        return (messages, {"before": 0, "after": 0, "dropped": 0})
+
+    before = sum(_message_token_cost(m) for m in messages)
+    if before <= budget:
+        return (messages, {"before": before, "after": before, "dropped": 0})
+
+    system_messages = [dict(m) for m in messages if m.get("role") in {"system", "developer"}]
+    other_messages = [dict(m) for m in messages if m.get("role") not in {"system", "developer"}]
+
+    kept_system: list[dict[str, Any]] = []
+    used = 0
+    system_budget = max(512, budget // 3)
+    for msg in system_messages:
+        remaining = max(0, system_budget - used)
+        msg_cost = _message_token_cost(msg)
+        if msg_cost > remaining:
+            msg = _truncate_message_to_budget(msg, remaining)
+            if not msg:
+                continue
+            msg_cost = _message_token_cost(msg)
+        kept_system.append(msg)
+        used += msg_cost
+
+    remaining_budget = max(256, budget - used)
+    kept_other_rev: list[dict[str, Any]] = []
+    for msg in reversed(other_messages):
+        msg_cost = _message_token_cost(msg)
+        if msg_cost <= remaining_budget:
+            kept_other_rev.append(msg)
+            remaining_budget -= msg_cost
+            continue
+        trimmed = _truncate_message_to_budget(msg, remaining_budget)
+        if trimmed:
+            kept_other_rev.append(trimmed)
+            remaining_budget = 0
+        break
+
+    trimmed_messages = kept_system + list(reversed(kept_other_rev))
+    after = sum(_message_token_cost(m) for m in trimmed_messages)
+    dropped = max(0, len(messages) - len(trimmed_messages))
+    return (trimmed_messages, {"before": before, "after": after, "dropped": dropped})
+
+
+_OPENCLAW_SLUG_HINT_RE = re.compile(
+    r"\b("
+    r"slug|title|conversation\s+title|session\s+title|chat\s+title|"
+    r"short\s+title|concise\s+title|generate\s+a\s+slug|generate\s+a\s+title|"
+    r"filename|label"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _responses_text_parts(inp: Any) -> list[str]:
+    parts: list[str] = []
+    if isinstance(inp, str):
+        if inp.strip():
+            parts.append(inp.strip())
+        return parts
+    if not isinstance(inp, list):
+        return parts
+    for item in inp:
+        if isinstance(item, str):
+            if item.strip():
+                parts.append(item.strip())
+            continue
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if isinstance(content, str):
+            if content.strip():
+                parts.append(content.strip())
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    text = block.get("text")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+    return parts
+
+
+def _slugify_text(text: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return cleaned[:64] or "chat"
+
+
+def _title_from_text(text: str) -> str:
+    words = re.findall(r"[A-Za-z0-9']+", text)
+    title = " ".join(words[:8]).strip()
+    return title[:80] or "Chat"
+
+
+def _is_openclaw_slug_helper_request(service: str, body: ResponsesRequest) -> bool:
+    if service != "openclaw":
+        return False
+    if body.tools:
+        return False
+    corpus = "\n".join([body.instructions or "", *_responses_text_parts(body.input)]).strip()
+    if not corpus:
+        return False
+    if not _OPENCLAW_SLUG_HINT_RE.search(corpus):
+        return False
+    max_output = body.max_output_tokens or body.max_tokens or 0
+    # Short-output + keyword match = very likely a slug/title helper, bypass eagerly.
+    if isinstance(max_output, int) and 0 < max_output <= 64 and len(corpus) < 8000:
+        return True
+    # Longer-output but still a small metadata-only prompt with keyword match.
+    return len(corpus) < 4000
+
+
+def _synthetic_openclaw_slug_response(body: ResponsesRequest) -> dict[str, Any]:
+    text_parts = _responses_text_parts(body.input)
+    seed = text_parts[-1] if text_parts else (body.instructions or "chat")
+    wants_slug = "slug" in (body.instructions or "").lower() or "slug" in seed.lower()
+    rendered = _slugify_text(seed) if wants_slug else _title_from_text(seed)
+    return {
+        "id": f"resp-{uuid.uuid4().hex[:12]}",
+        "object": "response",
+        "created_at": int(time.time()),
+        "model": body.model,
+        "output": [{
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": rendered}],
+        }],
+        "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+        "status": "completed",
+    }
 # Only extract <result> when scoped inside an <attempt_completion> wrapper (Cline agent format).
 _ATTEMPT_COMPLETION_RE = re.compile(
     r"<attempt_completion>\s*<result>\s*(.*?)\s*</result>\s*</attempt_completion>",
@@ -114,39 +311,14 @@ def _is_embedding_model_id(model_id: str) -> bool:
     return "embed" in lower or lower.startswith("text-embedding")
 
 
-def _chat_profile_id(model_id: str) -> str:
-    if model_id.endswith(CHAT_PROFILE_SUFFIX):
-        return model_id
-    return f"{model_id}{CHAT_PROFILE_SUFFIX}"
-
-
-def _strip_chat_profile_suffix(model_id: str) -> str:
-    if CHAT_PROFILE_ENABLED and model_id.endswith(CHAT_PROFILE_SUFFIX):
-        return model_id[: -len(CHAT_PROFILE_SUFFIX)]
-    return model_id
-
-
 def _profiled_model_entries(model_id: str, created: int, owned_by: str) -> list[dict[str, Any]]:
-    items = [{
+    return [{
         "id": model_id,
         "object": "model",
         "created": created,
         "owned_by": owned_by,
         "context_window": DEFAULT_CONTEXT_WINDOW,
-        "profile": "long",
-        "base_model": model_id,
     }]
-    if CHAT_PROFILE_ENABLED and not _is_embedding_model_id(model_id):
-        items.append({
-            "id": _chat_profile_id(model_id),
-            "object": "model",
-            "created": created,
-            "owned_by": owned_by,
-            "context_window": min(DEFAULT_CONTEXT_WINDOW, CHAT_PROFILE_CONTEXT_WINDOW),
-            "profile": "chat",
-            "base_model": model_id,
-        })
-    return items
 
 
 def _is_likely_cline_request(request: Request) -> bool:
@@ -268,15 +440,15 @@ def _model_provider_and_id(name: str) -> tuple[str, str]:
     """Return (provider, model_id). Provider: llamacpp, vllm.
     Explicit prefixes: vllm/, llamacpp/, ollama/ (legacy), gateway/ (OpenClaw provider id)."""
     if name.startswith("vllm/") and VLLM_URL:
-        return ("vllm", _strip_chat_profile_suffix(name[5:]))
+        return ("vllm", name[5:])
     if name.startswith("llamacpp/"):
-        return ("llamacpp", _strip_chat_profile_suffix(name[9:]))
+        return ("llamacpp", name[9:])
     if name.startswith("ollama/"):
-        return ("llamacpp", _strip_chat_profile_suffix(name[7:]))
+        return ("llamacpp", name[7:])
     # OpenClaw uses agents.defaults.model.primary like "gateway/<modelId>" while /v1/models lists bare ids.
     if name.startswith("gateway/"):
-        return (DEFAULT_PROVIDER, _strip_chat_profile_suffix(name[8:]))
-    return (DEFAULT_PROVIDER, _strip_chat_profile_suffix(name))
+        return (DEFAULT_PROVIDER, name[8:])
+    return (DEFAULT_PROVIDER, name)
 
 
 def _inference_model_id(name: str) -> str:
@@ -1115,6 +1287,18 @@ async def _chat_completions_impl(request: Request, body: dict[str, Any]):
         {**m, "role": "system"} if m.get("role") == "developer" else m
         for m in body.get("messages", [])
     ]
+    if service == "openclaw" and OPENCLAW_MAX_INPUT_TOKENS > 0:
+        trimmed_messages, trim_stats = _trim_messages_to_budget(messages, OPENCLAW_MAX_INPUT_TOKENS)
+        if trim_stats["after"] < trim_stats["before"]:
+            logger.info(
+                "trimmed openclaw prompt cid=%s before=%s after=%s dropped=%s budget=%s",
+                req_id,
+                trim_stats["before"],
+                trim_stats["after"],
+                trim_stats["dropped"],
+                OPENCLAW_MAX_INPUT_TOKENS,
+            )
+        messages = trimmed_messages
     stream = body.get("stream", False)
 
     # vLLM: native OpenAI format — proxy directly
@@ -1242,6 +1426,17 @@ async def completions_compat(request: Request, body: CompletionRequest):
 @app.post("/v1/responses")
 async def responses_api(request: Request, body: ResponsesRequest):
     """OpenAI Responses API — convert to chat completions and proxy, preserving tools."""
+    service = _service_from_headers(
+        request.headers.get("Origin"),
+        request.headers.get("X-Service-Name") or request.headers.get("X-Client-Id"),
+    )
+    if _is_openclaw_slug_helper_request(service, body):
+        logger.info(
+            "short-circuiting openclaw slug/title helper cid=%s",
+            getattr(request.state, "correlation_id", "?"),
+        )
+        return _synthetic_openclaw_slug_response(body)
+
     raw_tools = body.tools or []
 
     messages: list[dict] = []

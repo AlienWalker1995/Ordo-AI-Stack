@@ -25,6 +25,7 @@ dirs=(
   "$data/qdrant"
   "$data/openclaw"
   "$data/openclaw/workspace"
+  "$data/openclaude"
   "$base/models/comfyui/checkpoints"
   "$base/models/comfyui/loras"
   "$base/models/comfyui/latent_upscale_models"
@@ -169,6 +170,8 @@ if command -v claude >/dev/null 2>&1; then
 else
   echo "Note: Claude Code not installed. To install:"
   echo "        npm install -g @anthropic-ai/claude-code"
+  echo "      To avoid host ANTHROPIC_* overrides entirely, use the Dockerized OpenClaude CLI:"
+  echo "        docker compose --profile openclaude-cli run --rm openclaude-cli"
   echo "      Then re-run this script to configure it automatically."
 fi
 

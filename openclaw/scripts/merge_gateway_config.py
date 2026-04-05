@@ -49,9 +49,26 @@ MODEL_GATEWAY_URL = os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11
 # Default OpenClaw model metadata to the server cap unless a lower compaction target is set explicitly.
 _ctx_raw = os.environ.get("OPENCLAW_CONTEXT_WINDOW", os.environ.get("LLAMACPP_CTX_SIZE", "262144")).strip()
 LLAMACPP_CTX = int(_ctx_raw) if _ctx_raw.isdigit() and int(_ctx_raw) > 0 else 262144
+OPENCLAW_COMPACTION_MODE = (os.environ.get("OPENCLAW_COMPACTION_MODE", "safeguard").strip() or "safeguard")
 
 # OpenClaw 2026.3.x: tools.elevated.allowFrom.<provider> is a string[] (sender allowlist), not boolean.
 _ELEVATED_ALLOW_ALL_SENDERS = ["*"]
+_ALLOWED_COMPACTION_MODES = {"default", "safeguard"}
+
+
+def _env_positive_int(name: str, default: int) -> int:
+    raw = (os.environ.get(name, "").strip() or str(default))
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+OPENCLAW_AGENT_TIMEOUT_SECONDS = _env_positive_int("OPENCLAW_AGENT_TIMEOUT_SECONDS", 3600)
+OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS = _env_positive_int("OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS", 900)
+if OPENCLAW_COMPACTION_MODE not in _ALLOWED_COMPACTION_MODES:
+    OPENCLAW_COMPACTION_MODE = "safeguard"
 
 
 def _sanitize_elevated_allow_from_legacy_booleans(data: dict) -> bool:
@@ -503,10 +520,6 @@ def _fetch_models_from_gateway() -> list[dict] | None:
         # Skip ollama/-prefixed duplicates; the bare ID routes fine through the gateway
         if mid.startswith("ollama/"):
             continue
-        # Skip :chat profile aliases — these are UI convenience aliases for Open WebUI,
-        # not separate models. OpenClaw should use the base model ID.
-        if m.get("profile") == "chat":
-            continue
         lower_id = mid.lower()
         has_vision = "vision" in lower_id or "llava" in lower_id or "puppy" in lower_id
         is_reasoning = (
@@ -616,7 +629,6 @@ def main() -> int:
         else:
             gateway_models = [m.copy() for m in DEFAULT_GATEWAY_MODELS]
             msg = f"using {len(gateway_models)} default models (gateway unreachable)"
-
     if "gateway" not in providers:
         providers["gateway"] = {
             **GATEWAY_PROVIDER,
@@ -658,12 +670,12 @@ def main() -> int:
         gateway["bind"] = "lan"
         modified = True
 
-    # Keep compaction on the default mode. "safeguard" was firing repeatedly in light sessions
-    # and adding extra churn without solving the real prompt-bloat sources.
+    # Keep compaction and timeout policy env-driven so long-context local models do not stall on
+    # raw history growth or die during long prompt prefill before the first token arrives.
     agents_defaults = data.setdefault("agents", {}).setdefault("defaults", {})
     compaction = agents_defaults.setdefault("compaction", {})
-    if compaction.get("mode") != "default":
-        compaction["mode"] = "default"
+    if compaction.get("mode") != OPENCLAW_COMPACTION_MODE:
+        compaction["mode"] = OPENCLAW_COMPACTION_MODE
         modified = True
     # Keep the default agent model pinned to the active llama.cpp model so isolated
     # sessions and cron runs do not point at a stale provider model id.
@@ -681,16 +693,16 @@ def main() -> int:
         if not isinstance(model_defaults.get("fallbacks"), list):
             model_defaults["fallbacks"] = []
             modified = True
-    # Ensure cron/isolated sessions have enough runway for Tavily + LLM generation.
-    if agents_defaults.get("timeoutSeconds") != 300:
-        agents_defaults["timeoutSeconds"] = 300
+    # Give agent loops enough runway for downloads, large retrieval calls, and multi-turn tool use.
+    if agents_defaults.get("timeoutSeconds") != OPENCLAW_AGENT_TIMEOUT_SECONDS:
+        agents_defaults["timeoutSeconds"] = OPENCLAW_AGENT_TIMEOUT_SECONDS
         modified = True
-    # Raise idle-token timeout — large MoE/reasoning models can pause during prompt prefill
-    # before the first token streams. Default 60 s is too tight; 120 s gives headroom.
+    # Large reasoning/local models can spend minutes in prompt prefill before the first token.
+    # Keep idle timeout high enough that long-context sessions compact instead of aborting mid-prefill.
     # Do NOT set to 0 — OpenClaw interprets 0 as instant abort, not "disabled".
     llm_defaults = agents_defaults.setdefault("llm", {})
-    if llm_defaults.get("idleTimeoutSeconds") != 120:
-        llm_defaults["idleTimeoutSeconds"] = 120
+    if llm_defaults.get("idleTimeoutSeconds") != OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS:
+        llm_defaults["idleTimeoutSeconds"] = OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS
         modified = True
 
     # Native web_search (Brave, etc.): keep disabled — use MCP gateway__call + duckduckgo__search.

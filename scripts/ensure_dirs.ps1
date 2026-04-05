@@ -19,6 +19,7 @@ $dirs = @(
     (Join-Path $data "qdrant"),
     (Join-Path $data "openclaw"),
     (Join-Path $data "openclaw\workspace"),
+    (Join-Path $data "openclaude"),
     (Join-Path $base "models\comfyui\checkpoints"),
     (Join-Path $base "models\comfyui\loras"),
     (Join-Path $base "models\comfyui\latent_upscale_models"),
@@ -161,6 +162,8 @@ if (Get-Command claude -ErrorAction SilentlyContinue) {
 } else {
     Write-Host "Note: Claude Code not installed. To install:"
     Write-Host "        npm install -g @anthropic-ai/claude-code"
+    Write-Host "      To avoid host ANTHROPIC_* overrides entirely, use the Dockerized OpenClaude CLI:"
+    Write-Host "        docker compose --profile openclaude-cli run --rm openclaude-cli"
     Write-Host "      Then re-run this script to configure it automatically."
 }
 

@@ -14,12 +14,18 @@ from pathlib import Path
 
 MCP_PLUGIN_ID = "openclaw-mcp-bridge"
 _mcp_url = os.environ.get("MCP_GATEWAY_URL", "http://mcp-gateway:8811/mcp")
+_connect_timeout_ms = int(os.environ.get("OPENCLAW_MCP_CONNECT_TIMEOUT_MS", "10000"))
+_request_timeout_ms = int(os.environ.get("OPENCLAW_MCP_REQUEST_TIMEOUT_MS", "900000"))
 MCP_PLUGIN_CONFIG = {
     "enabled": True,
     "config": {
         "servers": {
             # Single endpoint: Docker MCP Gateway (aggregates n8n, tavily, comfyui, …).
-            "gateway": {"url": _mcp_url},
+            "gateway": {
+                "url": _mcp_url,
+                "connectTimeoutMs": _connect_timeout_ms,
+                "requestTimeoutMs": _request_timeout_ms,
+            },
         },
         "debug": False,
     },
@@ -37,7 +43,11 @@ PLUGIN_MANIFEST = {
                 "type": "object",
                 "additionalProperties": {
                     "type": "object",
-                    "properties": {"url": {"type": "string"}},
+                    "properties": {
+                        "url": {"type": "string"},
+                        "connectTimeoutMs": {"type": "number"},
+                        "requestTimeoutMs": {"type": "number"},
+                    },
                     "required": ["url"],
                 },
             },
@@ -50,7 +60,7 @@ EXTENSIONS_DIR = Path("/config/extensions/openclaw-mcp-bridge")
 
 
 def normalize_mcp_bridge_servers(data: dict) -> bool:
-    """Remove a legacy second MCP URL so only the Docker MCP gateway remains.
+    """Normalize MCP bridge config to the single Docker gateway with durable timeouts.
 
     ComfyUI and other catalog servers are reached through ``mcp-gateway``; do not
     configure a separate ``comfyui`` URL on the bridge.
@@ -75,6 +85,17 @@ def normalize_mcp_bridge_servers(data: dict) -> bool:
     if "comfyui" in servers:
         del servers["comfyui"]
         modified = True
+    gateway = servers.get("gateway")
+    if isinstance(gateway, dict):
+        if gateway.get("url") != _mcp_url:
+            gateway["url"] = _mcp_url
+            modified = True
+        if gateway.get("connectTimeoutMs") != _connect_timeout_ms:
+            gateway["connectTimeoutMs"] = _connect_timeout_ms
+            modified = True
+        if gateway.get("requestTimeoutMs") != _request_timeout_ms:
+            gateway["requestTimeoutMs"] = _request_timeout_ms
+            modified = True
     return modified
 
 
