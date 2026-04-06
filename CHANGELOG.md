@@ -4,6 +4,32 @@ All notable changes to this project are documented here. The format is loosely b
 
 ## [Unreleased]
 
+### Added
+
+- **Work summary note - OpenClaw / Primus remediation work:** [`docs/openclaw-primus-work-summary-2026-04-05.md`](docs/openclaw-primus-work-summary-2026-04-05.md) summarizes the recent local work across bridge hardening, flat-tool defaults, dynamic ComfyUI workflow guidance, compaction/runtime investigation, transcript-aware recovery, status/continue reply rules, and the remaining unresolved failure classes.
+
+- **Investigation note â€” Primus compaction/runtime failures:** [`docs/openclaw-primus-compaction-investigation-2026-04-05.md`](docs/openclaw-primus-compaction-investigation-2026-04-05.md) captures the recent Primus failure pattern with local evidence and external references: OpenClaw compaction/context docs, MCP tool-result sequencing requirements, analogous post-tool synthesis failures, contaminated compaction summaries, empty assistant replies, and the absence of new ComfyUI audio outputs.
+
+### Changed
+
+- **OpenClaw / Primus remediation summary:** Recent local work now spans three coordinated areas: MCP bridge hardening for local models, a shift from built-in media templates toward dynamic ComfyUI workflow authoring, and runtime guidance/recovery changes aimed at post-tool and post-compaction stability. The new summary note documents the implemented scope and distinguishes the improved failure classes from the ones still unresolved.
+
+- **OpenClaw media workflow model:** ComfyUI media tasks no longer assume built-in `generate_*` templates. Workspace guidance now treats ComfyUI as a general image/audio/video engine: reuse a saved workflow when it fits, otherwise inspect nodes, author or adapt a workflow, validate it, save it if useful, run it, await it, and fetch outputs.
+
+- **OpenClaw MCP bridge defaults:** Generated OpenClaw plugin config now prefers direct `gateway__...` flat tools with `flatTools: true` and keeps `injectSchemas: false`. Workspace guidance was updated to steer agents toward direct workflow-authoring tools such as `gateway__list_workflows`, `gateway__search_nodes`, `gateway__validate_workflow`, `gateway__save_workflow`, `gateway__run_workflow`, `gateway__await_run`, and `gateway__list_outputs` instead of relying on proxy-only `gateway__call`.
+
+- **Runtime bootstrap guidance:** The runtime `AGENTS.md` contract was shortened and tightened so the critical OpenClaw rules remain inside the bootstrap injection cap. It now explicitly covers prose-only `status` replies, safe `continue`/`resume` behavior, and ComfyUI workflow-authoring expectations without tripping the old truncation threshold.
+
+### Fixed
+
+- **OpenClaw post-compaction recovery:** The forked `openclaw-mcp-bridge` now derives recovery context directly from recent session JSONL during `before_prompt_build`. It detects contaminated compaction summaries, empty post-tool assistant turns, and recent raw workflow payloads so resumed turns prefer current structured state over polluted compacted prose.
+
+- **OpenClaw `status` / `continue` reply contract:** Status-style prompts (`status`, `progress`, `update`) and continuation prompts (`continue`, `resume`, `go on`) now receive explicit prose-only reply guards in both workspace guidance and the plugin prompt contract. The model is told not to dump raw workflow JSON, not to repeat the last tool payload, not to end with an empty assistant message, and not to call `read` without an absolute `path`.
+
+- **MCP proxy/tool-call hardening:** `openclaw-mcp-bridge` now strips a stray leading quote before `{`/`[` in malformed proxy args, keeps `tool` required in the proxy schema, and auto-discovers available tools when a proxy call omits `tool` instead of returning a dead-end error. This reduces repeated `missing required tool name` and `args JSON parse failed` loops in local model sessions.
+
+- **OpenClaw runtime bootstrap pressure:** Runtime workspace guidance was shortened so the most important OpenClaw rules are more likely to survive bootstrap truncation. This reduces one source of degraded resumed turns in local-model sessions, even though empty assistant completions and task-path drift are still being observed in later transcripts.
+
 ### Changed
 
 - **Project identity:** Repository and stack renamed from **AI-toolkit** to **Ordo AI Stack** (technical slug **`ordo-ai-stack`**). Docker Compose **`name`**, image tags (**`ordo-ai-stack-*`**), explicit networks (**`ordo-ai-stack-frontend`** / **`ordo-ai-stack-backend`**), CLI entrypoints (**`./ordo-ai-stack`**, **`.\ordo-ai-stack.ps1`**, **`.\ordo-ai-stack.cmd`**), and **`ORDO_AI_STACK_ROOT`** ( **`scripts/validate_openclaw_config.py`** still accepts **`AI_TOOLKIT_ROOT`** ) are updated. **Rebuild** images after pull: `docker compose build` or full init (`ordo-ai-stack initialize`). Old **`ai-toolkit*`** images/networks can be removed once containers are recreated.

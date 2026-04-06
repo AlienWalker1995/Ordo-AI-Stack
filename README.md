@@ -117,6 +117,8 @@ Auto-generated: **`overrides/compute.yml`** (from hardware detection). Do not co
   ./compose --profile openclaude-cli run --rm openclaude-cli
   ```
 
+  Host `openclaude` installs are wired to the local `model-gateway` by `./scripts/ensure_dirs.sh` or `.\scripts\ensure_dirs.ps1`, so the CLI uses local models by default after setup.
+
 - **RAG:** `docker compose --profile rag up -d` and ingest paths per [Getting started — RAG](docs/GETTING_STARTED.md#rag-documents-in-chat).
 - **MCP clients:** connect to `http://localhost:8811/mcp` (see [mcp/README.md](mcp/README.md)).
 - **OpenClaw control UI:** `http://localhost:6680/?token=<OPENCLAW_GATEWAY_TOKEN>` — see [openclaw/README.md](openclaw/README.md) and [openclaw/OPENCLAW_SECURE.md](openclaw/OPENCLAW_SECURE.md).

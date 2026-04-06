@@ -122,49 +122,50 @@ if (Test-Path $detectScript) {
     if ($LASTEXITCODE -eq 0) { Write-Host "OK Hardware detected (overrides/compute.yml)" }
 }
 
-# Configure Claude Code to route through the local model-gateway (optional; dashboard toggle: data/dashboard/claude_code_env_overwrite.json)
-$claudeEnvJson = Join-Path $data "dashboard\claude_code_env_overwrite.json"
-$claudeEnvOverwrite = $true
-if (Test-Path $claudeEnvJson) {
+# Configure OpenClaude on the host to use the local OpenAI-compatible model-gateway.
+$port = if ($env:MODEL_GATEWAY_PORT) { $env:MODEL_GATEWAY_PORT } else { "11435" }
+$openClaudeModel = ""
+if (Test-Path $rootEnv) {
     try {
-        $j = Get-Content $claudeEnvJson -Raw | ConvertFrom-Json
-        if ($null -ne $j.PSObject.Properties["enabled"]) {
-            $claudeEnvOverwrite = [bool]$j.enabled
+        $envText = Get-Content $rootEnv -Raw -ErrorAction Stop
+        $match = [regex]::Match($envText, '(?m)^OPENCLAUDE_MODEL=(.+)$')
+        if (-not $match.Success) {
+            $match = [regex]::Match($envText, '(?m)^DEFAULT_MODEL=(.+)$')
+        }
+        if ($match.Success) {
+            $openClaudeModel = $match.Groups[1].Value.Trim()
         }
     } catch { }
 }
-if (Get-Command claude -ErrorAction SilentlyContinue) {
-    $port = if ($env:MODEL_GATEWAY_PORT) { $env:MODEL_GATEWAY_PORT } else { "11435" }
-    if ($claudeEnvOverwrite) {
-        try {
-            [System.Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", "local", "User")
-            [System.Environment]::SetEnvironmentVariable("ANTHROPIC_BASE_URL", "http://localhost:$port", "User")
-            Write-Host "OK Claude Code configured -> http://localhost:$port (restart terminal to apply)"
-            Write-Host "   Usage: claude --model <gguf-model-id-from-/v1/models>"
-        } catch {
-            Write-Warning "Claude Code env override could not be written to the user registry. Run the terminal as your normal desktop user or set ANTHROPIC_API_KEY=local and ANTHROPIC_BASE_URL=http://localhost:$port manually."
+if (Get-Command openclaude -ErrorAction SilentlyContinue) {
+    try {
+        [System.Environment]::SetEnvironmentVariable("CLAUDE_CODE_USE_OPENAI", "1", "User")
+        [System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", "local", "User")
+        [System.Environment]::SetEnvironmentVariable("OPENAI_BASE_URL", "http://localhost:$port/v1", "User")
+        if ($openClaudeModel) {
+            [System.Environment]::SetEnvironmentVariable("OPENAI_MODEL", $openClaudeModel, "User")
         }
-    } else {
-        $curKey = [System.Environment]::GetEnvironmentVariable("ANTHROPIC_API_KEY", "User")
-        $curUrl = [System.Environment]::GetEnvironmentVariable("ANTHROPIC_BASE_URL", "User")
-        if ($curKey -eq 'local' -and $curUrl -match '^http://localhost:\d+$') {
-            try {
-                [System.Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", $null, "User")
-                [System.Environment]::SetEnvironmentVariable("ANTHROPIC_BASE_URL", $null, "User")
-                Write-Host "OK Claude Code ANTHROPIC_* user overrides cleared (local routing off in dashboard). Restart terminal."
-            } catch {
-                Write-Warning "Claude Code user env overrides could not be cleared from the registry. Clear ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL manually if needed."
-            }
-        } else {
-            Write-Host 'Claude Code: local Model Gateway routing disabled in dashboard - skipped setting ANTHROPIC_*.'
+        $curAnthropicKey = [System.Environment]::GetEnvironmentVariable("ANTHROPIC_API_KEY", "User")
+        $curAnthropicUrl = [System.Environment]::GetEnvironmentVariable("ANTHROPIC_BASE_URL", "User")
+        if ($curAnthropicKey -eq "local" -and $curAnthropicUrl -match '^http://localhost:\d+$') {
+            [System.Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", $null, "User")
+            [System.Environment]::SetEnvironmentVariable("ANTHROPIC_BASE_URL", $null, "User")
         }
+        Write-Host "OK OpenClaude configured -> http://localhost:$port/v1 (restart terminal to apply)"
+        if ($openClaudeModel) {
+            Write-Host "   Default model: $openClaudeModel"
+        }
+        Write-Host "   Usage: openclaude"
+    } catch {
+        $modelNote = if ($openClaudeModel) { " and OPENAI_MODEL=$openClaudeModel" } else { "" }
+        Write-Warning "OpenClaude env could not be written to the user registry. Set CLAUDE_CODE_USE_OPENAI=1, OPENAI_API_KEY=local, OPENAI_BASE_URL=http://localhost:$port/v1$modelNote manually."
     }
 } else {
-    Write-Host "Note: Claude Code not installed. To install:"
-    Write-Host "        npm install -g @anthropic-ai/claude-code"
-    Write-Host "      To avoid host ANTHROPIC_* overrides entirely, use the Dockerized OpenClaude CLI:"
+    Write-Host "Note: OpenClaude not installed. To install:"
+    Write-Host "        npm install -g @gitlawb/openclaude"
+    Write-Host "      Or use the Dockerized OpenClaude CLI:"
     Write-Host "        docker compose --profile openclaude-cli run --rm openclaude-cli"
-    Write-Host "      Then re-run this script to configure it automatically."
+    Write-Host "      Then re-run this script to configure host OpenClaude automatically."
 }
 
 Write-Host "Directories ready."

@@ -6,21 +6,24 @@ services:
     image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
     restart: unless-stopped
     platform: linux/amd64
-    command: >
-      --host 0.0.0.0 --port 8080
-      --model /models/${LLAMACPP_MODEL:-model.gguf}
-      --ctx-size ${LLAMACPP_CTX_SIZE:-262144}
-      --parallel ${LLAMACPP_PARALLEL:-1}
-      --rope-scaling ${LLAMACPP_ROPE_SCALING:-none}
-      --rope-scale ${LLAMACPP_ROPE_SCALE:-1}
-      --yarn-orig-ctx ${LLAMACPP_YARN_ORIG_CTX:-0}
-      --override-kv ${LLAMACPP_OVERRIDE_KV:-}
-      --n-gpu-layers ${LLAMACPP_GPU_LAYERS:--1}
-      --flash-attn auto
-      --jinja
-      --no-mmap
+    entrypoint: ["/bin/sh", "/llamacpp-scripts/run-llama-server.sh"]
+    environment:
+      - LLAMACPP_MODEL=${LLAMACPP_MODEL:-model.gguf}
+      - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-262144}
+      - LLAMACPP_PARALLEL=${LLAMACPP_PARALLEL:-1}
+      - LLAMACPP_ROPE_SCALING=${LLAMACPP_ROPE_SCALING:-none}
+      - LLAMACPP_ROPE_SCALE=${LLAMACPP_ROPE_SCALE:-1}
+      - LLAMACPP_YARN_ORIG_CTX=${LLAMACPP_YARN_ORIG_CTX:-0}
+      - LLAMACPP_OVERRIDE_KV=${LLAMACPP_OVERRIDE_KV:-}
+      - LLAMACPP_GPU_LAYERS=${LLAMACPP_GPU_LAYERS:--1}
+      - LLAMACPP_FLASH_ATTN=${LLAMACPP_FLASH_ATTN:-auto}
+      - LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION=${LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION:-0}
+      - LLAMACPP_KV_CACHE_TYPE_K=${LLAMACPP_KV_CACHE_TYPE_K:-q4_0}
+      - LLAMACPP_KV_CACHE_TYPE_V=${LLAMACPP_KV_CACHE_TYPE_V:-q4_0}
+      - LLAMACPP_EXTRA_ARGS=${LLAMACPP_EXTRA_ARGS:-}
     volumes:
       - ${BASE_PATH:-.}/models/gguf:/models:ro
+      - ${BASE_PATH:-.}/scripts/llamacpp:/llamacpp-scripts:ro
     # Large GGUFs can take many minutes before /health returns 200; 503 during load fails curl -f.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -90,7 +93,7 @@ services:
       - MODEL_CACHE_TTL_SEC=${MODEL_CACHE_TTL_SEC:-60}
       - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-262144}
       - OPENCLAW_MAX_INPUT_TOKENS=${OPENCLAW_MAX_INPUT_TOKENS:-16384}
-      # Local model used when Claude Code sends a "claude-*" model name
+      # Local model used when a Claude-compatible client sends a "claude-*" model name
       - CLAUDE_CODE_LOCAL_MODEL=${CLAUDE_CODE_LOCAL_MODEL:-}
       # Set to 1 only if a client requires claude-* ids in GET /v1/models (pollutes OpenClaw sync if on)
       - CLAUDE_CODE_ADVERTISE_ALIASES=${CLAUDE_CODE_ADVERTISE_ALIASES:-0}

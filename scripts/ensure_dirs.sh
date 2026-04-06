@@ -83,7 +83,7 @@ if [[ ! -f "$mcp_registry" ]] && [[ -f "$base/mcp/gateway/registry-custom.yaml" 
   echo "OK $mcp_registry"
 fi
 
-# Fix ownership for non-root dashboard (PRD §5): models and data must be writable by uid 1000
+# Fix ownership for non-root dashboard (PRD section 5): models and data must be writable by uid 1000
 if command -v chown >/dev/null 2>&1; then
   chown -R 1000:1000 "$base/models/comfyui" "$data" 2>/dev/null && echo "OK chown models+data (dashboard non-root)" || true
 fi
@@ -141,38 +141,50 @@ if [[ -f "$base/scripts/ssrf-egress-block.sh" ]] && command -v iptables >/dev/nu
   echo "Note: After first 'docker compose up', run: sudo ./scripts/ssrf-egress-block.sh (blocks SSRF from MCP)"
 fi
 
-# Configure Claude Code to route through the local model-gateway (optional; dashboard toggle: data/dashboard/claude_code_env_overwrite.json)
-claude_env_json="$data/dashboard/claude_code_env_overwrite.json"
-claude_env_overwrite=true
-if [[ -f "$claude_env_json" ]] && command -v python3 >/dev/null 2>&1; then
-  en=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(1 if d.get('enabled',True) else 0)" "$claude_env_json" 2>/dev/null || echo 1)
-  [[ "$en" == "0" ]] && claude_env_overwrite=false
-fi
-if command -v claude >/dev/null 2>&1; then
-  port="${MODEL_GATEWAY_PORT:-11435}"
-  if [[ "$claude_env_overwrite" == "true" ]]; then
-    configured=false
-    for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
-      if [[ -f "$rc" ]] && ! grep -q 'ANTHROPIC_BASE_URL' "$rc"; then
-        printf '\n# Claude Code — local model-gateway\nexport ANTHROPIC_API_KEY=local\nexport ANTHROPIC_BASE_URL=http://localhost:%s\n' "$port" >> "$rc"
-        configured=true
-      fi
-    done
-    if [[ "$configured" == "true" ]]; then
-      echo "OK Claude Code configured -> http://localhost:$port (run: source ~/.bashrc)"
-    else
-      echo "OK Claude Code already configured in shell rc"
-    fi
-    echo "   Usage: claude --model <gguf-model-id-from-/v1/models>"
-  else
-    echo "Claude Code: local Model Gateway routing disabled (data/dashboard/claude_code_env_overwrite.json). Remove ANTHROPIC_* from ~/.bashrc or ~/.zshrc if you no longer want local routing."
+# Configure OpenClaude on the host to use the local OpenAI-compatible model-gateway.
+port="${MODEL_GATEWAY_PORT:-11435}"
+openclaude_model=""
+if [[ -f "$root_env" ]]; then
+  openclaude_model=$(grep -E '^OPENCLAUDE_MODEL=' "$root_env" 2>/dev/null | tail -n 1 | cut -d= -f2-)
+  if [[ -z "$openclaude_model" ]]; then
+    openclaude_model=$(grep -E '^DEFAULT_MODEL=' "$root_env" 2>/dev/null | tail -n 1 | cut -d= -f2-)
   fi
+fi
+if command -v openclaude >/dev/null 2>&1; then
+  configured=false
+  for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    [[ -f "$rc" ]] || continue
+    if ! grep -q 'OPENCLAUDE_LOCAL_MODEL_GATEWAY' "$rc"; then
+      {
+        printf '\n# OPENCLAUDE_LOCAL_MODEL_GATEWAY\n'
+        printf 'export CLAUDE_CODE_USE_OPENAI=1\n'
+        printf 'export OPENAI_API_KEY=local\n'
+        printf 'export OPENAI_BASE_URL=http://localhost:%s/v1\n' "$port"
+        if [[ -n "$openclaude_model" ]]; then
+          printf 'export OPENAI_MODEL=%s\n' "$openclaude_model"
+        fi
+      } >> "$rc"
+      configured=true
+    fi
+  done
+  if grep -q 'export ANTHROPIC_API_KEY=local' "$HOME/.bashrc" "$HOME/.zshrc" 2>/dev/null; then
+    echo "Note: old local ANTHROPIC_* exports may still exist in your shell rc from the Claude Code flow."
+  fi
+  if [[ "$configured" == "true" ]]; then
+    echo "OK OpenClaude configured -> http://localhost:$port/v1 (run: source ~/.bashrc)"
+  else
+    echo "OK OpenClaude already configured in shell rc"
+  fi
+  if [[ -n "$openclaude_model" ]]; then
+    echo "   Default model: $openclaude_model"
+  fi
+  echo "   Usage: openclaude"
 else
-  echo "Note: Claude Code not installed. To install:"
-  echo "        npm install -g @anthropic-ai/claude-code"
-  echo "      To avoid host ANTHROPIC_* overrides entirely, use the Dockerized OpenClaude CLI:"
+  echo "Note: OpenClaude not installed. To install:"
+  echo "        npm install -g @gitlawb/openclaude"
+  echo "      Or use the Dockerized OpenClaude CLI:"
   echo "        docker compose --profile openclaude-cli run --rm openclaude-cli"
-  echo "      Then re-run this script to configure it automatically."
+  echo "      Then re-run this script to configure host OpenClaude automatically."
 fi
 
 echo "Directories ready."

@@ -36,6 +36,10 @@ def _merge_run_workflow_args(
             continue
         if v is not None:
             merged[k] = v
+    if merged.get("style_prompt") is not None and merged.get("tags") is None:
+        merged["tags"] = merged["style_prompt"]
+    elif merged.get("tags") is not None and merged.get("style_prompt") is None:
+        merged["style_prompt"] = merged["tags"]
     wid = (workflow_id or "").strip() or None
     default_wf = os.environ.get("COMFY_MCP_DEFAULT_WORKFLOW_ID", "").strip() or None
     allow_default = os.environ.get("COMFY_MCP_ALLOW_DEFAULT_WORKFLOW_ID", "1").strip().lower() in (
@@ -111,6 +115,16 @@ def register_workflow_tools(
         denoise: float | None = None,
         model: str | None = None,
         negative_prompt: str | None = None,
+        tags: str | None = None,
+        style_prompt: str | None = None,
+        lyrics: str | None = None,
+        seconds: int | None = None,
+        lyrics_strength: float | None = None,
+        language: str | None = None,
+        key: str | None = None,
+        duration: int | None = None,
+        fps: int | None = None,
+        frames: int | None = None,
     ) -> dict:
         """Run a saved ComfyUI workflow with constrained parameter overrides.
 
@@ -120,7 +134,9 @@ def register_workflow_tools(
             options: Optional dict of execution options (reserved for future use)
             return_inline_preview: If True, include a small thumbnail base64 in response (256px, ~100KB)
             prompt, width, height, ...: Optional flat overrides (merged into overrides) for clients
-                that omit the nested `overrides` object.
+                that omit the nested `overrides` object. This includes image, audio, and video
+                parameters such as tags, lyrics, seconds, lyrics_strength, duration, fps, and frames.
+                `style_prompt` is accepted as a clearer alias for `tags`.
 
         Returns:
             Result with asset_url, workflow_id, and execution metadata. If return_inline_preview=True,
@@ -139,6 +155,16 @@ def register_workflow_tools(
                 "denoise": denoise,
                 "model": model,
                 "negative_prompt": negative_prompt,
+                "tags": tags,
+                "style_prompt": style_prompt,
+                "lyrics": lyrics,
+                "seconds": seconds,
+                "lyrics_strength": lyrics_strength,
+                "language": language,
+                "key": key,
+                "duration": duration,
+                "fps": fps,
+                "frames": frames,
             }
             wid, ov, opt, rip = _merge_run_workflow_args(
                 workflow_id,

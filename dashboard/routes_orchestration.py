@@ -34,6 +34,7 @@ from dashboard.orchestration_db import (
     update_schedule,
 )
 from dashboard.orchestration_readiness import compute_readiness
+from dashboard.text_sanitizers import sanitize_workflow_id
 from dashboard.workflow_boundary import assert_api_workflow
 from dashboard.workflow_templates import compile_template, list_template_ids, load_template
 
@@ -123,7 +124,8 @@ async def validate_workflow(body: ValidateBody):
     if body.workflow is not None:
         wf = body.workflow
     elif body.workflow_id:
-        path = _safe_workflow_path(body.workflow_id)
+        workflow_id = sanitize_workflow_id(body.workflow_id)
+        path = _safe_workflow_path(workflow_id or "")
         if not path:
             raise HTTPException(status_code=400, detail="Invalid workflow_id")
         wf = json.loads(path.read_text(encoding="utf-8"))
@@ -168,8 +170,11 @@ async def save_workflow(body: SaveWorkflowBody):
         assert_api_workflow(body.workflow)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    version = save_workflow_version(DATA_DIR, body.workflow_id, body.workflow, body.params_schema)
-    return {"ok": True, "workflow_id": body.workflow_id, "version": version}
+    workflow_id = sanitize_workflow_id(body.workflow_id)
+    if not workflow_id:
+        raise HTTPException(status_code=400, detail="Invalid workflow_id")
+    version = save_workflow_version(DATA_DIR, workflow_id, body.workflow, body.params_schema)
+    return {"ok": True, "workflow_id": workflow_id, "version": version}
 
 
 @router.get("/workflows/{workflow_id}/versions")
@@ -228,12 +233,13 @@ async def run_workflow(body: RunBody):
     r = compute_readiness()
     if not r.get("ok"):
         raise HTTPException(status_code=503, detail={"readiness": r})
-    if not body.template_id and not body.workflow_id:
+    workflow_id = sanitize_workflow_id(body.workflow_id)
+    if not body.template_id and not workflow_id:
         raise HTTPException(status_code=400, detail="template_id or workflow_id required")
     job = create_job(
         DATA_DIR,
         template_id=body.template_id,
-        workflow_id=body.workflow_id,
+        workflow_id=workflow_id,
         params=body.params,
     )
     return {"job_id": job.job_id, "state": JobState.queued.value}
@@ -365,10 +371,11 @@ class CreateScheduleBody(BaseModel):
 
 @router.post("/schedules")
 async def create_schedule_endpoint(body: CreateScheduleBody):
-    if not body.template_id and not body.workflow_id:
+    workflow_id = sanitize_workflow_id(body.workflow_id)
+    if not body.template_id and not workflow_id:
         raise HTTPException(status_code=400, detail="template_id or workflow_id required")
     try:
-        s = create_schedule(DATA_DIR, body.cron_expr, body.template_id, body.workflow_id, body.params)
+        s = create_schedule(DATA_DIR, body.cron_expr, body.template_id, workflow_id, body.params)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return s

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 import httpx
@@ -12,6 +13,26 @@ from mcp.server.fastmcp import FastMCP
 
 BASE = os.environ.get("ORCHESTRATION_DASHBOARD_URL", "http://dashboard:8080").rstrip("/")
 TOKEN = os.environ.get("DASHBOARD_AUTH_TOKEN", "").strip()
+
+
+def _clean_gemma_special_tokens(text: str) -> str:
+    """Replace Gemma special tokens (<|"|>, etc.) with literal characters."""
+    if "<|" not in text:
+        return text
+    text = text.replace('<|"|>', '"')
+    text = text.replace("<|'|>", "'")
+    text = text.replace("<|`|>", "`")
+    text = text.replace("<|\\n|>", "\n")
+    return re.sub(r"<\|(.)\|>", r"\1", text)
+
+
+def _sanitize_workflow_id(workflow_id: str | None) -> str | None:
+    if workflow_id is None:
+        return None
+    cleaned = _clean_gemma_special_tokens(str(workflow_id)).strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {"'", '"', "`"}:
+        cleaned = cleaned[1:-1].strip()
+    return cleaned or None
 
 
 def _headers() -> dict[str, str]:
@@ -101,6 +122,7 @@ def validate_workflow(workflow_json: str | None = None, workflow_id: str | None 
             body["workflow"] = json.loads(workflow_json)
         except json.JSONDecodeError as e:
             return {"error": f"Invalid JSON in workflow_json: {e}"}
+    workflow_id = _sanitize_workflow_id(workflow_id)
     if workflow_id:
         body["workflow_id"] = workflow_id
     return _post("/api/orchestration/validate", body)
@@ -128,6 +150,7 @@ def save_workflow(workflow_id: str, workflow_json: str, params_schema_json: str 
         params_schema = json.loads(params_schema_json) if params_schema_json else None
     except json.JSONDecodeError as e:
         return {"error": f"Invalid JSON in params_schema_json: {e}"}
+    workflow_id = _sanitize_workflow_id(workflow_id)
     return _post("/api/orchestration/workflows/save",
                  {"workflow_id": workflow_id, "workflow": workflow, "params_schema": params_schema})
 
@@ -172,6 +195,7 @@ def run_workflow(
     body: dict[str, Any] = {"params": params}
     if template_id:
         body["template_id"] = template_id
+    workflow_id = _sanitize_workflow_id(workflow_id)
     if workflow_id:
         body["workflow_id"] = workflow_id
     return _post("/api/orchestration/run", body)
@@ -244,6 +268,7 @@ def create_schedule(
     body: dict[str, Any] = {"cron_expr": cron_expr, "params": params}
     if template_id:
         body["template_id"] = template_id
+    workflow_id = _sanitize_workflow_id(workflow_id)
     if workflow_id:
         body["workflow_id"] = workflow_id
     return _post("/api/orchestration/schedules", body)

@@ -8,6 +8,8 @@
  * @see SPEC.md section 6.4 for the plugin entry point specification.
  */
 import { Type } from "@sinclair/typebox";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { MCPManager } from "./manager/mcp-manager.js";
 
 // ---------------------------------------------------------------------------
@@ -87,11 +89,18 @@ function coerceToolArgs(raw) {
         return {};
     }
     text = text
+        .replace(/[“”]/g, '"')
+        .replace(/[‘’]/g, "'")
         .replaceAll('<|"|>', '"')
         .replaceAll("<|'|>", "'")
         .replaceAll("<|`|>", "`")
         .replaceAll("<|\\n|>", "\n")
         .replace(/<\|(.)\|>/g, "$1");
+    const firstBrace = text.indexOf("{");
+    const lastBrace = text.lastIndexOf("}");
+    if ((firstBrace > 0 || lastBrace !== text.length - 1) && firstBrace >= 0 && lastBrace > firstBrace) {
+        text = text.slice(firstBrace, lastBrace + 1).trim();
+    }
     // Strip leading/trailing quotes from models that double-stringify args
     if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
         try {
@@ -134,6 +143,9 @@ function coerceToolArgs(raw) {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
         throw new Error("args must resolve to an object");
     }
+    if (parsed.args && typeof parsed.args === "object" && !Array.isArray(parsed.args)) {
+        return parsed.args;
+    }
     return parsed;
 }
 
@@ -145,6 +157,23 @@ function coerceToolName(raw, prefix) {
         const candidate = raw.tool ?? raw.toolName ?? raw.name ?? raw.namespacedTool;
         if (typeof candidate === "string" && candidate.trim()) {
             return candidate.trim();
+        }
+        const nested = raw.args;
+        if (typeof nested === "string") {
+            try {
+                const parsedNested = coerceToolArgs(nested);
+                const nestedCandidate = parsedNested.tool ?? parsedNested.toolName ?? parsedNested.name ?? parsedNested.namespacedTool;
+                if (typeof nestedCandidate === "string" && nestedCandidate.trim()) {
+                    return nestedCandidate.trim();
+                }
+            }
+            catch { }
+        }
+        if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+            const nestedCandidate = nested.tool ?? nested.toolName ?? nested.name ?? nested.namespacedTool;
+            if (typeof nestedCandidate === "string" && nestedCandidate.trim()) {
+                return nestedCandidate.trim();
+            }
         }
     }
     throw new Error(`missing required tool name for ${prefix}__call; provide "tool" with the raw MCP tool name or run ${prefix}__discover first`);
@@ -188,6 +217,335 @@ function buildSchemaContext(config, allSchemas, flatToolsEnabled) {
     return `\n\n## MCP Tools Available\n\n${usage}\n\nFor unattended or cron runs: do not emit progress chatter such as "Let me check..." or "Fetching more...". Keep assistant text empty while calling tools, then emit exactly one final non-empty assistant message.\n\n${allSchemas.join("\n\n")}`;
 }
 
+const OPENCLAW_HOME = process.env.OPENCLAW_HOME?.trim() || "/home/node/.openclaw";
+const SESSION_STATUS_DIR = path.join(OPENCLAW_HOME, "agents", "main", "session-status");
+const SESSION_TRANSCRIPT_DIR = path.join(OPENCLAW_HOME, "agents", "main", "sessions");
+const STATUS_REQUEST_RE = /^\s*(status|progress|update|what'?s the status)\s*$/i;
+const CONTINUE_REQUEST_RE = /^\s*(ok(?:ay)?\s+)?(continue|resume|go on|keep going|proceed)\s*$/i;
+const CONTAMINATION_MARKERS = [
+    "telegram",
+    "google sheets",
+    "google drive",
+    "google apps script",
+    "creatomate",
+    "runway",
+    "suno",
+    "n8n",
+];
+
+function trimText(value, maxChars = 800) {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (!text) {
+        return "";
+    }
+    return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+}
+
+function extractText(value) {
+    if (typeof value === "string") {
+        return value;
+    }
+    if (Array.isArray(value)) {
+        return value.map((item) => extractText(item)).filter(Boolean).join("\n");
+    }
+    if (!value || typeof value !== "object") {
+        return "";
+    }
+    if (typeof value.text === "string") {
+        return value.text;
+    }
+    if (Array.isArray(value.content)) {
+        return value.content.map((item) => extractText(item)).filter(Boolean).join("\n");
+    }
+    if (value.message) {
+        return extractText(value.message);
+    }
+    if (value.data) {
+        return extractText(value.data);
+    }
+    return "";
+}
+
+function extractToolName(value) {
+    if (!value || typeof value !== "object") {
+        return "";
+    }
+    return trimText(value.toolName ?? value.name ?? value.tool ?? value.message?.toolName ?? "", 120);
+}
+
+function extractSessionIdentifiers(value) {
+    if (!value || typeof value !== "object") {
+        return { sessionId: "", sessionKey: "" };
+    }
+    const sessionId = trimText(value.sessionId ?? value.session?.id ?? value.data?.sessionId ?? value.payload?.sessionId ?? "", 200);
+    const sessionKey = trimText(value.sessionKey ?? value.session?.key ?? value.data?.sessionKey ?? value.payload?.sessionKey ?? "", 300);
+    return { sessionId, sessionKey };
+}
+
+function safeStatusKey(sessionId, sessionKey) {
+    const raw = sessionId || sessionKey;
+    if (!raw) {
+        return "";
+    }
+    return raw.replace(/[^A-Za-z0-9._-]+/g, "_");
+}
+
+async function ensureSessionStatusDir() {
+    await fs.mkdir(SESSION_STATUS_DIR, { recursive: true });
+}
+
+async function readSessionStatus(sessionId, sessionKey) {
+    const key = safeStatusKey(sessionId, sessionKey);
+    if (!key) {
+        return {};
+    }
+    try {
+        const raw = await fs.readFile(path.join(SESSION_STATUS_DIR, `${key}.json`), "utf8");
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === "object" ? parsed : {};
+    }
+    catch {
+        return {};
+    }
+}
+
+async function writeSessionStatus(sessionId, sessionKey, patch) {
+    const key = safeStatusKey(sessionId, sessionKey);
+    if (!key || !patch || typeof patch !== "object") {
+        return {};
+    }
+    await ensureSessionStatusDir();
+    const current = await readSessionStatus(sessionId, sessionKey);
+    const next = {
+        ...current,
+        ...patch,
+        updatedAt: new Date().toISOString(),
+    };
+    await fs.writeFile(path.join(SESSION_STATUS_DIR, `${key}.json`), JSON.stringify(next, null, 2), "utf8");
+    return next;
+}
+
+function looksLikeMediaSongGoal(text) {
+    const lower = text.toLowerCase();
+    return (lower.includes("comfyui") && (lower.includes("song") || lower.includes("music") || lower.includes("audio")))
+        || lower.includes("irish folk song")
+        || lower.includes("pub stuffff");
+}
+
+function extractWorkflowPathFromText(text) {
+    const match = text.match(/\/[^\s"'`]*ace_step_song_workflow\.json/);
+    return match?.[0] ?? "";
+}
+
+function summarizeToolResult(toolName, text, current = {}) {
+    const lower = text.toLowerCase();
+    const patch = {
+        lastTool: trimText(toolName, 120),
+        lastToolAt: new Date().toISOString(),
+    };
+    if (toolName === "read") {
+        const workflowPath = extractWorkflowPathFromText(text) || current.workflowPath;
+        if (workflowPath) {
+            patch.workflowPath = workflowPath;
+            patch.phase = "workflow ready";
+        }
+        if (lower.includes("\"saveaudiomp3\"") || lower.includes("\"textencodeacestepaudio1.5\"")) {
+            patch.workflowSummary = "ACE-Step workflow file exists with text encoder, sampler, audio decode, and MP3 save nodes.";
+            patch.generationStarted = current.generationStarted === true;
+            if (current.generationStarted !== true) {
+                patch.blocker = "Workflow exists, but there is no confirmed ComfyUI prompt submission yet.";
+            }
+        }
+    }
+    if (toolName.includes("download") || lower.includes("downloading ") || lower.includes("huggingface.co")) {
+        patch.phase = "model download";
+    }
+    if (lower.includes("\"prompt_id\"")) {
+        patch.generationStarted = true;
+        patch.phase = "generation submitted";
+        patch.blocker = "";
+        const match = text.match(/"prompt_id"\s*:\s*"([^"]+)"/);
+        if (match?.[1]) {
+            patch.promptId = match[1];
+        }
+    }
+    if (lower.includes("still running after 30s")) {
+        patch.generationStarted = true;
+        patch.phase = "generation running";
+        patch.blocker = "";
+    }
+    if (lower.includes("enoent") && lower.includes("ace_step_song_workflow.json")) {
+        patch.phase = "workflow fetch";
+        patch.blocker = "Workflow file was read before it existed.";
+        patch.workflowPath = extractWorkflowPathFromText(text) || current.workflowPath;
+    }
+    return patch;
+}
+
+function isContaminatedCompaction(summary, goal) {
+    const lowerSummary = summary.toLowerCase();
+    const lowerGoal = goal.toLowerCase();
+    if (!(lowerGoal.includes("song") || lowerGoal.includes("music") || lowerGoal.includes("comfyui"))) {
+        return false;
+    }
+    return CONTAMINATION_MARKERS.some((marker) => lowerSummary.includes(marker));
+}
+
+function buildSessionStatusContext(state) {
+    if (!state || typeof state !== "object" || Object.keys(state).length === 0) {
+        return "";
+    }
+    const lines = [
+        "## Structured Session State",
+        "Treat this structured state as higher priority than compacted transcript prose when they conflict.",
+    ];
+    if (state.goal) {
+        lines.push(`- Goal: ${state.goal}`);
+    }
+    if (state.phase) {
+        lines.push(`- Phase: ${state.phase}`);
+    }
+    if (state.workflowPath) {
+        lines.push(`- Workflow path: ${state.workflowPath}`);
+    }
+    if (state.workflowSummary) {
+        lines.push(`- Workflow summary: ${state.workflowSummary}`);
+    }
+    if (state.lastTool) {
+        lines.push(`- Last tool: ${state.lastTool}`);
+    }
+    if (state.generationStarted === true) {
+        lines.push("- Generation started: yes");
+    }
+    else if (state.generationStarted === false) {
+        lines.push("- Generation started: no");
+    }
+    if (state.lastOutputPath) {
+        lines.push(`- Latest output path: ${state.lastOutputPath}`);
+    }
+    if (state.blocker) {
+        lines.push(`- Blocker: ${state.blocker}`);
+    }
+    if (state.degradedAfterCompaction) {
+        lines.push("- Warning: the last compaction summary was contaminated by unrelated task content; do not trust compacted prose over this state.");
+    }
+    return lines.join("\n");
+}
+
+async function readRecentTranscriptEntries(sessionId, limit = 160) {
+    const trimmedId = typeof sessionId === "string" ? sessionId.trim() : "";
+    if (!trimmedId) {
+        return [];
+    }
+    try {
+        const raw = await fs.readFile(path.join(SESSION_TRANSCRIPT_DIR, `${trimmedId}.jsonl`), "utf8");
+        return raw
+            .split(/\r?\n/)
+            .filter(Boolean)
+            .slice(-limit)
+            .map((line) => {
+            try {
+                return JSON.parse(line);
+            }
+            catch {
+                return null;
+            }
+        })
+            .filter((entry) => entry && typeof entry === "object");
+    }
+    catch {
+        return [];
+    }
+}
+
+function deriveSessionStateFromTranscript(entries) {
+    const state = {};
+    let latestUserText = "";
+    let lastAssistantText = "";
+    let lastAssistantWasEmpty = false;
+    let lastToolResultText = "";
+    let lastToolName = "";
+    for (const entry of entries) {
+        if (!entry || typeof entry !== "object") {
+            continue;
+        }
+        if (entry.type === "compaction") {
+            const summary = trimText(entry.summary ?? "", 8000);
+            if (summary && isContaminatedCompaction(summary, state.goal ?? latestUserText ?? "")) {
+                state.degradedAfterCompaction = true;
+                state.compactionWarning = trimText(summary, 500);
+                if (!state.blocker) {
+                    state.blocker = "Compaction summary included unrelated prior-task content.";
+                }
+            }
+            const readFileMatch = summary.match(/<read-files>\s*([\s\S]*?)\s*<\/read-files>/i);
+            if (readFileMatch?.[1]) {
+                const workflowPath = extractWorkflowPathFromText(readFileMatch[1]);
+                if (workflowPath) {
+                    state.workflowPath = workflowPath;
+                }
+            }
+            continue;
+        }
+        if (entry.type !== "message" || !entry.message || typeof entry.message !== "object") {
+            continue;
+        }
+        const role = entry.message.role;
+        const text = trimText(extractText(entry.message.content ?? entry.message), 12000);
+        if (role === "user") {
+            if (text) {
+                latestUserText = text;
+            }
+            if (looksLikeMediaSongGoal(text)) {
+                state.goal = trimText(text, 600);
+                if (!state.phase) {
+                    state.phase = "planning workflow";
+                }
+                if (typeof state.generationStarted !== "boolean") {
+                    state.generationStarted = false;
+                }
+            }
+            continue;
+        }
+        if (role === "toolResult") {
+            const toolName = trimText(entry.message.toolName ?? "", 120);
+            if (toolName) {
+                lastToolName = toolName;
+            }
+            if (text) {
+                lastToolResultText = text;
+            }
+            Object.assign(state, summarizeToolResult(toolName, text, state));
+            const lower = text.toLowerCase();
+            if (lower.includes("invalid json in workflow_json")) {
+                state.phase = "workflow validation";
+                state.blocker = "Workflow save failed because the workflow JSON sent to the gateway was invalid.";
+            }
+            if (lower.includes("pip: not found")) {
+                state.phase = "environment setup";
+                state.blocker = "The gateway container tried to install dependencies with pip, but pip is unavailable there.";
+            }
+            if (lower.includes("\"saveaudiomp3\"") || lower.includes("\"textencodeacestepaudio1.5\"")) {
+                state.workflowSummary = "ACE-Step workflow graph is present in session history.";
+            }
+            continue;
+        }
+        if (role === "assistant") {
+            if (text) {
+                lastAssistantText = text;
+                lastAssistantWasEmpty = false;
+            }
+            else {
+                lastAssistantWasEmpty = true;
+            }
+        }
+    }
+    if (!state.phase && state.workflowPath) {
+        state.phase = "workflow prepared";
+    }
+    return { state, latestUserText, lastAssistantText, lastAssistantWasEmpty, lastToolName, lastToolResultText };
+}
+
 // ---------------------------------------------------------------------------
 // Plugin registration
 // ---------------------------------------------------------------------------
@@ -208,6 +566,7 @@ function register(api) {
     const flatToolsEnabled = config.flatTools === true;
     const injectSchemasEnabled = config.injectSchemas !== false;
     const mcpManager = new MCPManager(toManagerConfig(config));
+    const latestUserMessages = new Map();
 
     let connected = false;
     let connectingPromise = null;
@@ -236,7 +595,10 @@ function register(api) {
             label: `MCP: ${serverName}`,
             description: `Call a tool on MCP server "${serverName}" (${serverConfig.url}). Pass tool name and arguments to invoke any tool on this server.`,
             parameters: Type.Object({
-                tool: Type.String({ description: `The raw MCP tool name to call on this server (e.g. "duckduckgo_web_search"). Run ${prefix}__discover first if unsure of the exact name.` }),
+                tool: Type.Optional(Type.String({ description: `The raw MCP tool name to call on this server (e.g. "duckduckgo_web_search"). Run ${prefix}__discover first if unsure of the exact name.` })),
+                toolName: Type.Optional(Type.String({ description: `Alias for tool. Accepted to recover from model formatting drift.` })),
+                name: Type.Optional(Type.String({ description: `Alias for tool. Accepted to recover from model formatting drift.` })),
+                namespacedTool: Type.Optional(Type.String({ description: `Alias for tool. Accepted to recover from model formatting drift.` })),
                 args: Type.Optional(Type.Union([
                     Type.Record(Type.String(), Type.Unknown(), { description: "Arguments to pass to the tool" }),
                     Type.String({ description: "JSON object string of arguments; accepted for models that emit stringified tool args" }),
@@ -422,7 +784,77 @@ function register(api) {
         }
     }, { name: "mcp-client-shutdown", description: "Disconnect all MCP servers" });
 
-    api.on("before_prompt_build", async () => {
+    api.registerHook("message_received", async (event) => {
+        try {
+            const { sessionId, sessionKey } = extractSessionIdentifiers(event);
+            const text = trimText(extractText(event), 2000);
+            if (!text) {
+                return;
+            }
+            const key = safeStatusKey(sessionId, sessionKey);
+            if (key) {
+                latestUserMessages.set(key, text);
+            }
+            const patch = {};
+            if (STATUS_REQUEST_RE.test(text)) {
+                patch.lastStatusRequestAt = new Date().toISOString();
+                patch.lastStatusRequestText = text;
+            }
+            else if (looksLikeMediaSongGoal(text)) {
+                patch.goal = trimText(text, 600);
+                patch.phase = "planning workflow";
+                patch.generationStarted = false;
+            }
+            if (Object.keys(patch).length > 0) {
+                await writeSessionStatus(sessionId, sessionKey, patch);
+            }
+        }
+        catch (err) {
+            api.logger.warn("[mcp-bridge] message_received status tracking failed: " + String(err));
+        }
+    }, { name: "mcp-session-status-received", description: "Track the latest user ask for status-safe replies" });
+
+    api.registerHook("tool_result_persist", async (event) => {
+        try {
+            const { sessionId, sessionKey } = extractSessionIdentifiers(event);
+            const toolName = extractToolName(event);
+            if (!toolName) {
+                return;
+            }
+            const text = trimText(extractText(event), 4000);
+            const current = await readSessionStatus(sessionId, sessionKey);
+            const patch = summarizeToolResult(toolName, text, current);
+            if (Object.keys(patch).length > 0) {
+                await writeSessionStatus(sessionId, sessionKey, patch);
+            }
+        }
+        catch (err) {
+            api.logger.warn("[mcp-bridge] tool_result_persist status tracking failed: " + String(err));
+        }
+    }, { name: "mcp-session-status-tools", description: "Persist compact task state from tool results" });
+
+    api.registerHook("after_compaction", async (event) => {
+        try {
+            const { sessionId, sessionKey } = extractSessionIdentifiers(event);
+            const summary = trimText(event?.summary ?? event?.data?.summary ?? extractText(event), 6000);
+            if (!summary) {
+                return;
+            }
+            const current = await readSessionStatus(sessionId, sessionKey);
+            if (isContaminatedCompaction(summary, current.goal ?? "")) {
+                await writeSessionStatus(sessionId, sessionKey, {
+                    degradedAfterCompaction: true,
+                    blocker: current.blocker || "Compaction summary included unrelated prior-task content; rely on structured session state instead.",
+                    compactionWarning: trimText(summary, 500),
+                });
+            }
+        }
+        catch (err) {
+            api.logger.warn("[mcp-bridge] after_compaction guard failed: " + String(err));
+        }
+    }, { name: "mcp-session-status-compaction", description: "Detect contaminated compactions for long-running sessions" });
+
+    api.on("before_prompt_build", async (event) => {
         const firstServerName = Object.keys(config.servers)[0];
         const firstConfig = config.servers[firstServerName];
         const prefix = firstConfig?.toolPrefix ?? firstServerName;
@@ -434,7 +866,58 @@ function register(api) {
             `Example: \`${prefix}__call({\"tool\":\"list_workflows\",\"args\":{\"details\":false}})\`.`,
             "Do not assume unavailable tools exist; discover them or report the failure truthfully.",
         ].join("\n");
-        return { appendSystemContext: `\n\n${context}` };
+        const { sessionId, sessionKey } = extractSessionIdentifiers(event);
+        const transcriptEntries = await readRecentTranscriptEntries(sessionId);
+        const transcriptState = deriveSessionStateFromTranscript(transcriptEntries);
+        const statusState = await readSessionStatus(sessionId, sessionKey);
+        const state = { ...statusState, ...transcriptState.state };
+        const key = safeStatusKey(sessionId, sessionKey);
+        const latestUserText = transcriptState.latestUserText || (key ? latestUserMessages.get(key) ?? "" : "");
+        const additions = [context];
+        const stateContext = buildSessionStatusContext(state);
+        if (stateContext) {
+            additions.push(stateContext);
+        }
+        const isStatusRequest = STATUS_REQUEST_RE.test(latestUserText);
+        const isContinueRequest = CONTINUE_REQUEST_RE.test(latestUserText);
+        if (state.degradedAfterCompaction) {
+            additions.push([
+                "## Compaction Recovery Rule",
+                "A recent compaction summary contained unrelated task content.",
+                "Trust the structured session state and the most recent local transcript over compacted prose when they conflict.",
+                "Do not resume work on Telegram, Google Sheets, Suno, Runway, Creatomate, or n8n unless the current user explicitly asks for them.",
+            ].join("\n"));
+        }
+        if (transcriptState.lastAssistantWasEmpty) {
+            additions.push([
+                "## Final Reply Guard",
+                "The previous assistant turn ended with an empty message after tool activity.",
+                "Do not end this turn with an empty assistant message.",
+                "If you use tools, finish with at least one short non-empty assistant reply.",
+                "Do not repeat the last raw tool payload verbatim.",
+            ].join("\n"));
+        }
+        if (STATUS_REQUEST_RE.test(latestUserText)) {
+            additions.push([
+                "## Status Reply Rule",
+                "The latest user asked for a status update.",
+                "Reply in plain prose only, in 2-5 short sentences.",
+                "Summarize current phase, last successful action, blocker, whether generation has started, and the latest output path if one exists.",
+                "Do not call the read tool just to echo workflow JSON.",
+                "Do not emit raw JSON, raw workflow objects, or an empty assistant message.",
+            ].join("\n"));
+        }
+        else if (isContinueRequest) {
+            additions.push([
+                "## Continue Reply Rule",
+                "The latest user asked you to continue the current task.",
+                "Resume from the structured session state and recent transcript, not from contaminated compacted prose.",
+                "Do not answer by dumping raw workflow JSON or repeating the last tool result.",
+                "If you need to use the read tool, include an explicit absolute path.",
+                "Keep any prose to one short sentence before taking the next concrete step.",
+            ].join("\n"));
+        }
+        return { appendSystemContext: `\n\n${additions.filter(Boolean).join("\n\n")}` };
     }, { priority: 4 });
 
     if (injectSchemasEnabled) {

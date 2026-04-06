@@ -27,6 +27,7 @@ PLACEHOLDER_TYPE_HINTS = {
 }
 PLACEHOLDER_DESCRIPTIONS = {
     "prompt": "Main text prompt used inside the workflow.",
+    "style_prompt": "Style and instrumentation prompt for the song.",
     "seed": "Random seed for image generation. If not provided, a random seed will be generated.",
     "width": "Image width in pixels. Default: 512.",
     "height": "Image height in pixels. Default: 512.",
@@ -41,9 +42,31 @@ PLACEHOLDER_DESCRIPTIONS = {
     "lyrics": "Full lyric text that should drive the audio generation.",
     "seconds": "Audio duration in seconds. Default: 60 (1 minute).",
     "lyrics_strength": "How strongly lyrics influence audio generation (0.0-1.0). Default: 0.99.",
+    "language": "Language for the generated vocals. Default: 'en'.",
+    "key": "Musical key for the song. Default: 'C major'.",
     "duration": "Video duration in seconds. Default: 5.",
     "fps": "Frames per second for video output. Default: 24.",
     "frames": "Number of video frames (must be divisible by 8+1 for LTX-2). Default: 121 (5s at 24fps).",
+    "scheduler": "Scheduler type for the sampler. Default: 'simple'.",
+}
+OPTIONAL_PARAM_DEFAULTS = {
+    "width": 512,
+    "height": 512,
+    "model": "v1-5-pruned-emaonly.ckpt",
+    "steps": 20,
+    "cfg": 8.0,
+    "sampler_name": "euler",
+    "scheduler": "normal",
+    "denoise": 1.0,
+    "negative_prompt": "text, watermark",
+    "seconds": 60,
+    "lyrics_strength": 0.99,
+    "language": "en",
+    "key": "C major",
+    "scheduler": "simple",
+    "duration": 5,
+    "fps": 24,
+    "frames": 121,
 }
 DEFAULT_OUTPUT_KEYS = ("images", "image", "gifs", "gif")
 AUDIO_OUTPUT_KEYS = ("audio", "audios", "sound", "files")
@@ -166,6 +189,7 @@ class WorkflowManager:
             
             # Extract parameters
             parameters = self._extract_parameters(workflow)
+            parameters = self._merge_metadata_parameters(parameters, metadata)
             available_inputs = {
                 name: {
                     "type": param.annotation.__name__,
@@ -181,6 +205,8 @@ class WorkflowManager:
             
             # Get workflow defaults from metadata or infer from workflow_id
             workflow_defaults = metadata.get("defaults", {})
+            if not workflow_defaults:
+                workflow_defaults = self._infer_defaults(parameters)
 
             catalog.append({
                 "id": workflow_id,
@@ -267,6 +293,7 @@ class WorkflowManager:
 
         # Extract parameters once for type coercion
         parameters = self._extract_parameters(workflow)
+        parameters = self._merge_metadata_parameters(parameters, metadata)
 
         # Apply overrides with constraints
         for param_name, value in overrides.items():
@@ -301,12 +328,15 @@ class WorkflowManager:
         # Apply defaults for parameters not in overrides
         for param_name, param in parameters.items():
             if param_name not in overrides and not param.required:
+                default_value = None
                 if defaults_manager:
                     default_value = defaults_manager.get_default(namespace, param.name, None)
-                    if default_value is not None:
-                        for node_id, input_name in param.bindings:
-                            if node_id in workflow and "inputs" in workflow[node_id]:
-                                workflow[node_id]["inputs"][input_name] = default_value
+                if default_value is None:
+                    default_value = self._get_parameter_default(param.name, param.annotation, metadata)
+                if default_value is not None:
+                    for node_id, input_name in param.bindings:
+                        if node_id in workflow and "inputs" in workflow[node_id]:
+                            workflow[node_id]["inputs"][input_name] = default_value
 
         # Store the report on the workflow dict so callers can access it
         # (using a private key that won't conflict with node IDs which are numeric strings)
@@ -336,8 +366,11 @@ class WorkflowManager:
         try:
             with open(workflow_path, encoding="utf-8") as f:
                 workflow = json.load(f)
+            metadata = self._load_workflow_metadata(workflow_path)
             definition.template = workflow
-            definition.parameters = self._extract_parameters(workflow)
+            definition.parameters = self._merge_metadata_parameters(
+                self._extract_parameters(workflow), metadata
+            )
             definition.output_preferences = self._guess_output_preferences(workflow)
             self._workflow_cache[definition.workflow_id] = workflow
             self._workflow_mtime[definition.workflow_id] = current_mtime
@@ -371,6 +404,7 @@ class WorkflowManager:
                 continue
 
             parameters = self._extract_parameters(workflow)
+            parameters = self._merge_metadata_parameters(parameters, self._load_workflow_metadata(workflow_path))
             if not parameters:
                 logger.info(
                     "Workflow %s has no %s placeholders; skipping auto-tool registration",
@@ -415,6 +449,8 @@ class WorkflowManager:
         self._refresh_definition_if_stale(definition)
 
         workflow = copy.deepcopy(definition.template)
+        workflow_path = self._safe_workflow_path(definition.workflow_id)
+        metadata = self._load_workflow_metadata(workflow_path) if workflow_path else {}
         
         # Determine namespace (image, audio, or video)
         namespace = self._determine_namespace(definition.workflow_id)
@@ -426,21 +462,20 @@ class WorkflowManager:
             # Use provided value, default, or generate (for seed)
             raw_value = provided_params.get(param.name)
             if raw_value is None:
-                if param.name == "seed" and param.annotation is int:
-                    # Special handling for seed - generate random
-                    raw_value = random.randint(0, 2**32 - 1)
-                    logger.debug(f"Generated random seed: {raw_value}")
-                elif defaults_manager:
+                if defaults_manager:
                     # Use defaults manager to get value with proper precedence
                     raw_value = defaults_manager.get_default(namespace, param.name, None)
                     if raw_value is not None:
                         logger.debug(f"Using default value for {param.name}: {raw_value}")
+                if raw_value is None:
+                    raw_value = self._get_parameter_default(param.name, param.annotation, metadata)
+                    if raw_value is not None:
+                        logger.debug(f"Using builtin default value for {param.name}: {raw_value}")
+                if raw_value is None:
+                    if param.required:
+                        raise ValueError(f"Missing required parameter '{param.name}'")
                     else:
-                        # Skip parameters without defaults
                         continue
-                else:
-                    # Fallback to old behavior if no defaults manager
-                    continue
             
             coerced_value = self._coerce_value(raw_value, param.annotation)
             for node_id, input_name in param.bindings:
@@ -580,3 +615,81 @@ class WorkflowManager:
             return value
         except (ValueError, TypeError) as e:
             raise ValueError(f"Cannot convert {value!r} to {annotation.__name__}: {e}")
+
+    def _get_builtin_default(self, param_name: str, annotation: type) -> Any:
+        if param_name == "seed" and annotation is int:
+            return random.randint(0, 2**32 - 1)
+        if param_name in OPTIONAL_PARAM_DEFAULTS:
+            return self._coerce_value(OPTIONAL_PARAM_DEFAULTS[param_name], annotation)
+        return None
+
+    def _get_parameter_default(self, param_name: str, annotation: type, metadata: dict[str, Any]) -> Any:
+        metadata_defaults = metadata.get("defaults", {})
+        if param_name in metadata_defaults:
+            return self._coerce_value(metadata_defaults[param_name], annotation)
+        return self._get_builtin_default(param_name, annotation)
+
+    def _infer_defaults(self, parameters: OrderedDict[str, WorkflowParameter]) -> dict[str, Any]:
+        defaults: dict[str, Any] = {}
+        for param in parameters.values():
+            if param.required:
+                continue
+            default_value = self._get_builtin_default(param.name, param.annotation)
+            if default_value is not None:
+                defaults[param.name] = default_value
+        return defaults
+
+    def _annotation_from_type_name(self, raw_type: str) -> type:
+        mapped = {
+            "str": str,
+            "string": str,
+            "text": str,
+            "int": int,
+            "integer": int,
+            "float": float,
+            "number": float,
+            "bool": bool,
+            "boolean": bool,
+        }
+        return mapped.get((raw_type or "str").strip().lower(), str)
+
+    def _merge_metadata_parameters(
+        self,
+        parameters: OrderedDict[str, WorkflowParameter],
+        metadata: dict[str, Any],
+    ) -> OrderedDict[str, WorkflowParameter]:
+        available_inputs = metadata.get("available_inputs") or {}
+        override_mappings = metadata.get("override_mappings") or {}
+        if not available_inputs:
+            return parameters
+
+        merged = OrderedDict(parameters)
+        for param_name, spec in available_inputs.items():
+            if not isinstance(spec, dict):
+                continue
+            annotation = self._annotation_from_type_name(str(spec.get("type", "str")))
+            description = spec.get(
+                "description",
+                PLACEHOLDER_DESCRIPTIONS.get(param_name, f"Value for '{param_name}'."),
+            )
+            required = bool(spec.get("required", False))
+            bindings = [(str(node_id), str(input_name)) for node_id, input_name in override_mappings.get(param_name, [])]
+
+            existing = merged.get(param_name)
+            if existing is not None:
+                existing.annotation = annotation
+                existing.description = description
+                existing.required = required
+                if bindings:
+                    existing.bindings = bindings
+                continue
+
+            merged[param_name] = WorkflowParameter(
+                name=param_name,
+                placeholder=f"metadata:{param_name}",
+                annotation=annotation,
+                description=description,
+                required=required,
+                bindings=bindings,
+            )
+        return merged

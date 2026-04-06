@@ -1194,34 +1194,6 @@ _MAX_SERVICE_USAGE = 500
 DASHBOARD_DATA_PATH = Path(os.environ.get("DASHBOARD_DATA_PATH", "./data/dashboard")).resolve()
 DASHBOARD_DATA_PATH.mkdir(parents=True, exist_ok=True)
 _THROUGHPUT_FILE = DASHBOARD_DATA_PATH / "throughput.json"
-CLAUDE_CODE_ENV_OVERWRITE_FILE = DASHBOARD_DATA_PATH / "claude_code_env_overwrite.json"
-
-
-def _load_claude_code_env_overwrite_enabled() -> bool:
-    """Whether ensure_dirs / host setup should set ANTHROPIC_* for Claude Code → model-gateway. Default: on."""
-    if not CLAUDE_CODE_ENV_OVERWRITE_FILE.exists():
-        return True
-    try:
-        data = json.loads(CLAUDE_CODE_ENV_OVERWRITE_FILE.read_text(encoding="utf-8"))
-        if isinstance(data, dict) and "enabled" in data:
-            return bool(data["enabled"])
-    except Exception as e:
-        logger.warning("Claude Code env overwrite read failed: %s", e)
-    return True
-
-
-def _save_claude_code_env_overwrite_enabled(enabled: bool) -> None:
-    try:
-        CLAUDE_CODE_ENV_OVERWRITE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        CLAUDE_CODE_ENV_OVERWRITE_FILE.write_text(
-            json.dumps({"enabled": bool(enabled)}, indent=2),
-            encoding="utf-8",
-        )
-    except OSError as e:
-        logger.warning("Claude Code env overwrite write failed: %s", e)
-        raise HTTPException(
-            status_code=500, detail=f"Cannot save preference: {e}",
-        ) from e
 
 
 def _load_throughput_state() -> None:
@@ -1691,26 +1663,6 @@ async def set_default_model(req: DefaultModelRequest, request: Request):
         "openclaw_restarted": code3 in (200, 201),
         "webui_error": data2.get("detail") if code2 >= 400 else None,
     }
-
-
-# --- Claude Code (host) — ANTHROPIC_* local gateway overwrite ---
-
-
-class ClaudeCodeEnvOverwriteRequest(BaseModel):
-    enabled: bool
-
-
-@app.get("/api/claude-code/env-overwrite")
-async def get_claude_code_env_overwrite():
-    """Persisted preference for scripts/ensure_dirs: set ANTHROPIC_* so Claude Code uses the local Model Gateway."""
-    return {"enabled": _load_claude_code_env_overwrite_enabled()}
-
-
-@app.put("/api/claude-code/env-overwrite")
-async def put_claude_code_env_overwrite(req: ClaudeCodeEnvOverwriteRequest):
-    """Enable or disable automated ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL setup for Claude Code on the host."""
-    _save_claude_code_env_overwrite_enabled(req.enabled)
-    return {"ok": True, "enabled": bool(req.enabled)}
 
 
 # --- OpenClaw model management ---

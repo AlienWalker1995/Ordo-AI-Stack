@@ -155,6 +155,49 @@ def test_full_pipeline_compile_run_artifact_publish_callback(
         assert j4.state.value == "published", "State must survive simulated worker restart"
 
 
+def test_run_workflow_sanitizes_gemma_wrapped_workflow_id(
+    client: TestClient, db_dir: Path, mock_comfyui_url: str, tmp_path: Path
+):
+    """Gemma 4 can wrap string args in special tokens; workflow execution should still resolve."""
+    from dashboard.orchestration_db import claim_next_job, get_job, load_store
+
+    wf_dir = tmp_path / "workflows"
+    wf_dir.mkdir(parents=True)
+    wf_file = wf_dir / "pubsong.json"
+    wf_file.write_text(json.dumps({
+        "1": {"class_type": "CLIPTextEncode", "inputs": {"text": "ok", "clip": ["2", 0]}},
+        "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "test.safetensors"}},
+    }), encoding="utf-8")
+
+    with patch("dashboard.routes_orchestration.WORKFLOWS_DIR", wf_dir), \
+         patch("dashboard.routes_orchestration.compute_readiness", return_value={"ok": True, "checks": []}):
+        r = client.post("/api/orchestration/run", json={"workflow_id": '<|"|>pubsong<|"|>', "params": {}})
+        assert r.status_code == 200
+        job_id = r.json()["job_id"]
+
+        load_store(db_dir)
+        job = claim_next_job(db_dir)
+        assert job is not None
+        assert job.job_id == job_id
+        assert job.workflow_id == "pubsong"
+
+        import os
+
+        from worker.worker import execute_job as _execute_job
+        os.environ["COMFYUI_URL"] = mock_comfyui_url
+        os.environ["COMFYUI_WORKFLOWS_DIR"] = str(wf_dir)
+
+        import worker.worker as ww
+        ww.DATA_DIR = db_dir
+        ww.COMFYUI_URL = mock_comfyui_url
+        ww.WORKFLOWS_DIR = wf_dir
+        _execute_job(job)
+
+        finished = get_job(db_dir, job_id)
+        assert finished is not None
+        assert finished.state.value == "artifact_ready"
+
+
 def test_cancel_queued_job(client: TestClient, db_dir: Path):
     """Cancellation of a queued job before execution."""
     from dashboard.orchestration_db import get_job, load_store

@@ -39,6 +39,7 @@ from dashboard.orchestration_db import (
     load_store,
 )
 from dashboard.param_placeholders import apply_param_placeholders
+from dashboard.text_sanitizers import sanitize_workflow_id
 from dashboard.workflow_boundary import assert_api_workflow
 from dashboard.workflow_templates import compile_template, load_template
 
@@ -94,7 +95,10 @@ def _comfyui_wait_outputs(prompt_id: str, timeout: int = 600) -> dict[str, Any]:
 
 def _resolve_workflow_path(workflow_id: str) -> Path | None:
     root = WORKFLOWS_DIR.resolve()
-    raw = workflow_id.strip().replace("\\", "/")
+    normalized = sanitize_workflow_id(workflow_id)
+    if not normalized:
+        return None
+    raw = normalized.replace("\\", "/")
     if not raw or raw.startswith("/") or ".." in raw.split("/"):
         return None
     if "/" in raw:

@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from dashboard.app import app
+from dashboard.text_sanitizers import sanitize_workflow_id
 from dashboard.workflow_boundary import assert_api_workflow, is_ui_workflow_export
 
 
@@ -97,3 +98,42 @@ def test_template_compile_minimal(tmp_path: Path, monkeypatch):
     }
     out = compile_template(tpl, {"prompt": "hello"}, workflows_dir=wf_dir)
     assert out["9"]["inputs"]["text"] == "hello"
+
+
+def test_sanitize_workflow_id_strips_gemma_wrappers():
+    assert sanitize_workflow_id('<|"|>mcp-api/generate_song<|"|>') == "mcp-api/generate_song"
+
+
+def test_apply_param_placeholders_fills_optional_audio_defaults():
+    from dashboard.param_placeholders import apply_param_placeholders
+
+    workflow = {
+        "14": {
+            "class_type": "TextEncodeAceStepAudio",
+            "inputs": {
+                "tags": "PARAM_STR_TAGS",
+                "lyrics": "PARAM_STR_LYRICS",
+                "lyrics_strength": "PARAM_FLOAT_LYRICS_STRENGTH",
+            },
+        },
+        "17": {
+            "class_type": "EmptyAceStepLatentAudio",
+            "inputs": {"seconds": "PARAM_INT_SECONDS"},
+        },
+        "52": {
+            "class_type": "KSampler",
+            "inputs": {"seed": "PARAM_INT_SEED"},
+        },
+    }
+
+    out = apply_param_placeholders(
+        workflow,
+        {
+            "tags": "irish folk, pub singalong, tin whistle",
+            "lyrics": "[Verse]\\nOh pub stuff\\n[Chorus]\\nOh pub stuffff",
+        },
+    )
+
+    assert out["14"]["inputs"]["lyrics_strength"] == pytest.approx(0.99)
+    assert out["17"]["inputs"]["seconds"] == 60
+    assert isinstance(out["52"]["inputs"]["seed"], int)

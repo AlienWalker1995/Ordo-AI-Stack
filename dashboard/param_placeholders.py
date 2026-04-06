@@ -36,6 +36,23 @@ _OPTIONAL_PARAMS = frozenset(
     }
 )
 
+OPTIONAL_PARAM_DEFAULTS: dict[str, Any] = {
+    "width": 512,
+    "height": 512,
+    "model": "v1-5-pruned-emaonly.ckpt",
+    "steps": 20,
+    "cfg": 8.0,
+    "sampler_name": "euler",
+    "scheduler": "normal",
+    "denoise": 1.0,
+    "negative_prompt": "text, watermark",
+    "seconds": 60,
+    "lyrics_strength": 0.99,
+    "duration": 5,
+    "fps": 24,
+    "frames": 121,
+}
+
 
 def _parse_placeholder(value: Any) -> tuple[str, type, str] | None:
     if not isinstance(value, str) or not value.startswith(PLACEHOLDER_PREFIX):
@@ -77,6 +94,14 @@ def _coerce_value(value: Any, annotation: type) -> Any:
         raise ValueError(f"Cannot convert {value!r} to {annotation.__name__}: {e}") from e
 
 
+def get_optional_param_default(param_name: str, annotation: type) -> Any:
+    if param_name == "seed" and annotation is int:
+        return random.randint(0, 2**32 - 1)
+    if param_name in OPTIONAL_PARAM_DEFAULTS:
+        return _coerce_value(OPTIONAL_PARAM_DEFAULTS[param_name], annotation)
+    return None
+
+
 def apply_param_placeholders(workflow: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
     """Deep-copy workflow and replace PARAM_* string placeholders using params."""
     out = copy.deepcopy(workflow)
@@ -95,10 +120,10 @@ def apply_param_placeholders(workflow: dict[str, Any], params: dict[str, Any]) -
             pname, ann, _ = parsed
             raw = params.get(pname)
             if raw is None:
-                if pname == "seed" and ann is int:
-                    raw = random.randint(0, 2**32 - 1)
-                elif pname in _OPTIONAL_PARAMS:
-                    continue
+                if pname in _OPTIONAL_PARAMS:
+                    raw = get_optional_param_default(pname, ann)
+                    if raw is None:
+                        continue
                 else:
                     required_missing.append(pname)
                     continue

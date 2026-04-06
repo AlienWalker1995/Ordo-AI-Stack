@@ -1309,18 +1309,6 @@
             </div>
           </div>
         </div>
-        <div class="model-panel claude-env-panel" style="grid-column: 1 / -1;">
-          <h3>Claude Code - host CLI</h3>
-          <div class="pull-area">
-            <p class="section-desc" style="margin:0 0 var(--space-3);">Controls whether setup scripts set <code>ANTHROPIC_API_KEY</code> and <code>ANTHROPIC_BASE_URL</code> so the Claude Code CLI talks to your local Model Gateway. Turn off to stop overriding and use Anthropic's API with your own credentials.</p>
-            <label class="claude-env-toggle">
-              <input type="checkbox" id="claude-env-overwrite" checked aria-describedby="claude-env-hint" />
-              <span class="track" aria-hidden="true"></span>
-              <span>Local Model Gateway ANTHROPIC overrides</span>
-            </label>
-            <p id="claude-env-hint" style="font-size:0.8rem;color:var(--fg-muted);margin-top:var(--space-3);">Re-run <code>./scripts/ensure_dirs.ps1</code> or <code>./scripts/ensure_dirs.sh</code> after changing this so your user environment or shell profile picks up the change.</p>
-          </div>
-        </div>
       </div>
     </section>
   </div>
@@ -2483,50 +2471,11 @@
       }
     });
 
-    async function loadClaudeCodeEnvOverwrite() {
-      const input = document.getElementById('claude-env-overwrite');
-      if (!input) return;
-      try {
-        const d = await api('/api/claude-code/env-overwrite').then(r => r.json());
-        input.checked = d.enabled !== false;
-      } catch (_) {
-        input.checked = true;
-      }
-    }
-
-    document.getElementById('claude-env-overwrite')?.addEventListener('change', async function() {
-      const enabled = this.checked;
-      const prev = !enabled;
-      try {
-        const r = await api('/api/claude-code/env-overwrite', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled }),
-        });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          this.checked = prev;
-          const err = d.detail;
-          toast(typeof err === 'string' ? err : 'Save failed', 'error');
-          return;
-        }
-        toast(
-          enabled
-            ? 'Local ANTHROPIC overrides enabled — re-run ensure_dirs on the host to apply.'
-            : 'Local ANTHROPIC overrides disabled — re-run ensure_dirs on the host to clear or keep env.',
-          'success',
-        );
-      } catch (e) {
-        this.checked = prev;
-        toast('Failed to save: ' + (e.message || e), 'error');
-      }
-    });
-
     async function refresh() {
       const btn = document.getElementById('refresh-btn');
       btn.classList.add('loading');
       if (!ollamaLibrary.length) await loadOllamaLibrary();
-      await Promise.all([loadServices(), loadDependencies(), loadRagStatus(), loadOllamaModels(), loadComfyuiModels(), loadComfyuiPacks(), loadMcpServers(), loadClaudeCodeEnvOverwrite()]);
+      await Promise.all([loadServices(), loadDependencies(), loadRagStatus(), loadOllamaModels(), loadComfyuiModels(), loadComfyuiPacks(), loadMcpServers()]);
       loadThroughputStats();
       loadThroughputServiceUsage();
       loadPerfKPIs();
