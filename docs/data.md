@@ -149,7 +149,7 @@ This document describes data sources, schemas, lifecycle, and persistence rules 
 
 ### 1. Initialization
 
-**Trigger:** `./ordo-ai-stack initialize` or `ensure_dirs` script
+**Trigger:** Bootstrap sequence (via `compose` wrapper or manual scripts)
 
 **Actions:**
 - Create `data/` subdirectories
@@ -280,13 +280,13 @@ This document describes data sources, schemas, lifecycle, and persistence rules 
 **Option 1: Full Directory Backup**
 ```bash
 # Backup all data
-tar -czf ordo-ai-stack-backup.tar.gz data/ models/
+tar -czf ai-toolkit-backup.tar.gz data/ models/
 ```
 
 **Option 2: Selective Backup**
 ```bash
 # Backup critical data only
-tar -czf ordo-ai-stack-critical-backup.tar.gz \
+tar -czf ai-toolkit-critical-backup.tar.gz \
   data/openclaw/workspace/ \
   data/openclaw/openclaw.json \
   data/ops-controller/audit.log
@@ -307,7 +307,7 @@ ls data/qdrant/snapshots/
 
 2. **Restore data from backup:**
    ```bash
-   tar -xzf ordo-ai-stack-backup.tar.gz
+   tar -xzf ai-toolkit-backup.tar.gz
    ```
 
 3. **Restart services:**

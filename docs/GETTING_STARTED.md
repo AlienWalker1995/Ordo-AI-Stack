@@ -25,7 +25,7 @@ No GPU required for chat (Ollama runs on CPU, slower but works).
 
 ### Full stack
 
-**Recommended:** `./ordo-ai-stack initialize` (Linux/Mac/Git Bash) or `.\ordo-ai-stack.ps1 initialize` (Windows) — bootstraps data dirs and config, then rebuilds/recreates and starts all default services.
+**Recommended:** Run the bootstrap sequence (ensure directories, workspace seeds, then start the stack) as detailed in the [README.md Quickstart](../README.md#quickstart).
 
 Alternatively: `docker compose up -d` — same services without the full bootstrap/rebuild step (use the `compose` wrapper if you want auto hardware detection).
 

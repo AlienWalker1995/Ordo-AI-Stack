@@ -152,7 +152,7 @@ Audit query:      Dashboard → GET /audit (auth) → Controller reads JSONL
 ## Repo Structure
 
 ```
-ordo-ai-stack/
+AI-toolkit/
 ├── dashboard/           # Ops dashboard (Python/Flask)
 ├── model-gateway/       # OpenAI-compat model proxy
 ├── ops-controller/      # Authenticated Docker lifecycle API

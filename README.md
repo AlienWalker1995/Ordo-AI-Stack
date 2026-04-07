@@ -114,10 +114,10 @@ Auto-generated: **`overrides/compute.yml`** (from hardware detection). Do not co
   ./compose run --rm model-puller
   ./compose run --rm comfyui-model-puller
   ./compose run --rm openclaw-cli onboard
-  ./compose --profile openclaude-cli run --rm openclaude-cli
+  ./compose --profile openclaw-cli run --rm openclaw-cli
   ```
 
-  Host `openclaude` installs are wired to the local `model-gateway` by `./scripts/ensure_dirs.sh` or `.\scripts\ensure_dirs.ps1`, so the CLI uses local models by default after setup.
+  Host `openclaw` installs are wired to the local `model-gateway` by `./scripts/ensure_dirs.sh` or `.\scripts\ensure_dirs.ps1`, so the CLI uses local models by default after setup.
 
 - **RAG:** `docker compose --profile rag up -d` and ingest paths per [Getting started — RAG](docs/GETTING_STARTED.md#rag-documents-in-chat).
 - **MCP clients:** connect to `http://localhost:8811/mcp` (see [mcp/README.md](mcp/README.md)).
