@@ -16,7 +16,7 @@ Docker Compose stack for local LLMs, chat UI, image/video (ComfyUI), automation 
 
 ## Overview
 
-**Ordo AI Stack** packages a **local-first** stack: Ollama-backed models behind an **OpenAI-compatible** model-gateway, **Open WebUI** for chat, **ComfyUI** for diffusion workflows, **n8n** for workflows, **OpenClaw** as an optional assistant layer, and an **MCP gateway** for shared tools. A **dashboard** provides a single place to inspect dependencies, pull models, and (with tokens set) control parts of the stack.
+**Ordo AI Stack** packages a **local-first** stack: llama.cpp-backed models behind an **OpenAI-compatible** LiteLLM model gateway, **Open WebUI** for chat, **ComfyUI** for diffusion workflows, **n8n** for workflows, **OpenClaw** as an optional assistant layer, and an **MCP gateway** for shared tools. A **dashboard** provides a single place to inspect dependencies, pull models, and (with tokens set) control parts of the stack.
 
 **Who it is for:** Operators running the stack on their own machine or LAN; contributors changing Python services, tests, and Compose definitions.
 
@@ -25,7 +25,7 @@ Docker Compose stack for local LLMs, chat UI, image/video (ComfyUI), automation 
 ## Features
 
 - **Unified dashboard** (port **8080**) — model lists, service links, dependency health, model pulls (when configured).
-- **Model gateway** (**11435**) — OpenAI-compatible API in front of Ollama / vLLM backends.
+- **Model gateway** (**11435**) — LiteLLM OpenAI-compatible API in front of llama.cpp backends.
 - **Open WebUI** (**3000**) — chat UI.
 - **ComfyUI** (**8188**) — workflows; large optional model downloads on demand.
 - **n8n** (**5678**) — automation.
@@ -157,7 +157,7 @@ Hardware detection writes **`overrides/compute.yml`**. The `compose` wrapper run
 ```
 User → Dashboard / Open WebUI / N8N / OpenClaw
          │
-         ├── Model Gateway (:11435) → Ollama / vLLM
+         ├── Model Gateway (:11435) → LiteLLM → llama.cpp
          ├── MCP Gateway (:8811) → shared tools
          └── Ops Controller (:9000) → Docker Compose lifecycle
 ```

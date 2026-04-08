@@ -42,8 +42,8 @@ echo "=== Active MCP Servers ==="
 cat /home/node/.openclaw/workspace/data/mcp/servers.txt 2>/dev/null || echo "(servers.txt not found)"
 echo ""
 
-echo "=== Ollama Running Models ==="
-wget -q -O - "http://model-gateway:11435/api/ps" 2>/dev/null | grep -o '"name":"[^"]*"' | head -5 || echo "No models loaded"
+echo "=== Gateway Models ==="
+wget -q -O - "http://model-gateway:11435/v1/models" 2>/dev/null | grep -o '"id":"[^"]*"' | head -5 || echo "No models loaded"
 echo ""
 
 echo "=== Done ==="

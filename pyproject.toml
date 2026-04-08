@@ -17,7 +17,6 @@ ignore = ["E501"]
 [tool.ruff.lint.per-file-ignores]
 # Imports intentionally ordered after _state_lock / app for readability
 "dashboard/app.py" = ["E402"]
-"model-gateway/main.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["dashboard"]

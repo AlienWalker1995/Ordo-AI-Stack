@@ -40,7 +40,7 @@ _load_env_file(_repo_root() / ".env")
 
 GATEWAY_PROVIDER = {
     "baseUrl": "http://model-gateway:11435/v1",
-    "apiKey": "local",
+    "apiKey": os.environ.get("LITELLM_MASTER_KEY", "local"),
     "api": "openai-responses",
     "headers": {"X-Service-Name": "openclaw"},
 }
@@ -681,14 +681,14 @@ def main() -> int:
         modified = True
     # Keep the default agent model pinned to the active llama.cpp model so isolated
     # sessions and cron runs do not point at a stale provider model id.
-    active_model_id = os.environ.get("LLAMACPP_MODEL", "").strip().removesuffix(".gguf")
+    active_model_id = os.environ.get("LLAMACPP_MODEL", "").strip()
     if not active_model_id and gateway_models:
         first_id = gateway_models[0].get("id")
         if isinstance(first_id, str):
             active_model_id = first_id
     if active_model_id:
         model_defaults = agents_defaults.setdefault("model", {})
-        desired_primary = f"gateway/{active_model_id}"
+        desired_primary = active_model_id
         if model_defaults.get("primary") != desired_primary:
             model_defaults["primary"] = desired_primary
             modified = True

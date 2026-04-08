@@ -86,24 +86,16 @@ services:
     environment:
       - LLAMACPP_URL=http://llamacpp:8080
       - LLAMACPP_EMBED_URL=http://llamacpp-embed:8080
-      - VLLM_URL=${VLLM_URL:-}
-      - DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-llamacpp}
-      - DASHBOARD_URL=http://dashboard:8080
-      - THROUGHPUT_RECORD_TOKEN=${THROUGHPUT_RECORD_TOKEN:-}
-      - MODEL_CACHE_TTL_SEC=${MODEL_CACHE_TTL_SEC:-60}
+      - LLAMACPP_MODEL=${LLAMACPP_MODEL:-model.gguf}
+      - LLAMACPP_EMBED_MODEL=${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-local}
       - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-262144}
-      - OPENCLAW_MAX_INPUT_TOKENS=${OPENCLAW_MAX_INPUT_TOKENS:-16384}
       # Local model used when a Claude-compatible client sends a "claude-*" model name
       - CLAUDE_CODE_LOCAL_MODEL=${CLAUDE_CODE_LOCAL_MODEL:-}
-      # Set to 1 only if a client requires claude-* ids in GET /v1/models (pollutes OpenClaw sync if on)
-      - CLAUDE_CODE_ADVERTISE_ALIASES=${CLAUDE_CODE_ADVERTISE_ALIASES:-0}
-      # Claude Code web_search_* tools: gateway strips them and injects Tavily results
-      # into the system prompt when TAVILY_API_KEY is set (same key as mcp-gateway).
-      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
     ports:
       - "${MODEL_GATEWAY_PORT:-11435}:11435"
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:11435/health')"]
+      test: ["CMD-SHELL", "python3 -c \"import os, urllib.request; req = urllib.request.Request('http://localhost:11435/v1/models', headers={'Authorization': 'Bearer ' + os.environ.get('LITELLM_MASTER_KEY', 'local')}); urllib.request.urlopen(req)\""]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -183,6 +175,7 @@ services:
         max-file: "3"
     environment:
       - LLAMACPP_URL=http://llamacpp:8080
+      - MODEL_GATEWAY_API_KEY=${LITELLM_MASTER_KEY:-local}
       - MODELS_DIR=/models
       - GGUF_MODELS_DIR=/gguf-models
       - SCRIPTS_DIR=/scripts
@@ -273,7 +266,7 @@ services:
       # Route all model requests through the gateway (unified provider)
       - OLLAMA_BASE_URL=
       - OPENAI_API_BASE_URL=${OPENAI_API_BASE:-http://model-gateway:11435/v1}
-      - OPENAI_API_KEY=local
+      - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-local}
       # Auth: False = single-user local / Tailscale use.
       - WEBUI_AUTH=${WEBUI_AUTH:-False}
       # Default model shown in chat UI. Dashboard writes OPEN_WEBUI_DEFAULT_MODEL to prefer the low-context :chat alias.
@@ -284,7 +277,7 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - RAG_EMBEDDING_ENGINE=openai
       - RAG_OPENAI_API_BASE_URL=http://model-gateway:11435/v1
-      - RAG_OPENAI_API_KEY=${DASHBOARD_AUTH_TOKEN:-local}
+      - RAG_OPENAI_API_KEY=${LITELLM_MASTER_KEY:-local}
       - RAG_EMBEDDING_MODEL=${EMBED_MODEL:-${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}}
     volumes:
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/open-webui:/app/backend/data
@@ -601,6 +594,7 @@ services:
       - LLAMACPP_MODEL=${LLAMACPP_MODEL:-}
       - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-262144}
       - OPENCLAW_CONTEXT_WINDOW=${OPENCLAW_CONTEXT_WINDOW:-${LLAMACPP_CTX_SIZE:-262144}}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-local}
       # Comma-separated Discord guild snowflake IDs → channels.discord.guilds (required for allowlist policy)
       - OPENCLAW_DISCORD_GUILD_IDS=${OPENCLAW_DISCORD_GUILD_IDS:-}
       # Optional comma-separated Discord user snowflake IDs → each allowed guild's users allowlist
@@ -892,7 +886,7 @@ services:
       TERM: xterm-256color
       NODE_ENV: production
       BROWSER: echo
-      OPENAI_API_KEY: "local"
+      OPENAI_API_KEY: "${LITELLM_MASTER_KEY:-local}"
       OPENAI_BASE_URL: "http://model-gateway:11435/v1"
     volumes:
       - ${OPENCLAW_CONFIG_DIR:-${BASE_PATH:-.}/data/openclaw}:/home/node/.openclaw
@@ -922,7 +916,7 @@ services:
       NODE_ENV: production
       BROWSER: echo
       CLAUDE_CODE_USE_OPENAI: "1"
-      OPENAI_API_KEY: ${OPENCLAUDE_OPENAI_API_KEY:-local}
+      OPENAI_API_KEY: ${OPENCLAUDE_OPENAI_API_KEY:-${LITELLM_MASTER_KEY:-local}}
       OPENAI_BASE_URL: http://model-gateway:${MODEL_GATEWAY_PORT:-11435}/v1
       OPENAI_MODEL: ${OPENCLAUDE_MODEL:-${DEFAULT_MODEL:-model.gguf}}
     volumes:

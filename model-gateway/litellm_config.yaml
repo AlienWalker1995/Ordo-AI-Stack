@@ -1,0 +1,15 @@
+model_list:
+  - model_name: "__CHAT_MODEL__"
+    litellm_params:
+      model: "openai/__CHAT_MODEL__"
+      api_base: "http://llamacpp:8080/v1"
+      api_key: "local"
+
+  - model_name: "__EMBED_MODEL__"
+    litellm_params:
+      model: "openai/__EMBED_MODEL__"
+      api_base: "http://llamacpp-embed:8080/v1"
+      api_key: "local"
+
+general_settings:
+  master_key: "__MASTER_KEY__"

@@ -109,9 +109,17 @@ async def auth_middleware(request: Request, call_next):
 
 
 MODEL_GATEWAY_URL = os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435").rstrip("/")
+MODEL_GATEWAY_API_KEY = os.environ.get("MODEL_GATEWAY_API_KEY", os.environ.get("LITELLM_MASTER_KEY", "local")).strip()
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://comfyui:8188").rstrip("/")
 MODELS_DIR = Path(os.environ.get("MODELS_DIR", "/models"))
 SCRIPTS_DIR = Path(os.environ.get("SCRIPTS_DIR", "/scripts"))
+
+
+def _model_gateway_headers() -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if MODEL_GATEWAY_API_KEY:
+        headers["Authorization"] = f"Bearer {MODEL_GATEWAY_API_KEY}"
+    return headers
 
 # Ollama library: fetched from community JSON (all pullable model:tag names)
 OLLAMA_LIBRARY_URL = os.environ.get(
@@ -219,13 +227,14 @@ async def ollama_models():
     disk_models = await asyncio.to_thread(_scan_gguf_models)
     if disk_models:
         return {"models": disk_models, "ok": True}
-    # Fallback: ask model-gateway (only returns the currently loaded model)
+    # Fallback: ask model-gateway
     async with AsyncClient(timeout=30.0) as client:
         try:
-            r = await client.get(f"{MODEL_GATEWAY_URL}/api/tags")
+            r = await client.get(f"{MODEL_GATEWAY_URL}/v1/models", headers=_model_gateway_headers())
             r.raise_for_status()
             data = r.json()
-            return {"models": data.get("models", []), "ok": True}
+            models = [{"name": m["id"]} for m in data.get("data", []) if m.get("id")]
+            return {"models": models, "ok": True}
         except Exception as e:
             return {"models": [], "ok": False, "error": str(e)}
 
@@ -263,6 +272,7 @@ async def ollama_unload(req: PullRequest):
             r = await client.request(
                 "DELETE",
                 f"{MODEL_GATEWAY_URL.rstrip('/')}/api/delete",
+                headers=_model_gateway_headers(),
                 json={"name": name},
             )
             if r.status_code == 404:
@@ -337,7 +347,7 @@ async def set_active_model(req: PullRequest, request: Request):
     results["open_webui_restarting"] = code3 in (200, 201, 202)
 
     # 3. Update OpenClaw agents.defaults.model.primary + model list + restart openclaw-gateway
-    openclaw_model = f"gateway/{bare_name}"
+    openclaw_model = model
     if OPENCLAW_CONFIG_PATH.exists():
         try:
             cfg = json.loads(OPENCLAW_CONFIG_PATH.read_text(encoding="utf-8"))
@@ -1407,17 +1417,19 @@ async def performance_summary():
 
 @app.get("/api/ollama/ps")
 async def ollama_ps():
-    """List models currently loaded in Ollama (via model-gateway)."""
+    """List models currently advertised by model-gateway."""
     async with AsyncClient(timeout=10.0) as client:
         try:
-            r = await client.get(f"{MODEL_GATEWAY_URL.rstrip('/')}/api/ps")
+            r = await client.get(f"{MODEL_GATEWAY_URL.rstrip('/')}/v1/models", headers=_model_gateway_headers())
             r.raise_for_status()
-            return r.json()
+            data = r.json()
+            models = [{"name": m["id"]} for m in data.get("data", []) if m.get("id")]
+            return {"models": models}
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Ollama request failed: {e}")
+            raise HTTPException(status_code=502, detail=f"Model gateway request failed: {e}")
 
 
-# Embedding models don't support /api/generate — exclude from throughput benchmark
+# Embedding models don't support chat completions — exclude from throughput benchmark
 _EMBED_MODEL_PATTERNS = ("embed", "bge", "mxbai", "arctic-embed", "granite-embedding", "paraphrase-multilingual")
 
 
@@ -1428,7 +1440,7 @@ def _is_embedding_model(name: str) -> bool:
 
 @app.post("/api/throughput/benchmark")
 async def throughput_benchmark(req: ThroughputBenchmarkRequest):
-    """Run a quick benchmark via model-gateway /api/generate (llama.cpp). Returns tokens/sec and related metrics."""
+    """Run a quick benchmark via model-gateway /v1/chat/completions."""
     model = req.model.strip() or "llama3.2"
     if _is_embedding_model(model):
         raise HTTPException(
@@ -1436,36 +1448,46 @@ async def throughput_benchmark(req: ThroughputBenchmarkRequest):
             detail=f"Model '{model}' is an embedding model and does not support text generation. Choose an LLM (e.g. llama3.2, deepseek-r1:7b).",
         )
     prompt = "Say 'ok' and nothing else."
-    url = f"{MODEL_GATEWAY_URL.rstrip('/')}/api/generate"
+    url = f"{MODEL_GATEWAY_URL.rstrip('/')}/v1/chat/completions"
     async with AsyncClient(timeout=60.0) as client:
         try:
-            r = await client.post(url, json={"model": model, "prompt": prompt, "stream": False})
+            started = time.perf_counter()
+            r = await client.post(
+                url,
+                headers=_model_gateway_headers(),
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 16,
+                    "stream": False,
+                },
+            )
+            elapsed_ms = (time.perf_counter() - started) * 1000
             if r.status_code == 400:
                 try:
                     err = r.json()
-                    msg = err.get("error", r.text) or "Bad request"
+                    error_obj = err.get("error", err)
+                    if isinstance(error_obj, dict):
+                        msg = error_obj.get("message") or error_obj.get("error") or r.text or "Bad request"
+                    else:
+                        msg = str(error_obj) or r.text or "Bad request"
                 except Exception:
                     msg = r.text or "Bad request"
-                raise HTTPException(status_code=400, detail=f"Ollama: {msg}")
+                raise HTTPException(status_code=400, detail=f"Model gateway: {msg}")
             r.raise_for_status()
             data = r.json()
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Ollama request failed: {e}")
+            raise HTTPException(status_code=502, detail=f"Model gateway request failed: {e}")
 
-    eval_count = data.get("eval_count", 0)
-    eval_duration_ns = data.get("eval_duration", 0) or 1
-    prompt_eval_count = data.get("prompt_eval_count", 0)
-    prompt_eval_duration_ns = data.get("prompt_eval_duration", 0) or 1
-    load_duration_ns = data.get("load_duration", 0)
-    total_duration_ns = data.get("total_duration", 0)
+    usage = data.get("usage", {}) if isinstance(data, dict) else {}
+    eval_count = int(usage.get("completion_tokens") or 0)
+    prompt_eval_count = int(usage.get("prompt_tokens") or 0)
+    elapsed_sec = max(elapsed_ms / 1000, 0.001)
 
-    eval_duration_sec = eval_duration_ns / 1e9
-    prompt_eval_duration_sec = prompt_eval_duration_ns / 1e9
-
-    output_tokens_per_sec = eval_count / eval_duration_sec if eval_duration_sec > 0 else 0
-    input_tokens_per_sec = prompt_eval_count / prompt_eval_duration_sec if prompt_eval_duration_sec > 0 else 0
+    output_tokens_per_sec = eval_count / elapsed_sec if eval_count > 0 else 0
+    input_tokens_per_sec = prompt_eval_count / elapsed_sec if prompt_eval_count > 0 else 0
 
     # Store sample for stats (peak, percentiles)
     with _state_lock:
@@ -1483,9 +1505,9 @@ async def throughput_benchmark(req: ThroughputBenchmarkRequest):
         "output_tokens": eval_count,
         "output_tokens_per_sec": round(output_tokens_per_sec, 1),
         "input_tokens_per_sec": round(input_tokens_per_sec, 1),
-        "eval_duration_ms": round(eval_duration_ns / 1e6, 1),
-        "load_duration_ms": round(load_duration_ns / 1e6, 1),
-        "total_duration_ms": round(total_duration_ns / 1e6, 1),
+        "eval_duration_ms": round(elapsed_ms, 1),
+        "load_duration_ms": 0.0,
+        "total_duration_ms": round(elapsed_ms, 1),
     }
     global _last_benchmark
     with _state_lock:
@@ -1670,7 +1692,7 @@ async def set_default_model(req: DefaultModelRequest, request: Request):
 # Gateway provider base written into openclaw.json (must match merge_gateway_config.py)
 _OPENCLAW_GATEWAY_BASE = {
     "baseUrl": "http://model-gateway:11435/v1",
-    "apiKey": "local",
+    "apiKey": os.environ.get("LITELLM_MASTER_KEY", "local"),
     "api": "openai-responses",
     "headers": {"X-Service-Name": "openclaw"},
 }
@@ -1783,7 +1805,7 @@ async def sync_openclaw_models(request: Request):
     # Fetch live model list from model-gateway
     try:
         async with AsyncClient(timeout=15.0) as client:
-            r = await client.get(f"{MODEL_GATEWAY_URL}/v1/models")
+            r = await client.get(f"{MODEL_GATEWAY_URL}/v1/models", headers=_model_gateway_headers())
             r.raise_for_status()
             raw = r.json()
     except Exception as e:
