@@ -962,6 +962,93 @@ function deriveSessionStateFromTranscript(entries) {
  * @param api - The OpenClaw plugin API.
  */
 let IS_LOCAL_GGUF = false;
+
+// ---------------------------------------------------------------------------
+// Response truncation — applied to all flat tool results before returning
+// ---------------------------------------------------------------------------
+const RESPONSE_CAP_CLOUD = 4000;
+const RESPONSE_CAP_GGUF = 2000;
+const SEARCH_MAX_ITEMS = 3;
+const SEARCH_DESC_CLOUD = 200;
+const SEARCH_DESC_GGUF = 150;
+
+function isSearchTool(toolName) {
+    const lower = toolName.toLowerCase();
+    return (
+        lower.includes("search") ||
+        lower.includes("duckduckgo") ||
+        lower.includes("tavily") ||
+        (lower.includes("n8n") && (lower.includes("list") || lower.includes("search")))
+    );
+}
+
+function truncateToolResult(text, toolName) {
+    if (typeof text !== "string") {
+        return String(text ?? "");
+    }
+    const cap = IS_LOCAL_GGUF ? RESPONSE_CAP_GGUF : RESPONSE_CAP_CLOUD;
+    const descLen = IS_LOCAL_GGUF ? SEARCH_DESC_GGUF : SEARCH_DESC_CLOUD;
+    let parsed;
+    try {
+        parsed = JSON.parse(text);
+    }
+    catch {
+        // Not JSON — apply global cap only
+        return text.length > cap ? `${text.slice(0, cap - 40)}\u2026[${text.length - cap} chars omitted]` : text;
+    }
+    // list_workflows: filter to mcp-api/* only
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray(parsed.workflow_files)) {
+        const runnable = parsed.workflow_files.filter((w) => typeof w?.id === "string" && w.id.startsWith("mcp-api/"));
+        const omitted = parsed.workflow_files.length - runnable.length;
+        const out = { ...parsed, workflow_files: runnable };
+        if (omitted > 0) {
+            out._note = `${String(omitted)} non-runnable workflow files omitted (use workflow_id from mcp-api/* only)`;
+        }
+        text = JSON.stringify(out, null, 2);
+    }
+    // Search tools: cap results and truncate descriptions
+    else if (isSearchTool(toolName) && parsed !== null) {
+        const truncateDesc = (item) => {
+            if (!item || typeof item !== "object" || Array.isArray(item)) {
+                return item;
+            }
+            const out = { ...item };
+            for (const field of ["description", "snippet", "text", "content", "body", "summary"]) {
+                if (typeof out[field] === "string" && out[field].length > descLen) {
+                    out[field] = `${out[field].slice(0, descLen)}\u2026`;
+                }
+            }
+            return out;
+        };
+        const truncateList = (arr) => {
+            if (!Array.isArray(arr)) {
+                return arr;
+            }
+            const limited = arr.slice(0, SEARCH_MAX_ITEMS).map(truncateDesc);
+            if (arr.length > SEARCH_MAX_ITEMS) {
+                limited.push({ _note: `${String(arr.length - SEARCH_MAX_ITEMS)} more results omitted` });
+            }
+            return limited;
+        };
+        if (Array.isArray(parsed)) {
+            parsed = truncateList(parsed);
+        } else if (parsed && typeof parsed === "object") {
+            for (const key of ["results", "items", "hits", "data"]) {
+                if (Array.isArray(parsed[key])) {
+                    parsed[key] = truncateList(parsed[key]);
+                    break;
+                }
+            }
+        }
+        text = JSON.stringify(parsed, null, 2);
+    }
+    // Global cap
+    if (text.length > cap) {
+        text = `${text.slice(0, cap - 40)}\u2026[${text.length - cap} chars omitted]`;
+    }
+    return text;
+}
+
 function register(api) {
     const config = api.pluginConfig;
     if (!config?.servers || Object.keys(config.servers).length === 0) {
@@ -1195,8 +1282,9 @@ function register(api) {
                                 // Success: clear retry state
                                 await clearRetryState(sessionKey, toolSlug);
                                 const rawText = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+                                const text = truncateToolResult(rawText, rt.namespacedName);
                                 return {
-                                    content: [{ type: "text", text: rawText }],
+                                    content: [{ type: "text", text }],
                                     details: { server: rt.serverName, tool: rt.originalName, params: coercedParams, result },
                                 };
                             }

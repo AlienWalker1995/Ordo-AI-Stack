@@ -91,3 +91,16 @@ def test_mcp_bridge_retry_tier_logic():
     assert "Stop retrying with the same arguments." in text
     assert "let currentSessionKey" in text
     assert "currentSessionKey = key;" in text
+
+
+def test_mcp_bridge_response_truncation():
+    text = BRIDGE_DIST.read_text(encoding="utf-8")
+
+    assert "function isSearchTool(toolName)" in text
+    assert "function truncateToolResult(text, toolName)" in text
+    assert 'startsWith("mcp-api/")' in text
+    assert "non-runnable workflow files omitted" in text
+    assert "RESPONSE_CAP_CLOUD" in text
+    assert "RESPONSE_CAP_GGUF" in text
+    # Wired into flat tool handler
+    assert "truncateToolResult(rawText, rt.namespacedName)" in text
