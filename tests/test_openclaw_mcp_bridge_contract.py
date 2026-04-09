@@ -128,3 +128,26 @@ def test_mcp_bridge_proxy_retry_tracking():
     assert text.count("clearRetryState(sessionKey, toolSlug)") >= 2
     assert text.count("buildCapMessage(") >= 2
     assert text.count("buildFeedbackMessage(") >= 2
+
+
+def test_mcp_bridge_gateway_call_description_is_adaptive():
+    """gateway__call description must differ based on flatToolsEnabled.
+
+    When flatTools is disabled the description must NOT call itself a "legacy
+    fallback" or tell the model to prefer flat tools — there are no flat tools
+    and the model will skip tool calls entirely if given that signal.
+
+    The implementation uses a ternary on flatToolsEnabled at registration time,
+    so both branches must exist in the source.
+    """
+    text = BRIDGE_DIST.read_text(encoding="utf-8")
+
+    # The flatTools=true branch still says "Legacy fallback"
+    assert "Legacy fallback for MCP server" in text
+
+    # The flatTools=false branch must NOT say "Legacy fallback" — it says
+    # "Primary MCP tool" so the model treats it as the main interface.
+    assert "Primary MCP tool for server" in text
+
+    # The conditional must key on flatToolsEnabled
+    assert "flatToolsEnabled" in text
