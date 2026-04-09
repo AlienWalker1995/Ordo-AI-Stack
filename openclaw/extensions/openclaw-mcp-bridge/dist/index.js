@@ -87,7 +87,7 @@ function buildLooseToolSchema(schema) {
         if (hasObjectType && !hasStringFallback) {
             mapped.push({
                 type: "string",
-                description: "object-string fallback: pass a JSON object string; the bridge will parse and repair it before forwarding.",
+                description: "object-string fallback: pass a JSON object string; coerceFlatToolValue repairs it before forwarding.",
             });
         }
         return { ...schema, anyOf: mapped };
@@ -114,9 +114,10 @@ function buildLooseToolSchema(schema) {
         const loosened = { ...schema, properties, additionalProperties };
         const stringFallback = {
             type: "string",
-            description: "object-string fallback: pass a JSON object string; the bridge will parse and repair it before forwarding.",
+            description: "object-string fallback: pass a JSON object string; coerceFlatToolValue repairs it before forwarding.",
         };
-        return { anyOf: [loosened, stringFallback] };
+        const { type: _type, properties: _props, additionalProperties: _ap, ...rest } = schema;
+        return { ...rest, anyOf: [loosened, stringFallback] };
     }
     if (schema.type === "array" && schema.items && typeof schema.items === "object" && !Array.isArray(schema.items)) {
         return {
