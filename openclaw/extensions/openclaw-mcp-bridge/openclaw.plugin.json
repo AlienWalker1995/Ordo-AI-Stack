@@ -51,6 +51,11 @@
         "type": "boolean",
         "description": "Register individual flat tools per MCP tool (eager discovery). When false, only gateway__call is available.",
         "default": false
+      },
+      "ggufMode": {
+        "type": "boolean",
+        "description": "Enable GGUF-mode: lower retry thresholds and tighter response caps for local quantized models. Auto-detected from OPENCLAW_MODEL env var if not set.",
+        "default": false
       }
     }
   }

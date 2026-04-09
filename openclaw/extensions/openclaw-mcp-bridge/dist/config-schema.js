@@ -85,5 +85,9 @@ export const configSchema = Type.Object({
         default: false,
         description: "Register individual flat tools per MCP tool (eager discovery). When false, only gateway__call is available.",
     })),
+    ggufMode: Type.Optional(Type.Boolean({
+        default: false,
+        description: "Enable GGUF-mode: lower retry thresholds and tighter response caps for local quantized models. Auto-detected from OPENCLAW_MODEL env var if not set.",
+    })),
 });
 //# sourceMappingURL=config-schema.js.map

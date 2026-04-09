@@ -872,10 +872,29 @@ function deriveSessionStateFromTranscript(entries) {
  *
  * @param api - The OpenClaw plugin API.
  */
+let IS_LOCAL_GGUF = false;
 function register(api) {
     const config = api.pluginConfig;
     if (!config?.servers || Object.keys(config.servers).length === 0) {
         return;
+    }
+
+    // Model-tier detection: explicit config overrides env-var auto-detection.
+    if (config?.ggufMode === true) {
+        IS_LOCAL_GGUF = true;
+    } else if (config?.ggufMode !== false) {
+        // Auto-detect from active model string
+        const activeModel = (
+            process.env.OPENCLAW_MODEL ??
+            process.env.OPENCLAW_DEFAULT_MODEL ??
+            ""
+        ).toLowerCase();
+        if (/\.gguf/i.test(activeModel) || /q[45678]_/i.test(activeModel) || activeModel.includes("gguf")) {
+            IS_LOCAL_GGUF = true;
+        }
+    }
+    if (IS_LOCAL_GGUF) {
+        api.logger.info("[mcp-bridge] GGUF mode active — lower retry thresholds and tighter response caps enabled");
     }
 
     const flatToolsEnabled = config.flatTools === true;

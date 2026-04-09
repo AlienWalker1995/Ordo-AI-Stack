@@ -57,3 +57,14 @@ def test_mcp_bridge_strips_integer_trailing_artifacts():
 
     # Regex that strips trailing ], ), ", ' from integer strings
     assert r'.replace(/[\])"\']+$/, "")' in text
+
+
+def test_mcp_bridge_model_tier_detection():
+    text = BRIDGE_DIST.read_text(encoding="utf-8")
+
+    assert "let IS_LOCAL_GGUF = false;" in text
+    assert "IS_LOCAL_GGUF = true;" in text
+    # Detection checks
+    assert r"/\.gguf/i" in text
+    assert r"/q[45678]_/i" in text
+    assert 'api.logger.info("[mcp-bridge] GGUF mode' in text
