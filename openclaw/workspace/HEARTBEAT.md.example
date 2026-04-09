@@ -1,11 +1,5 @@
-<!-- Copy to HEARTBEAT.md — optional; leave minimal if unused -->
+<!-- Copy to HEARTBEAT.md -->
 
 # HEARTBEAT.md
 
-How to advance work across turns without excess chatter.
-
-- Work until the user’s goal is met or they stop you.
-- State progress when a meaningful milestone completes.
-- Continue the next step without re-explaining the whole plan each turn.
-- Stop when the goal is satisfied or the user signals done.
-- Add dated checklist items below only when the operator wants recurring checks; otherwise keep this file empty.
+Current stack health is available on demand — call `gateway__get_services` or read `agents/stack-ops.md`. Do not add recurring checklist items here unless the operator explicitly asks.
