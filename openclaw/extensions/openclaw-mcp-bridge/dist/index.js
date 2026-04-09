@@ -994,7 +994,11 @@ function truncateToolResult(text, toolName) {
     }
     catch {
         // Not JSON — apply global cap only
-        return text.length > cap ? `${text.slice(0, cap - 40)}\u2026[${text.length - cap} chars omitted]` : text;
+        if (text.length > cap) {
+            const sliceAt = cap - 40;
+            return `${text.slice(0, sliceAt)}\u2026[${text.length - sliceAt} chars omitted]`;
+        }
+        return text;
     }
     // list_workflows: filter to mcp-api/* only
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray(parsed.workflow_files)) {
@@ -1044,7 +1048,8 @@ function truncateToolResult(text, toolName) {
     }
     // Global cap
     if (text.length > cap) {
-        text = `${text.slice(0, cap - 40)}\u2026[${text.length - cap} chars omitted]`;
+        const sliceAt = cap - 40;
+        text = `${text.slice(0, sliceAt)}\u2026[${text.length - sliceAt} chars omitted]`;
     }
     return text;
 }
@@ -1137,7 +1142,21 @@ function register(api) {
                     if (resolvedToolName !== `${prefix}__${toolName}`) {
                         api.logger.info(`mcp-client: normalized proxy tool "${toolName}" -> "${resolvedToolName}"`);
                     }
+                    // Retry budget: keyed on resolved tool name, not on gateway__call itself
+                    const sessionKey = currentSessionKey;
+                    const toolSlug = resolvedToolName.replace(/__/g, "_").slice(0, 60);
+                    const thresholds = getRetryThresholds();
+                    const retryState = await readRetryState(sessionKey, toolSlug);
+                    const attempts = (retryState?.attempts ?? 0) + 1;
+                    if (attempts > thresholds.capAt) {
+                        await clearRetryState(sessionKey, toolSlug);
+                        return {
+                            content: [{ type: "text", text: buildCapMessage(resolvedToolName, attempts) }],
+                            details: { server: serverName, tool: toolName, resolvedTool: resolvedToolName, capped: true },
+                        };
+                    }
                     const result = await mcpManager.callTool(resolvedToolName, args);
+                    await clearRetryState(sessionKey, toolSlug);
                     const rawText = typeof result === "string" ? result : JSON.stringify(result, null, 2);
                     const text = truncateToolResult(rawText, resolvedToolName);
                     return {
@@ -1149,7 +1168,7 @@ function register(api) {
                     const message = err instanceof Error ? err.message : String(err);
                     const example = `Example: ${prefix}__call({"tool": "duckduckgo_web_search", "args": {"query": "your search"}})`;
                     if (message.includes("missing required tool name")) {
-                        // Auto-discover: return tool list instead of a dead-end error so the model can pick the right tool
+                        // Auto-discover: not a real tool failure, exempt from retry tracking
                         const discovered = mcpManager.getRegisteredTools()
                             .filter((t) => t.serverName === serverName)
                             .slice(0, 12)
@@ -1161,6 +1180,25 @@ function register(api) {
                             content: [{ type: "text", text: `You must provide a "tool" parameter. ${example}\n\nAvailable tools on "${serverName}":\n${toolListText}` }],
                             details: { server: serverName, autoDiscovered: true, count: discovered.length },
                         };
+                    }
+                    // Retry budget: record failure and inject feedback if threshold reached
+                    // toolSlug and attempts may not be in scope here if resolvedToolName threw — guard with try
+                    try {
+                        const sessionKey = currentSessionKey;
+                        const toolSlug = (toolName ?? "unknown").replace(/__/g, "_").slice(0, 60);
+                        const retryState = await readRetryState(sessionKey, toolSlug);
+                        const attempts = (retryState?.attempts ?? 0) + 1;
+                        await writeRetryState(sessionKey, toolSlug, { attempts, lastError: message });
+                        if (attempts >= getRetryThresholds().feedbackAt) {
+                            const schema = mcpManager.getRegisteredTools().find((t) => t.namespacedName === `${prefix}__${toolName ?? ""}`)?.inputSchema;
+                            return {
+                                content: [{ type: "text", text: buildFeedbackMessage(`${prefix}__${toolName ?? "unknown"}`, attempts, getRetryThresholds().capAt, message, schema) }],
+                                details: { server: serverName, tool: params?.tool ?? "<missing>", error: message, attempt: attempts },
+                            };
+                        }
+                    }
+                    catch {
+                        // Best-effort retry tracking — swallow errors, fall through to original error response
                     }
                     const hint = message.includes("JSON parse failed")
                         ? `The "args" value must be valid JSON (use standard double quotes, not escape tokens). ${example}`

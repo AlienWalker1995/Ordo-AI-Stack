@@ -1,86 +1,32 @@
 # TOOLS.md
 
-Which tools exist here and how to invoke them.
+**MCP (primary):** `servers.gateway` → `http://mcp-gateway:8811/mcp`. Use flat `gateway__...` tools first; `gateway__call` only as fallback (raw `tool` + `args`). Never use `gateway__gateway__...`.
 
-## MCP Gateway
+**Search:** Prefer `gateway__tavily__tavily_search`. Fallback: `gateway__duckduckgo__search`. Do not use native `web_search`.
 
-Single URL: `http://mcp-gateway:8811/mcp` via `openclaw-mcp-bridge` (server name: `gateway`).
+**Browser:** Denied in merged config. No Playwright MCP in this stack.
 
-Preferred flow:
-- Use direct flat tools first, such as `gateway__list_workflows`, `gateway__search_nodes`, `gateway__validate_workflow`, `gateway__save_workflow`, `gateway__run_workflow`, `gateway__await_run`, and `gateway__list_outputs`.
-- Use `gateway__call` only as a compatibility fallback when a flat tool is missing.
-- Invalid patterns: `gateway__gateway__...`, `comfyui__call`.
+**ComfyUI runnable workflows:**
 
-## Search & Web
+| workflow_id | Type | Key inputs |
+|-------------|------|------------|
+| `mcp-api/generate_video` | Video (LTX-2.3, 9:16) | `prompt`, `width`=576, `height`=1024, `frames`=121, `fps`=24 |
+| `mcp-api/generate_song` | Audio (ACE-Step v1) | `tags` (required), `lyrics` (required) |
+| `mcp-api/generate_image` | Image | `prompt` (required) |
 
-| Tool | When |
-|------|------|
-| `gateway__tavily__tavily_search` | General web search (primary) |
-| `gateway__tavily__tavily_extract` | Extract content from a URL |
-| `gateway__tavily__tavily_research` | Deep multi-query research |
-| `gateway__duckduckgo__search` | Simple web search (backup) |
-| `web_fetch` | Fetch raw HTML from a URL |
+`save_workflow` → UI-format JSON, not runnable. To add a runnable workflow write API-format JSON to `data/comfyui-storage/ComfyUI/user/default/workflows/mcp-api/<id>.json`.
 
-Built-in `browser` is denied. Built-in `web_search` is disabled.
+**Core services:**
 
-## ComfyUI
+| Service | URL |
+|---------|-----|
+| Model Gateway | `http://model-gateway:11435/v1` |
+| MCP Gateway | `http://mcp-gateway:8811/mcp` |
+| Dashboard | `http://dashboard:8080` |
+| ComfyUI | `http://comfyui:8188` |
+| n8n | `http://n8n:5678` |
+| OpenClaw UI | `http://openclaw-gateway:6680` |
 
-ComfyUI is a general media engine. It can generate images, audio/music, and video. Do not assume a prebuilt workflow like `generate_song` already exists.
+**Discord:** `message` with `to: "channel:<id>"`.
 
-| Tool | Purpose |
-|------|---------|
-| `gateway__list_workflows` | List available API-format workflows |
-| `gateway__search_nodes` | Find candidate nodes for a workflow |
-| `gateway__get_node_info` | Inspect node inputs and outputs |
-| `gateway__get_node_documentation` | Inspect node behavior and examples |
-| `gateway__validate_workflow` | Validate a workflow before execution |
-| `gateway__save_workflow` | Save a reusable API-format workflow |
-| `gateway__run_workflow` | Execute a workflow |
-| `gateway__await_run` | Poll for completion |
-| `gateway__list_outputs` | Retrieve generated outputs |
-
-Recommended authoring flow:
-1. Reuse an existing API-format workflow when it is a clear fit.
-2. Otherwise inspect nodes and compose or adapt a workflow.
-3. Validate before execution.
-4. Save only if the workflow is worth reusing.
-5. Run and fetch outputs through MCP.
-
-Outputs: MCP `list_outputs`.
-
-Do not drive ComfyUI via `exec` + `curl` to `/prompt`.
-
-Fallback `gateway__call` example:
-
-```json
-{ "tool": "list_workflows", "args": { "details": false } }
-```
-
-## n8n
-
-| Tool | Purpose |
-|------|---------|
-| `gateway__n8n__list_workflows` | List n8n workflows |
-| `gateway__n8n__execute_workflow` | Run a workflow |
-
-Never create or modify n8n workflows from within OpenClaw unless the user explicitly asks.
-
-## Core Services
-
-| Service | URL | Auth |
-|---------|-----|------|
-| Model Gateway | `http://model-gateway:11435/v1` | Header: `X-Service-Name: openclaw` |
-| MCP Gateway | `http://mcp-gateway:8811/mcp` | MCP protocol |
-| Dashboard | `http://dashboard:8080` | Bearer: `DASHBOARD_AUTH_TOKEN` |
-| ComfyUI | `http://comfyui:8188` | None (prefer MCP) |
-| n8n | `http://n8n:5678` | MCP only |
-| OpenClaw UI | `http://openclaw-gateway:6680` | Bearer token |
-
-## Discord
-
-`message` tool with `to: "channel:<snowflake>"`. Respect per-message size limits.
-
-## Stack Ops
-
-Service lifecycle, model pulls, self-healing: `agents/stack-ops.md`.
-Compose, model downloads, MCP troubleshooting: `agents/docker-ops.md`.
+**Model pulls:** `gateway__pull_comfyui_models`. Runbook in `agents/stack-ops.md`.

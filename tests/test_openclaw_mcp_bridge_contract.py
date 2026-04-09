@@ -104,3 +104,27 @@ def test_mcp_bridge_response_truncation():
     assert "RESPONSE_CAP_GGUF" in text
     # Wired into flat tool handler
     assert "truncateToolResult(rawText, rt.namespacedName)" in text
+    # Also wired into gateway__call proxy handler
+    assert "truncateToolResult(rawText, resolvedToolName)" in text
+
+
+def test_mcp_bridge_truncation_annotation_correct():
+    text = BRIDGE_DIST.read_text(encoding="utf-8")
+
+    # Omitted count must use (text.length - sliceAt), not (text.length - cap)
+    # which would be off by 40 chars
+    assert "const sliceAt = cap - 40;" in text
+    assert "text.length - sliceAt" in text
+
+
+def test_mcp_bridge_proxy_retry_tracking():
+    text = BRIDGE_DIST.read_text(encoding="utf-8")
+
+    # gateway__call handler must track retries keyed on resolvedToolName
+    assert "toolSlug = resolvedToolName.replace" in text
+    # All retry functions used in proxy path
+    assert text.count("readRetryState(sessionKey, toolSlug)") >= 2
+    assert text.count("writeRetryState(sessionKey, toolSlug") >= 2
+    assert text.count("clearRetryState(sessionKey, toolSlug)") >= 2
+    assert text.count("buildCapMessage(") >= 2
+    assert text.count("buildFeedbackMessage(") >= 2
