@@ -1106,6 +1106,22 @@
     <span id="hw-disk-sep" style="display:none" aria-hidden="true"></span>
     <span id="hw-gpu-sep" style="display:none" aria-hidden="true"></span>
 
+    <!-- ── Compute Pressure ──────────────────────────────── -->
+    <section id="compute-pressure" class="section-card">
+      <div class="compute-header">
+        <span class="section-label">COMPUTE PRESSURE</span>
+        <span id="cp-util-badge" class="cp-util-badge">— GPU</span>
+        <span class="live-dot" id="cp-live-dot" style="margin-left:var(--space-2)"></span>
+      </div>
+      <div class="cp-vram-bar-wrap">
+        <div id="cp-vram-bar" class="cp-vram-bar"></div>
+        <div id="cp-vram-legend" class="cp-vram-legend"></div>
+        <span id="cp-vram-total" class="cp-vram-total">— / — GB</span>
+      </div>
+      <div id="cp-rows" class="cp-rows"></div>
+      <div id="cp-score" class="cp-score" style="display:none"></div>
+    </section>
+
     <section id="services-section">
       <h2>Services</h2>
       <p class="section-desc">Click a service to open it. MCP Gateway provides shared tools for Open WebUI, N8N, Cursor, and OpenClaw.</p>
