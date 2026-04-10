@@ -1892,6 +1892,80 @@ async def rag_status():
 BASE_PATH_ENV = os.environ.get("BASE_PATH", "/")
 
 
+def _pid_to_service_label(pid: int) -> str:
+    """Map a host PID to a human-readable service label via psutil cmdline.
+
+    Requires the dashboard container to run with ``pid: host`` so that
+    /proc/<host_pid> is accessible from within the container.
+    """
+    try:
+        proc = psutil.Process(pid)
+        cmdline = " ".join(proc.cmdline()).lower()
+        name = proc.name().lower()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return f"pid:{pid}"
+
+    if "llama-server" in cmdline or "llama_server" in cmdline:
+        return "LLM"
+    if "comfyui" in cmdline:
+        return "ComfyUI"
+    if "embed" in name or "embed" in cmdline:
+        return "Embed"
+    if "python" in name:
+        return "Python"
+    return name[:12] if name else f"pid:{pid}"
+
+
+def _gpu_processes() -> dict:
+    """Per-process VRAM allocation via pynvml + psutil.
+
+    Requires the dashboard container to have ``pid: host`` set in
+    overrides/compute.yml so that psutil can read host-level /proc entries.
+    Returns an empty processes list (not an error) when pynvml is unavailable.
+    """
+    import pynvml
+    pynvml.nvmlInit()
+    try:
+        h = pynvml.nvmlDeviceGetHandleByIndex(0)
+        mi = pynvml.nvmlDeviceGetMemoryInfo(h)
+        ut = pynvml.nvmlDeviceGetUtilizationRates(h)
+        raw_procs = pynvml.nvmlDeviceGetComputeRunningProcesses(h)
+        total_b = int(mi.total)
+        processes = []
+        for p in raw_procs:
+            pid = p.pid
+            used_b = int(getattr(p, "usedGpuMemory", 0))
+            processes.append({
+                "label": _pid_to_service_label(pid),
+                "pid": pid,
+                "vram_gb": round(used_b / 1e9, 1),
+                "vram_pct": round(used_b / total_b * 100, 1) if total_b > 0 else 0.0,
+            })
+        processes.sort(key=lambda x: x["vram_gb"], reverse=True)
+        return {
+            "total_gb": round(total_b / 1e9, 1),
+            "used_gb": round(int(mi.used) / 1e9, 1),
+            "utilization_pct": int(ut.gpu),
+            "processes": processes,
+        }
+    finally:
+        pynvml.nvmlShutdown()
+
+
+@app.get("/api/hardware/gpu-processes")
+async def gpu_processes():
+    """Per-process GPU VRAM allocation. No auth required (read-only).
+
+    Requires ``pid: host`` on the dashboard container (overrides/compute.yml).
+    Returns empty processes list when pynvml is unavailable rather than 500.
+    """
+    try:
+        return await asyncio.to_thread(_gpu_processes)
+    except Exception as e:
+        logger.debug("GPU process stats unavailable: %s", e)
+        return {"total_gb": 0.0, "used_gb": 0.0, "utilization_pct": 0, "processes": []}
+
+
 def _nvml_vram_to_gpu_dict(
     name: str,
     used_b: int,
