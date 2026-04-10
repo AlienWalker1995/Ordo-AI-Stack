@@ -966,6 +966,86 @@
     }
     .hw-bar-fill.gpu-util span { background: #7c6fcd; }
 
+    /* ── Compute Pressure ──────────────────────────────────── */
+    :root {
+      --cp-llm:   #00c9ff;
+      --cp-comfy: #ff9500;
+      --cp-embed: #7c4dff;
+      --cp-other: #4d5468;
+      --cp-free:  #1c1f2e;
+    }
+    #compute-pressure { margin-bottom: var(--space-5); }
+    .compute-header {
+      display: flex; align-items: center; gap: var(--space-3);
+      margin-bottom: var(--space-4);
+    }
+    .cp-util-badge {
+      font-family: 'JetBrains Mono', monospace; font-size: 11px;
+      color: var(--fg-muted); letter-spacing: .05em; margin-left: auto;
+    }
+    .cp-vram-bar-wrap { margin-bottom: var(--space-4); }
+    .cp-vram-bar {
+      display: flex; height: 10px; border-radius: var(--radius-sm);
+      overflow: hidden; background: var(--cp-free);
+      margin-bottom: var(--space-2);
+    }
+    .cp-vram-seg { height: 100%; transition: width .4s ease; }
+    .cp-vram-seg.seg-llm    { background: var(--cp-llm); }
+    .cp-vram-seg.seg-comfyui { background: var(--cp-comfy); }
+    .cp-vram-seg.seg-embed  { background: var(--cp-embed); }
+    .cp-vram-seg.seg-other  { background: var(--cp-other); }
+    .cp-vram-seg.seg-free   { background: var(--cp-free); }
+    .cp-vram-legend {
+      display: flex; gap: var(--space-4); flex-wrap: wrap;
+      margin-bottom: var(--space-1);
+    }
+    .cp-legend-item {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--fg-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .cp-legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .cp-vram-total {
+      font-family: 'JetBrains Mono', monospace; font-size: 11px;
+      color: var(--fg-muted); text-align: right; display: block;
+      margin-top: var(--space-1);
+    }
+    .cp-rows { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-4); }
+    .cp-row {
+      display: grid;
+      grid-template-columns: 90px 1fr 64px 140px;
+      align-items: center; gap: var(--space-3);
+    }
+    .cp-row-label {
+      font-size: 12px; font-weight: 700; color: var(--fg);
+      font-family: 'Barlow Condensed', sans-serif;
+      letter-spacing: .06em; text-transform: uppercase;
+    }
+    .cp-row-bar {
+      height: 6px; border-radius: 3px; background: var(--border); overflow: hidden;
+    }
+    .cp-row-bar-fill { height: 100%; border-radius: 3px; transition: width .4s ease; }
+    .cp-row-vram {
+      font-family: 'JetBrains Mono', monospace; font-size: 11px;
+      color: var(--fg-muted); text-align: right;
+    }
+    .cp-row-status {
+      font-size: 11px; font-family: 'JetBrains Mono', monospace; text-align: right;
+    }
+    .cp-row-status.st-nominal  { color: var(--success); }
+    .cp-row-status.st-degraded { color: var(--warning); }
+    .cp-row-status.st-starved  { color: var(--danger);  }
+    .cp-row-status.st-idle     { color: var(--muted);   }
+    .cp-score {
+      font-size: 12px; font-family: 'JetBrains Mono', monospace;
+      padding: var(--space-3) var(--space-4);
+      background: var(--bg-elevated); border-radius: var(--radius-sm);
+      border-left: 3px solid var(--border);
+    }
+    .cp-score.st-nominal  { border-left-color: var(--success); color: var(--success); }
+    .cp-score.st-degraded { border-left-color: var(--warning); color: var(--warning); }
+    .cp-score.st-starved  { border-left-color: var(--danger);  color: var(--danger);  }
+
     /* ── Code elements ── */
     code {
       font-family: var(--font-mono); font-size: .85em;
