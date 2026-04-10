@@ -154,6 +154,21 @@ function sanitizeModelToolText(raw) {
         .trim();
 }
 
+function trimPseudoCallPreamble(text) {
+    if (typeof text !== "string") {
+        return "";
+    }
+    const pseudoCallIndex = text.search(/(?:^|[\s`])(?:call:)?gateway__call\s*\(?\s*\{?/i);
+    if (pseudoCallIndex >= 0) {
+        return text.slice(pseudoCallIndex).trim();
+    }
+    const argsIndex = text.search(/\bargs\b\s*[:=]\s*/i);
+    if (argsIndex >= 0) {
+        return text.slice(argsIndex).trim();
+    }
+    return text.trim();
+}
+
 function collectStringFragments(value) {
     const fragments = [];
     const visit = (current) => {
@@ -295,7 +310,7 @@ function coerceToolArgs(raw) {
     if (typeof raw !== "string") {
         throw new Error("args must be an object or JSON object string");
     }
-    let text = sanitizeModelToolText(raw);
+    let text = trimPseudoCallPreamble(sanitizeModelToolText(raw));
     if (!text) {
         return {};
     }
@@ -311,6 +326,13 @@ function coerceToolArgs(raw) {
     const lastBrace = text.lastIndexOf("}");
     if ((firstBrace > 0 || lastBrace !== text.length - 1) && firstBrace >= 0 && lastBrace > firstBrace) {
         text = text.slice(firstBrace, lastBrace + 1).trim();
+    }
+    const argsAnchor = text.match(/\bargs\b\s*[:=]\s*\{/i);
+    if (argsAnchor?.index != null) {
+        const extractedArgs = extractBalancedObject(text, /\bargs\b\s*[:=]\s*/i);
+        if (extractedArgs) {
+            text = extractedArgs;
+        }
     }
     // Strip leading/trailing quotes from models that double-stringify args
     if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
@@ -530,6 +552,23 @@ function buildSchemaContext(config, allSchemas, flatToolsEnabled) {
         ? `Use the flat \`gateway__...\` tools when available. If you use \`${prefix}__call\`, the inner \`tool\` value must be the raw tool name without a \`gateway__\` prefix.`
         : `Use only \`${prefix}__call\`. The inner \`tool\` value must be the raw MCP tool name without a \`gateway__\` prefix.`;
     return `\n\n## MCP Tools Available\n\n${usage}\n\nFor unattended or cron runs: do not emit progress chatter such as "Let me check..." or "Fetching more...". Keep assistant text empty while calling tools, then emit exactly one final non-empty assistant message.\n\n${allSchemas.join("\n\n")}`;
+}
+
+function shouldRegisterFlatTool(rt, config, flatToolsEnabled) {
+    if (flatToolsEnabled) {
+        return true;
+    }
+    const srvCfg = config.servers?.[rt.serverName];
+    const allowlist = Array.isArray(srvCfg?.flatToolAllowlist)
+        ? srvCfg.flatToolAllowlist
+            .filter((value) => typeof value === "string")
+            .map((value) => value.trim())
+            .filter(Boolean)
+        : [];
+    if (allowlist.length === 0) {
+        return false;
+    }
+    return allowlist.includes(rt.originalName) || allowlist.includes(rt.namespacedName);
 }
 
 const OPENCLAW_HOME = process.env.OPENCLAW_HOME?.trim() || "/home/node/.openclaw";
@@ -1255,11 +1294,12 @@ function register(api) {
         api.logger.info(`mcp-client: registered discovery tool ${prefix}__discover for server "${serverName}"`);
     }
 
-    if (!flatToolsEnabled) {
+    const hasSelectiveFlatTools = Object.values(config.servers).some((serverConfig) => Array.isArray(serverConfig?.flatToolAllowlist) && serverConfig.flatToolAllowlist.length > 0);
+    if (!flatToolsEnabled && !hasSelectiveFlatTools) {
         api.logger.info("[mcp-bridge] flatTools disabled - only gateway__call registered (set flatTools: true to enable eager discovery)");
     }
 
-    if (flatToolsEnabled) {
+    if (flatToolsEnabled || hasSelectiveFlatTools) {
         let flatToolsRegistered = false;
         let flatToolsRegistrationAttempts = 0;
         const MAX_FLAT_REGISTRATION_ATTEMPTS = 24;
@@ -1294,7 +1334,11 @@ function register(api) {
                     setTimeout(() => { registerFlatMcpTools().catch(() => { }); }, 5000);
                     return;
                 }
+                let registeredCount = 0;
                 for (const rt of discovered) {
+                    if (!shouldRegisterFlatTool(rt, config, flatToolsEnabled)) {
+                        continue;
+                    }
                     const srvCfg = config.servers[rt.serverName];
                     const pfx = srvCfg?.toolPrefix ?? rt.serverName;
                     api.registerTool({
@@ -1348,6 +1392,10 @@ function register(api) {
                         },
                     });
                     api.logger.info(`mcp-client: registered flat tool ${rt.namespacedName}`);
+                    registeredCount += 1;
+                }
+                if (!flatToolsEnabled && hasSelectiveFlatTools) {
+                    api.logger.info("[mcp-bridge] selective flat tools registered=" + String(registeredCount));
                 }
                 flatToolsRegistered = true;
             }
@@ -1361,7 +1409,9 @@ function register(api) {
         };
         api.registerHook("gateway_start", flatToolsHook, { name: "mcp-flat-tools-gateway", description: "Expose namespaced MCP tools as OpenClaw tools" });
         api.registerHook("session_start", flatToolsHook, { name: "mcp-flat-tools-session", description: "Fallback if gateway_start is unavailable" });
-        api.logger.info("[mcp-bridge] starting eager flat tool discovery");
+        api.logger.info(flatToolsEnabled
+            ? "[mcp-bridge] starting eager flat tool discovery"
+            : "[mcp-bridge] starting selective flat tool discovery");
         registerFlatMcpTools().then(() => {
             api.logger.info("[mcp-bridge] eager discovery done, registered=" + String(flatToolsRegistered));
         }).catch((err) => {

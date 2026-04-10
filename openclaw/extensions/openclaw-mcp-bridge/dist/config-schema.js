@@ -50,6 +50,10 @@ export const MCPServerConfig = Type.Object({
     apiKey: Type.Optional(Type.String()),
     /** Namespace prefix for tools from this server (defaults to server name). */
     toolPrefix: Type.Optional(Type.String()),
+    /** Optional subset of tools to expose as direct flat tools even when flatTools is false. */
+    flatToolAllowlist: Type.Optional(Type.Array(Type.String(), {
+        description: "Expose only these raw MCP tools as direct namespaced tools for this server.",
+    })),
     /** Connection timeout in milliseconds. */
     connectTimeoutMs: Type.Optional(Type.Number({ default: 10000 })),
     /** Per-request timeout in milliseconds. */

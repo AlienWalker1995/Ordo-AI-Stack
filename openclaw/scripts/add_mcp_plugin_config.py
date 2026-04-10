@@ -16,6 +16,7 @@ MCP_PLUGIN_ID = "openclaw-mcp-bridge"
 _mcp_url = os.environ.get("MCP_GATEWAY_URL", "http://mcp-gateway:8811/mcp")
 _connect_timeout_ms = int(os.environ.get("OPENCLAW_MCP_CONNECT_TIMEOUT_MS", "10000"))
 _request_timeout_ms = int(os.environ.get("OPENCLAW_MCP_REQUEST_TIMEOUT_MS", "900000"))
+_workspace_root = os.environ.get("OPENCLAW_WORKSPACE_ROOT", "/home/node/.openclaw/workspace")
 MCP_PLUGIN_CONFIG = {
     "enabled": True,
     "config": {
@@ -26,11 +27,28 @@ MCP_PLUGIN_CONFIG = {
                 "connectTimeoutMs": _connect_timeout_ms,
                 "requestTimeoutMs": _request_timeout_ms,
             },
+            "local-tools": {
+                "url": "stdio://local",
+                "transport": "stdio",
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-filesystem", _workspace_root],
+                "toolPrefix": "local-tools",
+                "flatToolAllowlist": ["read_file"],
+                "connectTimeoutMs": _connect_timeout_ms,
+                "requestTimeoutMs": 30000,
+            },
         },
         "debug": False,
-        "flatTools": True,
+        "flatTools": False,
         "injectSchemas": False,
     },
+}
+
+_llm_idle_timeout_seconds = 1800
+
+SESSION_MEMORY_HOOK_CONFIG = {
+    "enabled": True,
+    "llmSlug": False,
 }
 
 PLUGIN_MANIFEST = {
@@ -46,8 +64,13 @@ PLUGIN_MANIFEST = {
                     "type": "object",
                     "properties": {
                         "url": {"type": "string"},
+                        "transport": {"type": "string"},
+                        "command": {"type": "string"},
+                        "args": {"type": "array", "items": {"type": "string"}},
                         "connectTimeoutMs": {"type": "number"},
                         "requestTimeoutMs": {"type": "number"},
+                        "toolPrefix": {"type": "string"},
+                        "flatToolAllowlist": {"type": "array", "items": {"type": "string"}},
                     },
                     "required": ["url"],
                 },
@@ -99,15 +122,77 @@ def normalize_mcp_bridge_servers(data: dict) -> bool:
         if gateway.get("requestTimeoutMs") != _request_timeout_ms:
             gateway["requestTimeoutMs"] = _request_timeout_ms
             modified = True
-    # Prefer direct flat tools so agents can call workflow operations without proxy JSON wrapping.
-    if cfg.get("flatTools") is not True:
-        cfg["flatTools"] = True
+
+    local_tools = servers.get("local-tools")
+    desired_local_tools = MCP_PLUGIN_CONFIG["config"]["servers"]["local-tools"]
+    if not isinstance(local_tools, dict):
+        servers["local-tools"] = copy.deepcopy(desired_local_tools)
+        modified = True
+    else:
+        for key, value in desired_local_tools.items():
+            if local_tools.get(key) != value:
+                local_tools[key] = copy.deepcopy(value)
+                modified = True
+
+    # Keep the bridge in selective mode: direct file reads through local-tools, everything else via gateway__call.
+    if cfg.get("flatTools") is not False:
+        cfg["flatTools"] = False
         modified = True
     # Keep prompt context compact by discovering tools on demand instead of injecting full schemas.
     if cfg.get("injectSchemas") is not False:
         cfg["injectSchemas"] = False
         modified = True
     return modified
+
+
+def normalize_internal_hooks(data: dict) -> bool:
+    """Keep session-memory enabled but disable LLM slug generation.
+
+    /new and /reset should not block on an embedded helper run just to name the
+    markdown memory file. The built-in fallback timestamp slug is sufficient.
+    """
+    hooks = data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        return False
+    internal = hooks.setdefault("internal", {})
+    if not isinstance(internal, dict):
+        return False
+    entries = internal.setdefault("entries", {})
+    if not isinstance(entries, dict):
+        return False
+
+    modified = False
+    session_memory = entries.get("session-memory")
+    if not isinstance(session_memory, dict):
+        entries["session-memory"] = copy.deepcopy(SESSION_MEMORY_HOOK_CONFIG)
+        return True
+
+    for key, value in SESSION_MEMORY_HOOK_CONFIG.items():
+        if session_memory.get(key) != value:
+            session_memory[key] = copy.deepcopy(value)
+            modified = True
+    return modified
+
+
+def normalize_llm_idle_timeout(config: dict) -> bool:
+    """Ensure llm.idleTimeoutSeconds is set to 1800 to survive GPU contention at cron start time.
+
+    The default 900 s is too tight when llamacpp shares VRAM with ComfyUI — the model
+    may not produce its first token within 900 s if the GPU is occupied.
+    """
+    agents = config.setdefault("agents", {})
+    if not isinstance(agents, dict):
+        return False
+    defaults = agents.setdefault("defaults", {})
+    if not isinstance(defaults, dict):
+        return False
+    llm = defaults.setdefault("llm", {})
+    if not isinstance(llm, dict):
+        return False
+    if llm.get("idleTimeoutSeconds") != _llm_idle_timeout_seconds:
+        llm["idleTimeoutSeconds"] = _llm_idle_timeout_seconds
+        return True
+    return False
 
 
 def _ensure_plugin_manifest() -> None:
@@ -154,6 +239,10 @@ def main() -> int:
         plugins["enabled"] = True
         modified = True
     if normalize_mcp_bridge_servers(data):
+        modified = True
+    if normalize_internal_hooks(data):
+        modified = True
+    if normalize_llm_idle_timeout(data):
         modified = True
 
     if not modified:

@@ -33,6 +33,11 @@
             },
             "apiKey": { "type": "string" },
             "toolPrefix": { "type": "string" },
+            "flatToolAllowlist": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Expose only these raw MCP tools as direct namespaced tools for this server."
+            },
             "connectTimeoutMs": { "type": "number", "default": 10000 },
             "requestTimeoutMs": { "type": "number", "default": 30000 }
           },

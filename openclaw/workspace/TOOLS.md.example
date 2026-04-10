@@ -1,13 +1,14 @@
 # TOOLS.md
 
-**MCP:** `gateway__call` only. Pass `tool` = raw MCP tool name (no `gateway__` prefix), `args` = object. Example: `gateway__call({"tool": "tavily_search", "args": {"query": "..."}})`.
+**MCP:** Use direct `local-tools__read_file` for workspace files when available. Use `gateway__call` for gateway-hosted MCP tools. Pass `tool` = raw MCP tool name (no `gateway__` prefix), `args` = object. Example: `gateway__call({"tool": "tavily_search", "args": {"query": "..."}})`.
+Use the runtime tool interface with structured arguments. Do not print literal tool-call text like `gateway__call({...})`, `call:gateway__call{...}`, or `<|tool_call|>...` in the assistant message.
 
 **Search:** `gateway__call({"tool": "tavily_search", ...})`. Fallback: `gateway__call({"tool": "duckduckgo_web_search", ...})`. Do not use native `web_search`.
 
-**Session Startup:** Read workspace files via `gateway__call` before greeting. Required steps:
+**Session Startup:** Read workspace files before greeting. Required steps:
 ```
-gateway__call({"tool": "read_file", "args": {"path": "TOOLS.md"}})
-gateway__call({"tool": "read_file", "args": {"path": "AGENTS.md"}})
+local-tools__read_file({"path": "TOOLS.md"})
+local-tools__read_file({"path": "AGENTS.md"})
 ```
 Do not skip this. Do not greet the user before reading these files.
 

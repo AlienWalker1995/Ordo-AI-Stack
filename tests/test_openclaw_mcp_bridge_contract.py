@@ -21,6 +21,8 @@ def test_mcp_bridge_recovers_malformed_gateway_call_payloads():
     assert "mcp-client: recovered malformed" in text
     assert '.replace(/\\\\"/g, \'"\')' in text
     assert 'extractBalancedObject(combined, /gateway__call\\s*\\(/i)' in text
+    assert "function trimPseudoCallPreamble(text)" in text
+    assert 'const extractedArgs = extractBalancedObject(text, /\\bargs\\b\\s*[:=]\\s*/i);' in text
 
 
 def test_mcp_bridge_relaxes_and_coerces_flat_tool_params():
@@ -151,3 +153,11 @@ def test_mcp_bridge_gateway_call_description_is_adaptive():
 
     # The conditional must key on flatToolsEnabled
     assert "flatToolsEnabled" in text
+
+
+def test_mcp_bridge_supports_selective_flat_tool_allowlist():
+    text = BRIDGE_DIST.read_text(encoding="utf-8")
+
+    assert "function shouldRegisterFlatTool(rt, config, flatToolsEnabled)" in text
+    assert "flatToolAllowlist" in text
+    assert "selective flat tools registered=" in text
