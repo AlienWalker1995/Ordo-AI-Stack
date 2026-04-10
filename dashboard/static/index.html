@@ -2860,6 +2860,122 @@
       } catch (_) {}
     }
 
+    // ── Compute Pressure ─────────────────────────────────────
+    const _CP_COLORS = { LLM: 'var(--cp-llm)', ComfyUI: 'var(--cp-comfy)', Embed: 'var(--cp-embed)' };
+    const _CP_SEG    = { LLM: 'seg-llm', ComfyUI: 'seg-comfyui', Embed: 'seg-embed' };
+
+    function _cpColor(label)   { return _CP_COLORS[label] || 'var(--cp-other)'; }
+    function _cpSegCls(label)  { return _CP_SEG[label]    || 'seg-other'; }
+
+    let _cpStats = null;
+
+    async function _fetchCpStats() {
+      try {
+        const r = await fetch('/api/throughput/stats');
+        if (r.ok) _cpStats = await r.json();
+      } catch (_) {}
+    }
+
+    function _cpDegradation() {
+      if (!_cpStats?.models) return null;
+      const entries = Object.values(_cpStats.models);
+      if (!entries.length) return null;
+      const m = entries[0];
+      if (!m.peak || !m.latest || m.sample_count === 0) return null;
+      return { latest: m.latest, peak: m.peak, pct: Math.round(m.latest / m.peak * 100) };
+    }
+
+    function _cpScoreClass(pct) {
+      return pct >= 85 ? 'st-nominal' : pct >= 60 ? 'st-degraded' : 'st-starved';
+    }
+
+    async function refreshComputePressure() {
+      try {
+        await _fetchCpStats();
+        const r = await fetch('/api/hardware/gpu-processes');
+        if (!r.ok) return;
+        const d = await r.json();
+
+        // util badge
+        document.getElementById('cp-util-badge').textContent = d.utilization_pct + '% GPU';
+
+        // stacked VRAM bar + legend
+        const bar    = document.getElementById('cp-vram-bar');
+        const legend = document.getElementById('cp-vram-legend');
+        bar.innerHTML = legend.innerHTML = '';
+
+        (d.processes || []).forEach(p => {
+          const seg = document.createElement('div');
+          seg.className = 'cp-vram-seg ' + _cpSegCls(p.label);
+          seg.style.width = p.vram_pct + '%';
+          seg.title = p.label + ': ' + p.vram_gb + ' GB';
+          bar.appendChild(seg);
+
+          const li = document.createElement('div');
+          li.className = 'cp-legend-item';
+          li.innerHTML = `<span class="cp-legend-dot" style="background:${_cpColor(p.label)}"></span>${p.label}&nbsp;${p.vram_gb}&nbsp;GB`;
+          legend.appendChild(li);
+        });
+
+        // free segment
+        const usedPct = (d.processes || []).reduce((s, p) => s + p.vram_pct, 0);
+        const freePct = Math.max(0, 100 - usedPct);
+        if (freePct > 0.5) {
+          const fs = document.createElement('div');
+          fs.className = 'cp-vram-seg seg-free';
+          fs.style.width = freePct + '%';
+          fs.title = 'Free: ' + (d.total_gb * freePct / 100).toFixed(1) + ' GB';
+          bar.appendChild(fs);
+        }
+
+        document.getElementById('cp-vram-total').textContent =
+          d.used_gb + ' / ' + d.total_gb + ' GB';
+
+        // per-service rows
+        const deg     = _cpDegradation();
+        const rowsEl  = document.getElementById('cp-rows');
+        rowsEl.innerHTML = '';
+
+        (d.processes || []).forEach(p => {
+          const isLLM = p.label === 'LLM';
+          let statusHtml = '<span class="cp-row-status st-idle">—</span>';
+          if (isLLM && deg) {
+            const cls = _cpScoreClass(deg.pct);
+            statusHtml = `<span class="cp-row-status ${cls}">${deg.latest}&nbsp;tok/s</span>`;
+          }
+          const row = document.createElement('div');
+          row.className = 'cp-row';
+          row.innerHTML = `
+            <span class="cp-row-label">${p.label}</span>
+            <div class="cp-row-bar">
+              <div class="cp-row-bar-fill" style="width:${p.vram_pct}%;background:${_cpColor(p.label)}"></div>
+            </div>
+            <span class="cp-row-vram">${p.vram_gb}&nbsp;GB</span>
+            ${statusHtml}`;
+          rowsEl.appendChild(row);
+        });
+
+        // LLM score strip
+        const scoreEl = document.getElementById('cp-score');
+        if (deg) {
+          const cls   = _cpScoreClass(deg.pct);
+          const label = deg.pct >= 85 ? 'NOMINAL' : deg.pct >= 60 ? 'DEGRADED' : 'STARVED';
+          scoreEl.className = 'cp-score ' + cls;
+          scoreEl.textContent = `⚡ LLM at ${deg.pct}% of peak (${deg.latest} / ${deg.peak} tok/s) — ${label}`;
+          scoreEl.style.display = '';
+        } else {
+          scoreEl.style.display = 'none';
+        }
+
+      } catch (e) {
+        console.warn('compute pressure refresh failed', e);
+      }
+    }
+
+    refreshComputePressure();
+    setInterval(refreshComputePressure, 3000);
+    // ── End Compute Pressure ──────────────────────────────────
+
     (async function init() {
       await loadAuthConfig();
       if (authConfig.auth_required && authConfig.auth_type === 'bearer' && !sessionStorage.getItem(AUTH_STORAGE_KEY)) {
