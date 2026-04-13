@@ -267,8 +267,8 @@ def _scan_gguf_models() -> list[dict]:
         for p in sorted(_GGUF_MODELS_DIR.iterdir()):
             if p.suffix.lower() == ".gguf" and p.is_file():
                 models.append({"name": p.name, "size": p.stat().st_size, "modified_at": int(p.stat().st_mtime)})
-    except OSError:
-        pass
+    except OSError as e:
+        logger.warning("GGUF model scan failed: %s", e)
     return models
 
 
@@ -308,6 +308,7 @@ async def ollama_delete(req: PullRequest):
         path.unlink()
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Cannot delete model: {e}") from e
+    logger.info("MODEL_DELETED model=%s path=%s", name, path)
     return {"ok": True, "message": f"Deleted '{name}' from disk."}
 
 

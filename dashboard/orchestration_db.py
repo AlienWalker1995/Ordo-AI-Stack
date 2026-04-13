@@ -298,19 +298,10 @@ def update_job(data_dir: Path, job_id: str, **fields: Any) -> OrchestrationJob |
         "state", "prompt_id", "error", "outputs", "publish_webhook",
         "publish_status", "retry_count", "compiled_workflow", "params_json",
     }
-    # Validate state transitions
+    # Validate state transitions atomically via conditional UPDATE
+    new_state = None
     if "state" in fields:
         new_state = JobState(fields["state"]) if isinstance(fields["state"], str) else fields["state"]
-        current = get_job(data_dir, job_id)
-        if current and new_state not in _VALID_TRANSITIONS.get(current.state, set()):
-            import logging as _logging
-            _logging.getLogger("orchestration_db").warning(
-                "Invalid state transition for job %s: %s -> %s (ignored)",
-                job_id, current.state, new_state,
-            )
-            fields = {k: v for k, v in fields.items() if k != "state"}
-            if not fields:
-                return current
     col_map = {"outputs": "outputs_json", "state": "state"}
     sets = ["updated_at=?"]
     vals: list[Any] = [_now_iso()]
@@ -326,9 +317,31 @@ def update_job(data_dir: Path, job_id: str, **fields: Any) -> OrchestrationJob |
         vals.append(v)
     if len(sets) == 1:
         return get_job(data_dir, job_id)
-    vals.append(job_id)
     with _connect(data_dir) as conn:
-        conn.execute(f"UPDATE jobs SET {', '.join(sets)} WHERE job_id=?", vals)
+        if new_state is not None:
+            # Build reverse lookup: which source states can transition to new_state?
+            valid_from = {s.value for s, targets in _VALID_TRANSITIONS.items() if new_state in targets}
+            if valid_from:
+                placeholders = ", ".join("?" for _ in valid_from)
+                where = f"WHERE job_id=? AND state IN ({placeholders})"
+                query_vals = vals + [job_id] + sorted(valid_from)
+            else:
+                where = "WHERE job_id=? AND 0"  # no valid source states
+                query_vals = vals + [job_id]
+            updated = conn.execute(
+                f"UPDATE jobs SET {', '.join(sets)} {where}", query_vals
+            ).rowcount
+            if updated == 0:
+                import logging as _logging
+                current = conn.execute("SELECT state FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+                cur_state = current["state"] if current else "missing"
+                _logging.getLogger("orchestration_db").warning(
+                    "Invalid state transition for job %s: %s -> %s (ignored)",
+                    job_id, cur_state, new_state,
+                )
+        else:
+            vals.append(job_id)
+            conn.execute(f"UPDATE jobs SET {', '.join(sets)} WHERE job_id=?", vals)
         conn.commit()
         row = conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
     return _row_to_job(row) if row else None
@@ -365,7 +378,8 @@ def cancel_job(data_dir: Path, job_id: str) -> OrchestrationJob | None:
              JobState.queued.value, JobState.validated.value),
         )
         conn.commit()
-    return get_job(data_dir, job_id)
+        row = conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+    return _row_to_job(row) if row else None
 
 
 def recover_stale_running_jobs(data_dir: Path) -> int:
@@ -394,13 +408,13 @@ def get_job_counts(data_dir: Path) -> dict[str, int]:
 
 def get_outbox_stats(data_dir: Path) -> dict[str, int]:
     with _connect(data_dir) as conn:
-        pending = conn.execute(
-            "SELECT COUNT(*) FROM publish_outbox WHERE delivered_at IS NULL"
-        ).fetchone()[0]
-        delivered = conn.execute(
-            "SELECT COUNT(*) FROM publish_outbox WHERE delivered_at IS NOT NULL"
-        ).fetchone()[0]
-    return {"pending": int(pending), "delivered": int(delivered)}
+        row = conn.execute(
+            "SELECT "
+            "SUM(CASE WHEN delivered_at IS NULL THEN 1 ELSE 0 END) AS pending, "
+            "SUM(CASE WHEN delivered_at IS NOT NULL THEN 1 ELSE 0 END) AS delivered "
+            "FROM publish_outbox"
+        ).fetchone()
+    return {"pending": int(row["pending"] or 0), "delivered": int(row["delivered"] or 0)}
 
 
 def checkpoint_wal(data_dir: Path) -> dict[str, Any]:
@@ -483,14 +497,13 @@ def mark_outbox_delivered(data_dir: Path, idempotency_key: str) -> None:
 
 
 def record_outbox_attempt(data_dir: Path, row_id: int, error: str | None = None) -> None:
+    from datetime import timedelta
     with _connect(data_dir) as conn:
-        attempts = conn.execute(
-            "SELECT attempts FROM publish_outbox WHERE id=?", (row_id,)
-        ).fetchone()
-        n = (attempts["attempts"] or 0) + 1
+        # Atomic: read + update in same transaction
+        row = conn.execute("SELECT attempts FROM publish_outbox WHERE id=?", (row_id,)).fetchone()
+        n = (row["attempts"] or 0) + 1
         # Exponential backoff: 30s, 2m, 8m, 30m, 2h
         delay_sec = min(30 * (4 ** (n - 1)), 7200)
-        from datetime import timedelta
         next_retry = (datetime.now(UTC) + timedelta(seconds=delay_sec)).isoformat().replace("+00:00", "Z")
         conn.execute(
             "UPDATE publish_outbox SET attempts=?, last_attempt_at=?, next_retry_at=?, error=? WHERE id=?",

@@ -58,6 +58,22 @@ All notable changes to this project are documented here. The format is loosely b
 
 - **Service recreate timeout:** `subprocess.run` in ops-controller `service_recreate` now has a 120-second timeout, preventing indefinite hangs if `docker-compose up` stalls. Returns HTTP 504 on timeout.
 
+- **TOCTOU race in `update_job` state validation:** State transition guard read the current state in a separate connection from the write, allowing a concurrent thread to change the state between check and update. Now uses a conditional `UPDATE ... WHERE state IN (valid_sources)` in a single atomic query.
+
+- **Outbox stats inconsistent snapshot:** `get_outbox_stats` ran two independent COUNT queries; rows could change between them. Now uses a single query with `SUM(CASE ...)`.
+
+- **Outbox attempt counter race:** `record_outbox_attempt` read the attempt count and incremented in Python, allowing concurrent calls to read the same value. Now performs the read and update within the same connection/transaction.
+
+- **`cancel_job` re-read via separate connection:** After updating the job state, `cancel_job` called `get_job()` which opened a new connection, potentially returning stale data. Now returns the row from the same connection.
+
+- **Ops-controller health endpoint was a no-op:** `/health` returned `{"ok": true}` unconditionally without checking Docker daemon connectivity. Now pings Docker and returns 503 if unreachable.
+
+- **Stale Docker client cached forever:** If the Docker daemon restarted, the cached client would fail on every subsequent call. Now validates the connection with `ping()` and reconnects on failure.
+
+- **Silent GGUF model scan failure:** `_scan_gguf_models` swallowed `OSError` silently, masking disk/mount failures. Now logs a warning.
+
+- **Model deletion missing audit trail:** `ollama_delete` permanently removed model files without any log entry. Now logs `MODEL_DELETED` with model name and path.
+
 ### Added
 
 - **Global exception handler:** Unhandled exceptions in API endpoints now return `{"detail": "Internal server error"}` instead of raw Python tracebacks with internal paths and variable values. Full traceback is logged server-side.

@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 import docker
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 app = FastAPI(title="Ops Controller", version="1.0.0")
@@ -83,8 +84,14 @@ _cached_docker: docker.DockerClient | None = None
 
 def _docker_client() -> docker.DockerClient:
     global _cached_docker  # noqa: PLW0603
-    if _cached_docker is None:
-        _cached_docker = docker.from_env()
+    if _cached_docker is not None:
+        try:
+            _cached_docker.ping()
+            return _cached_docker
+        except Exception:
+            logger.warning("Docker client stale — reconnecting")
+            _cached_docker = None
+    _cached_docker = docker.from_env()
     return _cached_docker
 
 
@@ -173,7 +180,11 @@ def _containers_for_service(service_id: str):
 
 @app.get("/health")
 async def health():
-    """Controller health. No auth required."""
+    """Controller health. No auth required. Verifies Docker daemon reachable."""
+    try:
+        _docker_client().ping()
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"ok": False, "error": str(e)})
     return {"ok": True}
 
 
