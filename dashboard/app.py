@@ -507,16 +507,28 @@ def _run_ollama_pull(model: str):
                     _ollama_pull_status["done"] = True
                 return
 
+        deadline = time.time() + 7200  # 2-hour max
+        consecutive_errors = 0
         with _httpx.Client(timeout=60.0) as poll_client:
-            while True:
+            while time.time() < deadline:
                 time.sleep(1.5)
-                sr = poll_client.get(
-                    f"{ops_url}/models/gguf-pull/status",
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-                if sr.status_code != 200:
+                try:
+                    sr = poll_client.get(
+                        f"{ops_url}/models/gguf-pull/status",
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                    if sr.status_code != 200:
+                        consecutive_errors += 1
+                        if consecutive_errors >= 20:
+                            raise RuntimeError(f"Poll returned {sr.status_code} 20 times in a row")
+                        continue
+                    consecutive_errors = 0
+                    st = sr.json()
+                except Exception as poll_err:
+                    consecutive_errors += 1
+                    if consecutive_errors >= 20:
+                        raise RuntimeError(f"Poll failed 20 times: {poll_err}")
                     continue
-                st = sr.json()
                 with _state_lock:
                     _ollama_pull_status["output"] = st.get("output", "")
                     _ollama_pull_status["pct"] = 50 if st.get("running") else 100
@@ -526,6 +538,8 @@ def _run_ollama_pull(model: str):
                         _ollama_pull_status["running"] = False
                         _ollama_pull_status["done"] = True
                     break
+            else:
+                raise TimeoutError("GGUF pull timed out after 2 hours")
     except Exception as e:
         logger.error("GGUF pull failed: %s", e)
         with _state_lock:
@@ -733,13 +747,19 @@ def _run_comfyui_pull(packs: str | None = None):
 
             _append("All models queued. Waiting for downloads to complete...")
 
-            while True:
+            deadline = time.time() + 7200  # 2-hour max
+            consecutive_errors = 0
+            while time.time() < deadline:
                 time.sleep(2)
                 try:
                     r = client.get(f"{COMFYUI_URL}/manager/queue/status")
                     data = r.json()
+                    consecutive_errors = 0
                 except (json.JSONDecodeError, _httpx.RequestError, _httpx.HTTPStatusError) as e:
                     logger.debug("ComfyUI queue poll failed: %s", e)
+                    consecutive_errors += 1
+                    if consecutive_errors >= 20:
+                        raise RuntimeError(f"ComfyUI queue poll failed 20 times: {e}")
                     continue
 
                 items = data if isinstance(data, list) else data.get("queue", [])
@@ -764,6 +784,8 @@ def _run_comfyui_pull(packs: str | None = None):
                     else:
                         _append("All downloads complete!")
                     break
+            else:
+                raise TimeoutError("ComfyUI model pull timed out after 2 hours")
 
         with _state_lock:
             _comfyui_status["success"] = True

@@ -439,7 +439,12 @@ async def service_recreate(
         cmd += ["-f", f"/workspace/{cf}"]
     cmd += ["up", "-d", "--no-deps", service_id]
     env = {**os.environ, "BASE_PATH": BASE_PATH}
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd="/workspace", env=env)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd="/workspace", env=env, timeout=120)
+    except subprocess.TimeoutExpired:
+        _audit("recreate", service_id, "error", "timed out after 120s",
+               correlation_id=_correlation_id(request))
+        raise HTTPException(status_code=504, detail="Service recreate timed out after 120 seconds")
     ok = result.returncode == 0
     detail = (result.stderr or result.stdout)[:200] if not ok else ""
     _audit("recreate", service_id, "ok" if ok else "error", detail,

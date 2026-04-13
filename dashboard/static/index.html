@@ -2806,9 +2806,11 @@
       barEl.classList.toggle('danger', pct >= 90);
     }
 
+    let _hwLastSuccess = Date.now();
     async function refreshHardware() {
       try {
         const d = await api('/api/hardware').then(r => r.json());
+        _hwLastSuccess = Date.now();
         const cpu = d.cpu_pct != null ? d.cpu_pct : 0;
         document.getElementById('hw-cpu').textContent = cpu.toFixed(0) + '%';
         setBar(document.getElementById('hw-cpu-bar'), cpu);
@@ -2846,6 +2848,12 @@
           document.getElementById('hw-gpu-wrap').style.display = 'none';
         }
       } catch (e) { /* silently skip if not available */ }
+      const hwSection = document.getElementById('hw-bar');
+      if (hwSection) {
+        const stale = Date.now() - _hwLastSuccess > 15000;
+        hwSection.style.opacity = stale ? '0.5' : '';
+        hwSection.title = stale ? 'Hardware data may be stale' : '';
+      }
     }
 
     async function resumeActivePulls() {

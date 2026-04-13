@@ -52,6 +52,12 @@ All notable changes to this project are documented here. The format is loosely b
 
 - **Model switch partial failure visibility:** `set_active_model` now tracks per-step errors and returns `{"ok": false, "errors": [...]}` when downstream steps (open-webui recreate, openclaw restart) fail, instead of always returning `{"ok": true}`.
 
+- **Ollama pull loop deadline:** `_run_ollama_pull` had an unbounded `while True` polling loop; now enforces a 2-hour deadline and aborts after 20 consecutive poll errors.
+
+- **ComfyUI pull loop deadline:** `_run_comfyui_pull` had the same unbounded polling pattern; now enforces a 2-hour deadline and aborts after 20 consecutive poll failures.
+
+- **Service recreate timeout:** `subprocess.run` in ops-controller `service_recreate` now has a 120-second timeout, preventing indefinite hangs if `docker-compose up` stalls. Returns HTTP 504 on timeout.
+
 ### Added
 
 - **Global exception handler:** Unhandled exceptions in API endpoints now return `{"detail": "Internal server error"}` instead of raw Python tracebacks with internal paths and variable values. Full traceback is logged server-side.
@@ -73,6 +79,8 @@ All notable changes to this project are documented here. The format is loosely b
 - **Keyboard focus visibility:** All `input:focus` rules changed to `focus-visible` pattern — keyboard users see a clear outline ring, mouse users get clean styling. Fixes WCAG 2.4.7.
 
 - **Reduced-motion support:** Added `@media (prefers-reduced-motion: reduce)` that disables animations, transitions, and smooth scroll for users with vestibular disorders. Fixes WCAG 2.3.3.
+
+- **Hardware staleness indicator:** Hardware metrics section fades to 50% opacity and shows a tooltip when the last successful poll is older than 15 seconds, making connectivity loss visible instead of silently showing stale data.
 
 ### Changed
 
