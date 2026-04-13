@@ -74,6 +74,10 @@ All notable changes to this project are documented here. The format is loosely b
 
 - **GPU process VRAM always showing 0 on newer pynvml:** `usedGpuMemory` attribute was renamed to `used_gpu_memory` in pynvml >= 12.x. The `getattr` fallback silently returned 0 for all processes. Now checks both attribute names.
 
+- **Dashboard missing comfyui-output volume mount:** The dashboard container set `COMFYUI_OUTPUT_DIR=/comfyui-output` but had no volume mount for it, so `GET /api/orchestration/outputs` always returned empty. Added read-only mount matching the worker's configuration.
+
+- **Misleading readiness and comfyui_delete docstrings:** Readiness endpoint docstring claimed worker health check (never performed); comfyui_delete listed only 5 of 13 valid categories. Both corrected.
+
 - **Docker client leak in ops-controller:** `_docker_client()` created a new Docker SDK client (and HTTP connection pool) on every API call. Now caches a singleton, preventing file descriptor exhaustion under load.
 
 - **Worker cancellation during ComfyUI polling:** `_comfyui_wait_outputs` now checks job state each poll iteration, allowing cancellation to take effect within 3 seconds instead of waiting up to 600 seconds for the full timeout.

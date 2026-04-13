@@ -215,6 +215,7 @@ services:
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/mcp:/mcp-config
       - ${OPENCLAW_CONFIG_DIR:-${BASE_PATH:-.}/data/openclaw}:/openclaw-config
       - ${BASE_PATH:-.}/data/comfyui-storage/ComfyUI/user/default/workflows:/comfyui-workflows:ro
+      - ${DATA_PATH:-${BASE_PATH:-.}/data}/comfyui-output:/comfyui-output:ro
     networks:
       - frontend
       - backend

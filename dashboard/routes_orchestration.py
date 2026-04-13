@@ -94,7 +94,7 @@ load_store(DATA_DIR)
 
 @router.get("/readiness")
 async def readiness():
-    """Returns 200 when all upstream services (ComfyUI, worker) are healthy, 503 otherwise."""
+    """Returns 200 when upstream services (model-gateway, MCP, ComfyUI) are healthy, 503 otherwise."""
     r = compute_readiness()
     if not r.get("ok"):
         from fastapi.responses import JSONResponse

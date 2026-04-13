@@ -841,7 +841,7 @@ COMFYUI_CATEGORIES = (
 
 @app.delete("/api/comfyui/models/{category}/{filename}")
 async def comfyui_delete(category: str, filename: str):
-    """Delete a ComfyUI model file. category: checkpoints, loras, text_encoders, latent_upscale_models, vae."""
+    """Delete a ComfyUI model file. See COMFYUI_CATEGORIES for valid category values."""
     if category not in COMFYUI_CATEGORIES:
         raise HTTPException(status_code=400, detail=f"Invalid category. Must be one of: {COMFYUI_CATEGORIES}")
     if not filename or ".." in filename or "/" in filename or "\\" in filename:
