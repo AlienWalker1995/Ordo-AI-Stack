@@ -66,6 +66,14 @@ All notable changes to this project are documented here. The format is loosely b
 
 - **Dashboard missing ComfyUI model categories:** Dashboard's `COMFYUI_CATEGORIES` only listed 6 subdirs while ops-controller supports 13. Models downloaded to `clip`, `controlnet`, `embeddings`, `upscale_models`, `diffusion_models`, etc. were invisible in the dashboard and could not be deleted. Now synced with ops-controller's full list.
 
+- **Duplicate webhook deliveries when idempotency_key is NULL:** `mark_outbox_delivered` matched by `idempotency_key`, but `NULL = NULL` is false in SQL, so outbox entries with no key were never marked delivered and re-sent on every cycle. Added `mark_outbox_delivered_by_id` fallback for NULL-key entries.
+
+- **Publish callback accepts invalid status values:** `PublishCallbackBody.status` was an unconstrained `str`; a typo like `"DELIVERED"` would silently mark the job as failed. Now uses `Literal["delivered", "failed"]` for Pydantic validation.
+
+- **Negative tail parameter on service logs:** `tail` query parameter had no lower bound; `tail=-1` could cause undefined Docker SDK behavior. Now clamped to `max(1, min(tail, 500))`.
+
+- **GPU process VRAM always showing 0 on newer pynvml:** `usedGpuMemory` attribute was renamed to `used_gpu_memory` in pynvml >= 12.x. The `getattr` fallback silently returned 0 for all processes. Now checks both attribute names.
+
 - **Docker client leak in ops-controller:** `_docker_client()` created a new Docker SDK client (and HTTP connection pool) on every API call. Now caches a singleton, preventing file descriptor exhaustion under load.
 
 - **Worker cancellation during ComfyUI polling:** `_comfyui_wait_outputs` now checks job state each poll iteration, allowing cancellation to take effect within 3 seconds instead of waiting up to 600 seconds for the full timeout.

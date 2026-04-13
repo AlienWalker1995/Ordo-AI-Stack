@@ -319,7 +319,7 @@ async def service_logs(
     containers = _containers_for_service(service_id)
     if not containers:
         raise HTTPException(status_code=404, detail=f"No container found for service {service_id}")
-    tail_n = min(tail, 500)
+    tail_n = max(1, min(tail, 500))
     lines = []
     for c in containers:
         try:

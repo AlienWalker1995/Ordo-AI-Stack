@@ -2097,7 +2097,7 @@ def _gpu_processes() -> dict:
         processes = []
         for p in raw_procs:
             pid = p.pid
-            used_b = int(getattr(p, "usedGpuMemory", 0))
+            used_b = int(getattr(p, "usedGpuMemory", None) or getattr(p, "used_gpu_memory", 0))
             processes.append({
                 "label": _pid_to_service_label(pid),
                 "pid": pid,

@@ -498,6 +498,16 @@ def mark_outbox_delivered(data_dir: Path, idempotency_key: str) -> None:
         conn.commit()
 
 
+def mark_outbox_delivered_by_id(data_dir: Path, row_id: int) -> None:
+    """Mark an outbox entry delivered by row ID (fallback when idempotency_key is NULL)."""
+    with _connect(data_dir) as conn:
+        conn.execute(
+            "UPDATE publish_outbox SET delivered_at=?, error=NULL WHERE id=?",
+            (_now_iso(), row_id),
+        )
+        conn.commit()
+
+
 def record_outbox_attempt(data_dir: Path, row_id: int, error: str | None = None) -> None:
     from datetime import timedelta
     with _connect(data_dir) as conn:

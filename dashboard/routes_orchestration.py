@@ -10,7 +10,7 @@ import logging
 import os
 import socket
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import httpx
@@ -334,7 +334,7 @@ async def publish_enqueue(body: PublishEnqueueBody):
 
 class PublishCallbackBody(BaseModel):
     job_id: str
-    status: str  # "delivered" | "failed"
+    status: Literal["delivered", "failed"]
     idempotency_key: str | None = None
     platform: str | None = None
     post_url: str | None = None

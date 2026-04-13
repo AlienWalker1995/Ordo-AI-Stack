@@ -32,6 +32,7 @@ from dashboard.orchestration_db import (
     get_pending_outbox,
     load_store,
     mark_outbox_delivered,
+    mark_outbox_delivered_by_id,
     record_outbox_attempt,
     recover_stale_running_jobs,
     tick_schedule,
@@ -223,7 +224,11 @@ def process_outbox() -> None:
                 headers={"X-Idempotency-Key": key or ""},
             )
             r.raise_for_status()
-            mark_outbox_delivered(DATA_DIR, key)
+            if key:
+                mark_outbox_delivered(DATA_DIR, key)
+            else:
+                # No idempotency_key — mark by row_id directly
+                mark_outbox_delivered_by_id(DATA_DIR, row_id)
             # Transition job to published
             job = get_job(DATA_DIR, entry["job_id"])
             if job and job.state == JobState.publish_enqueued:
