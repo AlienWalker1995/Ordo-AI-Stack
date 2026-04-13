@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
     && curl -fsSL "https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64" \
        -o /usr/local/bin/docker-compose \
     && chmod +x /usr/local/bin/docker-compose \
+    && apt-mark manual ca-certificates \
     && apt-get purge -y --auto-remove curl && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

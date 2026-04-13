@@ -22,6 +22,10 @@ All notable changes to this project are documented here. The format is loosely b
 
 - **Audit log value masking:** `env_set` audit entries now log `len=N` instead of the first 80 chars of the value, preventing credential leakage if token-type keys are ever added to the env allowlist.
 
+- **TruffleHog CI pinning:** Secret scanning action pinned from mutable `@main` to release tag `@v3.88.26`, preventing supply-chain attacks via compromised upstream commits.
+
+- **ca-certificates preserved in ops-controller:** `apt-mark manual ca-certificates` prevents auto-removal when curl is purged, ensuring Python HTTPS calls work at runtime.
+
 ### Fixed
 
 - **`ttft_ms` always zero in service-usage:** `/api/throughput/service-usage` was building per-service dicts without `ttft_ms`, so the `last_ttft_ms` stat always reported `0.0`. Now correctly propagated from the raw samples.
@@ -61,6 +65,14 @@ All notable changes to this project are documented here. The format is loosely b
 - **Worker graceful shutdown:** Worker process now handles SIGTERM/SIGINT, drains in-flight jobs (120s timeout), and exits cleanly. Prevents job corruption when Docker stops the container.
 
 - **Test coverage expansion:** Added 88 new tests across 7 test files: ops-controller auth enforcement (26 tests), dashboard auth middleware (18 tests), text sanitizers (16 tests), orchestration outbox/callback (10 tests), ComfyUI API client (9 tests), SSRF validation (5 tests), and model download URL blocking.
+
+### Accessibility
+
+- **WCAG AA contrast fix:** `--muted` color bumped from `#6e7694` to `#8a90a8` (~5.1:1 ratio against `--bg`), clearing the 4.5:1 AA minimum for normal text across ~40 dashboard elements.
+
+- **Keyboard focus visibility:** All `input:focus` rules changed to `focus-visible` pattern — keyboard users see a clear outline ring, mouse users get clean styling. Fixes WCAG 2.4.7.
+
+- **Reduced-motion support:** Added `@media (prefers-reduced-motion: reduce)` that disables animations, transitions, and smooth scroll for users with vestibular disorders. Fixes WCAG 2.3.3.
 
 ### Changed
 

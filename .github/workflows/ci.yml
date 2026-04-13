@@ -23,7 +23,7 @@ jobs:
           fetch-depth: 0
 
       - name: Secret scanning (TruffleHog)
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@v3.88.26
         with:
           extra_args: --results=verified,unknown
 
@@ -71,6 +71,7 @@ jobs:
           # Create minimal .env for validation (BASE_PATH required)
           echo "BASE_PATH=." > .env
           echo "OPENCLAW_GATEWAY_TOKEN=placeholder-for-ci" >> .env
+          echo "OPS_CONTROLLER_TOKEN=placeholder-for-ci" >> .env
           docker compose config
 
   compose-smoke:
@@ -94,6 +95,7 @@ jobs:
         run: |
           echo "BASE_PATH=." > .env
           echo "OPENCLAW_GATEWAY_TOKEN=placeholder" >> .env
+          echo "OPS_CONTROLLER_TOKEN=placeholder" >> .env
 
       - name: Run smoke tests
         run: python -m pytest tests/test_compose_smoke.py -v
