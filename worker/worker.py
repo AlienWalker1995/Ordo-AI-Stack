@@ -76,9 +76,13 @@ def _comfyui_post_prompt(workflow: dict[str, Any], client_id: str) -> str:
     return str(pid)
 
 
-def _comfyui_wait_outputs(prompt_id: str, timeout: int = 600) -> dict[str, Any]:
+def _comfyui_wait_outputs(prompt_id: str, job_id: str, timeout: int = 600) -> dict[str, Any]:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        # Check for cancellation between polls
+        fresh = get_job(DATA_DIR, job_id)
+        if fresh and fresh.state == JobState.cancelling:
+            raise RuntimeError(f"Job {job_id} cancelled during execution")
         try:
             r = httpx.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=15)
             r.raise_for_status()
@@ -158,7 +162,7 @@ def execute_job(job: OrchestrationJob) -> None:
         pid = _comfyui_post_prompt(wf, client_id)
         update_job(DATA_DIR, jid, prompt_id=pid)
 
-        entry = _comfyui_wait_outputs(pid)
+        entry = _comfyui_wait_outputs(pid, jid)
         update_job(DATA_DIR, jid, state=JobState.artifact_ready, outputs=entry.get("outputs", {}))
         logger.info("Job %s completed successfully (prompt_id=%s)", jid, pid)
 

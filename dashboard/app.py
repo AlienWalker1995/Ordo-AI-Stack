@@ -150,6 +150,11 @@ async def auth_middleware(request: Request, call_next):
             return JSONResponse(status_code=401, content={"detail": "Invalid or missing X-Throughput-Token"})
         return await call_next(request)
     if _AUTH_REQUIRED and not _verify_auth(request):
+        logger.warning(
+            "AUTH_FAIL path=%s method=%s src=%s",
+            path, request.method,
+            request.client.host if request.client else "unknown",
+        )
         return JSONResponse(status_code=401, content={"detail": "Bearer token required"})
     return await call_next(request)
 
@@ -367,6 +372,7 @@ async def set_active_model(req: PullRequest, request: Request):
 
     bare_name = model[:-5]  # strip .gguf → gateway model id
     results: dict = {}
+    errors: list[str] = []
 
     # 1. Switch LLAMACPP_MODEL + recreate llamacpp
     code, data = await _ops_request(
@@ -379,17 +385,25 @@ async def set_active_model(req: PullRequest, request: Request):
         "POST", "/services/llamacpp/recreate", request=request, json={"confirm": True}
     )
     results["llamacpp_restarting"] = code2 in (200, 201, 202)
+    if not results["llamacpp_restarting"]:
+        errors.append("llamacpp recreate failed")
 
     # 2. Update DEFAULT_MODEL + OPEN_WEBUI_DEFAULT_MODEL + recreate open-webui
     open_webui_model = _open_webui_default_model(bare_name)
-    await _ops_request("POST", "/env/set", request=request,
+    c_dm, _ = await _ops_request("POST", "/env/set", request=request,
                        json={"key": "DEFAULT_MODEL", "value": bare_name, "confirm": True})
-    await _ops_request("POST", "/env/set", request=request,
+    if c_dm not in (200, 201):
+        errors.append("DEFAULT_MODEL update failed")
+    c_owm, _ = await _ops_request("POST", "/env/set", request=request,
                        json={"key": "OPEN_WEBUI_DEFAULT_MODEL", "value": open_webui_model, "confirm": True})
+    if c_owm not in (200, 201):
+        errors.append("OPEN_WEBUI_DEFAULT_MODEL update failed")
     code3, _ = await _ops_request(
         "POST", "/services/open-webui/recreate", request=request, json={"confirm": True}
     )
     results["open_webui_restarting"] = code3 in (200, 201, 202)
+    if not results["open_webui_restarting"]:
+        errors.append("open-webui recreate failed")
 
     # 3. Update OpenClaw agents.defaults.model.primary + model list + restart openclaw-gateway
     openclaw_model = model
@@ -418,12 +432,18 @@ async def set_active_model(req: PullRequest, request: Request):
                 "POST", "/services/openclaw-gateway/restart", request=request, json={"confirm": True}
             )
             results["openclaw_restarting"] = code4 in (200, 201)
-        except (OSError, json.JSONDecodeError, _httpx.RequestError):
+            if not results["openclaw_restarting"]:
+                errors.append("openclaw-gateway restart failed")
+        except (OSError, json.JSONDecodeError, _httpx.RequestError) as exc:
             results["openclaw_restarting"] = False
+            errors.append(f"openclaw config update failed: {exc}")
     else:
         results["openclaw_restarting"] = False
 
-    return {"ok": True, "model": model, **results}
+    all_ok = len(errors) == 0
+    if errors:
+        logger.warning("Model switch to %s partial failure: %s", model, "; ".join(errors))
+    return {"ok": all_ok, "model": model, "errors": errors, **results}
 
 
 def _run_ollama_pull(model: str):

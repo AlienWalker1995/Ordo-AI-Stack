@@ -18,6 +18,10 @@ All notable changes to this project are documented here. The format is loosely b
 
 - **Non-root ops-controller container:** ops-controller Dockerfile now runs as `appuser` (UID 1000) with docker group access instead of root.
 
+- **Failed-auth logging:** Dashboard and ops-controller now log `AUTH_FAIL` warnings with path, method, and source IP on every rejected authentication attempt, enabling brute-force detection.
+
+- **Audit log value masking:** `env_set` audit entries now log `len=N` instead of the first 80 chars of the value, preventing credential leakage if token-type keys are ever added to the env allowlist.
+
 ### Fixed
 
 - **`ttft_ms` always zero in service-usage:** `/api/throughput/service-usage` was building per-service dicts without `ttft_ms`, so the `last_ttft_ms` stat always reported `0.0`. Now correctly propagated from the raw samples.
@@ -39,6 +43,10 @@ All notable changes to this project are documented here. The format is loosely b
 - **Job state machine enforcement:** `update_job` now validates state transitions against a defined state machine, preventing invalid regressions (e.g. `published -> queued`). Invalid transitions are logged and silently ignored.
 
 - **Docker client leak in ops-controller:** `_docker_client()` created a new Docker SDK client (and HTTP connection pool) on every API call. Now caches a singleton, preventing file descriptor exhaustion under load.
+
+- **Worker cancellation during ComfyUI polling:** `_comfyui_wait_outputs` now checks job state each poll iteration, allowing cancellation to take effect within 3 seconds instead of waiting up to 600 seconds for the full timeout.
+
+- **Model switch partial failure visibility:** `set_active_model` now tracks per-step errors and returns `{"ok": false, "errors": [...]}` when downstream steps (open-webui recreate, openclaw restart) fail, instead of always returning `{"ok": true}`.
 
 ### Added
 

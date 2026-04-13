@@ -92,11 +92,14 @@ async def verify_token(request: Request) -> None:
     """Verify Bearer token. Use as Depends(verify_token)."""
     if not OPS_CONTROLLER_TOKEN:
         raise HTTPException(status_code=503, detail="Ops controller authentication not configured. Set OPS_CONTROLLER_TOKEN in your .env file and restart.")
+    src = request.client.host if request.client else "unknown"
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
+        logger.warning("AUTH_FAIL reason=missing_bearer path=%s src=%s", request.url.path, src)
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
     token = auth[7:].strip()
     if not hmac.compare_digest(token, OPS_CONTROLLER_TOKEN):
+        logger.warning("AUTH_FAIL reason=invalid_token path=%s src=%s", request.url.path, src)
         raise HTTPException(status_code=403, detail="Invalid token")
 
 
@@ -396,7 +399,7 @@ async def env_set(body: EnvSetBody, request: Request, _: None = Depends(verify_t
     else:
         content = content.rstrip("\n") + f"\n{body.key}={body.value}\n"
     env_path.write_text(content, encoding="utf-8")
-    _audit("env_set", body.key, "ok", body.value[:80], correlation_id=_correlation_id(request))
+    _audit("env_set", body.key, "ok", f"len={len(body.value)}", correlation_id=_correlation_id(request))
     return {"ok": True, "key": body.key}
 
 
