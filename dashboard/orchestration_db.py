@@ -370,12 +370,12 @@ def claim_next_job(data_dir: Path) -> OrchestrationJob | None:
 
 
 def cancel_job(data_dir: Path, job_id: str) -> OrchestrationJob | None:
-    """Request cancellation for a queued/validated job."""
+    """Request cancellation for a queued, validated, or running job."""
     with _connect(data_dir) as conn:
         conn.execute(
-            "UPDATE jobs SET state=?, updated_at=? WHERE job_id=? AND state IN (?,?)",
+            "UPDATE jobs SET state=?, updated_at=? WHERE job_id=? AND state IN (?,?,?)",
             (JobState.cancelling.value, _now_iso(), job_id,
-             JobState.queued.value, JobState.validated.value),
+             JobState.queued.value, JobState.validated.value, JobState.running.value),
         )
         conn.commit()
         row = conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()

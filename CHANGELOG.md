@@ -102,6 +102,14 @@ All notable changes to this project are documented here. The format is loosely b
 
 - **Information disclosure in unauthenticated health/services endpoints:** Docker exception strings (containing hostnames, socket paths, version info) were returned to unauthenticated clients. Now returns generic "Docker unavailable" message; details logged server-side only.
 
+- **`cancel_job` ignored running jobs:** Only `queued` and `validated` jobs could be cancelled, even though the state machine and worker already supported `running -> cancelling`. Now includes `running` in the cancellable states.
+
+- **Benchmark throughput inflated by network overhead:** `output_tokens_per_sec` was calculated from wall-clock time including HTTP round-trip. Now prefers server-reported `timings.predicted_per_second` from llama.cpp when available, falling back to wall-clock calculation.
+
+- **ComfyUI pull polling dies silently on connection loss:** The frontend poll loop had no `.catch()`, causing the button to stay disabled forever if the backend restarted during a download. Now retries up to 20 times before showing a connection-lost message.
+
+- **Service stop/restart missing confirmation:** Stop and restart buttons fired immediately without a `confirm()` prompt, risking accidental service disruption. Now matches the existing pattern for model deletion and active model switching.
+
 ### Added
 
 - **Global exception handler:** Unhandled exceptions in API endpoints now return `{"detail": "Internal server error"}` instead of raw Python tracebacks with internal paths and variable values. Full traceback is logged server-side.

@@ -1734,6 +1734,7 @@
             e.preventDefault();
             e.stopPropagation();
             const id = btn.dataset.serviceId;
+            if (!confirm('Stop service "' + id + '"? Active connections will be dropped.')) return;
             btn.classList.add('loading');
             try {
               const r = await api('/api/ops/services/' + id + '/stop', { method: 'POST' });
@@ -1756,6 +1757,7 @@
             e.preventDefault();
             e.stopPropagation();
             const id = btn.dataset.serviceId;
+            if (!confirm('Restart service "' + id + '"? This will briefly interrupt the service.')) return;
             btn.classList.add('loading');
             try {
               const r = await api('/api/ops/services/' + id + '/restart', { method: 'POST' });
@@ -2463,8 +2465,10 @@
       try {
         const qs = '?packs=' + encodeURIComponent(selected.join(','));
         await api('/api/comfyui/pull' + qs, { method: 'POST' });
+        let pollErrors = 0;
         const poll = () => {
           api('/api/comfyui/pull/status').then(r => r.json()).then(s => {
+            pollErrors = 0;
             logEl.textContent = s.output || 'Preparing...';
             logEl.scrollTop = logEl.scrollHeight;
             if (s.running) setTimeout(poll, 1500);
@@ -2474,6 +2478,13 @@
               btn.disabled = false;
               loadComfyuiModels();
               loadComfyuiPacks();
+            }
+          }).catch(() => {
+            if (++pollErrors > 20) {
+              logEl.textContent += '\nLost connection to server.';
+              btn.disabled = false;
+            } else {
+              setTimeout(poll, 3000);
             }
           });
         };

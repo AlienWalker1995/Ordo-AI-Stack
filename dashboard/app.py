@@ -1591,7 +1591,12 @@ async def throughput_benchmark(req: ThroughputBenchmarkRequest):
     prompt_eval_count = int(usage.get("prompt_tokens") or 0)
     elapsed_sec = max(elapsed_ms / 1000, 0.001)
 
-    output_tokens_per_sec = eval_count / elapsed_sec if eval_count > 0 else 0
+    # Prefer server-reported eval speed when available (avoids network overhead inflation)
+    timings = data.get("timings", {}) if isinstance(data, dict) else {}
+    if isinstance(timings, dict) and timings.get("predicted_per_second"):
+        output_tokens_per_sec = float(timings["predicted_per_second"])
+    else:
+        output_tokens_per_sec = eval_count / elapsed_sec if eval_count > 0 else 0
     input_tokens_per_sec = prompt_eval_count / elapsed_sec if prompt_eval_count > 0 else 0
 
     # Store sample for stats (peak, percentiles)
