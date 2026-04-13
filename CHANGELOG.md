@@ -88,6 +88,20 @@ All notable changes to this project are documented here. The format is loosely b
 
 - **OpenClaw startup path error:** TOOLS.md Session Startup used relative paths (`TOOLS.md`) which less capable models resolved as `/app/TOOLS.md` instead of the workspace directory. Now uses absolute `/home/node/.openclaw/workspace/` paths.
 
+- **Unbounded throughput model-key growth:** `_throughput_samples` and `_ttft_samples` capped samples per model but not the number of distinct models, allowing memory exhaustion via unique model names. Now capped at 50 tracked models.
+
+- **Uncapped `limit` on list_jobs endpoint:** `/api/orchestration/jobs?limit=999999999` could force SQLite to materialize an enormous result set. Now clamped to `max(1, min(limit, 1000))`.
+
+- **Throughput record missing field constraints:** `ThroughputRecordRequest` accepted arbitrary-length model names, negative values, `inf`, and `nan`. Now uses Pydantic `Field` with `max_length`, `ge`, and `le` constraints.
+
+- **ComfyUI history response type validation:** Worker accepted any JSON shape from ComfyUI history endpoint; a non-dict entry would silently poll until timeout. Now validates entry is a dict and logs a warning.
+
+- **Unbounded error strings in job database:** Exception messages from ComfyUI could be arbitrarily large, bloating the SQLite database. Error strings now truncated to 4096 characters before storage.
+
+- **Audit log injection via X-Request-ID:** Raw `X-Request-ID` header was written directly into the JSON audit log, allowing injection of fake fields or broken log parsing. Now sanitized to alphanumeric/dashes, capped at 128 chars.
+
+- **Information disclosure in unauthenticated health/services endpoints:** Docker exception strings (containing hostnames, socket paths, version info) were returned to unauthenticated clients. Now returns generic "Docker unavailable" message; details logged server-side only.
+
 ### Added
 
 - **Global exception handler:** Unhandled exceptions in API endpoints now return `{"detail": "Internal server error"}` instead of raw Python tracebacks with internal paths and variable values. Full traceback is logged server-side.

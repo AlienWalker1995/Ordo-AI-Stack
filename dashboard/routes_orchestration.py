@@ -257,6 +257,7 @@ async def run_workflow(body: RunBody):
 @router.get("/jobs")
 async def list_jobs_endpoint(state: str | None = None, limit: int = 100):
     """List orchestration jobs, optionally filtered by state (queued, running, failed, etc.)."""
+    limit = max(1, min(limit, 1000))
     jobs = list_jobs(DATA_DIR, state=state, limit=limit)
     return {"jobs": [j.to_dict() for j in jobs], "count": len(jobs)}
 

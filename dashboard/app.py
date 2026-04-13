@@ -25,7 +25,7 @@ import httpx as _httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from dashboard.orchestration_db import get_job_counts, get_outbox_stats
 from dashboard.routes_hub import router as hub_router
@@ -1291,6 +1291,7 @@ async def mcp_remove(req: McpRemoveRequest):
 _throughput_samples: dict[str, list[float]] = {}
 _ttft_samples: dict[str, list[float]] = {}
 _MAX_SAMPLES_PER_MODEL = 500
+_MAX_TRACKED_MODELS = 50
 
 # Last benchmark result (persists across page refresh until dashboard restart)
 _last_benchmark: dict | None = None
@@ -1353,10 +1354,10 @@ class ThroughputBenchmarkRequest(BaseModel):
 
 
 class ThroughputRecordRequest(BaseModel):
-    model: str = ""
-    output_tokens_per_sec: float = 0.0
-    service: str = ""
-    ttft_ms: float = 0.0
+    model: str = Field(default="", max_length=256)
+    output_tokens_per_sec: float = Field(default=0.0, ge=0, le=1e6)
+    service: str = Field(default="", max_length=64)
+    ttft_ms: float = Field(default=0.0, ge=0, le=1e6)
 
 
 @app.post("/api/throughput/record")
@@ -1367,6 +1368,8 @@ async def throughput_record(req: ThroughputRecordRequest):
         return {"ok": True}
     with _state_lock:
         if model not in _throughput_samples:
+            if len(_throughput_samples) >= _MAX_TRACKED_MODELS:
+                return {"ok": True}
             _throughput_samples[model] = []
         _throughput_samples[model].append(req.output_tokens_per_sec)
         if len(_throughput_samples[model]) > _MAX_SAMPLES_PER_MODEL:

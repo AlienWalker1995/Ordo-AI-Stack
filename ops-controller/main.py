@@ -184,7 +184,8 @@ async def health():
     try:
         _docker_client().ping()
     except Exception as e:
-        return JSONResponse(status_code=503, content={"ok": False, "error": str(e)})
+        logger.warning("Health check failed: %s", e)
+        return JSONResponse(status_code=503, content={"ok": False, "error": "Docker daemon unavailable"})
     return {"ok": True}
 
 
@@ -205,7 +206,8 @@ async def list_services():
             services.append({"id": svc, "name": svc, "state": state})
         return {"services": sorted(services, key=lambda s: s["id"])}
     except Exception as e:
-        return JSONResponse(status_code=503, content={"services": [], "detail": f"Docker unavailable: {e}"})
+        logger.warning("Service list failed: %s", e)
+        return JSONResponse(status_code=503, content={"services": [], "detail": "Docker unavailable"})
 
 
 class ConfirmBody(BaseModel):
@@ -214,8 +216,9 @@ class ConfirmBody(BaseModel):
 
 
 def _correlation_id(request: Request) -> str:
-    """Extract X-Request-ID for audit correlation."""
-    return (request.headers.get("X-Request-ID") or "").strip()
+    """Extract X-Request-ID for audit correlation. Sanitized to prevent log injection."""
+    raw = (request.headers.get("X-Request-ID") or "").strip()
+    return re.sub(r"[^a-zA-Z0-9_\-.]", "", raw)[:128]
 
 
 @app.post("/services/{service_id}/start")

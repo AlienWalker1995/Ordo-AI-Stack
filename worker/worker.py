@@ -91,6 +91,9 @@ def _comfyui_wait_outputs(prompt_id: str, job_id: str, timeout: int = 600) -> di
             r.raise_for_status()
             history = r.json()
             entry = history.get(prompt_id, {})
+            if not isinstance(entry, dict):
+                logger.warning("Unexpected history format for %s: %s", prompt_id, type(entry).__name__)
+                continue
             if entry.get("outputs"):
                 return entry
         except (httpx.RequestError, httpx.HTTPStatusError, json.JSONDecodeError) as exc:
@@ -175,7 +178,7 @@ def execute_job(job: OrchestrationJob) -> None:
         if retry_count <= MAX_RETRIES:
             try:
                 update_job(DATA_DIR, jid, state=JobState.failed,
-                           error=f"attempt {retry_count - 1} failed: {exc}")
+                           error=f"attempt {retry_count - 1} failed: {exc}"[:4096])
                 params = json.loads(job.params_json) if job.params_json else {}
                 compiled = (json.loads(job.compiled_workflow)
                             if isinstance(job.compiled_workflow, str) and job.compiled_workflow
@@ -194,9 +197,9 @@ def execute_job(job: OrchestrationJob) -> None:
             except Exception as retry_exc:
                 logger.error("Job %s retry failed: %s", jid, retry_exc)
                 update_job(DATA_DIR, jid, state=JobState.failed,
-                           error=f"retry failed: {retry_exc}")
+                           error=f"retry failed: {retry_exc}"[:4096])
         else:
-            update_job(DATA_DIR, jid, state=JobState.failed, error=str(exc))
+            update_job(DATA_DIR, jid, state=JobState.failed, error=str(exc)[:4096])
             logger.error("Job %s permanently failed after %d attempts", jid, retry_count)
 
 
