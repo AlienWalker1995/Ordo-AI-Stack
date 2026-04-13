@@ -120,6 +120,22 @@ All notable changes to this project are documented here. The format is loosely b
 
 - **Throughput save on every record call:** `_save_throughput_state()` wrote to disk on every `/api/throughput/record` call, causing unnecessary I/O under high request volume. Now debounced to write at most every 5 seconds via `_maybe_save_throughput()`.
 
+- **SSRF check was a no-op:** `publish_enqueue` detected private IPs in webhook URLs but executed `pass` instead of raising an exception, silently allowing all private-IP webhooks through. Now raises HTTP 400.
+
+- **Blocking DNS lookup in async handler:** `socket.getaddrinfo()` in `publish_enqueue` blocked the event loop during DNS resolution. Now wrapped with `asyncio.to_thread`.
+
+- **Popen without timeout in model pull:** `_run_model_pull` and `_run_gguf_pull` used `proc.wait()` with no timeout; a hung child process would block the pull thread forever. Now uses `proc.wait(timeout=7200)` with `proc.kill()` on timeout.
+
+- **Worker outbox creates new connection per delivery:** `process_outbox()` used bare `httpx.post()` (throwaway client) every 0.5s poll cycle, churning TCP connections. Now reuses a module-level `httpx.Client`.
+
+- **Redundant validated state update in worker:** `execute_job` called `update_job(state=validated)` even though `claim_next_job` already set the state to `validated`, wasting a DB write on every job.
+
+- **`list_outputs` calls `stat()` three times per file:** Sorting, size, and mtime each triggered a separate `stat()` syscall. Now caches the stat result once per file.
+
+- **`update_schedule` re-reads via separate connection:** After UPDATE, `update_schedule` called `get_schedule()` which opened a new connection, potentially returning stale data. Now returns the row from the same connection.
+
+- **Missing index on `workflow_versions.promoted_at`:** `get_promoted_workflow` filtered on `promoted_at IS NOT NULL` without a covering index, forcing a scan of all versions per workflow. Added partial index on `(workflow_id, version DESC) WHERE promoted_at IS NOT NULL`.
+
 ### Added
 
 - **Global exception handler:** Unhandled exceptions in API endpoints now return `{"detail": "Internal server error"}` instead of raw Python tracebacks with internal paths and variable values. Full traceback is logged server-side.

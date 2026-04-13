@@ -785,7 +785,7 @@ def _run_model_pull(packs_csv: str, correlation_id: str = "") -> None:
             output_lines.append(line.rstrip())
             with _pull_lock:
                 _pull_status["output"] = "\n".join(output_lines[-20:])
-        proc.wait()
+        proc.wait(timeout=7200)
         ok = proc.returncode == 0
         _audit("model_pull", packs_csv, "ok" if ok else "error", f"exit={proc.returncode}", correlation_id=correlation_id)
         with _pull_lock:
@@ -793,6 +793,13 @@ def _run_model_pull(packs_csv: str, correlation_id: str = "") -> None:
             _pull_status["output"] = "\n".join(output_lines[-30:])
             if not ok:
                 _pull_status["output"] += f"\nExit code: {proc.returncode}"
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        logger.error("Model pull timed out after 7200s")
+        _audit("model_pull", packs_csv, "error", "timeout after 7200s", correlation_id=correlation_id)
+        with _pull_lock:
+            _pull_status["success"] = False
+            _pull_status["output"] += "\nError: timed out after 2 hours"
     except Exception as e:
         logger.error("Model pull failed: %s", e)
         _audit("model_pull", packs_csv, "error", str(e)[:200], correlation_id=correlation_id)
@@ -920,7 +927,7 @@ def _run_gguf_pull(repos_csv: str, correlation_id: str = "") -> None:
             output_lines.append(line.rstrip())
             with _gguf_pull_lock:
                 _gguf_pull_status["output"] = "\n".join(output_lines[-40:])
-        proc.wait()
+        proc.wait(timeout=7200)
         ok = proc.returncode == 0
         _audit("gguf_pull", label, "ok" if ok else "error", f"exit={proc.returncode}", correlation_id=correlation_id)
         with _gguf_pull_lock:
@@ -928,6 +935,13 @@ def _run_gguf_pull(repos_csv: str, correlation_id: str = "") -> None:
             _gguf_pull_status["output"] = "\n".join(output_lines[-50:])
             if not ok:
                 _gguf_pull_status["output"] += f"\nExit code: {proc.returncode}"
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        logger.error("GGUF pull timed out after 7200s")
+        _audit("gguf_pull", label, "error", "timeout after 7200s", correlation_id=correlation_id)
+        with _gguf_pull_lock:
+            _gguf_pull_status["success"] = False
+            _gguf_pull_status["output"] += "\nError: timed out after 2 hours"
     except Exception as e:
         logger.error("GGUF pull failed: %s", e)
         _audit("gguf_pull", label, "error", str(e)[:200], correlation_id=correlation_id)

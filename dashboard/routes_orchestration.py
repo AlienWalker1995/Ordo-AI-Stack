@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 import ipaddress
 import json
@@ -306,13 +307,13 @@ async def publish_enqueue(body: PublishEnqueueBody):
         if parsed.scheme not in ("http", "https"):
             raise HTTPException(status_code=400, detail="webhook_url must use http or https")
         hostname = parsed.hostname or ""
-        resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        resolved = await asyncio.to_thread(socket.getaddrinfo, hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
         for _, _, _, _, addr in resolved:
             ip = ipaddress.ip_address(addr[0])
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
                 # Allow Docker internal network (common for n8n webhooks)
                 if not (ip.is_private and hostname.endswith((".internal", ".local")) or "." not in hostname):
-                    pass  # Docker service names are OK
+                    raise HTTPException(status_code=400, detail="webhook_url must not resolve to a private IP")
     except (ValueError, socket.gaierror):
         pass  # Allow unresolvable hostnames (Docker DNS resolves at delivery time)
     j = get_job(DATA_DIR, body.job_id)
@@ -381,14 +382,19 @@ async def list_outputs():
         return {"outputs": [], "output_dir": str(COMFYUI_OUTPUT_DIR)}
     files = []
     try:
-        for p in sorted(COMFYUI_OUTPUT_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+        entries = []
+        for p in COMFYUI_OUTPUT_DIR.iterdir():
             if p.is_file():
-                files.append({
-                    "filename": p.name,
-                    "size_bytes": p.stat().st_size,
-                    "modified_at": p.stat().st_mtime,
-                    "suffix": p.suffix,
-                })
+                st = p.stat()
+                entries.append((p, st))
+        entries.sort(key=lambda x: x[1].st_mtime, reverse=True)
+        for p, st in entries:
+            files.append({
+                "filename": p.name,
+                "size_bytes": st.st_size,
+                "modified_at": st.st_mtime,
+                "suffix": p.suffix,
+            })
     except OSError as e:
         logger.warning("Could not read output dir: %s", e)
     return {"outputs": files[:200], "output_dir": str(COMFYUI_OUTPUT_DIR)}

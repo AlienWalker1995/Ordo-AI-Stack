@@ -137,6 +137,7 @@ CREATE INDEX IF NOT EXISTS idx_outbox_pending ON publish_outbox(delivered_at, at
 CREATE INDEX IF NOT EXISTS idx_outbox_job_id ON publish_outbox(job_id);
 CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_run_at);
 CREATE INDEX IF NOT EXISTS idx_wf_versions_lookup ON workflow_versions(workflow_id, version);
+CREATE INDEX IF NOT EXISTS idx_wf_versions_promoted ON workflow_versions(workflow_id, version DESC) WHERE promoted_at IS NOT NULL;
 """
 
 
@@ -689,7 +690,8 @@ def update_schedule(data_dir: Path, schedule_id: str, **fields: Any) -> dict[str
     with _connect(data_dir) as conn:
         conn.execute(f"UPDATE schedules SET {', '.join(sets)} WHERE schedule_id=?", vals)
         conn.commit()
-    return get_schedule(data_dir, schedule_id)
+        row = conn.execute("SELECT * FROM schedules WHERE schedule_id=?", (schedule_id,)).fetchone()
+    return dict(row) if row else None
 
 
 def delete_schedule(data_dir: Path, schedule_id: str) -> bool:

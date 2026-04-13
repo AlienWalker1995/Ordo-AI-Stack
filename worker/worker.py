@@ -66,6 +66,7 @@ HEARTBEAT_PATH = Path("/tmp/worker.heartbeat")
 # ── ComfyUI HTTP (inline; no async needed in worker) ─────────────────────────
 
 _comfyui_client = httpx.Client(base_url=COMFYUI_URL, timeout=30)
+_outbox_client = httpx.Client(timeout=30)
 
 
 def _comfyui_post_prompt(workflow: dict[str, Any], client_id: str) -> str:
@@ -139,9 +140,7 @@ def execute_job(job: OrchestrationJob) -> None:
         return
 
     try:
-        # Compile workflow
-        update_job(DATA_DIR, jid, state=JobState.validated)
-
+        # Compile workflow (state is already validated from claim_next_job)
         if job.compiled_workflow:
             # Pre-compiled (e.g. retry or scheduled)
             wf = json.loads(job.compiled_workflow) if isinstance(job.compiled_workflow, str) else job.compiled_workflow
@@ -211,10 +210,9 @@ def process_outbox() -> None:
         key = entry.get("idempotency_key")
         row_id = entry["id"]
         try:
-            r = httpx.post(
+            r = _outbox_client.post(
                 entry["webhook_url"],
                 json=json.loads(entry["payload_json"]),
-                timeout=30,
                 headers={"X-Idempotency-Key": key or ""},
             )
             r.raise_for_status()
