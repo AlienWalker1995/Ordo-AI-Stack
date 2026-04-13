@@ -30,7 +30,6 @@ from dashboard.orchestration_db import (
     get_due_schedules,
     get_job,
     get_pending_outbox,
-    list_jobs,
     load_store,
     mark_outbox_delivered,
     record_outbox_attempt,
@@ -170,7 +169,7 @@ def execute_job(job: OrchestrationJob) -> None:
             # Re-queue with incremented retry_count (compiled workflow already stored)
             update_job(DATA_DIR, jid, state=JobState.failed,
                        error=f"attempt {retry_count - 1} failed: {exc}")
-            create_job(
+            new_job = create_job(
                 DATA_DIR,
                 template_id=job.template_id,
                 workflow_id=job.workflow_id,
@@ -178,12 +177,7 @@ def execute_job(job: OrchestrationJob) -> None:
                 compiled_workflow=json.loads(job.compiled_workflow) if job.compiled_workflow else None,
                 extra={"retried_from": jid, "retry_count": retry_count},
             )
-            # Store retry_count in the new job
-            all_jobs = list_jobs(DATA_DIR, state=JobState.queued.value, limit=1)
-            for nj in all_jobs:
-                if nj.extra.get("retried_from") == jid:
-                    update_job(DATA_DIR, nj.job_id, **{"retry_count": retry_count})
-                    break
+            update_job(DATA_DIR, new_job.job_id, retry_count=retry_count)
             logger.info("Job %s failed; requeued (attempt %d/%d)", jid, retry_count, MAX_RETRIES + 1)
         else:
             update_job(DATA_DIR, jid, state=JobState.failed, error=str(exc))
@@ -307,7 +301,7 @@ def main() -> None:
                     logger.error("WAL checkpoint error: %s", exc)
                 last_wal_checkpoint = time.time()
 
-            if time.time() - last_vacuum >= VACUUM_SEC:
+            if time.time() - last_vacuum >= VACUUM_SEC and not inflight:
                 pool.submit(vacuum_db, DATA_DIR)
                 last_vacuum = time.time()
 

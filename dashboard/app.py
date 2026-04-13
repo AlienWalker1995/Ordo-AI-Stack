@@ -759,7 +759,7 @@ def _run_comfyui_pull(packs: str | None = None):
 COMFYUI_CATEGORIES = ("checkpoints", "unet", "loras", "text_encoders", "latent_upscale_models", "vae")
 
 
-@app.delete("/api/comfyui/models/{category}/{filename:path}")
+@app.delete("/api/comfyui/models/{category}/{filename}")
 async def comfyui_delete(category: str, filename: str):
     """Delete a ComfyUI model file. category: checkpoints, loras, text_encoders, latent_upscale_models, vae."""
     if category not in COMFYUI_CATEGORIES:
@@ -1364,7 +1364,7 @@ async def throughput_service_usage():
             s = u["service"]
             if s not in by_svc:
                 by_svc[s] = []
-            by_svc[s].append({"tps": u["tps"], "ts": u["ts"]})
+            by_svc[s].append({"tps": u["tps"], "ts": u["ts"], "ttft_ms": u.get("ttft_ms", 0.0)})
         result[model] = {
             "services": [
                 {

@@ -391,9 +391,22 @@ def checkpoint_wal(data_dir: Path) -> dict[str, Any]:
 
 
 def vacuum_db(data_dir: Path) -> None:
-    with _connect(data_dir) as conn:
+    """Run VACUUM with a short timeout to avoid blocking readers/writers.
+
+    VACUUM requires an exclusive lock on the entire database.  Using a short
+    busy_timeout means it will fail fast (OperationalError) rather than block
+    the dashboard or other worker threads for the duration of the rewrite.
+    """
+    import logging as _logging
+
+    conn = sqlite3.connect(str(_db_path(data_dir)), timeout=5, check_same_thread=False)
+    try:
         conn.execute("VACUUM")
         conn.commit()
+    except sqlite3.OperationalError as exc:
+        _logging.getLogger("orchestration_db").debug("VACUUM skipped (DB busy): %s", exc)
+    finally:
+        conn.close()
 
 
 # ── Publish outbox ─────────────────────────────────────────────────────────────

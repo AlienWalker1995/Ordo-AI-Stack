@@ -14,6 +14,16 @@ All notable changes to this project are documented here. The format is loosely b
 
 - **XSS fix in service cards:** Service hint text was injected as raw HTML; now uses `escapeHtml()`.
 
+### Fixed
+
+- **`ttft_ms` always zero in service-usage:** `/api/throughput/service-usage` was building per-service dicts without `ttft_ms`, so the `last_ttft_ms` stat always reported `0.0`. Now correctly propagated from the raw samples.
+
+- **Worker retry race condition:** Retry job creation used `list_jobs(limit=1)` to find the new job by `retried_from` — with concurrency >1, a different job could occupy the slot, leaving `retry_count=0` and enabling unlimited retries. Now uses `create_job()` return value directly.
+
+- **Dead `:path` route modifier:** `DELETE /api/comfyui/models/{category}/{filename:path}` declared `:path` (allows slashes) but immediately rejected any filename containing `/`. Changed to plain `{filename}`.
+
+- **VACUUM blocks readers under load:** `vacuum_db()` ran with 30s busy_timeout, blocking all dashboard reads during the full rewrite. Now uses 5s timeout and logs a debug message on skip. Worker also skips vacuum when jobs are in-flight.
+
 ### Added
 
 - **Global exception handler:** Unhandled exceptions in API endpoints now return `{"detail": "Internal server error"}` instead of raw Python tracebacks with internal paths and variable values. Full traceback is logged server-side.
