@@ -1678,7 +1678,7 @@
               ${escapeHtml(s.name)}
             </div>
             <a href="${serviceOpenHref(s, host)}" target="_blank" rel="noopener" class="service" style="text-decoration:none;color:inherit;" aria-label="Open ${s.name} (opens in new tab)">
-              <span class="status ${s.ok ? 'ok' : 'fail'}" aria-hidden="true"></span>
+              <span class="status ${s.ok ? 'ok' : 'fail'}" aria-hidden="true" title="${s.ok ? 'Healthy' : 'Offline'}"></span>
               <span class="label">${s.ok ? 'Running' : 'Offline'}</span>
               <span class="external" aria-hidden="true">↗</span>
             </a>
@@ -1690,7 +1690,7 @@
               <button type="button" class="btn-icon btn-ops-logs" data-service-id="${escapeHtml(s.id)}" title="View logs" aria-label="View logs for ${s.name}">📋</button>
             </div>
             ` : ''}
-            ${!s.ok && s.hint ? `<div class="hint">${s.hint}</div>` : ''}
+            ${!s.ok && s.hint ? `<div class="hint">${escapeHtml(s.hint)}</div>` : ''}
           </div>
         `).join('');
         el.querySelectorAll('.btn-ops-start').forEach(btn => {
@@ -2597,9 +2597,7 @@
       btn.classList.add('loading');
       if (!ollamaLibrary.length) await loadOllamaLibrary();
       await Promise.all([loadServices(), loadDependencies(), loadRagStatus(), loadOllamaModels(), loadComfyuiModels(), loadComfyuiPacks(), loadMcpServers()]);
-      loadThroughputStats();
-      loadThroughputServiceUsage();
-      loadPerfKPIs();
+      await Promise.all([loadThroughputStats(), loadThroughputServiceUsage(), loadPerfKPIs()]);
       btn.classList.remove('loading');
     }
 
@@ -3030,6 +3028,7 @@
         if (document.hidden) {
           stopPolling();
         } else {
+          stopPolling();  // prevent stacking on rapid tab switches
           refresh();
           refreshHardware();
           startPolling();

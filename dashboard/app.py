@@ -71,7 +71,7 @@ async def _lifespan(_app: FastAPI):
         )
     _http_client = _httpx.AsyncClient(
         timeout=30.0,
-        limits=_httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        limits=_httpx.Limits(max_connections=100, max_keepalive_connections=20),
     )
     try:
         yield

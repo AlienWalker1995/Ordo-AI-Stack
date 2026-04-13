@@ -225,7 +225,7 @@ services:
       dockerfile: worker/Dockerfile
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "test", "-f", "/tmp/worker.heartbeat"]
+      test: ["CMD-SHELL", "[ -f /tmp/worker.heartbeat ] && [ $(($(date +%s) - $(cat /tmp/worker.heartbeat))) -lt 120 ]"]
       start_period: 30s
       interval: 30s
       timeout: 5s
@@ -250,6 +250,11 @@ services:
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/dashboard:/data/dashboard
       - ${BASE_PATH:-.}/data/comfyui-storage/ComfyUI/user/default/workflows:/comfyui-workflows:ro
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/comfyui-output:/comfyui-output:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - backend
 
@@ -257,9 +262,12 @@ services:
     image: ${OPEN_WEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.8.4}
     restart: unless-stopped
     depends_on:
-      - llamacpp
-      - model-gateway
-      - qdrant
+      llamacpp:
+        condition: service_healthy
+      model-gateway:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
     ports:
       - "3000:8080"
     healthcheck:

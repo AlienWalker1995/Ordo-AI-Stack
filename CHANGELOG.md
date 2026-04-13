@@ -12,6 +12,8 @@ All notable changes to this project are documented here. The format is loosely b
 
 - **Hardened CSP headers:** Added `connect-src 'self'`, `frame-ancestors 'none'`, `base-uri 'self'`, and `form-action 'self'` directives to Content-Security-Policy.
 
+- **XSS fix in service cards:** Service hint text was injected as raw HTML; now uses `escapeHtml()`.
+
 ### Added
 
 - **Global exception handler:** Unhandled exceptions in API endpoints now return `{"detail": "Internal server error"}` instead of raw Python tracebacks with internal paths and variable values. Full traceback is logged server-side.
@@ -69,6 +71,18 @@ All notable changes to this project are documented here. The format is loosely b
 - **Reproducible builds:** Pinned model-gateway base image from floating `:main-stable` to `:main-v1.65.5`. Pinned comfyui-mcp upstream clone to specific commit SHA.
 
 - **CI pip caching:** All `setup-python` steps now use `cache: pip` with `cache-dependency-path`, saving 30-60s per CI run.
+
+- **Worker healthcheck freshness:** Worker healthcheck now verifies heartbeat file age (<120s) instead of just file existence, so a deadlocked main loop triggers Docker restart.
+
+- **Worker logging config:** Added `json-file` logging driver with 10MB rotation to worker service (was missing, unbounded logs could fill disk).
+
+- **open-webui startup ordering:** `depends_on` now uses `condition: service_healthy` for llamacpp, model-gateway, and qdrant so open-webui waits for backends to be ready.
+
+- **Dashboard connection pool:** Increased httpx `max_connections` from 20 to 100 to prevent request queuing when multiple browser tabs are open during streaming requests.
+
+- **Frontend polling fix:** `stopPolling()` called before `startPolling()` on tab resume to prevent interval accumulation from rapid visibility changes.
+
+- **Frontend refresh correctness:** `loadThroughputStats()`, `loadThroughputServiceUsage()`, and `loadPerfKPIs()` are now awaited in `refresh()` so the loading spinner stays visible until all data is loaded.
 
 - **Exception handling:** Replaced bare `except Exception: pass/continue` patterns in ComfyUI queue polling (dashboard) and history polling (worker) with specific exception types and debug logging.
 
