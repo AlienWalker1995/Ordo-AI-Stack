@@ -823,6 +823,7 @@ async def comfyui_delete(category: str, filename: str):
         raise HTTPException(status_code=400, detail="Not a file")
     try:
         path.unlink()
+        logger.info("MODEL_DELETED model=%s/%s path=%s", category, filename, path)
         return {"ok": True, "message": f"Deleted {category}/{filename}"}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=f"Permission denied: {e}") from e
@@ -1270,6 +1271,7 @@ async def mcp_add(req: McpAddRequest):
         return {"status": "already_enabled", "servers": servers}
     servers.append(server)
     _write_mcp_servers(servers)
+    logger.info("MCP_SERVER_ADDED server=%s", server)
     return {"status": "added", "servers": servers}
 
 
@@ -1286,6 +1288,7 @@ async def mcp_remove(req: McpRemoveRequest):
     if not servers:
         raise HTTPException(status_code=400, detail="Cannot remove last server. Add another first.")
     _write_mcp_servers(servers)
+    logger.info("MCP_SERVER_REMOVED server=%s", server)
     return {"status": "removed", "servers": servers}
 
 

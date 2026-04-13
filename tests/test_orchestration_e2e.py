@@ -284,3 +284,62 @@ def test_schedule_crud(client: TestClient, db_dir: Path):
 
     r4 = client.delete(f"/api/orchestration/schedules/{sid}")
     assert r4.status_code == 200
+
+
+def test_invalid_state_transition_rejected(db_dir: Path):
+    """update_job must reject invalid state transitions (e.g. published -> running)."""
+    from dashboard.orchestration_db import (
+        JobState,
+        create_job,
+        get_job,
+        init_db,
+        update_job,
+    )
+    init_db(db_dir)
+    job = create_job(db_dir, workflow_id="test", params={})
+    # Walk to published state
+    update_job(db_dir, job.job_id, state=JobState.validated)
+    update_job(db_dir, job.job_id, state=JobState.running)
+    update_job(db_dir, job.job_id, state=JobState.artifact_ready)
+    update_job(db_dir, job.job_id, state=JobState.published)
+    # Attempt invalid transition: published -> running
+    update_job(db_dir, job.job_id, state=JobState.running)
+    j = get_job(db_dir, job.job_id)
+    assert j.state == JobState.published, "Invalid transition should be rejected"
+
+
+def test_invalid_state_transition_cancelled_is_terminal(db_dir: Path):
+    """Cancelled jobs must not transition to any other state."""
+    from dashboard.orchestration_db import (
+        JobState,
+        create_job,
+        get_job,
+        init_db,
+        update_job,
+    )
+    init_db(db_dir)
+    job = create_job(db_dir, workflow_id="test", params={})
+    update_job(db_dir, job.job_id, state=JobState.cancelling)
+    update_job(db_dir, job.job_id, state=JobState.cancelled)
+    # Attempt invalid: cancelled -> queued
+    update_job(db_dir, job.job_id, state=JobState.queued)
+    j = get_job(db_dir, job.job_id)
+    assert j.state == JobState.cancelled, "Cancelled is terminal"
+
+
+def test_safe_workflow_path_rejects_traversal():
+    """_resolve_workflow_under_root must reject path traversal attempts."""
+    from dashboard.routes_orchestration import _resolve_workflow_under_root
+
+    root = Path(__file__).parent
+    # Basic traversal
+    assert _resolve_workflow_under_root("../../etc/passwd", root) is None
+    # Backslash normalization
+    assert _resolve_workflow_under_root("..\\..\\etc\\passwd", root) is None
+    # Absolute path
+    assert _resolve_workflow_under_root("/etc/passwd", root) is None
+    # Empty
+    assert _resolve_workflow_under_root("", root) is None
+    assert _resolve_workflow_under_root("   ", root) is None
+    # Dot-dot in middle
+    assert _resolve_workflow_under_root("sub/../../../etc/passwd", root) is None

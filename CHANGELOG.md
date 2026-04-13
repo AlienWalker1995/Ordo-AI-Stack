@@ -146,7 +146,13 @@ All notable changes to this project are documented here. The format is loosely b
 
 - **Vacuum future silently lost:** `pool.submit(vacuum_db)` discarded the returned future; unexpected exceptions were silently swallowed. Now logs errors via `add_done_callback`.
 
+- **ComfyUI model delete missing audit trail:** `DELETE /api/comfyui/models/{category}/{filename}` performed destructive file deletion with no log entry. Now logs `MODEL_DELETED` with category, filename, and path.
+
+- **MCP server add/remove missing audit trail:** `POST /api/mcp/add` and `POST /api/mcp/remove` modified gateway configuration with no log entry. Now logs `MCP_SERVER_ADDED` and `MCP_SERVER_REMOVED` with the server name.
+
 ### Added
+
+- **Test coverage expansion (session 4):** Added 3 tests: state transition rejection (published cannot transition to running), cancelled-is-terminal invariant, and `_resolve_workflow_under_root` path traversal prevention (6 attack vectors). Total: 223 tests.
 
 - **Global exception handler:** Unhandled exceptions in API endpoints now return `{"detail": "Internal server error"}` instead of raw Python tracebacks with internal paths and variable values. Full traceback is logged server-side.
 
