@@ -78,8 +78,14 @@ _gguf_pull_status: dict = {
 }
 
 
-def _docker_client():
-    return docker.from_env()
+_cached_docker: docker.DockerClient | None = None
+
+
+def _docker_client() -> docker.DockerClient:
+    global _cached_docker  # noqa: PLW0603
+    if _cached_docker is None:
+        _cached_docker = docker.from_env()
+    return _cached_docker
 
 
 async def verify_token(request: Request) -> None:

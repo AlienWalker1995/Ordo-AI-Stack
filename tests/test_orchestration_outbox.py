@@ -54,6 +54,14 @@ def _create_job(db_dir: Path, **kwargs) -> str:
     return job.job_id
 
 
+def _advance_job_to_artifact_ready(db_dir: Path, job_id: str) -> None:
+    """Walk a queued job through the valid state machine to artifact_ready."""
+    from dashboard.orchestration_db import JobState, update_job
+
+    for state in (JobState.validated, JobState.running, JobState.artifact_ready):
+        update_job(db_dir, job_id, state=state)
+
+
 # ── Publish callback endpoint tests ──────────────────────────────────────────
 
 
@@ -71,6 +79,7 @@ class TestPublishCallback:
         )
 
         job_id = _create_job(db_dir)
+        _advance_job_to_artifact_ready(db_dir, job_id)
         update_job(db_dir, job_id, state=JobState.publish_enqueued)
 
         webhook = "http://n8n:5678/webhook/test"
@@ -102,6 +111,7 @@ class TestPublishCallback:
         from dashboard.orchestration_db import JobState, get_job, update_job
 
         job_id = _create_job(db_dir)
+        _advance_job_to_artifact_ready(db_dir, job_id)
         update_job(db_dir, job_id, state=JobState.publish_enqueued)
 
         r = client.post(
@@ -124,6 +134,7 @@ class TestPublishCallback:
         from dashboard.orchestration_db import JobState, get_job, update_job
 
         job_id = _create_job(db_dir)
+        _advance_job_to_artifact_ready(db_dir, job_id)
         update_job(db_dir, job_id, state=JobState.publish_enqueued)
 
         r = client.post(

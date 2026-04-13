@@ -278,6 +278,19 @@ def list_jobs(data_dir: Path, state: str | None = None, limit: int = 100) -> lis
     return [_row_to_job(r) for r in rows]
 
 
+_VALID_TRANSITIONS: dict[JobState, set[JobState]] = {
+    JobState.queued: {JobState.validated, JobState.cancelling, JobState.failed},
+    JobState.validated: {JobState.running, JobState.cancelling, JobState.failed, JobState.queued},
+    JobState.running: {JobState.artifact_ready, JobState.failed, JobState.cancelling},
+    JobState.artifact_ready: {JobState.publish_enqueued, JobState.published, JobState.failed},
+    JobState.publish_enqueued: {JobState.published, JobState.failed},
+    JobState.cancelling: {JobState.cancelled},
+    JobState.published: set(),
+    JobState.failed: {JobState.queued},
+    JobState.cancelled: set(),
+}
+
+
 def update_job(data_dir: Path, job_id: str, **fields: Any) -> OrchestrationJob | None:
     if not fields:
         return get_job(data_dir, job_id)
@@ -285,6 +298,19 @@ def update_job(data_dir: Path, job_id: str, **fields: Any) -> OrchestrationJob |
         "state", "prompt_id", "error", "outputs", "publish_webhook",
         "publish_status", "retry_count", "compiled_workflow", "params_json",
     }
+    # Validate state transitions
+    if "state" in fields:
+        new_state = JobState(fields["state"]) if isinstance(fields["state"], str) else fields["state"]
+        current = get_job(data_dir, job_id)
+        if current and new_state not in _VALID_TRANSITIONS.get(current.state, set()):
+            import logging as _logging
+            _logging.getLogger("orchestration_db").warning(
+                "Invalid state transition for job %s: %s -> %s (ignored)",
+                job_id, current.state, new_state,
+            )
+            fields = {k: v for k, v in fields.items() if k != "state"}
+            if not fields:
+                return current
     col_map = {"outputs": "outputs_json", "state": "state"}
     sets = ["updated_at=?"]
     vals: list[Any] = [_now_iso()]
@@ -481,26 +507,31 @@ def save_workflow_version(
     compiled_json: dict[str, Any],
     params_schema: dict[str, Any] | None = None,
 ) -> int:
-    """Save a new version; returns the version number."""
+    """Save a new version; returns the version number.
+
+    Uses an atomic INSERT…SELECT to avoid version-number collisions
+    when concurrent callers save the same workflow_id.
+    """
     with _connect(data_dir) as conn:
-        row = conn.execute(
-            "SELECT MAX(version) as mv FROM workflow_versions WHERE workflow_id=?",
-            (workflow_id,),
-        ).fetchone()
-        next_v = (row["mv"] or 0) + 1
         conn.execute(
             """INSERT INTO workflow_versions
                (workflow_id, version, compiled_json, params_schema, created_at)
-               VALUES (?,?,?,?,?)""",
+               VALUES (?,
+                       COALESCE((SELECT MAX(version) FROM workflow_versions WHERE workflow_id=?), 0) + 1,
+                       ?, ?, ?)""",
             (
-                workflow_id, next_v,
+                workflow_id, workflow_id,
                 json.dumps(compiled_json),
                 json.dumps(params_schema) if params_schema else None,
                 _now_iso(),
             ),
         )
         conn.commit()
-    return next_v
+        row = conn.execute(
+            "SELECT MAX(version) as mv FROM workflow_versions WHERE workflow_id=?",
+            (workflow_id,),
+        ).fetchone()
+    return row["mv"]
 
 
 def list_workflow_versions(data_dir: Path, workflow_id: str) -> list[dict[str, Any]]:
@@ -564,17 +595,14 @@ def rollback_workflow(data_dir: Path, workflow_id: str, to_version: int) -> int 
     if not src:
         return None
     with _connect(data_dir) as conn:
-        row = conn.execute(
-            "SELECT MAX(version) as mv FROM workflow_versions WHERE workflow_id=?",
-            (workflow_id,),
-        ).fetchone()
-        next_v = (row["mv"] or 0) + 1
         conn.execute(
             """INSERT INTO workflow_versions
                (workflow_id, version, compiled_json, params_schema, created_at, rollback_of)
-               VALUES (?,?,?,?,?,?)""",
+               VALUES (?,
+                       COALESCE((SELECT MAX(version) FROM workflow_versions WHERE workflow_id=?), 0) + 1,
+                       ?, ?, ?, ?)""",
             (
-                workflow_id, next_v,
+                workflow_id, workflow_id,
                 json.dumps(src["compiled_json"]) if isinstance(src["compiled_json"], dict)
                 else src["compiled_json"],
                 src.get("params_schema"),
@@ -583,7 +611,11 @@ def rollback_workflow(data_dir: Path, workflow_id: str, to_version: int) -> int 
             ),
         )
         conn.commit()
-    return next_v
+        row = conn.execute(
+            "SELECT MAX(version) as mv FROM workflow_versions WHERE workflow_id=?",
+            (workflow_id,),
+        ).fetchone()
+    return row["mv"]
 
 
 # ── Schedules ─────────────────────────────────────────────────────────────────

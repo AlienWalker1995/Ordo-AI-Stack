@@ -227,6 +227,7 @@ def test_stale_running_job_recovery(db_dir: Path):
     )
     init_db(db_dir)
     job = create_job(db_dir, workflow_id="test", params={})
+    update_job(db_dir, job.job_id, state=JobState.validated)
     update_job(db_dir, job.job_id, state=JobState.running)
 
     recovered = recover_stale_running_jobs(db_dir)

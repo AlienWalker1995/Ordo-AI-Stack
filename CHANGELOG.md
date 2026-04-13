@@ -32,6 +32,14 @@ All notable changes to this project are documented here. The format is loosely b
 
 - **OPENCLAW_CONTEXT_WINDOW validation:** Invalid values now log a warning instead of silently falling back, making misconfigurations visible in logs.
 
+- **Workflow version collision:** `save_workflow_version` and `rollback_workflow` used non-atomic SELECT MAX + INSERT for version numbers, allowing collisions under concurrent saves. Now uses atomic `INSERT…SELECT` with `COALESCE`.
+
+- **Throughput state corruption on crash:** `_save_throughput_state()` wrote directly to `throughput.json`; a crash mid-write produced truncated JSON, losing all historical data on next load. Now uses atomic write-then-rename.
+
+- **Job state machine enforcement:** `update_job` now validates state transitions against a defined state machine, preventing invalid regressions (e.g. `published -> queued`). Invalid transitions are logged and silently ignored.
+
+- **Docker client leak in ops-controller:** `_docker_client()` created a new Docker SDK client (and HTTP connection pool) on every API call. Now caches a singleton, preventing file descriptor exhaustion under load.
+
 ### Added
 
 - **Global exception handler:** Unhandled exceptions in API endpoints now return `{"detail": "Internal server error"}` instead of raw Python tracebacks with internal paths and variable values. Full traceback is logged server-side.

@@ -1271,15 +1271,17 @@ def _load_throughput_state() -> None:
 
 
 def _save_throughput_state() -> None:
-    """Persist throughput state to disk."""
+    """Persist throughput state to disk via atomic write-then-rename."""
     try:
         _THROUGHPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _THROUGHPUT_FILE.write_text(json.dumps({
+        tmp = _THROUGHPUT_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({
             "samples": _throughput_samples,
             "ttft_samples": _ttft_samples,
             "last_benchmark": _last_benchmark,
             "service_usage": _service_usage[-_MAX_SERVICE_USAGE:],
         }))
+        tmp.replace(_THROUGHPUT_FILE)
     except Exception as e:
         logger.warning("Throughput state save failed: %s", e)
 
