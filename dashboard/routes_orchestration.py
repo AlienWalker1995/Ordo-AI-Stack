@@ -258,6 +258,11 @@ async def run_workflow(body: RunBody):
 async def list_jobs_endpoint(state: str | None = None, limit: int = 100):
     """List orchestration jobs, optionally filtered by state (queued, running, failed, etc.)."""
     limit = max(1, min(limit, 1000))
+    if state is not None:
+        try:
+            JobState(state)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid state. Must be one of: {[s.value for s in JobState]}")
     jobs = list_jobs(DATA_DIR, state=state, limit=limit)
     return {"jobs": [j.to_dict() for j in jobs], "count": len(jobs)}
 
@@ -427,6 +432,11 @@ async def update_schedule_endpoint(schedule_id: str, body: UpdateScheduleBody):
     if body.enabled is not None:
         fields["enabled"] = 1 if body.enabled else 0
     if body.cron_expr is not None:
+        try:
+            from croniter import croniter
+            croniter(body.cron_expr)
+        except (ValueError, KeyError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid cron expression: {e}")
         fields["cron_expr"] = body.cron_expr
     s = update_schedule(DATA_DIR, schedule_id, **fields)
     if not s:

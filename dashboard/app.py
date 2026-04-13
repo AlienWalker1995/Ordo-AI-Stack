@@ -833,7 +833,7 @@ async def comfyui_delete(category: str, filename: str):
 async def comfyui_models():
     """List ComfyUI models on disk."""
     try:
-        models = _scan_comfyui_models()
+        models = await asyncio.to_thread(_scan_comfyui_models)
         return {"models": models, "ok": True}
     except Exception as e:
         return {"models": [], "ok": False, "error": str(e)}
@@ -902,13 +902,16 @@ async def comfyui_install_node_requirements_api(
     request: Request,
 ):
     """Run pip install -r for a pack under ComfyUI custom_nodes (ops-controller → comfyui container)."""
+    node = body.node_path.strip()
+    if not node or ".." in node or node.startswith("/"):
+        raise HTTPException(status_code=400, detail="Invalid node_path")
     if not body.confirm:
         raise HTTPException(status_code=400, detail="Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
     code, data = await _ops_request(
         "POST",
         "/comfyui/install-node-requirements",
         request=request,
-        json={"node_path": body.node_path.strip(), "confirm": True},
+        json={"node_path": node, "confirm": True},
         timeout=600.0,
     )
     if code >= 400:
@@ -1336,6 +1339,19 @@ def _save_throughput_state() -> None:
         logger.warning("Throughput state save failed: %s", e)
 
 
+_throughput_last_save: float = 0.0
+_THROUGHPUT_SAVE_INTERVAL: float = 5.0
+
+
+def _maybe_save_throughput() -> None:
+    """Debounced save: write at most every _THROUGHPUT_SAVE_INTERVAL seconds."""
+    global _throughput_last_save
+    now = time.monotonic()
+    if now - _throughput_last_save >= _THROUGHPUT_SAVE_INTERVAL:
+        _save_throughput_state()
+        _throughput_last_save = now
+
+
 _load_throughput_state()
 
 
@@ -1391,7 +1407,7 @@ async def throughput_record(req: ThroughputRecordRequest):
         })
         if len(_service_usage) > _MAX_SERVICE_USAGE:
             _service_usage[:] = _service_usage[-_MAX_SERVICE_USAGE:]
-        _save_throughput_state()
+        _maybe_save_throughput()
     return {"ok": True}
 
 
@@ -1606,7 +1622,7 @@ async def throughput_benchmark(req: ThroughputBenchmarkRequest):
         _throughput_samples[model].append(output_tokens_per_sec)
         if len(_throughput_samples[model]) > _MAX_SAMPLES_PER_MODEL:
             _throughput_samples[model] = _throughput_samples[model][-_MAX_SAMPLES_PER_MODEL:]
-        _save_throughput_state()
+        _maybe_save_throughput()
 
     payload = {
         "ok": True,

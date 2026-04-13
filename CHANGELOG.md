@@ -110,6 +110,16 @@ All notable changes to this project are documented here. The format is loosely b
 
 - **Service stop/restart missing confirmation:** Stop and restart buttons fired immediately without a `confirm()` prompt, risking accidental service disruption. Now matches the existing pattern for model deletion and active model switching.
 
+- **Cron expression validation missing on schedule update:** `update_schedule` accepted arbitrary cron strings without validation, causing `croniter` to raise at evaluation time. Now validated on save with a 400 response for malformed expressions.
+
+- **Path traversal in ComfyUI node requirements install:** `comfyui_install_node_requirements_api` accepted `..` segments and absolute paths in `node_path`, allowing reads/writes outside the custom nodes directory. Now rejects paths containing `..` or starting with `/`.
+
+- **No validation on `state` query parameter in `list_jobs`:** `GET /api/orchestration/jobs?state=bogus` passed raw strings to the query, producing empty results instead of an error. Now validates against `JobState` enum, returning 400 for unknown states.
+
+- **ComfyUI models scan blocks async event loop:** `_scan_comfyui_models()` performs synchronous filesystem I/O directly in an async route handler, blocking all concurrent requests. Now wrapped with `asyncio.to_thread`.
+
+- **Throughput save on every record call:** `_save_throughput_state()` wrote to disk on every `/api/throughput/record` call, causing unnecessary I/O under high request volume. Now debounced to write at most every 5 seconds via `_maybe_save_throughput()`.
+
 ### Added
 
 - **Global exception handler:** Unhandled exceptions in API endpoints now return `{"detail": "Internal server error"}` instead of raw Python tracebacks with internal paths and variable values. Full traceback is logged server-side.
