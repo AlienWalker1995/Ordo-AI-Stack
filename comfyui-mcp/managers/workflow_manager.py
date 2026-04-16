@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 import random
 from collections import OrderedDict
 from pathlib import Path
@@ -32,7 +33,7 @@ PLACEHOLDER_DESCRIPTIONS = {
     "seed": "Random seed for image generation. If not provided, a random seed will be generated.",
     "width": "Image width in pixels. Default: 512.",
     "height": "Image height in pixels. Default: 512.",
-    "model": "Checkpoint model name (e.g., 'v1-5-pruned-emaonly.ckpt', 'sd_xl_base_1.0.safetensors'). Default: 'v1-5-pruned-emaonly.ckpt'.",
+    "model": "Checkpoint model name. Set COMFY_MCP_DEFAULT_MODEL env var to override. Default: 'v1-5-pruned-emaonly.ckpt'.",
     "steps": "Number of sampling steps. Higher = better quality but slower. Default: 20.",
     "cfg": "Classifier-free guidance scale. Higher = more adherence to prompt. Default: 8.0.",
     "sampler_name": "Sampling method (e.g., 'euler', 'dpmpp_2m', 'ddim'). Default: 'euler'.",
@@ -52,7 +53,7 @@ PLACEHOLDER_DESCRIPTIONS = {
 OPTIONAL_PARAM_DEFAULTS = {
     "width": 512,
     "height": 512,
-    "model": "v1-5-pruned-emaonly.ckpt",
+    "model": os.environ.get("COMFY_MCP_DEFAULT_MODEL", "v1-5-pruned-emaonly.ckpt"),
     "steps": 20,
     "cfg": 8.0,
     "sampler_name": "euler",
@@ -92,7 +93,7 @@ class WorkflowManager:
     def _safe_workflow_path_under_root(self, workflow_id: str, root: Path) -> Path | None:
         """Resolve workflow ID under a single root (path traversal safe)."""
         root = root.resolve()
-        raw = workflow_id.strip().replace("\\", "/")
+        raw = workflow_id.strip().strip('"\'').replace("\\", "/")
         if not raw or raw.startswith("/"):
             return None
         if ".." in raw.split("/"):
@@ -508,7 +509,7 @@ class WorkflowManager:
                         "seed", "width", "height", "model", "steps", "cfg",
                         "sampler_name", "scheduler", "denoise", "negative_prompt",
                         "seconds", "lyrics_strength",  # Audio-specific optional params
-                        "duration", "fps"  # Video-specific optional params
+                        "duration", "fps", "frames"  # Video-specific optional params
                     }
                     is_required = param_name not in optional_params
                     parameter = WorkflowParameter(

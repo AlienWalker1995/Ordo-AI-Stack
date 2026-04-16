@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import random
 import re
 from typing import Any
@@ -40,7 +41,7 @@ _OPTIONAL_PARAMS = frozenset(
 OPTIONAL_PARAM_DEFAULTS: dict[str, Any] = {
     "width": 512,
     "height": 512,
-    "model": "v1-5-pruned-emaonly.ckpt",
+    "model": os.environ.get("COMFY_MCP_DEFAULT_MODEL", "v1-5-pruned-emaonly.ckpt"),
     "steps": 20,
     "cfg": 8.0,
     "sampler_name": "euler",
