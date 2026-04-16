@@ -109,7 +109,7 @@
       ]
     },
     "sd15": {
-      "description": "SD 1.5 v1-5-pruned-emaonly — default for ComfyUI MCP generate_image (4 GB)",
+      "description": "SD 1.5 v1-5-pruned-emaonly — lightweight checkpoint for basic image generation (4 GB)",
       "models": [
         {
           "repo": "runwayml/stable-diffusion-v1-5",
@@ -242,10 +242,38 @@
           "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/diffusion_models/ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors"
         }
       ]
+    },
+    "scooby-doo-game-assets": {
+      "description": "Scooby-Doo merge board game asset workflows — 90s hand-drawn cartoon LoRA (PetkaV3), 2D game assets LoRA (GRPZA), and 4x-UltraSharp upscaler",
+      "models": [
+        {
+          "repo": "",
+          "file": "PetkaV3.safetensors",
+          "dest": "loras",
+          "type": "loras",
+          "name": "PetkaV3.safetensors",
+          "url": "https://civitai.com/api/download/models/967018"
+        },
+        {
+          "repo": "",
+          "file": "game_assets_v3.safetensors",
+          "dest": "loras",
+          "type": "loras",
+          "name": "game_assets_v3.safetensors",
+          "url": "https://civitai.com/api/download/models/1030391"
+        },
+        {
+          "repo": "lokCX/4x-Ultrasharp",
+          "file": "4x-UltraSharp.pth",
+          "dest": "upscale_models",
+          "type": "upscale_models",
+          "url": "https://huggingface.co/lokCX/4x-Ultrasharp/resolve/main/4x-UltraSharp.pth"
+        }
+      ]
     }
   },
   "defaults": {
-    "packs": ["ltx-2.3-fp8", "ltx-2.3-extras", "gemma-3-text-encoder-fp4", "gemma-3-abliterated-lora"],
+    "packs": ["ltx-2.3-fp8", "ltx-2.3-t2v-basic", "ltx-2.3-extras"],
     "quant": "Q4_K_M"
   }
 }
