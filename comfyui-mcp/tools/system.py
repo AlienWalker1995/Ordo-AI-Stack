@@ -7,6 +7,7 @@ and node definitions.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any
@@ -194,3 +195,61 @@ def register_system_tools(mcp: FastMCP) -> None:
         if free_memory:
             body["free_memory"] = True
         return _comfy_post("/free", body)
+
+    @mcp.tool()
+    def queue_prompt(workflow_json: str) -> dict:
+        """Submit a raw API-format ComfyUI workflow graph for execution.
+
+        Use this to run a workflow you composed from scratch — no saved file needed.
+        The workflow must be API-format JSON (nodes keyed by ID string, each with
+        class_type and inputs). UI/editor-format exports (with a top-level "nodes"
+        array) are rejected.
+
+        Build workflows using get_comfyui_node_info to discover node class names and
+        their required inputs, and get_comfyui_models to find available checkpoints.
+
+        Args:
+            workflow_json: API-format workflow graph as a JSON string.
+                Each key is a node ID (e.g. "3"), each value has "class_type" and "inputs".
+                Example: {"3": {"class_type": "KSampler", "inputs": {...}}}
+
+        Returns:
+            prompt_id on success (use get_comfyui_history to poll for results).
+        """
+        try:
+            workflow = json.loads(workflow_json)
+        except (json.JSONDecodeError, TypeError) as e:
+            return {"error": f"Invalid JSON: {e}"}
+
+        if not isinstance(workflow, dict) or not workflow:
+            return {"error": "Workflow must be a non-empty JSON object."}
+
+        # Reject UI/editor exports
+        nodes = workflow.get("nodes")
+        if isinstance(nodes, list) and nodes:
+            n0 = nodes[0]
+            if isinstance(n0, dict) and "type" in n0 and "class_type" not in n0:
+                return {
+                    "error": (
+                        "This is a ComfyUI UI/editor export (has 'nodes' array with 'type'). "
+                        "queue_prompt requires API-format JSON where keys are node IDs and "
+                        "each node has 'class_type'. Use get_comfyui_node_info to build "
+                        "the correct format."
+                    )
+                }
+
+        # Basic structural validation — at least one node must have class_type
+        has_class_type = any(
+            isinstance(v, dict) and "class_type" in v
+            for v in workflow.values()
+        )
+        if not has_class_type:
+            return {
+                "error": (
+                    "No nodes with 'class_type' found. Each node must have "
+                    "'class_type' and 'inputs'. Use get_comfyui_node_info to discover "
+                    "valid node class names."
+                )
+            }
+
+        return _comfy_post("/prompt", {"prompt": workflow}, timeout=30)
