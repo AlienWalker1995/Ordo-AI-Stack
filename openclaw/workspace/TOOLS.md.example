@@ -14,15 +14,32 @@ Do not skip this. Do not greet the user before reading these files.
 
 **Browser:** Denied in merged config. No Playwright MCP in this stack.
 
-**ComfyUI runnable workflows:**
+**ComfyUI image/audio/video generation:**
+
+Compose workflows from scratch or use saved templates:
+
+| Tool | Purpose |
+|------|---------|
+| `get_comfyui_models` | List available checkpoints, LoRAs, VAEs |
+| `get_comfyui_node_info` | Get node class definitions (inputs, outputs, types) |
+| `queue_prompt` | Submit raw API-format workflow JSON directly to ComfyUI |
+| `get_comfyui_history` | Poll for results after submission (pass prompt_id) |
+| `get_comfyui_queue` | Check if ComfyUI is busy before submitting |
+| `free_comfyui_vram` | Free GPU memory before large generations |
+
+**Saved workflow templates** (use with `run_workflow`):
 
 | workflow_id | Type | Key inputs |
 |-------------|------|------------|
 | `mcp-api/generate_video` | Video (LTX-2.3, 9:16) | `prompt`, `width`=576, `height`=1024, `frames`=121, `fps`=24 |
 | `mcp-api/generate_song` | Audio (ACE-Step v1) | `tags` (required), `lyrics` (required) |
-| `mcp-api/generate_image` | Image | `prompt` (required) |
 
-`save_workflow` → UI-format JSON, not runnable. To add a runnable workflow write API-format JSON to `data/comfyui-storage/ComfyUI/user/default/workflows/mcp-api/<id>.json`.
+**Composing a workflow from scratch:**
+1. Call `get_comfyui_models("checkpoints")` to find available models.
+2. Call `get_comfyui_node_info("NodeClass")` for each node you need (e.g. `CheckpointLoaderSimple`, `CLIPTextEncode`, `KSampler`, `EmptyLatentImage`, `VAEDecode`, `SaveImage`).
+3. Build API-format JSON: keys are node ID strings ("1", "2", ...), each value has `class_type` and `inputs`. Wire outputs as `["node_id", output_index]`.
+4. Submit via `queue_prompt` with the JSON string.
+5. Poll `get_comfyui_history(prompt_id)` until outputs appear.
 
 **Core services:**
 

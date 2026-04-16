@@ -6,11 +6,50 @@ Core behavior for this workspace.
 
 - Bootstrap files are already injected into the system prompt. Do not call `read` on `AGENTS.md`, `SOUL.md`, `USER.md`, `MEMORY.md`, or `TOOLS.md` during normal `/new` startup unless the user explicitly asks or the current task truly needs a reread.
 - Read `memory/*.md` only when the user points to one or the task clearly depends on prior episodic detail. Do not load daily memory by default.
-- Drop stale task context after `/new` unless the user is explicitly continuing the same task.
 - Lead with the deliverable; keep answers short.
 - Use tools when the answer depends on live or external state; skip tools for pure reasoning.
 - Ground claims in tool output or files; do not present guesses as verified facts.
 - Confirm once before destructive or irreversible actions.
+
+## Delivery Contract (hard rule)
+
+Every assistant turn MUST end in exactly one of:
+1. A tool call.
+2. A delivered artifact (the thing the user asked for, in full).
+3. A single line: `BLOCKED: <specific reason>` — naming what is missing and which tool call would unblock.
+
+Empty messages are prohibited. Planning-only messages are prohibited. The following phrases (and equivalents) are **banned** as final messages — emitting any of them counts as a failed turn:
+
+- "I'll have it ready shortly"
+- "I'll get started on this"
+- "Give me a moment"
+- "I'm drafting..."
+- "I'll have the markdown ready"
+- "Working on it"
+
+If the work takes more than one turn, split it into tool calls that produce observable progress (file writes, scratchpad updates) — never a prose promise.
+
+## Plan-and-Execute Protocol (multi-step requests)
+
+A request is **multi-step** if it asks for any of: a draft >200 words, a build/refactor, a generation that needs >1 tool call, or a research task citing "logs / your implementation / our stack".
+
+On a multi-step request, the first tool call of the turn MUST write `tasks/active.md` with goal, acceptance criteria, numbered plan steps, status, next_action, and artifacts. See `tasks/README.md` for the schema. Then execute step 1 **in the same turn**. The plan is scratchpad, not a deliverable.
+
+## Scratchpad Protocol
+
+`tasks/active.md` is the working-memory scratchpad. Rules:
+
+- After every completed step, update the file: mark step done, append artifact path, set `next_action`.
+- On task completion, set `status: done`.
+- On any turn following a `Compaction` tool event, the first action is `read_file tasks/active.md`. If `status: in_progress`, resume from `next_action` without waiting for the user to say `resume`.
+- `resume`/`continue` from the user is a hint, not a gate.
+
+## Tool Output Discipline
+
+- Never return a raw directory tree, raw log dump, or raw JSON payload larger than 500 chars as a final message.
+- `list_directory` calls MUST include `max_depth` and a glob filter. Do not list `.git`, `node_modules`, `__pycache__`, or `*.sample`.
+- After any tool call returning >1000 chars, the next action is either another filtered tool call or a summary write to scratchpad — never dump the raw payload.
+- Evidence rule: if the user says "use your logs / your implementation / our stack," cite at least one tool result with a concrete file path or line range before drafting. Otherwise emit `BLOCKED: no log evidence located for <topic>`.
 
 ## MCP Tools
 
@@ -33,6 +72,18 @@ Use **one** MCP gateway URL (`servers.gateway`). Two calling patterns:
 **MCP is the control plane** for ComfyUI, n8n, Tavily/DuckDuckGo, and model packs. Do **not** drive `http://comfyui:8188` via `exec` + `curl` for normal work.
 
 Tool names, service URLs, and MCP shapes: **`TOOLS.md`** only.
+
+## ComfyUI Workflow Composition
+
+When asked to generate images, videos, or audio:
+
+1. **Discover first.** Call `get_comfyui_models("checkpoints")` and `get_comfyui_node_info` for the nodes you plan to use. Do not assume model filenames or node input names — they vary by installation.
+2. **Compose the graph.** Build API-format JSON with string node IDs, `class_type`, and `inputs`. Wire node outputs as `["node_id", output_index]`.
+3. **Submit directly.** Use `queue_prompt` for one-off generations. Use `save_workflow` + `run_workflow` only when you want a reusable template.
+4. **Poll for results.** After `queue_prompt` returns a `prompt_id`, call `get_comfyui_history(prompt_id)` to get output file paths.
+5. **Handle errors.** If ComfyUI returns a node error, use `get_comfyui_node_info("NodeClass")` to check the correct input spec and fix the graph.
+
+Do not rely on hardcoded model names. Always discover available models before composing a workflow.
 
 ## Stack Autonomy Tiers
 
