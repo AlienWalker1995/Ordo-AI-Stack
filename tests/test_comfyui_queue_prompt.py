@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -95,3 +96,49 @@ class TestQueuePrompt:
         with patch("tools.system.requests.post", return_value=mock_response):
             result = fn(workflow_json='{"6":{"class_type":"CLIPTextEncode","inputs":{"text":"a cat","clip":["4",1]}}}')
         assert result["ok"] is False
+
+    def test_strips_gemma_quoted_strings(self, mcp_app):
+        """Gemma token-bleeding wraps values in extra quotes — queue_prompt must strip them."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"prompt_id": "sanitized-123"}
+
+        fn = _get_tool_fn(mcp_app, "queue_prompt")
+        # ckpt_name has embedded quotes like Gemma produces
+        workflow_json = json.dumps({
+            "4": {
+                "class_type": "CheckpointLoaderSimple",
+                "inputs": {"ckpt_name": '"flux1-schnell-fp8.safetensors"'},
+            },
+            "6": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": "a cat", "clip": ["4", 1]},
+            },
+        })
+        with patch("tools.system.requests.post", return_value=mock_response) as mock_post:
+            result = fn(workflow_json=workflow_json)
+
+        assert result["ok"] is True
+        # Verify the posted workflow has clean ckpt_name (no embedded quotes)
+        posted_body = mock_post.call_args[1]["json"]
+        assert posted_body["prompt"]["4"]["inputs"]["ckpt_name"] == "flux1-schnell-fp8.safetensors"
+
+    def test_strips_gemma_special_tokens(self, mcp_app):
+        """Gemma <|X|> special tokens in values must be cleaned."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"prompt_id": "token-clean-456"}
+
+        fn = _get_tool_fn(mcp_app, "queue_prompt")
+        workflow_json = json.dumps({
+            "1": {
+                "class_type": "CheckpointLoaderSimple",
+                "inputs": {"ckpt_name": '<|"|>flux1-schnell-fp8.safetensors<|"|>'},
+            },
+        })
+        with patch("tools.system.requests.post", return_value=mock_response) as mock_post:
+            result = fn(workflow_json=workflow_json)
+
+        assert result["ok"] is True
+        posted_body = mock_post.call_args[1]["json"]
+        assert posted_body["prompt"]["1"]["inputs"]["ckpt_name"] == "flux1-schnell-fp8.safetensors"

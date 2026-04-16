@@ -252,4 +252,25 @@ def register_system_tools(mcp: FastMCP) -> None:
                 )
             }
 
+        # Sanitize Gemma token-bleeding: strip <|X|> special tokens and
+        # balanced surrounding quotes from string values in node inputs.
+        # Gemma 4 leaks turn-separator tokens into tool-call strings, producing
+        # values like '"flux1-schnell-fp8.safetensors"' (with embedded quotes)
+        # or '<|"|>flux1-schnell<|"|>' which ComfyUI rejects.
+        import re
+        for node in workflow.values():
+            if not isinstance(node, dict):
+                continue
+            inputs = node.get("inputs")
+            if not isinstance(inputs, dict):
+                continue
+            for key, val in inputs.items():
+                if not isinstance(val, str):
+                    continue
+                cleaned = re.sub(r"<\|(.)\|>", r"\1", val).strip()
+                if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in ('"', "'", "`"):
+                    cleaned = cleaned[1:-1].strip()
+                if cleaned != val:
+                    inputs[key] = cleaned
+
         return _comfy_post("/prompt", {"prompt": workflow}, timeout=30)
