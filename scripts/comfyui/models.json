@@ -243,6 +243,79 @@
         }
       ]
     },
+    "flux2-dev-gguf": {
+      "description": "FLUX.2 [dev] GGUF — best local image model (April 2026). Q5_K_S UNET + Flux 2 VAE + Turbo LoRA. ~26 GB total.",
+      "models": [
+        {
+          "repo": "city96/FLUX.2-dev-gguf",
+          "file": "flux2-dev-Q5_K_S.gguf",
+          "dest": "unet/FLUX",
+          "type": "unet",
+          "url": "https://huggingface.co/city96/FLUX.2-dev-gguf/resolve/main/flux2-dev-Q5_K_S.gguf"
+        },
+        {
+          "repo": "Comfy-Org/flux2-dev",
+          "file": "split_files/vae/flux2-vae.safetensors",
+          "dest": "vae",
+          "type": "vae",
+          "name": "flux2-vae.safetensors",
+          "url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors"
+        },
+        {
+          "repo": "fal/FLUX.2-dev-Turbo",
+          "file": "comfy/Flux_2-Turbo-LoRA_comfyui.safetensors",
+          "dest": "loras",
+          "type": "loras",
+          "name": "Flux_2-Turbo-LoRA_comfyui.safetensors",
+          "url": "https://huggingface.co/fal/FLUX.2-dev-Turbo/resolve/main/comfy/Flux_2-Turbo-LoRA_comfyui.safetensors"
+        }
+      ]
+    },
+    "flux2-text-encoder": {
+      "description": "Mistral 3 Small text encoder for FLUX.2 — fp8 quantized (18 GB). Required for Flux 2 workflows.",
+      "models": [
+        {
+          "repo": "Comfy-Org/flux2-dev",
+          "file": "split_files/text_encoders/mistral_3_small_flux2_fp8.safetensors",
+          "dest": "text_encoders",
+          "type": "text_encoders",
+          "name": "mistral_3_small_flux2_fp8.safetensors",
+          "url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/text_encoders/mistral_3_small_flux2_fp8.safetensors"
+        }
+      ]
+    },
+    "gemma-4-text-encoder": {
+      "description": "Gemma 4 E4B text encoder — fp8 quantized (9 GB). Latest text encoder from Comfy-Org.",
+      "models": [
+        {
+          "repo": "Comfy-Org/Gemma4",
+          "file": "text_encoders/gemma4_e4b_it_fp8_scaled.safetensors",
+          "dest": "text_encoders",
+          "type": "text_encoders",
+          "name": "gemma4_e4b_it_fp8_scaled.safetensors",
+          "url": "https://huggingface.co/Comfy-Org/Gemma4/resolve/main/text_encoders/gemma4_e4b_it_fp8_scaled.safetensors"
+        }
+      ]
+    },
+    "supir-upscaler": {
+      "description": "SUPIR upscaler (Kijai pruned) — best quality upscaling, replaces 4x-UltraSharp. 2.7 GB each.",
+      "models": [
+        {
+          "repo": "Kijai/SUPIR_pruned",
+          "file": "SUPIR-v0Q_fp16.safetensors",
+          "dest": "upscale_models",
+          "type": "upscale_models",
+          "url": "https://huggingface.co/Kijai/SUPIR_pruned/resolve/main/SUPIR-v0Q_fp16.safetensors"
+        },
+        {
+          "repo": "Kijai/SUPIR_pruned",
+          "file": "SUPIR-v0F_fp16.safetensors",
+          "dest": "upscale_models",
+          "type": "upscale_models",
+          "url": "https://huggingface.co/Kijai/SUPIR_pruned/resolve/main/SUPIR-v0F_fp16.safetensors"
+        }
+      ]
+    },
     "scooby-doo-game-assets": {
       "description": "Scooby-Doo merge board game asset workflows — 90s hand-drawn cartoon LoRA (PetkaV3), 2D game assets LoRA (GRPZA), and 4x-UltraSharp upscaler",
       "models": [
