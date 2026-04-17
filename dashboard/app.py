@@ -843,14 +843,21 @@ async def comfyui_packs():
         packs = {}
         for name, pack in config.get("packs", {}).items():
             models = pack.get("models", [])
-            installed_count = sum(
-                1 for m in models
-                if (m.get("dest", "checkpoints"), Path(m["file"].replace("{quant}", default_quant)).name) in installed
-            )
+            resolved_files = []
+            installed_count = 0
+            for m in models:
+                category = m.get("dest", "checkpoints")
+                filename = Path(m["file"].replace("{quant}", default_quant)).name
+                resolved_files.append({"category": category, "name": filename})
+                if (category, filename) in installed:
+                    installed_count += 1
+
             packs[name] = {
                 "description": pack.get("description", ""),
+                "capability": pack.get("capability", "other"),
                 "model_count": len(models),
                 "installed_count": installed_count,
+                "files": resolved_files,
             }
         return {"packs": packs, "defaults": config.get("defaults", {}).get("packs", []), "ok": True}
     except Exception as e:
