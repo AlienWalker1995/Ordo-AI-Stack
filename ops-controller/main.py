@@ -178,6 +178,21 @@ def _containers_for_service(service_id: str):
     )
 
 
+def _cpu_pct_from_stats(stats: dict) -> float:
+    """Compute CPU% from one docker stats sample using precpu_stats delta. Matches `docker stats` CLI math."""
+    try:
+        cpu = stats["cpu_stats"]
+        pre = stats["precpu_stats"]
+        cpu_delta = int(cpu["cpu_usage"]["total_usage"]) - int(pre["cpu_usage"]["total_usage"])
+        system_delta = int(cpu["system_cpu_usage"]) - int(pre.get("system_cpu_usage") or 0)
+        online_cpus = int(cpu.get("online_cpus") or len((cpu["cpu_usage"].get("percpu_usage") or [])) or 1)
+        if system_delta <= 0 or cpu_delta < 0:
+            return 0.0
+        return round((cpu_delta / system_delta) * online_cpus * 100.0, 1)
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return 0.0
+
+
 @app.get("/health")
 async def health():
     """Controller health. No auth required. Verifies Docker daemon reachable."""
