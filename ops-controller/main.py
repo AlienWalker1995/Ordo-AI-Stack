@@ -670,6 +670,53 @@ async def comfyui_install_node_requirements(
     return result
 
 
+@app.get("/stats/services")
+async def stats_services(_: None = Depends(verify_token)):
+    """Per-compose-service CPU/RAM/VRAM. Read-only, auth required (same as other ops routes)."""
+    try:
+        containers = _get_containers()
+    except Exception as e:
+        logger.warning("stats/services: docker list failed: %s", e)
+        return {"gpu": None, "services": {}, "vram_aggregate_unavailable": True}
+
+    vram_by_pid, gpu = await asyncio.to_thread(_nvml_vraam_by_pid)
+    vram_aggregate_unavailable = not gpu["per_pid_available"]
+
+    services: dict[str, dict] = {}
+    for c in containers:
+        svc = (c.labels or {}).get("com.docker.compose.service")
+        if not svc:
+            continue
+        row = services.setdefault(svc, {
+            "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
+            "vram_gb": 0.0, "vram_pct": 0.0, "running": False,
+        })
+        status = getattr(c, "status", "") or ""
+        if status != "running":
+            continue
+        row["running"] = True
+        try:
+            sample = c.stats(stream=False)
+        except Exception as e:
+            logger.debug("stats sample failed for %s: %s", svc, e)
+            continue
+        row["cpu_pct"] = _cpu_pct_from_stats(sample)
+        row["mem_gb"], row["mem_pct"] = _mem_from_stats(sample)
+        if vram_by_pid:
+            pids = _container_host_pids(c)
+            total_b = sum(vram_by_pid.get(pid, 0) for pid in pids)
+            if total_b > 0 and gpu["total_gb"] > 0:
+                row["vram_gb"] = round(total_b / 1e9, 2)
+                row["vram_pct"] = round(total_b / (gpu["total_gb"] * 1e9) * 100.0, 1)
+
+    gpu_out = None if gpu["total_gb"] == 0 else {k: v for k, v in gpu.items() if k != "per_pid_available"}
+    return {
+        "gpu": gpu_out,
+        "services": services,
+        "vram_aggregate_unavailable": vram_aggregate_unavailable,
+    }
+
+
 # --- Model downloads (ComfyUI files) ---
 
 
