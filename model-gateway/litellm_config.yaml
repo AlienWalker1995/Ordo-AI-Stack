@@ -1,15 +1,21 @@
 model_list:
-  - model_name: "__CHAT_MODEL__"
+  - model_name: "local-chat"
     litellm_params:
-      model: "openai/__CHAT_MODEL__"
+      model: "openai/local-chat"
       api_base: "http://llamacpp:8080/v1"
       api_key: "local"
+      timeout: 1800
+      stream_timeout: 1800
 
-  - model_name: "__EMBED_MODEL__"
+  - model_name: "local-embed"
     litellm_params:
-      model: "openai/__EMBED_MODEL__"
+      model: "openai/local-embed"
       api_base: "http://llamacpp-embed:8080/v1"
       api_key: "local"
 
 general_settings:
   master_key: "__MASTER_KEY__"
+
+litellm_settings:
+  request_timeout: 1800
+  stream_timeout: 1800
