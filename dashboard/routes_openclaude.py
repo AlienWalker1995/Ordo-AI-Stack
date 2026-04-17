@@ -72,6 +72,10 @@ async def _build_install_render_kwargs(request: Request) -> dict:
     blog_api_key = os.environ.get("BLOG_MCP_API_KEY", "")
     blog_reachable = await _blog_preflight.is_reachable(_get_http_client())
     master_key = os.environ.get("LITELLM_MASTER_KEY", "local")
+    # Reserve ~10% headroom below the actual llama.cpp context for compaction to trigger safely.
+    ctx_raw = os.environ.get("LLAMACPP_CTX_SIZE", "131072")
+    ctx_size = int(ctx_raw) if ctx_raw.isdigit() else 131072
+    context_window = max(ctx_size - 8192, ctx_size * 9 // 10)
     return dict(
         host=host,
         model_gateway_port=model_port,
@@ -80,6 +84,7 @@ async def _build_install_render_kwargs(request: Request) -> dict:
         blog_reachable=blog_reachable,
         blog_port=blog_port,
         blog_api_key=blog_api_key,
+        context_window=context_window,
     )
 
 

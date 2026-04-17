@@ -71,6 +71,8 @@ $WrapperBody = @"
 set "CLAUDE_CONFIG_DIR=%USERPROFILE%\.openclaude"
 set "OPENAI_BASE_URL=$ModelGateway"
 set "OPENAI_API_KEY=$MasterKey"
+set "CLAUDE_CODE_USE_OPENAI=1"
+set "CLAUDE_CODE_AUTO_COMPACT_WINDOW={{ context_window }}"
 openclaude --model local-chat %*
 "@
 Set-Content -Path $Wrapper -Value $WrapperBody -Encoding ASCII

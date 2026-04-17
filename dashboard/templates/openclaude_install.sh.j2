@@ -68,6 +68,8 @@ cat > "$WRAPPER" <<ENDWRAPPER
 export CLAUDE_CONFIG_DIR="\$HOME/.openclaude"
 export OPENAI_BASE_URL="${MODEL_GATEWAY}"
 export OPENAI_API_KEY="${MASTER_KEY}"
+export CLAUDE_CODE_USE_OPENAI=1
+export CLAUDE_CODE_AUTO_COMPACT_WINDOW={{ context_window }}
 exec openclaude --model local-chat "\$@"
 ENDWRAPPER
 chmod +x "$WRAPPER"
