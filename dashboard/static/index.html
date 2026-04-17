@@ -3145,14 +3145,26 @@
         });
         refreshOneLiner();
 
-        copyBtn.addEventListener('click', async () => {
-          try {
-            await navigator.clipboard.writeText(lineEl.textContent);
+        copyBtn.addEventListener('click', () => {
+          const text = lineEl.textContent;
+          // Clipboard API requires secure context (HTTPS); fall back to execCommand for plain HTTP.
+          if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(() => flash('Copied'), () => fallbackCopy(text));
+          } else {
+            fallbackCopy(text);
+          }
+          function fallbackCopy(t) {
+            const ta = document.createElement('textarea');
+            ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+            document.body.appendChild(ta); ta.select();
+            try { document.execCommand('copy'); flash('Copied'); }
+            catch { flash('Copy failed'); }
+            finally { document.body.removeChild(ta); }
+          }
+          function flash(msg) {
             const orig = copyBtn.textContent;
-            copyBtn.textContent = 'Copied';
+            copyBtn.textContent = msg;
             setTimeout(() => { copyBtn.textContent = orig; }, 1500);
-          } catch (e) {
-            copyBtn.textContent = 'Copy failed';
           }
         });
 
