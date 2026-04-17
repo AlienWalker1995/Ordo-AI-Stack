@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Config-driven ComfyUI model downloader — direct streaming to destination, no cache.
 
-Downloads HuggingFace models directly to the ComfyUI model directories.
+Downloads HuggingFace and Civitai models directly to the ComfyUI model directories.
 Uses stdlib urllib only; no external dependencies, no intermediate cache.
 Resumes interrupted downloads via HTTP Range requests.
 
@@ -11,6 +11,7 @@ Environment variables:
   COMFYUI_QUANT     GGUF quantization level for {quant} templates (default: Q4_K_M)
   COMFYUI_CONFIG    Path to models.json override (default: <script_dir>/models.json)
   HF_TOKEN          HuggingFace token for gated/private repos (optional)
+  CIVITAI_TOKEN     Civitai API key for model downloads (required for Civitai packs)
 """
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ MODELS_DIR = Path(os.environ.get("MODELS_DIR", "/models"))
 QUANT = os.environ.get("COMFYUI_QUANT", "Q4_K_M")
 CONFIG_PATH = Path(os.environ.get("COMFYUI_CONFIG", SCRIPT_DIR / "models.json"))
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or ""
+CIVITAI_TOKEN = os.environ.get("CIVITAI_TOKEN") or ""
 
 ALL_SUBDIRS = (
     "unet",
@@ -105,7 +107,8 @@ def download_model(repo_id: str, filename: str, subdir: str, dest_name: str | No
         print(f"  OK (exists): {subdir}/{dest_name} ({size_mb} MB)", flush=True)
         return True
 
-    url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
+    if not url:
+        url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
     part_path = dest_dir / (dest_name + ".part")
     resume_from = part_path.stat().st_size if part_path.exists() else 0
 
@@ -113,9 +116,16 @@ def download_model(repo_id: str, filename: str, subdir: str, dest_name: str | No
     if resume_from:
         print(f"  Resuming from {resume_from // (1024 * 1024)} MB", flush=True)
 
+    # Append Civitai token as query param if needed
+    if "civitai.com" in url and CIVITAI_TOKEN:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}token={CIVITAI_TOKEN}"
+    elif "civitai.com" in url and not CIVITAI_TOKEN:
+        print(f"  WARNING: CIVITAI_TOKEN not set — {dest_name} will likely fail (401).", flush=True)
+
     try:
         headers: dict[str, str] = {"User-Agent": "comfyui-model-puller/2.0"}
-        if HF_TOKEN:
+        if HF_TOKEN and "huggingface.co" in url:
             headers["Authorization"] = f"Bearer {HF_TOKEN}"
         if resume_from:
             headers["Range"] = f"bytes={resume_from}-"

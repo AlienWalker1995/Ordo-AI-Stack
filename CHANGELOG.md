@@ -32,6 +32,14 @@ All notable changes to this project are documented here. The format is loosely b
 
 ### Fixed
 
+- **Gemma token bleeding in `run_workflow`:** Gemma 4 leaks turn-separator tokens (`<|"|>`) into tool-call argument strings, producing values like `"mcp-api/generate_video"` (with surrounding quotes). `comfyui-mcp` now strips Gemma special tokens and balanced surrounding quotes from `workflow_id` before path resolution, so the workflow lookup succeeds regardless of token artifacts.
+
+- **`frames` parameter required in video workflows:** `PARAM_INT_FRAMES` was not in the `optional_params` set, so LTX-2.3 video workflows required explicit `frames` instead of defaulting to 121. Added `frames` to optional params; default 121 (5 s at 24 fps) now applies automatically.
+
+- **Missing `generate_video.wfmeta`:** `mcp-api/generate_video` lacked a sidecar metadata file, so the ComfyUI MCP catalog had no descriptions, defaults, or parameter guidance for video generation. Added `generate_video.wfmeta` with LTX-2.3 defaults (576×1024, 121 frames, 24 fps, cfg=3.5, 40 steps).
+
+- **`ltx-2.3-t2v-basic` missing from default model packs:** The default pull list included `gemma-3-text-encoder-fp4` (wrong filename) but not `ltx-2.3-t2v-basic`, which provides the `fpmixed` Gemma encoder, KJ VAE, and text projection files actually referenced by `mcp-api/generate_video`. Updated defaults to `ltx-2.3-fp8` + `ltx-2.3-t2v-basic` + `ltx-2.3-extras`.
+
 - **`ttft_ms` always zero in service-usage:** `/api/throughput/service-usage` was building per-service dicts without `ttft_ms`, so the `last_ttft_ms` stat always reported `0.0`. Now correctly propagated from the raw samples.
 
 - **Worker retry race condition:** Retry job creation used `list_jobs(limit=1)` to find the new job by `retried_from` — with concurrency >1, a different job could occupy the slot, leaving `retry_count=0` and enabling unlimited retries. Now uses `create_job()` return value directly.
@@ -107,6 +115,8 @@ All notable changes to this project are documented here. The format is loosely b
 - **Ollama pull loop deadline:** `_run_ollama_pull` had an unbounded `while True` polling loop; now enforces a 2-hour deadline and aborts after 20 consecutive poll errors.
 
 - **ComfyUI pull loop deadline:** `_run_comfyui_pull` had the same unbounded polling pattern; now enforces a 2-hour deadline and aborts after 20 consecutive poll failures.
+
+- **Model gateway inference timeout:** LiteLLM proxy had no explicit timeout configuration, defaulting to 600s (10 minutes). With a 31B model processing 42-50K token contexts, inference regularly exceeds this limit, causing OpenClaw to surface empty responses with `reason=timeout`. Added `request_timeout: 1800` and `stream_timeout: 1800` to both global `litellm_settings` and the chat model's `litellm_params`, aligning with OpenClaw's `idleTimeoutSeconds: 1800`.
 
 - **Service recreate timeout:** `subprocess.run` in ops-controller `service_recreate` now has a 120-second timeout, preventing indefinite hangs if `docker-compose up` stalls. Returns HTTP 504 on timeout.
 

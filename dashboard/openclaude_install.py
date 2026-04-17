@@ -116,7 +116,6 @@ def render_install_script_sh(
     blog_reachable: bool,
     blog_port: int,
     blog_api_key: str,
-    context_window: int = 120000,
 ) -> str:
     """Render the POSIX install script (macOS / Linux)."""
     template = _jinja_env.get_template("openclaude_install.sh.j2")
@@ -128,7 +127,6 @@ def render_install_script_sh(
         blog_port=blog_port,
         blog_api_key=blog_api_key,
         include_blog=bool(blog_reachable and blog_api_key),
-        context_window=context_window,
     )
 
 
@@ -141,7 +139,6 @@ def render_install_script_ps1(
     blog_reachable: bool,
     blog_port: int,
     blog_api_key: str,
-    context_window: int = 120000,
 ) -> str:
     """Render the PowerShell install script (Windows)."""
     template = _jinja_env.get_template("openclaude_install.ps1.j2")

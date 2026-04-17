@@ -72,7 +72,10 @@ set "CLAUDE_CONFIG_DIR=%USERPROFILE%\.openclaude"
 set "OPENAI_BASE_URL=$ModelGateway"
 set "OPENAI_API_KEY=$MasterKey"
 set "CLAUDE_CODE_USE_OPENAI=1"
-set "CLAUDE_CODE_AUTO_COMPACT_WINDOW={{ context_window }}"
+
+REM Query the gateway for the live context window (single source of truth: LLAMACPP_CTX_SIZE).
+for /f "usebackq delims=" %%C in (`powershell -NoProfile -Command "try { `$r = Invoke-RestMethod -Uri '%OPENAI_BASE_URL:~0,-3%/model/info' -Headers @{Authorization='Bearer %OPENAI_API_KEY%'} -TimeoutSec 5; `$ctx = (`$r.data | Where-Object { `$_.model_name -eq 'local-chat' }).model_info.max_input_tokens; if (`$ctx -gt 0) { [Math]::Max(`$ctx - 8192, [int](`$ctx * 0.9)) } } catch {}"`) do set "CLAUDE_CODE_AUTO_COMPACT_WINDOW=%%C"
+
 openclaude --model local-chat %*
 "@
 Set-Content -Path $Wrapper -Value $WrapperBody -Encoding ASCII

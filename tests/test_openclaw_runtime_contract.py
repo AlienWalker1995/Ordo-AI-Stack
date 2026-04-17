@@ -14,7 +14,7 @@ def test_openclaw_bridge_runtime_contract_is_stable() -> None:
     config = json.loads(OPENCLAW_CONFIG.read_text(encoding="utf-8"))
     providers = config["models"]["providers"]["gateway"]["models"]
     assert providers, "expected at least one gateway model configuration"
-    assert providers[0]["contextWindow"] == 256000
+    assert providers[0]["contextWindow"] == 65536
 
     bridge = config["plugins"]["entries"]["openclaw-mcp-bridge"]["config"]
     assert bridge["flatTools"] is True
@@ -29,7 +29,7 @@ def test_openclaw_bridge_runtime_contract_is_stable() -> None:
     assert session_memory["enabled"] is True
     assert session_memory["llmSlug"] is False
 
-    assert config["agents"]["defaults"]["llm"]["idleTimeoutSeconds"] == 1800
+    assert config["agents"]["defaults"]["llm"]["idleTimeoutSeconds"] == 3600
 
 
 def test_openclaw_workspace_agents_bootstrap_stays_under_limit() -> None:
