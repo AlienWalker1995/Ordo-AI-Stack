@@ -23,3 +23,4 @@ known-first-party = ["dashboard"]
 
 [tool.pytest.ini_options]
 tmp_path_retention_policy = "none"
+asyncio_mode = "auto"
