@@ -97,3 +97,56 @@ def test_container_host_pids_skips_non_numeric_rows():
         "Processes": [["1234", "python3"], ["bad", "x"], [], ["9999", "comfyui"]],
     }
     assert oc._container_host_pids(c) == [1234, 9999]
+
+
+class _MI:
+    total = int(24e9)
+    used = int(8e9)
+
+
+class _UT:
+    gpu = 42
+
+
+class _P:
+    def __init__(self, pid, mem):
+        self.pid = pid
+        self.usedGpuMemory = mem
+
+
+def _patch_nvml(monkeypatch, compute_procs, graphics_procs=None):
+    import pynvml
+    monkeypatch.setattr(pynvml, "nvmlInit", lambda: None)
+    monkeypatch.setattr(pynvml, "nvmlShutdown", lambda: None)
+    monkeypatch.setattr(pynvml, "nvmlDeviceGetHandleByIndex", lambda i: object())
+    monkeypatch.setattr(pynvml, "nvmlDeviceGetMemoryInfo", lambda h: _MI())
+    monkeypatch.setattr(pynvml, "nvmlDeviceGetUtilizationRates", lambda h: _UT())
+    monkeypatch.setattr(pynvml, "nvmlDeviceGetComputeRunningProcesses", lambda h: compute_procs)
+    monkeypatch.setattr(pynvml, "nvmlDeviceGetGraphicsRunningProcesses", lambda h: graphics_procs or [])
+
+
+def test_nvml_vraam_by_pid_happy(monkeypatch):
+    _patch_nvml(monkeypatch, [_P(1234, int(6e9)), _P(5678, int(1e9))])
+    pid_map, gpu = oc._nvml_vraam_by_pid()
+    assert pid_map == {1234: int(6e9), 5678: int(1e9)}
+    assert gpu["total_gb"] == 24.0
+    assert gpu["used_gb"] == 8.0
+    assert gpu["utilization_pct"] == 42
+    assert gpu["per_pid_available"] is True
+
+
+def test_nvml_vraam_by_pid_windows_fallback(monkeypatch):
+    # On WSL2/WDDM, usedGpuMemory is None — flag goes to False
+    _patch_nvml(monkeypatch, [_P(1234, None)])
+    pid_map, gpu = oc._nvml_vraam_by_pid()
+    assert pid_map == {}
+    assert gpu["per_pid_available"] is False
+    assert gpu["total_gb"] == 24.0  # aggregate still works
+
+
+def test_nvml_vraam_by_pid_init_fails(monkeypatch):
+    import pynvml
+    monkeypatch.setattr(pynvml, "nvmlInit", lambda: (_ for _ in ()).throw(Exception("no gpu")))
+    pid_map, gpu = oc._nvml_vraam_by_pid()
+    assert pid_map == {}
+    assert gpu == {"total_gb": 0.0, "used_gb": 0.0, "utilization_pct": 0, "per_pid_available": False}

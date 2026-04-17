@@ -226,6 +226,50 @@ def _container_host_pids(container) -> list[int]:
     return pids
 
 
+def _nvml_vraam_by_pid() -> tuple[dict[int, int], dict]:
+    """Return ({pid: vram_bytes}, gpu_summary). pid_map empty when per-PID VRAM is unavailable (e.g. WSL2/WDDM)."""
+    default_gpu = {"total_gb": 0.0, "used_gb": 0.0, "utilization_pct": 0, "per_pid_available": False}
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+    except Exception as e:
+        logger.debug("NVML init failed: %s", e)
+        return {}, default_gpu
+    try:
+        h = pynvml.nvmlDeviceGetHandleByIndex(0)
+        mi = pynvml.nvmlDeviceGetMemoryInfo(h)
+        ut = pynvml.nvmlDeviceGetUtilizationRates(h)
+        total_b = int(mi.total)
+        used_b = int(mi.used)
+        pids: dict[int, int] = {}
+        has_per_pid = False
+        for getter in (pynvml.nvmlDeviceGetComputeRunningProcesses,
+                       pynvml.nvmlDeviceGetGraphicsRunningProcesses):
+            try:
+                for p in getter(h):
+                    mem = getattr(p, "usedGpuMemory", None) or getattr(p, "used_gpu_memory", None)
+                    if mem is None:
+                        continue
+                    mem_b = int(mem)
+                    if mem_b <= 0:
+                        continue
+                    has_per_pid = True
+                    pids[int(p.pid)] = pids.get(int(p.pid), 0) + mem_b
+            except pynvml.NVMLError:
+                pass
+        return pids, {
+            "total_gb": round(total_b / 1e9, 1),
+            "used_gb": round(used_b / 1e9, 1),
+            "utilization_pct": int(ut.gpu),
+            "per_pid_available": has_per_pid,
+        }
+    finally:
+        try:
+            pynvml.nvmlShutdown()
+        except Exception:
+            pass
+
+
 @app.get("/health")
 async def health():
     """Controller health. No auth required. Verifies Docker daemon reachable."""
