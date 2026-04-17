@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format is loosely b
 
 ## [Unreleased]
 
+### Changed
+- **Compute Pressure overhaul:** `COMPUTE PRESSURE` panel now shows CPU%, RAM%, and (where applicable) VRAM% per toolkit service, sorted by current pressure so the hog is always on top. New ops-controller endpoint `/stats/services` merges `docker stats` with NVML per-PID VRAM. Dashboard proxies via `/api/hardware/service-pressure` (no auth, same pattern as `/api/hardware`). On Windows/WSL2 where per-PID VRAM is unavailable, panel falls back to a single aggregate GPU row. Replaces `/api/hardware/gpu-processes` and the PID-labeling heuristic.
+
 ### Security
 
 - **Timing-safe token comparison:** Auth token verification in dashboard and ops-controller now uses `hmac.compare_digest()` instead of `==`, preventing timing side-channel attacks.
@@ -277,6 +280,8 @@ All notable changes to this project are documented here. The format is loosely b
 - **Hardware staleness indicator:** Hardware metrics section fades to 50% opacity and shows a tooltip when the last successful poll is older than 15 seconds, making connectivity loss visible instead of silently showing stale data.
 
 ### Changed
+
+- **Compute Pressure overhaul:** `COMPUTE PRESSURE` panel now shows CPU%, RAM%, and (where applicable) VRAM% per toolkit service, sorted by current pressure so the hog is always on top. New ops-controller endpoint `/stats/services` merges `docker stats` with NVML per-PID VRAM. Dashboard proxies via `/api/hardware/service-pressure` (no auth, same pattern as `/api/hardware`). On Windows/WSL2 where per-PID VRAM is unavailable, panel falls back to a single aggregate GPU row. Replaces `/api/hardware/gpu-processes` and the PID-labeling heuristic.
 
 - **Parallel service and dependency probes:** `/api/services`, `/api/health`, and `/api/dependencies` now run all HTTP probes concurrently via `asyncio.gather()` instead of sequentially. Dependency probes converted from synchronous httpx to async. All probes reuse the shared connection-pooled HTTP client.
 
