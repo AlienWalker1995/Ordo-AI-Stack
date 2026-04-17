@@ -45,6 +45,12 @@ GATEWAY_PROVIDER = {
     "headers": {"X-Service-Name": "openclaw"},
 }
 
+# Canonical OpenClaw model identity. Independent of the loaded GGUF on the host —
+# every consumer (OpenWebUI, OpenClaw, OpenClaude) refers to the model by this name.
+# The model-gateway (LiteLLM) advertises "local-chat" and forwards to whatever GGUF
+# llama.cpp has loaded.
+OPENCLAW_PRIMARY_MODEL_ID = "local-chat"
+
 MODEL_GATEWAY_URL = os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435")
 # Default OpenClaw model metadata to the server cap unless a lower compaction target is set explicitly.
 _ctx_raw = os.environ.get("OPENCLAW_CONTEXT_WINDOW", os.environ.get("LLAMACPP_CTX_SIZE", "262144")).strip()
@@ -471,6 +477,19 @@ def _gguf_model_entry(filename: str, context_window: int = LLAMACPP_CTX) -> dict
     }
 
 
+def _canonical_model_entry(context_window: int = LLAMACPP_CTX) -> dict:
+    """Build the single canonical OpenClaw model entry used for all chat agents."""
+    return {
+        "id": OPENCLAW_PRIMARY_MODEL_ID,
+        "name": "Local Chat (gateway alias)",
+        "reasoning": True,
+        "input": ["text"],
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": context_window,
+        "maxTokens": 8192,
+    }
+
+
 def _scan_gguf_models_from_disk() -> list[dict] | None:
     """Scan GGUF_MODELS_DIR for .gguf files.
 
@@ -619,19 +638,10 @@ def main() -> int:
         modified = True
         msg = "removed direct ollama provider (all models via gateway)"
 
-    # Prefer disk scan (all GGUFs) over gateway fetch (only loaded model).
-    # Fall back to gateway, then static defaults.
-    disk_models = _scan_gguf_models_from_disk()
-    if disk_models:
-        gateway_models = disk_models
-        msg = f"synced {len(gateway_models)} models from GGUF disk scan"
-    else:
-        gateway_models = _fetch_models_from_gateway()
-        if gateway_models:
-            msg = f"synced {len(gateway_models)} models from model-gateway"
-        else:
-            gateway_models = [m.copy() for m in DEFAULT_GATEWAY_MODELS]
-            msg = f"using {len(gateway_models)} default models (gateway unreachable)"
+    # Always expose the single canonical gateway alias rather than real GGUF filenames.
+    # Swapping the loaded GGUF on the host no longer requires any config change here.
+    gateway_models = [_canonical_model_entry()]
+    msg = "using canonical gateway/local-chat model alias"
     if "gateway" not in providers:
         providers["gateway"] = {
             **GATEWAY_PROVIDER,
@@ -680,22 +690,16 @@ def main() -> int:
     if compaction.get("mode") != OPENCLAW_COMPACTION_MODE:
         compaction["mode"] = OPENCLAW_COMPACTION_MODE
         modified = True
-    # Keep the default agent model pinned to the gateway-qualified llama.cpp model so
-    # OpenClaw does not apply its own provider fallback (which can rewrite bare ids to anthropic/...).
-    active_model_id = os.environ.get("LLAMACPP_MODEL", "").strip()
-    if not active_model_id and gateway_models:
-        first_id = gateway_models[0].get("id")
-        if isinstance(first_id, str):
-            active_model_id = first_id
-    if active_model_id:
-        model_defaults = agents_defaults.setdefault("model", {})
-        desired_primary = active_model_id if "/" in active_model_id else f"gateway/{active_model_id}"
-        if model_defaults.get("primary") != desired_primary:
-            model_defaults["primary"] = desired_primary
-            modified = True
-        if not isinstance(model_defaults.get("fallbacks"), list):
-            model_defaults["fallbacks"] = []
-            modified = True
+    # Always pin OpenClaw to the canonical gateway alias.
+    active_model_id = OPENCLAW_PRIMARY_MODEL_ID
+    desired_primary = f"gateway/{OPENCLAW_PRIMARY_MODEL_ID}"
+    model_defaults = agents_defaults.setdefault("model", {})
+    if model_defaults.get("primary") != desired_primary:
+        model_defaults["primary"] = desired_primary
+        modified = True
+    if not isinstance(model_defaults.get("fallbacks"), list):
+        model_defaults["fallbacks"] = []
+        modified = True
     # Give agent loops enough runway for downloads, large retrieval calls, and multi-turn tool use.
     if agents_defaults.get("timeoutSeconds") != OPENCLAW_AGENT_TIMEOUT_SECONDS:
         agents_defaults["timeoutSeconds"] = OPENCLAW_AGENT_TIMEOUT_SECONDS
