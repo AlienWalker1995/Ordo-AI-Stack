@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 from dashboard.orchestration_db import get_job_counts, get_outbox_stats
 from dashboard.routes_hub import router as hub_router
 from dashboard.routes_orchestration import router as orchestration_router
+from dashboard.routes_openclaude import router as openclaude_router
 from dashboard.services_catalog import OPS_SERVICE_MAP
 from dashboard.settings import AUTH_REQUIRED as _AUTH_REQUIRED
 from dashboard.settings import DASHBOARD_AUTH_TOKEN, OPENCLAW_CONFIG_PATH
@@ -90,6 +91,7 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(title="Ordo AI Stack Dashboard", version="1.0.0", lifespan=_lifespan)
 app.include_router(hub_router)
 app.include_router(orchestration_router)
+app.include_router(openclaude_router)
 
 
 @app.exception_handler(Exception)
