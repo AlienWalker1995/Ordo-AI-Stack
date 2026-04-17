@@ -13,6 +13,10 @@ def test_litellm_config_advertises_canonical_model_names():
     assert 'model_name: "local-chat"' in config_text
     assert 'model_name: "local-embed"' in config_text
 
+    # The 'model' field is what LiteLLM forwards upstream — verify it matches the canonical name.
+    assert 'model: "openai/local-chat"' in config_text
+    assert 'model: "openai/local-embed"' in config_text
+
     # Underlying api_base routing preserved.
     assert 'api_base: "http://llamacpp:8080/v1"' in config_text
     assert 'api_base: "http://llamacpp-embed:8080/v1"' in config_text
