@@ -525,7 +525,11 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/mcp:/mcp-config
-    # No host port by default (backend-only per PRD M6). For external MCP access: -f overrides/mcp-expose.yml
+    # Published on host so remote tailnet devices can reach it (OpenClaude install,
+    # external MCP clients like Cursor). Backend services still address it as
+    # http://mcp-gateway:8811 over the docker network.
+    ports:
+      - "${MCP_GATEWAY_PORT:-8811}:8811"
     healthcheck:
       # Verify gateway is listening AND has loaded its tool catalog (tools/list returns >0 tools).
       # Falls back to port check if curl is unavailable.
