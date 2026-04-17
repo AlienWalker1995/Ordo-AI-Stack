@@ -991,59 +991,46 @@
       font-family: 'JetBrains Mono', monospace; font-size: 11px;
       color: var(--fg-muted); letter-spacing: .05em; margin-left: auto;
     }
-    .cp-vram-bar-wrap { margin-bottom: var(--space-4); }
-    .cp-vram-bar {
-      display: flex; height: 10px; border-radius: var(--radius-sm);
-      overflow: hidden; background: var(--cp-free);
-      margin-bottom: var(--space-2);
+    .cp-aggregate-row {
+      display: grid; grid-template-columns: 90px 1fr 140px;
+      gap: var(--space-3); align-items: center; margin-bottom: var(--space-3);
+      padding: var(--space-2) 0; border-bottom: 1px solid var(--border-subtle);
     }
-    .cp-vram-seg { height: 100%; transition: width .4s ease; }
-    .cp-vram-seg.seg-llm    { background: var(--cp-llm); }
-    .cp-vram-seg.seg-comfyui { background: var(--cp-comfy); }
-    .cp-vram-seg.seg-embed  { background: var(--cp-embed); }
-    .cp-vram-seg.seg-other  { background: var(--cp-other); }
-    .cp-vram-seg.seg-free   { background: var(--cp-free); }
-    .cp-vram-legend {
-      display: flex; gap: var(--space-4); flex-wrap: wrap;
-      margin-bottom: var(--space-1);
+    .cp-rows {
+      display: flex; flex-direction: column; gap: var(--space-2);
+      margin-bottom: var(--space-4);
     }
-    .cp-legend-item {
-      display: flex; align-items: center; gap: 6px;
-      font-size: 11px; color: var(--fg-muted);
-      font-family: 'JetBrains Mono', monospace;
-    }
-    .cp-legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-    .cp-vram-total {
-      font-family: 'JetBrains Mono', monospace; font-size: 11px;
-      color: var(--fg-muted); text-align: right; display: block;
-      margin-top: var(--space-1);
-    }
-    .cp-rows { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-4); }
     .cp-row {
       display: grid;
-      grid-template-columns: 90px 1fr 64px 140px;
+      grid-template-columns: 100px 1fr 1fr 1fr 120px;
       align-items: center; gap: var(--space-3);
+      padding: 4px 0;
     }
+    .cp-row.idle { opacity: 0.45; }
     .cp-row-label {
       font-size: 12px; font-weight: 700; color: var(--fg);
       font-family: 'Barlow Condensed', sans-serif;
       letter-spacing: .06em; text-transform: uppercase;
     }
-    .cp-row-bar {
+    .cp-bar-group { display: flex; flex-direction: column; gap: 3px; }
+    .cp-bar-label {
+      font-size: 9px; color: var(--fg-muted); letter-spacing: .08em;
+      font-family: 'JetBrains Mono', monospace; text-transform: uppercase;
+    }
+    .cp-bar-track {
       height: 6px; border-radius: 3px; background: var(--border); overflow: hidden;
     }
-    .cp-row-bar-fill { height: 100%; border-radius: 3px; transition: width .4s ease; }
-    .cp-row-vram {
-      font-family: 'JetBrains Mono', monospace; font-size: 11px;
-      color: var(--fg-muted); text-align: right;
+    .cp-bar-fill {
+      height: 100%; border-radius: 3px; transition: width .4s ease;
     }
-    .cp-row-status {
-      font-size: 11px; font-family: 'JetBrains Mono', monospace; text-align: right;
+    .cp-bar-fill.cpu  { background: var(--cp-llm, #4ea8de); }
+    .cp-bar-fill.ram  { background: var(--cp-comfy, #f4a261); }
+    .cp-bar-fill.vram { background: var(--cp-embed, #a78bfa); }
+    .cp-bar-slot-empty { visibility: hidden; }
+    .cp-row-values {
+      font-family: 'JetBrains Mono', monospace; font-size: 10px;
+      color: var(--fg-muted); text-align: right; line-height: 1.3;
     }
-    .cp-row-status.st-nominal  { color: var(--success); }
-    .cp-row-status.st-degraded { color: var(--warning); }
-    .cp-row-status.st-starved  { color: var(--danger);  }
-    .cp-row-status.st-idle     { color: var(--muted);   }
     .cp-score {
       font-size: 12px; font-family: 'JetBrains Mono', monospace;
       padding: var(--space-3) var(--space-4);
@@ -1131,10 +1118,13 @@
         <span id="cp-util-badge" class="cp-util-badge">— GPU</span>
         <span class="live-dot" id="cp-live-dot" style="margin-left:var(--space-2)"></span>
       </div>
-      <div class="cp-vram-bar-wrap">
-        <div id="cp-vram-bar" class="cp-vram-bar"></div>
-        <div id="cp-vram-legend" class="cp-vram-legend"></div>
-        <span id="cp-vram-total" class="cp-vram-total">— / — GB</span>
+      <div id="cp-aggregate" class="cp-aggregate-row" style="display:none">
+        <span class="cp-row-label">GPU (AGG)</span>
+        <div class="cp-bar-group">
+          <span class="cp-bar-label">VRAM</span>
+          <div class="cp-bar-track"><div id="cp-agg-fill" class="cp-bar-fill vram" style="width:0%"></div></div>
+        </div>
+        <span class="cp-row-values" id="cp-agg-values">— / — GB</span>
       </div>
       <div id="cp-rows" class="cp-rows"></div>
       <div id="cp-score" class="cp-score" style="display:none"></div>
@@ -2994,76 +2984,78 @@
       return pct >= 85 ? 'st-nominal' : pct >= 60 ? 'st-degraded' : 'st-starved';
     }
 
+    function _cpBarFill(pct) {
+      const v = Math.max(0, Math.min(100, Number(pct) || 0));
+      return v.toFixed(0) + '%';
+    }
+
     async function refreshComputePressure() {
       try {
-        await _fetchCpStats();
-        const r = await api('/api/hardware/gpu-processes');
+        const r = await api('/api/hardware/service-pressure');
         if (!r.ok) return;
         const d = await r.json();
 
-        // util badge
-        document.getElementById('cp-util-badge').textContent = d.utilization_pct + '% GPU';
-
-        // stacked VRAM bar + legend
-        const bar    = document.getElementById('cp-vram-bar');
-        const legend = document.getElementById('cp-vram-legend');
-        bar.innerHTML = legend.innerHTML = '';
-
-        (d.processes || []).forEach(p => {
-          const seg = document.createElement('div');
-          seg.className = 'cp-vram-seg ' + _cpSegCls(p.label);
-          seg.style.width = p.vram_pct + '%';
-          seg.title = p.label + ': ' + p.vram_gb + ' GB';
-          bar.appendChild(seg);
-
-          const li = document.createElement('div');
-          li.className = 'cp-legend-item';
-          li.innerHTML = `<span class="cp-legend-dot" style="background:${_cpColor(p.label)}"></span>${escapeHtml(p.label)}&nbsp;${p.vram_gb}&nbsp;GB`;
-          legend.appendChild(li);
-        });
-
-        // free segment
-        const usedPct = (d.processes || []).reduce((s, p) => s + p.vram_pct, 0);
-        const freePct = Math.max(0, 100 - usedPct);
-        if (freePct > 0.5) {
-          const fs = document.createElement('div');
-          fs.className = 'cp-vram-seg seg-free';
-          fs.style.width = freePct + '%';
-          fs.title = 'Free: ' + (d.total_gb * freePct / 100).toFixed(1) + ' GB';
-          bar.appendChild(fs);
+        // GPU util badge
+        if (d.gpu && typeof d.gpu.utilization_pct === 'number') {
+          document.getElementById('cp-util-badge').textContent = d.gpu.utilization_pct + '% GPU';
+        } else {
+          document.getElementById('cp-util-badge').textContent = '— GPU';
         }
 
-        document.getElementById('cp-vram-total').textContent =
-          d.used_gb + ' / ' + d.total_gb + ' GB';
+        // Aggregate-VRAM row shown only when per-PID unavailable
+        const agg = document.getElementById('cp-aggregate');
+        if (d.vram_aggregate_unavailable && d.gpu && d.gpu.total_gb > 0) {
+          agg.style.display = '';
+          const pct = d.gpu.total_gb > 0 ? (d.gpu.used_gb / d.gpu.total_gb * 100) : 0;
+          document.getElementById('cp-agg-fill').style.width = _cpBarFill(pct);
+          document.getElementById('cp-agg-values').textContent =
+            d.gpu.used_gb.toFixed(1) + ' / ' + d.gpu.total_gb.toFixed(1) + ' GB';
+        } else {
+          agg.style.display = 'none';
+        }
 
-        // per-service rows
-        const deg     = _cpDegradation();
-        const rowsEl  = document.getElementById('cp-rows');
+        // Per-service rows
+        const rowsEl = document.getElementById('cp-rows');
         rowsEl.innerHTML = '';
-
-        (d.processes || []).forEach(p => {
-          const isLLM = p.label === 'LLM';
-          let statusHtml = '<span class="cp-row-status st-idle">—</span>';
-          if (isLLM && deg) {
-            const cls = _cpScoreClass(deg.pct);
-            statusHtml = `<span class="cp-row-status ${cls}">${deg.latest}&nbsp;tok/s</span>`;
-          }
+        (d.services || []).forEach(s => {
           const row = document.createElement('div');
-          row.className = 'cp-row';
+          row.className = 'cp-row' + (s.running ? '' : ' idle');
+          const vramBar = s.has_gpu && !d.vram_aggregate_unavailable
+            ? `<div class="cp-bar-group">
+                 <span class="cp-bar-label">VRAM</span>
+                 <div class="cp-bar-track"><div class="cp-bar-fill vram" style="width:${_cpBarFill(s.vram_pct)}"</div></div>
+               </div>`
+            : `<div class="cp-bar-group cp-bar-slot-empty">
+                 <span class="cp-bar-label">VRAM</span>
+                 <div class="cp-bar-track"></div>
+               </div>`;
+          const vramValue = s.has_gpu && !d.vram_aggregate_unavailable
+            ? `${s.vram_gb.toFixed(1)}&nbsp;GB VRAM`
+            : '';
           row.innerHTML = `
-            <span class="cp-row-label">${escapeHtml(p.label)}</span>
-            <div class="cp-row-bar">
-              <div class="cp-row-bar-fill" style="width:${p.vram_pct}%;background:${_cpColor(p.label)}"></div>
+            <span class="cp-row-label">${escapeHtml(s.name)}</span>
+            <div class="cp-bar-group">
+              <span class="cp-bar-label">CPU</span>
+              <div class="cp-bar-track"><div class="cp-bar-fill cpu" style="width:${_cpBarFill(s.cpu_pct)}"></div></div>
             </div>
-            <span class="cp-row-vram">${p.vram_gb}&nbsp;GB</span>
-            ${statusHtml}`;
+            <div class="cp-bar-group">
+              <span class="cp-bar-label">RAM</span>
+              <div class="cp-bar-track"><div class="cp-bar-fill ram" style="width:${_cpBarFill(s.mem_pct)}"></div></div>
+            </div>
+            ${vramBar}
+            <span class="cp-row-values">
+              ${s.cpu_pct.toFixed(0)}%&nbsp;CPU<br>
+              ${s.mem_gb.toFixed(1)}&nbsp;GB RAM<br>
+              ${vramValue || (s.running ? '' : 'stopped')}
+            </span>`;
           rowsEl.appendChild(row);
         });
 
-        // LLM score strip
+        // LLM degradation score strip (unchanged — uses separate data source)
+        const deg = _cpDegradation();
         const scoreEl = document.getElementById('cp-score');
         if (deg) {
-          const cls   = _cpScoreClass(deg.pct);
+          const cls = _cpScoreClass(deg.pct);
           const label = deg.pct >= 85 ? 'NOMINAL' : deg.pct >= 60 ? 'DEGRADED' : 'STARVED';
           scoreEl.className = 'cp-score ' + cls;
           scoreEl.textContent = `⚡ LLM at ${deg.pct}% of peak (${deg.latest} / ${deg.peak} tok/s) — ${label}`;
@@ -3071,7 +3063,6 @@
         } else {
           scoreEl.style.display = 'none';
         }
-
       } catch (e) {
         console.warn('compute pressure refresh failed', e);
       }
