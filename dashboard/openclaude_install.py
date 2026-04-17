@@ -70,3 +70,84 @@ class BlogMcpPreflight:
                 ok = False
             self._cache = (now, ok)
             return ok
+
+
+from pathlib import Path
+
+import jinja2
+
+_TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+_jinja_env = jinja2.Environment(
+    loader=jinja2.FileSystemLoader(_TEMPLATES_DIR),
+    autoescape=False,
+    trim_blocks=True,
+    lstrip_blocks=True,
+    undefined=jinja2.StrictUndefined,
+)
+
+
+def render_claude_json(
+    *,
+    host: str,
+    mcp_gateway_port: int,
+    blog_reachable: bool,
+    blog_port: int,
+    blog_api_key: str,
+    local_workspace_path: str,
+) -> str:
+    """Render the body of ~/.openclaude/.claude.json for a remote device."""
+    template = _jinja_env.get_template("openclaude_claude_json.j2")
+    return template.render(
+        host=host,
+        mcp_gateway_port=mcp_gateway_port,
+        blog_port=blog_port,
+        blog_api_key=blog_api_key,
+        local_workspace_path=local_workspace_path,
+        include_blog=bool(blog_reachable and blog_api_key),
+    )
+
+
+def render_install_script_sh(
+    *,
+    host: str,
+    model_gateway_port: int,
+    mcp_gateway_port: int,
+    master_key: str,
+    blog_reachable: bool,
+    blog_port: int,
+    blog_api_key: str,
+) -> str:
+    """Render the POSIX install script (macOS / Linux)."""
+    template = _jinja_env.get_template("openclaude_install.sh.j2")
+    return template.render(
+        host=host,
+        model_gateway_port=model_gateway_port,
+        mcp_gateway_port=mcp_gateway_port,
+        master_key=master_key,
+        blog_port=blog_port,
+        blog_api_key=blog_api_key,
+        include_blog=bool(blog_reachable and blog_api_key),
+    )
+
+
+def render_install_script_ps1(
+    *,
+    host: str,
+    model_gateway_port: int,
+    mcp_gateway_port: int,
+    master_key: str,
+    blog_reachable: bool,
+    blog_port: int,
+    blog_api_key: str,
+) -> str:
+    """Render the PowerShell install script (Windows)."""
+    template = _jinja_env.get_template("openclaude_install.ps1.j2")
+    return template.render(
+        host=host,
+        model_gateway_port=model_gateway_port,
+        mcp_gateway_port=mcp_gateway_port,
+        master_key=master_key,
+        blog_port=blog_port,
+        blog_api_key=blog_api_key,
+        include_blog=bool(blog_reachable and blog_api_key),
+    )
