@@ -3091,7 +3091,7 @@
           const vramBar = s.has_gpu && !d.vram_aggregate_unavailable
             ? `<div class="cp-bar-group">
                  <span class="cp-bar-label">VRAM</span>
-                 <div class="cp-bar-track"><div class="cp-bar-fill vram" style="width:${_cpBarFill(s.vram_pct)}"</div></div>
+                <div class="cp-bar-track"><div class="cp-bar-fill vram" style="width:${_cpBarFill(s.vram_pct)}"></div></div>
                </div>`
             : `<div class="cp-bar-group cp-bar-slot-empty">
                  <span class="cp-bar-label">VRAM</span>
