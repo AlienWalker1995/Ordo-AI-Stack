@@ -178,6 +178,98 @@ def _containers_for_service(service_id: str):
     )
 
 
+def _cpu_pct_from_stats(stats: dict) -> float:
+    """Compute CPU% from one docker stats sample using precpu_stats delta. Matches `docker stats` CLI math."""
+    try:
+        cpu = stats["cpu_stats"]
+        pre = stats["precpu_stats"]
+        cpu_delta = int(cpu["cpu_usage"]["total_usage"]) - int(pre["cpu_usage"]["total_usage"])
+        system_delta = int(cpu["system_cpu_usage"]) - int(pre.get("system_cpu_usage") or 0)
+        online_cpus = int(cpu.get("online_cpus") or len((cpu["cpu_usage"].get("percpu_usage") or [])) or 1)
+        if system_delta <= 0 or cpu_delta < 0:
+            return 0.0
+        return round((cpu_delta / system_delta) * online_cpus * 100.0, 1)
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def _mem_from_stats(stats: dict) -> tuple[float, float]:
+    """Return (mem_gb, mem_pct). Subtracts inactive_file (cgroup v2) or cache (v1) like `docker stats`."""
+    try:
+        ms = stats["memory_stats"]
+        usage = int(ms.get("usage") or 0)
+        inner = ms.get("stats") or {}
+        sub = int(inner.get("inactive_file") or inner.get("cache") or 0)
+        used = max(0, usage - sub)
+        limit = int(ms.get("limit") or 0)
+        if limit <= 0:
+            return (round(used / 1e9, 2), 0.0)
+        return (round(used / 1e9, 2), round(used / limit * 100.0, 1))
+    except (KeyError, TypeError, ValueError):
+        return (0.0, 0.0)
+
+
+def _container_host_pids(container) -> list[int]:
+    """Host-visible PIDs for a running container via `docker top`. Returns [] on any failure."""
+    try:
+        info = container.top(ps_args="-eo pid,comm")
+    except Exception:
+        return []
+    procs = (info or {}).get("Processes") or []
+    pids: list[int] = []
+    for row in procs:
+        if not row:
+            continue
+        raw = str(row[0]).strip()
+        if raw.isdigit():
+            pids.append(int(raw))
+    return pids
+
+
+def _nvml_vraam_by_pid() -> tuple[dict[int, int], dict]:
+    """Return ({pid: vram_bytes}, gpu_summary). pid_map empty when per-PID VRAM is unavailable (e.g. WSL2/WDDM)."""
+    default_gpu = {"total_gb": 0.0, "used_gb": 0.0, "utilization_pct": 0, "per_pid_available": False}
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+    except Exception as e:
+        logger.debug("NVML init failed: %s", e)
+        return {}, default_gpu
+    try:
+        h = pynvml.nvmlDeviceGetHandleByIndex(0)
+        mi = pynvml.nvmlDeviceGetMemoryInfo(h)
+        ut = pynvml.nvmlDeviceGetUtilizationRates(h)
+        total_b = int(mi.total)
+        used_b = int(mi.used)
+        pids: dict[int, int] = {}
+        has_per_pid = False
+        for getter in (pynvml.nvmlDeviceGetComputeRunningProcesses,
+                       pynvml.nvmlDeviceGetGraphicsRunningProcesses):
+            try:
+                for p in getter(h):
+                    mem = getattr(p, "usedGpuMemory", None) or getattr(p, "used_gpu_memory", None)
+                    if mem is None:
+                        continue
+                    mem_b = int(mem)
+                    if mem_b <= 0:
+                        continue
+                    has_per_pid = True
+                    pids[int(p.pid)] = pids.get(int(p.pid), 0) + mem_b
+            except pynvml.NVMLError:
+                pass
+        return pids, {
+            "total_gb": round(total_b / 1e9, 1),
+            "used_gb": round(used_b / 1e9, 1),
+            "utilization_pct": int(ut.gpu),
+            "per_pid_available": has_per_pid,
+        }
+    finally:
+        try:
+            pynvml.nvmlShutdown()
+        except Exception:
+            pass
+
+
 @app.get("/health")
 async def health():
     """Controller health. No auth required. Verifies Docker daemon reachable."""
@@ -576,6 +668,53 @@ async def comfyui_install_node_requirements(
     if not result.get("ok"):
         raise HTTPException(status_code=500, detail=result)
     return result
+
+
+@app.get("/stats/services")
+async def stats_services(_: None = Depends(verify_token)):
+    """Per-compose-service CPU/RAM/VRAM. Read-only, auth required (same as other ops routes)."""
+    try:
+        containers = _get_containers()
+    except Exception as e:
+        logger.warning("stats/services: docker list failed: %s", e)
+        return {"gpu": None, "services": {}, "vram_aggregate_unavailable": True}
+
+    vram_by_pid, gpu = await asyncio.to_thread(_nvml_vraam_by_pid)
+    vram_aggregate_unavailable = not gpu["per_pid_available"]
+
+    services: dict[str, dict] = {}
+    for c in containers:
+        svc = (c.labels or {}).get("com.docker.compose.service")
+        if not svc:
+            continue
+        row = services.setdefault(svc, {
+            "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
+            "vram_gb": 0.0, "vram_pct": 0.0, "running": False,
+        })
+        status = getattr(c, "status", "") or ""
+        if status != "running":
+            continue
+        row["running"] = True
+        try:
+            sample = c.stats(stream=False)
+        except Exception as e:
+            logger.debug("stats sample failed for %s: %s", svc, e)
+            continue
+        row["cpu_pct"] = _cpu_pct_from_stats(sample)
+        row["mem_gb"], row["mem_pct"] = _mem_from_stats(sample)
+        if vram_by_pid:
+            pids = _container_host_pids(c)
+            total_b = sum(vram_by_pid.get(pid, 0) for pid in pids)
+            if total_b > 0 and gpu["total_gb"] > 0:
+                row["vram_gb"] = round(total_b / 1e9, 2)
+                row["vram_pct"] = round(total_b / (gpu["total_gb"] * 1e9) * 100.0, 1)
+
+    gpu_out = None if gpu["total_gb"] == 0 else {k: v for k, v in gpu.items() if k != "per_pid_available"}
+    return {
+        "gpu": gpu_out,
+        "services": services,
+        "vram_aggregate_unavailable": vram_aggregate_unavailable,
+    }
 
 
 # --- Model downloads (ComfyUI files) ---

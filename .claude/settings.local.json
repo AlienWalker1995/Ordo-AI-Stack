@@ -49,7 +49,19 @@
       "Bash(wc -c \"C:\\\\dev\\\\AI-toolkit\\\\data\\\\openclaw\\\\agents\\\\main\\\\sessions/\"*.jsonl*)",
       "Bash(du -sh \"C:\\\\dev\\\\AI-toolkit\\\\data\\\\openclaw\\\\workspace/\"*/)",
       "Bash(python3:*)",
-      "Bash(cp:*)"
+      "Bash(cp:*)",
+      "WebFetch(domain:civitai.com)",
+      "Bash(MODELS_DIR=models/comfyui COMFYUI_PACKS=scooby-doo-game-assets python scripts/comfyui/pull_comfyui_models.py)",
+      "Bash(MODELS_DIR=models/comfyui COMFYUI_PACKS=scooby-doo-game-assets CIVITAI_TOKEN=***REMOVED*** python scripts/comfyui/pull_comfyui_models.py)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(pytest *)",
+      "Bash(git commit *)",
+      "Bash(git update-index *)",
+      "Read(//c/dev/AI-toolkit/**)",
+      "Bash(docker info *)",
+      "Bash(git stash *)",
+      "Bash(git check-ignore *)"
     ]
   }
 }
