@@ -1,5 +1,0 @@
-<!-- Copy to HEARTBEAT.md -->
-
-# HEARTBEAT.md
-
-Current stack health is available on demand — call `gateway__get_services` or read `agents/stack-ops.md`. Do not add recurring checklist items here unless the operator explicitly asks.
