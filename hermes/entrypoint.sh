@@ -21,4 +21,10 @@ HERMES_BIN=/opt/hermes-agent/.venv/bin/hermes
 "$HERMES_BIN" config set model.default         "local-chat"                    >/dev/null
 "$HERMES_BIN" config set mcp_servers.gateway.url "http://mcp-gateway:8811/mcp" >/dev/null
 
+# Bump timeouts for local model. Hermes's default 180s stale-timeout aborts
+# prefill on long contexts (22k+ tokens on a dense local model = many minutes).
+# 900s covers realistic worst case without masking a truly dead connection.
+"$HERMES_BIN" config set providers.custom.stale_timeout_seconds   900 >/dev/null
+"$HERMES_BIN" config set providers.custom.request_timeout_seconds 900 >/dev/null
+
 exec "$@"
