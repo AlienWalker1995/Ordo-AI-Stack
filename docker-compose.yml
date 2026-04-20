@@ -690,6 +690,10 @@ services:
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-local}
       - PYTHONIOENCODING=utf-8
+      # Point Hermes at the pre-built SPA (Dockerfile stage 1). Without this env var,
+      # `hermes dashboard` tries to rebuild from web/ source, which requires npm (not
+      # present in the runtime image).
+      - HERMES_WEB_DIST=/opt/hermes-agent/hermes_cli/web_dist
     volumes:
       - ${BASE_PATH:-.}:/workspace:rw
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/hermes:/home/hermes/.hermes:rw
@@ -709,7 +713,9 @@ services:
     networks:
       - frontend
       - backend
-    command: ["hermes", "dashboard", "--port", "9119", "--host", "0.0.0.0", "--no-open"]
+    # --insecure: Hermes rejects 0.0.0.0 binding without it. Safe here because the
+    # port mapping gates external access; internal Docker network is trusted.
+    command: ["hermes", "dashboard", "--port", "9119", "--host", "0.0.0.0", "--no-open", "--insecure"]
 
 networks:
   frontend:
