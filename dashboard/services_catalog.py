@@ -30,6 +30,11 @@ SERVICES = [
     {"id": "qdrant", "name": "Qdrant", "port": 6333, "url": "http://localhost:6333", "has_gpu": False,
      "check": "http://qdrant:6333/readyz",
      "hint": "Vector DB for RAG. Drop files in data/rag-input/ (with --profile rag) or upload via Open WebUI Documents tab."},
+    # Hermes Agent runs on the host (not in Docker) via scripts/start-hermes-host.sh. From inside the
+    # dashboard container we reach it via host.docker.internal; unhealthy just means it's not running.
+    {"id": "hermes", "name": "Hermes Agent", "port": 9119, "url": "http://localhost:9119",
+     "check": "http://host.docker.internal:9119/", "has_gpu": False,
+     "hint": "Assistant agent web UI. Start it with: ./scripts/start-hermes-host.sh --dashboard"},
 ]
 
 
