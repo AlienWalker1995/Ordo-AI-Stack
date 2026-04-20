@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -26,7 +27,10 @@ def test_script_has_bash_shebang():
     assert first_line == "#!/usr/bin/env bash", f"unexpected shebang: {first_line!r}"
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@pytest.mark.skipif(
+    sys.platform == "win32" or shutil.which("bash") is None,
+    reason="bash -n requires POSIX bash (Git Bash/WSL path handling unreliable on Windows)",
+)
 def test_script_parses_as_bash():
     result = subprocess.run(
         ["bash", "-n", str(SCRIPT)], capture_output=True, text=True
