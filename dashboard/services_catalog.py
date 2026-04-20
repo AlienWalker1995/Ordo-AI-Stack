@@ -3,19 +3,6 @@ from __future__ import annotations
 
 import httpx as _httpx
 
-from dashboard.settings import (
-    OPENCLAW_GATEWAY_INTERNAL_PORT as _OPENCLAW_GATEWAY_INTERNAL_PORT,
-)
-from dashboard.settings import (
-    OPENCLAW_GATEWAY_PORT as _OPENCLAW_GATEWAY_PORT,
-)
-from dashboard.settings import (
-    OPENCLAW_GATEWAY_TOKEN as _OPENCLAW_GATEWAY_TOKEN,
-)
-from dashboard.settings import (
-    OPENCLAW_UI_PORT as _OPENCLAW_UI_PORT,
-)
-
 # Map dashboard service id -> ops-controller service id
 OPS_SERVICE_MAP = {
     "llamacpp": "llamacpp",
@@ -24,7 +11,6 @@ OPS_SERVICE_MAP = {
     "mcp": "mcp-gateway",
     "comfyui": "comfyui",
     "n8n": "n8n",
-    "openclaw": "openclaw-gateway",
     "qdrant": "qdrant",
 }
 
@@ -41,13 +27,6 @@ SERVICES = [
      "hint": "ComfyUI uses auto-detected compute (NVIDIA/AMD/Intel/CPU). Run ./compose up -d. Pull LTX-2 via dashboard."},
     {"id": "n8n", "name": "N8N", "port": 5678, "url": "http://localhost:5678", "check": "http://n8n:5678", "has_gpu": False,
      "hint": "Check: docker compose logs n8n"},
-    {"id": "openclaw", "name": "OpenClaw", "port": int(_OPENCLAW_GATEWAY_PORT), "has_gpu": False,
-     "url": f"http://localhost:{_OPENCLAW_GATEWAY_PORT}",
-     "check": f"http://openclaw-gateway:{_OPENCLAW_GATEWAY_INTERNAL_PORT}/",
-     "hint": (
-         f"Control UI: port {_OPENCLAW_GATEWAY_PORT} with ?token=. "
-         f"Not :{_OPENCLAW_UI_PORT} (browser/CDP bridge). Logs: docker compose logs openclaw-gateway"
-    )},
     {"id": "qdrant", "name": "Qdrant", "port": 6333, "url": "http://localhost:6333", "has_gpu": False,
      "check": "http://qdrant:6333/readyz",
      "hint": "Vector DB for RAG. Drop files in data/rag-input/ (with --profile rag) or upload via Open WebUI Documents tab."},
