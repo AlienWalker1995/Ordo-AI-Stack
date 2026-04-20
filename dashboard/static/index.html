@@ -2567,7 +2567,11 @@
       document.getElementById('ollama-starter-pack').disabled = false;
     };
 
-    document.getElementById('comfyui-pull').onclick = async () => {
+    // Guard: the #comfyui-pull button was removed from the UI but the handler survived.
+    // Without this null-check, accessing .onclick on the missing element throws and
+    // halts all subsequent script init (skeletons never populate).
+    const _comfyuiPullBtn = document.getElementById('comfyui-pull');
+    if (_comfyuiPullBtn) _comfyuiPullBtn.onclick = async () => {
       const btn = document.getElementById('comfyui-pull');
       const prog = document.getElementById('comfyui-progress');
       const logEl = document.getElementById('comfyui-log');
