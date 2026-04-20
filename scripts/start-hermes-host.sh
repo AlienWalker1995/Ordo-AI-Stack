@@ -65,16 +65,18 @@ export OPENAI_API_KEY="${LITELLM_MASTER_KEY:-local}"
 export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
 
 # ── Phase 8: Persist Hermes endpoint config ──
-# Config keys discovered from vendor/hermes-agent/hermes_cli/config.py:
-#   providers.<name>.{base_url,api_key}  — custom OpenAI-compatible provider
-#   model                                — "provider:model_slug" format
-#   mcp_servers.<name>.url               — streamable-http MCP endpoint
+# Verified against Hermes 0.10.0 (2026.4.16) source. The inline `model` dict
+# (provider=custom + base_url + api_key + default) is what actually routes to the
+# configured endpoint; the `providers.<name>` dict form does NOT flow through chat
+# client provider resolution and falls back to openrouter.
+# MCP: streamable-http transport (natively supported).
 # Honcho: no disable flag; stays dormant unless ~/.honcho/config.json exists.
 echo "==> Configuring Hermes endpoints..."
-"$HERMES_BIN" config set providers.ordo.base_url   "$OPENAI_API_BASE"
-"$HERMES_BIN" config set providers.ordo.api_key    "$OPENAI_API_KEY"
-"$HERMES_BIN" config set model                     "ordo:local-chat"
-"$HERMES_BIN" config set mcp_servers.gateway.url   "http://localhost:${MCP_GATEWAY_PORT:-8811}/mcp"
+"$HERMES_BIN" config set model.provider          "custom"
+"$HERMES_BIN" config set model.base_url          "$OPENAI_API_BASE"
+"$HERMES_BIN" config set model.api_key           "$OPENAI_API_KEY"
+"$HERMES_BIN" config set model.default           "local-chat"
+"$HERMES_BIN" config set mcp_servers.gateway.url "http://localhost:${MCP_GATEWAY_PORT:-8811}/mcp"
 
 # ── Phase 9: Launch ──
 cd "$REPO_ROOT"
