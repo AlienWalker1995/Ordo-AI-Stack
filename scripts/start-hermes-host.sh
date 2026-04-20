@@ -92,29 +92,55 @@ if [ -f "$STATUS_PY" ] && ! grep -q "Ordo AI Stack patch" "$STATUS_PY" 2>/dev/nu
 import sys, pathlib
 p = pathlib.Path(sys.argv[1])
 src = p.read_text(encoding="utf-8")
-old = ("    try:\n"
-       "        os.kill(pid, 0)  # signal 0 = existence check, no actual signal sent\n"
-       "    except (ProcessLookupError, PermissionError):\n"
-       "        _cleanup_invalid_pid_path(resolved_pid_path, cleanup_stale=cleanup_stale)\n"
-       "        return None\n")
-new = ("    try:\n"
-       "        os.kill(pid, 0)  # signal 0 = existence check, no actual signal sent\n"
-       "    except (ProcessLookupError, PermissionError):\n"
-       "        _cleanup_invalid_pid_path(resolved_pid_path, cleanup_stale=cleanup_stale)\n"
-       "        return None\n"
-       "    except OSError:\n"
-       "        # Ordo AI Stack patch — Windows raises OSError(WinError 87/11) for dead PIDs\n"
-       "        # instead of ProcessLookupError. Treat as stale and clean up.\n"
-       "        import sys as _sys\n"
-       "        if _sys.platform == 'win32':\n"
-       "            _cleanup_invalid_pid_path(resolved_pid_path, cleanup_stale=cleanup_stale)\n"
-       "            return None\n"
-       "        raise\n")
-if old in src:
-    p.write_text(src.replace(old, new, 1), encoding="utf-8")
-    print(f"patched: {p}")
-else:
-    print(f"skip: pattern not found in {p} (upstream changed?)")
+# Site 1: get_running_pid — pid-file existence check.
+old1 = ("    try:\n"
+        "        os.kill(pid, 0)  # signal 0 = existence check, no actual signal sent\n"
+        "    except (ProcessLookupError, PermissionError):\n"
+        "        _cleanup_invalid_pid_path(resolved_pid_path, cleanup_stale=cleanup_stale)\n"
+        "        return None\n")
+new1 = ("    try:\n"
+        "        os.kill(pid, 0)  # signal 0 = existence check, no actual signal sent\n"
+        "    except (ProcessLookupError, PermissionError):\n"
+        "        _cleanup_invalid_pid_path(resolved_pid_path, cleanup_stale=cleanup_stale)\n"
+        "        return None\n"
+        "    except OSError:\n"
+        "        # Ordo AI Stack patch — Windows raises OSError(WinError 87/11) for dead PIDs\n"
+        "        # instead of ProcessLookupError. Treat as stale and clean up.\n"
+        "        import sys as _sys\n"
+        "        if _sys.platform == 'win32':\n"
+        "            _cleanup_invalid_pid_path(resolved_pid_path, cleanup_stale=cleanup_stale)\n"
+        "            return None\n"
+        "        raise\n")
+# Site 2: acquire_scoped_lock — platform-lock stale check.
+old2 = ("        if not stale:\n"
+        "            try:\n"
+        "                os.kill(existing_pid, 0)\n"
+        "            except (ProcessLookupError, PermissionError):\n"
+        "                stale = True\n"
+        "            else:\n")
+new2 = ("        if not stale:\n"
+        "            try:\n"
+        "                os.kill(existing_pid, 0)\n"
+        "            except (ProcessLookupError, PermissionError):\n"
+        "                stale = True\n"
+        "            except OSError:\n"
+        "                # Ordo AI Stack patch — Windows OSError variants mean dead PID.\n"
+        "                import sys as _sys\n"
+        "                if _sys.platform == 'win32':\n"
+        "                    stale = True\n"
+        "                else:\n"
+        "                    raise\n"
+        "            else:\n")
+changed = False
+for old, new, label in ((old1, new1, "get_running_pid"), (old2, new2, "acquire_scoped_lock")):
+    if old in src:
+        src = src.replace(old, new, 1)
+        changed = True
+        print(f"patched: {label}")
+    else:
+        print(f"skip: {label} pattern not found (upstream changed?)")
+if changed:
+    p.write_text(src, encoding="utf-8")
 PY
 fi
 
