@@ -33,13 +33,8 @@ from dashboard.routes_orchestration import router as orchestration_router
 from dashboard.routes_openclaude import router as openclaude_router
 from dashboard.services_catalog import OPS_SERVICE_MAP
 from dashboard.settings import AUTH_REQUIRED as _AUTH_REQUIRED
-from dashboard.settings import DASHBOARD_AUTH_TOKEN, OPENCLAW_CONFIG_PATH
+from dashboard.settings import DASHBOARD_AUTH_TOKEN
 
-# Default OpenClaw model metadata to the server cap unless a lower compaction target is set explicitly.
-_ctx_raw = os.environ.get("OPENCLAW_CONTEXT_WINDOW", os.environ.get("LLAMACPP_CTX_SIZE", "262144")).strip()
-if not _ctx_raw.isdigit() or int(_ctx_raw) <= 0:
-    logger.warning("Invalid OPENCLAW_CONTEXT_WINDOW=%r — using default 262144", _ctx_raw)
-OPENCLAW_CONTEXT_WINDOW = int(_ctx_raw) if _ctx_raw.isdigit() and int(_ctx_raw) > 0 else 262144
 
 
 async def _read_json_async(path: Path) -> dict:
@@ -1513,7 +1508,6 @@ async def performance_summary():
     return {
         "ok": True,
         "llamacpp_ctx_size": int(os.environ.get("LLAMACPP_CTX_SIZE", "262144") or 262144),
-        "openclaw_context_window": OPENCLAW_CONTEXT_WINDOW,
         "worker_concurrency": int(os.environ.get("WORKER_CONCURRENCY", "1") or 1),
         "throughput": {
             "tracked_models": len(top_models),
@@ -1797,192 +1791,12 @@ async def set_default_model(req: DefaultModelRequest, request: Request):
         "POST", "/services/open-webui/recreate", request=request, json={"confirm": True}
     )
 
-    # 3. Restart openclaw-gateway (re-reads model config on startup)
-    code3, _ = await _ops_request(
-        "POST", "/services/openclaw-gateway/restart", request=request, json={"confirm": True}
-    )
-
     return {
         "ok": code2 in (200, 201),
         "model": name,
         "open_webui_model": open_webui_model,
         "webui_recreated": code2 in (200, 201),
-        "openclaw_restarted": code3 in (200, 201),
         "webui_error": data2.get("detail") if code2 >= 400 else None,
-    }
-
-
-# --- OpenClaw model management ---
-
-# Gateway provider base written into openclaw.json (must match merge_gateway_config.py)
-_OPENCLAW_GATEWAY_BASE = {
-    "baseUrl": "http://model-gateway:11435/v1",
-    "apiKey": os.environ.get("LITELLM_MASTER_KEY", "local"),
-    "api": "openai-responses",
-    "headers": {"X-Service-Name": "openclaw"},
-}
-
-
-def _make_openclaw_model(item: dict) -> dict:
-    """Transform a /v1/models entry into an OpenClaw model definition."""
-    mid = item.get("id", "")
-    name = mid.split("/")[-1] if "/" in mid else mid
-    name = name.replace(":", " ").replace("-", " ").replace(".", " ")
-    name = " ".join(w.capitalize() for w in name.split())
-    if item.get("profile") == "chat":
-        name = f"{name} Chat"
-    lower = mid.lower()
-    has_vision = "vision" in lower or "llava" in lower or "puppy" in lower
-    is_reasoning = "r1" in lower or "reasoning" in lower or "qwen3" in lower or "qwen-3" in lower
-    context_window = item.get("context_window")
-    if not isinstance(context_window, int) or context_window <= 0:
-        context_window = OPENCLAW_CONTEXT_WINDOW
-    return {
-        "id": mid,
-        "name": name,
-        "reasoning": is_reasoning,
-        "input": ["text", "image"] if has_vision else ["text"],
-        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-        "contextWindow": context_window,
-        "maxTokens": 8192,
-    }
-
-
-@app.get("/api/openclaw/models")
-async def get_openclaw_models():
-    """Return OpenClaw's current model list from openclaw.json."""
-    if not OPENCLAW_CONFIG_PATH.exists():
-        return {"models": [], "count": 0, "config_found": False}
-    try:
-        cfg = await _read_json_async(OPENCLAW_CONFIG_PATH)
-        gw = cfg.get("models", {}).get("providers", {}).get("gateway", {})
-        models = gw.get("models", [])
-        return {"models": models, "count": len(models), "config_found": True}
-    except Exception as e:
-        return {"models": [], "count": 0, "config_found": True, "error": str(e)}
-
-
-@app.get("/api/openclaw/default-model")
-async def get_openclaw_default_model():
-    """Return the current OpenClaw agent default model (agents.defaults.model.primary)."""
-    if not OPENCLAW_CONFIG_PATH.exists():
-        return {"default_model": "", "config_found": False}
-    try:
-        cfg = await _read_json_async(OPENCLAW_CONFIG_PATH)
-        primary = (
-            cfg.get("agents", {})
-            .get("defaults", {})
-            .get("model", {})
-            .get("primary", "")
-        )
-        return {"default_model": primary or "", "config_found": True}
-    except Exception as e:
-        return {"default_model": "", "config_found": True, "error": str(e)}
-
-
-class OpenClawDefaultModelRequest(BaseModel):
-    model: str
-
-
-@app.post("/api/openclaw/default-model")
-async def set_openclaw_default_model(req: OpenClawDefaultModelRequest, request: Request):
-    """Write agents.defaults.model.primary to openclaw.json and restart openclaw-gateway."""
-    if not OPENCLAW_CONFIG_PATH.exists():
-        raise HTTPException(status_code=404, detail="openclaw.json not found — is OpenClaw set up?")
-    model = (req.model or "").strip()
-    if not model:
-        raise HTTPException(status_code=400, detail="Model cannot be empty")
-
-    try:
-        cfg = await _read_json_async(OPENCLAW_CONFIG_PATH)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Cannot read openclaw.json: {e}")
-
-    agents = cfg.setdefault("agents", {})
-    defaults = agents.setdefault("defaults", {})
-    model_cfg = defaults.setdefault("model", {})
-    model_cfg["primary"] = model
-    if "fallbacks" not in model_cfg:
-        model_cfg["fallbacks"] = []
-
-    try:
-        await _write_json_async(OPENCLAW_CONFIG_PATH, cfg)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Cannot write openclaw.json: {e}")
-
-    code, _ = await _ops_request(
-        "POST", "/services/openclaw-gateway/restart", request=request, json={"confirm": True}
-    )
-
-    return {
-        "ok": True,
-        "model": model,
-        "openclaw_restarted": code in (200, 201),
-    }
-
-
-@app.post("/api/openclaw/sync")
-async def sync_openclaw_models(request: Request):
-    """Fetch current models from model-gateway, update openclaw.json, restart openclaw-gateway."""
-    if not OPENCLAW_CONFIG_PATH.exists():
-        raise HTTPException(status_code=404, detail="openclaw.json not found — is OpenClaw set up?")
-
-    # Fetch live model list from model-gateway
-    try:
-        r = await _get_http_client().get(
-            f"{MODEL_GATEWAY_URL}/v1/models", headers=_model_gateway_headers(), timeout=15.0
-        )
-        r.raise_for_status()
-        raw = r.json()
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Cannot reach model-gateway: {e}")
-
-    items = raw.get("data", []) if isinstance(raw, dict) else []
-    # Skip ollama/-prefixed duplicates; bare IDs route fine through the gateway
-    new_models = [_make_openclaw_model(m) for m in items if m.get("id") and not m["id"].startswith("ollama/")]
-
-    # Read + patch openclaw.json
-    try:
-        cfg = await _read_json_async(OPENCLAW_CONFIG_PATH)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Cannot read openclaw.json: {e}")
-
-    providers = cfg.setdefault("models", {}).setdefault("providers", {})
-
-    # Strip any per-model baseUrl/apiKey (OpenClaw 2026.2.x rejects them)
-    for pv in providers.values():
-        if isinstance(pv, dict):
-            for m in (pv.get("models") or []):
-                if isinstance(m, dict):
-                    m.pop("baseUrl", None)
-                    m.pop("apiKey", None)
-
-    # Upsert gateway provider
-    if "gateway" not in providers:
-        providers["gateway"] = {**_OPENCLAW_GATEWAY_BASE, "models": new_models}
-    else:
-        gw = providers["gateway"]
-        if isinstance(gw, dict):
-            for k, v in _OPENCLAW_GATEWAY_BASE.items():
-                if k != "models":
-                    gw[k] = v
-            gw["models"] = new_models
-
-    try:
-        await _write_json_async(OPENCLAW_CONFIG_PATH, cfg)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Cannot write openclaw.json: {e}")
-
-    # Restart openclaw-gateway to pick up the updated model list
-    code, _ = await _ops_request(
-        "POST", "/services/openclaw-gateway/restart", request=request, json={"confirm": True}
-    )
-
-    return {
-        "ok": True,
-        "synced_count": len(new_models),
-        "models": [m["id"] for m in new_models],
-        "openclaw_restarted": code in (200, 201),
     }
 
 
