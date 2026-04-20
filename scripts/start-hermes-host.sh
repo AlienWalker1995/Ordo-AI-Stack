@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # start-hermes-host.sh — Single-command bootstrap for host-mode Hermes Agent.
-# Installs Hermes (if missing), starts Docker infrastructure, launches Hermes CLI.
+# Installs all dependencies (uv, Hermes, Python venv, web UI), starts Docker
+# infrastructure, writes endpoint config, and launches Hermes.
+#
+# Usage:
+#   ./scripts/start-hermes-host.sh              # Launch TUI (requires WSL2; Git Bash unsupported for TUI)
+#   ./scripts/start-hermes-host.sh --dashboard  # Launch web UI at http://localhost:9119 (Git Bash OK)
+#   ./scripts/start-hermes-host.sh --no-launch  # Set up everything, don't launch
 set -eu
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -10,6 +16,19 @@ cd "$REPO_ROOT"
 HERMES_REPO="https://github.com/NousResearch/hermes-agent.git"
 HERMES_PINNED_SHA="${HERMES_PINNED_SHA:-dcd763c284086afd5ddee4fdcd86daaf534916ab}"
 HERMES_DIR="$REPO_ROOT/vendor/hermes-agent"
+
+# ── Arg parsing ──
+LAUNCH_MODE="tui"
+for arg in "$@"; do
+  case "$arg" in
+    --dashboard)  LAUNCH_MODE="dashboard" ;;
+    --no-launch)  LAUNCH_MODE="none" ;;
+    --tui)        LAUNCH_MODE="tui" ;;
+    -h|--help)
+      sed -n '2,8p' "$0"; exit 0 ;;
+    *) echo "Unknown arg: $arg (use --dashboard, --tui, --no-launch)"; exit 2 ;;
+  esac
+done
 
 # ── Phase 1: Load config ──
 if [ -f .env ]; then
@@ -41,6 +60,22 @@ if [ ! -x "$HERMES_BIN_POSIX" ] && [ ! -x "$HERMES_BIN_WIN" ]; then
 fi
 HERMES_BIN="$HERMES_BIN_POSIX"
 [ -x "$HERMES_BIN_WIN" ] && HERMES_BIN="$HERMES_BIN_WIN"
+
+# ── Phase 4.5: Build web UI if missing ──
+# Hermes dashboard serves assets from vendor/hermes-agent/hermes_cli/web_dist/.
+# The web/ package prebuild uses `rm -rf` and `cp -r` which require POSIX (Git Bash / WSL2 / Linux).
+WEB_DIST="$HERMES_DIR/hermes_cli/web_dist"
+if [ ! -f "$WEB_DIST/index.html" ]; then
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "!! npm not found — needed to build the Hermes web UI."
+    echo "   Install Node.js (https://nodejs.org/) then re-run."
+    exit 1
+  fi
+  echo "==> Installing web UI dependencies (one-time, ~100MB)..."
+  (cd "$HERMES_DIR/web" && npm install)
+  echo "==> Building web UI..."
+  (cd "$HERMES_DIR/web" && npm run build)
+fi
 
 # ── Phase 5: Start Docker infrastructure ──
 echo "==> Starting Docker stack..."
@@ -80,5 +115,20 @@ echo "==> Configuring Hermes endpoints..."
 
 # ── Phase 9: Launch ──
 cd "$REPO_ROOT"
-echo "==> Launching Hermes CLI (HERMES_HOME=$HERMES_HOME)..."
-exec "$HERMES_BIN"
+case "$LAUNCH_MODE" in
+  dashboard)
+    echo "==> Launching Hermes dashboard at http://localhost:${HERMES_DASHBOARD_PORT:-9119}/ ..."
+    exec "$HERMES_BIN" dashboard --port "${HERMES_DASHBOARD_PORT:-9119}" --no-open
+    ;;
+  tui)
+    echo "==> Launching Hermes CLI (HERMES_HOME=$HERMES_HOME)..."
+    echo "    TUI requires a Windows console or POSIX terminal. Git Bash will crash"
+    echo "    on prompt_toolkit; use WSL2, or re-run with --dashboard for the web UI."
+    exec "$HERMES_BIN"
+    ;;
+  none)
+    echo "==> Setup complete. Launch manually:"
+    echo "    $HERMES_BIN                  # TUI (WSL2)"
+    echo "    $HERMES_BIN dashboard        # Web UI"
+    ;;
+esac
