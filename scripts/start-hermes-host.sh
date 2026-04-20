@@ -192,6 +192,25 @@ export OPENAI_API_KEY="${LITELLM_MASTER_KEY:-local}"
 # Hermes prints UTF-8 checkmarks (\u2713) in `config set`; Windows cp1252 console can't encode them.
 export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
 
+# ── Phase 7.5: Seed $HERMES_HOME/.env for gateway ──
+# Hermes reads its own .env at $HERMES_HOME/.env at gateway startup. Copy the
+# relevant Discord/Telegram vars from the repo .env so `hermes gateway` picks them
+# up regardless of how it's invoked (bootstrap, wrapper, or direct).
+HERMES_ENV="$HERMES_HOME/.env"
+{
+  echo "# Auto-managed by scripts/start-hermes-host.sh — Hermes reads this at gateway startup."
+  echo "# Regenerated on each bootstrap run. Do not commit."
+  for key in DISCORD_BOT_TOKEN DISCORD_ALLOWED_USERS DISCORD_ALLOWED_CHANNELS \
+             DISCORD_ALLOWED_ROLES DISCORD_REQUIRE_MENTION DISCORD_FREE_RESPONSE_CHANNELS \
+             DISCORD_HOME_CHANNEL DISCORD_AUTO_THREAD DISCORD_REACTIONS \
+             TELEGRAM_BOT_TOKEN; do
+    # Pull the in-process value (Phase 1 exported these). Skip empties.
+    val=$(eval "printf '%s' \"\${$key:-}\"")
+    [ -n "$val" ] && echo "$key=$val"
+  done
+} > "$HERMES_ENV"
+echo "seeded: $HERMES_ENV"
+
 # ── Phase 8: Persist Hermes endpoint config ──
 # Verified against Hermes 0.10.0 (2026.4.16) source. The inline `model` dict
 # (provider=custom + base_url + api_key + default) is what actually routes to the
