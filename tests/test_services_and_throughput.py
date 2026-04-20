@@ -39,7 +39,6 @@ def test_services_returns_all_services(client):
     ids = [s["id"] for s in services]
     assert "llamacpp" in ids
     assert "model-gateway" in ids
-    assert "openclaw" in ids
 
 
 def test_services_have_required_fields(client):
@@ -53,8 +52,8 @@ def test_services_have_required_fields(client):
 
 
 def test_services_do_not_leak_auth_token(client, monkeypatch):
-    """Regression: OPENCLAW_GATEWAY_TOKEN must not appear in public /api/services URLs."""
-    monkeypatch.setattr("dashboard.settings.OPENCLAW_GATEWAY_TOKEN", "secret-test-token-1234")
+    """Regression: sensitive auth tokens must not appear in public /api/services URLs."""
+    monkeypatch.setattr("dashboard.settings.DASHBOARD_AUTH_TOKEN", "secret-test-token-1234")
     # Re-import to pick up monkeypatched value
     import importlib
     import dashboard.services_catalog

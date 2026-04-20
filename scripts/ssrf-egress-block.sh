@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# Block MCP gateway and OpenClaw browser-tier containers from reaching private ranges
+# Block MCP gateway containers from reaching private ranges
 # and cloud metadata. Reduces SSRF risk. See docs/runbooks/SECURITY_HARDENING.md.
 #
 # Usage:
-#   ./scripts/ssrf-egress-block.sh                        # block MCP subnet (default)
-#   ./scripts/ssrf-egress-block.sh --target openclaw      # block openclaw subnet
-#   ./scripts/ssrf-egress-block.sh --target all           # block both MCP + openclaw
+#   ./scripts/ssrf-egress-block.sh                        # block MCP subnet
 #   ./scripts/ssrf-egress-block.sh --dry-run              # print commands only
-#   ./scripts/ssrf-egress-block.sh --remove               # remove rules for targeted subnet(s)
+#   ./scripts/ssrf-egress-block.sh --remove               # remove rules
 #   ./scripts/ssrf-egress-block.sh 172.18.0.0/16          # explicit subnet override
 #
 # Persistence: apt install iptables-persistent && sudo netfilter-persistent save
@@ -16,34 +14,19 @@ set -e
 
 DRY_RUN=false
 REMOVE=false
-TARGET="mcp"   # default: mcp | openclaw | all
 SUBNET_OVERRIDE=""
 
 for arg in "$@"; do
   case "$arg" in
     --dry-run)  DRY_RUN=true ;;
     --remove)   REMOVE=true ;;
-    --target)   ;;  # consumed by next iteration via shift pattern below
     -h|--help)
-      echo "Usage: $0 [--dry-run] [--remove] [--target mcp|openclaw|all] [SUBNET]"
-      echo "  --target mcp        Block MCP gateway subnet (default)"
-      echo "  --target openclaw   Block OpenClaw browser-tier subnet"
-      echo "  --target all        Block both subnets"
+      echo "Usage: $0 [--dry-run] [--remove] [SUBNET]"
       echo "  SUBNET              Explicit subnet override (e.g. 172.18.0.0/16)"
       exit 0
       ;;
-    --target=*) TARGET="${arg#--target=}" ;;
     *) [ -z "$SUBNET_OVERRIDE" ] && SUBNET_OVERRIDE="$arg" ;;
   esac
-done
-
-# Handle --target as a separate positional argument (--target foo)
-# Re-parse to handle space-separated --target value
-ARGS=("$@")
-for i in "${!ARGS[@]}"; do
-  if [ "${ARGS[$i]}" = "--target" ] && [ -n "${ARGS[$((i+1))+_}" ]; then
-    TARGET="${ARGS[$((i+1))]}"
-  fi
 done
 
 detect_subnet() {
@@ -56,8 +39,7 @@ detect_subnet() {
   echo "$subnet"
 }
 
-get_subnet_for_target() {
-  local target="$1"
+get_subnet() {
   local subnet=""
 
   if [ -n "$SUBNET_OVERRIDE" ]; then
@@ -65,18 +47,8 @@ get_subnet_for_target() {
     return
   fi
 
-  case "$target" in
-    mcp)
-      subnet=$(detect_subnet "ordo-ai-stack-frontend")
-      [ -z "$subnet" ] && subnet=$(detect_subnet "ordo-ai-stack_default")
-      ;;
-    openclaw)
-      subnet=$(detect_subnet "ordo-ai-stack-openclaw")
-      # Fall back to frontend if no dedicated openclaw network exists yet
-      [ -z "$subnet" ] && subnet=$(detect_subnet "ordo-ai-stack-frontend")
-      [ -z "$subnet" ] && subnet=$(detect_subnet "ordo-ai-stack_default")
-      ;;
-  esac
+  subnet=$(detect_subnet "ordo-ai-stack-frontend")
+  [ -z "$subnet" ] && subnet=$(detect_subnet "ordo-ai-stack_default")
 
   echo "$subnet"
 }
@@ -120,35 +92,18 @@ remove_rules() {
   done
 }
 
-process_target() {
-  local target="$1"
-  local subnet
-  subnet=$(get_subnet_for_target "$target")
+subnet=$(get_subnet)
 
-  if [ -z "$subnet" ]; then
-    echo "Could not detect subnet for target '$target'. Start the stack once (docker compose up -d), or pass an explicit SUBNET." >&2
-    exit 1
-  fi
+if [ -z "$subnet" ]; then
+  echo "Could not detect subnet for MCP gateway. Start the stack once (docker compose up -d), or pass an explicit SUBNET." >&2
+  exit 1
+fi
 
-  if [ "$REMOVE" = true ]; then
-    remove_rules "$subnet" "$target"
-  else
-    apply_rules "$subnet" "$target"
-  fi
-}
-
-case "$TARGET" in
-  mcp)      process_target "mcp" ;;
-  openclaw) process_target "openclaw" ;;
-  all)
-    process_target "mcp"
-    process_target "openclaw"
-    ;;
-  *)
-    echo "Unknown --target '$TARGET'. Use: mcp | openclaw | all" >&2
-    exit 1
-    ;;
-esac
+if [ "$REMOVE" = true ]; then
+  remove_rules "$subnet" "mcp"
+else
+  apply_rules "$subnet" "mcp"
+fi
 
 echo "Done. Verify: sudo iptables -L DOCKER-USER -n -v"
 if [ "$REMOVE" = false ]; then

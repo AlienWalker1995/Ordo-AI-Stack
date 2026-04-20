@@ -260,7 +260,7 @@ def create_schedule(
     workflow_id: str | None = None,
     params_json: str = "{}",
 ) -> dict:
-    """Schedule a recurring ComfyUI workflow run using a cron expression (e.g. '0 9 * * *' = 9am daily). NOTE: This is for orchestration workflows only, not OpenClaw cron jobs. CRITICAL: Provide the raw ID only. Do NOT include the 'gateway__' prefix or any other namespace prefix."""
+    """Schedule a recurring ComfyUI workflow run using a cron expression (e.g. '0 9 * * *' = 9am daily). CRITICAL: Provide the raw ID only. Do NOT include the 'gateway__' prefix or any other namespace prefix."""
     try:
         params = json.loads(params_json) if params_json else {}
     except json.JSONDecodeError as e:
@@ -276,7 +276,7 @@ def create_schedule(
 
 @mcp.tool()
 def list_schedules() -> dict:
-    """List orchestration workflow schedules (ComfyUI jobs). NOTE: This does NOT list OpenClaw cron jobs — those live in data/openclaw/cron/jobs.json and are managed via OpenClaw's built-in cron API."""
+    """List orchestration workflow schedules (ComfyUI jobs)."""
     return _get("/api/orchestration/schedules")
 
 

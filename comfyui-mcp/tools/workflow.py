@@ -1,7 +1,7 @@
 """Workflow management tools for ComfyUI MCP Server (Ordo AI Stack overlay).
 
 Upstream: joenorton/comfyui-mcp-server — patched so `run_workflow` accepts the
-flat args shape OpenClaw models often send (prompt/width/height at top level
+flat args shape many models send (prompt/width/height at top level
 without `workflow_id` or nested `overrides`), and optional default workflow_id
 via COMFY_MCP_DEFAULT_WORKFLOW_ID.
 """

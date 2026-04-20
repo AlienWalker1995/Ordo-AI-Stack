@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # start-hermes-host.sh — Single-command bootstrap for host-mode Hermes Agent.
 # Installs Hermes (if missing), starts Docker infrastructure, launches Hermes CLI.
-# Mirrors scripts/start-openclaw-host.sh; Hermes and OpenClaw must not run simultaneously.
 set -eu
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -46,9 +45,6 @@ HERMES_BIN="$HERMES_BIN_POSIX"
 # ── Phase 5: Start Docker infrastructure ──
 echo "==> Starting Docker stack..."
 docker compose up -d
-# Defensive: Hermes and OpenClaw share the model-gateway; run only one at a time.
-docker compose stop openclaw-gateway openclaw-ui-proxy 2>/dev/null || true
-pkill -f "openclaw gateway" 2>/dev/null || true
 
 # ── Phase 6: Wait for services ──
 echo "==> Waiting for services..."

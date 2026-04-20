@@ -1,6 +1,6 @@
 """ComfyUI system state tools — direct HTTP queries to ComfyUI's API.
 
-Gives OpenClaw (and other MCP clients) full visibility into ComfyUI state:
+Gives MCP clients full visibility into ComfyUI state:
 GPU/VRAM usage, queue status, execution history, installed models, extensions,
 and node definitions.
 """

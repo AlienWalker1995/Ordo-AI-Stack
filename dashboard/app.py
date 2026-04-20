@@ -394,7 +394,7 @@ async def _do_set_active_model(req: PullRequest, request: Request):
     results: dict = {}
     errors: list[str] = []
 
-    # Switch LLAMACPP_MODEL + recreate llamacpp. Every consumer (OpenWebUI, OpenClaw,
+    # Switch LLAMACPP_MODEL + recreate llamacpp. Every consumer (OpenWebUI,
     # OpenClaude on remote devices) uses the canonical 'local-chat' alias from the
     # model-gateway, so there's nothing else to update.
     code, data = await _ops_request(

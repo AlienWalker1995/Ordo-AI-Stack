@@ -69,7 +69,7 @@ def test_mcp_servers_registry_allow_clients_structure():
          patch("dashboard.app._read_mcp_registry", return_value={
              "servers": {
                  "duckduckgo": {"allow_clients": ["*"], "scopes": ["search"]},
-                 "github-official": {"allow_clients": ["openclaw", "dashboard"], "env_schema": {"GITHUB_PERSONAL_ACCESS_TOKEN": "required"}},
+                 "github-official": {"allow_clients": ["dashboard"], "env_schema": {"GITHUB_PERSONAL_ACCESS_TOKEN": "required"}},
              }
          }):
         r = client.get("/api/mcp/servers")
@@ -77,4 +77,4 @@ def test_mcp_servers_registry_allow_clients_structure():
     reg = r.json().get("registry", {})
     assert "duckduckgo" in reg.get("servers", {})
     assert reg["servers"]["duckduckgo"].get("allow_clients") == ["*"]
-    assert reg["servers"]["github-official"].get("allow_clients") == ["openclaw", "dashboard"]
+    assert reg["servers"]["github-official"].get("allow_clients") == ["dashboard"]

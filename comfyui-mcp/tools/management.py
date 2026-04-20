@@ -1,6 +1,6 @@
 """Ordo AI Stack: ComfyUI stack management tools (MCP) — ops-controller for pip + restart.
 
-OpenClaw and other clients use the same paradigm as other MCP tools: gateway__call with
+MCP clients use the same paradigm as other MCP tools: gateway__call with
 inner tool names install_custom_node_requirements / restart_comfyui (or flat gateway__comfyui__*).
 """
 

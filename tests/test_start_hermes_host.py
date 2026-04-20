@@ -52,12 +52,6 @@ def test_script_references_expected_paths():
     assert "docker compose up -d" in script
 
 
-def test_script_stops_openclaw_defensively():
-    """Operator runs Hermes OR OpenClaw — never both. Script stops any in-flight OpenClaw."""
-    script = SCRIPT.read_text(encoding="utf-8")
-    assert "openclaw-gateway" in script, "script should stop openclaw-gateway if running"
-
-
 def test_env_example_has_hermes_section():
     text = ENV_EXAMPLE.read_text(encoding="utf-8")
     assert "Hermes Agent" in text

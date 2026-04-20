@@ -1,6 +1,6 @@
-# Doctor: quick health probes + optional openclaw.json validation (M7).
+# Doctor: quick health probes for Ordo AI Stack.
 # Usage: .\scripts\doctor.ps1
-# Env: MODEL_GATEWAY_URL, MCP_GATEWAY_URL, DASHBOARD_URL, OPENCLAW_CONFIG_PATH, ORDO_AI_STACK_ROOT
+# Env: MODEL_GATEWAY_URL, MCP_GATEWAY_URL, DASHBOARD_URL, ORDO_AI_STACK_ROOT
 #      DOCTOR_DEPS_TIMEOUT_SEC - max seconds for GET /api/dependencies (default 120; many sequential probes)
 #      DOCTOR_STRICT=1 - treat optional Ollama/MCP host probes as FAIL if unreachable (default: WARN only)
 
@@ -172,10 +172,6 @@ Test-ProbeReady "model-gateway /ready"       "$mg/ready"
 Write-Host "==> Probes (optional: Ollama/MCP on localhost only if you use expose overrides)"
 Test-ProbeOptionalBackendHost "ollama /api/version" "$ollama/api/version" "See overrides/ollama-expose.yml"
 Test-ProbeMcpGatewayHost "mcp-gateway /mcp" "$mcp/mcp" "See overrides/mcp-expose.yml"
-
-Write-Host "==> OpenClaw config validation"
-& python (Join-Path $ScriptDir "validate_openclaw_config.py")
-if ($LASTEXITCODE -ne 0) { $fail = 1 }
 
 if ($fail -ne 0) {
     Write-Host "==> doctor FAILED" -ForegroundColor Red

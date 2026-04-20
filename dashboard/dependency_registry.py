@@ -31,7 +31,7 @@ async def _probe_one(
         latency_ms = (time.perf_counter() - t0) * 1000.0
         ok = 200 <= r.status_code < 300
         # MCP Streamable HTTP: a bare GET to /mcp is invalid; server often returns 400
-        # (e.g. missing Mcp-Session-Id). OpenClaw still reaches it via POST/SSE — treat as up.
+        # (e.g. missing Mcp-Session-Id). Clients still reach it via POST/SSE — treat as up.
         if (
             not ok
             and entry_id == "mcp-gateway"
