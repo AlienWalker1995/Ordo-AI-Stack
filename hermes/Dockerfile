@@ -53,6 +53,13 @@ WORKDIR /opt/hermes-agent
 RUN uv venv --python 3.11 \
     && uv pip install -e ".[all]"
 
+# Ordo AI Stack patch: replace SQLite journal_mode=WAL with DELETE across all
+# Hermes DB handles. WAL mode requires mmap/shared-memory features that don't
+# work reliably on Docker Desktop Windows bind mounts (9p/virtiofs filesystem).
+# DELETE mode is slower but works on any POSIX-ish filesystem.
+RUN find /opt/hermes-agent -type f -name "*.py" -not -path "*/tests/*" -not -path "*/.venv/*" \
+    -exec sed -i 's/PRAGMA journal_mode=WAL/PRAGMA journal_mode=DELETE/g' {} +
+
 # Web UI — copy built SPA from stage 1.
 COPY --from=web-builder --chown=hermes:hermes \
     /build/hermes-agent/hermes_cli/web_dist/ \

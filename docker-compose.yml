@@ -655,7 +655,11 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
     volumes:
       - ${BASE_PATH:-.}:/workspace:rw
-      - ${DATA_PATH:-${BASE_PATH:-.}/data}/hermes:/home/hermes/.hermes:rw
+      # Named Docker volume — Windows Docker Desktop bind mounts (9p/virtiofs)
+      # don't support SQLite WAL/DELETE journaling reliably. A named volume lives
+      # on the Linux VM's ext4 filesystem where SQLite works normally.
+      # Inspect with: docker run --rm -v ordo-ai-stack_hermes-data:/d alpine ls /d
+      - hermes-data:/home/hermes/.hermes
     healthcheck:
       # gateway_state.json is written by `hermes gateway` on startup (Docker-mode
       # doesn't create a gateway.pid — that's only for systemd/launchd installs).
@@ -697,7 +701,11 @@ services:
       - HERMES_WEB_DIST=/opt/hermes-agent/hermes_cli/web_dist
     volumes:
       - ${BASE_PATH:-.}:/workspace:rw
-      - ${DATA_PATH:-${BASE_PATH:-.}/data}/hermes:/home/hermes/.hermes:rw
+      # Named Docker volume — Windows Docker Desktop bind mounts (9p/virtiofs)
+      # don't support SQLite WAL/DELETE journaling reliably. A named volume lives
+      # on the Linux VM's ext4 filesystem where SQLite works normally.
+      # Inspect with: docker run --rm -v ordo-ai-stack_hermes-data:/d alpine ls /d
+      - hermes-data:/home/hermes/.hermes
     ports:
       - "${HERMES_DASHBOARD_PORT:-9119}:9119"
     healthcheck:
@@ -717,6 +725,13 @@ services:
     # --insecure: Hermes rejects 0.0.0.0 binding without it. Safe here because the
     # port mapping gates external access; internal Docker network is trusted.
     command: ["hermes", "dashboard", "--port", "9119", "--host", "0.0.0.0", "--no-open", "--insecure"]
+
+volumes:
+  # Persistent SQLite + config + sessions for Hermes Agent.
+  # Named volume (not bind mount) because Windows Docker Desktop's bind mount
+  # filesystem breaks SQLite journal operations. Inspect with:
+  #   docker run --rm -v ordo-ai-stack_hermes-data:/d alpine ls /d
+  hermes-data:
 
 networks:
   frontend:
