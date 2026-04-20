@@ -37,6 +37,18 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && mv /root/.local/bin/uv /usr/local/bin/uv \
     && mv /root/.local/bin/uvx /usr/local/bin/uvx
 
+# Docker CLI + compose plugin — lets Hermes run `docker exec`, `docker ps`,
+# `docker compose ...` against the host daemon (via the mounted /var/run/docker.sock).
+# Download static binaries (docker.io apt package doesn't always ship the client).
+RUN curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-26.1.4.tgz" \
+      -o /tmp/docker.tgz \
+    && tar -xzf /tmp/docker.tgz -C /tmp \
+    && mv /tmp/docker/docker /usr/local/bin/docker \
+    && rm -rf /tmp/docker /tmp/docker.tgz \
+    && curl -fsSL "https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64" \
+       -o /usr/local/bin/docker-compose \
+    && chmod +x /usr/local/bin/docker /usr/local/bin/docker-compose
+
 # Non-root user (uid 1000 matches other stack services).
 RUN useradd -m -u 1000 -s /bin/bash hermes
 

@@ -632,6 +632,12 @@ services:
     image: ordo-ai-stack-hermes:latest
     pull_policy: build
     restart: unless-stopped
+    # Root group grants access to /var/run/docker.sock (root:root mode 660 on
+    # Docker Desktop). Lets Hermes run `docker exec`, `docker ps`, `docker compose`
+    # against the stack without running the container itself as root.
+    # Security note: any user in DISCORD_ALLOWED_USERS effectively has root on
+    # any stack container via Hermes prompt injection. Keep that allowlist tight.
+    group_add: ["0"]
     depends_on:
       model-gateway:
         condition: service_healthy
@@ -660,6 +666,10 @@ services:
       # on the Linux VM's ext4 filesystem where SQLite works normally.
       # Inspect with: docker run --rm -v ordo-ai-stack_hermes-data:/d alpine ls /d
       - hermes-data:/home/hermes/.hermes
+      # Docker socket — lets Hermes manage the stack via `docker`, `docker exec`,
+      # `docker compose`. Requires group_add:["0"] above so the non-root hermes
+      # user can read the socket (root:root mode 660 on Docker Desktop).
+      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       # gateway_state.json is written by `hermes gateway` on startup (Docker-mode
       # doesn't create a gateway.pid — that's only for systemd/launchd installs).
