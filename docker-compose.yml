@@ -115,6 +115,9 @@ services:
     restart: unless-stopped
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
+    # Add appuser to root group so it can read /var/run/docker.sock (root:root on Docker Desktop).
+    # Avoids needing root-at-start or a chmod-on-entry script.
+    group_add: ["0"]
     environment:
       - COMPOSE_PROJECT_DIR=/workspace
       - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:-}
