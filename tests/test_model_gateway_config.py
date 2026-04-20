@@ -21,8 +21,12 @@ def test_litellm_config_advertises_canonical_model_names():
     assert 'api_base: "http://llamacpp:8080/v1"' in config_text
     assert 'api_base: "http://llamacpp-embed:8080/v1"' in config_text
 
-    # Master key still templated for entrypoint substitution.
+    # Master key and context size still templated for entrypoint substitution.
     assert "__MASTER_KEY__" in config_text
+    assert "__CTX_SIZE__" in config_text
+
+    # model_info advertises context window from LLAMACPP_CTX_SIZE.
+    assert "max_input_tokens: __CTX_SIZE__" in config_text
 
     # Old templated GGUF placeholders are gone.
     assert "__CHAT_MODEL__" not in config_text

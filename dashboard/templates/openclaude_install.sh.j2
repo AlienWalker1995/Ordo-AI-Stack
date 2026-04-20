@@ -68,6 +68,19 @@ cat > "$WRAPPER" <<ENDWRAPPER
 export CLAUDE_CONFIG_DIR="\$HOME/.openclaude"
 export OPENAI_BASE_URL="${MODEL_GATEWAY}"
 export OPENAI_API_KEY="${MASTER_KEY}"
+export CLAUDE_CODE_USE_OPENAI=1
+
+# Query the gateway for the live context window (single source of truth: LLAMACPP_CTX_SIZE).
+_ctx=\$(curl -sf -H "Authorization: Bearer \$OPENAI_API_KEY" \\
+       "\${OPENAI_BASE_URL%/v1}/model/info" 2>/dev/null \\
+     | sed -n 's/.*"max_input_tokens"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' \\
+     | head -1)
+if [ -n "\$_ctx" ] && [ "\$_ctx" -gt 0 ] 2>/dev/null; then
+  _headroom=\$(( _ctx - 8192 ))
+  _ninety=\$(( _ctx * 9 / 10 ))
+  export CLAUDE_CODE_AUTO_COMPACT_WINDOW=\$(( _headroom > _ninety ? _headroom : _ninety ))
+fi
+
 exec openclaude --model local-chat "\$@"
 ENDWRAPPER
 chmod +x "$WRAPPER"

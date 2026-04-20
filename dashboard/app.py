@@ -143,7 +143,6 @@ async def auth_middleware(request: Request, call_next):
         "/api/dependencies",
         "/api/auth/config",
         "/api/hardware",
-        "/api/hardware/gpu-processes",
         "/api/throughput/stats",
         "/api/throughput/service-usage",
         "/api/rag/status",
@@ -843,14 +842,21 @@ async def comfyui_packs():
         packs = {}
         for name, pack in config.get("packs", {}).items():
             models = pack.get("models", [])
-            installed_count = sum(
-                1 for m in models
-                if (m.get("dest", "checkpoints"), Path(m["file"].replace("{quant}", default_quant)).name) in installed
-            )
+            resolved_files = []
+            installed_count = 0
+            for m in models:
+                category = m.get("dest", "checkpoints")
+                filename = Path(m["file"].replace("{quant}", default_quant)).name
+                resolved_files.append({"category": category, "name": filename})
+                if (category, filename) in installed:
+                    installed_count += 1
+
             packs[name] = {
                 "description": pack.get("description", ""),
+                "capability": pack.get("capability", "other"),
                 "model_count": len(models),
                 "installed_count": installed_count,
+                "files": resolved_files,
             }
         return {"packs": packs, "defaults": config.get("defaults", {}).get("packs", []), "ok": True}
     except Exception as e:
@@ -2011,113 +2017,6 @@ async def rag_status():
 BASE_PATH_ENV = os.environ.get("BASE_PATH", "/")
 
 
-def _pid_to_service_label(pid: int) -> str:
-    """Map a host PID to a human-readable service label via psutil cmdline.
-
-    Requires the dashboard container to run with ``pid: host`` so that
-    /proc/<host_pid> is accessible from within the container.
-    """
-    try:
-        proc = psutil.Process(pid)
-        cmdline = " ".join(proc.cmdline()).lower()
-        name = proc.name().lower()
-    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-        return f"pid:{pid}"
-
-    if "llama-server" in cmdline or "llama_server" in cmdline:
-        return "LLM"
-    if "comfyui" in cmdline:
-        return "ComfyUI"
-    if "embed" in name or "embed" in cmdline:
-        return "Embed"
-    if "python" in name:
-        return "Python"
-    return name[:12] if name else f"pid:{pid}"
-
-
-def _gpu_processes() -> dict:
-    """Per-process VRAM allocation via pynvml + psutil.
-
-    Requires the dashboard container to have ``pid: host`` set in
-    overrides/compute.yml so that psutil can read host-level /proc entries.
-    Returns an empty processes list (not an error) when pynvml is unavailable.
-
-    On Windows/WSL2 (WDDM drivers), per-process VRAM is unavailable (returns
-    None). In that case, falls back to showing aggregate used VRAM as a single
-    "GPU" entry so the compute pressure section still displays useful info.
-    """
-    import pynvml
-    pynvml.nvmlInit()
-    try:
-        h = pynvml.nvmlDeviceGetHandleByIndex(0)
-        mi = pynvml.nvmlDeviceGetMemoryInfo(h)
-        ut = pynvml.nvmlDeviceGetUtilizationRates(h)
-        total_b = int(mi.total)
-        used_b_total = int(mi.used)
-
-        # Collect both compute and graphics processes
-        seen_pids: set[int] = set()
-        raw_procs = []
-        for getter in (pynvml.nvmlDeviceGetComputeRunningProcesses,
-                       pynvml.nvmlDeviceGetGraphicsRunningProcesses):
-            try:
-                for p in getter(h):
-                    if p.pid not in seen_pids:
-                        seen_pids.add(p.pid)
-                        raw_procs.append(p)
-            except pynvml.NVMLError:
-                pass
-
-        processes = []
-        has_per_process_vram = False
-        for p in raw_procs:
-            pid = p.pid
-            mem = getattr(p, "usedGpuMemory", None) or getattr(p, "used_gpu_memory", None)
-            if mem is not None and int(mem) > 0:
-                has_per_process_vram = True
-            used_b = int(mem) if mem is not None else 0
-            processes.append({
-                "label": _pid_to_service_label(pid),
-                "pid": pid,
-                "vram_gb": round(used_b / 1e9, 1),
-                "vram_pct": round(used_b / total_b * 100, 1) if total_b > 0 else 0.0,
-            })
-
-        if not has_per_process_vram and used_b_total > 0:
-            # Windows/WSL2 fallback: show aggregate used VRAM as single entry
-            processes = [{
-                "label": "GPU",
-                "pid": 0,
-                "vram_gb": round(used_b_total / 1e9, 1),
-                "vram_pct": round(used_b_total / total_b * 100, 1) if total_b > 0 else 0.0,
-            }]
-        else:
-            processes.sort(key=lambda x: x["vram_gb"], reverse=True)
-
-        return {
-            "total_gb": round(total_b / 1e9, 1),
-            "used_gb": round(used_b_total / 1e9, 1),
-            "utilization_pct": int(ut.gpu),
-            "processes": processes,
-        }
-    finally:
-        pynvml.nvmlShutdown()
-
-
-@app.get("/api/hardware/gpu-processes")
-async def gpu_processes():
-    """Per-process GPU VRAM allocation. No auth required (read-only).
-
-    Requires ``pid: host`` on the dashboard container (overrides/compute.yml).
-    Returns empty processes list when pynvml is unavailable rather than 500.
-    """
-    try:
-        return await asyncio.to_thread(_gpu_processes)
-    except Exception as e:
-        logger.debug("GPU process stats unavailable: %s", e)
-        return {"total_gb": 0.0, "used_gb": 0.0, "utilization_pct": 0, "processes": []}
-
-
 def _nvml_vram_to_gpu_dict(
     name: str,
     used_b: int,
@@ -2183,6 +2082,80 @@ async def hardware_stats():
         "disk_total_gb": disk_total_gb,
         "disk_pct": disk_pct,
         "gpu": gpu,
+    }
+
+@app.get("/api/hardware/service-pressure")
+async def service_pressure():
+    """Per-service compute pressure (CPU/RAM/VRAM). No auth — read-only, like /api/hardware."""
+    from dashboard.services_catalog import SERVICES, OPS_SERVICE_MAP
+
+    ops_url = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000").rstrip("/")
+    token = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+    host_info = {
+        "cpu_cores": psutil.cpu_count() or 0,
+        "ram_total_gb": round(psutil.virtual_memory().total / 1e9, 1),
+    }
+
+    def _empty_payload():
+        services_out = [{
+            "id": s["id"], "name": s["name"],
+            "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
+            "vram_gb": 0.0, "vram_pct": 0.0,
+            "has_gpu": bool(s.get("has_gpu", False)),
+            "running": False,
+        } for s in SERVICES]
+        return {"gpu": None, "host": host_info, "services": services_out, "vram_aggregate_unavailable": True}
+
+    try:
+        async with _httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{ops_url}/stats/services", headers=headers)
+            if r.status_code != 200:
+                return _empty_payload()
+            raw = r.json()
+    except (_httpx.RequestError, OSError) as e:
+        logger.debug("service-pressure: ops-controller unreachable: %s", e)
+        return _empty_payload()
+
+    raw_services: dict = raw.get("services") or {}
+    catalog = {s["id"]: s for s in SERVICES}
+    compose_to_display = {v: k for k, v in OPS_SERVICE_MAP.items()}
+
+    services_out: list[dict] = []
+    for compose_id, row in raw_services.items():
+        display_id = compose_to_display.get(compose_id, compose_id)
+        cat = catalog.get(display_id)
+        services_out.append({
+            "id": display_id,
+            "name": (cat or {}).get("name") or compose_id,
+            "cpu_pct": float(row.get("cpu_pct") or 0.0),
+            "mem_gb": float(row.get("mem_gb") or 0.0),
+            "mem_pct": float(row.get("mem_pct") or 0.0),
+            "vram_gb": float(row.get("vraam_gb") or 0.0),
+            "vram_pct": float(row.get("vraam_pct") or 0.0),
+            "has_gpu": bool((cat or {}).get("has_gpu", False)),
+            "running": bool(row.get("running", False)),
+        })
+    seen = {s["id"] for s in services_out}
+    for cid, cat in catalog.items():
+        if cid not in seen:
+            services_out.append({
+                "id": cid, "name": cat["name"],
+                "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
+                "vram_gb": 0.0, "vram_pct": 0.0,
+                "has_gpu": bool(cat.get("has_gpu", False)),
+                "running": False,
+            })
+    services_out.sort(
+        key=lambda s: max(s["cpu_pct"], s["mem_pct"], s["vraam_pct"]),
+        reverse=True,
+    )
+    return {
+        "gpu": raw.get("gpu"),
+        "host": host_info,
+        "services": services_out,
+        "vraam_aggregate_unavailable": bool(raw.get("vraam_aggregate_unavailable", False)),
     }
 
 

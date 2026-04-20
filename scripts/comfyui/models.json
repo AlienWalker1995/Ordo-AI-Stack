@@ -2,6 +2,7 @@
   "_comment": "ComfyUI model packs. Select packs via COMFYUI_PACKS env var (comma-separated). Default packs listed in defaults.packs. {quant} replaced by COMFYUI_QUANT (default: Q4_K_M).",
   "packs": {
     "ltx-2.3-fp8": {
+      "capability": "video",
       "description": "LTX-2.3 22B dev — fp8 safetensors checkpoint (29 GB)",
       "models": [
         {
@@ -14,6 +15,7 @@
       ]
     },
     "ltx-2.3-gguf": {
+      "capability": "video",
       "description": "LTX-2.3 22B dev — GGUF quantized (for ComfyUI GGUF loader nodes)",
       "models": [
         {
@@ -47,6 +49,7 @@
       ]
     },
     "ltx-2.3-extras": {
+      "capability": "video",
       "description": "LTX-2.3 extras — distilled LoRA + spatial upscaler",
       "models": [
         {
@@ -66,6 +69,7 @@
       ]
     },
     "gemma-3-text-encoder-fp4": {
+      "capability": "encoder",
       "description": "Gemma 3 12B text encoder — fp4 mixed quantized (9.5 GB, from Comfy-Org)",
       "models": [
         {
@@ -78,6 +82,7 @@
       ]
     },
     "gemma-3-text-encoder-gguf": {
+      "capability": "encoder",
       "description": "Gemma 3 12B text encoder — GGUF quantized (for GGUF workflows)",
       "models": [
         {
@@ -97,6 +102,7 @@
       ]
     },
     "gemma-3-abliterated-lora": {
+      "capability": "encoder",
       "description": "Gemma 3 12B abliterated LoRA — uncensored text encoder addon (628 MB)",
       "models": [
         {
@@ -109,6 +115,7 @@
       ]
     },
     "sd15": {
+      "capability": "image",
       "description": "SD 1.5 v1-5-pruned-emaonly — lightweight checkpoint for basic image generation (4 GB)",
       "models": [
         {
@@ -121,6 +128,7 @@
       ]
     },
     "sd35-medium": {
+      "capability": "image",
       "description": "SD 3.5 Medium FP8 — higher quality than SD 1.5, all-in-one with text encoders (11.6 GB). Use for blog images.",
       "models": [
         {
@@ -133,6 +141,7 @@
       ]
     },
     "sdxl": {
+      "capability": "image",
       "description": "SDXL Base 1.0 — higher quality than SD 1.5, detailed illustrations (6.5 GB). Use for blog images.",
       "models": [
         {
@@ -145,6 +154,7 @@
       ]
     },
     "flux-schnell": {
+      "capability": "image",
       "description": "Flux.1-schnell — 12B param, 1–4 steps, Apache 2.0. Best quality for blog images. FP8 = 17 GB.",
       "models": [
         {
@@ -157,6 +167,7 @@
       ]
     },
     "flux1-dev": {
+      "capability": "image",
       "description": "FLUX.1 [dev] — 12B param, higher quality than schnell. Gated model — HF_TOKEN required. FP8 = 17 GB.",
       "models": [
         {
@@ -169,6 +180,7 @@
       ]
     },
     "flux1-dev-gguf": {
+      "capability": "image",
       "description": "FLUX.1 [dev] GGUF workflow — T5 XXL + UNet GGUF (city96) + ae.safetensors (ffxvs/vae-flux mirror; same weights as BFL, ~335 MB). ~22 GB total. UNet path: models/unet/FLUX/flux1-dev-Q5_K_S.gguf (matches workflows using FLUX/flux1-dev-Q5_K_S.gguf).",
       "models": [
         {
@@ -195,6 +207,7 @@
       ]
     },
     "ltx-2.3-t2v-basic": {
+      "capability": "video",
       "description": "Weights for bundled LTX-2.3_*_Basic workflows (fpmixed Gemma + Kijai VAE/UNET/projection paths). ~40+ GB.",
       "models": [
         {
@@ -244,6 +257,7 @@
       ]
     },
     "flux2-dev-gguf": {
+      "capability": "image",
       "description": "FLUX.2 [dev] GGUF — best local image model (April 2026). Q5_K_S UNET + Flux 2 VAE + Turbo LoRA. ~26 GB total.",
       "models": [
         {
@@ -272,6 +286,7 @@
       ]
     },
     "flux2-text-encoder": {
+      "capability": "encoder",
       "description": "Mistral 3 Small text encoder for FLUX.2 — fp8 quantized (18 GB). Required for Flux 2 workflows.",
       "models": [
         {
@@ -285,6 +300,7 @@
       ]
     },
     "gemma-4-text-encoder": {
+      "capability": "encoder",
       "description": "Gemma 4 E4B text encoder — fp8 quantized (9 GB). Latest text encoder from Comfy-Org.",
       "models": [
         {
@@ -298,6 +314,7 @@
       ]
     },
     "supir-upscaler": {
+      "capability": "upscale",
       "description": "SUPIR upscaler (Kijai pruned) — best quality upscaling, replaces 4x-UltraSharp. 2.7 GB each.",
       "models": [
         {
@@ -317,6 +334,7 @@
       ]
     },
     "scooby-doo-game-assets": {
+      "capability": "style",
       "description": "Scooby-Doo merge board game asset workflows — 90s hand-drawn cartoon LoRA (PetkaV3), 2D game assets LoRA (GRPZA), and 4x-UltraSharp upscaler",
       "models": [
         {

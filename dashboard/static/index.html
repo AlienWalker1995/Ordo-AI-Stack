@@ -1394,24 +1394,9 @@
             <div id="openclaw-sync-status" class="openclaw-sync-status" aria-live="polite"></div>
           </div>
         </div>
-        <div class="model-panel">
+        <div class="model-panel" id="comfyui-capability-panel">
           <h3>ComfyUI — diffusion models</h3>
-          <div class="model-list" id="comfyui-models">
-            <div class="skeleton skeleton-line"></div>
-            <div class="skeleton skeleton-line short"></div>
-          </div>
-          <div class="pull-area">
-            <div id="comfyui-packs" style="margin-bottom:var(--space-3);">
-              <div class="skeleton skeleton-line" style="width:70%"></div>
-              <div class="skeleton skeleton-line" style="width:55%"></div>
-            </div>
-            <div class="pull-row">
-              <button id="comfyui-pull">Download Selected Packs</button>
-            </div>
-            <div id="comfyui-progress" class="progress-area" style="display:none;" role="region" aria-label="ComfyUI pull progress">
-              <div class="log" id="comfyui-log" role="log" aria-live="polite"></div>
-            </div>
-          </div>
+          <div id="comfyui-panel-root"></div>
         </div>
       </div>
     </section>
@@ -1540,7 +1525,6 @@
     let mcpEnabled = [];
     let mcpCatalog = [];
     let mcpDynamic = false;
-    const comfyuiOpenCategories = new Set();
 
     function escapeHtml(s) {
       const div = document.createElement('div');
@@ -1804,7 +1788,58 @@
                   body{margin:0;background:#020307;color:#dde2ee;font-family:'JetBrains Mono',monospace;font-size:12px}
                   pre{padding:1.5rem;white-space:pre-wrap;word-break:break-all;line-height:1.6;margin:0}
                   .bar{position:sticky;top:0;padding:8px 16px;background:#07080e;border-bottom:1px solid #1c1f2e;font-size:13px;font-weight:600;color:#00c9ff;letter-spacing:.04em}
-                </style></head><body><div class="bar">${escapeHtml(id)} — last 100 lines</div><pre>${escapeHtml(d.logs)}</pre></body></html>`);
+                /* ── ComfyUI Capability Panel ── */
+    .comfyui-capability-panel {
+      display: flex; flex-direction: column; gap: var(--space-4);
+    }
+    .capability-group {
+      display: flex; flex-direction: column; gap: var(--space-2);
+    }
+    .capability-header {
+      font-family: var(--font-display); font-size: var(--text-xs);
+      font-weight: 700; text-transform: uppercase; letter-spacing: .1em;
+      color: var(--muted); margin-bottom: var(--space-1);
+      display: flex; align-items: center; gap: var(--space-2);
+    }
+    .capability-header::before {
+      content: ''; width: 2px; height: 1em; background: var(--accent); border-radius: 1px;
+    }
+    .capability-items {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-2);
+    }
+    .capability-item {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3);
+      font-size: var(--text-sm); color: var(--fg);
+      display: flex; align-items: center; justify-content: space-between;
+      transition: border-color .2s, background .2s; cursor: default;
+    }
+    .capability-item:hover { border-color: rgba(0,201,255,0.3); background: var(--surface-hover); }
+    .capability-item .item-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .capability-item .item-size { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg-muted); }
+
+    /* Disk Usage Bar */
+    .disk-usage-container {
+      margin-bottom: var(--space-4); padding: var(--space-3);
+      background: var(--bg-elevated); border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+    }
+    .disk-usage-label {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: var(--text-xs); font-family: var(--font-mono);
+      color: var(--fg-muted); margin-bottom: var(--space-2);
+    }
+    .disk-usage-bar {
+      height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;
+    }
+    .disk-usage-fill {
+      height: 100%; background: var(--accent); transition: width .4s ease;
+      box-shadow: 0 0 8px var(--accent);
+    }
+    .disk-usage-fill.warning { background: var(--warning); box-shadow: 0 0 8px var(--warning); }
+    .disk-usage-fill.danger { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+
+    </style></head><body><div class="bar">${escapeHtml(id)} — last 100 lines</div><pre>${escapeHtml(d.logs)}</pre></body></html>`);
                 win.document.close();
               } else {
                 toast((d.detail || 'No logs') + '', 'error');
@@ -2218,6 +2253,73 @@
       } finally {
         loadingEl.style.display = 'none';
         btn.disabled = false;
+      }
+    }
+
+    async function loadComfyuiPanel() {
+      const root = document.getElementById('comfyui-panel-root');
+      if (!root) return;
+      try {
+        const r = await api('/api/comfyui/models');
+        const d = await r.json();
+        if (!d.ok || !d.models?.length) {
+          root.innerHTML = '<div class="empty">No ComfyUI models installed.</div>';
+          return;
+        }
+
+        const models = d.models;
+        const totalBytes = models.reduce((sum, m) => sum + Number(m.size_bytes || 0), 0);
+        const limit = 100 * 1024 * 1024 * 1024;
+        const pct = Math.min(100, (totalBytes / limit) * 100);
+        let fillClass = '';
+        if (pct >= 90) fillClass = 'danger';
+        else if (pct >= 75) fillClass = 'warning';
+
+        const byCat = {};
+        models.forEach(m => {
+          const cat = m.category || 'Uncategorized';
+          if (!byCat[cat]) byCat[cat] = [];
+          byCat[cat].push(m);
+        });
+
+        const sortedCats = Object.keys(byCat).sort();
+        let html = `
+          <div class="comfyui-capability-panel">
+            <div class="disk-usage-container">
+              <div class="disk-usage-label">
+                <span>ComfyUI Model Storage</span>
+                <span class="deps-mono">${formatSize(totalBytes)} / 100 GB</span>
+              </div>
+              <div class="disk-usage-bar">
+                <div class="disk-usage-fill ${fillClass}" style="width: ${pct}%"></div>
+              </div>
+            </div>
+            <div class="capability-groups">
+        `;
+
+        sortedCats.forEach(cat => {
+          const catModels = byCat[cat].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+          html += `
+            <div class="capability-group">
+              <div class="capability-header">
+                ${escapeHtml(cat.replace(/_/g, ' '))}
+              </div>
+              <div class="capability-items">
+                ${catModels.map(m => `
+                  <div class="capability-item">
+                    <span class="item-name" title="${escapeHtml(m.name)}">${escapeHtml(m.name)}</span>
+                    <span class="item-size">${formatSize(Number(m.size_bytes || 0))}</span>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          `;
+        });
+
+        html += `</div></div>`;
+        root.innerHTML = html;
+      } catch (e) {
+        root.innerHTML = '<div class="empty">Failed to load ComfyUI capabilities.</div>';
       }
     }
 
@@ -2649,7 +2751,7 @@
       btn.classList.add('loading');
       try {
         if (!ollamaLibrary.length) await loadOllamaLibrary();
-        await Promise.all([loadServices(), loadDependencies(), loadRagStatus(), loadOllamaModels(), loadComfyuiModels(), loadComfyuiPacks(), loadMcpServers()]);
+        await Promise.all([loadServices(), loadDependencies(), loadRagStatus(), loadOllamaModels(), loadComfyuiModels(), loadComfyuiPacks(), loadMcpServers(), loadComfyuiPanel()]);
         await Promise.all([loadThroughputStats(), loadThroughputServiceUsage(), loadPerfKPIs()]);
       } finally {
         btn.classList.remove('loading');
@@ -2898,40 +3000,6 @@
     }
 
     async function resumeActivePulls() {
-      // ComfyUI — resume polling if a pull is in progress
-      try {
-        const s = await api('/api/comfyui/pull/status').then(r => r.json());
-        if (s.running) {
-          const btn = document.getElementById('comfyui-pull');
-          const prog = document.getElementById('comfyui-progress');
-          const logEl = document.getElementById('comfyui-log');
-          btn.disabled = true;
-          prog.style.display = 'block';
-          let resumePollErrors = 0;
-          const poll = () => api('/api/comfyui/pull/status').then(r => r.json()).then(s => {
-            resumePollErrors = 0;
-            logEl.textContent = s.output || 'Preparing...';
-            logEl.scrollTop = logEl.scrollHeight;
-            if (s.running) setTimeout(poll, 1500);
-            else {
-              logEl.textContent += '\n' + (s.success ? '✓ Done.' : '✗ Failed.');
-              toast(s.success ? 'Models ready' : 'Download failed', s.success ? 'success' : 'error');
-              btn.disabled = false;
-              loadComfyuiModels();
-              loadComfyuiPacks();
-            }
-          }).catch(() => {
-            if (++resumePollErrors >= 20) {
-              logEl.textContent += '\nConnection lost.';
-              btn.disabled = false;
-              return;
-            }
-            setTimeout(poll, 2000);
-          });
-          poll();
-        }
-      } catch (_) {}
-
       // Ollama — resume polling if a pull is in progress
       try {
         const s = await api('/api/ollama/pull/status').then(r => r.json());
@@ -3023,7 +3091,7 @@
           const vramBar = s.has_gpu && !d.vram_aggregate_unavailable
             ? `<div class="cp-bar-group">
                  <span class="cp-bar-label">VRAM</span>
-                 <div class="cp-bar-track"><div class="cp-bar-fill vram" style="width:${_cpBarFill(s.vram_pct)}"</div></div>
+                <div class="cp-bar-track"><div class="cp-bar-fill vram" style="width:${_cpBarFill(s.vram_pct)}"></div></div>
                </div>`
             : `<div class="cp-bar-group cp-bar-slot-empty">
                  <span class="cp-bar-label">VRAM</span>
