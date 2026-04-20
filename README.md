@@ -20,7 +20,7 @@ Docker Compose stack for local LLMs, chat UI, image/video (ComfyUI), automation 
 
 **Who it is for:** Operators running the stack on their own machine or LAN; contributors changing Python services, tests, and Compose definitions.
 
-**Docs:** [Getting started](docs/GETTING_STARTED.md) · [Configuration](docs/configuration.md) · [Docker runtime](docs/docker-runtime.md) · [Data](docs/data.md) · [Troubleshooting](docs/runbooks/TROUBLESHOOTING.md) · [Architecture index](docs/architecture/README.md) · [PRD](docs/Product%20Requirements%20Document.md)
+**Docs:** [Getting started](docs/GETTING_STARTED.md) · [Configuration](docs/configuration.md) · [Docker runtime](docs/docker-runtime.md) · [Data](docs/data.md) · [Troubleshooting](docs/runbooks/TROUBLESHOOTING.md) · [Architecture index](docs/architecture/README.md) · [PRD](docs/Product%20Requirements%20Document.md) · [Hermes Agent](docs/hermes-agent.md)
 
 ## Features
 
