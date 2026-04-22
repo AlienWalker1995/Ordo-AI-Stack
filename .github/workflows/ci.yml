@@ -50,15 +50,11 @@ jobs:
         run: |
           echo "BASE_PATH=." > .env
           echo "OPS_CONTROLLER_TOKEN=placeholder-for-ci" >> .env
-          echo "OPENCLAW_GATEWAY_TOKEN=placeholder-for-ci" >> .env
 
       - name: Run tests
         run: python -m pytest tests/ -v
         env:
           RUN_COMPOSE_SMOKE: "0"
-
-      - name: Validate OpenClaw config (fixture)
-        run: python scripts/validate_openclaw_config.py tests/fixtures/openclaw_valid.json
 
   compose-validate:
     name: Docker Compose validation
@@ -70,7 +66,6 @@ jobs:
         run: |
           # Create minimal .env for validation (BASE_PATH required)
           echo "BASE_PATH=." > .env
-          echo "OPENCLAW_GATEWAY_TOKEN=placeholder-for-ci" >> .env
           echo "OPS_CONTROLLER_TOKEN=placeholder-for-ci" >> .env
           docker compose config
 
@@ -94,7 +89,6 @@ jobs:
       - name: Create .env
         run: |
           echo "BASE_PATH=." > .env
-          echo "OPENCLAW_GATEWAY_TOKEN=placeholder" >> .env
           echo "OPS_CONTROLLER_TOKEN=placeholder" >> .env
 
       - name: Run smoke tests
@@ -122,7 +116,6 @@ jobs:
               - 'comfyui-mcp/**'
               - 'dashboard/**'
               - 'orchestration-mcp/**'
-              - 'openclaw/**'
               - 'ops-controller/**'
               - 'rag-ingestion/**'
               - 'worker/**'
@@ -144,7 +137,6 @@ jobs:
         if: steps.filter.outputs.stack == 'true'
         run: |
           echo "BASE_PATH=." > .env
-          echo "OPENCLAW_GATEWAY_TOKEN=placeholder" >> .env
           echo "OPS_CONTROLLER_TOKEN=placeholder" >> .env
 
       - name: Compose smoke (required when stack paths change)
