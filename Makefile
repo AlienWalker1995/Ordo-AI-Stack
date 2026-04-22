@@ -14,7 +14,7 @@ test:
 	python -m pytest tests/ -v
 
 lint:
-	python -m ruff check dashboard tests model-gateway ops-controller rag-ingestion scripts
+	python -m ruff check dashboard tests model-gateway ops-controller rag-ingestion scripts comfyui-mcp orchestration-mcp worker
 
 test-audit:
 	python -m pytest tests/test_ops_controller_audit.py -v
