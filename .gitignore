@@ -27,7 +27,12 @@ openclaw/OPENCLAW_SECURE.md
 # Local dev (personal notes, full troubleshooting)
 context/
 .claude/scheduled_tasks.lock
+.claude/settings.local.json
 cp_test_output.log
+test_output.log
+
+# Untracked sibling projects that happen to live in this tree
+/isolated_portfolio/
 
 # Hermes Agent (host-mode install + local state; see docs/hermes-agent.md)
 vendor/hermes-agent/
