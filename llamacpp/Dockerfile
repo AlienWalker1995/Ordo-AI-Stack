@@ -32,8 +32,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 # CUDA driver API stubs — libcuda.so.1 is provided by the NVIDIA driver at
 # runtime (via --gpus all + nvidia-container-runtime), but at build time the
 # linker needs a stub to satisfy cuMemCreate / cuMemMap / etc references
-# emitted by ggml-cuda. Without this, the final executable link fails with
-# 'libcuda.so.1, not found' even though the compile step succeeded.
+# emitted by ggml-cuda.
+#
+# The toolkit ships /usr/local/cuda/lib64/stubs/libcuda.so (unversioned), but
+# libggml-cuda.so is built with SONAME dependency on libcuda.so.1 — so when
+# linking the executable we need both LIBRARY_PATH AND a versioned symlink.
+# The symlink is created below in the apt-install step; LIBRARY_PATH lets gcc
+# pass the stubs dir to ld via its generated -L flags.
 ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -44,7 +49,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libcurl4-openssl-dev \
         ninja-build \
         pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
 
 WORKDIR /src
 # Fetch only the specific commit tree (no history, no submodules — the fork's
