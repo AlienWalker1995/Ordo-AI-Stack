@@ -11,10 +11,10 @@
 7. **Safe-by-default ops:** Controller token required (no default). Destructive actions require `confirm: true`. Dry-run mode. Audit log for every privileged action.
 8. **Auditable by design:** Every privileged call → audit event with `ts`, `action`, `resource`, `actor`, `result`, `correlation_id`. Append-only. Exportable.
 9. **Deny-by-default:** Unknown services blocked at MCP (`allow_clients: ["*"]` is explicit opt-in, not omission-default). Auth enabled where supported.
-10. **Minimize breaking changes:** Existing `OLLAMA_BASE_URL` continues working. OpenClaw `ollama` provider still works; gateway is the preferred path. `servers.txt` still works; registry adds metadata on top.
+10. **Minimize breaking changes:** Existing `OLLAMA_BASE_URL` continues working; gateway is the preferred path. `servers.txt` still works; registry adds metadata on top.
 11. **Observable:** Structured JSON logs from all custom services. Request IDs (`X-Request-ID`) propagated across model→ops→tool calls. Audit log as primary observability artifact for privileged actions.
 12. **Explicit trade-offs:** Model gateway adds ~2–5ms proxy latency for interoperability. Controller-via-docker.sock is a high-value target but isolated behind auth and no host port. We accept the complexity for safe ops.
-13. **Reliability is a first-class contract:** Clients (including OpenClaw) depend on machine-readable readiness, consistent timeouts/retries, and traceable failures across model gateway, MCP gateway, and optional bridges—without making the dashboard or ops-controller part of the normal request path.
+13. **Reliability is a first-class contract:** Agent and tool clients depend on machine-readable readiness, consistent timeouts/retries, and traceable failures across model gateway, MCP gateway, and optional bridges—without making the dashboard or ops-controller part of the normal request path.
 
 ---
 
@@ -25,9 +25,9 @@
 │  Host  (network: ordo-ai-stack-frontend = host-accessible)                    │
 │                                                                                │
 │  ┌─────────────┐  ┌──────────┐  ┌──────────────────────────────────────────┐  │
-│  │ Open WebUI  │  │   N8N    │  │  OpenClaw Gateway  :6680/:6681           │  │
-│  │ :3000       │  │ :5678    │  │  model provider → gateway                │  │
-│  │ → gateway   │  │ → gw     │  │  MCP tools via bridge plugin             │  │
+│  │ Open WebUI  │  │   N8N    │  │  Hermes  gateway + dashboard             │  │
+│  │ :3000       │  │ :5678    │  │  model → gateway                         │  │
+│  │ → gateway   │  │ → gw     │  │  MCP tools → mcp-gateway                 │  │
 │  └──────┬──────┘  └────┬─────┘  └────────────────┬─────────────────────────┘  │
 │         │              │                           │                            │
 │  ┌──────▼──────────────▼───────────────────────────▼──────────────────────┐   │
@@ -75,9 +75,8 @@
 - **Ollama** `:11434` — LLM inference; backend-only by default (use `overrides/ollama-expose.yml` for Cursor/CLI access); GPU via `overrides/compute.yml`.
 - **Qdrant** `:6333` — Vector database; backend-only; used by Open WebUI for RAG and by `rag-ingestion` service.
 - **RAG Ingestion** — Watch-mode document ingester (`--profile rag`); reads `data/rag-input/`; chunks and embeds via model gateway; stores in Qdrant.
-- **OpenClaw Gateway** `:6680/:6681` (default host ports; `overrides/openclaw-secure.yml`: **18789**/18790) — Agentic runtime; routes models via gateway provider; MCP tools via bridge plugin.
-- **OpenClaw CLI** — Interactive CLI (`--profile openclaw-cli`); gateway token only; no session credentials.
-- **Supporting services** — Open WebUI (`:3000`, connected to Qdrant), N8N (`:5678`), ComfyUI (`:8188`), openclaw sync/config/plugin services.
+- **Hermes** (`hermes-gateway` + `hermes-dashboard`) — Agent runtime; routes model calls through model-gateway and tool calls through mcp-gateway. State under `data/hermes/`. See [docs/hermes-agent.md](../hermes-agent.md) for setup.
+- **Supporting services** — Open WebUI (`:3000`, connected to Qdrant), N8N (`:5678`), ComfyUI (`:8188`).
 
 ## Data Flows
 
@@ -99,7 +98,7 @@ Audit query:      Dashboard → GET /audit (auth) → Controller reads JSONL
 
 | Goal | Status | Evidence |
 |------|--------|----------|
-| **G1: Any service → any model** | Done | Gateway `:11435`; Ollama + vLLM adapters; streaming, embeddings, tool-calling, Responses API. Open WebUI uses `OPENAI_API_BASE_URL` → gateway. OpenClaw routes via gateway provider. |
+| **G1: Any service → any model** | Done | Gateway `:11435`; Ollama + vLLM adapters; streaming, embeddings, tool-calling, Responses API. Open WebUI uses `OPENAI_API_BASE_URL` → gateway. Hermes and other clients route via the same `/v1` surface. |
 | **G2: Shared tools with health** | Done | MCP Gateway + `registry.json` metadata; `GET /api/mcp/health` per-server; dashboard health badges. |
 | **G3: Dashboard as control center** | Done | Ops Controller: start/stop/restart/logs/pull; no host port; bearer auth. Hardware stats, throughput benchmark, default-model management, RAG status. |
 | **G4: Security + auditing** | Done | Audit JSONL. Optional Bearer auth for dashboard API. `SECURITY.md` + threat table. SSRF scripts. |
@@ -113,7 +112,6 @@ Audit query:      Dashboard → GET /audit (auth) → Controller reads JSONL
 | `WEBUI_AUTH` defaults to `False` | G4 | Open WebUI ships open; target default is `True` | Medium |
 | MCP per-client policy unenforced | G2 | `allow_clients` in registry.json not enforced at gateway level — requires Docker MCP Gateway `X-Client-ID` support | Medium |
 | No CI pipeline | G5 | Smoke tests exist but no GitHub Actions workflow to run them | Low |
-| `openclaw.json` plaintext tokens | G4 | Telegram token, skill API keys on disk in gitignored `data/` | Low |
 | mcp-gateway on frontend network | G5 | Should be backend-only for internal services; currently has host port | Low |
 | Reliability / readiness contracts | G1–G2 | Health today is partly architectural; see [Reliability & Contracts](reliability-and-contracts.md) | High |
 
@@ -124,7 +122,8 @@ Audit query:      Dashboard → GET /audit (auth) → Controller reads JSONL
 | open-webui | Y | Y | Needs model-gateway, qdrant |
 | dashboard | Y | Y | Needs ollama, ops-controller, mcp-gateway |
 | n8n | Y | — | |
-| openclaw-gateway | Y | Y | Needs model-gateway, mcp-gateway |
+| hermes-gateway | Y | Y | Needs model-gateway, mcp-gateway |
+| hermes-dashboard | Y | — | Host port via `HERMES_DASHBOARD_PORT` |
 | model-gateway | Y | Y | Frontend for external clients; backend for Ollama |
 | mcp-gateway | Y | — | Has host port `:8811`; M6: move to backend-only |
 | ops-controller | — | Y | Internal only; no host port |
@@ -141,8 +140,8 @@ Audit query:      Dashboard → GET /audit (auth) → Controller reads JSONL
 | `cap_drop: [ALL]` | `model-gateway`, `dashboard`, `ops-controller` |
 | `security_opt: [no-new-privileges:true]` | `model-gateway`, `dashboard`, `ops-controller` |
 | `read_only: true` + `tmpfs: [/tmp]` | `model-gateway`, `dashboard` |
-| Healthchecks | All long-running services including `openclaw-gateway` |
-| Resource limits | All services including `openclaw-gateway` (2G), `qdrant` (512M), `rag-ingestion` (256M) |
+| Healthchecks | All long-running services |
+| Resource limits | `qdrant` (512M), `rag-ingestion` (256M), plus per-service limits on model-gateway / dashboard / comfyui |
 | Log rotation | All services |
 | Pinned images | `ollama:0.17.4`, `open-webui:v0.8.4`, `qdrant:v1.13.4`, etc. |
 | Explicit networks | `ordo-ai-stack-frontend`, `ordo-ai-stack-backend` declared; Ollama backend-only |
@@ -157,7 +156,7 @@ AI-toolkit/
 ├── model-gateway/       # OpenAI-compat model proxy
 ├── ops-controller/      # Authenticated Docker lifecycle API
 ├── mcp/                 # MCP gateway (Dockerfile, gateway/, docs/)
-├── openclaw/            # workspace/, scripts/, openclaw.json.example
+├── hermes/              # Hermes agent (Dockerfile, entrypoint.sh, plugins/, seed/)
 ├── rag-ingestion/       # Document ingester (Dockerfile, ingest.py)
 ├── orchestration-mcp/   # Orchestration MCP server
 ├── scripts/             # detect_hardware.py, ssrf-egress-block, smoke tests
@@ -169,7 +168,7 @@ AI-toolkit/
 │   ├── ops-controller/  # audit.log
 │   ├── qdrant/          # Vector DB storage
 │   ├── rag-input/       # Drop documents here
-│   └── openclaw/        # OpenClaw config + workspace
+│   └── hermes/          # Hermes runtime state
 ├── docker-compose.yml
 ├── compose              # Helper script (auto-detects hardware)
 ├── overrides/           # Optional compose overrides

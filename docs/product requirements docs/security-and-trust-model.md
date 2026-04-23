@@ -11,7 +11,6 @@
 | MCP tools (browser/playwright) | SSRF → RFC1918/metadata | No egress blocks yet | Add `DOCKER-USER` iptables egress block; document in runbooks |
 | Tool output → model | Prompt injection via tool output | No sandbox; tool output passed to model | Allowlists; structured tool calls (`<tool_result>` tags); validate tool schemas |
 | Dashboard auth | Unauthenticated admin | Optional `DASHBOARD_AUTH_TOKEN` | Document: set for networked use; pre-deployment checklist item |
-| `openclaw.json` plaintext keys | Key exposure if file shared/backed up | In gitignored `data/`; acceptable on local disk | Flag in docs: avoid `data/openclaw/` in cloud backups without encryption |
 | WEBUI_AUTH=False | Open WebUI accessible without auth | Explicit in compose env | Change default to `WEBUI_AUTH=${WEBUI_AUTH:-True}`; opt-out, not opt-in |
 | Model gateway | No auth on `/v1/` endpoints | None; local-first intentional | Acceptable for localhost; add API key support if exposed to LAN |
 
@@ -36,22 +35,19 @@
 
 - `.env` — gitignored, host-only, not committed
 - `mcp/.env` — gitignored, host-only; mount as Docker secret via compose `secrets:` block
-- `data/openclaw/openclaw.json` — gitignored; may list skill keys; gateway and Discord/Telegram tokens should be supplied via `.env` (`merge_gateway_config.py` injects gateway token and channel SecretRefs when env vars are set).
+- Agent runtime state under `data/hermes/` — gitignored; Discord bot token and per-user allowlists are supplied via `.env`.
 - Gateway tokens — in `.env`, set via compose `environment:`
-- **Secret rotation:** Update `.env`, `docker compose up -d --force-recreate <service>`. Document in `BACKUP_RESTORE.md`.
+- **Secret rotation:** Update `.env`, `docker compose up -d --force-recreate <service>`.
 
-### OpenClaw-Specific Secrets
+### Stack Secrets
 
 | Secret | Location | Injected by | Notes |
 |--------|----------|-------------|-------|
-| `OPENCLAW_GATEWAY_TOKEN` | `.env` | Compose `environment:` | Orchestrator + CLI (bridge auth only) |
-| `CLAUDE_AI_SESSION_KEY` | `.env` | Compose `environment:` (gateway only) | Never in CLI container |
-| `CLAUDE_WEB_SESSION_KEY` | `.env` | Compose `environment:` (gateway only) | Never in CLI container |
-| `CLAUDE_WEB_COOKIE` | `.env` | Compose `environment:` (gateway only) | Never in CLI container |
-| Telegram bot token | `data/openclaw/openclaw.json` | OpenClaw config sync | Gitignored |
-| Skill API keys | `data/openclaw/openclaw.json` | OpenClaw config sync | Gitignored |
-
-**Rotation:** See `docs/runbooks/SECURITY_HARDENING.md`.
+| `OPS_CONTROLLER_TOKEN` | `.env` | Compose `environment:` | Required for ops-controller privileged API |
+| `DASHBOARD_AUTH_TOKEN` | `.env` | Compose `environment:` | Optional Bearer auth on dashboard `/api/*` |
+| `DISCORD_BOT_TOKEN` | `.env` | Compose `environment:` → hermes-gateway | Optional, only when Discord channel is used |
+| `TAVILY_API_KEY` | `.env` | Compose `environment:` → mcp-gateway | Optional, required if Tavily MCP server is enabled |
+| `HF_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN` | `.env` | Compose `environment:` | Optional, for gated HF model pulls and GitHub MCP |
 
 ## SSRF Defenses (MCP)
 
@@ -71,10 +67,6 @@ SSRF scripts live at `scripts/ssrf-egress-block.sh` (Linux/WSL2) and `scripts/ss
 When browser/playwright is active, worker containers can make arbitrary outbound HTTP requests. Apply RFC1918 + metadata blocks:
 
 ```bash
-# Block the openclaw network specifically:
-./scripts/ssrf-egress-block.sh --target openclaw
-
-# Block both MCP and openclaw in one pass:
 ./scripts/ssrf-egress-block.sh --target all
 ```
 
@@ -82,40 +74,26 @@ Blocked ranges: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` (RFC1918), `100.
 
 ## Prompt Injection Defense at Tool-Output Boundary
 
-- Tool results returned in structured `<tool_result>` boundary by the MCP bridge plugin
-- The orchestrator treats tool output as **data**, not **instructions**
+- Tool results returned in structured boundaries by the MCP gateway and agent
+- Agents treat tool output as **data**, not **instructions**
 - Validate tool output schemas where possible (MCP `registry.json` `outputSchema` field)
-- Structured boundary ensures the model can distinguish injected text from genuine prompts
+- Structured boundaries help the model distinguish injected text from genuine prompts
 
-## Container Hardening (Both Tiers)
+## Container Hardening
 
-Both OpenClaw containers run with:
+Custom services (model-gateway, dashboard, ops-controller, hermes-gateway, hermes-dashboard, mcp-gateway, orchestration-mcp, comfyui-mcp, rag-ingestion, worker) run with:
+
 ```yaml
 cap_drop: [ALL]
 security_opt: ["no-new-privileges:true"]
 ```
 
-`openclaw-gateway` additionally has:
-```yaml
-deploy:
-  resources:
-    limits:
-      memory: 2G
-healthcheck:
-  test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:6680"]
-  start_period: 60s
-  interval: 30s
-  timeout: 10s
-  retries: 3
-```
-
-`openclaw-cli` has `restart: "no"` because it is an interactive/on-demand process.
+Resource limits, healthchecks, and `restart: unless-stopped` are applied per-service in `docker-compose.yml`. One-shot containers (pullers, setup scripts) use `restart: "no"`.
 
 ## Security + Reliability Intersection
 
 Items that are both security and reliability problems:
 - Open WebUI auth default
 - MCP per-client enforcement gaps
-- Plaintext tokens in `openclaw.json`
 
 **Improvements:** auth on by default for remotely reachable UIs; env-based secret resolution where possible; explicit per-client policy at MCP gateway; tool registration workflow; immutable audit trail for config changes.
