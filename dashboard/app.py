@@ -30,7 +30,6 @@ from pydantic import BaseModel, Field
 from dashboard.orchestration_db import get_job_counts, get_outbox_stats
 from dashboard.routes_hub import router as hub_router
 from dashboard.routes_orchestration import router as orchestration_router
-from dashboard.routes_openclaude import router as openclaude_router
 from dashboard.services_catalog import OPS_SERVICE_MAP
 from dashboard.settings import AUTH_REQUIRED as _AUTH_REQUIRED
 from dashboard.settings import DASHBOARD_AUTH_TOKEN
@@ -86,7 +85,6 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(title="Ordo AI Stack Dashboard", version="1.0.0", lifespan=_lifespan)
 app.include_router(hub_router)
 app.include_router(orchestration_router)
-app.include_router(openclaude_router)
 
 
 @app.exception_handler(Exception)
@@ -142,7 +140,6 @@ async def auth_middleware(request: Request, call_next):
         "/api/throughput/service-usage",
         "/api/rag/status",
         "/api/orchestration/readiness",
-        "/api/openclaude/preview",
     ):
         return await call_next(request)
     # /api/throughput/record: requires THROUGHPUT_RECORD_TOKEN when set (model-gateway internal; PRD §3.E)
@@ -394,9 +391,9 @@ async def _do_set_active_model(req: PullRequest, request: Request):
     results: dict = {}
     errors: list[str] = []
 
-    # Switch LLAMACPP_MODEL + recreate llamacpp. Every consumer (OpenWebUI,
-    # OpenClaude on remote devices) uses the canonical 'local-chat' alias from the
-    # model-gateway, so there's nothing else to update.
+    # Switch LLAMACPP_MODEL + recreate llamacpp. Every consumer uses the
+    # canonical 'local-chat' alias from the model-gateway, so there's nothing
+    # else to update.
     code, data = await _ops_request(
         "POST", "/env/set", request=request,
         json={"key": "LLAMACPP_MODEL", "value": model, "confirm": True},
@@ -1104,7 +1101,12 @@ def _write_mcp_servers(servers: list[str]) -> Path:
     if not path:
         raise HTTPException(status_code=409, detail="MCP config not in dynamic mode (no volume)")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(",".join(servers))
+    # Atomic write-then-rename: survives file ownership mismatches on bind mounts
+    # (the target file may be root-owned from an earlier write, but a world-writable
+    # parent dir lets us create a new file and replace it regardless).
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(",".join(servers))
+    tmp.replace(path)
     return path
 
 
@@ -1224,24 +1226,30 @@ def _valid_mcp_server_name(name: str) -> bool:
 
 def _parse_mcp_server_input(raw: str) -> str | None:
     """Extract server ID from input. Accepts:
-    - Docker Hub URL: https://hub.docker.com/mcp/server/hugging-face/overview
+    - Docker Hub MCP URL: https://hub.docker.com/mcp/server/hugging-face/overview -> hugging-face
+    - Docker Hub image URL: https://hub.docker.com/r/searxng/searxng -> searxng/searxng
     - Raw server name: hugging-face, fetch, mcp/firecrawl
     """
     s = raw.strip()
     if not s:
         return None
-    # Docker Hub MCP URL: hub.docker.com/mcp/server/<server-id>/...
-    if "hub.docker.com" in s and "/mcp/server/" in s:
-        try:
-            # Extract segment after /mcp/server/
-            idx = s.find("/mcp/server/")
-            if idx >= 0:
-                rest = s[idx + len("/mcp/server/"):]
-                server_id = rest.split("/")[0].split("?")[0]
-                if server_id and _valid_mcp_server_name(server_id):
-                    return server_id
-        except (IndexError, ValueError):
-            pass
+    if "hub.docker.com" in s:
+        # /mcp/server/<server-id>/...  (official MCP catalog page)
+        idx = s.find("/mcp/server/")
+        if idx >= 0:
+            rest = s[idx + len("/mcp/server/"):].split("?", 1)[0].split("#", 1)[0]
+            server_id = rest.split("/", 1)[0]
+            if server_id and _valid_mcp_server_name(server_id):
+                return server_id
+        # /r/<org>/<image>/...  (generic Docker Hub image page)
+        idx = s.find("/r/")
+        if idx >= 0:
+            rest = s[idx + len("/r/"):].split("?", 1)[0].split("#", 1)[0].rstrip("/")
+            parts = rest.split("/")
+            if len(parts) >= 2 and parts[0] and parts[1]:
+                image_ref = f"{parts[0]}/{parts[1]}"
+                if _valid_mcp_server_name(image_ref):
+                    return image_ref
     return s if _valid_mcp_server_name(s) else None
 
 

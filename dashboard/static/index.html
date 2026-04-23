@@ -306,15 +306,19 @@
       font-size: var(--text-sm); font-family: var(--font-mono);
       background: var(--surface); border: 1px solid var(--border);
       border-radius: var(--radius-sm); color: var(--fg);
-      max-width: 12rem; overflow: hidden;
-      text-overflow: ellipsis; white-space: nowrap; transition: border-color .2s;
+      max-width: 20rem; min-width: 0;
+      transition: border-color .2s;
     }
     .mcp-chip:hover { border-color: rgba(0,201,255,.3); }
+    .mcp-chip .mcp-chip-label {
+      min-width: 0; flex: 1 1 auto;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     .mcp-chip .mcp-chip-remove {
       flex-shrink: 0; width: 1.25rem; height: 1.25rem;
       display: flex; align-items: center; justify-content: center;
       border-radius: 3px; color: var(--muted); cursor: pointer;
-      font-size: .9rem; line-height: 1; transition: color .2s, background .2s;
+      font-size: 1rem; line-height: 1; transition: color .2s, background .2s;
       background: transparent; border: none;
     }
     .mcp-chip .mcp-chip-remove:hover { color: var(--danger); background: var(--danger-dim); }
@@ -1375,28 +1379,6 @@
       </div>
     </section>
 
-    <!-- OpenClaude self-serve install -->
-    <section id="openclaude-install-section">
-      <h2>Add OpenClaude to a Device</h2>
-      <p class="section-desc">Install OpenClaude on any tailnet device with a single command. Auto-configured to use this host's model gateway and MCP tools.</p>
-      <div id="openclaude-install-status" class="muted">Loading…</div>
-      <div id="openclaude-install-body" style="display:none;">
-        <p>Detected tailnet host: <code id="openclaude-install-host"></code></p>
-        <div style="margin:var(--space-2) 0;">
-          <label><input type="radio" name="openclaude-os" value="sh" checked> macOS / Linux (bash)</label>
-          <label style="margin-left:1em;"><input type="radio" name="openclaude-os" value="ps1"> Windows (PowerShell)</label>
-        </div>
-        <pre id="openclaude-install-oneliner" style="background:var(--bg);border:1px solid var(--border);padding:var(--space-3);border-radius:var(--radius-sm);overflow-x:auto;white-space:pre-wrap;word-break:break-all;"></pre>
-        <button type="button" id="openclaude-install-copy" style="margin-top:var(--space-2);">Copy</button>
-        <p class="muted" style="margin-top:var(--space-2);">
-          Status:
-          <span style="color:var(--green);">model-gateway ✓</span> &nbsp;
-          <span style="color:var(--green);">mcp-gateway ✓</span> &nbsp;
-          <span id="openclaude-install-blog-status"></span>
-        </p>
-        <p class="muted">After install, run <code>openclaude-local</code> on that device.</p>
-      </div>
-    </section>
   </div>
 
   <div class="toast-container" id="toasts" role="region" aria-label="Notifications" aria-live="polite"></div>
@@ -1535,7 +1517,7 @@
         if (chipsEl) {
           if (emptyHint) emptyHint.style.display = mcpEnabled.length ? 'none' : 'inline';
           chipsEl.innerHTML = mcpEnabled.length ? mcpEnabled.map(s =>
-            `<span class="mcp-chip" title="${escapeHtml(s)}" data-server="${escapeHtml(s)}"><span>${escapeHtml(s)}</span><button type="button" class="mcp-chip-remove mcp-remove-btn" data-server="${escapeHtml(s)}" aria-label="Remove ${escapeHtml(s)}">×</button></span>`
+            `<span class="mcp-chip" title="${escapeHtml(s)}" data-server="${escapeHtml(s)}"><span class="mcp-chip-label">${escapeHtml(s)}</span><button type="button" class="mcp-chip-remove mcp-remove-btn" data-server="${escapeHtml(s)}" aria-label="Remove ${escapeHtml(s)}">×</button></span>`
           ).join('') : '';
         }
         const sel = document.getElementById('mcp-add-select');
@@ -3121,71 +3103,6 @@
       }
       startPolling();
       refreshHardware();
-
-      // --- OpenClaude self-serve install card ---
-      (async function initOpenClaudeInstallCard() {
-        const statusEl   = document.getElementById('openclaude-install-status');
-        const bodyEl     = document.getElementById('openclaude-install-body');
-        const hostEl     = document.getElementById('openclaude-install-host');
-        const lineEl     = document.getElementById('openclaude-install-oneliner');
-        const blogEl     = document.getElementById('openclaude-install-blog-status');
-        const copyBtn    = document.getElementById('openclaude-install-copy');
-        if (!statusEl) return;
-
-        let preview = null;
-        try {
-          const r = await api('/api/openclaude/preview');
-          if (r.status === 503) {
-            const err = await r.json().catch(() => ({}));
-            statusEl.textContent = 'Tailnet hostname not detected. ' + (err.detail || '');
-            return;
-          }
-          preview = await r.json();
-        } catch (e) {
-          statusEl.textContent = 'Could not load preview: ' + e.message;
-          return;
-        }
-
-        hostEl.textContent = preview.host;
-        blogEl.innerHTML = preview.blog_mcp_reachable
-          ? '<span style="color:var(--green);">blog-mcp ✓</span>'
-          : '<span style="color:var(--yellow,orange);">blog-mcp ⚠ skipped</span>';
-
-        function refreshOneLiner() {
-          const os = document.querySelector('input[name="openclaude-os"]:checked').value;
-          lineEl.textContent = os === 'ps1' ? preview.one_liner_ps1 : preview.one_liner_sh;
-        }
-        document.querySelectorAll('input[name="openclaude-os"]').forEach(el => {
-          el.addEventListener('change', refreshOneLiner);
-        });
-        refreshOneLiner();
-
-        copyBtn.addEventListener('click', () => {
-          const text = lineEl.textContent;
-          // Clipboard API requires secure context (HTTPS); fall back to execCommand for plain HTTP.
-          if (navigator.clipboard && window.isSecureContext) {
-            navigator.clipboard.writeText(text).then(() => flash('Copied'), () => fallbackCopy(text));
-          } else {
-            fallbackCopy(text);
-          }
-          function fallbackCopy(t) {
-            const ta = document.createElement('textarea');
-            ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
-            document.body.appendChild(ta); ta.select();
-            try { document.execCommand('copy'); flash('Copied'); }
-            catch { flash('Copy failed'); }
-            finally { document.body.removeChild(ta); }
-          }
-          function flash(msg) {
-            const orig = copyBtn.textContent;
-            copyBtn.textContent = msg;
-            setTimeout(() => { copyBtn.textContent = orig; }, 1500);
-          }
-        });
-
-        statusEl.style.display = 'none';
-        bodyEl.style.display = '';
-      })();
 
       document.addEventListener('visibilitychange', () => {
         if (document.hidden) {
