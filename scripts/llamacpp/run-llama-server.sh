@@ -24,11 +24,12 @@ if [ "${LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION:-0}" = "1" ]; then
     --cache-type-k "${LLAMACPP_KV_CACHE_TYPE_K:-q4_0}" \
     --cache-type-v "${LLAMACPP_KV_CACHE_TYPE_V:-q4_0}"
 
-  # TurboQuant (turbo2 / turbo3) requires Flash Attention — without FA the
-  # kernels silently corrupt KV. Append --flash-attn on so llama-server's
-  # last-wins arg parsing overrides any earlier `auto`/`off` value.
+  # TurboQuant (tbq*_N / tbqp*_N) requires Flash Attention — without FA the
+  # rotation-quantize kernels silently corrupt KV. Append --flash-attn on
+  # so llama-server's last-wins arg parsing overrides any earlier
+  # `auto`/`off` value.
   case "${LLAMACPP_KV_CACHE_TYPE_K:-}${LLAMACPP_KV_CACHE_TYPE_V:-}" in
-    *turbo*) set -- "$@" --flash-attn on ;;
+    *tbq*) set -- "$@" --flash-attn on ;;
   esac
 fi
 

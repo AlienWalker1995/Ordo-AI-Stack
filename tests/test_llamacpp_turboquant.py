@@ -92,18 +92,18 @@ def test_wrapper_syntax_is_posix_sh() -> None:
     assert result.returncode == 0, f"sh -n failed:\n{result.stderr}"
 
 
-def test_turbo2_forces_flash_attention_on() -> None:
-    """When K or V cache type is a turbo* variant, --flash-attn on must be appended
+def test_tbqp3_0_forces_flash_attention_on() -> None:
+    """When K or V cache type is any tbq* variant, --flash-attn on must be appended
     regardless of LLAMACPP_FLASH_ATTN. TurboQuant kernels silently corrupt without FA."""
     env = _base_env(
         LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION="1",
-        LLAMACPP_KV_CACHE_TYPE_K="turbo2",
-        LLAMACPP_KV_CACHE_TYPE_V="turbo2",
+        LLAMACPP_KV_CACHE_TYPE_K="tbqp3_0",
+        LLAMACPP_KV_CACHE_TYPE_V="tbqp3_0",
         LLAMACPP_FLASH_ATTN="off",  # deliberately hostile
     )
     args = _final_args(_run_wrapper(env))
-    assert "--cache-type-k turbo2" in args, args
-    assert "--cache-type-v turbo2" in args, args
+    assert "--cache-type-k tbqp3_0" in args, args
+    assert "--cache-type-v tbqp3_0" in args, args
     # The guard must append `--flash-attn on` AFTER any earlier --flash-attn arg so
     # llama-server takes the safe value (last-wins).
     last_flash_attn_value = args.rsplit("--flash-attn", 1)[-1].strip().split()[0]
@@ -112,13 +112,28 @@ def test_turbo2_forces_flash_attention_on() -> None:
     )
 
 
-def test_turbo3_also_forces_flash_attention_on() -> None:
-    """turbo3 (3.5 bpw) has the same FA requirement as turbo2."""
+def test_tbq4_0_also_forces_flash_attention_on() -> None:
+    """tbq4_0 (4-bit TurboQuant) has the same FA requirement as the packed variants."""
     env = _base_env(
         LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION="1",
-        LLAMACPP_KV_CACHE_TYPE_K="turbo3",
-        LLAMACPP_KV_CACHE_TYPE_V="turbo3",
+        LLAMACPP_KV_CACHE_TYPE_K="tbq4_0",
+        LLAMACPP_KV_CACHE_TYPE_V="tbq4_0",
         LLAMACPP_FLASH_ATTN="auto",
+    )
+    args = _final_args(_run_wrapper(env))
+    last_flash_attn_value = args.rsplit("--flash-attn", 1)[-1].strip().split()[0]
+    assert last_flash_attn_value == "on", args
+
+
+def test_mixed_k_tbq_v_q4_0_still_forces_flash_attention() -> None:
+    """If only ONE of K/V is a tbq* type (asymmetric config), FA is still required
+    because the tbq* side's rotation-quantize kernels need it. The wrapper's guard
+    fires whenever either K or V matches tbq*."""
+    env = _base_env(
+        LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION="1",
+        LLAMACPP_KV_CACHE_TYPE_K="tbqp3_0",
+        LLAMACPP_KV_CACHE_TYPE_V="q4_0",
+        LLAMACPP_FLASH_ATTN="off",
     )
     args = _final_args(_run_wrapper(env))
     last_flash_attn_value = args.rsplit("--flash-attn", 1)[-1].strip().split()[0]
@@ -146,8 +161,8 @@ def test_quantization_disabled_emits_no_cache_type_args() -> None:
     regardless of the type env vars, and the FA safety rail must not fire."""
     env = _base_env(
         LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION="0",
-        LLAMACPP_KV_CACHE_TYPE_K="turbo2",  # should be ignored
-        LLAMACPP_KV_CACHE_TYPE_V="turbo2",
+        LLAMACPP_KV_CACHE_TYPE_K="tbqp3_0",  # should be ignored
+        LLAMACPP_KV_CACHE_TYPE_V="tbqp3_0",
         LLAMACPP_FLASH_ATTN="auto",
     )
     args = _final_args(_run_wrapper(env))

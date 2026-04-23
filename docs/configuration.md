@@ -50,17 +50,19 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 
 ## TurboQuant KV-Cache (llama.cpp)
 
-The `llamacpp` service runs a custom build from the [AmesianX/TurboQuant](https://github.com/AmesianX/TurboQuant) fork, produced by `llamacpp/Dockerfile` and pinned to a specific commit. On top of mainline's KV-cache quant types (`q4_0`, `q8_0`, etc.) it adds two TurboQuant variants: `turbo3` (3.5 bpw, neutral quality vs fp16) and `turbo2` (2.5 bpw, marginal quality dip for much smaller KV).
+The `llamacpp` service runs a custom build from the [AmesianX/TurboQuant](https://github.com/AmesianX/TurboQuant) fork, produced by `llamacpp/Dockerfile` and pinned to a specific commit. On top of mainline's KV-cache quant types (`q4_0`, `q8_0`, etc.) it adds a family of TurboQuant types named `tbq*` and `tbqp*` that use Walsh–Hadamard rotation + Lloyd–Max scalar quantization, optionally with a 1-bit QJL residual (the `tbqp*` packed variants).
 
 ### Which type should I pick?
 
-| Type | bpw | Per-token KV | Quality | When to use |
-|---|---|---|---|---|
-| `turbo3` | 3.5 | ~117 KiB | Neutral vs fp16 | Safe default when upgrading from `q4_0`; strictly better quality at smaller size. |
-| `turbo2` | 2.5 | ~83 KiB | Marginal dip | When you need maximum KV headroom and accept small quality cost (e.g. fitting long context entirely in VRAM). |
-| `q4_0` | ~4.5 | ~150 KiB | Small ppl loss | Mainline fallback if you revert `LLAMACPP_IMAGE` to upstream. |
+| Type | Approach | Effective bpw | Quality |
+|---|---|---|---|
+| `tbqp3_0` | 2-bit Lloyd-Max + 1-bit QJL residual | ~2.5 bpw | Marginal dip — best compression, paper's two-stage variant |
+| `tbq3_0` | 3-bit Lloyd-Max after WHT rotation | ~3 bpw | Near-neutral |
+| `tbqp4_0` | 3-bit Lloyd-Max + 1-bit QJL residual | ~3.5 bpw | Very close to fp16 |
+| `tbq4_0` | 4-bit Lloyd-Max after WHT rotation | ~4 bpw | Closest to fp16 in the tbq family |
+| `q4_0` | Mainline block-scaled 4-bit | ~4.5 bpw | Small ppl loss |
 
-Per-token sizes assume Gemma-4-31B-class architecture; multiply by `LLAMACPP_CTX_SIZE` for total KV memory.
+Suffix variants (`_1`, `_2`, `_3`) are head-dim specialized: `_1` for head_dim=128, `_2` for head_dim=64, `_3` for double WHT per-head. Use `_0` unless benchmarking shows a head-dim-specific variant helps your model.
 
 ### Enabling it
 
@@ -68,29 +70,30 @@ Set in `.env`:
 
 ```
 LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION=1
-LLAMACPP_KV_CACHE_TYPE_K=turbo2   # or turbo3
-LLAMACPP_KV_CACHE_TYPE_V=turbo2   # matching K and V is recommended
+LLAMACPP_KV_CACHE_TYPE_K=tbqp3_0   # or tbq3_0 / tbqp4_0 / tbq4_0
+LLAMACPP_KV_CACHE_TYPE_V=tbqp3_0   # matching K and V is recommended
 ```
 
 Then `docker compose build llamacpp && docker compose up -d llamacpp`. First build takes ~25–35 min (compiles CUDA kernels for Blackwell sm_120); subsequent builds reuse the buildx layer cache.
 
 ### Non-negotiable: Flash Attention
 
-TurboQuant kernels silently corrupt output without Flash Attention. The shell wrapper at `scripts/llamacpp/run-llama-server.sh` appends `--flash-attn on` automatically whenever `LLAMACPP_KV_CACHE_TYPE_K` or `LLAMACPP_KV_CACHE_TYPE_V` starts with `turbo`, overriding any `LLAMACPP_FLASH_ATTN=auto|off`. Do not try to disable this.
+TurboQuant kernels silently corrupt output without Flash Attention. The shell wrapper at `scripts/llamacpp/run-llama-server.sh` appends `--flash-attn on` automatically whenever `LLAMACPP_KV_CACHE_TYPE_K` or `LLAMACPP_KV_CACHE_TYPE_V` contains `tbq`, overriding any `LLAMACPP_FLASH_ATTN=auto|off`. Do not try to disable this.
 
 ### VRAM sizing cheat sheet
 
-Single-GPU budget = VRAM - driver overhead (~1.5 GB) - weights - compute buffer (~1.5 GB). Divide by per-token KV size for max on-GPU context.
+Single-GPU budget = VRAM − driver overhead (~1.5 GB) − weights − compute buffer (~1.5 GB). Divide by per-token KV size for max on-GPU context.
 
 Example on 32 GB 5090 with a 19 GB Q4_K_M 31B model (10 GB KV budget):
 
-| KV type | Max context fully on GPU |
-|---|---|
-| fp16 | ~20k |
-| q8_0 | ~38k |
-| q4_0 | ~72k |
-| turbo3 | ~92k |
-| turbo2 | ~128k |
+| KV type | Per-token KV | Max context fully on GPU |
+|---|---|---|
+| fp16 | ~533 KiB | ~20k |
+| q8_0 | ~283 KiB | ~38k |
+| q4_0 | ~150 KiB | ~72k |
+| tbq4_0 | ~130 KiB | ~80k |
+| tbq3_0 / tbqp4_0 | ~100 KiB | ~105k |
+| tbqp3_0 | ~83 KiB | ~128k |
 
 ### Rollback to upstream
 
@@ -100,7 +103,7 @@ LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda
 LLAMACPP_KV_CACHE_TYPE_K=q4_0
 LLAMACPP_KV_CACHE_TYPE_V=q4_0
 ```
-`docker compose up -d llamacpp`. No code changes required.
+`docker compose up -d llamacpp`. No code changes required. Upstream does not understand `tbq*` types and will reject them at startup.
 
 ## MCP Server Configuration
 
