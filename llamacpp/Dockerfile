@@ -14,7 +14,10 @@
 # Target GPU: RTX 5090 (Blackwell, compute capability 12.0 = sm_120).
 # Building for sm_120 explicitly avoids a PTX JIT stall on the first call.
 
-ARG CUDA_VERSION=12.4.1
+# CUDA 12.8+ is required for Blackwell sm_120 (RTX 50-series consumer) —
+# earlier versions' nvcc rejects `-gencode=arch=compute_120` with
+# "Unsupported gpu architecture 'compute_120'".
+ARG CUDA_VERSION=12.8.1
 ARG UBUNTU_VERSION=22.04
 
 # --- Build stage --------------------------------------------------------------
@@ -49,16 +52,15 @@ RUN git clone --filter=blob:none "${TURBOQUANT_REPO}" . \
 #                                   without FA, so this + the shell-wrapper
 #                                   safety rail must both be in place.
 #   GGML_NATIVE=OFF                 don't tune to host CPU; we're CUDA-bound.
-#   LLAMA_CURL=ON                   enable curl for model fetches if needed.
 #   LLAMA_BUILD_TESTS=OFF           skip fork test suite; we test at the
 #                                   llama-server arg + runtime level.
+# (LLAMA_CURL is deprecated in current llama.cpp — curl is enabled by default.)
 RUN cmake -S . -B build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DGGML_CUDA=ON \
         -DCMAKE_CUDA_ARCHITECTURES="${CMAKE_CUDA_ARCHITECTURES}" \
         -DGGML_CUDA_FA_ALL_QUANTS=ON \
         -DGGML_NATIVE=OFF \
-        -DLLAMA_CURL=ON \
         -DLLAMA_BUILD_TESTS=OFF \
     && cmake --build build -j --target llama-server llama-perplexity
 
