@@ -10,7 +10,6 @@
 #
 # Compose overrides (in overrides/):
 #   .\compose.ps1 -f docker-compose.yml -f overrides/ollama-expose.yml up -d
-#   .\compose.ps1 -f docker-compose.yml -f overrides/openclaw-secure.yml up -d
 #   .\compose.ps1 -f docker-compose.yml -f overrides/vllm.yml --profile vllm up -d
 
 param([Parameter(ValueFromRemainingArguments)][string[]]$PassThrough)

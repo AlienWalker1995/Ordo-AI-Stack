@@ -13,16 +13,11 @@ data/
 # Debug / temporary
 comfyui-logs.txt
 comfyui*.log
-openclaw*.log
 .pytest_cache
 pytest-cache-files-*
 tmp*
 __pycache__
 *.pyc
-
-# OpenClaw workspace: ignore personalized top-level *.md (templates use *.md.example and are tracked)
-openclaw/workspace/*.md
-openclaw/OPENCLAW_SECURE.md
 
 # Local dev (personal notes, full troubleshooting)
 context/
