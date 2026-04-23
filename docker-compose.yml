@@ -3,7 +3,13 @@ name: ordo-ai-stack
 # All services start by default. Run: docker compose up -d
 services:
   llamacpp:
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    # Default points at the repo-built TurboQuant image (llamacpp/Dockerfile).
+    # Escape hatch: set LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda in
+    # .env to fall back to upstream (loses turbo2 / turbo3 KV types).
+    image: ${LLAMACPP_IMAGE:-ordo-ai-stack/llamacpp-turboquant:latest}
+    build:
+      context: ./llamacpp
+      dockerfile: Dockerfile
     restart: unless-stopped
     platform: linux/amd64
     entrypoint: ["/bin/sh", "/llamacpp-scripts/run-llama-server.sh"]
