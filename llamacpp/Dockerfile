@@ -40,9 +40,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
-RUN git clone --filter=blob:none "${TURBOQUANT_REPO}" . \
-    && git checkout "${TURBOQUANT_SHA}" \
-    && git submodule update --init --recursive
+# Fetch only the specific commit tree (no history, no submodules — the fork's
+# .gitmodules is empty as of the pinned SHA). Avoids the `--filter=blob:none`
+# lazy-fetch path which stalled during builds in this environment.
+RUN git init . \
+    && git remote add origin "${TURBOQUANT_REPO}" \
+    && git -c protocol.version=2 fetch --depth 1 origin "${TURBOQUANT_SHA}" \
+    && git checkout --detach FETCH_HEAD
 
 # Flags chosen for this deployment:
 #   GGML_CUDA=ON                    enable CUDA backend
