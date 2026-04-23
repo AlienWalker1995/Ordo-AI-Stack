@@ -13,9 +13,8 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 
 | Script | Purpose |
 |--------|---------|
-| `doctor.sh` / `.ps1` | Deep health probes (dashboard, model-gateway, MCP gateway) plus `validate_openclaw_config`. |
+| `doctor.sh` / `.ps1` | Deep health probes (dashboard, model-gateway, MCP gateway). |
 | `smoke_test.sh` / `.ps1` | Quick smoke test: optionally starts services, then checks health endpoints. Also in `Makefile`. |
-| `validate_openclaw_config.py` | Validates `openclaw.json` for gateway wiring conventions. Used by CI and `doctor`. |
 
 ## MCP Gateway
 
@@ -28,14 +27,8 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 
 | Script | Purpose |
 |--------|---------|
-| `ssrf-egress-block.sh` | iptables rules blocking SSRF from MCP/OpenClaw containers to private ranges and cloud metadata. Linux only. |
+| `ssrf-egress-block.sh` | iptables rules blocking SSRF from MCP / agent containers to private ranges and cloud metadata. Linux only. |
 | `ssrf-egress-block.ps1` | Windows guidance (prints options; actual blocking requires WSL iptables). |
-
-## OpenClaw
-
-| Script | Purpose |
-|--------|---------|
-| `fix_openclaw_workspace_permissions.sh` / `.ps1` | Re-runs `openclaw-workspace-sync` to fix uid 1000 ownership on `data/openclaw`. |
 
 ## ComfyUI
 
@@ -66,9 +59,4 @@ $env:BASE_PATH = "F:/ordo-ai-stack"
 ```bash
 export BASE_PATH="$HOME/ordo-ai-stack"
 ./scripts/ensure_dirs.sh
-```
-
-**OpenClaw workspace** (if using openclaw/):
-```powershell
-.\openclaw\scripts\ensure_openclaw_workspace.ps1
 ```
