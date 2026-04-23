@@ -543,38 +543,6 @@ services:
     networks:
       - backend
 
-  openclaude-cli:
-    profiles: [openclaude-cli]
-    build:
-      context: .
-      dockerfile: openclaude/Dockerfile
-      args:
-        OPENCLAUDE_NPM_VERSION: ${OPENCLAUDE_NPM_VERSION:-latest}
-    depends_on:
-      model-gateway:
-        condition: service_healthy
-    env_file:
-      - .env
-    environment:
-      HOME: /home/node
-      TERM: xterm-256color
-      NODE_ENV: production
-      BROWSER: echo
-      CLAUDE_CODE_USE_OPENAI: "1"
-      OPENAI_API_KEY: ${OPENCLAUDE_OPENAI_API_KEY:-${LITELLM_MASTER_KEY:-local}}
-      OPENAI_BASE_URL: http://model-gateway:${MODEL_GATEWAY_PORT:-11435}/v1
-      OPENAI_MODEL: ${OPENCLAUDE_MODEL:-${DEFAULT_MODEL:-model.gguf}}
-    volumes:
-      - ${BASE_PATH:-.}:/workspace
-      - ${BASE_PATH:-.}/data/openclaude:/home/node/.claude
-    working_dir: /workspace
-    stdin_open: true
-    tty: true
-    init: true
-    restart: "no"
-    networks:
-      - frontend
-
   # --- RAG ---
 
   qdrant:

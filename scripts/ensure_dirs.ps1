@@ -17,7 +17,6 @@ $dirs = @(
     (Join-Path $data "n8n-files"),
     (Join-Path $data "dashboard"),
     (Join-Path $data "qdrant"),
-    (Join-Path $data "openclaude"),
     (Join-Path $base "models\comfyui\checkpoints"),
     (Join-Path $base "models\comfyui\loras"),
     (Join-Path $base "models\comfyui\latent_upscale_models"),
@@ -88,52 +87,6 @@ if (Test-Path $detectScript) {
     $env:BASE_PATH = $base -replace '\\', '/'
     python $detectScript 2>$null
     if ($LASTEXITCODE -eq 0) { Write-Host "OK Hardware detected (overrides/compute.yml)" }
-}
-
-# Configure OpenClaude on the host to use the local OpenAI-compatible model-gateway.
-$port = if ($env:MODEL_GATEWAY_PORT) { $env:MODEL_GATEWAY_PORT } else { "11435" }
-$openClaudeModel = ""
-if (Test-Path $rootEnv) {
-    try {
-        $envText = Get-Content $rootEnv -Raw -ErrorAction Stop
-        $match = [regex]::Match($envText, '(?m)^OPENCLAUDE_MODEL=(.+)$')
-        if (-not $match.Success) {
-            $match = [regex]::Match($envText, '(?m)^DEFAULT_MODEL=(.+)$')
-        }
-        if ($match.Success) {
-            $openClaudeModel = $match.Groups[1].Value.Trim()
-        }
-    } catch { }
-}
-if (Get-Command openclaude -ErrorAction SilentlyContinue) {
-    try {
-        [System.Environment]::SetEnvironmentVariable("CLAUDE_CODE_USE_OPENAI", "1", "User")
-        [System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", "local", "User")
-        [System.Environment]::SetEnvironmentVariable("OPENAI_BASE_URL", "http://localhost:$port/v1", "User")
-        if ($openClaudeModel) {
-            [System.Environment]::SetEnvironmentVariable("OPENAI_MODEL", $openClaudeModel, "User")
-        }
-        $curAnthropicKey = [System.Environment]::GetEnvironmentVariable("ANTHROPIC_API_KEY", "User")
-        $curAnthropicUrl = [System.Environment]::GetEnvironmentVariable("ANTHROPIC_BASE_URL", "User")
-        if ($curAnthropicKey -eq "local" -and $curAnthropicUrl -match '^http://localhost:\d+$') {
-            [System.Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", $null, "User")
-            [System.Environment]::SetEnvironmentVariable("ANTHROPIC_BASE_URL", $null, "User")
-        }
-        Write-Host "OK OpenClaude configured -> http://localhost:$port/v1 (restart terminal to apply)"
-        if ($openClaudeModel) {
-            Write-Host "   Default model: $openClaudeModel"
-        }
-        Write-Host "   Usage: openclaude"
-    } catch {
-        $modelNote = if ($openClaudeModel) { " and OPENAI_MODEL=$openClaudeModel" } else { "" }
-        Write-Warning "OpenClaude env could not be written to the user registry. Set CLAUDE_CODE_USE_OPENAI=1, OPENAI_API_KEY=local, OPENAI_BASE_URL=http://localhost:$port/v1$modelNote manually."
-    }
-} else {
-    Write-Host "Note: OpenClaude not installed. To install:"
-    Write-Host "        npm install -g @gitlawb/openclaude"
-    Write-Host "      Or use the Dockerized OpenClaude CLI:"
-    Write-Host "        docker compose --profile openclaude-cli run --rm openclaude-cli"
-    Write-Host "      Then re-run this script to configure host OpenClaude automatically."
 }
 
 Write-Host "Directories ready."
