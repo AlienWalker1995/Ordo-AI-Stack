@@ -62,3 +62,12 @@ def test_logs_unknown_container_returns_404(set_token):
         headers={"Authorization": "Bearer test-token-for-test"},
     )
     assert r.status_code == 404
+
+
+def test_restart_unknown_container_returns_404(set_token):
+    client = TestClient(set_token.app)
+    r = client.post(
+        "/containers/nonexistent-xyz/restart",
+        headers={"Authorization": "Bearer test-token-for-test"},
+    )
+    assert r.status_code == 404

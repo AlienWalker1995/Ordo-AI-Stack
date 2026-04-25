@@ -403,6 +403,24 @@ async def container_logs(
     return text
 
 
+@app.post("/containers/{name}/restart")
+async def container_restart(name: str, _: None = Depends(verify_token)):
+    """Restart any container by name. Auth required, audited."""
+    client = _docker_client()
+    try:
+        c = client.containers.get(name)
+    except docker.errors.NotFound:
+        _audit_log.record(
+            action="container.restart", target=name, result="not_found", caller="hermes",
+        )
+        raise HTTPException(status_code=404, detail=f"container {name} not found")
+    c.restart()
+    _audit_log.record(
+        action="container.restart", target=name, result="ok", caller="hermes",
+    )
+    return {"name": name, "restarted": True}
+
+
 class ConfirmBody(BaseModel):
     confirm: bool = False
     dry_run: bool = False
