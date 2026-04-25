@@ -1,6 +1,6 @@
 # Ordo AI Stack Makefile
 .PHONY: test test-audit test-dashboard test-gateway smoke-test lint help \
-        decrypt-secrets up down logs
+        decrypt-secrets up down logs rotate-internal-tokens
 
 RUNTIME_ENV := $(HOME)/.ai-toolkit/runtime/.env
 
@@ -28,6 +28,9 @@ down:
 
 logs:
 	docker compose logs -f --tail=100
+
+rotate-internal-tokens:
+	@./scripts/secrets/rotate-internal.sh
 
 test:
 	python -m pytest tests/ -v
