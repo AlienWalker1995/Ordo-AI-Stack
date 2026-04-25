@@ -647,10 +647,18 @@ services:
       # If "database is locked" errors appear, revert to a named volume (see the
       # volumes: block at the bottom of this file for the rollback path).
       - ${BASE_PATH:-.}/data/hermes:/home/hermes/.hermes
-      # Mount C:\dev (parent of AI-toolkit) as /projects so Hermes can read/write
-      # files across all dev repos, not just AI-toolkit. /workspace stays scoped
-      # to the AI-toolkit project root.
-      - ${BASE_PATH:-.}/..:/projects:rw
+      # Mount the parent dev directory into Hermes so it can read/write files
+      # across sibling repos. /workspace stays scoped to the AI-toolkit project
+      # root. Default target is /projects.
+      #
+      # Override HERMES_HOST_DEV_MOUNT to a path that mirrors your host
+      # filesystem (e.g. /c/dev on Windows where dev lives at C:\dev,
+      # /Users/<you>/dev on macOS) when Hermes invokes `docker compose` against
+      # sibling stacks via the docker socket — the host's daemon resolves
+      # bind-mount source paths against the *host* filesystem, so matching the
+      # in-container target to the host path makes sibling bind-mounts resolve
+      # identically on both sides. See .env.example for examples.
+      - ${BASE_PATH:-.}/..:${HERMES_HOST_DEV_MOUNT:-/projects}:rw
       # Docker socket — lets Hermes manage the stack via `docker`, `docker exec`,
       # `docker compose`. Requires group_add:["0"] above so the non-root hermes
       # user can read the socket (root:root mode 660 on Docker Desktop).
@@ -698,9 +706,10 @@ services:
       - HERMES_WEB_DIST=/opt/hermes-agent/hermes_cli/web_dist
     volumes:
       - ${BASE_PATH:-.}:/workspace:rw
-      # Bind-mount + /projects: see hermes-gateway above for rationale and rollback notes.
+      # Bind-mount + host-dev mount: see hermes-gateway above for rationale,
+      # HERMES_HOST_DEV_MOUNT override, and rollback notes.
       - ${BASE_PATH:-.}/data/hermes:/home/hermes/.hermes
-      - ${BASE_PATH:-.}/..:/projects:rw
+      - ${BASE_PATH:-.}/..:${HERMES_HOST_DEV_MOUNT:-/projects}:rw
     ports:
       - "${HERMES_DASHBOARD_PORT:-9119}:9119"
     healthcheck:
