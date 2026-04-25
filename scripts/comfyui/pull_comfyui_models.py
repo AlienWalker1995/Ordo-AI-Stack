@@ -10,8 +10,9 @@ Environment variables:
   COMFYUI_PACKS     Comma-separated pack names to download (default: from models.json defaults)
   COMFYUI_QUANT     GGUF quantization level for {quant} templates (default: Q4_K_M)
   COMFYUI_CONFIG    Path to models.json override (default: <script_dir>/models.json)
-  HF_TOKEN          HuggingFace token for gated/private repos (optional)
-  CIVITAI_TOKEN     Civitai API key for model downloads (required for Civitai packs)
+  HF_TOKEN          HuggingFace token for gated/private repos. Also accepted via
+                    HF_TOKEN_FILE (Docker secrets — file wins if both set).
+  CIVITAI_TOKEN     Civitai API key. Also accepted via CIVITAI_TOKEN_FILE.
 """
 from __future__ import annotations
 
@@ -22,12 +23,27 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+
+def _read_token(env_name: str) -> str:
+    """Resolve a token from {NAME}_FILE (Docker secrets) or {NAME} (env). Empty string if neither."""
+    file_var = f"{env_name}_FILE"
+    path = os.environ.get(file_var)
+    if path:
+        try:
+            value = open(path).read().strip()
+            if value:
+                return value
+        except OSError:
+            pass
+    return (os.environ.get(env_name) or "").strip()
+
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 MODELS_DIR = Path(os.environ.get("MODELS_DIR", "/models"))
 QUANT = os.environ.get("COMFYUI_QUANT", "Q4_K_M")
 CONFIG_PATH = Path(os.environ.get("COMFYUI_CONFIG", SCRIPT_DIR / "models.json"))
-HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or ""
-CIVITAI_TOKEN = os.environ.get("CIVITAI_TOKEN") or ""
+HF_TOKEN = _read_token("HF_TOKEN") or _read_token("HUGGING_FACE_HUB_TOKEN")
+CIVITAI_TOKEN = _read_token("CIVITAI_TOKEN")
 
 ALL_SUBDIRS = (
     "unet",

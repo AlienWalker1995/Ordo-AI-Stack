@@ -35,3 +35,12 @@ data/hermes/
 
 # Tailscale-issued TLS material for Caddy front door — per-host, NEVER commit
 auth/caddy/certs/
+
+# Secrets — only encrypted .sops files plus README/.sops.yaml are tracked.
+# Any plaintext file someone drops in secrets/ is rejected by default,
+# so a slipped `secrets/temp.env` or `secrets/notes.txt` cannot leak.
+secrets/*
+!secrets/*.sops
+!secrets/.sops.yaml
+!secrets/README.md
+!secrets/.gitkeep
