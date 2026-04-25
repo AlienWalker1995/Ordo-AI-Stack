@@ -799,8 +799,6 @@ services:
       # HERMES_HOST_DEV_MOUNT override, and rollback notes.
       - ${BASE_PATH:-.}/data/hermes:/home/hermes/.hermes
       - ${BASE_PATH:-.}/..:${HERMES_HOST_DEV_MOUNT:-/projects}:rw
-    ports:
-      - "${HERMES_DASHBOARD_PORT:-9119}:9119"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9119/"]
       start_period: 30s
@@ -815,6 +813,7 @@ services:
     networks:
       - frontend
       - backend
+      - proxy-net
     # --insecure: Hermes rejects 0.0.0.0 binding without it. Safe here because the
     # port mapping gates external access; internal Docker network is trusted.
     command: ["hermes", "dashboard", "--port", "9119", "--host", "0.0.0.0", "--no-open", "--insecure"]

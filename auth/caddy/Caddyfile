@@ -61,6 +61,11 @@
         reverse_proxy n8n:5678
     }
 
+    # ---- /hermes/ → hermes-dashboard ----
+    handle_path /hermes/* {
+        reverse_proxy hermes-dashboard:9119
+    }
+
     # ---- catch-all for paths not yet wired ----
     handle {
         respond "auth ok — no route configured for this path yet" 404
