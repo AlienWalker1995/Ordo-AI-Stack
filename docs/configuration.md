@@ -1,10 +1,10 @@
 # Configuration Quick Reference
 
-Short reference for the env vars, MCP config, and compute overrides you'll touch most often. `.env.example` is the canonical list; this page highlights the common ones and how they interact.
+Short reference for the env vars, MCP config, and compute overrides you'll touch most often. `.env.example` (plaintext) and `secrets/.env.sops` (encrypted) are the canonical sources; this page highlights the common ones and how they interact.
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and set at least `BASE_PATH`. Everything else has sensible defaults.
+Plaintext settings live in `.env` (copy from `.env.example`); managed tokens live in `secrets/.env.sops` and the file-form `secrets/*.sops` blobs (decrypted into `~/.ai-toolkit/runtime/` by `make decrypt-secrets`).
 
 ### Required
 
@@ -12,31 +12,56 @@ Copy `.env.example` to `.env` and set at least `BASE_PATH`. Everything else has 
 |---|---|---|
 | `BASE_PATH` | `.` | Repository root (forward slashes on Windows, e.g. `C:/dev/AI-toolkit`) |
 
-### Commonly set
+### Commonly set (plaintext `.env`)
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `DATA_PATH` | `${BASE_PATH}/data` | Override data directory location |
+| `LLAMACPP_MODEL` | `Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf` | GGUF filename under `models/gguf/` |
 | `DEFAULT_MODEL` | `local-chat` | Canonical model alias used by Open WebUI, Hermes, and LiteLLM |
-| `MODELS` | *(see `.env.example`)* | Comma-separated Ollama models to pull on first start |
-| `OPS_CONTROLLER_TOKEN` | *(empty)* | Required for dashboard-driven service lifecycle (`openssl rand -hex 32`) |
-| `DASHBOARD_AUTH_TOKEN` | *(empty)* | Optional Bearer auth on dashboard `/api/*` |
-| `HF_TOKEN` | *(empty)* | Hugging Face token for gated model downloads |
-| `GITHUB_PERSONAL_ACCESS_TOKEN` | *(empty)* | GitHub MCP server token; also passed to `comfyui` as `GITHUB_TOKEN` for Manager API |
-| `TAVILY_API_KEY` | *(empty)* | Required if the `tavily` MCP server is enabled |
+| `EMBED_MODEL` | `nomic-embed-text-v1.5.Q4_K_M.gguf` | GGUF embedding model served by `llamacpp-embed` |
 | `COMPUTE_MODE` | *(auto-detected)* | Override GPU type: `nvidia`, `amd`, `intel`, `cpu` |
+| `COMPOSE_FILE` | *(auto-set)* | Compose file chain. Linux/macOS: `docker-compose.yml:overrides/compute.yml`. Windows: `docker-compose.yml;overrides/compute.yml`. |
+| `CADDY_TAILNET_HOSTNAME` | *(unset)* | e.g. `ordo.<tailnet>.ts.net` — used by Caddy for the SSO host block |
+| `CADDY_TAILNET_DOMAIN` | *(unset)* | e.g. `<tailnet>.ts.net` — cookie domain for oauth2-proxy |
+| `CADDY_BIND` | *(no default; required)* | Tailnet IP from `tailscale ip -4`; the compose `:?` failsafe refuses to start with an empty value |
+
+### Managed tokens (`secrets/.env.sops`)
+
+Edit with `sops secrets/.env.sops`. After save, `make decrypt-secrets` and restart the dependent service. Full rotation guide: [docs/runbooks/secrets.md](runbooks/secrets.md).
+
+| Variable | Purpose |
+|---|---|
+| `LITELLM_MASTER_KEY` | Bearer presented by clients to model-gateway |
+| `DASHBOARD_AUTH_TOKEN` | Bearer fallback when Caddy's SSO isn't in the path |
+| `OPS_CONTROLLER_TOKEN` | Bearer for any caller of ops-controller's HTTP API |
+| `OAUTH2_PROXY_CLIENT_ID` | Google OAuth Web client ID |
+| `OAUTH2_PROXY_CLIENT_SECRET` | Google OAuth Web client secret |
+| `OAUTH2_PROXY_COOKIE_SECRET` | 16/24/32 raw bytes; rotates browser sessions when changed |
+
+### High-value tokens (Docker secret files)
+
+Each lives in its own `secrets/<name>.sops` blob and is decrypted to `~/.ai-toolkit/runtime/secrets/<name>`, then mounted into containers at `/run/secrets/<name>`. The `_FILE` env-var bridge (`hermes/entrypoint.sh`, `mcp-gateway`'s entrypoint) reads the file into the env var the SDK expects.
+
+| Secret file | App env var | Consumer |
+|---|---|---|
+| `discord_token` | `DISCORD_BOT_TOKEN` | `hermes-gateway` |
+| `github_pat` | `GITHUB_PERSONAL_ACCESS_TOKEN` | `mcp-gateway` (GitHub server) |
+| `hf_token` | `HF_TOKEN` | `ops-controller` (model pulls), `comfyui` |
+| `tavily_key` | `TAVILY_API_KEY` | `mcp-gateway` (Tavily server) |
+| `civitai_token` | `CIVITAI_TOKEN` | `comfyui` (model pulls) |
 
 ### Hermes Agent
 
-See [hermes-agent.md](hermes-agent.md) for the full setup flow.
+Full setup flow: [hermes-agent.md](hermes-agent.md).
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `HERMES_DASHBOARD_PORT` | `9119` | Host port for the Hermes dashboard |
-| `DISCORD_BOT_TOKEN` | *(empty)* | Discord bot token. Legacy `DISCORD_TOKEN` is aliased automatically. |
-| `DISCORD_ALLOWED_USERS` | *(empty)* | Comma-separated Discord user IDs authorized to DM / invoke the bot. Required for Discord use. |
-| `DISCORD_ALLOWED_CHANNELS` | *(empty)* | Comma-separated channel IDs where the bot may respond. Optional. |
-| `DISCORD_REQUIRE_MENTION` | `true` | Require `@bot` mention to respond. |
+| `HERMES_HOST_DEV_MOUNT` | `/c/dev` (Windows), `/workspace` elsewhere | Where the host's project root is mounted into the Hermes container — keeps sibling `docker compose` calls valid by mirroring the host path |
+| `DISCORD_ALLOWED_USERS` | *(empty)* | Comma-separated Discord user IDs authorized to DM / invoke the bot |
+| `DISCORD_ALLOWED_CHANNELS` | *(empty)* | Comma-separated channel IDs where the bot may respond |
+| `DISCORD_REQUIRE_MENTION` | `true` | Require `@bot` mention to respond |
 
 ### RAG (`--profile rag`)
 
@@ -46,7 +71,7 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 | `RAG_COLLECTION` | `documents` | Qdrant collection (must match Open WebUI / ingestion) |
 | `RAG_CHUNK_SIZE` | `400` | Chunk size in tokens |
 | `RAG_CHUNK_OVERLAP` | `50` | Chunk overlap in tokens |
-| `QDRANT_PORT` | `6333` | Qdrant host port (change if something else already uses 6333) |
+| `QDRANT_PORT` | `6333` | Qdrant host port (change if 6333 is taken) |
 
 ## TurboQuant KV-Cache (llama.cpp)
 
@@ -84,16 +109,16 @@ TurboQuant kernels silently corrupt output without Flash Attention. The shell wr
 
 Single-GPU budget = VRAM − driver overhead (~1.5 GB) − weights − compute buffer (~1.5 GB). Divide by per-token KV size for max on-GPU context.
 
-Example on 32 GB 5090 with a 19 GB Q4_K_M 31B model (10 GB KV budget):
+Example on 32 GB 5090 with **Qwen3.6-35B-A3B Q4_K_M** (~20 GB on GPU; MoE — only 3B active per token, so the KV cache is also small per active head):
 
 | KV type | Per-token KV | Max context fully on GPU |
 |---|---|---|
-| fp16 | ~533 KiB | ~20k |
-| q8_0 | ~283 KiB | ~38k |
-| q4_0 | ~150 KiB | ~72k |
-| tbq4_0 | ~130 KiB | ~80k |
-| tbq3_0 / tbqp4_0 | ~100 KiB | ~105k |
-| tbqp3_0 | ~83 KiB | ~128k |
+| fp16 | ~533 KiB | ~18k |
+| q8_0 | ~283 KiB | ~35k |
+| q4_0 | ~150 KiB | ~66k |
+| tbq4_0 | ~130 KiB | ~75k |
+| tbq3_0 / tbqp4_0 | ~100 KiB | ~95k |
+| tbqp3_0 | ~83 KiB | ~120k |
 
 ### Rollback to upstream
 
@@ -111,7 +136,7 @@ Repo templates live under `mcp/gateway/`; runtime files are in `data/mcp/` (bind
 
 Enabled servers are listed in `data/mcp/servers.txt` (one per line). Metadata, per-server `allow_clients`, and rate limits live in `data/mcp/registry.json`.
 
-Default servers: `duckduckgo`, `n8n`, `tavily`, `comfyui` (Tavily requires `TAVILY_API_KEY`). Override with `MCP_GATEWAY_SERVERS` in `.env`:
+Default servers: `duckduckgo`, `n8n`, `tavily`, `comfyui` (Tavily requires its key in `secrets/tavily_key.sops`). Override with `MCP_GATEWAY_SERVERS` in `.env`:
 
 ```
 MCP_GATEWAY_SERVERS=duckduckgo,github-official
@@ -122,6 +147,8 @@ Edits to `servers.txt` trigger a gateway reload within ~10 seconds — no contai
 ## Compute Configuration
 
 `scripts/detect_hardware.py` runs via the `compose` wrapper and writes `overrides/compute.yml` (gitignored). It's re-detected every time you invoke `./compose`.
+
+The generator inspects `nvidia-smi` (or AMD/Intel equivalents). When it sees a GPU, it adds the right `deploy.resources.reservations.devices` stanza to `llamacpp`, `llamacpp-embed`, `comfyui`, and a `utility` reservation to `dashboard` so it can call `nvidia-smi` for the throughput panel. **If you skip the wrapper and run raw `docker compose up`, you must regenerate the override yourself**: `python scripts/detect_hardware.py`. A missing devices block manifests as `libcuda.so.1: cannot open shared object file` in the `llamacpp` log.
 
 To override manually, set `COMPUTE_MODE` and `COMPOSE_FILE` in `.env`:
 
@@ -138,42 +165,53 @@ All `data/` and `models/` directories are bind-mounted and persist across contai
 
 | Directory | Purpose |
 |---|---|
-| `data/hermes/` | Hermes agent runtime state (sessions, per-user allowlists) |
+| `data/hermes/` | Stale (pre-volume-migration); kept for archival, NOT mounted live. Live state is the named volume `ordo-ai-stack_hermes-data`. |
 | `data/qdrant/` | Qdrant vector DB storage |
 | `data/rag-input/` | Drop files here for `rag-ingestion` |
-| `data/ops-controller/` | Audit logs |
+| `data/ops-controller/` | Audit log (`audit.jsonl` + `audit.1.jsonl`) |
 | `data/mcp/` | `servers.txt`, `registry.json`, `registry-custom.yaml` |
 | `data/dashboard/` | Dashboard throughput / benchmark data |
 | `data/comfyui-storage/` | ComfyUI outputs, custom nodes, local configs |
-| `models/ollama/` | Ollama model blobs |
-| `models/gguf/` | llama.cpp GGUF files |
+| `models/gguf/` | llama.cpp GGUF files (chat + embed) |
 | `models/comfyui/` | ComfyUI checkpoints, LoRAs, VAEs, encoders |
 
 `/tmp` inside containers is tmpfs; nothing there survives a restart.
 
 ## Network Ports
 
+All ports bind to `0.0.0.0` by default, so they're reachable from anywhere your host's network can reach. The expectation is that **Tailscale is the network gate** (see [Getting Started — Tailscale + SSO front door](GETTING_STARTED.md#tailscale--sso-front-door)).
+
 | Service | Host port | Description |
 |---|---|---|
-| Dashboard | `8080` | Dashboard API + control center |
-| Open WebUI | `3000` | Chat interface |
+| Caddy (HTTPS, SSO front door) | `443` (bound to `${CADDY_BIND}` only) | Routes `/dash/`, `/api/*`, `/favicon.svg` to dashboard after SSO |
+| Dashboard (backend) | `8080` (no host publish unless you opt out of SSO) | Dashboard API + control center |
+| Open WebUI | `3000` | Chat interface (direct on tailnet) |
 | Model Gateway | `11435` | OpenAI-compatible model endpoint (LiteLLM in front of llama.cpp) |
 | ComfyUI | `8188` | Image / audio / video generation |
 | n8n | `5678` | Workflow automation |
 | Hermes dashboard | `9119` | Overridable via `HERMES_DASHBOARD_PORT` |
-| MCP Gateway | `8811` | Published on host so external clients (Cursor, Claude Desktop) can reach it |
-| Ollama | `11434` | **Backend-only by default.** Expose via `overrides/ollama-expose.yml` |
+| MCP Gateway | `8811` | Published on host so Cursor / Claude Desktop / etc. can reach it |
 | Qdrant | `6333` | RAG profile only |
-| Ops Controller | internal `9000` | Not published on the host |
+| Ops Controller | internal `9000` | Not published on the host — only reachable from the Docker network |
 
 ## Audit Log Schema
 
-`data/ops-controller/audit.log` is JSONL, append-only, one event per line:
+`data/ops-controller/audit.jsonl` is JSONL, append-only, one event per privileged ops-controller call:
 
 ```json
-{"timestamp":"2026-03-22T10:00:00Z","action":"model_pulled","model":"qwen3:8b","status":"success"}
-{"timestamp":"2026-03-22T10:01:00Z","action":"service_started","service":"ollama","status":"success"}
+{"ts": 1745611200.123, "caller": "hermes", "action": "container.restart", "target": "open-webui", "result": "ok"}
+{"ts": 1745611205.456, "caller": "dashboard", "action": "compose.up", "target": "open-webui", "result": "ok"}
 ```
+
+| Field | Type | Description |
+|---|---|---|
+| `ts` | float (Unix epoch seconds) | Event timestamp |
+| `caller` | string | Identity of the caller (`hermes`, `dashboard`, …) |
+| `action` | string | `container.list`, `container.logs`, `container.restart`, `compose.up`, `compose.down`, `compose.restart` |
+| `target` | string | Action-specific target (container name, service, or empty for whole-stack) |
+| `result` | string | `ok` or short error message |
+
+Rotation: `audit.jsonl` rolls to `audit.1.jsonl` at `AUDIT_LOG_MAX_BYTES` (default 50 MB). One historical generation; older data is dropped.
 
 ## Minimal `.env`
 
@@ -181,17 +219,19 @@ All `data/` and `models/` directories are bind-mounted and persist across contai
 BASE_PATH=.
 
 # Models
-MODELS=qwen3:8b,deepseek-r1:7b,nomic-embed-text
+LLAMACPP_MODEL=Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf
 DEFAULT_MODEL=local-chat
-
-# Ops
-OPS_CONTROLLER_TOKEN=ops-controller-token-here
-DASHBOARD_AUTH_TOKEN=dashboard-token-here
-
-# Optional
-HF_TOKEN=
-GITHUB_PERSONAL_ACCESS_TOKEN=
-
-# RAG
 EMBED_MODEL=nomic-embed-text-v1.5.Q4_K_M.gguf
+
+# SSO front door (set after `tailscale ip -4` and Google OAuth setup)
+CADDY_TAILNET_HOSTNAME=ordo.<tailnet>.ts.net
+CADDY_TAILNET_DOMAIN=<tailnet>.ts.net
+CADDY_BIND=<tailnet-ip>
+
+# TurboQuant KV (optional but recommended on Blackwell)
+LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION=1
+LLAMACPP_KV_CACHE_TYPE_K=tbqp3_0
+LLAMACPP_KV_CACHE_TYPE_V=tbqp3_0
 ```
+
+Tokens (`LITELLM_MASTER_KEY`, `DASHBOARD_AUTH_TOKEN`, `OPS_CONTROLLER_TOKEN`, `OAUTH2_PROXY_*`, all the high-value provider keys) live in `secrets/.env.sops` and `secrets/<name>.sops`, **not** in `.env`. See [secrets runbook](runbooks/secrets.md).

@@ -1,16 +1,34 @@
 # Bounded Hermes — Operator Runbook
 
+> **Status (April 2026): the socket-removal half of this design was rolled back.** Hermes
+> still mounts `/var/run/docker.sock` directly today, because the upstream Hermes image
+> (`vendor/hermes-agent/`, pinned by SHA) ships built-in `docker` / `docker compose`
+> tools that fail when the socket isn't there, and the right fix (a Hermes plugin that
+> intercepts those tools and re-routes them through `OpsClient`) hasn't shipped yet.
+>
+> What survived from this plan and is **live on main**: the audited HTTP API
+> (`ops-controller` exposes `GET /containers`, `GET /containers/{name}/logs`,
+> `POST /containers/{name}/restart`, `POST /compose/{up,down,restart}`), the JSONL
+> audit log at `data/ops-controller/audit.jsonl` with 50 MB rotation, and
+> `hermes/ops_client.py` for callers that want the audited path explicitly. The high-value
+> tokens are still safer than they were thanks to Plan B (Docker secrets — see
+> [secrets runbook](secrets.md)) — `docker inspect` no longer exposes them even though
+> Hermes can still run it.
+>
+> The rest of this runbook is preserved as the bounded-Hermes design that was prototyped,
+> so the path back to it is short when there's a clean way to bridge the upstream tools.
+
 ## Mental model
 
-Hermes used to hold `/var/run/docker.sock` directly, giving it (and any
+Hermes holds `/var/run/docker.sock` directly today, giving it (and any
 prompt-injection of it) full Docker daemon access — `docker exec` into
-any container, `docker inspect` env vars (including high-value tokens),
-recreate containers with arbitrary mounts.
+any container, `docker inspect` env vars (Docker secrets aside), recreate
+containers with arbitrary mounts.
 
-Plan C narrows the surface: Hermes no longer has the socket. When it
-needs to restart a service, fetch logs, or manage the compose stack,
-it makes an HTTP call to `ops-controller`, which is the single holder
-of the socket. Every privileged call is audited.
+The bounded-Hermes design narrows that surface: Hermes loses the socket and
+makes an HTTP call to `ops-controller` for every privileged op. ops-controller
+is the single holder of the socket and audits every call. **This is not
+the live state today** — see the status banner above.
 
 ## What Hermes can still do
 
@@ -31,39 +49,46 @@ ops.compose_restart(service="open-webui")   # OK — single service
 ops.compose_restart(confirm=True)           # OK — whole stack
 ```
 
-## What Hermes can no longer do
+## What Hermes would no longer do (under bounded-Hermes — not live)
 
 - `docker exec` into other containers — by design. Specific named verbs
   only. If you find yourself wanting `exec`, add a named verb to
   `ops-controller/main.py` instead of reintroducing arbitrary shell.
 - `docker inspect` other containers — high-value tokens that live in
-  Docker secrets are now invisible to Hermes even with prompt injection.
+  Docker secrets would be invisible to Hermes even with prompt injection.
+  *Today, with the socket present, Hermes can still call `docker inspect`,
+  but the Docker secrets layer (Plan B) keeps the high-value tokens out of
+  what `inspect` returns regardless.*
 - Mount new volumes, create containers from arbitrary images, or invoke
   any Docker SDK call ops-controller doesn't explicitly expose.
 
-## UX caveat (vendored upstream)
+## Why bounded-Hermes was rolled back
 
 Hermes' built-in docker tools (in `vendor/hermes-agent/`,
-upstream-pinned) will fail when they try `/var/run/docker.sock`. There
-are three ways to bridge that gap:
+upstream-pinned) call `/var/run/docker.sock` directly — they don't
+know about `OpsClient`. With the socket gone, every built-in `docker`
+or `docker compose` tool call inside Hermes fails. We chose three
+possible bridges and shipped none of them, so we restored the socket:
 
-1. **Manual via `OpsClient`** (today's path). From the host or any
-   shell with `OPS_CONTROLLER_TOKEN` in env, invoke directly:
+1. **Manual via `OpsClient`.** From the host or any shell with
+   `OPS_CONTROLLER_TOKEN` in env, invoke directly:
    ```python
    from hermes.ops_client import OpsClient
    OpsClient().restart_container("open-webui")
    ```
-2. **Hermes plugin** (future). Register a `pre_tool_call` hook
-   (similar to `hermes/plugins/push-through/`) that intercepts the
-   built-in docker / terminal tools and routes them through
-   `OpsClient`. Smaller blast radius than forking upstream.
-3. **Fork upstream** (last resort). Maintain a fork of
-   `NousResearch/hermes-agent` that swaps `tools/environments/docker.py`
-   to call `OpsClient`. Highest maintenance debt.
+   This still works today and is the **recommended path for any
+   automation or skill that wants its container ops audited**.
+2. **Hermes plugin.** Register a `pre_tool_call` hook (similar to
+   `hermes/plugins/push-through/`) that intercepts the built-in docker
+   / terminal tools and routes them through `OpsClient`. Smaller blast
+   radius than forking upstream. Not yet built.
+3. **Fork upstream.** Maintain a fork of `NousResearch/hermes-agent`
+   that swaps `tools/environments/docker.py` to call `OpsClient`.
+   Highest maintenance debt; option of last resort.
 
-The compose `${OPS_CONTROLLER_TOKEN:?required}` failsafe ensures
-Hermes can never start without the token — option 2 or 3 always has a
-working `OpsClient` to delegate to.
+Until option 2 or 3 ships, Hermes mounts the socket and the audit
+trail is opt-in (anyone — Hermes or otherwise — who calls through
+`OpsClient` gets logged; direct socket use does not).
 
 ## Audit log
 
@@ -127,3 +152,9 @@ pytest tests/test_hermes_socket_absent.py -v
 Six tests: socket absent (gateway + dashboard), root-group elevation
 absent (both), ops-controller reachable, OPS_CONTROLLER_TOKEN/URL
 present in env. The suite skips if Hermes containers aren't running.
+
+**Expected today: socket-absent assertions FAIL** because Plan C was
+rolled back. The ops-controller-reachable + token-present assertions
+should still pass and are useful as a smoke test of the audited path.
+When the bridge plugin (option 2 above) ships, drop the socket again
+and this whole suite should go green.
