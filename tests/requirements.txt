@@ -1,4 +1,5 @@
 # Test dependencies. Install: pip install -r tests/requirements.txt
 -r ../dashboard/requirements.txt
 pytest>=7.0.0
+respx>=0.21.0
 ruff>=0.8.0

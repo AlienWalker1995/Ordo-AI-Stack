@@ -19,8 +19,24 @@ from urllib.parse import urlparse
 import docker
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse, PlainTextResponse
+from pydantic import BaseModel, Field
+
+# ``audit`` lives next to this module. In production (uvicorn main:app) and
+# in pytest with ``ops-controller/conftest.py`` it imports as a top-level
+# module; from tests in ``tests/`` that load this file via
+# ``spec_from_file_location`` without touching sys.path, fall back to loading
+# the sibling file directly.
+try:
+    from audit import AuditLog
+except ModuleNotFoundError:  # pragma: no cover — exercised via legacy tests
+    import importlib.util as _ilu
+    _audit_spec = _ilu.spec_from_file_location(
+        "audit", str(Path(__file__).resolve().parent / "audit.py"),
+    )
+    _audit_mod = _ilu.module_from_spec(_audit_spec)
+    _audit_spec.loader.exec_module(_audit_mod)
+    AuditLog = _audit_mod.AuditLog
 
 app = FastAPI(title="Ops Controller", version="1.0.0")
 logger = logging.getLogger(__name__)
@@ -110,6 +126,11 @@ _guardian_status: dict = {
 
 
 _cached_docker: docker.DockerClient | None = None
+
+# Structured audit log for the Hermes-facing privileged endpoints
+# (containers.list / container.logs / container.restart / compose.{up,down,restart}).
+# Schema: ``{ts, caller, action, target, result, ...extra}``. One JSON line per call.
+_audit_log = AuditLog(os.environ.get("AUDIT_LOG_PATH", "/data/audit.jsonl"))
 
 
 def _docker_client() -> docker.DockerClient:
@@ -330,6 +351,133 @@ async def list_services():
     except Exception as e:
         logger.warning("Service list failed: %s", e)
         return JSONResponse(status_code=503, content={"services": [], "detail": "Docker unavailable"})
+
+
+# --- Hermes-facing privileged endpoints --------------------------------------
+# Plan C narrows Hermes to call ops-controller over HTTP instead of holding
+# /var/run/docker.sock directly. These verbs (containers.list / container.logs
+# / container.restart / compose.{up,down,restart}) are the ones Hermes needs;
+# every call emits one line to ``_audit_log``.
+
+@app.get("/containers")
+async def list_containers(_: None = Depends(verify_token)):
+    """List all containers visible to the docker daemon. Auth required, audited."""
+    client = _docker_client()
+    out = []
+    for c in client.containers.list(all=True):
+        image = ""
+        try:
+            tags = getattr(c.image, "tags", None) or []
+            image = tags[0] if tags else (getattr(c.image, "id", "") or "")
+        except Exception:
+            image = ""
+        out.append({
+            "name": c.name,
+            "status": c.status,
+            "image": image,
+        })
+    _audit_log.record(action="containers.list", target="*", result="ok", caller="hermes")
+    return out
+
+
+@app.get("/containers/{name}/logs", response_class=PlainTextResponse)
+async def container_logs(
+    name: str, tail: int = 100, since: str | None = None,
+    _: None = Depends(verify_token),
+):
+    """Tail any container's logs by name. Auth required, audited."""
+    client = _docker_client()
+    try:
+        c = client.containers.get(name)
+    except docker.errors.NotFound:
+        _audit_log.record(action="container.logs", target=name, result="not_found", caller="hermes")
+        raise HTTPException(status_code=404, detail=f"container {name} not found")
+    kwargs: dict = {"tail": tail, "timestamps": True}
+    if since:
+        kwargs["since"] = since
+    raw = c.logs(**kwargs)
+    text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+    _audit_log.record(
+        action="container.logs", target=name, result="ok", caller="hermes", tail=tail,
+    )
+    return text
+
+
+@app.post("/containers/{name}/restart")
+async def container_restart(name: str, _: None = Depends(verify_token)):
+    """Restart any container by name. Auth required, audited."""
+    client = _docker_client()
+    try:
+        c = client.containers.get(name)
+    except docker.errors.NotFound:
+        _audit_log.record(
+            action="container.restart", target=name, result="not_found", caller="hermes",
+        )
+        raise HTTPException(status_code=404, detail=f"container {name} not found")
+    c.restart()
+    _audit_log.record(
+        action="container.restart", target=name, result="ok", caller="hermes",
+    )
+    return {"name": name, "restarted": True}
+
+
+# Whole-stack compose ops require ``confirm: true`` to prevent accidents
+# (or prompt-injection-driven restarts of the entire stack). Service names
+# are validated against a strict allowlist regex to prevent shell injection
+# via the subprocess argv.
+
+class ComposeOpRequest(BaseModel):
+    service: str | None = Field(default=None, max_length=64)
+    confirm: bool = False
+
+
+_COMPOSE_SERVICE_NAME = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _run_compose(verb: str, service: str | None) -> subprocess.CompletedProcess:
+    cmd = ["docker", "compose", verb]
+    if service:
+        cmd.append(service)
+    elif verb == "up":
+        cmd += ["-d"]
+    return subprocess.run(
+        cmd, capture_output=True, text=True,
+        cwd=os.environ.get("COMPOSE_PROJECT_DIR", "/workspace"),
+    )
+
+
+def _compose_endpoint(verb: str, body: ComposeOpRequest):
+    # Validate service name explicitly (rather than via pydantic) so we
+    # return a plain 400 instead of FastAPI's 422 ValidationError envelope.
+    if body.service is not None and not _COMPOSE_SERVICE_NAME.fullmatch(body.service):
+        raise HTTPException(status_code=400, detail="service name contains illegal characters")
+    if body.service is None and not body.confirm:
+        raise HTTPException(status_code=400, detail="whole-stack compose op requires confirm=true")
+    target = body.service or "all"
+    proc = _run_compose(verb, body.service)
+    result = "ok" if proc.returncode == 0 else "fail"
+    _audit_log.record(
+        action=f"compose.{verb}", target=target, result=result, caller="hermes",
+        rc=proc.returncode, stderr=proc.stderr[-500:] if proc.stderr else "",
+    )
+    if proc.returncode != 0:
+        raise HTTPException(status_code=500, detail=f"compose {verb} failed: {proc.stderr[-200:]}")
+    return {"verb": verb, "target": target, "stdout": proc.stdout[-2000:]}
+
+
+@app.post("/compose/up")
+async def compose_up(body: ComposeOpRequest, _: None = Depends(verify_token)):
+    return _compose_endpoint("up", body)
+
+
+@app.post("/compose/down")
+async def compose_down(body: ComposeOpRequest, _: None = Depends(verify_token)):
+    return _compose_endpoint("down", body)
+
+
+@app.post("/compose/restart")
+async def compose_restart(body: ComposeOpRequest, _: None = Depends(verify_token)):
+    return _compose_endpoint("restart", body)
 
 
 class ConfirmBody(BaseModel):

@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py .
+COPY main.py audit.py ./
 
 # Run as non-root user (docker group for socket access)
 RUN groupadd -g 999 docker && useradd -m -u 1000 -G docker appuser
