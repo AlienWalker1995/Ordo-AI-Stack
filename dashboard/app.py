@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import ipaddress
 import json
 import logging
 import os
@@ -27,6 +28,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from dashboard import settings
 from dashboard.orchestration_db import get_job_counts, get_outbox_stats
 from dashboard.routes_hub import router as hub_router
 from dashboard.routes_orchestration import router as orchestration_router
@@ -94,8 +96,43 @@ async def _global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
-def _verify_auth(request: Request) -> bool:
-    """Verify Authorization header. Returns True if auth passes or not required."""
+def _request_from_trusted_proxy(request: Request) -> bool:
+    """True if the request originates from the configured proxy network."""
+    if not settings.DASHBOARD_TRUST_PROXY_HEADERS:
+        return False
+    if settings.DASHBOARD_TRUSTED_PROXY_NET is None:
+        return False
+    client_ip = request.client.host if request.client else None
+    if client_ip is None:
+        return False
+    try:
+        return ipaddress.ip_address(client_ip) in settings.DASHBOARD_TRUSTED_PROXY_NET
+    except ValueError:
+        return False
+
+
+def _verify_auth(request: Request) -> bool | str:
+    """Verify the request's authentication.
+
+    Order of precedence:
+      1. Trusted-proxy branch — if the request originates from the configured
+         proxy network and carries an X-Forwarded-Email header, accept it.
+         If the proxy is trusted but no email is present, fail closed when
+         AUTH_REQUIRED so a misconfigured proxy can't silently bypass auth.
+      2. Bearer-token branch — Authorization: Bearer <DASHBOARD_AUTH_TOKEN>
+         (preserved for orchestration-mcp / internal callers).
+
+    Returns a truthy value when auth passes (the email or True for bearer),
+    False when auth fails. Returns True when auth is not required.
+    """
+    if _request_from_trusted_proxy(request):
+        email = request.headers.get("X-Forwarded-Email", "").strip()
+        if email:
+            return email
+        # Trusted proxy connected but no identity header — refuse rather
+        # than silently bypass auth (fail-closed).
+        return not _AUTH_REQUIRED
+
     if not _AUTH_REQUIRED:
         return True
     auth = request.headers.get("Authorization", "")

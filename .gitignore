@@ -32,3 +32,6 @@ test_output.log
 # Hermes Agent (host-mode install + local state; see docs/hermes-agent.md)
 vendor/hermes-agent/
 data/hermes/
+
+# Tailscale-issued TLS material for Caddy front door — per-host, NEVER commit
+auth/caddy/certs/

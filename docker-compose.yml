@@ -174,8 +174,6 @@ services:
     depends_on:
       llamacpp:
         condition: service_healthy
-    ports:
-      - "8080:8080"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -212,6 +210,8 @@ services:
       # n8n webhook for publish_enqueue (or pass per-request); n8n owns retries/OAuth
       - N8N_PUBLISH_WEBHOOK_URL=${N8N_PUBLISH_WEBHOOK_URL:-}
       - COMFYUI_OUTPUT_DIR=/comfyui-output
+      - DASHBOARD_TRUST_PROXY_HEADERS=true
+      - DASHBOARD_TRUSTED_PROXY_NET=172.24.0.0/16
     volumes:
       - ${BASE_PATH:-.}/models/comfyui:/models
       - ${BASE_PATH:-.}/models/gguf:/gguf-models
@@ -223,6 +223,7 @@ services:
     networks:
       - frontend
       - backend
+      - proxy-net
 
   worker:
     build:
@@ -273,8 +274,6 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_healthy
-    ports:
-      - "3000:8080"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/"]
       start_period: 120s
@@ -303,6 +302,7 @@ services:
     networks:
       - frontend
       - backend
+      - proxy-net
 
   gguf-puller:
     profiles: [models]
@@ -370,8 +370,6 @@ services:
         condition: service_completed_successfully
     # Backend network so MCP gateway-spawned comfyui container can reach it
     # ComfyUI: run scripts/detect_hardware.py to auto-configure GPU (NVIDIA/AMD/Intel) or CPU
-    ports:
-      - "8188:8188"
     # Custom nodes + ComfyRegistry can take several minutes before :8188 serves; short grace marks healthy deps as failed.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8188/"]
@@ -400,6 +398,7 @@ services:
     networks:
       - frontend
       - backend
+      - proxy-net
 
   # Build ComfyUI MCP image for gateway-spawned containers (exits immediately after build)
   comfyui-mcp-image:
@@ -458,8 +457,6 @@ services:
         condition: service_healthy
       mcp-gateway:
         condition: service_started
-    ports:
-      - "5678:5678"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:5678/"]
       interval: 30s
@@ -492,6 +489,7 @@ services:
     networks:
       - frontend
       - backend
+      - proxy-net
 
   mcp-gateway:
     build: ./mcp
@@ -548,6 +546,82 @@ services:
         max-file: "3"
     networks:
       - backend
+
+  oauth2-proxy:
+    # alpine variant ships with wget for the in-container healthcheck below.
+    # The default :latest is distroless and has no shell or HTTP probe tools.
+    image: quay.io/oauth2-proxy/oauth2-proxy:latest-alpine
+    restart: unless-stopped
+    # oauth2-proxy is used purely as an authn endpoint via Caddy `forward_auth`
+    # (Caddy calls /oauth2/auth, oauth2-proxy returns 202 on valid session,
+    # 401 otherwise). It never proxies to a real upstream, so --upstream is a
+    # static 202 placeholder. Do not change without redesigning the front door.
+    command:
+      - --provider=google
+      - --http-address=0.0.0.0:4180
+      - --reverse-proxy=true
+      - --set-xauthrequest=true
+      - --upstream=static://202
+      - --redirect-url=https://${CADDY_TAILNET_HOSTNAME}/oauth2/callback
+      - --whitelist-domain=.${CADDY_TAILNET_DOMAIN}
+      - --cookie-domain=.${CADDY_TAILNET_DOMAIN}
+      - --cookie-secure=true
+      - --cookie-samesite=lax
+      - --cookie-expire=24h
+      - --email-domain=*
+      - --authenticated-emails-file=/etc/oauth2-proxy/emails.txt
+      - --skip-provider-button=true
+    environment:
+      - OAUTH2_PROXY_CLIENT_ID=${OAUTH2_PROXY_CLIENT_ID}
+      - OAUTH2_PROXY_CLIENT_SECRET=${OAUTH2_PROXY_CLIENT_SECRET}
+      - OAUTH2_PROXY_COOKIE_SECRET=${OAUTH2_PROXY_COOKIE_SECRET}
+    volumes:
+      - ./auth/oauth2-proxy/emails.txt:/etc/oauth2-proxy/emails.txt:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4180/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - proxy-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    # CADDY_BIND must be the host's tailnet IP. The :? failsafe makes
+    # `docker compose config` exit non-zero if it's empty or unset, since
+    # an empty bind silently degrades to 0.0.0.0:443 (compose only warns).
+    ports:
+      - "${CADDY_BIND:?CADDY_BIND must be set to the host tailnet IP — never empty or 0.0.0.0}:443:443"
+    environment:
+      - CADDY_TAILNET_HOSTNAME=${CADDY_TAILNET_HOSTNAME}
+      - CADDY_TAILNET_DOMAIN=${CADDY_TAILNET_DOMAIN}
+    volumes:
+      - ./auth/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${TAILSCALE_CERT_DIR:-./auth/caddy/certs}:/etc/caddy/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      oauth2-proxy:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - proxy-net
+      - frontend
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # --- RAG ---
 
@@ -724,8 +798,6 @@ services:
       # HERMES_HOST_DEV_MOUNT override, and rollback notes.
       - ${BASE_PATH:-.}/data/hermes:/home/hermes/.hermes
       - ${BASE_PATH:-.}/..:${HERMES_HOST_DEV_MOUNT:-/projects}:rw
-    ports:
-      - "${HERMES_DASHBOARD_PORT:-9119}:9119"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9119/"]
       start_period: 30s
@@ -740,11 +812,15 @@ services:
     networks:
       - frontend
       - backend
-    # --insecure: Hermes rejects 0.0.0.0 binding without it. Safe here because the
-    # port mapping gates external access; internal Docker network is trusted.
+      - proxy-net
+    # --insecure: Hermes rejects 0.0.0.0 binding without it. Safe here because
+    # the host-port publish was dropped (Plan A Task 13) — hermes-dashboard is
+    # only reachable on the internal Docker network via Caddy at /hermes/.
     command: ["hermes", "dashboard", "--port", "9119", "--host", "0.0.0.0", "--no-open", "--insecure"]
 
-volumes: {}
+volumes:
+  caddy_data:
+  caddy_config:
 # Hermes data is now bind-mounted from data/hermes/ (see hermes-gateway/dashboard above).
 # The legacy `ordo-ai-stack_hermes-data` named volume still exists in Docker for
 # rollback. To revert: re-add `hermes-data:` here, then switch the hermes services'
@@ -759,3 +835,12 @@ networks:
     # internal: false required for llama.cpp and HuggingFace model downloads.
     # Set internal: true for air-gapped security (model pulls will fail).
     internal: false
+  proxy-net:
+    driver: bridge
+    # Pinned so DASHBOARD_TRUSTED_PROXY_NET (set in dashboard's env block)
+    # stays in lockstep across rebuilds. Any RFC1918 /16 inside Docker's
+    # default address pool (172.17–172.30) works; 172.24 was the auto-assigned
+    # value at first boot and was kept to avoid a one-time renumber.
+    ipam:
+      config:
+        - subnet: 172.24.0.0/16
