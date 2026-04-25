@@ -562,6 +562,7 @@ services:
       - --provider=google
       - --http-address=0.0.0.0:4180
       - --reverse-proxy=true
+      - --set-xauthrequest=true
       - --upstream=static://202
       - --redirect-url=https://${CADDY_TAILNET_HOSTNAME}/oauth2/callback
       - --whitelist-domain=.${CADDY_TAILNET_DOMAIN}
@@ -838,3 +839,6 @@ networks:
     internal: false
   proxy-net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.24.0.0/16
