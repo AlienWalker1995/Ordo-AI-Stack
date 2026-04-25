@@ -21,7 +21,7 @@
     tls /etc/caddy/certs/tailnet.crt /etc/caddy/certs/tailnet.key
 
     # ---- forward_auth (oauth2-proxy) on every protected path ----
-    @auth not path /oauth2/* /healthz
+    @auth not path /oauth2/* /healthz /n8n/rest/oauth2-credential/callback /n8n/webhook/*
     handle @auth {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
@@ -54,6 +54,11 @@
     # ---- /chat/ → open-webui ----
     handle_path /chat/* {
         reverse_proxy open-webui:8080
+    }
+
+    # ---- /n8n/ → n8n (OAuth callback + webhooks bypass SSO via @auth exclusion above) ----
+    handle_path /n8n/* {
+        reverse_proxy n8n:5678
     }
 
     # ---- catch-all for paths not yet wired ----

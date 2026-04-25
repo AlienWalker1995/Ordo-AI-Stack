@@ -458,8 +458,6 @@ services:
         condition: service_healthy
       mcp-gateway:
         condition: service_started
-    ports:
-      - "5678:5678"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:5678/"]
       interval: 30s
@@ -492,6 +490,7 @@ services:
     networks:
       - frontend
       - backend
+      - proxy-net
 
   mcp-gateway:
     build: ./mcp
