@@ -120,10 +120,11 @@ def test_spoofed_proxy_header_from_untrusted_ip_is_rejected(client_proxy_untrust
 def test_trusted_proxy_without_email_fails_closed(client_proxy_trusted):
     """Trusted proxy net but X-Forwarded-Email missing → 401 (fail-closed).
 
-    Covers the spec's named failure mode (`docs/superpowers/specs/2026-04-25-
-    auth-redesign-design.md` § Failure modes: "Caddy or proxy drops
-    X-Forwarded-Email"). A misconfigured proxy that strips the header must
-    NOT result in anonymous access; the dashboard must fail closed.
+    Failure mode: a misconfigured Caddy / oauth2-proxy that strips
+    X-Forwarded-Email must NOT result in anonymous access. When trust is
+    enabled and the request originates from inside the trusted proxy
+    network but the header is absent, the dashboard must reject the
+    request rather than silently accept it.
     """
     r = client_proxy_trusted.get(PROTECTED_PATH)
     assert r.status_code == 401
