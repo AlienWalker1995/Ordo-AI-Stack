@@ -46,7 +46,12 @@
         respond "ok" 200
     }
 
-    # ---- Upstream UIs are wired in subsequent tasks (Plan A Tasks 10-14). ----
+    # ---- /dash/ → dashboard:8080 ----
+    handle_path /dash/* {
+        reverse_proxy dashboard:8080
+    }
+
+    # ---- catch-all for paths not yet wired ----
     handle {
         respond "auth ok — no route configured for this path yet" 404
     }

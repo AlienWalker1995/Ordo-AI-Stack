@@ -174,8 +174,6 @@ services:
     depends_on:
       llamacpp:
         condition: service_healthy
-    ports:
-      - "8080:8080"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -212,6 +210,8 @@ services:
       # n8n webhook for publish_enqueue (or pass per-request); n8n owns retries/OAuth
       - N8N_PUBLISH_WEBHOOK_URL=${N8N_PUBLISH_WEBHOOK_URL:-}
       - COMFYUI_OUTPUT_DIR=/comfyui-output
+      - DASHBOARD_TRUST_PROXY_HEADERS=true
+      - DASHBOARD_TRUSTED_PROXY_NET=172.24.0.0/16
     volumes:
       - ${BASE_PATH:-.}/models/comfyui:/models
       - ${BASE_PATH:-.}/models/gguf:/gguf-models
@@ -223,6 +223,7 @@ services:
     networks:
       - frontend
       - backend
+      - proxy-net
 
   worker:
     build:
