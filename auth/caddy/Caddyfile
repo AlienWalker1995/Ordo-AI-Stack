@@ -4,6 +4,18 @@
     auto_https off
 }
 
+# Plain-HTTP healthz on :80 for the in-container Docker healthcheck
+# (caddy:2-alpine's wget targets http://localhost/healthz). The 443
+# host block below also serves /healthz publicly for tailnet probes.
+:80 {
+    handle /healthz {
+        respond "ok" 200
+    }
+    handle {
+        respond "use https" 421
+    }
+}
+
 {$CADDY_TAILNET_HOSTNAME} {
     # Tailscale-issued cert (mounted in by host).
     tls /etc/caddy/certs/tailnet.crt /etc/caddy/certs/tailnet.key
@@ -21,6 +33,13 @@
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
             copy_headers X-Forwarded-Email X-Forwarded-User X-Forwarded-Preferred-Username
+            # Convert oauth2-proxy's 401 (no session) into a 302 redirect to
+            # /oauth2/start, preserving the original URL via rd= so the user
+            # is bounced back after Google sign-in.
+            @unauthorized status 401
+            handle_response @unauthorized {
+                redir https://{host}/oauth2/start?rd={scheme}://{host}{uri} 302
+            }
         }
     }
 
