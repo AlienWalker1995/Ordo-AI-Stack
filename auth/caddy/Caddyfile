@@ -66,6 +66,11 @@
         reverse_proxy hermes-dashboard:9119
     }
 
+    # ---- /comfy/ → comfyui (WebSocket auto-upgrade via reverse_proxy) ----
+    handle_path /comfy/* {
+        reverse_proxy comfyui:8188
+    }
+
     # ---- catch-all for paths not yet wired ----
     handle {
         respond "auth ok — no route configured for this path yet" 404

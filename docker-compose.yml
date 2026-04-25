@@ -370,8 +370,6 @@ services:
         condition: service_completed_successfully
     # Backend network so MCP gateway-spawned comfyui container can reach it
     # ComfyUI: run scripts/detect_hardware.py to auto-configure GPU (NVIDIA/AMD/Intel) or CPU
-    ports:
-      - "8188:8188"
     # Custom nodes + ComfyRegistry can take several minutes before :8188 serves; short grace marks healthy deps as failed.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8188/"]
@@ -400,6 +398,7 @@ services:
     networks:
       - frontend
       - backend
+      - proxy-net
 
   # Build ComfyUI MCP image for gateway-spawned containers (exits immediately after build)
   comfyui-mcp-image:
