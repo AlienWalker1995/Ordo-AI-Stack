@@ -92,11 +92,15 @@ def test_hermes_dashboard_not_in_root_group(dashboard: str):
 
 def test_hermes_can_reach_ops_controller(gateway: str):
     """The whole point of Task 8: Hermes must still be able to call
-    ops-controller for privileged verbs. A simple GET /health from inside
-    hermes-gateway proves the network path is intact."""
-    r = _docker_exec(gateway, "wget", "-qO-", "http://ops-controller:9000/health")
+    ops-controller for privileged verbs. The Hermes image is python-based
+    and ships neither wget nor curl, so probe via stdlib urllib."""
+    r = _docker_exec(
+        gateway, "python3", "-c",
+        "import urllib.request, sys;"
+        "sys.exit(0 if urllib.request.urlopen('http://ops-controller:9000/health', timeout=5).status == 200 else 1)",
+    )
     assert r.returncode == 0, (
-        f"FAIL: hermes-gateway cannot reach ops-controller — stderr: {r.stderr!r}"
+        f"FAIL: hermes-gateway cannot reach ops-controller — stdout={r.stdout!r} stderr={r.stderr!r}"
     )
 
 
