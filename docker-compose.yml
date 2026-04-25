@@ -604,7 +604,9 @@ services:
       - --cookie-secure=true
       - --cookie-samesite=lax
       - --cookie-expire=24h
-      - --email-domain=*
+      # NOTE: do NOT add --email-domain=* alongside --authenticated-emails-file.
+      # Either condition allows the user in, so the wildcard would defeat the
+      # allowlist. The file is the only gate.
       - --authenticated-emails-file=/etc/oauth2-proxy/emails.txt
       - --skip-provider-button=true
     environment:
