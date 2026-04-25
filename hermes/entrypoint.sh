@@ -11,6 +11,15 @@ HERMES_HOME="${HERMES_HOME:-/home/hermes/.hermes}"
 mkdir -p "$HERMES_HOME"
 export HERMES_HOME
 
+# Bridge from Docker secrets _FILE pattern to the env var the app expects.
+# discord.py / hermes read DISCORD_BOT_TOKEN directly from os.environ; the
+# compose file mounts the secret at /run/secrets/discord_token and exports
+# DISCORD_BOT_TOKEN_FILE pointing to it. If both are set, the file wins.
+if [ -n "${DISCORD_BOT_TOKEN_FILE:-}" ] && [ -f "$DISCORD_BOT_TOKEN_FILE" ]; then
+    DISCORD_BOT_TOKEN="$(cat "$DISCORD_BOT_TOKEN_FILE")"
+    export DISCORD_BOT_TOKEN
+fi
+
 HERMES_BIN=/opt/hermes-agent/.venv/bin/hermes
 
 # Seed model + MCP endpoints to Docker-network DNS. hermes config set is idempotent

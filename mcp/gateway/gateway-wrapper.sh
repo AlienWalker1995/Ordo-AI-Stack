@@ -11,6 +11,20 @@ GATEWAY_BIN="/docker-mcp"
 POLL_SEC="${MCP_GATEWAY_POLL_SEC:-5}"
 RELOAD_DEBOUNCE_SEC="${MCP_GATEWAY_RELOAD_DEBOUNCE_SEC:-20}"
 
+# Bridge Docker secrets *_FILE pointers to plaintext env vars. The gateway
+# itself + its sed substitution into registry-custom.docker.yaml expect the
+# canonical env names (TAVILY_API_KEY, GITHUB_PERSONAL_ACCESS_TOKEN). The
+# gateway also propagates these to spawned MCP-server containers (e.g. the
+# `tavily` MCP that reads TAVILY_API_KEY directly).
+if [ -n "${TAVILY_API_KEY_FILE:-}" ] && [ -f "$TAVILY_API_KEY_FILE" ]; then
+    TAVILY_API_KEY="$(cat "$TAVILY_API_KEY_FILE")"
+    export TAVILY_API_KEY
+fi
+if [ -n "${GITHUB_PERSONAL_ACCESS_TOKEN_FILE:-}" ] && [ -f "$GITHUB_PERSONAL_ACCESS_TOKEN_FILE" ]; then
+    GITHUB_PERSONAL_ACCESS_TOKEN="$(cat "$GITHUB_PERSONAL_ACCESS_TOKEN_FILE")"
+    export GITHUB_PERSONAL_ACCESS_TOKEN
+fi
+
 # Ensure config exists with default
 mkdir -p "$(dirname "$CONFIG_FILE")"
 if [ ! -f "$CONFIG_FILE" ]; then

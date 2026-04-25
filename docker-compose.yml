@@ -408,6 +408,23 @@ services:
     secrets:
       - hf_token
       - github_pat
+    # Bridge Docker secrets *_FILE pointers to the plaintext env vars the
+    # upstream image's runner-scripts/entrypoint.sh + ComfyUI custom nodes
+    # (HF SDK, ComfyUI-Manager) read directly. The upstream image's default
+    # CMD is `bash /runner-scripts/entrypoint.sh`; we replace it with a shim
+    # that exports HF_TOKEN / GITHUB_TOKEN from the mounted secret files,
+    # then exec's the original.
+    command:
+      - bash
+      - -c
+      - |
+        if [ -f "$${HF_TOKEN_FILE:-/run/secrets/hf_token}" ]; then
+          export HF_TOKEN="$$(cat "$${HF_TOKEN_FILE:-/run/secrets/hf_token}")"
+        fi
+        if [ -f "$${GITHUB_TOKEN_FILE:-/run/secrets/github_pat}" ]; then
+          export GITHUB_TOKEN="$$(cat "$${GITHUB_TOKEN_FILE:-/run/secrets/github_pat}")"
+        fi
+        exec bash /runner-scripts/entrypoint.sh
     networks:
       - frontend
       - backend

@@ -5,7 +5,8 @@ Env:
   GGUF_MODELS — comma-separated entries. Each entry is either:
     - HuggingFace repo id, e.g. bartowski/Llama-3.2-3B-Instruct-GGUF
     - huggingface.co URL to a single .gguf file
-  HF_TOKEN — optional, for gated repos
+  HF_TOKEN — optional, for gated repos. May also be supplied via
+    HF_TOKEN_FILE pointing at a Docker secret (file wins if both set).
 """
 from __future__ import annotations
 
@@ -13,6 +14,21 @@ import os
 import re
 import sys
 from pathlib import Path
+
+
+def _read_token(env_name: str) -> str | None:
+    """Resolve a token from {NAME}_FILE (Docker secrets) or {NAME} (env)."""
+    file_var = f"{env_name}_FILE"
+    path = os.environ.get(file_var)
+    if path:
+        try:
+            value = open(path).read().strip()
+            if value:
+                return value
+        except OSError:
+            pass
+    value = os.environ.get(env_name, "").strip()
+    return value or None
 
 
 def _install_hf_hub() -> None:
@@ -32,7 +48,7 @@ def main() -> int:
 
     dest = Path(os.environ.get("GGUF_DEST", "/models"))
     dest.mkdir(parents=True, exist_ok=True)
-    token = os.environ.get("HF_TOKEN", "").strip() or None
+    token = _read_token("HF_TOKEN")
 
     try:
         import huggingface_hub  # noqa: F401
