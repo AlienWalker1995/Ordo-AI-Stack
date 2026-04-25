@@ -17,8 +17,8 @@
 | File | Action | Responsibility |
 |------|--------|----------------|
 | `docker-compose.yml` | modify | Add `caddy` + `oauth2-proxy` services, `proxy-net` network; drop host-port publishes from internal-only UIs |
-| `compose/caddy/Caddyfile` | create | Routes `/dash/`, `/chat/`, `/n8n/`, `/hermes/`, `/comfy/` with `forward_auth` to oauth2-proxy; n8n callback bypass list |
-| `compose/oauth2-proxy/emails.txt` | create | Single-line allowlist file (placeholder `YOUR_ALLOWLIST_EMAIL` in repo; user replaces locally) |
+| `auth/caddy/Caddyfile` | create | Routes `/dash/`, `/chat/`, `/n8n/`, `/hermes/`, `/comfy/` with `forward_auth` to oauth2-proxy; n8n callback bypass list |
+| `auth/oauth2-proxy/emails.txt` | create | Single-line allowlist file (placeholder `YOUR_ALLOWLIST_EMAIL` in repo; user replaces locally) |
 | `.env.example` | modify | Document new SSO env vars (OAUTH2_*, CADDY_TAILNET_HOSTNAME) |
 | `dashboard/settings.py` | modify | Read `DASHBOARD_TRUST_PROXY_HEADERS`, `DASHBOARD_TRUSTED_PROXY_NET` |
 | `dashboard/app.py` | modify | `_verify_auth()` gains proxy-headers branch; new helper `_request_from_trusted_proxy()` |
@@ -86,11 +86,11 @@ git commit -m "feat(auth): add proxy-net Docker network for SSO front door"
 ## Task 3: Add oauth2-proxy emails allowlist file
 
 **Files:**
-- Create: `compose/oauth2-proxy/emails.txt`
+- Create: `auth/oauth2-proxy/emails.txt`
 
 - [ ] **Step 1: Create the file with placeholder**
 
-Create `compose/oauth2-proxy/emails.txt` with content:
+Create `auth/oauth2-proxy/emails.txt` with content:
 
 ```
 YOUR_ALLOWLIST_EMAIL
@@ -100,7 +100,7 @@ Single line. The placeholder is replaced locally by the user; the file in the pu
 
 - [ ] **Step 2: Add a README beside it**
 
-Create `compose/oauth2-proxy/README.md`:
+Create `auth/oauth2-proxy/README.md`:
 
 ```markdown
 # oauth2-proxy
@@ -117,7 +117,7 @@ To reload after editing: `docker compose restart oauth2-proxy`.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add compose/oauth2-proxy/emails.txt compose/oauth2-proxy/README.md
+git add auth/oauth2-proxy/emails.txt auth/oauth2-proxy/README.md
 git commit -m "feat(auth): scaffold oauth2-proxy emails allowlist with placeholder"
 ```
 
@@ -155,7 +155,7 @@ Insert this service block in `docker-compose.yml` (near the other gateways, e.g.
       - OAUTH2_PROXY_CLIENT_SECRET=${OAUTH2_PROXY_CLIENT_SECRET}
       - OAUTH2_PROXY_COOKIE_SECRET=${OAUTH2_PROXY_COOKIE_SECRET}
     volumes:
-      - ./compose/oauth2-proxy/emails.txt:/etc/oauth2-proxy/emails.txt:ro
+      - ./auth/oauth2-proxy/emails.txt:/etc/oauth2-proxy/emails.txt:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:4180/ping"]
       interval: 30s
@@ -187,11 +187,11 @@ git commit -m "feat(auth): add oauth2-proxy service backing Google OIDC SSO"
 ## Task 5: Add Caddyfile
 
 **Files:**
-- Create: `compose/caddy/Caddyfile`
+- Create: `auth/caddy/Caddyfile`
 
 - [ ] **Step 1: Create the Caddyfile with placeholders for upstream wiring**
 
-Create `compose/caddy/Caddyfile`:
+Create `auth/caddy/Caddyfile`:
 
 ```caddyfile
 {
@@ -236,7 +236,7 @@ Create `compose/caddy/Caddyfile`:
 - [ ] **Step 2: Commit**
 
 ```bash
-git add compose/caddy/Caddyfile
+git add auth/caddy/Caddyfile
 git commit -m "feat(auth): scaffold Caddyfile with oauth2-proxy forward_auth"
 ```
 
@@ -263,8 +263,8 @@ Insert before or after `oauth2-proxy` in `docker-compose.yml`:
       - CADDY_TAILNET_HOSTNAME=${CADDY_TAILNET_HOSTNAME}
       - CADDY_TAILNET_DOMAIN=${CADDY_TAILNET_DOMAIN}
     volumes:
-      - ./compose/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ${TAILSCALE_CERT_DIR:-./compose/caddy/certs}:/etc/caddy/certs:ro
+      - ./auth/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${TAILSCALE_CERT_DIR:-./auth/caddy/certs}:/etc/caddy/certs:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
@@ -322,9 +322,9 @@ git commit -m "feat(auth): add caddy reverse-proxy service bound to tailnet IP"
 # Get it from `tailscale ip -4`.
 # CADDY_BIND=100.x.y.z
 # Path on the host where Tailscale-issued certs are mounted into Caddy.
-# Default: ./compose/caddy/certs (where you put tailnet.crt + tailnet.key
+# Default: ./auth/caddy/certs (where you put tailnet.crt + tailnet.key
 # from `tailscale cert <hostname>`).
-# TAILSCALE_CERT_DIR=./compose/caddy/certs
+# TAILSCALE_CERT_DIR=./auth/caddy/certs
 # Google OAuth 2.0 Client (https://console.cloud.google.com/apis/credentials)
 # OAUTH2_PROXY_CLIENT_ID=
 # OAUTH2_PROXY_CLIENT_SECRET=
@@ -356,11 +356,11 @@ OAUTH2_PROXY_CLIENT_ID=<from Task 1>
 OAUTH2_PROXY_CLIENT_SECRET=<from Task 1>
 OAUTH2_PROXY_COOKIE_SECRET=<from Task 1>
 ```
-Replace `compose/oauth2-proxy/emails.txt` locally with your real allowlist email (do **not** commit this).
+Replace `auth/oauth2-proxy/emails.txt` locally with your real allowlist email (do **not** commit this).
 
 - [ ] **Step 2: Place Tailscale cert files**
 
-`mkdir -p compose/caddy/certs && tailscale cert --cert-file compose/caddy/certs/tailnet.crt --key-file compose/caddy/certs/tailnet.key ordo.<tailnet>.ts.net`
+`mkdir -p auth/caddy/certs && tailscale cert --cert-file auth/caddy/certs/tailnet.crt --key-file auth/caddy/certs/tailnet.key ordo.<tailnet>.ts.net`
 
 - [ ] **Step 3: Bring up just the proxy stack**
 
@@ -547,12 +547,12 @@ git commit -m "feat(dashboard): trust X-Forwarded-Email from configured proxy ne
 ## Task 10: Wire dashboard through Caddy
 
 **Files:**
-- Modify: `compose/caddy/Caddyfile`
+- Modify: `auth/caddy/Caddyfile`
 - Modify: `docker-compose.yml`
 
 - [ ] **Step 1: Replace the placeholder `handle { ... }` block in Caddyfile with the dashboard route**
 
-In `compose/caddy/Caddyfile`, replace:
+In `auth/caddy/Caddyfile`, replace:
 
 ```caddyfile
     handle {
@@ -617,7 +617,7 @@ Open `https://ordo.<tailnet>.ts.net/dash/`. Expected: redirected to Google → a
 - [ ] **Step 7: Commit**
 
 ```bash
-git add compose/caddy/Caddyfile docker-compose.yml
+git add auth/caddy/Caddyfile docker-compose.yml
 git commit -m "feat(auth): route /dash/ through Caddy + oauth2-proxy SSO"
 ```
 
@@ -626,12 +626,12 @@ git commit -m "feat(auth): route /dash/ through Caddy + oauth2-proxy SSO"
 ## Task 11: Wire open-webui through Caddy
 
 **Files:**
-- Modify: `compose/caddy/Caddyfile`
+- Modify: `auth/caddy/Caddyfile`
 - Modify: `docker-compose.yml`
 
 - [ ] **Step 1: Add /chat/ route to Caddyfile**
 
-In `compose/caddy/Caddyfile`, add inside the host block (above `handle { respond "no route" 404 }`):
+In `auth/caddy/Caddyfile`, add inside the host block (above `handle { respond "no route" 404 }`):
 
 ```caddyfile
     # ---- /chat/ → open-webui ----
@@ -669,7 +669,7 @@ From the same tailnet browser session (cookie still valid from Task 10), open `h
 - [ ] **Step 5: Commit**
 
 ```bash
-git add compose/caddy/Caddyfile docker-compose.yml
+git add auth/caddy/Caddyfile docker-compose.yml
 git commit -m "feat(auth): route /chat/ through Caddy SSO; drop open-webui host port"
 ```
 
@@ -678,12 +678,12 @@ git commit -m "feat(auth): route /chat/ through Caddy SSO; drop open-webui host 
 ## Task 12: Wire n8n through Caddy with OAuth-callback bypass
 
 **Files:**
-- Modify: `compose/caddy/Caddyfile`
+- Modify: `auth/caddy/Caddyfile`
 - Modify: `docker-compose.yml`
 
 - [ ] **Step 1: Add /n8n/ with bypass for OAuth callback + webhooks**
 
-In `compose/caddy/Caddyfile`, add:
+In `auth/caddy/Caddyfile`, add:
 
 ```caddyfile
     # ---- /n8n/ — OAuth callback + /webhook/ bypass SSO; rest requires auth ----
@@ -731,7 +731,7 @@ External callback simulation: `curl -k https://ordo.<tailnet>.ts.net/n8n/rest/oa
 - [ ] **Step 5: Commit**
 
 ```bash
-git add compose/caddy/Caddyfile docker-compose.yml
+git add auth/caddy/Caddyfile docker-compose.yml
 git commit -m "feat(auth): route /n8n/ through Caddy with OAuth-callback bypass"
 ```
 
@@ -740,7 +740,7 @@ git commit -m "feat(auth): route /n8n/ through Caddy with OAuth-callback bypass"
 ## Task 13: Wire hermes-dashboard through Caddy
 
 **Files:**
-- Modify: `compose/caddy/Caddyfile`
+- Modify: `auth/caddy/Caddyfile`
 - Modify: `docker-compose.yml`
 
 - [ ] **Step 1: Add /hermes/ route**
@@ -768,7 +768,7 @@ And add `proxy-net` to its networks.
 ```bash
 docker compose up -d --force-recreate hermes-dashboard caddy
 # Browse https://ordo.<tailnet>.ts.net/hermes/ — should load.
-git add compose/caddy/Caddyfile docker-compose.yml
+git add auth/caddy/Caddyfile docker-compose.yml
 git commit -m "feat(auth): route /hermes/ through Caddy SSO"
 ```
 
@@ -777,7 +777,7 @@ git commit -m "feat(auth): route /hermes/ through Caddy SSO"
 ## Task 14: Wire comfyui through Caddy
 
 **Files:**
-- Modify: `compose/caddy/Caddyfile`
+- Modify: `auth/caddy/Caddyfile`
 - Modify: `docker-compose.yml`
 
 - [ ] **Step 1: Add /comfy/ route — note WebSocket support**
@@ -800,7 +800,7 @@ Remove `8188:8188` from the `comfyui` ports block. Add `proxy-net`.
 ```bash
 docker compose up -d --force-recreate comfyui caddy
 # Browse https://ordo.<tailnet>.ts.net/comfy/ — UI loads, WebSocket connects.
-git add compose/caddy/Caddyfile docker-compose.yml
+git add auth/caddy/Caddyfile docker-compose.yml
 git commit -m "feat(auth): route /comfy/ through Caddy SSO with websocket support"
 ```
 
@@ -832,7 +832,7 @@ No commit — gate before allowlist deny test.
 
 - [ ] **Step 1: Sign in with a non-allowlisted Google account**
 
-Use a secondary Google account whose email is **not** in `compose/oauth2-proxy/emails.txt`.
+Use a secondary Google account whose email is **not** in `auth/oauth2-proxy/emails.txt`.
 
 - [ ] **Step 2: Expected behavior**
 
@@ -883,18 +883,18 @@ Create `docs/runbooks/auth.md`:
 3. Generate cookie secret: `openssl rand -base64 32` →
    `OAUTH2_PROXY_COOKIE_SECRET`.
 4. Issue Tailscale cert:
-   `tailscale cert --cert-file compose/caddy/certs/tailnet.crt
-                   --key-file  compose/caddy/certs/tailnet.key
+   `tailscale cert --cert-file auth/caddy/certs/tailnet.crt
+                   --key-file  auth/caddy/certs/tailnet.key
                    ordo.<tailnet>.ts.net`
 5. Set `CADDY_BIND` to your tailnet IP from `tailscale ip -4`.
-6. Replace `compose/oauth2-proxy/emails.txt` locally with your real
+6. Replace `auth/oauth2-proxy/emails.txt` locally with your real
    allowlist (do **not** commit your real email — repo file stays
    `YOUR_ALLOWLIST_EMAIL`).
 7. `docker compose up -d caddy oauth2-proxy`
 
 ## Edit allowlist
 
-Edit your local `compose/oauth2-proxy/emails.txt` (one email per line),
+Edit your local `auth/oauth2-proxy/emails.txt` (one email per line),
 then `docker compose restart oauth2-proxy`. Sessions for removed emails
 remain valid until cookie expiry (24h max); to force-invalidate, also
 rotate `OAUTH2_PROXY_COOKIE_SECRET` and restart.
