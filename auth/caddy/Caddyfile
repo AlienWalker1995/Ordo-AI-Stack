@@ -1,0 +1,34 @@
+{
+    # Listen only on the tailnet interface; the bind address is
+    # controlled at compose level via CADDY_BIND.
+    auto_https off
+}
+
+{$CADDY_TAILNET_HOSTNAME} {
+    # Tailscale-issued cert (mounted in by host).
+    tls /etc/caddy/certs/tailnet.crt /etc/caddy/certs/tailnet.key
+
+    # ---- forward_auth (oauth2-proxy) on every protected path ----
+    @auth not path /oauth2/* /healthz
+    handle @auth {
+        forward_auth oauth2-proxy:4180 {
+            uri /oauth2/auth
+            copy_headers X-Forwarded-Email X-Forwarded-User X-Forwarded-Preferred-Username
+        }
+    }
+
+    # ---- oauth2-proxy endpoints (start, callback, sign_out) ----
+    handle /oauth2/* {
+        reverse_proxy oauth2-proxy:4180
+    }
+
+    # ---- public health (no auth) ----
+    handle /healthz {
+        respond "ok" 200
+    }
+
+    # ---- Upstream UIs are wired in subsequent tasks (Plan A Tasks 10-14). ----
+    handle {
+        respond "auth ok — no route configured for this path yet" 404
+    }
+}
