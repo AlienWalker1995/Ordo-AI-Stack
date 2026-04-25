@@ -722,12 +722,11 @@ services:
     image: ordo-ai-stack-hermes:latest
     pull_policy: build
     restart: unless-stopped
-    # Root group grants access to /var/run/docker.sock (root:root mode 660 on
-    # Docker Desktop). Lets Hermes run `docker exec`, `docker ps`, `docker compose`
-    # against the stack without running the container itself as root.
-    # Security note: any user in DISCORD_ALLOWED_USERS effectively has root on
-    # any stack container via Hermes prompt injection. Keep that allowlist tight.
-    group_add: ["0"]
+    # Hermes used to hold /var/run/docker.sock (and group_add ["0"]) for its
+    # built-in docker tools. Plan C narrowed that surface: Hermes no longer
+    # has the socket. Privileged container ops route through ops-controller's
+    # HTTP API at OPS_CONTROLLER_URL with OPS_CONTROLLER_TOKEN. See
+    # docs/runbooks/bounded-hermes.md for the new verb surface.
     depends_on:
       model-gateway:
         condition: service_healthy
@@ -735,9 +734,16 @@ services:
         condition: service_healthy
       dashboard:
         condition: service_healthy
+      ops-controller:
+        condition: service_healthy
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-local}
       - PYTHONIOENCODING=utf-8
+      # ops-controller HTTP API replaces the raw Docker socket Hermes used
+      # to hold. Privileged verbs: /containers/*, /compose/*. See
+      # hermes/ops_client.py for the in-process wrapper.
+      - OPS_CONTROLLER_URL=http://ops-controller:9000
+      - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:?required for Hermes to reach ops-controller}
       # Single source of truth for context window across the stack — llamacpp
       # allocates KV for this; model-gateway templates it into litellm_config
       # as max_input_tokens; the hermes entrypoint seeds model.context_length
@@ -773,20 +779,14 @@ services:
       - ${BASE_PATH:-.}/data/hermes:/home/hermes/.hermes
       # Mount the parent dev directory into Hermes so it can read/write files
       # across sibling repos. /workspace stays scoped to the AI-toolkit project
-      # root. Default target is /projects.
-      #
-      # Override HERMES_HOST_DEV_MOUNT to a path that mirrors your host
-      # filesystem (e.g. /c/dev on Windows where dev lives at C:\dev,
-      # /Users/<you>/dev on macOS) when Hermes invokes `docker compose` against
-      # sibling stacks via the docker socket — the host's daemon resolves
-      # bind-mount source paths against the *host* filesystem, so matching the
-      # in-container target to the host path makes sibling bind-mounts resolve
-      # identically on both sides. See .env.example for examples.
+      # root. Default target is /projects. Override HERMES_HOST_DEV_MOUNT to a
+      # path that mirrors your host filesystem (e.g. /c/dev on Windows where
+      # dev lives at C:\dev) — the historical reason was to make sibling-stack
+      # bind-mounts resolve identically when Hermes shelled out to `docker
+      # compose`. Plan C removes that shell-out path; the override is still
+      # useful for any future tool that does its own filesystem path
+      # rewriting against the host.
       - ${BASE_PATH:-.}/..:${HERMES_HOST_DEV_MOUNT:-/projects}:rw
-      # Docker socket — lets Hermes manage the stack via `docker`, `docker exec`,
-      # `docker compose`. Requires group_add:["0"] above so the non-root hermes
-      # user can read the socket (root:root mode 660 on Docker Desktop).
-      - /var/run/docker.sock:/var/run/docker.sock
     secrets:
       - discord_token
     healthcheck:
@@ -821,9 +821,14 @@ services:
         condition: service_healthy
       dashboard:
         condition: service_healthy
+      ops-controller:
+        condition: service_healthy
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-local}
       - PYTHONIOENCODING=utf-8
+      # Same ops-controller plumbing as hermes-gateway — see Plan C runbook.
+      - OPS_CONTROLLER_URL=http://ops-controller:9000
+      - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:?required for Hermes to reach ops-controller}
       # Same single-source plumbing as hermes-gateway — dashboard shares
       # the bind-mounted config.yaml so either service's entrypoint seeds it.
       - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-262144}
