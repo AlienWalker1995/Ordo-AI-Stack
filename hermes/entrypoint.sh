@@ -19,6 +19,20 @@ HERMES_BIN=/opt/hermes-agent/.venv/bin/hermes
 "$HERMES_BIN" config set model.base_url        "http://model-gateway:11435/v1" >/dev/null
 "$HERMES_BIN" config set model.api_key         "${LITELLM_MASTER_KEY:-local}"  >/dev/null
 "$HERMES_BIN" config set model.default         "local-chat"                    >/dev/null
+# Context window: single source of truth is LLAMACPP_CTX_SIZE in .env. The
+# compose file plumbs it into this container's env; the seed below overwrites
+# whatever hermes had cached so a change to .env + `docker compose up -d
+# hermes-gateway hermes-dashboard` is enough to update the UI progress bar
+# (`0/<N>K`). Falls back to 262144 (256k) if unset — matches the stack default.
+"$HERMES_BIN" config set model.context_length  "${LLAMACPP_CTX_SIZE:-262144}"  >/dev/null
+# Same ceiling for the auxiliary-compression helper model. Hermes's standard
+# /v1/models probe on the LiteLLM proxy doesn't expose max_input_tokens (OpenAI
+# spec doesn't include it), so without this explicit override hermes falls
+# through to its 128K default for 'custom' providers and warns that the
+# compression model is smaller than the main-model compression threshold.
+# See agent/model_metadata.py get_model_context_length resolution order #0
+# and run_agent.py line ~1605 where auxiliary.compression.context_length is read.
+"$HERMES_BIN" config set auxiliary.compression.context_length "${LLAMACPP_CTX_SIZE:-262144}" >/dev/null
 "$HERMES_BIN" config set mcp_servers.gateway.url "http://mcp-gateway:8811/mcp" >/dev/null
 
 # Bump timeouts for local model. Hermes's default 180s stale-timeout aborts

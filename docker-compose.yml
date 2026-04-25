@@ -3,7 +3,13 @@ name: ordo-ai-stack
 # All services start by default. Run: docker compose up -d
 services:
   llamacpp:
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    # Default points at the repo-built TurboQuant image (llamacpp/Dockerfile).
+    # Escape hatch: set LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda in
+    # .env to fall back to upstream (loses turbo2 / turbo3 KV types).
+    image: ${LLAMACPP_IMAGE:-ordo-ai-stack/llamacpp-turboquant:latest}
+    build:
+      context: ./llamacpp
+      dockerfile: Dockerfile
     restart: unless-stopped
     platform: linux/amd64
     entrypoint: ["/bin/sh", "/llamacpp-scripts/run-llama-server.sh"]
@@ -622,6 +628,11 @@ services:
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-local}
       - PYTHONIOENCODING=utf-8
+      # Single source of truth for context window across the stack — llamacpp
+      # allocates KV for this; model-gateway templates it into litellm_config
+      # as max_input_tokens; the hermes entrypoint seeds model.context_length
+      # into $HERMES_HOME/config.yaml so the dashboard progress bar matches.
+      - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-262144}
       # 24h — effectively "never timeout". Hermes's run_agent.py:6606 reads
       # HERMES_STREAM_STALE_TIMEOUT (env-only, not a config key) with default 180s,
       # which kills streaming responses mid-flight on slow local-model turns.
@@ -698,6 +709,9 @@ services:
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-local}
       - PYTHONIOENCODING=utf-8
+      # Same single-source plumbing as hermes-gateway — dashboard shares
+      # the bind-mounted config.yaml so either service's entrypoint seeds it.
+      - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-262144}
       # 24h — see hermes-gateway for rationale. Dashboard streams chat too.
       - HERMES_STREAM_STALE_TIMEOUT=86400
       # Point Hermes at the pre-built SPA (Dockerfile stage 1). Without this env var,
