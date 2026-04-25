@@ -21,18 +21,11 @@
     tls /etc/caddy/certs/tailnet.crt /etc/caddy/certs/tailnet.key
 
     # ---- forward_auth (oauth2-proxy) on every protected path ----
-    # TODO(plan-a-task-10): oauth2-proxy emits X-Auth-Request-Email /
-    # X-Auth-Request-User / X-Auth-Request-Preferred-Username on /oauth2/auth.
-    # Either pass --set-xauthrequest=true to oauth2-proxy and rename here,
-    # or align dashboard `_verify_auth()` to read X-Auth-Request-Email
-    # instead of X-Forwarded-Email. The header copy below is the current
-    # plan's wording; resolve the mismatch when wiring the first real
-    # upstream (Task 10).
     @auth not path /oauth2/* /healthz
     handle @auth {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
-            copy_headers X-Forwarded-Email X-Forwarded-User X-Forwarded-Preferred-Username
+            copy_headers X-Auth-Request-Email>X-Forwarded-Email X-Auth-Request-User>X-Forwarded-User X-Auth-Request-Preferred-Username>X-Forwarded-Preferred-Username
             # Convert oauth2-proxy's 401 (no session) into a 302 redirect to
             # /oauth2/start, preserving the original URL via rd= so the user
             # is bounced back after Google sign-in.
