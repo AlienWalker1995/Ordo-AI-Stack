@@ -111,7 +111,7 @@ def _request_from_trusted_proxy(request: Request) -> bool:
         return False
 
 
-def _verify_auth(request: Request) -> bool:
+def _verify_auth(request: Request) -> bool | str:
     """Verify the request's authentication.
 
     Order of precedence:

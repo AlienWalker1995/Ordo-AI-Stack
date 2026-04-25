@@ -115,3 +115,29 @@ def test_spoofed_proxy_header_from_untrusted_ip_is_rejected(client_proxy_untrust
         headers={"X-Forwarded-Email": "spoofed@evil.com"},
     )
     assert r.status_code == 401
+
+
+def test_trusted_proxy_without_email_fails_closed(client_proxy_trusted):
+    """Trusted proxy net but X-Forwarded-Email missing → 401 (fail-closed).
+
+    Covers the spec's named failure mode (`docs/superpowers/specs/2026-04-25-
+    auth-redesign-design.md` § Failure modes: "Caddy or proxy drops
+    X-Forwarded-Email"). A misconfigured proxy that strips the header must
+    NOT result in anonymous access; the dashboard must fail closed.
+    """
+    r = client_proxy_trusted.get(PROTECTED_PATH)
+    assert r.status_code == 401
+
+
+def test_trusted_proxy_empty_email_fails_closed(client_proxy_trusted):
+    """Trusted proxy net with empty X-Forwarded-Email → 401 (fail-closed).
+
+    Distinct from the missing-header case: an empty string can be sent by a
+    misbehaving proxy, and `request.headers.get('X-Forwarded-Email')`
+    returns `''` (falsy) rather than `None`. Both must reject.
+    """
+    r = client_proxy_trusted.get(
+        PROTECTED_PATH,
+        headers={"X-Forwarded-Email": ""},
+    )
+    assert r.status_code == 401
