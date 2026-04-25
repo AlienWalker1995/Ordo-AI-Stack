@@ -813,8 +813,9 @@ services:
       - frontend
       - backend
       - proxy-net
-    # --insecure: Hermes rejects 0.0.0.0 binding without it. Safe here because the
-    # port mapping gates external access; internal Docker network is trusted.
+    # --insecure: Hermes rejects 0.0.0.0 binding without it. Safe here because
+    # the host-port publish was dropped (Plan A Task 13) — hermes-dashboard is
+    # only reachable on the internal Docker network via Caddy at /hermes/.
     command: ["hermes", "dashboard", "--port", "9119", "--host", "0.0.0.0", "--no-open", "--insecure"]
 
 volumes:
@@ -836,6 +837,10 @@ networks:
     internal: false
   proxy-net:
     driver: bridge
+    # Pinned so DASHBOARD_TRUSTED_PROXY_NET (set in dashboard's env block)
+    # stays in lockstep across rebuilds. Any RFC1918 /16 inside Docker's
+    # default address pool (172.17–172.30) works; 172.24 was the auto-assigned
+    # value at first boot and was kept to avoid a one-time renumber.
     ipam:
       config:
         - subnet: 172.24.0.0/16

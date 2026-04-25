@@ -71,8 +71,8 @@
         reverse_proxy comfyui:8188
     }
 
-    # ---- catch-all for paths not yet wired ----
+    # ---- catch-all 404 for paths that don't match any route above ----
     handle {
-        respond "auth ok — no route configured for this path yet" 404
+        respond "auth ok — unknown route" 404
     }
 }
