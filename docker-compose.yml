@@ -759,3 +759,5 @@ networks:
     # internal: false required for llama.cpp and HuggingFace model downloads.
     # Set internal: true for air-gapped security (model pulls will fail).
     internal: false
+  proxy-net:
+    driver: bridge
