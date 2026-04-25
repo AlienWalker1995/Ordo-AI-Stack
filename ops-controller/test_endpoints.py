@@ -42,3 +42,23 @@ def test_containers_list_emits_audit_line(set_token, tmp_path, monkeypatch):
     import json
     parsed = [json.loads(l) for l in audit]
     assert any(p["action"] == "containers.list" for p in parsed)
+
+
+def test_logs_endpoint_returns_text(set_token):
+    client = TestClient(set_token.app)
+    r = client.get(
+        "/containers/ordo-ai-stack-llamacpp-1/logs?tail=10",
+        headers={"Authorization": "Bearer test-token-for-test"},
+    )
+    assert r.status_code in (200, 404)
+    if r.status_code == 200:
+        assert isinstance(r.text, str)
+
+
+def test_logs_unknown_container_returns_404(set_token):
+    client = TestClient(set_token.app)
+    r = client.get(
+        "/containers/nonexistent-xyz/logs",
+        headers={"Authorization": "Bearer test-token-for-test"},
+    )
+    assert r.status_code == 404

@@ -380,6 +380,29 @@ async def list_containers(_: None = Depends(verify_token)):
     return out
 
 
+@app.get("/containers/{name}/logs", response_class=PlainTextResponse)
+async def container_logs(
+    name: str, tail: int = 100, since: str | None = None,
+    _: None = Depends(verify_token),
+):
+    """Tail any container's logs by name. Auth required, audited."""
+    client = _docker_client()
+    try:
+        c = client.containers.get(name)
+    except docker.errors.NotFound:
+        _audit_log.record(action="container.logs", target=name, result="not_found", caller="hermes")
+        raise HTTPException(status_code=404, detail=f"container {name} not found")
+    kwargs: dict = {"tail": tail, "timestamps": True}
+    if since:
+        kwargs["since"] = since
+    raw = c.logs(**kwargs)
+    text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+    _audit_log.record(
+        action="container.logs", target=name, result="ok", caller="hermes", tail=tail,
+    )
+    return text
+
+
 class ConfirmBody(BaseModel):
     confirm: bool = False
     dry_run: bool = False

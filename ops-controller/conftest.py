@@ -35,10 +35,16 @@ if "docker" not in sys.modules:
     sys.modules["docker.errors"] = errors_mod
 
     # Make ``docker.from_env()`` return a client whose ``containers.list``
-    # yields an empty iterable by default. Individual tests that need
-    # specific containers can monkeypatch ``_dc`` / ``_docker_client``.
+    # yields an empty iterable and whose ``containers.get`` raises NotFound
+    # by default. Individual tests that need specific containers can
+    # monkeypatch ``_dc`` / ``_docker_client``.
     _client = MagicMock()
     _client.containers.list.return_value = []
+
+    def _get_raises(name):  # noqa: ANN001
+        raise _NotFound(f"container {name} not found (stubbed)")
+
+    _client.containers.get.side_effect = _get_raises
     docker_stub.from_env.return_value = _client
 
 _HERE = Path(__file__).resolve().parent
