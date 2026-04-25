@@ -1,3 +1,7 @@
-# Ensure shell scripts use LF so they run in Linux containers
+# Ensure shell scripts use LF so they run in Linux containers.
+# Broader *.sh rule prevents CRLF regressions when new scripts are added
+# (e.g. on Windows checkouts with autocrlf=true).
+*.sh text eol=lf
 dashboard/entrypoint.sh text eol=lf
 hermes/entrypoint.sh text eol=lf
+scripts/llamacpp/run-llama-server.sh text eol=lf
