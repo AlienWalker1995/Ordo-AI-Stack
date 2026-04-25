@@ -550,7 +550,9 @@ services:
       - backend
 
   oauth2-proxy:
-    image: quay.io/oauth2-proxy/oauth2-proxy:latest
+    # alpine variant ships with wget for the in-container healthcheck below.
+    # The default :latest is distroless and has no shell or HTTP probe tools.
+    image: quay.io/oauth2-proxy/oauth2-proxy:latest-alpine
     restart: unless-stopped
     # oauth2-proxy is used purely as an authn endpoint via Caddy `forward_auth`
     # (Caddy calls /oauth2/auth, oauth2-proxy returns 202 on valid session,
