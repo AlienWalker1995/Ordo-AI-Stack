@@ -20,19 +20,20 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 # Stub ``docker`` SDK before any test imports ``ops_controller.main``.
-if "docker" not in sys.modules:
-    docker_stub = MagicMock()
-
+# We install unconditionally — legacy tests in ``tests/`` install a plain
+# ``MagicMock()`` for ``docker`` which lacks the structured behavior our
+# endpoint tests need (e.g. ``containers.get`` raising NotFound). Our
+# richer stub is a strict superset of theirs, so overriding is safe.
+def _install_docker_stub() -> None:
     # Real ``docker.errors.NotFound`` is a real exception type — endpoints
     # do ``except docker.errors.NotFound``. Provide a real class.
     class _NotFound(Exception):
         pass
 
+    docker_stub = MagicMock()
     errors_mod = types.ModuleType("docker.errors")
     errors_mod.NotFound = _NotFound  # type: ignore[attr-defined]
     docker_stub.errors = errors_mod
-    sys.modules["docker"] = docker_stub
-    sys.modules["docker.errors"] = errors_mod
 
     # Make ``docker.from_env()`` return a client whose ``containers.list``
     # yields an empty iterable and whose ``containers.get`` raises NotFound
@@ -46,6 +47,12 @@ if "docker" not in sys.modules:
 
     _client.containers.get.side_effect = _get_raises
     docker_stub.from_env.return_value = _client
+
+    sys.modules["docker"] = docker_stub
+    sys.modules["docker.errors"] = errors_mod
+
+
+_install_docker_stub()
 
 _HERE = Path(__file__).resolve().parent
 _PKG_NAME = "ops_controller"

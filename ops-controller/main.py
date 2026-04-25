@@ -20,7 +20,7 @@ import docker
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 # ``audit`` lives next to this module. In production (uvicorn main:app) and
 # in pytest with ``ops-controller/conftest.py`` it imports as a top-level
@@ -419,6 +419,65 @@ async def container_restart(name: str, _: None = Depends(verify_token)):
         action="container.restart", target=name, result="ok", caller="hermes",
     )
     return {"name": name, "restarted": True}
+
+
+# Whole-stack compose ops require ``confirm: true`` to prevent accidents
+# (or prompt-injection-driven restarts of the entire stack). Service names
+# are validated against a strict allowlist regex to prevent shell injection
+# via the subprocess argv.
+
+class ComposeOpRequest(BaseModel):
+    service: str | None = Field(default=None, max_length=64)
+    confirm: bool = False
+
+
+_COMPOSE_SERVICE_NAME = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _run_compose(verb: str, service: str | None) -> subprocess.CompletedProcess:
+    cmd = ["docker", "compose", verb]
+    if service:
+        cmd.append(service)
+    elif verb == "up":
+        cmd += ["-d"]
+    return subprocess.run(
+        cmd, capture_output=True, text=True,
+        cwd=os.environ.get("COMPOSE_PROJECT_DIR", "/workspace"),
+    )
+
+
+def _compose_endpoint(verb: str, body: ComposeOpRequest):
+    # Validate service name explicitly (rather than via pydantic) so we
+    # return a plain 400 instead of FastAPI's 422 ValidationError envelope.
+    if body.service is not None and not _COMPOSE_SERVICE_NAME.fullmatch(body.service):
+        raise HTTPException(status_code=400, detail="service name contains illegal characters")
+    if body.service is None and not body.confirm:
+        raise HTTPException(status_code=400, detail="whole-stack compose op requires confirm=true")
+    target = body.service or "all"
+    proc = _run_compose(verb, body.service)
+    result = "ok" if proc.returncode == 0 else "fail"
+    _audit_log.record(
+        action=f"compose.{verb}", target=target, result=result, caller="hermes",
+        rc=proc.returncode, stderr=proc.stderr[-500:] if proc.stderr else "",
+    )
+    if proc.returncode != 0:
+        raise HTTPException(status_code=500, detail=f"compose {verb} failed: {proc.stderr[-200:]}")
+    return {"verb": verb, "target": target, "stdout": proc.stdout[-2000:]}
+
+
+@app.post("/compose/up")
+async def compose_up(body: ComposeOpRequest, _: None = Depends(verify_token)):
+    return _compose_endpoint("up", body)
+
+
+@app.post("/compose/down")
+async def compose_down(body: ComposeOpRequest, _: None = Depends(verify_token)):
+    return _compose_endpoint("down", body)
+
+
+@app.post("/compose/restart")
+async def compose_restart(body: ComposeOpRequest, _: None = Depends(verify_token)):
+    return _compose_endpoint("restart", body)
 
 
 class ConfirmBody(BaseModel):

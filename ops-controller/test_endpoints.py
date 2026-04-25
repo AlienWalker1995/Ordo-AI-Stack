@@ -5,6 +5,11 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture(autouse=True)
 def set_token(monkeypatch):
+    # Re-install the rich docker stub from conftest in case an earlier
+    # test module (e.g. tests/test_ops_controller_audit.py) overrode it
+    # with a plain MagicMock.
+    from conftest import _install_docker_stub
+    _install_docker_stub()
     monkeypatch.setenv("OPS_CONTROLLER_TOKEN", "test-token-for-test")
     import importlib
     import ops_controller.main as m
@@ -71,3 +76,24 @@ def test_restart_unknown_container_returns_404(set_token):
         headers={"Authorization": "Bearer test-token-for-test"},
     )
     assert r.status_code == 404
+
+
+def test_compose_restart_invalid_service_400(set_token):
+    client = TestClient(set_token.app)
+    r = client.post(
+        "/compose/restart",
+        json={"service": "../etc/passwd"},
+        headers={"Authorization": "Bearer test-token-for-test"},
+    )
+    assert r.status_code == 400
+
+
+def test_compose_restart_no_service_targets_all_requires_confirm(set_token):
+    client = TestClient(set_token.app)
+    r = client.post(
+        "/compose/restart",
+        json={},
+        headers={"Authorization": "Bearer test-token-for-test"},
+    )
+    assert r.status_code == 400
+    assert "confirm" in r.json().get("detail", "").lower()
