@@ -585,6 +585,37 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    # CADDY_BIND must be the host's tailnet IP. NEVER 0.0.0.0.
+    ports:
+      - "${CADDY_BIND}:443:443"
+    environment:
+      - CADDY_TAILNET_HOSTNAME=${CADDY_TAILNET_HOSTNAME}
+      - CADDY_TAILNET_DOMAIN=${CADDY_TAILNET_DOMAIN}
+    volumes:
+      - ./auth/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${TAILSCALE_CERT_DIR:-./auth/caddy/certs}:/etc/caddy/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      oauth2-proxy:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - proxy-net
+      - frontend
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # --- RAG ---
 
   qdrant:
@@ -780,7 +811,9 @@ services:
     # port mapping gates external access; internal Docker network is trusted.
     command: ["hermes", "dashboard", "--port", "9119", "--host", "0.0.0.0", "--no-open", "--insecure"]
 
-volumes: {}
+volumes:
+  caddy_data:
+  caddy_config:
 # Hermes data is now bind-mounted from data/hermes/ (see hermes-gateway/dashboard above).
 # The legacy `ordo-ai-stack_hermes-data` named volume still exists in Docker for
 # rollback. To revert: re-add `hermes-data:` here, then switch the hermes services'
