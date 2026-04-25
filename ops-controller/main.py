@@ -19,8 +19,24 @@ from urllib.parse import urlparse
 import docker
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse, PlainTextResponse
+from pydantic import BaseModel, Field, field_validator
+
+# ``audit`` lives next to this module. In production (uvicorn main:app) and
+# in pytest with ``ops-controller/conftest.py`` it imports as a top-level
+# module; from tests in ``tests/`` that load this file via
+# ``spec_from_file_location`` without touching sys.path, fall back to loading
+# the sibling file directly.
+try:
+    from audit import AuditLog
+except ModuleNotFoundError:  # pragma: no cover — exercised via legacy tests
+    import importlib.util as _ilu
+    _audit_spec = _ilu.spec_from_file_location(
+        "audit", str(Path(__file__).resolve().parent / "audit.py"),
+    )
+    _audit_mod = _ilu.module_from_spec(_audit_spec)
+    _audit_spec.loader.exec_module(_audit_mod)
+    AuditLog = _audit_mod.AuditLog
 
 app = FastAPI(title="Ops Controller", version="1.0.0")
 logger = logging.getLogger(__name__)
@@ -110,6 +126,11 @@ _guardian_status: dict = {
 
 
 _cached_docker: docker.DockerClient | None = None
+
+# Structured audit log for the Hermes-facing privileged endpoints
+# (containers.list / container.logs / container.restart / compose.{up,down,restart}).
+# Schema: ``{ts, caller, action, target, result, ...extra}``. One JSON line per call.
+_audit_log = AuditLog(os.environ.get("AUDIT_LOG_PATH", "/data/audit.jsonl"))
 
 
 def _docker_client() -> docker.DockerClient:
@@ -330,6 +351,33 @@ async def list_services():
     except Exception as e:
         logger.warning("Service list failed: %s", e)
         return JSONResponse(status_code=503, content={"services": [], "detail": "Docker unavailable"})
+
+
+# --- Hermes-facing privileged endpoints --------------------------------------
+# Plan C narrows Hermes to call ops-controller over HTTP instead of holding
+# /var/run/docker.sock directly. These verbs (containers.list / container.logs
+# / container.restart / compose.{up,down,restart}) are the ones Hermes needs;
+# every call emits one line to ``_audit_log``.
+
+@app.get("/containers")
+async def list_containers(_: None = Depends(verify_token)):
+    """List all containers visible to the docker daemon. Auth required, audited."""
+    client = _docker_client()
+    out = []
+    for c in client.containers.list(all=True):
+        image = ""
+        try:
+            tags = getattr(c.image, "tags", None) or []
+            image = tags[0] if tags else (getattr(c.image, "id", "") or "")
+        except Exception:
+            image = ""
+        out.append({
+            "name": c.name,
+            "status": c.status,
+            "image": image,
+        })
+    _audit_log.record(action="containers.list", target="*", result="ok", caller="hermes")
+    return out
 
 
 class ConfirmBody(BaseModel):

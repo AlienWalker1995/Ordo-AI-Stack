@@ -5,6 +5,9 @@ importable package ``ops_controller`` so test files can do
 Python module names cannot contain hyphens, so we synthesize a package on
 the fly. This only affects test runs — production code in this directory
 imports siblings via plain ``from audit import AuditLog`` style imports.
+
+Also stubs out ``docker`` (the SDK) so ``main.py`` can be imported on dev
+boxes that don't have the docker-py package installed.
 """
 from __future__ import annotations
 
@@ -14,9 +17,37 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+from unittest.mock import MagicMock
+
+# Stub ``docker`` SDK before any test imports ``ops_controller.main``.
+if "docker" not in sys.modules:
+    docker_stub = MagicMock()
+
+    # Real ``docker.errors.NotFound`` is a real exception type — endpoints
+    # do ``except docker.errors.NotFound``. Provide a real class.
+    class _NotFound(Exception):
+        pass
+
+    errors_mod = types.ModuleType("docker.errors")
+    errors_mod.NotFound = _NotFound  # type: ignore[attr-defined]
+    docker_stub.errors = errors_mod
+    sys.modules["docker"] = docker_stub
+    sys.modules["docker.errors"] = errors_mod
+
+    # Make ``docker.from_env()`` return a client whose ``containers.list``
+    # yields an empty iterable by default. Individual tests that need
+    # specific containers can monkeypatch ``_dc`` / ``_docker_client``.
+    _client = MagicMock()
+    _client.containers.list.return_value = []
+    docker_stub.from_env.return_value = _client
 
 _HERE = Path(__file__).resolve().parent
 _PKG_NAME = "ops_controller"
+
+# Also let production-style imports (``from audit import AuditLog``) work in
+# tests, so ``main.py`` doesn't need an import shim.
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
 
 
 def _install_synthetic_package() -> None:
