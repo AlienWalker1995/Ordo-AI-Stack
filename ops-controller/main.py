@@ -108,20 +108,39 @@ COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://comfyui:8188").rstrip("/")
 COMFYUI_SERIALIZE_LLAMACPP = os.environ.get("COMFYUI_SERIALIZE_LLAMACPP", "0").strip().lower() in ("1", "true", "yes", "on")
 COMFYUI_QUEUE_POLL_SECONDS = float(os.environ.get("COMFYUI_QUEUE_POLL_SECONDS", "2"))
 COMFYUI_DRAIN_SECONDS = float(os.environ.get("COMFYUI_DRAIN_SECONDS", "20"))
+# Comma-separated list of services or container names to pause when ComfyUI is busy.
+# Each entry is resolved first as an in-stack compose service id (label-filtered to
+# COMPOSE_PROJECT) and falls back to a literal container name in any compose project.
+# Lets cross-project consumers like a sibling ai-toolkit container join the handshake.
+# Examples: "llamacpp" (legacy single), "llamacpp,llamacpp-embed,ai-toolkit-ai-toolkit-1".
 COMFYUI_GUARDIAN_TARGET = os.environ.get("COMFYUI_GUARDIAN_TARGET", "llamacpp")
+
+
+def _guardian_target_list() -> list[str]:
+    """Parse COMFYUI_GUARDIAN_TARGET as a comma-separated list.
+
+    Whitespace is trimmed; empty entries are dropped. Pathological all-blank
+    inputs fall back to the historic default ``["llamacpp"]`` rather than
+    silently disabling pause behaviour.
+    """
+    targets = [t.strip() for t in COMFYUI_GUARDIAN_TARGET.split(",") if t.strip()]
+    return targets or ["llamacpp"]
+
 
 _guardian_lock = threading.Lock()
 _guardian_status: dict = {
     "enabled": COMFYUI_SERIALIZE_LLAMACPP,
     "state": "disabled",  # disabled | idle | paused | draining | error
-    "target": COMFYUI_GUARDIAN_TARGET,
+    "target": COMFYUI_GUARDIAN_TARGET,  # raw env value (legacy, kept for back-compat)
+    "targets": _guardian_target_list(),  # parsed list (multi-target)
     "comfyui_url": COMFYUI_URL,
     "poll_seconds": COMFYUI_QUEUE_POLL_SECONDS,
     "drain_seconds": COMFYUI_DRAIN_SECONDS,
     "comfyui_queue": {"running": 0, "pending": 0, "reachable": False},
     "last_transition": None,
     "last_error": "",
-    "paused_by_us": False,
+    "paused_by_us": False,  # aggregate: True if we paused at least one target
+    "paused_targets": [],   # which specific targets we paused this cycle
 }
 
 
@@ -1332,6 +1351,30 @@ def _comfyui_queue_depth() -> tuple[int, int] | None:
         return None
 
 
+def _resolve_guardian_containers(target: str):
+    """Resolve a guardian target string to docker container(s).
+
+    Tried in order:
+      1. In-stack compose service id (label-filtered to COMPOSE_PROJECT) via
+         ``_containers_for_service``. Returns all containers for that service.
+      2. Literal container name in any compose project via
+         ``client.containers.get(target)``. Returns the single match.
+
+    Empty list = nothing managed for this target this cycle; the guardian
+    logs and continues with other targets without erroring out.
+    """
+    in_stack = _containers_for_service(target)
+    if in_stack:
+        return in_stack
+    try:
+        return [_docker_client().containers.get(target)]
+    except docker.errors.NotFound:
+        return []
+    except Exception as e:  # noqa: BLE001
+        logger.warning("guardian: failed to resolve target=%r: %s", target, e)
+        return []
+
+
 def _guardian_transition(new_state: str, error: str = "") -> None:
     with _guardian_lock:
         _guardian_status["state"] = new_state
@@ -1340,12 +1383,84 @@ def _guardian_transition(new_state: str, error: str = "") -> None:
             _guardian_status["last_error"] = error[:200]
 
 
+def _guardian_pause_targets(targets: list[str], context: str) -> tuple[list[str], list[str]]:
+    """Pause every target whose containers are currently running.
+
+    Returns ``(paused, errors)`` — the targets we successfully stopped, and a
+    flat list of human-readable error strings encountered along the way.
+    Targets whose containers are already stopped (or unresolvable) contribute
+    neither — they're silently skipped so a partially-down stack doesn't
+    block the others.
+    """
+    paused: list[str] = []
+    errors: list[str] = []
+    for t in targets:
+        try:
+            containers = _resolve_guardian_containers(t)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{t}: resolve failed: {e}")
+            continue
+        running = [c for c in containers if getattr(c, "status", None) == "running"]
+        if not running:
+            continue
+        per_target_errs: list[str] = []
+        for c in running:
+            try:
+                c.stop(timeout=30)
+            except Exception as e:  # noqa: BLE001
+                per_target_errs.append(str(e))
+        if per_target_errs:
+            msg = "; ".join(per_target_errs)[:200]
+            errors.append(f"{t}: {msg}")
+            _audit("guardian_pause", t, "error", msg)
+            print(f"[guardian] PAUSE ERROR {t}: {msg}", flush=True)
+        else:
+            paused.append(t)
+            _audit("guardian_pause", t, "ok", context)
+            print(f"[guardian] PAUSE ok target={t} ({context})", flush=True)
+    return paused, errors
+
+
+def _guardian_resume_targets(targets: list[str]) -> list[str]:
+    """Start each named target. Returns a flat list of error strings; empty
+    means everything resumed cleanly (or had nothing to start)."""
+    errors: list[str] = []
+    for t in targets:
+        try:
+            containers = _resolve_guardian_containers(t)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{t}: resolve failed: {e}")
+            continue
+        per_target_errs: list[str] = []
+        for c in containers:
+            try:
+                c.start()
+            except Exception as e:  # noqa: BLE001
+                per_target_errs.append(str(e))
+        if per_target_errs:
+            msg = "; ".join(per_target_errs)[:200]
+            errors.append(f"{t}: {msg}")
+            _audit("guardian_resume", t, "error", msg)
+            print(f"[guardian] RESUME ERROR {t}: {msg}", flush=True)
+        else:
+            _audit("guardian_resume", t, "ok", "drain_elapsed")
+            print(f"[guardian] RESUME ok target={t}", flush=True)
+    return errors
+
+
 def _guardian_loop() -> None:
-    """Poll ComfyUI queue; stop the target service when non-empty, start after drain."""
-    target = COMFYUI_GUARDIAN_TARGET
+    """Poll ComfyUI queue; stop configured targets when non-empty, restart
+    them after a drain period.
+
+    Multiple targets are paused/resumed as a unit — when ComfyUI goes busy,
+    every running target stops; after the queue drains for
+    COMFYUI_DRAIN_SECONDS, every target we paused starts again. Targets are
+    resolved per-cycle so newly-added containers join automatically.
+    """
+    targets = _guardian_target_list()
     drain_started: float | None = None
     _guardian_transition("idle")
-    print(f"[guardian] loop started target={target}", flush=True)
+    print(f"[guardian] loop started targets={targets}", flush=True)
 
     while True:
         try:
@@ -1362,37 +1477,20 @@ def _guardian_loop() -> None:
                 _guardian_status["comfyui_queue"] = {"running": running, "pending": pending, "reachable": True}
                 state = _guardian_status["state"]
                 paused_by_us = _guardian_status["paused_by_us"]
+                paused_targets_snapshot = list(_guardian_status["paused_targets"])
 
             if busy and state == "idle":
-                containers = _containers_for_service(target)
-                if not containers:
-                    print(f"[guardian] ERROR: no container for service={target}", flush=True)
-                    _guardian_transition("error", f"no container for {target}")
+                paused, errs = _guardian_pause_targets(
+                    targets, f"queue running={running} pending={pending}"
+                )
+                if errs and not paused:
+                    # Every attempted pause failed → real error.
+                    _guardian_transition("error", "; ".join(errs))
                 else:
-                    running_containers = [c for c in containers if c.status == "running"]
-                    if running_containers:
-                        print(f"[guardian] PAUSE {target} (queue running={running} pending={pending})", flush=True)
-                        errs: list[str] = []
-                        for c in running_containers:
-                            try:
-                                c.stop(timeout=30)
-                            except Exception as e:
-                                errs.append(str(e))
-                        if errs:
-                            print(f"[guardian] PAUSE ERROR: {'; '.join(errs)[:200]}", flush=True)
-                            _audit("guardian_pause", target, "error", "; ".join(errs)[:200])
-                            _guardian_transition("error", "; ".join(errs))
-                        else:
-                            print(f"[guardian] {target} stopped", flush=True)
-                            _audit("guardian_pause", target, "ok", f"queue running={running} pending={pending}")
-                            with _guardian_lock:
-                                _guardian_status["paused_by_us"] = True
-                            _guardian_transition("paused")
-                    else:
-                        # Already stopped by something else — we won't auto-resume it
-                        with _guardian_lock:
-                            _guardian_status["paused_by_us"] = False
-                        _guardian_transition("paused")
+                    with _guardian_lock:
+                        _guardian_status["paused_by_us"] = bool(paused)
+                        _guardian_status["paused_targets"] = paused
+                    _guardian_transition("paused")
 
             elif busy and state == "draining":
                 drain_started = None
@@ -1404,26 +1502,20 @@ def _guardian_loop() -> None:
 
             elif not busy and state == "draining":
                 if drain_started is not None and (time.monotonic() - drain_started) >= COMFYUI_DRAIN_SECONDS:
-                    if paused_by_us:
-                        print(f"[guardian] RESUME {target} (drain elapsed)", flush=True)
-                        containers = _containers_for_service(target)
-                        errs = []
-                        for c in containers:
-                            try:
-                                c.start()
-                            except Exception as e:
-                                errs.append(str(e))
+                    if paused_by_us and paused_targets_snapshot:
+                        print(
+                            f"[guardian] RESUME drain elapsed; targets={paused_targets_snapshot}",
+                            flush=True,
+                        )
+                        errs = _guardian_resume_targets(paused_targets_snapshot)
                         if errs:
-                            print(f"[guardian] RESUME ERROR: {'; '.join(errs)[:200]}", flush=True)
-                            _audit("guardian_resume", target, "error", "; ".join(errs)[:200])
                             _guardian_transition("error", "; ".join(errs))
                             drain_started = None
                             time.sleep(COMFYUI_QUEUE_POLL_SECONDS)
                             continue
-                        print(f"[guardian] {target} started", flush=True)
-                        _audit("guardian_resume", target, "ok", "drain_elapsed")
                     with _guardian_lock:
                         _guardian_status["paused_by_us"] = False
+                        _guardian_status["paused_targets"] = []
                     drain_started = None
                     _guardian_transition("idle")
 
@@ -1452,7 +1544,7 @@ async def guardian_status(_: None = Depends(verify_token)):
 # spawns regardless of the app lifecycle and surfaces errors immediately.
 if COMFYUI_SERIALIZE_LLAMACPP:
     print(
-        f"[guardian] ENABLED target={COMFYUI_GUARDIAN_TARGET} "
+        f"[guardian] ENABLED targets={_guardian_target_list()} "
         f"poll={COMFYUI_QUEUE_POLL_SECONDS}s drain={COMFYUI_DRAIN_SECONDS}s "
         f"comfyui={COMFYUI_URL}",
         flush=True,
