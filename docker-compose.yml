@@ -51,6 +51,12 @@ services:
     image: ${LLAMACPP_EMBED_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
     restart: unless-stopped
     platform: linux/amd64
+    # Explicit entrypoint: upstream `ghcr.io/ggml-org/llama.cpp:server-cuda`
+    # ships ENTRYPOINT=[] with the binary baked into CMD. Setting `command:`
+    # below otherwise strips the binary and tries to exec `--host` directly
+    # (exit 127 "executable file not found"). Forcing the entrypoint here
+    # makes command-args chain work regardless of how upstream packages CMD.
+    entrypoint: ["/app/llama-server"]
     command: >
       --host 0.0.0.0 --port 8080
       --model /models/${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}
