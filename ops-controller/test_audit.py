@@ -1,7 +1,6 @@
 import json
-from pathlib import Path
 import threading
-import pytest
+from pathlib import Path
 
 from ops_controller.audit import AuditLog
 
@@ -12,7 +11,7 @@ def test_writes_one_line_per_call(tmp_path: Path):
     log.record(action="compose.up", target="all", result="ok", caller="test")
     lines = (tmp_path / "audit.jsonl").read_text().splitlines()
     assert len(lines) == 2
-    parsed = [json.loads(l) for l in lines]
+    parsed = [json.loads(line) for line in lines]
     assert parsed[0]["action"] == "container.restart"
     assert parsed[1]["action"] == "compose.up"
     assert "ts" in parsed[0]
@@ -39,9 +38,11 @@ def test_concurrent_writes_dont_interleave(tmp_path: Path):
         for j in range(50):
             log.record(action="x", target=f"{i}-{j}", result="ok", caller="t")
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
-    for t in threads: t.start()
-    for t in threads: t.join()
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
     lines = (tmp_path / "audit.jsonl").read_text().splitlines()
     assert len(lines) == 8 * 50
-    for l in lines:
-        json.loads(l)  # never raises
+    for line in lines:
+        json.loads(line)  # never raises

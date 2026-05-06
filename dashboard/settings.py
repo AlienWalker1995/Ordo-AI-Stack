@@ -4,7 +4,6 @@ from __future__ import annotations
 import ipaddress
 import logging
 import os
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 

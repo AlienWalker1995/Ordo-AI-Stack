@@ -102,7 +102,7 @@ def test_template_compile_minimal(tmp_path: Path, monkeypatch):
 
 def test_load_template_rejects_path_traversal(tmp_path: Path, monkeypatch):
     """Regression: template_id containing ../ must not escape templates directory."""
-    from dashboard.workflow_templates import load_template, _templates_dir
+    from dashboard.workflow_templates import load_template
 
     # Create a templates dir with a valid template
     tpl_dir = tmp_path / "templates"

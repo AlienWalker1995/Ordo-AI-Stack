@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -56,6 +56,7 @@ def test_services_do_not_leak_auth_token(client, monkeypatch):
     monkeypatch.setattr("dashboard.settings.DASHBOARD_AUTH_TOKEN", "secret-test-token-1234")
     # Re-import to pick up monkeypatched value
     import importlib
+
     import dashboard.services_catalog
     importlib.reload(dashboard.services_catalog)
     try:

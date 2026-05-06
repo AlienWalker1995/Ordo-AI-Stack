@@ -151,7 +151,7 @@ def test_nvml_vraam_by_pid_init_fails(monkeypatch):
     assert pid_map == {}
     assert gpu == {"total_gb": 0.0, "used_gb": 0.0, "utilization_pct": 0, "per_pid_available": False}
 
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient  # noqa: E402 — needs the env-var setup above
 
 VALID_TOKEN = "test-token"
 

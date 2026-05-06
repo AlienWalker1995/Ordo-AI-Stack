@@ -13,9 +13,9 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def client(monkeypatch):
     """Stub service probes — real checks hit Docker DNS hostnames and are slow/flaky without a running stack."""
-    import dashboard.app as dashboard_app
-
     from unittest.mock import AsyncMock, MagicMock
+
+    import dashboard.app as dashboard_app
 
     async def _stub_check(url: str, client=None):
         return (True, "")

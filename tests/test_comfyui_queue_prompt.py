@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
-from mcp.server.fastmcp import FastMCP
+
+# `mcp` is a comfyui-mcp service dep, not part of the test-runner deps in
+# tests/requirements.txt. Skip rather than fail when it isn't installed.
+pytest.importorskip("mcp.server.fastmcp")
+from mcp.server.fastmcp import FastMCP  # noqa: E402
 
 
 @pytest.fixture
 def mcp_app():
     """Create a FastMCP app with system tools registered."""
-    import importlib.util
     import sys
     from pathlib import Path
 
@@ -39,7 +42,7 @@ class TestQueuePrompt:
     """queue_prompt tool tests."""
 
     def test_accepts_valid_api_format_and_posts(self, mcp_app):
-        workflow = {
+        workflow = {  # noqa: F841 — workflow construction kept for documentation/future assertions
             "6": {
                 "class_type": "CLIPTextEncode",
                 "inputs": {"text": "a cat", "clip": ["4", 1]},

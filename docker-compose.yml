@@ -51,7 +51,12 @@ services:
     image: ${LLAMACPP_EMBED_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
     restart: unless-stopped
     platform: linux/amd64
+    # The upstream :server-cuda image's default CMD is `/app/llama-server
+    # --host 0.0.0.0 --port 8080`. Setting `command:` replaces CMD wholesale,
+    # so prepend the binary explicitly — otherwise docker tries to exec
+    # `--host` as the executable and the container fails to start.
     command: >
+      /app/llama-server
       --host 0.0.0.0 --port 8080
       --model /models/${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}
       --ctx-size 8192 --embeddings
@@ -140,6 +145,12 @@ services:
       - COMFYUI_QUEUE_POLL_SECONDS=${COMFYUI_QUEUE_POLL_SECONDS:-2}
       - COMFYUI_DRAIN_SECONDS=${COMFYUI_DRAIN_SECONDS:-20}
       - COMFYUI_GUARDIAN_TARGET=${COMFYUI_GUARDIAN_TARGET:-llamacpp}
+      # Hermes self-heal watchdog (opt-in): restart exited hermes-gateway/hermes-dashboard
+      # after grace window. Disabled by default.
+      - OPS_HERMES_WATCHDOG_ENABLED=${OPS_HERMES_WATCHDOG_ENABLED:-0}
+      - OPS_HERMES_WATCHDOG_INTERVAL_SECONDS=${OPS_HERMES_WATCHDOG_INTERVAL_SECONDS:-30}
+      - OPS_HERMES_WATCHDOG_GRACE_SECONDS=${OPS_HERMES_WATCHDOG_GRACE_SECONDS:-60}
+      - OPS_HERMES_WATCHDOG_PAUSE_FILE=${OPS_HERMES_WATCHDOG_PAUSE_FILE:-/data/watchdog.paused}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${BASE_PATH:-.}:/workspace

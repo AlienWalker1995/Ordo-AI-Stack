@@ -64,9 +64,15 @@ jobs:
 
       - name: Validate docker-compose
         run: |
-          # Create minimal .env for validation (BASE_PATH required)
-          echo "BASE_PATH=." > .env
-          echo "OPS_CONTROLLER_TOKEN=placeholder-for-ci" >> .env
+          # Create minimal .env for validation. docker-compose.yml uses
+          # ${VAR:?...} strict-required syntax for several variables that
+          # must be supplied by the operator at deploy time; provide
+          # placeholders here so `compose config` can interpolate.
+          cat > .env <<'EOF'
+          BASE_PATH=.
+          OPS_CONTROLLER_TOKEN=placeholder-for-ci
+          CADDY_BIND=127.0.0.1
+          EOF
           docker compose config
 
   compose-smoke:

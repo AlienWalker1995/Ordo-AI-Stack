@@ -110,6 +110,17 @@ COMFYUI_QUEUE_POLL_SECONDS = float(os.environ.get("COMFYUI_QUEUE_POLL_SECONDS", 
 COMFYUI_DRAIN_SECONDS = float(os.environ.get("COMFYUI_DRAIN_SECONDS", "20"))
 COMFYUI_GUARDIAN_TARGET = os.environ.get("COMFYUI_GUARDIAN_TARGET", "llamacpp")
 
+# ── Hermes self-heal watchdog ────────────────────────────────────────────────
+# Opt-in background task that restarts exited hermes services after a grace
+# window. Prevents the "operator stopped for rebuild and died" scenario.
+# Disabled by default — set OPS_HERMES_WATCHDOG_ENABLED=1 to enable.
+OPS_HERMES_WATCHDOG_ENABLED = os.environ.get("OPS_HERMES_WATCHDOG_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
+OPS_HERMES_WATCHDOG_INTERVAL_SECONDS = float(os.environ.get("OPS_HERMES_WATCHDOG_INTERVAL_SECONDS", "30"))
+OPS_HERMES_WATCHDOG_GRACE_SECONDS = float(os.environ.get("OPS_HERMES_WATCHDOG_GRACE_SECONDS", "60"))
+OPS_HERMES_WATCHDOG_PAUSE_FILE = os.environ.get("OPS_HERMES_WATCHDOG_PAUSE_FILE", "/data/watchdog.paused")
+WATCHDOG_SERVICES = ["hermes-gateway", "hermes-dashboard"]
+_WATCHDOG_TASK: asyncio.Task | None = None
+
 _guardian_lock = threading.Lock()
 _guardian_status: dict = {
     "enabled": COMFYUI_SERIALIZE_LLAMACPP,
@@ -236,7 +247,7 @@ def _cpu_pct_from_stats(stats: dict) -> float:
         pre = stats["precpu_stats"]
         cpu_delta = int(cpu["cpu_usage"]["total_usage"]) - int(pre["cpu_usage"]["total_usage"])
         system_delta = int(cpu["system_cpu_usage"]) - int(pre.get("system_cpu_usage") or 0)
-        online_cpus = int(cpu.get("online_cpus") or len((cpu["cpu_usage"].get("percpu_usage") or [])) or 1)
+        online_cpus = int(cpu.get("online_cpus") or len(cpu["cpu_usage"].get("percpu_usage") or []) or 1)
         if system_delta <= 0 or cpu_delta < 0:
             return 0.0
         return round((cpu_delta / system_delta) * online_cpus * 100.0, 1)
@@ -435,7 +446,9 @@ _COMPOSE_SERVICE_NAME = re.compile(r"[A-Za-z0-9_-]+")
 
 
 def _run_compose(verb: str, service: str | None) -> subprocess.CompletedProcess:
-    cmd = ["docker", "compose", verb]
+    # Use standalone docker-compose binary (installed in Dockerfile)
+    # rather than docker CLI + compose plugin which is not available.
+    cmd = ["docker-compose", verb]
     if service:
         cmd.append(service)
     elif verb == "up":
@@ -463,6 +476,111 @@ def _compose_endpoint(verb: str, body: ComposeOpRequest):
     if proc.returncode != 0:
         raise HTTPException(status_code=500, detail=f"compose {verb} failed: {proc.stderr[-200:]}")
     return {"verb": verb, "target": target, "stdout": proc.stdout[-2000:]}
+
+
+def _watchdog_paused() -> bool:
+    return Path(OPS_HERMES_WATCHDOG_PAUSE_FILE).exists()
+
+
+def _watchdog_decision(container, now: datetime, grace_seconds: float) -> tuple[str, str]:
+    """Pure decision for one container. Returns (decision, detail).
+
+    decisions: skip-running, skip-no-finish, skip-bad-finish, skip-grace, act.
+    """
+    if container.status != "exited":
+        return ("skip-running", f"status={container.status}")
+    finished_at_str = container.attrs.get("State", {}).get("FinishedAt", "") or ""
+    if not finished_at_str or finished_at_str == "0001-01-01T00:00:00Z":
+        return ("skip-no-finish", finished_at_str or "<empty>")
+    try:
+        finished_at = datetime.fromisoformat(finished_at_str.replace("Z", "+00:00"))
+    except ValueError:
+        return ("skip-bad-finish", finished_at_str)
+    age = (now - finished_at).total_seconds()
+    if age < grace_seconds:
+        return ("skip-grace", f"age={age:.0f}s grace={grace_seconds:.0f}s")
+    return ("act", f"age={age:.0f}s")
+
+
+def _watchdog_iteration() -> None:
+    """One synchronous watchdog cycle. Safe to call from tests."""
+    if _watchdog_paused():
+        _audit_log.record(
+            action="watchdog.paused", target="", result="ok", caller="watchdog",
+            pause_file=OPS_HERMES_WATCHDOG_PAUSE_FILE,
+        )
+        return
+
+    try:
+        client = _docker_client()
+        containers = client.containers.list(
+            all=True,
+            filters={"label": f"com.docker.compose.project={COMPOSE_PROJECT}"},
+        )
+    except Exception:
+        logger.exception("[watchdog] docker query failed")
+        return
+
+    now = datetime.now(UTC)
+    for svc in WATCHDOG_SERVICES:
+        targets = [c for c in containers if c.labels.get("com.docker.compose.service") == svc]
+        for c in targets:
+            decision, detail = _watchdog_decision(c, now, OPS_HERMES_WATCHDOG_GRACE_SECONDS)
+
+            # Healthy state — debug only. Auditing every iteration would flood the log.
+            if decision == "skip-running":
+                logger.debug("[watchdog] %s skip-running (%s)", svc, detail)
+                continue
+
+            if decision in ("skip-no-finish", "skip-bad-finish"):
+                logger.warning("[watchdog] %s %s detail=%s", svc, decision, detail)
+                _audit_log.record(
+                    action=f"watchdog.{decision}", target=svc, result="ok",
+                    caller="watchdog", detail=detail,
+                )
+                continue
+
+            if decision == "skip-grace":
+                _audit_log.record(
+                    action="watchdog.skipped-grace", target=svc, result="ok",
+                    caller="watchdog", detail=detail,
+                )
+                continue
+
+            # decision == "act"
+            # Use container.start() via the SDK rather than `docker-compose up`.
+            # The watchdog's job is to revive a container the operator stopped,
+            # not to recreate from spec — and avoiding compose sidesteps the
+            # ${HOME}-relative secret-path resolution mess (compose secrets
+            # interpolate $HOME against the *calling* process, so running it
+            # from inside ops-controller (HOME=/home/appuser) hits a path that
+            # doesn't exist on the docker host).
+            logger.info("[watchdog] starting %s (%s)", svc, detail)
+            try:
+                c.start()
+                _audit_log.record(
+                    action="watchdog.acted", target=svc, result="ok",
+                    caller="watchdog", detail=detail, container_id=c.short_id,
+                )
+            except Exception as e:
+                _audit_log.record(
+                    action="watchdog.acted", target=svc, result="fail",
+                    caller="watchdog", detail=detail,
+                    container_id=c.short_id, error=str(e)[:200],
+                )
+
+
+async def _hermes_watchdog_loop() -> None:
+    """Asyncio loop: run one iteration, sleep, repeat. Cancelled on shutdown."""
+    while True:
+        try:
+            _watchdog_iteration()
+        except asyncio.CancelledError:
+            logger.info("[watchdog] cancelled")
+            raise
+        except Exception:
+            logger.exception("[watchdog] iteration crashed")
+        await asyncio.sleep(OPS_HERMES_WATCHDOG_INTERVAL_SECONDS)
 
 
 @app.post("/compose/up")
@@ -1460,3 +1578,33 @@ if COMFYUI_SERIALIZE_LLAMACPP:
     threading.Thread(target=_guardian_loop, daemon=True, name="comfyui-guardian").start()
 else:
     print("[guardian] disabled (set COMFYUI_SERIALIZE_LLAMACPP=1 to enable)", flush=True)
+
+
+# ── FastAPI lifespan: start watchdog task ────────────────────────────────────
+async def _startup_watchdog() -> None:
+    """Start the Hermes self-heal watchdog if enabled."""
+    global _WATCHDOG_TASK
+    if OPS_HERMES_WATCHDOG_ENABLED:
+        logger.info("[watchdog] ENABLED interval=%ss grace=%ss pause=%s",
+                     OPS_HERMES_WATCHDOG_INTERVAL_SECONDS,
+                     OPS_HERMES_WATCHDOG_GRACE_SECONDS,
+                     OPS_HERMES_WATCHDOG_PAUSE_FILE)
+        _WATCHDOG_TASK = asyncio.create_task(_hermes_watchdog_loop(), name="hermes-watchdog")
+    else:
+        logger.info("[watchdog] disabled (set OPS_HERMES_WATCHDOG_ENABLED=1 to enable)")
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    await _startup_watchdog()
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    if _WATCHDOG_TASK and not _WATCHDOG_TASK.done():
+        _WATCHDOG_TASK.cancel()
+        try:
+            await _WATCHDOG_TASK
+        except (asyncio.CancelledError, RuntimeError):
+            pass
+        logger.info("[watchdog] cancelled on shutdown")

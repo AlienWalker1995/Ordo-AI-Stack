@@ -12,9 +12,9 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def client(monkeypatch):
-    import dashboard.app as dashboard_app
-
     from unittest.mock import AsyncMock, MagicMock
+
+    import dashboard.app as dashboard_app
 
     async def _stub_check(url: str, client=None):
         return (True, "")

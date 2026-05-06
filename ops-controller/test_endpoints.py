@@ -1,4 +1,3 @@
-import os
 import pytest
 from fastapi.testclient import TestClient
 
@@ -12,6 +11,7 @@ def set_token(monkeypatch):
     _install_docker_stub()
     monkeypatch.setenv("OPS_CONTROLLER_TOKEN", "test-token-for-test")
     import importlib
+
     import ops_controller.main as m
     importlib.reload(m)
     return m
@@ -39,13 +39,14 @@ def test_containers_list_returns_minimal_metadata(set_token):
 def test_containers_list_emits_audit_line(set_token, tmp_path, monkeypatch):
     monkeypatch.setenv("AUDIT_LOG_PATH", str(tmp_path / "audit.jsonl"))
     import importlib
+
     import ops_controller.main as m
     importlib.reload(m)
     client = TestClient(m.app)
     client.get("/containers", headers={"Authorization": "Bearer test-token-for-test"})
     audit = (tmp_path / "audit.jsonl").read_text().splitlines()
     import json
-    parsed = [json.loads(l) for l in audit]
+    parsed = [json.loads(line) for line in audit]
     assert any(p["action"] == "containers.list" for p in parsed)
 
 

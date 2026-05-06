@@ -13,9 +13,9 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def _stub_services(monkeypatch):
     """Stub service probes so TestClient doesn't hit real Docker DNS."""
-    import dashboard.app  # noqa: F401 — ensure module is loaded before patching
-
     from unittest.mock import AsyncMock, MagicMock
+
+    import dashboard.app  # noqa: F401 — ensure module is loaded before patching
 
     async def _stub_check(url: str, client=None):
         return (True, "")

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -13,12 +14,17 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def client(monkeypatch):
     """Spin up the dashboard app without hitting real ComfyUI / services."""
-    # Set SCRIPTS_DIR to the repo root + scripts before importing dashboard.app
     repo_root = os.path.join(os.path.dirname(__file__), "..")
     scripts_dir = os.path.join(repo_root, "scripts")
     monkeypatch.setenv("SCRIPTS_DIR", scripts_dir)
 
     import dashboard.app as dashboard_app
+
+    # dashboard.app captures SCRIPTS_DIR at module import time. If an earlier
+    # test imported the module first, the env-var change above is a no-op
+    # against the cached module — patch the attribute directly so this
+    # fixture works regardless of test order.
+    monkeypatch.setattr(dashboard_app, "SCRIPTS_DIR", Path(scripts_dir))
 
     # /api/comfyui/packs calls _scan_comfyui_models via asyncio.to_thread; stub the
     # sync function so the test is hermetic even without a models/ directory.

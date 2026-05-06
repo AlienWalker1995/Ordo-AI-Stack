@@ -37,7 +37,6 @@ from dashboard.settings import AUTH_REQUIRED as _AUTH_REQUIRED
 from dashboard.settings import DASHBOARD_AUTH_TOKEN
 
 
-
 async def _read_json_async(path: Path) -> dict:
     """Read and parse a JSON file off the event loop."""
     return await asyncio.to_thread(lambda: json.loads(path.read_text(encoding="utf-8")))
@@ -1946,7 +1945,7 @@ async def hardware_stats():
 @app.get("/api/hardware/service-pressure")
 async def service_pressure():
     """Per-service compute pressure (CPU/RAM/VRAM). No auth — read-only, like /api/hardware."""
-    from dashboard.services_catalog import SERVICES, OPS_SERVICE_MAP
+    from dashboard.services_catalog import OPS_SERVICE_MAP, SERVICES
 
     ops_url = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000").rstrip("/")
     token = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
@@ -1991,8 +1990,8 @@ async def service_pressure():
             "cpu_pct": float(row.get("cpu_pct") or 0.0),
             "mem_gb": float(row.get("mem_gb") or 0.0),
             "mem_pct": float(row.get("mem_pct") or 0.0),
-            "vram_gb": float(row.get("vraam_gb") or 0.0),
-            "vram_pct": float(row.get("vraam_pct") or 0.0),
+            "vram_gb": float(row.get("vram_gb") or 0.0),
+            "vram_pct": float(row.get("vram_pct") or 0.0),
             "has_gpu": bool((cat or {}).get("has_gpu", False)),
             "running": bool(row.get("running", False)),
         })
@@ -2007,14 +2006,14 @@ async def service_pressure():
                 "running": False,
             })
     services_out.sort(
-        key=lambda s: max(s["cpu_pct"], s["mem_pct"], s["vraam_pct"]),
+        key=lambda s: max(s["cpu_pct"], s["mem_pct"], s["vram_pct"]),
         reverse=True,
     )
     return {
         "gpu": raw.get("gpu"),
         "host": host_info,
         "services": services_out,
-        "vraam_aggregate_unavailable": bool(raw.get("vraam_aggregate_unavailable", False)),
+        "vram_aggregate_unavailable": bool(raw.get("vram_aggregate_unavailable", False)),
     }
 
 

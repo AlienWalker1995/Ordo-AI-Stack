@@ -19,6 +19,7 @@ import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
+
 # Stub ``docker`` SDK before any test imports ``ops_controller.main``.
 # We install unconditionally — legacy tests in ``tests/`` install a plain
 # ``MagicMock()`` for ``docker`` which lacks the structured behavior our

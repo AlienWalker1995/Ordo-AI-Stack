@@ -44,6 +44,14 @@ def test_hermes_services_build_from_hermes_dir():
         assert build.get("context") == "./hermes", f"{svc} context != ./hermes"
 
 
+@pytest.mark.skip(
+    reason="Direct host port exposure on hermes-dashboard was removed when "
+    "the stack moved to Caddy + oauth2-proxy SSO front door. The dashboard "
+    "is now reachable only via the proxy on the host's tailnet IP; there is "
+    "no direct ${HERMES_DASHBOARD_PORT:-9119} mapping to assert on. Test "
+    "left in place as a marker — delete or rewrite if/when the architecture "
+    "changes again."
+)
 def test_dashboard_port_is_env_overridable():
     svc = _compose_services()["hermes-dashboard"]
     ports = svc.get("ports", [])
