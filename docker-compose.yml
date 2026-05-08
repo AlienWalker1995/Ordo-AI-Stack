@@ -4,7 +4,7 @@ name: ordo-ai-stack
 services:
   llamacpp:
     # Default points at the repo-built TurboQuant image (llamacpp/Dockerfile).
-    # Escape hatch: set LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-b9071 in
+    # Escape hatch: set LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda in
     # .env to fall back to upstream (loses turbo2 / turbo3 KV types).
     image: ${LLAMACPP_IMAGE:-ordo-ai-stack/llamacpp-turboquant:latest}
     build:
@@ -48,15 +48,15 @@ services:
 
   # Use CUDA image so linux/amd64 is available (plain :server manifest can resolve to arm64 on Docker Desktop).
   llamacpp-embed:
-    image: ${LLAMACPP_EMBED_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-b9071}
+    image: ${LLAMACPP_EMBED_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
     restart: unless-stopped
     platform: linux/amd64
-    # The upstream :server-b9071 image's default CMD is `/app/llama-server
-    # --host 0.0.0.0 --port 8080`. Setting `command:` replaces CMD wholesale,
-    # so prepend the binary explicitly — otherwise docker tries to exec
-    # `--host` as the executable and the container fails to start.
+    # The upstream :server-cuda image now uses ENTRYPOINT=["/app/llama-server"]
+    # with CMD=[]. Compose's `command:` becomes the binary's argv, so DON'T
+    # prepend /app/llama-server (would double-exec). The image used to have an
+    # empty ENTRYPOINT with the binary in CMD; the rolling tag changed shape
+    # in a newer build.
     command: >
-      /app/llama-server
       --host 0.0.0.0 --port 8080
       --model /models/${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}
       --ctx-size 8192 --embeddings
@@ -597,7 +597,7 @@ services:
   oauth2-proxy:
     # alpine variant ships with wget for the in-container healthcheck below.
     # The default :latest is distroless and has no shell or HTTP probe tools.
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.2
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.2-alpine
     restart: unless-stopped
     # oauth2-proxy is used purely as an authn endpoint via Caddy `forward_auth`
     # (Caddy calls /oauth2/auth, oauth2-proxy returns 202 on valid session,
