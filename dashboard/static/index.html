@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <title>Ordo AI Stack Dashboard</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -1395,12 +1395,18 @@
   </div>
 
   <script>
+    // Detected once at load. Empty when served at host root, '/dash' when
+    // mounted under Caddy's handle_path /dash/* in the SSO front door.
+    // Prepended to every API path so absolute fetches resolve correctly
+    // either way without needing a build-time substitution.
+    const APP_PREFIX = (location.pathname.match(/^\/dash(?=\/|$)/) || [''])[0];
+
     let authConfig = { auth_required: false, auth_type: null };
     const AUTH_STORAGE_KEY = 'dashboard_auth_token';
 
     async function loadAuthConfig() {
       try {
-        const r = await fetch('/api/auth/config', { cache: 'no-store' });
+        const r = await fetch(APP_PREFIX + '/api/auth/config', { cache: 'no-store' });
         authConfig = await r.json();
       } catch (_) { authConfig = { auth_required: false }; }
     }
@@ -1448,7 +1454,7 @@
 
     const api = (path, opts = {}) => {
       const headers = { 'Accept': 'application/json', ...getAuthHeaders(), ...opts.headers };
-      return fetch(path, { cache: 'no-store', ...opts, headers }).then(async r => {
+      return fetch(APP_PREFIX + path, { cache: 'no-store', ...opts, headers }).then(async r => {
         if (r.status === 401 && authConfig.auth_required && authConfig.auth_type === 'bearer') {
           sessionStorage.removeItem(AUTH_STORAGE_KEY);
           showAuthModal();
@@ -1605,8 +1611,24 @@
       return `http://${host}:${port}`;
     }
 
+    // When the dashboard is mounted behind the SSO front door (APP_PREFIX
+    // is '/dash'), direct upstream ports like :8188/:5678/:8080 aren't
+    // reachable from outside the host. Caddy publishes SSO-gated paths
+    // for the same services on port 443 instead — route the open links
+    // through those. Services without an SSO route (llamacpp/model-gateway/
+    // mcp/qdrant) fall through to the original direct-port behavior.
+    const SSO_ROUTES = {
+      comfyui: '/comfy/',
+      webui: '/chat/',
+      n8n: '/n8n/',
+      hermes: '/hermes/',
+    };
+
     /** Prefer API `url` (paths + query) and match dashboard hostname. */
     function serviceOpenHref(s, host) {
+      if (APP_PREFIX && SSO_ROUTES[s.id]) {
+        return location.origin + SSO_ROUTES[s.id];
+      }
       if (!s.url) return serviceUrl(host, s.port);
       try {
         const u = new URL(s.url);

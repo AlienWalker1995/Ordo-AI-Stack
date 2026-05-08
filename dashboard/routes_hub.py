@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from dashboard.dependency_registry import probe_all
 from dashboard.services_catalog import SERVICES, _check_service
@@ -32,9 +32,16 @@ async def services():
 
 
 @router.get("/auth/config")
-async def auth_config():
+async def auth_config(request: Request):
     """Return auth config for frontend. No auth required."""
     if not AUTH_REQUIRED:
+        return {"auth_required": False, "auth_type": None}
+    # SSO front door: when the request arrives through Caddy's forward_auth
+    # with a verified X-Forwarded-Email, the auth middleware will accept it
+    # in lieu of a bearer token. Tell the JS no further auth is needed so
+    # the bearer modal doesn't pop up on every page load.
+    from dashboard.app import _request_from_trusted_proxy
+    if _request_from_trusted_proxy(request) and request.headers.get("X-Forwarded-Email", "").strip():
         return {"auth_required": False, "auth_type": None}
     return {"auth_required": True, "auth_type": "bearer"}
 
