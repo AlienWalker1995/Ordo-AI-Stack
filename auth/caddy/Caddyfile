@@ -20,59 +20,60 @@
     # Tailscale-issued cert (mounted in by host).
     tls /etc/caddy/certs/tailnet.crt /etc/caddy/certs/tailnet.key
 
-    # ---- forward_auth (oauth2-proxy) on every protected path ----
-    @auth not path /oauth2/* /healthz /n8n/rest/oauth2-credential/callback /n8n/webhook/*
-    handle @auth {
+    # ---- public bypass routes (auth not required) ----
+    handle /oauth2/* {
+        reverse_proxy oauth2-proxy:4180
+    }
+    handle /healthz {
+        respond "ok" 200
+    }
+    handle /n8n/rest/oauth2-credential/callback* {
+        reverse_proxy n8n:5678
+    }
+    handle /n8n/webhook/* {
+        reverse_proxy n8n:5678
+    }
+
+    # ---- everything else: forward_auth + then route to upstream ----
+    # `route` (vs `handle`) keeps directives in source order and lets the
+    # request continue past forward_auth to the matching handle_path block.
+    # Caddy's `handle` blocks are MUTUALLY EXCLUSIVE — only one runs per
+    # request — so a `handle { forward_auth }` would terminate the request
+    # immediately after auth succeeds, returning the 202 to the browser
+    # instead of proxying to the upstream UI.
+    route {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
             copy_headers X-Auth-Request-Email>X-Forwarded-Email X-Auth-Request-User>X-Forwarded-User X-Auth-Request-Preferred-Username>X-Forwarded-Preferred-Username
-            # Convert oauth2-proxy's 401 (no session) into a 302 redirect to
-            # /oauth2/start, preserving the original URL via rd= so the user
-            # is bounced back after Google sign-in.
+            # Convert oauth2-proxy's 401 (no session) into a 302 redirect
+            # to /oauth2/start, preserving the original URL via rd= so the
+            # user is bounced back to it after Google sign-in.
             @unauthorized status 401
             handle_response @unauthorized {
                 redir https://{host}/oauth2/start?rd={scheme}://{host}{uri} 302
             }
         }
-    }
 
-    # ---- oauth2-proxy endpoints (start, callback, sign_out) ----
-    handle /oauth2/* {
-        reverse_proxy oauth2-proxy:4180
-    }
+        # ---- protected upstreams (run only after forward_auth passes) ----
+        handle_path /dash/* {
+            reverse_proxy dashboard:8080
+        }
+        handle_path /chat/* {
+            reverse_proxy open-webui:8080
+        }
+        handle_path /n8n/* {
+            reverse_proxy n8n:5678
+        }
+        handle_path /hermes/* {
+            reverse_proxy hermes-dashboard:9119
+        }
+        handle_path /comfy/* {
+            reverse_proxy comfyui:8188
+        }
 
-    # ---- public health (no auth) ----
-    handle /healthz {
-        respond "ok" 200
-    }
-
-    # ---- /dash/ → dashboard:8080 ----
-    handle_path /dash/* {
-        reverse_proxy dashboard:8080
-    }
-
-    # ---- /chat/ → open-webui ----
-    handle_path /chat/* {
-        reverse_proxy open-webui:8080
-    }
-
-    # ---- /n8n/ → n8n (OAuth callback + webhooks bypass SSO via @auth exclusion above) ----
-    handle_path /n8n/* {
-        reverse_proxy n8n:5678
-    }
-
-    # ---- /hermes/ → hermes-dashboard ----
-    handle_path /hermes/* {
-        reverse_proxy hermes-dashboard:9119
-    }
-
-    # ---- /comfy/ → comfyui (WebSocket auto-upgrade via reverse_proxy) ----
-    handle_path /comfy/* {
-        reverse_proxy comfyui:8188
-    }
-
-    # ---- catch-all 404 for paths that don't match any route above ----
-    handle {
-        respond "auth ok — unknown route" 404
+        # ---- catch-all 404 for paths that don't match any route above ----
+        handle {
+            respond "auth ok — unknown route" 404
+        }
     }
 }
