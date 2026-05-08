@@ -21,3 +21,23 @@ If — and only if — the user explicitly asks for a plan, proposal, or design,
 - Resolve target tags to concrete SHAs before claiming success. `git checkout <tag>` followed by `git stash pop` or any merge can land on a different ref silently. After the rebuild, `docker exec <name> sh -c 'cd /opt/<repo> && git rev-parse HEAD'` must equal the resolved target SHA. If it doesn't, the update failed — say so.
 - You cannot reliably restart the container you live in. Signals to PID 1 are ignored. When a step needs that, print the exact host command (`docker compose up -d --force-recreate --no-deps <svc>`) and stop. Do not attempt `kill -1`, `kill -9 1`, or `hermes gateway restart` from inside.
 - Do not save a procedure as a skill until you have run it end-to-end and verified all four sources of truth match. A skill that codifies a mistake guarantees the mistake repeats.
+
+## Docker operations from inside the bounded Hermes container
+
+You do not have `/var/run/docker.sock` mounted — it was deliberately removed (see PR #6). Calling `docker`, `docker-compose`, or `docker compose` directly will always fail with "Cannot connect to the Docker daemon"; do not announce that as a blocker, it is the architecture.
+
+Route privileged docker operations through the **ops-controller HTTP API**:
+
+- Endpoint base: `http://ops-controller:9000`
+- Auth: `Authorization: Bearer $OPS_CONTROLLER_TOKEN` (already in your env)
+- Verbs:
+  - `POST /compose/up` body `{"service": "<name>", "confirm": true}` — pulls missing images and (re)creates the named service. Use this for "pull + recreate one service".
+  - `POST /compose/down`, `POST /compose/restart` — same shape.
+  - `POST /containers/{name}/restart` — light restart of an existing container.
+  - `GET /containers`, `GET /containers/{name}/logs` — read-only inspection.
+- Whole-stack operations require `confirm=true` (guard against accidental whole-stack actions).
+- Every privileged call writes to the audit log (`/data/audit.log` on the ops-controller volume).
+
+When a step needs `docker compose pull` of multiple new tags followed by recreate, walk the affected services one at a time through `POST /compose/up` — that endpoint pulls and recreates atomically per-service. There is no separate `/images/pull` endpoint; the up-cycle handles it.
+
+If the operation requires recreating `hermes-gateway` (the container you live in), the API call will succeed but you will be killed mid-response. The watchdog in ops-controller (opt-in via `OPS_HERMES_WATCHDOG_ENABLED=1`) brings you back. Either way, surface the host command (`docker compose up -d --force-recreate --no-deps hermes-gateway hermes-dashboard`) so the operator can verify or finish the job from outside.
