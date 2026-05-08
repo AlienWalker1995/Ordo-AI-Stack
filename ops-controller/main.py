@@ -449,12 +449,27 @@ def _run_compose(verb: str, service: str | None) -> subprocess.CompletedProcess:
     # Use standalone docker-compose binary (installed in Dockerfile)
     # rather than docker CLI + compose plugin which is not available.
     cmd = ["docker-compose", verb]
+    if verb == "up":
+        cmd.append("-d")  # always detach, regardless of whether a service is named
     if service:
         cmd.append(service)
-    elif verb == "up":
-        cmd += ["-d"]
+
+    # Compose interpolates ${HOME} when resolving secret bind sources
+    # (docker-compose.yml top-level `secrets:` block uses
+    # ${HOME}/.ai-toolkit/runtime/secrets/...). The ops-controller process
+    # runs as `appuser` with HOME=/home/appuser, which does NOT match the
+    # operator's host home where those secret files live. Override HOME in
+    # the subprocess env to whatever OPERATOR_HOME points at — set on the
+    # ops-controller service in docker-compose.yml as
+    # `OPERATOR_HOME=${HOME}` so it inherits the operator's $HOME at the
+    # moment they ran `docker compose up`.
+    env = os.environ.copy()
+    operator_home = os.environ.get("OPERATOR_HOME")
+    if operator_home:
+        env["HOME"] = operator_home
+
     return subprocess.run(
-        cmd, capture_output=True, text=True,
+        cmd, capture_output=True, text=True, env=env,
         cwd=os.environ.get("COMPOSE_PROJECT_DIR", "/workspace"),
     )
 
