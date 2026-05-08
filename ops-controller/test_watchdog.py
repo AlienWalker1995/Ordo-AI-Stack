@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 
-def _make_container(name, service, status="running", finished_at=""):
+def _make_container(name, service, status="running", finished_at="", restart_policy="unless-stopped"):
     c = MagicMock()
     c.name = name
     c.labels = {
@@ -23,7 +23,10 @@ def _make_container(name, service, status="running", finished_at=""):
         "com.docker.compose.project": "ordo-ai-stack",
     }
     c.status = status
-    c.attrs = {"State": {"FinishedAt": finished_at}}
+    c.attrs = {
+        "State": {"FinishedAt": finished_at},
+        "HostConfig": {"RestartPolicy": {"Name": restart_policy}},
+    }
     return c
 
 
@@ -141,6 +144,42 @@ def test_iteration_skip_running_writes_no_audit(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "_docker_client", lambda: fake_client)
 
     m._watchdog_iteration()
+    assert _read_audit(audit_path) == []
+
+
+def test_iteration_skips_oneshot_and_excluded(tmp_path, monkeypatch):
+    """Restart policy != unless-stopped (one-shot init containers) must not be touched,
+    and explicitly excluded services (ops-controller itself) must be skipped even if exited."""
+    import ops_controller.main as m
+    audit_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(m, "OPS_HERMES_WATCHDOG_PAUSE_FILE", str(tmp_path / "no-such"))
+    monkeypatch.setattr(m, "OPS_HERMES_WATCHDOG_GRACE_SECONDS", 60.0)
+    monkeypatch.setattr(m, "OPS_WATCHDOG_EXCLUDE", {"ops-controller"})
+    _patch_audit_log(monkeypatch, m, audit_path)
+
+    finished = datetime.now(UTC) - timedelta(seconds=300)
+
+    # exited init container with restart=no — must be ignored
+    init_c = _make_container(
+        "init-1", "comfyui-manager-setup", "exited",
+        finished_at=_iso(finished), restart_policy="no",
+    )
+    # exited ops-controller — excluded by name even though restart=unless-stopped
+    self_c = _make_container(
+        "ops-1", "ops-controller", "exited", finished_at=_iso(finished),
+    )
+    started = []
+
+    init_c.start.side_effect = lambda: started.append("init")
+    self_c.start.side_effect = lambda: started.append("self")
+
+    fake_client = MagicMock()
+    fake_client.containers.list.return_value = [init_c, self_c]
+    monkeypatch.setattr(m, "_docker_client", lambda: fake_client)
+
+    m._watchdog_iteration()
+
+    assert started == [], "watchdog must not act on init containers or its own host"
     assert _read_audit(audit_path) == []
 
 
