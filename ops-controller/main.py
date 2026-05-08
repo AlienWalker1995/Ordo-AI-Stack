@@ -110,15 +110,28 @@ COMFYUI_QUEUE_POLL_SECONDS = float(os.environ.get("COMFYUI_QUEUE_POLL_SECONDS", 
 COMFYUI_DRAIN_SECONDS = float(os.environ.get("COMFYUI_DRAIN_SECONDS", "20"))
 COMFYUI_GUARDIAN_TARGET = os.environ.get("COMFYUI_GUARDIAN_TARGET", "llamacpp")
 
-# ── Hermes self-heal watchdog ────────────────────────────────────────────────
-# Opt-in background task that restarts exited hermes services after a grace
-# window. Prevents the "operator stopped for rebuild and died" scenario.
-# Disabled by default — set OPS_HERMES_WATCHDOG_ENABLED=1 to enable.
+# ── Self-heal watchdog ────────────────────────────────────────────────────────
+# Opt-in background task that restarts exited compose services after a grace
+# window. Prevents the "operator stopped for rebuild and died" scenario AND
+# the "cascade orphaned model-gateway/mcp-gateway and nobody noticed" one.
+# Disabled by default — set OPS_HERMES_WATCHDOG_ENABLED=1 to enable. The env
+# var name keeps the OPS_HERMES_ prefix for backward compatibility with the
+# original Hermes-only watchdog; the watched set is no longer Hermes-only.
 OPS_HERMES_WATCHDOG_ENABLED = os.environ.get("OPS_HERMES_WATCHDOG_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
 OPS_HERMES_WATCHDOG_INTERVAL_SECONDS = float(os.environ.get("OPS_HERMES_WATCHDOG_INTERVAL_SECONDS", "30"))
 OPS_HERMES_WATCHDOG_GRACE_SECONDS = float(os.environ.get("OPS_HERMES_WATCHDOG_GRACE_SECONDS", "60"))
 OPS_HERMES_WATCHDOG_PAUSE_FILE = os.environ.get("OPS_HERMES_WATCHDOG_PAUSE_FILE", "/data/watchdog.paused")
-WATCHDOG_SERVICES = ["hermes-gateway", "hermes-dashboard"]
+
+# Comma-separated list of compose service NAMES the watchdog must NOT touch.
+# Defaults to ops-controller (we cannot watch our own host) plus any one-shot
+# init container service names if you have them. Override via env if needed.
+OPS_WATCHDOG_EXCLUDE = {
+    s.strip() for s in os.environ.get(
+        "OPS_WATCHDOG_EXCLUDE",
+        "ops-controller,comfyui-manager-setup,comfyui-mcp-image,orchestration-mcp-image",
+    ).split(",") if s.strip()
+}
+
 _WATCHDOG_TASK: asyncio.Task | None = None
 
 _guardian_lock = threading.Lock()
@@ -536,9 +549,27 @@ def _watchdog_iteration() -> None:
         logger.exception("[watchdog] docker query failed")
         return
 
+    # Auto-discover the watched set: every compose service in this project
+    # whose restart policy is unless-stopped (covers all long-running services)
+    # and that we're allowed to touch (not on the EXCLUDE list — ops-controller
+    # itself, init/one-shot containers, anything the operator explicitly opted
+    # out). This way new services added to docker-compose.yml are watched
+    # automatically; no code change required.
     now = datetime.now(UTC)
-    for svc in WATCHDOG_SERVICES:
-        targets = [c for c in containers if c.labels.get("com.docker.compose.service") == svc]
+    by_service: dict[str, list] = {}
+    for c in containers:
+        svc = c.labels.get("com.docker.compose.service")
+        if not svc or svc in OPS_WATCHDOG_EXCLUDE:
+            continue
+        try:
+            policy = (c.attrs.get("HostConfig", {}) or {}).get("RestartPolicy", {}).get("Name", "")
+        except Exception:
+            policy = ""
+        if policy != "unless-stopped":
+            continue
+        by_service.setdefault(svc, []).append(c)
+
+    for svc, targets in by_service.items():
         for c in targets:
             decision, detail = _watchdog_decision(c, now, OPS_HERMES_WATCHDOG_GRACE_SECONDS)
 
