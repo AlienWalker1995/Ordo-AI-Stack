@@ -132,6 +132,13 @@ services:
     environment:
       - COMPOSE_PROJECT_DIR=/workspace
       - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:-}
+      # Pass through the operator's $HOME so this container's docker-compose
+      # subprocesses (POST /compose/* endpoints) interpolate ${HOME} the same
+      # way the operator's shell would. Without this, secret bind sources at
+      # ${HOME}/.ai-toolkit/runtime/secrets/* resolve against /home/appuser
+      # inside the container — a path that doesn't exist on the docker host
+      # — and `compose up` aborts on "bind source path does not exist".
+      - OPERATOR_HOME=${HOME}
       - HF_TOKEN_FILE=/run/secrets/hf_token
       - AUDIT_LOG_PATH=/data/audit.log
       - BASE_PATH=${BASE_PATH:-.}
