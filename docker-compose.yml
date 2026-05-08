@@ -51,11 +51,12 @@ services:
     image: ${LLAMACPP_EMBED_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
     restart: unless-stopped
     platform: linux/amd64
-    # The upstream :server-cuda image now uses ENTRYPOINT=["/app/llama-server"]
-    # with CMD=[]. Compose's `command:` becomes the binary's argv, so DON'T
-    # prepend /app/llama-server (would double-exec). The image used to have an
-    # empty ENTRYPOINT with the binary in CMD; the rolling tag changed shape
-    # in a newer build.
+    # The upstream :server-cuda is a rolling tag that has flipped its
+    # ENTRYPOINT/CMD shape at least twice this week (sometimes empty
+    # ENTRYPOINT with binary in CMD, sometimes ENTRYPOINT=["/app/llama-server"]
+    # with CMD=[]). Pin both explicitly so neither variant breaks us:
+    # entrypoint always invokes the binary; compose's command: is its argv.
+    entrypoint: ["/app/llama-server"]
     command: >
       --host 0.0.0.0 --port 8080
       --model /models/${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}
@@ -622,7 +623,9 @@ services:
       - --cookie-secure=true
       - --cookie-samesite=lax
       - --cookie-expire=24h
-      - --email-domain=*
+      # NOTE: do NOT add --email-domain=* alongside --authenticated-emails-file.
+      # Either condition allows the user in, so the wildcard would defeat the
+      # allowlist. The file is the only gate.
       - --authenticated-emails-file=/etc/oauth2-proxy/emails.txt
       - --skip-provider-button=true
     environment:
@@ -669,8 +672,13 @@ services:
       timeout: 5s
       retries: 3
     networks:
+      # caddy is the SSO ingress — it only needs proxy-net to reach upstreams.
+      # All upstreams it proxies (oauth2-proxy, dashboard, open-webui, n8n,
+      # comfyui, hermes-dashboard) are on proxy-net. Membership on `frontend`
+      # caused Docker DNS to return frontend IPs for the dashboard, putting
+      # caddy's source IP outside DASHBOARD_TRUSTED_PROXY_NET=172.24.0.0/16
+      # and 401-ing every /api/* call from the SSO front door.
       - proxy-net
-      - frontend
     logging:
       driver: json-file
       options:
