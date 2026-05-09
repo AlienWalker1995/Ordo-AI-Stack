@@ -42,3 +42,14 @@ def test_negative_prompt_has_desk_additions_and_drops_microphone(tmp_path):
         assert phrase in text, f"expected {phrase!r} in negative prompt"
     assert "identity" in text.lower() or "morph" in text.lower()
     assert "missing microphone" not in text
+
+
+def test_shot_data_is_desk_template(tmp_path):
+    out = run_builder(tmp_path / "out.json")
+    shot_node = next(n for n in out["nodes"] if n.get("id") == 352)
+    text = shot_node["widgets_values"][0]
+    assert "podcast desk" in text
+    assert "ring light" in text
+    assert "NYC sidewalk" not in text
+    assert "vox-pop" not in text.lower()
+    assert "[VISUAL]" in text and "[SPEECH]" in text and "[SOUNDS]" in text

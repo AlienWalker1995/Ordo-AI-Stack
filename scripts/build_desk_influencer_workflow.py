@@ -24,6 +24,18 @@ def _replace_negative_prompt(data: dict) -> None:
     neg_node["widgets_values"][0] = DESK_NEGATIVE_PROMPT
 
 
+DESK_SHOT_DATA = """[VISUAL]: man in his early 30s seated at a modern podcast desk, soft ring light from upper-left, a single condenser mic on a low boom in front of him, monitor glow behind, clean tech-podcast aesthetic. He's looking directly at the camera, talking energetically with hand gestures. Vertical 9:16 framing, chest-up, depth of field on the background.
+
+[SPEECH]: \"...\"
+
+[SOUNDS]: room tone, soft keyboard tap, distant HVAC."""
+
+
+def _replace_shot_data(data: dict) -> None:
+    shot_node = next(n for n in data["nodes"] if n.get("id") == 352)
+    shot_node["widgets_values"][0] = DESK_SHOT_DATA
+
+
 def _retune_cameraman_lora(data: dict) -> None:
     """Drop Cameraman IC-LoRA strength from street-interview's 0.5 to 0.15.
 
@@ -42,6 +54,7 @@ def build(source: Path, target: Path) -> None:
     data = json.loads(source.read_text(encoding="utf-8"))
     _retune_cameraman_lora(data)
     _replace_negative_prompt(data)
+    _replace_shot_data(data)
     target.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
