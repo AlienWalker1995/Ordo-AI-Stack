@@ -153,6 +153,16 @@ services:
       - COMFYUI_QUEUE_POLL_SECONDS=${COMFYUI_QUEUE_POLL_SECONDS:-2}
       - COMFYUI_DRAIN_SECONDS=${COMFYUI_DRAIN_SECONDS:-20}
       - COMFYUI_GUARDIAN_TARGET=${COMFYUI_GUARDIAN_TARGET:-llamacpp}
+      # Phase 1: after drain, POST ComfyUI /free so PyTorch's caching allocator
+      # releases. Default ON; harmless 200 OK when nothing is held.
+      - COMFYUI_FREE_AFTER_DRAIN=${COMFYUI_FREE_AFTER_DRAIN:-1}
+      # Phase 2: VRAM-pressure watchdog. Independent of the queue. When total
+      # used VRAM exceeds OPS_VRAM_PRESSURE_GB, call ComfyUI /free; recheck
+      # until below OPS_VRAM_RECOVERY_GB (or pressure-4 if unset). Disabled
+      # while OPS_VRAM_PRESSURE_GB <= 0.
+      - OPS_VRAM_PRESSURE_GB=${OPS_VRAM_PRESSURE_GB:-0}
+      - OPS_VRAM_RECOVERY_GB=${OPS_VRAM_RECOVERY_GB:-0}
+      - OPS_VRAM_POLL_SECONDS=${OPS_VRAM_POLL_SECONDS:-30}
       # Hermes self-heal watchdog (opt-in): restart exited hermes-gateway/hermes-dashboard
       # after grace window. Disabled by default.
       - OPS_HERMES_WATCHDOG_ENABLED=${OPS_HERMES_WATCHDOG_ENABLED:-0}
