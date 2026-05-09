@@ -36,18 +36,27 @@ def _replace_shot_data(data: dict) -> None:
     shot_node["widgets_values"][0] = DESK_SHOT_DATA
 
 
-def _normalize_talkvid_id_lora(data: dict) -> None:
-    """Force at least one TalkVid ID-LoRA row to {on: False, strength: 1.0}.
+def _normalize_id_loras(data: dict) -> None:
+    """Force every ID-LoRA row in the Power Lora Loader to {on: False, strength: 1.0}.
 
-    Operator flips it ON via the Power Lora Loader widget for re-angle mode.
+    Anchored mode (the desk-influencer default per the spec's mode-switch
+    table) wants no identity injection — the master scene still + prompt
+    carry the character. Operator flips a single ID-LoRA row ON in
+    ComfyUI's UI for re-angle mode.
+
+    The street-interview source has multiple ID-LoRA rows (TalkVid x2,
+    CelebVHQ x1), some on, some off. We iterate the whole list — early
+    return would leave duplicate-on rows live.
     """
     power_lora = next(n for n in data["nodes"] if n.get("id") == 301)
+    found = 0
     for widget in power_lora["widgets_values"]:
-        if isinstance(widget, dict) and "TalkVid" in widget.get("lora", ""):
+        if isinstance(widget, dict) and "ID-LoRA" in widget.get("lora", ""):
             widget["on"] = False
             widget["strength"] = 1
-            return
-    raise RuntimeError("TalkVid ID-LoRA row not found in Power Lora Loader (node 301)")
+            found += 1
+    if found == 0:
+        raise RuntimeError("No ID-LoRA rows found in Power Lora Loader (node 301)")
 
 
 def _retune_cameraman_lora(data: dict) -> None:
@@ -69,7 +78,7 @@ def build(source: Path, target: Path) -> None:
     _retune_cameraman_lora(data)
     _replace_negative_prompt(data)
     _replace_shot_data(data)
-    _normalize_talkvid_id_lora(data)
+    _normalize_id_loras(data)
     target.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 

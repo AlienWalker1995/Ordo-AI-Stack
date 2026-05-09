@@ -55,8 +55,16 @@ def test_shot_data_is_desk_template(tmp_path):
     assert "[VISUAL]" in text and "[SPEECH]" in text and "[SOUNDS]" in text
 
 
-def test_talkvid_id_lora_off_at_strength_one(tmp_path):
+def test_all_id_loras_off_at_strength_one(tmp_path):
     out = run_builder(tmp_path / "out.json")
     power_lora = next(n for n in out["nodes"] if n.get("id") == 301)
-    talkvids = [w for w in power_lora["widgets_values"] if isinstance(w, dict) and "TalkVid" in w.get("lora", "")]
-    assert any(w["on"] is False and w["strength"] == 1 for w in talkvids), "expected at least one TalkVid ID-LoRA row with on=False, strength=1.0"
+    id_loras = [
+        w for w in power_lora["widgets_values"]
+        if isinstance(w, dict) and "ID-LoRA" in w.get("lora", "")
+    ]
+    assert id_loras, "expected at least one ID-LoRA row in Power Lora Loader"
+    # Spec mode-switch (anchored default): ALL ID-LoRA rows must be OFF
+    # at strength 1.0 so operator can flip exactly one ON for re-angle mode.
+    assert all(w["on"] is False for w in id_loras), \
+        f"expected every ID-LoRA row OFF, got {[(w['lora'], w['on']) for w in id_loras]}"
+    assert all(w["strength"] == 1 for w in id_loras)
