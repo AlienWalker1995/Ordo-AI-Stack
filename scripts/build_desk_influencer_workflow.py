@@ -9,7 +9,6 @@ import argparse
 import json
 from pathlib import Path
 
-
 DESK_NEGATIVE_PROMPT = (
     "subject changing identity mid-shot, face morphing, identity drift between frames, "
     "multiple subjects, two people in frame, crowd, "
