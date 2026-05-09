@@ -44,3 +44,6 @@ secrets/*
 !secrets/.sops.yaml
 !secrets/README.md
 !secrets/.gitkeep
+
+# Internal superpowers tooling artifacts (specs, plans, skill notes) — local only.
+docs/superpowers/
