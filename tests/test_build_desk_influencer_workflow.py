@@ -3,10 +3,20 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "build_desk_influencer_workflow.py"
 SOURCE = REPO_ROOT / "data/comfyui-storage/ComfyUI/user/default/workflows/ltx-video/LTX-2.3_-_Street_Interview.json"
 TARGET = REPO_ROOT / "data/comfyui-storage/ComfyUI/user/default/workflows/ltx-video/LTX-2.3_-_Desk_Influencer.json"
+
+# These tests require an operator-local ComfyUI workflow fixture under
+# `data/comfyui-storage/...`, which is gitignored. CI runners don't have it.
+# Skip cleanly there; run normally on dev boxes that do have the fixture.
+pytestmark = pytest.mark.skipif(
+    not SOURCE.exists(),
+    reason=f"workflow fixture not present: {SOURCE.relative_to(REPO_ROOT)}",
+)
 
 
 def run_builder(tmp_target: Path) -> dict:
