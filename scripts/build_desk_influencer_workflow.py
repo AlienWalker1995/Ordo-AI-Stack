@@ -10,9 +10,23 @@ import json
 from pathlib import Path
 
 
+def _retune_cameraman_lora(data: dict) -> None:
+    """Drop Cameraman IC-LoRA strength from street-interview's 0.5 to 0.15.
+
+    Desk content is mostly static. 0.15 keeps a touch of breath without
+    pushing toward handheld. Operator can crank to 0.3 for vlog energy.
+    """
+    power_lora = next(n for n in data["nodes"] if n.get("id") == 301)
+    for widget in power_lora["widgets_values"]:
+        if isinstance(widget, dict) and widget.get("lora", "").startswith("LTX-2.3-Cameraman"):
+            widget["strength"] = 0.15
+            return
+    raise RuntimeError("Cameraman IC-LoRA row not found in Power Lora Loader (node 301)")
+
+
 def build(source: Path, target: Path) -> None:
     data = json.loads(source.read_text(encoding="utf-8"))
-    # Mutations are layered in by later tasks. Step 3 just clones.
+    _retune_cameraman_lora(data)
     target.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 

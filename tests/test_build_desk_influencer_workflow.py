@@ -21,3 +21,14 @@ def test_builder_produces_valid_json(tmp_path):
     out = run_builder(tmp_path / "out.json")
     assert set(out.keys()) >= {"nodes", "links", "groups", "version"}
     assert isinstance(out["nodes"], list) and len(out["nodes"]) > 0
+
+
+def test_cameraman_lora_strength_is_0_15(tmp_path):
+    out = run_builder(tmp_path / "out.json")
+    power_lora = next(n for n in out["nodes"] if n.get("id") == 301)
+    cameraman = next(
+        w for w in power_lora["widgets_values"]
+        if isinstance(w, dict) and w.get("lora", "").startswith("LTX-2.3-Cameraman")
+    )
+    assert cameraman["on"] is True
+    assert cameraman["strength"] == 0.15
