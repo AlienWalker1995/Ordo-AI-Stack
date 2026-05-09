@@ -53,3 +53,10 @@ def test_shot_data_is_desk_template(tmp_path):
     assert "NYC sidewalk" not in text
     assert "vox-pop" not in text.lower()
     assert "[VISUAL]" in text and "[SPEECH]" in text and "[SOUNDS]" in text
+
+
+def test_talkvid_id_lora_off_at_strength_one(tmp_path):
+    out = run_builder(tmp_path / "out.json")
+    power_lora = next(n for n in out["nodes"] if n.get("id") == 301)
+    talkvids = [w for w in power_lora["widgets_values"] if isinstance(w, dict) and "TalkVid" in w.get("lora", "")]
+    assert any(w["on"] is False and w["strength"] == 1 for w in talkvids), "expected at least one TalkVid ID-LoRA row with on=False, strength=1.0"

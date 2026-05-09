@@ -36,6 +36,20 @@ def _replace_shot_data(data: dict) -> None:
     shot_node["widgets_values"][0] = DESK_SHOT_DATA
 
 
+def _normalize_talkvid_id_lora(data: dict) -> None:
+    """Force at least one TalkVid ID-LoRA row to {on: False, strength: 1.0}.
+
+    Operator flips it ON via the Power Lora Loader widget for re-angle mode.
+    """
+    power_lora = next(n for n in data["nodes"] if n.get("id") == 301)
+    for widget in power_lora["widgets_values"]:
+        if isinstance(widget, dict) and "TalkVid" in widget.get("lora", ""):
+            widget["on"] = False
+            widget["strength"] = 1
+            return
+    raise RuntimeError("TalkVid ID-LoRA row not found in Power Lora Loader (node 301)")
+
+
 def _retune_cameraman_lora(data: dict) -> None:
     """Drop Cameraman IC-LoRA strength from street-interview's 0.5 to 0.15.
 
@@ -55,6 +69,7 @@ def build(source: Path, target: Path) -> None:
     _retune_cameraman_lora(data)
     _replace_negative_prompt(data)
     _replace_shot_data(data)
+    _normalize_talkvid_id_lora(data)
     target.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
