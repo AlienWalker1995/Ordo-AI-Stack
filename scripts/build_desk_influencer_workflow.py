@@ -19,8 +19,34 @@ DESK_NEGATIVE_PROMPT = (
 )
 
 
+def _node_by_id(data: dict, node_id: int, expected_type_substring: str) -> dict:
+    """Find a node by id and assert its type contains the expected substring.
+
+    Bare next() lookups raise StopIteration with no context if a node is
+    removed, and silently overwrite the wrong widget if an ID gets reused
+    for a different node type. This wrapper makes both failure modes loud.
+    """
+    for node in data["nodes"]:
+        if node.get("id") == node_id:
+            actual_type = node.get("type", "")
+            if expected_type_substring not in actual_type:
+                raise RuntimeError(
+                    f"Node {node_id} expected to contain {expected_type_substring!r} in its type, "
+                    f"got {actual_type!r}"
+                )
+            return node
+    raise RuntimeError(f"Node id {node_id} not found in workflow")
+
+
 def _replace_negative_prompt(data: dict) -> None:
-    neg_node = next(n for n in data["nodes"] if n.get("id") == 110)
+    """Swap negative prompt for desk-specific rejections.
+
+    Drops street-interview's "missing microphone" clause (desk mics
+    don't need to be on-frame for influencer content) and adds rejections
+    for handheld/shaky/dutch-angle camera, multi-desk scenes, and
+    background morphing. Identity-drift rejections are preserved.
+    """
+    neg_node = _node_by_id(data, 110, "CLIPTextEncode")
     neg_node["widgets_values"][0] = DESK_NEGATIVE_PROMPT
 
 
@@ -32,7 +58,14 @@ DESK_SHOT_DATA = """[VISUAL]: man in his early 30s seated at a modern podcast de
 
 
 def _replace_shot_data(data: dict) -> None:
-    shot_node = next(n for n in data["nodes"] if n.get("id") == 352)
+    """Replace the SHOT_DATA primitive with the desk-influencer template.
+
+    Swaps street-interview's NYC-sidewalk vox-pop scene for a podcast-desk
+    aesthetic (ring light, condenser mic on boom, monitor glow) while
+    preserving the [VISUAL]/[SPEECH]/[SOUNDS] structured-prompt format
+    that the downstream encoder expects.
+    """
+    shot_node = _node_by_id(data, 352, "Primitive")
     shot_node["widgets_values"][0] = DESK_SHOT_DATA
 
 
@@ -48,7 +81,7 @@ def _normalize_id_loras(data: dict) -> None:
     CelebVHQ x1), some on, some off. We iterate the whole list — early
     return would leave duplicate-on rows live.
     """
-    power_lora = next(n for n in data["nodes"] if n.get("id") == 301)
+    power_lora = _node_by_id(data, 301, "Power Lora Loader")
     found = 0
     for widget in power_lora["widgets_values"]:
         if isinstance(widget, dict) and "ID-LoRA" in widget.get("lora", ""):
@@ -65,7 +98,7 @@ def _retune_cameraman_lora(data: dict) -> None:
     Desk content is mostly static. 0.15 keeps a touch of breath without
     pushing toward handheld. Operator can crank to 0.3 for vlog energy.
     """
-    power_lora = next(n for n in data["nodes"] if n.get("id") == 301)
+    power_lora = _node_by_id(data, 301, "Power Lora Loader")
     for widget in power_lora["widgets_values"]:
         if isinstance(widget, dict) and widget.get("lora", "").startswith("LTX-2.3-Cameraman"):
             widget["strength"] = 0.15

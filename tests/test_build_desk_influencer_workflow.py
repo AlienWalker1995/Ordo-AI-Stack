@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -11,7 +12,7 @@ TARGET = REPO_ROOT / "data/comfyui-storage/ComfyUI/user/default/workflows/ltx-vi
 def run_builder(tmp_target: Path) -> dict:
     """Run the builder pointing at a tmp output path; return parsed JSON."""
     subprocess.run(
-        ["python", str(SCRIPT), "--source", str(SOURCE), "--target", str(tmp_target)],
+        [sys.executable, str(SCRIPT), "--source", str(SOURCE), "--target", str(tmp_target)],
         check=True,
     )
     return json.loads(tmp_target.read_text(encoding="utf-8"))
@@ -68,3 +69,23 @@ def test_all_id_loras_off_at_strength_one(tmp_path):
     assert all(w["on"] is False for w in id_loras), \
         f"expected every ID-LoRA row OFF, got {[(w['lora'], w['on']) for w in id_loras]}"
     assert all(w["strength"] == 1 for w in id_loras)
+
+
+def test_builder_is_idempotent(tmp_path):
+    """Running the builder on its own output should produce identical JSON.
+
+    All mutations set to fixed values rather than applying deltas, so
+    re-running must be a no-op. Locks that property in.
+    """
+    first = tmp_path / "first.json"
+    subprocess.run(
+        [sys.executable, str(SCRIPT), "--source", str(SOURCE), "--target", str(first)],
+        check=True,
+    )
+    # Now re-build using the previous output as source
+    second = tmp_path / "second.json"
+    subprocess.run(
+        [sys.executable, str(SCRIPT), "--source", str(first), "--target", str(second)],
+        check=True,
+    )
+    assert first.read_text(encoding="utf-8") == second.read_text(encoding="utf-8")
