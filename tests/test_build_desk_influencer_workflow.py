@@ -32,3 +32,13 @@ def test_cameraman_lora_strength_is_0_15(tmp_path):
     )
     assert cameraman["on"] is True
     assert cameraman["strength"] == 0.15
+
+
+def test_negative_prompt_has_desk_additions_and_drops_microphone(tmp_path):
+    out = run_builder(tmp_path / "out.json")
+    neg_node = next(n for n in out["nodes"] if n.get("id") == 110)
+    text = neg_node["widgets_values"][0]
+    for phrase in ["handheld camera", "shaky cam", "two desks", "background morphing", "lighting changing mid-shot"]:
+        assert phrase in text, f"expected {phrase!r} in negative prompt"
+    assert "identity" in text.lower() or "morph" in text.lower()
+    assert "missing microphone" not in text

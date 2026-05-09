@@ -10,6 +10,20 @@ import json
 from pathlib import Path
 
 
+DESK_NEGATIVE_PROMPT = (
+    "subject changing identity mid-shot, face morphing, identity drift between frames, "
+    "multiple subjects, two people in frame, crowd, "
+    "handheld camera, shaky cam, dutch angle, fisheye, vlog selfie distortion, "
+    "two desks, multiple desks, room layout changing, walls warping, "
+    "background morphing, lighting changing mid-shot, props moving on desk"
+)
+
+
+def _replace_negative_prompt(data: dict) -> None:
+    neg_node = next(n for n in data["nodes"] if n.get("id") == 110)
+    neg_node["widgets_values"][0] = DESK_NEGATIVE_PROMPT
+
+
 def _retune_cameraman_lora(data: dict) -> None:
     """Drop Cameraman IC-LoRA strength from street-interview's 0.5 to 0.15.
 
@@ -27,6 +41,7 @@ def _retune_cameraman_lora(data: dict) -> None:
 def build(source: Path, target: Path) -> None:
     data = json.loads(source.read_text(encoding="utf-8"))
     _retune_cameraman_lora(data)
+    _replace_negative_prompt(data)
     target.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
