@@ -132,6 +132,8 @@ COMPOSE_FILE=docker-compose.yml;overrides/compute.yml
 
 **ComfyUI `CLI_ARGS`:** Set `COMFYUI_CLI_ARGS` in `.env`, or accept the default that `detect_hardware.py` supplies (GPU stacks get `--normalvram` so text encoders stay on GPU). Without the var, the compose base default is `--cpu --enable-manager`.
 
+**ComfyUI custom-node deps:** The `comfyui` container's startup wrapper auto-installs every `requirements.txt` it finds under `/root/ComfyUI/custom_nodes/*/` before launching ComfyUI. Idempotent (pip skips already-satisfied specifiers). Adding a new custom node? Drop it under `data/comfyui-storage/ComfyUI/custom_nodes/` and `docker compose up -d --force-recreate comfyui` — its deps land automatically. Failures on individual files (e.g. malformed pin) are logged as `[deps] WARN failed` and don't block startup.
+
 ## Data Persistence Rules
 
 All `data/` and `models/` directories are bind-mounted and persist across container restarts.
