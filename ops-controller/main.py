@@ -110,6 +110,22 @@ COMFYUI_QUEUE_POLL_SECONDS = float(os.environ.get("COMFYUI_QUEUE_POLL_SECONDS", 
 COMFYUI_DRAIN_SECONDS = float(os.environ.get("COMFYUI_DRAIN_SECONDS", "20"))
 COMFYUI_GUARDIAN_TARGET = os.environ.get("COMFYUI_GUARDIAN_TARGET", "llamacpp")
 
+# Phase 1: after the guardian's drain elapses and we resume the target service,
+# also POST to ComfyUI's /free endpoint so PyTorch's caching allocator releases
+# back to the OS. Without this, ComfyUI keeps the post-job VRAM pool warm and
+# llamacpp comes back into a near-OOM card. Default ON; harmless no-op when
+# ComfyUI is already idle (200 OK either way).
+COMFYUI_FREE_AFTER_DRAIN = os.environ.get("COMFYUI_FREE_AFTER_DRAIN", "1").strip().lower() in ("1", "true", "yes", "on")
+
+# Phase 2: VRAM-pressure watchdog. Independent of ComfyUI's queue state.
+# Polls total GPU memory use; if it exceeds OPS_VRAM_PRESSURE_GB, POST to
+# ComfyUI /free to release whatever PyTorch is holding. Re-checks until used
+# memory falls below OPS_VRAM_RECOVERY_GB (or pressure_gb - 4 if recovery is
+# unset). Disabled when OPS_VRAM_PRESSURE_GB <= 0 (default).
+OPS_VRAM_PRESSURE_GB = float(os.environ.get("OPS_VRAM_PRESSURE_GB", "0"))
+OPS_VRAM_RECOVERY_GB = float(os.environ.get("OPS_VRAM_RECOVERY_GB", "0"))
+OPS_VRAM_POLL_SECONDS = float(os.environ.get("OPS_VRAM_POLL_SECONDS", "30"))
+
 # ── Self-heal watchdog ────────────────────────────────────────────────────────
 # Opt-in background task that restarts exited compose services after a grace
 # window. Prevents the "operator stopped for rebuild and died" scenario AND
@@ -343,6 +359,38 @@ def _nvml_vraam_by_pid() -> tuple[dict[int, int], dict]:
             pynvml.nvmlShutdown()
         except Exception:
             pass
+
+
+def _read_total_vram_used_gb() -> float | None:
+    """Total GPU memory in use, in GB. None when NVML unavailable."""
+    _, gpu = _nvml_vraam_by_pid()
+    if not gpu.get("total_gb"):
+        return None
+    return float(gpu.get("used_gb") or 0.0)
+
+
+def _call_comfyui_free(reason: str = "") -> tuple[bool, str]:
+    """POST to ComfyUI /free so PyTorch's caching allocator returns memory.
+
+    Non-fatal — on any failure, return (False, detail). Caller logs and
+    continues. The body shape matches ComfyUI's documented contract: unloading
+    the model graph and emptying the cache. Other shapes ({}, just one of the
+    two flags) are also accepted by ComfyUI but produce a partial release.
+    """
+    try:
+        import urllib.request
+        body = json.dumps({"unload_models": True, "free_memory": True}).encode()
+        req = urllib.request.Request(
+            f"{COMFYUI_URL}/free",
+            method="POST",
+            data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            ok = 200 <= resp.status < 300
+            return (ok, f"http={resp.status} reason={reason}" if reason else f"http={resp.status}")
+    except Exception as e:
+        return (False, f"{type(e).__name__}: {str(e)[:200]}")
 
 
 @app.get("/health")
@@ -1591,6 +1639,20 @@ def _guardian_loop() -> None:
                     drain_started = None
                     _guardian_transition("idle")
 
+                    # Phase 1: free ComfyUI's PyTorch caching-allocator pool now
+                    # that the queue has drained. Without this, post-job VRAM
+                    # stays held even when no work is running (PyTorch keeps the
+                    # pool warm). Non-fatal — log + continue on failure.
+                    if COMFYUI_FREE_AFTER_DRAIN:
+                        ok, detail = _call_comfyui_free(reason="post_drain")
+                        print(f"[guardian] /free post-drain: ok={ok} {detail}", flush=True)
+                        _audit(
+                            "guardian_free_after_drain",
+                            "comfyui",
+                            "ok" if ok else "error",
+                            detail,
+                        )
+
             elif state == "error":
                 # Try to recover: if queue is empty and we didn't pause, reset to idle
                 if not busy:
@@ -1624,6 +1686,48 @@ if COMFYUI_SERIALIZE_LLAMACPP:
     threading.Thread(target=_guardian_loop, daemon=True, name="comfyui-guardian").start()
 else:
     print("[guardian] disabled (set COMFYUI_SERIALIZE_LLAMACPP=1 to enable)", flush=True)
+
+
+def _vram_pressure_watchdog_loop() -> None:
+    """Phase 2: proactively call ComfyUI /free when VRAM use exceeds threshold.
+
+    Independent of the guardian's queue-state machine. Polls total GPU memory
+    every OPS_VRAM_POLL_SECONDS; on exceed of OPS_VRAM_PRESSURE_GB, calls /free
+    until used falls below OPS_VRAM_RECOVERY_GB (or pressure-4 if unset).
+    """
+    threshold = OPS_VRAM_PRESSURE_GB
+    recovery = OPS_VRAM_RECOVERY_GB if OPS_VRAM_RECOVERY_GB > 0 else max(threshold - 4, 0.0)
+    print(
+        f"[vram-watchdog] enabled threshold={threshold}GB recovery={recovery}GB "
+        f"poll={OPS_VRAM_POLL_SECONDS}s",
+        flush=True,
+    )
+    while True:
+        try:
+            used = _read_total_vram_used_gb()
+            if used is None:
+                # NVML not available (WSL2/WDDM/no GPU) — back off, retry slowly
+                time.sleep(max(OPS_VRAM_POLL_SECONDS, 60))
+                continue
+            if used >= threshold:
+                ok, detail = _call_comfyui_free(reason=f"pressure used={used:.1f}GB threshold={threshold}GB")
+                _audit(
+                    "vram_pressure_acted",
+                    "comfyui",
+                    "ok" if ok else "error",
+                    f"used_gb={used:.1f} threshold_gb={threshold} target_gb={recovery} {detail}",
+                )
+                # Wait a bit for the OS to actually reclaim before re-measuring.
+                time.sleep(5)
+        except Exception:
+            logger.exception("[vram-watchdog] iteration crashed")
+        time.sleep(OPS_VRAM_POLL_SECONDS)
+
+
+if OPS_VRAM_PRESSURE_GB > 0:
+    threading.Thread(target=_vram_pressure_watchdog_loop, daemon=True, name="vram-pressure-watchdog").start()
+else:
+    print("[vram-watchdog] disabled (set OPS_VRAM_PRESSURE_GB > 0 to enable)", flush=True)
 
 
 # ── FastAPI lifespan: start watchdog task ────────────────────────────────────
