@@ -442,7 +442,11 @@ services:
     # (HF SDK, ComfyUI-Manager) read directly. The upstream image's default
     # CMD is `bash /runner-scripts/entrypoint.sh`; we replace it with a shim
     # that exports HF_TOKEN / GITHUB_TOKEN from the mounted secret files,
-    # then exec's the original.
+    # installs every custom node's pip requirements (the image's writable
+    # layer is wiped on container recreate, so a manual `pip install` for a
+    # custom-node dep doesn't survive the next `compose up`), then exec's
+    # the original entrypoint. Idempotent: pip skips already-satisfied
+    # specifiers so warm-cache restarts add only seconds.
     command:
       - bash
       - -c
@@ -453,6 +457,11 @@ services:
         if [ -f "$${GITHUB_TOKEN_FILE:-/run/secrets/github_pat}" ]; then
           export GITHUB_TOKEN="$$(cat "$${GITHUB_TOKEN_FILE:-/run/secrets/github_pat}")"
         fi
+        for r in /root/ComfyUI/custom_nodes/*/requirements.txt; do
+          [ -f "$$r" ] || continue
+          echo "[deps] installing $$r"
+          pip install --no-cache-dir --no-warn-script-location -q -r "$$r" || echo "[deps] WARN failed $$r"
+        done
         exec bash /runner-scripts/entrypoint.sh
     networks:
       - frontend
