@@ -1078,11 +1078,12 @@ async def models_pull_status(request: Request):
     return data
 
 
-MCP_GATEWAY_SERVERS = os.environ.get("MCP_GATEWAY_SERVERS", "duckduckgo,n8n,tavily,comfyui")
+MCP_GATEWAY_SERVERS = os.environ.get("MCP_GATEWAY_SERVERS", "duckduckgo,n8n,searxng,comfyui,orchestration")
 MCP_CONFIG_PATH = os.environ.get("MCP_CONFIG_PATH")
 # Suggested servers (dropdown). Users can also add any valid server name via custom input.
+# `searxng` replaced `tavily` 2026-05-12 — search is now self-hosted via services.searxng.
 MCP_CATALOG = [
-    "duckduckgo", "n8n", "tavily", "comfyui", "fetch", "dockerhub", "github-official",
+    "duckduckgo", "n8n", "searxng", "comfyui", "orchestration", "fetch", "dockerhub", "github-official",
     "mongodb", "postgres", "stripe", "notion", "grafana", "elasticsearch",
     "documentation", "perplexity", "excalidraw", "miro", "neo4j",
     "time", "slack", "filesystem", "puppeteer", "context7", "memory",
@@ -1125,7 +1126,7 @@ def _read_mcp_servers() -> list[str]:
             return normalized
         # Migrate: init file from .env on first run
         path.parent.mkdir(parents=True, exist_ok=True)
-        initial = ",".join(s.strip() for s in MCP_GATEWAY_SERVERS.split(",") if s.strip()) or "duckduckgo,n8n,tavily,comfyui"
+        initial = ",".join(s.strip() for s in MCP_GATEWAY_SERVERS.split(",") if s.strip()) or "duckduckgo,n8n,searxng,comfyui,orchestration"
         path.write_text(initial)
         return [s.strip() for s in initial.split(",") if s.strip()]
     return [s.strip() for s in MCP_GATEWAY_SERVERS.split(",") if s.strip()]
