@@ -1,0 +1,11 @@
+name: ops-router
+version: "1.0"
+description: First-class tools for ops-controller verbs (restart_container, container_logs, list_containers) plus a pre_llm_call intent nudge so the model uses them instead of `terminal: docker ...`.
+requires_env:
+  - OPS_CONTROLLER_TOKEN
+provides_tools:
+  - list_containers
+  - container_logs
+  - restart_container
+provides_hooks:
+  - pre_llm_call

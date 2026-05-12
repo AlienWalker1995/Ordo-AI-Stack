@@ -62,6 +62,7 @@ if [ ! -f "$SEED_MARK" ]; then
     cp /opt/ordo-seed/SOUL.md "$HERMES_HOME/SOUL.md"
   fi
   "$HERMES_BIN" plugins enable push-through >/dev/null 2>&1 || true
+  "$HERMES_BIN" plugins enable ops-router    >/dev/null 2>&1 || true
   touch "$SEED_MARK"
 fi
 
