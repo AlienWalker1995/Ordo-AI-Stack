@@ -4,14 +4,14 @@
 # for this file: with --servers set, the gateway does not merge registry.yaml for definitions.
 # PLACEHOLDER_* replaced at mcp-gateway startup (gateway-wrapper.sh).
 registry:
-  tavily:
-    description: Tavily API for web/news research with direct env injection from the stack .env.
-    title: Tavily
+  searxng:
+    description: SearXNG MCP server — private, aggregated web search via the self-hosted SearXNG instance (services.searxng in this stack). Replaces the prior Tavily integration; no external API key required.
+    title: SearXNG
     type: server
-    image: mcp/tavily
+    image: isokoliuk/mcp-searxng
     env:
-      - name: TAVILY_API_KEY
-        value: PLACEHOLDER_TAVILY_API_KEY
+      - name: SEARXNG_URL
+        value: http://searxng:8080
   comfyui:
     description: ComfyUI MCP for AI Toolkit (workflows, images, video, model pull, system stats, queue, history, installed models/nodes/extensions).
     title: ComfyUI
