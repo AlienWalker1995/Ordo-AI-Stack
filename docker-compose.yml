@@ -471,6 +471,11 @@ services:
       # ComfyUI-Manager: GitHub API rate limits for custom node installs (optional; same token as GitHub MCP).
       # ComfyUI's Manager reads GITHUB_TOKEN (not GITHUB_PERSONAL_ACCESS_TOKEN); _FILE pointer matches.
       - GITHUB_TOKEN_FILE=/run/secrets/github_pat
+      # JunoLLMRefine talks to model-gateway:11435 (LiteLLM master key 'local') and
+      # may need to wake llamacpp via ops-controller when the guardian has paused it.
+      - OPS_CONTROLLER_URL=http://ops-controller:9000
+      - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:-}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-local}
     volumes:
       - ${BASE_PATH:-.}/data/comfyui-storage:/root
       - ${BASE_PATH:-.}/models/comfyui:/root/ComfyUI/models
