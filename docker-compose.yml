@@ -141,6 +141,11 @@ services:
       - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-262144}
       # Local model used when a Claude-compatible client sends a "claude-*" model name
       - CLAUDE_CODE_LOCAL_MODEL=${CLAUDE_CODE_LOCAL_MODEL:-}
+      # throughput_callback.py — posts per-completion samples to the dashboard.
+      # Must share at least one docker network with the dashboard service (the
+      # `backend` membership below covers it).
+      - DASHBOARD_URL=http://dashboard:8080
+      - THROUGHPUT_RECORD_TOKEN=${THROUGHPUT_RECORD_TOKEN:-}
     ports:
       # 127.0.0.1 bind: localhost-only host publish. Tailnet peers reach this
       # service through Caddy (see auth/caddy/Caddyfile); host apps (Cline,

@@ -456,6 +456,99 @@
     .perf-kpi-value.hi { color: var(--accent); }
     .perf-kpi-unit { font-size: .62rem; color: var(--muted); margin-top: 4px; font-family: var(--font-mono); }
 
+    /* ── Single-model Hero (replaces multi-model KPI strip) ── */
+    .perf-hero {
+      display: grid; grid-template-columns: minmax(0,1fr) auto;
+      align-items: end; gap: var(--space-6);
+      padding: var(--space-5) var(--space-6);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
+      margin-bottom: var(--space-3); position: relative; overflow: hidden;
+    }
+    .perf-hero::before {
+      content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 2px;
+      background: linear-gradient(180deg, var(--accent) 0%, transparent 100%);
+      opacity: 0; transition: opacity .6s ease;
+    }
+    .perf-hero.loaded::before { opacity: .7; }
+    .perf-hero-meta { min-width: 0; }
+    .perf-hero-label {
+      font-size: .58rem; font-weight: 700; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: var(--space-2);
+    }
+    .perf-hero-model {
+      font-family: var(--font-mono); font-size: var(--text-lg); font-weight: 600;
+      color: var(--fg); line-height: 1.15; margin-bottom: var(--space-3);
+      overflow-wrap: anywhere;
+    }
+    .perf-hero-tags { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+    .perf-hero-tag {
+      font-family: var(--font-mono); font-size: .62rem; letter-spacing: .04em;
+      color: var(--fg-muted);
+      background: var(--surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px; padding: 2px 8px; white-space: nowrap;
+    }
+    .perf-hero-tag.dim { color: var(--muted); }
+    .perf-hero-tps {
+      text-align: right; display: flex; flex-direction: column;
+      align-items: flex-end; gap: 4px;
+    }
+    .perf-hero-tps-value {
+      font-family: var(--font-display); font-size: 3.4rem; font-weight: 800;
+      color: var(--accent); line-height: 1; letter-spacing: -.03em;
+      text-shadow: 0 0 24px rgba(0, 201, 255, .18);
+    }
+    .perf-hero-tps-unit {
+      font-family: var(--font-mono); font-size: .7rem; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--muted);
+    }
+    .perf-hero-tps-sub {
+      font-size: .56rem; letter-spacing: .14em; text-transform: uppercase;
+      color: var(--fg-muted);
+    }
+    @media (max-width: 720px) {
+      .perf-hero { grid-template-columns: 1fr; align-items: stretch; }
+      .perf-hero-tps { align-items: flex-start; text-align: left; }
+    }
+
+    /* ── Percentile rail (single-model summary) ── */
+    .perf-rail {
+      display: grid; grid-template-columns: repeat(6, 1fr); gap: 1px;
+      background: var(--border-subtle);
+      border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+      overflow: hidden; margin-bottom: var(--space-6);
+    }
+    @media (max-width: 900px) { .perf-rail { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 480px) { .perf-rail { grid-template-columns: repeat(2, 1fr); } }
+    .perf-rail-cell {
+      background: var(--bg-elevated); padding: var(--space-3) var(--space-4);
+      display: flex; flex-direction: column; gap: 4px;
+      transition: background .15s ease;
+    }
+    .perf-rail-cell:hover { background: var(--surface); }
+    .perf-rail-label {
+      font-size: .58rem; font-weight: 700; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--muted);
+    }
+    .perf-rail-value {
+      font-family: var(--font-mono); font-size: 1.2rem; font-weight: 600;
+      color: var(--fg); line-height: 1.1; letter-spacing: -.02em;
+    }
+    .perf-rail-value.hi { color: var(--accent); }
+    .perf-rail-value.dim { color: var(--muted); }
+    .perf-rail-unit {
+      font-family: var(--font-mono); font-size: .58rem; color: var(--muted);
+    }
+
+    /* Bench target chip — shows which model the button will benchmark */
+    .bench-target {
+      font-family: var(--font-mono); font-size: .68rem; color: var(--fg-muted);
+      letter-spacing: .03em; padding-left: var(--space-3);
+      border-left: 1px solid var(--border-subtle);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+    }
+
     /* ── Benchmark Panel ── */
     .bench-panel {
       padding: var(--space-5); background: var(--bg-elevated);
@@ -1184,34 +1277,57 @@
 
     <section id="throughput-section">
       <h2>Inference Telemetry</h2>
-      <p class="section-desc">Real-time performance monitoring — benchmark models, track throughput, see which services drive load.</p>
+      <p class="section-desc">Live throughput of the active local model. Updates after every completion through the Model Gateway.</p>
 
-      <!-- KPI Strip -->
-      <div class="perf-kpi-strip">
-        <div class="perf-kpi-tile" id="kpi-tile-models">
-          <div class="perf-kpi-label">Models Tracked</div>
-          <div class="perf-kpi-value" id="kpi-models">—</div>
-          <div class="perf-kpi-unit">with data</div>
+      <!-- Hero: active model + latest tok/s -->
+      <div class="perf-hero" id="perf-hero">
+        <div class="perf-hero-meta">
+          <div class="perf-hero-label">Active Model</div>
+          <div class="perf-hero-model" id="perf-hero-model">No samples yet</div>
+          <div class="perf-hero-tags">
+            <span class="perf-hero-tag" id="perf-hero-ctx">— ctx</span>
+            <span class="perf-hero-tag" id="perf-hero-samples">0 samples</span>
+            <span class="perf-hero-tag dim" id="perf-hero-lastseen">no traffic yet</span>
+          </div>
         </div>
-        <div class="perf-kpi-tile" id="kpi-tile-p95">
-          <div class="perf-kpi-label">Best P95</div>
-          <div class="perf-kpi-value hi" id="kpi-p95">—</div>
-          <div class="perf-kpi-unit">tok / sec</div>
+        <div class="perf-hero-tps">
+          <span class="perf-hero-tps-value" id="perf-hero-tps">—</span>
+          <span class="perf-hero-tps-unit">tok / sec</span>
+          <span class="perf-hero-tps-sub">latest sample</span>
         </div>
-        <div class="perf-kpi-tile" id="kpi-tile-ttft">
-          <div class="perf-kpi-label">Best TTFT p50</div>
-          <div class="perf-kpi-value" id="kpi-ttft">—</div>
-          <div class="perf-kpi-unit">milliseconds</div>
+      </div>
+
+      <!-- Percentile rail -->
+      <div class="perf-rail" id="perf-rail">
+        <div class="perf-rail-cell">
+          <span class="perf-rail-label">p50</span>
+          <span class="perf-rail-value" id="perf-rail-p50">—</span>
+          <span class="perf-rail-unit">tok/s</span>
         </div>
-        <div class="perf-kpi-tile" id="kpi-tile-events">
-          <div class="perf-kpi-label">Service Events</div>
-          <div class="perf-kpi-value" id="kpi-events">—</div>
-          <div class="perf-kpi-unit">last 24 hours</div>
+        <div class="perf-rail-cell">
+          <span class="perf-rail-label">p95</span>
+          <span class="perf-rail-value hi" id="perf-rail-p95">—</span>
+          <span class="perf-rail-unit">tok/s</span>
         </div>
-        <div class="perf-kpi-tile" id="kpi-tile-ctx">
-          <div class="perf-kpi-label">Context Window</div>
-          <div class="perf-kpi-value" id="kpi-ctx">—</div>
-          <div class="perf-kpi-unit">tokens (llamacpp)</div>
+        <div class="perf-rail-cell">
+          <span class="perf-rail-label">p99</span>
+          <span class="perf-rail-value" id="perf-rail-p99">—</span>
+          <span class="perf-rail-unit">tok/s</span>
+        </div>
+        <div class="perf-rail-cell">
+          <span class="perf-rail-label">peak</span>
+          <span class="perf-rail-value" id="perf-rail-peak">—</span>
+          <span class="perf-rail-unit">tok/s</span>
+        </div>
+        <div class="perf-rail-cell">
+          <span class="perf-rail-label">TTFT p50</span>
+          <span class="perf-rail-value" id="perf-rail-ttft-p50">—</span>
+          <span class="perf-rail-unit">ms</span>
+        </div>
+        <div class="perf-rail-cell">
+          <span class="perf-rail-label">TTFT p95</span>
+          <span class="perf-rail-value" id="perf-rail-ttft-p95">—</span>
+          <span class="perf-rail-unit">ms</span>
         </div>
       </div>
 
@@ -1220,15 +1336,11 @@
         <div class="perf-subsection-header">
           <span class="perf-subsection-label">Benchmark</span>
         </div>
-        <p class="perf-subsection-desc">Run a timed inference pass to measure raw throughput of the active model.</p>
+        <p class="perf-subsection-desc">Run a timed inference pass against the active model.</p>
         <div class="bench-panel">
           <div class="bench-controls">
-            <div class="model-select-wrap" style="max-width:340px;flex:1;">
-              <select id="throughput-model-select" aria-label="Model for benchmark">
-                <option value="">Loading models...</option>
-              </select>
-            </div>
             <button type="button" id="throughput-run-btn" class="bench-fire-btn">▶ Run Benchmark</button>
+            <span class="bench-target" id="bench-target">—</span>
           </div>
           <div id="throughput-results" class="bench-results" style="display:none;">
             <div class="bench-metric">
@@ -1250,40 +1362,6 @@
           </div>
           <div id="throughput-error" class="bench-error" style="display:none;"></div>
           <div id="throughput-loading" class="bench-loading" style="display:none;">Running benchmark…</div>
-        </div>
-      </div>
-
-      <!-- Model Performance Table -->
-      <div class="perf-subsection">
-        <div class="perf-subsection-header">
-          <span class="perf-subsection-label">Model Performance</span>
-        </div>
-        <p class="perf-subsection-desc">Throughput percentiles from benchmarks and live gateway traffic. All values in tok/s unless noted.</p>
-        <div class="perf-table-outer" id="throughput-stats">
-          <div class="perf-table-header">
-            <span class="perf-table-title">Throughput Matrix</span>
-            <span class="perf-table-count" id="perf-model-count">—</span>
-          </div>
-          <div class="perf-table-scroll">
-            <table class="perf-table">
-              <thead>
-                <tr>
-                  <th>Model</th>
-                  <th title="Most recent sample">Latest</th>
-                  <th title="Peak observed">Peak</th>
-                  <th title="50th percentile">P50</th>
-                  <th title="95th percentile">P95</th>
-                  <th title="99th percentile">P99</th>
-                  <th title="Time to first token, p50 / p95">TTFT</th>
-                  <th title="Sample count">N</th>
-                  <th title="Distribution shape: p50 / p95 / p99 / peak">Dist</th>
-                </tr>
-              </thead>
-              <tbody id="throughput-stats-grid">
-                <tr><td colspan="9"><div class="perf-empty" id="throughput-stats-empty">No data yet — run a benchmark or use models via the Model Gateway.</div></td></tr>
-              </tbody>
-            </table>
-          </div>
         </div>
       </div>
 
@@ -2067,93 +2145,71 @@
       if (loadingEl) loadingEl.style.display = 'none';
     }
 
-    async function loadPerfKPIs() {
+    // Single-model telemetry loader. Replaces the prior loadPerfKPIs +
+    // loadThroughputStats pair (multi-model comparison was overkill for one
+    // local model). Pulls /api/performance/summary for context, then takes
+    // the most-recent-sampled model from /api/throughput/stats and renders
+    // it into the hero card + percentile rail. Legacy names are aliased
+    // below so existing call sites keep working without churn.
+    async function loadPerfHero() {
+      const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+      const setClass = (id, cls, on) => { const el = document.getElementById(id); if (el) el.classList.toggle(cls, on); };
+      const fmt = (v) => (v === null || v === undefined || v === 0 || Number.isNaN(v)) ? '—' : (Math.round(v * 10) / 10).toString();
+      const fmtInt = (v) => (v === null || v === undefined || v === 0 || Number.isNaN(v)) ? '—' : Math.round(v).toString();
+
+      let summary = null, stats = null;
       try {
         const r = await api('/api/performance/summary');
-        const d = await r.json();
-        if (!d.ok) return;
-        const top = d.throughput?.top_models || [];
-        const tracked = d.throughput?.tracked_models ?? 0;
-        const events = d.throughput?.service_events_24h ?? 0;
-        const ctx = d.llamacpp_ctx_size ?? 0;
-        const bestP95 = top.length ? Math.max(...top.map(m => m.p95_tps || 0)) : 0;
-        const bestTtft = top.filter(m => m.latest_ttft_ms > 0);
-        const ttftVal = bestTtft.length ? Math.min(...bestTtft.map(m => m.latest_ttft_ms)) : 0;
-        const setKpi = (id, val, tileId) => {
-          const el = document.getElementById(id);
-          if (el) el.textContent = val;
-          const tile = document.getElementById(tileId);
-          if (tile && val !== '—') tile.classList.add('loaded');
-        };
-        setKpi('kpi-models', tracked || '—', 'kpi-tile-models');
-        setKpi('kpi-p95', bestP95 ? bestP95 + '' : '—', 'kpi-tile-p95');
-        setKpi('kpi-ttft', ttftVal ? ttftVal + '' : '—', 'kpi-tile-ttft');
-        setKpi('kpi-events', events !== undefined ? events + '' : '—', 'kpi-tile-events');
-        if (ctx) {
-          const ctxEl = document.getElementById('kpi-ctx');
-          if (ctxEl) ctxEl.textContent = ctx >= 1000 ? Math.round(ctx / 1000) + 'K' : ctx + '';
-          document.getElementById('kpi-tile-ctx')?.classList.add('loaded');
-        }
-      } catch (_) {}
-    }
-
-    async function loadThroughputStats() {
-      const tbody = document.getElementById('throughput-stats-grid');
-      const countEl = document.getElementById('perf-model-count');
-      if (!tbody) return;
-      let loadedModels = new Set();
-      try {
-        const ps = await api('/api/ollama/ps');
-        if (ps.ok) {
-          const d = await ps.json();
-          (d.models || []).forEach(m => {
-            const n = (m.name || m.model || '').trim();
-            if (n) { loadedModels.add(n); loadedModels.add(n.split(':')[0]); }
-          });
-        }
+        summary = await r.json();
       } catch (_) {}
       try {
         const r = await api('/api/throughput/stats');
-        const d = await r.json();
-        if (d.last_benchmark) showLastBenchmark(d.last_benchmark);
-        if (!d.ok || !d.models || Object.keys(d.models).length === 0) {
-          tbody.innerHTML = '<tr><td colspan="9"><div class="perf-empty" id="throughput-stats-empty">No data yet — run a benchmark or use models via the Model Gateway.</div></td></tr>';
-          if (countEl) countEl.textContent = '0 models';
-          return;
-        }
-        const models = Object.entries(d.models);
-        models.sort((a, b) => (b[1].latest || 0) - (a[1].latest || 0));
-        if (countEl) countEl.textContent = models.length + ' model' + (models.length !== 1 ? 's' : '');
-        tbody.innerHTML = '';
-        models.forEach(([name, s]) => {
-          const isLive = loadedModels.has(name) || loadedModels.has(name.split(':')[0]);
-          const tr = document.createElement('tr');
-          if (isLive) tr.classList.add('perf-live-row');
-          tr.dataset.model = name;
-          const ttftCell = (s.ttft_p50_ms || s.ttft_p95_ms)
-            ? `<span class="t-f">${fmtTtft(s.ttft_p50_ms)}</span><span style="color:var(--muted);font-size:.58rem"> / ${fmtTtft(s.ttft_p95_ms)}</span>`
-            : '<span class="t-n">—</span>';
-          tr.innerHTML = `
-            <td>
-              ${isLive ? '<span class="live-dot"></span> ' : ''}
-              <span class="perf-model-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
-              ${isLive ? '<span class="live-badge">live</span>' : ''}
-            </td>
-            <td class="perf-tps ${tpsClass(s.latest)}">${fmtTps(s.latest)}</td>
-            <td class="${tpsClass(s.peak)}">${fmtTps(s.peak)}</td>
-            <td class="${tpsClass(s.p50)}">${fmtTps(s.p50)}</td>
-            <td class="${tpsClass(s.p95)}">${fmtTps(s.p95)}</td>
-            <td class="${tpsClass(s.p99)}">${fmtTps(s.p99)}</td>
-            <td>${ttftCell}</td>
-            <td style="color:var(--muted)">${s.sample_count || 0}</td>
-            <td>${distSpark(s)}</td>
-          `;
-          tbody.appendChild(tr);
-        });
-      } catch (_) {
-        tbody.innerHTML = '<tr><td colspan="9"><div class="perf-empty" id="throughput-stats-empty">Failed to load stats.</div></td></tr>';
+        stats = await r.json();
+        if (stats?.last_benchmark) showLastBenchmark(stats.last_benchmark);
+      } catch (_) {}
+
+      const ctx = summary?.llamacpp_ctx_size || 0;
+      setText('perf-hero-ctx', ctx ? (ctx >= 1000 ? `${Math.round(ctx / 1000)}K ctx` : `${ctx} ctx`) : '— ctx');
+
+      const heroEl = document.getElementById('perf-hero');
+      const models = stats?.ok && stats.models ? stats.models : {};
+      const entries = Object.entries(models);
+      if (!entries.length) {
+        setText('perf-hero-model', 'No samples yet');
+        setText('perf-hero-tps', '—');
+        setText('perf-hero-samples', '0 samples');
+        setText('perf-hero-lastseen', 'no traffic yet');
+        ['perf-rail-p50','perf-rail-p95','perf-rail-p99','perf-rail-peak','perf-rail-ttft-p50','perf-rail-ttft-p95'].forEach(id => setText(id, '—'));
+        heroEl?.classList.remove('loaded');
+        // Bench target — show the configured local model name if available
+        const targetName = (typeof ollamaModels !== 'undefined' && ollamaModels?.length)
+          ? (ollamaModels.find(m => !isEmbeddingModel?.(m.name))?.name || ollamaModels[0]?.name) : '';
+        setText('bench-target', targetName || 'Run a benchmark to seed the dashboard');
+        return;
       }
+      // Most recent / busiest model wins. For a single-model stack this is
+      // always the one we want; for transient multi-model traffic, latest tps
+      // is a reasonable ranking signal.
+      entries.sort((a, b) => (b[1].sample_count || 0) - (a[1].sample_count || 0));
+      const [name, s] = entries[0];
+      heroEl?.classList.add('loaded');
+      setText('perf-hero-model', name);
+      setText('perf-hero-tps', fmt(s.latest));
+      setText('perf-hero-samples', `${s.sample_count || 0} samples`);
+      setText('perf-hero-lastseen', s.sample_count ? 'within last 24h' : 'no traffic yet');
+      setText('perf-rail-p50', fmt(s.p50));
+      setText('perf-rail-p95', fmt(s.p95));
+      setText('perf-rail-p99', fmt(s.p99));
+      setText('perf-rail-peak', fmt(s.peak));
+      setText('perf-rail-ttft-p50', fmtInt(s.ttft_p50_ms));
+      setText('perf-rail-ttft-p95', fmtInt(s.ttft_p95_ms));
+      setText('bench-target', name);
     }
+
+    // Legacy aliases — both old names now route to the single loader so callers
+    // (refresh(), runThroughputBenchmark(), MCP add/remove flows) don't change.
+    const loadPerfKPIs = loadPerfHero;
+    const loadThroughputStats = loadPerfHero;
 
     async function loadThroughputServiceUsage() {
       const container = document.getElementById('throughput-service-usage');
@@ -2200,9 +2256,12 @@
       const resultsEl = document.getElementById('throughput-results');
       const errorEl = document.getElementById('throughput-error');
       const loadingEl = document.getElementById('throughput-loading');
-      const modelSel = document.getElementById('throughput-model-select');
+      // No model selector in the simplified single-model UI — pick the first
+      // non-embedding LLM the gateway reports. Fall back to the hero's current
+      // target text (whatever the dashboard is actively showing).
       const llms = ollamaModels.filter(m => !isEmbeddingModel(m.name));
-      const model = modelSel?.value?.trim() || llms[0]?.name || 'llama3.2';
+      const heroTarget = document.getElementById('bench-target')?.textContent?.trim();
+      const model = llms[0]?.name || (heroTarget && heroTarget !== '—' ? heroTarget : 'llama3.2');
       resultsEl.style.display = 'none';
       errorEl.style.display = 'none';
       errorEl.textContent = '';
@@ -2221,9 +2280,8 @@
         document.getElementById('throughput-eval-ms').textContent = d.eval_duration_ms + ' ms';
         document.getElementById('throughput-load-ms').textContent = d.load_duration_ms + ' ms';
         resultsEl.style.display = 'grid';
-        loadThroughputStats();
+        loadPerfHero();
         loadThroughputServiceUsage();
-        loadPerfKPIs();
       } catch (err) {
         errorEl.textContent = err.message || 'Benchmark failed';
         errorEl.style.display = 'block';
@@ -2712,7 +2770,7 @@
       try {
         if (!ollamaLibrary.length) await loadOllamaLibrary();
         await Promise.all([loadServices(), loadDependencies(), loadRagStatus(), loadOllamaModels(), loadComfyuiModels(), loadComfyuiPacks(), loadMcpServers(), loadComfyuiPanel()]);
-        await Promise.all([loadThroughputStats(), loadThroughputServiceUsage(), loadPerfKPIs()]);
+        await Promise.all([loadPerfHero(), loadThroughputServiceUsage()]);
       } finally {
         btn.classList.remove('loading');
       }
