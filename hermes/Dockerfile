@@ -20,6 +20,15 @@ RUN git clone --no-single-branch "$HERMES_REPO" hermes-agent \
     && git checkout "$HERMES_PINNED_SHA"
 
 WORKDIR /build/hermes-agent/web
+
+# Ordo AI Stack patch: rewrite the SPA's hardcoded root-absolute URLs
+# (/api/*, /ds-assets/*, /dashboard-plugins/*, four /api/* WebSocket
+# endpoints, plus the Vite base + React Router basename) so it can be
+# served under /hermes/ via Caddy's prefix-strip reverse proxy.
+# Each patch fails the build loudly if its anchor moves on a SHA bump.
+COPY spa-patches.mjs /tmp/spa-patches.mjs
+RUN node /tmp/spa-patches.mjs
+
 RUN npm install && npm run build
 # Produces: /build/hermes-agent/hermes_cli/web_dist/
 
@@ -85,6 +94,14 @@ RUN chmod +x /entrypoint.sh
 # on first run) and the seeded SOUL.md. See docs/superpowers/specs/2026-04-21-hermes-push-through-design.md.
 COPY --chown=hermes:hermes plugins/push-through/ /opt/hermes-agent/plugins/push-through/
 COPY --chown=hermes:hermes seed/SOUL.md /opt/ordo-seed/SOUL.md
+
+# Ordo AI Stack: ship the ops-router plugin alongside push-through. Exposes
+# ops-controller verbs (list_containers / container_logs / restart_container)
+# as first-class tools so the model never tries `terminal: docker ...` (which
+# fails — Plan C removed the docker.sock mount). Co-locate the canonical
+# ops_client.py inside the plugin dir so the plugin can `from .ops_client import OpsClient`.
+COPY --chown=hermes:hermes plugins/ops-router/ /opt/hermes-agent/plugins/ops-router/
+COPY --chown=hermes:hermes ops_client.py /opt/hermes-agent/plugins/ops-router/ops_client.py
 
 USER hermes
 ENV HERMES_HOME=/home/hermes/.hermes

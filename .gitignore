@@ -47,3 +47,18 @@ secrets/*
 
 # Internal superpowers tooling artifacts (specs, plans, skill notes) — local only.
 docs/superpowers/
+
+# Build/export artifacts and ad-hoc HTML drops accumulated at the repo root
+# (min-max blog tarball, page exports). Audit 2026-05-11.
+*.tar.gz
+/final.html
+/index.html
+
+# Local dev artifacts not for the public repo
+/screenshots/
+/runtime/
+
+# Host-specific Docker secret-path override (WSL2 path translation shim).
+# Bind sources are operator-local; the file itself contains no secrets but
+# reveals filesystem layout for secret files.
+overrides/secrets-path.yml
