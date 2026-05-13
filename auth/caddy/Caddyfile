@@ -58,9 +58,6 @@
         handle_path /dash/* {
             reverse_proxy dashboard:8080
         }
-        handle_path /chat/* {
-            reverse_proxy open-webui:8080
-        }
         handle_path /n8n/* {
             reverse_proxy n8n:5678
         }
@@ -71,9 +68,19 @@
             reverse_proxy comfyui:8188
         }
 
-        # ---- catch-all 404 for paths that don't match any route above ----
+        # ---- Open WebUI claims the root namespace ----
+        # Open WebUI is a SvelteKit SPA built with base="" (no subpath
+        # support), so its HTML emits absolute paths like /_app/*, /static/*,
+        # /api/*, /manifest.json, plus client-side routes like /chats/<id>,
+        # /c/<id>, /models, etc. Hosting it under a prefix (the old
+        # `handle_path /chat/*`) broke every fresh-cache load because Caddy
+        # had no route for those root-relative assets. All other apps in this
+        # stack are properly prefix-aware (dashboard at /dash/, hermes at
+        # /hermes/, n8n at /n8n/, comfyui at /comfy/), so giving Open WebUI
+        # the root catch-all is the cleanest fix. The old /chat/ bookmark is
+        # retired — users hit `/` directly.
         handle {
-            respond "auth ok — unknown route" 404
+            reverse_proxy open-webui:8080
         }
     }
 }
