@@ -394,8 +394,16 @@ def _call_comfyui_free(reason: str = "") -> tuple[bool, str]:
 
 
 @app.get("/health")
-async def health():
-    """Controller health. No auth required. Verifies Docker daemon reachable."""
+def health():
+    """Controller health. No auth required. Verifies Docker daemon reachable.
+
+    Defined as `def` (not `async def`) so FastAPI dispatches it on the
+    threadpool. The body calls `_docker_client().ping()` synchronously, which
+    blocks on Docker's socket with the SDK's 60s default timeout. Running that
+    on the asyncio event loop froze every other request — manifesting as a
+    full accept queue and silent timeouts even on loopback. Same change
+    applied to every other handler that does sync Docker SDK I/O below.
+    """
     try:
         _docker_client().ping()
     except Exception as e:
@@ -405,7 +413,7 @@ async def health():
 
 
 @app.get("/services")
-async def list_services():
+def list_services():
     """List compose services. No auth for read-only."""
     try:
         containers = _get_containers()
@@ -432,7 +440,7 @@ async def list_services():
 # every call emits one line to ``_audit_log``.
 
 @app.get("/containers")
-async def list_containers(_: None = Depends(verify_token)):
+def list_containers(_: None = Depends(verify_token)):
     """List all containers visible to the docker daemon. Auth required, audited."""
     client = _docker_client()
     out = []
@@ -453,7 +461,7 @@ async def list_containers(_: None = Depends(verify_token)):
 
 
 @app.get("/containers/{name}/logs", response_class=PlainTextResponse)
-async def container_logs(
+def container_logs(
     name: str, tail: int = 100, since: str | None = None,
     _: None = Depends(verify_token),
 ):
@@ -476,7 +484,7 @@ async def container_logs(
 
 
 @app.post("/containers/{name}/restart")
-async def container_restart(name: str, _: None = Depends(verify_token)):
+def container_restart(name: str, _: None = Depends(verify_token)):
     """Restart any container by name. Auth required, audited."""
     client = _docker_client()
     try:
@@ -665,10 +673,19 @@ def _watchdog_iteration() -> None:
 
 
 async def _hermes_watchdog_loop() -> None:
-    """Asyncio loop: run one iteration, sleep, repeat. Cancelled on shutdown."""
+    """Asyncio loop: run one iteration, sleep, repeat. Cancelled on shutdown.
+
+    `_watchdog_iteration` makes blocking Docker SDK calls (containers.list,
+    container.start) — running it on the event loop would freeze every HTTP
+    handler for the duration of those calls. On Docker Desktop Windows the
+    daemon can take seconds-to-minutes to respond, and the 60s default SDK
+    timeout had been stalling uvicorn long enough that healthchecks passed
+    (listener still bound) but no request body was ever read. Run on a worker
+    thread so the event loop stays responsive.
+    """
     while True:
         try:
-            _watchdog_iteration()
+            await asyncio.to_thread(_watchdog_iteration)
         except asyncio.CancelledError:
             logger.info("[watchdog] cancelled")
             raise
@@ -844,7 +861,7 @@ async def images_pull(body: PullBody, request: Request, _: None = Depends(verify
 
 
 @app.get("/mcp/containers")
-async def mcp_containers(_: None = Depends(verify_token)):
+def mcp_containers(_: None = Depends(verify_token)):
     """List MCP server containers (spawned by mcp-gateway). Auth required."""
     try:
         client = _docker_client()
@@ -1061,15 +1078,23 @@ async def comfyui_install_node_requirements(
 
 
 @app.get("/stats/services")
-async def stats_services(_: None = Depends(verify_token)):
-    """Per-compose-service CPU/RAM/VRAM. Read-only, auth required (same as other ops routes)."""
+def stats_services(_: None = Depends(verify_token)):
+    """Per-compose-service CPU/RAM/VRAM. Read-only, auth required (same as other ops routes).
+
+    Sync def: the body iterates every running container and calls Docker's
+    `c.stats(stream=False)`, which takes ~1s per container while the daemon
+    samples cgroup counters. With ~17 services this single endpoint blocks
+    for ~17 seconds. Running it as `async def` froze the entire uvicorn
+    event loop — manifesting as a stuck accept queue and timed-out probes
+    from every peer. Threadpool dispatch (this change) keeps the loop free.
+    """
     try:
         containers = _get_containers()
     except Exception as e:
         logger.warning("stats/services: docker list failed: %s", e)
         return {"gpu": None, "services": {}, "vram_aggregate_unavailable": True}
 
-    vram_by_pid, gpu = await asyncio.to_thread(_nvml_vraam_by_pid)
+    vram_by_pid, gpu = _nvml_vraam_by_pid()
     vram_aggregate_unavailable = not gpu["per_pid_available"]
 
     services: dict[str, dict] = {}
