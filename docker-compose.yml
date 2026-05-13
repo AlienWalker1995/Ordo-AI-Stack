@@ -854,12 +854,18 @@ services:
     # HTTP API at OPS_CONTROLLER_URL with OPS_CONTROLLER_TOKEN. See
     # docs/runbooks/bounded-hermes.md for the new verb surface.
     depends_on:
+      # Hermes specifically requires these peers to be HEALTHY (not just
+      # started) — otherwise the gateway spams 5xx on every request while
+      # model-gateway is still loading LiteLLM config or mcp-gateway is
+      # still warming the catalog. Enforced by
+      # tests/test_hermes_docker.py::test_hermes_services_depend_on_stack;
+      # don't relax to `service_started` without updating that test.
       model-gateway:
-        condition: service_started
+        condition: service_healthy
       mcp-gateway:
-        condition: service_started
+        condition: service_healthy
       dashboard:
-        condition: service_started
+        condition: service_healthy
       ops-controller:
         condition: service_started
     environment:
@@ -941,12 +947,14 @@ services:
     pull_policy: build
     restart: unless-stopped
     depends_on:
+      # Same as hermes-gateway: must be healthy (not just started). Enforced
+      # by tests/test_hermes_docker.py::test_hermes_services_depend_on_stack.
       model-gateway:
-        condition: service_started
+        condition: service_healthy
       mcp-gateway:
-        condition: service_started
+        condition: service_healthy
       dashboard:
-        condition: service_started
+        condition: service_healthy
       ops-controller:
         condition: service_started
     environment:
