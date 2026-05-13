@@ -20,6 +20,22 @@ if [ -n "${GITHUB_PERSONAL_ACCESS_TOKEN_FILE:-}" ] && [ -f "$GITHUB_PERSONAL_ACC
     GITHUB_PERSONAL_ACCESS_TOKEN="$(cat "$GITHUB_PERSONAL_ACCESS_TOKEN_FILE")"
     export GITHUB_PERSONAL_ACCESS_TOKEN
 fi
+if [ -n "${N8N_API_KEY_FILE:-}" ] && [ -f "$N8N_API_KEY_FILE" ]; then
+    N8N_API_KEY="$(cat "$N8N_API_KEY_FILE")"
+    export N8N_API_KEY
+fi
+
+# Docker MCP gateway resolves per-server secret refs (e.g. `n8n.api_key` in the
+# upstream catalog) through its --secrets paths, not the spawned-container's
+# env-passthrough. Without this, the gateway substitutes <UNKNOWN> for
+# N8N_API_KEY even when the env var is populated. Write a dotenv file at a
+# stable in-container path; start_gateway() appends it to --secrets below.
+MCP_SECRETS_FILE="/run/mcp-secrets.env"
+: > "$MCP_SECRETS_FILE"
+chmod 600 "$MCP_SECRETS_FILE" 2>/dev/null || true
+if [ -n "${N8N_API_KEY:-}" ]; then
+    printf 'n8n.api_key=%s\n' "$N8N_API_KEY" >> "$MCP_SECRETS_FILE"
+fi
 
 # Ensure config exists with default
 mkdir -p "$(dirname "$CONFIG_FILE")"
@@ -47,7 +63,8 @@ resolve_registry_custom() {
     sed -e "s|PLACEHOLDER_OPS_CONTROLLER_TOKEN|${OPS_CONTROLLER_TOKEN:-}|g" \
         -e "s|PLACEHOLDER_TAVILY_API_KEY|${TAVILY_API_KEY:-}|g" \
         -e "s|PLACEHOLDER_DASHBOARD_AUTH_TOKEN|${DASHBOARD_AUTH_TOKEN:-}|g" \
-        -e "s|PLACEHOLDER_COMFY_MCP_DEFAULT_MODEL|${COMFY_MCP_DEFAULT_MODEL:-flux1-schnell-fp8.safetensors}|g" "$src" >"$dst"
+        -e "s|PLACEHOLDER_COMFY_MCP_DEFAULT_MODEL|${COMFY_MCP_DEFAULT_MODEL:-flux1-schnell-fp8.safetensors}|g" \
+        -e "s|PLACEHOLDER_N8N_API_KEY|${N8N_API_KEY:-}|g" "$src" >"$dst"
   else
     cp "$src" "$dst"
   fi
@@ -100,8 +117,17 @@ start_gateway() {
   if [ "${MCP_GATEWAY_VERBOSE:-0}" = "1" ] || [ "${MCP_GATEWAY_VERBOSE:-}" = "true" ]; then
     verbose="--verbose"
   fi
+  # Add our stack-managed dotenv (built above from N8N_API_KEY_FILE etc.) at the
+  # FRONT of the gateway's secret resolver path list. The default `docker-desktop`
+  # provider errors out inside this container (no `pass` keychain backend), and
+  # the resolver gives up at the first failing provider rather than falling
+  # through — so our file must come first.
+  secrets_arg=""
+  if [ -f "${MCP_SECRETS_FILE:-}" ]; then
+    secrets_arg="--secrets ${MCP_SECRETS_FILE}:docker-desktop:/run/secrets/mcp_secret:/.env"
+  fi
   # shellcheck disable=SC2086
-  "$GATEWAY_BIN" gateway run --transport=streaming --port="$PORT" --servers="$servers" $extra $verbose &
+  "$GATEWAY_BIN" gateway run --transport=streaming --port="$PORT" --servers="$servers" $extra $secrets_arg $verbose &
   echo $!
 }
 

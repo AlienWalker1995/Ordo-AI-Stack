@@ -38,7 +38,8 @@ for src in secrets/discord_token.sops \
            secrets/github_pat.sops \
            secrets/hf_token.sops \
            secrets/tavily_key.sops \
-           secrets/civitai_token.sops; do
+           secrets/civitai_token.sops \
+           secrets/n8n_api_key.sops; do
     [ -f "$src" ] || { echo "WARN: $src missing, skipping" >&2; continue; }
     name=$(basename "$src" .sops)
     sops --decrypt --input-type=binary --output-type=binary "$src" \
