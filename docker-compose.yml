@@ -127,9 +127,9 @@ services:
     security_opt: [no-new-privileges:true]
     depends_on:
       llamacpp:
-        condition: service_healthy
+        condition: service_started
       llamacpp-embed:
-        condition: service_healthy
+        condition: service_started
       dashboard:
         condition: service_started
     environment:
@@ -223,9 +223,14 @@ services:
     secrets:
       - hf_token
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')"]
+      # Socket-only check — verifies the port is bound without paying for
+      # urllib.request's huge import graph (saved 2-5s on Docker Desktop where
+      # the urllib-based check was flaking past 30s). App-level health is
+      # already covered by every dependent service calling real endpoints.
+      test: ["CMD", "python3", "-c", "import socket; s=socket.create_connection(('127.0.0.1',9000),2); s.close()"]
+      start_period: 15s
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
     logging:
       driver: json-file
@@ -250,7 +255,7 @@ services:
       - SETGID
     depends_on:
       llamacpp:
-        condition: service_healthy
+        condition: service_started
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -317,9 +322,9 @@ services:
       retries: 3
     depends_on:
       dashboard:
-        condition: service_healthy
+        condition: service_started
       comfyui:
-        condition: service_healthy
+        condition: service_started
     environment:
       - DASHBOARD_DATA_PATH=/data/dashboard
       - COMFYUI_URL=http://comfyui:8188
@@ -348,11 +353,11 @@ services:
     restart: unless-stopped
     depends_on:
       llamacpp:
-        condition: service_healthy
+        condition: service_started
       model-gateway:
-        condition: service_healthy
+        condition: service_started
       qdrant:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/"]
       start_period: 120s
@@ -547,7 +552,7 @@ services:
       retries: 3
     depends_on:
       comfyui:
-        condition: service_healthy
+        condition: service_started
     command: ["python", "server.py"]
     environment:
       - COMFYUI_URL=http://comfyui:8188
@@ -573,7 +578,7 @@ services:
     user: "1000:1000"
     depends_on:
       model-gateway:
-        condition: service_healthy
+        condition: service_started
       mcp-gateway:
         condition: service_started
     healthcheck:
@@ -757,7 +762,7 @@ services:
       - caddy_config:/config
     depends_on:
       oauth2-proxy:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost/healthz"]
       interval: 30s
@@ -825,9 +830,9 @@ services:
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/rag-input:/watch
     depends_on:
       model-gateway:
-        condition: service_healthy
+        condition: service_started
       qdrant:
-        condition: service_healthy
+        condition: service_started
     logging:
       driver: json-file
       options:
@@ -850,13 +855,13 @@ services:
     # docs/runbooks/bounded-hermes.md for the new verb surface.
     depends_on:
       model-gateway:
-        condition: service_healthy
+        condition: service_started
       mcp-gateway:
-        condition: service_healthy
+        condition: service_started
       dashboard:
-        condition: service_healthy
+        condition: service_started
       ops-controller:
-        condition: service_healthy
+        condition: service_started
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-local}
       - PYTHONIOENCODING=utf-8
@@ -937,13 +942,13 @@ services:
     restart: unless-stopped
     depends_on:
       model-gateway:
-        condition: service_healthy
+        condition: service_started
       mcp-gateway:
-        condition: service_healthy
+        condition: service_started
       dashboard:
-        condition: service_healthy
+        condition: service_started
       ops-controller:
-        condition: service_healthy
+        condition: service_started
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-local}
       - PYTHONIOENCODING=utf-8

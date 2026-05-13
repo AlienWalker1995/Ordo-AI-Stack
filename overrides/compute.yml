@@ -49,7 +49,7 @@ services:
     cpus: 2
   comfyui:
     image: yanwk/comfyui-boot:cu128-slim
-    mem_limit: 53G
+    mem_limit: 100G
     shm_size: 8g
     environment:
       - CLI_ARGS=${COMFYUI_CLI_ARGS:---disable-xformers --normalvram --enable-manager}
