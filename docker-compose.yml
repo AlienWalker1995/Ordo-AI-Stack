@@ -607,12 +607,19 @@ services:
       # X-Forwarded-* headers oauth2-proxy + Caddy inject so cookies, CSRF
       # tokens, and outbound redirect URLs all use the public scheme/host.
       - N8N_PROXY_HOPS=1
-      # Trust the SSO front door (Caddy + oauth2-proxy + Google) for identity.
-      # With this flag n8n skips its own owner-setup wizard / login screen and
-      # auto-signs-in as the instance owner. Safe here because /n8n/* is gated
-      # by oauth2-proxy at the Caddy layer (single-Gmail allowlist in
-      # auth/oauth2-proxy/emails.txt) — anyone reaching n8n has already proven
-      # they are the operator.
+      # Skip the first-run owner-setup wizard. This flag does NOT bypass the
+      # email/password login form — in n8n 2.x `authenticationMethod` is
+      # constrained to [email, ldap, saml] (see dist/config/schema.js) and
+      # there is no `none` option. /rest/settings still reports
+      # `authenticationMethod: "email"` with this flag set, and the SPA shows
+      # the login screen accordingly.
+      #
+      # Operator workflow: oauth2-proxy at Caddy gates the /n8n/* URL with the
+      # single-Gmail allowlist (auth/oauth2-proxy/emails.txt), then n8n's own
+      # login form requires an owner account's credentials. Bootstrap the owner
+      # once via the first-run UI (or POST /rest/owner/setup), store the creds
+      # in your own secret store outside this repo, and rely on the ~7-day
+      # session cookie so the second login is infrequent.
       - N8N_USER_MANAGEMENT_DISABLED=true
       # Route all model traffic through Model Gateway (dashboard tracking, unified provider)
       - OLLAMA_HOST=http://model-gateway:11435
