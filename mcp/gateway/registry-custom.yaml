@@ -36,3 +36,13 @@ registry:
         value: http://dashboard:8080
       - name: DASHBOARD_AUTH_TOKEN
         value: PLACEHOLDER_DASHBOARD_AUTH_TOKEN
+  n8n:
+    description: n8n workflow automation MCP — bridges the local n8n instance + the full czlonkowski/n8n-mcp node/template catalog. The upstream catalog spec only propagates N8N_API_KEY; without N8N_API_URL the `n8n_*` instance-management tools (list/create/update workflows, executions) silently disable. This override enables them.
+    title: n8n
+    type: server
+    image: mcp/n8n
+    env:
+      - name: N8N_API_URL
+        value: http://n8n:5678
+      - name: N8N_API_KEY
+        value: PLACEHOLDER_N8N_API_KEY
