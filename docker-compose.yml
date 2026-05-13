@@ -589,6 +589,22 @@ services:
     environment:
       - N8N_HOST=0.0.0.0
       - N8N_PORT=5678
+      # n8n is mounted at /n8n/ via Caddy's handle_path (prefix-strip). Without
+      # N8N_PATH, n8n thinks it lives at root and emits absolute /assets/...
+      # URLs that 404 at Caddy. With it set, n8n emits /n8n/assets/... which
+      # Caddy strips back to /assets/... and serves correctly.
+      - N8N_PATH=/n8n/
+      # Caddy is one reverse-proxy hop in front; this lets n8n honour the
+      # X-Forwarded-* headers oauth2-proxy + Caddy inject so cookies, CSRF
+      # tokens, and outbound redirect URLs all use the public scheme/host.
+      - N8N_PROXY_HOPS=1
+      # Trust the SSO front door (Caddy + oauth2-proxy + Google) for identity.
+      # With this flag n8n skips its own owner-setup wizard / login screen and
+      # auto-signs-in as the instance owner. Safe here because /n8n/* is gated
+      # by oauth2-proxy at the Caddy layer (single-Gmail allowlist in
+      # auth/oauth2-proxy/emails.txt) — anyone reaching n8n has already proven
+      # they are the operator.
+      - N8N_USER_MANAGEMENT_DISABLED=true
       # Route all model traffic through Model Gateway (dashboard tracking, unified provider)
       - OLLAMA_HOST=http://model-gateway:11435
       - OPENAI_API_BASE_URL=${OPENAI_API_BASE:-http://model-gateway:11435/v1}
