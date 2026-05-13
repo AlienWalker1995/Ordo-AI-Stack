@@ -651,9 +651,12 @@ services:
       # canonical names directly).
       - TAVILY_API_KEY_FILE=/run/secrets/tavily_key
       - GITHUB_PERSONAL_ACCESS_TOKEN_FILE=/run/secrets/github_pat
-      # n8n MCP server (mcp/n8n) — for workflow tools when n8n API key is set
+      # n8n MCP server (mcp/n8n) — for workflow tools when n8n API key is set.
+      # `n8n.api_key` is a Docker secret mounted at /run/secrets/n8n_api_key;
+      # gateway-wrapper.sh reads the file and exports it as the canonical
+      # N8N_API_KEY env var that mcp/n8n expects.
       - N8N_API_URL=${N8N_API_URL:-http://n8n:5678}
-      - N8N_API_KEY=${N8N_API_KEY:-}
+      - N8N_API_KEY_FILE=/run/secrets/n8n_api_key
       # ComfyUI MCP (custom registry) — passed to spawned comfyui container
       - COMFYUI_URL=http://comfyui:8188
       - COMFY_MCP_DEFAULT_MODEL=${COMFY_MCP_DEFAULT_MODEL:-flux1-schnell-fp8.safetensors}
@@ -667,6 +670,7 @@ services:
     secrets:
       - tavily_key
       - github_pat
+      - n8n_api_key
     # Published on host so external MCP clients (e.g. Cursor, Claude Desktop)
     # can reach it. Backend services still address it as
     # http://mcp-gateway:8811 over the docker network.
@@ -1024,3 +1028,5 @@ secrets:
     file: ${HOME}/.ai-toolkit/runtime/secrets/tavily_key
   civitai_token:
     file: ${HOME}/.ai-toolkit/runtime/secrets/civitai_token
+  n8n_api_key:
+    file: ${HOME}/.ai-toolkit/runtime/secrets/n8n_api_key
