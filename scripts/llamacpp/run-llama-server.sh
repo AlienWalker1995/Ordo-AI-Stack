@@ -12,8 +12,18 @@ set -- \
   --yarn-orig-ctx "${LLAMACPP_YARN_ORIG_CTX:-0}" \
   --n-gpu-layers "${LLAMACPP_GPU_LAYERS:--1}" \
   --flash-attn "${LLAMACPP_FLASH_ATTN:-auto}" \
+  --n-predict "${LLAMACPP_N_PREDICT:-65536}" \
   --jinja \
   --no-mmap
+
+# --n-predict is a hard ceiling on tokens generated per request, independent
+# of --reasoning-budget. Reasoning-budget tracks tokens inside the model's
+# <think>...</think> block and only kicks in if the model emits the closing
+# tag — when the model gets confused in a large context (e.g. 248K input
+# tokens after a tool-spam loop), it can produce reasoning tokens forever
+# without emitting </think>, defeating the budget. The n-predict cap fires
+# regardless and force-terminates with finish_reason=length. Tuned high
+# enough (~64K) that normal responses are unaffected.
 
 if [ -n "${LLAMACPP_OVERRIDE_KV:-}" ]; then
   set -- "$@" --override-kv "${LLAMACPP_OVERRIDE_KV}"

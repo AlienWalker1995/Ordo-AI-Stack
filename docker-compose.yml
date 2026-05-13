@@ -60,6 +60,10 @@ services:
       - LLAMACPP_OVERRIDE_KV=${LLAMACPP_OVERRIDE_KV:-}
       - LLAMACPP_GPU_LAYERS=${LLAMACPP_GPU_LAYERS:--1}
       - LLAMACPP_FLASH_ATTN=${LLAMACPP_FLASH_ATTN:-auto}
+      # Hard ceiling on tokens per request (defense-in-depth against
+      # runaway-reasoning loops where --reasoning-budget fails to close
+      # the <think> block). 64K is plenty for any legitimate response.
+      - LLAMACPP_N_PREDICT=${LLAMACPP_N_PREDICT:-65536}
       - LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION=${LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION:-0}
       - LLAMACPP_KV_CACHE_TYPE_K=${LLAMACPP_KV_CACHE_TYPE_K:-q4_0}
       - LLAMACPP_KV_CACHE_TYPE_V=${LLAMACPP_KV_CACHE_TYPE_V:-q4_0}
