@@ -22,7 +22,6 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 WORKFLOW_PATH = REPO_ROOT / "n8n" / "workflows" / "social_media_fanout.json"
 DEFAULT_API_BASE = "http://localhost:5678"
