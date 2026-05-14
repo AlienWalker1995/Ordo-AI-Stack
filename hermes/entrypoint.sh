@@ -34,6 +34,18 @@ HERMES_BIN=/opt/hermes-agent/.venv/bin/hermes
 # hermes-gateway hermes-dashboard` is enough to update the UI progress bar
 # (`0/<N>K`). Falls back to 262144 (256k) if unset — matches the stack default.
 "$HERMES_BIN" config set model.context_length  "${LLAMACPP_CTX_SIZE:-262144}"  >/dev/null
+# Per-turn budgets — hoisted from in-container config.yaml so they're
+# monitorable from .env. See the matching env vars in docker-compose.yml's
+# hermes-gateway / hermes-dashboard service blocks.
+# - model.max_tokens: output cap per LLM call. Without this Hermes computes a
+#   smaller default that truncates tool-heavy turns and triggers a 3-retry
+#   continuation loop that often still fails. Match LLAMACPP_N_PREDICT.
+# - agent.max_turns: tool-use iteration ceiling per Hermes turn.
+# - agent.gateway_timeout: wall-clock cap on a single turn (distinct from
+#   the stream-stale detector, which is HERMES_STREAM_STALE_TIMEOUT below).
+"$HERMES_BIN" config set model.max_tokens      "${HERMES_MAX_TOKENS:-65536}"     >/dev/null
+"$HERMES_BIN" config set agent.max_turns       "${HERMES_MAX_TURNS:-90}"         >/dev/null
+"$HERMES_BIN" config set agent.gateway_timeout "${HERMES_GATEWAY_TIMEOUT:-3600}" >/dev/null
 # Same ceiling for the auxiliary-compression helper model. Hermes's standard
 # /v1/models probe on the LiteLLM proxy doesn't expose max_input_tokens (OpenAI
 # spec doesn't include it), so without this explicit override hermes falls
