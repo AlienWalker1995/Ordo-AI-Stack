@@ -43,9 +43,10 @@ HERMES_BIN=/opt/hermes-agent/.venv/bin/hermes
 # - agent.max_turns: tool-use iteration ceiling per Hermes turn.
 # - agent.gateway_timeout: wall-clock cap on a single turn (distinct from
 #   the stream-stale detector, which is HERMES_STREAM_STALE_TIMEOUT below).
-"$HERMES_BIN" config set model.max_tokens      "${HERMES_MAX_TOKENS:-65536}"     >/dev/null
-"$HERMES_BIN" config set agent.max_turns       "${HERMES_MAX_TURNS:-90}"         >/dev/null
-"$HERMES_BIN" config set agent.gateway_timeout "${HERMES_GATEWAY_TIMEOUT:-3600}" >/dev/null
+"$HERMES_BIN" config set model.max_tokens       "${HERMES_MAX_TOKENS:-65536}"      >/dev/null
+"$HERMES_BIN" config set agent.max_turns        "${HERMES_MAX_TURNS:-90}"          >/dev/null
+"$HERMES_BIN" config set agent.gateway_timeout  "${HERMES_GATEWAY_TIMEOUT:-3600}"  >/dev/null
+"$HERMES_BIN" config set agent.api_max_retries  "${HERMES_API_MAX_RETRIES:-10}"    >/dev/null
 # Same ceiling for the auxiliary-compression helper model. Hermes's standard
 # /v1/models probe on the LiteLLM proxy doesn't expose max_input_tokens (OpenAI
 # spec doesn't include it), so without this explicit override hermes falls
