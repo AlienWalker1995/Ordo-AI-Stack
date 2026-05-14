@@ -13,8 +13,16 @@ set -- \
   --n-gpu-layers "${LLAMACPP_GPU_LAYERS:--1}" \
   --flash-attn "${LLAMACPP_FLASH_ATTN:-auto}" \
   --n-predict "${LLAMACPP_N_PREDICT:-65536}" \
+  --reasoning-budget "${LLAMACPP_REASONING_BUDGET:-32768}" \
   --jinja \
   --no-mmap
+
+# --reasoning-budget caps tokens spent inside <think>...</think> per response.
+# Llama.cpp's grammar engine is meant to force-close the block when this is
+# hit, but enforcement depends on the model producing a recognizable
+# end-of-thinking token. When that doesn't happen, --n-predict above is the
+# unconditional ceiling that still fires. Hoisted out of LLAMACPP_EXTRA_ARGS
+# so operators have one canonical knob exposed in .env.
 
 # --n-predict is a hard ceiling on tokens generated per request, independent
 # of --reasoning-budget. Reasoning-budget tracks tokens inside the model's

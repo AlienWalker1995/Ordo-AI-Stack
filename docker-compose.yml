@@ -64,6 +64,11 @@ services:
       # runaway-reasoning loops where --reasoning-budget fails to close
       # the <think> block). 64K is plenty for any legitimate response.
       - LLAMACPP_N_PREDICT=${LLAMACPP_N_PREDICT:-65536}
+      # Cap on tokens spent inside <think>...</think>. Hoisted from
+      # LLAMACPP_EXTRA_ARGS so it's monitorable. Reliability depends on the
+      # model emitting a recognizable end-of-thinking token; N_PREDICT above
+      # is the unconditional ceiling that fires regardless.
+      - LLAMACPP_REASONING_BUDGET=${LLAMACPP_REASONING_BUDGET:-32768}
       - LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION=${LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION:-0}
       - LLAMACPP_KV_CACHE_TYPE_K=${LLAMACPP_KV_CACHE_TYPE_K:-q4_0}
       - LLAMACPP_KV_CACHE_TYPE_V=${LLAMACPP_KV_CACHE_TYPE_V:-q4_0}
@@ -892,10 +897,16 @@ services:
       # as max_input_tokens; the hermes entrypoint seeds model.context_length
       # into $HERMES_HOME/config.yaml so the dashboard progress bar matches.
       - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-262144}
+      # Per-turn budgets seeded into $HERMES_HOME/config.yaml by
+      # hermes/entrypoint.sh on startup. Override in .env to monitor or tune
+      # from a single place rather than editing the in-container yaml.
+      - HERMES_MAX_TOKENS=${HERMES_MAX_TOKENS:-65536}
+      - HERMES_MAX_TURNS=${HERMES_MAX_TURNS:-90}
+      - HERMES_GATEWAY_TIMEOUT=${HERMES_GATEWAY_TIMEOUT:-3600}
       # 24h — effectively "never timeout". Hermes's run_agent.py:6606 reads
       # HERMES_STREAM_STALE_TIMEOUT (env-only, not a config key) with default 180s,
       # which kills streaming responses mid-flight on slow local-model turns.
-      # Agent-level gateway_timeout (1800s) is the real upper bound; this just
+      # Agent-level gateway_timeout (above) is the real upper bound; this just
       # keeps the streaming stale-detector from firing first.
       - HERMES_STREAM_STALE_TIMEOUT=86400
       # Discord bot token sourced from Docker secrets (file-form). The
@@ -977,6 +988,9 @@ services:
       # Same single-source plumbing as hermes-gateway — dashboard shares
       # the bind-mounted config.yaml so either service's entrypoint seeds it.
       - LLAMACPP_CTX_SIZE=${LLAMACPP_CTX_SIZE:-262144}
+      - HERMES_MAX_TOKENS=${HERMES_MAX_TOKENS:-65536}
+      - HERMES_MAX_TURNS=${HERMES_MAX_TURNS:-90}
+      - HERMES_GATEWAY_TIMEOUT=${HERMES_GATEWAY_TIMEOUT:-3600}
       # 24h — see hermes-gateway for rationale. Dashboard streams chat too.
       - HERMES_STREAM_STALE_TIMEOUT=86400
       # Point Hermes at the pre-built SPA (Dockerfile stage 1). Without this env var,
