@@ -3,6 +3,11 @@
         decrypt-secrets up down logs rotate-internal-tokens
 
 RUNTIME_ENV := $(HOME)/.ai-toolkit/runtime/.env
+# Every docker-compose invocation that touches services with SOPS-substituted
+# variables (oauth2-proxy, hermes-gateway, etc.) must pass BOTH env files —
+# compose's `--env-file` REPLACES, not merges, so a single --env-file pointing
+# at runtime/.env loses every feature flag in .env and vice versa.
+COMPOSE := docker compose --env-file .env --env-file $(RUNTIME_ENV)
 
 help:
 	@echo "Targets:"
@@ -21,17 +26,13 @@ decrypt-secrets:
 	@./scripts/secrets/decrypt.sh
 
 up: decrypt-secrets
-	# Compose's `--env-file` REPLACES the default .env load, not merges. To
-	# get both layers, pass two flags: feature flags from the operator's
-	# local .env first, then SOPS-decrypted secrets from the runtime .env
-	# (which wins if any name collides — secrets are the source of truth).
-	docker compose --env-file .env --env-file $(RUNTIME_ENV) up -d
+	$(COMPOSE) up -d
 
-down:
-	docker compose down
+down: decrypt-secrets
+	$(COMPOSE) down
 
 logs:
-	docker compose logs -f --tail=100
+	$(COMPOSE) logs -f --tail=100
 
 rotate-internal-tokens:
 	@./scripts/secrets/rotate-internal.sh

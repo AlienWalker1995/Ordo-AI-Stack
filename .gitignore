@@ -1,6 +1,10 @@
 .env
+.env.bak
+.env.bak.*
 .env.compute
 mcp/.env
+secrets/.env.sops.bak
+secrets/.env.sops.bak.*
 overrides/compute.yml
 models/
 data/
