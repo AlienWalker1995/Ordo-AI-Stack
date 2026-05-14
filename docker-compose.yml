@@ -903,6 +903,11 @@ services:
       - HERMES_MAX_TOKENS=${HERMES_MAX_TOKENS:-65536}
       - HERMES_MAX_TURNS=${HERMES_MAX_TURNS:-90}
       - HERMES_GATEWAY_TIMEOUT=${HERMES_GATEWAY_TIMEOUT:-3600}
+      # API retry budget — covers transient 5xx + network errors, especially
+      # the 503 "Loading model" window when COMFYUI_SERIALIZE_LLAMACPP stops
+      # llamacpp during a ComfyUI generation. Default 10 ≈ 12 min cumulative
+      # wait (jittered exponential backoff capped at 120s per attempt).
+      - HERMES_API_MAX_RETRIES=${HERMES_API_MAX_RETRIES:-10}
       # 24h — effectively "never timeout". Hermes's run_agent.py:6606 reads
       # HERMES_STREAM_STALE_TIMEOUT (env-only, not a config key) with default 180s,
       # which kills streaming responses mid-flight on slow local-model turns.
@@ -991,6 +996,7 @@ services:
       - HERMES_MAX_TOKENS=${HERMES_MAX_TOKENS:-65536}
       - HERMES_MAX_TURNS=${HERMES_MAX_TURNS:-90}
       - HERMES_GATEWAY_TIMEOUT=${HERMES_GATEWAY_TIMEOUT:-3600}
+      - HERMES_API_MAX_RETRIES=${HERMES_API_MAX_RETRIES:-10}
       # 24h — see hermes-gateway for rationale. Dashboard streams chat too.
       - HERMES_STREAM_STALE_TIMEOUT=86400
       # Point Hermes at the pre-built SPA (Dockerfile stage 1). Without this env var,
