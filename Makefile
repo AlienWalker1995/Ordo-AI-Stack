@@ -21,7 +21,11 @@ decrypt-secrets:
 	@./scripts/secrets/decrypt.sh
 
 up: decrypt-secrets
-	docker compose --env-file $(RUNTIME_ENV) up -d
+	# Compose's `--env-file` REPLACES the default .env load, not merges. To
+	# get both layers, pass two flags: feature flags from the operator's
+	# local .env first, then SOPS-decrypted secrets from the runtime .env
+	# (which wins if any name collides — secrets are the source of truth).
+	docker compose --env-file .env --env-file $(RUNTIME_ENV) up -d
 
 down:
 	docker compose down
