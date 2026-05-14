@@ -37,7 +37,7 @@ registry:
       - name: DASHBOARD_AUTH_TOKEN
         value: PLACEHOLDER_DASHBOARD_AUTH_TOKEN
   n8n:
-    description: n8n workflow automation MCP — bridges the local n8n instance + the full czlonkowski/n8n-mcp node/template catalog. The upstream catalog spec only propagates N8N_API_KEY; without N8N_API_URL the `n8n_*` instance-management tools (list/create/update workflows, executions) silently disable. This override enables them.
+    description: "n8n workflow automation MCP - bridges the local n8n instance plus the full czlonkowski/n8n-mcp node and template catalog. Override of the upstream catalog spec to (1) propagate N8N_API_URL alongside N8N_API_KEY so the n8n_* instance-management tools are registered, and (2) silence the image's startup banner + INFO logs which otherwise pollute the stdio JSON-RPC channel and break the gateway's parser with 'invalid character' errors."
     title: n8n
     type: server
     image: mcp/n8n
@@ -46,3 +46,13 @@ registry:
         value: http://n8n:5678
       - name: N8N_API_KEY
         value: PLACEHOLDER_N8N_API_KEY
+      # Suppress the box-drawing banner ('Anonymous Usage Statistics') and
+      # INFO log lines this image prints to stdout. With stdio transport, ANY
+      # non-JSON-RPC byte before the response makes the gateway crash with
+      # 'failed to connect: calling initialize: invalid character'.
+      - name: LOG_LEVEL
+        value: error
+      - name: N8N_DIAGNOSTICS_ENABLED
+        value: "false"
+      - name: DISABLE_TELEMETRY
+        value: "true"
