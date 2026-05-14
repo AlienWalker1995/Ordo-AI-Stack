@@ -5,3 +5,9 @@
 dashboard/entrypoint.sh text eol=lf
 hermes/entrypoint.sh text eol=lf
 scripts/llamacpp/run-llama-server.sh text eol=lf
+
+# SOPS-encrypted files must keep LF endings or `sops` chokes parsing the
+# embedded timestamp metadata. The failure surfaces as
+#   parsing time "2026-XX-XX...Z\x0d": extra text: "\x0d"
+# when scripts/secrets/decrypt.sh runs on a Windows-mangled .sops file.
+*.sops text eol=lf
