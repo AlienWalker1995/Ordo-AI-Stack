@@ -1077,6 +1077,112 @@ async def comfyui_install_node_requirements(
     return result
 
 
+# ── Reel rendering ─────────────────────────────────────────────────────────────
+# Hermes can't directly docker-exec into the comfyui container (no socket); this
+# endpoint is the single allowed invocation of scripts/render_reel.py inside
+# comfyui. Whitelisted to that one script — no arbitrary command execution.
+
+RENDER_REEL_SCRIPT_HOST = Path("/workspace/data/comfyui-storage/ComfyUI/scripts/render_reel.py")
+RENDER_REEL_SCRIPT_CONTAINER = "/root/ComfyUI/scripts/render_reel.py"
+
+
+def _comfyui_render_reel_sync(payload: dict) -> dict:
+    """Run scripts/render_reel.py inside the comfyui container with payload as --input-json.
+
+    The script lives inside comfyui at /root/ComfyUI/scripts/render_reel.py (bind-mounted
+    from host data/comfyui-storage/ComfyUI/scripts/). We don't check for it from ops-controller's
+    side — the bind-mount source path doesn't match between containers — and a missing
+    script will surface as a non-zero exit code from the exec_run call below.
+    """
+    try:
+        client = _docker_client()
+        container = client.containers.get(COMFYUI_CONTAINER_NAME)
+    except docker.errors.NotFound:
+        return {
+            "ok": False,
+            "http_status": 503,
+            "detail": f"Container {COMFYUI_CONTAINER_NAME!r} not found — start comfyui first",
+        }
+    except Exception as e:
+        return {"ok": False, "http_status": 503, "detail": f"Docker: {e}"}
+    try:
+        er = container.exec_run(
+            ["python3", RENDER_REEL_SCRIPT_CONTAINER, "--input-json", json.dumps(payload)],
+            demux=False,
+        )
+        exit_code = getattr(er, "exit_code", None)
+        output = getattr(er, "output", b"")
+        if exit_code is None and isinstance(er, tuple):
+            exit_code, output = er[0], er[1]
+    except Exception as e:
+        return {"ok": False, "http_status": 500, "detail": f"exec failed: {e}"}
+    text = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else str(output or "")
+    # The script prints a single JSON line; pull the last JSON object out (logs from
+    # torch / kokoro print to stderr but some warnings leak to stdout).
+    result_json: dict | None = None
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                result_json = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+    if result_json is None:
+        return {
+            "ok": False,
+            "http_status": 500,
+            "detail": "render_reel produced no parseable JSON output",
+            "raw_tail": text[-1500:],
+            "exit_code": int(exit_code) if exit_code is not None else -1,
+        }
+    result_json["exit_code"] = int(exit_code) if exit_code is not None else -1
+    return result_json
+
+
+class RenderReelBody(BaseModel):
+    script: str
+    voice: str = "am_michael"
+    slug: str
+
+
+@app.post("/comfyui/render-reel")
+async def comfyui_render_reel(
+    body: RenderReelBody,
+    request: Request,
+    _: None = Depends(verify_token),
+):
+    """Render one brainrot-format reel: Kokoro TTS → faster-whisper captions → ffmpeg vstack 1080x1920.
+
+    Invokes scripts/render_reel.py inside the comfyui container (single whitelisted script —
+    no arbitrary exec). Typical wall time: ~25–35s. Returns a JSON envelope with
+    draft_dir / reel_path / narration_sec / word_count / gameplay_segment / timing breakdown.
+    """
+    if not body.script.strip():
+        raise HTTPException(status_code=400, detail="script is required and cannot be empty")
+    if len(body.script.split()) > 80:
+        raise HTTPException(status_code=400, detail="script too long (max 80 words)")
+    if not body.slug or not all(c.isalnum() or c in "_-" for c in body.slug):
+        raise HTTPException(status_code=400, detail="slug must be non-empty alphanumeric (with _ or -)")
+    result = await asyncio.to_thread(
+        _comfyui_render_reel_sync,
+        {"script": body.script.strip(), "voice": body.voice, "slug": body.slug},
+    )
+    if result.get("http_status"):
+        raise HTTPException(status_code=int(result["http_status"]), detail=result.get("detail", result))
+    _audit(
+        "comfyui_render_reel",
+        body.slug,
+        "ok" if result.get("ok") else "error",
+        f"voice={body.voice} script={body.script[:80]!r}",
+        correlation_id=_correlation_id(request),
+        metadata={"narration_sec": result.get("narration_sec"), "exit_code": result.get("exit_code")},
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=500, detail=result)
+    return result
+
+
 @app.get("/stats/services")
 def stats_services(_: None = Depends(verify_token)):
     """Per-compose-service CPU/RAM/VRAM. Read-only, auth required (same as other ops routes).
