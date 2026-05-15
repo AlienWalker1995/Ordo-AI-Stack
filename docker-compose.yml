@@ -188,6 +188,12 @@ services:
     environment:
       - COMPOSE_PROJECT_DIR=/workspace
       - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:-}
+      # Docker container name for ComfyUI, used by /comfyui/install-node-requirements
+      # to docker-exec a pip install. The code default is "comfyui" (assumes
+      # container_name: comfyui in compose), but this stack relies on Compose's
+      # auto-naming (project-service-N). Without this override, the endpoint
+      # silently returns 'Container "comfyui" not found'.
+      - COMFYUI_CONTAINER_NAME=ordo-ai-stack-comfyui-1
       # Pass through the operator's $HOME so this container's docker-compose
       # subprocesses (POST /compose/* endpoints) interpolate ${HOME} the same
       # way the operator's shell would. Without this, secret bind sources at

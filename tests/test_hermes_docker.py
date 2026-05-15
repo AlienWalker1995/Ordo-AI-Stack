@@ -122,7 +122,12 @@ def test_entrypoint_is_bash_and_seeds_config():
     assert "model.base_url" in src, "entrypoint must seed model.base_url"
     assert "model-gateway:11435" in src, "entrypoint must point at Docker DNS model-gateway:11435"
     assert "mcp_servers.gateway.url" in src, "entrypoint must seed mcp_servers.gateway.url"
-    assert 'exec "$@"' in src, "entrypoint must exec the supplied command"
+    # exec the supplied command, either directly or via gosu (the latter is the
+    # post-2026-05-15 pattern that drops from root → hermes after chmod'ing the
+    # bind-mounted $HERMES_HOME — same shape as dashboard/entrypoint.sh).
+    assert 'exec "$@"' in src or 'exec gosu hermes "$@"' in src, (
+        "entrypoint must exec the supplied command"
+    )
 
 
 def test_dockerignore_exists():

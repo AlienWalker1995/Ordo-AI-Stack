@@ -38,7 +38,7 @@ ARG HERMES_REPO
 ARG HERMES_PINNED_SHA
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ca-certificates curl \
+        git ca-certificates curl gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # uv — fast Python package manager.
@@ -103,7 +103,11 @@ COPY --chown=hermes:hermes seed/SOUL.md /opt/ordo-seed/SOUL.md
 COPY --chown=hermes:hermes plugins/ops-router/ /opt/hermes-agent/plugins/ops-router/
 COPY --chown=hermes:hermes ops_client.py /opt/hermes-agent/plugins/ops-router/ops_client.py
 
-USER hermes
+# Stay as root through the final stage so the entrypoint can chmod the
+# bind-mounted $HERMES_HOME (host UID and container hermes UID often diverge
+# on Docker Desktop / virtiofs). Entrypoint drops to hermes via gosu before
+# exec'ing the CMD — same pattern as dashboard/entrypoint.sh.
+USER root
 ENV HERMES_HOME=/home/hermes/.hermes
 ENV PYTHONIOENCODING=utf-8
 ENV PATH=/opt/hermes-agent/.venv/bin:$PATH
