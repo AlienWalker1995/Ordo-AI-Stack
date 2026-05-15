@@ -169,13 +169,13 @@ Hermes maintains its own state under `data/hermes/` — session records, Discord
 ### Full backup
 
 ```bash
-tar -czf ai-toolkit-backup-$(date +%Y%m%d).tar.gz data/ models/ .env
+tar -czf ordo-ai-stack-backup-$(date +%Y%m%d).tar.gz data/ models/ .env
 ```
 
 ### Selective backup (skip models, which are reproducible)
 
 ```bash
-tar -czf ai-toolkit-state-$(date +%Y%m%d).tar.gz \
+tar -czf ordo-ai-stack-state-$(date +%Y%m%d).tar.gz \
   data/hermes/ data/ops-controller/ data/qdrant/ data/mcp/ .env
 ```
 
@@ -183,7 +183,7 @@ tar -czf ai-toolkit-state-$(date +%Y%m%d).tar.gz \
 
 ```bash
 docker compose down
-tar -xzf ai-toolkit-backup-<date>.tar.gz
+tar -xzf ordo-ai-stack-backup-<date>.tar.gz
 docker compose up -d
 ```
 

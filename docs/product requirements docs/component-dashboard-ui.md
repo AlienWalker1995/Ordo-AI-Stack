@@ -64,11 +64,11 @@ A web-based control plane that provides a single pane of glass for:
 - `OPERATIONS` environment variables:
   - `OPS_CONTROLLER_TOKEN` – auth for the Ops Controller.
   - `DASHBOARD_AUTH_TOKEN` – for UI-to-controller auth.
-- The `dashboard` service itself (Python/Flask app with static HTML frontend) runs inside the Ordo AI Stack.
+- The `dashboard` service itself (FastAPI app with a static vanilla-JS frontend in `dashboard/static/index.html`) runs inside the Ordo AI Stack.
 
 ## Typical Use Flow
-1. Open `http://localhost:8080`.
-2. Authenticate with the `DASHBOARD_AUTH_TOKEN`.
+1. From a tailnet device, open `https://${CADDY_TAILNET_HOSTNAME}/dash/` and complete Google sign-in.
+2. The SSO front door (Caddy + oauth2-proxy) gates browser access; `DASHBOARD_AUTH_TOKEN` is a bearer-token fallback for host scripts and non-browser API access.
 3. Use the "Services" tab to stop or restart a service if an issue is suspected.
 4. Pull a new Ollama or ComfyUI model from the relevant tab.
 5. In the "MCP" tab, add a new tool server (e.g., a custom web search provider) by clicking "Add" and filling the JSON manifest.

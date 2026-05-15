@@ -107,9 +107,10 @@ python -m pytest tests/ -v
 # Compose smoke
 ./compose up -d
 docker compose ps           # all services healthy within 3 min
-curl -s http://localhost:11435/v1/models | jq .data[].id
-curl -s http://localhost:8080/api/mcp/health | jq .health
-curl -s http://localhost:8080/api/rag/status | jq .
+# model-gateway is host-published on 127.0.0.1; dashboard is NOT — go through the network from inside a container, or via the SSO front door with a session cookie:
+curl -s http://127.0.0.1:11435/v1/models | jq .data[].id
+docker compose exec dashboard curl -s http://localhost:8080/api/mcp/health | jq .health
+docker compose exec dashboard curl -s http://localhost:8080/api/rag/status | jq .
 docker inspect $(docker compose ps -q model-gateway) --format '{{.HostConfig.CapDrop}}'
 # → [ALL]
 ```

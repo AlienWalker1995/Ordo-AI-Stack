@@ -6,7 +6,7 @@ The [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) lets AI app
 
 | Path | Role |
 |------|------|
-| **[gateway/](gateway/)** | Image entrypoint (`gateway-wrapper.sh`) and **template** `registry-custom.yaml` (catalog fragment: **`registry.comfyui`**). The wrapper injects secrets into **`registry-custom.docker.yaml`** and passes it as **`--additional-catalog`** (not **`--additional-registry`** — with **`--servers`**, registry files are not used for server definitions). `ensure_dirs` copies the template into **`data/mcp/`**. DuckDuckGo, n8n, and Tavily come from the online catalog; **`TAVILY_API_KEY`** is on **`mcp-gateway`** via compose. |
+| **[gateway/](gateway/)** | Image entrypoint (`gateway-wrapper.sh`) and **template** `registry-custom.yaml` (catalog fragment registering **`searxng`**, **`comfyui`**, **`orchestration`**, and an override of upstream **`n8n`**). The wrapper injects secrets into **`registry-custom.docker.yaml`** and passes it as **`--additional-catalog`** (not **`--additional-registry`** — with **`--servers`**, registry files are not used for server definitions). `ensure_dirs` copies the template into **`data/mcp/`**. **`duckduckgo`** comes from the online catalog; web search is otherwise served by the self-hosted **`searxng`** server (Tavily was retired from defaults — see Secrets below for re-enable instructions). |
 | **[docs/](docs/)** | MCP-specific architecture notes. |
 | **`Dockerfile`** | Builds `ordo-ai-stack-mcp-gateway` from `docker/mcp-gateway` + the wrapper above. |
 
@@ -29,7 +29,7 @@ For Docker Engine / Docker CE without Docker Desktop, use this stack's MCP Gatew
 
 ### Dashboard — add/remove tools (no container restart)
 
-The dashboard at [localhost:8080](http://localhost:8080) manages MCP tools. Add or remove servers from the MCP Gateway section; changes take effect in ~10 seconds without restarting the container.
+The dashboard (reached via the Caddy SSO front door at `https://${CADDY_TAILNET_HOSTNAME}/dash/` — see [docs/runbooks/auth.md](../docs/runbooks/auth.md)) manages MCP tools. Add or remove servers from the MCP Gateway section; changes take effect in ~10 seconds without restarting the container.
 
 ### Scripts (alternative)
 
@@ -55,9 +55,10 @@ The scripts update the config file and the gateway reloads automatically.
 | Server | Purpose |
 |--------|---------|
 | `duckduckgo` | **Web search** — **`gateway__search`**. |
-| `n8n` | Workflow automation. Set `N8N_API_KEY` in `.env` for full access. |
-| `tavily` | **[Tavily](https://app.tavily.com)** — **`tavily_search`**, **`tavily_extract`**, **`tavily_crawl`**, **`tavily_map`**, **`tavily_research`**. Requires **`TAVILY_API_KEY`** in root **`.env`** (compose passes it into **`mcp-gateway`**; the catalog server **`mcp/tavily`** resolves secrets like upstream). Image: **`mcp/tavily`** ([catalog](https://hub.docker.com/mcp/server/tavily)). |
+| `n8n` | Workflow automation. `N8N_API_KEY` is mounted as a Docker secret (`secrets/n8n_api_key.sops`); see [docs/runbooks/secrets.md](../docs/runbooks/secrets.md). |
+| `searxng` | Private aggregated web search via the self-hosted **`searxng`** service (`services.searxng` in compose). No external API key. Replaced Tavily as the default web-research tool. |
 | `comfyui` | Image/audio/video via ComfyUI (custom registry). **`list_workflows`**, **`run_workflow`**, per-workflow tools, **`install_custom_node_requirements`**, **`restart_comfyui`**. Registry template: **`mcp/gateway/registry-custom.yaml`**; entrypoint: **`mcp/gateway/gateway-wrapper.sh`**. |
+| `orchestration` | Stable orchestration adapter (fixed verbs against the dashboard HTTP API, insulated from upstream gateway tool-name churn). |
 
 ### Other catalog servers
 
@@ -101,7 +102,9 @@ See [n8n MCP Client Tool docs](https://docs.n8n.io/integrations/builtin/cluster-
 
 ## Secrets
 
-**Tavily:** set **`TAVILY_API_KEY`** in the **repo root** **`.env`** (same file as **`OPS_CONTROLLER_TOKEN`**). Compose passes it into **`mcp-gateway`** for the **`mcp/tavily`** catalog server. Get a key from [Tavily](https://app.tavily.com).
+The default servers (`duckduckgo`, `n8n`, `searxng`, `comfyui`, `orchestration`) need no external API keys — `n8n`'s API key is supplied via Docker secrets from SOPS-encrypted material under `secrets/`.
+
+**Re-enabling Tavily (optional):** Tavily was retired from the defaults in favor of the self-hosted `searxng` server. To re-enable, add `tavily` to `MCP_GATEWAY_SERVERS`, get a key from [Tavily](https://app.tavily.com), and provide it via Docker secrets (`secrets/tavily_key.sops` + `TAVILY_API_KEY_FILE=/run/secrets/tavily_key`).
 
 Other MCP servers like `github-official` need API keys. Optionally use Docker secrets:
 

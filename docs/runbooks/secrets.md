@@ -9,9 +9,13 @@
 - The runtime directory is **outside** `/workspace` and the
   `HERMES_HOST_DEV_MOUNT` bind-mount, so even a prompt-injected Hermes
   cannot `cat` the decrypted files.
-- High-value tokens (Discord, GitHub PAT, HF, Tavily, Civitai) are mounted
-  into containers as **Docker secrets** (files at `/run/secrets/<name>`),
-  not env vars — so they don't appear in `docker inspect`.
+- High-value tokens (Discord, GitHub PAT, HF, Civitai, plus optional Tavily
+  if you re-enable it) are mounted into containers as **Docker secrets**
+  (files at `/run/secrets/<name>`), not env vars — so they don't appear in
+  `docker inspect`. Tavily is no longer a default MCP server: the stack
+  ships with self-hosted SearXNG for web search and only consumes
+  `TAVILY_API_KEY` when `tavily` is explicitly added to
+  `MCP_GATEWAY_SERVERS`.
 
 ## First-time setup
 

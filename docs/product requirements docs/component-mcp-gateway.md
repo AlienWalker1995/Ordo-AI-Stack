@@ -8,7 +8,7 @@ The **MCP gateway** service exposes one **MCP HTTP endpoint** (backend port **88
 
 - **Catalog merge** – Upstream Docker MCP gateway plus repo **`registry-custom.yaml`** (e.g. ComfyUI, orchestration) via `gateway-wrapper.sh`.
 - **Dynamic ComfyUI MCP** – Spawns or connects to the **ComfyUI** service using `COMFYUI_URL` (Docker DNS name `comfyui` on the stack network).
-- **Secrets injection** – API keys (Tavily, GitHub, n8n, dashboard token for orchestration) arrive via compose environment, not committed config.
+- **Secrets injection** – API keys (GitHub PAT, `N8N_API_KEY`, `DASHBOARD_AUTH_TOKEN` for orchestration; optional `TAVILY_API_KEY` if Tavily is re-enabled) arrive via Docker secrets / compose environment, not committed config. SOPS-managed at rest under `secrets/*.sops`.
 - **Operational boundary** – Default compose keeps **8811** on the internal network; optional overrides expose it for external clients.
 
 ## Registry Format
@@ -79,7 +79,7 @@ Agent clients (Hermes today, others later) connect to the gateway via the single
 
 - **docker-compose** service **mcp-gateway** (build context `mcp/`).
 - **Docker socket** (for gateway features that spawn tool containers, per upstream behavior).
-- **data/mcp/servers.txt** – Comma-separated server list (e.g. `duckduckgo,n8n,tavily,comfyui,orchestration`). The `gateway-wrapper.sh` watches this file and **restarts the gateway process** when it changes, so edits cause a brief tool-discovery interruption.
+- **data/mcp/servers.txt** – Comma-separated server list (default: `duckduckgo,n8n,searxng,comfyui,orchestration`). The `gateway-wrapper.sh` watches this file and **restarts the gateway process** when it changes, so edits cause a brief tool-discovery interruption.
 
 ## MCP Gateway Healthcheck
 

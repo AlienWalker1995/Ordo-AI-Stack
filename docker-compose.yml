@@ -943,7 +943,7 @@ services:
       # volumes: block at the bottom of this file for the rollback path).
       - ${BASE_PATH:-.}/data/hermes:/home/hermes/.hermes
       # Mount the parent dev directory into Hermes so it can read/write files
-      # across sibling repos. /workspace stays scoped to the AI-toolkit project
+      # across sibling repos. /workspace stays scoped to the ordo-ai-stack project
       # root. Default target is /projects. Override HERMES_HOST_DEV_MOUNT to a
       # path that mirrors your host filesystem (e.g. /c/dev on Windows where
       # dev lives at C:\dev) — the historical reason was to make sibling-stack

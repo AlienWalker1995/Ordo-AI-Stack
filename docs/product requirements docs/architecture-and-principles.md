@@ -71,7 +71,7 @@
 - **Model Gateway** `:11435` — OpenAI-compatible proxy; Ollama + vLLM adapters; streaming, Responses API, completions compat, embeddings; TTL model cache; cache-bust endpoint; `X-Request-ID` propagation; throughput recording.
 - **MCP Gateway** `:8811` — Docker MCP Gateway with 10s hot-reload; `registry.json` metadata reader; per-server health; docker.sock for spawning server containers.
 - **Ops Controller** `:9000` (internal) — Authenticated REST; start/stop/restart/logs/pull; append-only JSONL audit log; docker.sock access with allowlisted operations only.
-- **Dashboard** `:8080` — No docker.sock; calls controller for ops; model inventory + default-model management; MCP tool management + health badges; throughput stats + benchmark; hardware stats; RAG status. Auth: optional Bearer token (`DASHBOARD_AUTH_TOKEN`).
+- **Dashboard** internal `:8080` (no host port published; reached via Caddy front door at `${CADDY_TAILNET_HOSTNAME}/dash/` behind oauth2-proxy / Google SSO) — No docker.sock; calls controller for ops; model inventory + default-model management; MCP tool management + health badges; throughput stats + benchmark; hardware stats; RAG status. Auth: optional Bearer token (`DASHBOARD_AUTH_TOKEN`) layered behind the front-door SSO.
 - **Ollama** `:11434` — LLM inference; backend-only by default (use `overrides/ollama-expose.yml` for Cursor/CLI access); GPU via `overrides/compute.yml`.
 - **Qdrant** `:6333` — Vector database; backend-only; used by Open WebUI for RAG and by `rag-ingestion` service.
 - **RAG Ingestion** — Watch-mode document ingester (`--profile rag`); reads `data/rag-input/`; chunks and embeds via model gateway; stores in Qdrant.
@@ -111,25 +111,29 @@ Audit query:      Dashboard → GET /audit (auth) → Controller reads JSONL
 |-----|------|-------------|----------|
 | `WEBUI_AUTH` defaults to `False` | G4 | Open WebUI ships open; target default is `True` | Medium |
 | MCP per-client policy unenforced | G2 | `allow_clients` in registry.json not enforced at gateway level — requires Docker MCP Gateway `X-Client-ID` support | Medium |
-| No CI pipeline | G5 | Smoke tests exist but no GitHub Actions workflow to run them | Low |
-| mcp-gateway on frontend network | G5 | Should be backend-only for internal services; currently has host port | Low |
+| mcp-gateway on frontend network | G5 | Should be backend-only for internal services; currently published on `127.0.0.1:8811` (localhost-only) so host MCP clients (Cline / VS Code) still work, but no LAN exposure | Low |
 | Reliability / readiness contracts | G1–G2 | Health today is partly architectural; see [Reliability & Contracts](reliability-and-contracts.md) | High |
 
 ## Network Assignment
 
+All user-facing UIs (dashboard, Open WebUI, n8n, ComfyUI, hermes-dashboard) are reached through the Caddy front door at `${CADDY_TAILNET_HOSTNAME}:443` (Tailscale-bound) with oauth2-proxy / Google SSO in front. No UI service publishes a port on `0.0.0.0` or `127.0.0.1` by itself. Host-published ports are limited to: Caddy `:443` (tailnet bind), model-gateway `127.0.0.1:11435`, mcp-gateway `127.0.0.1:8811`, qdrant `127.0.0.1:6333` — each for host-side tools (Cline, MCP clients, scripts), not LAN exposure.
+
 | Service | Frontend | Backend | Notes |
 |---------|----------|---------|-------|
-| open-webui | Y | Y | Needs model-gateway, qdrant |
-| dashboard | Y | Y | Needs ollama, ops-controller, mcp-gateway |
-| n8n | Y | — | |
-| hermes-gateway | Y | Y | Needs model-gateway, mcp-gateway |
-| hermes-dashboard | Y | — | Host port via `HERMES_DASHBOARD_PORT` |
-| model-gateway | Y | Y | Frontend for external clients; backend for Ollama |
-| mcp-gateway | Y | — | Has host port `:8811`; M6: move to backend-only |
+| caddy | Y | — | `${CADDY_BIND}:443` host bind (must be the tailnet IP); reverse-proxies everything else with forward_auth → oauth2-proxy |
+| oauth2-proxy | Y | — | Internal; sits behind Caddy; Google SSO with email allowlist (`auth/oauth2-proxy/emails.txt`) |
+| open-webui | Y | Y | Reached at `https://<tailnet>/` (root catch-all in Caddy); needs model-gateway, qdrant |
+| dashboard | Y | Y | Reached at `https://<tailnet>/dash/`; needs ollama, ops-controller, mcp-gateway |
+| n8n | Y | — | Reached at `https://<tailnet>/n8n/`; OAuth callbacks bypass auth via `/n8n/rest/oauth2-credential/callback*` |
+| hermes-gateway | Y | Y | No UI; needs model-gateway, mcp-gateway |
+| hermes-dashboard | Y | — | Reached at `https://<tailnet>/hermes/` |
+| model-gateway | Y | Y | Frontend for host MCP clients (`127.0.0.1:11435`); backend for Ollama / llamacpp |
+| mcp-gateway | Y | — | Host port `127.0.0.1:8811` (localhost-only — for host MCP clients like Cline / VS Code); internal services use `http://mcp-gateway:8811` over the docker network |
 | ops-controller | — | Y | Internal only; no host port |
 | ollama | — | Y | Backend-only by default; `overrides/ollama-expose.yml` for Cursor |
-| qdrant | — | Y | Backend-only; no host port needed for compose services |
-| comfyui | Y | — | |
+| qdrant | — | Y | Internal; `127.0.0.1:6333` host publish for one-off scripts only |
+| searxng | — | Y | Backend-only; queried by the `searxng` MCP server at `http://searxng:8080` |
+| comfyui | Y | — | Reached at `https://<tailnet>/comfy/` |
 | rag-ingestion | — | Y | Backend-only; no ingress needed |
 
 ## Compose Hardening
@@ -151,8 +155,8 @@ Audit query:      Dashboard → GET /audit (auth) → Controller reads JSONL
 ## Repo Structure
 
 ```
-AI-toolkit/
-├── dashboard/           # Ops dashboard (Python/Flask)
+ordo-ai-stack/
+├── dashboard/           # Ops dashboard (FastAPI)
 ├── model-gateway/       # OpenAI-compat model proxy
 ├── ops-controller/      # Authenticated Docker lifecycle API
 ├── mcp/                 # MCP gateway (Dockerfile, gateway/, docs/)

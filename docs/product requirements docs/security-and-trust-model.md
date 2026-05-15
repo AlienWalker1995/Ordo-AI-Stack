@@ -35,7 +35,7 @@
 
 - `.env` — gitignored, host-only, not committed
 - `mcp/.env` — gitignored, host-only; mount as Docker secret via compose `secrets:` block
-- Agent runtime state under `data/hermes/` — gitignored; Discord bot token and per-user allowlists are supplied via `.env`.
+- Agent runtime state under `data/hermes/` — gitignored; Discord bot token is supplied via Docker secrets (file at `/run/secrets/discord_token`, SOPS-encrypted at rest under `secrets/discord_token.sops`); per-user allowlists are runtime state inside `data/hermes/`.
 - Gateway tokens — in `.env`, set via compose `environment:`
 - **Secret rotation:** Update `.env`, `docker compose up -d --force-recreate <service>`.
 
@@ -45,8 +45,8 @@
 |--------|----------|-------------|-------|
 | `OPS_CONTROLLER_TOKEN` | `.env` | Compose `environment:` | Required for ops-controller privileged API |
 | `DASHBOARD_AUTH_TOKEN` | `.env` | Compose `environment:` | Optional Bearer auth on dashboard `/api/*` |
-| `DISCORD_BOT_TOKEN` | `.env` | Compose `environment:` → hermes-gateway | Optional, only when Discord channel is used |
-| `TAVILY_API_KEY` | `.env` | Compose `environment:` → mcp-gateway | Optional, required if Tavily MCP server is enabled |
+| `DISCORD_BOT_TOKEN` | `secrets/discord_token.sops` | Docker secret → hermes-gateway (`/run/secrets/discord_token`) | Optional, only when Discord channel is used |
+| `TAVILY_API_KEY` | `secrets/tavily_key.sops` | Docker secret → mcp-gateway (`/run/secrets/tavily_key`) | Optional; Tavily was retired from the default `MCP_GATEWAY_SERVERS` list in favor of self-hosted SearXNG |
 | `HF_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN` | `.env` | Compose `environment:` | Optional, for gated HF model pulls and GitHub MCP |
 
 ## SSRF Defenses (MCP)

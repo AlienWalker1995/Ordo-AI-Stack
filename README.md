@@ -16,26 +16,37 @@ Docker Compose stack for local LLMs, chat UI, image/video (ComfyUI), and automat
 
 ## Overview
 
-**Ordo AI Stack** packages a **local-first** stack: llama.cpp-backed models behind an **OpenAI-compatible** LiteLLM model gateway, **Open WebUI** for chat, **ComfyUI** for diffusion workflows, **n8n** for workflows, and an **MCP gateway** for shared tools. A **dashboard** provides a single place to inspect dependencies, pull models, and (with tokens set) control parts of the stack.
+**Ordo AI Stack** packages a **local-first, operator-deployed** stack: llama.cpp-backed models behind an **OpenAI-compatible** LiteLLM model gateway, **Open WebUI** for chat, **ComfyUI** for diffusion workflows, **n8n** for workflows, and an **MCP gateway** for shared tools. A **dashboard** provides a single place to inspect dependencies, pull models, and control the stack.
 
-**Who it is for:** Operators running the stack on their own machine or LAN; contributors changing Python services, tests, and Compose definitions.
+**Deployment model:** Single homelab operator. All user-facing UIs sit behind a **Caddy + oauth2-proxy + Tailscale + Google SSO** front door — no UI service publishes a host port directly. The operator brings their own Tailscale tailnet and Google OAuth client; the stack stitches them together so every UI is reachable at `https://${CADDY_TAILNET_HOSTNAME}/<service>/` after a single Google sign-in, with an email allowlist gating access. See [docs/runbooks/auth.md](docs/runbooks/auth.md) for the one-time setup.
 
-**Docs:** [Getting started](docs/GETTING_STARTED.md) · [Configuration](docs/configuration.md) · [Data](docs/data.md) · [Hermes Agent](docs/hermes-agent.md) · [PRD index](docs/product%20requirements%20docs/index.md)
+**Who it is for:** A homelab operator running the stack on their own hardware, exposed over their tailnet to a small allowlist of personal Google accounts. Local AI models, strong operator-deployment principles.
+
+**Docs:** [Getting started](docs/GETTING_STARTED.md) · [Auth front door](docs/runbooks/auth.md) · [Secrets](docs/runbooks/secrets.md) · [Configuration](docs/configuration.md) · [Data](docs/data.md) · [Hermes Agent](docs/hermes-agent.md) · [PRD index](docs/product%20requirements%20docs/index.md)
 
 ## Features
 
-- **Unified dashboard** (port **8080**) — model lists, service links, dependency health, model pulls (when configured).
-- **Model gateway** (**11435**) — LiteLLM OpenAI-compatible API in front of llama.cpp backends.
-- **Open WebUI** (**3000**) — chat UI.
-- **ComfyUI** (**8188**) — workflows; large optional model downloads on demand.
-- **n8n** (**5678**) — automation.
-- **MCP gateway** (**8811**) — shared MCP tools for connected clients.
-- **Ops controller** (internal **9000**; no host port by default) — compose lifecycle from the dashboard when `OPS_CONTROLLER_TOKEN` is set.
+All UI ports below are **internal** (container-network). Operators reach them via the Caddy front door under `https://${CADDY_TAILNET_HOSTNAME}/<path>/`; the only host-published ports are Caddy `:443` (tailnet-bound), and `127.0.0.1`-bound publishes of `model-gateway:11435`, `mcp-gateway:8811`, and `qdrant:6333` for host-side tools (Cursor, Cline, scripts).
+
+- **Unified dashboard** (internal **8080**, front-door `/dash/`) — model lists, service links, dependency health, model pulls.
+- **Model gateway** (host `127.0.0.1:11435`, also internal) — LiteLLM OpenAI-compatible API in front of llama.cpp backends.
+- **Open WebUI** (internal **8080**, front-door `/`) — chat UI at the root of the tailnet hostname.
+- **ComfyUI** (internal **8188**, front-door `/comfy/`) — workflows; large optional model downloads on demand.
+- **n8n** (internal **5678**, front-door `/n8n/`) — automation.
+- **MCP gateway** (host `127.0.0.1:8811`, also internal) — shared MCP tools for host clients and in-stack services.
+- **Ops controller** (internal **9000**; no host port) — compose lifecycle from the dashboard with `OPS_CONTROLLER_TOKEN`.
+- **Hermes dashboard** (internal **9119**, front-door `/hermes/`) — assistant-agent UI.
 - **GPU profiles** — `scripts/detect_hardware.py` generates `overrides/compute.yml` (gitignored) for NVIDIA / AMD / Intel / CPU paths.
 
 ## Quickstart
 
-**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with Compose, and enough disk for models. For **tests/lint**, Python **3.12+** (see `pyproject.toml`).
+**Prerequisites:**
+
+- [Docker](https://docs.docker.com/get-docker/) with Compose, and enough disk for models.
+- [Tailscale](https://tailscale.com/) installed on the host machine, with a Tailscale-issued TLS cert for the chosen tailnet hostname (`tailscale cert ordo.<tailnet>.ts.net`).
+- A Google Cloud OAuth 2.0 Web client for the SSO front door (Client ID + secret).
+- [SOPS](https://github.com/getsops/sops) + [age](https://github.com/FiloSottile/age) for secrets at rest.
+- For **tests / lint**, Python **3.12+** (see `pyproject.toml`).
 
 1. Clone this repository and open a shell at the repo root.
 
@@ -45,9 +56,13 @@ Docker Compose stack for local LLMs, chat UI, image/video (ComfyUI), and automat
    cp .env.example .env
    ```
 
-   Set at least **`BASE_PATH`** to the repo root (see comments in [`.env.example`](.env.example)). Optional: **`DATA_PATH`**, tokens, and model lists.
+   Set at least **`BASE_PATH`**, **`CADDY_BIND`** (your tailnet IPv4 from `tailscale ip -4`), and **`CADDY_TAILNET_HOSTNAME`** (e.g. `ordo.<tailnet>.ts.net`). See comments in [`.env.example`](.env.example).
 
-3. **Full bring-up** — the `compose` wrapper runs hardware detection, then builds and starts the stack:
+3. **Auth front door (one-time):** Follow [docs/runbooks/auth.md](docs/runbooks/auth.md) to configure the Tailscale cert, Google OAuth client, cookie secret, and email allowlist.
+
+4. **Secrets (one-time):** Follow [docs/runbooks/secrets.md](docs/runbooks/secrets.md) — generate an age keypair, register your public key in `secrets/.sops.yaml`, and run `make decrypt-secrets` to materialize runtime tokens at `~/.ai-toolkit/runtime/secrets/`.
+
+5. **Full bring-up** — the `compose` wrapper runs hardware detection, then builds and starts the stack:
 
    **Windows (PowerShell):**
 
@@ -61,7 +76,7 @@ Docker Compose stack for local LLMs, chat UI, image/video (ComfyUI), and automat
    ./compose up -d --build --force-recreate
    ```
 
-4. Open the **dashboard** at [http://localhost:8080](http://localhost:8080) and **Open WebUI** at [http://localhost:3000](http://localhost:3000).
+6. From any device on your tailnet, browse to `https://${CADDY_TAILNET_HOSTNAME}/` — Google sign-in gates the front door, then Open WebUI loads at `/`, the dashboard at `/dash/`, n8n at `/n8n/`, ComfyUI at `/comfy/`, and the Hermes UI at `/hermes/`.
 
 **Lighter bring-up** (no forced rebuild/recreate; still runs hardware detection):
 
@@ -116,7 +131,7 @@ Auto-generated: **`overrides/compute.yml`** (from hardware detection). Do not co
 
 ### Dashboard
 
-The dashboard at [http://localhost:8080](http://localhost:8080) lists models (Ollama and ComfyUI), links to other services, dependency health, and searchable model pulls. With **`OPS_CONTROLLER_TOKEN`** set, it can restart services and run **`POST /api/comfyui/install-node-requirements`** (proxied to ops-controller; use **`DASHBOARD_AUTH_TOKEN`** as in **TROUBLESHOOTING**).
+Reach the dashboard at `https://${CADDY_TAILNET_HOSTNAME}/dash/` (Google SSO front door; allowlist via `auth/oauth2-proxy/emails.txt`). It lists models (Ollama and ComfyUI), links to other services, dependency health, and searchable model pulls. **`OPS_CONTROLLER_TOKEN`** lets it restart services and run **`POST /api/comfyui/install-node-requirements`**. **`DASHBOARD_AUTH_TOKEN`** is an optional bearer layer for non-browser API access; the browser path is gated by SSO at the proxy level.
 
 After code changes affecting the dashboard image: `.\compose.ps1 build dashboard` then `.\compose.ps1 up -d` (or `./compose` equivalents).
 
@@ -134,10 +149,12 @@ Large optional downloads on demand; first run can take a long time. Pull via the
 
 ### Security
 
-- **Open WebUI:** set `WEBUI_AUTH=True` when exposing the stack beyond localhost.
-- **Dashboard:** set `DASHBOARD_AUTH_TOKEN` when the dashboard is reachable beyond localhost.
-- **Ops controller:** requires `OPS_CONTROLLER_TOKEN` for dashboard-driven lifecycle and installs.
-- Never commit `.env`. Full notes: [SECURITY.md](SECURITY.md).
+- **Front door:** Caddy + oauth2-proxy + Google SSO gates all browser-reachable UIs at the network edge. Email allowlist in `auth/oauth2-proxy/emails.txt` (replace `YOUR_ALLOWLIST_EMAIL` locally — never commit your real email). See [docs/runbooks/auth.md](docs/runbooks/auth.md).
+- **Open WebUI:** runs with native auth disabled by default because Google SSO already gates it at the proxy; flip `WEBUI_AUTH=True` if you want a second auth layer for multi-user workspaces.
+- **Dashboard:** `DASHBOARD_AUTH_TOKEN` provides a bearer-token fallback for non-browser API access (e.g. host scripts). Browser traffic is SSO-gated.
+- **Ops controller:** requires `OPS_CONTROLLER_TOKEN` for dashboard-driven lifecycle and installs; no host port at all.
+- **Secrets at rest:** SOPS + age, with high-value tokens mounted as Docker secrets at `/run/secrets/<name>`. See [docs/runbooks/secrets.md](docs/runbooks/secrets.md).
+- Never commit `.env` or any plaintext secret. Full notes: [SECURITY.md](SECURITY.md).
 
 ### GPU / compute
 
@@ -146,14 +163,20 @@ Hardware detection writes **`overrides/compute.yml`**. The `compose` wrapper run
 ### Architecture
 
 ```
-User → Dashboard / Open WebUI / N8N
-         │
-         ├── Model Gateway (:11435) → LiteLLM → llama.cpp
-         ├── MCP Gateway (:8811) → shared tools
-         └── Ops Controller (:9000) → Docker Compose lifecycle
+Tailnet device → Caddy :443 (TLS) → oauth2-proxy (Google SSO + email allowlist)
+                                          │
+                                          ├── /          → Open WebUI
+                                          ├── /dash/     → Dashboard
+                                          ├── /n8n/      → n8n
+                                          ├── /comfy/    → ComfyUI
+                                          └── /hermes/   → Hermes dashboard
+                                                  │
+                                                  ├── Model Gateway → LiteLLM → llama.cpp / Ollama / (vLLM)
+                                                  ├── MCP Gateway → shared tools (SearXNG, n8n, ComfyUI, …)
+                                                  └── Ops Controller → Docker Compose lifecycle (token-auth, no host port)
 ```
 
-Local-first, OpenAI-compatible endpoint; dashboard does not mount `docker.sock`. Details: [PRD index](docs/product%20requirements%20docs/index.md).
+Local-first AI; operator-deployed front door. Dashboard does not mount `docker.sock`. Details: [PRD index](docs/product%20requirements%20docs/index.md).
 
 ### Data
 

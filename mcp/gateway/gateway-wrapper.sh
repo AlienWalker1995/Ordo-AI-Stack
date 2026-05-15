@@ -61,7 +61,6 @@ resolve_registry_custom() {
   # Inject secrets from mcp-gateway environment (same .env as stack).
   if command -v sed >/dev/null 2>&1; then
     sed -e "s|PLACEHOLDER_OPS_CONTROLLER_TOKEN|${OPS_CONTROLLER_TOKEN:-}|g" \
-        -e "s|PLACEHOLDER_TAVILY_API_KEY|${TAVILY_API_KEY:-}|g" \
         -e "s|PLACEHOLDER_DASHBOARD_AUTH_TOKEN|${DASHBOARD_AUTH_TOKEN:-}|g" \
         -e "s|PLACEHOLDER_COMFY_MCP_DEFAULT_MODEL|${COMFY_MCP_DEFAULT_MODEL:-flux1-schnell-fp8.safetensors}|g" \
         -e "s|PLACEHOLDER_N8N_API_KEY|${N8N_API_KEY:-}|g" "$src" >"$dst"
@@ -105,7 +104,7 @@ graceful_restart() {
 
 start_gateway() {
   servers=$(read_servers)
-  servers=${servers:-duckduckgo,n8n,tavily,comfyui,orchestration}
+  servers=${servers:-duckduckgo,n8n,searxng,comfyui,orchestration}
   echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Starting gateway with servers: $servers"
   extra=""
   resolve_registry_custom
