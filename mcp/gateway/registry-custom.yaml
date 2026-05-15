@@ -13,7 +13,7 @@ registry:
       - name: SEARXNG_URL
         value: http://searxng:8080
   comfyui:
-    description: ComfyUI MCP for AI Toolkit (workflows, images, video, model pull, system stats, queue, history, installed models/nodes/extensions).
+    description: ComfyUI MCP for Ordo AI Stack (workflows, images, video, model pull, system stats, queue, history, installed models/nodes/extensions).
     title: ComfyUI
     type: server
     image: ordo-ai-stack-comfyui-mcp:latest

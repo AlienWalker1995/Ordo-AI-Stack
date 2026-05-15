@@ -51,7 +51,7 @@ A self-hosted AI platform that any developer can run with `./compose up -d`. Cor
 | `docker.sock` in both `mcp-gateway` and `ops-controller` | High | Accepted — mitigated by allowlist + auth + no host port |
 | `WEBUI_AUTH` still defaults to `False` | Medium | Tracked — change to `True` in M6 |
 | MCP per-client policy (`allow_clients`) not enforced at gateway level | Medium | Planned — requires Docker MCP Gateway `X-Client-ID` support |
-| No CI pipeline for compose smoke tests | Low | Tracked — M6 |
+| Compose smoke tests in CI gated to workflow_dispatch | Low | Done — `.github/workflows/ci.yml` runs pytest + ruff + `docker compose config` on push; `compose-smoke` job is opt-in via workflow_dispatch to keep PR runs fast |
 | Reliability / readiness contracts | High | Strategic — see [reliability-and-contracts.md](reliability-and-contracts.md) |
 
 ## Strategic Priority: Reliability Layer
