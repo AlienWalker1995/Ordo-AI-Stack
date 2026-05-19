@@ -1873,7 +1873,15 @@ async def rag_status():
 
 # --- Hardware ---
 
-BASE_PATH_ENV = os.environ.get("BASE_PATH", "/")
+# Disk usage probe path. Defaults to a bind-mount (NOT '/') so psutil sees the
+# host volume's real free/used instead of the small Docker overlay layer
+# (which is what shows up at `/` inside the container). Every dashboard bind
+# mount points back at the same host C:/ drive, so any of them reports
+# correct host-disk stats — `/data/dashboard` is always mounted, smallest, and
+# semantically the right place to ask "how much room do I have for state?".
+# Operator can still override via BASE_PATH env if they want a different
+# mount (e.g. a separate drive for models).
+BASE_PATH_ENV = os.environ.get("BASE_PATH", "/data/dashboard")
 
 
 def _nvml_vram_to_gpu_dict(
@@ -1897,6 +1905,102 @@ def _nvml_vram_to_gpu_dict(
     }
 
 
+def _probe_gpu() -> dict | None:
+    """Best-effort GPU stats with multi-source fallback.
+
+    NVML (pynvml) is the preferred path BUT on Windows Docker Desktop with
+    recent CUDA drivers, `nvmlDeviceGetMemoryInfo` returns garbage for free /
+    used (memory.free reports ~4.4 TB, memory.used overflows to ~1.8e19 GB).
+    We detect that and fall back to `nvidia-smi --query-gpu=memory.free,memory.total --format=csv`
+    which has internal sanity-checking and returns correct values.
+    """
+    name = "GPU"
+    util_pct = 0
+    total_b: int | None = None
+    used_b: int | None = None
+    source = "nvml"
+
+    # Layer 1: NVML
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        try:
+            h = pynvml.nvmlDeviceGetHandleByIndex(0)
+            mi = pynvml.nvmlDeviceGetMemoryInfo(h)
+            ut = pynvml.nvmlDeviceGetUtilizationRates(h)
+            nm = pynvml.nvmlDeviceGetName(h)
+            if isinstance(nm, bytes):
+                name = nm.decode("utf-8", errors="replace").strip()
+            else:
+                name = str(nm).strip()
+            util_pct = int(ut.gpu)
+            t = int(mi.total)
+            f = int(mi.free)
+            u = int(mi.used)
+            if t > 0:
+                total_b = t
+            # Sanity-check NVML's memory fields. On this driver they wrap to
+            # values > total — discard those.
+            if total_b is not None and 0 <= u <= total_b:
+                used_b = u
+            elif total_b is not None and 0 <= f <= total_b:
+                used_b = total_b - f
+            # else: leave used_b unset; fall through to nvidia-smi
+        finally:
+            pynvml.nvmlShutdown()
+    except Exception as e:
+        logger.debug("NVML probe failed: %s", e)
+
+    # Layer 2: nvidia-smi shell fallback
+    if total_b is None or used_b is None:
+        try:
+            import subprocess
+            cmd = [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,memory.free,memory.used,utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ]
+            out = subprocess.check_output(cmd, text=True, timeout=4).strip().splitlines()[0]
+            parts = [p.strip() for p in out.split(",")]
+            if len(parts) >= 5:
+                if name == "GPU" and parts[0]:
+                    name = parts[0]
+                t = int(float(parts[1])) * 1024 * 1024     # MiB -> bytes
+                f = int(float(parts[2])) * 1024 * 1024
+                u_raw = int(float(parts[3])) * 1024 * 1024
+                util_pct = int(float(parts[4])) if parts[4] else util_pct
+                total_b = t
+                # nvidia-smi memory.used can wrap; prefer total-free unless
+                # used looks sensible.
+                if 0 <= u_raw <= t:
+                    used_b = u_raw
+                elif 0 <= f <= t:
+                    used_b = t - f
+                source = "nvidia-smi"
+        except Exception as e:
+            logger.debug("nvidia-smi probe failed: %s", e)
+
+    if total_b is None:
+        return None
+    if used_b is None:
+        # Memory reading came back garbage from BOTH sources (NVML wrap + nvidia-smi
+        # under heavy load). Return total + util but flag the used field as unknown
+        # so the UI can render "N/A" instead of confidently misleading "100%".
+        return {
+            "name": name or "GPU",
+            "vram_used_gb": None,
+            "vram_total_gb": round(total_b / 1e9, 1),
+            "utilization_pct": int(util_pct),
+            "memory_reading_reliable": False,
+            "source": source,
+        }
+    gpu = _nvml_vram_to_gpu_dict(name, used_b, total_b, util_pct)
+    if gpu is not None:
+        gpu["source"] = source
+        gpu["memory_reading_reliable"] = True
+    return gpu
+
+
 @app.get("/api/hardware")
 async def hardware_stats():
     """System resource stats. No auth required (read-only). Blocking calls run in thread pool (R7)."""
@@ -1913,24 +2017,7 @@ async def hardware_stats():
         disk_total_gb = None
         disk_pct = None
 
-    gpu = None
-    try:
-        import pynvml  # optional; only present when nvidia-ml-py is installed
-        pynvml.nvmlInit()
-        try:
-            h = pynvml.nvmlDeviceGetHandleByIndex(0)
-            mi = pynvml.nvmlDeviceGetMemoryInfo(h)
-            ut = pynvml.nvmlDeviceGetUtilizationRates(h)
-            name = pynvml.nvmlDeviceGetName(h)
-            if isinstance(name, bytes):
-                name = name.decode("utf-8", errors="replace").strip()
-            else:
-                name = str(name).strip()
-            gpu = _nvml_vram_to_gpu_dict(name, int(mi.used), int(mi.total), ut.gpu)
-        finally:
-            pynvml.nvmlShutdown()
-    except Exception as e:
-        logger.debug("GPU stats unavailable: %s", e)
+    gpu = await asyncio.to_thread(_probe_gpu)
 
     return {
         "cpu_pct": cpu_pct,
