@@ -27,10 +27,21 @@
     handle /healthz {
         respond "ok" 200
     }
+    # These bypass forward_auth (no SSO required) so external services
+    # (Google OAuth, IG Graph API webhooks, etc.) can hit them. The
+    # `uri strip_prefix /n8n` directive strips only the `/n8n` prefix
+    # (not the full matched path) before proxying — n8n's internal routes
+    # are registered at `/rest/...` and `/webhook/...`, NOT `/n8n/rest/...`
+    # even with N8N_PATH=/n8n/, so without the strip the requests fall through
+    # to n8n's SPA catch-all and the callback handler never runs (verified
+    # live 2026-05-18: OAuth callbacks returned 200 + n8n SPA HTML instead of
+    # processing the code/state).
     handle /n8n/rest/oauth2-credential/callback* {
+        uri strip_prefix /n8n
         reverse_proxy n8n:5678
     }
     handle /n8n/webhook/* {
+        uri strip_prefix /n8n
         reverse_proxy n8n:5678
     }
 
