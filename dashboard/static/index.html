@@ -2992,13 +2992,22 @@
         }
         const vTotGb = d.gpu && d.gpu.vram_total_gb != null ? Number(d.gpu.vram_total_gb) : 0;
         if (d.gpu && vTotGb > 0) {
+          const reliable = d.gpu.memory_reading_reliable !== false && d.gpu.vram_used_gb != null;
           const vUsedGb = Number(d.gpu.vram_used_gb);
           const u = Number.isFinite(vUsedGb) ? vUsedGb : 0;
           const t = vTotGb;
-          const vramPct = t > 0 ? (u / t) * 100 : 0;
+          const vramPct = (reliable && t > 0) ? (u / t) * 100 : 0;
           document.getElementById('hw-gpu-name').textContent = (d.gpu.name || 'GPU').replace(/NVIDIA /i, '');
-          document.getElementById('hw-vram').textContent = u.toFixed(1) + ' / ' + t.toFixed(1) + ' GB';
-          document.getElementById('hw-vram-free').textContent = (t - u).toFixed(1) + ' GB free';
+          if (reliable) {
+            document.getElementById('hw-vram').textContent = u.toFixed(1) + ' / ' + t.toFixed(1) + ' GB';
+            document.getElementById('hw-vram-free').textContent = (t - u).toFixed(1) + ' GB free';
+          } else {
+            // Driver memory reading unreliable on this host (NVML overflow under load).
+            // Show total only and mark used as unknown so we don't lie with "0 GB" / "100%".
+            document.getElementById('hw-vram').textContent = '— / ' + t.toFixed(1) + ' GB';
+            document.getElementById('hw-vram-free').textContent = 'driver reporting unavailable';
+            document.getElementById('hw-vram-free').title = 'NVML / nvidia-smi memory.used is wrapping on this driver. Total + utilization are correct; used is hidden rather than displayed wrong.';
+          }
           setBar(document.getElementById('hw-vram-bar'), vramPct);
           const utilPct = d.gpu.utilization_pct != null ? Number(d.gpu.utilization_pct) : 0;
           setBar(document.getElementById('hw-gpu-util-bar'), utilPct);
