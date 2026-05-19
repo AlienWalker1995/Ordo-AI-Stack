@@ -1,11 +1,17 @@
 """ops-router — Hermes plugin exposing ops-controller verbs as first-class tools.
 
-Replaces the lost docker.sock surface (Plan C). Three tools wrap ops-controller's
+Replaces the lost docker.sock surface (Plan C). Five tools wrap ops-controller's
 HTTP API so the model never has to know about curl or HTTP:
 
 - list_containers    -> GET  /containers
 - container_logs     -> GET  /containers/{name}/logs
-- restart_container  -> POST /containers/{name}/restart
+- restart_container  -> POST /containers/{name}/restart       (bounce existing container)
+- compose_restart    -> POST /compose/restart                 (compose-aware restart, same env)
+- compose_up         -> POST /compose/up                      (recreate; picks up new .env / volumes / network)
+
+When to use which:
+- Process is wedged or a bind-mounted file changed   -> restart_container / compose_restart
+- .env, image, volumes, or network changed           -> compose_up (recreate)
 
 Plus a pre_llm_call hook that nudges the model toward these tools when the user
 message contains docker / container / restart / logs intent — guards against
@@ -90,6 +96,36 @@ def _restart_container(args: dict, **kwargs) -> str:
         return _err(f"unexpected error: {exc}")
 
 
+def _compose_restart(args: dict, **kwargs) -> str:
+    service = (args.get("service") or "").strip() or None
+    confirm = bool(args.get("confirm"))
+    if service is None and not confirm:
+        return _err("whole-stack restart requires confirm=true; pass a service name to scope")
+    try:
+        result = _get_client().compose_restart(service=service, confirm=confirm)
+        return json.dumps({"ok": True, **result})
+    except OpsClientError as exc:
+        return _err(str(exc))
+    except Exception as exc:
+        logger.exception("compose_restart failed")
+        return _err(f"unexpected error: {exc}")
+
+
+def _compose_up(args: dict, **kwargs) -> str:
+    service = (args.get("service") or "").strip() or None
+    confirm = bool(args.get("confirm"))
+    if service is None and not confirm:
+        return _err("whole-stack up requires confirm=true; pass a service name to scope")
+    try:
+        result = _get_client().compose_up(service=service, confirm=confirm)
+        return json.dumps({"ok": True, **result})
+    except OpsClientError as exc:
+        return _err(str(exc))
+    except Exception as exc:
+        logger.exception("compose_up failed")
+        return _err(f"unexpected error: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # Tool schemas — descriptions are how the model decides when to use these
 # ---------------------------------------------------------------------------
@@ -137,11 +173,13 @@ CONTAINER_LOGS_SCHEMA = {
 RESTART_CONTAINER_SCHEMA = {
     "name": "restart_container",
     "description": (
-        "Restart any Docker container by name via ops-controller's "
+        "Bounce a single container by name via ops-controller's "
         "/containers/{name}/restart endpoint. Works for ANY container the host "
         "daemon sees (including non-Ordo containers like `min-max-web-dev-1`). "
         "Use this INSTEAD of `terminal: docker restart ...` — Hermes has no "
-        "docker socket; that command will always fail."
+        "docker socket; that command will always fail. "
+        "NOTE: this does NOT pick up changes to environment variables / .env / "
+        "volumes — use `compose_up` for that."
     ),
     "parameters": {
         "type": "object",
@@ -152,6 +190,63 @@ RESTART_CONTAINER_SCHEMA = {
             },
         },
         "required": ["name"],
+    },
+}
+
+COMPOSE_RESTART_SCHEMA = {
+    "name": "compose_restart",
+    "description": (
+        "Compose-aware restart: `docker compose restart <service>` via "
+        "ops-controller's /compose/restart endpoint. Bounces the process but "
+        "does NOT recreate the container — does NOT pick up .env or compose "
+        "config changes. Use `compose_up` for those. Use this when the process "
+        "is wedged and you want a clean restart of the existing container."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "service": {
+                "type": "string",
+                "description": (
+                    "Compose service name (e.g. `llamacpp`, `hermes-gateway`). "
+                    "Omit to restart the whole stack — requires confirm=true."
+                ),
+            },
+            "confirm": {
+                "type": "boolean",
+                "description": "Required (true) when service is omitted. Guards against prompt-injected stack-wide restarts.",
+            },
+        },
+        "required": [],
+    },
+}
+
+COMPOSE_UP_SCHEMA = {
+    "name": "compose_up",
+    "description": (
+        "Compose recreate: `docker compose up -d <service>` via ops-controller's "
+        "/compose/up endpoint. Recreates the container so it picks up changes "
+        "to .env / environment / volumes / network / image. This is the verb "
+        "you want after editing .env (e.g. changing LLAMACPP_MODEL). Does NOT "
+        "rebuild images; if you need a rebuild, ask the operator to run "
+        "`docker compose up -d --build --force-recreate <service>` from the host."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "service": {
+                "type": "string",
+                "description": (
+                    "Compose service name (e.g. `llamacpp`, `model-gateway`). "
+                    "Omit to recreate the whole stack — requires confirm=true."
+                ),
+            },
+            "confirm": {
+                "type": "boolean",
+                "description": "Required (true) when service is omitted. Guards against prompt-injected stack-wide recreates.",
+            },
+        },
+        "required": [],
     },
 }
 
@@ -182,12 +277,14 @@ _NUDGE = (
     "Routing note: this turn looks like a docker/container op. Hermes has no "
     "docker socket — DO NOT call `terminal` or `execute_code` with `docker ...`; "
     "it will fail with 'Cannot connect to the Docker daemon'. "
-    "Use the first-class tools instead: `list_containers`, "
-    "`container_logs(name, tail)`, `restart_container(name)`. "
-    "They route via ops-controller and work on ANY container the host daemon "
-    "sees, including non-Ordo containers like `min-max-web-dev-1`. "
-    "For whole-stack compose ops (up/down/restart), follow the "
-    "`devops/ops-controller-api` skill — load it now if you haven't."
+    "Use the first-class tools: `list_containers`, `container_logs(name, tail)`, "
+    "`restart_container(name)`, `compose_restart(service)`, `compose_up(service)`. "
+    "Picking the right verb: if .env / environment / volumes changed, use "
+    "`compose_up(service=...)` (recreate) — `restart_container` and "
+    "`compose_restart` only bounce the existing container and will NOT pick up "
+    "env changes. The OPS_CONTROLLER_TOKEN is already in your env — do NOT "
+    "generate a new one or write tokens to .env. For deeper context, load the "
+    "`devops/ops-controller-api` skill."
 )
 
 
@@ -225,7 +322,23 @@ def register(ctx) -> None:
         toolset="ops-router",
         schema=RESTART_CONTAINER_SCHEMA,
         handler=_restart_container,
-        description="Restart any container by name via ops-controller.",
+        description="Bounce a single container by name (does NOT pick up env changes).",
         emoji="🔁",
+    )
+    ctx.register_tool(
+        name="compose_restart",
+        toolset="ops-router",
+        schema=COMPOSE_RESTART_SCHEMA,
+        handler=_compose_restart,
+        description="Compose-aware restart of a service (does NOT pick up env changes).",
+        emoji="🔄",
+    )
+    ctx.register_tool(
+        name="compose_up",
+        toolset="ops-router",
+        schema=COMPOSE_UP_SCHEMA,
+        handler=_compose_up,
+        description="Compose recreate: applies .env / volume / network changes.",
+        emoji="⬆️",
     )
     ctx.register_hook("pre_llm_call", _intent_nudge)

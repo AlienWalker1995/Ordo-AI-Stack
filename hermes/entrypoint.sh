@@ -21,6 +21,22 @@ if ! gosu hermes sh -c "test -w '$HERMES_HOME'" 2>/dev/null; then
 fi
 export HERMES_HOME
 
+# Same ownership/writability check for the gameplay manifest used by the
+# social-relay reel pipeline. ComfyUI writes outputs into this directory as
+# root, which leaves the manifest unwritable for the unprivileged hermes user
+# the agent's execute_code sandbox runs as (uid 1000). Without this, the cron
+# completes its run but cannot record the gameplay segment in `used`, so the
+# next run can pick the same segment again. Idempotent.
+COMFYUI_OUTPUT_DIR=/workspace/data/comfyui-output
+GAMEPLAY_MANIFEST="$COMFYUI_OUTPUT_DIR/gameplay_manifest.json"
+if [ -d "$COMFYUI_OUTPUT_DIR" ] && ! gosu hermes sh -c "test -w '$COMFYUI_OUTPUT_DIR'" 2>/dev/null; then
+    chmod 775 "$COMFYUI_OUTPUT_DIR" 2>/dev/null || true
+fi
+if [ -f "$GAMEPLAY_MANIFEST" ] && ! gosu hermes sh -c "test -w '$GAMEPLAY_MANIFEST'" 2>/dev/null; then
+    chown hermes:hermes "$GAMEPLAY_MANIFEST" 2>/dev/null || true
+    chmod 664 "$GAMEPLAY_MANIFEST" 2>/dev/null || true
+fi
+
 # Bridge from Docker secrets _FILE pattern to the env var the app expects.
 # discord.py / hermes read DISCORD_BOT_TOKEN directly from os.environ; the
 # compose file mounts the secret at /run/secrets/discord_token and exports
