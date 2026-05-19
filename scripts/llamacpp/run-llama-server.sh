@@ -37,6 +37,14 @@ if [ -n "${LLAMACPP_OVERRIDE_KV:-}" ]; then
   set -- "$@" --override-kv "${LLAMACPP_OVERRIDE_KV}"
 fi
 
+if [ -n "${LLAMACPP_MMPROJ:-}" ]; then
+  if [ ! -f "${LLAMACPP_MMPROJ}" ]; then
+    echo "warning: LLAMACPP_MMPROJ=${LLAMACPP_MMPROJ} not found; vision disabled"
+  else
+    set -- "$@" --mmproj "${LLAMACPP_MMPROJ}"
+  fi
+fi
+
 if [ "${LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION:-0}" = "1" ]; then
   set -- "$@" \
     --cache-type-k "${LLAMACPP_KV_CACHE_TYPE_K:-q4_0}" \

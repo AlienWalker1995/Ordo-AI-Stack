@@ -73,6 +73,10 @@ services:
       - LLAMACPP_KV_CACHE_TYPE_K=${LLAMACPP_KV_CACHE_TYPE_K:-q4_0}
       - LLAMACPP_KV_CACHE_TYPE_V=${LLAMACPP_KV_CACHE_TYPE_V:-q4_0}
       - LLAMACPP_EXTRA_ARGS=${LLAMACPP_EXTRA_ARGS:-}
+      # Optional vision projector (mmproj GGUF). Path is INSIDE the container —
+      # bind-mount maps host models/gguf/ to /models, so set
+      # LLAMACPP_MMPROJ=/models/<file>.gguf. Empty = no vision.
+      - LLAMACPP_MMPROJ=${LLAMACPP_MMPROJ:-}
     volumes:
       - ${BASE_PATH:-.}/models/gguf:/models:ro
       - ${BASE_PATH:-.}/scripts/llamacpp:/llamacpp-scripts:ro
