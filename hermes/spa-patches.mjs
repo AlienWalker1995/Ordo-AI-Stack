@@ -24,47 +24,9 @@ const patches = [
       "base: '/hermes/',\n  plugins: [react(), tailwindcss(), hermesDevToken()]",
   },
   {
-    file: "src/main.tsx",
-    find: "<BrowserRouter>",
-    replace: '<BrowserRouter basename="/hermes">',
-  },
-  {
-    file: "src/lib/api.ts",
-    find: 'const BASE = "";',
-    replace: 'const BASE = "/hermes";',
-  },
-  {
     file: "src/components/Backdrop.tsx",
     find: '"/ds-assets/filler-bg0.jpg"',
     replace: '"/hermes/ds-assets/filler-bg0.jpg"',
-  },
-  {
-    file: "src/components/ChatSidebar.tsx",
-    find: "`${proto}//${window.location.host}/api/events?${qs.toString()}`",
-    replace:
-      "`${proto}//${window.location.host}/hermes/api/events?${qs.toString()}`",
-  },
-  {
-    file: "src/lib/gatewayClient.ts",
-    find: "`${scheme}//${location.host}/api/ws?token=${encodeURIComponent(resolved)}`",
-    replace:
-      "`${scheme}//${location.host}/hermes/api/ws?token=${encodeURIComponent(resolved)}`",
-  },
-  {
-    file: "src/pages/ChatPage.tsx",
-    find: "`${proto}//${window.location.host}/api/pty?${qs.toString()}`",
-    replace:
-      "`${proto}//${window.location.host}/hermes/api/pty?${qs.toString()}`",
-  },
-  {
-    file: "src/plugins/usePlugins.ts",
-    find: "`/dashboard-plugins/${manifest.name}/${manifest.css}`",
-    replace: "`/hermes/dashboard-plugins/${manifest.name}/${manifest.css}`",
-  },
-  {
-    file: "src/plugins/usePlugins.ts",
-    find: "`/dashboard-plugins/${manifest.name}/${manifest.entry}`",
-    replace: "`/hermes/dashboard-plugins/${manifest.name}/${manifest.entry}`",
   },
 ];
 

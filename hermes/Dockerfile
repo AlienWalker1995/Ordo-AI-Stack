@@ -3,7 +3,7 @@
 # Stage 1: node builds the web UI bundle.
 # Stage 2: python runtime with hermes installed; copies web_dist from stage 1.
 
-ARG HERMES_PINNED_SHA=73bf3ab1b22314ed9dfecbb59242c03742fe72af
+ARG HERMES_PINNED_SHA=5fdcfd851f7e693fb72a9ea6a6ef25142e63259e
 ARG HERMES_REPO=https://github.com/NousResearch/hermes-agent.git
 
 # ── Stage 1: web-builder ──
