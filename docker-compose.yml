@@ -296,7 +296,8 @@ services:
       - MCP_CONFIG_PATH=/mcp-config/servers.txt
       - MCP_GATEWAY_URL=http://mcp-gateway:8811
       # Must include comfyui so mcp-gateway loads ComfyUI tools (registry-custom.yaml). Matches data/mcp/servers.txt default.
-      - MCP_GATEWAY_SERVERS=${MCP_GATEWAY_SERVERS:-duckduckgo,n8n,tavily,comfyui,orchestration}
+      # Tavily retired 2026-05-12 in favour of self-hosted searxng MCP (see services.searxng).
+      - MCP_GATEWAY_SERVERS=${MCP_GATEWAY_SERVERS:-duckduckgo,n8n,searxng,comfyui,orchestration}
       # Read-only: ComfyUI user workflows (host: data/comfyui-storage/ComfyUI/user/default/workflows)
       - COMFYUI_WORKFLOWS_DIR=/comfyui-workflows
       - OPS_CONTROLLER_URL=http://ops-controller:9000
@@ -680,7 +681,6 @@ services:
       # gateway-wrapper.sh entrypoint bridges the *_FILE pointers back to
       # plaintext env vars for the spawned MCP servers (which read the
       # canonical names directly).
-      - TAVILY_API_KEY_FILE=/run/secrets/tavily_key
       - GITHUB_PERSONAL_ACCESS_TOKEN_FILE=/run/secrets/github_pat
       # n8n MCP server (mcp/n8n) — for workflow tools when n8n API key is set.
       # `n8n.api_key` is a Docker secret mounted at /run/secrets/n8n_api_key;
@@ -699,7 +699,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/mcp:/mcp-config
     secrets:
-      - tavily_key
       - github_pat
       - n8n_api_key
     # Published on host so external MCP clients (e.g. Cursor, Claude Desktop)
@@ -1078,8 +1077,6 @@ secrets:
     file: ${HOME}/.ai-toolkit/runtime/secrets/github_pat
   hf_token:
     file: ${HOME}/.ai-toolkit/runtime/secrets/hf_token
-  tavily_key:
-    file: ${HOME}/.ai-toolkit/runtime/secrets/tavily_key
   civitai_token:
     file: ${HOME}/.ai-toolkit/runtime/secrets/civitai_token
   n8n_api_key:
