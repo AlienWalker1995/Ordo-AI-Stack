@@ -45,6 +45,14 @@
         reverse_proxy n8n:5678
     }
 
+    # ---- legacy URL redirects (no auth needed — they redirect, then the
+    # destination goes through forward_auth on the next request) ----
+    # `/chat/*` is the retired Open WebUI mount (see the Open WebUI block
+    # below for history). Bookmarked /chat/ links would otherwise 404 because
+    # Open WebUI at root has no `/chat` route. Permanent redirect to root.
+    redir /chat / permanent
+    redir /chat/* / permanent
+
     # ---- everything else: forward_auth + then route to upstream ----
     # `route` (vs `handle`) keeps directives in source order and lets the
     # request continue past forward_auth to the matching handle_path block.
@@ -73,7 +81,14 @@
             reverse_proxy n8n:5678
         }
         handle_path /hermes/* {
-            reverse_proxy hermes-dashboard:9119
+            # Tell the Hermes dashboard server it's mounted at /hermes so the
+            # SPA can rewrite its absolute asset/API/WS/plugin URLs at runtime
+            # (server reads X-Forwarded-Prefix and injects window.__HERMES_BASE_PATH__).
+            # Required since the upstream upgrade to commit 5fdcfd8 retired the
+            # build-time spa-patches.mjs string-replaces in favor of header-driven base.
+            reverse_proxy hermes-dashboard:9119 {
+                header_up X-Forwarded-Prefix /hermes
+            }
         }
         handle_path /comfy/* {
             reverse_proxy comfyui:8188
