@@ -71,8 +71,8 @@ fi
 mcp_servers="$data/mcp/servers.txt"
 mcp_registry="$data/mcp/registry-custom.yaml"
 if [[ ! -f "$mcp_servers" ]]; then
-  echo "duckduckgo,n8n,tavily,comfyui" > "$mcp_servers"
-  echo "OK $mcp_servers (duckduckgo,n8n,tavily,comfyui)"
+  echo "duckduckgo,n8n,searxng,comfyui,orchestration" > "$mcp_servers"
+  echo "OK $mcp_servers (duckduckgo,n8n,searxng,comfyui,orchestration)"
 fi
 # Bootstrap catalog fragment for ComfyUI (gateway uses --additional-catalog)
 if [[ ! -f "$mcp_registry" ]] && [[ -f "$base/mcp/gateway/registry-custom.yaml" ]]; then
