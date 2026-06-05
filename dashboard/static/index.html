@@ -2034,8 +2034,8 @@
         const assigns = data.assignments || {};
         const cards = (data.gpus || []).map(g => {
           const pct = g.vram_total_gb ? Math.round(100 * g.vram_used_gb / g.vram_total_gb) : 0;
-          return `<div class="service-card"><div><strong>${escapeHtml(g.name)}</strong> <span class="badge badge-muted">#${g.index}</span></div>
-            <div>VRAM ${g.vram_used_gb} / ${g.vram_total_gb} GB (${pct}%) · ${g.utilization_pct}% util · ${g.temp_c}°C</div></div>`;
+          return `<div class="service-card"><div><strong>${escapeHtml(g.name)}</strong> <span class="badge badge-muted">#${escapeHtml(String(g.index))}</span></div>
+            <div>VRAM ${escapeHtml(String(g.vram_used_gb))} / ${escapeHtml(String(g.vram_total_gb))} GB (${pct}%) · ${escapeHtml(String(g.utilization_pct))}% util · ${escapeHtml(String(g.temp_c))}°C</div></div>`;
         }).join("");
         const selectors = GPU_SERVICES.map(svc => {
           const cur = assigns[svc] || "";
@@ -2051,7 +2051,7 @@
       }
     }
     async function assignGpu(service, gpu_uuid) {
-      if (!confirm(`Reassign ${service} to this GPU? This recreates the container (brief downtime).`)) { loadGpuTab(); return; }
+      if (!confirm(`Reassign ${service} to this GPU? This recreates the container (brief downtime).`)) return;
       try {
         const r = await api("/api/gpu/assign", {
           method: "POST",
@@ -3277,8 +3277,16 @@
     function activateTab(name) {
       const tabs = ["models", "gpu", "services", "mcp", "orchestration"];
       if (!tabs.includes(name)) name = "models";
-      document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
-      document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.dataset.tab === name));
+      document.querySelectorAll(".tab-btn").forEach(b => {
+        const on = b.dataset.tab === name;
+        b.classList.toggle("active", on);
+        b.setAttribute("aria-selected", on ? "true" : "false");
+      });
+      document.querySelectorAll(".tab-panel").forEach(p => {
+        const on = p.dataset.tab === name;
+        p.classList.toggle("active", on);
+        p.setAttribute("aria-hidden", on ? "false" : "true");
+      });
       if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
       if (name === "gpu" && typeof loadGpuTab === "function") loadGpuTab();
       if (name === "orchestration" && typeof loadOrchestrationTab === "function") loadOrchestrationTab();
