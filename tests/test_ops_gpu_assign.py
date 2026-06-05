@@ -3,6 +3,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 # Mock docker before loading ops-controller
 sys.modules.setdefault("docker", MagicMock())
 
@@ -69,3 +71,50 @@ def test_apply_gpu_assignment_adds_missing_service(tmp_path, monkeypatch):
     assert ops_main.parse_gpu_assignments_yaml(path.read_text()) == {
         "llamacpp": "GPU-5090", "llamacpp-embed": "GPU-1070",
     }
+
+
+# --- HTTP guard tests for POST /gpu/assign ---
+
+@pytest.fixture
+def http_client(monkeypatch):
+    """Return a TestClient for ops_main.app with a known token set."""
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(ops_main, "OPS_CONTROLLER_TOKEN", "testtok")
+    return TestClient(ops_main.app, raise_server_exceptions=False)
+
+
+_VALID_UUID = "GPU-12345678-1234-1234-1234-123456789abc"
+_AUTH = {"Authorization": "Bearer testtok"}
+
+
+def test_gpu_assign_rejects_non_allowlisted_service(http_client):
+    """Service not in GPU_ASSIGNABLE_SERVICES → 400."""
+    resp = http_client.post(
+        "/gpu/assign",
+        json={"service": "open-webui", "gpu_uuid": _VALID_UUID, "confirm": True},
+        headers=_AUTH,
+    )
+    assert resp.status_code == 400
+    assert "not GPU-assignable" in resp.json()["detail"]
+
+
+def test_gpu_assign_rejects_missing_confirm(http_client):
+    """confirm omitted (defaults False) → 400."""
+    resp = http_client.post(
+        "/gpu/assign",
+        json={"service": "llamacpp", "gpu_uuid": _VALID_UUID},
+        headers=_AUTH,
+    )
+    assert resp.status_code == 400
+    assert "confirm" in resp.json()["detail"].lower()
+
+
+def test_gpu_assign_rejects_bad_uuid(http_client):
+    """Malformed gpu_uuid → 400."""
+    resp = http_client.post(
+        "/gpu/assign",
+        json={"service": "llamacpp", "gpu_uuid": "GPU-notauuid", "confirm": True},
+        headers=_AUTH,
+    )
+    assert resp.status_code == 400
+    assert "UUID" in resp.json()["detail"]

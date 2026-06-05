@@ -43,7 +43,7 @@ class GpuAssignRequest(BaseModel):
     confirm: bool = False
 
 
-def register(app, ops_request, gguf_dir):
+def register(app, ops_request):
     """Wire routes onto `app`. `ops_request` is dashboard.app._ops_request."""
 
     @router.get("/api/gpu/list")
