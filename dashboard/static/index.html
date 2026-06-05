@@ -1475,6 +1475,15 @@
     </section>
     </div>
 
+    <div class="tab-panel" data-tab="gpu">
+      <section id="gpu-section">
+        <h2>GPU</h2>
+        <p class="section-desc">Live per-GPU stats and which service runs on which GPU. Reassigning recreates the service (brief downtime).</p>
+        <div id="gpu-unreachable" class="status-summary" style="display:none;color:var(--danger)"></div>
+        <div class="services" id="gpu-cards"></div>
+      </section>
+    </div>
+
   </div>
 
   <div class="toast-container" id="toasts" role="region" aria-label="Notifications" aria-live="polite"></div>
@@ -1996,6 +2005,54 @@
       } catch (err) {
         wrap.innerHTML = '<div class="empty">Could not load dependencies. <span class="hint">Check that the dashboard API is up.</span></div>';
       }
+    }
+
+    const GPU_SERVICES = ["llamacpp", "llamacpp-embed", "comfyui"];
+    async function loadGpuTab() {
+      const wrap = document.getElementById("gpu-cards");
+      const unreach = document.getElementById("gpu-unreachable");
+      if (!wrap) return;
+      try {
+        const r = await api("/api/gpu/list");
+        const data = await r.json();
+        if (!data.reachable) {
+          unreach.style.display = "";
+          unreach.textContent = "⚠ No GPU visible to the container runtime (WSL passthrough may be down). Try: wsl --shutdown + restart Docker.";
+          wrap.innerHTML = "";
+          return;
+        }
+        unreach.style.display = "none";
+        const assigns = data.assignments || {};
+        const cards = (data.gpus || []).map(g => {
+          const pct = g.vram_total_gb ? Math.round(100 * g.vram_used_gb / g.vram_total_gb) : 0;
+          return `<div class="service-card"><div><strong>${escapeHtml(g.name)}</strong> <span class="badge badge-muted">#${g.index}</span></div>
+            <div>VRAM ${g.vram_used_gb} / ${g.vram_total_gb} GB (${pct}%) · ${g.utilization_pct}% util · ${g.temp_c}°C</div></div>`;
+        }).join("");
+        const selectors = GPU_SERVICES.map(svc => {
+          const cur = assigns[svc] || "";
+          const opts = (data.gpus || []).map(g =>
+            `<option value="${escapeHtml(g.uuid)}"${g.uuid === cur ? " selected" : ""}>${escapeHtml(g.name)} (${g.vram_total_gb} GB)</option>`).join("");
+          return `<div class="service-card"><label><strong>${escapeHtml(svc)}</strong> &rarr; <select data-svc="${escapeHtml(svc)}">${opts}</select></label></div>`;
+        }).join("");
+        wrap.innerHTML = cards + selectors;
+        wrap.querySelectorAll("select[data-svc]").forEach(s =>
+          s.addEventListener("change", () => assignGpu(s.dataset.svc, s.value)));
+      } catch (e) {
+        unreach.style.display = ""; unreach.textContent = "Failed to load GPU data: " + e;
+      }
+    }
+    async function assignGpu(service, gpu_uuid) {
+      if (!confirm(`Reassign ${service} to this GPU? This recreates the container (brief downtime).`)) { loadGpuTab(); return; }
+      try {
+        const r = await api("/api/gpu/assign", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ service, gpu_uuid, confirm: true })
+        });
+        const d = await r.json();
+        if (!r.ok) alert("Assignment failed: " + (d.error || JSON.stringify(d.result || d)));
+      } catch (e) { alert("Assignment error: " + e); }
+      loadGpuTab();
     }
 
     function buildOllamaDropdown(filter = '') {
