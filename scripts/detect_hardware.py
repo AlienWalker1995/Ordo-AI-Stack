@@ -203,6 +203,8 @@ def detect_nvidia() -> bool:
 
 def parse_gpu_query(csv_text: str) -> list[dict]:
     """Parse `nvidia-smi --query-gpu=uuid,name,memory.total --format=csv,noheader,nounits`.
+    The name field may itself contain commas (CSV is not quote-escaped), so the first
+    field is the UUID, the last is memory MiB, and everything between is the name.
     Returns GPUs sorted by total VRAM descending (biggest first)."""
     gpus: list[dict] = []
     for line in csv_text.strip().splitlines():
@@ -210,10 +212,11 @@ def parse_gpu_query(csv_text: str) -> list[dict]:
         if len(parts) < 3 or not parts[0]:
             continue
         try:
-            total = int(parts[2])
+            total = int(parts[-1])
         except ValueError:
             continue
-        gpus.append({"uuid": parts[0], "name": parts[1], "memory_total_mib": total})
+        name = ", ".join(parts[1:-1])
+        gpus.append({"uuid": parts[0], "name": name, "memory_total_mib": total})
     gpus.sort(key=lambda g: g["memory_total_mib"], reverse=True)
     return gpus
 
@@ -319,11 +322,12 @@ def ensure_comfyui_cli_args_in_env(env_path: Path, mode: str) -> None:
     print(f"  Appended COMFYUI_CLI_ARGS to {env_path}")
 
 
-def update_env(env_path: Path, mode: str, sep: str) -> None:
+def update_env(env_path: Path, mode: str, sep: str, gpu_assignments: bool = False) -> None:
     """Write COMPOSE_FILE and COMPUTE_MODE into .env, handling commented-out lines.
-    For nvidia mode, append overrides/gpu-assignments.yml (UUID GPU pinning)."""
+    For nvidia mode, append overrides/gpu-assignments.yml only when gpu_assignments=True
+    (i.e. the file was actually written)."""
     parts = ["docker-compose.yml", "overrides/compute.yml"]
-    if mode == "nvidia":
+    if mode == "nvidia" and gpu_assignments:
         parts.append("overrides/gpu-assignments.yml")
     new_compose_file = "COMPOSE_FILE=" + sep.join(parts)
     new_compute_mode = f"COMPUTE_MODE={mode}"
@@ -591,12 +595,14 @@ def main() -> int:
     print("Compute override:")
     print(f"  Wrote {override_path}")
 
+    ga_written = False
     if mode == "nvidia":
         gpus = enumerate_gpus()
         assignments = build_gpu_assignments(gpus)
         if assignments:
             ga_path = base / "overrides" / "gpu-assignments.yml"
             ga_path.write_text(format_gpu_assignments(assignments), encoding="utf-8")
+            ga_written = True
             print(f"  Wrote {ga_path}")
             for svc, uuid in assignments.items():
                 name = next((g["name"] for g in gpus if g["uuid"] == uuid), uuid)
@@ -607,15 +613,16 @@ def main() -> int:
     # Update .env with COMPOSE_FILE and COMPUTE_MODE
     sep = ";" if platform.system() == "Windows" else ":"
     if env_path.exists():
-        update_env(env_path, mode, sep)
+        update_env(env_path, mode, sep, gpu_assignments=ga_written)
         ensure_comfyui_cli_args_in_env(env_path, mode)
     else:
         env_compute = base / ".env.compute"
         gpu_cli = ""
         if mode in ("nvidia", "amd", "intel"):
             gpu_cli = "COMFYUI_CLI_ARGS=--disable-xformers --normalvram --enable-manager\n"
+        ga_suffix = f"{sep}overrides/gpu-assignments.yml" if mode == "nvidia" and ga_written else ""
         env_compute.write_text(
-            f"# Auto-generated\nCOMPUTE_MODE={mode}\nCOMPOSE_FILE=docker-compose.yml{sep}overrides/compute.yml\n{gpu_cli}",
+            f"# Auto-generated\nCOMPUTE_MODE={mode}\nCOMPOSE_FILE=docker-compose.yml{sep}overrides/compute.yml{ga_suffix}\n{gpu_cli}",
             encoding="utf-8",
         )
         print(f"  Wrote {env_compute} (create .env from .env.example, then re-run)")

@@ -65,7 +65,7 @@ def test_nvidia_compute_override_has_no_gpu_compute_reservations():
 def test_update_env_appends_gpu_assignments_after_compute(tmp_path):
     env = tmp_path / ".env"
     env.write_text("FOO=bar\n", encoding="utf-8")
-    detect_hardware.update_env(env, mode="nvidia", sep=";")
+    detect_hardware.update_env(env, mode="nvidia", sep=";", gpu_assignments=True)
     content = env.read_text(encoding="utf-8")
     assert "COMPOSE_FILE=docker-compose.yml;overrides/compute.yml;overrides/gpu-assignments.yml" in content
 
@@ -77,3 +77,21 @@ def test_update_env_no_gpu_assignments_for_cpu(tmp_path):
     content = env.read_text(encoding="utf-8")
     assert "gpu-assignments.yml" not in content
     assert "COMPOSE_FILE=docker-compose.yml:overrides/compute.yml" in content
+
+
+def test_update_env_nvidia_without_assignments_omits_file(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("FOO=bar\n", encoding="utf-8")
+    detect_hardware.update_env(env, mode="nvidia", sep=";", gpu_assignments=False)
+    content = env.read_text(encoding="utf-8")
+    assert "gpu-assignments.yml" not in content
+    assert "COMPOSE_FILE=docker-compose.yml;overrides/compute.yml" in content
+
+
+def test_parse_gpu_query_handles_comma_in_name():
+    csv = "GPU-x, NVIDIA RTX, Special Edition, 16384\n"
+    gpus = detect_hardware.parse_gpu_query(csv)
+    assert len(gpus) == 1
+    assert gpus[0]["uuid"] == "GPU-x"
+    assert gpus[0]["name"] == "NVIDIA RTX, Special Edition"
+    assert gpus[0]["memory_total_mib"] == 16384
