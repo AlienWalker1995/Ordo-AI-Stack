@@ -45,13 +45,20 @@
         reverse_proxy n8n:5678
     }
 
-    # ---- legacy URL redirects (no auth needed — they redirect, then the
+    # ---- canonical Open WebUI path (no auth needed — redirect, then the
     # destination goes through forward_auth on the next request) ----
-    # `/chat/*` is the retired Open WebUI mount (see the Open WebUI block
-    # below for history). Bookmarked /chat/ links would otherwise 404 because
-    # Open WebUI at root has no `/chat` route. Permanent redirect to root.
-    redir /chat / permanent
-    redir /chat/* / permanent
+    # Open WebUI is the canonical chat UI and lives at /chat. Bare root and a
+    # bare /chat (no trailing slash) redirect to /chat/ so the prefix-stripped
+    # mount in the route block below matches. Open WebUI's SPA still emits
+    # root-absolute assets (/_app, /static, /api, /ws); those are served by the
+    # root catch-all reverse_proxy at the bottom of the route block, so a fresh
+    # /chat/ load resolves all assets.
+    # NOTE: the upstream v0.9.2 image is a prebuilt SvelteKit SPA with base="",
+    # so in-app client navigation may normalize the visible URL back toward / —
+    # /chat is the canonical entry/deep-link path, not a guaranteed-sticky
+    # address bar (accepted trade-off vs. a custom base=/chat build).
+    redir / /chat/ 302
+    redir /chat /chat/ 302
 
     # ---- everything else: forward_auth + then route to upstream ----
     # `route` (vs `handle`) keeps directives in source order and lets the
@@ -94,17 +101,21 @@
             reverse_proxy comfyui:8188
         }
 
-        # ---- Open WebUI claims the root namespace ----
+        # ---- Open WebUI mounted at /chat (prefix stripped) ----
+        # /chat/* → open-webui with the /chat prefix removed, so the upstream
+        # sees /, /c/<id>, /models, etc. This is the canonical chat path.
+        handle_path /chat/* {
+            reverse_proxy open-webui:8080
+        }
+
+        # ---- root catch-all: Open WebUI assets + any unprefixed route ----
         # Open WebUI is a SvelteKit SPA built with base="" (no subpath
-        # support), so its HTML emits absolute paths like /_app/*, /static/*,
-        # /api/*, /manifest.json, plus client-side routes like /chats/<id>,
-        # /c/<id>, /models, etc. Hosting it under a prefix (the old
-        # `handle_path /chat/*`) broke every fresh-cache load because Caddy
-        # had no route for those root-relative assets. All other apps in this
-        # stack are properly prefix-aware (dashboard at /dash/, hermes at
-        # /hermes/, n8n at /n8n/, comfyui at /comfy/), so giving Open WebUI
-        # the root catch-all is the cleanest fix. The old /chat/ bookmark is
-        # retired — users hit `/` directly.
+        # support), so it emits absolute paths like /_app/*, /static/*,
+        # /api/*, /ws, /manifest.json. The /chat/* mount above strips its
+        # prefix, so those assets are requested at root and resolved here.
+        # Bare / is redirected to /chat/ in the bypass block above. All other
+        # apps are properly prefix-aware (dashboard /dash/, hermes /hermes/,
+        # n8n /n8n/, comfy /comfy/); only Open WebUI needs this root fallback.
         handle {
             reverse_proxy open-webui:8080
         }
