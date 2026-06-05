@@ -1215,6 +1215,7 @@
 
 
 
+    <div class="tab-panel" data-tab="services">
     <section id="services-section">
       <h2>Services</h2>
       <p class="section-desc">Click a service to open it. MCP Gateway provides shared tools for Open WebUI, N8N, and Cursor.</p>
@@ -1224,47 +1225,6 @@
         <div class="skeleton skeleton-line" style="height:52px;width:100%;"></div>
         <div class="skeleton skeleton-line" style="height:52px;width:100%;"></div>
       </div>
-      <details class="mcp-howto" open>
-        <summary>MCP Gateway — Deploy tools</summary>
-        <div class="mcp-howto-content">
-          <div class="mcp-section">
-            <div class="mcp-section-label">Enabled tools <span id="mcp-gateway-status" class="badge badge-muted" title="Gateway status">—</span></div>
-            <div class="mcp-enabled-chips" id="mcp-enabled-chips">
-              <span class="mcp-empty-hint" id="mcp-empty-hint">None — add from catalog or paste a URL below</span>
-            </div>
-          </div>
-          <div id="mcp-dynamic-row" class="mcp-section" style="display:none;">
-            <div class="mcp-section-label">Add from catalog</div>
-            <div class="mcp-add-row">
-              <select id="mcp-add-select">
-                <option value="">Choose a tool...</option>
-              </select>
-              <button type="button" id="mcp-add-btn">Add</button>
-            </div>
-            <div class="mcp-section-label" style="margin-top:var(--space-4);">Or add by URL or name</div>
-            <div class="mcp-add-row">
-              <input type="text" id="mcp-custom-input" placeholder="Paste Docker Hub URL or server name (e.g. hugging-face)" aria-label="Custom MCP server name or Docker Hub URL" style="flex:1;min-width:200px;">
-              <button type="button" id="mcp-add-custom-btn" class="secondary">Add</button>
-            </div>
-          </div>
-          <div id="mcp-static-row" class="mcp-section" style="display:none;">
-            <p><strong>Add tool:</strong> Run from repo root — <code id="mcp-add-cmd">./scripts/mcp_add.sh fetch</code> <button type="button" class="btn-copy" id="mcp-add-copy" title="Copy add command" aria-label="Copy add command">Copy</button></p>
-            <p><strong>Remove:</strong> <code id="mcp-remove-cmd">./scripts/mcp_remove.sh fetch</code> <button type="button" class="btn-copy" id="mcp-remove-copy" title="Copy remove command" aria-label="Copy remove command">Copy</button></p>
-            <div class="mcp-add-row">
-              <select id="mcp-add-select-static">
-                <option value="">Choose a tool...</option>
-              </select>
-              <button type="button" id="mcp-add-btn-static" class="secondary">Copy add command</button>
-            </div>
-            <p style="margin-top:var(--space-2);font-size:var(--text-sm);color:var(--fg-muted);">Or run from repo root: <code>./scripts/mcp_add.sh &lt;server-name&gt;</code> — use any name from <a href="https://hub.docker.com/mcp" target="_blank" rel="noopener">Docker MCP Catalog</a></p>
-          </div>
-          <div class="mcp-section" style="margin-top:var(--space-6);padding-top:var(--space-4);border-top:1px solid var(--border-subtle);">
-            <div class="mcp-section-label">Connect</div>
-            <p>Open WebUI → Admin Settings → External Tools → MCP (Streamable HTTP) → <code class="mcp-ext-url">http://localhost:8811/mcp</code>. N8N: MCP Client Tool node → <code>http://mcp-gateway:8811/mcp</code>. Cursor/Claude: <code class="mcp-ext-url">http://localhost:8811/mcp</code>.</p>
-            <p><a href="https://hub.docker.com/mcp" target="_blank" rel="noopener">Browse 200+ tools in Docker MCP Catalog ↗</a></p>
-          </div>
-        </div>
-      </details>
     </section>
 
     <section id="dependencies-section">
@@ -1384,7 +1344,56 @@
         </div>
       </div>
     </section>
+    </div>
 
+    <div class="tab-panel" data-tab="mcp">
+      <section id="mcp-section">
+        <h2>MCP Gateway</h2>
+        <details class="mcp-howto" open>
+          <summary>MCP Gateway — Deploy tools</summary>
+          <div class="mcp-howto-content">
+            <div class="mcp-section">
+              <div class="mcp-section-label">Enabled tools <span id="mcp-gateway-status" class="badge badge-muted" title="Gateway status">—</span></div>
+              <div class="mcp-enabled-chips" id="mcp-enabled-chips">
+                <span class="mcp-empty-hint" id="mcp-empty-hint">None — add from catalog or paste a URL below</span>
+              </div>
+            </div>
+            <div id="mcp-dynamic-row" class="mcp-section" style="display:none;">
+              <div class="mcp-section-label">Add from catalog</div>
+              <div class="mcp-add-row">
+                <select id="mcp-add-select">
+                  <option value="">Choose a tool...</option>
+                </select>
+                <button type="button" id="mcp-add-btn">Add</button>
+              </div>
+              <div class="mcp-section-label" style="margin-top:var(--space-4);">Or add by URL or name</div>
+              <div class="mcp-add-row">
+                <input type="text" id="mcp-custom-input" placeholder="Paste Docker Hub URL or server name (e.g. hugging-face)" aria-label="Custom MCP server name or Docker Hub URL" style="flex:1;min-width:200px;">
+                <button type="button" id="mcp-add-custom-btn" class="secondary">Add</button>
+              </div>
+            </div>
+            <div id="mcp-static-row" class="mcp-section" style="display:none;">
+              <p><strong>Add tool:</strong> Run from repo root — <code id="mcp-add-cmd">./scripts/mcp_add.sh fetch</code> <button type="button" class="btn-copy" id="mcp-add-copy" title="Copy add command" aria-label="Copy add command">Copy</button></p>
+              <p><strong>Remove:</strong> <code id="mcp-remove-cmd">./scripts/mcp_remove.sh fetch</code> <button type="button" class="btn-copy" id="mcp-remove-copy" title="Copy remove command" aria-label="Copy remove command">Copy</button></p>
+              <div class="mcp-add-row">
+                <select id="mcp-add-select-static">
+                  <option value="">Choose a tool...</option>
+                </select>
+                <button type="button" id="mcp-add-btn-static" class="secondary">Copy add command</button>
+              </div>
+              <p style="margin-top:var(--space-2);font-size:var(--text-sm);color:var(--fg-muted);">Or run from repo root: <code>./scripts/mcp_add.sh &lt;server-name&gt;</code> — use any name from <a href="https://hub.docker.com/mcp" target="_blank" rel="noopener">Docker MCP Catalog</a></p>
+            </div>
+            <div class="mcp-section" style="margin-top:var(--space-6);padding-top:var(--space-4);border-top:1px solid var(--border-subtle);">
+              <div class="mcp-section-label">Connect</div>
+              <p>Open WebUI → Admin Settings → External Tools → MCP (Streamable HTTP) → <code class="mcp-ext-url">http://localhost:8811/mcp</code>. N8N: MCP Client Tool node → <code>http://mcp-gateway:8811/mcp</code>. Cursor/Claude: <code class="mcp-ext-url">http://localhost:8811/mcp</code>.</p>
+              <p><a href="https://hub.docker.com/mcp" target="_blank" rel="noopener">Browse 200+ tools in Docker MCP Catalog ↗</a></p>
+            </div>
+          </div>
+        </details>
+      </section>
+    </div>
+
+    <div class="tab-panel" data-tab="models">
     <section id="models-section">
       <h2>Model Hub</h2>
       <p class="section-desc">Download from Hugging Face or any URL. GGUF pulls go to llama.cpp, diffusion files go to ComfyUI.</p>
@@ -1464,6 +1473,7 @@
         </div>
       </div>
     </section>
+    </div>
 
   </div>
 
