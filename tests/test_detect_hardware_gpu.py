@@ -51,7 +51,7 @@ def test_format_gpu_assignments_emits_device_ids_yaml():
 
 def test_nvidia_compute_override_has_no_gpu_compute_reservations():
     overrides = detect_hardware.build_overrides(
-        mode="nvidia", llamacpp_mem="100G", comfyui_mem="42G",
+        llamacpp_mem="100G", comfyui_mem="42G",
         embed_mem="6G", common_sidecars={},
     )
     text = detect_hardware.format_override(overrides["nvidia"])

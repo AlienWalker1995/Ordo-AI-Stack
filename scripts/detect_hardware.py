@@ -343,7 +343,6 @@ def update_env(env_path: Path, mode: str, sep: str) -> None:
 
 def build_overrides(
     *,
-    mode: str,
     llamacpp_mem: str,
     comfyui_mem: str,
     embed_mem: str,
@@ -579,7 +578,6 @@ def main() -> int:
         "qdrant": {"mem_limit": qdrant_mem, "cpus": qdrant_cpus},
     }
     overrides = build_overrides(
-        mode=mode,
         llamacpp_mem=llamacpp_mem,
         comfyui_mem=comfyui_mem,
         embed_mem=embed_mem,
