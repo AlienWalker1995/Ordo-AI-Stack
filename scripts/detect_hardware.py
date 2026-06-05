@@ -201,6 +201,35 @@ def detect_nvidia() -> bool:
     return code == 0 and bool(out)
 
 
+def parse_gpu_query(csv_text: str) -> list[dict]:
+    """Parse `nvidia-smi --query-gpu=uuid,name,memory.total --format=csv,noheader,nounits`.
+    Returns GPUs sorted by total VRAM descending (biggest first)."""
+    gpus: list[dict] = []
+    for line in csv_text.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 3 or not parts[0]:
+            continue
+        try:
+            total = int(parts[2])
+        except ValueError:
+            continue
+        gpus.append({"uuid": parts[0], "name": parts[1], "memory_total_mib": total})
+    gpus.sort(key=lambda g: g["memory_total_mib"], reverse=True)
+    return gpus
+
+
+def enumerate_gpus() -> list[dict]:
+    """Query all NVIDIA GPUs, ranked biggest-VRAM-first. Empty list if none/none-readable."""
+    code, out = run([
+        "nvidia-smi",
+        "--query-gpu=uuid,name,memory.total",
+        "--format=csv,noheader,nounits",
+    ])
+    if code != 0:
+        return []
+    return parse_gpu_query(out)
+
+
 def detect_amd() -> bool:
     """Check for AMD GPU (ROCm)."""
     if platform.system() != "Linux":
