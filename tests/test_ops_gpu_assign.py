@@ -48,3 +48,24 @@ def test_parse_gpu_assignments_yaml_empty():
 def test_render_gpu_assignments_roundtrip():
     m = {"llamacpp": "GPU-5090", "comfyui": "GPU-1070"}
     assert ops_main.parse_gpu_assignments_yaml(ops_main.render_gpu_assignments(m)) == m
+
+
+def test_apply_gpu_assignment_updates_one_service(tmp_path, monkeypatch):
+    path = tmp_path / "gpu-assignments.yml"
+    path.write_text(ops_main.render_gpu_assignments(
+        {"llamacpp": "GPU-5090", "comfyui": "GPU-5090"}), encoding="utf-8")
+    monkeypatch.setattr(ops_main, "GPU_ASSIGNMENTS_PATH", path)
+    ops_main.apply_gpu_assignment("comfyui", "GPU-1070")
+    assert ops_main.parse_gpu_assignments_yaml(path.read_text()) == {
+        "llamacpp": "GPU-5090", "comfyui": "GPU-1070",
+    }
+
+
+def test_apply_gpu_assignment_adds_missing_service(tmp_path, monkeypatch):
+    path = tmp_path / "gpu-assignments.yml"
+    path.write_text(ops_main.render_gpu_assignments({"llamacpp": "GPU-5090"}), encoding="utf-8")
+    monkeypatch.setattr(ops_main, "GPU_ASSIGNMENTS_PATH", path)
+    ops_main.apply_gpu_assignment("llamacpp-embed", "GPU-1070")
+    assert ops_main.parse_gpu_assignments_yaml(path.read_text()) == {
+        "llamacpp": "GPU-5090", "llamacpp-embed": "GPU-1070",
+    }

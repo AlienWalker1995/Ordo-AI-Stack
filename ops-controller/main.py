@@ -110,6 +110,25 @@ def render_gpu_assignments(assignments: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+class GpuAssignBody(BaseModel):
+    service: str
+    gpu_uuid: str
+    confirm: bool = False
+
+
+def apply_gpu_assignment(service: str, gpu_uuid: str) -> dict:
+    """Read current assignments, set service->gpu_uuid, write atomically. Returns new map."""
+    current = {}
+    if GPU_ASSIGNMENTS_PATH.exists():
+        current = parse_gpu_assignments_yaml(GPU_ASSIGNMENTS_PATH.read_text(encoding="utf-8"))
+    current[service] = gpu_uuid
+    GPU_ASSIGNMENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = GPU_ASSIGNMENTS_PATH.with_suffix(".tmp")
+    tmp.write_text(render_gpu_assignments(current), encoding="utf-8")
+    os.replace(str(tmp), str(GPU_ASSIGNMENTS_PATH))
+    return current
+
+
 # Model download (ComfyUI files)
 COMFYUI_MODELS_DIR = Path(os.environ.get("COMFYUI_MODELS_DIR", "/models/comfyui"))
 # Same layout as docker-compose: ${BASE_PATH}/data/comfyui-storage → comfyui /root
@@ -909,6 +928,32 @@ async def gpu_assignments(_: None = Depends(verify_token)):
     if not GPU_ASSIGNMENTS_PATH.exists():
         return {"assignments": {}}
     return {"assignments": parse_gpu_assignments_yaml(GPU_ASSIGNMENTS_PATH.read_text(encoding="utf-8"))}
+
+
+@app.post("/gpu/assign")
+async def gpu_assign(body: GpuAssignBody, request: Request, _: None = Depends(verify_token)):
+    """Pin a GPU service to a specific GPU UUID, then recreate it so the pin takes effect."""
+    if body.service not in GPU_ASSIGNABLE_SERVICES:
+        raise HTTPException(status_code=400, detail=f"Service {body.service} not GPU-assignable")
+    if not re.fullmatch(r"GPU-[0-9a-fA-F-]{6,}", body.gpu_uuid):
+        raise HTTPException(status_code=400, detail="Invalid GPU UUID format")
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+    apply_gpu_assignment(body.service, body.gpu_uuid)
+    _audit("gpu_assign", body.service, "ok", body.gpu_uuid, correlation_id=_correlation_id(request))
+    compose_files = [f.strip() for f in COMPOSE_FILE_ENV.split(";") if f.strip()]
+    cmd = ["docker-compose"]
+    for cf in compose_files:
+        cmd += ["-f", f"/workspace/{cf}"]
+    cmd += ["up", "-d", "--no-deps", body.service]
+    env = {**os.environ, "BASE_PATH": BASE_PATH}
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd="/workspace", env=env, timeout=120)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Service recreate timed out after 120 seconds")
+    if result.returncode != 0:
+        raise HTTPException(status_code=500, detail=(result.stderr or result.stdout)[:500])
+    return {"ok": True, "service": body.service, "gpu_uuid": body.gpu_uuid, "action": "reassigned"}
 
 
 @app.get("/mcp/containers")
