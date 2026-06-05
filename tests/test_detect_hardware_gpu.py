@@ -47,3 +47,16 @@ def test_format_gpu_assignments_emits_device_ids_yaml():
     assert 'device_ids: ["GPU-5090uuid"]' in yaml
     assert "capabilities: ['gpu']" in yaml
     assert "count:" not in yaml
+
+
+def test_nvidia_compute_override_has_no_gpu_compute_reservations():
+    overrides = detect_hardware.build_overrides(
+        mode="nvidia", llamacpp_mem="100G", comfyui_mem="42G",
+        embed_mem="6G", common_sidecars={},
+    )
+    text = detect_hardware.format_override(overrides["nvidia"])
+    assert "device_ids" not in text
+    # The only remaining `driver: nvidia` line is the dashboard's utility-only
+    # reservation (NVML stats, no GPU compute). Compute services must have none.
+    assert text.count("driver: nvidia") <= 1
+    assert "mem_limit: 100G" in text  # mem limits still present
