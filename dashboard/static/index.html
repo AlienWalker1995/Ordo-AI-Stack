@@ -1153,6 +1153,14 @@
       html { scroll-behavior: auto; }
     }
 
+    /* ── Tabs ───────────────────────────────────────────── */
+    .tab-bar { display:flex; gap:var(--space-1); flex-wrap:wrap; margin:var(--space-4) 0 var(--space-3); border-bottom:1px solid var(--border); }
+    .tab-btn { background:transparent; border:none; color:var(--fg-muted); padding:var(--space-2) var(--space-4); font:inherit; font-weight:600; cursor:pointer; border-bottom:2px solid transparent; }
+    .tab-btn:hover { color:var(--fg); }
+    .tab-btn.active { color:var(--accent, #00c9ff); border-bottom-color:var(--accent, #00c9ff); }
+    .tab-panel { display:none; }
+    .tab-panel.active { display:block; }
+
   </style>
 </head>
 <body>
@@ -1162,12 +1170,12 @@
       <div class="header-brand">
         <h1>Ordo AI Stack Dashboard</h1>
         <p class="subtitle">Unified model management — LLM (GGUF), ComfyUI, and services</p>
-        <nav class="nav-anchors" aria-label="Page sections">
-          <a href="#services-section">⚡ Services</a>
-          <a href="#dependencies-section">🔗 Dependencies</a>
-          <a href="#rag-section">📚 RAG</a>
-          <a href="#throughput-section">📊 Telemetry</a>
-          <a href="#models-section">📦 Models</a>
+        <nav class="tab-bar" role="tablist" aria-label="Dashboard sections">
+          <button class="tab-btn" data-tab="models" role="tab">📦 Models</button>
+          <button class="tab-btn" data-tab="gpu" role="tab">🖥️ GPU</button>
+          <button class="tab-btn" data-tab="services" role="tab">⚡ Services</button>
+          <button class="tab-btn" data-tab="mcp" role="tab">🧩 MCP</button>
+          <button class="tab-btn" data-tab="orchestration" role="tab">🛠️ Orchestration</button>
         </nav>
       </div>
       <div class="header-actions">
@@ -3170,6 +3178,19 @@
       else { refreshComputePressure(); cpTimer = setInterval(refreshComputePressure, 3000); }
     });
     // ── End Compute Pressure ──────────────────────────────────
+
+    function activateTab(name) {
+      const tabs = ["models", "gpu", "services", "mcp", "orchestration"];
+      if (!tabs.includes(name)) name = "models";
+      document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+      document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.dataset.tab === name));
+      if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
+      if (name === "gpu" && typeof loadGpuTab === "function") loadGpuTab();
+      if (name === "orchestration" && typeof loadOrchestrationTab === "function") loadOrchestrationTab();
+    }
+    document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => activateTab(b.dataset.tab)));
+    window.addEventListener("hashchange", () => activateTab(location.hash.replace("#", "")));
+    activateTab(location.hash.replace("#", "") || "models");
 
     (async function init() {
       await loadAuthConfig();
