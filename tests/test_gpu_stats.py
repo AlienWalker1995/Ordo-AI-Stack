@@ -31,3 +31,17 @@ def test_parse_smi_gpus_comma_in_name():
 
 def test_parse_smi_gpus_empty():
     assert gpu_stats.parse_smi_gpus("") == []
+
+
+def test_biggest_gpu_picks_largest_total():
+    gpus = [
+        {"uuid": "a", "name": "small", "vram_total_gb": 8.6, "vram_total_mib": 8192,
+         "vram_used_gb": 0.5, "utilization_pct": 1, "temp_c": 40, "index": 0},
+        {"uuid": "b", "name": "big", "vram_total_gb": 34.2, "vram_total_mib": 32607,
+         "vram_used_gb": 21.4, "utilization_pct": 5, "temp_c": 45, "index": 1},
+    ]
+    assert gpu_stats.biggest(gpus)["uuid"] == "b"
+
+
+def test_biggest_gpu_empty_is_none():
+    assert gpu_stats.biggest([]) is None
