@@ -2105,6 +2105,11 @@ async def service_pressure():
     }
 
 
+# --- GPU routes ---
+
+from dashboard import routes_gpu as _routes_gpu
+_routes_gpu.register(app, _ops_request, _GGUF_MODELS_DIR)
+
 # --- Static ---
 
 static_dir = Path(__file__).parent / "static"
