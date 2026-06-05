@@ -320,23 +320,23 @@ def ensure_comfyui_cli_args_in_env(env_path: Path, mode: str) -> None:
 
 
 def update_env(env_path: Path, mode: str, sep: str) -> None:
-    """Write COMPUTE_MODE and COMPOSE_FILE into .env, handling commented-out lines."""
-    new_compose_file = f"COMPOSE_FILE=docker-compose.yml{sep}overrides/compute.yml"
+    """Write COMPOSE_FILE and COMPUTE_MODE into .env, handling commented-out lines.
+    For nvidia mode, append overrides/gpu-assignments.yml (UUID GPU pinning)."""
+    parts = ["docker-compose.yml", "overrides/compute.yml"]
+    if mode == "nvidia":
+        parts.append("overrides/gpu-assignments.yml")
+    new_compose_file = "COMPOSE_FILE=" + sep.join(parts)
     new_compute_mode = f"COMPUTE_MODE={mode}"
 
     content = env_path.read_text(encoding="utf-8")
-
-    # Replace whether the line is active or commented out (e.g. "# COMPOSE_FILE=...")
     if re.search(r"^#?\s*COMPOSE_FILE=", content, re.MULTILINE):
         content = re.sub(r"^#?\s*COMPOSE_FILE=.*", new_compose_file, content, flags=re.MULTILINE)
     else:
         content = content.rstrip() + "\n" + new_compose_file + "\n"
-
     if re.search(r"^#?\s*COMPUTE_MODE=", content, re.MULTILINE):
         content = re.sub(r"^#?\s*COMPUTE_MODE=.*", new_compute_mode, content, flags=re.MULTILINE)
     else:
         content = content.rstrip() + "\n" + new_compute_mode + "\n"
-
     env_path.write_text(content, encoding="utf-8")
     print(f"  Updated {env_path} (COMPOSE_FILE, COMPUTE_MODE)")
 
@@ -590,6 +590,19 @@ def main() -> int:
     override_path.write_text(override_content, encoding="utf-8")
     print("Compute override:")
     print(f"  Wrote {override_path}")
+
+    if mode == "nvidia":
+        gpus = enumerate_gpus()
+        assignments = build_gpu_assignments(gpus)
+        if assignments:
+            ga_path = base / "overrides" / "gpu-assignments.yml"
+            ga_path.write_text(format_gpu_assignments(assignments), encoding="utf-8")
+            print(f"  Wrote {ga_path}")
+            for svc, uuid in assignments.items():
+                name = next((g["name"] for g in gpus if g["uuid"] == uuid), uuid)
+                print(f"    {svc} -> {name} ({uuid})")
+        else:
+            print("  No NVIDIA GPUs enumerable; skipping gpu-assignments.yml")
 
     # Update .env with COMPOSE_FILE and COMPUTE_MODE
     sep = ";" if platform.system() == "Windows" else ":"

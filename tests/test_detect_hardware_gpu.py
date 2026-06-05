@@ -60,3 +60,20 @@ def test_nvidia_compute_override_has_no_gpu_compute_reservations():
     # reservation (NVML stats, no GPU compute). Compute services must have none.
     assert text.count("driver: nvidia") <= 1
     assert "mem_limit: 100G" in text  # mem limits still present
+
+
+def test_update_env_appends_gpu_assignments_after_compute(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("FOO=bar\n", encoding="utf-8")
+    detect_hardware.update_env(env, mode="nvidia", sep=";")
+    content = env.read_text(encoding="utf-8")
+    assert "COMPOSE_FILE=docker-compose.yml;overrides/compute.yml;overrides/gpu-assignments.yml" in content
+
+
+def test_update_env_no_gpu_assignments_for_cpu(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("FOO=bar\n", encoding="utf-8")
+    detect_hardware.update_env(env, mode="cpu", sep=":")
+    content = env.read_text(encoding="utf-8")
+    assert "gpu-assignments.yml" not in content
+    assert "COMPOSE_FILE=docker-compose.yml:overrides/compute.yml" in content
