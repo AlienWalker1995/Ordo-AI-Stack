@@ -1484,6 +1484,15 @@
       </section>
     </div>
 
+    <div class="tab-panel" data-tab="orchestration">
+      <section id="orchestration-section">
+        <h2>Orchestration</h2>
+        <p class="section-desc">Workflow readiness and recent jobs.</p>
+        <div id="orch-readiness" class="status-summary"></div>
+        <div id="orch-jobs"></div>
+      </section>
+    </div>
+
   </div>
 
   <div class="toast-container" id="toasts" role="region" aria-label="Notifications" aria-live="polite"></div>
@@ -2053,6 +2062,25 @@
         if (!r.ok) alert("Assignment failed: " + (d.error || JSON.stringify(d.result || d)));
       } catch (e) { alert("Assignment error: " + e); }
       loadGpuTab();
+    }
+
+    async function loadOrchestrationTab() {
+      const rd = document.getElementById("orch-readiness");
+      const jobsEl = document.getElementById("orch-jobs");
+      if (!rd || !jobsEl) return;
+      try {
+        const r = await api("/api/orchestration/readiness");
+        const ready = await r.json();
+        rd.textContent = "Readiness: " + (ready.ok ? "✅ ready" : "⚠ not ready") + (ready.detail ? " — " + ready.detail : "");
+      } catch (e) { rd.textContent = "Readiness unavailable: " + e; }
+      try {
+        const r = await api("/api/orchestration/jobs");
+        const data = await r.json();
+        const list = Array.isArray(data) ? data : (data.jobs || []);
+        jobsEl.innerHTML = "<h3>Recent jobs</h3>" + (list.length
+          ? list.slice(0, 20).map(j => `<div class="service-card">${escapeHtml(String(j.job_id || "?"))} — ${escapeHtml(String(j.state || "?"))}</div>`).join("")
+          : "<p class='section-desc'>No jobs.</p>");
+      } catch (e) { jobsEl.textContent = "Jobs unavailable: " + e; }
     }
 
     function buildOllamaDropdown(filter = '') {
