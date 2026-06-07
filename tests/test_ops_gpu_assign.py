@@ -52,6 +52,14 @@ def test_render_gpu_assignments_roundtrip():
     assert ops_main.parse_gpu_assignments_yaml(ops_main.render_gpu_assignments(m)) == m
 
 
+def test_render_gpu_assignments_emits_cuda_visible_devices():
+    # WSL2/Docker Desktop ignores device_ids isolation; CUDA_VISIBLE_DEVICES
+    # is what actually pins each service to its assigned GPU.
+    text = ops_main.render_gpu_assignments({"comfyui": "GPU-1070"})
+    assert "CUDA_VISIBLE_DEVICES=GPU-1070" in text
+    assert "NVIDIA_VISIBLE_DEVICES=GPU-1070" in text
+
+
 def test_apply_gpu_assignment_updates_one_service(tmp_path, monkeypatch):
     path = tmp_path / "gpu-assignments.yml"
     path.write_text(ops_main.render_gpu_assignments(
