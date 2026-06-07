@@ -1153,6 +1153,14 @@
       html { scroll-behavior: auto; }
     }
 
+    /* ── Tabs ───────────────────────────────────────────── */
+    .tab-bar { display:flex; gap:var(--space-1); flex-wrap:wrap; margin:var(--space-4) 0 var(--space-3); border-bottom:1px solid var(--border); }
+    .tab-btn { background:transparent; border:none; color:var(--fg-muted); padding:var(--space-2) var(--space-4); font:inherit; font-weight:600; cursor:pointer; border-bottom:2px solid transparent; }
+    .tab-btn:hover { color:var(--fg); }
+    .tab-btn.active { color:var(--accent, #00c9ff); border-bottom-color:var(--accent, #00c9ff); }
+    .tab-panel { display:none; }
+    .tab-panel.active { display:block; }
+
   </style>
 </head>
 <body>
@@ -1162,12 +1170,12 @@
       <div class="header-brand">
         <h1>Ordo AI Stack Dashboard</h1>
         <p class="subtitle">Unified model management — LLM (GGUF), ComfyUI, and services</p>
-        <nav class="nav-anchors" aria-label="Page sections">
-          <a href="#services-section">⚡ Services</a>
-          <a href="#dependencies-section">🔗 Dependencies</a>
-          <a href="#rag-section">📚 RAG</a>
-          <a href="#throughput-section">📊 Telemetry</a>
-          <a href="#models-section">📦 Models</a>
+        <nav class="tab-bar" role="tablist" aria-label="Dashboard sections">
+          <button class="tab-btn" data-tab="models" role="tab">📦 Models</button>
+          <button class="tab-btn" data-tab="gpu" role="tab">🖥️ GPU</button>
+          <button class="tab-btn" data-tab="services" role="tab">⚡ Services</button>
+          <button class="tab-btn" data-tab="mcp" role="tab">🧩 MCP</button>
+          <button class="tab-btn" data-tab="orchestration" role="tab">🛠️ Orchestration</button>
         </nav>
       </div>
       <div class="header-actions">
@@ -1207,6 +1215,7 @@
 
 
 
+    <div class="tab-panel" data-tab="services">
     <section id="services-section">
       <h2>Services</h2>
       <p class="section-desc">Click a service to open it. MCP Gateway provides shared tools for Open WebUI, N8N, and Cursor.</p>
@@ -1216,47 +1225,6 @@
         <div class="skeleton skeleton-line" style="height:52px;width:100%;"></div>
         <div class="skeleton skeleton-line" style="height:52px;width:100%;"></div>
       </div>
-      <details class="mcp-howto" open>
-        <summary>MCP Gateway — Deploy tools</summary>
-        <div class="mcp-howto-content">
-          <div class="mcp-section">
-            <div class="mcp-section-label">Enabled tools <span id="mcp-gateway-status" class="badge badge-muted" title="Gateway status">—</span></div>
-            <div class="mcp-enabled-chips" id="mcp-enabled-chips">
-              <span class="mcp-empty-hint" id="mcp-empty-hint">None — add from catalog or paste a URL below</span>
-            </div>
-          </div>
-          <div id="mcp-dynamic-row" class="mcp-section" style="display:none;">
-            <div class="mcp-section-label">Add from catalog</div>
-            <div class="mcp-add-row">
-              <select id="mcp-add-select">
-                <option value="">Choose a tool...</option>
-              </select>
-              <button type="button" id="mcp-add-btn">Add</button>
-            </div>
-            <div class="mcp-section-label" style="margin-top:var(--space-4);">Or add by URL or name</div>
-            <div class="mcp-add-row">
-              <input type="text" id="mcp-custom-input" placeholder="Paste Docker Hub URL or server name (e.g. hugging-face)" aria-label="Custom MCP server name or Docker Hub URL" style="flex:1;min-width:200px;">
-              <button type="button" id="mcp-add-custom-btn" class="secondary">Add</button>
-            </div>
-          </div>
-          <div id="mcp-static-row" class="mcp-section" style="display:none;">
-            <p><strong>Add tool:</strong> Run from repo root — <code id="mcp-add-cmd">./scripts/mcp_add.sh fetch</code> <button type="button" class="btn-copy" id="mcp-add-copy" title="Copy add command" aria-label="Copy add command">Copy</button></p>
-            <p><strong>Remove:</strong> <code id="mcp-remove-cmd">./scripts/mcp_remove.sh fetch</code> <button type="button" class="btn-copy" id="mcp-remove-copy" title="Copy remove command" aria-label="Copy remove command">Copy</button></p>
-            <div class="mcp-add-row">
-              <select id="mcp-add-select-static">
-                <option value="">Choose a tool...</option>
-              </select>
-              <button type="button" id="mcp-add-btn-static" class="secondary">Copy add command</button>
-            </div>
-            <p style="margin-top:var(--space-2);font-size:var(--text-sm);color:var(--fg-muted);">Or run from repo root: <code>./scripts/mcp_add.sh &lt;server-name&gt;</code> — use any name from <a href="https://hub.docker.com/mcp" target="_blank" rel="noopener">Docker MCP Catalog</a></p>
-          </div>
-          <div class="mcp-section" style="margin-top:var(--space-6);padding-top:var(--space-4);border-top:1px solid var(--border-subtle);">
-            <div class="mcp-section-label">Connect</div>
-            <p>Open WebUI → Admin Settings → External Tools → MCP (Streamable HTTP) → <code class="mcp-ext-url">http://localhost:8811/mcp</code>. N8N: MCP Client Tool node → <code>http://mcp-gateway:8811/mcp</code>. Cursor/Claude: <code class="mcp-ext-url">http://localhost:8811/mcp</code>.</p>
-            <p><a href="https://hub.docker.com/mcp" target="_blank" rel="noopener">Browse 200+ tools in Docker MCP Catalog ↗</a></p>
-          </div>
-        </div>
-      </details>
     </section>
 
     <section id="dependencies-section">
@@ -1376,7 +1344,56 @@
         </div>
       </div>
     </section>
+    </div>
 
+    <div class="tab-panel" data-tab="mcp">
+      <section id="mcp-section">
+        <h2>MCP Gateway</h2>
+        <details class="mcp-howto" open>
+          <summary>MCP Gateway — Deploy tools</summary>
+          <div class="mcp-howto-content">
+            <div class="mcp-section">
+              <div class="mcp-section-label">Enabled tools <span id="mcp-gateway-status" class="badge badge-muted" title="Gateway status">—</span></div>
+              <div class="mcp-enabled-chips" id="mcp-enabled-chips">
+                <span class="mcp-empty-hint" id="mcp-empty-hint">None — add from catalog or paste a URL below</span>
+              </div>
+            </div>
+            <div id="mcp-dynamic-row" class="mcp-section" style="display:none;">
+              <div class="mcp-section-label">Add from catalog</div>
+              <div class="mcp-add-row">
+                <select id="mcp-add-select">
+                  <option value="">Choose a tool...</option>
+                </select>
+                <button type="button" id="mcp-add-btn">Add</button>
+              </div>
+              <div class="mcp-section-label" style="margin-top:var(--space-4);">Or add by URL or name</div>
+              <div class="mcp-add-row">
+                <input type="text" id="mcp-custom-input" placeholder="Paste Docker Hub URL or server name (e.g. hugging-face)" aria-label="Custom MCP server name or Docker Hub URL" style="flex:1;min-width:200px;">
+                <button type="button" id="mcp-add-custom-btn" class="secondary">Add</button>
+              </div>
+            </div>
+            <div id="mcp-static-row" class="mcp-section" style="display:none;">
+              <p><strong>Add tool:</strong> Run from repo root — <code id="mcp-add-cmd">./scripts/mcp_add.sh fetch</code> <button type="button" class="btn-copy" id="mcp-add-copy" title="Copy add command" aria-label="Copy add command">Copy</button></p>
+              <p><strong>Remove:</strong> <code id="mcp-remove-cmd">./scripts/mcp_remove.sh fetch</code> <button type="button" class="btn-copy" id="mcp-remove-copy" title="Copy remove command" aria-label="Copy remove command">Copy</button></p>
+              <div class="mcp-add-row">
+                <select id="mcp-add-select-static">
+                  <option value="">Choose a tool...</option>
+                </select>
+                <button type="button" id="mcp-add-btn-static" class="secondary">Copy add command</button>
+              </div>
+              <p style="margin-top:var(--space-2);font-size:var(--text-sm);color:var(--fg-muted);">Or run from repo root: <code>./scripts/mcp_add.sh &lt;server-name&gt;</code> — use any name from <a href="https://hub.docker.com/mcp" target="_blank" rel="noopener">Docker MCP Catalog</a></p>
+            </div>
+            <div class="mcp-section" style="margin-top:var(--space-6);padding-top:var(--space-4);border-top:1px solid var(--border-subtle);">
+              <div class="mcp-section-label">Connect</div>
+              <p>Open WebUI → Admin Settings → External Tools → MCP (Streamable HTTP) → <code class="mcp-ext-url">http://localhost:8811/mcp</code>. N8N: MCP Client Tool node → <code>http://mcp-gateway:8811/mcp</code>. Cursor/Claude: <code class="mcp-ext-url">http://localhost:8811/mcp</code>.</p>
+              <p><a href="https://hub.docker.com/mcp" target="_blank" rel="noopener">Browse 200+ tools in Docker MCP Catalog ↗</a></p>
+            </div>
+          </div>
+        </details>
+      </section>
+    </div>
+
+    <div class="tab-panel" data-tab="models">
     <section id="models-section">
       <h2>Model Hub</h2>
       <p class="section-desc">Download from Hugging Face or any URL. GGUF pulls go to llama.cpp, diffusion files go to ComfyUI.</p>
@@ -1456,6 +1473,25 @@
         </div>
       </div>
     </section>
+    </div>
+
+    <div class="tab-panel" data-tab="gpu">
+      <section id="gpu-section">
+        <h2>GPU</h2>
+        <p class="section-desc">Live per-GPU stats and which service runs on which GPU. Reassigning recreates the service (brief downtime).</p>
+        <div id="gpu-unreachable" class="status-summary" style="display:none;color:var(--danger)"></div>
+        <div class="services" id="gpu-cards"></div>
+      </section>
+    </div>
+
+    <div class="tab-panel" data-tab="orchestration">
+      <section id="orchestration-section">
+        <h2>Orchestration</h2>
+        <p class="section-desc">Workflow readiness and recent jobs.</p>
+        <div id="orch-readiness" class="status-summary"></div>
+        <div id="orch-jobs"></div>
+      </section>
+    </div>
 
   </div>
 
@@ -1978,6 +2014,73 @@
       } catch (err) {
         wrap.innerHTML = '<div class="empty">Could not load dependencies. <span class="hint">Check that the dashboard API is up.</span></div>';
       }
+    }
+
+    const GPU_SERVICES = ["llamacpp", "llamacpp-embed", "comfyui"];
+    async function loadGpuTab() {
+      const wrap = document.getElementById("gpu-cards");
+      const unreach = document.getElementById("gpu-unreachable");
+      if (!wrap) return;
+      try {
+        const r = await api("/api/gpu/list");
+        const data = await r.json();
+        if (!data.reachable) {
+          unreach.style.display = "";
+          unreach.textContent = "⚠ No GPU visible to the container runtime (WSL passthrough may be down). Try: wsl --shutdown + restart Docker.";
+          wrap.innerHTML = "";
+          return;
+        }
+        unreach.style.display = "none";
+        const assigns = data.assignments || {};
+        const cards = (data.gpus || []).map(g => {
+          const pct = g.vram_total_gb ? Math.round(100 * g.vram_used_gb / g.vram_total_gb) : 0;
+          return `<div class="service-card"><div><strong>${escapeHtml(g.name)}</strong> <span class="badge badge-muted">#${escapeHtml(String(g.index))}</span></div>
+            <div>VRAM ${escapeHtml(String(g.vram_used_gb))} / ${escapeHtml(String(g.vram_total_gb))} GB (${pct}%) · ${escapeHtml(String(g.utilization_pct))}% util · ${escapeHtml(String(g.temp_c))}°C</div></div>`;
+        }).join("");
+        const selectors = GPU_SERVICES.map(svc => {
+          const cur = assigns[svc] || "";
+          const opts = (data.gpus || []).map(g =>
+            `<option value="${escapeHtml(g.uuid)}"${g.uuid === cur ? " selected" : ""}>${escapeHtml(g.name)} (${g.vram_total_gb} GB)</option>`).join("");
+          return `<div class="service-card"><label><strong>${escapeHtml(svc)}</strong> &rarr; <select data-svc="${escapeHtml(svc)}">${opts}</select></label></div>`;
+        }).join("");
+        wrap.innerHTML = cards + selectors;
+        wrap.querySelectorAll("select[data-svc]").forEach(s =>
+          s.addEventListener("change", () => assignGpu(s.dataset.svc, s.value)));
+      } catch (e) {
+        unreach.style.display = ""; unreach.textContent = "Failed to load GPU data: " + e;
+      }
+    }
+    async function assignGpu(service, gpu_uuid) {
+      if (!confirm(`Reassign ${service} to this GPU? This recreates the container (brief downtime).`)) return;
+      try {
+        const r = await api("/api/gpu/assign", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ service, gpu_uuid, confirm: true })
+        });
+        const d = await r.json();
+        if (!r.ok) alert("Assignment failed: " + (d.error || JSON.stringify(d.result || d)));
+      } catch (e) { alert("Assignment error: " + e); }
+      loadGpuTab();
+    }
+
+    async function loadOrchestrationTab() {
+      const rd = document.getElementById("orch-readiness");
+      const jobsEl = document.getElementById("orch-jobs");
+      if (!rd || !jobsEl) return;
+      try {
+        const r = await api("/api/orchestration/readiness");
+        const ready = await r.json();
+        rd.textContent = "Readiness: " + (ready.ok ? "✅ ready" : "⚠ not ready") + (ready.detail ? " — " + ready.detail : "");
+      } catch (e) { rd.textContent = "Readiness unavailable: " + e; }
+      try {
+        const r = await api("/api/orchestration/jobs");
+        const data = await r.json();
+        const list = Array.isArray(data) ? data : (data.jobs || []);
+        jobsEl.innerHTML = "<h3>Recent jobs</h3>" + (list.length
+          ? list.slice(0, 20).map(j => `<div class="service-card">${escapeHtml(String(j.job_id || "?"))} — ${escapeHtml(String(j.state || "?"))}</div>`).join("")
+          : "<p class='section-desc'>No jobs.</p>");
+      } catch (e) { jobsEl.textContent = "Jobs unavailable: " + e; }
     }
 
     function buildOllamaDropdown(filter = '') {
@@ -3170,6 +3273,27 @@
       else { refreshComputePressure(); cpTimer = setInterval(refreshComputePressure, 3000); }
     });
     // ── End Compute Pressure ──────────────────────────────────
+
+    function activateTab(name) {
+      const tabs = ["models", "gpu", "services", "mcp", "orchestration"];
+      if (!tabs.includes(name)) name = "models";
+      document.querySelectorAll(".tab-btn").forEach(b => {
+        const on = b.dataset.tab === name;
+        b.classList.toggle("active", on);
+        b.setAttribute("aria-selected", on ? "true" : "false");
+      });
+      document.querySelectorAll(".tab-panel").forEach(p => {
+        const on = p.dataset.tab === name;
+        p.classList.toggle("active", on);
+        p.setAttribute("aria-hidden", on ? "false" : "true");
+      });
+      if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
+      if (name === "gpu" && typeof loadGpuTab === "function") loadGpuTab();
+      if (name === "orchestration" && typeof loadOrchestrationTab === "function") loadOrchestrationTab();
+    }
+    document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => activateTab(b.dataset.tab)));
+    window.addEventListener("hashchange", () => activateTab(location.hash.replace("#", "")));
+    activateTab(location.hash.replace("#", "") || "models");
 
     (async function init() {
       await loadAuthConfig();
