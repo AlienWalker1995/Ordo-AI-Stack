@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format is loosely b
 
 ## [Unreleased]
 
+### Fixed
+- **ComfyUI restart storm hardened (status verb + server-side debounce).** During a failed reel cron, Hermes tried to recover ComfyUI by hammering guessed paths `POST /api/comfyui/restart` and `GET /api/comfyui/status` against both ops-controller (404) and the dashboard (401), ~every 3s for ~2 min — it had no canonical *status* verb so it improvised raw HTTP. Two fixes: (1) ops-controller `POST /services/{id}/restart` now **debounces** rapid repeats per-service (`OPS_RESTART_DEBOUNCE_SECONDS`, default 20) so a retry-loop collapses into one in-flight restart instead of stacking `docker restart` calls; (2) a new ComfyUI-**independent** health verb — dashboard `GET /api/orchestration/comfyui/status` + orchestration-MCP `comfyui_status` tool — that reports container state + render-queue reachability by querying the dashboard→ops control plane (which stays up when ComfyUI is down), so the agent checks status via a real tool instead of guessing. The `restart_comfyui` tool docstring now points agents at `comfyui_status` rather than tight-looping.
+
 ### Changed
 - **ComfyUI custom-node deps auto-install on container start.** The `comfyui` service's command shim now loops `pip install -r requirements.txt` over each `/root/ComfyUI/custom_nodes/*/` before exec'ing `/runner-scripts/entrypoint.sh`. Previously a manual `pip install` after recreate was required because the deps live on the container's writable layer (e.g. `juno-comfyui-nodes` needs `faster-whisper`, `edge-tts`, `soundfile` for caption rendering — every recreate wiped those). Idempotent: warm-cache restarts skip already-satisfied specifiers; failures on individual `requirements.txt` files (e.g. `ACE-Step-1`) log `[deps] WARN failed` and continue. The pre-existing manual API at `POST /api/comfyui/install-node-requirements` is unchanged.
 
