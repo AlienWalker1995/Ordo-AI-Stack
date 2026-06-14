@@ -88,7 +88,7 @@ class ModelRegistry:
     }
 
     def derive_env(self, record: ModelRecord) -> dict[str, str]:
-        """Env keys this record implies when enabled. Empty for multi-model (comfyui)."""
+        """Env keys this record implies when enabled. Empty for multi-model (comfyui) and for any single-model service not in _MODEL_FILE_ENV."""
         if record.runtime != "single-model":
             return {}
         out: dict[str, str] = {}
@@ -112,37 +112,44 @@ class ModelRegistry:
         return (record.service, record.gpu_uuid)
 
     def reconcile(self) -> None:
-        """Seed/repair registry from authoritative files. Registry-owned fields
-        (est_vram_gb, updated_by/at, config overrides already set) are preserved;
-        observed file values fill gaps and update source/pin."""
+        """Seed the registry from authoritative files. SEED-ONLY semantics: the
+        registry is the source of intent, so a record that already exists is left
+        untouched (all its fields are operator/registry-owned). Observed file values
+        are used ONLY to create records that don't exist yet (first run). Operators
+        change models via the registry verbs, never by reconcile clobbering them."""
         env = _parse_env(self.env_path)
         pins: dict[str, Optional[str]] = {}
         if self.gpu_assignments_path.exists():
             pins = parse_gpu_assignments_yaml(
                 self.gpu_assignments_path.read_text(encoding="utf-8"))
         existing = self.list_models()
+
+        def _ctx(value):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
         seeds = [
             ("local-chat", "chat", "llamacpp", env.get("LLAMACPP_MODEL"),
-             {"ctx": int(env["LLAMACPP_CTX_SIZE"]) if env.get("LLAMACPP_CTX_SIZE") else None,
-              "mmproj": env.get("LLAMACPP_MMPROJ")}),
+             {"ctx": _ctx(env.get("LLAMACPP_CTX_SIZE")), "mmproj": env.get("LLAMACPP_MMPROJ")}),
             ("local-embed", "embedding", "llamacpp-embed", env.get("LLAMACPP_EMBED_MODEL"), {}),
             ("comfyui", "comfyui", "comfyui", None, {}),
         ]
         for mid, kind, service, model_file, cfg in seeds:
-            prev = existing.get(mid)
+            if mid in existing:
+                continue  # registry already owns this record — preserve operator intent
             runtime = "multi-model" if kind == "comfyui" else "single-model"
             cfg = {k: v for k, v in cfg.items() if v is not None}
-            rec = ModelRecord(
+            self.upsert(ModelRecord(
                 id=mid, kind=kind, service=service, runtime=runtime,
-                source={"file": model_file} if model_file else (prev.source if prev else {}),
-                gpu_uuid=pins.get(service, prev.gpu_uuid if prev else None),
-                enabled=True if runtime == "single-model" else (prev.enabled if prev else True),
-                config={**(prev.config if prev else {}), **cfg},
-                est_vram_gb=(prev.est_vram_gb if prev else 0.0),
-                updated_by=(prev.updated_by if prev else "reconcile"),
-                updated_at=(prev.updated_at if prev else None),
-            )
-            self.upsert(rec)
+                source={"file": model_file} if model_file else {},
+                gpu_uuid=pins.get(service),
+                enabled=True,
+                config=cfg,
+                est_vram_gb=0.0,
+                updated_by="reconcile",
+            ))
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +185,10 @@ def _parse_env(path: Path) -> dict[str, str]:
             continue
         if "=" in line:
             key, _, value = line.partition("=")
-            result[key.strip()] = value.strip()
+            v = value.strip()
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+                v = v[1:-1]
+            result[key.strip()] = v
     return result
 
 

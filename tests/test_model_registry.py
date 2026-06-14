@@ -86,6 +86,7 @@ def test_derive_gpu_assignment(tmp_path):
 def test_render_gpu_yaml_emits_both_layers(tmp_path):
     out = mr.render_gpu_assignments_yaml({"llamacpp": "GPU-abc", "comfyui": "GPU-def"})
     assert "CUDA_VISIBLE_DEVICES=GPU-abc" in out
+    assert "NVIDIA_VISIBLE_DEVICES=GPU-abc" in out
     assert "device_ids:" in out and "GPU-def" in out
     assert out.lstrip().startswith("services:")
 
@@ -130,3 +131,28 @@ def test_reconcile_is_idempotent_and_preserves_intent(tmp_path):
     rec = reg.get("local-chat"); rec.est_vram_gb = 22.0; reg.upsert(rec)
     reg.reconcile()
     assert reg.get("local-chat").est_vram_gb == 22.0
+
+
+def test_reconcile_preserves_operator_intent_on_existing(tmp_path):
+    (tmp_path / ".env").write_text("LLAMACPP_MODEL=qwen.gguf\nLLAMACPP_CTX_SIZE=131072\n")
+    reg = _reg(tmp_path)
+    reg.reconcile()
+    rec = reg.get("local-chat")
+    rec.config["ctx"] = 262144
+    rec.source["file"] = "operator-pick.gguf"
+    rec.gpu_uuid = "GPU-operator"
+    rec.enabled = False
+    reg.upsert(rec)
+    reg.reconcile()  # must NOT clobber any of the operator-set fields
+    after = reg.get("local-chat")
+    assert after.config["ctx"] == 262144
+    assert after.source["file"] == "operator-pick.gguf"
+    assert after.gpu_uuid == "GPU-operator"
+    assert after.enabled is False
+
+
+def test_reconcile_handles_quoted_env_values(tmp_path):
+    (tmp_path / ".env").write_text('LLAMACPP_MODEL="qwen.gguf"\n')
+    reg = _reg(tmp_path)
+    reg.reconcile()
+    assert reg.get("local-chat").source["file"] == "qwen.gguf"
