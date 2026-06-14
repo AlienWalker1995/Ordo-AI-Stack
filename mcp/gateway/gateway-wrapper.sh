@@ -14,8 +14,8 @@ RELOAD_DEBOUNCE_SEC="${MCP_GATEWAY_RELOAD_DEBOUNCE_SEC:-20}"
 # Bridge Docker secrets *_FILE pointers to plaintext env vars. The gateway
 # propagates these to spawned MCP-server containers that read the canonical
 # names directly (e.g. github MCP needs GITHUB_PERSONAL_ACCESS_TOKEN).
-# Tavily was retired 2026-05-12 in favour of the self-hosted SearXNG MCP
-# (services.searxng + registry-custom.yaml searxng entry); no API key needed.
+# Web search is the self-hosted SearXNG MCP (services.searxng +
+# registry-custom.yaml searxng entry); no external search API key is used.
 if [ -n "${GITHUB_PERSONAL_ACCESS_TOKEN_FILE:-}" ] && [ -f "$GITHUB_PERSONAL_ACCESS_TOKEN_FILE" ]; then
     GITHUB_PERSONAL_ACCESS_TOKEN="$(cat "$GITHUB_PERSONAL_ACCESS_TOKEN_FILE")"
     export GITHUB_PERSONAL_ACCESS_TOKEN
@@ -40,7 +40,7 @@ fi
 # Ensure config exists with default
 mkdir -p "$(dirname "$CONFIG_FILE")"
 if [ ! -f "$CONFIG_FILE" ]; then
-  echo "duckduckgo,n8n,searxng,comfyui,orchestration" > "$CONFIG_FILE"
+  echo "duckduckgo,n8n,searxng,comfyui,orchestration,playwright" > "$CONFIG_FILE"
 fi
 
 read_servers() {
@@ -48,7 +48,7 @@ read_servers() {
   if [ -z "$content" ] && [ -f "$REGISTRY_FILE" ] && command -v jq >/dev/null 2>&1; then
     content=$(jq -r '.servers | keys | join(",")' "$REGISTRY_FILE" 2>/dev/null)
   fi
-  printf '%s' "${content:-duckduckgo,n8n,searxng,comfyui,orchestration}"
+  printf '%s' "${content:-duckduckgo,n8n,searxng,comfyui,orchestration,playwright}"
 }
 
 resolve_registry_custom() {
@@ -104,7 +104,7 @@ graceful_restart() {
 
 start_gateway() {
   servers=$(read_servers)
-  servers=${servers:-duckduckgo,n8n,searxng,comfyui,orchestration}
+  servers=${servers:-duckduckgo,n8n,searxng,comfyui,orchestration,playwright}
   echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Starting gateway with servers: $servers"
   extra=""
   resolve_registry_custom

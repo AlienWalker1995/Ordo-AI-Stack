@@ -16,11 +16,11 @@
         "N8N_API_KEY": "optional"
       }
     },
-    "tavily": {
-      "image": "mcp/tavily",
-      "scopes": ["search", "web"],
+    "playwright": {
+      "image": "mcp/playwright@sha256:097d978439237cc9b12e10825836a97245add2be0479272cce9d98c368f024d1",
+      "scopes": ["browser", "web"],
       "allow_clients": ["*"],
-      "description": "Tavily API — tavily_search, tavily_extract, tavily_crawl, tavily_map, tavily_research (set TAVILY_API_KEY in .env)"
+      "description": "Playwright browser automation (browser_* tools) — headless Chromium navigation, snapshots, screenshots, form-fill, network inspection. Stack-pinned; default-on."
     },
     "comfyui": {
       "image": "ordo-ai-stack-comfyui-mcp:latest",

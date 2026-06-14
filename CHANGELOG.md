@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is loosely b
 
 ## [Unreleased]
 
+### Added
+- **Playwright registered as a stack-managed MCP server (default-on).** `mcp/gateway/registry-custom.yaml` now pins `playwright` (sha-pinned `mcp/playwright` image) and it is included in the default `MCP_GATEWAY_SERVERS` (`gateway-wrapper.sh`, `docker-compose.yml`, `.env.example`). Previously `playwright` was listed in `data/mcp/servers.txt` but had no local catalog entry, so the gateway resolved it from Docker's **unpinned online catalog** — non-reproducible and leaking orphan `mcp/playwright` containers across gateway reloads. Pinning it here makes the stack own the definition; Hermes keeps its `browser_*` tools. Note: this image exposes `browser_run_code_unsafe` (RCE-equivalent) — acceptable for the single trusted operator, restrict with `--caps` if exposed more widely.
+
+### Removed
+- **Retired Tavily scaffolding fully removed.** Tavily was replaced by self-hosted SearXNG on 2026-05-12 and the `secrets/tavily_key.sops` Docker secret was deleted in #38; this removes the remaining re-enable scaffolding so no Tavily API key can be wired back in by accident: the `tavily` block in `mcp/registry.json.example`, the `tavily_key.sops`/`TAVILY_API_KEY` references in `secrets/README.md`, `docs/runbooks/secrets.md`, `docs/configuration.md`, and the security/mcp-gateway PRD docs. The `tvly-` pattern in `scripts/secrets/audit-git-history.sh` is intentionally **kept** as a guard against accidental future key commits. (Upstream Hermes' own built-in Tavily web backend under `vendor/hermes-agent/` is untouched — the stack reaches search via the SearXNG MCP, not that backend.)
+
 ### Changed
 - **ComfyUI custom-node deps auto-install on container start.** The `comfyui` service's command shim now loops `pip install -r requirements.txt` over each `/root/ComfyUI/custom_nodes/*/` before exec'ing `/runner-scripts/entrypoint.sh`. Previously a manual `pip install` after recreate was required because the deps live on the container's writable layer (e.g. `juno-comfyui-nodes` needs `faster-whisper`, `edge-tts`, `soundfile` for caption rendering — every recreate wiped those). Idempotent: warm-cache restarts skip already-satisfied specifiers; failures on individual `requirements.txt` files (e.g. `ACE-Step-1`) log `[deps] WARN failed` and continue. The pre-existing manual API at `POST /api/comfyui/install-node-requirements` is unchanged.
 

@@ -23,7 +23,6 @@ Copy `.env.example` to `.env` and set at least `BASE_PATH`. Everything else has 
 | `DASHBOARD_AUTH_TOKEN` | *(empty)* | Optional Bearer auth on dashboard `/api/*` |
 | `HF_TOKEN` | *(empty)* | Hugging Face token for gated model downloads |
 | `GITHUB_PERSONAL_ACCESS_TOKEN` | *(empty)* | GitHub MCP server token; also passed to `comfyui` as `GITHUB_TOKEN` for Manager API |
-| `TAVILY_API_KEY` | *(empty)* | Required only if the optional `tavily` MCP server is re-enabled — Tavily was retired from the defaults in favor of the self-hosted [SearXNG](https://github.com/searxng/searxng) MCP server, which needs no API key |
 | `COMPUTE_MODE` | *(auto-detected)* | Override GPU type: `nvidia`, `amd`, `intel`, `cpu` |
 
 ### Hermes Agent
@@ -111,7 +110,7 @@ Repo templates live under `mcp/gateway/`; runtime files are in `data/mcp/` (bind
 
 Enabled servers are listed in `data/mcp/servers.txt` (one per line). Metadata, per-server `allow_clients`, and rate limits live in `data/mcp/registry.json`.
 
-Default servers: `duckduckgo`, `n8n`, `searxng`, `comfyui`, `orchestration` (the `searxng` server proxies the self-hosted SearXNG instance — no external API key). Override with `MCP_GATEWAY_SERVERS` in `.env`:
+Default servers: `duckduckgo`, `n8n`, `searxng`, `comfyui`, `orchestration`, `playwright` (the `searxng` server proxies the self-hosted SearXNG instance — no external API key; `playwright` is stack-pinned headless-Chromium browser automation). Override with `MCP_GATEWAY_SERVERS` in `.env`:
 
 ```
 MCP_GATEWAY_SERVERS=duckduckgo,github-official

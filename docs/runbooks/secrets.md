@@ -9,13 +9,10 @@
 - The runtime directory is **outside** `/workspace` and the
   `HERMES_HOST_DEV_MOUNT` bind-mount, so even a prompt-injected Hermes
   cannot `cat` the decrypted files.
-- High-value tokens (Discord, GitHub PAT, HF, Civitai, plus optional Tavily
-  if you re-enable it) are mounted into containers as **Docker secrets**
-  (files at `/run/secrets/<name>`), not env vars — so they don't appear in
-  `docker inspect`. Tavily is no longer a default MCP server: the stack
-  ships with self-hosted SearXNG for web search and only consumes
-  `TAVILY_API_KEY` when `tavily` is explicitly added to
-  `MCP_GATEWAY_SERVERS`.
+- High-value tokens (Discord, GitHub PAT, HF, Civitai) are mounted into
+  containers as **Docker secrets** (files at `/run/secrets/<name>`), not
+  env vars — so they don't appear in `docker inspect`. Web search is the
+  self-hosted SearXNG MCP, which needs no external API key.
 
 ## First-time setup
 
@@ -51,7 +48,7 @@ explicitly.
 After editing, restart the dependent service:
 ```
 docker compose restart hermes-gateway   # for Discord
-docker compose restart mcp-gateway      # for GitHub PAT, Tavily
+docker compose restart mcp-gateway      # for GitHub PAT
 docker compose restart ops-controller   # for HF
 ```
 
@@ -84,7 +81,6 @@ then re-encrypt the new value:
 | Discord bot | https://discord.com/developers/applications → bot → Reset Token |
 | GitHub PAT | https://github.com/settings/tokens (revoke + create) |
 | HuggingFace | https://huggingface.co/settings/tokens |
-| Tavily | https://app.tavily.com → Settings → API Keys |
 | Civitai | https://civitai.com/user/account → API Keys |
 
 Then on the host:

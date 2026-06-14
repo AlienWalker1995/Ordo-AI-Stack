@@ -36,6 +36,20 @@ registry:
         value: http://dashboard:8080
       - name: DASHBOARD_AUTH_TOKEN
         value: PLACEHOLDER_DASHBOARD_AUTH_TOKEN
+  playwright:
+    # Stack-managed Playwright (browser_* tools: navigate, snapshot, screenshot,
+    # form-fill, network inspection). Pinned here so the gateway resolves it from
+    # THIS catalog instead of Docker's unpinned online catalog — that keeps the
+    # image reproducible and stops orphan mcp/playwright containers from
+    # accumulating across gateway reloads. Image default CMD is
+    # `--headless --browser chromium --no-sandbox`, so no command override needed.
+    # SECURITY: this server exposes browser_run_code_unsafe (arbitrary JS in the
+    # Playwright process, RCE-equivalent). Acceptable for the single trusted
+    # operator; restrict with --caps if ever exposed more widely.
+    description: Playwright browser automation — headless Chromium for page navigation, accessibility snapshots, screenshots, form filling, and network inspection (browser_* tools). Stack-managed and pinned (no dependency on Docker's online catalog).
+    title: Playwright
+    type: server
+    image: mcp/playwright@sha256:097d978439237cc9b12e10825836a97245add2be0479272cce9d98c368f024d1
   n8n:
     description: "n8n workflow automation MCP - bridges the local n8n instance plus the full czlonkowski/n8n-mcp node and template catalog. Override of the upstream catalog spec to (1) propagate N8N_API_URL alongside N8N_API_KEY so the n8n_* instance-management tools are registered, and (2) silence the image's startup banner + INFO logs which otherwise pollute the stdio JSON-RPC channel and break the gateway's parser with 'invalid character' errors."
     title: n8n
