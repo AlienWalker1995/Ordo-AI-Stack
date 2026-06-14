@@ -300,8 +300,26 @@ def delete_schedule(schedule_id: str) -> dict:
 # ── ComfyUI ops ───────────────────────────────────────────────────────────────
 
 @mcp.tool()
+def comfyui_status() -> dict:
+    """Check whether ComfyUI is up (container state + render-queue reachability).
+
+    Use this to verify ComfyUI before/after restart_comfyui. It is ComfyUI-
+    INDEPENDENT — it goes through the dashboard→ops-controller control plane,
+    which stays reachable even when ComfyUI itself is down — so prefer it over
+    issuing raw HTTP to guessed paths like /api/comfyui/status.
+    Returns {service, container_state, queue, up}.
+    """
+    return _get("/api/orchestration/comfyui/status")
+
+
+@mcp.tool()
 def restart_comfyui(confirm: bool = False) -> dict:
-    """Restart ComfyUI via ops-controller (privileged). Set confirm=true to proceed."""
+    """Restart ComfyUI via ops-controller (privileged). Set confirm=true to proceed.
+
+    Repeated calls are debounced server-side (collapsed into one in-flight
+    restart), so a retry does not stack overlapping restarts. Poll comfyui_status
+    afterwards instead of re-calling this in a tight loop.
+    """
     if not confirm:
         return {"error": "Set confirm=true to restart the ComfyUI service."}
     return _post("/api/orchestration/comfyui/restart", {"confirm": True})

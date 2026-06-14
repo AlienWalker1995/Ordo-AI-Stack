@@ -852,6 +852,15 @@ async def service_stop(
     return {"ok": True, "service": service_id, "action": "stopped"}
 
 
+# Restart debounce: collapse rapid repeat restart requests for the SAME service
+# (e.g. an agent retry loop) into a single in-flight restart. Without this, a
+# few-seconds-apart hammer issues N overlapping `docker restart` calls and
+# thrashes the service. Tunable via OPS_RESTART_DEBOUNCE_SECONDS (0 disables).
+RESTART_DEBOUNCE_SECONDS = float(os.environ.get("OPS_RESTART_DEBOUNCE_SECONDS", "20"))
+_restart_lock = threading.Lock()
+_restart_state: dict[str, dict] = {}  # service_id -> {"inflight": bool, "ts": float}
+
+
 @app.post("/services/{service_id}/restart")
 async def service_restart(
     service_id: str, body: ConfirmBody, request: Request,
@@ -863,15 +872,36 @@ async def service_restart(
         return {"would": "restart", "service": service_id}
     if not body.confirm:
         raise HTTPException(status_code=400, detail="Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
-    containers = _containers_for_service(service_id)
-    if not containers:
-        raise HTTPException(status_code=404, detail=f"No container found for service {service_id}")
+    # Debounce rapid repeats so a retry-loop "storm" collapses into one restart.
+    now = time.monotonic()
+    with _restart_lock:
+        st = _restart_state.get(service_id) or {}
+        if st.get("inflight"):
+            _audit("restart", service_id, "debounced", "restart already in progress",
+                   correlation_id=_correlation_id(request))
+            return {"ok": True, "service": service_id, "action": "debounced",
+                    "detail": "restart already in progress"}
+        last_ts = st.get("ts", 0.0)
+        if RESTART_DEBOUNCE_SECONDS > 0 and last_ts and (now - last_ts) < RESTART_DEBOUNCE_SECONDS:
+            ago = now - last_ts
+            _audit("restart", service_id, "debounced", f"restarted {ago:.0f}s ago",
+                   correlation_id=_correlation_id(request))
+            return {"ok": True, "service": service_id, "action": "debounced",
+                    "detail": f"restarted {ago:.0f}s ago; within {RESTART_DEBOUNCE_SECONDS:.0f}s debounce window"}
+        _restart_state[service_id] = {"inflight": True, "ts": last_ts}
     errs = []
-    for c in containers:
-        try:
-            c.restart(timeout=30)
-        except Exception as e:
-            errs.append(str(e))
+    try:
+        containers = _containers_for_service(service_id)
+        if not containers:
+            raise HTTPException(status_code=404, detail=f"No container found for service {service_id}")
+        for c in containers:
+            try:
+                c.restart(timeout=30)
+            except Exception as e:
+                errs.append(str(e))
+    finally:
+        with _restart_lock:
+            _restart_state[service_id] = {"inflight": False, "ts": time.monotonic()}
     _audit(
         "restart", service_id, "error" if errs else "ok", "; ".join(errs) if errs else "",
         correlation_id=_correlation_id(request),
