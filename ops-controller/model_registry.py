@@ -80,3 +80,32 @@ class ModelRegistry:
         data = self._read()
         data.get("models", {}).pop(model_id, None)
         self._write(data)
+
+    _MODEL_FILE_ENV = {
+        "llamacpp": "LLAMACPP_MODEL",
+        "llamacpp-embed": "LLAMACPP_EMBED_MODEL",
+    }
+
+    def derive_env(self, record: ModelRecord) -> dict[str, str]:
+        """Env keys this record implies when enabled. Empty for multi-model (comfyui)."""
+        if record.runtime != "single-model":
+            return {}
+        out: dict[str, str] = {}
+        key = self._MODEL_FILE_ENV.get(record.service)
+        if key and record.source.get("file"):
+            out[key] = str(record.source["file"])
+        if record.service == "llamacpp":
+            cfg = record.config or {}
+            if cfg.get("ctx") is not None:
+                out["LLAMACPP_CTX_SIZE"] = str(cfg["ctx"])
+            if cfg.get("mmproj"):
+                out["LLAMACPP_MMPROJ"] = str(cfg["mmproj"])
+            if cfg.get("kv_cache_k"):
+                out["LLAMACPP_KV_CACHE_TYPE_K"] = str(cfg["kv_cache_k"])
+            if cfg.get("kv_cache_v"):
+                out["LLAMACPP_KV_CACHE_TYPE_V"] = str(cfg["kv_cache_v"])
+        return out
+
+    def derive_gpu_assignment(self, record: ModelRecord) -> tuple[str, Optional[str]]:
+        """(service, gpu_uuid) — the pin this record implies. uuid None = unassigned."""
+        return (record.service, record.gpu_uuid)

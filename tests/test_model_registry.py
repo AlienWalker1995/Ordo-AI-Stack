@@ -47,3 +47,33 @@ def test_delete_removes(tmp_path):
                               enabled=False, est_vram_gb=1.0))
     reg.delete("m1")
     assert reg.get("m1") is None
+
+
+# ---------------------------------------------------------------------------
+# Task 2: derive_env + derive_gpu_assignment
+# ---------------------------------------------------------------------------
+
+def test_derive_env_for_chat(tmp_path):
+    reg = _reg(tmp_path)
+    rec = mr.ModelRecord(id="local-chat", kind="chat", service="llamacpp",
+                         runtime="single-model", source={"file": "qwen.gguf"},
+                         enabled=True, config={"ctx": 131072, "mmproj": "mm.gguf"},
+                         est_vram_gb=20.0)
+    env = reg.derive_env(rec)
+    assert env["LLAMACPP_MODEL"] == "qwen.gguf"
+    assert env["LLAMACPP_CTX_SIZE"] == "131072"
+    assert env["LLAMACPP_MMPROJ"] == "mm.gguf"
+
+def test_derive_env_for_embedding(tmp_path):
+    reg = _reg(tmp_path)
+    rec = mr.ModelRecord(id="local-embed", kind="embedding", service="llamacpp-embed",
+                         runtime="single-model", source={"file": "nomic.gguf"},
+                         enabled=True, est_vram_gb=1.5)
+    assert reg.derive_env(rec) == {"LLAMACPP_EMBED_MODEL": "nomic.gguf"}
+
+def test_derive_gpu_assignment(tmp_path):
+    reg = _reg(tmp_path)
+    rec = mr.ModelRecord(id="local-chat", kind="chat", service="llamacpp",
+                         runtime="single-model", source={"file": "q.gguf"},
+                         gpu_uuid="GPU-abc", enabled=True, est_vram_gb=20.0)
+    assert reg.derive_gpu_assignment(rec) == ("llamacpp", "GPU-abc")
