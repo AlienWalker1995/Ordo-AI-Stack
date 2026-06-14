@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format is loosely b
 
 ## [Unreleased]
 
+### Fixed
+- **GitHub-monitor cron no longer blocked by invisible unicode.** `scripts/stack_monitor.py` fetches upstream GitHub release names and commit messages, which routinely embed zero-width / invisible "format" (Cf) characters — most often the ZWJ `U+200D` inside emoji sequences like 👨‍💻. When the JSON report was fed back into Hermes to format for Discord, that invisible unicode tripped the prompt-injection scanner and the whole daily cron failed (`Blocked: prompt contains invisible unicode U+200D`), every run. The monitor now strips all Cf-category characters from the entire output (recursively, both `--json` and human-readable) before emitting; visible text and emoji are unaffected (a ZWJ emoji renders as its component glyphs). Covered by `tests/test_stack_monitor_sanitize.py`.
+
 ### Changed
 - **ComfyUI custom-node deps auto-install on container start.** The `comfyui` service's command shim now loops `pip install -r requirements.txt` over each `/root/ComfyUI/custom_nodes/*/` before exec'ing `/runner-scripts/entrypoint.sh`. Previously a manual `pip install` after recreate was required because the deps live on the container's writable layer (e.g. `juno-comfyui-nodes` needs `faster-whisper`, `edge-tts`, `soundfile` for caption rendering — every recreate wiped those). Idempotent: warm-cache restarts skip already-satisfied specifiers; failures on individual `requirements.txt` files (e.g. `ACE-Step-1`) log `[deps] WARN failed` and continue. The pre-existing manual API at `POST /api/comfyui/install-node-requirements` is unchanged.
 
