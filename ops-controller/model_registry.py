@@ -32,9 +32,9 @@ class ModelRecord(BaseModel):
     updated_by: str = "system"
     updated_at: Optional[str] = None
 
-    model_config = {"arbitrary_types_allowed": True}
 
-
+# Force resolution of the module-level Literal aliases (Kind/Runtime) when this
+# file is loaded via importlib spec loading (tests + ops-controller's sibling import).
 ModelRecord.model_rebuild()
 
 
