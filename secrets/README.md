@@ -19,7 +19,6 @@ with the age private key at `~/.config/sops/age/keys.txt`.
 - `hf_token.sops` — HuggingFace token (gated model downloads). Mounted
   on `ops-controller`, `dashboard`, `gguf-puller`, and the comfyui
   model puller.
-- `tavily_key.sops` — Tavily search MCP key. Mounted on `mcp-gateway`.
 - `civitai_token.sops` — Civitai token (LoRA downloads). Mounted on
   the comfyui model puller.
 

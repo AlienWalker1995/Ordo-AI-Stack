@@ -6,7 +6,7 @@ The [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) lets AI app
 
 | Path | Role |
 |------|------|
-| **[gateway/](gateway/)** | Image entrypoint (`gateway-wrapper.sh`) and **template** `registry-custom.yaml` (catalog fragment registering **`searxng`**, **`comfyui`**, **`orchestration`**, and an override of upstream **`n8n`**). The wrapper injects secrets into **`registry-custom.docker.yaml`** and passes it as **`--additional-catalog`** (not **`--additional-registry`** — with **`--servers`**, registry files are not used for server definitions). `ensure_dirs` copies the template into **`data/mcp/`**. **`duckduckgo`** comes from the online catalog; web search is otherwise served by the self-hosted **`searxng`** server (Tavily was retired from defaults — see Secrets below for re-enable instructions). |
+| **[gateway/](gateway/)** | Image entrypoint (`gateway-wrapper.sh`) and **template** `registry-custom.yaml` (catalog fragment registering **`searxng`**, **`comfyui`**, **`orchestration`**, **`playwright`**, and an override of upstream **`n8n`**). The wrapper injects secrets into **`registry-custom.docker.yaml`** and passes it as **`--additional-catalog`** (not **`--additional-registry`** — with **`--servers`**, registry files are not used for server definitions). `ensure_dirs` copies the template into **`data/mcp/`**. **`duckduckgo`** comes from the online catalog; web search is served by the self-hosted **`searxng`** server (no external API key). |
 | **[docs/](docs/)** | MCP-specific architecture notes. |
 | **`Dockerfile`** | Builds `ordo-ai-stack-mcp-gateway` from `docker/mcp-gateway` + the wrapper above. |
 
@@ -59,6 +59,7 @@ The scripts update the config file and the gateway reloads automatically.
 | `searxng` | Private aggregated web search via the self-hosted **`searxng`** service (`services.searxng` in compose). No external API key. Replaced Tavily as the default web-research tool. |
 | `comfyui` | Image/audio/video via ComfyUI (custom registry). **`list_workflows`**, **`run_workflow`**, per-workflow tools, **`install_custom_node_requirements`**, **`restart_comfyui`**. Registry template: **`mcp/gateway/registry-custom.yaml`**; entrypoint: **`mcp/gateway/gateway-wrapper.sh`**. |
 | `orchestration` | Stable orchestration adapter (fixed verbs against the dashboard HTTP API, insulated from upstream gateway tool-name churn). |
+| `playwright` | Headless-Chromium browser automation — **`browser_navigate`**, **`browser_snapshot`**, **`browser_take_screenshot`**, **`browser_fill_form`**, network inspection, etc. Stack-pinned in **`mcp/gateway/registry-custom.yaml`** (sha-pinned image, not resolved from Docker's online catalog). ⚠️ exposes **`browser_run_code_unsafe`** (RCE-equivalent) — fine for the single trusted operator; restrict with `--caps` if exposed more widely. |
 
 ### Other catalog servers
 
@@ -102,9 +103,7 @@ See [n8n MCP Client Tool docs](https://docs.n8n.io/integrations/builtin/cluster-
 
 ## Secrets
 
-The default servers (`duckduckgo`, `n8n`, `searxng`, `comfyui`, `orchestration`) need no external API keys — `n8n`'s API key is supplied via Docker secrets from SOPS-encrypted material under `secrets/`.
-
-**Re-enabling Tavily (optional):** Tavily was retired from the defaults in favor of the self-hosted `searxng` server. To re-enable, add `tavily` to `MCP_GATEWAY_SERVERS`, get a key from [Tavily](https://app.tavily.com), and provide it via Docker secrets (`secrets/tavily_key.sops` + `TAVILY_API_KEY_FILE=/run/secrets/tavily_key`).
+The default servers (`duckduckgo`, `n8n`, `searxng`, `comfyui`, `orchestration`, `playwright`) need no external API keys — `n8n`'s API key is supplied via Docker secrets from SOPS-encrypted material under `secrets/`.
 
 Other MCP servers like `github-official` need API keys. Optionally use Docker secrets:
 

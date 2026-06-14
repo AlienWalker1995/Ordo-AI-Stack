@@ -296,8 +296,8 @@ services:
       - MCP_CONFIG_PATH=/mcp-config/servers.txt
       - MCP_GATEWAY_URL=http://mcp-gateway:8811
       # Must include comfyui so mcp-gateway loads ComfyUI tools (registry-custom.yaml). Matches data/mcp/servers.txt default.
-      # Tavily retired 2026-05-12 in favour of self-hosted searxng MCP (see services.searxng).
-      - MCP_GATEWAY_SERVERS=${MCP_GATEWAY_SERVERS:-duckduckgo,n8n,searxng,comfyui,orchestration}
+      # Web search is the self-hosted searxng MCP (see services.searxng). playwright is stack-pinned in registry-custom.yaml.
+      - MCP_GATEWAY_SERVERS=${MCP_GATEWAY_SERVERS:-duckduckgo,n8n,searxng,comfyui,orchestration,playwright}
       # Read-only: ComfyUI user workflows (host: data/comfyui-storage/ComfyUI/user/default/workflows)
       - COMFYUI_WORKFLOWS_DIR=/comfyui-workflows
       - OPS_CONTROLLER_URL=http://ops-controller:9000
