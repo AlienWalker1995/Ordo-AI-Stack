@@ -46,7 +46,6 @@
 | `OPS_CONTROLLER_TOKEN` | `.env` | Compose `environment:` | Required for ops-controller privileged API |
 | `DASHBOARD_AUTH_TOKEN` | `.env` | Compose `environment:` | Optional Bearer auth on dashboard `/api/*` |
 | `DISCORD_BOT_TOKEN` | `secrets/discord_token.sops` | Docker secret → hermes-gateway (`/run/secrets/discord_token`) | Optional, only when Discord channel is used |
-| `TAVILY_API_KEY` | `secrets/tavily_key.sops` | Docker secret → mcp-gateway (`/run/secrets/tavily_key`) | Optional; Tavily was retired from the default `MCP_GATEWAY_SERVERS` list in favor of self-hosted SearXNG |
 | `HF_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN` | `.env` | Compose `environment:` | Optional, for gated HF model pulls and GitHub MCP |
 
 ## SSRF Defenses (MCP)
