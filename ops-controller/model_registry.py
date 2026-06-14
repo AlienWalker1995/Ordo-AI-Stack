@@ -109,3 +109,43 @@ class ModelRegistry:
     def derive_gpu_assignment(self, record: ModelRecord) -> tuple[str, Optional[str]]:
         """(service, gpu_uuid) — the pin this record implies. uuid None = unassigned."""
         return (record.service, record.gpu_uuid)
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers (shared, no registry state needed)
+# ---------------------------------------------------------------------------
+
+def render_gpu_assignments_yaml(assignments: dict[str, str]) -> str:
+    """Canonical emitter — both CUDA_VISIBLE_DEVICES (WSL2-effective) and device_ids
+    (native-Linux). Replaces the duplicated format_gpu_assignments / render_gpu_assignments."""
+    lines = [
+        "services:",
+    ]
+    for service, uuid in assignments.items():
+        if not uuid:
+            continue
+        lines += [
+            f"  {service}:",
+            "    environment:",
+            f"      - CUDA_VISIBLE_DEVICES={uuid}",
+            f"      - NVIDIA_VISIBLE_DEVICES={uuid}",
+            "    deploy:",
+            "      resources:",
+            "        reservations:",
+            "          devices:",
+            "            - driver: nvidia",
+            f"              device_ids: ['{uuid}']",
+            "              capabilities: ['gpu']",
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def capacity_check(gpus: dict[str, dict], gpu_uuid: str,
+                   enabled_models: list[ModelRecord], candidate_gb: float
+                   ) -> tuple[bool, float, float]:
+    """Sum est VRAM of enabled models already on gpu_uuid + candidate vs total.
+    Returns (fits, used_gb, total_gb)."""
+    total = float(gpus.get(gpu_uuid, {}).get("total_gb", 0.0))
+    used = sum(m.est_vram_gb for m in enabled_models
+               if m.gpu_uuid == gpu_uuid and m.enabled)
+    return (used + candidate_gb <= total, used, total)

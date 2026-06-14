@@ -77,3 +77,28 @@ def test_derive_gpu_assignment(tmp_path):
                          runtime="single-model", source={"file": "q.gguf"},
                          gpu_uuid="GPU-abc", enabled=True, est_vram_gb=20.0)
     assert reg.derive_gpu_assignment(rec) == ("llamacpp", "GPU-abc")
+
+
+# ---------------------------------------------------------------------------
+# Task 3: render_gpu_assignments_yaml + capacity_check
+# ---------------------------------------------------------------------------
+
+def test_render_gpu_yaml_emits_both_layers(tmp_path):
+    out = mr.render_gpu_assignments_yaml({"llamacpp": "GPU-abc", "comfyui": "GPU-def"})
+    assert "CUDA_VISIBLE_DEVICES=GPU-abc" in out
+    assert "device_ids:" in out and "GPU-def" in out
+    assert out.lstrip().startswith("services:")
+
+def test_capacity_check_blocks_overcommit():
+    gpus = {"GPU-1": {"total_gb": 8.0}}
+    enabled = [
+        mr.ModelRecord(id="a", kind="stt", service="stt", runtime="single-model",
+                       source={}, gpu_uuid="GPU-1", enabled=True, est_vram_gb=5.0),
+    ]
+    ok, used, total = mr.capacity_check(gpus, "GPU-1", enabled, candidate_gb=4.0)
+    assert used == 5.0 and total == 8.0 and ok is False
+
+def test_capacity_check_allows_fit():
+    gpus = {"GPU-1": {"total_gb": 32.0}}
+    ok, used, total = mr.capacity_check(gpus, "GPU-1", [], candidate_gb=20.0)
+    assert ok is True and used == 0.0
