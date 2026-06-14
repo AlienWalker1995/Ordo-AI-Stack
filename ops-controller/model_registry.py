@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -110,10 +111,76 @@ class ModelRegistry:
         """(service, gpu_uuid) — the pin this record implies. uuid None = unassigned."""
         return (record.service, record.gpu_uuid)
 
+    def reconcile(self) -> None:
+        """Seed/repair registry from authoritative files. Registry-owned fields
+        (est_vram_gb, updated_by/at, config overrides already set) are preserved;
+        observed file values fill gaps and update source/pin."""
+        env = _parse_env(self.env_path)
+        pins: dict[str, Optional[str]] = {}
+        if self.gpu_assignments_path.exists():
+            pins = parse_gpu_assignments_yaml(
+                self.gpu_assignments_path.read_text(encoding="utf-8"))
+        existing = self.list_models()
+        seeds = [
+            ("local-chat", "chat", "llamacpp", env.get("LLAMACPP_MODEL"),
+             {"ctx": int(env["LLAMACPP_CTX_SIZE"]) if env.get("LLAMACPP_CTX_SIZE") else None,
+              "mmproj": env.get("LLAMACPP_MMPROJ")}),
+            ("local-embed", "embedding", "llamacpp-embed", env.get("LLAMACPP_EMBED_MODEL"), {}),
+            ("comfyui", "comfyui", "comfyui", None, {}),
+        ]
+        for mid, kind, service, model_file, cfg in seeds:
+            prev = existing.get(mid)
+            runtime = "multi-model" if kind == "comfyui" else "single-model"
+            cfg = {k: v for k, v in cfg.items() if v is not None}
+            rec = ModelRecord(
+                id=mid, kind=kind, service=service, runtime=runtime,
+                source={"file": model_file} if model_file else (prev.source if prev else {}),
+                gpu_uuid=pins.get(service, prev.gpu_uuid if prev else None),
+                enabled=True if runtime == "single-model" else (prev.enabled if prev else True),
+                config={**(prev.config if prev else {}), **cfg},
+                est_vram_gb=(prev.est_vram_gb if prev else 0.0),
+                updated_by=(prev.updated_by if prev else "reconcile"),
+                updated_at=(prev.updated_at if prev else None),
+            )
+            self.upsert(rec)
+
 
 # ---------------------------------------------------------------------------
 # Module-level helpers (shared, no registry state needed)
 # ---------------------------------------------------------------------------
+
+def parse_gpu_assignments_yaml(text: str) -> dict[str, str]:
+    """Parse the fixed-format gpu-assignments.yml into {service: uuid}.
+    Mirrors ops-controller/main.py parse_gpu_assignments_yaml but also handles
+    single-quoted UUIDs (both ' and " are accepted)."""
+    result: dict[str, str] = {}
+    current = None
+    for line in text.splitlines():
+        m = re.match(r"^  (\S+):\s*$", line)
+        if m:
+            current = m.group(1)
+            continue
+        m = re.search(r"device_ids:\s*\[['\"]([^'\"]+)['\"]\]", line)
+        if m and current:
+            result[current] = m.group(1)
+            current = None
+    return result
+
+
+def _parse_env(path: Path) -> dict[str, str]:
+    """Read a dotenv file, return {KEY: VALUE} for simple KEY=VALUE lines."""
+    result: dict[str, str] = {}
+    if not path.exists():
+        return result
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+            result[key.strip()] = value.strip()
+    return result
+
 
 def render_gpu_assignments_yaml(assignments: dict[str, str]) -> str:
     """Canonical emitter — both CUDA_VISIBLE_DEVICES (WSL2-effective) and device_ids

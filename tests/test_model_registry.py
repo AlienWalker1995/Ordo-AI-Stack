@@ -102,3 +102,31 @@ def test_capacity_check_allows_fit():
     gpus = {"GPU-1": {"total_gb": 32.0}}
     ok, used, total = mr.capacity_check(gpus, "GPU-1", [], candidate_gb=20.0)
     assert ok is True and used == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Task 4: reconcile from .env + gpu-assignments.yml
+# ---------------------------------------------------------------------------
+
+def test_reconcile_seeds_chat_and_embed(tmp_path):
+    (tmp_path / ".env").write_text(
+        "LLAMACPP_MODEL=qwen.gguf\nLLAMACPP_EMBED_MODEL=nomic.gguf\nLLAMACPP_CTX_SIZE=131072\n")
+    (tmp_path / "gpu-assignments.yml").write_text(
+        "services:\n  llamacpp:\n    deploy:\n      resources:\n        reservations:\n"
+        "          devices:\n            - device_ids: ['GPU-xyz']\n")
+    reg = _reg(tmp_path)
+    reg.reconcile()
+    models = reg.list_models()
+    assert models["local-chat"].source["file"] == "qwen.gguf"
+    assert models["local-chat"].gpu_uuid == "GPU-xyz"
+    assert models["local-chat"].config["ctx"] == 131072
+    assert models["local-embed"].source["file"] == "nomic.gguf"
+    assert models["local-chat"].enabled is True
+
+def test_reconcile_is_idempotent_and_preserves_intent(tmp_path):
+    (tmp_path / ".env").write_text("LLAMACPP_MODEL=qwen.gguf\n")
+    reg = _reg(tmp_path)
+    reg.reconcile()
+    rec = reg.get("local-chat"); rec.est_vram_gb = 22.0; reg.upsert(rec)
+    reg.reconcile()
+    assert reg.get("local-chat").est_vram_gb == 22.0
