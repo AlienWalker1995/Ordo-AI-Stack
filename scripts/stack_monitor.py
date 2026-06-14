@@ -19,8 +19,35 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
+
+
+def _strip_invisible(text: str) -> str:
+    """Remove zero-width / invisible Unicode 'format' (Cf) characters.
+
+    GitHub release names and commit messages routinely embed these — e.g. the
+    zero-width joiner U+200D inside emoji sequences like 👨‍💻, or a stray U+200B.
+    When this report is fed back into Hermes to format for Discord, that
+    invisible unicode trips the prompt-injection scanner and the whole daily
+    cron is blocked ("prompt contains invisible unicode U+200D"). Stripping Cf
+    characters keeps the report scanner-safe; visible text and emoji are
+    unaffected (a ZWJ emoji simply renders as its component glyphs).
+    """
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+
+
+def _scrub_invisible(obj):
+    """Recursively apply _strip_invisible to every string in a JSON-like value."""
+    if isinstance(obj, str):
+        return _strip_invisible(obj)
+    if isinstance(obj, dict):
+        return {k: _scrub_invisible(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_scrub_invisible(v) for v in obj]
+    return obj
+
 
 STACK_ROOT = Path(__file__).resolve().parent.parent
 COMPOSE = STACK_ROOT / "docker-compose.yml"
@@ -507,6 +534,12 @@ def main():
 
             # Create PR
             results["pr"] = create_git_branch_and_pr(applied)
+
+    # Strip invisible/zero-width unicode from all fetched text (release names,
+    # commit messages, etc.) before emitting. A ZWJ (U+200D) in an upstream
+    # title otherwise trips Hermes' prompt-injection scanner and blocks the
+    # daily GitHub-monitor cron.
+    results = _scrub_invisible(results)
 
     if args.json:
         print(json.dumps(results, indent=2))
