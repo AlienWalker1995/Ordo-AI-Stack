@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Added
+- **Voice STT/TTS services — opt-in `--profile voice` with secondary-GPU pinning.**
+  Adds two OpenAI-compatible local speech services: `stt` (`fedirz/faster-whisper-server:latest-cuda`,
+  `/v1/audio/transcriptions` at `http://stt:8000/v1`) and `tts` (`ghcr.io/remsky/kokoro-fastapi-gpu:latest`,
+  `/v1/audio/speech` at `http://tts:8880/v1`, default voice `af_bella`). Both services are
+  internal-only (no host ports, `backend` network), use `profiles: ["voice"]`, and default to
+  `STT_COMPUTE_TYPE=int8` for Pascal compatibility. `detect_hardware.py` assigns `stt`/`tts` to
+  the secondary GPU (`gpus[-1]`) when more than one GPU is detected, falling back to the primary
+  on single-GPU hosts — keeps the primary GPU free for the LLM. The model registry seeds
+  `voice-stt` (kind `stt`, `est_vram_gb=2.0`) and `voice-tts` (kind `tts`, `est_vram_gb=1.0`)
+  on first run from `STT_MODEL` / `TTS_VOICE` env vars. Both services are in `ALLOWED_SERVICES`
+  and `GPU_ASSIGNABLE_SERVICES`. Enable with `docker compose --profile voice up -d`. HF weights
+  cached at `${DATA_PATH}/voice/hf-cache`. See `docs/configuration.md` for Hermes wiring.
+
 - **Model registry — single source of truth for model↔GPU assignment.** `ops-controller/model_registry.py` introduces `ModelRecord` + `ModelRegistry` backed by `data/model-registry.json`. The registry is the *intent layer*: it tracks which model file runs on which GPU UUID, estimated VRAM, enable/disable state, and per-service config (ctx size, mmproj, KV-cache types). `.env` and `overrides/gpu-assignments.yml` are now *derived enforcement* — both are written from registry state, never the other way around. On startup ops-controller reconciles the registry from those files (seed-only: existing records are preserved). REST endpoints `/registry/{models,gpus}` expose full CRUD + GPU-assign + enable/swap; Hermes and the dashboard are equal clients. The legacy `POST /gpu/assign` path keeps the registry in sync after a successful assign so no client ever sees a stale pin. A dependency-free shared formatter module (`ops-controller/gpu_assignments_fmt.py`) ensures `detect_hardware.py`, `model_registry.py`, and `main.py` all emit identical gpu-assignments YAML (single-quoted `device_ids`; double-quoted legacy files are still parsed). `MODEL_REGISTRY_PATH` (default `/data/model-registry.json`) controls the backing store location. Fine-grained GPU pinning for single-model services (`llamacpp`, `llamacpp-embed`); coarse for `comfyui` (multi-model runtime).
 
 - **Playwright registered as a stack-managed MCP server (default-on).** `mcp/gateway/registry-custom.yaml` now pins `playwright` (sha-pinned `mcp/playwright` image) and it is included in the default `MCP_GATEWAY_SERVERS` (`gateway-wrapper.sh`, `docker-compose.yml`, `.env.example`). Previously `playwright` was listed in `data/mcp/servers.txt` but had no local catalog entry, so the gateway resolved it from Docker's **unpinned online catalog** — non-reproducible and leaking orphan `mcp/playwright` containers across gateway reloads. Pinning it here makes the stack own the definition; Hermes keeps its `browser_*` tools. Note: this image exposes `browser_run_code_unsafe` (RCE-equivalent) — acceptable for the single trusted operator, restrict with `--caps` if exposed more widely.
