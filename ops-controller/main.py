@@ -1115,6 +1115,18 @@ async def gpu_assign(body: GpuAssignBody, request: Request, _: None = Depends(ve
         _audit("gpu_assign", body.service, "error", detail[:200], correlation_id=_correlation_id(request))
         raise
     _audit("gpu_assign", body.service, "ok", body.gpu_uuid, correlation_id=_correlation_id(request))
+
+    # Keep the model registry in sync so it never goes stale when an old client
+    # uses the legacy /gpu/assign path. Update any record whose service matches.
+    # Guarded so a registry failure never breaks the legacy response.
+    try:
+        for mid, record in REGISTRY.list_models().items():
+            if record.service == body.service:
+                record.gpu_uuid = body.gpu_uuid
+                REGISTRY.upsert(record)
+    except Exception as _reg_exc:  # noqa: BLE001
+        logger.warning("legacy /gpu/assign: registry sync failed (non-fatal): %s", _reg_exc)
+
     return {"ok": True, "service": body.service, "gpu_uuid": body.gpu_uuid, "action": "reassigned"}
 
 
