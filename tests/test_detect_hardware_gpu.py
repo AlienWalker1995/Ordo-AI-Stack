@@ -72,9 +72,12 @@ def test_nvidia_compute_override_has_no_gpu_compute_reservations():
     )
     text = detect_hardware.format_override(overrides["nvidia"])
     assert "device_ids" not in text
-    # The only remaining `driver: nvidia` line is the dashboard's utility-only
-    # reservation (NVML stats, no GPU compute). Compute services must have none.
-    assert text.count("driver: nvidia") <= 1
+    # Compute services (llamacpp/embed/comfyui) must have NO gpu-compute reservations
+    # here — those moved to overrides/gpu-assignments.yml. The only `driver: nvidia`
+    # entries are utility-only reservations (dashboard + ops-controller read NVML stats,
+    # no GPU compute allocation).
+    assert "capabilities: ['gpu']" not in text
+    assert "capabilities: ['utility']" in text
     assert "mem_limit: 100G" in text  # mem limits still present
 
 
