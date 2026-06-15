@@ -97,6 +97,25 @@ REGISTRY = model_registry.ModelRegistry(
 )
 
 
+def _reconcile_registry_on_startup() -> None:
+    """Seed the model registry from .env + gpu-assignments.yml at startup.
+
+    SEED-ONLY: records that already exist are left untouched. Safe to call
+    multiple times (reconcile is idempotent). Mirrors the guarded pattern
+    used for the ComfyUI guardian thread start — any failure logs a warning
+    and is swallowed so a missing / corrupted env never prevents the controller
+    from starting.
+    """
+    try:
+        REGISTRY.reconcile()
+        logger.info("Model registry reconciled from .env + gpu-assignments on startup")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("startup reconcile failed (non-fatal): %s", exc)
+
+
+_reconcile_registry_on_startup()
+
+
 def parse_gpu_assignments_yaml(text: str) -> dict:
     """Parse the fixed-format overrides/gpu-assignments.yml into {service: uuid}.
     Delegates to model_registry.parse_gpu_assignments_yaml which accepts both

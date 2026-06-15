@@ -282,3 +282,18 @@ def test_registry_gpus_empty_when_no_gpus(client, monkeypatch):
     monkeypatch.setattr(oc, "_live_gpus", lambda: {})
     r = client.get("/registry/gpus", headers=AUTH)
     assert r.status_code == 200 and r.json()["gpus"] == {}
+
+
+# ─── Task 15b: reconcile-on-startup ───────────────────────────────────────────
+
+def test_reconcile_registry_on_startup_seeds_from_env(monkeypatch, tmp_path):
+    """_reconcile_registry_on_startup() seeds local-chat from .env LLAMACPP_MODEL."""
+    (tmp_path / ".env").write_text("LLAMACPP_MODEL=qwen.gguf\n", encoding="utf-8")
+    reg = oc.model_registry.ModelRegistry(
+        registry_path=tmp_path / "reg.json",
+        env_path=tmp_path / ".env",
+        gpu_assignments_path=tmp_path / "gpu.yml",
+    )
+    monkeypatch.setattr(oc, "REGISTRY", reg)
+    oc._reconcile_registry_on_startup()
+    assert oc.REGISTRY.get("local-chat").source["file"] == "qwen.gguf"
