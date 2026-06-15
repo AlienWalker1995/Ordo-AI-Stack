@@ -47,6 +47,41 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 | `RAG_CHUNK_OVERLAP` | `50` | Chunk overlap in tokens |
 | `QDRANT_PORT` | `6333` | Qdrant host port (change if something else already uses 6333) |
 
+### Voice STT/TTS (`--profile voice`)
+
+Opt-in local speech services with OpenAI-compatible APIs. Both services run on
+the **secondary GPU** by default (the smallest GPU, e.g. GTX 1070) to leave the
+primary GPU free for the LLM. On single-GPU hosts they share the primary.
+`detect_hardware.py` seeds the GPU pin into `overrides/gpu-assignments.yml`; the
+ops-controller model registry (`voice-stt` / `voice-tts` records) owns the intent.
+
+**Enable:**
+
+```bash
+docker compose --profile voice up -d
+```
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `STT_MODEL` | `Systran/faster-whisper-small` | Hugging Face repo ID for faster-whisper |
+| `STT_COMPUTE_TYPE` | `int8` | Quantization type (`int8` is Pascal-compatible; use `float16` on Turing+) |
+| `TTS_VOICE` | `af_bella` | Default Kokoro voice (can be overridden per-request) |
+
+**Internal endpoints (backend network only — no host ports):**
+
+| Service | URL | API |
+|---|---|---|
+| STT | `http://stt:8000/v1` | OpenAI-compatible `/v1/audio/transcriptions` |
+| TTS | `http://tts:8880/v1` | OpenAI-compatible `/v1/audio/speech` |
+
+**Hermes wiring:** configure Hermes to use these as its STT/TTS providers by
+pointing the relevant provider at the above URLs with `provider=openai`. For STT:
+`base_url: http://stt:8000/v1`. For TTS: `base_url: http://tts:8880/v1`,
+`voice: af_bella` (or any voice returned by `GET /v1/audio/voices`).
+
+HF model weights are cached at `${DATA_PATH}/voice/hf-cache` and survive container
+recreates.
+
 ## TurboQuant KV-Cache (llama.cpp)
 
 The `llamacpp` service runs a custom build from the [AmesianX/TurboQuant](https://github.com/AmesianX/TurboQuant) fork, produced by `llamacpp/Dockerfile` and pinned to a specific commit. On top of mainline's KV-cache quant types (`q4_0`, `q8_0`, etc.) it adds a family of TurboQuant types named `tbq*` and `tbqp*` that use Walsh–Hadamard rotation + Lloyd–Max scalar quantization, optionally with a 1-bit QJL residual (the `tbqp*` packed variants).
