@@ -43,7 +43,7 @@ def register(app, ops_request):
     async def define_model(body: dict, request: Request):
         code, data = await _ops_request(
             "POST", "/registry/models", request=request,
-            json={**body, "actor": "dashboard"},
+            json=body,
         )
         if code >= 400:
             raise HTTPException(status_code=code, detail=(data.get("detail", data) if isinstance(data, dict) else data))

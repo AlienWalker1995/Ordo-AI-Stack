@@ -30,3 +30,27 @@ def test_assign_gpu_409_surfaces_to_browser():
         )
     assert r.status_code == 409
     assert "overcommit" in str(r.json()).lower()
+
+
+def test_define_model_does_not_send_actor_field():
+    """M1 regression: define_model must send json=body, not {**body, 'actor': 'dashboard'}.
+
+    The actor is derived server-side from the X-Actor header; a dead 'actor' key
+    in the body is noise that could confuse future callers.
+    """
+    captured = {}
+
+    async def fake_ops_request(method, path, *, request=None, json=None, **kw):
+        captured["json"] = json
+        return (200, {"id": "test-model"})
+
+    with patch("dashboard.routes_registry._ops_request", new=fake_ops_request):
+        TestClient(app).post(
+            "/api/registry/models",
+            json={"id": "test-model", "kind": "chat", "service": "llamacpp",
+                  "runtime": "single-model", "source": {}, "enabled": False, "est_vram_gb": 1.0},
+        )
+
+    assert "actor" not in (captured.get("json") or {}), (
+        f"'actor' key must not appear in forwarded body; got: {captured.get('json')}"
+    )

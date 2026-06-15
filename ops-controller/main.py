@@ -92,7 +92,7 @@ _GPU_UUID_RE = re.compile(
 
 REGISTRY = model_registry.ModelRegistry(
     registry_path=Path(os.environ.get("MODEL_REGISTRY_PATH", "/data/model-registry.json")),
-    env_path=Path(os.environ.get("OPS_ENV_PATH", f"{BASE_PATH}/.env")),
+    env_path=Path(os.environ.get("OPS_ENV_PATH", "/workspace/.env")),
     gpu_assignments_path=GPU_ASSIGNMENTS_PATH,
 )
 
@@ -2166,6 +2166,13 @@ async def registry_enable_model(
             prev_sibling_states[mid] = True
             if prev_active_record is None:
                 prev_active_record = sibling
+    # Capture the current values of env keys we are about to overwrite, so we
+    # can restore them on recreate failure even when no sibling was previously
+    # active (the old code only restored env when prev_active_record existed).
+    new_env = REGISTRY.derive_env(rec)
+    prior_env = model_registry._parse_env(REGISTRY.env_path)
+    prev_for_keys = {k: prior_env[k] for k in new_env if k in prior_env}
+
     def _rollback_enable(exc: Exception, status: int, detail: str) -> None:
         """Restore registry to pre-mutation state and re-raise as HTTPException."""
         rec.enabled = prev_target_enabled
@@ -2175,11 +2182,18 @@ async def registry_enable_model(
             if sib is not None:
                 sib.enabled = True
                 REGISTRY.upsert(sib)
-        if prev_active_record is not None:
-            prev_env = REGISTRY.derive_env(prev_active_record)
-            if prev_env:
+        # Robust env restore: use the keys-we-wrote snapshot first; fall back
+        # to deriving from the previously active sibling if no snapshot exists.
+        if prev_for_keys:
+            try:
+                _set_env_keys(prev_for_keys, request)
+            except Exception:
+                pass
+        elif prev_active_record is not None:
+            prev_env_derived = REGISTRY.derive_env(prev_active_record)
+            if prev_env_derived:
                 try:
-                    _set_env_keys(prev_env, request)
+                    _set_env_keys(prev_env_derived, request)
                 except Exception:
                     pass
         _audit("registry_enable", model_id, "error", str(exc)[:200], correlation_id=_correlation_id(request))
@@ -2195,10 +2209,9 @@ async def registry_enable_model(
     rec.enabled = True
     REGISTRY.upsert(rec)
     # Push derived env keys — rollback registry on any failure (incl. newline injection 400)
-    env_kv = REGISTRY.derive_env(rec)
-    if env_kv:
+    if new_env:
         try:
-            _set_env_keys(env_kv, request)
+            _set_env_keys(new_env, request)
         except HTTPException as exc:
             _rollback_enable(exc, exc.status_code, exc.detail)
         except Exception as exc:

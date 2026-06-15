@@ -5,6 +5,7 @@ Tasks 5-9: singleton + read, define/delete, assign-gpu, enable, GET /registry/gp
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -297,3 +298,81 @@ def test_reconcile_registry_on_startup_seeds_from_env(monkeypatch, tmp_path):
     monkeypatch.setattr(oc, "REGISTRY", reg)
     oc._reconcile_registry_on_startup()
     assert oc.REGISTRY.get("local-chat").source["file"] == "qwen.gguf"
+
+
+# ─── C1 regression: env_path must default to /workspace/.env ─────────────────
+
+def test_registry_env_path_defaults_to_container_workspace(monkeypatch):
+    """When OPS_ENV_PATH is unset the REGISTRY env_path must be /workspace/.env.
+
+    The module-level REGISTRY was constructed at import time. In the test suite
+    OPS_ENV_PATH is typically unset (CI/dev) so REGISTRY.env_path already reflects
+    the default. We also construct a fresh instance with the same default expression
+    to prove the fix is robust even when the monkeypatched env is cleared.
+    """
+    monkeypatch.delenv("OPS_ENV_PATH", raising=False)
+    # Assert module-level REGISTRY (built at import) uses the container path.
+    assert oc.REGISTRY.env_path.as_posix() == "/workspace/.env", (
+        f"REGISTRY.env_path is {oc.REGISTRY.env_path.as_posix()!r}; "
+        "expected '/workspace/.env'. Was BASE_PATH used instead of the container path?"
+    )
+    # Also verify a freshly constructed registry with the same default expression.
+    fresh = oc.model_registry.ModelRegistry(
+        registry_path=Path("/data/model-registry.json"),
+        env_path=Path(os.environ.get("OPS_ENV_PATH", "/workspace/.env")),
+        gpu_assignments_path=oc.GPU_ASSIGNMENTS_PATH,
+    )
+    assert fresh.env_path.as_posix() == "/workspace/.env"
+
+
+# ─── I1 regression: env rollback when no sibling was previously active ────────
+
+def test_enable_restores_prior_env_on_recreate_failure(monkeypatch, tmp_path):
+    """If _recreate_service fails, the .env must be restored to its prior value.
+
+    This test covers the case where NO sibling was previously active — the old
+    rollback only restored env via prev_active_record, so when nothing was active
+    the .env was left pointing at the NEW model after a recreate failure.
+    """
+    # Seed a writable temp .env with the original model value.
+    env_file = tmp_path / ".env"
+    env_file.write_text("LLAMACPP_MODEL=old.gguf\n", encoding="utf-8")
+
+    # Registry with no initially-enabled records (clean slate, prev_active_record=None).
+    reg = oc.model_registry.ModelRegistry(
+        registry_path=tmp_path / "reg.json",
+        env_path=env_file,
+        gpu_assignments_path=tmp_path / "gpu.yml",
+    )
+    # Define local-chat as DISABLED so there is no prev_active_record when we enable chat-b.
+    reg.upsert(oc.model_registry.ModelRecord(
+        id="local-chat", kind="chat", service="llamacpp", runtime="single-model",
+        source={"file": "old.gguf"}, enabled=False, est_vram_gb=0.0,
+    ))
+    # Define chat-b (to be enabled).
+    reg.upsert(oc.model_registry.ModelRecord(
+        id="chat-b", kind="chat", service="llamacpp", runtime="single-model",
+        source={"file": "new.gguf"}, enabled=False, est_vram_gb=18.0,
+    ))
+
+    monkeypatch.setattr(oc, "REGISTRY", reg)
+    monkeypatch.setattr(oc, "OPS_CONTROLLER_TOKEN", TOKEN)
+    # Let _set_env_keys run for real (it writes to tmp .env via REGISTRY.env_path).
+    # Only _recreate_service is monkeypatched to simulate a compose failure.
+    monkeypatch.setattr(
+        oc, "_recreate_service",
+        lambda svc, request=None: (_ for _ in ()).throw(RuntimeError("compose boom")),
+    )
+
+    c = TestClient(oc.app, raise_server_exceptions=False)
+    r = c.post("/registry/models/chat-b/enable", json={"confirm": True}, headers=AUTH)
+    assert r.status_code == 500, f"Expected 500, got {r.status_code}: {r.json()}"
+
+    # The .env must be restored to the original value.
+    restored = oc.model_registry._parse_env(env_file)
+    assert restored.get("LLAMACPP_MODEL") == "old.gguf", (
+        f"After recreate failure .env has LLAMACPP_MODEL={restored.get('LLAMACPP_MODEL')!r}; "
+        "expected 'old.gguf'. The env rollback did not restore the prior value."
+    )
+    # Registry state must also be rolled back.
+    assert reg.get("chat-b").enabled is False
