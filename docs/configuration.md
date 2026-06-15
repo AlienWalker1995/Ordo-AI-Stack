@@ -47,6 +47,55 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 | `RAG_CHUNK_OVERLAP` | `50` | Chunk overlap in tokens |
 | `QDRANT_PORT` | `6333` | Qdrant host port (change if something else already uses 6333) |
 
+### Voice STT/TTS (`--profile voice`)
+
+Opt-in local speech services with OpenAI-compatible APIs. Both services run on
+the **secondary GPU** by default (the smallest GPU, e.g. GTX 1070) to leave the
+primary GPU free for the LLM. On single-GPU hosts they share the primary.
+`detect_hardware.py` seeds the GPU pin into `overrides/gpu-assignments.yml`; the
+ops-controller model registry (`voice-stt` / `voice-tts` records) owns the intent.
+
+**Enable:**
+
+```bash
+docker compose --profile voice up -d
+```
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `STT_MODEL` | `Systran/faster-whisper-small` | Hugging Face repo ID for faster-whisper |
+| `STT_COMPUTE_TYPE` | `int8` | Quantization type (`int8` is Pascal-compatible; use `float16` on Turing+) |
+| `TTS_VOICE` | `af_bella` | Default voice label (registry record + client default). Kokoro selects the voice **per request** via the API `voice` param — this is not a container env. |
+
+**Internal endpoints (backend network only — no host ports):**
+
+| Service | URL | API |
+|---|---|---|
+| STT | `http://stt:8000/v1` | OpenAI-compatible `/v1/audio/transcriptions` |
+| TTS | `http://tts:8880/v1` | OpenAI-compatible `/v1/audio/speech` |
+
+**Hermes wiring (Discord voice memos):**
+
+- **STT (voice memo → text): fully local.** Hermes' STT openai provider takes its
+  base URL from the `STT_OPENAI_BASE_URL` env, which `docker-compose.yml` sets on
+  `hermes-gateway` to `http://stt:8000/v1`. Set in `data/hermes/config.yaml`:
+  `stt.provider: openai`, `stt.openai.model: Systran/faster-whisper-small`,
+  `stt.openai.api_key: local`, `stt.enabled: true`. Inbound Discord voice messages
+  are then auto-transcribed on the secondary GPU.
+- **TTS (voice reply): edge by default; local Kokoro available but not yet Hermes-wired.**
+  Hermes auto-replies in voice when the input was voice. Its default TTS provider is
+  `edge` (Microsoft cloud, free, works out of the box). Pointing Hermes' *openai* TTS
+  provider at the local Kokoro service requires `tts.openai.base_url`, but the current
+  Hermes config schema does **not** persist a TTS `base_url` (and there is no env for
+  it), so this Hermes version cannot target local Kokoro for replies. The Kokoro
+  service is still deployed + registry-managed and reachable at `http://tts:8880/v1`
+  for n8n / the reel pipeline / scripts / a future Hermes that honours a TTS base URL.
+  For a fully-local reply voice today, use Hermes' native `neutts` provider (on-device).
+
+**STT** weights download once to `${DATA_PATH}/voice/hf-cache` (persists across
+recreates). **TTS** (Kokoro) bakes its models into the image — no runtime download,
+no volume needed.
+
 ## TurboQuant KV-Cache (llama.cpp)
 
 The `llamacpp` service runs a custom build from the [AmesianX/TurboQuant](https://github.com/AmesianX/TurboQuant) fork, produced by `llamacpp/Dockerfile` and pinned to a specific commit. On top of mainline's KV-cache quant types (`q4_0`, `q8_0`, etc.) it adds a family of TurboQuant types named `tbq*` and `tbqp*` that use Walsh–Hadamard rotation + Lloyd–Max scalar quantization, optionally with a 1-bit QJL residual (the `tbqp*` packed variants).

@@ -30,9 +30,22 @@ def test_build_gpu_assignments_pins_services_to_biggest():
         {"uuid": "GPU-1070uuid", "name": "GTX 1070", "memory_total_mib": 8192},
     ]
     assigns = detect_hardware.build_gpu_assignments(gpus)
+    # Primary compute services → biggest GPU
     assert assigns["llamacpp"] == "GPU-5090uuid"
     assert assigns["comfyui"] == "GPU-5090uuid"
     assert assigns["llamacpp-embed"] == "GPU-5090uuid"
+    # Voice services → secondary GPU (GTX 1070, Pascal, int8-friendly)
+    assert assigns["stt"] == "GPU-1070uuid"
+    assert assigns["tts"] == "GPU-1070uuid"
+
+
+def test_build_gpu_assignments_single_gpu_voice_falls_back_to_primary():
+    """With one GPU, voice services share it with primary compute."""
+    gpus = [{"uuid": "GPU-onlyuuid", "name": "RTX 4090", "memory_total_mib": 24576}]
+    assigns = detect_hardware.build_gpu_assignments(gpus)
+    assert assigns["stt"] == "GPU-onlyuuid"
+    assert assigns["tts"] == "GPU-onlyuuid"
+    assert assigns["llamacpp"] == "GPU-onlyuuid"
 
 
 def test_build_gpu_assignments_no_gpus_is_empty():
@@ -72,13 +85,20 @@ def test_nvidia_compute_override_has_no_gpu_compute_reservations():
     )
     text = detect_hardware.format_override(overrides["nvidia"])
     assert "device_ids" not in text
-    # Compute services (llamacpp/embed/comfyui) must have NO gpu-compute reservations
-    # here — those moved to overrides/gpu-assignments.yml. The only `driver: nvidia`
-    # entries are utility-only reservations (dashboard + ops-controller read NVML stats,
-    # no GPU compute allocation).
-    assert "capabilities: ['gpu']" not in text
+    # Primary compute services (llamacpp/embed/comfyui) must have NO gpu-compute
+    # reservations here — those moved to overrides/gpu-assignments.yml to avoid
+    # Docker Compose sequence-concatenation conflicts.
+    # Voice services (stt/tts) DO get a gpu compute reservation in compute.yml
+    # (pinned UUID comes from gpu-assignments.yml; capability stanza lives here).
+    # Dashboard + ops-controller have utility-only reservations.
     assert "capabilities: ['utility']" in text
-    assert "mem_limit: 100G" in text  # mem limits still present
+    assert "mem_limit: 100G" in text  # llamacpp mem limit still present
+    # llamacpp/embed/comfyui must NOT have per-service gpu compute reservations
+    # (confirmed by absence of device_ids — those only appear in gpu-assignments.yml)
+    assert "device_ids" not in text
+    # voice services bring gpu compute capability into compute.yml
+    assert "  stt:" in text
+    assert "  tts:" in text
 
 
 def test_update_env_appends_gpu_assignments_after_compute(tmp_path):
