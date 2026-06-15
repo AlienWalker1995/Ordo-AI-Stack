@@ -23,6 +23,9 @@ _spec.loader.exec_module(oc)
 TOKEN = "test-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
+_FULL_UUID = "GPU-12345678-1234-1234-1234-123456789abc"
+_FULL_UUID_2 = "GPU-97fe65ee-5e2d-8c9b-32d0-362f510ceb96"
+
 
 @pytest.fixture()
 def client(monkeypatch, tmp_path):
@@ -35,7 +38,7 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setattr(oc, "REGISTRY", reg)
     reg.upsert(oc.model_registry.ModelRecord(
         id="local-chat", kind="chat", service="llamacpp", runtime="single-model",
-        source={"file": "q.gguf"}, gpu_uuid="GPU-abc", enabled=True, est_vram_gb=20.0,
+        source={"file": "q.gguf"}, gpu_uuid=_FULL_UUID, enabled=True, est_vram_gb=20.0,
     ))
     return TestClient(oc.app, raise_server_exceptions=False)
 
@@ -93,28 +96,32 @@ def test_delete_missing_model_returns_404(client):
 
 # ─── Task 7: assign-gpu endpoint ─────────────────────────────────────────────
 
-_FULL_UUID = "GPU-12345678-1234-1234-1234-123456789abc"
-
-
 def test_assign_gpu_sets_pin_and_recreates(client, monkeypatch):
     calls = {}
     monkeypatch.setattr(oc, "_recreate_service",
                         lambda svc, request=None: calls.setdefault("svc", svc) or {"ok": True})
     monkeypatch.setattr(oc, "_live_gpus",
-                        lambda: {"GPU-def": {"total_gb": 32.0}, "GPU-abc": {"total_gb": 32.0}})
+                        lambda: {_FULL_UUID_2: {"total_gb": 32.0}, _FULL_UUID: {"total_gb": 32.0}})
     r = client.post(
         "/registry/models/local-chat/assign-gpu",
-        json={"gpu_uuid": "GPU-def", "confirm": True},
+        json={"gpu_uuid": _FULL_UUID_2, "confirm": True},
         headers=AUTH,
     )
-    assert r.status_code == 200 and r.json()["gpu_uuid"] == "GPU-def"
-    assert calls["svc"] == "llamacpp" and oc.REGISTRY.get("local-chat").gpu_uuid == "GPU-def"
+    assert r.status_code == 200 and r.json()["gpu_uuid"] == _FULL_UUID_2
+    assert calls["svc"] == "llamacpp" and oc.REGISTRY.get("local-chat").gpu_uuid == _FULL_UUID_2
 
 
 def test_assign_gpu_rejects_bad_uuid(client):
+    # "nope" is clearly invalid
     assert client.post(
         "/registry/models/local-chat/assign-gpu",
         json={"gpu_uuid": "nope", "confirm": True},
+        headers=AUTH,
+    ).status_code == 400
+    # FIX 2 regression: short-form "GPU-abc" must also be rejected by the strict regex
+    assert client.post(
+        "/registry/models/local-chat/assign-gpu",
+        json={"gpu_uuid": "GPU-abc", "confirm": True},
         headers=AUTH,
     ).status_code == 400
 
@@ -122,29 +129,29 @@ def test_assign_gpu_rejects_bad_uuid(client):
 def test_assign_gpu_requires_confirm(client):
     assert client.post(
         "/registry/models/local-chat/assign-gpu",
-        json={"gpu_uuid": "GPU-def", "confirm": False},
+        json={"gpu_uuid": _FULL_UUID_2, "confirm": False},
         headers=AUTH,
     ).status_code == 400
 
 
 def test_assign_gpu_missing_model_returns_404(client, monkeypatch):
     monkeypatch.setattr(oc, "_live_gpus",
-                        lambda: {"GPU-def": {"total_gb": 32.0}})
+                        lambda: {_FULL_UUID_2: {"total_gb": 32.0}})
     assert client.post(
         "/registry/models/ghost/assign-gpu",
-        json={"gpu_uuid": "GPU-def", "confirm": True},
+        json={"gpu_uuid": _FULL_UUID_2, "confirm": True},
         headers=AUTH,
     ).status_code == 404
 
 
 def test_assign_gpu_capacity_check_blocks_overcommit(client, monkeypatch):
-    # GPU-abc only has 8 GB; local-chat needs 20 GB => should fail
+    # _FULL_UUID only has 8 GB; local-chat needs 20 GB => should fail
     monkeypatch.setattr(oc, "_live_gpus",
-                        lambda: {"GPU-abc": {"total_gb": 8.0}})
+                        lambda: {_FULL_UUID: {"total_gb": 8.0}})
     monkeypatch.setattr(oc, "_recreate_service", lambda svc, request=None: {"ok": True})
     r = client.post(
         "/registry/models/local-chat/assign-gpu",
-        json={"gpu_uuid": "GPU-abc", "confirm": True},
+        json={"gpu_uuid": _FULL_UUID, "confirm": True},
         headers=AUTH,
     )
     assert r.status_code == 409
@@ -153,15 +160,32 @@ def test_assign_gpu_capacity_check_blocks_overcommit(client, monkeypatch):
 def test_assign_gpu_force_bypasses_capacity(client, monkeypatch):
     calls = {}
     monkeypatch.setattr(oc, "_live_gpus",
-                        lambda: {"GPU-abc": {"total_gb": 8.0}})
+                        lambda: {_FULL_UUID: {"total_gb": 8.0}})
     monkeypatch.setattr(oc, "_recreate_service",
                         lambda svc, request=None: calls.setdefault("svc", svc) or {"ok": True})
     r = client.post(
         "/registry/models/local-chat/assign-gpu",
-        json={"gpu_uuid": "GPU-abc", "confirm": True, "force": True},
+        json={"gpu_uuid": _FULL_UUID, "confirm": True, "force": True},
         headers=AUTH,
     )
     assert r.status_code == 200
+
+
+def test_assign_gpu_to_same_gpu_not_double_counted(client, monkeypatch):
+    """FIX 4 regression: reassigning a model to its current GPU must not
+    double-count the model's own VRAM and spuriously reject the operation."""
+    monkeypatch.setattr(oc, "_recreate_service", lambda svc, request=None: {"ok": True})
+    # local-chat: est_vram_gb=20, assigned to _FULL_UUID (total 32 GB)
+    # Without self-exclusion: 20 (existing) + 20 (candidate) = 40 > 32 → 409
+    # With self-exclusion: 0 (others on this GPU) + 20 (candidate) = 20 <= 32 → 200
+    monkeypatch.setattr(oc, "_live_gpus",
+                        lambda: {_FULL_UUID: {"total_gb": 32.0}})
+    r = client.post(
+        "/registry/models/local-chat/assign-gpu",
+        json={"gpu_uuid": _FULL_UUID, "confirm": True},
+        headers=AUTH,
+    )
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.json()}"
 
 
 # ─── Task 8: enable endpoint ──────────────────────────────────────────────────
@@ -206,13 +230,47 @@ def test_enable_rejects_non_single_model(client, monkeypatch):
     assert r.status_code == 400
 
 
+def test_enable_rolls_back_on_recreate_failure(client, monkeypatch):
+    """FIX 3 regression: if _recreate_service raises, enabled states are restored."""
+    monkeypatch.setattr(oc, "_set_env_keys", lambda kv, request=None: None)
+    monkeypatch.setattr(oc, "_recreate_service",
+                        lambda svc, request=None: (_ for _ in ()).throw(RuntimeError("boom")))
+    # Add a second model to enable (local-chat is currently enabled)
+    client.post("/registry/models", json={
+        "id": "chat-b", "kind": "chat", "service": "llamacpp",
+        "runtime": "single-model", "source": {"file": "b.gguf"},
+        "enabled": False, "est_vram_gb": 18.0,
+    }, headers=AUTH)
+    r = client.post("/registry/models/chat-b/enable", json={"confirm": True}, headers=AUTH)
+    assert r.status_code == 500
+    # chat-b must be rolled back to disabled
+    assert oc.REGISTRY.get("chat-b").enabled is False
+    # local-chat must be restored to enabled
+    assert oc.REGISTRY.get("local-chat").enabled is True
+
+
+def test_enable_rejects_newline_in_model_file(client, monkeypatch):
+    """FIX 6 regression: a model whose source.file contains a newline is rejected at env-write."""
+    # _recreate_service is a no-op so the test reaches _set_env_keys
+    monkeypatch.setattr(oc, "_recreate_service", lambda svc, request=None: {"ok": True})
+    client.post("/registry/models", json={
+        "id": "evil", "kind": "chat", "service": "llamacpp",
+        "runtime": "single-model", "source": {"file": "a.gguf\nEVIL=1"},
+        "enabled": False, "est_vram_gb": 1.0,
+    }, headers=AUTH)
+    r = client.post("/registry/models/evil/enable", json={"confirm": True}, headers=AUTH)
+    assert r.status_code == 400, f"Expected 400, got {r.status_code}: {r.json()}"
+    # The registry must NOT have been left in a corrupted enabled state
+    assert oc.REGISTRY.get("evil").enabled is False
+
+
 # ─── Task 9: GET /registry/gpus ───────────────────────────────────────────────
 
 def test_registry_gpus_lists_assignments(client, monkeypatch):
     monkeypatch.setattr(oc, "_live_gpus",
-                        lambda: {"GPU-abc": {"name": "5090", "total_gb": 32.0,
-                                             "used_gb": 20.0, "util": 5}})
-    g = client.get("/registry/gpus", headers=AUTH).json()["gpus"]["GPU-abc"]
+                        lambda: {_FULL_UUID: {"name": "5090", "total_gb": 32.0,
+                                              "used_gb": 20.0, "util": 5}})
+    g = client.get("/registry/gpus", headers=AUTH).json()["gpus"][_FULL_UUID]
     assert "local-chat" in g["models"] and g["total_gb"] == 32.0
 
 

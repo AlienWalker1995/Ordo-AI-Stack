@@ -88,7 +88,31 @@ def test_render_gpu_yaml_emits_both_layers(tmp_path):
     assert "CUDA_VISIBLE_DEVICES=GPU-abc" in out
     assert "NVIDIA_VISIBLE_DEVICES=GPU-abc" in out
     assert "device_ids:" in out and "GPU-def" in out
-    assert out.lstrip().startswith("services:")
+    # Header comment now precedes the services: block
+    assert "services:" in out
+
+
+def test_render_gpu_yaml_roundtrip_both_quote_styles():
+    """FIX 1 regression: render then parse must recover the original mapping.
+    Also proves the module-level parser accepts legacy double-quoted YAML."""
+    # Single-quote emitter → parse round-trip
+    rendered = mr.render_gpu_assignments_yaml({"llamacpp": "GPU-x"})
+    assert mr.parse_gpu_assignments_yaml(rendered) == {"llamacpp": "GPU-x"}
+
+    # Legacy double-quoted YAML (as emitted by the old main.py renderer) must
+    # also parse correctly so old files survive a /gpu/assign rollback read.
+    legacy = (
+        "services:\n"
+        "  llamacpp:\n"
+        "    deploy:\n"
+        "      resources:\n"
+        "        reservations:\n"
+        "          devices:\n"
+        '            - driver: nvidia\n'
+        '              device_ids: ["GPU-y"]\n'
+        "              capabilities: ['gpu']\n"
+    )
+    assert mr.parse_gpu_assignments_yaml(legacy) == {"llamacpp": "GPU-y"}
 
 def test_capacity_check_blocks_overcommit():
     gpus = {"GPU-1": {"total_gb": 8.0}}

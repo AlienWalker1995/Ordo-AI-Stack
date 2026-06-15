@@ -196,6 +196,8 @@ def render_gpu_assignments_yaml(assignments: dict[str, str]) -> str:
     """Canonical emitter — both CUDA_VISIBLE_DEVICES (WSL2-effective) and device_ids
     (native-Linux). Replaces the duplicated format_gpu_assignments / render_gpu_assignments."""
     lines = [
+        "# Machine-local GPU pins. Generated from the model registry — edit via the dashboard GPU view.",
+        "# Both layers (CUDA_VISIBLE_DEVICES + device_ids) are required (see detect_hardware.py / WSL2).",
         "services:",
     ]
     for service, uuid in assignments.items():
