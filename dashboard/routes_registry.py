@@ -1,34 +1,42 @@
 """Registry tab routes: model registry + GPU view passthrough to ops-controller."""
 from __future__ import annotations
 
-from typing import Any
-
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 router = APIRouter(prefix="/api/registry")
 
 # Injected by register()
 _ops_request = None
+_registered = False
 
 
 def register(app, ops_request):
     """Wire routes onto `app`. `ops_request` is dashboard.app._ops_request."""
-    global _ops_request
+    global _ops_request, _registered
     _ops_request = ops_request
+    if _registered:
+        return
+    _registered = True
 
     @router.get("/models")
     async def list_models(request: Request):
         code, data = await _ops_request("GET", "/registry/models", request=request)
+        if code >= 400:
+            raise HTTPException(status_code=code, detail=(data.get("detail", data) if isinstance(data, dict) else data))
         return data
 
     @router.get("/gpus")
     async def list_gpus(request: Request):
         code, data = await _ops_request("GET", "/registry/gpus", request=request)
+        if code >= 400:
+            raise HTTPException(status_code=code, detail=(data.get("detail", data) if isinstance(data, dict) else data))
         return data
 
     @router.get("/models/{model_id}")
     async def get_model(model_id: str, request: Request):
         code, data = await _ops_request("GET", f"/registry/models/{model_id}", request=request)
+        if code >= 400:
+            raise HTTPException(status_code=code, detail=(data.get("detail", data) if isinstance(data, dict) else data))
         return data
 
     @router.post("/models")
@@ -37,6 +45,8 @@ def register(app, ops_request):
             "POST", "/registry/models", request=request,
             json={**body, "actor": "dashboard"},
         )
+        if code >= 400:
+            raise HTTPException(status_code=code, detail=(data.get("detail", data) if isinstance(data, dict) else data))
         return data
 
     @router.delete("/models/{model_id}")
@@ -44,6 +54,8 @@ def register(app, ops_request):
         code, data = await _ops_request(
             "DELETE", f"/registry/models/{model_id}", request=request,
         )
+        if code >= 400:
+            raise HTTPException(status_code=code, detail=(data.get("detail", data) if isinstance(data, dict) else data))
         return data
 
     @router.post("/models/{model_id}/assign-gpu")
@@ -52,6 +64,8 @@ def register(app, ops_request):
             "POST", f"/registry/models/{model_id}/assign-gpu", request=request,
             json=body,
         )
+        if code >= 400:
+            raise HTTPException(status_code=code, detail=(data.get("detail", data) if isinstance(data, dict) else data))
         return data
 
     @router.post("/models/{model_id}/enable")
@@ -60,6 +74,8 @@ def register(app, ops_request):
             "POST", f"/registry/models/{model_id}/enable", request=request,
             json=body,
         )
+        if code >= 400:
+            raise HTTPException(status_code=code, detail=(data.get("detail", data) if isinstance(data, dict) else data))
         return data
 
     app.include_router(router)

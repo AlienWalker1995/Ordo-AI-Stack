@@ -2084,18 +2084,17 @@
           return;
         }
         unreach.style.display = "none";
-        const gpuOptions = Object.entries(gpus).map(([uuid, g]) =>
-          `<option value="${escapeHtml(uuid)}">${escapeHtml(g.name || uuid)} (${escapeHtml(String(g.total_gb || '?'))} GB)</option>`
-        ).join("");
         const head = `<tr><th>ID</th><th>Kind</th><th>Service</th><th>Source file</th><th>Enabled</th><th>GPU</th></tr>`;
         const rows = entries.map(([id, m]) => {
           const srcFile = escapeHtml(String((m.source && m.source.file) || m.source_file || '—'));
           const isMulti = m.runtime === "multi-model";
           const enabledCell = isMulti
             ? `<span class="badge ${m.enabled ? 'badge-ok' : 'badge-muted'}">${m.enabled ? 'enabled' : 'disabled'}</span>`
-            : `<button class="btn-icon btn-text" onclick="toggleRegistryModel(${JSON.stringify(id)}, ${JSON.stringify(!m.enabled)})"
-                 title="${m.enabled ? 'Disable' : 'Enable'} model (recreates service)"
-                 style="font-size:0.85em;">${m.enabled ? '✅ Enabled' : '⬜ Disabled'}</button>`;
+            : (m.enabled
+                ? `<span style="font-size:0.85em;">&#x2713; active</span>`
+                : `<button class="btn-icon btn-text" onclick="setActiveRegistryModel(${JSON.stringify(id)})"
+                     title="Set active model (recreates service)"
+                     style="font-size:0.85em;">Set active</button>`);
           const curGpu = escapeHtml(m.gpu_uuid || "");
           const gpuCell = `<select data-model-id="${escapeHtml(id)}" onchange="assignRegistryGpu(${JSON.stringify(id)}, this.value)">
             <option value="">— none —</option>
@@ -2118,9 +2117,9 @@
       }
     }
 
-    async function toggleRegistryModel(modelId, enable) {
-      const action = enable ? "enable" : "disable";
-      if (!confirm(`${enable ? "Enable" : "Disable"} model "${modelId}"? This will recreate the service (brief downtime).`)) return;
+    async function setActiveRegistryModel(modelId) {
+      const svc = modelId;
+      if (!confirm(`This recreates the ${svc} service. Set "${modelId}" as the active model?`)) return;
       try {
         const r = await api(`/api/registry/models/${encodeURIComponent(modelId)}/enable`, {
           method: "POST",
@@ -2128,7 +2127,7 @@
           body: JSON.stringify({ confirm: true }),
         });
         const d = await r.json();
-        if (!r.ok) alert("Failed to " + action + " model: " + (d.detail || JSON.stringify(d)));
+        if (!r.ok) alert("Failed to set active model: " + (d.detail || JSON.stringify(d)));
       } catch (e) { alert("Error: " + e); }
       loadModelsRegistry();
     }
@@ -3381,7 +3380,10 @@
       });
       if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
       if (name === "gpu" && typeof loadGpuTab === "function") loadGpuTab();
-      if (name === "registry" && typeof loadGpuTab === "function") { loadGpuTab(); loadModelsRegistry(); }
+      if (name === "registry") {
+        if (typeof loadGpuTab === "function") loadGpuTab();
+        if (typeof loadModelsRegistry === "function") loadModelsRegistry();
+      }
       if (name === "orchestration" && typeof loadOrchestrationTab === "function") loadOrchestrationTab();
     }
     document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => activateTab(b.dataset.tab)));
