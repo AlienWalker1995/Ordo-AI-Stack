@@ -243,17 +243,29 @@ def enumerate_gpus() -> list[dict]:
 # GPU services that take a compute (`gpu`) reservation, in default-emit order.
 GPU_COMPUTE_SERVICES = ("llamacpp", "llamacpp-embed", "comfyui")
 
+# Voice services default to the secondary GPU (Pascal-friendly int8).
+# Falls back to the primary GPU when only one GPU is present.
+GPU_SECONDARY_SERVICES = ("stt", "tts")
+
 # Utility-only access for monitoring (pynvml/NVML) — no compute allocation, no VRAM reserved.
 _NVIDIA_UTILITY = [{"driver": "nvidia", "count": "all", "capabilities": ["utility"]}]
 
 
 def build_gpu_assignments(gpus: list[dict]) -> dict[str, str]:
-    """Map each GPU compute service to a GPU UUID. Default: everything on the
-    biggest GPU (gpus[0]). Returns {} when no GPUs are present."""
+    """Map each GPU compute service to a GPU UUID.
+
+    Primary services (llamacpp, llamacpp-embed, comfyui) go on the biggest GPU
+    (gpus[0]). Voice services (stt, tts) default to the secondary GPU (gpus[-1])
+    when more than one GPU is present, otherwise they share the primary.
+    Returns {} when no GPUs are present."""
     if not gpus:
         return {}
     biggest = gpus[0]["uuid"]
-    return {svc: biggest for svc in GPU_COMPUTE_SERVICES}
+    secondary = gpus[-1]["uuid"] if len(gpus) > 1 else biggest
+    assignments: dict[str, str] = {svc: biggest for svc in GPU_COMPUTE_SERVICES}
+    for svc in GPU_SECONDARY_SERVICES:
+        assignments[svc] = secondary
+    return assignments
 
 
 def format_gpu_assignments(assignments: dict[str, str]) -> str:
@@ -396,6 +408,20 @@ def build_overrides(
                     "HF_TOKEN": "${HF_TOKEN:-}",
                     "GITHUB_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN:-}",
                 },
+            },
+            # Voice services: GPU compute reservation only (pin comes from gpu-assignments.yml).
+            # mem_limit is modest — int8 faster-whisper fits in 6G; Kokoro in 4G.
+            "stt": {
+                "mem_limit": "6G",
+                "deploy": {"resources": {"reservations": {"devices": [
+                    {"driver": "nvidia", "count": "all", "capabilities": ["gpu"]},
+                ]}}},
+            },
+            "tts": {
+                "mem_limit": "4G",
+                "deploy": {"resources": {"reservations": {"devices": [
+                    {"driver": "nvidia", "count": "all", "capabilities": ["gpu"]},
+                ]}}},
             },
         },
         "amd": {
