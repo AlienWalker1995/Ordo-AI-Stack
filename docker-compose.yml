@@ -947,6 +947,11 @@ services:
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-local}
       - PYTHONIOENCODING=utf-8
+      # Voice: STT openai-provider base URL points at the local faster-whisper
+      # service (profile: voice). TTS base URL is set in hermes config.yaml
+      # (tts.openai.base_url). Auto-TTS-on-voice-input replies in voice. See
+      # docs/configuration.md "Voice (STT/TTS)".
+      - STT_OPENAI_BASE_URL=${STT_OPENAI_BASE_URL:-http://stt:8000/v1}
       # ops-controller HTTP API replaces the raw Docker socket Hermes used
       # to hold. Privileged verbs: /containers/*, /compose/*. See
       # hermes/ops_client.py for the in-process wrapper.
