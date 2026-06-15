@@ -325,5 +325,42 @@ def restart_comfyui(confirm: bool = False) -> dict:
     return _post("/api/orchestration/comfyui/restart", {"confirm": True})
 
 
+# ── Registry parity verbs ─────────────────────────────────────────────────────
+
+@mcp.tool()
+def list_models() -> dict:
+    """List all managed models (registry): id, kind, service, gpu_uuid, enabled, source."""
+    return _get("/api/orchestration/registry/models")
+
+
+@mcp.tool()
+def gpu_status() -> dict:
+    """Live GPU VRAM/util + which models are assigned to each GPU."""
+    return _get("/api/orchestration/registry/gpus")
+
+
+@mcp.tool()
+def set_active_model(model_id: str, confirm: bool = False) -> dict:
+    """Make a single-model registry entry the active model for its service (writes .env + recreates the service). confirm=true required."""
+    if not confirm:
+        return {"error": "Set confirm=true to swap the active model (recreates the service)."}
+    return _post(f"/api/orchestration/registry/models/{model_id}/enable", {"confirm": True})
+
+
+@mcp.tool()
+def assign_model_gpu(model_id: str, gpu_uuid: str, confirm: bool = False) -> dict:
+    """Pin a model to a GPU by full UUID (GPU-xxxxxxxx-...); recreates its service. confirm=true required."""
+    if not confirm:
+        return {"error": "Set confirm=true to reassign the GPU (recreates the service)."}
+    return _post(f"/api/orchestration/registry/models/{model_id}/assign-gpu", {"gpu_uuid": gpu_uuid, "confirm": True})
+
+
+@mcp.tool()
+def register_model(record_json: str) -> dict:
+    """Define a new managed model. record_json: JSON with id, kind, service, runtime, source, est_vram_gb."""
+    import json as _json
+    return _post("/api/orchestration/registry/models", _json.loads(record_json))
+
+
 if __name__ == "__main__":
     mcp.run()
