@@ -58,7 +58,7 @@ The scripts update the config file and the gateway reloads automatically.
 | `n8n` | Workflow automation. `N8N_API_KEY` is mounted as a Docker secret (`secrets/n8n_api_key.sops`); see [docs/runbooks/secrets.md](../docs/runbooks/secrets.md). |
 | `searxng` | Private aggregated web search via the self-hosted **`searxng`** service (`services.searxng` in compose). No external API key. Replaced Tavily as the default web-research tool. |
 | `comfyui` | Image/audio/video via ComfyUI (custom registry). **`list_workflows`**, **`run_workflow`**, per-workflow tools, **`install_custom_node_requirements`**, **`restart_comfyui`**. Registry template: **`mcp/gateway/registry-custom.yaml`**; entrypoint: **`mcp/gateway/gateway-wrapper.sh`**. |
-| `orchestration` | Stable orchestration adapter (fixed verbs against the dashboard HTTP API, insulated from upstream gateway tool-name churn). |
+| `orchestration` | Stable orchestration adapter (fixed verbs against the dashboard HTTP API, insulated from upstream gateway tool-name churn). Model-registry verbs: **`list_models`**, **`gpu_status`**, **`set_active_model`**, **`assign_model_gpu`**, **`register_model`** — Hermes and external clients use these to query and control which model runs on which GPU without directly touching `.env` or compose files. |
 | `playwright` | Headless-Chromium browser automation — **`browser_navigate`**, **`browser_snapshot`**, **`browser_take_screenshot`**, **`browser_fill_form`**, network inspection, etc. Stack-pinned in **`mcp/gateway/registry-custom.yaml`** (sha-pinned image, not resolved from Docker's online catalog). ⚠️ exposes **`browser_run_code_unsafe`** (RCE-equivalent) — fine for the single trusted operator; restrict with `--caps` if exposed more widely. |
 
 ### Other catalog servers

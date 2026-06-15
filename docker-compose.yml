@@ -192,6 +192,10 @@ services:
     environment:
       - COMPOSE_PROJECT_DIR=/workspace
       - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:-}
+      # Belt-and-suspenders: pin the in-container .env path so REGISTRY never
+      # falls back to the host-side BASE_PATH value (which resolves to a path
+      # that does not exist inside the Linux container).
+      - OPS_ENV_PATH=/workspace/.env
       # Docker container name for ComfyUI, used by /comfyui/install-node-requirements
       # to docker-exec a pip install. The code default is "comfyui" (assumes
       # container_name: comfyui in compose), but this stack relies on Compose's

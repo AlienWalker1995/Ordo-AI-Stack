@@ -126,3 +126,41 @@ def test_gpu_assign_rejects_bad_uuid(http_client):
     )
     assert resp.status_code == 400
     assert "UUID" in resp.json()["detail"]
+
+
+# ─── Task 16: legacy /gpu/assign syncs the model registry ────────────────────
+
+def test_gpu_assign_syncs_registry(monkeypatch, tmp_path):
+    """POST /gpu/assign must update REGISTRY records whose service matches."""
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(ops_main, "OPS_CONTROLLER_TOKEN", "testtok")
+
+    # Seed a registry record for llamacpp
+    reg = ops_main.model_registry.ModelRegistry(
+        registry_path=tmp_path / "reg.json",
+        env_path=tmp_path / ".env",
+        gpu_assignments_path=tmp_path / "gpu.yml",
+    )
+    original_uuid = "GPU-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    new_uuid = _VALID_UUID
+    reg.upsert(ops_main.model_registry.ModelRecord(
+        id="local-chat", kind="chat", service="llamacpp", runtime="single-model",
+        source={"file": "q.gguf"}, gpu_uuid=original_uuid, enabled=True, est_vram_gb=20.0,
+    ))
+    monkeypatch.setattr(ops_main, "REGISTRY", reg)
+
+    # Patch GPU_ASSIGNMENTS_PATH to a temp file and _recreate_service to a no-op
+    ga_path = tmp_path / "gpu-assignments.yml"
+    monkeypatch.setattr(ops_main, "GPU_ASSIGNMENTS_PATH", ga_path)
+    monkeypatch.setattr(ops_main, "_recreate_service", lambda svc, request=None: {"ok": True})
+
+    client = TestClient(ops_main.app, raise_server_exceptions=False)
+    resp = client.post(
+        "/gpu/assign",
+        json={"service": "llamacpp", "gpu_uuid": new_uuid, "confirm": True},
+        headers=_AUTH,
+    )
+    assert resp.status_code == 200, resp.json()
+    # Registry must now reflect the new GPU UUID
+    assert ops_main.REGISTRY.get("local-chat").gpu_uuid == new_uuid
