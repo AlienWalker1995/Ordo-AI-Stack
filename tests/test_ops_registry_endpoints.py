@@ -54,3 +54,38 @@ def test_list_models(client):
 def test_get_one_model(client):
     assert client.get("/registry/models/local-chat", headers=AUTH).json()["kind"] == "chat"
     assert client.get("/registry/models/nope", headers=AUTH).status_code == 404
+
+
+# ─── Task 6: define/delete endpoints ─────────────────────────────────────────
+
+def test_define_model(client):
+    body = {
+        "id": "chat-b", "kind": "chat", "service": "llamacpp",
+        "runtime": "single-model", "source": {"file": "b.gguf"},
+        "enabled": False, "est_vram_gb": 18.0,
+    }
+    r = client.post("/registry/models", json=body, headers=AUTH)
+    assert r.status_code == 200
+    assert oc.REGISTRY.get("chat-b") is not None
+
+
+def test_define_requires_auth(client):
+    body = {
+        "id": "chat-c", "kind": "chat", "service": "llamacpp",
+        "runtime": "single-model", "source": {}, "enabled": False, "est_vram_gb": 1.0,
+    }
+    assert client.post("/registry/models", json=body).status_code == 401
+
+
+def test_delete_model(client):
+    client.post("/registry/models", json={
+        "id": "to-del", "kind": "chat", "service": "llamacpp",
+        "runtime": "single-model", "source": {}, "enabled": False, "est_vram_gb": 1.0,
+    }, headers=AUTH)
+    r = client.delete("/registry/models/to-del", headers=AUTH)
+    assert r.status_code == 200
+    assert client.get("/registry/models/to-del", headers=AUTH).status_code == 404
+
+
+def test_delete_missing_model_returns_404(client):
+    assert client.delete("/registry/models/ghost", headers=AUTH).status_code == 404
