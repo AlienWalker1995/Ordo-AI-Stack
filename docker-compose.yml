@@ -818,7 +818,9 @@ services:
     # Opt-in: docker compose --profile voice up -d. GPU pin via the model registry
     # (defaults to the secondary GPU). Reached internally at http://stt:8000/v1.
     profiles: ["voice"]
-    image: fedirz/faster-whisper-server:latest-cuda
+    # sha-pinned for reproducibility. NOTE: must run on a Pascal-class GPU (the 1070);
+    # the registry pins it to the secondary GPU. CTranslate2 int8 has no Blackwell kernels.
+    image: fedirz/faster-whisper-server@sha256:0b64050ad0b9244745746b652473ee42a8d5454d501877a252c3e65f631ffc99
     restart: unless-stopped
     environment:
       - WHISPER__MODEL=${STT_MODEL:-Systran/faster-whisper-small}
@@ -827,7 +829,7 @@ services:
     volumes:
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/voice/hf-cache:/root/.cache/huggingface
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/v1/models',timeout=5).status==200 else 1)\""]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/v1/models',timeout=5).status==200 else 1)\""]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -841,10 +843,12 @@ services:
     # Text-to-speech (Kokoro, OpenAI-compatible /v1/audio/speech). Opt-in profile.
     # Reached internally at http://tts:8880/v1. Voice chosen per-request (af_bella default).
     profiles: ["voice"]
-    image: ghcr.io/remsky/kokoro-fastapi-gpu:latest
+    # sha-pinned. NOTE: Kokoro's PyTorch build has no Blackwell kernels — must run on the
+    # Pascal 1070 (the registry pins it to the secondary GPU). It will crash on the 5090.
+    image: ghcr.io/remsky/kokoro-fastapi-gpu@sha256:63176e12e476470f020e29dfb3203bac249fa66c8fdf95e44b7482546eb4e974
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8880/v1/audio/voices',timeout=5).status==200 else 1)\""]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8880/v1/audio/voices',timeout=5).status==200 else 1)\""]
       interval: 30s
       timeout: 10s
       retries: 5
