@@ -162,3 +162,45 @@ def test_assign_gpu_force_bypasses_capacity(client, monkeypatch):
         headers=AUTH,
     )
     assert r.status_code == 200
+
+
+# ─── Task 8: enable endpoint ──────────────────────────────────────────────────
+
+def test_enable_swaps_active_and_writes_env(client, monkeypatch):
+    written = {}
+    monkeypatch.setattr(oc, "_set_env_keys", lambda kv, request=None: written.update(kv))
+    monkeypatch.setattr(oc, "_recreate_service", lambda svc, request=None: {"ok": True})
+    client.post("/registry/models", json={
+        "id": "chat-b", "kind": "chat", "service": "llamacpp",
+        "runtime": "single-model", "source": {"file": "b.gguf"},
+        "config": {"ctx": 65536},
+        "enabled": False, "est_vram_gb": 18.0,
+    }, headers=AUTH)
+    r = client.post("/registry/models/chat-b/enable", json={"confirm": True}, headers=AUTH)
+    assert r.status_code == 200
+    assert written["LLAMACPP_MODEL"] == "b.gguf" and written["LLAMACPP_CTX_SIZE"] == "65536"
+    assert oc.REGISTRY.get("chat-b").enabled is True
+    assert oc.REGISTRY.get("local-chat").enabled is False
+
+
+def test_enable_requires_confirm(client, monkeypatch):
+    monkeypatch.setattr(oc, "_set_env_keys", lambda kv, request=None: None)
+    monkeypatch.setattr(oc, "_recreate_service", lambda svc, request=None: {"ok": True})
+    r = client.post("/registry/models/local-chat/enable", json={"confirm": False}, headers=AUTH)
+    assert r.status_code == 400
+
+
+def test_enable_missing_model_returns_404(client):
+    r = client.post("/registry/models/ghost/enable", json={"confirm": True}, headers=AUTH)
+    assert r.status_code == 404
+
+
+def test_enable_rejects_non_single_model(client, monkeypatch):
+    monkeypatch.setattr(oc, "_set_env_keys", lambda kv, request=None: None)
+    monkeypatch.setattr(oc, "_recreate_service", lambda svc, request=None: {"ok": True})
+    client.post("/registry/models", json={
+        "id": "comfy", "kind": "comfyui", "service": "comfyui",
+        "runtime": "multi-model", "source": {}, "enabled": False, "est_vram_gb": 0.0,
+    }, headers=AUTH)
+    r = client.post("/registry/models/comfy/enable", json={"confirm": True}, headers=AUTH)
+    assert r.status_code == 400
