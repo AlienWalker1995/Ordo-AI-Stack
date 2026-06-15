@@ -379,6 +379,12 @@ def build_overrides(
             "dashboard": {
                 "deploy": {"resources": {"reservations": {"devices": _NVIDIA_UTILITY}}},
             },
+            # ops-controller needs utility capability so the model registry can read live
+            # GPU VRAM (GET /registry/gpus) + enforce the capacity guard, and the
+            # VRAM-pressure watchdog can read GPU memory. No compute allocation.
+            "ops-controller": {
+                "deploy": {"resources": {"reservations": {"devices": _NVIDIA_UTILITY}}},
+            },
             **common_sidecars,
             "comfyui": {
                 "image": "yanwk/comfyui-boot:cu128-slim",
