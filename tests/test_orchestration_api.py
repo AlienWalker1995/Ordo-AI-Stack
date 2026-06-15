@@ -161,3 +161,106 @@ def test_apply_param_placeholders_fills_optional_audio_defaults():
     assert out["14"]["inputs"]["lyrics_strength"] == pytest.approx(0.99)
     assert out["17"]["inputs"]["seconds"] == 60
     assert isinstance(out["52"]["inputs"]["seed"], int)
+
+
+# ── /api/orchestration/registry/* passthrough (Hermes path) ──────────────────
+
+
+class _MockResp:
+    """Minimal httpx response stand-in."""
+    def __init__(self, data, status_code: int = 200):
+        self.status_code = status_code
+        self._data = data
+        self.text = str(data)
+
+    def json(self):
+        return self._data
+
+
+class _MockAsyncClient:
+    """Replaces httpx.AsyncClient; routes by URL suffix to canned responses."""
+
+    def __init__(self, responses: dict, *args, **kwargs):
+        self._responses = responses
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url, **kwargs):
+        for suffix, resp in self._responses.items():
+            if url.endswith(suffix):
+                return resp
+        return _MockResp({}, 404)
+
+    async def post(self, url, **kwargs):
+        for suffix, resp in self._responses.items():
+            if url.endswith(suffix):
+                return resp
+        return _MockResp({}, 404)
+
+
+@pytest.fixture
+def dash_client():
+    from dashboard.app import app
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def test_orch_registry_list_models_ok(dash_client, monkeypatch):
+    """GET /api/orchestration/registry/models → 200 with upstream payload."""
+    import dashboard.routes_orchestration as ro
+    monkeypatch.setattr(ro, "OPS_CONTROLLER_TOKEN", "tok")
+
+    payload = {"models": {"local-chat": {"kind": "chat", "service": "llamacpp"}}}
+
+    def _mk_client(*a, **k):
+        return _MockAsyncClient({"/registry/models": _MockResp(payload)})
+
+    monkeypatch.setattr(ro.httpx, "AsyncClient", _mk_client)
+    r = dash_client.get("/api/orchestration/registry/models")
+    assert r.status_code == 200
+    assert r.json()["models"]["local-chat"]["kind"] == "chat"
+
+
+def test_orch_registry_list_models_503_without_token(dash_client, monkeypatch):
+    """GET /api/orchestration/registry/models → 503 when token is absent."""
+    import dashboard.routes_orchestration as ro
+    monkeypatch.setattr(ro, "OPS_CONTROLLER_TOKEN", "")
+    r = dash_client.get("/api/orchestration/registry/models")
+    assert r.status_code == 503
+
+
+def test_orch_registry_assign_gpu_409_propagated(dash_client, monkeypatch):
+    """POST /api/orchestration/registry/models/{id}/assign-gpu mirrors upstream 409."""
+    import dashboard.routes_orchestration as ro
+    monkeypatch.setattr(ro, "OPS_CONTROLLER_TOKEN", "tok")
+
+    def _mk_client(*a, **k):
+        return _MockAsyncClient({
+            "/assign-gpu": _MockResp({"detail": "VRAM insufficient"}, status_code=409)
+        })
+
+    monkeypatch.setattr(ro.httpx, "AsyncClient", _mk_client)
+    r = dash_client.post(
+        "/api/orchestration/registry/models/local-chat/assign-gpu",
+        json={"gpu_uuid": "GPU-12345678-1234-1234-1234-123456789abc", "confirm": True},
+    )
+    assert r.status_code == 409
+
+
+def test_orch_registry_get_model_ok(dash_client, monkeypatch):
+    """GET /api/orchestration/registry/models/{id} → 200 with model record."""
+    import dashboard.routes_orchestration as ro
+    monkeypatch.setattr(ro, "OPS_CONTROLLER_TOKEN", "tok")
+
+    payload = {"id": "local-chat", "kind": "chat", "service": "llamacpp"}
+
+    def _mk_client(*a, **k):
+        return _MockAsyncClient({"/registry/models/local-chat": _MockResp(payload)})
+
+    monkeypatch.setattr(ro.httpx, "AsyncClient", _mk_client)
+    r = dash_client.get("/api/orchestration/registry/models/local-chat")
+    assert r.status_code == 200
+    assert r.json()["kind"] == "chat"

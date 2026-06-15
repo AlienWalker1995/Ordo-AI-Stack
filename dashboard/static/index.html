@@ -1173,6 +1173,7 @@
         <nav class="tab-bar" role="tablist" aria-label="Dashboard sections">
           <button class="tab-btn" data-tab="models" role="tab">📦 Models</button>
           <button class="tab-btn" data-tab="gpu" role="tab">🖥️ GPU</button>
+          <button class="tab-btn" data-tab="registry" role="tab">📋 Registry</button>
           <button class="tab-btn" data-tab="services" role="tab">⚡ Services</button>
           <button class="tab-btn" data-tab="mcp" role="tab">🧩 MCP</button>
           <button class="tab-btn" data-tab="orchestration" role="tab">🛠️ Orchestration</button>
@@ -1481,6 +1482,15 @@
         <p class="section-desc">Live per-GPU stats and which service runs on which GPU. Reassigning recreates the service (brief downtime).</p>
         <div id="gpu-unreachable" class="status-summary" style="display:none;color:var(--danger)"></div>
         <div class="services" id="gpu-cards"></div>
+      </section>
+    </div>
+
+    <div class="tab-panel" data-tab="registry">
+      <section id="registry-section">
+        <h2>Model Registry</h2>
+        <p class="section-desc">All registered models: kind, service, source file, GPU assignment, and enable state. Reassigning GPU or toggling enable recreates the service (brief downtime).</p>
+        <div id="registry-unreachable" class="status-summary" style="display:none;color:var(--danger)"></div>
+        <div id="registry-models-root"></div>
       </section>
     </div>
 
@@ -2016,51 +2026,132 @@
       }
     }
 
-    const GPU_SERVICES = ["llamacpp", "llamacpp-embed", "comfyui"];
     async function loadGpuTab() {
       const wrap = document.getElementById("gpu-cards");
       const unreach = document.getElementById("gpu-unreachable");
       if (!wrap) return;
       try {
-        const r = await api("/api/gpu/list");
+        const r = await api("/api/registry/gpus");
         const data = await r.json();
-        if (!data.reachable) {
+        const gpus = data.gpus || {};
+        const entries = Object.entries(gpus);
+        if (!entries.length) {
           unreach.style.display = "";
-          unreach.textContent = "⚠ No GPU visible to the container runtime (WSL passthrough may be down). Try: wsl --shutdown + restart Docker.";
+          unreach.textContent = "⚠ No GPUs returned from registry. WSL passthrough may be down. Try: wsl --shutdown + restart Docker.";
           wrap.innerHTML = "";
           return;
         }
         unreach.style.display = "none";
-        const assigns = data.assignments || {};
-        const cards = (data.gpus || []).map(g => {
-          const pct = g.vram_total_gb ? Math.round(100 * g.vram_used_gb / g.vram_total_gb) : 0;
-          return `<div class="service-card"><div><strong>${escapeHtml(g.name)}</strong> <span class="badge badge-muted">#${escapeHtml(String(g.index))}</span></div>
-            <div>VRAM ${escapeHtml(String(g.vram_used_gb))} / ${escapeHtml(String(g.vram_total_gb))} GB (${pct}%) · ${escapeHtml(String(g.utilization_pct))}% util · ${escapeHtml(String(g.temp_c))}°C</div></div>`;
+        wrap.innerHTML = entries.map(([uuid, g]) => {
+          const used = Number(g.used_gb || 0);
+          const total = Number(g.total_gb || 0);
+          const pct = total ? Math.round(100 * used / total) : 0;
+          const models = (g.models || []).map(m => `<span class="badge badge-muted">${escapeHtml(String(m))}</span>`).join(" ");
+          const barColor = pct > 90 ? "var(--danger)" : pct > 70 ? "var(--warn, #f59e0b)" : "var(--accent)";
+          return `<div class="service-card">
+            <div><strong>${escapeHtml(g.name || uuid)}</strong></div>
+            <div>VRAM ${escapeHtml(String(used))} / ${escapeHtml(String(total))} GB &nbsp;
+              <span style="display:inline-block;width:120px;height:10px;background:var(--card-border);border-radius:4px;vertical-align:middle;">
+                <span style="display:block;width:${pct}%;height:100%;background:${barColor};border-radius:4px;"></span>
+              </span>
+              &nbsp;${pct}%
+            </div>
+            <div>Util: ${escapeHtml(String(g.util || 0))}%</div>
+            <div>Models: ${models || '<span class="hint">none assigned</span>'}</div>
+          </div>`;
         }).join("");
-        const selectors = GPU_SERVICES.map(svc => {
-          const cur = assigns[svc] || "";
-          const opts = (data.gpus || []).map(g =>
-            `<option value="${escapeHtml(g.uuid)}"${g.uuid === cur ? " selected" : ""}>${escapeHtml(g.name)} (${g.vram_total_gb} GB)</option>`).join("");
-          return `<div class="service-card"><label><strong>${escapeHtml(svc)}</strong> &rarr; <select data-svc="${escapeHtml(svc)}">${opts}</select></label></div>`;
-        }).join("");
-        wrap.innerHTML = cards + selectors;
-        wrap.querySelectorAll("select[data-svc]").forEach(s =>
-          s.addEventListener("change", () => assignGpu(s.dataset.svc, s.value)));
       } catch (e) {
         unreach.style.display = ""; unreach.textContent = "Failed to load GPU data: " + e;
       }
     }
-    async function assignGpu(service, gpu_uuid) {
-      if (!confirm(`Reassign ${service} to this GPU? This recreates the container (brief downtime).`)) return;
+
+    async function loadModelsRegistry() {
+      const root = document.getElementById("registry-models-root");
+      const unreach = document.getElementById("registry-unreachable");
+      if (!root) return;
       try {
-        const r = await api("/api/gpu/assign", {
+        const [rModels, rGpus] = await Promise.all([
+          api("/api/registry/models"),
+          api("/api/registry/gpus"),
+        ]);
+        const modelsData = await rModels.json();
+        const gpusData = await rGpus.json();
+        const models = modelsData.models || {};
+        const gpus = gpusData.gpus || {};
+        const entries = Object.entries(models);
+        if (!entries.length) {
+          root.innerHTML = '<div class="empty">No models registered. POST /api/registry/models to define one.</div>';
+          return;
+        }
+        unreach.style.display = "none";
+        const head = `<tr><th>ID</th><th>Kind</th><th>Service</th><th>Source file</th><th>Enabled</th><th>GPU</th></tr>`;
+        const rows = entries.map(([id, m]) => {
+          const srcFile = escapeHtml(String((m.source && m.source.file) || m.source_file || '—'));
+          const isMulti = m.runtime === "multi-model";
+          const enabledCell = isMulti
+            ? `<span class="badge ${m.enabled ? 'badge-ok' : 'badge-muted'}">${m.enabled ? 'enabled' : 'disabled'}</span>`
+            : (m.enabled
+                ? `<span style="font-size:0.85em;">&#x2713; active</span>`
+                : `<button class="btn-icon btn-text" onclick="setActiveRegistryModel(${JSON.stringify(id)})"
+                     title="Set active model (recreates service)"
+                     style="font-size:0.85em;">Set active</button>`);
+          const curGpu = escapeHtml(m.gpu_uuid || "");
+          const gpuCell = `<select data-model-id="${escapeHtml(id)}" onchange="assignRegistryGpu(${JSON.stringify(id)}, this.value)">
+            <option value="">— none —</option>
+            ${Object.entries(gpus).map(([uuid, g]) =>
+              `<option value="${escapeHtml(uuid)}"${uuid === m.gpu_uuid ? " selected" : ""}>${escapeHtml(g.name || uuid)} (${escapeHtml(String(g.total_gb || '?'))} GB)</option>`
+            ).join("")}
+          </select>`;
+          return `<tr>
+            <td><code>${escapeHtml(id)}</code></td>
+            <td>${escapeHtml(m.kind || '—')}</td>
+            <td>${escapeHtml(m.service || '—')}</td>
+            <td><span class="hint" title="${srcFile}">${srcFile.length > 40 ? srcFile.slice(-40) : srcFile}</span></td>
+            <td>${enabledCell}</td>
+            <td>${gpuCell}</td>
+          </tr>`;
+        }).join("");
+        root.innerHTML = `<table class="deps-table" aria-label="Model registry"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+      } catch (e) {
+        unreach.style.display = ""; unreach.textContent = "Failed to load model registry: " + e;
+      }
+    }
+
+    async function setActiveRegistryModel(modelId) {
+      const svc = modelId;
+      if (!confirm(`This recreates the ${svc} service. Set "${modelId}" as the active model?`)) return;
+      try {
+        const r = await api(`/api/registry/models/${encodeURIComponent(modelId)}/enable`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ service, gpu_uuid, confirm: true })
+          body: JSON.stringify({ confirm: true }),
         });
         const d = await r.json();
-        if (!r.ok) alert("Assignment failed: " + (d.error || JSON.stringify(d.result || d)));
+        if (!r.ok) alert("Failed to set active model: " + (d.detail || JSON.stringify(d)));
+      } catch (e) { alert("Error: " + e); }
+      loadModelsRegistry();
+    }
+
+    async function assignRegistryGpu(modelId, gpuUuid) {
+      if (!gpuUuid) return;
+      if (!confirm(`Assign GPU to model "${modelId}"? This recreates the service (brief downtime).`)) {
+        loadModelsRegistry();
+        return;
+      }
+      try {
+        const r = await api(`/api/registry/models/${encodeURIComponent(modelId)}/assign-gpu`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ gpu_uuid: gpuUuid, confirm: true }),
+        });
+        const d = await r.json();
+        if (r.status === 409) {
+          alert("GPU capacity conflict: " + (d.detail || JSON.stringify(d)));
+        } else if (!r.ok) {
+          alert("Assignment failed: " + (d.detail || JSON.stringify(d)));
+        }
       } catch (e) { alert("Assignment error: " + e); }
+      loadModelsRegistry();
       loadGpuTab();
     }
 
@@ -3289,6 +3380,10 @@
       });
       if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
       if (name === "gpu" && typeof loadGpuTab === "function") loadGpuTab();
+      if (name === "registry") {
+        if (typeof loadGpuTab === "function") loadGpuTab();
+        if (typeof loadModelsRegistry === "function") loadModelsRegistry();
+      }
       if (name === "orchestration" && typeof loadOrchestrationTab === "function") loadOrchestrationTab();
     }
     document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => activateTab(b.dataset.tab)));
