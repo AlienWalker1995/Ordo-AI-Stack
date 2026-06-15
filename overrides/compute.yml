@@ -74,3 +74,21 @@ services:
             - driver: nvidia
               count: all
               capabilities: ['gpu']
+  stt:
+    mem_limit: 6G
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: ['gpu']
+  tts:
+    mem_limit: 4G
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: ['gpu']

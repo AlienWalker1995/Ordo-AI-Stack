@@ -811,6 +811,49 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # --- Voice (STT / TTS) ---
+
+  stt:
+    # Speech-to-text (faster-whisper, OpenAI-compatible /v1/audio/transcriptions).
+    # Opt-in: docker compose --profile voice up -d. GPU pin via the model registry
+    # (defaults to the secondary GPU). Reached internally at http://stt:8000/v1.
+    profiles: ["voice"]
+    image: fedirz/faster-whisper-server:latest-cuda
+    restart: unless-stopped
+    environment:
+      - WHISPER__MODEL=${STT_MODEL:-Systran/faster-whisper-small}
+      - WHISPER__INFERENCE_DEVICE=cuda
+      - WHISPER__COMPUTE_TYPE=${STT_COMPUTE_TYPE:-int8}
+    volumes:
+      - ${DATA_PATH:-${BASE_PATH:-.}/data}/voice/hf-cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/v1/models',timeout=5).status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    networks: [backend]
+
+  tts:
+    # Text-to-speech (Kokoro, OpenAI-compatible /v1/audio/speech). Opt-in profile.
+    # Reached internally at http://tts:8880/v1. Voice chosen per-request (af_bella default).
+    profiles: ["voice"]
+    image: ghcr.io/remsky/kokoro-fastapi-gpu:latest
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8880/v1/audio/voices',timeout=5).status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    networks: [backend]
+
   # --- RAG ---
 
   qdrant:
