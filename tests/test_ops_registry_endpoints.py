@@ -89,3 +89,76 @@ def test_delete_model(client):
 
 def test_delete_missing_model_returns_404(client):
     assert client.delete("/registry/models/ghost", headers=AUTH).status_code == 404
+
+
+# ─── Task 7: assign-gpu endpoint ─────────────────────────────────────────────
+
+_FULL_UUID = "GPU-12345678-1234-1234-1234-123456789abc"
+
+
+def test_assign_gpu_sets_pin_and_recreates(client, monkeypatch):
+    calls = {}
+    monkeypatch.setattr(oc, "_recreate_service",
+                        lambda svc, request=None: calls.setdefault("svc", svc) or {"ok": True})
+    monkeypatch.setattr(oc, "_live_gpus",
+                        lambda: {"GPU-def": {"total_gb": 32.0}, "GPU-abc": {"total_gb": 32.0}})
+    r = client.post(
+        "/registry/models/local-chat/assign-gpu",
+        json={"gpu_uuid": "GPU-def", "confirm": True},
+        headers=AUTH,
+    )
+    assert r.status_code == 200 and r.json()["gpu_uuid"] == "GPU-def"
+    assert calls["svc"] == "llamacpp" and oc.REGISTRY.get("local-chat").gpu_uuid == "GPU-def"
+
+
+def test_assign_gpu_rejects_bad_uuid(client):
+    assert client.post(
+        "/registry/models/local-chat/assign-gpu",
+        json={"gpu_uuid": "nope", "confirm": True},
+        headers=AUTH,
+    ).status_code == 400
+
+
+def test_assign_gpu_requires_confirm(client):
+    assert client.post(
+        "/registry/models/local-chat/assign-gpu",
+        json={"gpu_uuid": "GPU-def", "confirm": False},
+        headers=AUTH,
+    ).status_code == 400
+
+
+def test_assign_gpu_missing_model_returns_404(client, monkeypatch):
+    monkeypatch.setattr(oc, "_live_gpus",
+                        lambda: {"GPU-def": {"total_gb": 32.0}})
+    assert client.post(
+        "/registry/models/ghost/assign-gpu",
+        json={"gpu_uuid": "GPU-def", "confirm": True},
+        headers=AUTH,
+    ).status_code == 404
+
+
+def test_assign_gpu_capacity_check_blocks_overcommit(client, monkeypatch):
+    # GPU-abc only has 8 GB; local-chat needs 20 GB => should fail
+    monkeypatch.setattr(oc, "_live_gpus",
+                        lambda: {"GPU-abc": {"total_gb": 8.0}})
+    monkeypatch.setattr(oc, "_recreate_service", lambda svc, request=None: {"ok": True})
+    r = client.post(
+        "/registry/models/local-chat/assign-gpu",
+        json={"gpu_uuid": "GPU-abc", "confirm": True},
+        headers=AUTH,
+    )
+    assert r.status_code == 409
+
+
+def test_assign_gpu_force_bypasses_capacity(client, monkeypatch):
+    calls = {}
+    monkeypatch.setattr(oc, "_live_gpus",
+                        lambda: {"GPU-abc": {"total_gb": 8.0}})
+    monkeypatch.setattr(oc, "_recreate_service",
+                        lambda svc, request=None: calls.setdefault("svc", svc) or {"ok": True})
+    r = client.post(
+        "/registry/models/local-chat/assign-gpu",
+        json={"gpu_uuid": "GPU-abc", "confirm": True, "force": True},
+        headers=AUTH,
+    )
+    assert r.status_code == 200
