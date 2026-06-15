@@ -65,7 +65,7 @@ docker compose --profile voice up -d
 |---|---|---|
 | `STT_MODEL` | `Systran/faster-whisper-small` | Hugging Face repo ID for faster-whisper |
 | `STT_COMPUTE_TYPE` | `int8` | Quantization type (`int8` is Pascal-compatible; use `float16` on Turing+) |
-| `TTS_VOICE` | `af_bella` | Default Kokoro voice (can be overridden per-request) |
+| `TTS_VOICE` | `af_bella` | Default voice label (registry record + client default). Kokoro selects the voice **per request** via the API `voice` param — this is not a container env. |
 
 **Internal endpoints (backend network only — no host ports):**
 
@@ -92,8 +92,9 @@ docker compose --profile voice up -d
   for n8n / the reel pipeline / scripts / a future Hermes that honours a TTS base URL.
   For a fully-local reply voice today, use Hermes' native `neutts` provider (on-device).
 
-HF model weights are cached at `${DATA_PATH}/voice/hf-cache` and survive container
-recreates.
+**STT** weights download once to `${DATA_PATH}/voice/hf-cache` (persists across
+recreates). **TTS** (Kokoro) bakes its models into the image — no runtime download,
+no volume needed.
 
 ## TurboQuant KV-Cache (llama.cpp)
 
