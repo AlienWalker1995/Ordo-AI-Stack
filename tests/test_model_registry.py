@@ -180,3 +180,71 @@ def test_reconcile_handles_quoted_env_values(tmp_path):
     reg = _reg(tmp_path)
     reg.reconcile()
     assert reg.get("local-chat").source["file"] == "qwen.gguf"
+
+
+# ---------------------------------------------------------------------------
+# Voice (STT / TTS) seed records
+# ---------------------------------------------------------------------------
+
+def test_reconcile_seeds_voice_records_from_env(tmp_path):
+    (tmp_path / ".env").write_text("STT_MODEL=x\nTTS_VOICE=y\n")
+    reg = _reg(tmp_path)
+    reg.reconcile()
+    models = reg.list_models()
+
+    # voice-stt
+    assert "voice-stt" in models, "voice-stt record missing after reconcile"
+    stt = models["voice-stt"]
+    assert stt.kind == "stt"
+    assert stt.service == "stt"
+    assert stt.source.get("file") == "x", f"expected source.file='x', got {stt.source!r}"
+    assert stt.enabled is True
+    assert stt.est_vram_gb == 2.0
+    assert stt.runtime == "single-model"
+
+    # voice-tts
+    assert "voice-tts" in models, "voice-tts record missing after reconcile"
+    tts = models["voice-tts"]
+    assert tts.kind == "tts"
+    assert tts.service == "tts"
+    assert tts.source.get("file") == "y", f"expected source.file='y', got {tts.source!r}"
+    assert tts.enabled is True
+    assert tts.est_vram_gb == 1.0
+    assert tts.runtime == "single-model"
+
+
+def test_reconcile_voice_records_use_defaults_when_env_absent(tmp_path):
+    # No .env — voice records should still seed with hardcoded defaults.
+    reg = _reg(tmp_path)
+    reg.reconcile()
+    models = reg.list_models()
+    assert models["voice-stt"].source["file"] == "Systran/faster-whisper-small"
+    assert models["voice-tts"].source["file"] == "af_bella"
+
+
+def test_reconcile_seeds_voice_picks_up_gpu_pin(tmp_path):
+    (tmp_path / ".env").write_text("")
+    (tmp_path / "gpu-assignments.yml").write_text(
+        "services:\n  stt:\n    deploy:\n      resources:\n        reservations:\n"
+        "          devices:\n            - device_ids: ['GPU-1070uuid']\n"
+        "  tts:\n    deploy:\n      resources:\n        reservations:\n"
+        "          devices:\n            - device_ids: ['GPU-1070uuid']\n"
+    )
+    reg = _reg(tmp_path)
+    reg.reconcile()
+    assert reg.get("voice-stt").gpu_uuid == "GPU-1070uuid"
+    assert reg.get("voice-tts").gpu_uuid == "GPU-1070uuid"
+
+
+def test_reconcile_voice_is_idempotent_and_preserves_intent(tmp_path):
+    (tmp_path / ".env").write_text("STT_MODEL=original\n")
+    reg = _reg(tmp_path)
+    reg.reconcile()
+    rec = reg.get("voice-stt")
+    rec.source["file"] = "operator-pick"
+    rec.est_vram_gb = 3.5
+    reg.upsert(rec)
+    reg.reconcile()  # must NOT clobber operator-set fields
+    after = reg.get("voice-stt")
+    assert after.source["file"] == "operator-pick"
+    assert after.est_vram_gb == 3.5
