@@ -2078,6 +2078,7 @@ async def registry_assign_gpu(
     # Save previous pin for rollback
     prev_uuid = rec.gpu_uuid
     rec.gpu_uuid = body.gpu_uuid
+    rec.updated_by = request.headers.get("X-Actor", "dashboard")
     REGISTRY.upsert(rec)
     # Rewrite gpu-assignments.yml
     assignments = {m.service: m.gpu_uuid for m in REGISTRY.list_models().values() if m.gpu_uuid}
