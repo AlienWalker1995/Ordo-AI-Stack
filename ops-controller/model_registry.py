@@ -129,13 +129,21 @@ class ModelRegistry:
             except (TypeError, ValueError):
                 return None
 
+        # Seed tuples: (id, kind, service, model_file, cfg, est_vram_gb)
+        # model_file: str or None — used as source["file"]; for non-file services
+        # (stt uses a HF repo ID, tts a voice name) the value is stored identically.
         seeds = [
             ("local-chat", "chat", "llamacpp", env.get("LLAMACPP_MODEL"),
-             {"ctx": _ctx(env.get("LLAMACPP_CTX_SIZE")), "mmproj": env.get("LLAMACPP_MMPROJ")}),
-            ("local-embed", "embedding", "llamacpp-embed", env.get("LLAMACPP_EMBED_MODEL"), {}),
-            ("comfyui", "comfyui", "comfyui", None, {}),
+             {"ctx": _ctx(env.get("LLAMACPP_CTX_SIZE")), "mmproj": env.get("LLAMACPP_MMPROJ")},
+             0.0),
+            ("local-embed", "embedding", "llamacpp-embed", env.get("LLAMACPP_EMBED_MODEL"), {}, 0.0),
+            ("comfyui", "comfyui", "comfyui", None, {}, 0.0),
+            ("voice-stt", "stt", "stt",
+             env.get("STT_MODEL", "Systran/faster-whisper-small"), {}, 2.0),
+            ("voice-tts", "tts", "tts",
+             env.get("TTS_VOICE", "af_bella"), {}, 1.0),
         ]
-        for mid, kind, service, model_file, cfg in seeds:
+        for mid, kind, service, model_file, cfg, est_vram in seeds:
             if mid in existing:
                 continue  # registry already owns this record — preserve operator intent
             runtime = "multi-model" if kind == "comfyui" else "single-model"
@@ -146,7 +154,7 @@ class ModelRegistry:
                 gpu_uuid=pins.get(service),
                 enabled=True,
                 config=cfg,
-                est_vram_gb=0.0,
+                est_vram_gb=est_vram,
                 updated_by="reconcile",
             ))
 

@@ -60,7 +60,7 @@ AUDIT_LOG_MAX_BYTES = int(os.environ.get("AUDIT_LOG_MAX_BYTES", "10485760"))  # 
 # Services we allow operations on (allowlist)
 ALLOWED_SERVICES = {
     "llamacpp", "llamacpp-embed", "dashboard", "open-webui", "model-gateway", "mcp-gateway",
-    "comfyui", "n8n", "qdrant",
+    "comfyui", "n8n", "qdrant", "stt", "tts",
 }
 
 # .env keys we allow updating via the API
@@ -82,7 +82,7 @@ BASE_PATH = os.environ.get("BASE_PATH", ".")
 COMPOSE_FILE_ENV = os.environ.get("COMPOSE_FILE", "docker-compose.yml")
 
 # Services whose GPU pin the dashboard may change.
-GPU_ASSIGNABLE_SERVICES = {"llamacpp", "llamacpp-embed", "comfyui"}
+GPU_ASSIGNABLE_SERVICES = {"llamacpp", "llamacpp-embed", "comfyui", "stt", "tts"}
 GPU_ASSIGNMENTS_PATH = Path("/workspace/overrides/gpu-assignments.yml")
 
 # Full UUID pattern: used by /gpu/assign and /registry/assign-gpu.
