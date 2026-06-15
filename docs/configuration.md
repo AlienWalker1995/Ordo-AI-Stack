@@ -104,6 +104,28 @@ LLAMACPP_KV_CACHE_TYPE_V=q4_0
 ```
 `docker compose up -d llamacpp`. No code changes required. Upstream does not understand `tbq*` types and will reject them at startup.
 
+## Model Registry
+
+The model registry is the single source of truth for which model runs on which GPU. It is backed by `data/model-registry.json` and managed via:
+
+- **Dashboard** — Models view (swap active model, set VRAM estimate) and GPU view (reassign GPU pin per model).
+- **Hermes verbs** — `list_models`, `gpu_status`, `set_active_model`, `assign_model_gpu`, `register_model` (see [mcp/README.md](../mcp/README.md)).
+- **ops-controller REST API** — `/registry/*` endpoints (auth required):
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/registry/models` | GET | List all registered models |
+| `/registry/models/{id}` | GET | Read one model record |
+| `/registry/models` | POST | Define / upsert a model record |
+| `/registry/models/{id}` | DELETE | Remove a model record |
+| `/registry/models/{id}/assign-gpu` | POST | Pin a model to a specific GPU UUID |
+| `/registry/models/{id}/enable` | POST | Swap active model (writes .env, recreates service) |
+| `/registry/gpus` | GET | Live GPU inventory with per-model VRAM breakdown |
+
+On startup the ops-controller reconciles the registry from `.env` (LLAMACPP_MODEL, LLAMACPP_EMBED_MODEL, etc.) and `overrides/gpu-assignments.yml`. Reconcile is **seed-only**: records that already exist are never overwritten. Operators change models via the registry verbs; `.env` and `gpu-assignments.yml` are derived artifacts.
+
+The registry path can be overridden with `MODEL_REGISTRY_PATH` (default `/data/model-registry.json`).
+
 ## MCP Server Configuration
 
 Repo templates live under `mcp/gateway/`; runtime files are in `data/mcp/` (bind-mounted into the gateway). See [mcp/README.md](../mcp/README.md).
