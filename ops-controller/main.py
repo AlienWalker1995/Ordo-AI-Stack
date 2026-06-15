@@ -38,6 +38,16 @@ except ModuleNotFoundError:  # pragma: no cover — exercised via legacy tests
     _audit_spec.loader.exec_module(_audit_mod)
     AuditLog = _audit_mod.AuditLog
 
+try:
+    import model_registry
+except ModuleNotFoundError:  # pragma: no cover
+    import importlib.util as _ilu
+    _mr_spec = _ilu.spec_from_file_location(
+        "model_registry", str(Path(__file__).resolve().parent / "model_registry.py"),
+    )
+    model_registry = _ilu.module_from_spec(_mr_spec)
+    _mr_spec.loader.exec_module(model_registry)
+
 app = FastAPI(title="Ops Controller", version="1.0.0")
 logger = logging.getLogger(__name__)
 
@@ -57,6 +67,9 @@ ENV_ALLOWED_KEYS = {
     "DEFAULT_MODEL",
     "OPEN_WEBUI_DEFAULT_MODEL",
     "LLAMACPP_MODEL",
+    "LLAMACPP_CTX_SIZE",
+    "LLAMACPP_EMBED_MODEL",
+    "LLAMACPP_MMPROJ",
     "LLAMACPP_FLASH_ATTN",
     "LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION",
     "LLAMACPP_KV_CACHE_TYPE_K",
@@ -70,6 +83,21 @@ COMPOSE_FILE_ENV = os.environ.get("COMPOSE_FILE", "docker-compose.yml")
 # Services whose GPU pin the dashboard may change.
 GPU_ASSIGNABLE_SERVICES = {"llamacpp", "llamacpp-embed", "comfyui"}
 GPU_ASSIGNMENTS_PATH = Path("/workspace/overrides/gpu-assignments.yml")
+
+# Full UUID pattern: used by /gpu/assign (legacy strictness kept for backward compat).
+_GPU_UUID_RE = re.compile(
+    r"GPU-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+# Permissive GPU-<id> check for /registry endpoints: nvidia-smi can emit short-form
+# ids (e.g. "GPU-abc") in some environments / test doubles.  Just requires the
+# "GPU-" prefix and at least one alphanumeric character after it.
+_GPU_UUID_REGISTRY_RE = re.compile(r"GPU-[0-9a-fA-F][0-9a-fA-F\-]*")
+
+REGISTRY = model_registry.ModelRegistry(
+    registry_path=Path(os.environ.get("MODEL_REGISTRY_PATH", "/data/model-registry.json")),
+    env_path=Path(os.environ.get("OPS_ENV_PATH", f"{BASE_PATH}/.env")),
+    gpu_assignments_path=GPU_ASSIGNMENTS_PATH,
+)
 
 
 def parse_gpu_assignments_yaml(text: str) -> dict:
@@ -139,6 +167,101 @@ def apply_gpu_assignment(service: str, gpu_uuid: str) -> dict:
     current[service] = gpu_uuid
     _write_gpu_assignments(current)
     return current
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers used by /gpu/assign AND /registry/* endpoints
+# ---------------------------------------------------------------------------
+
+def _recreate_service(service: str, request=None) -> dict:
+    """Run docker-compose up -d --no-deps <service>. Raises HTTPException on failure."""
+    compose_files = [f.strip() for f in COMPOSE_FILE_ENV.split(";") if f.strip()]
+    cmd = ["docker-compose"]
+    for cf in compose_files:
+        cmd += ["-f", f"/workspace/{cf}"]
+    cmd += ["up", "-d", "--no-deps", service]
+    env = {**os.environ, "BASE_PATH": BASE_PATH}
+    operator_home = os.environ.get("OPERATOR_HOME")
+    if operator_home:
+        env["HOME"] = operator_home
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True,
+            cwd="/workspace", env=env, timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Service recreate timed out after 120 seconds")
+    if result.returncode != 0:
+        raise HTTPException(status_code=500, detail=(result.stderr or result.stdout)[:500])
+    return {"ok": True, "service": service, "action": "recreated"}
+
+
+def _write_text_atomic(path: Path, text: str) -> None:
+    """Write text to path atomically via a tempfile + os.replace."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(str(tmp), str(path))
+
+
+def _set_env_keys(kv: dict, request=None) -> None:
+    """Write each key→value pair into the .env file (OPS_ENV_PATH).
+
+    Only keys in ENV_ALLOWED_KEYS are permitted; raises HTTPException for others.
+    Each key is upserted atomically (replace existing line or append).
+    """
+    env_path = REGISTRY.env_path
+    for key, value in kv.items():
+        if key not in ENV_ALLOWED_KEYS:
+            raise HTTPException(status_code=400, detail=f"Key not in allowlist: {key!r}")
+    if not env_path.exists():
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        content = ""
+    else:
+        content = env_path.read_text(encoding="utf-8")
+    for key, value in kv.items():
+        pattern = rf"^{re.escape(key)}=.*"
+        if re.search(pattern, content, re.MULTILINE):
+            content = re.sub(pattern, f"{key}={value}", content, flags=re.MULTILINE)
+        else:
+            content = content.rstrip("\n") + f"\n{key}={value}\n"
+    _write_text_atomic(env_path, content)
+
+
+def _live_gpus() -> dict:
+    """Return {uuid: {"name", "total_gb", "used_gb", "util"}} via nvidia-smi.
+
+    Returns {} if nvidia-smi is unavailable or returns no output.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=gpu_uuid,name,memory.total,memory.used,utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return {}
+        out: dict = {}
+        for line in result.stdout.strip().splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 5:
+                continue
+            uuid, name, total_mib, used_mib, util = parts[:5]
+            try:
+                out[uuid] = {
+                    "name": name,
+                    "total_gb": round(float(total_mib) / 1024.0, 1),
+                    "used_gb": round(float(used_mib) / 1024.0, 1),
+                    "util": int(float(util)),
+                }
+            except (ValueError, TypeError):
+                continue
+        return out
+    except Exception:
+        return {}
 
 
 # Model download (ComfyUI files)
@@ -977,7 +1100,7 @@ async def gpu_assign(body: GpuAssignBody, request: Request, _: None = Depends(ve
     """Pin a GPU service to a specific GPU UUID, then recreate it so the pin takes effect."""
     if body.service not in GPU_ASSIGNABLE_SERVICES:
         raise HTTPException(status_code=400, detail=f"Service {body.service} not GPU-assignable")
-    if not re.fullmatch(r"GPU-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", body.gpu_uuid):
+    if not _GPU_UUID_RE.fullmatch(body.gpu_uuid):
         raise HTTPException(status_code=400, detail="Invalid GPU UUID format")
     if not body.confirm:
         raise HTTPException(status_code=400, detail="Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
@@ -985,26 +1108,13 @@ async def gpu_assign(body: GpuAssignBody, request: Request, _: None = Depends(ve
     if GPU_ASSIGNMENTS_PATH.exists():
         prev = parse_gpu_assignments_yaml(GPU_ASSIGNMENTS_PATH.read_text(encoding="utf-8"))
     apply_gpu_assignment(body.service, body.gpu_uuid)
-    compose_files = [f.strip() for f in COMPOSE_FILE_ENV.split(";") if f.strip()]
-    cmd = ["docker-compose"]
-    for cf in compose_files:
-        cmd += ["-f", f"/workspace/{cf}"]
-    cmd += ["up", "-d", "--no-deps", body.service]
-    env = {**os.environ, "BASE_PATH": BASE_PATH}
-    operator_home = os.environ.get("OPERATOR_HOME")
-    if operator_home:
-        env["HOME"] = operator_home
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd="/workspace", env=env, timeout=120)
-    except subprocess.TimeoutExpired:
+        _recreate_service(body.service, request)
+    except HTTPException as exc:
         _write_gpu_assignments(prev)  # rollback
-        _audit("gpu_assign", body.service, "error", "recreate timed out after 120s", correlation_id=_correlation_id(request))
-        raise HTTPException(status_code=504, detail="Service recreate timed out after 120 seconds")
-    ok = result.returncode == 0
-    if not ok:
-        _write_gpu_assignments(prev)  # rollback
-        _audit("gpu_assign", body.service, "error", (result.stderr or result.stdout)[:200], correlation_id=_correlation_id(request))
-        raise HTTPException(status_code=500, detail=(result.stderr or result.stdout)[:500])
+        detail = str(exc.detail)
+        _audit("gpu_assign", body.service, "error", detail[:200], correlation_id=_correlation_id(request))
+        raise
     _audit("gpu_assign", body.service, "ok", body.gpu_uuid, correlation_id=_correlation_id(request))
     return {"ok": True, "service": body.service, "gpu_uuid": body.gpu_uuid, "action": "reassigned"}
 
@@ -1902,6 +2012,170 @@ if OPS_VRAM_PRESSURE_GB > 0:
     threading.Thread(target=_vram_pressure_watchdog_loop, daemon=True, name="vram-pressure-watchdog").start()
 else:
     print("[vram-watchdog] disabled (set OPS_VRAM_PRESSURE_GB > 0 to enable)", flush=True)
+
+
+# ── /registry/* endpoints (Tasks 5–9) ────────────────────────────────────────
+
+
+class RegistryAssignBody(BaseModel):
+    gpu_uuid: str
+    confirm: bool = False
+    force: bool = False
+
+
+@app.get("/registry/models")
+async def registry_list_models(_: None = Depends(verify_token)):
+    """List all models in the registry."""
+    return {"models": {mid: rec.model_dump() for mid, rec in REGISTRY.list_models().items()}}
+
+
+@app.get("/registry/models/{model_id}")
+async def registry_get_model(model_id: str, _: None = Depends(verify_token)):
+    """Get a single model record by ID. 404 if not found."""
+    rec = REGISTRY.get(model_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"Model {model_id!r} not found")
+    return rec.model_dump()
+
+
+@app.post("/registry/models")
+async def registry_define_model(
+    record: model_registry.ModelRecord,
+    request: Request,
+    _: None = Depends(verify_token),
+):
+    """Upsert a model record into the registry."""
+    record.updated_by = request.headers.get("X-Actor", "dashboard")
+    REGISTRY.upsert(record)
+    _audit("registry_define", record.id, "ok", correlation_id=_correlation_id(request))
+    return record.model_dump()
+
+
+@app.delete("/registry/models/{model_id}")
+async def registry_delete_model(
+    model_id: str,
+    request: Request,
+    _: None = Depends(verify_token),
+):
+    """Delete a model record. 404 if not found."""
+    if REGISTRY.get(model_id) is None:
+        raise HTTPException(status_code=404, detail=f"Model {model_id!r} not found")
+    REGISTRY.delete(model_id)
+    _audit("registry_delete", model_id, "ok", correlation_id=_correlation_id(request))
+    return {"ok": True, "id": model_id}
+
+
+@app.post("/registry/models/{model_id}/assign-gpu")
+async def registry_assign_gpu(
+    model_id: str,
+    body: RegistryAssignBody,
+    request: Request,
+    _: None = Depends(verify_token),
+):
+    """Pin a model to a GPU UUID, update gpu-assignments.yml, and recreate the service."""
+    rec = REGISTRY.get(model_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"Model {model_id!r} not found")
+    if not _GPU_UUID_REGISTRY_RE.fullmatch(body.gpu_uuid):
+        raise HTTPException(status_code=400, detail="Invalid GPU UUID format")
+    if not body.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.",
+        )
+    # Capacity guard (skip when force=True)
+    if not body.force:
+        all_models = list(REGISTRY.list_models().values())
+        fits, used, total = model_registry.capacity_check(
+            _live_gpus(), body.gpu_uuid, all_models, rec.est_vram_gb,
+        )
+        if not fits:
+            raise HTTPException(
+                status_code=409,
+                detail=f"VRAM insufficient: {used + rec.est_vram_gb:.1f} GB requested, {total:.1f} GB available on {body.gpu_uuid}. Use force=true to override.",
+            )
+    # Save previous pin for rollback
+    prev_uuid = rec.gpu_uuid
+    rec.gpu_uuid = body.gpu_uuid
+    REGISTRY.upsert(rec)
+    # Rewrite gpu-assignments.yml
+    assignments = {m.service: m.gpu_uuid for m in REGISTRY.list_models().values() if m.gpu_uuid}
+    try:
+        _write_text_atomic(GPU_ASSIGNMENTS_PATH, model_registry.render_gpu_assignments_yaml(assignments))
+    except Exception as exc:
+        # Rollback registry
+        rec.gpu_uuid = prev_uuid
+        REGISTRY.upsert(rec)
+        _audit("registry_assign_gpu", model_id, "error", str(exc)[:200], correlation_id=_correlation_id(request))
+        raise HTTPException(status_code=500, detail=f"Failed to write gpu-assignments.yml: {exc}") from exc
+    # Recreate service
+    try:
+        _recreate_service(rec.service, request)
+    except HTTPException as exc:
+        # Rollback both registry and YAML
+        rec.gpu_uuid = prev_uuid
+        REGISTRY.upsert(rec)
+        prev_assignments = {m.service: m.gpu_uuid for m in REGISTRY.list_models().values() if m.gpu_uuid}
+        try:
+            _write_text_atomic(GPU_ASSIGNMENTS_PATH, model_registry.render_gpu_assignments_yaml(prev_assignments))
+        except Exception:
+            pass
+        _audit("registry_assign_gpu", model_id, "error", str(exc.detail)[:200], correlation_id=_correlation_id(request))
+        raise
+    _audit("registry_assign_gpu", model_id, "ok", body.gpu_uuid, correlation_id=_correlation_id(request))
+    return {"ok": True, "id": model_id, "gpu_uuid": body.gpu_uuid}
+
+
+@app.post("/registry/models/{model_id}/enable")
+async def registry_enable_model(
+    model_id: str,
+    body: ConfirmBody,
+    request: Request,
+    _: None = Depends(verify_token),
+):
+    """Activate a model: deactivate siblings on the same service, write env, recreate."""
+    rec = REGISTRY.get(model_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"Model {model_id!r} not found")
+    if rec.runtime != "single-model":
+        raise HTTPException(status_code=400, detail=f"Model {model_id!r} has runtime={rec.runtime!r}; only single-model records can be enabled via this endpoint")
+    if not body.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.",
+        )
+    # Deactivate siblings on the same service
+    for mid, sibling in REGISTRY.list_models().items():
+        if mid != model_id and sibling.service == rec.service and sibling.enabled:
+            sibling.enabled = False
+            REGISTRY.upsert(sibling)
+    # Activate target
+    rec.enabled = True
+    REGISTRY.upsert(rec)
+    # Push derived env keys
+    env_kv = REGISTRY.derive_env(rec)
+    if env_kv:
+        _set_env_keys(env_kv, request)
+    # Recreate service so new env takes effect
+    _recreate_service(rec.service, request)
+    _audit("registry_enable", model_id, "ok", correlation_id=_correlation_id(request))
+    return {"ok": True, "id": model_id, "enabled": True}
+
+
+@app.get("/registry/gpus")
+async def registry_gpus(_: None = Depends(verify_token)):
+    """Live GPU info merged with registry model assignments."""
+    live = _live_gpus()
+    models = REGISTRY.list_models()
+    # Build uuid -> list of model ids
+    uuid_to_models: dict = {}
+    for mid, m in models.items():
+        if m.gpu_uuid:
+            uuid_to_models.setdefault(m.gpu_uuid, []).append(mid)
+    result: dict = {}
+    for uuid, info in live.items():
+        result[uuid] = {**info, "models": uuid_to_models.get(uuid, [])}
+    return {"gpus": result}
 
 
 # ── FastAPI lifespan: start watchdog task ────────────────────────────────────
