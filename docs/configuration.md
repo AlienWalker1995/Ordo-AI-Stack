@@ -74,10 +74,23 @@ docker compose --profile voice up -d
 | STT | `http://stt:8000/v1` | OpenAI-compatible `/v1/audio/transcriptions` |
 | TTS | `http://tts:8880/v1` | OpenAI-compatible `/v1/audio/speech` |
 
-**Hermes wiring:** configure Hermes to use these as its STT/TTS providers by
-pointing the relevant provider at the above URLs with `provider=openai`. For STT:
-`base_url: http://stt:8000/v1`. For TTS: `base_url: http://tts:8880/v1`,
-`voice: af_bella` (or any voice returned by `GET /v1/audio/voices`).
+**Hermes wiring (Discord voice memos):**
+
+- **STT (voice memo → text): fully local.** Hermes' STT openai provider takes its
+  base URL from the `STT_OPENAI_BASE_URL` env, which `docker-compose.yml` sets on
+  `hermes-gateway` to `http://stt:8000/v1`. Set in `data/hermes/config.yaml`:
+  `stt.provider: openai`, `stt.openai.model: Systran/faster-whisper-small`,
+  `stt.openai.api_key: local`, `stt.enabled: true`. Inbound Discord voice messages
+  are then auto-transcribed on the secondary GPU.
+- **TTS (voice reply): edge by default; local Kokoro available but not yet Hermes-wired.**
+  Hermes auto-replies in voice when the input was voice. Its default TTS provider is
+  `edge` (Microsoft cloud, free, works out of the box). Pointing Hermes' *openai* TTS
+  provider at the local Kokoro service requires `tts.openai.base_url`, but the current
+  Hermes config schema does **not** persist a TTS `base_url` (and there is no env for
+  it), so this Hermes version cannot target local Kokoro for replies. The Kokoro
+  service is still deployed + registry-managed and reachable at `http://tts:8880/v1`
+  for n8n / the reel pipeline / scripts / a future Hermes that honours a TTS base URL.
+  For a fully-local reply voice today, use Hermes' native `neutts` provider (on-device).
 
 HF model weights are cached at `${DATA_PATH}/voice/hf-cache` and survive container
 recreates.
