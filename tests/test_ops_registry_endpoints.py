@@ -204,3 +204,23 @@ def test_enable_rejects_non_single_model(client, monkeypatch):
     }, headers=AUTH)
     r = client.post("/registry/models/comfy/enable", json={"confirm": True}, headers=AUTH)
     assert r.status_code == 400
+
+
+# ─── Task 9: GET /registry/gpus ───────────────────────────────────────────────
+
+def test_registry_gpus_lists_assignments(client, monkeypatch):
+    monkeypatch.setattr(oc, "_live_gpus",
+                        lambda: {"GPU-abc": {"name": "5090", "total_gb": 32.0,
+                                             "used_gb": 20.0, "util": 5}})
+    g = client.get("/registry/gpus", headers=AUTH).json()["gpus"]["GPU-abc"]
+    assert "local-chat" in g["models"] and g["total_gb"] == 32.0
+
+
+def test_registry_gpus_requires_auth(client):
+    assert client.get("/registry/gpus").status_code == 401
+
+
+def test_registry_gpus_empty_when_no_gpus(client, monkeypatch):
+    monkeypatch.setattr(oc, "_live_gpus", lambda: {})
+    r = client.get("/registry/gpus", headers=AUTH)
+    assert r.status_code == 200 and r.json()["gpus"] == {}
