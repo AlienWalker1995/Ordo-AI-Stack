@@ -3800,7 +3800,7 @@
     // ── End Compute Pressure ──────────────────────────────────
 
     function activateTab(name) {
-      const tabs = ["models", "gpu", "services", "mcp", "orchestration"];
+      const tabs = ["models", "gpu", "registry", "services", "mcp", "orchestration"];
       if (!tabs.includes(name)) name = "models";
       document.querySelectorAll(".tab-btn").forEach(b => {
         const on = b.dataset.tab === name;
