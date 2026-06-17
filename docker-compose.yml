@@ -564,6 +564,15 @@ services:
     restart: "no"
     command: ["true"]
 
+  # Qdrant RAG MCP image (gateway-spawned). Semantic search over the `documents`
+  # collection; embeds queries via llamacpp-embed to match rag-ingestion's vectors.
+  qdrant-rag-mcp-image:
+    build: ./qdrant-rag-mcp
+    image: ordo-ai-stack-qdrant-rag-mcp:latest
+    pull_policy: build
+    restart: "no"
+    command: ["true"]
+
   comfyui-mcp:
     image: ordo-ai-stack-comfyui-mcp:latest
     pull_policy: build
@@ -894,7 +903,11 @@ services:
       timeout: 5s
       retries: 3
     environment:
-      - MODEL_GATEWAY_URL=http://model-gateway:11435
+      # Embed directly against the raw llama.cpp embedding server. litellm's
+      # /v1/embeddings route 500s for the local embed model; llama-server works
+      # and ignores the model field. This keeps ingest + qdrant-rag-mcp queries
+      # in the SAME 768-dim nomic space.
+      - MODEL_GATEWAY_URL=http://llamacpp-embed:8080
       - EMBED_MODEL=${EMBED_MODEL:-${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}}
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_COLLECTION=${RAG_COLLECTION:-documents}
@@ -905,7 +918,7 @@ services:
     volumes:
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/rag-input:/watch
     depends_on:
-      model-gateway:
+      llamacpp-embed:
         condition: service_started
       qdrant:
         condition: service_started
