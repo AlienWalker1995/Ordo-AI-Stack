@@ -4,6 +4,18 @@
 # for this file: with --servers set, the gateway does not merge registry.yaml for definitions.
 # PLACEHOLDER_* replaced at mcp-gateway startup (gateway-wrapper.sh).
 registry:
+  qdrant-rag:
+    description: "Semantic RAG search over the stack's Qdrant `documents` collection. Embeds the query with the local nomic embedder (llamacpp-embed, same vectors as rag-ingestion) and returns the top-K matching chunks with source and score. Use to retrieve indexed knowledge instead of pasting large context. Tools - qdrant_search, qdrant_status."
+    title: Qdrant RAG
+    type: server
+    image: ordo-ai-stack-qdrant-rag-mcp:latest
+    env:
+      - name: QDRANT_URL
+        value: http://qdrant:6333
+      - name: EMBED_URL
+        value: http://llamacpp-embed:8080
+      - name: RAG_COLLECTION
+        value: documents
   searxng:
     description: SearXNG MCP server — private, aggregated web search via the self-hosted SearXNG instance (services.searxng in this stack). Replaces the prior Tavily integration; no external API key required.
     title: SearXNG
