@@ -1,7 +1,8 @@
 from __future__ import annotations
+
+import importlib.util
 import json
 from pathlib import Path
-import importlib.util
 
 _spec = importlib.util.spec_from_file_location(
     "model_registry",
@@ -11,7 +12,7 @@ mr = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mr)
 
 
-def _reg(tmp_path) -> "mr.ModelRegistry":
+def _reg(tmp_path) -> mr.ModelRegistry:
     return mr.ModelRegistry(
         registry_path=tmp_path / "model-registry.json",
         env_path=tmp_path / ".env",
@@ -152,7 +153,9 @@ def test_reconcile_is_idempotent_and_preserves_intent(tmp_path):
     (tmp_path / ".env").write_text("LLAMACPP_MODEL=qwen.gguf\n")
     reg = _reg(tmp_path)
     reg.reconcile()
-    rec = reg.get("local-chat"); rec.est_vram_gb = 22.0; reg.upsert(rec)
+    rec = reg.get("local-chat")
+    rec.est_vram_gb = 22.0
+    reg.upsert(rec)
     reg.reconcile()
     assert reg.get("local-chat").est_vram_gb == 22.0
 

@@ -17,12 +17,13 @@ import re
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 # Load the canonical dependency-free GPU-assignments formatter from ops-controller.
 # Inserted into sys.path at index 0 only for this module-level import; we use
 # importlib so we never permanently pollute sys.path at runtime.
 import sys as _sys
+from pathlib import Path
+
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ops-controller"))
 from gpu_assignments_fmt import render_gpu_assignments_yaml as _render_gpu_yaml  # noqa: E402
 

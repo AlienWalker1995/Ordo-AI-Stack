@@ -37,6 +37,9 @@ def client(monkeypatch, tmp_path):
         gpu_assignments_path=tmp_path / "gpu.yml",
     )
     monkeypatch.setattr(oc, "REGISTRY", reg)
+    # endpoint writes via the module-level GPU_ASSIGNMENTS_PATH (prod: same path as
+    # the registry's); point it at the tmp file so the test is hermetic, not /workspace
+    monkeypatch.setattr(oc, "GPU_ASSIGNMENTS_PATH", tmp_path / "gpu.yml")
     reg.upsert(oc.model_registry.ModelRecord(
         id="local-chat", kind="chat", service="llamacpp", runtime="single-model",
         source={"file": "q.gguf"}, gpu_uuid=_FULL_UUID, enabled=True, est_vram_gb=20.0,
