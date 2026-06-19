@@ -27,9 +27,8 @@ import json
 import re
 import shutil
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
 
 # ── Pure policy functions (unit-tested; no filesystem side effects) ───────────
 
@@ -47,7 +46,7 @@ def draft_expired(folder_name, now, max_age_days=60):
         return False
     try:
         stamp = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)),
-                         tzinfo=timezone.utc)
+                         tzinfo=UTC)
     except ValueError:
         return False
     return (now - stamp).days > max_age_days
@@ -251,7 +250,7 @@ def main():
     args = parser.parse_args()
 
     data_root = Path(args.data_root) if args.data_root else Path(__file__).resolve().parent.parent / "data"
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     plan = plan_purge(data_root, now)
     applied = execute_purge(plan, data_root, force=args.force) if args.apply else None

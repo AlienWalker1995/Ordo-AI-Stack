@@ -7,7 +7,8 @@ and exercised only via a temp tree in the apply test.
 from __future__ import annotations
 
 import importlib.util
-from datetime import datetime, timezone
+import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 _PATH = Path(__file__).resolve().parent.parent / "scripts" / "storage_purge.py"
@@ -15,7 +16,7 @@ _spec = importlib.util.spec_from_file_location("storage_purge_under_test", _PATH
 sp = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sp)
 
-NOW = datetime(2026, 6, 19, tzinfo=timezone.utc)
+NOW = datetime(2026, 6, 19, tzinfo=UTC)
 
 
 # --- draft_expired: age from the YYYY-MM-DD folder-name prefix ---
@@ -117,8 +118,6 @@ def test_within_root_false_for_parent_traversal(tmp_path):
 
 
 # --- plan_purge / execute_purge: integration against a temp data tree ---
-
-import os
 
 
 def _aged_file(path, days_old, now_epoch, size=1024):
