@@ -6,8 +6,8 @@ import hmac
 import ipaddress
 import json
 import logging
-import os
 import mimetypes
+import os
 import re
 import subprocess
 import threading
@@ -29,10 +29,9 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from dashboard import gpu_stats
+from dashboard import gpu_stats, settings
 from dashboard import routes_gpu as _routes_gpu
 from dashboard import routes_registry as _routes_registry
-from dashboard import settings
 from dashboard.orchestration_db import get_job_counts, get_outbox_stats
 from dashboard.routes_hub import router as hub_router
 from dashboard.routes_orchestration import router as orchestration_router

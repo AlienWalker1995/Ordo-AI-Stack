@@ -11,7 +11,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -25,12 +25,12 @@ class ModelRecord(BaseModel):
     service: str
     runtime: Runtime
     source: dict[str, Any] = Field(default_factory=dict)
-    gpu_uuid: Optional[str] = None
+    gpu_uuid: str | None = None
     enabled: bool = False
     config: dict[str, Any] = Field(default_factory=dict)
     est_vram_gb: float = 0.0
     updated_by: str = "system"
-    updated_at: Optional[str] = None
+    updated_at: str | None = None
 
 
 # Force resolution of the module-level Literal aliases (Kind/Runtime) when this
@@ -67,7 +67,7 @@ class ModelRegistry:
         raw = self._read().get("models", {})
         return {mid: ModelRecord(**rec) for mid, rec in raw.items()}
 
-    def get(self, model_id: str) -> Optional[ModelRecord]:
+    def get(self, model_id: str) -> ModelRecord | None:
         return self.list_models().get(model_id)
 
     def upsert(self, record: ModelRecord) -> ModelRecord:
@@ -106,7 +106,7 @@ class ModelRegistry:
                 out["LLAMACPP_KV_CACHE_TYPE_V"] = str(cfg["kv_cache_v"])
         return out
 
-    def derive_gpu_assignment(self, record: ModelRecord) -> tuple[str, Optional[str]]:
+    def derive_gpu_assignment(self, record: ModelRecord) -> tuple[str, str | None]:
         """(service, gpu_uuid) — the pin this record implies. uuid None = unassigned."""
         return (record.service, record.gpu_uuid)
 
@@ -117,7 +117,7 @@ class ModelRegistry:
         are used ONLY to create records that don't exist yet (first run). Operators
         change models via the registry verbs, never by reconcile clobbering them."""
         env = _parse_env(self.env_path)
-        pins: dict[str, Optional[str]] = {}
+        pins: dict[str, str | None] = {}
         if self.gpu_assignments_path.exists():
             pins = parse_gpu_assignments_yaml(
                 self.gpu_assignments_path.read_text(encoding="utf-8"))
@@ -166,7 +166,7 @@ class ModelRegistry:
 # Re-export from the dependency-free shared module so all callers
 # (model_registry, main.py, detect_hardware) share one canonical implementation.
 try:
-    from gpu_assignments_fmt import render_gpu_assignments_yaml, parse_gpu_assignments_yaml
+    from gpu_assignments_fmt import parse_gpu_assignments_yaml, render_gpu_assignments_yaml
 except ModuleNotFoundError:
     import importlib.util as _ilu
     _f = _ilu.spec_from_file_location(
