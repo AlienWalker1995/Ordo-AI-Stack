@@ -45,20 +45,15 @@
         reverse_proxy n8n:5678
     }
 
-    # ---- canonical Open WebUI path (no auth needed — redirect, then the
-    # destination goes through forward_auth on the next request) ----
-    # Open WebUI is the canonical chat UI and lives at /chat. Bare root and a
-    # bare /chat (no trailing slash) redirect to /chat/ so the prefix-stripped
-    # mount in the route block below matches. Open WebUI's SPA still emits
-    # root-absolute assets (/_app, /static, /api, /ws); those are served by the
-    # root catch-all reverse_proxy at the bottom of the route block, so a fresh
-    # /chat/ load resolves all assets.
-    # NOTE: the upstream v0.9.2 image is a prebuilt SvelteKit SPA with base="",
-    # so in-app client navigation may normalize the visible URL back toward / —
-    # /chat is the canonical entry/deep-link path, not a guaranteed-sticky
-    # address bar (accepted trade-off vs. a custom base=/chat build).
-    redir / /chat/ 302
-    redir /chat /chat/ 302
+    # ---- Open WebUI at ROOT (no auth needed for the redirect) ----
+    # Open WebUI's upstream v0.9.2 image is a prebuilt SvelteKit SPA with
+    # base="" (assets are root-absolute: /_app, /static, /api, /ws). It MUST be
+    # served at / — serving it under /chat made the *client-side* router 404 on
+    # the /chat/ path even though the server returned 200 (logo loads, then the
+    # SvelteKit router can't match /chat/ → its own 404 page). Open WebUI is the
+    # root app via the catch-all reverse_proxy at the bottom of the route block.
+    # Old /chat links 302 to / so they keep working.
+    redir /chat* / 302
 
     # ---- everything else: forward_auth + then route to upstream ----
     # `route` (vs `handle`) keeps directives in source order and lets the
