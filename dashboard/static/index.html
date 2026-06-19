@@ -89,6 +89,8 @@
       overflow-x: hidden;
     }
     :focus-visible { outline: 1.5px solid var(--accent); outline-offset: 3px; }
+    a { color: var(--accent); text-decoration-color: rgba(0,201,255,.4); }
+    a:hover { text-decoration-color: var(--accent); }
     .skip-link {
       position: absolute; top: var(--space-2); left: var(--space-4);
       padding: var(--space-2) var(--space-3);
@@ -203,11 +205,11 @@
     .nav-anchors a:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 2px; }
     .header-actions { display: flex; gap: var(--space-2); align-items: center; flex-shrink: 0; }
     .btn-icon {
-      height: 36px;
+      height: 36px; min-width: 36px;
       display: inline-flex; align-items: center; justify-content: center;
       padding: 0 var(--space-3);
       background: var(--surface); border: 1px solid var(--border);
-      border-radius: var(--radius-sm); color: var(--fg-muted);
+      border-radius: var(--radius-sm); color: var(--fg);
       cursor: pointer; font-size: var(--text-sm);
       font-family: var(--font-sans); font-weight: 500; letter-spacing: .02em;
       transition: all .2s ease; white-space: nowrap;
@@ -350,8 +352,15 @@
       50% { opacity: .7; box-shadow: 0 0 4px var(--success); }
     }
     .service .status.fail { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+    .service .status.pending { background: var(--warning); animation: pulse-pending .9s ease-in-out infinite; }
+    @keyframes pulse-pending {
+      0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--warning); }
+      50% { opacity: .55; box-shadow: 0 0 3px var(--warning); }
+    }
+    .service-card.pending { border-left-color: var(--warning); }
+    .service-card.pending .label { color: var(--warning); }
     .service .label { flex: 1; font-size: .88rem; font-weight: 500; min-width: 0; }
-    .service .external { opacity: .3; font-size: .7rem; flex-shrink: 0; }
+    .service .external { opacity: .55; font-size: .7rem; flex-shrink: 0; }
     .service-card {
       display: flex; flex-direction: column; gap: 0;
       padding: var(--space-4) var(--space-5);
@@ -403,6 +412,7 @@
     }
     .status-summary.all-ok   { border-left: 3px solid var(--success); background: rgba(0,212,122,.05); }
     .status-summary.has-issues { border-left: 3px solid var(--warning); background: rgba(255,179,0,.04); }
+    .status-detail { color: var(--muted); font-size: var(--text-xs); font-weight: 400; }
     .deps-wrap { overflow-x: auto; margin-top: var(--space-3); }
     .deps-summary { margin-bottom: var(--space-3); }
     .deps-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
@@ -507,6 +517,11 @@
       font-size: .56rem; letter-spacing: .14em; text-transform: uppercase;
       color: var(--fg-muted);
     }
+    /* empty state: don't render the placeholder as a giant glowing cyan value */
+    .perf-hero:not(.loaded) .perf-hero-tps-value {
+      color: var(--muted); text-shadow: none; font-size: 2rem; font-weight: 600;
+    }
+    .perf-hero:not(.loaded) ~ .perf-rail .perf-rail-value.hi { color: var(--muted); }
     @media (max-width: 720px) {
       .perf-hero { grid-template-columns: 1fr; align-items: stretch; }
       .perf-hero-tps { align-items: flex-start; text-align: left; }
@@ -1033,7 +1048,7 @@
       .pill { padding: 2px var(--space-3); }
     }
     /* ── Hardware bar ── */
-    .hw-bar { display: flex; gap: var(--space-3); margin-bottom: var(--space-5); flex-wrap: wrap; }
+    .hw-bar { display: flex; gap: var(--space-3); margin-bottom: var(--space-5); flex-wrap: wrap; align-items: flex-start; }
     .hw-stat {
       flex: 1; min-width: 90px;
       padding: var(--space-3) var(--space-4);
@@ -1066,7 +1081,18 @@
       font-size: .55rem; text-transform: uppercase; letter-spacing: .1em;
       color: var(--muted); font-weight: 600; margin-top: var(--space-2);
     }
-    .hw-bar-fill.gpu-util span { background: #7c6fcd; }
+    .hw-bar-fill.gpu-util span { background: var(--accent); opacity: .65; }
+    /* Multi-GPU cycling card */
+    .hw-gpu-cycle { cursor: pointer; }
+    .hw-gpu-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+    .hw-gpu-count { color: var(--fg-muted); font-weight: 600; }
+    .hw-gpu-dots { display: inline-flex; gap: 4px; align-items: center; flex-shrink: 0; }
+    .hw-gpu-dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--border);
+      cursor: pointer; transition: background .2s ease, transform .2s ease;
+    }
+    .hw-gpu-dot.active { background: var(--accent); transform: scale(1.25); box-shadow: 0 0 6px var(--accent); }
+    .hw-gpu-dot:hover { background: var(--fg-muted); }
 
     /* ── Compute Pressure ──────────────────────────────────── */
     :root {
@@ -1117,9 +1143,13 @@
     .cp-bar-fill {
       height: 100%; border-radius: 3px; transition: width .4s ease;
     }
-    .cp-bar-fill.cpu  { background: var(--cp-llm, #4ea8de); }
-    .cp-bar-fill.ram  { background: var(--cp-comfy, #f4a261); }
-    .cp-bar-fill.vram { background: var(--cp-embed, #a78bfa); }
+    .cp-bar-fill.cpu  { background: var(--cp-llm); }
+    .cp-bar-fill.ram  { background: var(--cp-comfy); }
+    .cp-bar-fill.vram { background: var(--cp-embed); }
+    @media (max-width: 600px) {
+      .cp-aggregate-row { grid-template-columns: 1fr; gap: var(--space-2); }
+      .cp-row { grid-template-columns: 1fr; gap: var(--space-1); padding: var(--space-2) 0; }
+    }
     .cp-bar-slot-empty { visibility: hidden; }
     .cp-row-values {
       font-family: 'JetBrains Mono', monospace; font-size: 10px;
@@ -1308,8 +1338,7 @@
     /* registry — source file (truncated, muted) */
     .reg-src-file {
       font-family: var(--font-mono); font-size: .72rem;
-      color: var(--fg-muted); max-width: 260px;
-      overflow: hidden; text-overflow: ellipsis;
+      color: var(--fg-muted);
       white-space: nowrap; display: block;
     }
 
@@ -1319,7 +1348,7 @@
       background: var(--bg); border: 1px solid var(--border);
       border-radius: var(--radius-sm); color: var(--fg);
       font-size: var(--text-xs); font-family: var(--font-mono);
-      min-width: 120px; max-width: 200px;
+      min-width: 120px; max-width: 280px;
     }
 
     /* registry — "Set active" button in table */
@@ -1437,15 +1466,15 @@
       padding: 2px var(--space-2); white-space: nowrap;
     }
     .gpu-vram-row {
-      display: flex; align-items: center; gap: var(--space-3);
+      display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2);
       margin-bottom: var(--space-3);
     }
     .gpu-vram-label {
       font-size: .6rem; font-weight: 700; text-transform: uppercase;
-      letter-spacing: .1em; color: var(--muted); flex-shrink: 0; width: 3.5rem;
+      letter-spacing: .1em; color: var(--muted); flex-shrink: 0;
     }
     .gpu-vram-track {
-      flex: 1; height: 8px; background: var(--border);
+      order: 3; flex: 1 1 100%; min-width: 0; height: 8px; background: var(--border);
       border-radius: 4px; overflow: hidden;
     }
     .gpu-vram-fill {
@@ -1458,8 +1487,8 @@
     .gpu-vram-text {
       font-family: var(--font-mono); font-size: var(--text-xs);
       font-variant-numeric: tabular-nums;
-      color: var(--fg); white-space: nowrap; flex-shrink: 0; min-width: 4.5rem;
-      text-align: right;
+      color: var(--fg); white-space: nowrap; flex-shrink: 0;
+      margin-left: auto; text-align: right;
     }
     .gpu-vram-pct {
       font-family: var(--font-mono); font-size: var(--text-xs);
@@ -1484,6 +1513,25 @@
     }
     .gpu-none-hint {
       font-size: var(--text-xs); color: var(--muted); font-style: italic;
+    }
+
+    /* ── Orchestration — recent jobs (compact list) ── */
+    .orch-jobs-list { display: flex; flex-direction: column; gap: 2px; margin-top: var(--space-3); }
+    .orch-job-row {
+      display: flex; align-items: center; gap: var(--space-3);
+      padding: var(--space-2) var(--space-3);
+      background: var(--bg-elevated); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); transition: border-color .15s;
+    }
+    .orch-job-row:hover { border-color: rgba(0,201,255,.2); }
+    .orch-job-id {
+      font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg);
+      width: 7rem; flex-shrink: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .orch-job-time {
+      margin-left: auto; flex-shrink: 0; color: var(--muted);
+      font-size: var(--text-xs); font-family: var(--font-mono);
     }
 
     /* GPU — empty / unreachable */
@@ -1519,6 +1567,72 @@
       animation: skeleton 1.8s ease-in-out infinite;
     }
 
+    /* ── ComfyUI Capability Panel + Disk Usage (moved out of popup-logs <style>) ── */
+    /* ── ComfyUI Capability Panel ── */
+    .comfyui-capability-panel {
+      display: flex; flex-direction: column; gap: var(--space-4);
+    }
+    .capability-group {
+      display: flex; flex-direction: column; gap: var(--space-2);
+    }
+    .capability-header {
+      font-family: var(--font-display); font-size: var(--text-xs);
+      font-weight: 700; text-transform: uppercase; letter-spacing: .1em;
+      color: var(--muted); margin-bottom: var(--space-1);
+      display: flex; align-items: center; gap: var(--space-2);
+    }
+    .capability-header::before {
+      content: ''; width: 2px; height: 1em; background: var(--accent); border-radius: 1px;
+    }
+    .capability-groups {
+      display: flex; flex-direction: column; gap: var(--space-4);
+      max-height: 420px; overflow-y: auto; padding-right: var(--space-1);
+    }
+    .capability-items {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--space-2);
+    }
+    .capability-item {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3);
+      font-size: var(--text-sm); color: var(--fg);
+      display: flex; align-items: center; justify-content: space-between;
+      transition: border-color .2s, background .2s; cursor: default;
+    }
+    .capability-item:hover { border-color: rgba(0,201,255,0.3); background: var(--surface-hover); }
+    .capability-item .item-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .capability-item .item-size { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg-muted); }
+
+    /* Disk Usage Bar */
+    .disk-usage-container {
+      margin-bottom: var(--space-4); padding: var(--space-3);
+      background: var(--bg-elevated); border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+    }
+    .disk-usage-label {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: var(--text-xs); font-family: var(--font-mono);
+      color: var(--fg-muted); margin-bottom: var(--space-2);
+    }
+    .disk-usage-bar {
+      height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;
+    }
+    .disk-usage-fill {
+      height: 100%; background: var(--accent); transition: width .4s ease;
+      box-shadow: 0 0 8px var(--accent);
+    }
+    .disk-usage-fill.warning { background: var(--warning); box-shadow: 0 0 8px var(--warning); }
+    .disk-usage-fill.danger { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+
+    /* ── Mobile overrides (placed last so they win over base rules) ── */
+    @media (max-width: 768px) {
+      /* tabs: single horizontal scroll strip instead of wrapping to 3 ragged rows */
+      .tab-bar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+      .tab-bar::-webkit-scrollbar { display: none; }
+      .tab-btn { flex-shrink: 0; }
+      /* stat values wrap instead of clipping in narrow cards */
+      .hw-stat { min-width: 120px; }
+      .hw-stat-val { white-space: normal; word-break: break-word; }
+    }
   </style>
 </head>
 <body>
@@ -1527,7 +1641,7 @@
     <header>
       <div class="header-brand">
         <h1>Ordo AI Stack Dashboard</h1>
-        <p class="subtitle">Unified model management — LLM (GGUF), ComfyUI, and services</p>
+        <p class="subtitle">Unified model management: LLM (GGUF), ComfyUI, and services</p>
         <nav class="tab-bar" role="tablist" aria-label="Dashboard sections">
           <button class="tab-btn" data-tab="models" role="tab">📦 Models</button>
           <button class="tab-btn" data-tab="gpu" role="tab">🖥️ GPU</button>
@@ -1538,7 +1652,7 @@
         </nav>
       </div>
       <div class="header-actions">
-        <button class="btn-icon btn-text" id="rebuild-hint" title="Copy rebuild command" aria-label="Copy rebuild command">↻ Rebuild</button>
+        <button class="btn-icon btn-text" id="rebuild-hint" title="Copy rebuild command" aria-label="Copy rebuild command">⎈ Rebuild</button>
         <button class="btn-icon" id="refresh-btn" title="Refresh status" aria-label="Refresh status">↻</button>
       </div>
     </header>
@@ -1559,14 +1673,7 @@
         <span class="hw-stat-val" id="hw-disk">—</span>
         <div class="hw-bar-fill" id="hw-disk-bar"><span></span></div>
       </div>
-      <div class="hw-stat hw-stat-gpu" id="hw-gpu-wrap" style="display:none">
-        <span class="hw-stat-label" id="hw-gpu-name">GPU VRAM</span>
-        <span class="hw-stat-val" id="hw-vram">—</span>
-        <span class="hw-stat-gpu-free" id="hw-vram-free"></span>
-        <div class="hw-bar-fill" id="hw-vram-bar"><span></span></div>
-        <span class="hw-stat-sublabel">GPU Compute</span>
-        <div class="hw-bar-fill gpu-util" id="hw-gpu-util-bar"><span></span></div>
-      </div>
+      <span id="hw-gpu-cards" style="display:contents"></span>
     </div>
 
     <span id="hw-disk-sep" style="display:none" aria-hidden="true"></span>
@@ -1612,7 +1719,7 @@
           <div class="perf-hero-label">Active Model</div>
           <div class="perf-hero-model" id="perf-hero-model">No samples yet</div>
           <div class="perf-hero-tags">
-            <span class="perf-hero-tag" id="perf-hero-ctx">— ctx</span>
+            <span class="perf-hero-tag" id="perf-hero-ctx">no ctx</span>
             <span class="perf-hero-tag" id="perf-hero-samples">0 samples</span>
             <span class="perf-hero-tag dim" id="perf-hero-lastseen">no traffic yet</span>
           </div>
@@ -1723,7 +1830,7 @@
                 <select id="mcp-add-select">
                   <option value="">Choose a tool...</option>
                 </select>
-                <button type="button" id="mcp-add-btn">Add</button>
+                <button type="button" id="mcp-add-btn" class="secondary">Add</button>
               </div>
               <div class="mcp-section-label" style="margin-top:var(--space-4);">Or add by URL or name</div>
               <div class="mcp-add-row">
@@ -2130,7 +2237,7 @@
     // mcp/qdrant) fall through to the original direct-port behavior.
     const SSO_ROUTES = {
       comfyui: '/comfy/',
-      webui: '/chat/',
+      webui: '/',
       n8n: '/n8n/',
       hermes: '/hermes/',
     };
@@ -2148,6 +2255,44 @@
       } catch (_) {
         return serviceUrl(host, s.port);
       }
+    }
+
+    // Show an immediate transitional state on a service card after a start/stop/restart,
+    // so the user gets feedback instead of the card staying red while the service boots.
+    function markServicePending(id, verb) {
+      const sel = (window.CSS && CSS.escape) ? CSS.escape(id) : id;
+      const card = document.querySelector(`.service-card[data-service-id="${sel}"]`);
+      if (!card) return;
+      card.classList.remove('ok-status', 'fail');
+      card.classList.add('pending');
+      const dot = card.querySelector('.status');
+      const label = card.querySelector('.label');
+      if (dot) dot.className = 'status pending';
+      if (label) label.textContent = verb + '…';
+    }
+
+    // Poll /api/services until the service reaches the expected state (slow services
+    // like llamacpp take ~1 min to load the model), then re-render + confirm.
+    async function watchService(id, action) {
+      const targetOk = action !== 'stop';
+      const verb = action === 'stop' ? 'Stopping' : action === 'restart' ? 'Restarting' : 'Starting';
+      markServicePending(id, verb);
+      const deadline = Date.now() + 90000;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 3000));
+        let services;
+        try { services = (await (await api('/api/services')).json()).services || []; }
+        catch (e) { continue; }
+        const svc = services.find(s => s.id === id);
+        if (svc && !!svc.ok === targetOk) {
+          await loadServices();
+          toast(`${id} is now ${targetOk ? 'running' : 'stopped'}`, 'success');
+          return;
+        }
+      }
+      await loadServices();
+      toast(`${id} is taking longer than expected to ${verb.toLowerCase().replace(/ing$/, '')}` +
+            (targetOk ? ' — still booting, check logs if it stays red' : ''));
     }
 
     async function loadServices() {
@@ -2203,8 +2348,8 @@
               const r = await api('/api/ops/services/' + id + '/start', { method: 'POST' });
               const d = await r.json();
               if (r.ok) {
-                toast(id + ' started');
-                loadServices();
+                toast('Starting ' + id + '…');
+                watchService(id, 'start');
               } else {
                 toast((d.detail || 'Failed') + '', 'error');
               }
@@ -2226,8 +2371,8 @@
               const r = await api('/api/ops/services/' + id + '/stop', { method: 'POST' });
               const d = await r.json();
               if (r.ok) {
-                toast(id + ' stopped');
-                loadServices();
+                toast('Stopping ' + id + '…');
+                watchService(id, 'stop');
               } else {
                 toast((d.detail || 'Failed') + '', 'error');
               }
@@ -2249,8 +2394,8 @@
               const r = await api('/api/ops/services/' + id + '/restart', { method: 'POST' });
               const d = await r.json();
               if (r.ok) {
-                toast(id + ' restarted');
-                loadServices();
+                toast('Restarting ' + id + '…');
+                watchService(id, 'restart');
               } else {
                 toast((d.detail || 'Failed') + '', 'error');
               }
@@ -2276,56 +2421,7 @@
                   body{margin:0;background:#020307;color:#dde2ee;font-family:'JetBrains Mono',monospace;font-size:12px}
                   pre{padding:1.5rem;white-space:pre-wrap;word-break:break-all;line-height:1.6;margin:0}
                   .bar{position:sticky;top:0;padding:8px 16px;background:#07080e;border-bottom:1px solid #1c1f2e;font-size:13px;font-weight:600;color:#00c9ff;letter-spacing:.04em}
-                /* ── ComfyUI Capability Panel ── */
-    .comfyui-capability-panel {
-      display: flex; flex-direction: column; gap: var(--space-4);
-    }
-    .capability-group {
-      display: flex; flex-direction: column; gap: var(--space-2);
-    }
-    .capability-header {
-      font-family: var(--font-display); font-size: var(--text-xs);
-      font-weight: 700; text-transform: uppercase; letter-spacing: .1em;
-      color: var(--muted); margin-bottom: var(--space-1);
-      display: flex; align-items: center; gap: var(--space-2);
-    }
-    .capability-header::before {
-      content: ''; width: 2px; height: 1em; background: var(--accent); border-radius: 1px;
-    }
-    .capability-items {
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-2);
-    }
-    .capability-item {
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3);
-      font-size: var(--text-sm); color: var(--fg);
-      display: flex; align-items: center; justify-content: space-between;
-      transition: border-color .2s, background .2s; cursor: default;
-    }
-    .capability-item:hover { border-color: rgba(0,201,255,0.3); background: var(--surface-hover); }
-    .capability-item .item-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .capability-item .item-size { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg-muted); }
 
-    /* Disk Usage Bar */
-    .disk-usage-container {
-      margin-bottom: var(--space-4); padding: var(--space-3);
-      background: var(--bg-elevated); border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-sm);
-    }
-    .disk-usage-label {
-      display: flex; justify-content: space-between; align-items: center;
-      font-size: var(--text-xs); font-family: var(--font-mono);
-      color: var(--fg-muted); margin-bottom: var(--space-2);
-    }
-    .disk-usage-bar {
-      height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;
-    }
-    .disk-usage-fill {
-      height: 100%; background: var(--accent); transition: width .4s ease;
-      box-shadow: 0 0 8px var(--accent);
-    }
-    .disk-usage-fill.warning { background: var(--warning); box-shadow: 0 0 8px var(--warning); }
-    .disk-usage-fill.danger { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
 
     </style></head><body><div class="bar">${escapeHtml(id)} — last 100 lines</div><pre>${escapeHtml(d.logs)}</pre></body></html>`);
                 win.document.close();
@@ -2358,10 +2454,13 @@
         const r = await api('/api/rag/status');
         const d = await r.json();
         if (d.ok) {
-          const pc = d.points_count != null ? d.points_count : '—';
-          const st = d.status != null ? d.status : '—';
+          const pc = d.points_count != null ? d.points_count : '0';
+          const st = d.status != null ? String(d.status) : 'unknown';
           const col = escapeHtml(d.collection || 'documents');
-          wrap.innerHTML = `<p class="subsection-desc" style="margin:0;"><strong>Collection</strong> <code>${col}</code> · <strong>Points</strong> ${escapeHtml(String(pc))} · <strong>Status</strong> ${escapeHtml(String(st))}</p>`;
+          const sl = st.toLowerCase();
+          const stCls = /green|ok|ready|healthy/.test(sl) ? 'badge-success'
+            : /red|error|down|fail|unreach/.test(sl) ? 'badge-error' : 'badge-warn';
+          wrap.innerHTML = `<p class="subsection-desc" style="margin:0;"><strong>Collection</strong> <code>${col}</code> · <strong>Points</strong> ${escapeHtml(String(pc))} · <strong>Status</strong> <span class="badge ${stCls}">${escapeHtml(st)}</span></p>`;
         } else {
           wrap.innerHTML = '<p class="subsection-desc" style="margin:0;color:var(--muted);">Qdrant unreachable or RAG not running. Start with <code>docker compose --profile rag up -d</code> and ensure Qdrant is healthy.</p>';
         }
@@ -2509,23 +2608,25 @@
         unreach.style.display = "none";
         const kindBadge = (kind) => {
           const k = (kind || '').toLowerCase();
-          const cls = k.includes('llm') || k.includes('gguf') ? 'llm'
-            : k.includes('diffusion') || k.includes('stable') ? 'diffusion'
+          const cls = k.includes('llm') || k.includes('gguf') || k.includes('chat') ? 'llm'
+            : k.includes('diffusion') || k.includes('stable') || k.includes('comfy') ? 'diffusion'
             : k.includes('embed') ? 'embed'
             : k.includes('tts') ? 'tts'
             : k.includes('stt') || k.includes('whisper') ? 'stt'
             : '';
-          return `<span class="reg-kind-badge ${cls}">${escapeHtml(kind || '—')}</span>`;
+          return `<span class="reg-kind-badge ${cls}">${escapeHtml(kind || 'n/a')}</span>`;
         };
         const head = `<tr>
           <th>Model ID</th><th>Kind</th><th>Service</th>
           <th>Source file</th><th>Status</th><th>GPU assignment</th>
         </tr>`;
         const rows = entries.map(([id, m]) => {
-          const srcFile = escapeHtml(String((m.source && m.source.file) || m.source_file || '—'));
+          const srcFile = escapeHtml(String((m.source && m.source.file) || m.source_file || 'n/a'));
           const isMulti = m.runtime === "multi-model";
           const enabledCell = isMulti
-            ? `<span class="reg-enabled-badge multi">${m.enabled ? 'enabled' : 'disabled'}</span>`
+            ? (m.enabled
+                ? `<span class="reg-enabled-badge active">Enabled</span>`
+                : `<span class="reg-enabled-badge multi">Disabled</span>`)
             : (m.enabled
                 ? `<span class="reg-enabled-badge active">Active</span>`
                 : `<button class="reg-set-active-btn" onclick="setActiveRegistryModel(${JSON.stringify(id)})"
@@ -2539,7 +2640,7 @@
           return `<tr>
             <td><code>${escapeHtml(id)}</code></td>
             <td>${kindBadge(m.kind)}</td>
-            <td style="color:var(--fg-muted);font-size:var(--text-xs);">${escapeHtml(m.service || '—')}</td>
+            <td style="color:var(--fg-muted);font-size:var(--text-xs);">${escapeHtml(m.service || 'n/a')}</td>
             <td><span class="reg-src-file" title="${srcFile}">${srcFile.length > 42 ? '…' + srcFile.slice(-42) : srcFile}</span></td>
             <td>${enabledCell}</td>
             <td>${gpuCell}</td>
@@ -2596,14 +2697,40 @@
       try {
         const r = await api("/api/orchestration/readiness");
         const ready = await r.json();
-        rd.textContent = "Readiness: " + (ready.ok ? "✅ ready" : "⚠ not ready") + (ready.detail ? " — " + ready.detail : "");
-      } catch (e) { rd.textContent = "Readiness unavailable: " + e; }
+        rd.className = "status-summary " + (ready.ok ? "all-ok" : "has-issues");
+        rd.innerHTML = `<span class="badge ${ready.ok ? "badge-success" : "badge-warn"}">${ready.ok ? "Ready" : "Not ready"}</span>`
+          + (ready.detail ? `<span class="status-detail">${escapeHtml(String(ready.detail))}</span>` : "");
+      } catch (e) {
+        rd.className = "status-summary has-issues";
+        rd.innerHTML = `<span class="badge badge-error">Unavailable</span><span class="status-detail">${escapeHtml(String(e))}</span>`;
+      }
       try {
         const r = await api("/api/orchestration/jobs");
         const data = await r.json();
         const list = Array.isArray(data) ? data : (data.jobs || []);
-        jobsEl.innerHTML = "<h3>Recent jobs</h3>" + (list.length
-          ? list.slice(0, 20).map(j => `<div class="service-card">${escapeHtml(String(j.job_id || "?"))} — ${escapeHtml(String(j.state || "?"))}</div>`).join("")
+        const stateBadge = (s) => {
+          s = String(s || "").toLowerCase();
+          if (/ready|done|complete|success|finish/.test(s)) return "badge-success";
+          if (/error|fail|cancel/.test(s)) return "badge-error";
+          if (/run|queue|pend|active|progress/.test(s)) return "badge-warn";
+          return "badge-muted";
+        };
+        const jobs = list.slice(0, 20);
+        const summary = list.length
+          ? `<span class="section-desc">${list.length} job${list.length === 1 ? "" : "s"}${list.length > 20 ? " · showing 20" : ""}</span>`
+          : "";
+        jobsEl.innerHTML = `<h3>Recent jobs</h3>${summary}` + (jobs.length
+          ? `<div class="orch-jobs-list">` + jobs.map(j => {
+              const id = String(j.job_id || "?");
+              const st = String(j.state || "?");
+              const tsRaw = j.updated_at || j.created_at;
+              const ts = tsRaw ? Date.parse(tsRaw) / 1000 : 0;
+              return `<div class="orch-job-row">
+                <span class="orch-job-id" title="${escapeHtml(id)}">${escapeHtml(id.slice(0, 12))}</span>
+                <span class="badge ${stateBadge(st)}">${escapeHtml(st.replace(/_/g, " "))}</span>
+                <span class="orch-job-time">${fmtAgo(ts)}</span>
+              </div>`;
+            }).join("") + `</div>`
           : "<p class='section-desc'>No jobs.</p>");
       } catch (e) { jobsEl.textContent = "Jobs unavailable: " + e; }
     }
@@ -2742,9 +2869,11 @@
     function fmtAgo(ts) {
       if (!ts) return '';
       const secs = Date.now() / 1000 - ts;
+      if (secs < 0) return '';
       if (secs < 60) return 'just now';
       if (secs < 3600) return Math.round(secs / 60) + 'm ago';
-      return Math.round(secs / 3600) + 'h ago';
+      if (secs < 86400) return Math.round(secs / 3600) + 'h ago';
+      return Math.round(secs / 86400) + 'd ago';
     }
     function distSpark(s) {
       const peak = s.peak || 0;
@@ -2797,7 +2926,7 @@
       } catch (_) {}
 
       const ctx = summary?.llamacpp_ctx_size || 0;
-      setText('perf-hero-ctx', ctx ? (ctx >= 1000 ? `${Math.round(ctx / 1000)}K ctx` : `${ctx} ctx`) : '— ctx');
+      setText('perf-hero-ctx', ctx ? (ctx >= 1000 ? `${Math.round(ctx / 1000)}K ctx` : `${ctx} ctx`) : 'no ctx');
 
       const heroEl = document.getElementById('perf-hero');
       const models = stats?.ok && stats.models ? stats.models : {};
@@ -2930,13 +3059,15 @@
           return;
         }
 
-        const models = d.models;
-        const totalBytes = models.reduce((sum, m) => sum + Number(m.size_bytes || 0), 0);
-        const limit = 100 * 1024 * 1024 * 1024;
-        const pct = Math.min(100, (totalBytes / limit) * 100);
-        let fillClass = '';
-        if (pct >= 90) fillClass = 'danger';
-        else if (pct >= 75) fillClass = 'warning';
+        const mBytes = (m) => Number(m.size_bytes ?? (m.size_mb || 0) * 1024 * 1024);
+        // Drop ComfyUI's `put_*_here` placeholder files (0-byte, not real models)
+        const models = d.models.filter(m =>
+          !/^put_.*_here(\.\w+)?$/i.test(m.name || '') && mBytes(m) > 0);
+        if (!models.length) {
+          root.innerHTML = '<div class="empty">No ComfyUI models installed.</div>';
+          return;
+        }
+        const totalBytes = models.reduce((sum, m) => sum + mBytes(m), 0);
 
         const byCat = {};
         models.forEach(m => {
@@ -2951,10 +3082,7 @@
             <div class="disk-usage-container">
               <div class="disk-usage-label">
                 <span>ComfyUI Model Storage</span>
-                <span class="deps-mono">${formatSize(totalBytes)} / 100 GB</span>
-              </div>
-              <div class="disk-usage-bar">
-                <div class="disk-usage-fill ${fillClass}" style="width: ${pct}%"></div>
+                <span class="deps-mono">${formatSize(totalBytes)} across ${models.length} models</span>
               </div>
             </div>
             <div class="capability-groups">
@@ -2971,7 +3099,7 @@
                 ${catModels.map(m => `
                   <div class="capability-item">
                     <span class="item-name" title="${escapeHtml(m.name)}">${escapeHtml(m.name)}</span>
-                    <span class="item-size">${formatSize(Number(m.size_bytes || 0))}</span>
+                    <span class="item-size">${formatSize(mBytes(m))}</span>
                   </div>
                 `).join('')}
               </div>
@@ -3595,6 +3723,57 @@
       barEl.classList.toggle('danger', pct >= 90);
     }
 
+    // ── Multi-GPU HW card: ONE card that auto-cycles through all GPUs ──
+    let _hwGpus = [];
+    let _hwGpuIdx = 0;
+    let _hwGpuPaused = false;
+    function renderHwGpuCard() {
+      const wrap = document.getElementById('hw-gpu-cards');
+      if (!wrap) return;
+      if (!_hwGpus.length) { wrap.innerHTML = ''; return; }
+      if (_hwGpuIdx >= _hwGpus.length) _hwGpuIdx = 0;
+      const g = _hwGpus[_hwGpuIdx];
+      const total = Number(g.vram_total_gb) || 0;
+      const usedRaw = Number(g.vram_used_gb);
+      const used = (g.vram_used_gb != null && Number.isFinite(usedRaw)) ? usedRaw : null;
+      const vramPct = (used != null && total > 0) ? (used / total) * 100 : 0;
+      const util = g.utilization_pct != null ? Number(g.utilization_pct) : 0;
+      const name = (g.name || 'GPU').replace(/NVIDIA\s+GeForce\s+/i, '').replace(/NVIDIA\s+/i, '');
+      const vCls = vramPct >= 90 ? 'danger' : vramPct >= 75 ? 'warn' : '';
+      const usedStr = used != null ? `${used.toFixed(1)} / ${total.toFixed(1)} GB` : `— / ${total.toFixed(1)} GB`;
+      const freeStr = used != null ? `${(total - used).toFixed(1)} GB free` : 'used unavailable';
+      const temp = (g.temp_c != null) ? ` · ${g.temp_c}°C` : '';
+      const multi = _hwGpus.length > 1;
+      const dots = multi
+        ? `<span class="hw-gpu-dots">${_hwGpus.map((gg, i) =>
+            `<span class="hw-gpu-dot${i === _hwGpuIdx ? ' active' : ''}" data-gpu-idx="${i}" title="${escapeHtml((gg.name || 'GPU').replace(/NVIDIA\s+/i, ''))}"></span>`).join('')}</span>`
+        : '';
+      wrap.innerHTML = `<div class="hw-stat hw-stat-gpu hw-gpu-cycle"${multi ? ' title="Click to show next GPU (auto-cycles; hover to pause)"' : ''}>
+        <div class="hw-gpu-top">
+          <span class="hw-stat-label" title="${escapeHtml(g.name || 'GPU')}">${escapeHtml(name)}${multi ? ` <span class="hw-gpu-count">${_hwGpuIdx + 1}/${_hwGpus.length}</span>` : ''}</span>
+          ${dots}
+        </div>
+        <span class="hw-stat-val">${escapeHtml(usedStr)}</span>
+        <span class="hw-stat-gpu-free">${escapeHtml(freeStr + temp)}</span>
+        <div class="hw-bar-fill ${vCls}"><span style="width:${vramPct.toFixed(0)}%"></span></div>
+        <span class="hw-stat-sublabel">Compute · ${util}%</span>
+        <div class="hw-bar-fill gpu-util"><span style="width:${util}%"></span></div>
+      </div>`;
+    }
+    function _hwGpuNext() { if (_hwGpus.length > 1) { _hwGpuIdx = (_hwGpuIdx + 1) % _hwGpus.length; renderHwGpuCard(); } }
+    (function initHwGpuCycle() {
+      const bar = document.getElementById('hw-bar');
+      if (!bar) return;
+      bar.addEventListener('click', (e) => {
+        const dot = e.target.closest('.hw-gpu-dot');
+        if (dot) { _hwGpuIdx = Number(dot.dataset.gpuIdx) || 0; renderHwGpuCard(); return; }
+        if (e.target.closest('.hw-gpu-cycle')) _hwGpuNext();
+      });
+      bar.addEventListener('mouseover', (e) => { _hwGpuPaused = !!(e.target.closest && e.target.closest('.hw-gpu-cycle')); });
+      bar.addEventListener('mouseout', () => { _hwGpuPaused = false; });
+      setInterval(() => { if (!_hwGpuPaused) _hwGpuNext(); }, 5000);
+    })();
+
     let _hwLastSuccess = Date.now();
     async function refreshHardware() {
       try {
@@ -3618,33 +3797,21 @@
           document.getElementById('hw-disk-sep').style.display = 'none';
           document.getElementById('hw-disk-wrap').style.display = 'none';
         }
-        const vTotGb = d.gpu && d.gpu.vram_total_gb != null ? Number(d.gpu.vram_total_gb) : 0;
-        if (d.gpu && vTotGb > 0) {
-          const reliable = d.gpu.memory_reading_reliable !== false && d.gpu.vram_used_gb != null;
-          const vUsedGb = Number(d.gpu.vram_used_gb);
-          const u = Number.isFinite(vUsedGb) ? vUsedGb : 0;
-          const t = vTotGb;
-          const vramPct = (reliable && t > 0) ? (u / t) * 100 : 0;
-          document.getElementById('hw-gpu-name').textContent = (d.gpu.name || 'GPU').replace(/NVIDIA /i, '');
-          if (reliable) {
-            document.getElementById('hw-vram').textContent = u.toFixed(1) + ' / ' + t.toFixed(1) + ' GB';
-            document.getElementById('hw-vram-free').textContent = (t - u).toFixed(1) + ' GB free';
-          } else {
-            // Driver memory reading unreliable on this host (NVML overflow under load).
-            // Show total only and mark used as unknown so we don't lie with "0 GB" / "100%".
-            document.getElementById('hw-vram').textContent = '— / ' + t.toFixed(1) + ' GB';
-            document.getElementById('hw-vram-free').textContent = 'driver reporting unavailable';
-            document.getElementById('hw-vram-free').title = 'NVML / nvidia-smi memory.used is wrapping on this driver. Total + utilization are correct; used is hidden rather than displayed wrong.';
-          }
-          setBar(document.getElementById('hw-vram-bar'), vramPct);
-          const utilPct = d.gpu.utilization_pct != null ? Number(d.gpu.utilization_pct) : 0;
-          setBar(document.getElementById('hw-gpu-util-bar'), utilPct);
-          document.getElementById('hw-gpu-sep').style.display = '';
-          document.getElementById('hw-gpu-wrap').style.display = '';
-        } else {
-          document.getElementById('hw-gpu-sep').style.display = 'none';
-          document.getElementById('hw-gpu-wrap').style.display = 'none';
-        }
+        // Multi-GPU: ONE card that cycles through all GPUs (tight, scales to N cards).
+        const gpuList = (Array.isArray(d.gpus) && d.gpus.length)
+          ? d.gpus
+          : (d.gpu && d.gpu.vram_total_gb != null ? [{
+              name: d.gpu.name,
+              vram_total_gb: d.gpu.vram_total_gb,
+              vram_used_gb: d.gpu.memory_reading_reliable !== false ? d.gpu.vram_used_gb : null,
+              utilization_pct: d.gpu.utilization_pct,
+              temp_c: null,
+            }] : []);
+        _hwGpus = gpuList
+          .filter(g => Number(g.vram_total_gb) > 0)
+          .sort((a, b) => (Number(b.vram_total_gb) || 0) - (Number(a.vram_total_gb) || 0));
+        if (_hwGpuIdx >= _hwGpus.length) _hwGpuIdx = 0;
+        renderHwGpuCard();
       } catch (e) { /* silently skip if not available */ }
       const hwSection = document.getElementById('hw-bar');
       if (hwSection) {

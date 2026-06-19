@@ -38,6 +38,7 @@ def client(monkeypatch, tmp_path):
         gpu_assignments_path=tmp_path / "gpu.yml",
     )
     monkeypatch.setattr(oc, "REGISTRY", reg)
+    monkeypatch.setattr(oc, "GPU_ASSIGNMENTS_PATH", tmp_path / "gpu.yml")
     reg.upsert(oc.model_registry.ModelRecord(
         id="local-chat",
         kind="chat",
@@ -122,6 +123,7 @@ def test_shared_store_parity_hermes_then_dashboard_read(monkeypatch, tmp_path):
         gpu_assignments_path=tmp_path / "gpu2.yml",
     )
     monkeypatch.setattr(oc, "REGISTRY", reg)
+    monkeypatch.setattr(oc, "GPU_ASSIGNMENTS_PATH", tmp_path / "gpu2.yml")
     reg.upsert(oc.model_registry.ModelRecord(
         id="model-x",
         kind="chat",

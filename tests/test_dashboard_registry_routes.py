@@ -1,6 +1,7 @@
 """Dashboard /api/registry/* passthrough — unit tests."""
-from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, patch
+
+from fastapi.testclient import TestClient
 
 from dashboard.app import app
 

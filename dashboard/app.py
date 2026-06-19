@@ -6,6 +6,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import mimetypes
 import os
 import re
 import subprocess
@@ -28,9 +29,9 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from dashboard import gpu_stats, settings
 from dashboard import routes_gpu as _routes_gpu
 from dashboard import routes_registry as _routes_registry
-from dashboard import settings
 from dashboard.orchestration_db import get_job_counts, get_outbox_stats
 from dashboard.routes_hub import router as hub_router
 from dashboard.routes_orchestration import router as orchestration_router
@@ -2020,6 +2021,11 @@ async def hardware_stats():
         disk_pct = None
 
     gpu = await asyncio.to_thread(_probe_gpu)
+    try:
+        gpus = (await asyncio.to_thread(gpu_stats.list_gpus)).get("gpus", [])
+    except Exception as e:
+        logger.debug("multi-GPU enumeration failed: %s", e)
+        gpus = []
 
     return {
         "cpu_pct": cpu_pct,
@@ -2030,6 +2036,7 @@ async def hardware_stats():
         "disk_total_gb": disk_total_gb,
         "disk_pct": disk_pct,
         "gpu": gpu,
+        "gpus": gpus,
     }
 
 @app.get("/api/hardware/service-pressure")
@@ -2111,6 +2118,20 @@ async def service_pressure():
 
 _routes_gpu.register(app, _ops_request)
 _routes_registry.register(app, _ops_request)
+
+mimetypes.add_type("application/octet-stream", ".stl")
+
+# --- STL File Serving ---
+from fastapi.responses import FileResponse
+
+STL_DIR = Path(__file__).parent / "static" / "stl"
+if STL_DIR.exists():
+    @app.get("/stl/{filename}")
+    async def serve_stl(filename: str):
+        stl_path = STL_DIR / filename
+        if stl_path.exists():
+            return FileResponse(str(stl_path), media_type="application/octet-stream")
+        raise HTTPException(status_code=404, detail="File not found")
 
 # --- Static ---
 
