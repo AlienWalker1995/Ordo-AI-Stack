@@ -405,6 +405,11 @@ services:
       - RAG_OPENAI_API_BASE_URL=http://model-gateway:11435/v1
       - RAG_OPENAI_API_KEY=${LITELLM_MASTER_KEY:-local}
       - RAG_EMBEDDING_MODEL=${EMBED_MODEL:-${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}}
+      # MCP tools: connect Open WebUI to the shared mcp-gateway (streamable HTTP),
+      # exposing every stack MCP (n8n, comfyui, searxng, orchestration, blog,
+      # playwright, qdrant-rag) as callable tools. Seeds tool_server.connections
+      # (the DB has none yet). One aggregated endpoint = all servers' tools.
+      - 'TOOL_SERVER_CONNECTIONS=[{"type":"mcp","url":"http://mcp-gateway:8811/mcp","auth_type":"none","info":{"id":"ordo-mcp","name":"Ordo MCP Gateway","description":"Shared stack tools: n8n, comfyui, searxng, orchestration, blog, playwright, qdrant-rag"}}]'
     volumes:
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/open-webui:/app/backend/data
     networks:
