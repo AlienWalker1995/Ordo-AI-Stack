@@ -81,6 +81,29 @@ RUN uv venv --python 3.11 \
 RUN find /opt/hermes-agent -type f -name "*.py" -not -path "*/tests/*" -not -path "*/.venv/*" \
     -exec sed -i 's/PRAGMA journal_mode=WAL/PRAGMA journal_mode=DELETE/g' {} +
 
+# Ordo AI Stack patch: allow 3D/maker file types as native outbound attachments.
+# Upstream's outbound media allowlists (gateway/platforms/base.py) omit
+# STL/3MF/OBJ/STEP/gcode/etc., so a generated .stl degrades to a plain-text
+# link instead of a real Discord/Telegram file attachment — breaking
+# "send me an STL" workflows. Two lists need it: the explicit MEDIA: tag regex
+# and the bare-path auto-detect tuple (_LOCAL_MEDIA_EXTS). Non-image/video
+# types already route to send_document, so once recognized they attach.
+# The asserts fail the build loudly if upstream moves either anchor.
+RUN python3 - <<'PYEOF'
+import pathlib
+b = pathlib.Path("/opt/hermes-agent/gateway/platforms/base.py")
+s = b.read_text()
+s = s.replace("apk|ipa)", "apk|ipa|stl|3mf|obj|step|stp|gcode|ply|glb|gltf)")
+s = s.replace(
+    "'.html', '.htm',",
+    "'.html', '.htm', '.stl', '.3mf', '.obj', '.step', '.stp', '.gcode', '.ply', '.glb', '.gltf',",
+)
+assert "apk|ipa|stl" in s, "hermes MEDIA: regex allowlist anchor moved"
+assert "'.htm', '.stl'" in s, "hermes _LOCAL_MEDIA_EXTS anchor moved"
+b.write_text(s)
+print("patched outbound media allowlists for 3D/maker formats")
+PYEOF
+
 # Web UI — copy built SPA from stage 1.
 COPY --from=web-builder --chown=hermes:hermes \
     /build/hermes-agent/hermes_cli/web_dist/ \
