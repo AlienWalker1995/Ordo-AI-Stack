@@ -82,3 +82,28 @@ registry:
         value: "false"
       - name: DISABLE_TELEMETRY
         value: "true"
+  codebase-memory:
+    description: "Code knowledge-graph navigation over the repos under your code root (mounted read-only at /c/dev). Structural queries grep can't do cheaply: call graphs, trace paths between symbols, architecture overviews, symbol/snippet lookup. Index is built on demand and persists in a named volume. Tools - index_repository, list_projects, index_status, search_graph, trace_path, query_graph, get_graph_schema, get_code_snippet, get_architecture, search_code, detect_changes, manage_adr, ingest_traces, delete_project. Results are navigation hints - confirm in the actual file before editing."
+    title: Codebase Memory
+    type: server
+    image: ordo-ai-stack-codebase-memory-mcp:latest
+    # Keep the indexer container warm across calls within a session.
+    longLived: true
+    # The indexer is 100% local (bundled embeddings) — no egress needed. This blocks
+    # exfiltration of indexed code from the spawned container.
+    disableNetwork: true
+    volumes:
+      # Code root (host path from $CODE_ROOT) mounted READ-ONLY. Under the gateway's
+      # 2026-06 bind-mount hardening, host binds must be read-only AND allow-listed via
+      # MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS (set to CODE_ROOT in docker-compose.yml).
+      # PLACEHOLDER_CODE_ROOT is substituted from $CODE_ROOT by gateway-wrapper.sh.
+      - "PLACEHOLDER_CODE_ROOT:/c/dev:ro"
+      # Persistent SQLite index — a NAMED volume (exempt from host-path restrictions,
+      # so it can be read-write). Survives container respawns.
+      - "codebase-memory-cache:/cache"
+    env:
+      - name: CBM_CACHE_DIR
+        value: /cache
+      # Keep logs off stdout so they can't corrupt the stdio JSON-RPC channel.
+      - name: CBM_LOG_LEVEL
+        value: error
