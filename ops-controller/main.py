@@ -49,6 +49,16 @@ except ModuleNotFoundError:  # pragma: no cover
     model_registry = _ilu.module_from_spec(_mr_spec)
     _mr_spec.loader.exec_module(model_registry)
 
+try:
+    import llamacpp_flags as lf
+except ModuleNotFoundError:  # pragma: no cover
+    import importlib.util as _ilu
+    _lf_spec = _ilu.spec_from_file_location(
+        "llamacpp_flags", str(Path(__file__).resolve().parent / "llamacpp_flags.py"),
+    )
+    lf = _ilu.module_from_spec(_lf_spec)
+    _lf_spec.loader.exec_module(lf)
+
 app = FastAPI(title="Ops Controller", version="1.0.0")
 logger = logging.getLogger(__name__)
 
@@ -80,6 +90,10 @@ ENV_ALLOWED_KEYS = {
 
 BASE_PATH = os.environ.get("BASE_PATH", ".")
 COMPOSE_FILE_ENV = os.environ.get("COMPOSE_FILE", "docker-compose.yml")
+# On-disk GGUF directory (chat models + mmproj) shown in the model-config UI.
+MODELS_DIR = Path(os.environ.get("LLAMACPP_MODELS_DIR", "/workspace/models/gguf"))
+# Services that template LLAMACPP_CTX_SIZE and must also recreate when ctx changes.
+MODEL_CONFIG_CTX_CONSUMERS = ["model-gateway"]
 
 # Services whose GPU pin the dashboard may change.
 GPU_ASSIGNABLE_SERVICES = {"llamacpp", "llamacpp-embed", "comfyui", "stt", "tts"}
@@ -225,6 +239,65 @@ def _set_env_keys(kv: dict, request=None) -> None:
         else:
             content = content.rstrip("\n") + f"\n{key}={value}\n"
     _write_text_atomic(env_path, content)
+
+
+# ---------------------------------------------------------------------------
+# Model-config control plane (dashboard) — registry overrides -> .env -> recreate
+# ---------------------------------------------------------------------------
+
+def _active_chat_record():
+    """The enabled single-model llamacpp (chat) registry record, or None."""
+    for rec in REGISTRY.list_models().values():
+        if rec.service == "llamacpp" and rec.runtime == "single-model" and rec.enabled:
+            return rec
+    return None
+
+
+def _read_env_values(keys):
+    """Current values for `keys` from the active (uncommented) .env lines."""
+    env_path = REGISTRY.env_path
+    out = {}
+    if not env_path.exists():
+        return out
+    content = env_path.read_text(encoding="utf-8")
+    for key in keys:
+        m = re.search(rf"^{re.escape(key)}=(.*)$", content, re.MULTILINE)
+        if m:
+            v = m.group(1).strip()
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+                v = v[1:-1]
+            out[key] = v
+    return out
+
+
+def _render_model_config_to_env(effective):
+    """Upsert every managed flag into .env in place. The ^KEY= anchor updates only
+    the active line, so commented presets in the MODEL CONFIGS block survive."""
+    env_path = REGISTRY.env_path
+    content = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+    for key in sorted(lf.ENV_KEYS):
+        if key not in effective:
+            continue
+        val = str(effective[key])
+        if "\n" in val or "\r" in val:
+            raise HTTPException(status_code=400, detail=f"Illegal newline in {key}")
+        pattern = rf"^{re.escape(key)}=.*"
+        if re.search(pattern, content, re.MULTILINE):
+            content = re.sub(pattern, f"{key}={val}", content, flags=re.MULTILINE)
+        else:
+            content = content.rstrip("\n") + f"\n{key}={val}\n"
+    _write_text_atomic(env_path, content)
+
+
+def _list_ggufs(mmproj=False):
+    """On-disk GGUF basenames. mmproj=True -> only mmproj-* files; else chat models."""
+    try:
+        names = sorted(p.name for p in MODELS_DIR.glob("*.gguf"))
+    except OSError:
+        return []
+    if mmproj:
+        return [n for n in names if n.startswith("mmproj")]
+    return [n for n in names if not n.startswith("mmproj") and "embed" not in n.lower()]
 
 
 def _live_gpus() -> dict:
@@ -1204,6 +1277,101 @@ async def env_get(key: str, _: None = Depends(verify_token)):
     if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
         raw = raw[1:-1]
     return {"key": key, "value": raw}
+
+
+class ModelConfigBody(BaseModel):
+    overrides: dict = Field(default_factory=dict)
+    confirm: bool = False
+    dry_run: bool = False
+
+
+@app.get("/model-config")
+async def model_config_get(_: None = Depends(verify_token)):
+    """Full model-control state for the dashboard: flag descriptors, defaults,
+    active model, the active model's overrides, effective values, current .env,
+    and on-disk model/mmproj lists."""
+    # Current state = the DEPLOYED .env (filled with defaults), so the UI always
+    # reflects what's actually running — not a possibly-stale registry record.
+    base = lf.defaults()
+    running = _read_env_values(lf.ENV_KEYS)
+    effective = dict(base)
+    effective.update(running)
+    rec = _active_chat_record()
+    if not effective.get("LLAMACPP_MODEL") and rec and rec.source.get("file"):
+        effective["LLAMACPP_MODEL"] = rec.source["file"]
+    # An "override" = an effective value that differs from the baseline default.
+    overrides = {k: effective[k] for k in lf.ENV_KEYS
+                 if k in effective and effective[k] != base.get(k, "")}
+    return {
+        "flags": lf.descriptors(),
+        "defaults": base,
+        "active_model": effective.get("LLAMACPP_MODEL", ""),
+        "overrides": overrides,
+        "effective": lf.flag_view(effective),
+        "running": running,
+        "models": _list_ggufs(),
+        "mmprojs": _list_ggufs(mmproj=True),
+    }
+
+
+@app.post("/model-config")
+async def model_config_post(body: ModelConfigBody, request: Request,
+                            _: None = Depends(verify_token)):
+    """Validate + apply model-config overrides via the ONE write path: persist to
+    the registry, render into .env, recreate llamacpp (+ ctx consumers)."""
+    errs = lf.validate_all({k: v for k, v in body.overrides.items() if v is not None})
+    if errs:
+        raise HTTPException(status_code=400, detail={"validation": errs})
+    if body.dry_run:
+        return {"would": "apply", "overrides": body.overrides}
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="Set {\"confirm\": true} to apply.")
+
+    rec = _active_chat_record()
+    if rec is None:
+        raise HTTPException(status_code=404, detail="No active single-model llamacpp record")
+
+    config = dict(rec.config)
+    source_file = rec.source.get("file", "")
+    ctx_touched = False
+    for k, v in body.overrides.items():
+        if k == "LLAMACPP_MODEL":
+            if v:
+                source_file = str(v)
+            config.pop("LLAMACPP_MODEL", None)
+            continue
+        if k == "LLAMACPP_CTX_SIZE":
+            ctx_touched = True
+        if v is None:
+            config.pop(k, None)
+        else:
+            config[k] = str(v)
+
+    overrides = dict(config)
+    if source_file:
+        overrides["LLAMACPP_MODEL"] = source_file
+    effective = lf.compute_effective(lf.defaults(), overrides)
+
+    model = effective.get("LLAMACPP_MODEL", "")
+    if not model:
+        raise HTTPException(status_code=400, detail="A model file must be set")
+    if not (MODELS_DIR / model).exists():
+        raise HTTPException(status_code=400, detail=f"Model file not found: {model}")
+
+    _render_model_config_to_env(effective)
+    rec.config = config
+    rec.source = {**rec.source, "file": source_file}
+    rec.updated_by = "model-config"
+    REGISTRY.upsert(rec)
+
+    services = ["llamacpp"] + (MODEL_CONFIG_CTX_CONSUMERS if ctx_touched else [])
+    for svc in services:
+        _recreate_service(svc, request)
+
+    _audit("model_config", model, "ok", f"keys={sorted(body.overrides)}",
+           correlation_id=_correlation_id(request))
+    return {"ok": True, "active_model": model,
+            "effective": lf.flag_view(effective), "recreated": services}
 
 
 @app.post("/services/{service_id}/recreate")
