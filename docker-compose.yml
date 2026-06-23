@@ -581,6 +581,19 @@ services:
     restart: "no"
     command: ["true"]
 
+  # Codebase-Memory MCP image (gateway-spawned, stdio). Opt-in (heavy: bundles an
+  # embedding model). Build with:
+  #   docker compose --profile codebase-memory build codebase-memory-mcp-image
+  # then enable in the gateway with: ./scripts/mcp_add.sh codebase-memory
+  # (requires CODE_ROOT set to your host code root).
+  codebase-memory-mcp-image:
+    build: ./codebase-memory-mcp
+    image: ordo-ai-stack-codebase-memory-mcp:latest
+    pull_policy: build
+    restart: "no"
+    command: ["true"]
+    profiles: ["codebase-memory"]
+
   comfyui-mcp:
     image: ordo-ai-stack-comfyui-mcp:latest
     pull_policy: build
@@ -716,6 +729,12 @@ services:
       - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:-}
       # Injected into registry-custom.yaml for orchestration MCP (dashboard Bearer)
       - DASHBOARD_AUTH_TOKEN=${DASHBOARD_AUTH_TOKEN:-}
+      # Codebase-Memory MCP — host code root (read-only mount source for the
+      # spawned container) + bind-mount allowlist. CODE_ROOT must be the HOST path
+      # that contains your repos (what Hermes sees as /c/dev). Allow-listing it lets
+      # the gateway's hardened bind logic accept the read-only /c/dev mount.
+      - CODE_ROOT=${CODE_ROOT:-}
+      - MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS=${CODE_ROOT:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/mcp:/mcp-config
