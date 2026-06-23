@@ -594,6 +594,36 @@ services:
     command: ["true"]
     profiles: ["codebase-memory"]
 
+  # Codebase-Memory 3D graph visualization UI (long-lived; opt-in). Serves the
+  # interactive knowledge-graph from the SAME index the headless codebase-memory
+  # MCP writes (shared `codebase-memory-cache` volume). The upstream UI binds
+  # 127.0.0.1:9749 only; the image's entrypoint bridges it to 0.0.0.0:9750 via
+  # socat so Caddy can reach it. Exposed via Caddy + oauth2-proxy SSO on a
+  # dedicated :8443 listener (it's an absolute-asset SPA that must own its origin;
+  # add overrides/codebase-memory-ui.yml to publish the port). Build with:
+  #   docker compose --profile codebase-memory build codebase-memory-ui
+  codebase-memory-ui:
+    build: ./codebase-memory-ui
+    image: ordo-ai-stack-codebase-memory-ui:latest
+    pull_policy: build
+    restart: unless-stopped
+    profiles: ["codebase-memory"]
+    volumes:
+      - codebase-memory-cache:/cache
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:9750/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - proxy-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   comfyui-mcp:
     image: ordo-ai-stack-comfyui-mcp:latest
     pull_policy: build
@@ -781,6 +811,10 @@ services:
       - --upstream=static://202
       - --redirect-url=https://${CADDY_TAILNET_HOSTNAME}/oauth2/callback
       - --whitelist-domain=.${CADDY_TAILNET_DOMAIN}
+      # Allow post-login redirects back to the codebase-memory-ui dedicated
+      # listener (Caddy :8443). The OAuth callback itself stays on :443
+      # (--redirect-url above); this only whitelists the :8443 return target.
+      - --whitelist-domain=.${CADDY_TAILNET_DOMAIN}:8443
       - --cookie-domain=.${CADDY_TAILNET_DOMAIN}
       - --cookie-secure=true
       - --cookie-samesite=lax
@@ -1137,6 +1171,12 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  # Shared code-index store: written by the gateway-spawned codebase-memory MCP
+  # and read by the codebase-memory-ui visualization. `name:` pins the literal
+  # volume name (no compose project prefix) so it matches the raw name the
+  # mcp-gateway uses when it spawns the MCP container (-v codebase-memory-cache:/cache).
+  codebase-memory-cache:
+    name: codebase-memory-cache
 # Hermes data is now bind-mounted from data/hermes/ (see hermes-gateway/dashboard above).
 # The legacy `ordo-ai-stack_hermes-data` named volume still exists in Docker for
 # rollback. To revert: re-add `hermes-data:` here, then switch the hermes services'
