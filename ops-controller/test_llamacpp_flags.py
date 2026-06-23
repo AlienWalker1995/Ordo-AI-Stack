@@ -211,3 +211,5 @@ def test_descriptors_are_json_safe_and_cover_flags():
     rope = next(d for d in desc if d["key"] == "LLAMACPP_ROPE_SCALING")
     assert rope["choices"] == ["none", "linear", "yarn"]
     assert rope["kind"] == "enum"
+    # every flag carries a non-empty help string for the UI tooltip
+    assert all(d.get("help") for d in desc), [d["key"] for d in desc if not d.get("help")]

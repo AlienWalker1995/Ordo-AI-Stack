@@ -142,6 +142,29 @@ CHOICES = {
     "LLAMACPP_KV_CACHE_TYPE_V": sorted(_KV_TYPES),
 }
 
+# One-line explanations surfaced as tooltips in the dashboard flag UI.
+HELP = {
+    "LLAMACPP_MODEL": "The GGUF weights file llama.cpp loads as the chat model.",
+    "LLAMACPP_CTX_SIZE": "Context window in tokens. Stack-wide cap (Open WebUI, Cline, etc.); larger = more KV-cache VRAM.",
+    "LLAMACPP_GPU_LAYERS": "How many model layers to offload to the GPU. -1 = all on GPU.",
+    "LLAMACPP_ROPE_SCALING": "Method to stretch context beyond the model's native length. 'none' = native; 'yarn'/'linear' extend it.",
+    "LLAMACPP_ROPE_SCALE": "Context-extension factor used with rope scaling (e.g. 2 = double the native length).",
+    "LLAMACPP_YARN_ORIG_CTX": "The model's native (pre-extension) context length, for YaRN math. 0 = unset.",
+    "LLAMACPP_OVERRIDE_KV": "Override a GGUF metadata key as key=type:value (e.g. raise the declared context_length). Empty = none.",
+    "LLAMACPP_FLASH_ATTN": "Flash Attention. 'auto' lets llama.cpp decide; 'on' forces it (required by quantized KV cache).",
+    "LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION": "Quantize the KV cache to fit longer context in VRAM (1 = on).",
+    "LLAMACPP_KV_CACHE_TYPE_K": "KV-cache quantization for keys. q8_0 = best quality of the quantized set; smaller types save more VRAM.",
+    "LLAMACPP_KV_CACHE_TYPE_V": "KV-cache quantization for values. q8_0 = best quality; smaller types save more VRAM.",
+    "LLAMACPP_N_PREDICT": "Hard ceiling on tokens generated per request — a backstop against runaway generation.",
+    "LLAMACPP_REASONING_BUDGET": "Max tokens the model may spend inside <think>…</think> per response.",
+    "LLAMACPP_MMPROJ": "Vision projector (mmproj GGUF) that enables image input. Empty = text-only.",
+    "LLAMACPP_PARALLEL": "Number of concurrent request slots the server handles.",
+    "LLAMACPP_USE_MMAP": "Memory-map the model file. 0 = off (avoids stale page-cache on Docker bind mounts).",
+    "LLAMACPP_EXTRA_ARGS": "Raw llama-server flags appended verbatim — escape hatch for anything without a dedicated field.",
+    "MTP_ENABLED": "Multi-Token Prediction speculative decoding (~1.7× faster), using the model's built-in draft head.",
+    "MTP_N_MAX": "Max speculative draft tokens per step (1–6). Hardware-dependent; try a few values.",
+}
+
 
 def descriptors():
     """JSON-safe flag metadata for the dashboard to build its form (no callables)."""
@@ -153,6 +176,7 @@ def descriptors():
             "kind": d["kind"],
             "choices": CHOICES.get(key),
             "default": DEFAULTS.get(key),
+            "help": HELP.get(key),
         })
     return out
 
