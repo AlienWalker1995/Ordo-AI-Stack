@@ -1646,6 +1646,7 @@
           <button class="tab-btn" data-tab="models" role="tab">📦 Models</button>
           <button class="tab-btn" data-tab="gpu" role="tab">🖥️ GPU</button>
           <button class="tab-btn" data-tab="registry" role="tab">📋 Registry</button>
+          <button class="tab-btn" data-tab="modelctl" role="tab">⚙️ Model</button>
           <button class="tab-btn" data-tab="services" role="tab">⚡ Services</button>
           <button class="tab-btn" data-tab="mcp" role="tab">🧩 MCP</button>
           <button class="tab-btn" data-tab="orchestration" role="tab">🛠️ Orchestration</button>
@@ -1985,6 +1986,14 @@
             </div>
           </div>
         </div>
+      </section>
+    </div>
+
+    <div class="tab-panel" data-tab="modelctl">
+      <section id="modelctl-section">
+        <h2>Model Control</h2>
+        <p class="section-desc">All llama.cpp launch parameters as feature flags. Baseline = <code>.env</code> defaults; per-model overrides live in the registry. "Apply &amp; restart" renders the effective config to <code>.env</code> and recreates llamacpp (+ model-gateway when context changes).</p>
+        <div id="modelctl-root"><p class="muted">Loading…</p></div>
       </section>
     </div>
 
@@ -2688,6 +2697,98 @@
       } catch (e) { alert("Assignment error: " + e); }
       loadModelsRegistry();
       loadGpuTab();
+    }
+
+    // --- Model Control: flag-card UI over /api/model-config (control plane) ---
+    let _mcState = null, _mcDirty = {};
+    const MC_GROUPS = [["core","Core"],["context","Context extension"],["attention","Attention / KV"],["mtp","Speculative (MTP)"],["gen","Generation caps"],["multimodal","Multimodal"],["advanced","Advanced"]];
+
+    async function loadModelControl() {
+      const root = document.getElementById('modelctl-root');
+      if (!root) return;
+      root.innerHTML = '<p class="muted">Loading…</p>';
+      try {
+        const r = await api('/api/model-config');
+        if (!r.ok) { root.innerHTML = '<p style="color:var(--danger)">Failed to load model config (' + r.status + ')</p>'; return; }
+        _mcState = await r.json(); _mcDirty = {};
+        renderModelControl();
+      } catch (e) { root.innerHTML = '<p style="color:var(--danger)">' + e + '</p>'; }
+    }
+
+    function _mcMeta(key) { return (_mcState.flags || []).find(f => f.key === key); }
+
+    function _mcInput(f, val) {
+      const k = f.key;
+      if (f.kind === 'enum' && f.choices) return '<select class="mc-in" data-key="' + k + '" style="flex:1">' + f.choices.map(c => '<option' + (String(c) === String(val) ? ' selected' : '') + '>' + c + '</option>').join('') + '</select>';
+      if (f.kind === 'bool') return '<select class="mc-in" data-key="' + k + '" style="flex:1"><option value="1"' + (String(val) === '1' ? ' selected' : '') + '>on</option><option value="0"' + (String(val) !== '1' ? ' selected' : '') + '>off</option></select>';
+      const t = (f.kind === 'int' || f.kind === 'float') ? 'number' : 'text';
+      return '<input class="mc-in" type="' + t + '" data-key="' + k + '" value="' + String(val == null ? '' : val).replace(/"/g, '&quot;') + '" style="flex:1">';
+    }
+
+    function renderModelControl() {
+      const s = _mcState, eff = s.effective || {}, ov = s.overrides || {};
+      const byGroup = {};
+      (s.flags || []).forEach(f => { (byGroup[f.group] = byGroup[f.group] || []).push(f); });
+      let h = '<div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem">';
+      h += '<strong>Active model</strong> <select id="mc-model" class="mc-in">';
+      (s.models || []).forEach(m => { h += '<option' + (m === s.active_model ? ' selected' : '') + '>' + m + '</option>'; });
+      h += '</select> <button class="btn" id="mc-apply">Apply &amp; restart</button> <span id="mc-dirty" class="muted"></span></div>';
+      MC_GROUPS.forEach(([g, label]) => {
+        const fs = byGroup[g]; if (!fs) return;
+        h += '<div style="margin-bottom:1rem"><div style="font-weight:600;text-transform:uppercase;font-size:.72rem;letter-spacing:.05em;color:var(--muted);margin-bottom:.4rem">' + label + '</div>';
+        fs.forEach(f => {
+          if (f.key === 'LLAMACPP_MODEL') return;
+          const overridden = (f.key in ov) || (g === 'mtp' && eff['MTP_ENABLED'] === '1');
+          const val = eff[f.key] !== undefined ? eff[f.key] : (f.default || '');
+          h += '<div class="mc-flag" data-key="' + f.key + '" style="display:flex;gap:.5rem;align-items:center;padding:.35rem .5rem;border:1px solid var(--border);border-radius:8px;margin-bottom:.35rem">';
+          h += '<span style="flex:0 0 13rem;font-family:monospace;font-size:.8rem">' + f.key.replace('LLAMACPP_', '').toLowerCase() + '</span>';
+          h += _mcInput(f, val);
+          h += '<span class="mc-pill" style="flex:0 0 5rem;font-size:.68rem;text-align:center;padding:.12rem .4rem;border-radius:999px;' + (overridden ? 'background:var(--accent,#5b8def);color:#fff' : 'background:var(--border);color:var(--muted)') + '">' + (overridden ? 'override' : 'inherited') + '</span>';
+          h += '<button class="mc-reset" data-key="' + f.key + '" title="reset to baseline" style="border:none;background:none;cursor:pointer;color:var(--muted);font-size:1rem">↺</button>';
+          h += '</div>';
+        });
+        h += '</div>';
+      });
+      document.getElementById('modelctl-root').innerHTML = h;
+      _wireModelControl();
+    }
+
+    function _wireModelControl() {
+      document.querySelectorAll('#modelctl-root .mc-in[data-key]').forEach(el => {
+        const upd = () => { _mcDirty[el.dataset.key] = el.value; _mcUpdateDirty(); };
+        el.addEventListener('input', upd); el.addEventListener('change', upd);
+      });
+      document.querySelectorAll('#modelctl-root .mc-reset').forEach(b => {
+        b.addEventListener('click', () => {
+          _mcDirty[b.dataset.key] = null; _mcUpdateDirty();
+          const f = _mcMeta(b.dataset.key);
+          const inp = document.querySelector('#modelctl-root .mc-flag[data-key="' + b.dataset.key + '"] .mc-in');
+          if (inp && f) inp.value = f.default || '';
+        });
+      });
+      const ms = document.getElementById('mc-model');
+      if (ms) ms.addEventListener('change', () => { _mcDirty['LLAMACPP_MODEL'] = ms.value; _mcUpdateDirty(); });
+      document.getElementById('mc-apply')?.addEventListener('click', _applyModelControl);
+      _mcUpdateDirty();
+    }
+
+    function _mcUpdateDirty() {
+      const n = Object.keys(_mcDirty).length;
+      const d = document.getElementById('mc-dirty');
+      if (d) d.textContent = n ? (n + ' change' + (n > 1 ? 's' : '') + ' pending') : 'no changes';
+    }
+
+    async function _applyModelControl() {
+      if (!Object.keys(_mcDirty).length) { toast('No changes to apply'); return; }
+      const btn = document.getElementById('mc-apply');
+      btn.disabled = true; btn.textContent = 'Applying…';
+      try {
+        const r = await api('/api/model-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true, overrides: _mcDirty }) });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { toast('Apply failed: ' + JSON.stringify(data.detail || data), 'error'); btn.disabled = false; btn.textContent = 'Apply & restart'; return; }
+        toast('Applied — recreating ' + ((data.recreated || []).join(', ') || 'llamacpp'), 'success');
+        await loadModelControl();
+      } catch (e) { toast('Apply error: ' + e, 'error'); btn.disabled = false; btn.textContent = 'Apply & restart'; }
     }
 
     async function loadOrchestrationTab() {
@@ -3967,7 +4068,7 @@
     // ── End Compute Pressure ──────────────────────────────────
 
     function activateTab(name) {
-      const tabs = ["models", "gpu", "registry", "services", "mcp", "orchestration"];
+      const tabs = ["models", "gpu", "registry", "modelctl", "services", "mcp", "orchestration"];
       if (!tabs.includes(name)) name = "models";
       document.querySelectorAll(".tab-btn").forEach(b => {
         const on = b.dataset.tab === name;
@@ -3986,6 +4087,7 @@
         if (typeof loadModelsRegistry === "function") loadModelsRegistry();
       }
       if (name === "orchestration" && typeof loadOrchestrationTab === "function") loadOrchestrationTab();
+      if (name === "modelctl" && typeof loadModelControl === "function") loadModelControl();
     }
     document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => activateTab(b.dataset.tab)));
     window.addEventListener("hashchange", () => activateTab(location.hash.replace("#", "")));

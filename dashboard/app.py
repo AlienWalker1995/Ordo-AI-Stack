@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 
 from dashboard import gpu_stats, settings
 from dashboard import routes_gpu as _routes_gpu
+from dashboard import routes_model_config as _routes_model_config
 from dashboard import routes_registry as _routes_registry
 from dashboard.orchestration_db import get_job_counts, get_outbox_stats
 from dashboard.routes_hub import router as hub_router
@@ -2118,6 +2119,7 @@ async def service_pressure():
 
 _routes_gpu.register(app, _ops_request)
 _routes_registry.register(app, _ops_request)
+_routes_model_config.register(app, _ops_request)
 
 mimetypes.add_type("application/octet-stream", ".stl")
 
