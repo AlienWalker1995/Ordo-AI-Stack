@@ -40,13 +40,12 @@ services:
       - backend
 
   llamacpp:
-    # Default points at the repo-built TurboQuant image (llamacpp/Dockerfile).
-    # Escape hatch: set LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda in
-    # .env to fall back to upstream (loses turbo2 / turbo3 KV types).
-    image: ${LLAMACPP_IMAGE:-ordo-ai-stack/llamacpp-turboquant:latest}
-    build:
-      context: ./llamacpp
-      dockerfile: Dockerfile
+    # Pinned mainline llama.cpp (ggml-org) by DIGEST for reproducibility —
+    # build 9765 (73618f27a), the first build that loads Qwen3.6 MTP + qwen35moe
+    # GGUFs natively (upstream PR #22673). This is the single source of truth for
+    # the image; bump the digest deliberately (stack_monitor tracks the build).
+    # Override LLAMACPP_IMAGE in .env only to test a different build.
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp@sha256:44cd08334f85c1fcb363e3798302f2986cdb78cdfc8c1cf56bdad44041595a32}
     restart: unless-stopped
     platform: linux/amd64
     entrypoint: ["/bin/sh", "/llamacpp-scripts/run-llama-server.sh"]
@@ -97,8 +96,9 @@ services:
       - backend
 
   # Use CUDA image so linux/amd64 is available (plain :server manifest can resolve to arm64 on Docker Desktop).
+  # Pinned by digest to the same mainline build as llamacpp (build 9765 / 73618f27a).
   llamacpp-embed:
-    image: ${LLAMACPP_EMBED_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    image: ${LLAMACPP_EMBED_IMAGE:-ghcr.io/ggml-org/llama.cpp@sha256:44cd08334f85c1fcb363e3798302f2986cdb78cdfc8c1cf56bdad44041595a32}
     restart: unless-stopped
     platform: linux/amd64
     # The upstream :server-cuda is a rolling tag that has flipped its
