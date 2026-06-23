@@ -37,10 +37,13 @@ SERVICES = [
      "hint": "Managed by docker compose. Logs: docker compose logs hermes-dashboard"},
     # Opt-in (--profile codebase-memory). 3D code knowledge-graph visualization. No host
     # port — reached via Caddy's SSO :8443 listener; the UI binds 127.0.0.1 inside the
-    # container and is bridged to :9750 (what the dashboard health-checks). `url` is omitted
-    # so the frontend builds https://<dashboard-host>:8443 from the port.
+    # container and is bridged to :9750 (what the dashboard health-checks). `url` carries
+    # the https scheme + :8443 port (the frontend's serviceOpenHref keeps scheme/port and
+    # swaps in the dashboard's hostname) — the `localhost` placeholder is replaced at render
+    # time, so the "Open" link becomes https://<your-host>:8443/. Plain http here would hit
+    # the TLS listener and fail with "Client sent an HTTP request to an HTTPS server".
     {"id": "codebase-memory-ui", "name": "Codebase Memory", "port": 8443,
-     "check": "http://codebase-memory-ui:9750/", "has_gpu": False,
+     "url": "https://localhost:8443", "check": "http://codebase-memory-ui:9750/", "has_gpu": False,
      "hint": "3D code knowledge-graph. Open via SSO at https://<CADDY_TAILNET_HOSTNAME>:8443/. "
              "In-memory index — re-index after a restart. Opt-in: --profile codebase-memory + overrides/codebase-memory-ui.yml"},
 ]
