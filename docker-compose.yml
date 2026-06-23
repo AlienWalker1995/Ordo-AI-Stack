@@ -594,14 +594,13 @@ services:
     command: ["true"]
     profiles: ["codebase-memory"]
 
-  # Codebase-Memory 3D graph visualization UI (long-lived; opt-in). Serves the
-  # interactive knowledge-graph from the SAME index the headless codebase-memory
-  # MCP writes (shared `codebase-memory-cache` volume). The upstream UI binds
-  # 127.0.0.1:9749 only; the image's entrypoint bridges it to 0.0.0.0:9750 via
-  # socat so Caddy can reach it. Exposed via Caddy + oauth2-proxy SSO on a
-  # dedicated :8443 listener (it's an absolute-asset SPA that must own its origin;
-  # add overrides/codebase-memory-ui.yml to publish the port). Build with:
-  #   docker compose --profile codebase-memory build codebase-memory-ui
+  # Codebase-Memory 3D graph visualization UI (long-lived; opt-in). Visualizes the
+  # code knowledge-graph it indexes in its own process (mounts /c/dev:ro). The
+  # upstream UI binds 127.0.0.1:9749 and is an absolute-asset SPA with no base path,
+  # so the image runs nginx (on :9750) which proxies to it and rewrites its baked
+  # /assets,/api,/rpc paths to the /codebase-memory/ prefix — letting Caddy serve it
+  # at https://<host>/codebase-memory/ on the shared :443 SSO origin (no extra port).
+  # Build with: docker compose --profile codebase-memory build codebase-memory-ui
   codebase-memory-ui:
     build: ./codebase-memory-ui
     image: ordo-ai-stack-codebase-memory-ui:latest
@@ -616,7 +615,7 @@ services:
       # graph rather than depending on the gateway-spawned MCP's index.
       - ${CODE_ROOT:-/c/dev}:/c/dev:ro
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:9750/ || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:9750/codebase-memory/ || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -816,10 +815,6 @@ services:
       - --upstream=static://202
       - --redirect-url=https://${CADDY_TAILNET_HOSTNAME}/oauth2/callback
       - --whitelist-domain=.${CADDY_TAILNET_DOMAIN}
-      # Allow post-login redirects back to the codebase-memory-ui dedicated
-      # listener (Caddy :8443). The OAuth callback itself stays on :443
-      # (--redirect-url above); this only whitelists the :8443 return target.
-      - --whitelist-domain=.${CADDY_TAILNET_DOMAIN}:8443
       - --cookie-domain=.${CADDY_TAILNET_DOMAIN}
       - --cookie-secure=true
       - --cookie-samesite=lax

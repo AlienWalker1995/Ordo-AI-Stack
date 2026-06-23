@@ -3,11 +3,14 @@
 #
 # Runs the upstream UI-variant binary (`codebase-memory-mcp --ui=true`), which
 # serves an interactive 3D knowledge-graph at :9749 as a thread alongside the MCP
-# server. Two upstream quirks this image works around:
+# server. Three upstream quirks this image works around:
 #   1. The UI HTTP server binds 127.0.0.1 ONLY (src/ui/httpd.c) — unreachable from
-#      other containers. We run a `socat` bridge on 0.0.0.0:9750 -> 127.0.0.1:9749
-#      so Caddy/oauth2-proxy can route to it.
-#   2. The process is an MCP stdio server; with no client it would hit EOF on stdin
+#      other containers. nginx (on 0.0.0.0:9750) proxies to 127.0.0.1:9749.
+#   2. The UI is an absolute-asset SPA with no base-path option; nginx serves it
+#      under /codebase-memory/ and sub_filter-rewrites its baked /assets,/api,/rpc
+#      paths to that prefix so it can live on the shared :443 SSO origin (see
+#      nginx.conf). No port, no collision with Open WebUI's root.
+#   3. The process is an MCP stdio server; with no client it would hit EOF on stdin
 #      and exit. The entrypoint keeps stdin open so the UI stays up.
 #
 # Shares the SAME index as the headless codebase-memory MCP via the
@@ -30,7 +33,7 @@ LABEL org.opencontainers.image.title="codebase-memory-ui" \
       org.opencontainers.image.version="${CBM_VERSION}"
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates socat \
+ && apt-get install -y --no-install-recommends curl ca-certificates nginx \
  && rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
@@ -42,13 +45,15 @@ RUN set -eux; \
     install -m 0755 /usr/local/share/codebase-memory-ui/codebase-memory-mcp /usr/local/bin/codebase-memory-mcp; \
     rm -f /tmp/cbm.tar.gz
 
+COPY nginx.conf /etc/nginx/nginx.conf
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENV CBM_CACHE_DIR=/cache
 ENV CBM_LOG_LEVEL=error
 
-# Public (bridged) port. The UI itself listens on 127.0.0.1:9749 inside the container.
+# nginx serves the rewritten SPA under /codebase-memory/ here; the UI itself listens
+# on 127.0.0.1:9749 inside the container.
 EXPOSE 9750
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

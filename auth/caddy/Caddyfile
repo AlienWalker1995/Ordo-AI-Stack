@@ -96,6 +96,17 @@
             reverse_proxy comfyui:8188
         }
 
+        # ---- codebase-memory 3D graph UI at /codebase-memory/ ----
+        # Absolute-asset SPA served under a subpath: the codebase-memory-ui container
+        # runs nginx, which proxies to the UI and rewrites its baked /assets,/api,/rpc,
+        # /font-files to the /codebase-memory/ prefix (see codebase-memory-ui/nginx.conf).
+        # `handle` (no strip) keeps the prefix so nginx's location matches. Opt-in
+        # (--profile codebase-memory); 502s if the service isn't running.
+        @codebasememory path /codebase-memory /codebase-memory/*
+        handle @codebasememory {
+            reverse_proxy codebase-memory-ui:9750
+        }
+
         # ---- Open WebUI mounted at /chat (prefix stripped) ----
         # /chat/* → open-webui with the /chat prefix removed, so the upstream
         # sees /, /c/<id>, /models, etc. This is the canonical chat path.
@@ -114,34 +125,5 @@
         handle {
             reverse_proxy open-webui:8080
         }
-    }
-}
-
-# ---- codebase-memory 3D graph UI — dedicated SSO-gated listener ----
-# The UI is an absolute-asset SPA: it requests /assets/*, /api/*, and /rpc at the
-# origin root. /api/* collides with Open WebUI's root catch-all, so the UI cannot
-# be mounted as a subpath on :443 — it gets its own origin on :8443 instead, where
-# every absolute path resolves to the UI with no overlap. Same Google SSO as :443
-# (the OAuth callback stays on :443; the post-login redirect returns here — see the
-# extra --whitelist-domain=...:8443 on oauth2-proxy). Reachable only when
-# overrides/codebase-memory-ui.yml publishes :8443 and the codebase-memory-ui
-# service is up (docker compose --profile codebase-memory).
-{$CADDY_TAILNET_HOSTNAME}:8443 {
-    tls /etc/caddy/certs/tailnet.crt /etc/caddy/certs/tailnet.key
-
-    handle /oauth2/* {
-        reverse_proxy oauth2-proxy:4180
-    }
-
-    route {
-        forward_auth oauth2-proxy:4180 {
-            uri /oauth2/auth
-            copy_headers X-Auth-Request-Email>X-Forwarded-Email X-Auth-Request-User>X-Forwarded-User X-Auth-Request-Preferred-Username>X-Forwarded-Preferred-Username
-            @unauthorized status 401
-            handle_response @unauthorized {
-                redir https://{host}:8443/oauth2/start?rd={scheme}://{host}:8443{uri} 302
-            }
-        }
-        reverse_proxy codebase-memory-ui:9750
     }
 }

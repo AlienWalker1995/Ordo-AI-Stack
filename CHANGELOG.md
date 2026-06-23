@@ -16,11 +16,13 @@ All notable changes to this project are documented here. The format is loosely b
   `docker compose --profile codebase-memory build codebase-memory-mcp-image` then
   `./scripts/mcp_add.sh codebase-memory` (set `CODE_ROOT` first). Indexing honors
   `.gitignore` + a new root `.cbmignore` (defense-in-depth secret/non-source excludes).
-  Also adds an optional **`codebase-memory-ui`** service — the upstream 3D graph
-  **visualization** of the same index — exposed via Caddy + Google SSO on a dedicated
-  `:8443` listener (the UI is an absolute-asset SPA whose `/api/*` collides with Open
-  WebUI's root, so it owns its origin). The image bridges the UI's localhost-only bind
-  with `socat`; publish the port via `overrides/codebase-memory-ui.yml`.
+  Also adds an optional **`codebase-memory-ui`** service — the upstream interactive 3D
+  graph **visualization** — served at `https://<host>/codebase-memory/` on the shared
+  `:443` Google-SSO origin and listed in the dashboard services section. The UI is an
+  absolute-asset SPA with no base-path option (its `/assets`/`/api` collide with Open
+  WebUI's root), so the image runs nginx that proxies the localhost-only UI and
+  `sub_filter`-rewrites its baked paths to the `/codebase-memory/` prefix. It indexes
+  the code root (`/c/dev:ro`) in its own process (in-memory; re-index after a restart).
 - **Voice STT/TTS services — opt-in `--profile voice` with secondary-GPU pinning.**
   Adds two OpenAI-compatible local speech services: `stt` (`fedirz/faster-whisper-server:latest-cuda`,
   `/v1/audio/transcriptions` at `http://stt:8000/v1`) and `tts` (`ghcr.io/remsky/kokoro-fastapi-gpu:latest`,

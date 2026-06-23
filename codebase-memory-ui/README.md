@@ -8,9 +8,12 @@ It runs the upstream UI-variant binary (`codebase-memory-mcp --ui=true --port=97
 which serves the visualization as a thread alongside the MCP server.
 
 ## Two upstream quirks this image handles
-1. **The UI HTTP server binds `127.0.0.1` only** (`src/ui/httpd.c`) — unreachable from
-   other containers. `entrypoint.sh` runs a `socat` bridge `0.0.0.0:9750 → 127.0.0.1:9749`
-   so Caddy can route to it.
+1. **Absolute-asset SPA that binds `127.0.0.1` only.** The UI binds `127.0.0.1:9749`
+   and serves `/assets`, `/api`, `/rpc`, `/font-files` at the origin root with no
+   base-path option. The image runs **nginx** (on `0.0.0.0:9750`) which proxies to the
+   UI and `sub_filter`-rewrites those baked paths to the `/codebase-memory/` prefix
+   (see `nginx.conf`) — so Caddy serves it under that subpath on the shared `:443` SSO
+   origin without colliding with Open WebUI's root.
 2. **The process is an MCP stdio server** — with no client attached it would read EOF
    on stdin and exit. The entrypoint keeps stdin open (`tail -f /dev/null | …`) so the
    UI stays up as a service.
@@ -28,21 +31,20 @@ this, plus the `codebase-memory-cache` volume at `/cache` for config.
 > (e.g. `secrets/`, `data/` are excluded — verified).
 
 ## Exposure (SSO)
-The UI is an **absolute-asset SPA** — it requests `/assets/*`, `/api/*`, and `/rpc` at
-the origin root, and `/api/*` collides with Open WebUI's root catch-all. So it can't be a
-subpath on `:443`; it gets its **own origin on Caddy's `:8443`** listener, behind the same
-Google SSO. See the `:8443` block in `auth/caddy/Caddyfile`, the extra
-`--whitelist-domain=…:8443` on `oauth2-proxy`, and `overrides/codebase-memory-ui.yml`
-(which publishes the port).
+Served at **`https://<host>/codebase-memory/`** on the shared `:443` origin, behind the
+existing Google SSO — no dedicated port. Caddy routes `/codebase-memory/*` to this
+container (the `@codebasememory` handle in `auth/caddy/Caddyfile`); nginx rewrites the
+SPA's absolute paths so everything stays under the prefix. The dashboard's services
+section links here via `SSO_ROUTES`.
 
 ## Enable
 ```
-# include the override + the codebase-memory profile
-COMPOSE_FILE=docker-compose.yml;overrides/compute.yml;overrides/codebase-memory-ui.yml
+# set CODE_ROOT in .env first (host path of your repos), then:
 docker compose --profile codebase-memory up -d --build
 ```
-Then browse **`https://<CADDY_TAILNET_HOSTNAME>:8443/`** (Google SSO). Index a repo first
-(via Hermes `index_repository`, or the UI's own "index" action) or the graph will be empty.
+Then browse **`https://<CADDY_TAILNET_HOSTNAME>/codebase-memory/`** (Google SSO). Index a
+repo first (the UI's "index" action, or `POST /codebase-memory/rpc` `index_repository`)
+or the graph will be empty.
 
 ## Note
 The UI exposes server actions (`/api/index`, `/api/process-kill`, …) to the browser; it's
