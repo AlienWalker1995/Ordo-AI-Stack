@@ -2741,7 +2741,8 @@
           const overridden = (f.key in ov) || (g === 'mtp' && eff['MTP_ENABLED'] === '1');
           const val = eff[f.key] !== undefined ? eff[f.key] : (f.default || '');
           h += '<div class="mc-flag" data-key="' + f.key + '" style="display:flex;gap:.5rem;align-items:center;padding:.35rem .5rem;border:1px solid var(--border);border-radius:8px;margin-bottom:.35rem">';
-          h += '<span style="flex:0 0 13rem;font-family:monospace;font-size:.8rem">' + f.key.replace('LLAMACPP_', '').toLowerCase() + '</span>';
+          const _help = (f.help || '').replace(/"/g, '&quot;');
+          h += '<span style="flex:0 0 13rem;font-family:monospace;font-size:.8rem"' + (_help ? ' title="' + _help + '"' : '') + '>' + f.key.replace('LLAMACPP_', '').toLowerCase() + (f.help ? ' <span style="cursor:help;opacity:.55" title="' + _help + '">ⓘ</span>' : '') + '</span>';
           h += _mcInput(f, val);
           h += '<span class="mc-pill" style="flex:0 0 5rem;font-size:.68rem;text-align:center;padding:.12rem .4rem;border-radius:999px;' + (overridden ? 'background:var(--accent,#5b8def);color:#fff' : 'background:var(--border);color:var(--muted)') + '">' + (overridden ? 'override' : 'inherited') + '</span>';
           h += '<button class="mc-reset" data-key="' + f.key + '" title="reset to baseline" style="border:none;background:none;cursor:pointer;color:var(--muted);font-size:1rem">↺</button>';
