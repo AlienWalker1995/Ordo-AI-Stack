@@ -1290,18 +1290,25 @@ async def model_config_get(_: None = Depends(verify_token)):
     """Full model-control state for the dashboard: flag descriptors, defaults,
     active model, the active model's overrides, effective values, current .env,
     and on-disk model/mmproj lists."""
+    # Current state = the DEPLOYED .env (filled with defaults), so the UI always
+    # reflects what's actually running — not a possibly-stale registry record.
+    base = lf.defaults()
+    running = _read_env_values(lf.ENV_KEYS)
+    effective = dict(base)
+    effective.update(running)
     rec = _active_chat_record()
-    overrides = dict(rec.config) if rec else {}
-    if rec and rec.source.get("file") and "LLAMACPP_MODEL" not in overrides:
-        overrides["LLAMACPP_MODEL"] = rec.source["file"]
-    effective = lf.compute_effective(lf.defaults(), overrides)
+    if not effective.get("LLAMACPP_MODEL") and rec and rec.source.get("file"):
+        effective["LLAMACPP_MODEL"] = rec.source["file"]
+    # An "override" = an effective value that differs from the baseline default.
+    overrides = {k: effective[k] for k in lf.ENV_KEYS
+                 if k in effective and effective[k] != base.get(k, "")}
     return {
         "flags": lf.descriptors(),
-        "defaults": lf.defaults(),
+        "defaults": base,
         "active_model": effective.get("LLAMACPP_MODEL", ""),
         "overrides": overrides,
         "effective": lf.flag_view(effective),
-        "running": _read_env_values(lf.ENV_KEYS),
+        "running": running,
         "models": _list_ggufs(),
         "mmprojs": _list_ggufs(mmproj=True),
     }
