@@ -422,13 +422,16 @@ services:
     image: python:3.12-slim
     restart: "no"
     environment:
-      - HF_TOKEN_FILE=/run/secrets/hf_token
+      # Optional HF token via env (set HF_TOKEN in .env for gated repos); empty by
+      # default so public repos pull token-free. Replaces the file secret, which
+      # made `compose run gguf-puller` hard-fail whenever the SOPS-managed secret
+      # file was absent or its ${HOME} source mis-resolved under a Hermes-invoked
+      # compose subprocess. pull_gguf_models.py reads HF_TOKEN when the file is absent.
+      - HF_TOKEN=${HF_TOKEN:-}
       - GGUF_MODELS=${GGUF_MODELS:-}
     volumes:
       - ${BASE_PATH:-.}/models/gguf:/models
       - ${BASE_PATH:-.}/scripts:/scripts:ro
-    secrets:
-      - hf_token
     command: ["sh", "-c", "pip install -q huggingface_hub && python3 /scripts/pull_gguf_models.py"]
     networks:
       - frontend
