@@ -53,6 +53,13 @@ STACK_ROOT = Path(__file__).resolve().parent.parent
 COMPOSE = STACK_ROOT / "docker-compose.yml"
 MONITOR = STACK_ROOT / "data" / "hermes" / "scripts" / "github_monitor.py"
 HERMES_DOCKERFILE = STACK_ROOT / "hermes" / "Dockerfile"
+# ComfyUI ships no version in docker-compose.yml (it runs from a 3rd-party boot
+# image); the real installed version is build-stamped in this file.
+COMFYUI_VERSION_FILE = STACK_ROOT / "data" / "comfyui-storage" / "ComfyUI" / "comfyui_version.py"
+# LiteLLM has no version pin anywhere (model-gateway is FROM
+# ghcr.io/berriai/litellm:main-stable, a rolling tag) — read it live from the
+# running container instead.
+MODEL_GATEWAY_CONTAINER = os.environ.get("MODEL_GATEWAY_CONTAINER", "ordo-ai-stack-model-gateway-1")
 
 # All services to monitor (sources of truth).
 #
@@ -78,24 +85,32 @@ SERVICES = {
                       "pin_source": "dockerfile"},
 }
 
-# Current pinned versions (synced from docker-compose.yml)
+# Last-resort fallbacks if a version can't be read from its real source.
+# NOTE: ComfyUI and LiteLLM are intentionally absent — they are resolved live
+# (see resolve_current_version). Do NOT add stale hardcodes for them; a wrong
+# value here silently produces a misleading audit (the old "v0.20.1" ComfyUI pin
+# was compared against upstream while the box actually ran 0.17.0).
 PINNED = {
     "n8n":         "2.20.0",
     "Open WebUI":  "v0.9.2",
     "Qdrant":      "v1.17.1",
     "Caddy":       "2.11.2",
-    "llama.cpp":   "server-cuda",
-    "LiteLLM":     "latest",
-    "ComfyUI":     "v0.20.1",
+    "llama.cpp":   "server-cuda",  # rolling tag — classifies as ROLLING (manual review)
     "oauth2-proxy":"latest-alpine",
 }
 
 
 def run_cmd(cmd, timeout=30):
-    """Run a command and return (stdout, stderr, returncode)."""
+    """Run a command and return (stdout, stderr, returncode).
+
+    Force UTF-8 decoding with replacement: GitHub release bodies routinely carry
+    non-ASCII bytes, and on a non-UTF-8 locale (e.g. a Windows host's cp1252)
+    the default decode raises mid-read, leaving stdout=None and crashing callers.
+    """
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return result.stdout, result.stderr, result.returncode
+        result = subprocess.run(cmd, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=timeout)
+        return (result.stdout or ""), (result.stderr or ""), result.returncode
     except subprocess.TimeoutExpired:
         return "", "timeout", 1
 
@@ -107,6 +122,56 @@ def read_hermes_pin():
     text = HERMES_DOCKERFILE.read_text()
     m = re.search(r"^ARG HERMES_PINNED_SHA=([a-f0-9]+)", text, re.MULTILINE)
     return m.group(1) if m else None
+
+
+def read_comfyui_version():
+    """Installed ComfyUI version, build-stamped in comfyui_version.py (e.g. 0.17.0).
+
+    ComfyUI has no pin in docker-compose.yml, so without this the monitor used a
+    hardcoded guess that drifted from reality. Returns None if the file is
+    missing/unreadable (caller falls back to ROLLING/manual).
+    """
+    if not COMFYUI_VERSION_FILE.exists():
+        return None
+    try:
+        m = re.search(r'__version__\s*=\s*["\']([\d.]+)["\']',
+                      COMFYUI_VERSION_FILE.read_text())
+    except OSError:
+        return None
+    return m.group(1) if m else None
+
+
+def read_litellm_version():
+    """Live LiteLLM version from the running model-gateway container (e.g. 1.82.3).
+
+    LiteLLM is pinned only by the rolling `main-stable` image tag, so the
+    installed package is the single source of truth. Returns None if the
+    container is down or docker is unavailable (caller falls back to ROLLING).
+    """
+    cmd = ["docker", "exec", MODEL_GATEWAY_CONTAINER, "python", "-c",
+           "import importlib.metadata as m; print(m.version('litellm'))"]
+    stdout, _, rc = run_cmd(cmd, timeout=20)
+    if rc != 0 or not stdout.strip():
+        return None
+    version = stdout.strip().splitlines()[-1].strip()
+    return version if re.match(r"^\d", version) else None
+
+
+def resolve_current_version(name, compose_versions):
+    """Best source of truth for a service's currently-deployed version.
+
+    Most services read from docker-compose.yml. ComfyUI and LiteLLM have no
+    usable pin there and are read from their live/build-stamped source instead.
+    """
+    if name == "ComfyUI":
+        live = read_comfyui_version()
+        if live:
+            return live
+    if name == "LiteLLM":
+        live = read_litellm_version()
+        if live:
+            return live
+    return compose_versions.get(name, PINNED.get(name, "unknown"))
 
 
 def fetch_tag_sha(repo, tag):
@@ -271,7 +336,11 @@ def classify_severity(current, latest, body=""):
         l_parts = [int(x) for x in re.findall(r'\d+', clean_latest)]
 
         if not p_parts or not l_parts:
-            return "MEDIUM", f"Version format unknown ({clean_current} → {clean_latest})"
+            # No comparable semver — the current pin is a rolling tag or a
+            # source-built image (e.g. llama.cpp 'server-cuda'). Don't pretend
+            # it's a minor update; flag it for manual review instead.
+            return "ROLLING", (f"Pinned by rolling tag/built image ('{clean_current}') — "
+                               f"rebuild to pull latest ({clean_latest}); review release notes")
 
         max_len = max(len(p_parts), len(l_parts))
         p_parts.extend([0] * (max_len - len(p_parts)))
@@ -484,8 +553,9 @@ def main():
                 all_updates[name] = latest_tag
             continue
 
-        # Compose-pinned services (the original path).
-        current = compose_versions.get(name, PINNED.get(name, "unknown"))
+        # Compose-pinned services (the original path), plus live-resolved
+        # current versions for ComfyUI/LiteLLM (no usable compose pin).
+        current = resolve_current_version(name, compose_versions)
 
         if latest_tag is None:
             results["services"][name] = {
@@ -552,6 +622,7 @@ def main():
         high = []
         medium = []
         low = []
+        rolling = []
         safe = []
 
         for name, info in results["services"].items():
@@ -572,6 +643,8 @@ def main():
                 medium.append(entry)
             elif sev == "LOW":
                 low.append(entry)
+            elif sev == "ROLLING":
+                rolling.append(entry)
             else:
                 safe.append(entry)
 
@@ -590,6 +663,10 @@ def main():
         if low:
             print("## 🟢 LOW (Patch update)\n")
             for entry in low:
+                print(entry)
+        if rolling:
+            print("## 🔁 ROLLING / MANUAL (rebuild to update)\n")
+            for entry in rolling:
                 print(entry)
         if safe:
             print("## ✅ SAFE (Up to date)\n")
