@@ -610,6 +610,11 @@ services:
     profiles: ["codebase-memory"]
     volumes:
       - codebase-memory-cache:/cache
+      # Source tree (read-only) so the UI's own long-lived process can index and
+      # visualize it. The graph index lives in-process (it is not reliably flushed
+      # to the cache volume across container exits), so the UI indexes its own
+      # graph rather than depending on the gateway-spawned MCP's index.
+      - ${CODE_ROOT:-/c/dev}:/c/dev:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:9750/ || exit 1"]
       interval: 30s
@@ -1171,10 +1176,12 @@ services:
 volumes:
   caddy_data:
   caddy_config:
-  # Shared code-index store: written by the gateway-spawned codebase-memory MCP
-  # and read by the codebase-memory-ui visualization. `name:` pins the literal
-  # volume name (no compose project prefix) so it matches the raw name the
-  # mcp-gateway uses when it spawns the MCP container (-v codebase-memory-cache:/cache).
+  # Per-container config/cache for codebase-memory (holds _config.db + config.json).
+  # NOTE: the graph index itself lives IN-PROCESS and is not reliably flushed here
+  # across container exits, so this is NOT a shared index — the gateway-spawned MCP
+  # and the UI each index in their own process. The volume is still shared/mounted
+  # by both; `name:` pins the literal name (no compose project prefix) to match the
+  # raw name the mcp-gateway uses when it spawns the MCP (-v codebase-memory-cache:/cache).
   codebase-memory-cache:
     name: codebase-memory-cache
 # Hermes data is now bind-mounted from data/hermes/ (see hermes-gateway/dashboard above).

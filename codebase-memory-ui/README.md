@@ -15,10 +15,17 @@ which serves the visualization as a thread alongside the MCP server.
    on stdin and exit. The entrypoint keeps stdin open (`tail -f /dev/null | …`) so the
    UI stays up as a service.
 
-## Shared index
-Mounts the **`codebase-memory-cache`** named volume at `/cache` (`CBM_CACHE_DIR=/cache`)
-— the same volume the gateway-spawned MCP writes to. The UI visualizes whatever Hermes
-has indexed. (SQLite WAL allows the UI to read while the MCP writes.)
+## Index (in-process)
+The UI **indexes the source tree in its own long-lived process** and visualizes that
+in-memory graph. It mounts the code root **read-only** at `/c/dev` (`${CODE_ROOT}`) for
+this, plus the `codebase-memory-cache` volume at `/cache` for config.
+
+> The upstream binary does **not** reliably flush its graph index to `CBM_CACHE_DIR`
+> across container exits, so the cache volume is **not** a shared index — the gateway
+> MCP and the UI each index independently. Practical consequence: **the UI's graph is
+> in-memory, so after a container restart you must re-index** (browse the UI's index
+> action, or `POST /rpc` `index_repository`). Indexing honors `.gitignore` + `.cbmignore`
+> (e.g. `secrets/`, `data/` are excluded — verified).
 
 ## Exposure (SSO)
 The UI is an **absolute-asset SPA** — it requests `/assets/*`, `/api/*`, and `/rpc` at
