@@ -581,6 +581,53 @@ services:
     restart: "no"
     command: ["true"]
 
+  # Codebase-Memory MCP image (gateway-spawned, stdio). Opt-in (heavy: bundles an
+  # embedding model). Build with:
+  #   docker compose --profile codebase-memory build codebase-memory-mcp-image
+  # then enable in the gateway with: ./scripts/mcp_add.sh codebase-memory
+  # (requires CODE_ROOT set to your host code root).
+  codebase-memory-mcp-image:
+    build: ./codebase-memory-mcp
+    image: ordo-ai-stack-codebase-memory-mcp:latest
+    pull_policy: build
+    restart: "no"
+    command: ["true"]
+    profiles: ["codebase-memory"]
+
+  # Codebase-Memory 3D graph visualization UI (long-lived; opt-in). Visualizes the
+  # code knowledge-graph it indexes in its own process (mounts /c/dev:ro). The
+  # upstream UI binds 127.0.0.1:9749 and is an absolute-asset SPA with no base path,
+  # so the image runs nginx (on :9750) which proxies to it and rewrites its baked
+  # /assets,/api,/rpc paths to the /codebase-memory/ prefix — letting Caddy serve it
+  # at https://<host>/codebase-memory/ on the shared :443 SSO origin (no extra port).
+  # Build with: docker compose --profile codebase-memory build codebase-memory-ui
+  codebase-memory-ui:
+    build: ./codebase-memory-ui
+    image: ordo-ai-stack-codebase-memory-ui:latest
+    pull_policy: build
+    restart: unless-stopped
+    profiles: ["codebase-memory"]
+    volumes:
+      - codebase-memory-cache:/cache
+      # Source tree (read-only) so the UI's own long-lived process can index and
+      # visualize it. The graph index lives in-process (it is not reliably flushed
+      # to the cache volume across container exits), so the UI indexes its own
+      # graph rather than depending on the gateway-spawned MCP's index.
+      - ${CODE_ROOT:-/c/dev}:/c/dev:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:9750/codebase-memory/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - proxy-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   comfyui-mcp:
     image: ordo-ai-stack-comfyui-mcp:latest
     pull_policy: build
@@ -716,6 +763,12 @@ services:
       - OPS_CONTROLLER_TOKEN=${OPS_CONTROLLER_TOKEN:-}
       # Injected into registry-custom.yaml for orchestration MCP (dashboard Bearer)
       - DASHBOARD_AUTH_TOKEN=${DASHBOARD_AUTH_TOKEN:-}
+      # Codebase-Memory MCP — host code root (read-only mount source for the
+      # spawned container) + bind-mount allowlist. CODE_ROOT must be the HOST path
+      # that contains your repos (what Hermes sees as /c/dev). Allow-listing it lets
+      # the gateway's hardened bind logic accept the read-only /c/dev mount.
+      - CODE_ROOT=${CODE_ROOT:-}
+      - MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS=${CODE_ROOT:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/mcp:/mcp-config
@@ -1118,6 +1171,14 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  # Per-container config/cache for codebase-memory (holds _config.db + config.json).
+  # NOTE: the graph index itself lives IN-PROCESS and is not reliably flushed here
+  # across container exits, so this is NOT a shared index — the gateway-spawned MCP
+  # and the UI each index in their own process. The volume is still shared/mounted
+  # by both; `name:` pins the literal name (no compose project prefix) to match the
+  # raw name the mcp-gateway uses when it spawns the MCP (-v codebase-memory-cache:/cache).
+  codebase-memory-cache:
+    name: codebase-memory-cache
 # Hermes data is now bind-mounted from data/hermes/ (see hermes-gateway/dashboard above).
 # The legacy `ordo-ai-stack_hermes-data` named volume still exists in Docker for
 # rollback. To revert: re-add `hermes-data:` here, then switch the hermes services'

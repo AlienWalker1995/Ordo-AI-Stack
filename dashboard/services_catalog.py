@@ -35,6 +35,15 @@ SERVICES = [
     {"id": "hermes", "name": "Hermes Agent", "port": 9119, "url": "http://localhost:9119",
      "check": "http://hermes-dashboard:9119/", "has_gpu": False,
      "hint": "Managed by docker compose. Logs: docker compose logs hermes-dashboard"},
+    # Opt-in (--profile codebase-memory). 3D code knowledge-graph visualization, served at
+    # https://<host>/codebase-memory/ on the shared :443 SSO origin (the codebase-memory-ui
+    # container's nginx serves it under that subpath). The "Open" link comes from SSO_ROUTES
+    # in the frontend (-> /codebase-memory/), so no `url` is needed. The health check hits the
+    # nginx subpath, which proxies through to the UI.
+    {"id": "codebase-memory-ui", "name": "Codebase Memory", "port": 9750,
+     "check": "http://codebase-memory-ui:9750/codebase-memory/", "has_gpu": False,
+     "hint": "3D code knowledge-graph. Open at https://<host>/codebase-memory/ (Google SSO). "
+             "In-memory index — re-index after a restart. Opt-in: --profile codebase-memory"},
 ]
 
 

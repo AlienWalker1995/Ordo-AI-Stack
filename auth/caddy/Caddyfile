@@ -96,6 +96,17 @@
             reverse_proxy comfyui:8188
         }
 
+        # ---- codebase-memory 3D graph UI at /codebase-memory/ ----
+        # Absolute-asset SPA served under a subpath: the codebase-memory-ui container
+        # runs nginx, which proxies to the UI and rewrites its baked /assets,/api,/rpc,
+        # /font-files to the /codebase-memory/ prefix (see codebase-memory-ui/nginx.conf).
+        # `handle` (no strip) keeps the prefix so nginx's location matches. Opt-in
+        # (--profile codebase-memory); 502s if the service isn't running.
+        @codebasememory path /codebase-memory /codebase-memory/*
+        handle @codebasememory {
+            reverse_proxy codebase-memory-ui:9750
+        }
+
         # ---- Open WebUI mounted at /chat (prefix stripped) ----
         # /chat/* → open-webui with the /chat prefix removed, so the upstream
         # sees /, /c/<id>, /models, etc. This is the canonical chat path.

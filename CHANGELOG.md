@@ -5,6 +5,24 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Added
+- **Codebase-Memory MCP — opt-in `--profile codebase-memory` code knowledge graph for Hermes.**
+  Adds `codebase-memory`, a gateway-spawned stdio MCP server wrapping the upstream
+  `DeusData/codebase-memory-mcp` static binary (MIT; bundled offline embeddings, no API
+  keys). Gives Hermes structural code navigation (`search_graph`, `trace_path`,
+  `get_architecture`, `get_code_snippet`, ...) over the repos under `CODE_ROOT`, mounted
+  read-only at `/c/dev`. The SQLite index persists in the `codebase-memory-cache` named
+  volume; the spawned container is `longLived` (warm across calls) and `disableNetwork`
+  (no egress). Image is checksum-pinned (portable/static build, v0.8.1). Enable with
+  `docker compose --profile codebase-memory build codebase-memory-mcp-image` then
+  `./scripts/mcp_add.sh codebase-memory` (set `CODE_ROOT` first). Indexing honors
+  `.gitignore` + a new root `.cbmignore` (defense-in-depth secret/non-source excludes).
+  Also adds an optional **`codebase-memory-ui`** service — the upstream interactive 3D
+  graph **visualization** — served at `https://<host>/codebase-memory/` on the shared
+  `:443` Google-SSO origin and listed in the dashboard services section. The UI is an
+  absolute-asset SPA with no base-path option (its `/assets`/`/api` collide with Open
+  WebUI's root), so the image runs nginx that proxies the localhost-only UI and
+  `sub_filter`-rewrites its baked paths to the `/codebase-memory/` prefix. It indexes
+  the code root (`/c/dev:ro`) in its own process (in-memory; re-index after a restart).
 - **Voice STT/TTS services — opt-in `--profile voice` with secondary-GPU pinning.**
   Adds two OpenAI-compatible local speech services: `stt` (`fedirz/faster-whisper-server:latest-cuda`,
   `/v1/audio/transcriptions` at `http://stt:8000/v1`) and `tts` (`ghcr.io/remsky/kokoro-fastapi-gpu:latest`,

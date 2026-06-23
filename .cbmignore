@@ -1,0 +1,38 @@
+# codebase-memory-mcp ignore file (gitignore syntax).
+# Defense-in-depth so the code indexer never ingests secrets or non-source bulk,
+# on top of the hardcoded defaults (.git, node_modules) and the .gitignore layer.
+# Keep this in sync with what must never be indexed; .gitignore already covers the
+# real secrets, this is the explicit belt-and-suspenders list.
+
+# Secrets / credentials
+.env
+.env.*
+!.env.example
+*.sops
+*.sops.*
+secrets/
+**/secrets/
+*.pem
+*.key
+id_rsa
+id_ed25519
+*.age
+
+# Runtime / operator state (gitignored, not source)
+data/
+overrides/
+
+# Large / generated / non-source
+models/
+*.gguf
+*.safetensors
+*.bin
+*.onnx
+node_modules/
+.venv/
+venv/
+__pycache__/
+dist/
+build/
+*.stl
+*.3mf
