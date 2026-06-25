@@ -6,7 +6,6 @@ import hmac
 import ipaddress
 import json
 import logging
-import mimetypes
 import os
 import re
 import subprocess
@@ -2120,20 +2119,6 @@ async def service_pressure():
 _routes_gpu.register(app, _ops_request)
 _routes_registry.register(app, _ops_request)
 _routes_model_config.register(app, _ops_request)
-
-mimetypes.add_type("application/octet-stream", ".stl")
-
-# --- STL File Serving ---
-from fastapi.responses import FileResponse
-
-STL_DIR = Path(__file__).parent / "static" / "stl"
-if STL_DIR.exists():
-    @app.get("/stl/{filename}")
-    async def serve_stl(filename: str):
-        stl_path = STL_DIR / filename
-        if stl_path.exists():
-            return FileResponse(str(stl_path), media_type="application/octet-stream")
-        raise HTTPException(status_code=404, detail="File not found")
 
 # --- Static ---
 
