@@ -31,7 +31,12 @@ with the age private key at `~/.config/sops/age/keys.txt`.
   and the `HERMES_HOST_DEV_MOUNT`, so even a prompt-injected Hermes
   cannot `cat` the decrypted files.
 - Bring up the stack: `make up` (runs decrypt-secrets, then
-  `docker compose --env-file ~/.ai-toolkit/runtime/.env up -d`).
+  `docker compose --env-file .env --env-file ~/.ai-toolkit/runtime/.env up -d`
+  — two files, last-wins, so `.env` defaults are kept and runtime secrets win).
+- `ops-controller` mounts `runtime/.env` read-only and injects it when it
+  recreates secret-dependent services, so dashboard-driven recreate brings them
+  up with real values. It never holds the age key. See
+  `docs/runbooks/secrets.md`.
 - Add a new secret: `echo -n "$VALUE" | sops --encrypt --age age1...
   --input-type=binary --output-type=binary /dev/stdin >
   secrets/<name>.sops`.

@@ -209,6 +209,12 @@ services:
       # inside the container — a path that doesn't exist on the docker host
       # — and `compose up` aborts on "bind source path does not exist".
       - OPERATOR_HOME=${HOME}
+      # Read-only view of the SOPS-decrypted runtime env so compose subprocesses
+      # (POST /compose/*, /services/*/recreate) interpolate REAL secret values for
+      # secret-dependent services (oauth2-proxy, caddy, searxng, n8n, …) instead of
+      # leaving them unset. Path only — no secret value lives in this compose file.
+      # See ops-controller/main.py:_load_runtime_env. Decryption stays host-only.
+      - RUNTIME_ENV_FILE=/run/runtime.env
       - HF_TOKEN_FILE=/run/secrets/hf_token
       - AUDIT_LOG_PATH=/data/audit.log
       - BASE_PATH=${BASE_PATH:-.}
@@ -232,8 +238,8 @@ services:
       - OPS_VRAM_PRESSURE_GB=${OPS_VRAM_PRESSURE_GB:-0}
       - OPS_VRAM_RECOVERY_GB=${OPS_VRAM_RECOVERY_GB:-0}
       - OPS_VRAM_POLL_SECONDS=${OPS_VRAM_POLL_SECONDS:-30}
-      # Hermes self-heal watchdog (opt-in): restart exited hermes-gateway/hermes-dashboard
-      # after grace window. Disabled by default.
+      # Self-heal watchdog (opt-in): restart any exited compose service after a
+      # grace window, except those in OPS_WATCHDOG_EXCLUDE. Disabled by default.
       - OPS_HERMES_WATCHDOG_ENABLED=${OPS_HERMES_WATCHDOG_ENABLED:-0}
       - OPS_HERMES_WATCHDOG_INTERVAL_SECONDS=${OPS_HERMES_WATCHDOG_INTERVAL_SECONDS:-30}
       - OPS_HERMES_WATCHDOG_GRACE_SECONDS=${OPS_HERMES_WATCHDOG_GRACE_SECONDS:-60}
@@ -243,6 +249,10 @@ services:
       - ${BASE_PATH:-.}:/workspace
       - ${DATA_PATH:-${BASE_PATH:-.}/data}/ops-controller:/data
       - ${BASE_PATH:-.}/models/comfyui:/models/comfyui
+      # Read-only: decrypted runtime secrets for compose interpolation (see
+      # RUNTIME_ENV_FILE above). Same host path the top-level `secrets:` block uses;
+      # `make up` runs decrypt-secrets first, so this file exists before compose up.
+      - ${HOME}/.ai-toolkit/runtime/.env:/run/runtime.env:ro
     secrets:
       - hf_token
     healthcheck:
