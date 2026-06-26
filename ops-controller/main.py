@@ -67,8 +67,11 @@ OPS_CONTROLLER_TOKEN = os.environ.get("OPS_CONTROLLER_TOKEN", "")
 AUDIT_LOG_PATH = Path(os.environ.get("AUDIT_LOG_PATH", "/data/audit.log"))
 AUDIT_LOG_MAX_BYTES = int(os.environ.get("AUDIT_LOG_MAX_BYTES", "10485760"))  # 10MB default
 
-# Services we allow operations on (allowlist)
+# Services we allow operations on (allowlist).
+# caddy/oauth2-proxy/searxng are secret-dependent; they are safe to recreate here
+# now that the compose paths inject the decrypted runtime env (see _compose_env).
 ALLOWED_SERVICES = {
+    "caddy", "oauth2-proxy", "searxng",
     "llamacpp", "llamacpp-embed", "dashboard", "open-webui", "model-gateway", "mcp-gateway",
     "comfyui", "n8n", "qdrant", "stt", "tts", "codebase-memory-ui",
 }
@@ -175,6 +178,64 @@ def apply_gpu_assignment(service: str, gpu_uuid: str) -> dict:
 # Shared helpers used by /gpu/assign AND /registry/* endpoints
 # ---------------------------------------------------------------------------
 
+RUNTIME_ENV_FILE = Path(os.environ.get("RUNTIME_ENV_FILE", "/run/runtime.env"))
+
+
+def _load_runtime_env() -> dict:
+    """Parse the SOPS-decrypted runtime env file into a dict.
+
+    Mounted read-only from the host's ``~/.ai-toolkit/runtime/.env`` (see the
+    ops-controller service in docker-compose.yml). docker-compose interpolates
+    ``${VAR}`` from the subprocess environment, so injecting these lets the
+    compose paths below recreate secret-dependent services (oauth2-proxy, caddy,
+    searxng, n8n, dashboard, model-gateway/litellm) with their REAL values
+    instead of leaving them unset — which is what made oauth2-proxy crash-loop on
+    an 11-byte ``placeholder`` cookie secret in the 2026-06-26 incident.
+
+    Returns ``{}`` when the file is absent (CI / dev), so callers degrade to the
+    previous ``.env``-only behaviour. The contents are never logged or returned
+    by any endpoint — they stay inside this already-privileged container.
+    """
+    out: dict[str, str] = {}
+    try:
+        text = RUNTIME_ENV_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return out
+    except OSError as e:
+        logger.warning("[runtime-env] could not read %s: %s", RUNTIME_ENV_FILE, e)
+        return out
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if not key:
+            continue
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        out[key] = val
+    return out
+
+
+def _compose_env(extra: dict | None = None) -> dict:
+    """Environment for docker-compose subprocesses.
+
+    Process env + decrypted runtime secrets (so secret-dependent services
+    interpolate real values) + ``BASE_PATH``, with ``HOME`` pinned to the
+    operator's host home so ``${HOME}``-relative secret bind mounts resolve.
+    Precedence: runtime secrets override process env; ``extra`` overrides all.
+    """
+    env = {**os.environ, **_load_runtime_env(), "BASE_PATH": BASE_PATH}
+    operator_home = os.environ.get("OPERATOR_HOME")
+    if operator_home:
+        env["HOME"] = operator_home
+    if extra:
+        env.update(extra)
+    return env
+
+
 def _recreate_service(service: str, request=None) -> dict:
     """Run docker-compose up -d --no-deps <service>. Raises HTTPException on failure."""
     compose_files = [f.strip() for f in COMPOSE_FILE_ENV.split(";") if f.strip()]
@@ -182,10 +243,7 @@ def _recreate_service(service: str, request=None) -> dict:
     for cf in compose_files:
         cmd += ["-f", f"/workspace/{cf}"]
     cmd += ["up", "-d", "--no-deps", service]
-    env = {**os.environ, "BASE_PATH": BASE_PATH}
-    operator_home = os.environ.get("OPERATOR_HOME")
-    if operator_home:
-        env["HOME"] = operator_home
+    env = _compose_env()
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True,
@@ -801,10 +859,7 @@ def _run_compose(verb: str, service: str | None) -> subprocess.CompletedProcess:
     # ops-controller service in docker-compose.yml as
     # `OPERATOR_HOME=${HOME}` so it inherits the operator's $HOME at the
     # moment they ran `docker compose up`.
-    env = os.environ.copy()
-    operator_home = os.environ.get("OPERATOR_HOME")
-    if operator_home:
-        env["HOME"] = operator_home
+    env = _compose_env()
 
     return subprocess.run(
         cmd, capture_output=True, text=True, env=env,
@@ -1391,7 +1446,7 @@ async def service_recreate(
     for cf in compose_files:
         cmd += ["-f", f"/workspace/{cf}"]
     cmd += ["up", "-d", "--no-deps", service_id]
-    env = {**os.environ, "BASE_PATH": BASE_PATH}
+    env = _compose_env()
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, cwd="/workspace", env=env, timeout=120)
     except subprocess.TimeoutExpired:

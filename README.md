@@ -153,8 +153,8 @@ Large optional downloads on demand; first run can take a long time. Pull via the
 - **Open WebUI:** runs with native auth disabled by default because Google SSO already gates it at the proxy; flip `WEBUI_AUTH=True` if you want a second auth layer for multi-user workspaces.
 - **Dashboard:** `DASHBOARD_AUTH_TOKEN` provides a bearer-token fallback for non-browser API access (e.g. host scripts). Browser traffic is SSO-gated.
 - **Ops controller:** requires `OPS_CONTROLLER_TOKEN` for dashboard-driven lifecycle and installs; no host port at all.
-- **Secrets at rest:** SOPS + age, with high-value tokens mounted as Docker secrets at `/run/secrets/<name>`. See [docs/runbooks/secrets.md](docs/runbooks/secrets.md).
-- Never commit `.env` or any plaintext secret. Full notes: [SECURITY.md](SECURITY.md).
+- **Secret management:** SOPS + age. Only encrypted `secrets/*.sops` blobs and architecture/config are committed; **plaintext is decrypted on the host only**, into `~/.ai-toolkit/runtime/` (outside every container's reach), and never enters the repo or a chat/log. Env-form secrets load via two `--env-file`s (`.env` defaults + `runtime/.env`, last-wins); high-value tokens mount as Docker secrets at `/run/secrets/<name>`. The ops-controller mounts `runtime/.env` read-only so it can recreate secret-dependent services with real values. See [docs/runbooks/secrets.md](docs/runbooks/secrets.md).
+- Never commit `.env` or any plaintext secret, and never synthesize placeholder secret values to clear an error — decrypt on the host instead. Full notes: [SECURITY.md](SECURITY.md).
 
 ### GPU / compute
 

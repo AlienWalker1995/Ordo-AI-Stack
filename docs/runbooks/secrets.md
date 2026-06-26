@@ -14,6 +14,44 @@
   env vars — so they don't appear in `docker inspect`. Web search is the
   self-hosted SearXNG MCP, which needs no external API key.
 
+## How services receive secrets at runtime
+
+Two delivery paths, both fed from `~/.ai-toolkit/runtime/` (produced by
+`make decrypt-secrets`):
+
+- **Env-form** (`secrets/.env.sops` → `runtime/.env`): compose loads **two**
+  env files, last-wins — `docker compose --env-file .env --env-file
+  ~/.ai-toolkit/runtime/.env`. The committed `.env` holds only non-secret
+  defaults; the decrypted `runtime/.env` supplies the real values
+  (`OAUTH2_PROXY_*`, `OPS_CONTROLLER_TOKEN`, `LITELLM_MASTER_KEY`,
+  `SEARXNG_SECRET`, `N8N_OWNER_*`, …). `make up` always passes both.
+- **File-form** (`secrets/<name>.sops` → `runtime/secrets/<name>`): mounted as
+  Docker secrets at `/run/secrets/<name>`, so they never appear in
+  `docker inspect`.
+
+### ops-controller recreates with real secrets
+
+The ops-controller recreates services in-container via its own `docker-compose`
+subprocess (the dashboard "recreate" and `POST /compose/*` paths). It mounts
+`~/.ai-toolkit/runtime/.env` **read-only** and injects it into those
+subprocesses (`_compose_env` in `ops-controller/main.py`), so a secret-dependent
+service it recreates (oauth2-proxy, caddy, searxng, n8n, dashboard,
+model-gateway/litellm) gets its real values — instead of coming up unset and
+crash-looping (e.g. oauth2-proxy on an 11-byte `placeholder` cookie secret).
+ops-controller holds only the **already-decrypted** runtime env, never the age
+key: decryption stays a host-only operation.
+
+> **Never paste secrets or the age key into chat, a log, or an issue, and never
+> "fix" a secret-stripped service by writing placeholder values into `.env` or
+> stubbing empty `secrets/*` files.** A `missing setting` / `not a directory`
+> error from a secret service means the runtime files weren't decrypted — the
+> fix is `make up` on the host, not a synthesized value.
+
+**Boundary:** secrets stay local. Only the encrypted `.sops` blobs plus
+architecture/config (compose, this runbook) are published; plaintext is
+decrypted only into the host runtime dir, which is outside `/workspace` and the
+Hermes bind-mount.
+
 ## First-time setup
 
 1. Install: `winget install Mozilla.sops FiloSottile.age` (Windows) or
