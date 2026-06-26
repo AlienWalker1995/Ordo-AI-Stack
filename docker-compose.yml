@@ -1068,6 +1068,9 @@ services:
       # discord.py expects. Legacy DISCORD_TOKEN inline alias is dropped —
       # use SOPS at secrets/discord_token.sops.
       - DISCORD_BOT_TOKEN_FILE=/run/secrets/discord_token
+      # Backup-repo PAT (git push to ordo-hermes-backup). SOPS-managed; the
+      # entrypoint bridges GITHUB_BACKUP_PAT_FILE -> GITHUB_BACKUP_PAT env var.
+      - GITHUB_BACKUP_PAT_FILE=/run/secrets/github_backup_pat
       - DISCORD_ALLOWED_USERS=${DISCORD_ALLOWED_USERS:-}
       - DISCORD_ALLOWED_CHANNELS=${DISCORD_ALLOWED_CHANNELS:-}
       - DISCORD_ALLOWED_ROLES=${DISCORD_ALLOWED_ROLES:-}
@@ -1097,6 +1100,7 @@ services:
       - ${BASE_PATH:-.}/..:${HERMES_HOST_DEV_MOUNT:-/projects}:rw
     secrets:
       - discord_token
+      - github_backup_pat
     healthcheck:
       # gateway_state.json is written by `hermes gateway` on startup (Docker-mode
       # doesn't create a gateway.pid — that's only for systemd/launchd installs).
@@ -1223,6 +1227,8 @@ secrets:
     file: ${HOME}/.ai-toolkit/runtime/secrets/discord_token
   github_pat:
     file: ${HOME}/.ai-toolkit/runtime/secrets/github_pat
+  github_backup_pat:
+    file: ${HOME}/.ai-toolkit/runtime/secrets/github_backup_pat
   hf_token:
     file: ${HOME}/.ai-toolkit/runtime/secrets/hf_token
   civitai_token:
