@@ -46,6 +46,14 @@ if [ -n "${DISCORD_BOT_TOKEN_FILE:-}" ] && [ -f "$DISCORD_BOT_TOKEN_FILE" ]; the
     export DISCORD_BOT_TOKEN
 fi
 
+# Same bridge for the backup-repo PAT: SOPS Docker secret at
+# /run/secrets/github_backup_pat -> GITHUB_BACKUP_PAT env var that Hermes and
+# git expect. Secrets live in SOPS, never in .env; this is how they reach the env.
+if [ -n "${GITHUB_BACKUP_PAT_FILE:-}" ] && [ -f "$GITHUB_BACKUP_PAT_FILE" ]; then
+    GITHUB_BACKUP_PAT="$(cat "$GITHUB_BACKUP_PAT_FILE")"
+    export GITHUB_BACKUP_PAT
+fi
+
 HERMES_BIN=/opt/hermes-agent/.venv/bin/hermes
 
 # Seed model + MCP endpoints to Docker-network DNS. hermes config set is idempotent
