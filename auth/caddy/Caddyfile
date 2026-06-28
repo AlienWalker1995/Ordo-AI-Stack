@@ -55,6 +55,26 @@
         reverse_proxy model-gateway:11435
     }
 
+    # ---- MCP gateway (aggregated tools) for tailnet MCP clients (Cline/Cursor) ----
+    # Bypasses Google SSO (programmatic clients can't do an interactive login) but
+    # requires a static Bearer token (MCP_GATEWAY_TOKEN, from SOPS) because the
+    # gateway has NO auth of its own. /mcp is passed through UNSTRIPPED — the
+    # gateway serves the MCP endpoint at /mcp. flush_interval -1 keeps the
+    # streamable-HTTP / SSE responses unbuffered. Reachable only over the tailnet.
+    @mcp_unauthed {
+        path /mcp /mcp/*
+        not header Authorization "Bearer {$MCP_GATEWAY_TOKEN}"
+    }
+    @mcp path /mcp /mcp/*
+    handle @mcp_unauthed {
+        respond "Unauthorized" 401
+    }
+    handle @mcp {
+        reverse_proxy mcp-gateway:8811 {
+            flush_interval -1
+        }
+    }
+
     # ---- Open WebUI at ROOT (no auth needed for the redirect) ----
     # Open WebUI's upstream v0.9.2 image is a prebuilt SvelteKit SPA with
     # base="" (assets are root-absolute: /_app, /static, /api, /ws). It MUST be
