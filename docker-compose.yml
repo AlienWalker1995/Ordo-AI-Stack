@@ -810,6 +810,8 @@ services:
         max-file: "3"
     networks:
       - backend
+      # proxy-net: lets Caddy (front door) reach the gateway for the /mcp/* route.
+      - proxy-net
 
   oauth2-proxy:
     # alpine variant ships with wget for the in-container healthcheck below.
@@ -867,6 +869,9 @@ services:
     environment:
       - CADDY_TAILNET_HOSTNAME=${CADDY_TAILNET_HOSTNAME}
       - CADDY_TAILNET_DOMAIN=${CADDY_TAILNET_DOMAIN}
+      # Bearer token (SOPS) gating the /mcp/* route for remote MCP clients
+      # (Cline/Cursor). The gateway has no auth of its own; Caddy enforces this.
+      - MCP_GATEWAY_TOKEN=${MCP_GATEWAY_TOKEN:-}
     volumes:
       - ./auth/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ${TAILSCALE_CERT_DIR:-./auth/caddy/certs}:/etc/caddy/certs:ro
