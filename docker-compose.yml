@@ -160,10 +160,11 @@ services:
       - DASHBOARD_URL=http://dashboard:8080
       - THROUGHPUT_RECORD_TOKEN=${THROUGHPUT_RECORD_TOKEN:-}
     ports:
-      # 127.0.0.1 bind: localhost-only host publish. Tailnet peers reach this
-      # service through Caddy (see auth/caddy/Caddyfile); host apps (Cline,
-      # VS Code, MCP clients, Hermes auth.json) keep their `localhost:11435`
-      # connectivity. Removes the prior 0.0.0.0 LAN exposure.
+      # 127.0.0.1 bind: localhost-only host publish. Tailnet peers reach the
+      # OpenAI-compatible API via Caddy at https://<tailnet-host>/llm/* — gated
+      # by the LiteLLM master key, no SSO (see auth/caddy/Caddyfile). Host apps
+      # (Cline, VS Code, MCP clients, Hermes auth.json) keep their
+      # `localhost:11435` connectivity. Removes the prior 0.0.0.0 LAN exposure.
       - "127.0.0.1:${MODEL_GATEWAY_PORT:-11435}:11435"
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import os, urllib.request; req = urllib.request.Request('http://localhost:11435/v1/models', headers={'Authorization': 'Bearer ' + os.environ.get('LITELLM_MASTER_KEY', 'local')}); urllib.request.urlopen(req)\""]
@@ -178,6 +179,8 @@ services:
     networks:
       - frontend
       - backend
+      # proxy-net: lets Caddy (front door) reach this for the /llm/* API route.
+      - proxy-net
 
   ops-controller:
     build: ./ops-controller

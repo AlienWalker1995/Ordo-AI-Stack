@@ -45,6 +45,16 @@
         reverse_proxy n8n:5678
     }
 
+    # ---- LiteLLM model gateway (OpenAI-compatible API) for tailnet API clients ----
+    # Bypasses SSO: programmatic clients (Cline, Cursor, scripts) can't do an
+    # interactive Google login. Auth is LiteLLM's own Bearer key
+    # (LITELLM_MASTER_KEY), which model-gateway enforces — so this is safe to
+    # expose over the tailnet (Caddy binds the tailnet interface only).
+    # handle_path strips /llm so LiteLLM sees /v1/... (e.g. /llm/v1/chat/completions).
+    handle_path /llm/* {
+        reverse_proxy model-gateway:11435
+    }
+
     # ---- Open WebUI at ROOT (no auth needed for the redirect) ----
     # Open WebUI's upstream v0.9.2 image is a prebuilt SvelteKit SPA with
     # base="" (assets are root-absolute: /_app, /static, /api, /ws). It MUST be
