@@ -142,27 +142,95 @@ CHOICES = {
     "LLAMACPP_KV_CACHE_TYPE_V": sorted(_KV_TYPES),
 }
 
-# One-line explanations surfaced as tooltips in the dashboard flag UI.
+# Tooltips for the dashboard flag UI — each explains the underlying concept,
+# what the value controls, and the practical tradeoff (concise but educational).
 HELP = {
-    "LLAMACPP_MODEL": "The GGUF weights file llama.cpp loads as the chat model.",
-    "LLAMACPP_CTX_SIZE": "Context window in tokens. Stack-wide cap (Open WebUI, Cline, etc.); larger = more KV-cache VRAM.",
-    "LLAMACPP_GPU_LAYERS": "How many model layers to offload to the GPU. -1 = all on GPU.",
-    "LLAMACPP_ROPE_SCALING": "Method to stretch context beyond the model's native length. 'none' = native; 'yarn'/'linear' extend it.",
-    "LLAMACPP_ROPE_SCALE": "Context-extension factor used with rope scaling (e.g. 2 = double the native length).",
-    "LLAMACPP_YARN_ORIG_CTX": "The model's native (pre-extension) context length, for YaRN math. 0 = unset.",
-    "LLAMACPP_OVERRIDE_KV": "Override a GGUF metadata key as key=type:value (e.g. raise the declared context_length). Empty = none.",
-    "LLAMACPP_FLASH_ATTN": "Flash Attention. 'auto' lets llama.cpp decide; 'on' forces it (required by quantized KV cache).",
-    "LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION": "Quantize the KV cache to fit longer context in VRAM (1 = on).",
-    "LLAMACPP_KV_CACHE_TYPE_K": "KV-cache quantization for keys. q8_0 = best quality of the quantized set; smaller types save more VRAM.",
-    "LLAMACPP_KV_CACHE_TYPE_V": "KV-cache quantization for values. q8_0 = best quality; smaller types save more VRAM.",
-    "LLAMACPP_N_PREDICT": "Hard ceiling on tokens generated per request — a backstop against runaway generation.",
-    "LLAMACPP_REASONING_BUDGET": "Max tokens the model may spend inside <think>…</think> per response.",
-    "LLAMACPP_MMPROJ": "Vision projector (mmproj GGUF) that enables image input. Empty = text-only.",
-    "LLAMACPP_PARALLEL": "Number of concurrent request slots the server handles.",
-    "LLAMACPP_USE_MMAP": "Memory-map the model file. 0 = off (avoids stale page-cache on Docker bind mounts).",
-    "LLAMACPP_EXTRA_ARGS": "Raw llama-server flags appended verbatim — escape hatch for anything without a dedicated field.",
-    "MTP_ENABLED": "Multi-Token Prediction speculative decoding (~1.7× faster), using the model's built-in draft head.",
-    "MTP_N_MAX": "Max speculative draft tokens per step (1–6). Hardware-dependent; try a few values.",
+    "LLAMACPP_MODEL":
+        "The model weights llama.cpp loads. GGUF is the quantized on-disk format; the "
+        "filename usually encodes the model, size, and quant level (e.g. Q4_K_M ≈ 4-bit — "
+        "smaller and faster than Q6/Q8, with a little quality loss). Changing this swaps "
+        "which model the stack-wide `local-chat` alias serves.",
+    "LLAMACPP_CTX_SIZE":
+        "The context window: the max tokens (prompt + reply) the model can attend to at once "
+        "(~0.75 words per token). This is the stack-wide cap every client sees (Open WebUI, "
+        "Cline, agents). Bigger = the model 'remembers' more, but the KV cache grows ~linearly "
+        "with it, costing VRAM and slowing prompt processing.",
+    "LLAMACPP_GPU_LAYERS":
+        "A transformer model is a stack of layers; this sets how many are offloaded to the GPU "
+        "(the rest run on the much slower CPU). -1 = put every layer on the GPU — fastest, but "
+        "needs enough VRAM for the whole model. Lower it only when a model doesn't fully fit.",
+    "LLAMACPP_ROPE_SCALING":
+        "Models encode token positions with RoPE (rotary position embeddings) and are trained "
+        "for a fixed 'native' context length. This stretches positions to run BEYOND that "
+        "length: 'none' = native only; 'linear' = naive interpolation; 'yarn' = a smarter scheme "
+        "that keeps quality much better. Only enable when you need more context than the model "
+        "was trained for.",
+    "LLAMACPP_ROPE_SCALE":
+        "The context-extension multiplier, used with rope scaling. e.g. 2 runs at 2× the native "
+        "length (256K→512K). Reaching further costs long-range accuracy, so use the smallest "
+        "factor that fits your need. Ignored when rope_scaling = none.",
+    "LLAMACPP_YARN_ORIG_CTX":
+        "Tells YaRN the model's native (pre-extension) context length so it scales correctly — "
+        "set it to the model's trained context (e.g. 262144). The effective window then ≈ this × "
+        "rope_scale. 0 = unset/auto.",
+    "LLAMACPP_OVERRIDE_KV":
+        "Force-override a value baked into the GGUF's metadata at load time, as key=type:value "
+        "(e.g. `qwen3.context_length=int:524288` to raise a declared limit). An expert escape "
+        "hatch — leave empty unless you know the exact metadata key; a wrong key/type can break "
+        "loading.",
+    "LLAMACPP_FLASH_ATTN":
+        "Flash Attention is a fused, memory-efficient attention kernel: same math/results, but "
+        "faster and far lower VRAM at long context. 'auto' lets llama.cpp choose for the "
+        "build/model; 'on' forces it (required when the KV cache is quantized); 'off' disables it.",
+    "LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION":
+        "The KV cache stores keys/values for every past token so they aren't recomputed each "
+        "step — it's the dominant VRAM cost of long context. Turning this on stores it "
+        "compressed (quantized), roughly halving that memory so you can fit a bigger window, for "
+        "a small quality cost. Uses the KV-cache type settings below and generally needs Flash "
+        "Attention on.",
+    "LLAMACPP_KV_CACHE_TYPE_K":
+        "Numeric format for the KEYS half of the (quantized) KV cache. q8_0 (8-bit) is the "
+        "highest-quality quantized option and the safe default; q4_0/q5_* save more VRAM at some "
+        "accuracy cost; f16 = unquantized (largest). Only used when KV-cache quantization is on.",
+    "LLAMACPP_KV_CACHE_TYPE_V":
+        "Numeric format for the VALUES half of the (quantized) KV cache. Same scale as keys: "
+        "q8_0 = best quality, smaller types save more VRAM, f16 = unquantized. Only used when "
+        "KV-cache quantization is on.",
+    "LLAMACPP_N_PREDICT":
+        "Hard upper bound on tokens generated in one response. It's a safety backstop: if a "
+        "model gets stuck in a loop (e.g. never closing its reasoning), this force-stops it "
+        "instead of running forever. Set high enough not to truncate legitimate answers.",
+    "LLAMACPP_REASONING_BUDGET":
+        "For 'thinking' models that emit a hidden <think>…</think> block before answering, this "
+        "caps tokens spent reasoning per response, so a runaway chain of thought can't consume "
+        "the whole budget. It relies on the model emitting a clean end-of-thinking token; "
+        "N_PREDICT is the unconditional backstop.",
+    "LLAMACPP_MMPROJ":
+        "Path to a multimodal projector (an mmproj GGUF) that lets the model accept images, not "
+        "just text — it projects vision features into the model's token space. Set it to enable "
+        "vision; leave empty for text-only (saves ~1 GB VRAM). Must match the model family.",
+    "LLAMACPP_PARALLEL":
+        "How many requests the server handles concurrently ('slots'). Each slot reserves its own "
+        "slice of the context/KV cache, so more slots = more throughput but a smaller window per "
+        "request. 1 = maximum context for a single request.",
+    "LLAMACPP_USE_MMAP":
+        "Memory-mapping loads the model lazily via the OS page cache instead of reading it all "
+        "into RAM up front. 0 = off here because Docker bind mounts (virtiofs/9p) don't reuse the "
+        "page cache across restarts, so mmap gives no benefit and can slow loads. Turn on only "
+        "with a native-filesystem model path.",
+    "LLAMACPP_EXTRA_ARGS":
+        "Raw flags passed straight to llama-server, appended after the managed ones — an escape "
+        "hatch for options without a dedicated field yet. Whitespace-split into argv (not "
+        "shell-evaluated). e.g. `--reasoning-format deepseek`.",
+    "MTP_ENABLED":
+        "Multi-Token Prediction = speculative decoding using the model's own built-in 'draft' "
+        "head: it cheaply guesses several next tokens, then the full model verifies them in one "
+        "pass and keeps the correct ones. Net effect ≈ 1.5–2× faster generation with identical "
+        "output. Only works on models shipped with MTP weights.",
+    "MTP_N_MAX":
+        "How many tokens MTP drafts ahead per step (speculation depth, 1–6). More draft tokens = "
+        "bigger speedups when the guesses are accepted, but wasted work when they're rejected — "
+        "the sweet spot is hardware/model-dependent, so try a few values.",
 }
 
 
