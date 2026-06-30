@@ -36,6 +36,7 @@ echo "==> ${RUNTIME_DIR}/.env (env-form internal tokens)"
 # File-form: decrypt each high-value token to its own file.
 for src in secrets/discord_token.sops \
            secrets/github_pat.sops \
+           secrets/github_backup_pat.sops \
            secrets/hf_token.sops \
            secrets/civitai_token.sops \
            secrets/n8n_api_key.sops; do

@@ -27,7 +27,12 @@ Two delivery paths, both fed from `~/.ai-toolkit/runtime/` (produced by
   `SEARXNG_SECRET`, `N8N_OWNER_*`, …). `make up` always passes both.
 - **File-form** (`secrets/<name>.sops` → `runtime/secrets/<name>`): mounted as
   Docker secrets at `/run/secrets/<name>`, so they never appear in
-  `docker inspect`.
+  `docker inspect`. Where an app SDK expects a plain env var, the consumer's
+  entrypoint **bridges** `<NAME>_FILE` → a `<NAME>` env var (e.g. hermes-gateway:
+  `DISCORD_BOT_TOKEN`, `GITHUB_BACKUP_PAT`). So agents read the token from their
+  environment — they never see, need, or look for a plaintext secret in `.env`.
+  The `ordo-hermes-backup` git remote authenticates the same way: a credential
+  helper reads the SOPS-decrypted token, so no token is ever embedded in a URL.
 
 ### ops-controller recreates with real secrets
 
