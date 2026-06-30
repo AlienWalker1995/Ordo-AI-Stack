@@ -91,12 +91,12 @@ SERVICES = {
 # value here silently produces a misleading audit (the old "v0.20.1" ComfyUI pin
 # was compared against upstream while the box actually ran 0.17.0).
 PINNED = {
-    "n8n":         "2.20.0",
-    "Open WebUI":  "v0.9.2",
-    "Qdrant":      "v1.17.1",
-    "Caddy":       "2.11.2",
+    "n8n":         "2.28.3",
+    "Open WebUI":  "v0.10.1",
+    "Qdrant":      "v1.18.2",
+    "Caddy":       "2.11.4",
     "llama.cpp":   "server-cuda",  # rolling tag — classifies as ROLLING (manual review)
-    "oauth2-proxy":"latest-alpine",
+    "oauth2-proxy":"v7.15.3-alpine",
 }
 
 
