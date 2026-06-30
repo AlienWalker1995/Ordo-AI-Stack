@@ -386,7 +386,7 @@ services:
       - backend
 
   open-webui:
-    image: ${OPEN_WEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.9.2}
+    image: ${OPEN_WEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.10.1}
     restart: unless-stopped
     depends_on:
       llamacpp:
@@ -673,7 +673,7 @@ services:
       - backend
 
   n8n:
-    image: ${N8N_IMAGE:-docker.n8n.io/n8nio/n8n:2.20.6}
+    image: ${N8N_IMAGE:-docker.n8n.io/n8nio/n8n:2.28.3}
     restart: unless-stopped
     # Run as non-root (n8n image uses node user; 1000:1000 matches typical node uid)
     user: "1000:1000"
@@ -816,7 +816,7 @@ services:
   oauth2-proxy:
     # alpine variant ships with wget for the in-container healthcheck below.
     # The default :latest is distroless and has no shell or HTTP probe tools.
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.2-alpine
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.3-alpine
     restart: unless-stopped
     # oauth2-proxy is used purely as an authn endpoint via Caddy `forward_auth`
     # (Caddy calls /oauth2/auth, oauth2-proxy returns 202 on valid session,
@@ -859,7 +859,7 @@ services:
         max-file: "3"
 
   caddy:
-    image: caddy:2.11.2-alpine
+    image: caddy:2.11.4-alpine
     restart: unless-stopped
     # CADDY_BIND must be the host's tailnet IP. The :? failsafe makes
     # `docker compose config` exit non-zero if it's empty or unset, since
@@ -949,7 +949,7 @@ services:
   # --- RAG ---
 
   qdrant:
-    image: qdrant/qdrant:v1.17.1
+    image: qdrant/qdrant:v1.18.2
     restart: unless-stopped
     ports:
       # 127.0.0.1 bind: localhost-only. Internal services use http://qdrant:6333
