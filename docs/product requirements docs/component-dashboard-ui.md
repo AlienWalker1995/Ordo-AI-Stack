@@ -3,7 +3,7 @@
 ## Purpose
 A web-based control plane that provides a single pane of glass for:
 - Managing Docker-Compose services (start/stop/restart, logs)
-- Pulling and configuring AI models (Ollama, vLLM, etc.)
+- Pulling and configuring AI models (GGUF/llama.cpp LLMs, ComfyUI diffusion models)
 - Viewing dependency health and throughput stats
 - Executing MCP tool calls from any browser (via the MCP Gateway)
 
@@ -19,11 +19,12 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/hardware` | GET | None | Host hardware stats (CPU, memory, GPU via nvidia-smi) |
 | `/api/auth/config` | GET | None | Auth method in use |
 | `/api/rag/status` | GET | None | Qdrant collection status + point count |
-| `/api/ollama/models` | GET | Y | Installed Ollama models |
-| `/api/ollama/pull` | POST | Y | Pull model (streaming progress) |
-| `/api/ollama/delete` | POST | Y | Delete Ollama model |
-| `/api/ollama/library` | GET | Y | Pullable models from Ollama registry (24h cache) |
-| `/api/ollama/ps` | GET | Y | Models currently loaded in Ollama |
+| `/api/llm/models` | GET | Y | Installed GGUF models (llama.cpp) |
+| `/api/llm/pull` | POST | Y | Pull a GGUF model from Hugging Face (background gguf-puller) |
+| `/api/llm/pull/status` | GET | Y | GGUF pull progress |
+| `/api/llm/delete` | POST | Y | Delete a GGUF model file from disk |
+| `/api/llm/unload` | POST | Y | Unload the active model from the gateway (keeps files) |
+| `/api/llm/ps` | GET | Y | Models currently advertised by the model gateway |
 | `/api/comfyui/models` | GET | Y | Installed ComfyUI models |
 | `/api/comfyui/pull` | POST | Y | Pull ComfyUI models |
 | `/api/comfyui/models/{cat}/{file}` | DELETE | Y | Delete ComfyUI model |
@@ -70,7 +71,7 @@ A web-based control plane that provides a single pane of glass for:
 1. From a tailnet device, open `https://${CADDY_TAILNET_HOSTNAME}/dash/` and complete Google sign-in.
 2. The SSO front door (Caddy + oauth2-proxy) gates browser access; `DASHBOARD_AUTH_TOKEN` is a bearer-token fallback for host scripts and non-browser API access.
 3. Use the "Services" tab to stop or restart a service if an issue is suspected.
-4. Pull a new Ollama or ComfyUI model from the relevant tab.
+4. Pull a new LLM (GGUF) or ComfyUI model from the relevant tab.
 5. In the "MCP" tab, add a new tool server (e.g., a custom web search provider) by clicking "Add" and filling the JSON manifest.
 
 ---

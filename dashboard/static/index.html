@@ -851,56 +851,13 @@
     .pill:hover { border-color: var(--accent); color: var(--accent); }
     .mcp-remove-btn:hover { border-color: var(--danger); color: var(--danger); }
     /* ── Model select dropdown ── */
-    .model-select-wrap { position: relative; flex: 1; min-width: 200px; }
-    .model-select-trigger {
-      width: 100%; display: flex; align-items: center; justify-content: space-between;
-      padding: var(--space-2) var(--space-4); background: var(--bg);
-      border: 1px solid var(--border); border-radius: var(--radius-sm);
+    .llm-model-input {
+      flex: 1; min-width: 200px; padding: var(--space-2) var(--space-4);
+      background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
       color: var(--fg); font-family: var(--font-mono); font-size: .88rem;
-      cursor: pointer; transition: all .2s;
     }
-    .model-select-trigger:hover, .model-select-trigger.open { border-color: var(--accent); background: var(--accent-dim); }
-    .model-select-trigger .chevron { transition: transform .2s; opacity: .6; }
-    .model-select-trigger.open .chevron { transform: rotate(180deg); }
-    .model-select-dropdown {
-      position: absolute; top: 100%; left: 0; right: 0; margin-top: var(--space-1);
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: var(--radius-sm); max-height: 320px;
-      overflow: hidden; display: flex; flex-direction: column;
-      z-index: 1000; box-shadow: var(--shadow-lg);
-    }
-    .model-select-search { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border-subtle); }
-    .model-select-search input {
-      width: 100%; padding: .4rem .65rem; background: var(--bg);
-      border: 1px solid var(--border); border-radius: var(--radius-sm);
-      color: var(--fg); font-family: var(--font-mono); font-size: .82rem;
-    }
-    .model-select-search input:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 2px; border-color: var(--accent); }
-    .model-select-search input:focus:not(:focus-visible) { outline: none; border-color: var(--accent); }
-    .model-select-dropdown .section-label {
-      padding: var(--space-2) var(--space-4); font-size: var(--text-xs);
-      text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
-      border-bottom: 1px solid var(--border-subtle);
-    }
-    .model-select-option {
-      padding: var(--space-2) var(--space-4); font-family: var(--font-mono); font-size: .82rem;
-      cursor: pointer; display: flex; justify-content: space-between;
-      align-items: center; transition: background .12s;
-    }
-    .model-select-option:hover { background: var(--surface-hover); }
-    .model-select-option.installed { color: var(--muted); cursor: default; }
-    .model-select-option.installed:hover { background: transparent; }
-    .model-select-option .badge { font-size: .65rem; color: var(--success); }
-    .model-select-option .size { font-size: .75rem; color: var(--muted); }
-    #ollama-select-options { overflow-y: auto; max-height: 220px; }
-    .model-select-custom { padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border-subtle); }
-    .model-select-custom input {
-      width: 100%; padding: .4rem .65rem; background: var(--bg);
-      border: 1px solid var(--border); border-radius: var(--radius-sm);
-      color: var(--fg); font-family: var(--font-mono); font-size: .82rem;
-    }
-    .model-select-custom input:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 2px; border-color: var(--accent); }
-    .model-select-custom input:focus:not(:focus-visible) { outline: none; border-color: var(--accent); }
+    .llm-model-input:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 2px; border-color: var(--accent); }
+    .llm-model-input:focus:not(:focus-visible) { outline: none; border-color: var(--accent); }
     .last-updated { font-size: var(--text-xs); color: var(--muted); margin-top: var(--space-2); }
     /* ── Inputs ── */
     input[type="text"] {
@@ -1020,10 +977,8 @@
       .model-item .name { word-break: break-word; }
       .pull-area { padding: var(--space-4); }
       .pull-row { flex-direction: row; flex-wrap: wrap; gap: var(--space-3); }
-      .pull-row .model-select-wrap { flex: 1 1 100%; min-width: 0; }
+      .pull-row .llm-model-input { flex: 1 1 100%; min-width: 0; }
       .pull-row button { flex: 1 1 120px; min-width: 0; }
-      .model-select-wrap { min-width: 0; }
-      .model-select-trigger { font-size: .85rem; }
       input[type="text"] { min-width: 0; }
       button { min-height: 44px; padding: .75rem 1.25rem; }
       .mcp-howto { padding: var(--space-2) var(--space-3); }
@@ -1043,7 +998,6 @@
       h1 { font-size: 1.75rem; }
       section { padding: var(--space-4) var(--space-3); }
       .model-list { max-height: 160px; }
-      .model-select-dropdown { max-height: 60vh; left: var(--space-2); right: var(--space-2); width: auto; }
       .quick-pills { gap: var(--space-1); }
       .pill { padding: 2px var(--space-3); }
     }
@@ -1210,7 +1164,6 @@
     }
     /* Override arbitrary z-indexes with scale tokens */
     .modal-overlay { z-index: var(--z-modal); }
-    .model-select-dropdown { z-index: var(--z-dropdown); }
     header::before { z-index: var(--z-sticky); }
     .toast-container { z-index: var(--z-overlay); }
     .skip-link { z-index: calc(var(--z-modal) + 1); }
@@ -1901,36 +1854,21 @@
             </div>
             <div id="llm-active-status" class="llm-active-status"></div>
           </div>
-          <div class="model-list" id="ollama-models">
+          <div class="model-list" id="llm-models">
             <div class="skeleton skeleton-line"></div>
             <div class="skeleton skeleton-line short"></div>
             <div class="skeleton skeleton-line"></div>
           </div>
           <div class="pull-area">
             <div class="pull-row">
-              <div class="model-select-wrap">
-                <div class="model-select-trigger" id="ollama-select-trigger" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="ollama-select-dropdown" aria-labelledby="ollama-select-label" tabindex="0">
-                  <span id="ollama-select-label">Select model to pull...</span>
-                  <span class="chevron" aria-hidden="true">&#9662;</span>
-                </div>
-                <div class="model-select-dropdown" id="ollama-select-dropdown" role="listbox" aria-labelledby="ollama-select-label" style="display:none;">
-                  <div class="model-select-search">
-                    <input type="text" id="ollama-library-search" placeholder="Search catalog..." autocomplete="off" aria-label="Search model catalog">
-                  </div>
-                  <div class="section-label">Registry (pull uses HF repo ids; see custom field)</div>
-                  <div id="ollama-select-options"></div>
-                  <div class="model-select-custom">
-                    <input type="text" id="ollama-model-custom" placeholder="HF repo (org/name), .env, or huggingface.co URL" aria-label="Hugging Face repo or URL">
-                  </div>
-                </div>
-              </div>
-              <button id="ollama-starter-pack" class="secondary" title="Runs gguf-puller with GGUF_MODELS from .env">Pull .env Models</button>
-              <button id="ollama-pull">Pull</button>
+              <input type="text" id="llm-model-input" class="llm-model-input" placeholder="HF repo (org/name), .env, or huggingface.co URL" aria-label="Hugging Face repo or URL to pull" autocomplete="off">
+              <button id="llm-starter-pack" class="secondary" title="Runs gguf-puller with GGUF_MODELS from .env">Pull .env Models</button>
+              <button id="llm-pull">Pull</button>
             </div>
-            <div class="last-updated" id="ollama-last-updated"></div>
-            <div id="ollama-progress" class="progress-area" style="display:none;" role="region" aria-label="Pull progress">
-              <div class="progress-bar"><div class="fill" id="ollama-progress-bar" style="width:0%" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
-              <div class="log" id="ollama-log" role="log" aria-live="polite"></div>
+            <div class="last-updated" id="llm-last-updated"></div>
+            <div id="llm-progress" class="progress-area" style="display:none;" role="region" aria-label="Pull progress">
+              <div class="progress-bar"><div class="fill" id="llm-progress-bar" style="width:0%" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
+              <div class="log" id="llm-log" role="log" aria-live="polite"></div>
             </div>
           </div>
         </div>
@@ -2090,8 +2028,7 @@
       });
     };
 
-    let ollamaModels = [];
-    let ollamaLibrary = [];
+    let llmModels = [];
 
     function toast(msg, type = '') {
       const el = document.createElement('div');
@@ -2213,7 +2150,6 @@
     }
 
     const SERVICE_ICONS = {
-      'ollama': '🦙',
       'model-gateway': '⇌',
       'webui': '💬',
       'mcp': '🔌',
@@ -2838,62 +2774,33 @@
       } catch (e) { jobsEl.textContent = "Jobs unavailable: " + e; }
     }
 
-    function buildOllamaDropdown(filter = '') {
-      const installed = new Set(ollamaModels.map(m => m.name));
-      const optionsEl = document.getElementById('ollama-select-options');
-      if (!optionsEl) return;
-      const q = filter.toLowerCase().trim();
-      const models = q ? ollamaLibrary.filter(m => m.toLowerCase().includes(q)) : ollamaLibrary;
-      optionsEl.innerHTML = models.slice(0, 80).map(name => {
-        const isInstalled = installed.has(name);
-        return `<div class="model-select-option ${isInstalled ? 'installed' : ''}" data-model="${name}" role="option" ${isInstalled ? 'aria-disabled="true"' : ''} tabindex="-1">
-          <span>${name}</span>
-          ${isInstalled ? '<span class="badge badge-success">✓</span>' : '<span class="size">pull</span>'}
-        </div>`;
-      }).join('');
-      if (models.length > 80) {
-        optionsEl.innerHTML += `<div class="section-label" style="border:none;padding:0.5rem;">+ ${models.length - 80} more — type to search</div>`;
-      }
-    }
-
-    async function loadOllamaLibrary() {
+    async function loadModels() {
+      const el = document.getElementById('llm-models');
       try {
-        const r = await api('/api/ollama/library');
+        const r = await api('/api/llm/models');
         const d = await r.json();
-        ollamaLibrary = d.models || [];
-      } catch (_) {
-        ollamaLibrary = ['llama3.2', 'deepseek-r1:7b', 'qwen2.5:7b', 'mistral', 'nomic-embed-text'];
-      }
-    }
-
-    async function loadOllamaModels() {
-      const el = document.getElementById('ollama-models');
-      try {
-        const r = await api('/api/ollama/models');
-        const d = await r.json();
-        ollamaModels = d.models || [];
-        buildOllamaDropdown(document.getElementById('ollama-library-search')?.value || '');
+        llmModels = d.models || [];
         if (!d.ok) {
           el.innerHTML = '<div class="empty">Model gateway unreachable.<span class="hint">Start with: docker compose up -d</span></div>';
           return;
         }
-        if (!ollamaModels.length) {
-          el.innerHTML = '<div class="empty">No models yet.<span class="hint">Select one below and click Pull.</span></div>';
-          document.getElementById('ollama-last-updated').textContent = '';
+        if (!llmModels.length) {
+          el.innerHTML = '<div class="empty">No models yet.<span class="hint">Enter a Hugging Face repo below and click Pull.</span></div>';
+          document.getElementById('llm-last-updated').textContent = '';
           populateThroughputModelSelect();
           return;
         }
-        document.getElementById('ollama-last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+        document.getElementById('llm-last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
         // Fetch currently loaded model to show active badge
         let activeModel = '';
         try {
-          const ps = await api('/api/ollama/ps');
+          const ps = await api('/api/llm/ps');
           if (ps.ok) {
             const psData = await ps.json();
             activeModel = (psData.models?.[0]?.name || '').replace(/\.gguf$/i, '').split(':')[0];
           }
         } catch (_) {}
-        el.innerHTML = ollamaModels.map(m => {
+        el.innerHTML = llmModels.map(m => {
           const bareName = m.name.replace(/\.gguf$/i, '');
           const isActive = activeModel && (bareName === activeModel || bareName.split(':')[0] === activeModel);
           return `
@@ -2908,7 +2815,7 @@
         const activeArea = document.getElementById('llm-active-area');
         const activeSel = document.getElementById('llm-active-select');
         if (activeSel) {
-          const llms = ollamaModels.filter(m => !isEmbeddingModel(m.name));
+          const llms = llmModels.filter(m => !isEmbeddingModel(m.name));
           if (llms.length) {
             activeSel.innerHTML = llms.map(m => `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`).join('');
             const active = llms.find(m => {
@@ -2943,7 +2850,7 @@
     function populateThroughputModelSelect() {
       const sel = document.getElementById('throughput-model-select');
       if (!sel) return;
-      const llms = ollamaModels.filter(m => !isEmbeddingModel(m.name));
+      const llms = llmModels.filter(m => !isEmbeddingModel(m.name));
       if (!llms.length) {
         sel.innerHTML = '<option value="">No LLMs — pull one (embedding models excluded)</option>';
         return;
@@ -3042,8 +2949,8 @@
         ['perf-rail-p50','perf-rail-p95','perf-rail-p99','perf-rail-peak','perf-rail-ttft-p50','perf-rail-ttft-p95'].forEach(id => setText(id, '—'));
         heroEl?.classList.remove('loaded');
         // Bench target — show the configured local model name if available
-        const targetName = (typeof ollamaModels !== 'undefined' && ollamaModels?.length)
-          ? (ollamaModels.find(m => !isEmbeddingModel?.(m.name))?.name || ollamaModels[0]?.name) : '';
+        const targetName = (typeof llmModels !== 'undefined' && llmModels?.length)
+          ? (llmModels.find(m => !isEmbeddingModel?.(m.name))?.name || llmModels[0]?.name) : '';
         setText('bench-target', targetName || 'Run a benchmark to seed the dashboard');
         return;
       }
@@ -3119,7 +3026,7 @@
       // No model selector in the simplified single-model UI — pick the first
       // non-embedding LLM the gateway reports. Fall back to the hero's current
       // target text (whatever the dashboard is actively showing).
-      const llms = ollamaModels.filter(m => !isEmbeddingModel(m.name));
+      const llms = llmModels.filter(m => !isEmbeddingModel(m.name));
       const heroTarget = document.getElementById('bench-target')?.textContent?.trim();
       const model = llms[0]?.name || (heroTarget && heroTarget !== '—' ? heroTarget : 'llama3.2');
       resultsEl.style.display = 'none';
@@ -3308,86 +3215,19 @@
       }
     }
 
-    function getSelectedOllamaModel() {
-      const custom = document.getElementById('ollama-model-custom').value.trim();
-      if (custom) return custom;
-      const label = document.getElementById('ollama-select-label').textContent;
-      return label !== 'Select model to pull...' ? label : '';
+    function getSelectedModel() {
+      return document.getElementById('llm-model-input').value.trim();
     }
 
-    function setSelectedOllamaModel(name) {
-      document.getElementById('ollama-model-custom').value = '';
-      document.getElementById('ollama-select-label').textContent = name || 'Select model to pull...';
+    function setSelectedModel(name) {
+      document.getElementById('llm-model-input').value = name || '';
     }
 
-    function toggleOllamaDropdown(open) {
-      const trigger = document.getElementById('ollama-select-trigger');
-      const dd = document.getElementById('ollama-select-dropdown');
-      dd.style.display = open ? 'flex' : 'none';
-      trigger.classList.toggle('open', open);
-      trigger.setAttribute('aria-expanded', open);
-      if (open) {
-        document.getElementById('ollama-library-search').value = '';
-        document.getElementById('ollama-library-search').focus();
-        buildOllamaDropdown('');
-      }
-    }
-    document.getElementById('ollama-select-trigger').onclick = (e) => {
-      e.stopPropagation();
-      const dd = document.getElementById('ollama-select-dropdown');
-      toggleOllamaDropdown(dd.style.display !== 'flex');
-    };
-    document.getElementById('ollama-select-trigger').onkeydown = (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        const dd = document.getElementById('ollama-select-dropdown');
-        toggleOllamaDropdown(dd.style.display !== 'flex');
-      }
-    };
-
-    document.getElementById('ollama-select-options').addEventListener('click', (e) => {
-      const opt = e.target.closest('.model-select-option');
-      if (!opt || opt.classList.contains('installed')) return;
-      const model = opt.dataset.model;
-      setSelectedOllamaModel(model);
-      toggleOllamaDropdown(false);
-      document.getElementById('ollama-library-search').value = '';
-    });
-
-    document.getElementById('ollama-library-search').oninput = debounce((e) => {
-      buildOllamaDropdown(e.target.value);
-    }, 200);
-
-    document.getElementById('ollama-library-search').onkeydown = (e) => {
-      e.stopPropagation();
-      if (e.key === 'Escape') {
-        toggleOllamaDropdown(false);
-        document.getElementById('ollama-select-trigger').focus();
-      }
-    };
-
-    document.getElementById('ollama-model-custom').oninput = () => {
-      const v = document.getElementById('ollama-model-custom').value.trim();
-      document.getElementById('ollama-select-label').textContent = v || 'Select model to pull...';
-    };
-
-    document.addEventListener('click', () => {
-      const dd = document.getElementById('ollama-select-dropdown');
-      if (dd.style.display === 'flex') toggleOllamaDropdown(false);
-    });
-    document.getElementById('ollama-select-dropdown').onclick = (e) => e.stopPropagation();
-    document.getElementById('ollama-select-dropdown').onkeydown = (e) => {
-      if (e.key === 'Escape') {
-        toggleOllamaDropdown(false);
-        document.getElementById('ollama-select-trigger').focus();
-      }
-    };
-
-    async function pullOllamaModel(name, btn, prog, logEl, barEl) {
+    async function pullModel(name, btn, prog, logEl, barEl) {
       logEl.textContent = `Pulling ${name}...`;
       barEl.style.width = '0%';
       barEl.setAttribute('aria-valuenow', 0);
-      const resp = await api('/api/ollama/pull', {
+      const resp = await api('/api/llm/pull', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: name })
@@ -3396,7 +3236,7 @@
         const d = await resp.json().catch(() => ({}));
         throw new Error(d.detail || `HTTP ${resp.status}`);
       }
-      const result = await pollOllamaPull(logEl, barEl);
+      const result = await pollGgufPull(logEl, barEl);
       if (result && result.success === false) {
         const line = (result.output || '').split('\n').filter(Boolean).pop() || 'Pull failed';
         throw new Error(line);
@@ -3404,11 +3244,11 @@
       return result;
     }
 
-    function pollOllamaPull(logEl, barEl) {
+    function pollGgufPull(logEl, barEl) {
       return new Promise((resolve) => {
         let pollErrors = 0;
         const poll = () => {
-          api('/api/ollama/pull/status').then(r => r.json()).then(s => {
+          api('/api/llm/pull/status').then(r => r.json()).then(s => {
             pollErrors = 0;
             if (s.output) { logEl.textContent = s.output; logEl.scrollTop = logEl.scrollHeight; }
             if (s.pct != null) { barEl.style.width = s.pct + '%'; barEl.setAttribute('aria-valuenow', s.pct); }
@@ -3427,20 +3267,20 @@
       });
     }
 
-    document.getElementById('ollama-starter-pack').onclick = async () => {
-      const btn = document.getElementById('ollama-starter-pack');
-      const pullBtn = document.getElementById('ollama-pull');
-      const prog = document.getElementById('ollama-progress');
-      const logEl = document.getElementById('ollama-log');
-      const barEl = document.getElementById('ollama-progress-bar');
+    document.getElementById('llm-starter-pack').onclick = async () => {
+      const btn = document.getElementById('llm-starter-pack');
+      const pullBtn = document.getElementById('llm-pull');
+      const prog = document.getElementById('llm-progress');
+      const logEl = document.getElementById('llm-log');
+      const barEl = document.getElementById('llm-progress-bar');
       btn.disabled = true;
       pullBtn.disabled = true;
       prog.style.display = 'block';
       logEl.textContent = 'Starting gguf-puller with GGUF_MODELS from .env...';
       try {
-        await pullOllamaModel('.env', btn, prog, logEl, barEl);
+        await pullModel('.env', btn, prog, logEl, barEl);
         toast('GGUF pull from .env finished', 'success');
-        await loadOllamaModels();
+        await loadModels();
       } catch (e) {
         logEl.textContent += '\nError: ' + e.message;
         toast('GGUF pull failed: ' + e.message, 'error');
@@ -3449,28 +3289,28 @@
       pullBtn.disabled = false;
     };
 
-    document.getElementById('ollama-pull').onclick = async () => {
-      const name = getSelectedOllamaModel();
+    document.getElementById('llm-pull').onclick = async () => {
+      const name = getSelectedModel();
       if (!name) { toast('Enter a model name', 'error'); return; }
-      const btn = document.getElementById('ollama-pull');
-      const prog = document.getElementById('ollama-progress');
-      const logEl = document.getElementById('ollama-log');
-      const barEl = document.getElementById('ollama-progress-bar');
+      const btn = document.getElementById('llm-pull');
+      const prog = document.getElementById('llm-progress');
+      const logEl = document.getElementById('llm-log');
+      const barEl = document.getElementById('llm-progress-bar');
       btn.disabled = true;
-      document.getElementById('ollama-starter-pack').disabled = true;
+      document.getElementById('llm-starter-pack').disabled = true;
       prog.style.display = 'block';
       logEl.textContent = 'Connecting...';
       try {
-        await pullOllamaModel(name, btn, prog, logEl, barEl);
+        await pullModel(name, btn, prog, logEl, barEl);
         toast(`Pulled ${name}`, 'success');
-        setSelectedOllamaModel('');
-        await loadOllamaModels();
+        setSelectedModel('');
+        await loadModels();
       } catch (e) {
         logEl.textContent += '\nError: ' + e.message;
         toast('Pull failed: ' + e.message, 'error');
       }
       btn.disabled = false;
-      document.getElementById('ollama-starter-pack').disabled = false;
+      document.getElementById('llm-starter-pack').disabled = false;
     };
 
     // Guard: the #comfyui-pull button was removed from the UI but the handler survived.
@@ -3562,9 +3402,9 @@
         try {
           if (target === 'llm') {
             try {
-              await pullOllamaModel(val, btn, prog, logEl, barEl);
+              await pullModel(val, btn, prog, logEl, barEl);
               toast(`GGUF pull: ${val}`, 'success');
-              loadOllamaModels?.();
+              loadModels?.();
             } catch (llmErr) {
               toast(llmErr.message || 'GGUF pull failed', 'error');
             }
@@ -3627,8 +3467,7 @@
       const btn = document.getElementById('refresh-btn');
       btn.classList.add('loading');
       try {
-        if (!ollamaLibrary.length) await loadOllamaLibrary();
-        await Promise.all([loadServices(), loadDependencies(), loadRagStatus(), loadOllamaModels(), loadComfyuiModels(), loadComfyuiPacks(), loadMcpServers(), loadComfyuiPanel()]);
+        await Promise.all([loadServices(), loadDependencies(), loadRagStatus(), loadModels(), loadComfyuiModels(), loadComfyuiPacks(), loadMcpServers(), loadComfyuiPanel()]);
         await Promise.all([loadPerfHero(), loadThroughputServiceUsage()]);
       } finally {
         btn.classList.remove('loading');
@@ -3730,7 +3569,7 @@
         if (r.ok && d.ok) {
           statusEl.textContent = `✓ Activating — services restarting…`;
           toast(`Activating ${model} — services restarting…`);
-          setTimeout(() => loadOllamaModels(), 8000);
+          setTimeout(() => loadModels(), 8000);
         } else {
           statusEl.textContent = 'Error: ' + (d.detail || 'Switch failed');
           toast((d.detail || 'Switch failed') + '', 'error');
@@ -3744,7 +3583,7 @@
       }
     });
 
-    document.getElementById('ollama-models')?.addEventListener('click', async (e) => {
+    document.getElementById('llm-models')?.addEventListener('click', async (e) => {
       const btn = e.target.closest('.btn-model-delete[data-model]');
       if (!btn) return;
       e.preventDefault();
@@ -3752,11 +3591,11 @@
       if (!model || !confirm(`Delete "${model}" from disk?\n\nThis removes the GGUF file and cannot be undone.`)) return;
       btn.disabled = true;
       try {
-        const r = await api('/api/ollama/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) });
+        const r = await api('/api/llm/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) });
         const d = await r.json();
         if (r.ok) {
           toast(d.message || 'Model deleted');
-          loadOllamaModels();
+          loadModels();
           loadThroughputStats();
         } else {
           toast((d.detail || 'Delete failed') + '', 'error');
@@ -3925,24 +3764,24 @@
     }
 
     async function resumeActivePulls() {
-      // Ollama — resume polling if a pull is in progress
+      // LLM (GGUF) — resume polling if a pull is in progress
       try {
-        const s = await api('/api/ollama/pull/status').then(r => r.json());
+        const s = await api('/api/llm/pull/status').then(r => r.json());
         if (s.running) {
-          const prog = document.getElementById('ollama-progress');
-          const logEl = document.getElementById('ollama-log');
-          const barEl = document.getElementById('ollama-progress-bar');
-          const pullBtn = document.getElementById('ollama-pull');
-          const packBtn = document.getElementById('ollama-starter-pack');
+          const prog = document.getElementById('llm-progress');
+          const logEl = document.getElementById('llm-log');
+          const barEl = document.getElementById('llm-progress-bar');
+          const pullBtn = document.getElementById('llm-pull');
+          const packBtn = document.getElementById('llm-starter-pack');
           prog.style.display = 'block';
           pullBtn.disabled = true;
           packBtn.disabled = true;
           logEl.textContent = `Resuming pull: ${s.model || ''}...`;
-          pollOllamaPull(logEl, barEl).then(result => {
+          pollGgufPull(logEl, barEl).then(result => {
             toast(result.success ? `Pulled ${s.model}` : 'Pull failed', result.success ? 'success' : 'error');
             pullBtn.disabled = false;
             packBtn.disabled = false;
-            loadOllamaModels();
+            loadModels();
           });
         }
       } catch (_) {}
@@ -4099,9 +3938,9 @@
       await loadAuthConfig();
       if (authConfig.auth_required && authConfig.auth_type === 'bearer' && !sessionStorage.getItem(AUTH_STORAGE_KEY)) {
         showAuthModal();
-        window.addEventListener('auth-ready', () => { loadOllamaLibrary().then(() => refresh()); resumeActivePulls(); }, { once: true });
+        window.addEventListener('auth-ready', () => { refresh(); resumeActivePulls(); }, { once: true });
       } else {
-        loadOllamaLibrary().then(() => refresh());
+        refresh();
         resumeActivePulls();
       }
       // Visibility-aware polling — pause when tab is hidden to save CPU/network

@@ -131,16 +131,16 @@ Auto-generated: **`overrides/compute.yml`** (from hardware detection). Do not co
 
 ### Dashboard
 
-Reach the dashboard at `https://${CADDY_TAILNET_HOSTNAME}/dash/` (Google SSO front door; allowlist via `auth/oauth2-proxy/emails.txt`). It lists models (Ollama and ComfyUI), links to other services, dependency health, and searchable model pulls. **`OPS_CONTROLLER_TOKEN`** lets it restart services and run **`POST /api/comfyui/install-node-requirements`**. **`DASHBOARD_AUTH_TOKEN`** is an optional bearer layer for non-browser API access; the browser path is gated by SSO at the proxy level.
+Reach the dashboard at `https://${CADDY_TAILNET_HOSTNAME}/dash/` (Google SSO front door; allowlist via `auth/oauth2-proxy/emails.txt`). It lists models (GGUF/llama.cpp and ComfyUI), links to other services, dependency health, and Hugging Face model pulls. **`OPS_CONTROLLER_TOKEN`** lets it restart services and run **`POST /api/comfyui/install-node-requirements`**. **`DASHBOARD_AUTH_TOKEN`** is an optional bearer layer for non-browser API access; the browser path is gated by SSO at the proxy level.
 
 After code changes affecting the dashboard image: `.\compose.ps1 build dashboard` then `.\compose.ps1 up -d` (or `./compose` equivalents).
 
-### Ollama models
+### LLM models (GGUF / llama.cpp)
 
-Pull lists and defaults come from **`.env`** (`MODELS`, `DEFAULT_MODEL`). Pull via the dashboard or:
+The stack pulls GGUF files (served by llama.cpp) directly from Hugging Face. Repo lists and defaults come from **`.env`** (`GGUF_MODELS`, `DEFAULT_MODEL`). Pull via the dashboard's **Models** panel (enter a Hugging Face repo id, a `huggingface.co/…`/`.gguf` URL, or `.env` to pull all `GGUF_MODELS`), or from the CLI:
 
 ```bash
-./compose run --rm model-puller
+./compose run --rm gguf-puller
 ```
 
 ### ComfyUI (LTX-2)

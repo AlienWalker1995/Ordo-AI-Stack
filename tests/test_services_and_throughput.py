@@ -1,4 +1,4 @@
-"""Tests for /api/services, /api/throughput/*, /api/ollama/library, and global exception handler."""
+"""Tests for /api/services, /api/throughput/*, and the global exception handler."""
 from __future__ import annotations
 
 import os
@@ -65,18 +65,6 @@ def test_services_do_not_leak_auth_token(client, monkeypatch):
                 f"Token leaked in service {svc['id']} URL: {svc['url']}"
     finally:
         importlib.reload(dashboard.services_catalog)
-
-
-# ── /api/ollama/library ──────────────────────────────────────────────────────
-
-def test_ollama_library_returns_models(client):
-    r = client.get("/api/ollama/library")
-    assert r.status_code == 200
-    data = r.json()
-    assert "models" in data
-    assert data["ok"] is True
-    assert isinstance(data["models"], list)
-    assert len(data["models"]) > 0
 
 
 # ── /api/throughput/record ───────────────────────────────────────────────────
@@ -167,11 +155,16 @@ def test_unhandled_exception_returns_500_not_traceback(monkeypatch):
     mock_client.get = AsyncMock(return_value=MagicMock(status_code=200))
     monkeypatch.setattr("dashboard.app._http_client", mock_client)
 
-    # Patch ollama library to raise an unexpected error
-    monkeypatch.setattr("dashboard.app._fetch_ollama_library", lambda: (_ for _ in ()).throw(RuntimeError("test boom")))
+    # Patch the GGUF disk scan (a dependency of /api/llm/models) to raise an
+    # unexpected error. It is called without a try/except in the route, so the
+    # error bubbles all the way to the global exception handler.
+    def _boom():
+        raise RuntimeError("test boom")
+
+    monkeypatch.setattr("dashboard.app._scan_gguf_models", _boom)
 
     tc = TestClient(dashboard_app.app, raise_server_exceptions=False)
-    r = tc.get("/api/ollama/library")
+    r = tc.get("/api/llm/models")
     assert r.status_code == 500
     data = r.json()
     assert data["detail"] == "Internal server error"
