@@ -55,18 +55,6 @@ The llama.cpp backend is internal (no host port). Host tools reach the models th
 - Point Cursor or any OpenAI-compatible client at `http://localhost:11435/v1`.
 - This is bound to `127.0.0.1` on the host machine only — not to the tailnet. Tailnet peers reach models through the SSO-gated front door (Open WebUI at `/`, or via the dashboard's model surface).
 
-### Optional: vLLM (OpenAI-compatible server)
-
-Use vLLM as an additional model provider (e.g. for Llama, Mistral via Hugging Face):
-
-1. Start with the vLLM profile:
-   `docker compose -f docker-compose.yml -f overrides/vllm.yml --profile vllm up -d`
-2. Set in `.env`: `VLLM_URL=http://vllm:8000`
-3. Restart model-gateway: `docker compose restart model-gateway`
-4. In clients (Open WebUI, Hermes), choose models with prefix `vllm/<model-id>` (e.g. `vllm/meta-llama/Llama-3.2-3B-Instruct`).
-
-See [overrides/vllm.yml](../overrides/vllm.yml) for `VLLM_MODEL` and resource limits.
-
 ## Tailscale + SSO front door
 
 Single homelab operator with a small Google-account allowlist for friends / family / co-workers — that's the deployment model. UI services don't publish host ports; everything goes through Caddy on the tailnet.

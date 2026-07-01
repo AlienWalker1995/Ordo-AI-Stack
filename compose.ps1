@@ -6,9 +6,6 @@
 #   .\compose.ps1 up -d llamacpp dashboard open-webui              # start core only
 #   .\compose.ps1 down                                             # stop all
 #   .\compose.ps1 logs -f llamacpp                                 # tail logs
-#
-# Compose overrides (in overrides/):
-#   .\compose.ps1 -f docker-compose.yml -f overrides/vllm.yml --profile vllm up -d
 
 param([Parameter(ValueFromRemainingArguments)][string[]]$PassThrough)
 

@@ -23,7 +23,6 @@
 | 3 | **MCP gateway policy:** Does Docker MCP Gateway support `X-Client-ID` for per-client allowlist? | Open — not yet; deferred to M6 |
 | 5 | **llama.cpp host port:** Remove to reduce attack surface? | Resolved — backend-only; no host port |
 | 6 | **Audit log rotation** | Resolved — size-based rotation (`AUDIT_LOG_MAX_BYTES`) |
-| 7 | **vLLM timing** | Resolved — `overrides/vllm.yml` with `--profile vllm` |
 | 8 | **ComfyUI non-root** | Open — `yanwk/comfyui-boot` runs as root; image limitation |
 | 9 | **Smoke test in CI** | Resolved — see `.github/workflows/ci.yml` |
 | 10 | **N8N LLM node** | Open — use OpenAI-compat node with `baseURL: http://model-gateway:11435/v1`; needs example workflow doc |
