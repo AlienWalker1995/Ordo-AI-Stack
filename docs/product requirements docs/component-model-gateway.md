@@ -69,29 +69,6 @@ model-gateway:
     - DASHBOARD_URL=http://dashboard:8080
 ```
 
-### vLLM Compose Profile (Optional)
-
-```yaml
-# overrides/vllm.yml
-services:
-  vllm:
-    profiles: [vllm]
-    image: vllm/vllm-openai:latest
-    ports:
-      - "8000:8000"
-    environment:
-      - MODEL=${VLLM_MODEL:-meta-llama/Llama-3.2-3B-Instruct}
-    deploy:
-      resources:
-        limits:
-          memory: 16G
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-```
-
 ## Non-Goals
 - Direct UI rendering. UI components are separate and consume the gateway.
 - Persistent storage of model results — the gateway only forwards results.

@@ -41,7 +41,6 @@ A self-hosted AI platform that any developer can run with `./compose up -d`. Cor
 | llama.cpp backend-only (no host port) | Live | `docker-compose.yml` |
 | SSRF egress block scripts | Live | `scripts/ssrf-egress-block.sh`, `.ps1` |
 | Hermes agent (gateway + dashboard) | Live | `docker-compose.yml`, `hermes/` |
-| vLLM optional compose profile | Live | `overrides/vllm.yml` |
 | Contract + smoke tests | Live | `tests/` |
 
 ## Open Risks
