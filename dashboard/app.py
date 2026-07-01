@@ -210,24 +210,9 @@ def _model_gateway_headers() -> dict[str, str]:
         headers["Authorization"] = f"Bearer {MODEL_GATEWAY_API_KEY}"
     return headers
 
-# Ollama library: fetched from community JSON (all pullable model:tag names)
-OLLAMA_LIBRARY_URL = os.environ.get(
-    "OLLAMA_LIBRARY_URL",
-    "https://yuma-shintani.github.io/ollama-model-library/model.json",
-)
-OLLAMA_LIBRARY_CACHE_TTL = float(os.environ.get("OLLAMA_LIBRARY_CACHE_TTL_SEC", "86400"))  # 24h
-_ollama_library_cache: list[str] = []
-_ollama_library_ts: float = 0.0
-
-# Fallback when fetch fails (minimal curated list)
-OLLAMA_LIBRARY_FALLBACK = [
-    "llama3.2", "llama3.1", "deepseek-r1:7b", "qwen2.5:7b", "qwen3:14b", "qwen3:14b-q4_K_M",
-    "mistral", "nomic-embed-text", "phi4", "gemma3",
-]
-
 # Background pull status dicts
 _comfyui_status: dict = {"running": False, "output": "", "done": False, "success": None}
-_ollama_pull_status: dict = {"running": False, "model": "", "output": "", "pct": 0, "done": False, "success": None}
+_gguf_pull_status: dict = {"running": False, "model": "", "output": "", "pct": 0, "done": False, "success": None}
 
 
 
@@ -235,68 +220,7 @@ class PullRequest(BaseModel):
     model: str
 
 
-# --- Ollama ---
-
-
-def _fetch_ollama_library() -> list[str]:
-    """Fetch pullable model names from Ollama registry. Uses community JSON; caches 24h."""
-    global _ollama_library_cache, _ollama_library_ts
-    now = time.monotonic()
-    with _state_lock:
-        if _ollama_library_cache and (now - _ollama_library_ts) < OLLAMA_LIBRARY_CACHE_TTL:
-            return list(_ollama_library_cache)
-
-    urls = [OLLAMA_LIBRARY_URL]
-    for url in urls:
-        try:
-            req = urllib.request.Request(url, headers={"Accept": "application/json"})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode())
-        except Exception as e:
-            logger.warning("Ollama library fetch failed from %s: %s", url, e)
-            continue
-
-        names: set[str] = set()
-        if isinstance(data, list):
-            # yuma-shintani format: [{"name":"llama3.1","tags":[{"name":"llama3.1:8b"},...]}, ...]
-            for item in data:
-                if isinstance(item, dict):
-                    base = (item.get("name") or "").strip()
-                    tags = item.get("tags") or []
-                    for t in tags:
-                        if isinstance(t, dict) and t.get("name"):
-                            names.add(str(t["name"]).strip())
-                    if base:
-                        names.add(base)  # e.g. llama3.1 -> llama3.1:latest
-        elif isinstance(data, dict):
-            # Official format: {"library": {"llama3.1": {"tags": ["8b","70b"]}, ...}}
-            lib = data.get("library") or data
-            if isinstance(lib, dict):
-                for base, meta in lib.items():
-                    if isinstance(meta, dict):
-                        for tag in meta.get("tags") or []:
-                            names.add(f"{base}:{tag}" if tag else base)
-                    else:
-                        names.add(base)
-
-        if names:
-            result = sorted(names)
-            with _state_lock:
-                _ollama_library_cache = result
-                _ollama_library_ts = now
-            return result
-
-    with _state_lock:
-        _ollama_library_cache = OLLAMA_LIBRARY_FALLBACK
-        _ollama_library_ts = now
-    return list(OLLAMA_LIBRARY_FALLBACK)
-
-
-@app.get("/api/ollama/library")
-async def ollama_library():
-    """List models available in the Ollama registry (fetched programmatically, cached 24h)."""
-    models = await asyncio.to_thread(_fetch_ollama_library)
-    return {"models": models, "ok": True}
+# --- LLM (llama.cpp / GGUF) ---
 
 
 _GGUF_MODELS_DIR = Path(os.environ.get("GGUF_MODELS_DIR", "/gguf-models"))
@@ -315,8 +239,8 @@ def _scan_gguf_models() -> list[dict]:
     return models
 
 
-@app.get("/api/ollama/models")
-async def ollama_models():
+@app.get("/api/llm/models")
+async def llm_models():
     """List GGUF models available on disk (primary) merged with gateway active-model info."""
     disk_models = await asyncio.to_thread(_scan_gguf_models)
     if disk_models:
@@ -332,8 +256,8 @@ async def ollama_models():
         return {"models": [], "ok": False, "error": str(e)}
 
 
-@app.post("/api/ollama/delete")
-async def ollama_delete(req: PullRequest):
+@app.post("/api/llm/delete")
+async def llm_delete(req: PullRequest):
     """Delete a GGUF model file from disk."""
     name = (req.model or "").strip()
     if not name or ".." in name or "/" in name:
@@ -355,8 +279,8 @@ async def ollama_delete(req: PullRequest):
     return {"ok": True, "message": f"Deleted '{name}' from disk."}
 
 
-@app.post("/api/ollama/unload")
-async def ollama_unload(req: PullRequest):
+@app.post("/api/llm/unload")
+async def llm_unload(req: PullRequest):
     """Unload the currently active model from the gateway without deleting GGUF files."""
     name = (req.model or "").strip()
     if not name or ".." in name:
@@ -376,7 +300,7 @@ async def ollama_unload(req: PullRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Ollama request failed: {e}") from e
+        raise HTTPException(status_code=502, detail=f"Model gateway request failed: {e}") from e
 
 
 @app.post("/api/llamacpp/switch")
@@ -452,38 +376,38 @@ async def _do_set_active_model(req: PullRequest, request: Request):
     return {"ok": all_ok, "model": model, "errors": errors, **results}
 
 
-def _run_ollama_pull(model: str):
+def _run_gguf_pull(model: str):
     """Download GGUFs via ops-controller gguf-puller (docker compose --profile models)."""
-    global _ollama_pull_status
+    global _gguf_pull_status
     with _state_lock:
-        _ollama_pull_status = {"running": True, "model": model, "output": "", "pct": 0, "done": False, "success": None}
+        _gguf_pull_status = {"running": True, "model": model, "output": "", "pct": 0, "done": False, "success": None}
 
     repos = _normalize_gguf_pull_repos(model)
     if repos is None:
-        repos = _normalize_gguf_pull_repos(_hf_url_to_ollama(model))
+        repos = _normalize_gguf_pull_repos(_hf_url_to_repo(model))
     if repos is None:
         msg = (
-            "This stack uses GGUF files (llama.cpp), not the Ollama registry.\n\n"
+            "This stack pulls GGUF files (llama.cpp) directly from Hugging Face.\n\n"
             "Enter a Hugging Face repo id (e.g. bartowski/Llama-3.2-3B-Instruct-GGUF), "
             "a huggingface.co/… page or .gguf URL, hf.co/owner/repo, or type .env to pull all "
             "repos listed in GGUF_MODELS in your .env.\n\n"
-            "Names like llama3.2:8b only work with a real Ollama daemon, not this gateway."
+            "Bare tag names like llama3.2:8b are not supported; use a Hugging Face repo id or .gguf URL."
         )
         with _state_lock:
-            _ollama_pull_status["output"] = msg
-            _ollama_pull_status["success"] = False
-            _ollama_pull_status["running"] = False
-            _ollama_pull_status["done"] = True
+            _gguf_pull_status["output"] = msg
+            _gguf_pull_status["success"] = False
+            _gguf_pull_status["running"] = False
+            _gguf_pull_status["done"] = True
         return
 
     ops_url = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000").rstrip("/")
     token = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
     if not token:
         with _state_lock:
-            _ollama_pull_status["output"] = "OPS_CONTROLLER_TOKEN is not set; cannot run gguf-puller from the dashboard."
-            _ollama_pull_status["success"] = False
-            _ollama_pull_status["running"] = False
-            _ollama_pull_status["done"] = True
+            _gguf_pull_status["output"] = "OPS_CONTROLLER_TOKEN is not set; cannot run gguf-puller from the dashboard."
+            _gguf_pull_status["success"] = False
+            _gguf_pull_status["running"] = False
+            _gguf_pull_status["done"] = True
         return
 
     try:
@@ -496,10 +420,10 @@ def _run_ollama_pull(model: str):
             )
             if r.status_code == 409:
                 with _state_lock:
-                    _ollama_pull_status["output"] = "Another model or GGUF pull is already in progress."
-                    _ollama_pull_status["success"] = False
-                    _ollama_pull_status["running"] = False
-                    _ollama_pull_status["done"] = True
+                    _gguf_pull_status["output"] = "Another model or GGUF pull is already in progress."
+                    _gguf_pull_status["success"] = False
+                    _gguf_pull_status["running"] = False
+                    _gguf_pull_status["done"] = True
                 return
             if r.status_code >= 400:
                 try:
@@ -507,10 +431,10 @@ def _run_ollama_pull(model: str):
                 except (ValueError, UnicodeDecodeError):
                     det = r.text
                 with _state_lock:
-                    _ollama_pull_status["output"] = f"Failed to start gguf-puller: {det}"
-                    _ollama_pull_status["success"] = False
-                    _ollama_pull_status["running"] = False
-                    _ollama_pull_status["done"] = True
+                    _gguf_pull_status["output"] = f"Failed to start gguf-puller: {det}"
+                    _gguf_pull_status["success"] = False
+                    _gguf_pull_status["running"] = False
+                    _gguf_pull_status["done"] = True
                 return
 
         deadline = time.time() + 7200  # 2-hour max
@@ -536,44 +460,44 @@ def _run_ollama_pull(model: str):
                         raise RuntimeError(f"Poll failed 20 times: {poll_err}")
                     continue
                 with _state_lock:
-                    _ollama_pull_status["output"] = st.get("output", "")
-                    _ollama_pull_status["pct"] = 50 if st.get("running") else 100
+                    _gguf_pull_status["output"] = st.get("output", "")
+                    _gguf_pull_status["pct"] = 50 if st.get("running") else 100
                 if st.get("done"):
                     with _state_lock:
-                        _ollama_pull_status["success"] = bool(st.get("success"))
-                        _ollama_pull_status["running"] = False
-                        _ollama_pull_status["done"] = True
+                        _gguf_pull_status["success"] = bool(st.get("success"))
+                        _gguf_pull_status["running"] = False
+                        _gguf_pull_status["done"] = True
                     break
             else:
                 raise TimeoutError("GGUF pull timed out after 2 hours")
     except Exception as e:
         logger.error("GGUF pull failed: %s", e)
         with _state_lock:
-            _ollama_pull_status["output"] = (_ollama_pull_status.get("output") or "") + f"\nError: {e}"
-            _ollama_pull_status["success"] = False
-            _ollama_pull_status["running"] = False
-            _ollama_pull_status["done"] = True
+            _gguf_pull_status["output"] = (_gguf_pull_status.get("output") or "") + f"\nError: {e}"
+            _gguf_pull_status["success"] = False
+            _gguf_pull_status["running"] = False
+            _gguf_pull_status["done"] = True
 
 
-@app.post("/api/ollama/pull")
-async def ollama_pull(req: PullRequest):
-    """Start GGUF download (gguf-puller via ops-controller) in background. Poll /api/ollama/pull/status."""
-    global _ollama_pull_status
+@app.post("/api/llm/pull")
+async def llm_pull(req: PullRequest):
+    """Start GGUF download (gguf-puller via ops-controller) in background. Poll /api/llm/pull/status."""
+    global _gguf_pull_status
     with _state_lock:
-        if _ollama_pull_status.get("running"):
+        if _gguf_pull_status.get("running"):
             raise HTTPException(status_code=409, detail="Pull already in progress")
-        _ollama_pull_status["running"] = True
-        _ollama_pull_status["model"] = req.model
-    thread = threading.Thread(target=_run_ollama_pull, args=(req.model,), daemon=True)
+        _gguf_pull_status["running"] = True
+        _gguf_pull_status["model"] = req.model
+    thread = threading.Thread(target=_run_gguf_pull, args=(req.model,), daemon=True)
     thread.start()
     return {"status": "started", "model": req.model}
 
 
-@app.get("/api/ollama/pull/status")
-async def ollama_pull_status():
-    """Get Ollama pull progress."""
+@app.get("/api/llm/pull/status")
+async def llm_pull_status():
+    """Get GGUF pull progress."""
     with _state_lock:
-        return dict(_ollama_pull_status)
+        return dict(_gguf_pull_status)
 
 
 # --- ComfyUI ---
@@ -957,7 +881,7 @@ class ModelPullRequest(BaseModel):
 def _normalize_gguf_pull_repos(model: str) -> str | None:
     """Return comma-separated Hugging Face repo ids for gguf-puller, or '' to use .env GGUF_MODELS.
 
-    None means the string is not suitable (e.g. Ollama-style ``llama3.2:8b``).
+    None means the string is not suitable (e.g. a bare tag like ``llama3.2:8b``).
     """
     def _normalize_repo_ref(raw: str) -> str | None:
         candidate = raw.strip()
@@ -999,8 +923,8 @@ def _normalize_gguf_pull_repos(model: str) -> str | None:
     return _normalize_repo_ref(s)
 
 
-def _hf_url_to_ollama(raw: str) -> str:
-    """Convert a HuggingFace GGUF URL to Ollama's hf.co/owner/repo format.
+def _hf_url_to_repo(raw: str) -> str:
+    """Convert a HuggingFace GGUF URL to hf.co/owner/repo form for the gguf-puller.
     Non-HF strings (model names, hf.co/ refs) are returned as-is.
     """
     if "huggingface.co/" in raw:
@@ -1016,7 +940,7 @@ def _hf_url_to_ollama(raw: str) -> str:
 @app.post("/api/models/download")
 async def models_download(req: ModelDownloadRequest, request: Request):
     """Unified model download.
-    - GGUF / HF repo → background gguf-puller via ops (same as ``/api/ollama/pull``); poll ``/api/ollama/pull/status``.
+    - GGUF / HF repo → background gguf-puller via ops (same as ``/api/llm/pull``); poll ``/api/llm/pull/status``.
     - safetensors / ckpt / pt / bin → proxied to ops-controller for file download.
     """
     raw = req.url.strip()
@@ -1039,15 +963,15 @@ async def models_download(req: ModelDownloadRequest, request: Request):
         return {**data, "target": "comfyui"}
     else:
         with _state_lock:
-            if _ollama_pull_status.get("running"):
+            if _gguf_pull_status.get("running"):
                 raise HTTPException(status_code=409, detail="Pull already in progress")
-            _ollama_pull_status["running"] = True
-        thread = threading.Thread(target=_run_ollama_pull, args=(raw,), daemon=True)
+            _gguf_pull_status["running"] = True
+        thread = threading.Thread(target=_run_gguf_pull, args=(raw,), daemon=True)
         thread.start()
         return {
             "status": "started",
             "target": "gguf",
-            "message": "Poll /api/ollama/pull/status for progress.",
+            "message": "Poll /api/llm/pull/status for progress.",
         }
 
 
@@ -1571,8 +1495,8 @@ async def performance_summary():
     }
 
 
-@app.get("/api/ollama/ps")
-async def ollama_ps():
+@app.get("/api/llm/ps")
+async def llm_ps():
     """List models currently advertised by model-gateway."""
     try:
         r = await _get_http_client().get(
@@ -1814,7 +1738,7 @@ def _open_webui_default_model(name: str) -> str:
 @app.post("/api/config/default-model")
 async def set_default_model(req: DefaultModelRequest, request: Request):
     """Write DEFAULT_MODEL and OPEN_WEBUI_DEFAULT_MODEL to .env and recreate open-webui."""
-    # Ollama allows namespaced ids: owner/model:tag (slashes required). Only reject empty / traversal.
+    # Model ids may be namespaced: owner/model:tag (slashes allowed). Only reject empty / traversal.
     name = (req.model or "").strip()
     if not name or ".." in name:
         raise HTTPException(status_code=400, detail="Invalid model name")
