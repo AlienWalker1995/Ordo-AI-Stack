@@ -7,9 +7,6 @@
 #   ./compose up -d llamacpp dashboard open-webui              # start core only
 #   ./compose down                                             # stop all
 #   ./compose logs -f llamacpp                                 # tail logs
-#
-# Compose overrides (in overrides/):
-#   ./compose -f docker-compose.yml -f overrides/vllm.yml --profile vllm up -d
 set -e
 
 if [[ $# -eq 0 || "$1" == "--help" || "$1" == "-h" ]]; then

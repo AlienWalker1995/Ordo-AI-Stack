@@ -5,7 +5,6 @@
 | `BASE_PATH` | compose | Project root path | `.` |
 | `DATA_PATH` | compose | Data directory | `${BASE_PATH}/data` |
 | `LLAMACPP_URL` | model-gateway, dashboard | llama.cpp internal URL | `http://llamacpp:8080` |
-| `VLLM_URL` | model-gateway | vLLM internal URL (optional) | *(empty)* |
 | `MODEL_CACHE_TTL_SEC` | model-gateway | Model list cache TTL seconds | `60` |
 | `DASHBOARD_URL` | model-gateway | Dashboard for throughput recording | `http://dashboard:8080` |
 | `OPS_CONTROLLER_URL` | dashboard | Ops controller URL | `http://ops-controller:9000` |

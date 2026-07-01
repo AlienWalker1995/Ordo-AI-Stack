@@ -1,6 +1,6 @@
 """Compose config and optional runtime smoke tests.
 
-- Config tests: validate docker-compose.yml (and optional vllm override) parse and merge.
+- Config tests: validate docker-compose.yml parses and merges.
 - Runtime smoke: set RUN_COMPOSE_SMOKE=1 to run 'compose up -d' and assert key services healthy
   (requires Docker daemon; use in CI or locally).
 """
@@ -15,7 +15,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
-COMPOSE_VLLM = REPO_ROOT / "overrides" / "vllm.yml"
 
 # Services that must be healthy for "smoke" (long-running core stack)
 SMOKE_SERVICES = ["llamacpp", "llamacpp-embed", "model-gateway", "dashboard"]
@@ -33,8 +32,6 @@ _COMPOSE_REQUIRED_PLACEHOLDERS = {
 
 def _compose_cmd(*args, extra_env=None, timeout=120):
     cmd = ["docker", "compose", "-f", str(COMPOSE_FILE)]
-    if COMPOSE_VLLM.exists():
-        cmd += ["-f", str(COMPOSE_VLLM)]
     cmd += list(args)
     env = {**os.environ, **_COMPOSE_REQUIRED_PLACEHOLDERS, **(extra_env or {})}
     return subprocess.run(
@@ -60,13 +57,6 @@ def test_compose_config_includes_networks():
     out = r.stdout
     assert "ordo-ai-stack-frontend" in out or "frontend" in out
     assert "ordo-ai-stack-backend" in out or "backend" in out
-
-
-@pytest.mark.skipif(not COMPOSE_VLLM.exists(), reason="overrides/vllm.yml not present")
-def test_compose_vllm_override_config_valid():
-    """With vllm override, compose config still valid (vllm profile)."""
-    r = _compose_cmd("config", "--quiet", extra_env={"COMPOSE_PROFILES": "vllm"})
-    assert r.returncode == 0, f"vllm config failed: {r.stderr or r.stdout}"
 
 
 def _has_nvidia_gpu() -> bool:

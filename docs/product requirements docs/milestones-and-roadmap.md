@@ -8,7 +8,7 @@
 | **M1** | Done | Model Gateway: OpenAI-compat, llama.cpp, streaming, embeddings, throughput |
 | **M2** | Done | Ops Controller: start/stop/restart/logs/pull/audit; dashboard calls controller; bearer auth |
 | **M3** | Done | MCP registry.json + health API; cap_drop/read_only hardening; model list cache; Open WebUI → gateway default |
-| **M4** | Done | Explicit Docker networks (frontend/backend); correlation IDs (X-Request-ID → audit); vLLM compose profile; smoke tests |
+| **M4** | Done | Explicit Docker networks (frontend/backend); correlation IDs (X-Request-ID → audit); smoke tests |
 | **M5** | Done | Dashboard MCP health dots (green/yellow/red); SSRF egress scripts; hardware stats; throughput benchmark; default-model management |
 | **M5-ext** | Done | RAG pipeline (Qdrant + rag-ingestion); Open WebUI → Qdrant; RAG status endpoint; Responses API + completions compat; cache-bust endpoint |
 | **M6** | Partial | **Done:** mcp-gateway backend-only; CI; audit log rotation. **Deferred:** MCP per-client / `X-Client-ID` (upstream). **Skipped:** `WEBUI_AUTH` default → True |
@@ -30,12 +30,11 @@
 
 ---
 
-## M4 — Networks + Correlation + vLLM + Smoke Tests (Done)
+## M4 — Networks + Correlation + Smoke Tests (Done)
 
 **User-visible outcomes:**
 - Explicit `ordo-ai-stack-frontend` / `ordo-ai-stack-backend` networks; llama.cpp/ops-controller on backend only
 - Request IDs: `X-Request-ID` forwarded dashboard → ops-controller and stored in audit entries
-- vLLM: `overrides/vllm.yml` with profile `vllm`
 - Smoke tests: `tests/test_compose_smoke.py`
 
 ---
