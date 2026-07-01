@@ -403,7 +403,7 @@ services:
       retries: 3
     environment:
       # Route all model requests through the gateway (unified provider)
-      - OLLAMA_BASE_URL=
+      - ENABLE_OLLAMA_API=false
       - OPENAI_API_BASE_URL=${OPENAI_API_BASE:-http://model-gateway:11435/v1}
       - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-local}
       # Auth: False = single-user local / Tailscale use.
@@ -719,7 +719,6 @@ services:
       # session cookie so the second login is infrequent.
       - N8N_USER_MANAGEMENT_DISABLED=true
       # Route all model traffic through Model Gateway (dashboard tracking, unified provider)
-      - OLLAMA_HOST=http://model-gateway:11435
       - OPENAI_API_BASE_URL=${OPENAI_API_BASE:-http://model-gateway:11435/v1}
       - OPENAI_API_KEY=local
       # OAuth callbacks + inbound webhooks require a public URL.
