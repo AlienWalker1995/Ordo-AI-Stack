@@ -12,7 +12,7 @@
 | docker.sock in two services | Two attack surfaces for container escape | Accept: both required. Mitigate with allowlists, auth, no host ports | Remove one; document trade-off |
 | MCP filesystem SSRF | Tool access to host filesystem | Removed from default; `allow_clients: []` in registry | Clear from servers.txt |
 | Prompt injection via MCP tool output | Model manipulated by tool results | Allowlists; structured output in tool_result tags; monitor | Remove suspicious tool from servers.txt |
-| Performance regression from gateway proxy | >10ms added latency | Thin async proxy; benchmarked acceptable. Cache helps | Direct `OLLAMA_BASE_URL` escape hatch |
+| Performance regression from gateway proxy | >10ms added latency | Thin async proxy; benchmarked acceptable. Cache helps | Point services directly at llama.cpp (`http://llamacpp:8080/v1`) escape hatch |
 
 ## Open Questions
 
@@ -21,7 +21,7 @@
 | 1 | **Ops-controller docker GID:** `user: "1000:<gid>"` value depends on host docker GID | Resolved — ops-controller runs without explicit user |
 | 2 | **Open WebUI `OPENAI_API_BASE`:** Does `open-webui:v0.8.4` support this env? | Resolved — uses `OPENAI_API_BASE_URL`; working |
 | 3 | **MCP gateway policy:** Does Docker MCP Gateway support `X-Client-ID` for per-client allowlist? | Open — not yet; deferred to M6 |
-| 5 | **Ollama host port:** Remove to reduce attack surface? | Resolved — backend-only by default; `overrides/ollama-expose.yml` |
+| 5 | **llama.cpp host port:** Remove to reduce attack surface? | Resolved — backend-only; no host port |
 | 6 | **Audit log rotation** | Resolved — size-based rotation (`AUDIT_LOG_MAX_BYTES`) |
 | 7 | **vLLM timing** | Resolved — `overrides/vllm.yml` with `--profile vllm` |
 | 8 | **ComfyUI non-root** | Open — `yanwk/comfyui-boot` runs as root; image limitation |

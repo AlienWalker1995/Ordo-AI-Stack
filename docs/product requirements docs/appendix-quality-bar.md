@@ -19,7 +19,7 @@
 ## Performance Targets
 
 - Model list (cached): `<100ms` after first call
-- Model list (cold): `<2s` when Ollama healthy
+- Model list (cold): `<2s` when llama.cpp healthy
 - RAG embedding: `<5s` per document chunk (depends on model)
 - Tool invocation: `<30s` default timeout
 - Ops restart: `<60s` for most services
@@ -42,4 +42,4 @@
 3. Disable all tools: `echo "" > data/mcp/servers.txt`
 4. Invalidate model cache: `curl -X DELETE http://localhost:11435/v1/cache`
 5. Disable unsafe services: `docker compose stop mcp-gateway hermes-gateway comfyui rag-ingestion`
-6. Safe mode: `docker compose up -d ollama model-gateway dashboard open-webui qdrant`
+6. Safe mode: `docker compose up -d llamacpp model-gateway dashboard open-webui qdrant`

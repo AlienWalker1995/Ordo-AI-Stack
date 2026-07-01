@@ -2,7 +2,7 @@
 # Usage: .\scripts\doctor.ps1
 # Env: MODEL_GATEWAY_URL, MCP_GATEWAY_URL, DASHBOARD_URL, ORDO_AI_STACK_ROOT
 #      DOCTOR_DEPS_TIMEOUT_SEC - max seconds for GET /api/dependencies (default 120; many sequential probes)
-#      DOCTOR_STRICT=1 - treat optional Ollama/MCP host probes as FAIL if unreachable (default: WARN only)
+#      DOCTOR_STRICT=1 - treat optional MCP host probes as FAIL if unreachable (default: WARN only)
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -12,7 +12,6 @@ Set-Location $RepoRoot
 $mg = if ($env:MODEL_GATEWAY_URL) { $env:MODEL_GATEWAY_URL } else { "http://localhost:11435" }
 $mcp = if ($env:MCP_GATEWAY_URL) { $env:MCP_GATEWAY_URL } else { "http://localhost:8811" }
 $dash = if ($env:DASHBOARD_URL) { $env:DASHBOARD_URL } else { "http://localhost:8080" }
-$ollama = if ($env:OLLAMA_URL) { $env:OLLAMA_URL } else { "http://localhost:11434" }
 
 $fail = 0
 
@@ -116,22 +115,6 @@ function Test-ProbeReady {
     }
 }
 
-function Test-ProbeOptionalBackendHost {
-    param([string]$Name, [string]$Url, [string]$ExposeHint)
-    try {
-        Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5 | Out-Null
-        Write-Host "  OK   $Name"
-    } catch {
-        $msg = "  WARN $Name - not reachable on host ($Url). Default compose keeps this backend internal. $ExposeHint"
-        if ($env:DOCTOR_STRICT -eq '1') {
-            Write-Host "  FAIL $Name ($Url)" -ForegroundColor Red
-            $script:fail = 1
-        } else {
-            Write-Host $msg -ForegroundColor Yellow
-        }
-    }
-}
-
 function Test-ProbeMcpGatewayHost {
     param([string]$Name, [string]$Url, [string]$ExposeHint)
     # GET /mcp often returns 400 (needs Streamable HTTP POST); any TCP+HTTP response means the gateway is up.
@@ -169,8 +152,7 @@ Test-Probe "dashboard /api/health"      "$dash/api/health"
 Test-ProbeDependencies "dashboard /api/dependencies" "$dash/api/dependencies"
 Test-Probe "model-gateway /health"      "$mg/health"
 Test-ProbeReady "model-gateway /ready"       "$mg/ready"
-Write-Host "==> Probes (optional: Ollama/MCP on localhost only if you use expose overrides)"
-Test-ProbeOptionalBackendHost "ollama /api/version" "$ollama/api/version" "See overrides/ollama-expose.yml"
+Write-Host "==> Probes (optional: MCP on localhost only if you use expose overrides)"
 Test-ProbeMcpGatewayHost "mcp-gateway /mcp" "$mcp/mcp" "See overrides/mcp-expose.yml"
 
 if ($fail -ne 0) {

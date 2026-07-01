@@ -5,7 +5,7 @@
 | Milestone | Status | User-visible Outcomes |
 |-----------|--------|----------------------|
 | **M0** | Done | Audit schema, Docker healthchecks, log rotation, SECURITY.md, runbooks |
-| **M1** | Done | Model Gateway: OpenAI-compat, Ollama+vLLM, streaming, embeddings, throughput |
+| **M1** | Done | Model Gateway: OpenAI-compat, llama.cpp, streaming, embeddings, throughput |
 | **M2** | Done | Ops Controller: start/stop/restart/logs/pull/audit; dashboard calls controller; bearer auth |
 | **M3** | Done | MCP registry.json + health API; cap_drop/read_only hardening; model list cache; Open WebUI → gateway default |
 | **M4** | Done | Explicit Docker networks (frontend/backend); correlation IDs (X-Request-ID → audit); vLLM compose profile; smoke tests |
@@ -21,7 +21,7 @@
 **User-visible outcomes:**
 - Dashboard shows green/yellow/red health badge per MCP tool
 - `filesystem` no longer silently broken by default
-- Model list loads faster (cached); gateway survives Ollama brief downtime
+- Model list loads faster (cached); gateway survives llama.cpp brief downtime
 - Open WebUI defaults to gateway endpoint
 
 **Acceptance criteria:**
@@ -33,7 +33,7 @@
 ## M4 — Networks + Correlation + vLLM + Smoke Tests (Done)
 
 **User-visible outcomes:**
-- Explicit `ordo-ai-stack-frontend` / `ordo-ai-stack-backend` networks; Ollama/ops-controller on backend only
+- Explicit `ordo-ai-stack-frontend` / `ordo-ai-stack-backend` networks; llama.cpp/ops-controller on backend only
 - Request IDs: `X-Request-ID` forwarded dashboard → ops-controller and stored in audit entries
 - vLLM: `overrides/vllm.yml` with profile `vllm`
 - Smoke tests: `tests/test_compose_smoke.py`

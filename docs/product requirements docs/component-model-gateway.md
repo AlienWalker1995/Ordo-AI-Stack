@@ -1,14 +1,14 @@
 # Component: Model Gateway
 
 ## Purpose
-- Central hub for multiple AI services (Ollama, OpenAI-compatible providers).
+- Central hub for local model access, fronting the llama.cpp inference server.
 - Provides unified model execution, token management, and cross-model communication.
 - Acts as a bridge between services, enabling them to call each other's APIs or workflows.
 
 ## Key Responsibilities
 - **Unified API**: OpenAI-compatible surface (`/v1/...`) for local and routed models.
-- **Provider / API keys**: Manages keys and headers for upstream providers where configured; local Ollama uses the stack's shared key material (e.g. `ollama-local` pattern).
-- **Cross-service use**: Open WebUI, Hermes, n8n, and other services target this service instead of raw Ollama where compose wires them.
+- **Provider / API keys**: Manages keys and headers where configured; local llama.cpp uses the stack's shared key material.
+- **Cross-service use**: Open WebUI, Hermes, n8n, and other services target this service instead of raw llama.cpp where compose wires them.
 - **Extensibility**: Additional backends or policies are added in the gateway service code and compose env—not in every client.
 
 ## API Reference
@@ -17,20 +17,18 @@
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/v1/models` | GET | Aggregated model list (Ollama + vLLM); TTL-cached 60s |
-| `/v1/chat/completions` | POST | Chat; routes by model prefix (`ollama/`, `vllm/`); streaming; tool-calling |
+| `/v1/models` | GET | Model list from llama.cpp; TTL-cached 60s |
+| `/v1/chat/completions` | POST | Chat; streaming; tool-calling |
 | `/v1/responses` | POST | OpenAI Responses API — converts to chat completions + tools; streams |
 | `/v1/completions` | POST | Legacy completions compat — wraps chat completions |
-| `/v1/embeddings` | POST | Embeddings; Ollama `/api/embed` + vLLM pass-through |
-| `/v1/cache` | DELETE | Invalidate model list cache (force re-fetch from Ollama/vLLM) |
+| `/v1/embeddings` | POST | Embeddings via llama.cpp |
+| `/v1/cache` | DELETE | Invalidate model list cache (force re-fetch from llama.cpp) |
 | `/health` | GET | Gateway health; checks at least one provider reachable |
 | `/ready` | GET | Readiness; verifies model list available |
 
 ### Model Naming
 
-- `ollama/deepseek-r1:7b` → Ollama
-- `vllm/llama3` → vLLM (if `VLLM_URL` set)
-- `deepseek-r1:7b` (no prefix) → `DEFAULT_PROVIDER`
+- Model ids map to the GGUF served by llama.cpp (typically the GGUF basename); no provider prefix is required.
 
 ### Headers
 
@@ -41,11 +39,9 @@
 
 Converts Responses API input items and tool definitions to chat-completions format. Tool calls in Responses API format (`function` type with `parameters`) are re-serialized back to Responses format in the response. Unsupported tool types (e.g. `computer_use_preview`) are filtered before forwarding.
 
-## Provider Abstraction (`model-gateway/main.py`)
+## Provider Abstraction (LiteLLM)
 
-- `_model_provider_and_id(name)` → `(provider, model_id)` by prefix
-- Ollama: translate to `/api/chat`, `/api/embed`; delta streaming
-- vLLM: native OpenAI format; proxy directly
+- LiteLLM proxy (config in `model-gateway/litellm_config.yaml`) fronts the local `llamacpp` and `llamacpp-embed` services; both speak the OpenAI-compatible API natively, so requests proxy directly.
 - TTL model list cache (60s default; stale-serve on provider error)
 - `DELETE /v1/cache` to invalidate cache on demand
 - `X-Request-ID` generated or forwarded on every chat/embeddings call
@@ -67,11 +63,10 @@ Converts Responses API input items and tool definitions to chat-completions form
 # docker-compose.yml (current)
 model-gateway:
   environment:
-    - OLLAMA_URL=http://ollama:11434
-    - VLLM_URL=${VLLM_URL:-}
-    - DEFAULT_PROVIDER=ollama
+    - LLAMACPP_URL=http://llamacpp:8080
+    - LLAMACPP_EMBED_URL=http://llamacpp-embed:8080
+    - CLAUDE_CODE_LOCAL_MODEL=${CLAUDE_CODE_LOCAL_MODEL:-}
     - DASHBOARD_URL=http://dashboard:8080
-    - MODEL_CACHE_TTL_SEC=${MODEL_CACHE_TTL_SEC:-60}
 ```
 
 ### vLLM Compose Profile (Optional)
@@ -102,5 +97,5 @@ services:
 - Persistent storage of model results — the gateway only forwards results.
 
 ## Dependencies
-- Docker service **`model-gateway`** (`model-gateway/main.py`, compose env such as `OLLAMA_NUM_CTX`, `MODEL_GATEWAY_URL` for consumers).
-- Root **`.env`** / compose for Ollama attachment and context limits.
+- Docker service **`model-gateway`** (`model-gateway/litellm_config.yaml`, compose env such as `LLAMACPP_URL`, `MODEL_GATEWAY_URL` for consumers).
+- Root **`.env`** / compose for llama.cpp attachment and context limits.

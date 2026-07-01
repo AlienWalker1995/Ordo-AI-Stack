@@ -9,7 +9,7 @@
 
 A self-hosted AI platform that any developer can run with `./compose up -d`. Core guarantees:
 
-1. **One model endpoint** — Every service reaches every model (Ollama, vLLM, future) via a single OpenAI-compatible gateway. No per-service provider config.
+1. **One model endpoint** — Every service reaches every model served by llama.cpp via a single OpenAI-compatible gateway. No per-service provider config.
 2. **Shared tools with health** — MCP tools served from a central gateway with registry metadata, per-server health badges, and policy controls.
 3. **Authenticated ops** — Dashboard manages the full service lifecycle through a secure, audited control plane. No docker.sock in the UI layer.
 4. **RAG out of the box** — Vector search (Qdrant) is wired into Open WebUI and exposed to the gateway; document ingestion is one compose profile away.
@@ -19,7 +19,7 @@ A self-hosted AI platform that any developer can run with `./compose up -d`. Cor
 
 | Capability | Status | Key Files |
 |-----------|--------|-----------|
-| OpenAI-compat model gateway (Ollama + vLLM) | Live | `model-gateway/main.py` |
+| OpenAI-compat model gateway (llama.cpp) | Live | `model-gateway/` |
 | Model list TTL cache + cache-bust endpoint | Live | `model-gateway/main.py` |
 | `X-Request-ID` correlation end-to-end | Live | `model-gateway/main.py`, `dashboard/app.py`, `ops-controller/main.py` |
 | Responses API (`/v1/responses`) | Live | `model-gateway/main.py` |
@@ -38,7 +38,7 @@ A self-hosted AI platform that any developer can run with `./compose up -d`. Cor
 | RAG status endpoint | Live | `dashboard/app.py` |
 | Docker hardening (cap_drop, read_only, networks) | Live | `docker-compose.yml` |
 | Explicit frontend/backend networks | Live | `docker-compose.yml` |
-| Ollama backend-only (no host port default) | Live | `docker-compose.yml`, `overrides/ollama-expose.yml` |
+| llama.cpp backend-only (no host port) | Live | `docker-compose.yml` |
 | SSRF egress block scripts | Live | `scripts/ssrf-egress-block.sh`, `.ps1` |
 | Hermes agent (gateway + dashboard) | Live | `docker-compose.yml`, `hermes/` |
 | vLLM optional compose profile | Live | `overrides/vllm.yml` |
@@ -67,7 +67,7 @@ See [Reliability & Service Contracts](reliability-and-contracts.md) for full det
 ## Component Docs
 
 - [Architecture & Principles](architecture-and-principles.md) – System architecture, product principles, data flows, network assignments.
-- [Model Gateway](component-model-gateway.md) – Unified model routing and provider-facing API keys (Ollama / OpenAI-compatible surface).
+- [Model Gateway](component-model-gateway.md) – Unified model routing and provider-facing API keys (llama.cpp / OpenAI-compatible surface).
 - [Ops Controller](component-ops-controller.md) – Secure Docker Compose control plane (token-auth lifecycle API, internal port 9000).
 - [MCP & Tool Aggregation](component-mcp-gateway.md) – Single MCP entrypoint; ComfyUI / n8n / web tools via gateway.
 - [RAG Pipeline](component-rag-pipeline.md) – Qdrant vector search + document ingestion.
