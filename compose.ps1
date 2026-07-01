@@ -3,13 +3,11 @@
 #
 # Examples:
 #   .\compose.ps1 up -d                                             # start all services
-#   .\compose.ps1 up -d ollama dashboard open-webui                # start core only
+#   .\compose.ps1 up -d llamacpp dashboard open-webui              # start core only
 #   .\compose.ps1 down                                             # stop all
-#   .\compose.ps1 logs -f ollama                                   # tail logs
-#   .\compose.ps1 run --rm model-puller                            # pull Ollama models
+#   .\compose.ps1 logs -f llamacpp                                 # tail logs
 #
 # Compose overrides (in overrides/):
-#   .\compose.ps1 -f docker-compose.yml -f overrides/ollama-expose.yml up -d
 #   .\compose.ps1 -f docker-compose.yml -f overrides/vllm.yml --profile vllm up -d
 
 param([Parameter(ValueFromRemainingArguments)][string[]]$PassThrough)

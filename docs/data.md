@@ -13,7 +13,6 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 | `data/mcp/registry.json` | MCP server metadata, `allow_clients`, rate limits | `mcp-gateway`, dashboard |
 | `data/mcp/registry-custom.yaml` | Custom catalog fragment (e.g. ComfyUI MCP) | `mcp-gateway` |
 | `data/rag-input/` | Drop zone for RAG documents | `rag-ingestion` watch directory |
-| `models/ollama/` | Ollama model blobs | `ollama` bind mount |
 | `models/gguf/` | llama.cpp GGUF files | `llamacpp` / `llamacpp-embed` bind mount |
 | `models/comfyui/` | ComfyUI checkpoints, LoRAs, VAEs, encoders | `comfyui` bind mount |
 
@@ -36,7 +35,7 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 
 ```json
 {"timestamp":"2026-03-22T10:00:00Z","action":"model_pulled","model":"qwen3:8b","status":"success"}
-{"timestamp":"2026-03-22T10:01:00Z","action":"service_started","service":"ollama","status":"success"}
+{"timestamp":"2026-03-22T10:01:00Z","action":"service_started","service":"llamacpp","status":"success"}
 ```
 
 | Field | Type | Description |
@@ -108,9 +107,7 @@ All directories created this way persist across restarts and rebuilds.
 
 ### Model Pull
 
-**Ollama:** `docker compose run --rm model-puller` reads `MODELS` from `.env` and pulls each into `models/ollama/`. Also exposed from the dashboard.
-
-**llama.cpp GGUF:** `docker compose --profile models run --rm gguf-puller` with `GGUF_MODELS=org/repo` fetches GGUF files into `models/gguf/`.
+**llama.cpp GGUF:** `docker compose --profile models run --rm gguf-puller` with `GGUF_MODELS=org/repo` fetches GGUF files into `models/gguf/`. Also exposed from the dashboard.
 
 **ComfyUI:** `docker compose run --rm comfyui-model-puller` downloads the pack defined by `COMFYUI_PACKS` (default includes LTX-2 variants) into `models/comfyui/`. First run can be tens of GB.
 
@@ -145,7 +142,6 @@ Hermes maintains its own state under `data/hermes/` — session records, Discord
 | `data/dashboard/` | Throughput / benchmarks | yes | yes |
 | `data/comfyui-storage/` | ComfyUI outputs + custom nodes | yes | yes |
 | `data/n8n-data/` | n8n workflows | yes | yes |
-| `models/ollama/` | Ollama blobs | yes | yes |
 | `models/gguf/` | llama.cpp GGUF files | yes | yes |
 | `models/comfyui/` | ComfyUI weights | yes | yes |
 
@@ -161,7 +157,7 @@ Hermes maintains its own state under `data/hermes/` — session records, Discord
 ### What to back up
 
 1. `data/hermes/` — agent state
-2. `models/ollama/`, `models/gguf/`, `models/comfyui/` — expensive to re-download
+2. `models/gguf/`, `models/comfyui/` — expensive to re-download
 3. `data/ops-controller/audit.log*` — audit history
 4. `data/qdrant/` — RAG collection
 5. `.env` — environment configuration (**do not commit**)
@@ -210,13 +206,13 @@ docker compose up -d
 | `data/ops-controller/audit.log` | Archive rotated files (`audit.log.1` etc.) | Monthly |
 | `data/rag-input/` | Remove processed files | As needed |
 | `data/comfyui-storage/output/` | Prune old outputs | As needed |
-| `models/ollama/` | Remove unused models | Quarterly |
+| `models/gguf/` | Remove unused models | Quarterly |
 
 ```bash
 # Archive current audit log
 mv data/ops-controller/audit.log data/ops-controller/audit.log.$(date +%Y%m%d)
 
-# Prune Ollama
-docker compose exec ollama ollama list
-docker compose exec ollama ollama rm <model-name>
+# Prune GGUF models (delete unused GGUF files)
+ls models/gguf/
+rm models/gguf/<model-file>.gguf
 ```

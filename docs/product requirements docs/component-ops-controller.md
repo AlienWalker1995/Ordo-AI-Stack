@@ -32,7 +32,7 @@ Secure, authenticated REST API for Docker Compose lifecycle operations. The cont
 {
   "ts": "2026-03-01T12:34:56.789Z",
   "action": "restart",
-  "resource": "ollama",
+  "resource": "llamacpp",
   "actor": "dashboard",
   "result": "ok",
   "detail": "",

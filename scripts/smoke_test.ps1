@@ -36,7 +36,6 @@ function Check-Health {
 Write-Host "==> Checking health endpoints..."
 Check-Health "dashboard" "http://localhost:8080/api/health"
 Check-Health "model-gateway" "http://localhost:11435/health"
-Check-Health "ollama" "http://localhost:11434/api/version"
 Check-Health "mcp-gateway" "http://localhost:8811/mcp"
 
 Write-Host "==> Service status"

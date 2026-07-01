@@ -3,7 +3,7 @@
 # Usage: ./scripts/doctor.sh
 # Env: MODEL_GATEWAY_URL, MCP_GATEWAY_URL, DASHBOARD_URL, ORDO_AI_STACK_ROOT
 #      DOCTOR_DEPS_TIMEOUT_SEC - max seconds for GET /api/dependencies (default 120)
-#      DOCTOR_STRICT=1 - optional Ollama/MCP host probes fail hard if unreachable
+#      DOCTOR_STRICT=1 - optional MCP host probes fail hard if unreachable
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -86,20 +86,6 @@ probe_ready() {
   else
     echo "  FAIL $name ($url) (HTTP ${code})" >&2
     FAIL=1
-  fi
-}
-
-probe_optional_backend_host() {
-  local name="$1"
-  local url="$2"
-  local hint="$3"
-  if curl -sf --max-time 5 "$url" > /dev/null 2>&1; then
-    echo "  OK   $name"
-  elif [ "${DOCTOR_STRICT:-}" = "1" ]; then
-    echo "  FAIL $name ($url)" >&2
-    FAIL=1
-  else
-    echo "  WARN $name - not reachable on host ($url). Default compose keeps this backend internal. $hint"
   fi
 }
 

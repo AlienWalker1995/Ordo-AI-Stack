@@ -18,7 +18,7 @@ Copy `.env.example` to `.env` and set at least `BASE_PATH`. Everything else has 
 |---|---|---|
 | `DATA_PATH` | `${BASE_PATH}/data` | Override data directory location |
 | `DEFAULT_MODEL` | `local-chat` | Canonical model alias used by Open WebUI, Hermes, and LiteLLM |
-| `MODELS` | *(see `.env.example`)* | Comma-separated Ollama models to pull on first start |
+| `GGUF_MODELS` | *(see `.env.example`)* | Hugging Face repo(s) of GGUF files to pull for llama.cpp (`docker compose --profile models run --rm gguf-puller`) |
 | `OPS_CONTROLLER_TOKEN` | *(empty)* | Required for dashboard-driven service lifecycle (`openssl rand -hex 32`) |
 | `DASHBOARD_AUTH_TOKEN` | *(empty)* | Optional Bearer auth on dashboard `/api/*` |
 | `HF_TOKEN` | *(empty)* | Hugging Face token for gated model downloads |
@@ -217,7 +217,6 @@ All `data/` and `models/` directories are bind-mounted and persist across contai
 | `data/mcp/` | `servers.txt`, `registry.json`, `registry-custom.yaml` |
 | `data/dashboard/` | Dashboard throughput / benchmark data |
 | `data/comfyui-storage/` | ComfyUI outputs, custom nodes, local configs |
-| `models/ollama/` | Ollama model blobs |
 | `models/gguf/` | llama.cpp GGUF files |
 | `models/comfyui/` | ComfyUI checkpoints, LoRAs, VAEs, encoders |
 
@@ -234,7 +233,6 @@ All `data/` and `models/` directories are bind-mounted and persist across contai
 | n8n | `5678` | Workflow automation |
 | Hermes dashboard | `9119` | Overridable via `HERMES_DASHBOARD_PORT` |
 | MCP Gateway | `8811` | Published on host so external clients (Cursor, Claude Desktop) can reach it |
-| Ollama | `11434` | **Backend-only by default.** Expose via `overrides/ollama-expose.yml` |
 | Qdrant | `6333` | RAG profile only |
 | Ops Controller | internal `9000` | Not published on the host |
 
@@ -244,7 +242,7 @@ All `data/` and `models/` directories are bind-mounted and persist across contai
 
 ```json
 {"timestamp":"2026-03-22T10:00:00Z","action":"model_pulled","model":"qwen3:8b","status":"success"}
-{"timestamp":"2026-03-22T10:01:00Z","action":"service_started","service":"ollama","status":"success"}
+{"timestamp":"2026-03-22T10:01:00Z","action":"service_started","service":"llamacpp","status":"success"}
 ```
 
 ## Minimal `.env`
