@@ -67,7 +67,7 @@ Response:
 
 ## Example Workflow: "Create a multi‑modal response"
 1. **Input** – User asks a question.
-2. **Step 1** – Orchestrator calls `gateway__call` with `provider=ollama`, `tool=search` to fetch context.
+2. **Step 1** – Orchestrator calls `gateway__call` with `provider=llamacpp`, `tool=search` to fetch context.
 3. **Step 2** – Orchestrator invokes the `comfyui` plugin to render an image.
 4. **Step 3** – Orchestrator compiles a markdown summary using the LLM.
 5. **Step 4** – Returns the full response to the caller (agent client or dashboard).

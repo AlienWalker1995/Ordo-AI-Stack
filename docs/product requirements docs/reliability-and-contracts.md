@@ -6,14 +6,14 @@ This section captures the developer/operator view of what Ordo AI Stack needs to
 
 Any given agent (today: Hermes) is **not** the center of the architecture; it is **one consumer** of:
 
-- **Model Gateway** (`:11435`) — single OpenAI-compatible surface to Ollama / vLLM.
+- **Model Gateway** (`:11435`) — single OpenAI-compatible surface to llama.cpp.
 - **MCP Gateway** (`:8811`) — shared tools, used by agents and other clients alike.
 - **Browser / CDP bridges** — optional capability; easy to misconfigure.
 
 **Effective paths (simplified):**
 
 ```
-User → Agent → Model Gateway → Ollama / vLLM
+User → Agent → Model Gateway → llama.cpp
 User → Agent → MCP Gateway → tool servers
 ```
 
@@ -40,7 +40,7 @@ Policy examples: do not start a model call if no live provider; do not invoke a 
 
 ### 1) Dependency Registry (Canonical)
 
-One registry listing every runtime dependency: model gateway, backends (Ollama/vLLM), MCP gateway, MCP servers/tools, browser bridge, optional RAG, optional ops controller.
+One registry listing every runtime dependency: model gateway, backend (llama.cpp), MCP gateway, MCP servers/tools, browser bridge, optional RAG, optional ops controller.
 
 Per dependency: name, endpoint, auth mode, health endpoint(s), version, timeout budget, retry policy, circuit-breaker policy, fallback target, last healthy timestamp, degraded reason. Rendered in dashboard and consumed by gateways/agents.
 
@@ -60,7 +60,7 @@ Per **class** of operation (model list vs chat stream vs MCP discovery vs tool e
 
 ## Model Gateway Reliability
 
-- **Provider metadata:** type (Ollama/vLLM), supported APIs, concurrency, warm/cold hints, latency signals, last failure, context limits.
+- **Provider metadata:** type (llama.cpp), supported APIs, concurrency, warm/cold hints, latency signals, last failure, context limits.
 - **Fallback chains:** Prefer capability-based routing when a target is unavailable or overloaded.
 - **Warmup / preflight:** Optional prewarm of default model; queue depth or cold-start flags in health.
 - **Streaming robustness:** Preserve stream semantics; clean recovery when upstream closes; annotate incomplete generations.

@@ -88,7 +88,7 @@ All UI ports below are **internal** (container-network). Operators reach them vi
 ./compose up -d
 ```
 
-**CPU-only / minimal services:** bring up a subset after init, e.g. `./compose up -d ollama dashboard open-webui`.
+**CPU-only / minimal services:** bring up a subset after init, e.g. `./compose up -d llamacpp dashboard open-webui`.
 
 ## Installation
 
@@ -158,7 +158,7 @@ Large optional downloads on demand; first run can take a long time. Pull via the
 
 ### GPU / compute
 
-Hardware detection writes **`overrides/compute.yml`**. The `compose` wrapper runs detection before commands. **No GPU:** use a minimal service set (`./compose up -d ollama dashboard open-webui`); ComfyUI will be slower.
+Hardware detection writes **`overrides/compute.yml`**. The `compose` wrapper runs detection before commands. **No GPU:** use a minimal service set (`./compose up -d llamacpp dashboard open-webui`); ComfyUI will be slower.
 
 ### Architecture
 
@@ -171,7 +171,7 @@ Tailnet device → Caddy :443 (TLS) → oauth2-proxy (Google SSO + email allowli
                                           ├── /comfy/    → ComfyUI
                                           └── /hermes/   → Hermes dashboard
                                                   │
-                                                  ├── Model Gateway → LiteLLM → llama.cpp / Ollama / (vLLM)
+                                                  ├── Model Gateway → LiteLLM → llama.cpp
                                                   ├── MCP Gateway → shared tools (SearXNG, n8n, ComfyUI, …)
                                                   └── Ops Controller → Docker Compose lifecycle (token-auth, no host port)
 ```
@@ -180,7 +180,7 @@ Local-first AI; operator-deployed front door. Dashboard does not mount `docker.s
 
 ### Data
 
-Bind mounts only. Set **`BASE_PATH`** (and optionally **`DATA_PATH`**). Ollama blobs under **`models/ollama`**. See [docs/data.md](docs/data.md).
+Bind mounts only. Set **`BASE_PATH`** (and optionally **`DATA_PATH`**). See [docs/data.md](docs/data.md).
 
 ### MCP (Model Context Protocol)
 
@@ -231,7 +231,7 @@ Optional: `DOCTOR_DEPS_TIMEOUT_SEC`; `DASHBOARD_AUTH_TOKEN` from `.env` when pro
 ## Troubleshooting
 
 1. **Services won’t start or images are stale** — Rebuild affected images and recreate, e.g. `docker compose build dashboard model-gateway` (or the `compose` wrapper), then `up -d`. Doctor **WARN** on missing `/api/dependencies` or `/ready` often indicates an old image.
-2. **Doctor warns on Ollama (11434) or MCP (8811)** — Expected if those ports are not published; use `overrides/ollama-expose.yml` / `overrides/mcp-expose.yml` or set `DOCTOR_STRICT=1` only when you intend strict probes (see doctor script comments in repo).
+2. **Doctor warns on MCP (8811)** — Expected if that port is not published; use `overrides/mcp-expose.yml` or set `DOCTOR_STRICT=1` only when you intend strict probes (see doctor script comments in repo).
 3. **No GPU** — Use a minimal service set or CPU-oriented overrides; ComfyUI will be slower.
 4. **Exposing to a network** — Enable **Open WebUI** auth (`WEBUI_AUTH=True`), set `DASHBOARD_AUTH_TOKEN`, and harden **n8n** — see [SECURITY.md](SECURITY.md).
 
