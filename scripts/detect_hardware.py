@@ -6,7 +6,6 @@ Run before first `docker compose up` to auto-configure for best performance.
 Detects: NVIDIA > AMD (ROCm) > Intel (XPU) > Apple Silicon (ARM64) > CPU fallback
 Also detects host RAM and:
   - Writes .wslconfig with appropriate memory allocation (Windows/WSL)
-  - Sets Ollama memory limit scaled to available RAM
   - Sets ComfyUI memory limit (GPU+lowvram needs more for LTX offload)
 """
 from __future__ import annotations

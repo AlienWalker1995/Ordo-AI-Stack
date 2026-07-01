@@ -6,11 +6,11 @@ Quick paths to common workflows for a single homelab operator. The stack assumes
 
 ### I want to chat
 
-1. Start: `docker compose up -d caddy oauth2-proxy ollama dashboard open-webui`
+1. Start: `docker compose up -d caddy oauth2-proxy llamacpp dashboard open-webui`
 2. Pull a model via the dashboard (`https://${CADDY_TAILNET_HOSTNAME}/dash/` → Starter pack, or pick one)
 3. Open `https://${CADDY_TAILNET_HOSTNAME}/` — Open WebUI
 
-No GPU required for chat (Ollama runs on CPU, slower but works).
+No GPU required for chat (llama.cpp runs on CPU, slower but works).
 
 ### I want to generate images (LTX-2)
 
@@ -20,7 +20,7 @@ No GPU required for chat (Ollama runs on CPU, slower but works).
 
 ### I want workflow automation
 
-1. Start: `docker compose up -d caddy oauth2-proxy ollama n8n`
+1. Start: `docker compose up -d caddy oauth2-proxy llamacpp n8n`
 2. Open `https://${CADDY_TAILNET_HOSTNAME}/n8n/` — n8n
 
 ### Full stack
@@ -35,7 +35,7 @@ Alternatively: `docker compose up -d` — same services without the full bootstr
 
 Use local files as context in **Open WebUI** via Qdrant + the `rag-ingestion` service.
 
-1. **Pull the embedding model** (once): use the dashboard or `docker compose run --rm model-puller` so **`nomic-embed-text`** (or your `EMBED_MODEL`) is available in Ollama.
+1. **Provide the embedding model** (once): place the embedding GGUF (**`nomic-embed-text`**, or your `EMBED_MODEL`) under `models/gguf/` so the `llamacpp-embed` service can serve it.
 2. **Start the RAG profile** (adds Qdrant + `rag-ingestion`):
    ```bash
    docker compose --profile rag up -d
@@ -48,15 +48,12 @@ Env knobs (optional, in `.env`): `EMBED_MODEL`, `RAG_COLLECTION`, `RAG_CHUNK_SIZ
 
 **Optional — [Agentic Design Patterns](https://github.com/Mathews-Tom/Agentic-Design-Patterns) (MIT book text):** clone or copy the `.md` tree into `data/rag-input/` (for example `git clone --depth 1 https://github.com/Mathews-Tom/Agentic-Design-Patterns.git data/rag-input/agentic-design-patterns`), then run the steps above so `rag-ingestion` can index it.
 
-### Direct Ollama (Cursor, CLI on the host machine)
+### Host tools (Cursor, CLI on the host machine)
 
-By default Ollama is backend-only (no host port — host MCP clients should go through `127.0.0.1:11435` model-gateway instead). To expose Ollama directly on the host for tools that speak Ollama's native API:
+The llama.cpp backend is internal (no host port). Host tools reach the models through the model-gateway's OpenAI-compatible API on `127.0.0.1:11435`:
 
-- Start with the Ollama-expose override:
-  `docker compose -f docker-compose.yml -f overrides/ollama-expose.yml up -d`
-- Use `http://localhost:11434` in Cursor or run `ollama run <model>` locally.
-
-Note: this exposes Ollama on `127.0.0.1` to the host machine only — not to the tailnet. Tailnet peers reach models through the SSO-gated front door (Open WebUI at `/`, or via the dashboard's model surface).
+- Point Cursor or any OpenAI-compatible client at `http://localhost:11435/v1`.
+- This is bound to `127.0.0.1` on the host machine only — not to the tailnet. Tailnet peers reach models through the SSO-gated front door (Open WebUI at `/`, or via the dashboard's model surface).
 
 ### Optional: vLLM (OpenAI-compatible server)
 

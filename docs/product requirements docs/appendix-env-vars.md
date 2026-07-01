@@ -4,9 +4,8 @@
 |----------|---------|-------------|---------|
 | `BASE_PATH` | compose | Project root path | `.` |
 | `DATA_PATH` | compose | Data directory | `${BASE_PATH}/data` |
-| `OLLAMA_URL` | model-gateway, dashboard | Ollama internal URL | `http://ollama:11434` |
+| `LLAMACPP_URL` | model-gateway, dashboard | llama.cpp internal URL | `http://llamacpp:8080` |
 | `VLLM_URL` | model-gateway | vLLM internal URL (optional) | *(empty)* |
-| `DEFAULT_PROVIDER` | model-gateway | Provider for unprefixed models | `ollama` |
 | `MODEL_CACHE_TTL_SEC` | model-gateway | Model list cache TTL seconds | `60` |
 | `DASHBOARD_URL` | model-gateway | Dashboard for throughput recording | `http://dashboard:8080` |
 | `OPS_CONTROLLER_URL` | dashboard | Ops controller URL | `http://ops-controller:9000` |
@@ -20,7 +19,7 @@
 | `MODEL_GATEWAY_PORT` | model-gateway | Model gateway host port | `11435` |
 | `WEBUI_AUTH` | open-webui | Enable Open WebUI auth | `False` (target `True` in M6) |
 | `OPENAI_API_BASE` | open-webui, n8n | OpenAI-compat base URL | `http://model-gateway:11435/v1` |
-| `MODELS` | model-puller | Models to pull on startup | `deepseek-r1:7b,...` |
+| `GGUF_MODELS` | gguf-puller | Hugging Face repo(s) of GGUF files to pull | *(empty)* |
 | `COMPUTE_MODE` | compose | CPU/nvidia/amd | auto-detected |
 | `QDRANT_PORT` | qdrant | Qdrant host port | `6333` |
 | `EMBED_MODEL` | rag-ingestion | Embedding model for RAG | `nomic-embed-text` |

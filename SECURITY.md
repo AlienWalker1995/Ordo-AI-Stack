@@ -71,4 +71,4 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 1. **Reset OPS_CONTROLLER_TOKEN:** Generate new token, update `.env`, restart dashboard + ops-controller
 2. **Restore data:** Restore `data/` from a local backup
 3. **Disable MCP tools:** Clear `data/mcp/servers.txt` or set to a single safe server
-4. **Safe mode:** Stop `mcp-gateway` and `hermes-gateway`; use `ollama` + `open-webui` only
+4. **Safe mode:** Stop `mcp-gateway` and `hermes-gateway`; use `llamacpp` + `open-webui` only
