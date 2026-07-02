@@ -394,6 +394,15 @@ def _live_gpus() -> dict:
         return {}
 
 
+def _compute_gpu_free_gb() -> float:
+    """Free VRAM (GB) on the largest GPU — the compute card. 0.0 if unknown."""
+    gpus = _live_gpus()
+    if not gpus:
+        return 0.0
+    big = max(gpus.values(), key=lambda g: g.get("total_gb", 0.0))
+    return round(big.get("total_gb", 0.0) - big.get("used_gb", 0.0), 1)
+
+
 # Model download (ComfyUI files)
 COMFYUI_MODELS_DIR = Path(os.environ.get("COMFYUI_MODELS_DIR", "/models/comfyui"))
 # Same layout as docker-compose: ${BASE_PATH}/data/comfyui-storage → comfyui /root
@@ -489,6 +498,8 @@ _guardian_status: dict = {
     "last_transition": None,
     "last_error": "",
     "paused_by_us": False,
+    "held": False,          # external GPU lease — see /guardian/hold + /guardian/release
+    "held_reason": "",
 }
 
 
@@ -2079,6 +2090,29 @@ def _guardian_loop() -> None:
 
     while True:
         try:
+            with _guardian_lock:
+                held = _guardian_status["held"]
+                held_state = _guardian_status["state"]
+            if held:
+                # External GPU lease (/guardian/hold): keep the target STOPPED and
+                # never resume it until /guardian/release. Ignore queue state while
+                # held, so a VRAM-heavy ComfyUI job owns the whole card.
+                for c in _containers_for_service(target):
+                    if c.status == "running":
+                        try:
+                            c.stop(timeout=30)
+                        except Exception:
+                            pass
+                with _guardian_lock:
+                    _guardian_status["state"] = "held"
+                    _guardian_status["paused_by_us"] = False
+                time.sleep(COMFYUI_QUEUE_POLL_SECONDS)
+                continue
+            if held_state == "held":
+                # Lease was just released (held flipped False while state lagged at
+                # "held"). Reset to idle so the normal pause/resume machine resumes.
+                _guardian_transition("idle")
+
             depth = _comfyui_queue_depth()
             if depth is None:
                 with _guardian_lock:
@@ -2189,6 +2223,55 @@ async def guardian_status(_: None = Depends(verify_token)):
     """Return current ComfyUI-guardian state. Auth required."""
     with _guardian_lock:
         return dict(_guardian_status)
+
+
+@app.post("/guardian/hold")
+async def guardian_hold(body: ConfirmBody, request: Request, _: None = Depends(verify_token)):
+    """Acquire a GPU lease: stop the guardian target (llamacpp) and HOLD it down —
+    the guardian will not resume it — until /guardian/release, so a VRAM-heavy
+    ComfyUI job (e.g. the VibeVoice dialogue render) owns the whole card. Blocks
+    until VRAM has actually been released (or a 90s cap). Auth required."""
+    target = COMFYUI_GUARDIAN_TARGET
+    if body.dry_run:
+        return {"would": "hold", "target": target}
+    min_free_gb = float(request.query_params.get("min_free_gb", "20"))
+    with _guardian_lock:
+        _guardian_status["held"] = True
+        _guardian_status["held_reason"] = request.query_params.get("reason", "gpu-lease")
+    for c in _containers_for_service(target):
+        try:
+            c.stop(timeout=30)
+        except Exception:
+            pass
+    deadline = time.time() + 90
+    free = _compute_gpu_free_gb()
+    while time.time() < deadline and free < min_free_gb:
+        time.sleep(2)
+        free = _compute_gpu_free_gb()
+    ready = free >= min_free_gb
+    _audit("guardian_hold", target, "ok" if ready else "error",
+           f"free_gb={free} min={min_free_gb}", correlation_id=_correlation_id(request))
+    return {"ok": True, "held": True, "target": target, "free_gb": free, "ready": ready}
+
+
+@app.post("/guardian/release")
+async def guardian_release(body: ConfirmBody, request: Request, _: None = Depends(verify_token)):
+    """Release the GPU lease: clear the hold and restart the target (llamacpp).
+    Auth required."""
+    target = COMFYUI_GUARDIAN_TARGET
+    if body.dry_run:
+        return {"would": "release", "target": target}
+    with _guardian_lock:
+        _guardian_status["held"] = False
+        _guardian_status["held_reason"] = ""
+    for c in _containers_for_service(target):
+        try:
+            c.start()
+        except Exception:
+            pass
+    _guardian_transition("idle")
+    _audit("guardian_release", target, "ok", "", correlation_id=_correlation_id(request))
+    return {"ok": True, "held": False, "target": target}
 
 
 # Start the guardian thread at module import. Doing it here instead of via
