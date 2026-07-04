@@ -32,9 +32,12 @@ if "_bi.print" not in t:
     s.write_text(t)
 PY
 
-# Ordo AI Stack: remove upstream bundled workflows — agents compose their own via queue_prompt.
-# The upstream generate_image.json hardcodes v1-5-pruned-emaonly.ckpt which doesn't exist.
-RUN rm -f workflows/generate_image.json workflows/basic_api_test.json
+# Ordo AI Stack: remove ALL upstream bundled workflows — nothing is baked here. Skills/agents
+# compose their own graph and submit it via queue_prompt(workflow_json=...). In particular the
+# song workflow lives in Hermes' private data
+# (data/hermes/skills/creative/song-generation/generate_song.workflow.json) so it can be edited
+# without an image rebuild. (generate_image.json also hardcoded a nonexistent checkpoint.)
+RUN rm -f workflows/generate_image.json workflows/basic_api_test.json workflows/generate_song.json
 
 # Ordo AI Stack: accept flat run_workflow args + optional default workflow_id (see tools/workflow.py)
 COPY tools/workflow.py tools/workflow.py
