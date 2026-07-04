@@ -496,6 +496,10 @@ services:
 
   comfyui:
     image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot:cpu}
+    # NOTE: this image supplies only the Python/CUDA runtime. The ComfyUI application code is
+    # the git checkout bind-mounted from data/comfyui-storage/ComfyUI (see volumes below).
+    # It must be >= v0.19.0 for ACE-Step 1.5 XL support (local song generation via generate_song);
+    # roll back with `git -C data/comfyui-storage/ComfyUI checkout <ref>` if a version breaks a node.
     # No fixed container_name — avoids "name already in use" when another project
     # owns `comfyui`; Docker DNS still resolves the service name `comfyui` on this network.
     restart: unless-stopped
