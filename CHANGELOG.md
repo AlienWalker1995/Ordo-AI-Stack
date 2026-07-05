@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Added
+- **Monitoring — opt-in `--profile monitoring` Grafana + Prometheus + GPU metrics.**
+  Adds real-time llama.cpp and GPU performance dashboards. `llama-server` now runs with
+  `--metrics` (native Prometheus endpoint: token rates, KV-cache usage, request queue).
+  A `prometheus` service scrapes it plus a `gpu-exporter` (`nvidia_gpu_exporter`, which
+  wraps `nvidia-smi` — the right tool for this host's consumer GPUs on WSL2, where DCGM
+  does not work). `grafana` (anonymous read-only; SSO is the gate) is served via Caddy at
+  `/grafana/` and embedded in the dashboard's new **Grafana** tab. Datasource + a
+  llama.cpp/GPU dashboard are auto-provisioned. All images pinned by digest; internal-only
+  (no host ports). Enable: `docker compose --profile monitoring up -d --build`.
 - **Codebase-Memory MCP — opt-in `--profile codebase-memory` code knowledge graph for Hermes.**
   Adds `codebase-memory`, a gateway-spawned stdio MCP server wrapping the upstream
   `DeusData/codebase-memory-mcp` static binary (MIT; bundled offline embeddings, no API

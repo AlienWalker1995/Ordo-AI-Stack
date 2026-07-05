@@ -1193,9 +1193,117 @@ services:
     # only reachable on the internal Docker network via Caddy at /hermes/.
     command: ["hermes", "dashboard", "--port", "9119", "--host", "0.0.0.0", "--no-open", "--insecure"]
 
+  # ── Monitoring (opt-in: --profile monitoring) ─────────────────────────────
+  # Grafana + Prometheus + GPU exporter for real-time llama.cpp + GPU perf.
+  # Reached via Caddy at /grafana/ (Google SSO); embedded in the dashboard's
+  # Grafana tab. Enable with: docker compose --profile monitoring up -d --build
+
+  # nvidia_gpu_exporter wraps nvidia-smi — the right tool for this host's
+  # consumer GPUs (5090 + 1070) on WSL2, where DCGM-exporter does not work.
+  # No CUDA_VISIBLE_DEVICES pin: the exporter should see ALL GPUs to report on
+  # them (nvidia-smi already sees both on WSL2 regardless).
+  gpu-exporter:
+    image: utkuozdemir/nvidia_gpu_exporter@sha256:50e9be96ce3f67a75d7fd3834f2372d295c3dfcf044a36c9235e19ea7f008e58
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    # Restrict to an explicit field set. The exporter's default AUTO field
+    # discovery panics on this host's driver (581.80): nvidia-smi emits
+    # `clocks_event_reasons_counters.sw_thermal_slowdown [us]`, whose derived
+    # metric name contains a space + brackets → invalid Prometheus name → the
+    # exporter crash-loops on startup. Pinning the fields we actually chart
+    # avoids the bad one entirely (verified on the 5090 + 1070).
+    command:
+      - --query-field-names=utilization.gpu,utilization.memory,memory.used,memory.total,memory.free,temperature.gpu,power.draw,fan.speed,clocks.sm,clocks.mem,name
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: ['gpu']
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9835/metrics || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    networks:
+      - backend
+
+  prometheus:
+    image: prom/prometheus@sha256:6559acbd5d770b15bb3c954629ce190ac3cbbdb2b7f1c30f0385c4e05104e218
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ${BASE_PATH:-.}/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9090/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    networks:
+      - backend
+
+  grafana:
+    image: grafana/grafana@sha256:d8ea37798ccc41061a62ab080f2676dda6bf7815558499f901bdb0f533a456fb
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    depends_on:
+      prometheus:
+        condition: service_started
+    environment:
+      # Served under /grafana/ behind Caddy — Grafana rewrites its own asset/API
+      # paths to the subpath so it works iframed at that prefix.
+      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      # SSO is the real gate (Caddy forward_auth). Grafana itself is anonymous
+      # read-only so the embed needs no second login. No admin surface exposed:
+      # anonymous is Viewer, and the sign-in form is hidden.
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_AUTH_BASIC_ENABLED=false
+      # Allow the dashboard to iframe Grafana panels (same tailnet origin).
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_SECURITY_COOKIE_SAMESITE=lax
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_NEWS_NEWS_FEED_ENABLED=false
+    volumes:
+      - ${BASE_PATH:-.}/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${BASE_PATH:-.}/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    networks:
+      - backend
+      - proxy-net
+
 volumes:
   caddy_data:
   caddy_config:
+  prometheus-data:
+  grafana-data:
   # Per-container config/cache for codebase-memory (holds _config.db + config.json).
   # NOTE: the graph index itself lives IN-PROCESS and is not reliably flushed here
   # across container exits, so this is NOT a shared index — the gateway-spawned MCP

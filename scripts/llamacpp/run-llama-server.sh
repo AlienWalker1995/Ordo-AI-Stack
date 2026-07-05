@@ -15,7 +15,12 @@ set -- \
   --n-predict "${LLAMACPP_N_PREDICT:-65536}" \
   --reasoning-budget "${LLAMACPP_REASONING_BUDGET:-32768}" \
   --jinja \
+  --metrics \
   --no-mmap
+
+# --metrics enables llama-server's Prometheus endpoint at /metrics on :8080
+# (token rates, KV-cache usage, request queue). Internal-only; scraped by the
+# Prometheus service when the `monitoring` profile is up. Harmless when unused.
 
 # --reasoning-budget caps tokens spent inside <think>...</think> per response.
 # Llama.cpp's grammar engine is meant to force-close the block when this is

@@ -126,6 +126,16 @@
             reverse_proxy comfyui:8188
         }
 
+        # ---- Grafana at /grafana/ (opt-in: --profile monitoring) ----
+        # Grafana serves from the subpath (GF_SERVER_SERVE_FROM_SUB_PATH + root_url
+        # /grafana/), so `handle` (NOT handle_path — keep the prefix) proxies straight
+        # through. SSO-gated by the forward_auth above; Grafana itself is anonymous
+        # read-only. Embedded in the dashboard's Grafana tab. 502s if the profile
+        # isn't running.
+        handle /grafana/* {
+            reverse_proxy grafana:3000
+        }
+
         # ---- codebase-memory 3D graph UI at /codebase-memory/ ----
         # Absolute-asset SPA served under a subpath: the codebase-memory-ui container
         # runs nginx, which proxies to the UI and rewrites its baked /assets,/api,/rpc,
