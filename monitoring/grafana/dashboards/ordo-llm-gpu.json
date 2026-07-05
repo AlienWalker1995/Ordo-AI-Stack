@@ -23,10 +23,10 @@
       "targets": [ { "expr": "llamacpp:prompt_tokens_seconds", "refId": "A" } ]
     },
     {
-      "id": 3, "type": "gauge", "title": "KV cache usage",
+      "id": 3, "type": "stat", "title": "Decode rate (tok/s, 5m avg)",
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
-      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
-      "targets": [ { "expr": "llamacpp:kv_cache_usage_ratio", "refId": "A" } ]
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 1 }, "overrides": [] },
+      "targets": [ { "expr": "rate(llamacpp:tokens_predicted_total[5m])", "refId": "A" } ]
     },
     {
       "id": 4, "type": "stat", "title": "Requests processing / deferred",
@@ -47,10 +47,13 @@
       ]
     },
     {
-      "id": 6, "type": "timeseries", "title": "KV cache usage over time",
+      "id": 6, "type": "timeseries", "title": "Smoothed throughput (5m rate)",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
-      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
-      "targets": [ { "expr": "llamacpp:kv_cache_usage_ratio", "refId": "A", "legendFormat": "kv cache" } ]
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(llamacpp:tokens_predicted_total[5m])", "refId": "A", "legendFormat": "generation" },
+        { "expr": "rate(llamacpp:prompt_tokens_total[5m])", "refId": "B", "legendFormat": "prompt" }
+      ]
     },
     {
       "id": 7, "type": "timeseries", "title": "GPU utilization",
