@@ -31,7 +31,11 @@ services:
     wants_secrets: true   # HF_TOKEN / GITHUB_PERSONAL_ACCESS_TOKEN resolve from secrets.env
     env:
       CLI_ARGS: ${COMFYUI_CLI_ARGS:---cpu --enable-manager}
-      PYTORCH_CUDA_ALLOC_CONF: ""
+      # V1's proven allocator config (overrides/compute.yml). An EMPTY string here is worse than
+      # omitting it: torch's allocator parser rejects "" with `ValueError: Unrecognized key ','` at
+      # `torch._C._cuda_init()`, crash-looping ComfyUI on boot. Default to V1's value; operator-
+      # overridable via ${PYTORCH_CUDA_ALLOC_CONF}.
+      PYTORCH_CUDA_ALLOC_CONF: ${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,pinned_use_cuda_host_register:True}
       OPS_CONTROLLER_URL: http://ops-controller:9000
       OPS_CONTROLLER_TOKEN: ${OPS_CONTROLLER_TOKEN:-}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-local}

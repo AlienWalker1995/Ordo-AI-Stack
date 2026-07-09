@@ -75,6 +75,19 @@ def test_ops_controller_has_scoped_socket():
     assert "--project" in ops["command"] and "ordo-v2" in ops["command"]
 
 
+def test_ops_controller_has_utility_gpu_visibility():
+    # The scheduler REPLACES V1's reactive guardian; its whole job is VRAM-fit co-run admission.
+    # It detects VRAM by shelling to nvidia-smi INSIDE its container — which the NVIDIA toolkit
+    # only injects when the service reserves a GPU with the `utility` capability. Without it the
+    # scheduler sees CPU-only (total_vram=0) and drops every GPU plugin. V1's ops-controller has
+    # caps=[[utility]]; guard that V2 renders the same read-only visibility.
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo-v2")
+    ops = c["services"]["ops-controller"]
+    devs = ops["deploy"]["resources"]["reservations"]["devices"]
+    assert any(d.get("capabilities") == ["utility"] for d in devs), \
+        "ops-controller must reserve a GPU with the `utility` cap so nvidia-smi works for the scheduler"
+
+
 def test_agent_swappable():
     c = compose.render_compose(has_gpu=False, compose_profiles=[], agent="openclaw")
     assert "agent-openclaw" in c["services"]["agent"]["image"]
