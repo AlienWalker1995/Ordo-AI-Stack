@@ -154,6 +154,32 @@ def test_v1_parity_dashboard_and_ops_api_have_healthchecks(tmp_path):
     assert "healthcheck" in c["services"]["ops-api"]
 
 
+def test_v1_parity_dashboard_reserves_utility_gpu(tmp_path):
+    # `/api/hardware`'s GPU widgets shell to nvidia-smi + gpu_stats.list_gpus, which the NVIDIA
+    # runtime only injects with a `utility` GPU reservation on the dashboard SERVICE itself.
+    # Without it the hw-stat bar's GPU widgets go blank (gpu:null + gpus:[]). Guard the reservation.
+    c = _compose("v1-parity", tmp_path)
+    devs = c["services"]["dashboard"]["deploy"]["resources"]["reservations"]["devices"]
+    assert any(d.get("capabilities") == ["utility"] and d.get("count") == "all" for d in devs), \
+        "the v1-parity dashboard must reserve all GPUs with the utility cap so nvidia-smi works for /api/hardware"
+
+
+def test_v1_parity_dashboard_pins_in_container_disk_probe_path(tmp_path):
+    # `/api/hardware` calls psutil.disk_usage(BASE_PATH) for the DISK widget. The shared .env carries
+    # BASE_PATH=<Windows host path> (needed for compose ${BASE_PATH} interpolation) and env_file leaks
+    # it into the Linux container, where disk_usage("C:/...") raises -> disk_*:null. A per-service
+    # `environment:` value beats env_file: pin the in-container probe to the always-mounted mount.
+    c = _compose("v1-parity", tmp_path)
+    assert c["services"]["dashboard"]["environment"]["BASE_PATH"] == "/data/dashboard", \
+        "dashboard BASE_PATH must be overridden to an in-container path or /api/hardware disk stats go null"
+
+
+def test_v2_native_dashboard_reserves_no_gpu(tmp_path):
+    # The default SPA declares no GPU visibility -> no reservation (unchanged behaviour).
+    c = _compose("v2-native", tmp_path)
+    assert "deploy" not in c["services"]["dashboard"]
+
+
 def test_this_deployments_source_selects_v1_parity():
     # the operator's ordo.yaml pins the reinstated dashboard (regression guard for the reinstatement).
     src = Source.load(ROOT / "ordo.yaml")

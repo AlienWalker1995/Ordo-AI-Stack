@@ -66,8 +66,8 @@ Legend: **PASS** (verified live, evidence) · **BY-DESIGN-DIFF** (intentional V2
 | Health rollup | `GET /api/health` | 200 (no auth) | PASS | 9 services all `ok:true` |
 | Dependencies probe | `GET /api/dependencies` | 200 (no auth) | PASS | canonical dependency list probed live (model-gateway 11.19ms, llamacpp, …) all `ok:true` |
 | RAG status | `GET /api/rag/status` | 200 (no auth) | PASS | collection `documents`, points_count 1, status green |
-| Hardware | `GET /api/hardware` | 200 (no auth) | PASS | cpu 4.6%, ram 13.3/125.5GB (dashboard container has no GPU → `gpus:[]`; GPU data comes via `/api/registry/gpus`, by design) |
-| Service pressure | `GET /api/hardware/service-pressure` | 200 | PASS | per-service cpu/mem/vram from ops-api /stats/services (48 cores, 125.5GB host) |
+| Hardware (hw-stat bar) | `GET /api/hardware` | 200 | **PASS (was false-PASS, now FIXED)** | The original PASS scored the 200 alone — but it carried **nulls**: `disk_*:null` + `gpu:null` + `gpus:[]` (the storage + GPU hw-stat widgets were BLANK live). Two root causes, both fixed (see FLIP.md "hw-stat bar widget fix"): (1) the dashboard service reserved no GPU → no `nvidia-smi` for `_probe_gpu`/`list_gpus`; (2) `BASE_PATH=<Windows host path>` leaked via env_file → `psutil.disk_usage` raised. **After fix:** `disk_used_gb 1180.0 / disk_total_gb 1999.8 / disk_pct 59.0`; `gpu` populated; `gpus` lists BOTH cards (1070 8.6GB + 5090 34.2GB, real util/temp); `nvidia-smi -L` inside the container lists both. |
+| Service pressure (hw-stat bar) | `GET /api/hardware/service-pressure` | 200 | **PASS (was false-PASS, now FIXED)** | The original PASS scored the 200 alone — but ops-api `/stats/services` **timed out even at 40s** (sequential `c.stats()` × ~24 running containers ≈ 48s), so the dashboard's 3s call fell to `_empty_payload()` → every service `running:false` live. Root-cause fix: parallelize the independent per-container samples across a thread pool (NOT a timeout bump; FLIP.md). **After fix:** route returns in **2.37s** (< the 3s timeout) with **24/25 services `running:true`** + real cpu/mem (llamacpp mem 10.93GB, …). (`gpu:null`/`vram_gb:0` here is the pre-existing WSL2 per-PID-VRAM limit → `vram_aggregate_unavailable:true`; GPU/VRAM data reaches the UI via `/api/hardware` `gpus`.) |
 | Throughput stats | `GET /api/throughput/stats` | 200 (no auth) | PASS | per-model tok/s + TTFT percentiles (local-chat p95 69.8 tok/s, 500 samples) |
 | Service usage | `GET /api/throughput/service-usage` | 200 | PASS | local-chat used by OpenAI(96)/curl(2)/Python-urllib(5) |
 | Performance summary | `GET /api/performance/summary` | 200 | PASS | ctx 131072, worker_concurrency 1, top_models rollup |
@@ -194,8 +194,14 @@ present and wired in V2, verified feature-by-feature with live evidence. Zero GA
 
 **Non-gap clarifications:** `/api/audit`, `/api/mcp/containers`, standalone `/api/guardian/status`
 do not exist in V1 and correctly 404; `/api/comfyui/packs` `ok:false` is identical V1 soft-empty
-behavior (no `models.json`); `/api/hardware` `gpus:[]` from the dashboard container is by design
-(GPU data flows through `/api/registry/gpus`, which returns both cards).
+behavior (no `models.json`).
+
+**Correction (hw-stat bar):** an earlier revision of this doc claimed `/api/hardware` `gpus:[]`
+(and the empty storage/service-pressure widgets) were "by design" — that was WRONG; it was a live
+regression (a 200 carrying nulls scored as PASS). The dashboard-service GPU reservation was dropped
+in the reinstatement and a Windows `BASE_PATH` leaked into the Linux container; ops-api
+`/stats/services` was sequential and timed out. All three are now fixed and the widgets carry real
+data (see the Hardware / Service pressure rows above and FLIP.md "hw-stat bar widget fix").
 
 ### Safety attestation
 - **V1 (`ordo-ai-stack`) untouched:** all containers `Exited` (stopped-intact), source read-only.

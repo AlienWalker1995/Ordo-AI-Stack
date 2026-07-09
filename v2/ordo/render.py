@@ -270,6 +270,7 @@ def render(source: Source, catalog: Catalog,
             "depends_on": dict(dash.depends_on),
             "healthcheck": dict(dash.healthcheck),
             "wants_secrets": dash.wants_secrets,
+            "gpu_capabilities": list(dash.gpu_capabilities),
             "backend": None,
         }
         if dash.backend and dash.backend.name:
