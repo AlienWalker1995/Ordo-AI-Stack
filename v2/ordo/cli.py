@@ -15,7 +15,9 @@ from pathlib import Path
 from .catalog import Catalog
 from .config import Source
 from .hardware import detect
-from .render import render
+from .plugins import PluginRegistry
+from .render import DEFAULT_PLUGINS_DIR, render
+from . import wizard
 
 HERE = Path(__file__).resolve().parent.parent
 DEFAULT_SOURCE = HERE / "ordo.example.yaml"
@@ -52,6 +54,16 @@ def cmd_render(args: argparse.Namespace) -> int:
     return 0 if consistent else 1
 
 
+def cmd_setup(args: argparse.Namespace) -> int:
+    cat = Catalog.load(Path(args.catalog))
+    reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
+    interactive = not args.yes and sys.stdin.isatty()
+    out = wizard.run(cat, reg, args.out, interactive=interactive,
+                     answers={} if not interactive else None)
+    print(f"Wrote {out} — now run: ordo render")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     ok = True
     src, cat = _load(Path(args.source), Path(args.catalog))
@@ -74,6 +86,10 @@ def main(argv: list[str] | None = None) -> int:
     pr = sub.add_parser("render")
     pr.add_argument("--out", default="out")
     pr.set_defaults(func=cmd_render)
+    ps = sub.add_parser("setup")
+    ps.add_argument("--out", default="ordo.yaml")
+    ps.add_argument("--yes", action="store_true", help="non-interactive (accept detected)")
+    ps.set_defaults(func=cmd_setup)
     sub.add_parser("doctor").set_defaults(func=cmd_doctor)
     args = p.parse_args(argv)
     return args.func(args)
