@@ -657,3 +657,118 @@ both sides, 5090 pin `GPU-97fe65ee-…` intact**. `docker compose config` (both 
   container ids across the apply: llamacpp `5d2d0510b871`, agent `c3dd48cb52bb`, comfyui
   `df29f2607941`, llamacpp-embed `1c7b6e36615e`, ops-controller `bd1c5804439f` (all RestartCount
   unchanged). llamacpp 5090 pin preserved (byte-identical compose block).
+
+---
+
+## CONSOLIDATION EXECUTED — single-location, `main` is production (2026-07-09)
+
+The final migration phase: the stack now runs **entirely from `C:\dev\ordo-ai-stack`** (the repo
+primary checkout) with **one data root** (`C:\dev\ordo-ai-stack\data`), `main` is the production
+branch, and the `C:\dev\ordo-v2` worktree is **retired**. The compose project name stays `ordo-v2`
+(renaming would recreate everything + break broker guard scoping).
+
+### 1. Merged to `main` (PR #72)
+`arch/v2-substrate` → `main` via `gh pr merge --merge` (merge commit `d115035`). Two REAL CI defects
+were found on the merge gate and **fixed at the root** (not waited out):
+- `tests/test_dashboards.py::test_this_deployments_source_selects_v1_parity` read the **gitignored**
+  operator `ordo.yaml` → `FileNotFoundError` in a clean checkout. Fixed: skip the operator-config
+  assertion when `ordo.yaml` is absent (the render-behavior guard for v1-parity is already covered by
+  fixture tests). Commit `f097159`.
+- The `v2-substrate` job's "Rendered compose validates" step ran `docker compose config` on the
+  example render with no env → the edge (caddy) `${CADDY_BIND:?…}` strict-required var aborted
+  interpolation. Fixed: load the rendered `.env` + append a CI-only `CADDY_BIND=127.0.0.1` placeholder
+  (mirrors the repo-root `compose-validate` job). The strict guard stays (must never bind 0.0.0.0).
+  Commit `9bc40c8`. All checks then green; merged.
+
+### 2–4. Prepared the primary checkout + re-rendered there (no downtime)
+- `C:\dev\ordo-ai-stack`: `git checkout main && git pull` (fast-forward, 35 commits) → `v2/` now
+  tracked here. Copied the gitignored runtime (`v2/out/`: compose, `.env`, `secrets.env`, `mcp/`,
+  `monitoring/`, `auth/`, `ordo.yaml`) from the worktree; verified `secrets.env` (1017 B) present +
+  gitignored at the destination (whole `out/` is gitignored — nothing tracked).
+- Edited the copied `ordo.yaml`: `site.DATA_PATH` `C:/dev/ordo-v2/data` → **`C:/dev/ordo-ai-stack/data`**.
+  `BASE_PATH` + `COMFYUI_STORAGE_PATH` + `COMFYUI_MODELS_PATH` already pointed at
+  `C:/dev/ordo-ai-stack` (shared, unchanged).
+- **Re-rendered in a `--gpus all` `nvidia/cuda:12.4.1-base` container** (real `detect()` → 5090
+  `GPU-97fe65ee` + 1070 `GPU-20fac13a`), `--source out/ordo.yaml`. **Render diff vs the live worktree
+  compose = ZERO** (`docker-compose.yml` byte-identical — all data paths are `${DATA_PATH}`
+  interpolations, so the literal lives only in `.env`). `.env` diff = exactly 3 lines: `DATA_PATH`
+  (the intended consolidation change) + the two runtime-appended keys `DEFAULT_MODEL=local-chat` /
+  `OPEN_WEBUI_DEFAULT_MODEL=local-chat:chat` (preserved by re-appending after the render). llamacpp
+  block incl. the 5090 pin unchanged; `docker compose config` (both env files, all 10 profiles) →
+  exit 0. Fully-resolved config: **0** `C:/dev/ordo-v2` filesystem paths (the 10 `ordo-v2` hits are
+  the project name + `ordo-v2/*` image tags + `ordo-v2-net` — all identifiers, not paths).
+
+### Data strategy (non-destructive — RENAME-ASIDE, never delete)
+- 16 dirs exist in BOTH data roots → each V1 original **renamed aside** (instant, same-volume) to
+  `C:\dev\ordo-ai-stack\data-v1-snapshot\<x>` (comfyui-output, dashboard, drafts, drafts-pending,
+  hermes, n8n-data, n8n-files, open-webui, ops-controller, primus_relay, qdrant, rag-input, searxng,
+  social-relay, voice, voices). `comfyui-storage` + `models/*` (shared, ~30GB+) **untouched** at the
+  original location — the rendered mounts resolve to them via `BASE_PATH`/`COMFYUI_*_PATH`.
+- **Bulk pre-copy while the stack ran** (robocopy `/E`): the live worktree data → the primary root.
+  Byte-verified (src == dst): hermes 2.60 GB / 4800 files, qdrant 206 MB / 41, open-webui 297 MB / 14,
+  n8n-data 1.11 GB / 769.
+
+### THE WINDOW (2026-07-09, ~17:30–17:35 UTC)
+- `17:30:35` — `docker compose -p ordo-v2 stop` from the **OLD** worktree `out/`. 0 running.
+- `17:30:43` — final `/MIR` delta-sync of the HOT dirs (hermes `/XD audio_cache image_cache`,
+  n8n-data, open-webui, qdrant, dashboard, ops-controller) — safe (stack stopped). Cleared stale
+  hermes locks (gateway.lock, auth.lock) in the destination; `history_backfill: false` confirmed
+  survived.
+- `17:31:02` — `up -d` core from the **NEW** primary `out/`. llamacpp/mcp-gateway/model-gateway
+  healthy, but the agent's `depends_on: dashboard: service_healthy` gate blocked: the dashboard's
+  `/api/health` aggregates over profile services (open-webui) not-yet-up during core-only boot, so
+  the probe took **10.5s > the 10s healthcheck timeout** → dashboard `unhealthy` → compose aborted.
+  **Not a config defect** (compose byte-identical to the worktree that ran healthy) — a core-first
+  **ordering** artifact.
+- `17:34:34–17:34:58` — brought up the **full** stack (all profiles + edge). Once open-webui was up
+  the dashboard probe completed fast → dashboard **healthy**; an idempotent re-`up` then started the
+  4 remaining `Created` containers (agent, grafana, rag-ingestion, worker) with the gate satisfied.
+  **No rollback needed.**
+- **Downtime for the chat path ≈ 3.75 min** (17:30:35 stop → ~17:34:20 core serving 200). Full stack
+  + edge settled by ~17:35.
+- **ROLLBACK asset during the window:** the OLD worktree `out/` + data were still in place
+  (`stop` new / `up` old). Only retired (renamed aside, not deleted) AFTER validation went green.
+
+### Validation (evidence) — all green
+- **Chat:** `POST local-chat` via model-gateway → HTTP 200, `model local-chat`,
+  `system_fingerprint b1-86b9470` (patched build); 5090 28.6 GB resident.
+- **Agent:** Discord `state: connected`, gateway `running`, `active_agents: 0` (no stale backfill);
+  `hermes cron list` → jobs active with FUTURE next-runs (2026-07-10T12:00), last_status ok.
+- **MCP:** gateway `initialize → tools/list` → **6 tools** (qdrant-rag 2 + searxng 4), servers spawned
+  over docker.sock on `ordo-v2-net`, reading `/mcp-config` from the new location.
+- **Dashboard `/api/hardware`** → 200, disk 1182/1999 GB (59%), **both GPUs** (1070 + 5090).
+- **Voice:** stt `/v1/models` 200; stt+tts pinned to the **1070** `GPU-20fac13a`.
+- **Scheduler `/status`** → model `huihui-qwen3.6-27b-q6`, ultra, ctx 131072, gpu idle (GPU visible).
+- **Monitoring:** grafana `/api/health` 200 (v11.4.0); prometheus targets: gpu-exporter + prometheus
+  `up`. **KNOWN PRE-EXISTING (not consolidation):** `llamacpp:8080/metrics` scrape is **down (501)** —
+  the wrapper `run-llama-server.sh` does not forward its positional `--metrics` arg (compose passes
+  `command:[--metrics]` but the built `llama-server` argv omits it). Compose is byte-identical to the
+  worktree, so this predates the flip; it degrades only the llamacpp Grafana panel (GPU panels use the
+  exporter, which is up). **Flagged for a follow-up wrapper fix (`$@` forwarding).**
+- **Edge:** caddy `:443` bound to tailnet `100.85.139.89` (PortBindings AND NetworkSettings — no
+  silent-loss); `https://ultracam.tail63bdfc.ts.net/` → **302 /oauth2/start** (Google SSO enforced),
+  oauth2-proxy `/ping` OK.
+- **ROOT-CAUSE PROOF:** llamacpp `RestartCount=0`, running since 17:31:05 through comfyui's boot
+  (comfyui restarts=0) — V1's guardian would have evicted it; V2's scheduler co-ran. Chat 200 held.
+- **NO-`ordo-v2`-MOUNTS PROOF:** scanned every running container's mount sources →
+  **0 reference any `C:/dev/ordo-v2` filesystem path** (the whole point). Agent + hermes-dashboard now
+  mount `C:/dev/ordo-ai-stack/data/hermes`. GPU pins on the running containers: llamacpp + comfyui →
+  5090 `GPU-97fe65ee`; stt + tts → 1070 `GPU-20fac13a`.
+
+### Retirement + decommission-lite (reversible-first)
+- **Worktree retired:** `arch/v2-substrate` (tip `9bc40c8`) verified fully merged into `main`, then
+  its gitignored payload **renamed aside** (`data` → `C:\dev\ordo-v2-data-retired`, `out` →
+  `C:\dev\ordo-v2-out-retired`) and `git worktree remove C:/dev/ordo-v2 --force`. Only
+  `C:/dev/ordo-ai-stack [main]` remains. The retired copies are kept ONE generation for the soak — the
+  operator deletes them after a soak day.
+- **V1 decommission-lite:** the **29 exited `ordo-ai-stack-*` containers** removed (`docker rm`;
+  0 remain). **6 named volumes** (`ordo-ai-stack_{caddy_config,caddy_data,grafana-data,hermes-data,
+  openclaw-extensions,prometheus-data}`) and **all V1 images KEPT** — V1 stays reconstitutable (fresh
+  `up` recreates from volumes+images). NOTE: `ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470` is
+  **shared with the running V2 llamacpp** — never prune it.
+
+### Attestation (consolidation)
+- **Nothing deleted.** All data renamed-aside (`data-v1-snapshot`, `ordo-v2-data-retired`,
+  `ordo-v2-out-retired`). No volume/image pruned. `secrets.env` copied, never committed.
+- **Rollback paths existed at every stage:** merge (branch fallback available), the window (old
+  worktree `out/`), post-window (V1 volumes+images intact for a fresh `up`).
