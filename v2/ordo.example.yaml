@@ -30,6 +30,20 @@ plugins: auto
 cloud_fallback:
   enabled: false
 
+# Host/site config — NOT derived from the model and NOT secret. Flows VERBATIM into the rendered
+# .env so the plugin manifests' ${VAR} bind-mount + edge refs resolve deterministically instead of
+# defaulting to `./data` relative to out/. This is the single source of truth for the operator's
+# filesystem roots + edge identity (kept here, so there is no hand-edit of a derived output).
+# A site key can NEVER shadow a derived one (a site LLAMACPP_CTX_SIZE is ignored) — the drift gate
+# always wins. Leave empty for a local floor install (defaults apply).
+site: {}
+  # DATA_PATH: /srv/ordo/data           # where mutable data (agent brain, qdrant, …) is bind-mounted
+  # BASE_PATH: /srv/ordo                 # models/ + comfyui storage roots (shared, often read-only)
+  # CODE_ROOT: /home/me/dev              # what the codebase-memory UI indexes (read-only)
+  # CADDY_TAILNET_HOSTNAME: host.tailnet.ts.net   # edge front door (profile edge)
+  # CADDY_TAILNET_DOMAIN: tailnet.ts.net
+  # CADDY_BIND: 100.x.y.z                # host tailnet IP Caddy binds :443 to (never 0.0.0.0)
+
 # Escape hatch: values here SURVIVE regeneration and override derived config. Use sparingly —
 # this is the one place a human/agent pins something the sizer would otherwise compute.
 overrides: {}

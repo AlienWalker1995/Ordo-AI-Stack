@@ -17,6 +17,11 @@ stack stays intact for instant rollback.
 - A **current** personal backup exists (Hermes `data/` + personal automation), committed. Verify the
   restore actually works into v2 before you flip — a backup you haven't restored is a guess.
 
+> **This box:** the source is already authored at `v2/ordo.yaml` (pinned model
+> `huihui-qwen3.6-27b-q6`, the full 5090+1070 parity plugin set, and a `site:` block with the real
+> host paths + edge identity). The exact, verified Phase-5 flip commands for this box live in
+> **[`FLIP.md`](./FLIP.md)** — use that; the sections below are the generic procedure.
+
 ## 1. Author the source
 
 ```
@@ -24,6 +29,10 @@ cd C:\dev\ordo-v2\v2
 python -m ordo.cli setup --yes        # detect hardware -> write ordo.yaml (or hand-write it)
 python -m ordo.cli detect             # sanity: tier / model / ctx / plugins it will pick
 ```
+
+Set host paths + edge identity in the source's `site:` block (see `ordo.example.yaml`): `DATA_PATH`,
+`BASE_PATH`, `CODE_ROOT`, `CADDY_*`. These render into `.env` so plugin `${VAR}` binds resolve to a
+deterministic absolute path instead of `./data` under `out/`. They are host config, not secrets.
 
 ## 2. Build the v2 images
 

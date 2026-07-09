@@ -7,3 +7,7 @@ __pycache__/
 secrets.env
 .validate-out/
 .validate-cpu/
+# operator-real source — contains host paths + tailnet hostname/IP (this repo is PUBLIC). Only the
+# template `ordo.example.yaml` is tracked; the real `ordo.yaml` stays operator-local (like data/ +
+# secrets.env). Do NOT commit it.
+ordo.yaml

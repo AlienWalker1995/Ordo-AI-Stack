@@ -101,13 +101,26 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def _local_images() -> set[str]:  # pragma: no cover - shells to docker
+    """Every locally-present image ref, BOTH as repo:tag AND as repo@sha256:digest.
+
+    A digest-pinned compose image (e.g. `grafana/grafana@sha256:…`) is present in the local
+    cache under its RepoDigest, not a repo:tag — so matching only tags falsely reported pinned
+    images as 'will pull'. Collect both forms so the preflight image-presence check is accurate.
+    """
     import subprocess
-    try:
-        out = subprocess.run(["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"],
-                             capture_output=True, text=True, timeout=30)
-        return {ln.strip() for ln in out.stdout.splitlines() if ln.strip()}
-    except (OSError, subprocess.SubprocessError):
-        return set()
+    refs: set[str] = set()
+    for fmt in ("{{.Repository}}:{{.Tag}}", "{{.Repository}}@{{.Digest}}"):
+        try:
+            out = subprocess.run(["docker", "images", "--digests", "--format", fmt],
+                                 capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return set()
+        for ln in out.stdout.splitlines():
+            ln = ln.strip()
+            # skip untagged/undigested rows ('<none>' or a bare 'repo@' / 'repo:')
+            if ln and "<none>" not in ln and not ln.endswith(("@", ":")):
+                refs.add(ln)
+    return refs
 
 
 def cmd_preflight(args: argparse.Namespace) -> int:

@@ -18,6 +18,7 @@ Pure logic here (docker/image presence is injected); the CLI wires the real `doc
 from __future__ import annotations
 
 import dataclasses
+import re
 from pathlib import Path
 
 from . import parity
@@ -25,6 +26,18 @@ from .catalog import Catalog
 from .config import Source
 from .plugins import PluginRegistry
 from .render import render
+
+# ${VAR} or ${VAR:-default} — the compose interpolation syntax a plugin image ref may carry
+# (e.g. `${COMFYUI_IMAGE:-yanwk/comfyui-boot:cu128-slim}`). Resolved against the rendered .env
+# (with the `:-default` fallback) so the image-presence check compares the ACTUAL resolved ref.
+_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+
+
+def _expand(image: str, env: dict[str, str]) -> str:
+    def sub(m: "re.Match[str]") -> str:
+        val = env.get(m.group(1))
+        return val if val not in (None, "") else (m.group(2) or "")
+    return _VAR_RE.sub(sub, image)
 
 
 @dataclasses.dataclass
@@ -36,9 +49,10 @@ class Check:
 
 
 def required_images(rc, project: str = "ordo-v2") -> list[str]:
-    """The exact images the rendered compose will need (core + agent + enabled plugins)."""
+    """The exact images the rendered compose will need (core + agent + enabled plugins), with
+    ${VAR:-default} refs expanded against the rendered .env so presence-matching is accurate."""
     c = rc.compose_dict(project=project)
-    return sorted({svc["image"] for svc in c["services"].values()})
+    return sorted({_expand(svc["image"], rc.env) for svc in c["services"].values()})
 
 
 def _is_buildable(image: str, project: str) -> bool:
