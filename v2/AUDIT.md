@@ -40,13 +40,43 @@ reservation + CUDA_VISIBLE_DEVICES pin.
 | Service | Difference | Why it's intentional |
 |---|---|---|
 | `ops-controller` | V2-native image + `ordo serve` cmd; V1's `comfyui-models`/`runtime.env`/`hf_token` mounts absent | V2-native control plane. Its reactive-guardian mounts belong to the V1 guardian that V2's **scheduler** replaces (PARITY.md). It has what `ordo serve` needs: docker.sock (guard-scoped to `ordo-v2-*`) + `./:/config`. `HF_TOKEN` comes via `secrets.env`. |
-| `dashboard` | V2-native SPA; V1's utility-GPU + comfyui/gguf/mcp binds absent | V2-native control plane; model/GPU state is the registry via ops-controller, not host binds. |
+| `dashboard` | ~~V2-native SPA; V1's utility-GPU + comfyui/gguf/mcp binds absent~~ **REINSTATED to V1-parity — see "Dashboard reinstatement" below.** | Was documented as an intentional diff, but the parity mapping WRONGLY dropped the operator's feature-rich V1 dashboard (GGUF mgmt, model-control flag cards, GPU/model-registry views, Grafana tab, token auth). The minimal V2-native SPA is the open-source substrate DEFAULT; this deployment selects `dashboard: v1-parity` (data-driven, mirrors the agent registry). |
 | all core UI services | NO host `ports:` (V1 published `127.0.0.1` loopbacks for model-gateway/mcp-gateway/qdrant) | V2 deployment model: reached via the edge (Caddy) only; loopback publishes were host-debug. **Only caddy `:443`** publishes (confirmed in resolved config). |
 | `model-gateway`/`mcp-gateway` | project buildable images `ordo-v2/*` vs V1 `ordo-ai-stack-*:latest` | Same wrapper build, project-namespaced + pinned by build context (preflight “build first”, no float). |
 | `llamacpp-embed`/`qdrant`/`rag-ingestion` | live only behind `--profile rag` | Grouped into the `rag` plugin (PARITY.md) — only needed when RAG is on. |
 | `gpu-exporter` | keeps `count: all` (no uuid pin) | Matches V1 — the exporter monitors ALL cards by design. |
 | brain / mutable data binds | point at `${DATA_PATH}` (V2 staged) not V1 `data/*` | The whole beside-run premise: V2 runs on staged copies; immutable big content (GGUF/comfyui models) is shared read-only from `${BASE_PATH}` (V1 tree). |
 | `searxng`/`stt` restart etc. | one V1 container (`tts`) shows an older compose-label path form | V1-side staleness (a not-recreated container), not a V2 gap; V2 renders the current form. |
+
+## Dashboard reinstatement (post-cutover, live) — GAP-FIXED (G8)
+
+The parity mapping had replaced the operator's feature-rich V1 dashboard with the minimal V2-native
+SPA (recorded above as an intentional diff). That was WRONG for this deployment: the V1 dashboard's
+GGUF model management (`/api/llm/*`), model-control flag cards, GPU/model-registry views, Grafana
+tab and token auth are load-bearing. It has been reinstated, correctly and durably:
+
+- **Data-driven selection (mirrors the agent registry).** New `dashboards/<id>/dashboard.yaml`
+  manifests + `ordo/dashboards.py` (`Dashboard`/`DashboardRegistry`) + a `dashboard:` key in the
+  source schema. `v2-native` stays the substrate DEFAULT; this box pins `dashboard: v1-parity`.
+  The selection flows render→compose exactly like the agent image (12 new tests).
+- **Naming (zero collision, zero dashboard rebuild).** The V1 frontend is same-origin (`/api/*`
+  only — NO baked backend hostname) and its FastAPI backend reads `OPS_CONTROLLER_URL` at runtime,
+  so the V1 image is reused UNCHANGED (built as `ordo-v2/dashboard-v1:latest`) and pointed at a NEW
+  backend service **`ops-api`** (`OPS_CONTROLLER_URL=http://ops-api:9000`). V2's `ordo serve`
+  scheduler stays named `ops-controller` (its 4 live clients — agent/mcp-gateway/comfyui/
+  hermes-dashboard — depend on that name). The Caddy `/dash/*` route is unchanged (service still
+  `dashboard`).
+- **ops-api = V1 ops-controller, guardian neutralized.** Built from a COPY of V1's ops-controller
+  (`v2/docker/ops-api/`). The reactive GUARDIAN needed NO code patch — it is opt-in via
+  `COMFYUI_SERIALIZE_LLAMACPP` (default `0`), left unset (set to `0` for clarity), so the guardian
+  thread never starts and `/guardian/status` returns a benign `{"enabled":false,"state":"disabled"}`
+  (the dashboard's guardian panel degrades gracefully). The VRAM + self-heal watchdogs are likewise
+  off by default. The ONLY code patch is a minimal, commented `OPS_COMPOSE_MUTATIONS_ENABLED`
+  kill-switch (default OFF) that turns `/compose/*` + `/services/*/recreate` into a static **501**
+  and makes the shared `_recreate_service` chokepoint a no-op — so ops-api can NEVER shell
+  `docker-compose` against the stack (the 2026-06-26 secret-less-recreate outage shape). SDK
+  start/stop/restart stay scoped to `COMPOSE_PROJECT=ordo-v2` (compose-project label), so they can
+  only ever touch V2. The V2 scheduler remains the sole GPU/compose authority.
 
 ## Verification (offline, no stack touched)
 - **Tests:** ruff clean + **134 passed** (was 122; **+12** across the 4 new defect classes:

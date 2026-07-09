@@ -18,11 +18,13 @@ from . import compose
 from .agents import AgentRegistry
 from .catalog import Catalog, DEFAULT_VRAM_RESERVE_GB, Model
 from .config import Source
+from .dashboards import DashboardRegistry
 from .hardware import HardwareProfile, detect
 from .plugins import PluginRegistry
 
 DEFAULT_PLUGINS_DIR = Path(__file__).resolve().parent.parent / "plugins"
 DEFAULT_AGENTS_DIR = Path(__file__).resolve().parent.parent / "agents"
+DEFAULT_DASHBOARDS_DIR = Path(__file__).resolve().parent.parent / "dashboards"
 
 # Secret env KEYS the CORE services need at runtime (values operator-managed in secrets.env, never
 # rendered). model-gateway/mcp-gateway/ops-controller/dashboard/agent read these; plugins add more
@@ -74,6 +76,9 @@ class RenderedConfig:
     env: dict[str, str]
     hermes: dict[str, Any]
     model_gateway: dict[str, Any]
+    # Selected control-plane UI wiring (data-driven, like `hermes` for the agent). Carries the
+    # dashboard service's image/env/depends/healthcheck + an OPTIONAL backend service (ops-api).
+    dashboard: dict[str, Any]
     plugins_enabled: list[str]
     compose_profiles: list[str] = dataclasses.field(default_factory=list)
     mcp_servers: list[dict[str, Any]] = dataclasses.field(default_factory=list)
@@ -116,6 +121,7 @@ class RenderedConfig:
             agent_secret_files=self.hermes.get("agent_secret_files") or None,
             agent_depends_on=self.hermes.get("agent_depends_on") or None,
             agent_healthcheck=self.hermes.get("agent_healthcheck") or None,
+            dashboard=self.dashboard,
             llamacpp_image=self.env.get("LLAMACPP_IMAGE") or None,
             plugin_services=self.plugin_services,
             primary_gpu_uuid=(pri.uuid if pri else None),
@@ -170,13 +176,16 @@ def _resolve_hardware(source: Source) -> HardwareProfile:
 def render(source: Source, catalog: Catalog,
            plugins: PluginRegistry | None = None,
            reserve_gb: float = DEFAULT_VRAM_RESERVE_GB,
-           agents: AgentRegistry | None = None) -> RenderedConfig:
+           agents: AgentRegistry | None = None,
+           dashboards: DashboardRegistry | None = None) -> RenderedConfig:
     hw = _resolve_hardware(source)
     model, warnings = catalog.resolve(hw, source.model, source.tier, reserve_gb)
     if plugins is None:
         plugins = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
     if agents is None:
         agents = AgentRegistry.load(DEFAULT_AGENTS_DIR)
+    if dashboards is None:
+        dashboards = DashboardRegistry.load(DEFAULT_DASHBOARDS_DIR)
 
     ctx = _max_ctx_for_vram(model, hw, reserve_gb)
 
@@ -246,6 +255,36 @@ def render(source: Source, catalog: Catalog,
     }
     model_gateway = {"ctx": ctx, "model_id": "local-chat"}
 
+    # Resolve the chosen control-plane UI from the registry (v2-native is the default). Unknown id ->
+    # a warning + fall back to the default, so a typo surfaces at render/preflight. The selected
+    # dashboard flows its image/env/depends/healthcheck (+ an optional backend service) into compose.
+    dash, dash_notes = dashboards.resolve(source.dashboard)
+    warnings = warnings + dash_notes
+    dashboard: dict[str, Any] = {"id": source.dashboard}
+    if dash:
+        dashboard = {
+            "id": dash.id,
+            "image": dash.image_for("ordo-v2"),
+            "environment": dict(dash.environment),
+            "volumes": list(dash.volumes),
+            "depends_on": dict(dash.depends_on),
+            "healthcheck": dict(dash.healthcheck),
+            "wants_secrets": dash.wants_secrets,
+            "backend": None,
+        }
+        if dash.backend and dash.backend.name:
+            b = dash.backend
+            dashboard["backend"] = {
+                "name": b.name,
+                "image": b.image_for("ordo-v2"),
+                "environment": dict(b.environment),
+                "volumes": list(b.volumes),
+                "depends_on": dict(b.depends_on),
+                "healthcheck": dict(b.healthcheck),
+                "group_add_root": b.group_add_root,
+                "wants_secrets": b.wants_secrets,
+            }
+
     # Registry-driven plugin resolution: enable what's requested AND fits AND has its deps.
     enabled, notes = plugins.resolve(source.plugins, hw)
     warnings = warnings + notes
@@ -275,6 +314,7 @@ def render(source: Source, catalog: Catalog,
     return RenderedConfig(
         hardware=hw, model=model, ctx_size=ctx, tier=(model.tier),
         warnings=warnings + mcp_notes, env=env, hermes=hermes, model_gateway=model_gateway,
+        dashboard=dashboard,
         plugins_enabled=[p.id for p in services], compose_profiles=compose_profiles,
         mcp_servers=mcp_servers, plugin_services=plugin_services,
         required_secrets=required_secrets,

@@ -14,6 +14,9 @@ class Source:
     tier: str = "auto"
     model: str = "auto"
     agent: str = "hermes"
+    # Control-plane UI (pluggable, like the agent). "v2-native" is the substrate default (minimal
+    # SPA); a deployment may select a registered dashboard (e.g. "v1-parity") in dashboards/*.
+    dashboard: str = "v2-native"
     plugins: Any = "auto"           # "auto" or list[str]
     cloud_fallback: dict[str, Any] = dataclasses.field(default_factory=lambda: {"enabled": False})
     overrides: dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -38,6 +41,7 @@ class Source:
             tier=str(data.get("tier", "auto")),
             model=str(data.get("model", "auto")),
             agent=str(data.get("agent", "hermes")),
+            dashboard=str(data.get("dashboard", "v2-native")),
             plugins=data.get("plugins", "auto"),
             cloud_fallback=data.get("cloud_fallback") or {"enabled": False},
             overrides=data.get("overrides") or {},

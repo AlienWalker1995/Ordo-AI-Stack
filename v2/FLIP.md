@@ -375,3 +375,50 @@ media plugin (comfyui) — core + all other services were already green when it 
   Owns tailnet `:443`.
 - **V1 = stopped-intact (rollback asset):** 0 running, 29 containers `exited` (not removed), 6 named
   volumes intact. Instant rollback remains `stop` V2 / `start` V1 until V2 is trusted (§5/§6).
+
+## Post-cutover EXECUTED — V1 dashboard reinstated (2026-07-09)
+
+The parity mapping had swapped the operator's feature-rich V1 dashboard for the minimal V2-native
+SPA. Reinstated data-driven (see AUDIT.md "Dashboard reinstatement" / G8). UI + control-plane only;
+no GPU-bound service intentionally recreated.
+
+### What changed
+- Source: `dashboard: v1-parity` in `ordo.yaml`; new `ordo/dashboards.py` + `dashboards/{v2-native,
+  v1-parity}/dashboard.yaml` (registry mirrors the agent pattern), threaded render→compose. +12 tests
+  → **151/151 pass**, ruff clean, `docker compose config` exit 0.
+- Images (NEW, project-namespaced, built from V1 context — V1 images untouched):
+  `ordo-v2/dashboard-v1:latest` (V1 dashboard **unchanged** — same-origin frontend, backend URL is
+  runtime env) + `ordo-v2/ops-api:latest` (V1 ops-controller + guardian/mutation kill-switches).
+- Naming: dashboard keeps name `dashboard` (Caddy `/dash/*` unchanged) with
+  `OPS_CONTROLLER_URL=http://ops-api:9000`; V2 scheduler stays `ops-controller`.
+
+### Timeline / incident (UTC)
+- `~15:45` — **first apply MISTAKE:** re-rendered `out/` inside a NON-GPU container, so `hardware:
+  auto` → CPU → llamacpp lost its 5090 pin (`GPU_LAYERS=0`, `count: all`). `docker compose up -d
+  ops-api dashboard` (without `--no-deps`) recreated llamacpp → it crash-looped (`libcuda.so.1
+  missing`) and then loaded on the wrong GPU (1070). Caught immediately via `docker inspect`
+  RestartCount + `nvidia-smi` (5090 idle at 499 MiB).
+- **Root-cause fix (not a bandaid):** the render MUST run where it can see the GPUs. Re-rendered `out/`
+  in a `--gpus all` CUDA container (real `detect()` → 5090+1070 uuids) → llamacpp correctly pinned to
+  the 5090 uuid (`device_ids` + `CUDA_VISIBLE_DEVICES`). Recreated llamacpp ONCE to restore it →
+  loaded on the 5090 (VRAM 29 GB, `/health` 200, RestartCount 0). All subsequent applies used
+  `--no-deps` so no GPU service was touched again.
+- Recreated `dashboard` + created `ops-api` with `--no-deps`. dashboard first crash-looped on
+  `PermissionError: /app/data` (V1 `DASHBOARD_DATA_PATH` defaulted under non-writable `/app`); fixed
+  in the manifest (`DASHBOARD_DATA_PATH=/data/dashboard` + a `${DATA_PATH}/dashboard` mount),
+  re-rendered on GPU, recreated dashboard → **healthy**.
+
+### Validations (with evidence)
+- **Dashboard `/api/health`** → 200; V1 SPA serves (195 KB single-file UI, `/api/*` calls present).
+- **`/api/llm/*`** → 200 listing the REAL GGUF dir (Huihui-Qwen3.6-27B Q6 22 GB, Qwen3.6-27B Q4,
+  mmprojs, nomic-embed) — GGUF management works.
+- **`/api/model-config`** (ops-api flag-card system) → 200, **19 flags**, 2 models on disk;
+  **`/api/services`** → 200 real inventory; **`/mcp/containers`** → 200 (guard-scoped).
+- **Guardian panel** → `/guardian/status` = `{"enabled":false,"state":"disabled"}` (inert, graceful).
+- **Compose kill-switch** → `POST /compose/restart` = **501** "use the ordo-v2 control plane".
+- **Caddy edge** → `dashboard:8080/api/health` and `grafana:3000/api/health` both 200 from the caddy
+  container; `/dash/*` route + SSO forward_auth chain unchanged.
+- **V2 scheduler still owns GPU:** `ops-controller /status` → 200, model `huihui-qwen3.6-27b-q6`,
+  `total_vram 31.8`. **llamacpp UNTOUCHED** by the dashboard/ops-api applies: `RestartCount=0`,
+  running since the correct-pin recreate, on the 5090.
+- **V1 untouched:** 0 running, 29 exited, original image IDs (`6760cc087b9b` / `17921b0f885b`) intact.

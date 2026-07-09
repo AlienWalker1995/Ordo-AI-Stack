@@ -1,0 +1,101 @@
+id: v1-parity
+name: V1 feature-rich dashboard
+description: >
+  This operator's original (V1) control-plane dashboard, reinstated on V2. Feature set: GGUF model
+  management (/api/llm/*), model-control flag cards + GPU/model-registry views (via the ops-api
+  backend's /model-config + /registry/*), guardian status panel (degrades to a static 'disabled'
+  state — the V2 scheduler owns the GPU), Grafana tab (/grafana/), token auth + Caddy SSO trust.
+
+  The frontend is same-origin (calls /api/* only — NO baked backend hostname), and the FastAPI
+  backend reads OPS_CONTROLLER_URL at runtime, so the V1 image is reused UNCHANGED (no rebuild)
+  and pointed at the `ops-api` backend below. That keeps V2's `ordo serve` scheduler service named
+  `ops-controller` (its live clients depend on that name) with zero collision.
+default: false
+# The V1 dashboard image, tagged under the project namespace (built from V1's context verbatim).
+image: ordo-v2/dashboard-v1:latest
+depends_on:
+  ops-api: service_started
+# V1's /api/health probe — keeps the agent's `dashboard: service_healthy` gate satisfiable. The
+# V1 image ships python3 (not curl), so use V1's python3 urllib probe verbatim.
+healthcheck:
+  test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 30s
+environment:
+  # Point the dashboard's backend proxy at the V1-parity API service (NOT V2's scheduler).
+  OPS_CONTROLLER_URL: http://ops-api:9000
+  # Backend service URLs the dashboard reads at runtime (all V2 service names).
+  LLAMACPP_URL: http://llamacpp:8080
+  MODEL_GATEWAY_URL: http://model-gateway:11435
+  MODEL_GATEWAY_API_KEY: ${LITELLM_MASTER_KEY:-local}
+  MCP_GATEWAY_URL: http://mcp-gateway:8811
+  COMFYUI_URL: http://comfyui:8188
+  QDRANT_URL: http://qdrant:6333
+  # On-disk model dirs (bind-mounted below): /api/llm/* scans GGUF_MODELS_DIR; MODELS_DIR is comfyui.
+  GGUF_MODELS_DIR: /gguf-models
+  MODELS_DIR: /models
+  LLAMACPP_CTX_SIZE: ${LLAMACPP_CTX_SIZE:-262144}
+  # Dashboard state (orchestration jobs, throughput samples, MCP registry) — staged V2 data tree.
+  # V1 defaults DASHBOARD_DATA_PATH to ./data/dashboard under /app (not writable by appuser); pin it
+  # to the mounted /data/dashboard so startup mkdir succeeds.
+  DASHBOARD_DATA_PATH: /data/dashboard
+  # SSO: trust Caddy's X-Forwarded-Email on the V2 backend network (mirrors V1's proxy-trust setup).
+  DASHBOARD_TRUST_PROXY_HEADERS: "true"
+  DASHBOARD_TRUSTED_PROXY_NET: 172.27.0.0/16
+# The dashboard reads on-disk GGUFs directly for /api/llm/* (shared read-only from the V1 tree via
+# BASE_PATH) and lists comfyui models via MODELS_DIR; its own state lives in the staged V2 data tree.
+volumes:
+  - ${BASE_PATH:-.}/models/gguf:/gguf-models
+  - ${BASE_PATH:-.}/models/comfyui:/models
+  - ${DATA_PATH:-./data}/dashboard:/data/dashboard
+
+# ── The V1-parity BACKEND (service `ops-api`) ──────────────────────────────────────────────────
+# The feature-rich FastAPI control API. Built from a COPY of V1's ops-controller with ONE minimal
+# patch: an OPS_COMPOSE_MUTATIONS_ENABLED kill-switch (default OFF) so it can never shell
+# docker-compose against the stack. The reactive GUARDIAN needs no patch — it is opt-in via
+# COMFYUI_SERIALIZE_LLAMACPP (default "0"), left unset here, so the guardian thread never starts and
+# /guardian/status returns a benign {"enabled": false, "state": "disabled"}. SDK start/stop/restart
+# stay scoped to COMPOSE_PROJECT=ordo-v2 (compose-project label), so they only ever touch V2.
+backend:
+  name: ops-api
+  image: ordo-v2/ops-api:latest
+  group_add_root: true            # Docker Desktop socket is root:root (mirrors V1 group_add: ["0"])
+  depends_on:
+    llamacpp: service_started
+  # Socket-only probe (matches V1's ops-controller healthcheck — no urllib import cost).
+  healthcheck:
+    test: ["CMD", "python3", "-c", "import socket; s=socket.create_connection(('127.0.0.1',9000),2); s.close()"]
+    start_period: 15s
+    interval: 30s
+    timeout: 5s
+    retries: 3
+  environment:
+    # Scope EVERY container/service action to the ordo-v2 project (compose-project label). This is
+    # the guard that keeps SDK start/stop/restart from ever touching the stopped V1 stack.
+    COMPOSE_PROJECT: ordo-v2
+    COMPOSE_PROJECT_DIR: /workspace
+    OPS_ENV_PATH: /workspace/.env
+    # Reactive-guardian + watchdogs: explicitly DISABLED (these are the defaults; set for clarity
+    # and defense-in-depth — the guardian that caused the migration-triggering outage never starts).
+    COMFYUI_SERIALIZE_LLAMACPP: "0"
+    OPS_VRAM_PRESSURE_GB: "0"
+    OPS_HERMES_WATCHDOG_ENABLED: "0"
+    # The compose-mutation endpoints stay disabled (V2 `ordo serve` owns the compose lifecycle).
+    OPS_COMPOSE_MUTATIONS_ENABLED: "0"
+    COMFYUI_URL: http://comfyui:8188
+    COMFYUI_CONTAINER_NAME: ordo-v2-comfyui-1
+    COMFYUI_MODELS_DIR: /models/comfyui
+    # Model registry + audit log live in the V2 data tree (staged, not the V1 tree).
+    MODEL_REGISTRY_PATH: /data/model-registry.json
+    AUDIT_LOG_PATH: /data/audit.log
+    # On-disk GGUF dir the model-config UI lists (shared read-only from the V1 tree).
+    LLAMACPP_MODELS_DIR: /workspace/models/gguf
+    BASE_PATH: ${BASE_PATH:-.}
+    DATA_PATH: ${DATA_PATH:-./data}
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock       # SDK start/stop (guard-scoped to ordo-v2-*)
+    - ${BASE_PATH:-.}/models/gguf:/workspace/models/gguf:ro
+    - ${BASE_PATH:-.}/models/comfyui:/models/comfyui:ro
+    - ${DATA_PATH:-./data}/ops-controller:/data        # registry + audit log (staged, V2 data tree)

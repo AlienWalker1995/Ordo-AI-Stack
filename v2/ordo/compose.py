@@ -137,19 +137,55 @@ def _model_gateway(project: str, net: str, env_file: str) -> dict[str, Any]:
     return s
 
 
-def _dashboard(project: str, net: str, env_file: str) -> dict[str, Any]:
-    """The V2-native control-plane SPA. V1's dashboard declares a container HEALTHCHECK on
-    `/api/health`, and the agent (hermes-gateway) gates on `dashboard: service_healthy` (the
-    audit's G5 depends-condition). Without a healthcheck on THIS service that `service_healthy`
-    gate is permanently unsatisfiable and the agent never starts — a live-only failure of the
-    same "V2 dropped a piece of V1 per-service config" class the parity audit targets. Emit the
-    healthcheck here; the V2 image ships `curl` (not V1's `python3`), so probe with curl."""
-    s = _svc(f"{project}/dashboard:latest", net=net, env_file=env_file,
-             depends=["ops-controller"], secrets=True)
-    s["healthcheck"] = {
+def _dashboard(project: str, net: str, env_file: str,
+               dashboard: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The control-plane UI service. The dashboard is PLUGGABLE (data-driven, like the agent):
+    the selected `dashboard` manifest supplies the image, env, depends_on and healthcheck. When no
+    selection is passed (bare/legacy call) it falls back to the V2-native SPA defaults.
+
+    V1's dashboard declares a container HEALTHCHECK on `/api/health`, and the agent gates on
+    `dashboard: service_healthy` (audit G5). Keeping a healthcheck on THIS service is REQUIRED or
+    that gate is unsatisfiable and the agent never starts — so a manifest that omits one still gets
+    the V2-native curl probe as a floor."""
+    dashboard = dashboard or {}
+    image = dashboard.get("image") or f"{project}/dashboard:latest"
+    wants_secrets = dashboard.get("wants_secrets", True)
+    # depends_on: manifest may map {peer: condition}; default to start-ordering on ops-controller.
+    depends = dashboard.get("depends_on") or {"ops-controller": "service_started"}
+    s = _svc(image, net=net, env_file=env_file, secrets=wants_secrets)
+    dep = _depends_on(depends)
+    if dep:
+        s["depends_on"] = dep
+    env = dashboard.get("environment") or {}
+    if env:
+        s["environment"] = dict(env)
+    if dashboard.get("volumes"):
+        s["volumes"] = list(dashboard["volumes"])
+    s["healthcheck"] = dashboard.get("healthcheck") or {
         "test": ["CMD-SHELL", "curl -sf http://localhost:8080/api/health || exit 1"],
         "interval": "30s", "timeout": "10s", "retries": 3, "start_period": "30s",
     }
+    return s
+
+
+def _dashboard_backend(net: str, env_file: str, backend: dict[str, Any]) -> dict[str, Any]:
+    """Render the OPTIONAL companion backend a dashboard manifest declares (e.g. the V1-parity
+    `ops-api` control API). Fully data-driven — image/env/volumes/depends/healthcheck come straight
+    from the manifest. `group_add_root` mirrors V1's ops-controller `group_add: ["0"]` for
+    Docker-socket access on Docker Desktop (root:root socket)."""
+    s = _svc(backend["image"], net=net, env_file=env_file,
+             secrets=backend.get("wants_secrets", True))
+    if backend.get("group_add_root"):
+        s["group_add"] = ["0"]
+    if backend.get("environment"):
+        s["environment"] = dict(backend["environment"])
+    if backend.get("volumes"):
+        s["volumes"] = list(backend["volumes"])
+    dep = _depends_on(backend.get("depends_on"))
+    if dep:
+        s["depends_on"] = dep
+    if backend.get("healthcheck"):
+        s["healthcheck"] = dict(backend["healthcheck"])
     return s
 
 
@@ -262,6 +298,7 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
                    agent_secret_files: list[dict[str, str]] | None = None,
                    agent_depends_on: dict[str, str] | None = None,
                    agent_healthcheck: dict[str, Any] | None = None,
+                   dashboard: dict[str, Any] | None = None,
                    llamacpp_image: str | None = None,
                    plugin_services: "list[tuple[Plugin, PluginService]] | None" = None,
                    primary_gpu_uuid: str | None = None,
@@ -305,11 +342,19 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         "model-gateway": _model_gateway(project, net, env_file),
         "mcp-gateway": _mcp_gateway(project, net, env_file),
         "ops-controller": _ops_controller(project, net, env_file),
-        "dashboard": _dashboard(project, net, env_file),
+        # The dashboard is pluggable (data-driven): the selected manifest supplies image/env/
+        # depends/healthcheck. A manifest may also declare a companion backend (e.g. the V1-parity
+        # `ops-api`) which is rendered as its OWN service below — keeping V2's `ordo serve` service
+        # named `ops-controller` (its live clients depend on that name) collision-free.
+        "dashboard": _dashboard(project, net, env_file, dashboard),
         # OPS_CONTROLLER_TOKEN + Discord/backup tokens are secrets (from secrets.env).
         "agent": _svc(agent_img, net=net, env_file=env_file,
                       depends=["model-gateway", "mcp-gateway", "ops-controller"], secrets=True),
     }
+    # Optional dashboard backend (e.g. ops-api for the V1-parity dashboard) — rendered verbatim.
+    if dashboard and dashboard.get("backend"):
+        b = dashboard["backend"]
+        svcs[b["name"]] = _dashboard_backend(net, env_file, b)
     # The agent image's default CMD may be a no-op (agent-hermes defaults to `hermes --help`, which
     # prints usage and exits → restart loop). The manifest's `command` (Hermes: `hermes gateway`)
     # starts the persistent orchestrator; emit it so the rendered service overrides that default,
