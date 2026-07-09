@@ -9,7 +9,6 @@ from __future__ import annotations
 import dataclasses
 import os
 import platform
-import re
 import shutil
 import subprocess
 from typing import Any
