@@ -38,6 +38,14 @@ through it, and it's the direct fix for the #1 pain.
 1. **Config render engine** — declarative source → drift-proof config + hardware right-sizing + checksummed catalog. ✅
 2. **Plugin registry** — data-only manifests, hardware-gated, dependency-resolved. ✅
 3. **Scheduler decision engine** — FIFO + co-run-if-fits + LRU idle-evict. ✅ (the process broker that drives it against real containers is a later slice — needs the live stack / operator.)
+4. **Guided-setup wizard** — `ordo setup` detects → proposes → writes `ordo.yaml` (headless path = CI). ✅
+5. **Full-stack parity render + `ordo parity`** — the renderer now reproduces the complete llama.cpp surface (model/ctx/mmproj/MTP args/…), and `ordo parity --ref <.env>` diffs it. ✅
+   **Merge-gate (a) demonstrated live:** `ordo parity` vs the real running `.env` → **PARITY OK** (15 keys, 0 mismatches), read-only — proving the engine regenerates today's hand-tuned config from one source with no drift.
+
+## Next (approaching the operator boundary)
+`ordo doctor` support-bundle · a status-API contract (busy/ETA the dashboard polls) · the process
+**broker** that drives the scheduler against real containers · the dashboard SPA · the **cutover**.
+The last few touch the live stack or need decisions — reserved for the operator.
 
 ## Acceptance gate for THIS slice (from the plan)
 1. Renders a full config from one source with **zero hand-edits**.

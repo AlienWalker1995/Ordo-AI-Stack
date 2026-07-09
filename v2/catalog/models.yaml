@@ -64,4 +64,6 @@ models:
     ctx_default: 131072
     # hybrid attention/SSM: KV is ~34.8 KB/token over 16 full-attn layers (q8_0).
     kv_kb_per_token: 34.8
+    mmproj: /models/mmproj-Huihui-Q6_K.gguf
+    extra_args: "--reasoning-format deepseek --spec-type draft-mtp --spec-draft-n-max 10 --spec-draft-p-min 0.5"
     tier: ultra

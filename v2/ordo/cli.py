@@ -17,7 +17,7 @@ from .config import Source
 from .hardware import detect
 from .plugins import PluginRegistry
 from .render import DEFAULT_PLUGINS_DIR, render
-from . import wizard
+from . import parity, wizard
 
 HERE = Path(__file__).resolve().parent.parent
 DEFAULT_SOURCE = HERE / "ordo.example.yaml"
@@ -64,6 +64,17 @@ def cmd_setup(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_parity(args: argparse.Namespace) -> int:
+    src, cat = _load(Path(args.source), Path(args.catalog))
+    rc = render(src, cat)
+    ok, mism, compared = parity.report(rc.env, args.ref)
+    print(f"parity vs {args.ref}: compared {len(compared)} key(s)")
+    for k, v in mism.items():
+        print(f"  DIFF {k}: rendered={v['rendered']!r} reference={v['reference']!r}")
+    print("PARITY OK" if ok else f"PARITY FAIL ({len(mism)} mismatch)")
+    return 0 if ok else 1
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     ok = True
     src, cat = _load(Path(args.source), Path(args.catalog))
@@ -90,6 +101,9 @@ def main(argv: list[str] | None = None) -> int:
     ps.add_argument("--out", default="ordo.yaml")
     ps.add_argument("--yes", action="store_true", help="non-interactive (accept detected)")
     ps.set_defaults(func=cmd_setup)
+    pp = sub.add_parser("parity")
+    pp.add_argument("--ref", required=True, help="reference .env to compare the render against")
+    pp.set_defaults(func=cmd_parity)
     sub.add_parser("doctor").set_defaults(func=cmd_doctor)
     args = p.parse_args(argv)
     return args.func(args)
