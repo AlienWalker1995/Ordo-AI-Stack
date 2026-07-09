@@ -2,6 +2,7 @@
 can select the V1-parity dashboard + its ops-api backend WITHOUT patching the substrate."""
 from pathlib import Path
 
+import pytest
 import yaml
 
 from ordo.agents import AgentRegistry
@@ -182,5 +183,10 @@ def test_v2_native_dashboard_reserves_no_gpu(tmp_path):
 
 def test_this_deployments_source_selects_v1_parity():
     # the operator's ordo.yaml pins the reinstated dashboard (regression guard for the reinstatement).
-    src = Source.load(ROOT / "ordo.yaml")
+    # ordo.yaml is the gitignored, operator-specific source — absent in a clean checkout / CI, where
+    # this operator-config guard is not applicable. Skip when absent; assert where it exists.
+    src_path = ROOT / "ordo.yaml"
+    if not src_path.exists():
+        pytest.skip("operator ordo.yaml not present (gitignored); operator-config guard N/A here")
+    src = Source.load(src_path)
     assert src.dashboard == "v1-parity"
