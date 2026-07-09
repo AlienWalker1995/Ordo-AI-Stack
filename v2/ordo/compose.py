@@ -138,6 +138,17 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
     llamacpp = _svc(llamacpp_img, net=net, env_file=env_file, gpu=has_gpu)
     # always-on Prometheus metrics endpoint (the monitoring plugin's prometheus scrapes it).
     llamacpp["command"] = [LLAMACPP_METRICS_ARG]
+    # The patched image is a drop-in binary at /app/llama-server; the launch LOGIC lives in the
+    # host wrapper scripts/llamacpp/run-llama-server.sh, which translates the rendered LLAMACPP_*
+    # env into the full `llama-server -m /models/<gguf> -c <ctx> -ngl -1 …` argv. Without this
+    # entrypoint + the two bind mounts, the image falls through to its default entrypoint and
+    # boots in model-less "router mode" (0 models, no VRAM). GGUF weights + the wrapper are
+    # shared-by-path from the V1 tree via ${BASE_PATH} (already rendered into .env), so no copy.
+    llamacpp["entrypoint"] = ["/bin/sh", "/llamacpp-scripts/run-llama-server.sh"]
+    llamacpp["volumes"] = [
+        "${BASE_PATH:-.}/models/gguf:/models:ro",
+        "${BASE_PATH:-.}/scripts/llamacpp:/llamacpp-scripts:ro",
+    ]
     # model-gateway + mcp-gateway are V1 CUSTOM-BUILT config-wrapper images (LiteLLM + the
     # `local-chat` alias config; docker/mcp-gateway + the reload wrapper). V2 pins them as its own
     # project-namespaced BUILDABLE images (build contexts under v2/docker/{model-gateway,mcp-gateway})

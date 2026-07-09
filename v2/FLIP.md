@@ -139,3 +139,51 @@ containers/volumes/images. **Not before** — until then V1 is your instant roll
   `runtime/secrets/*`. Delta-sync in step 1 does NOT touch secrets.
 - **Preflight:** `GO` — parity vs live `.env` (24 keys, 0 mismatch), all project images built,
   all secrets set, ctx consistent (131072), model sha256-pinned, MCP images digest-pinned.
+
+---
+
+## Phase-5 EXECUTED — attempt #1: ROLLED BACK (2026-07-09), then root-cause fixed
+
+**Outcome: clean rollback. V1 fully restored and serving. A render-engine defect that blocked
+V2's llamacpp was found live, and FIXED upstream in this same commit — the next attempt should pass.**
+
+### Timeline (UTC)
+- `14:14:14` — stopped V1 hermes-gateway + hermes-dashboard; robocopy `/MIR` delta-sync of the brain
+  into `C:\dev\ordo-v2\data\hermes` (exit 1 = success; 18 files updated, 0 failed, 0 extras);
+  cleared 4 stale locks in the V2 copy only (gateway.lock/pid, auth.lock, shell-hooks-allowlist.json.lock).
+- `14:14:33` — **V1 full stop** (`docker compose -p ordo-ai-stack stop`). 0 V1 running; 5090 VRAM → 4 MiB.
+- `14:15`    — V2 core up (`up -d`): 6 containers started.
+- `14:16`    — **defect detected:** V2 `llamacpp` booted in llama.cpp **router mode** (`Available models (0)`,
+  5090 still 4 MiB, no healthcheck). Root cause below.
+- `14:18:26` — **ROLLBACK:** `docker compose -p ordo-v2 stop` (edge never came up → :443 never contended).
+- `14:18:36` — `docker compose -p ordo-ai-stack start`. (One transient `network … not found` on start —
+  a stale ref as `ordo-v2-net` was torn down same session; healed, no container left down.)
+- `~14:21`   — V1 llamacpp `model loaded` → `/health 200`, 5090 back to **29711 MiB** (normal resident).
+- V1 chat proof: `POST local-chat` → **HTTP 200**, `model:"local-chat"`, `system_fingerprint:"b1-86b9470"`
+  (patched build), spec-decode live (draft_n=21, accepted=12). All **24** V1 containers healthy again
+  (gpu-exporter `unhealthy` is pre-existing on driver 581.80, not a regression).
+
+**Total production downtime ≈ 6.5 min** (14:14:33 stop → ~14:21 V1 serving again).
+
+### Root cause (the real fix, not a bandaid)
+`ordo/compose.py` built the `llamacpp` service with **only** `command: [--metrics]` and **no** entrypoint
+override and **no** volumes. The patched image `…llamacpp-patched:qwen36-swa-86b9470` is a drop-in *binary*
+(`ENTRYPOINT ["llama-server"]`); the launch LOGIC lives in the host wrapper
+`scripts/llamacpp/run-llama-server.sh`, which reads the rendered `LLAMACPP_*` env and builds the full
+`llama-server -m /models/<gguf> -c 131072 -ngl -1 …` argv (exactly what V1's compose does at
+`ordo-ai-stack/docker-compose.yml:51,80-81`). Missing that entrypoint + the two bind mounts
+(`${BASE_PATH}/models/gguf:/models:ro`, `${BASE_PATH}/scripts/llamacpp:/llamacpp-scripts:ro`), the image
+fell through to its default entrypoint → model-less router mode. The `LLAMACPP_*` env was rendered
+correctly but nothing consumed it.
+
+**Fix (this commit):** `ordo/compose.py` now emits the wrapper `entrypoint` + both bind mounts for
+`llamacpp`, mirroring V1 exactly. Weights + wrapper are shared-by-path from the V1 tree via `${BASE_PATH}`
+(already in `.env`) — no copy. Re-rendered `out/`, **119/119 tests pass**, preflight still **GO**.
+
+### State after this attempt
+- **V1 = intact rollback asset:** 24 running (== pre-flight), volumes/images untouched; owns tailnet `:443`.
+- **V2 = stopped-intact:** 6 containers `exited` (not removed), named volumes `ordo-v2_grafana-data`
+  + `ordo-v2_prometheus-data` intact — ready for a clean retry from `out/` after this fix.
+- **Retry procedure is unchanged** — re-run this runbook from step 1. The one delta: the Hermes brain was
+  already delta-synced at 14:14 and V1's hermes kept writing after rollback, so the retry's step-1
+  delta-sync will re-mirror the newer V1 state (correct by design).
