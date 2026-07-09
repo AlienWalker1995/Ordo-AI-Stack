@@ -12,7 +12,7 @@ Why this shape (the guardrails the 2026-06-26 and pin-drop incidents demand):
     UNSET and secret-dependent services crash-loop (the 2026-06-26 oauth2-proxy 11-byte
     cookie outage shape). Both are mandatory.
   * `--project-name ordo-v2` + `--project-directory <out>` pin the recreate to the V2
-    project and the EXISTING rendered tree — never the stopped V1 stack, never a re-render.
+    project and the EXISTING rendered tree — never another project, never a re-render.
   * `--no-deps` is MANDATORY: recreate ONLY the named service, never cascade-recreate its
     dependencies (which would drop their GPU pins / secrets and touch services the operator
     didn't ask for).

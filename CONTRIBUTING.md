@@ -2,13 +2,28 @@
 
 Thanks for contributing to Ordo AI Stack.
 
+> **Production is the v2 substrate (`v2/`).** Since the 2026-07-09 cutover (`main` @ `d115035`, PR #72), the stack is defined/operated from `v2/`; the top-level V1 layout is legacy (see [docs/LEGACY-CLEANUP.md](docs/LEGACY-CLEANUP.md)). Changes to the production stack belong in `v2/`.
+
+## Building and testing the v2 stack
+
+- **Tests (no host Python needed)** — run in a throwaway container:
+  ```bash
+  docker run --rm -v "$PWD/v2:/w" -w /w python:3.11-slim \
+    sh -c "pip install -q pyyaml pytest && python -m pytest -q"
+  ```
+  (or `pip install -e ./v2` then `cd v2 && python -m pytest -q`). CI runs a path-gated `v2-substrate` job — see `.github/workflows/ci.yml`.
+- **Render + deploy** — edit the declarative source `v2/ordo.yaml`, then `python -m ordo.cli render --out out` and bring up the rendered compose (`docker compose -p ordo-v2 …`). Never hand-edit `v2/out/*` — it's regenerated. See [`v2/README.md`](v2/README.md) and [`v2/CUTOVER.md`](v2/CUTOVER.md).
+- **Service images** build from `v2/docker/<name>/` (each has a README with the exact context).
+
 ## What not to commit
 
 This repo is public. **Never commit**:
 
-- **`.env`** — contains API keys, tokens, paths. Use `.env.example` as a template.
-- **`data/`** — contains user-specific runtime state (Hermes session data, Discord guild/user IDs, MCP config). Gitignored.
+- **`v2/out/secrets.env`** — operator secret values (rendered from `secrets.env.example`). Gitignored.
+- **`v2/ordo.yaml`** — operator-real source (host paths, tailnet hostname/IP). Only `v2/ordo.example.yaml` is tracked. Gitignored.
+- **`data/`** — user-specific runtime state (Hermes session data, Discord guild/user IDs, MCP config). Gitignored.
 - **`models/`** — model files. Gitignored.
-- **`overrides/compute.yml`** — hardware-specific. Gitignored.
+- **`.env`** *(legacy V1)* — API keys, tokens, paths. Gitignored; use `.env.example` as a template.
+- **`overrides/compute.yml`** *(legacy V1)* — hardware-specific. Gitignored.
 
-Shared code should use placeholders (e.g. `YOUR_GUILD_ID`, `BASE_PATH=.`) or read from environment variables. See [SECURITY.md](SECURITY.md) for details.
+Shared code should use placeholders (e.g. `YOUR_GUILD_ID`) or read from environment variables. See [SECURITY.md](SECURITY.md) for details.

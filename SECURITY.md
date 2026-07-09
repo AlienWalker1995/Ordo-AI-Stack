@@ -24,6 +24,8 @@ We will acknowledge receipt and aim to respond within a reasonable timeframe.
 
 ## Security Considerations
 
+> **Secrets under v2 (production, since the 2026-07-09 cutover):** operator secret **values** live in a gitignored **`v2/out/secrets.env`**, rendered from the keys-only `v2/out/secrets.env.example` and kept **separate from derived config** (`.env` stays config-only). Services that need secrets read `secrets.env` as a second `env_file` (`required: false`). Verify with `ordo preflight --secrets out/secrets.env`. **Never commit `v2/out/secrets.env`** (nor the operator-real `v2/ordo.yaml`, which carries host paths + tailnet identity). The SOPS + age at-rest model under `secrets/` still backs the encrypted material. The `.env` / `runtime/.env` notes below describe the legacy V1 secret flow.
+
 ### Authentication
 
 - **Open WebUI:** The default `WEBUI_AUTH=False` disables login. This is intended for **local/single-user** use only. If you expose the stack to a network (e.g., via port forwarding or LAN access), **enable authentication** by setting `WEBUI_AUTH=True` in the environment.

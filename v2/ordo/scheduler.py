@@ -1,7 +1,8 @@
-"""GPU scheduler — the decision engine that replaces the reactive guardian.
+"""GPU scheduler — the decision engine that replaced the reactive guardian.
 
-The current stack lets ComfyUI evict llama.cpp and races to recover (VRAM leaks, deadlocks).
-Instead, all GPU work requests capacity here. Policy (from the architecture decisions):
+The old reactive guardian let ComfyUI evict llama.cpp and raced to recover (VRAM leaks,
+deadlocks). Instead, all GPU work requests capacity here. Policy (from the architecture
+decisions):
 
   - FIFO admission — no priority, no preemption of a running job.
   - Co-run when it fits — the queue head is admitted concurrently with running jobs whenever
@@ -13,7 +14,7 @@ Instead, all GPU work requests capacity here. Policy (from the architecture deci
     to reclaim VRAM (modeled via `unload_idle`).
 
 This module is the pure decision logic; a thin process broker (start/stop containers) drives it
-against real processes — that part needs the live stack and is out of scope for this slice.
+against real processes (see broker.py).
 """
 from __future__ import annotations
 

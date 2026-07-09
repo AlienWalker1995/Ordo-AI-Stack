@@ -1,19 +1,31 @@
 # Cutover runbook — migrating from the live stack to Ordo v2
 
-This is the **operator's** procedure. Nothing here runs automatically: the substrate is built and
-validated in isolation, but bringing v2 up, validating GPU work, and retiring the old stack touches
-the live containers and the 5090 — so **you** drive it. Claude will not execute this.
+> **STATUS: EXECUTED — 2026-07-09. This cutover is DONE.** Ordo v2 is now the production stack,
+> running entirely from `C:\dev\ordo-ai-stack` on `main` (compose project `ordo-v2`, 24 services).
+> The flip succeeded at ~3.75-min core downtime (after two clean ~7-min rollbacks that each turned a
+> live defect into a test-guarded fix), then a consolidation re-homed the runtime to the primary
+> checkout and merged to `main`. The old V1 stack is stopped-intact (containers removed, 6 volumes +
+> all images KEPT for reconstitution). See **[`FLIP.md`](./FLIP.md)** for the executed flip +
+> consolidation record with evidence, and the **"CONSOLIDATION EXECUTED"** section at the bottom of
+> this file. The procedure below is retained as the runbook of record for how it was performed (and
+> how a future rebuild-and-flip would go); read it as a completed runbook, not a pending action.
 
-The design is a **big-bang rebuild with an atomic cutover** (agreed in the interrogation): v2 runs
-its own isolated compose project beside the live stack, you validate full parity, then flip. The old
-stack stays intact for instant rollback.
+This was the **operator's** procedure. Nothing here ran automatically: the substrate was built and
+validated in isolation, and bringing v2 up, validating GPU work, and retiring the old stack touched
+the live containers and the 5090.
+
+The design was a **big-bang rebuild with an atomic cutover** (agreed in the interrogation): v2 ran
+its own isolated compose project beside the live stack, parity was validated in full, then it flipped.
+The old stack stayed intact for instant rollback throughout.
 
 ---
 
 ## 0. Preconditions (once)
 
-- v2 lives at `C:\dev\ordo-v2` on branch `arch/v2-substrate` — **separate worktree**, the live stack
-  at `C:\dev\ordo-ai-stack` is untouched.
+- *(as performed)* v2 was developed at `C:\dev\ordo-v2` on branch `arch/v2-substrate` — a **separate
+  worktree**, beside the untouched live stack at `C:\dev\ordo-ai-stack`. Post-consolidation this is
+  no longer true: the retired worktree is gone and everything now runs from `C:\dev\ordo-ai-stack`
+  on `main` (see the STATUS banner + "CONSOLIDATION EXECUTED").
 - A **current** personal backup exists (Hermes `data/` + personal automation), committed. Verify the
   restore actually works into v2 before you flip — a backup you haven't restored is a guess.
 
@@ -41,10 +53,20 @@ searxng, grafana, prometheus, gpu-exporter, oauth2-proxy, caddy, stt/tts, upstre
 pulled on first `up`. `ordo preflight` lists any missing build-first image — build **all** of these
 before the flip (build only the ones your enabled profiles need):
 
+> **Dashboard note (as shipped):** production reinstated the **V1-parity** dashboard, not the
+> minimal V2-native SPA. That means two images instead of `ordo-v2/dashboard:latest`: the V1 SPA
+> reused unchanged as `ordo-v2/dashboard-v1:latest` (service `dashboard`) and its backend
+> `ordo-v2/ops-api:latest` (service `ops-api`, a copy of V1's ops-controller with guardian/watchdogs
+> OFF). See `docker/ops-api/README.md` and AUDIT.md "Dashboard reinstatement". The `ordo serve`
+> scheduler control plane below (`ops-controller`) is a *separate* service.
+
 ```
-# --- V2-native core control plane ---
+# --- V2-native core control plane (the ordo serve scheduler) ---
 docker build -f docker/ops-controller.Dockerfile -t ordo-v2/ops-controller:latest .
-docker build -f docker/dashboard.Dockerfile      -t ordo-v2/dashboard:latest .
+
+# --- dashboard: production uses the reinstated V1-parity pair (see note above) ---
+docker build -t ordo-v2/ops-api:latest       docker/ops-api
+docker build -t ordo-v2/dashboard-v1:latest  C:/dev/ordo-ai-stack/dashboard
 
 # --- config-wrapper core images (V1 parity: local-chat alias, mcp reload wrapper) ---
 docker build -t ordo-v2/model-gateway:latest  docker/model-gateway

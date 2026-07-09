@@ -1,13 +1,12 @@
-"""Preflight — a read-only GO / NO-GO readiness check for the cutover.
+"""Preflight — a read-only GO / NO-GO readiness check before bringing a stack up.
 
-The migration is the operator's to run, but "is it safe to cut over yet?" should be a command,
-not a vibe. `ordo preflight` renders the target config and checks every gate we can verify
-WITHOUT touching either stack:
+"Is it safe to deploy this config yet?" should be a command, not a vibe. `ordo preflight`
+renders the target config and checks every gate we can verify WITHOUT starting anything:
 
   - config renders and the one ctx value is consistent across all consumers (the drift gate),
   - the active model is sha256-pinned (corrupt-weights gate) and MCP images are digest-pinned,
   - if a GPU is expected for the enabled media/voice plugins, one is actually present,
-  - parity vs the live stack's .env (merge-gate (a)) when a --ref is given,
+  - parity vs a reference .env (merge-gate (a)) when a --ref is given,
   - every image the rendered compose needs is available: project images (ordo-v2/*) must be
     built locally (blocking); upstream images (llama.cpp, litellm, …) may be absent — Docker
     pulls them (a note, not a blocker).
