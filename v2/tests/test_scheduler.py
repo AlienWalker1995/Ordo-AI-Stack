@@ -62,9 +62,12 @@ def test_lru_evicts_idle_cached_to_admit():
     assert "newer_model" not in evicted  # only evicted as much as needed
 
 
-def test_job_bigger_than_gpu_stays_queued():
+def test_job_bigger_than_gpu_is_removed_not_left_to_starve_the_queue():
+    # A job that can never fit is rejected (or cloud-routed) rather than blocking the queue head.
+    # See test_cloud_fallback.py for the full routing/starvation coverage.
     s = Scheduler(total_vram_gb=8)
-    s.submit(Job("huge", 20, "media"))   # never fits → would cloud-fallback in the real broker
+    s.submit(Job("huge", 20, "media"))   # never fits on an 8GB card
     admitted, _ = s.pump()
     assert admitted == []
-    assert s.queued_ids == ["huge"]
+    assert s.queued_ids == []                    # not left stuck in the queue
+    assert s.status()["rejected"] == ["huge"]    # rejected (no cloud fallback configured here)

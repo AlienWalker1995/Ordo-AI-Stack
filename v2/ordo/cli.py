@@ -132,7 +132,8 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
     cat = Catalog.load(Path(args.catalog))
     reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
     hw = detect()
-    sched = Scheduler(hw.primary_vram_gb if hw.has_gpu else 0.0)
+    cloud_fallback = bool((Source.load(Path(args.source)).cloud_fallback or {}).get("enabled"))
+    sched = Scheduler(hw.primary_vram_gb if hw.has_gpu else 0.0, cloud_fallback=cloud_fallback)
     broker = Broker(sched, DockerBackend(project=args.project))
     cp = ControlPlane(Path(args.source), cat, reg, args.out, scheduler=sched, broker=broker)
     print(f"ops-controller on {args.host}:{args.port} (project={args.project}, "
