@@ -39,6 +39,15 @@ def _gpu_pinned_reservation(uuid: str) -> dict[str, Any]:
         {"driver": "nvidia", "device_ids": [uuid], "capabilities": ["gpu"]}]}}}}
 
 
+def _capability_gpu_reservation(capabilities: list[str]) -> dict[str, Any]:
+    """An all-GPU (`count: all`, not a uuid pin — reads BOTH cards) reservation with the given
+    NVIDIA capabilities. `["utility"]` injects `nvidia-smi` + NVML for read-only VRAM detection
+    WITHOUT reserving compute; `["gpu"]` is a compute reservation. Data-driven so a service just
+    declares the visibility it needs (see `_dashboard_backend`)."""
+    return {"deploy": {"resources": {"reservations": {"devices": [
+        {"driver": "nvidia", "count": "all", "capabilities": list(capabilities)}]}}}}
+
+
 def _utility_gpu_reservation() -> dict[str, Any]:
     """A read-only GPU reservation: the `utility` capability injects `nvidia-smi` + NVML into
     the container WITHOUT reserving compute. The V2 scheduler (ops-controller) detects VRAM by
@@ -46,8 +55,7 @@ def _utility_gpu_reservation() -> dict[str, Any]:
     → it can't do the VRAM-fit co-run admission that REPLACES V1's reactive guardian, and it
     drops every GPU plugin (comfyui/voice/worker) as 'not available'. V1's ops-controller has
     exactly this (caps=[[utility]]). `count: all` (not a uuid pin) so it can read BOTH cards."""
-    return {"deploy": {"resources": {"reservations": {"devices": [
-        {"driver": "nvidia", "count": "all", "capabilities": ["utility"]}]}}}}
+    return _capability_gpu_reservation(["utility"])
 
 
 def _pin_env(uuid: str) -> dict[str, str]:
@@ -177,6 +185,13 @@ def _dashboard_backend(net: str, env_file: str, backend: dict[str, Any]) -> dict
              secrets=backend.get("wants_secrets", True))
     if backend.get("group_add_root"):
         s["group_add"] = ["0"]
+    # GPU visibility: the V1-parity `ops-api` backend enumerates GPUs by shelling to nvidia-smi
+    # (it's a copy of V1's ops-controller), which the NVIDIA runtime only injects when the service
+    # reserves a GPU with the `utility` capability. Without this the backend sees ZERO GPUs and the
+    # dashboard's GPU widgets report "No GPUs returned from registry". `count: all` reads both cards.
+    gpu_caps = backend.get("gpu_capabilities") or []
+    if gpu_caps:
+        s.update(_capability_gpu_reservation(list(gpu_caps)))
     if backend.get("environment"):
         s["environment"] = dict(backend["environment"])
     if backend.get("volumes"):

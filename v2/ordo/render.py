@@ -283,6 +283,7 @@ def render(source: Source, catalog: Catalog,
                 "healthcheck": dict(b.healthcheck),
                 "group_add_root": b.group_add_root,
                 "wants_secrets": b.wants_secrets,
+                "gpu_capabilities": list(b.gpu_capabilities),
             }
 
     # Registry-driven plugin resolution: enable what's requested AND fits AND has its deps.

@@ -77,6 +77,25 @@ tab and token auth are load-bearing. It has been reinstated, correctly and durab
   start/stop/restart stay scoped to `COMPOSE_PROJECT=ordo-v2` (compose-project label), so they can
   only ever touch V2.
 
+- **ops-api GPU visibility: `gpu: utility` (this gap-fix).** ops-api IS a copy of V1's ops-controller
+  and enumerates GPUs/VRAM by shelling to `nvidia-smi` — which the NVIDIA runtime only injects when
+  the service reserves a GPU with the **`utility`** capability. The reinstatement WRONGLY dropped it
+  (parity mapping oversight, same shape as the dashboard row): `docker inspect` showed
+  `DeviceRequests=null`, `nvidia-smi` absent, so ops-api enumerated ZERO GPUs and the dashboard's
+  GPU/registry widgets reported *"No GPUs returned from registry. WSL passthrough may be down."*
+  DOWNSTREAM: the startup reconcile, running blind, seeded the registry with `gpu_uuid: null` on
+  first boot. **Fix (data-driven, mirrors V1 exactly):** a new `gpu_capabilities` / `gpu: <cap>`
+  field on the dashboard `backend:` manifest schema (`dashboards.py`) flows through render into
+  `compose._dashboard_backend`, which renders
+  `deploy.resources.reservations.devices: [{driver: nvidia, count: all, capabilities: [utility]}]`
+  — the exact caps V1's ops-controller has (`caps=[[utility]]`). `v1-parity/dashboard.yaml` sets
+  `gpu: utility` on ops-api. `count: all` (not a uuid pin) so it reads BOTH cards. V1's ops-controller
+  carries NO `NVIDIA_*` env vars (verified via `docker inspect .Config.Env`), so none were added —
+  the utility capability alone triggers the injection (confirmed live: `nvidia-smi -L` lists 5090+1070).
+  Live-validated: `/api/registry/gpus` returns both GPUs with model→GPU assignments; the "No GPUs"
+  condition is gone. The nulled registry was restored from V1's intact copy (reconcile is seed-only —
+  `if mid in existing: continue` — so it preserves restored records, never re-nulls).
+
 - **Per-service recreate: were 501 stubs, now WIRED-SAFE (this gap-fix).** The dashboard's REAL
   buttons — Model Control flag-apply → `/services/llamacpp/recreate`, and default-model →
   `/services/open-webui/recreate` — proxy to per-service recreate, which the earlier 501 stub broke.

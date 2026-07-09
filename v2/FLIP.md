@@ -479,3 +479,60 @@ new vs live `docker-compose.yml` = **ONLY the 3 intended ops-api lines** (`OPS_S
   untouched** (0 running, 29 exited).
 - **Offline:** ruff clean (ordo + tests + the touched ops-api modules) + **166 passed** (was 151;
   +15: 11 in `test_compose_recreate.py`, +4 render/gate guards in `test_dashboards.py`).
+
+## Gap-fix: ops-api GPU visibility — dashboard GPU widgets went blank ("No GPUs returned") — EXECUTED, live
+
+The reinstated V1 dashboard's GPU/registry widgets showed *"No GPUs returned from registry. WSL
+passthrough may be down."* — **WSL was fine** (llamacpp served off the 5090). Two-fold root cause:
+
+1. **ops-api had NO GPU access.** It IS a copy of V1's ops-controller and enumerates GPUs by shelling
+   to `nvidia-smi`, which the NVIDIA runtime injects only when the service reserves a GPU with the
+   **`utility`** capability. The reinstatement dropped it (parity oversight): `docker inspect
+   ordo-v2-ops-api-1` → `DeviceRequests=null`, no `nvidia-smi` in the container → zero GPUs enumerated
+   → the `/api/registry/gpus` route returned empty → the widget's "No GPUs" branch fired. V1 ground
+   truth (`docker inspect ordo-ai-stack-ops-controller-1`): `caps=[[utility]]`, and (verified via
+   `.Config.Env`) NO `NVIDIA_*` env vars — the capability alone triggers the injection.
+2. **Downstream: nulled registry.** ops-api's startup reconcile, running blind, seeded the staged
+   registry with `gpu_uuid: null` everywhere (`updated_by: reconcile`). V1's original registry was
+   intact at `C:\dev\ordo-ai-stack\data\ops-controller\model-registry.json`.
+
+### Change (data-driven, committed; no hand-edit of `out/`)
+- **`ordo/dashboards.py`**: new `gpu_capabilities` field on `DashboardBackend` + a `_gpu_caps` parser
+  accepting the `gpu: <cap>` shorthand OR `gpu_capabilities: [utility]` list.
+- **`ordo/compose.py`**: refactored `_utility_gpu_reservation` onto a shared
+  `_capability_gpu_reservation(caps)`; `_dashboard_backend` now renders the all-GPU (`count: all`)
+  reservation when the backend declares capabilities.
+- **`ordo/render.py`**: flows `gpu_capabilities` into the backend dict.
+- **`dashboards/v1-parity/dashboard.yaml`**: ops-api backend now declares `gpu: utility` (mirrors V1's
+  ops-controller `caps=[[utility]]` exactly; NO `NVIDIA_*` env, matching V1).
+- **Regression tests (+4, → 170):** utility reservation renders; a plain `gpu:true` service still
+  reserves the compute `gpu` cap (not utility); a no-GPU backend gets no reservation; the real
+  `v1-parity` manifest end-to-end gives ops-api the utility reservation.
+
+### Re-render (manifest changed) — llamacpp byte-identical, verified
+Re-rendered `out/` in a `--gpus all` CUDA container (`nvidia/cuda:12.4.1-base` → real `detect()`
+listed 5090 `GPU-97fe65ee-…` + 1070 `GPU-20fac13a-…`). `diff` new vs live `docker-compose.yml` =
+**ONLY the 8-line ops-api `deploy` block** (`{driver: nvidia, count: all, capabilities: [utility]}`).
+**llamacpp block byte-identical** (raw-text SHA `856ef157…` both sides; pin stays `GPU-97fe65ee-…`).
+`.env` NOT overwritten (live has runtime `/env/set` keys `DEFAULT_MODEL`/`OPEN_WEBUI_DEFAULT_MODEL`
+the render doesn't emit — only `docker-compose.yml` was applied; live `.env`/`secrets.env` preserved).
+`docker compose config` (both env files, all profiles) → exit 0. Applied `up -d --no-deps --force-recreate ops-api`.
+
+### Registry restore (clobber-safe)
+ops-api STOPPED → nulled registry backed up (`model-registry.json.nulled.bak`) → V1's intact registry
+copied over → ops-api started (now GPU-enabled). Reconcile is **seed-only** (`if mid in existing:
+continue`) so it preserved every restored record; post-boot re-read confirms real uuids
+(chat/embed/comfyui → 5090, voice → 1070), config blocks populated, provenance `model-config`/`dashboard`.
+No background writer nulls the registry (only startup-reconcile + explicit HTTP verbs mutate it).
+
+### Validations (with evidence)
+- **`docker inspect ordo-v2-ops-api-1`** → `DeviceRequests=[["utility"]]`; **`nvidia-smi -L`** inside →
+  lists BOTH cards (5090 + 1070); healthy, RestartCount 0.
+- **`/api/registry/gpus`** (DASHBOARD_AUTH bearer, the exact route the GPU widget calls) → **BOTH GPUs**:
+  5090 (31.8 GB, 28.4 used, models `comfyui`/`local-chat`/`local-embed`) + 1070 (8.0 GB, 2.5 used,
+  `voice-stt`/`voice-tts`). `data.gpus` non-empty → the "No GPUs returned" condition is GONE.
+- **`/api/registry/models`** → all 5 models with real GPU assignments.
+- **Scheduler `ops-controller /status`** → 200, model `huihui-qwen3.6-27b-q6`, unaffected.
+- **llamacpp UNTOUCHED:** container id `5d2d0510b871…` + RestartCount 0 — identical to pre-work.
+- **Scope:** ONLY `ops-api` recreated (`--no-deps`); **V1 untouched** (0 running, 29 exited).
+- **Offline:** ruff clean + **170 passed** (was 166; +4 GPU-reservation guards in `test_compose.py`).
