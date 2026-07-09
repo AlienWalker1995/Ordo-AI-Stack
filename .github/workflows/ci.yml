@@ -100,6 +100,14 @@ jobs:
           PYTHONPATH=. python -m ordo --source ordo.example.yaml render --out /tmp/ordo-out
           test -f /tmp/ordo-out/.env && test -f /tmp/ordo-out/docker-compose.yml
 
+      # Prove the rendered compose is loadable by the REAL docker engine (not just a well-shaped
+      # dict). `config` parses + validates; it does not create or start anything.
+      - name: Rendered compose validates (docker engine)
+        if: steps.filter.outputs.v2 == 'true'
+        run: |
+          docker compose -f /tmp/ordo-out/docker-compose.yml config >/dev/null
+          echo "rendered compose accepted by docker compose config"
+
       - name: Skip (no v2 changes)
         if: steps.filter.outputs.v2 != 'true'
         run: echo "Skipping v2 substrate — no changes under v2/."
