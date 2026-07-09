@@ -126,6 +126,16 @@
             reverse_proxy comfyui:8188
         }
 
+        # ---- Grafana at /grafana/ (opt-in: --profile monitoring) ----
+        # Grafana serves from the subpath (GF_SERVER_SERVE_FROM_SUB_PATH + root_url
+        # /grafana/), so `handle` (NOT handle_path — keep the prefix) proxies straight
+        # through. SSO-gated by the forward_auth above; Grafana itself is anonymous
+        # read-only. Embedded in the dashboard's Grafana tab. 502s if the profile
+        # isn't running.
+        handle /grafana/* {
+            reverse_proxy grafana:3000
+        }
+
         # ---- codebase-memory 3D graph UI at /codebase-memory/ ----
         # Absolute-asset SPA served under a subpath: the codebase-memory-ui container
         # runs nginx, which proxies to the UI and rewrites its baked /assets,/api,/rpc,
@@ -135,6 +145,17 @@
         @codebasememory path /codebase-memory /codebase-memory/*
         handle @codebasememory {
             reverse_proxy codebase-memory-ui:9750
+        }
+
+        # ---- Obsidian memory-vault GUI at /obsidian/ ----
+        # linuxserver/obsidian (selkies web desktop) is subfolder-aware via SUBFOLDER=/obsidian/,
+        # so it emits its own assets under /obsidian/ — `handle` (NO strip) keeps the prefix intact
+        # for the app. Caddy proxies the selkies websocket (video/input stream) natively; no extra
+        # config needed. SSO-gated (this GUI embeds a terminal w/ passwordless sudo — never bypass
+        # auth, never host-publish). Opt-in (--profile obsidian); 502s if the service isn't running.
+        @obsidian path /obsidian /obsidian/*
+        handle @obsidian {
+            reverse_proxy obsidian:3000
         }
 
         # ---- Open WebUI mounted at /chat (prefix stripped) ----

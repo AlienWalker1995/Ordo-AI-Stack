@@ -1,0 +1,45 @@
+# Plugin manifest — data-only. Registers the file-based memory-vault MCP server (agent tool), not a
+# compose service. Gives Hermes/agents read+write access to the shared markdown memory vault (the
+# SAME host dir the Obsidian GUI browses) via mcpvault: read_note/write_note/patch_note/search_notes/
+# frontmatter/tags/... — the durable memory substrate lives as plain markdown, not a hidden store.
+id: memory-vault
+name: Memory Vault (MCP tools)
+description: Read/write the shared markdown memory vault (Obsidian) via MCP, for durable agent memory.
+kind: mcp                  # registers an MCP server (agent tool), not a compose service
+requires:
+  nvidia: false            # pure filesystem — no GPU, no network
+  ram_gb: 1
+provides: [tools]
+mcp:
+  # Locally-built project image (build context v2/docker/mcpvault-mcp): wraps @bitbonsai/mcpvault
+  # pinned to an exact npm version. Like the other ordo-v2/* MCP images it's pinned by build context
+  # (preflight shows 'build first'), not a registry digest.
+  image: ordo-v2/mcpvault-mcp:latest
+  # Keep the container warm across calls within a session (avoids respawn per tool call).
+  longLived: true
+  # 100% local filesystem tool — no egress. Blocks any exfiltration of vault contents from the
+  # spawned container. (mcpvault reads/writes only the mounted vault; it never calls out.)
+  disableNetwork: true
+  volumes:
+    # The shared vault, bind-mounted READ-WRITE (no `:ro`) so write_note/patch_note/delete_note
+    # actually persist to disk. Source is a HOST path — the gateway spawns this as a sibling via the
+    # host docker.sock, so PLACEHOLDER_MEMORY_VAULT_PATH is substituted by gateway-wrapper.sh from
+    # the gateway's MEMORY_VAULT_PATH env (rendered from site.MEMORY_VAULT_PATH). Mount target /vault
+    # matches the image CMD `mcpvault /vault`.
+    - "PLACEHOLDER_MEMORY_VAULT_PATH:/vault"
+  tools:
+    - read_note
+    - write_note
+    - patch_note
+    - list_directory
+    - delete_note
+    - search_notes
+    - move_note
+    - move_file
+    - read_multiple_notes
+    - update_frontmatter
+    - get_notes_info
+    - get_frontmatter
+    - manage_tags
+    - get_vault_stats
+    - list_all_tags
