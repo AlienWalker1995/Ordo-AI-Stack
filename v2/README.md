@@ -28,9 +28,16 @@ through it, and it's the direct fix for the #1 pain.
 | `ordo/hardware.py` | hardware detection (GPU/VRAM/RAM/CPU) + mockable profiles for CI |
 | `ordo/catalog.py` | load catalog + **best-fit** model selection with a VRAM headroom reserve (encodes the "don't fill the card" lesson) |
 | `ordo/config.py` | load/validate the declarative source |
-| `ordo/render.py` | `(source + hardware + catalog) → RenderedConfig`; writes `out/.env`, `out/hermes.context.json`, `out/manifest.json` |
+| `ordo/render.py` | `(source + hardware + catalog + plugins) → RenderedConfig`; writes `out/.env`, `out/hermes.context.json`, `out/manifest.json` |
+| `ordo/plugins.py` + `plugins/*/plugin.yaml` | **registry-driven** plugins: each manifest declares hardware needs + a config fragment; the renderer enables what fits (media = NVIDIA-only) and resolves `depends_on` |
+| `ordo/scheduler.py` | GPU **scheduler decision engine** — FIFO admission + co-run-when-it-fits + LRU idle-evict (replaces the reactive guardian; pure logic, a process broker drives it later) |
 | `ordo/cli.py` | `ordo detect | render | doctor` — the seed of the one-script |
-| `tests/` | mocked-profile render (5090 + CPU-only), drift-revert, and cross-service ctx consistency |
+| `tests/` | 22 tests: mocked-profile render (5090 + CPU-only), drift-revert, ctx consistency, plugin gating/deps, scheduler co-run/FIFO/evict |
+
+## Slices done on this branch
+1. **Config render engine** — declarative source → drift-proof config + hardware right-sizing + checksummed catalog. ✅
+2. **Plugin registry** — data-only manifests, hardware-gated, dependency-resolved. ✅
+3. **Scheduler decision engine** — FIFO + co-run-if-fits + LRU idle-evict. ✅ (the process broker that drives it against real containers is a later slice — needs the live stack / operator.)
 
 ## Acceptance gate for THIS slice (from the plan)
 1. Renders a full config from one source with **zero hand-edits**.
