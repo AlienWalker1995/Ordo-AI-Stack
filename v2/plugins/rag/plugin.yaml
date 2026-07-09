@@ -29,7 +29,9 @@ services:
     # on a small nomic GGUF. rag-ingestion + the qdrant-rag MCP both embed against THIS so ingest and
     # query share the same 768-dim space. Stock upstream server image (Docker pulls it).
     image: ghcr.io/ggml-org/llama.cpp:server
-    gpu: true               # rides the primary card when present; CPU-fallback via gpu_layers=0 upstream
+    # Pin to the PRIMARY (compute) card by uuid when present — V1 pins llamacpp-embed to the 5090 in
+    # gpu-assignments.yml. On a CPU/no-GPU box the pin resolves to nothing → upstream CPU-fallback.
+    gpu_pin: primary        # rides the primary card by uuid; CPU-fallback when no GPU is detected
     command:
       - --host
       - 0.0.0.0

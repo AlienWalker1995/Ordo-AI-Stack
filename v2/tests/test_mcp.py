@@ -65,3 +65,18 @@ def test_write_emits_mcp_registry_yaml(tmp_path):
     render(_src(hardware=P_5090), CATALOG, REGISTRY).write(tmp_path)
     reg = yaml.safe_load((tmp_path / "mcp-registry.yaml").read_text())
     assert {s["id"] for s in reg["servers"]} >= {"qdrant-rag", "searxng"}
+
+
+# ── Defect class: the mcp-gateway wrapper reads servers.txt + registry-custom.yaml (its native
+#    schema) from the mounted config dir. render must emit those, or the gateway boots empty. ──
+def test_write_emits_wrapper_native_mcp_config(tmp_path):
+    render(_src(hardware=P_5090), CATALOG, REGISTRY).write(tmp_path)
+    servers = (tmp_path / "mcp" / "servers.txt").read_text().strip()
+    ids = set(servers.split(","))
+    assert {"qdrant-rag", "searxng"} <= ids
+    # registry-custom.yaml uses the wrapper's `registry:` map schema keyed by server id, env as list
+    reg = yaml.safe_load((tmp_path / "mcp" / "registry-custom.yaml").read_text())
+    assert "registry" in reg and {"qdrant-rag", "searxng"} <= set(reg["registry"])
+    q = reg["registry"]["qdrant-rag"]
+    assert q["type"] == "server" and q["image"] and isinstance(q["env"], list)
+    assert any(e["name"] == "QDRANT_URL" for e in q["env"])

@@ -88,3 +88,48 @@ def test_render_unknown_agent_warns_and_falls_back(tmp_path):
     rc.write(tmp_path)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
     assert c["services"]["agent"]["image"] == "ordo-v2/agent-typo-agent:latest"  # convention fallback
+
+
+# ── Defect class: agent runtime wiring (V2 agent had NO volumes/secrets/env/healthcheck → the brain,
+#    /workspace data, the /c/dev mirror + file secrets were all missing; only mattered live). ──
+def test_hermes_manifest_declares_runtime_wiring():
+    h = AGENTS.get("hermes")
+    assert h.user == "root"
+    assert h.secret_files and all("target" in s and "source" in s for s in h.secret_files)
+    assert h.depends_on.get("model-gateway") == "service_healthy"
+    assert h.healthcheck  # gateway_state.json check
+
+
+def test_render_agent_mounts_brain_workspace_and_mirror(tmp_path):
+    render(_src("hermes"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    vols = c["services"]["agent"]["volumes"]
+    # THE BRAIN at the staged path (never the live-stack path), plus /workspace/data + /c/dev mirror
+    assert any(v.endswith(":/home/hermes/.hermes") and "DATA_PATH" in v for v in vols)
+    assert any(v.endswith(":/workspace/data") for v in vols)
+    assert any(v.endswith(":/c/dev") for v in vols)
+
+
+def test_render_agent_mounts_file_secrets_readonly(tmp_path):
+    render(_src("hermes"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    vols = c["services"]["agent"]["volumes"]
+    assert any(v.endswith(":/run/secrets/discord_token:ro") for v in vols)
+    assert any(v.endswith(":/run/secrets/github_backup_pat:ro") for v in vols)
+
+
+def test_render_agent_has_user_env_and_healthcheck(tmp_path):
+    render(_src("hermes"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    agent = c["services"]["agent"]
+    assert agent["user"] == "root"
+    assert agent["environment"]["OPS_CONTROLLER_URL"] == "http://ops-controller:9000"
+    assert agent["healthcheck"]["test"][-1].endswith("gateway_state.json")
+
+
+def test_render_agent_without_wiring_stays_minimal(tmp_path):
+    # a third-party agent that declares no runtime wiring renders exactly as before (no volumes etc.)
+    render(_src("openai-agent"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    agent = c["services"]["agent"]
+    assert "volumes" not in agent and "user" not in agent

@@ -39,6 +39,24 @@ def _gpu_pinned_reservation(uuid: str) -> dict[str, Any]:
         {"driver": "nvidia", "device_ids": [uuid], "capabilities": ["gpu"]}]}}}}
 
 
+def _pin_env(uuid: str) -> dict[str, str]:
+    """The CUDA_VISIBLE_DEVICES / NVIDIA_VISIBLE_DEVICES pair — the ONLY thing that actually
+    isolates a process to one card under Docker Desktop/WSL2 (device_ids alone is a no-op).
+    Mirrors V1's overrides/gpu-assignments.yml for every GPU service (primary AND secondary)."""
+    return {"CUDA_VISIBLE_DEVICES": uuid, "NVIDIA_VISIBLE_DEVICES": uuid}
+
+
+def _depends_on(peers: dict[str, str] | list[str] | None) -> Any:
+    """Render depends_on. A plain list -> emitted as-is (start-ordering only). A dict of
+    {peer: condition} -> the long form `{peer: {condition: <cond>}}` so V1's service_healthy
+    gates are mirrored (the agent must not start until the gateways are HEALTHY, not just up)."""
+    if not peers:
+        return None
+    if isinstance(peers, dict):
+        return {p: {"condition": c} for p, c in peers.items()}
+    return list(peers)
+
+
 # Operator-managed secrets live here (SOPS-decrypted / hand-filled), NEVER in the rendered .env.
 # Services that need secrets read it as a SECOND env_file layered over the derived .env.
 SECRETS_ENV_FILE = "secrets.env"
@@ -86,8 +104,63 @@ def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
     return s
 
 
+def _mcp_gateway(project: str, net: str, env_file: str) -> dict[str, Any]:
+    """The MCP tool gateway. Like V1 it SPAWNS MCP servers as sibling containers, so it needs the
+    Docker socket; and its wrapper reads the rendered catalog (mcp-registry.yaml) from a mounted
+    config dir at runtime — not baked. Without the socket + the config mount + these env keys the
+    gateway boots with an empty/UNKNOWN catalog and the agent has no tools (a live-only failure).
+    GitHub/n8n API tokens for spawned servers come from secrets.env (env-var form)."""
+    s = _svc(f"{project}/mcp-gateway:latest", net=net, env_file=env_file, secrets=True)
+    s["volumes"] = [
+        "/var/run/docker.sock:/var/run/docker.sock",  # gateway spawns MCP servers as containers
+        # the rendered mcp config dir (servers.txt + registry-custom.yaml, wrapper-native schema). RW
+        # because the wrapper writes registry-custom.docker.yaml (placeholder substitution) alongside.
+        "./mcp:/mcp-config",
+    ]
+    s["environment"] = {
+        "MCP_GATEWAY_PORT": "8811",
+        # the wrapper reads the enabled server list from servers.txt and merges registry-custom.yaml.
+        "MCP_CONFIG_FILE": "/mcp-config/servers.txt",
+        "MCP_GATEWAY_VERBOSE": "1",
+        "OPS_CONTROLLER_URL": "http://ops-controller:9000",
+        "COMFYUI_URL": "http://comfyui:8188",
+        "N8N_API_URL": "http://n8n:5678",
+        "CODE_ROOT": "${CODE_ROOT:-/c/dev}",
+    }
+    s["healthcheck"] = {
+        "test": ["CMD-SHELL", "sh /mcp-scripts/healthcheck.sh"],
+        "interval": "15s", "timeout": "10s", "retries": 5, "start_period": "60s",
+    }
+    return s
+
+
+def _apply_agent_runtime(svc: dict[str, Any], *, user: str | None, volumes: list[str] | None,
+                         environment: dict[str, str] | None,
+                         secret_files: list[dict[str, str]] | None,
+                         depends_on: dict[str, str] | None,
+                         healthcheck: dict[str, Any] | None) -> None:
+    """Layer the agent manifest's runtime wiring onto the base agent service (in place). File
+    secrets render as read-only bind mounts of the operator's host secret files into /run/secrets/*
+    (the same files V1 mounts; independent of secrets.env). depends_on with conditions overrides the
+    plain start-order list so V1's service_healthy gates are mirrored."""
+    if user:
+        svc["user"] = user
+    vols = list(volumes or [])
+    for sf in (secret_files or []):
+        vols.append(f"{sf['source']}:{sf['target']}:ro")
+    if vols:
+        svc["volumes"] = vols
+    if environment:
+        svc["environment"] = dict(environment)
+    dep = _depends_on(depends_on)
+    if dep:
+        svc["depends_on"] = dep  # long-form conditions replace the base plain list
+    if healthcheck:
+        svc["healthcheck"] = dict(healthcheck)
+
+
 def _plugin_service(ps: "PluginService", plugin: "Plugin", *, net: str, env_file: str,
-                    has_gpu: bool, secondary_uuid: str | None,
+                    has_gpu: bool, primary_uuid: str | None, secondary_uuid: str | None,
                     project: str) -> dict[str, Any]:
     """Render ONE compose service from a plugin's declared PluginService — data-driven, so
     adding a service is a manifest edit, not a code change here. `${...}` / `./...` refs and
@@ -99,13 +172,20 @@ def _plugin_service(ps: "PluginService", plugin: "Plugin", *, net: str, env_file
     if plugin.compose_profile:
         s["profiles"] = [plugin.compose_profile]
     env = dict(ps.env)
-    # GPU wiring: a `secondary` pin lands on the non-primary card (voice → Pascal 1070) via BOTH
-    # CUDA_VISIBLE_DEVICES (the only thing WSL2 honors) AND a device_ids reservation.
+    # GPU wiring — BOTH layers (CUDA_VISIBLE_DEVICES + a device_ids reservation) on a real uuid,
+    # because device_ids alone is a WSL2 no-op (see overrides/gpu-assignments.yml in V1):
+    #   gpu_pin: secondary -> the non-primary card (voice STT/TTS → the Pascal 1070; no Blackwell)
+    #   gpu_pin: primary   -> the compute card by uuid (comfyui/llamacpp-embed → the 5090). V1 pins
+    #                         these explicitly; `count: all` here would let them see the 1070 too.
     if ps.gpu_pin == "secondary" and secondary_uuid:
-        env["CUDA_VISIBLE_DEVICES"] = secondary_uuid
-        env["NVIDIA_VISIBLE_DEVICES"] = secondary_uuid
+        env.update(_pin_env(secondary_uuid))
         s.update(_gpu_pinned_reservation(secondary_uuid))
-    elif ps.gpu and has_gpu:
+    elif ps.gpu_pin == "primary" and primary_uuid:
+        env.update(_pin_env(primary_uuid))
+        s.update(_gpu_pinned_reservation(primary_uuid))
+    elif (ps.gpu or ps.gpu_pin) and has_gpu:
+        # a GPU service on a machine whose primary uuid didn't resolve (CI/mock) — fall back to the
+        # all-GPU reservation so the shape is still valid; the uuid pin is added when detect() has it.
         s.update(_GPU_RESERVATION)
     if env:
         s["environment"] = env
@@ -115,8 +195,9 @@ def _plugin_service(ps: "PluginService", plugin: "Plugin", *, net: str, env_file
         s["volumes"] = list(ps.volumes)
     if ps.healthcheck:
         s["healthcheck"] = dict(ps.healthcheck)
-    if ps.depends_on:
-        s["depends_on"] = list(ps.depends_on)
+    dep = _depends_on(ps.depends_on)
+    if dep:
+        s["depends_on"] = dep
     if ps.ports:  # edge/front-door only (Caddy :443); gated behind the plugin's opt-in profile
         s["ports"] = list(ps.ports)
     return s
@@ -126,8 +207,15 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
                    project: str = "ordo-v2", env_file: str = ".env",
                    agent_image: str | None = None,
                    agent_command: list[str] | None = None,
+                   agent_user: str | None = None,
+                   agent_volumes: list[str] | None = None,
+                   agent_environment: dict[str, str] | None = None,
+                   agent_secret_files: list[dict[str, str]] | None = None,
+                   agent_depends_on: dict[str, str] | None = None,
+                   agent_healthcheck: dict[str, Any] | None = None,
                    llamacpp_image: str | None = None,
                    plugin_services: "list[tuple[Plugin, PluginService]] | None" = None,
+                   primary_gpu_uuid: str | None = None,
                    secondary_gpu_uuid: str | None = None) -> dict[str, Any]:
     net = f"{project}-net"
     # the agent is swappable (Hermes is the default); a registry manifest may pin any image,
@@ -139,6 +227,13 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
     llamacpp = _svc(llamacpp_img, net=net, env_file=env_file, gpu=has_gpu)
     # always-on Prometheus metrics endpoint (the monitoring plugin's prometheus scrapes it).
     llamacpp["command"] = [LLAMACPP_METRICS_ARG]
+    # Pin the compute service to the PRIMARY card by uuid (V1 does this in gpu-assignments.yml).
+    # Without the CUDA_VISIBLE_DEVICES pin, on a dual-GPU WSL2 box `count: all` lets llama.cpp see
+    # the 1070 too — a live-only failure the beside-run rollbacks were exactly the shape of. The
+    # `.env` still carries no pin; this is a compose-level env override on the service.
+    if has_gpu and primary_gpu_uuid:
+        llamacpp["deploy"] = _gpu_pinned_reservation(primary_gpu_uuid)["deploy"]
+        llamacpp["environment"] = _pin_env(primary_gpu_uuid)
     # The patched image is a drop-in binary at /app/llama-server; the launch LOGIC lives in the
     # host wrapper scripts/llamacpp/run-llama-server.sh, which translates the rendered LLAMACPP_*
     # env into the full `llama-server -m /models/<gguf> -c <ctx> -ngl -1 …` argv. Without this
@@ -160,9 +255,7 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         # LITELLM_MASTER_KEY + THROUGHPUT_RECORD_TOKEN are secrets (from secrets.env).
         "model-gateway": _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file,
                               depends=["llamacpp"], secrets=True),
-        # GitHub/n8n API tokens for spawned MCP servers come from secrets.env.
-        "mcp-gateway": _svc(f"{project}/mcp-gateway:latest", net=net, env_file=env_file,
-                            secrets=True),
+        "mcp-gateway": _mcp_gateway(project, net, env_file),
         "ops-controller": _ops_controller(project, net, env_file),
         "dashboard": _svc(f"{project}/dashboard:latest", net=net, env_file=env_file,
                           depends=["ops-controller"], secrets=True),
@@ -176,12 +269,20 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
     # mirroring V1's compose. Empty -> omitted, so an agent whose image self-starts is unaffected.
     if agent_command:
         svcs["agent"]["command"] = list(agent_command)
+    # Full agent runtime wiring (data-driven, from the agent manifest) — mirrors V1's hermes-gateway:
+    # the brain bind (staged), /workspace/data, the /c/dev mirror, file secrets, env, service_healthy
+    # depends, healthcheck. Each is emitted only when the manifest declares it (a self-contained
+    # third-party agent that declares none renders exactly as before).
+    _apply_agent_runtime(
+        svcs["agent"], user=agent_user, volumes=agent_volumes, environment=agent_environment,
+        secret_files=agent_secret_files, depends_on=agent_depends_on, healthcheck=agent_healthcheck)
     # optional plugin services, built from the resolved manifests (no hardcoded if-blocks).
     # render() only passes services whose plugin is enabled, so profile-gating already happened;
     # the per-service `profiles:` keeps them dormant until `--profile <p>` is used too.
     for plugin, ps in (plugin_services or []):
         svcs[ps.name] = _plugin_service(ps, plugin, net=net, env_file=env_file,
-                                        has_gpu=has_gpu, secondary_uuid=secondary_gpu_uuid,
+                                        has_gpu=has_gpu, primary_uuid=primary_gpu_uuid,
+                                        secondary_uuid=secondary_gpu_uuid,
                                         project=project)
 
     out: dict[str, Any] = {"name": project, "services": svcs, "networks": {net: {"name": net}}}
