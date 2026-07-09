@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py audit.py model_registry.py gpu_assignments_fmt.py llamacpp_flags.py ./
+COPY main.py audit.py model_registry.py gpu_assignments_fmt.py llamacpp_flags.py compose_recreate.py ./
 
 # Run as non-root user (docker group for socket access; Docker Desktop's socket is
 # root:root, so the ops-api service also uses group_add: ["0"] in compose).
