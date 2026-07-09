@@ -60,7 +60,34 @@ through it, and it's the direct fix for the #1 pain.
 17. **`ordo fetch` — offline model provisioning with mandatory checksum** — downloads catalog models and **refuses to trust unpinned or corrupt weights**: a null-sha256 entry is refused for download unless `--allow-unverified`, a post-download hash mismatch deletes the file and errors (never leave corrupt weights to load into noise), and an already-verified file short-circuits with no network call — so once fetched, installs are **offline-capable**. Hashing/planning/verify-reject logic is pure + fully tested (download injected); only the network shells out. ✅ Demonstrated: `fetch --all --plan-only` refuses the 4 unpinned Qwen entries and cleanly plans the pinned 27b.
 18. **Data-driven plugin services + `monitoring` & real `voice` bundles (V1 PR #71 + #45 parity)** — the plugin schema now declares its compose services as **data** (`services: [{name, image, gpu, gpu_pin, env, command, volumes, healthcheck, depends_on}]`); `compose.py` builds them from the resolved manifests instead of hardcoded if-blocks (comfyui/song-gen/voice migrated). Two bundles land as first-class plugins: **`monitoring`** (Grafana + Prometheus + `nvidia_gpu_exporter`, all sha-pinned; CPU-ok so it runs anywhere; keeps the driver-581.80 `--query-field-names` crash-fix; `render` now emits `--metrics` on `llama-server` so Prometheus can scrape `:8080`; named volumes are declared at the compose top level), and the **real `voice`** (faster-whisper **stt** + Kokoro **tts**, sha-pinned). Voice introduces **`gpu_pin: secondary`**: because those images have no Blackwell kernels and CRASH on the 5090, `hardware.detect()` now captures each GPU's uuid and render pins them to the **non-primary (Pascal 1070)** card via `CUDA_VISIBLE_DEVICES` + a `device_ids` reservation (the only pin WSL2 honors); with no secondary GPU the plugin is **gated OFF with a warning** rather than shipping a guaranteed crash. ✅ Validated: mocked dual-GPU (5090+1070) enables voice pinned to `GPU-20fac13a-…`, single-5090 disables it with a warning, CPU-only disables it; the rendered dual-GPU compose (profiles `media`+`voice`+`monitoring`) passes the real `docker compose config`. Live stack untouched.
 
-**103 tests green.** `ordo render` writes the complete stack (`.env` + `docker-compose.yml` + `hermes.context.json` + `manifest.json` + `mcp-registry.yaml`); `ordo serve` runs the control plane that regenerates it drift-safely at runtime; `ordo preflight` gates the cutover.
+19. **Full V1→V2 service parity + secrets model (this slice)** — the substrate now reaches
+    **service-level parity** with the live stack. Every V1 `docker-compose.yml` service is mapped in
+    [`PARITY.md`](PARITY.md): 12 already-covered (core/existing plugins), **9 ported now** as new
+    `kind=service` plugin manifests — **`rag`** (qdrant + llamacpp-embed + rag-ingestion),
+    **`worker`**, **`automation`** (n8n), **`open-webui`**, **`searxng-web`**,
+    **`codebase-memory-ui`**, **`hermes-dashboard`**, and the opt-in **`edge`** (Caddy + oauth2-proxy,
+    the *only* host-port publish, profile `edge`) — and 4 obsolete-by-design (model pullers → `ordo
+    fetch`; the manager-setup shim → image build; the reactive guardian → the V2 scheduler). Each
+    ported service preserves V1's **exact image pins** (qdrant `v1.18.2`, n8n `2.28.3`, open-webui
+    `v0.10.1`), floating `:latest` tags are **digest-pinned** (searxng), and env keys / volumes
+    (bind + named) / healthchecks / profiles / depends_on carry over verbatim.
+    **Image parity fixed:** `model-gateway` + `mcp-gateway` now reference V1's custom config-wrapper
+    builds as **project buildable images** (`ordo-v2/model-gateway:latest`, `ordo-v2/mcp-gateway:latest`
+    — contexts under `docker/`) instead of the unconfigured upstream `litellm:main` / `mcp-gateway`,
+    so the `local-chat` alias + reload wrapper survive and `preflight` reports "build first". The two
+    MCP **placeholder digests** are replaced with real refs (qdrant-rag = a project buildable image,
+    searxng = the live registry digest). **Secrets model:** derived `.env` and operator secrets stay
+    in **separate files** — services that need secrets read a second env_file `secrets.env`
+    (`required: false`, so a missing one never fails `docker compose config`), and `ordo render`
+    emits **`secrets.env.example`** listing the required KEYS (names only, values empty) gathered from
+    the core set + each enabled plugin's `secrets:`. `ordo preflight --secrets <file>` adds a
+    non-blocking check for missing keys. ✅
+    **Validated:** the full dual-GPU render enables all 12 service plugins + 2 MCP with **zero
+    warnings**; the rendered compose with **all 10 profiles** passes the real `docker compose config`
+    (27 entries, caddy the sole host-port publisher, CADDY_BIND `:?` failsafe preserved); the CPU-only
+    render validates too; `ordo preflight` → GO, MCP "all pinned". Live stack untouched.
+
+**118 tests green.** `ordo render` writes the complete stack (`.env` + `docker-compose.yml` + `hermes.context.json` + `manifest.json` + `mcp-registry.yaml` + `secrets.env.example`); `ordo serve` runs the control plane that regenerates it drift-safely at runtime; `ordo preflight` gates the cutover.
 
 ## This completes every operator-independent slice
 Right-sizing · drift-proof config (parity-proven live) · plugins · MCP · scheduling + broker ·

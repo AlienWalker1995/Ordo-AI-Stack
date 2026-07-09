@@ -1,0 +1,28 @@
+# Plugin manifest (data-only) — the Codebase-Memory 3D graph visualization UI (long-lived, opt-in).
+# LOCALLY-BUILT in V1; V2 pins it as a project buildable image. Indexes its own copy of the code
+# root (mounted read-only) and serves the graph at /codebase-memory/ behind the edge.
+id: codebase-memory-ui
+name: Codebase Memory UI (code graph)
+description: 3D code knowledge-graph visualizer over the read-only code root; served under /codebase-memory/.
+requires:
+  nvidia: false
+  ram_gb: 2
+provides: [codebase-memory-ui]
+compose_profile: codebase-memory
+env:
+  CODEBASE_MEMORY_UI_ENABLED: "1"
+services:
+  - name: codebase-memory-ui
+    image: ordo-v2/codebase-memory-ui:latest
+    volumes:
+      # Persistent per-container config/cache. NAMED volume — pinned name matches the raw name the
+      # mcp-gateway uses when it spawns the MCP (-v codebase-memory-cache:/cache).
+      - codebase-memory-cache:/cache
+      # Source tree (read-only) so the UI's own process can index and visualize it.
+      - ${CODE_ROOT:-/c/dev}:/c/dev:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:9750/codebase-memory/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s

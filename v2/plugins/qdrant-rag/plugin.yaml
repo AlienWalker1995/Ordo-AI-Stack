@@ -1,13 +1,22 @@
+# Plugin manifest — data-only. Registers an MCP server (agent tool), not a compose service.
 id: qdrant-rag
 name: Qdrant RAG (MCP tools)
-description: Vector search / retrieval tools exposed to the agent via MCP.
+description: Semantic RAG search over the stack's Qdrant `documents` collection, via MCP.
 kind: mcp                 # registers an MCP server (agent tool), not a compose service
 requires:
   nvidia: false           # light / CPU
   ram_gb: 1
 provides: [tools]
+depends_on: [rag]         # needs the qdrant + embed services (rag plugin) to answer queries
 mcp:
-  image: mcp/qdrant@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  # V1 runs this MCP from a LOCALLY-BUILT image (ordo-ai-stack-qdrant-rag-mcp:latest) — there is no
+  # public registry to digest-pin against. V2 mirrors it as a project buildable image (build context
+  # under v2/docker/qdrant-rag-mcp): pinned by its build context like llamacpp-patched, so preflight
+  # reports 'build first', not the old placeholder-digest warning. It embeds queries via
+  # llamacpp-embed to match rag-ingestion's 768-dim nomic vectors.
+  image: ordo-v2/qdrant-rag-mcp:latest
   env:
     QDRANT_URL: http://qdrant:6333
-  tools: [qdrant_search, qdrant_store]
+    EMBED_URL: http://llamacpp-embed:8080
+    RAG_COLLECTION: documents
+  tools: [qdrant_search, qdrant_status]

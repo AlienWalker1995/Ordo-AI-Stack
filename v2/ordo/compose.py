@@ -39,11 +39,28 @@ def _gpu_pinned_reservation(uuid: str) -> dict[str, Any]:
         {"driver": "nvidia", "device_ids": [uuid], "capabilities": ["gpu"]}]}}}}
 
 
+# Operator-managed secrets live here (SOPS-decrypted / hand-filled), NEVER in the rendered .env.
+# Services that need secrets read it as a SECOND env_file layered over the derived .env.
+SECRETS_ENV_FILE = "secrets.env"
+
+
+def _env_files(env_file: str | None, secrets: bool) -> list:
+    # secrets.env is operator-managed and may be absent at render/config time (it holds no derived
+    # values), so it's declared `required: false` — `docker compose config` must not fail when the
+    # operator hasn't filled it yet. `ordo render` emits secrets.env.example listing the keys.
+    files: list = [env_file] if env_file else []
+    if secrets:
+        files.append({"path": SECRETS_ENV_FILE, "required": False})
+    return files
+
+
 def _svc(image: str, *, net: str, env_file: str | None = None, gpu: bool = False,
-         profiles: list[str] | None = None, depends: list[str] | None = None) -> dict[str, Any]:
+         profiles: list[str] | None = None, depends: list[str] | None = None,
+         secrets: bool = False) -> dict[str, Any]:
     s: dict[str, Any] = {"image": image, "restart": "unless-stopped", "networks": [net]}
-    if env_file:
-        s["env_file"] = [env_file]
+    files = _env_files(env_file, secrets)
+    if files:
+        s["env_file"] = files
     if profiles:
         s["profiles"] = profiles
     if depends:
@@ -58,7 +75,7 @@ def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
     DockerBackend guard scopes every start/stop to `<project>-*`, so socket access can NOT
     reach the live ordo-ai-stack containers. The rendered config dir is mounted read-only
     so a runtime model switch re-renders in place (one write path stays inside the project)."""
-    s = _svc(f"{project}/ops-controller:latest", net=net, env_file=env_file)
+    s = _svc(f"{project}/ops-controller:latest", net=net, env_file=env_file, secrets=True)
     s["volumes"] = [
         "/var/run/docker.sock:/var/run/docker.sock",  # broker start/stop (guard-scoped)
         "./:/config",                                 # ordo.yaml + rendered out/ (single write path)
@@ -76,8 +93,9 @@ def _plugin_service(ps: "PluginService", plugin: "Plugin", *, net: str, env_file
     adding a service is a manifest edit, not a code change here. `${...}` / `./...` refs and
     named volumes pass straight through to compose (project-scoped, no live-stack collision)."""
     s: dict[str, Any] = {"image": ps.image, "restart": "unless-stopped", "networks": [net]}
-    if env_file:
-        s["env_file"] = [env_file]
+    files = _env_files(env_file, ps.wants_secrets)
+    if files:
+        s["env_file"] = files
     if plugin.compose_profile:
         s["profiles"] = [plugin.compose_profile]
     env = dict(ps.env)
@@ -99,6 +117,8 @@ def _plugin_service(ps: "PluginService", plugin: "Plugin", *, net: str, env_file
         s["healthcheck"] = dict(ps.healthcheck)
     if ps.depends_on:
         s["depends_on"] = list(ps.depends_on)
+    if ps.ports:  # edge/front-door only (Caddy :443); gated behind the plugin's opt-in profile
+        s["ports"] = list(ps.ports)
     return s
 
 
@@ -118,16 +138,25 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
     llamacpp = _svc(llamacpp_img, net=net, env_file=env_file, gpu=has_gpu)
     # always-on Prometheus metrics endpoint (the monitoring plugin's prometheus scrapes it).
     llamacpp["command"] = [LLAMACPP_METRICS_ARG]
+    # model-gateway + mcp-gateway are V1 CUSTOM-BUILT config-wrapper images (LiteLLM + the
+    # `local-chat` alias config; docker/mcp-gateway + the reload wrapper). V2 pins them as its own
+    # project-namespaced BUILDABLE images (build contexts under v2/docker/{model-gateway,mcp-gateway})
+    # so preflight reports 'build first' not 'Docker will pull' — matching the llamacpp-patched
+    # precedent. The V2-native ops-controller + dashboard remain the new control plane.
     svcs: dict[str, Any] = {
         "llamacpp": llamacpp,
-        "model-gateway": _svc("ghcr.io/berriai/litellm:main", net=net, env_file=env_file,
-                              depends=["llamacpp"]),
-        "mcp-gateway": _svc("docker/mcp-gateway:latest", net=net, env_file=env_file),
+        # LITELLM_MASTER_KEY + THROUGHPUT_RECORD_TOKEN are secrets (from secrets.env).
+        "model-gateway": _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file,
+                              depends=["llamacpp"], secrets=True),
+        # GitHub/n8n API tokens for spawned MCP servers come from secrets.env.
+        "mcp-gateway": _svc(f"{project}/mcp-gateway:latest", net=net, env_file=env_file,
+                            secrets=True),
         "ops-controller": _ops_controller(project, net, env_file),
         "dashboard": _svc(f"{project}/dashboard:latest", net=net, env_file=env_file,
-                          depends=["ops-controller"]),
+                          depends=["ops-controller"], secrets=True),
+        # OPS_CONTROLLER_TOKEN + Discord/backup tokens are secrets (from secrets.env).
         "agent": _svc(agent_img, net=net, env_file=env_file,
-                      depends=["model-gateway", "mcp-gateway", "ops-controller"]),
+                      depends=["model-gateway", "mcp-gateway", "ops-controller"], secrets=True),
     }
     # optional plugin services, built from the resolved manifests (no hardcoded if-blocks).
     # render() only passes services whose plugin is enabled, so profile-gating already happened;

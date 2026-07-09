@@ -27,13 +27,46 @@ python -m ordo.cli detect             # sanity: tier / model / ctx / plugins it 
 
 ## 2. Build the v2 images
 
-Project images are the substrate's own; upstream images (llama.cpp, litellm, mcp-gateway) are pulled.
+Project images are the substrate's own (buildable-not-pullable); the rest (qdrant, n8n, open-webui,
+searxng, grafana, prometheus, gpu-exporter, oauth2-proxy, caddy, stt/tts, upstream llama.cpp) are
+pulled on first `up`. `ordo preflight` lists any missing build-first image — build **all** of these
+before the flip (build only the ones your enabled profiles need):
 
 ```
+# --- V2-native core control plane ---
 docker build -f docker/ops-controller.Dockerfile -t ordo-v2/ops-controller:latest .
-# …and the remaining project images (dashboard, agent-hermes, comfyui, voice) as those
-#    build contexts are added. Upstream images pull on first `up`.
+docker build -f docker/dashboard.Dockerfile      -t ordo-v2/dashboard:latest .
+
+# --- config-wrapper core images (V1 parity: local-chat alias, mcp reload wrapper) ---
+docker build -t ordo-v2/model-gateway:latest  docker/model-gateway
+docker build -t ordo-v2/mcp-gateway:latest    docker/mcp-gateway
+
+# --- patched llama.cpp (only if the chosen model pins it via catalog backend_image) ---
+docker build -t ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470 docker/llamacpp-patched
+
+# --- ported service plugins (build the ones whose profiles you enable) ---
+docker build -t ordo-v2/rag-ingestion:latest      C:/dev/ordo-ai-stack/rag-ingestion        # profile rag
+docker build -f C:/dev/ordo-ai-stack/worker/Dockerfile -t ordo-v2/worker:latest C:/dev/ordo-ai-stack  # profile media
+docker build -t ordo-v2/codebase-memory-ui:latest C:/dev/ordo-ai-stack/codebase-memory-ui   # profile codebase-memory
+
+# --- MCP (kind=mcp) — the qdrant-rag MCP is a project buildable image ---
+docker build -t ordo-v2/qdrant-rag-mcp:latest     C:/dev/ordo-ai-stack/qdrant-rag-mcp
+
+# --- operator-specific: the agent (wraps your Hermes data/) — also serves hermes-dashboard ---
+docker build -t ordo-v2/agent-hermes:latest       C:/dev/ordo-ai-stack/hermes               # profile hermes-ui
+# comfyui / voice images are your operator-specific media/voice builds.
 ```
+
+Each `docker/<name>/README.md` documents the exact context + files. Contexts referenced at their
+V1 path are the single source of truth (referenced, not duplicated, so they can't drift).
+
+### Secrets
+
+`ordo render` writes `out/secrets.env.example` — the secret KEYS the enabled stack needs (values
+empty). Copy it to `out/secrets.env`, fill real values (SOPS-decrypt or hand-set), and **never
+commit it**. The rendered compose reads `secrets.env` as a second env_file (`required: false`) for
+services that need secrets; `.env` stays derived-config only. Verify with
+`ordo preflight --secrets out/secrets.env` (a non-blocking check flags any missing key).
 
 ## 3. Render + preflight (the GO/NO-GO gate)
 

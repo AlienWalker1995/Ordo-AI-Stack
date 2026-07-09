@@ -28,6 +28,13 @@ class PluginService:
     volumes: list[str] = dataclasses.field(default_factory=list)
     healthcheck: dict[str, Any] = dataclasses.field(default_factory=dict)
     depends_on: list[str] = dataclasses.field(default_factory=list)
+    # True → this service reads the operator-managed `secrets.env` as a second env_file (so its
+    # ${SECRET} refs resolve). Secret VALUES never live in the rendered config, only the reference.
+    wants_secrets: bool = False
+    # Host port publishes. RESERVED for the edge/front-door plugin (Caddy's :443) — core services
+    # deliberately publish none (isolation). Opt-in behind the plugin's profile, so it stays dormant
+    # until `--profile edge` and can't collide with the live stack's edge during a beside-run.
+    ports: list[str] = dataclasses.field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "PluginService":
@@ -39,6 +46,8 @@ class PluginService:
             volumes=[str(v) for v in (d.get("volumes", []) or [])],
             healthcheck=dict(d.get("healthcheck", {}) or {}),
             depends_on=[str(x) for x in (d.get("depends_on", []) or [])],
+            wants_secrets=bool(d.get("wants_secrets", False)),
+            ports=[str(p) for p in (d.get("ports", []) or [])],
         )
 
 
@@ -57,6 +66,10 @@ class Plugin:
     kind: str = "service"          # "service" (compose service) | "mcp" (agent tool server)
     mcp: dict[str, Any] = dataclasses.field(default_factory=dict)  # image/env/tools for kind=mcp
     services: tuple[PluginService, ...] = ()  # compose services this plugin contributes (kind=service)
+    # secret env KEYS this plugin's services need at runtime (names only, values operator-managed).
+    # render emits these into secrets.env.example; the rendered compose reads them via a second
+    # env_file `secrets.env` — derived (.env) config and operator secrets stay in separate files.
+    secrets: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Plugin":
@@ -73,6 +86,7 @@ class Plugin:
             kind=str(d.get("kind", "service")),
             mcp=dict(d.get("mcp", {}) or {}),
             services=tuple(PluginService.from_dict(s) for s in (d.get("services", []) or [])),
+            secrets=tuple(str(s) for s in (d.get("secrets", []) or [])),
         )
 
     @property

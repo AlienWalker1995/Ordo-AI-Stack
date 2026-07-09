@@ -27,18 +27,31 @@ def _src(**kw):
     return Source.from_dict(base)
 
 
+# The CPU-ok service plugins ported for V1 parity — enable on ANY hardware (they run without a GPU),
+# but stay dormant behind their compose profile until requested. Voice/comfyui/song-gen are the
+# GPU-gated ones handled separately.
+CPU_OK_SERVICE_PLUGINS = {"monitoring", "rag", "worker", "automation", "open-webui",
+                          "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge"}
+
+
 def test_registry_loaded_manifests():
     ids = {p.id for p in REGISTRY.plugins}
     assert {"comfyui", "song-gen", "voice", "monitoring"} <= ids
+    # the ported V1-parity plugins are registered too
+    assert {"rag", "worker", "automation", "open-webui", "searxng-web",
+            "codebase-memory-ui", "hermes-dashboard", "edge"} <= ids
 
 
 def test_big_gpu_enables_all_and_merges_env():
-    # single 5090: media enables; monitoring (CPU-ok) enables; voice needs a SECOND card → off
+    # single 5090: media enables; the CPU-ok service plugins enable; voice needs a SECOND card → off
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
-    assert set(rc.plugins_enabled) == {"comfyui", "song-gen", "monitoring"}
+    # worker depends on comfyui (enabled here), so it's in the set too
+    assert set(rc.plugins_enabled) == {"comfyui", "song-gen"} | CPU_OK_SERVICE_PLUGINS
+    assert "voice" not in rc.plugins_enabled
     assert rc.env["COMFYUI_ENABLED"] == "1"
     assert rc.env["SONG_GEN_ENABLED"] == "1"
-    assert "media" in rc.compose_profiles
+    assert rc.env["RAG_ENABLED"] == "1"           # a ported plugin's env fragment merges too
+    assert "media" in rc.compose_profiles and "rag" in rc.compose_profiles
 
 
 def test_dual_gpu_enables_voice_pinned_to_secondary():
@@ -67,7 +80,9 @@ def test_cpu_disables_voice_and_media():
     assert "voice" not in rc.plugins_enabled              # CPU-only → voice off
     assert not ({"comfyui", "song-gen"} & set(rc.plugins_enabled))
     assert "COMFYUI_ENABLED" not in rc.env
-    assert rc.plugins_enabled == ["monitoring"]           # only the CPU-ok plugin
+    # worker depends on comfyui (GPU-only) → dropped on CPU; the rest of the CPU-ok set stays
+    assert set(rc.plugins_enabled) == CPU_OK_SERVICE_PLUGINS - {"worker"}
+    assert "worker" not in rc.plugins_enabled
 
 
 def test_small_gpu_gates_by_vram():

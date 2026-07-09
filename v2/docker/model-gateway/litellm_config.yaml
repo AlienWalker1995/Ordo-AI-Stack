@@ -1,0 +1,27 @@
+model_list:
+  - model_name: "local-chat"
+    litellm_params:
+      model: "openai/local-chat"
+      api_base: "http://llamacpp:8080/v1"
+      api_key: "local"
+      timeout: 1800
+      stream_timeout: 1800
+    model_info:
+      max_input_tokens: __CTX_SIZE__
+
+  - model_name: "local-embed"
+    litellm_params:
+      model: "openai/local-embed"
+      api_base: "http://llamacpp-embed:8080/v1"
+      api_key: "local"
+
+general_settings:
+  master_key: "__MASTER_KEY__"
+
+litellm_settings:
+  request_timeout: 1800
+  stream_timeout: 1800
+  # Ordo throughput recorder — posts each completion's tok/s + TTFT + service
+  # to the dashboard at /api/throughput/record. See throughput_callback.py;
+  # PYTHONPATH=/app in Dockerfile makes the module importable.
+  callbacks: ["throughput_callback.throughput_recorder_instance"]

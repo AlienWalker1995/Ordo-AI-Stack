@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .venv/
+# operator-managed secret values — never committed (only secrets.env.example, keys-only, is rendered)
+secrets.env
+.validate-out/
+.validate-cpu/
