@@ -1,0 +1,50 @@
+# Ordo v2 substrate — config render engine (first slice)
+
+This directory is the **first slice** of the Ordo v2 rebuild (branch `arch/v2-substrate`).
+It is built in isolation — it does **not** touch or reconfigure the running stack. The engine
+renders config into `./out/`, never over the live `.env`.
+
+## Why this exists (from the architecture interrogation)
+
+Nearly every failure of the current stack traced to **config drift**: the LLM context size,
+the model choice, and Hermes' `context_length` were hand-set in three places and fell out of
+sync (256K in Hermes vs 128K in llama.cpp → a compaction deadlock; a stale model registry vs
+`.env`; etc.). The agreed cure is a **declarative source → regenerated config** model:
+
+> One human-editable declarative source (`ordo.yaml`). Everything derived (`.env`, Hermes
+> context, model-gateway ctx, compose vars) is **regenerated** from it. Edits to *derived*
+> outputs don't survive a re-render — so drift is structurally impossible. An explicit
+> `overrides:` block in the source is the escape hatch that *does* survive.
+
+This is the **first slice** because everything else (scheduler, plugins, installer) renders
+through it, and it's the direct fix for the #1 pain.
+
+## What's here
+
+| File | Role |
+|---|---|
+| `ordo.example.yaml` | the declarative source — the single source of truth (hardware, tier, model, plugins, overrides) |
+| `catalog/models.yaml` | curated model catalog: each entry has resource requirements **and a sha256** (checksums are mandatory — corrupt weights burned us once) |
+| `ordo/hardware.py` | hardware detection (GPU/VRAM/RAM/CPU) + mockable profiles for CI |
+| `ordo/catalog.py` | load catalog + **best-fit** model selection with a VRAM headroom reserve (encodes the "don't fill the card" lesson) |
+| `ordo/config.py` | load/validate the declarative source |
+| `ordo/render.py` | `(source + hardware + catalog) → RenderedConfig`; writes `out/.env`, `out/hermes.context.json`, `out/manifest.json` |
+| `ordo/cli.py` | `ordo detect | render | doctor` — the seed of the one-script |
+| `tests/` | mocked-profile render (5090 + CPU-only), drift-revert, and cross-service ctx consistency |
+
+## Acceptance gate for THIS slice (from the plan)
+1. Renders a full config from one source with **zero hand-edits**.
+2. **Drift-revert**: a hand-edited derived value is corrected on the next render.
+3. Renders both a **5090 profile and a mocked CPU-only profile** into valid configs.
+4. **Consistency**: the one ctx value is identical across `.env`, Hermes, and model-gateway
+   (the exact bug that started this).
+
+## Run the tests (no host Python needed)
+```
+docker run --rm -v "$PWD:/w" -w /w python:3.11-slim \
+  sh -c "pip install -q pyyaml pytest && python -m pytest -q"
+```
+
+## Explicitly NOT done here (needs the operator / later slices)
+Scheduler/broker, plugin registry runtime, the installer wizard, native path, and the actual
+cutover. This slice only proves the render engine. The live stack is untouched.

@@ -1,0 +1,37 @@
+# ordo.yaml — THE single source of truth. Human-editable. Everything else is regenerated
+# from this. Editing a *rendered* output (out/.env, Hermes context, ...) does nothing —
+# the next render overwrites it. To make something stick, set it in `overrides:` below.
+
+# Hardware: "auto" detects the machine. For CI / reproducibility, pin an explicit profile.
+hardware: auto
+# hardware:
+#   gpus: [{ name: "RTX 5090", vram_gb: 32 }]
+#   ram_gb: 128
+#   cpu_cores: 32
+#   platform: Linux
+
+# Tier: "auto" lets the sizer pick from hardware (game auto-detect). Or force a named tier
+# (cpu | low | medium | high | ultra) — the sizer still refuses to pick a model that won't fit
+# unless you also set model: below.
+tier: auto
+
+# Model: "auto" = best-fit from the catalog for the detected hardware+tier. Or pin a catalog id
+# to override (warn-but-allow: if it won't fit you'll get a warning, not a silent OOM).
+model: auto
+
+# Agent that manages the stack. Hermes is the default.
+agent: hermes
+
+# Optional plugins (media/song/reels/voice). "auto" = enable what the hardware can run;
+# a list forces specific ones. Media plugins are NVIDIA-only and self-declare that.
+plugins: auto
+
+# Cloud tier-fallback: off by default (fully local, offline-capable). Opt-in only.
+cloud_fallback:
+  enabled: false
+
+# Escape hatch: values here SURVIVE regeneration and override derived config. Use sparingly —
+# this is the one place a human/agent pins something the sizer would otherwise compute.
+overrides: {}
+  # llamacpp:
+  #   ctx_size: 131072
