@@ -1,5 +1,7 @@
 # Data Schemas, Lifecycle, and Persistence
 
+> ⚠️ **LEGACY (V1) — superseded by v2/ on 2026-07-09.** The production **v2** stack keeps a **single data root** at `C:\dev\ordo-ai-stack\data` (the primary checkout, after the 2026-07-09 consolidation — see [`../v2/FLIP.md`](../v2/FLIP.md) → "CONSOLIDATION EXECUTED"); `site.DATA_PATH` in `v2/ordo.yaml` renders it into the compose bind mounts. The per-directory schemas / bind-mount / backup guidance below still broadly describes what lives under `data/`, but the bring-up commands (`./compose`, `docker compose --profile …`) and the `.env`/`DATA_PATH` edit flow are V1 — under v2 those paths come from the rendered `v2/out/`. Kept for reference. See [`LEGACY-CLEANUP.md`](LEGACY-CLEANUP.md).
+
 Reference for where data lives, how it moves, and what survives a restart / rebuild.
 
 ## Data Sources and Sinks

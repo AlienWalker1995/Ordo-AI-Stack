@@ -1,5 +1,7 @@
 # Getting Started
 
+> ⚠️ **LEGACY (V1) — superseded by v2/ on 2026-07-09.** Production now runs from the v2 substrate; the authoritative getting-started + operator doc is **[`../v2/README.md`](../v2/README.md)** (bring-up via `ordo render` → `docker compose -p ordo-v2 … up`, see [`../v2/CUTOVER.md`](../v2/CUTOVER.md)). The `./compose` / `docker compose` bring-up steps below drive the retired V1 stack and are kept for historical reference / rollback only. See [`LEGACY-CLEANUP.md`](LEGACY-CLEANUP.md).
+
 Quick paths to common workflows for a single homelab operator. The stack assumes you've completed the one-time auth setup ([docs/runbooks/auth.md](runbooks/auth.md)) and secrets setup ([docs/runbooks/secrets.md](runbooks/secrets.md)), so the Caddy front door is up at `https://${CADDY_TAILNET_HOSTNAME}/` and you can sign in with a Google account on `auth/oauth2-proxy/emails.txt`.
 
 ## Workflows

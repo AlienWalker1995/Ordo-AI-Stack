@@ -1,5 +1,7 @@
 # Scripts
 
+> ⚠️ **LEGACY (V1) — superseded by the v2 substrate (cutover 2026-07-09).** These scripts drive the retired V1 bring-up model: `ensure_dirs` + `detect_hardware.py` (→ `overrides/compute.yml`), the `./compose` wrapper, and the model pullers. In production **v2**, directory/config generation is the render engine (`ordo render` → `v2/out/`), hardware detection is `ordo detect`, model provisioning is **`ordo fetch`** (checksum-mandatory, offline-capable — replaces `pull_gguf_models.py` / the pullers), and GPU scheduling is `ordo serve` (not a reactive guardian). Kept for reference / rollback. See [`../v2/README.md`](../v2/README.md) and [`../docs/LEGACY-CLEANUP.md`](../docs/LEGACY-CLEANUP.md).
+
 Setup, operations, and maintenance scripts for the Ordo AI Stack.
 
 ## Setup

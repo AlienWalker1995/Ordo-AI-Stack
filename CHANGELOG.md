@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format is loosely b
 
 ## [Unreleased]
 
+### Changed
+- **v2 substrate rebuild + 2026-07-09 cutover — `main` is now production.** The stack was rebuilt on
+  a declarative **render-engine substrate** (`v2/`): one source (`v2/ordo.yaml`) regenerates `.env`,
+  compose, Hermes context, and the MCP registry into `v2/out/`, so config **drift is structurally
+  impossible** (the class of failure — 256K-vs-128K ctx, stale model registry — that motivated the
+  rebuild). The **reactive VRAM guardian was removed** and replaced by the proactive `ordo serve`
+  **scheduler** (FIFO admission + co-run-when-it-fits + LRU idle-evict), designing out the
+  eviction-deadlock outage that triggered the rebuild. GPU work is requested through the
+  ops-controller (`POST /jobs`); patched llama.cpp runs on the primary GPU (5090), voice on the
+  secondary (1070). The V1-parity dashboard control plane was reinstated on the v2 stack (backend
+  service `ops-api`). Agents became **data manifests** under `v2/agents/` with **Hermes as the
+  default** agent. Full V1→V2 service map: `v2/PARITY.md`.
+  **Cutover (2026-07-09):** an atomic big-bang flip (v2 brought up beside the live stack, validated
+  for parity, then flipped) executed after 3 attempts, with **≈3.75 min core chat-path downtime**;
+  then **consolidated to a single primary checkout** (`C:\dev\ordo-ai-stack`, one data root at
+  `…\data`) with the `C:\dev\ordo-v2` worktree retired. Merged to `main` via **PR #72** (merge commit
+  `d115035`). The old V1 stack was kept intact as a rollback asset (containers removed, volumes +
+  images retained). See `v2/CUTOVER.md` + `v2/FLIP.md`. The **top-level V1 layout** (root
+  `docker-compose.yml`, root `ops-controller/`, root `model-gateway/`, `overrides/`, the guardian) is
+  now **LEGACY**, pending a separate deliberate cleanup PR — inventory in `docs/LEGACY-CLEANUP.md`.
+
 ### Added
 - **Codebase-Memory MCP — opt-in `--profile codebase-memory` code knowledge graph for Hermes.**
   Adds `codebase-memory`, a gateway-spawned stdio MCP server wrapping the upstream
