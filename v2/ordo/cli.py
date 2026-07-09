@@ -22,7 +22,7 @@ from .hardware import detect
 from .plugins import PluginRegistry
 from .render import DEFAULT_PLUGINS_DIR, render
 from .scheduler import Scheduler
-from . import doctor, parity, preflight, wizard
+from . import doctor, native, parity, preflight, wizard
 
 HERE = Path(__file__).resolve().parent.parent
 DEFAULT_SOURCE = HERE / "ordo.example.yaml"
@@ -121,6 +121,13 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     return 0 if go else 1
 
 
+def cmd_native(args: argparse.Namespace) -> int:
+    src, cat = _load(Path(args.source), Path(args.catalog))
+    rc = render(src, cat)
+    print(native.plan(rc, models_dir=args.models_dir).as_text())
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a socket
     cat = Catalog.load(Path(args.catalog))
     reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
@@ -153,6 +160,9 @@ def main(argv: list[str] | None = None) -> int:
     pd = sub.add_parser("doctor")
     pd.add_argument("--bundle", help="write a sanitized support bundle to this path")
     pd.set_defaults(func=cmd_doctor)
+    pn = sub.add_parser("native")
+    pn.add_argument("--models-dir", default="./models", help="where the GGUF files live natively")
+    pn.set_defaults(func=cmd_native)
     pf = sub.add_parser("preflight")
     pf.add_argument("--ref", help="live .env to parity-check against (merge gate)")
     pf.add_argument("--project", default="ordo-v2")
