@@ -49,20 +49,23 @@ through it, and it's the direct fix for the #1 pain.
     **Validated live in a container:** switching the model over HTTP rewrote `ordo.yaml` **and** regenerated `.env` in one pass (`LLAMACPP_MODEL` + `LLAMACPP_CTX_SIZE` moved together — the drift bug is structurally impossible); unknown model → 404, source untouched. The socket it mounts to drive the broker is guard-scoped to `ordo-v2-*`, so it still can't touch the live stack.
 11. **`ordo preflight` GO/NO-GO gate + [`CUTOVER.md`](CUTOVER.md) runbook** — a read-only readiness check for the migration: ctx consistency (drift gate), model/MCP checksums, GPU-present-for-enabled-plugins, **parity vs the live `.env`**, and image readiness (project images blocking, upstream pull-able). Blocking failure → non-zero exit. The runbook is the operator's atomic-cutover procedure (build → preflight → up-beside → validate parity + restore personal backup → flip → rollback-ready). ✅
     **Validated live:** `ordo preflight --ref <live .env>` → **GO**, `parity vs live .env: 15 keys, 0 mismatch`; the unpinned 27b sha256 correctly surfaced as a non-blocking warning.
+12. **Dashboard SPA (the 6th core image)** — a single-file, localhost, no-auth control plane: live GPU/scheduler state, active model + ctx + tier, enabled plugins/MCP, warnings, and a **model-switch dropdown** that POSTs `/model-config` (drift-safe). `dashboard/nginx.conf` reverse-proxies `/api/*` to the ops-controller; `docker/dashboard.Dockerfile` builds it. ✅
+    **Validated live:** built + run beside the ops-controller on a scoped network — served the SPA and proxied `/api/status` + `/api/model-config` to the real control plane (model `huihui-qwen3.6-27b`, ctx 131,072). Now **all 6 core services have real images** (ops-controller + dashboard built here; llama.cpp/litellm/mcp-gateway upstream; agent swappable).
 
 **67 tests green.** `ordo render` writes the complete stack (`.env` + `docker-compose.yml` + `hermes.context.json` + `manifest.json` + `mcp-registry.yaml`); `ordo serve` runs the control plane that regenerates it drift-safely at runtime; `ordo preflight` gates the cutover.
 
 ## This completes every operator-independent slice
 Right-sizing · drift-proof config (parity-proven live) · plugins · MCP · scheduling + broker ·
-isolated runnable compose · **control-plane service (built + validated)** · **cutover gate + runbook** ·
-wizard · diagnostics. All in one worktree, live stack untouched.
+isolated runnable compose · **control-plane service + dashboard (built + validated)** ·
+**cutover gate + runbook** · wizard · diagnostics. All 6 core services have real images.
+All in one worktree, live stack untouched.
 
 ## What genuinely needs you now (can't be automated safely)
 - The **cutover itself** — follow [`CUTOVER.md`](CUTOVER.md): build images → `ordo preflight` → bring
   `ordo-v2` up beside the live stack → validate parity + restore the personal backup → atomic flip,
   old stack kept for rollback. Touches the live containers + the 5090, so it's yours to drive.
-- The **dashboard SPA** — a UI to design/build (the control plane already serves the status/control data it needs).
-- The **remaining service images** — `agent-hermes`, `dashboard`, `comfyui`, `voice` build contexts (ops-controller's image is done).
+- The **operator-specific images** — `agent-hermes` (wraps your Hermes `data/` + automation),
+  `comfyui`, `voice` (tied to your models). The generic core images (ops-controller, dashboard) are done.
 
 The 27b ultra model is now **sha256-pinned** (`c03727f9…` — computed from the on-disk weights), so
 `preflight`'s checksum gate is green for the model the live stack actually runs.

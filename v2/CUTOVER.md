@@ -59,6 +59,14 @@ docker compose -p ordo-v2 up -d                         # core only
 docker compose -p ordo-v2 --profile media up -d         # add ComfyUI when you want to test media
 ```
 
+The rendered compose publishes **no host ports** (so it can't clash with the live stack). To open
+the localhost dashboard while testing, map its port ad-hoc without editing the render:
+
+```
+docker compose -p ordo-v2 run --rm -p 8080:8080 dashboard   # then browse http://localhost:8080
+# (or add a compose override with the port; the dashboard proxies /api/* to the control plane)
+```
+
 ## 5. Validate parity on the running v2 (before retiring anything)
 
 - **Restore the personal backup into v2** (Hermes `data/`, automation) and confirm crons/skills load.
