@@ -1,0 +1,13 @@
+id: searxng
+name: SearXNG web search (MCP tools)
+description: Private aggregated web search exposed to the agent via MCP.
+kind: mcp
+requires:
+  nvidia: false
+  ram_gb: 1
+provides: [tools]
+mcp:
+  image: mcp/searxng@sha256:1111111111111111111111111111111111111111111111111111111111111111
+  env:
+    SEARXNG_URL: http://searxng:8080
+  tools: [searxng_web_search, searxng_web_url_read]

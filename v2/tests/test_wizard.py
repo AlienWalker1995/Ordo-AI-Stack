@@ -22,7 +22,9 @@ def test_plan_reflects_hardware():
     assert "song-gen" in p.plugins_available
 
     p_cpu = wizard.plan(CATALOG, REGISTRY, HW_CPU)
-    assert p_cpu.plugins_available == []            # honest: no media on CPU
+    assert "comfyui" not in p_cpu.plugins_available   # no GPU media on CPU
+    assert "song-gen" not in p_cpu.plugins_available
+    # light MCP tool servers still run on CPU (they're not GPU-bound)
 
 
 def test_build_source_defaults_are_valid():

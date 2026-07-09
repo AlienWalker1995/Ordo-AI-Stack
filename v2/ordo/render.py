@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from .catalog import Catalog, DEFAULT_VRAM_RESERVE_GB, Model
 from .config import Source
 from .hardware import HardwareProfile, detect
@@ -59,6 +61,7 @@ class RenderedConfig:
     model_gateway: dict[str, Any]
     plugins_enabled: list[str]
     compose_profiles: list[str] = dataclasses.field(default_factory=list)
+    mcp_servers: list[dict[str, Any]] = dataclasses.field(default_factory=list)
 
     def manifest(self) -> dict[str, Any]:
         return {
@@ -68,6 +71,7 @@ class RenderedConfig:
             "ctx_size": self.ctx_size,
             "plugins_enabled": self.plugins_enabled,
             "compose_profiles": self.compose_profiles,
+            "mcp_servers": [s["id"] for s in self.mcp_servers],
             "warnings": self.warnings,
             "derived": {
                 "env.LLAMACPP_CTX_SIZE": self.env["LLAMACPP_CTX_SIZE"],
@@ -85,6 +89,9 @@ class RenderedConfig:
         (out / ".env").write_text("\n".join(env_lines) + "\n", encoding="utf-8")
         (out / "hermes.context.json").write_text(json.dumps(self.hermes, indent=2), encoding="utf-8")
         (out / "manifest.json").write_text(json.dumps(self.manifest(), indent=2), encoding="utf-8")
+        # the mcp-gateway registry, regenerated from kind=mcp plugins (no hand-edit, no drift)
+        (out / "mcp-registry.yaml").write_text(
+            yaml.safe_dump({"servers": self.mcp_servers}, sort_keys=False), encoding="utf-8")
 
 
 def _resolve_hardware(source: Source) -> HardwareProfile:
@@ -150,12 +157,36 @@ def render(source: Source, catalog: Catalog,
     # Registry-driven plugin resolution: enable what's requested AND fits AND has its deps.
     enabled, notes = plugins.resolve(source.plugins, hw)
     warnings = warnings + notes
-    for p in enabled:
-        env.update(p.env)  # plugins contribute their declared env fragment
-    compose_profiles = sorted({p.compose_profile for p in enabled if p.compose_profile})
+    services = [p for p in enabled if p.kind == "service"]
+    mcps = [p for p in enabled if p.kind == "mcp"]
+    for p in services:
+        env.update(p.env)  # compose services contribute their declared env fragment
+    compose_profiles = sorted({p.compose_profile for p in services if p.compose_profile})
+    mcp_servers, mcp_notes = _render_mcp(mcps)
 
     return RenderedConfig(
         hardware=hw, model=model, ctx_size=ctx, tier=(model.tier),
-        warnings=warnings, env=env, hermes=hermes, model_gateway=model_gateway,
-        plugins_enabled=[p.id for p in enabled], compose_profiles=compose_profiles,
+        warnings=warnings + mcp_notes, env=env, hermes=hermes, model_gateway=model_gateway,
+        plugins_enabled=[p.id for p in services], compose_profiles=compose_profiles,
+        mcp_servers=mcp_servers,
     )
+
+
+def _render_mcp(mcps: list) -> tuple[list[dict[str, Any]], list[str]]:
+    """Build the mcp-gateway registry from kind=mcp plugins. Images MUST be digest-pinned
+    (no Docker online-catalog roulette — the leak/drift source in the current stack)."""
+    servers: list[dict[str, Any]] = []
+    notes: list[str] = []
+    for p in mcps:
+        image = str(p.mcp.get("image", ""))
+        digest = image.split("@sha256:")[-1] if "@sha256:" in image else ""
+        if not digest:
+            notes.append(f"mcp '{p.id}': image is not digest-pinned — refuse in production")
+        elif len(set(digest)) <= 1:  # placeholder like 000.../111...
+            notes.append(f"mcp '{p.id}': image digest is a placeholder — set the real sha256")
+        servers.append({
+            "id": p.id, "name": p.name, "image": image,
+            "env": dict(p.mcp.get("env", {}) or {}),
+            "tools": list(p.mcp.get("tools", []) or []),
+        })
+    return servers, notes
