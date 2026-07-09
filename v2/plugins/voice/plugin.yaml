@@ -1,0 +1,11 @@
+id: voice
+name: Voice (STT + TTS)
+description: Speech-to-text and text-to-speech. GPU-accelerated.
+requires:
+  nvidia: true
+  vram_gb: 4
+  ram_gb: 4
+provides: [voice]
+compose_profile: voice
+env:
+  VOICE_ENABLED: "1"

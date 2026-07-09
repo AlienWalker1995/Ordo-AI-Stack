@@ -1,0 +1,14 @@
+# Plugin manifest — declares hardware needs + the config fragment it contributes.
+# The renderer reads this (it does NOT execute plugin code): registry-driven, data-only.
+id: comfyui
+name: ComfyUI media backend
+description: Image/audio/video generation backend. NVIDIA-only.
+requires:
+  nvidia: true          # media plugins self-declare NVIDIA-only
+  vram_gb: 6            # minimum to run a basic workflow
+  ram_gb: 8
+provides: [media]
+compose_profile: media
+# env this plugin contributes to the rendered .env when enabled
+env:
+  COMFYUI_ENABLED: "1"
