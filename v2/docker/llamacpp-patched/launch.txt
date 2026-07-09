@@ -1,0 +1,78 @@
+    command:
+      - "/usr/local/bin/llama-server"
+      - "-m"
+      - "/models/Qwen3.6-27B-MTP-Q6_K.gguf"
+
+      # === CONTEXT & OFFLOAD ===
+      - "-c"
+      - "196608"    # was 196608 - 262144 for kvarn6
+      - "-ngl"
+      - "99"
+      - "--cache-ram"
+      - "32768"     # 32GB RAM budget for prompt cache / checkpoint spill
+      - "--no-mmap"
+
+      # === MTP SPECULATIVE DECODING ===
+      - "--spec-type"
+      - "draft-mtp"
+      - "--spec-draft-n-max"
+      - "10"       #was 6, 10 gives 10-20% more throughput
+      - "--spec-draft-p-min"
+      - "0.5"               # pmin=0.5 best across 2k/15k/64k depths at 6 drafts (sweep: 119/122/118 t/s vs 106-126 range for others)
+
+      # === PERFORMANCE & BATCHING ===
+      - "--flash-attn"
+      - "on"
+      - "-b"
+      - "512"  #1024, 2048 optimal uses vram  512 needed for 192k context
+      - "-ub"
+      - "512"  #1024, 2048 optimal
+      - "--parallel"
+      - "1"
+
+      # === CHECKPOINT TUNING ===
+      - "--checkpoint-min-step"
+      - "256"   #was 512.  tune for use case
+      - "--ctx-checkpoints"
+      - "8"
+
+      # === KV CACHE ===
+      - "-ctk"
+      - "q8_0" # q8_0 - kvarn6
+      - "-ctv"
+      - "q8_0" # q8_0 - kvarn6
+      - "--kv-unified"
+
+      # === SAMPLING ===
+      - "--temp"
+      - "0.6"      #was 0.6
+      - "--top-k"
+      - "20"       #was 20
+      - "--top-p"
+      - "0.95"       # was 0.95
+      - "--min-p"
+      - "0.0"       # was 0.0
+      - "--presence-penalty"
+      - "0.0"
+      - "--repeat-penalty"
+      - "1.0"       #was 1.0
+      - "--no-mmproj"
+
+      # === THINKING MODE & CACHE CONTINUITY ===
+      - "--jinja"
+      # - "--chat-template-file"
+      # - "/models/qwen3.6-chat-template.jinja"
+      - "--reasoning"
+      - "on"
+      - "--reasoning-budget"
+      - "16384"
+
+      # === SERVER ===
+      - "--perf"
+      - "--metrics"
+      - "--port"
+      - "8080"
+      - "--host"
+      - "0.0.0.0"
+      - "--alias"
+      - "chat"

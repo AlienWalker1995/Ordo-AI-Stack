@@ -38,8 +38,19 @@ def required_images(rc, project: str = "ordo-v2") -> list[str]:
     """The exact images the rendered compose will need (core + agent + enabled plugins)."""
     c = compose.render_compose(has_gpu=rc.hardware.has_gpu,
                                compose_profiles=rc.compose_profiles,
-                               agent=rc.hermes.get("agent", "hermes"), project=project)
+                               agent=rc.hermes.get("agent", "hermes"), project=project,
+                               llamacpp_image=rc.env.get("LLAMACPP_IMAGE") or None)
     return sorted({svc["image"] for svc in c["services"].values()})
+
+
+def _is_buildable(image: str, project: str) -> bool:
+    """True for images this repo builds locally (so a registry pull can NOT provide them).
+
+    Project images (`<project>/*`) are always local. The patched llama.cpp build is also
+    local-only — it has a docker/ build context but no registry to pull from — so a missing
+    one is 'build first', not 'Docker will pull'.
+    """
+    return image.startswith(f"{project}/") or "llamacpp-patched" in image
 
 
 def run(
@@ -88,11 +99,19 @@ def run(
     # 6. images available — project images must be built (blocking); upstream may be pulled (note)
     if images_present is not None:
         needed = required_images(rc, project)
-        proj_missing = [i for i in needed if i.startswith(f"{project}/") and i not in images_present]
+        proj_missing = [i for i in needed if _is_buildable(i, project) and i not in images_present]
         upstream_missing = [i for i in needed
-                            if not i.startswith(f"{project}/") and i not in images_present]
-        checks.append(Check("project images built locally", not proj_missing,
-                            "all built" if not proj_missing else f"build first: {', '.join(proj_missing)}"))
+                            if not _is_buildable(i, project) and i not in images_present]
+        detail = "all built"
+        if proj_missing:
+            hints = []
+            for i in proj_missing:
+                if "llamacpp-patched" in i:
+                    hints.append(f"{i} (build from v2/docker/llamacpp-patched)")
+                else:
+                    hints.append(i)
+            detail = f"build first: {', '.join(hints)}"
+        checks.append(Check("project images built locally", not proj_missing, detail))
         if upstream_missing:
             checks.append(Check("upstream images cached", False,
                                 f"Docker will pull: {', '.join(upstream_missing)}", blocking=False))

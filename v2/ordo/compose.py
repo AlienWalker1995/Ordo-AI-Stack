@@ -57,13 +57,17 @@ def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
 
 def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "hermes",
                    project: str = "ordo-v2", env_file: str = ".env",
-                   agent_image: str | None = None) -> dict[str, Any]:
+                   agent_image: str | None = None,
+                   llamacpp_image: str | None = None) -> dict[str, Any]:
     net = f"{project}-net"
     # the agent is swappable (Hermes is the default); a registry manifest may pin any image,
     # else fall back to the <project>/agent-<id>:latest convention.
     agent_img = agent_image or f"{project}/agent-{agent}:latest"
+    # the llama.cpp image is the stock upstream build unless the chosen model pins a patched
+    # one (e.g. Qwen3.6 SWA) via its catalog `backend_image` — flowed here through render.
+    llamacpp_img = llamacpp_image or "ghcr.io/ggml-org/llama.cpp:server"
     svcs: dict[str, Any] = {
-        "llamacpp": _svc("ghcr.io/ggml-org/llama.cpp:server", net=net, env_file=env_file, gpu=has_gpu),
+        "llamacpp": _svc(llamacpp_img, net=net, env_file=env_file, gpu=has_gpu),
         "model-gateway": _svc("ghcr.io/berriai/litellm:main", net=net, env_file=env_file,
                               depends=["llamacpp"]),
         "mcp-gateway": _svc("docker/mcp-gateway:latest", net=net, env_file=env_file),

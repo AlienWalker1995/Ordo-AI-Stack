@@ -70,4 +70,20 @@ def test_required_images_include_core_and_ops():
     rc = render(GPU, CATALOG, REGISTRY)
     imgs = preflight.required_images(rc)
     assert "ordo-v2/ops-controller:latest" in imgs
-    assert any("llama.cpp" in i for i in imgs)
+    # the 5090 picks Qwen3.6, which pins the patched build — that image, not the stock one
+    assert "ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470" in imgs
+
+
+def test_patched_llamacpp_is_buildable_not_pullable():
+    # a missing patched image must be 'build first' (blocking), never 'Docker will pull'
+    rc = render(GPU, CATALOG, REGISTRY)
+    needed = preflight.required_images(rc)
+    patched = "ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470"
+    assert patched in needed
+    present = {i for i in needed if i != patched}          # everything cached except the patched build
+    go, checks = preflight.run(GPU, CATALOG, REGISTRY, images_present=present)
+    proj = _byname(checks)["project images built locally"]
+    assert not proj.ok and proj.blocking and not go        # NO-GO — it can't be pulled
+    assert "v2/docker/llamacpp-patched" in proj.detail     # points at the build context
+    # it must NOT show up as a pullable upstream image
+    assert not any(c.name.startswith("upstream") and patched in c.detail for c in checks)
