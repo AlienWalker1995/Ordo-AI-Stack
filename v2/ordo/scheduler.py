@@ -30,14 +30,17 @@ class Job:
 
 
 class Scheduler:
-    def __init__(self, total_vram_gb: float):
+    def __init__(self, total_vram_gb: float, cloud_fallback: bool = False):
         self.total_vram_gb = float(total_vram_gb)
+        self.cloud_fallback = bool(cloud_fallback)
         self._queue: list[Job] = []
         self._running: dict[str, Job] = {}
         self._elapsed: dict[str, float] = {}      # running job id -> seconds elapsed
         self._idle_cached: dict[str, float] = {}  # id -> vram held by an idle/cached model
         self._lru = itertools.count()             # recency counter for cached models
         self._lru_order: dict[str, int] = {}
+        self._cloud_routed: list[str] = []        # too-big jobs sent to cloud (fallback enabled)
+        self._rejected: list[str] = []            # too-big jobs with no fallback (can't run)
 
     # --- introspection ---
     @property
@@ -85,8 +88,12 @@ class Scheduler:
         while self._queue:
             head = self._queue[0]
             if head.vram_gb > self.total_vram_gb:
-                # can never fit on this GPU — leave it (a real broker would cloud-fallback/error)
-                break
+                # Can NEVER fit on this GPU. Removing it (route to cloud, or reject) instead of
+                # blocking is the fix for a real starvation bug: a too-big head would otherwise
+                # stall every smaller job queued behind it forever. Then keep pumping the rest.
+                self._queue.pop(0)
+                (self._cloud_routed if self.cloud_fallback else self._rejected).append(head.id)
+                continue
             if head.vram_gb > self.free_vram_gb:
                 # try reclaiming idle cached VRAM before giving up (LRU evict, not preemption)
                 evicted += self._unload_lru_until(head.vram_gb)
@@ -102,6 +109,11 @@ class Scheduler:
     def complete(self, job_id: str) -> None:
         self._running.pop(job_id, None)
         self._elapsed.pop(job_id, None)
+
+    def drain_cloud_routed(self) -> list[str]:
+        """Return + clear the jobs routed to cloud, so the agent dispatches each exactly once."""
+        routed, self._cloud_routed = self._cloud_routed, []
+        return routed
 
     def tick(self, dt_seconds: float) -> None:
         """Advance elapsed time for running jobs (drives the ETA)."""
@@ -131,4 +143,6 @@ class Scheduler:
             "queued": [{"id": j.id, "kind": j.kind, "vram_gb": j.vram_gb} for j in self._queue],
             "waiting_on_vram": waiting,
             "eta_seconds": eta,
+            "cloud_routed": list(self._cloud_routed),
+            "rejected": list(self._rejected),
         }
