@@ -1,0 +1,43 @@
+# Plugin manifest (data-only) — Open WebUI chat front-end. Routes all model requests through the
+# model-gateway (unified provider) and uses Qdrant for RAG vector storage, so it depends on the
+# rag plugin (qdrant + embed). Reached at open-webui:8080 on the project network.
+id: open-webui
+name: Open WebUI (chat UI)
+description: Web chat UI over the model-gateway with Qdrant-backed document RAG.
+requires:
+  nvidia: false
+  ram_gb: 2
+provides: [chat-ui]
+depends_on: [rag]         # VECTOR_DB=qdrant → needs the qdrant + embed services running
+compose_profile: webui
+env:
+  OPEN_WEBUI_ENABLED: "1"
+secrets:
+  - LITELLM_MASTER_KEY    # OPENAI_API_KEY into the gateway (master key)
+services:
+  - name: open-webui
+    # Pinned to the exact version V1 runs (V1 uses ${OPEN_WEBUI_IMAGE:-...v0.10.1}). Pin, don't float.
+    image: ghcr.io/open-webui/open-webui:v0.10.1
+    wants_secrets: true     # LITELLM_MASTER_KEY resolves from secrets.env
+    env:
+      ENABLE_OLLAMA_API: "false"
+      OPENAI_API_BASE_URL: ${OPENAI_API_BASE:-http://model-gateway:11435/v1}
+      OPENAI_API_KEY: ${LITELLM_MASTER_KEY:-local}
+      WEBUI_AUTH: ${WEBUI_AUTH:-False}
+      DEFAULT_MODELS: ${OPEN_WEBUI_DEFAULT_MODEL:-local-chat}
+      VECTOR_DB: qdrant
+      QDRANT_URI: http://qdrant:6333
+      QDRANT_URL: http://qdrant:6333
+      RAG_EMBEDDING_ENGINE: openai
+      RAG_OPENAI_API_BASE_URL: http://model-gateway:11435/v1
+      RAG_OPENAI_API_KEY: ${LITELLM_MASTER_KEY:-local}
+      RAG_EMBEDDING_MODEL: ${EMBED_MODEL:-${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}}
+    volumes:
+      - ${DATA_PATH:-./data}/open-webui:/app/backend/data
+    depends_on: [llamacpp, model-gateway, qdrant]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      start_period: 120s
+      interval: 30s
+      timeout: 10s
+      retries: 3

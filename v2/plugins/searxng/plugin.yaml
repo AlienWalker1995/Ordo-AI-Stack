@@ -1,0 +1,18 @@
+# Plugin manifest — data-only. Registers the SearXNG MCP server (agent tool).
+id: searxng
+name: SearXNG web search (MCP tools)
+description: Private aggregated web search exposed to the agent via MCP.
+kind: mcp
+requires:
+  nvidia: false
+  ram_gb: 1
+provides: [tools]
+depends_on: [searxng-web]   # the MCP queries the self-hosted SearXNG service (searxng-web plugin)
+mcp:
+  # Real image V1 runs: isokoliuk/mcp-searxng (V1 registry-custom.yaml). Digest-pinned here to the
+  # live registry manifest digest (multi-arch index) so the gateway never falls back to Docker's
+  # unpinned online catalog — the orphan-container/drift source in V1. Bump deliberately.
+  image: isokoliuk/mcp-searxng@sha256:ec0ca986ea9dde137607c44335b2e96a8e6a4d7876dee36198f406c34b35cbe0
+  env:
+    SEARXNG_URL: http://searxng:8080
+  tools: [searxng_web_search, searxng_web_url_read]

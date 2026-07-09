@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ordo v2 — control plane</title>
+<style>
+  :root { color-scheme: dark; --bg:#0e1116; --card:#171c24; --line:#252c37; --fg:#e6edf3;
+          --mut:#8b949e; --ok:#3fb950; --busy:#d29922; --bad:#f85149; --acc:#58a6ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+         background:var(--bg); color:var(--fg); }
+  header { padding:16px 22px; border-bottom:1px solid var(--line); display:flex;
+           align-items:baseline; gap:14px; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  header .sub { color:var(--mut); font-size:12px; }
+  header #dot { margin-left:auto; font-size:12px; color:var(--mut); }
+  main { padding:22px; display:grid; gap:18px; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); max-width:1100px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 18px; }
+  .card h2 { margin:0 0 12px; font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--mut); }
+  .kv { display:flex; justify-content:space-between; gap:12px; padding:3px 0; }
+  .kv span:first-child { color:var(--mut); }
+  .big { font-size:22px; font-weight:600; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:20px; font-size:12px; border:1px solid var(--line); }
+  .pill.ok{color:var(--ok);border-color:var(--ok)} .pill.busy{color:var(--busy);border-color:var(--busy)}
+  .pill.bad{color:var(--bad);border-color:var(--bad)}
+  .bar { height:8px; background:#0b0e13; border-radius:5px; overflow:hidden; margin-top:6px; }
+  .bar > i { display:block; height:100%; background:var(--acc); }
+  ul { margin:6px 0 0; padding-left:18px; } li { padding:1px 0; }
+  select,button { font:inherit; background:#0b0e13; color:var(--fg); border:1px solid var(--line);
+                  border-radius:7px; padding:7px 10px; }
+  button { cursor:pointer; border-color:var(--acc); color:var(--acc); }
+  button:disabled { opacity:.5; cursor:default; }
+  .warn { color:var(--busy); font-size:12px; margin-top:8px; }
+  .muted { color:var(--mut); }
+  code { color:var(--acc); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ordo v2</h1><span class="sub">control plane · localhost</span>
+  <span id="dot">connecting…</span>
+</header>
+<main>
+  <section class="card">
+    <h2>GPU / scheduler</h2>
+    <div class="kv"><span>state</span><b id="g-state">—</b></div>
+    <div class="kv"><span>free VRAM</span><b id="g-free">—</b></div>
+    <div class="bar"><i id="g-bar" style="width:0"></i></div>
+    <div class="kv" style="margin-top:10px"><span>running</span><b id="g-run">—</b></div>
+    <div class="kv"><span>queued</span><b id="g-q">—</b></div>
+    <div class="kv"><span>eta to free slot</span><b id="g-eta">—</b></div>
+  </section>
+
+  <section class="card">
+    <h2>Active model</h2>
+    <div class="big" id="m-id">—</div>
+    <div class="kv" style="margin-top:8px"><span>tier</span><b id="m-tier">—</b></div>
+    <div class="kv"><span>context</span><b id="m-ctx">—</b></div>
+    <div style="margin-top:12px; display:flex; gap:8px">
+      <select id="m-select" style="flex:1"></select>
+      <button id="m-apply">Switch</button>
+    </div>
+    <div class="muted" style="margin-top:6px; font-size:12px">
+      Writes <code>ordo.yaml</code> and re-renders — <code>.env</code>, Hermes ctx and gateway ctx
+      move together (no drift).
+    </div>
+    <div class="warn" id="m-msg"></div>
+  </section>
+
+  <section class="card">
+    <h2>Plugins &amp; MCP</h2>
+    <div class="kv"><span>services</span><b id="p-svc">—</b></div>
+    <ul id="p-list" class="muted"></ul>
+    <div class="kv" style="margin-top:10px"><span>MCP servers</span><b id="p-mcp">—</b></div>
+    <ul id="p-mcplist" class="muted"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Warnings</h2>
+    <ul id="w-list" class="warn"></ul>
+    <div id="w-none" class="muted">none — config is clean.</div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let models = [], current = null;
+
+async function api(path, opts) {
+  const r = await fetch("/api" + path, opts);
+  if (!r.ok) throw new Error(path + " -> " + r.status);
+  return r.json();
+}
+
+function setDot(ok) {
+  $("dot").textContent = ok ? "● live" : "● disconnected";
+  $("dot").style.color = ok ? "var(--ok)" : "var(--bad)";
+}
+
+async function refresh() {
+  try {
+    const s = await api("/status");
+    setDot(true);
+    const g = s.gpu || {}, m = s.manifest || {};
+    // scheduler
+    const cls = g.state === "busy" ? "busy" : "ok";
+    $("g-state").innerHTML = `<span class="pill ${cls}">${g.state || "—"}</span>`;
+    const free = g.free_vram_gb, total = g.total_vram_gb;
+    $("g-free").textContent = (free ?? "—") + (total ? " / " + total + " GB" : " GB");
+    $("g-bar").style.width = total ? Math.max(0, 100 - (free/total)*100) + "%" : "0";
+    $("g-run").textContent = (g.running||[]).map(r=>r.id).join(", ") || "—";
+    $("g-q").textContent   = (g.queued||[]).map(q=>q.id).join(", ") || "—";
+    $("g-eta").textContent = g.eta_seconds == null ? "—" : g.eta_seconds + "s";
+    // model
+    $("m-id").textContent   = (m.model||{}).id || "—";
+    $("m-tier").textContent = m.tier || "—";
+    $("m-ctx").textContent  = (m.ctx_size||0).toLocaleString() + " tokens";
+    // plugins / mcp
+    const svc = m.plugins_enabled||[], mcp = m.mcp_servers||[];
+    $("p-svc").textContent = svc.length; $("p-mcp").textContent = mcp.length;
+    $("p-list").innerHTML    = svc.map(p=>`<li>${p}</li>`).join("") || "<li>none</li>";
+    $("p-mcplist").innerHTML = mcp.map(p=>`<li>${p}</li>`).join("") || "<li>none</li>";
+    // warnings
+    const w = m.warnings||[];
+    $("w-list").innerHTML = w.map(x=>`<li>${x}</li>`).join("");
+    $("w-none").style.display = w.length ? "none" : "block";
+  } catch (e) { setDot(false); }
+}
+
+async function loadModels() {
+  try {
+    const mc = await api("/model-config");
+    models = mc.available || []; current = mc.active_model;
+    $("m-select").innerHTML = models
+      .map(x=>`<option value="${x.id}"${x.id===current?" selected":""}>${x.id} (${x.tier})</option>`)
+      .join("") + `<option value="auto">auto (best-fit)</option>`;
+  } catch (e) {}
+}
+
+$("m-apply").onclick = async () => {
+  const btn = $("m-apply"), sel = $("m-select").value;
+  btn.disabled = true; $("m-msg").textContent = "switching…";
+  try {
+    const r = await api("/model-config", {method:"POST", headers:{"Content-Type":"application/json"},
+                                          body: JSON.stringify({model: sel})});
+    $("m-msg").textContent = r.ok ? `→ ${r.active_model} @ ${(r.ctx_size||0).toLocaleString()} ctx` : (r.error||"failed");
+    await refresh(); await loadModels();
+  } catch (e) { $("m-msg").textContent = "" + e; }
+  btn.disabled = false;
+};
+
+loadModels(); refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

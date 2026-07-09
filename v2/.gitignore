@@ -1,0 +1,13 @@
+out/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+# operator-managed secret values — never committed (only secrets.env.example, keys-only, is rendered)
+secrets.env
+.validate-out/
+.validate-cpu/
+# operator-real source — contains host paths + tailnet hostname/IP (this repo is PUBLIC). Only the
+# template `ordo.example.yaml` is tracked; the real `ordo.yaml` stays operator-local (like data/ +
+# secrets.env). Do NOT commit it.
+ordo.yaml

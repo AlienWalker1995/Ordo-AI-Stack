@@ -1,0 +1,33 @@
+# Plugin manifest (data-only) — the self-hosted SearXNG meta-search service. The searxng MCP
+# plugin (kind=mcp) queries THIS at http://searxng:8080; it depends on this plugin, so the web
+# search tool only registers when the engine is running.
+id: searxng-web
+name: SearXNG (self-hosted web search)
+description: Private aggregated meta-search engine (backend-only); the SearXNG MCP queries it.
+requires:
+  nvidia: false
+  ram_gb: 1
+provides: [search]
+compose_profile: search
+env:
+  SEARXNG_ENABLED: "1"
+secrets:
+  # SEARXNG_SECRET is the server.secret_key. V1 keeps it in data/searxng/settings.yml (the bind
+  # mount); the operator manages it out-of-band. Declared here so it lands in secrets.env.example.
+  - SEARXNG_SECRET
+services:
+  - name: searxng
+    # Pinned to the live registry manifest digest (V1 floats searxng/searxng:latest — pin, don't float).
+    image: searxng/searxng@sha256:37c616a774b90fb5df9239eb143f1b11866ddf7b830cd1ebcca6ba11b38cc2bf
+    wants_secrets: true       # SEARXNG_SECRET resolves from secrets.env
+    env:
+      SEARXNG_SETTINGS_PATH: /etc/searxng/settings.yml
+      SEARXNG_BASE_URL: http://searxng:8080/
+    volumes:
+      - ${DATA_PATH:-./data}/searxng:/etc/searxng
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:8080/healthz | grep -q OK || exit 1"]
+      start_period: 30s
+      interval: 30s
+      timeout: 5s
+      retries: 3

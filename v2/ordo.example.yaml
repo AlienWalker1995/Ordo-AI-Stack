@@ -1,0 +1,60 @@
+# ordo.yaml — THE single source of truth. Human-editable. Everything else is regenerated
+# from this. Editing a *rendered* output (out/.env, Hermes context, ...) does nothing —
+# the next render overwrites it. To make something stick, set it in `overrides:` below.
+
+# Hardware: "auto" detects the machine. For CI / reproducibility, pin an explicit profile.
+hardware: auto
+# hardware:
+#   gpus: [{ name: "RTX 5090", vram_gb: 32 }]
+#   ram_gb: 128
+#   cpu_cores: 32
+#   platform: Linux
+
+# Tier: "auto" lets the sizer pick from hardware (game auto-detect). Or force a named tier
+# (cpu | low | medium | high | ultra) — the sizer still refuses to pick a model that won't fit
+# unless you also set model: below.
+tier: auto
+
+# Model: "auto" = best-fit from the catalog for the detected hardware+tier. Or pin a catalog id
+# to override (warn-but-allow: if it won't fit you'll get a warning, not a silent OOM).
+model: auto
+
+# Agent that manages the stack. Hermes is the default.
+agent: hermes
+
+# Control-plane UI (pluggable, like the agent — see dashboards/*/dashboard.yaml).
+#   v2-native  = the minimal single-file SPA over the `ordo serve` control plane (DEFAULT).
+#   v1-parity  = a feature-rich dashboard + its own `ops-api` backend (GGUF mgmt, model-control
+#                flag cards, GPU/model-registry views, Grafana tab). Its reactive guardian is OFF
+#                (the scheduler owns the GPU) and its compose-mutation endpoints are disabled.
+dashboard: v2-native
+
+# Optional plugins (media/song/reels/voice). "auto" = enable what the hardware can run;
+# a list forces specific ones. Media plugins are NVIDIA-only and self-declare that.
+plugins: auto
+
+# Cloud tier-fallback: off by default (fully local, offline-capable). Opt-in only.
+cloud_fallback:
+  enabled: false
+
+# Host/site config — NOT derived from the model and NOT secret. Flows VERBATIM into the rendered
+# .env so the plugin manifests' ${VAR} bind-mount + edge refs resolve deterministically instead of
+# defaulting to `./data` relative to out/. This is the single source of truth for the operator's
+# filesystem roots + edge identity (kept here, so there is no hand-edit of a derived output).
+# A site key can NEVER shadow a derived one (a site LLAMACPP_CTX_SIZE is ignored) — the drift gate
+# always wins. Leave empty for a local floor install (defaults apply).
+site: {}
+  # DATA_PATH: /srv/ordo/data           # where mutable data (agent brain, qdrant, …) is bind-mounted
+  # BASE_PATH: /srv/ordo                 # models/ + comfyui storage roots (shared, often read-only)
+  # CODE_ROOT: /home/me/dev              # what the codebase-memory UI indexes + the agent /c/dev mirror
+  # OPERATOR_SECRETS_DIR: /home/me/.ordo/secrets  # file-based secrets the agent binds into /run/secrets/*
+  #                                                # (e.g. discord_token, github_backup_pat)
+  # CADDY_TAILNET_HOSTNAME: host.tailnet.ts.net   # edge front door (profile edge)
+  # CADDY_TAILNET_DOMAIN: tailnet.ts.net
+  # CADDY_BIND: 100.x.y.z                # host tailnet IP Caddy binds :443 to (never 0.0.0.0)
+
+# Escape hatch: values here SURVIVE regeneration and override derived config. Use sparingly —
+# this is the one place a human/agent pins something the sizer would otherwise compute.
+overrides: {}
+  # llamacpp:
+  #   ctx_size: 131072
