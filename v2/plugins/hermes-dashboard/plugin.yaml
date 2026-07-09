@@ -1,0 +1,36 @@
+# Plugin manifest (data-only) — the Hermes web dashboard (the `hermes dashboard` SPA), served at
+# /hermes/ behind the edge. V1 runs it from the SAME image as the hermes-gateway agent. It's
+# Hermes-specific (uses the agent-hermes image), so it's opt-in behind its own profile; enable it
+# only when the chosen agent is Hermes. Distinct from the V2-native core `dashboard` (control plane).
+id: hermes-dashboard
+name: Hermes dashboard (agent SPA)
+description: The Hermes agent's own web chat/skill dashboard, served under /hermes/.
+requires:
+  nvidia: false
+  ram_gb: 1
+provides: [hermes-dashboard]
+compose_profile: hermes-ui
+env:
+  HERMES_DASHBOARD_ENABLED: "1"
+secrets:
+  - OPS_CONTROLLER_TOKEN    # required for Hermes to reach ops-controller
+services:
+  - name: hermes-dashboard
+    # Same image as the Hermes agent (V1 builds one hermes image, runs it as gateway + dashboard).
+    image: ordo-v2/agent-hermes:latest
+    wants_secrets: true
+    command: ["hermes", "dashboard", "--port", "9119", "--host", "0.0.0.0", "--no-open", "--insecure"]
+    env:
+      PYTHONIOENCODING: utf-8
+      OPS_CONTROLLER_URL: http://ops-controller:9000
+      LLAMACPP_CTX_SIZE: ${LLAMACPP_CTX_SIZE:-262144}
+      HERMES_WEB_DIST: /opt/hermes-agent/hermes_cli/web_dist
+    volumes:
+      - ${DATA_PATH:-./data}/hermes:/home/hermes/.hermes
+    depends_on: [model-gateway, mcp-gateway, dashboard, ops-controller]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9119/"]
+      start_period: 30s
+      interval: 30s
+      timeout: 5s
+      retries: 3

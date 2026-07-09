@@ -1,0 +1,46 @@
+id: voice
+name: Voice (STT + TTS)
+description: Speech-to-text (faster-whisper) + text-to-speech (Kokoro), OpenAI-compatible.
+requires:
+  nvidia: true
+  vram_gb: 4
+  ram_gb: 4
+provides: [voice]
+compose_profile: voice
+env:
+  VOICE_ENABLED: "1"
+# TWO compose services. CRITICAL: both images have NO Blackwell kernels — they CRASH on the
+# RTX 5090 and MUST run on the Pascal 1070. Under Docker Desktop/WSL2 device_ids/
+# NVIDIA_VISIBLE_DEVICES are no-ops for isolation; ONLY CUDA_VISIBLE_DEVICES=GPU-<uuid> pins.
+# `gpu_pin: secondary` makes render resolve the non-primary GPU's uuid and emit it. If there is
+# no secondary GPU, the whole plugin is gated OFF with a warning (never fall back to the 5090 —
+# that would ship a guaranteed crash).
+services:
+  - name: stt
+    # Speech-to-text (faster-whisper, OpenAI-compatible /v1/audio/transcriptions on :8000).
+    # sha-pinned for reproducibility. CTranslate2 int8 has no Blackwell kernels → Pascal 1070.
+    image: fedirz/faster-whisper-server@sha256:0b64050ad0b9244745746b652473ee42a8d5454d501877a252c3e65f631ffc99
+    gpu_pin: secondary
+    env:
+      WHISPER__MODEL: Systran/faster-whisper-small
+      WHISPER__INFERENCE_DEVICE: cuda
+      WHISPER__COMPUTE_TYPE: int8
+    volumes:
+      - ${DATA_PATH:-./data}/voice/hf-cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/v1/models',timeout=5).status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+  - name: tts
+    # Text-to-speech (Kokoro, OpenAI-compatible /v1/audio/speech on :8880). sha-pinned.
+    # Kokoro's PyTorch build has no Blackwell kernels → must run on the Pascal 1070.
+    image: ghcr.io/remsky/kokoro-fastapi-gpu@sha256:63176e12e476470f020e29dfb3203bac249fa66c8fdf95e44b7482546eb4e974
+    gpu_pin: secondary
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8880/v1/audio/voices',timeout=5).status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s

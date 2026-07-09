@@ -1,0 +1,27 @@
+# Ordo v2 substrate — packaging so the substrate installs as a real one-command tool:
+#   pip install ./v2   ->   ordo detect | render | preflight | serve | setup | doctor | parity
+# Runtime dependency is only PyYAML (the render engine is otherwise stdlib — this is the
+# "core runs anywhere, offline-capable after an online install" requirement).
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ordo"
+version = "2.0.0a0"
+description = "Ordo v2 — a portable, self-configuring, hardware-right-sizing AI stack substrate"
+requires-python = ">=3.10"
+dependencies = ["pyyaml>=6.0"]
+
+[project.scripts]
+ordo = "ordo.cli:main"
+
+[tool.setuptools]
+packages = ["ordo"]
+
+# Ship the curated catalog + plugin manifests with the package (data the CLI reads by default).
+[tool.setuptools.package-data]
+ordo = ["../catalog/*.yaml", "../plugins/**/*.yaml"]
+
+[tool.ruff]
+line-length = 100

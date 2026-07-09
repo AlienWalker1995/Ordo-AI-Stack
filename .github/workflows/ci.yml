@@ -56,6 +56,67 @@ jobs:
         env:
           RUN_COMPOSE_SMOKE: "0"
 
+  v2-substrate:
+    name: v2 substrate (mocked-profile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            v2:
+              - 'v2/**'
+
+      - name: Set up Python
+        if: steps.filter.outputs.v2 == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: v2/requirements-dev.txt
+
+      - name: Install pinned deps
+        if: steps.filter.outputs.v2 == 'true'
+        run: pip install -r v2/requirements-dev.txt
+
+      - name: Ruff lint
+        if: steps.filter.outputs.v2 == 'true'
+        working-directory: v2
+        run: python -m ruff check ordo tests
+
+      # No GPU on CI runners — every test uses a MOCKED hardware profile (the merge-gate
+      # "mocked-profile CI" requirement). Also proves the config renders from a clean checkout.
+      - name: Pytest (mocked profiles)
+        if: steps.filter.outputs.v2 == 'true'
+        working-directory: v2
+        run: PYTHONPATH=. python -m pytest -q
+
+      - name: Fresh-install render smoke
+        if: steps.filter.outputs.v2 == 'true'
+        working-directory: v2
+        run: |
+          PYTHONPATH=. python -m ordo --source ordo.example.yaml render --out /tmp/ordo-out
+          test -f /tmp/ordo-out/.env && test -f /tmp/ordo-out/docker-compose.yml
+
+      # Prove the rendered compose is loadable by the REAL docker engine (not just a well-shaped
+      # dict). `config` parses + validates; it does not create or start anything.
+      # The rendered edge (caddy) requires CADDY_BIND (host tailnet IP) via ${CADDY_BIND:?...} —
+      # an operator-supplied `site:` value the generic example intentionally leaves unset. Load the
+      # rendered .env and add a CI-only placeholder (never used at runtime) so config can interpolate,
+      # exactly as the repo-root compose-validate job does for the same strict-required var.
+      - name: Rendered compose validates (docker engine)
+        if: steps.filter.outputs.v2 == 'true'
+        run: |
+          echo "CADDY_BIND=127.0.0.1" >> /tmp/ordo-out/.env
+          docker compose -f /tmp/ordo-out/docker-compose.yml --env-file /tmp/ordo-out/.env config >/dev/null
+          echo "rendered compose accepted by docker compose config"
+
+      - name: Skip (no v2 changes)
+        if: steps.filter.outputs.v2 != 'true'
+        run: echo "Skipping v2 substrate — no changes under v2/."
+
   compose-validate:
     name: Docker Compose validation
     runs-on: ubuntu-latest

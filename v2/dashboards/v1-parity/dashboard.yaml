@@ -1,0 +1,140 @@
+id: v1-parity
+name: V1 feature-rich dashboard
+description: >
+  This operator's original (V1) control-plane dashboard, reinstated on V2. Feature set: GGUF model
+  management (/api/llm/*), model-control flag cards + GPU/model-registry views (via the ops-api
+  backend's /model-config + /registry/*), guardian status panel (degrades to a static 'disabled'
+  state — the V2 scheduler owns the GPU), Grafana tab (/grafana/), token auth + Caddy SSO trust.
+
+  The frontend is same-origin (calls /api/* only — NO baked backend hostname), and the FastAPI
+  backend reads OPS_CONTROLLER_URL at runtime, so the V1 image is reused UNCHANGED (no rebuild)
+  and pointed at the `ops-api` backend below. That keeps V2's `ordo serve` scheduler service named
+  `ops-controller` (its live clients depend on that name) with zero collision.
+default: false
+# The V1 dashboard image, tagged under the project namespace (built from V1's context verbatim).
+image: ordo-v2/dashboard-v1:latest
+# Read-only GPU visibility for the dashboard SERVICE ITSELF. Its `/api/hardware` route (the hw-stat
+# bar's GPU widgets) shells to nvidia-smi (_probe_gpu) + enumerates cards (gpu_stats.list_gpus),
+# which the NVIDIA runtime only injects when the service reserves a GPU with the `utility` cap.
+# V1's dashboard container has exactly caps=[[utility]]; without it `/api/hardware` returns
+# gpu:null + gpus:[] and the GPU widgets go blank. Renders an all-GPU (count: all) reservation so
+# it reads BOTH cards (5090 + 1070). Compute is NOT reserved (utility != gpu cap).
+gpu: utility
+depends_on:
+  ops-api: service_started
+# V1's /api/health probe — keeps the agent's `dashboard: service_healthy` gate satisfiable. The
+# V1 image ships python3 (not curl), so use V1's python3 urllib probe verbatim.
+healthcheck:
+  test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 30s
+environment:
+  # Point the dashboard's backend proxy at the V1-parity API service (NOT V2's scheduler).
+  OPS_CONTROLLER_URL: http://ops-api:9000
+  # Backend service URLs the dashboard reads at runtime (all V2 service names).
+  LLAMACPP_URL: http://llamacpp:8080
+  MODEL_GATEWAY_URL: http://model-gateway:11435
+  MODEL_GATEWAY_API_KEY: ${LITELLM_MASTER_KEY:-local}
+  MCP_GATEWAY_URL: http://mcp-gateway:8811
+  COMFYUI_URL: http://comfyui:8188
+  QDRANT_URL: http://qdrant:6333
+  # On-disk model dirs (bind-mounted below): /api/llm/* scans GGUF_MODELS_DIR; MODELS_DIR is comfyui.
+  GGUF_MODELS_DIR: /gguf-models
+  MODELS_DIR: /models
+  LLAMACPP_CTX_SIZE: ${LLAMACPP_CTX_SIZE:-262144}
+  # Dashboard state (orchestration jobs, throughput samples, MCP registry) — staged V2 data tree.
+  # V1 defaults DASHBOARD_DATA_PATH to ./data/dashboard under /app (not writable by appuser); pin it
+  # to the mounted /data/dashboard so startup mkdir succeeds.
+  DASHBOARD_DATA_PATH: /data/dashboard
+  # SSO: trust Caddy's X-Forwarded-Email on the V2 backend network (mirrors V1's proxy-trust setup).
+  DASHBOARD_TRUST_PROXY_HEADERS: "true"
+  DASHBOARD_TRUSTED_PROXY_NET: 172.27.0.0/16
+  # `/api/hardware` calls psutil.disk_usage(BASE_PATH) for the hw-stat bar's DISK widget. The render
+  # emits BASE_PATH=<Windows host path> into the shared .env (compose NEEDS it there to interpolate
+  # ${BASE_PATH} volume mounts on the host) — but env_file injects that Windows path into THIS Linux
+  # container too, where psutil.disk_usage("C:/dev/...") raises FileNotFoundError -> disk_*:null.
+  # A per-service `environment:` value BEATS env_file, so pin the IN-CONTAINER disk-probe target to
+  # the always-mounted /data/dashboard (same host C: drive -> correct host-disk stats). This mirrors
+  # V1's dashboard container, which set NO BASE_PATH and so used app.py's `/data/dashboard` default.
+  # (Only the dashboard reads BASE_PATH for an in-container fs call; ops-api's BASE_PATH stays the
+  # host path — it's used solely to interpolate ${BASE_PATH} for compose subprocesses, where correct.)
+  BASE_PATH: /data/dashboard
+# The dashboard reads on-disk GGUFs directly for /api/llm/* (shared read-only from the V1 tree via
+# BASE_PATH) and lists comfyui models via MODELS_DIR; its own state lives in the staged V2 data tree.
+volumes:
+  - ${BASE_PATH:-.}/models/gguf:/gguf-models
+  - ${BASE_PATH:-.}/models/comfyui:/models
+  - ${DATA_PATH:-./data}/dashboard:/data/dashboard
+
+# ── The V1-parity BACKEND (service `ops-api`) ──────────────────────────────────────────────────
+# The feature-rich FastAPI control API. Built from a COPY of V1's ops-controller with ONE minimal
+# patch: an OPS_COMPOSE_MUTATIONS_ENABLED kill-switch (default OFF) so it can never shell
+# docker-compose against the stack. The reactive GUARDIAN needs no patch — it is opt-in via
+# COMFYUI_SERIALIZE_LLAMACPP (default "0"), left unset here, so the guardian thread never starts and
+# /guardian/status returns a benign {"enabled": false, "state": "disabled"}. SDK start/stop/restart
+# stay scoped to COMPOSE_PROJECT=ordo-v2 (compose-project label), so they only ever touch V2.
+backend:
+  name: ops-api
+  image: ordo-v2/ops-api:latest
+  group_add_root: true            # Docker Desktop socket is root:root (mirrors V1 group_add: ["0"])
+  # Read-only GPU visibility: this backend IS a copy of V1's ops-controller and enumerates GPUs by
+  # shelling to nvidia-smi, which the NVIDIA runtime only injects when the service reserves a GPU
+  # with the `utility` capability. V1's ops-controller has exactly caps=[[utility]]; mirror it so
+  # the GPU/registry widgets see BOTH cards (5090 + 1070). Without it: "No GPUs returned from
+  # registry." Renders deploy.resources.reservations.devices: [{driver: nvidia, count: all,
+  # capabilities: [utility]}]. `count: all` (not a uuid pin) so it can read both cards.
+  gpu: utility
+  depends_on:
+    llamacpp: service_started
+  # Socket-only probe (matches V1's ops-controller healthcheck — no urllib import cost).
+  healthcheck:
+    test: ["CMD", "python3", "-c", "import socket; s=socket.create_connection(('127.0.0.1',9000),2); s.close()"]
+    start_period: 15s
+    interval: 30s
+    timeout: 5s
+    retries: 3
+  environment:
+    # Scope EVERY container/service action to the ordo-v2 project (compose-project label). This is
+    # the guard that keeps SDK start/stop/restart from ever touching the stopped V1 stack.
+    COMPOSE_PROJECT: ordo-v2
+    # The rendered out/ tree is bind-mounted RW at /workspace below (compose file + .env +
+    # secrets.env together). COMPOSE_PROJECT_DIR/OPS_ENV_PATH point INTO it so the model-config
+    # / default-model buttons' .env upsert (/env/set) and the per-service recreate replay share
+    # ONE source of truth — the exact file the recreate interpolates from.
+    COMPOSE_PROJECT_DIR: /workspace
+    OPS_ENV_PATH: /workspace/.env
+    # Reactive-guardian + watchdogs: explicitly DISABLED (these are the defaults; set for clarity
+    # and defense-in-depth — the guardian that caused the migration-triggering outage never starts).
+    COMFYUI_SERIALIZE_LLAMACPP: "0"
+    OPS_VRAM_PRESSURE_GB: "0"
+    OPS_HERMES_WATCHDOG_ENABLED: "0"
+    # Whole-stack /compose/* stays DISABLED (V2 `ordo serve` owns the stack lifecycle).
+    OPS_COMPOSE_MUTATIONS_ENABLED: "0"
+    # ...but the dashboard's REAL per-service recreate buttons (Model Control → llamacpp;
+    # default-model → open-webui) must WORK. This narrow gate enables ONLY single-service
+    # recreate, which replays the EXISTING rendered out/ compose with BOTH env files +
+    # --no-deps --force-recreate (no re-render; the llamacpp 5090 uuid pin is baked into the
+    # rendered compose so replaying it cannot drop the pin). See main.py "SAFE per-service recreate".
+    OPS_SERVICE_RECREATE_ENABLED: "1"
+    COMFYUI_URL: http://comfyui:8188
+    COMFYUI_CONTAINER_NAME: ordo-v2-comfyui-1
+    COMFYUI_MODELS_DIR: /models/comfyui
+    # Model registry + audit log live in the V2 data tree (staged, not the V1 tree).
+    MODEL_REGISTRY_PATH: /data/model-registry.json
+    AUDIT_LOG_PATH: /data/audit.log
+    # On-disk GGUF dir the model-config UI lists (shared read-only from the V1 tree). Kept OFF the
+    # /workspace subtree (mounted at /gguf-models below) so it doesn't nest under the RW out/ mount.
+    LLAMACPP_MODELS_DIR: /gguf-models
+    BASE_PATH: ${BASE_PATH:-.}
+    DATA_PATH: ${DATA_PATH:-./data}
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock       # SDK start/stop (guard-scoped to ordo-v2-*)
+    # The rendered out/ dir (docker-compose.yml + .env + secrets.env). RW so /env/set + /model-config
+    # upserts persist to the SAME .env the per-service recreate replays. `./` resolves to the compose
+    # project-directory (out/) at runtime — mirrors ops-controller's `./:/config` mount.
+    - ./:/workspace:rw
+    - ${BASE_PATH:-.}/models/gguf:/gguf-models:ro
+    - ${BASE_PATH:-.}/models/comfyui:/models/comfyui:ro
+    - ${DATA_PATH:-./data}/ops-controller:/data        # registry + audit log (staged, V2 data tree)

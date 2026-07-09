@@ -1,0 +1,84 @@
+id: hermes
+name: Hermes
+description: >
+  The default Ordo agent — a persistent, skill-driven orchestrator. Chats via the model-gateway,
+  runs tools through the mcp-gateway, and requests GPU work through the ops-controller scheduler.
+default: true
+# image omitted -> resolves to <project>/agent-hermes:latest (the operator builds this from their
+# Hermes data/); pin an explicit image here to ship a prebuilt one.
+# The agent-hermes image's default CMD is `hermes --help` (prints usage and exits); the gateway is
+# started explicitly so the container runs the persistent messaging gateway (mirrors V1 compose).
+command: [hermes, gateway]
+# The image's entrypoint (/entrypoint.sh) runs as root to chmod the bind-mounted brain, then drops
+# to the unprivileged hermes user via gosu. V1's hermes-gateway runs User=root for exactly this;
+# mirror it (empty -> compose omits `user:` and the image default applies).
+user: root
+consumes:
+  - model-gateway
+  - mcp-gateway
+  - ops-controller
+
+# ── Runtime wiring (data, mirroring V1's hermes-gateway — see the phase-5.5 parity audit) ──
+# Peers Hermes needs HEALTHY before it starts, else it spams 5xx while they warm (V1 uses
+# service_healthy on the gateways/dashboard; ops-controller only needs to be started). The compose
+# renderer emits `condition:` when a peer maps `name: <cond>` instead of a bare string.
+depends_on:
+  model-gateway: service_healthy
+  mcp-gateway: service_healthy
+  dashboard: service_healthy
+  ops-controller: service_started
+
+# Env the container reads (non-secret; secret VALUES come from secrets.env / secret_files below).
+# ${VAR:-default} refs resolve against the rendered .env at compose time (single source of truth).
+environment:
+  PYTHONIOENCODING: utf-8
+  OPS_CONTROLLER_URL: http://ops-controller:9000
+  # STT provider base URL — the local faster-whisper service (voice profile). Harmless if voice off.
+  STT_OPENAI_BASE_URL: ${STT_OPENAI_BASE_URL:-http://stt:8000/v1}
+  # Single source of truth for the context window (llamacpp KV / gateway max_input_tokens / the
+  # dashboard progress bar) — the entrypoint seeds it into $HERMES_HOME/config.yaml.
+  LLAMACPP_CTX_SIZE: ${LLAMACPP_CTX_SIZE:-262144}
+  HERMES_MAX_TOKENS: ${HERMES_MAX_TOKENS:-65536}
+  HERMES_MAX_TURNS: ${HERMES_MAX_TURNS:-90}
+  HERMES_GATEWAY_TIMEOUT: ${HERMES_GATEWAY_TIMEOUT:-3600}
+  HERMES_API_MAX_RETRIES: ${HERMES_API_MAX_RETRIES:-10}
+  # 24h — keeps the streaming stale-detector from killing slow local-model turns mid-flight.
+  HERMES_STREAM_STALE_TIMEOUT: ${HERMES_STREAM_STALE_TIMEOUT:-86400}
+  # Docker-secret _FILE pointers the entrypoint bridges to the plain env vars the app expects.
+  DISCORD_BOT_TOKEN_FILE: /run/secrets/discord_token
+  GITHUB_BACKUP_PAT_FILE: /run/secrets/github_backup_pat
+  DISCORD_ALLOWED_USERS: ${DISCORD_ALLOWED_USERS:-}
+  DISCORD_ALLOWED_CHANNELS: ${DISCORD_ALLOWED_CHANNELS:-}
+  DISCORD_ALLOWED_ROLES: ${DISCORD_ALLOWED_ROLES:-}
+  DISCORD_REQUIRE_MENTION: ${DISCORD_REQUIRE_MENTION:-true}
+  DISCORD_FREE_RESPONSE_CHANNELS: ${DISCORD_FREE_RESPONSE_CHANNELS:-}
+  DISCORD_HOME_CHANNEL: ${DISCORD_HOME_CHANNEL:-}
+  DISCORD_AUTO_THREAD: ${DISCORD_AUTO_THREAD:-true}
+  DISCORD_REACTIONS: ${DISCORD_REACTIONS:-true}
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+
+# Bind mounts. THE BRAIN is the V2-staged Hermes home (${DATA_PATH}/hermes) — never the live-stack
+# path. /workspace/data holds the staged mutable data the skills reference by absolute path
+# (/workspace/data/drafts, /workspace/data/social-relay, /workspace/data/comfyui-output, …); in V2
+# ${DATA_PATH} IS that data subtree, so it mounts at /workspace/data. /c/dev is the load-bearing
+# mirror mount (sibling repos + the V2 runtime dir) — keep the path name exactly.
+volumes:
+  - ${DATA_PATH:-./data}/hermes:/home/hermes/.hermes          # THE BRAIN (staged, delta-synced at flip)
+  - ${DATA_PATH:-./data}:/workspace/data                       # staged mutable data (skills' /workspace/data/*)
+  - ${CODE_ROOT:-/c/dev}:/c/dev                                # mirror mount (load-bearing path name)
+
+# File-based secrets Hermes reads from /run/secrets/* (independent of secrets.env — these are the
+# same host files V1 mounts; the entrypoint bridges the *_FILE env above to the plain vars).
+secret_files:
+  - source: ${OPERATOR_SECRETS_DIR:-${HOME}/.ai-toolkit/runtime/secrets}/discord_token
+    target: /run/secrets/discord_token
+  - source: ${OPERATOR_SECRETS_DIR:-${HOME}/.ai-toolkit/runtime/secrets}/github_backup_pat
+    target: /run/secrets/github_backup_pat
+
+# gateway_state.json is written by `hermes gateway` on startup (Docker mode writes no pid file).
+healthcheck:
+  test: ["CMD-SHELL", "test -f /home/hermes/.hermes/gateway_state.json"]
+  start_period: 60s
+  interval: 30s
+  timeout: 5s
+  retries: 3
