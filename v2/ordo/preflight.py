@@ -1,0 +1,101 @@
+"""Preflight — a read-only GO / NO-GO readiness check for the cutover.
+
+The migration is the operator's to run, but "is it safe to cut over yet?" should be a command,
+not a vibe. `ordo preflight` renders the target config and checks every gate we can verify
+WITHOUT touching either stack:
+
+  - config renders and the one ctx value is consistent across all consumers (the drift gate),
+  - the active model is sha256-pinned (corrupt-weights gate) and MCP images are digest-pinned,
+  - if a GPU is expected for the enabled media/voice plugins, one is actually present,
+  - parity vs the live stack's .env (merge-gate (a)) when a --ref is given,
+  - every image the rendered compose needs is available: project images (ordo-v2/*) must be
+    built locally (blocking); upstream images (llama.cpp, litellm, …) may be absent — Docker
+    pulls them (a note, not a blocker).
+
+Blocking checks failing = NO-GO. Non-blocking = a warning you can proceed past knowingly.
+Pure logic here (docker/image presence is injected); the CLI wires the real `docker images`.
+"""
+from __future__ import annotations
+
+import dataclasses
+
+from . import compose, parity
+from .catalog import Catalog
+from .config import Source
+from .plugins import PluginRegistry
+from .render import render
+
+
+@dataclasses.dataclass
+class Check:
+    name: str
+    ok: bool
+    detail: str
+    blocking: bool = True
+
+
+def required_images(rc, project: str = "ordo-v2") -> list[str]:
+    """The exact images the rendered compose will need (core + agent + enabled plugins)."""
+    c = compose.render_compose(has_gpu=rc.hardware.has_gpu,
+                               compose_profiles=rc.compose_profiles,
+                               agent=rc.hermes.get("agent", "hermes"), project=project)
+    return sorted({svc["image"] for svc in c["services"].values()})
+
+
+def run(
+    source: Source, catalog: Catalog, registry: PluginRegistry, *,
+    ref_env: str | None = None,
+    images_present: set[str] | None = None,
+    project: str = "ordo-v2",
+) -> tuple[bool, list[Check]]:
+    rc = render(source, catalog, registry)
+    checks: list[Check] = []
+
+    # 1. drift gate — one ctx value everywhere
+    derived = rc.manifest()["derived"]
+    consistent = len({str(v) for v in derived.values()}) == 1
+    checks.append(Check("config renders + ctx consistent across .env/hermes/model-gateway",
+                        consistent, f"ctx={rc.ctx_size:,}" if consistent else str(derived)))
+
+    # 2. corrupt-weights gate — the chosen model is checksum-pinned
+    checks.append(Check(f"active model '{rc.model.id}' is sha256-pinned",
+                        rc.model.sha256 is not None,
+                        "pinned" if rc.model.sha256 else "NO sha256 — download refuses unless --allow-unverified",
+                        blocking=False))
+
+    # 3. MCP images digest-pinned (drift/leak gate) — warn per unpinned server
+    unpinned_mcp = [s["id"] for s in rc.mcp_servers if "@sha256:" not in str(s.get("image", ""))
+                    or len(set(str(s["image"]).split("@sha256:")[-1])) <= 1]
+    checks.append(Check("all enabled MCP images digest-pinned", not unpinned_mcp,
+                        "all pinned" if not unpinned_mcp else f"placeholder/unpinned: {', '.join(unpinned_mcp)}",
+                        blocking=False))
+
+    # 4. GPU present if media/voice plugins are enabled
+    gpu_plugins = [p for p in rc.plugins_enabled if p in ("comfyui", "song-gen", "voice")]
+    gpu_ok = rc.hardware.has_gpu or not gpu_plugins
+    checks.append(Check("GPU present for enabled media/voice plugins", gpu_ok,
+                        "no GPU-only plugins" if not gpu_plugins else
+                        (f"GPU present ({rc.hardware.primary_vram_gb:.0f}GB)" if gpu_ok
+                         else f"media plugins {gpu_plugins} need a GPU but none detected")))
+
+    # 5. merge-gate (a): parity vs the live .env (read-only)
+    if ref_env:
+        ok, mism, compared = parity.report(rc.env, ref_env)
+        checks.append(Check(f"parity vs live .env ({ref_env})", ok,
+                            f"{len(compared)} keys compared, 0 mismatch" if ok
+                            else f"{len(mism)} mismatch: {', '.join(sorted(mism))}"))
+
+    # 6. images available — project images must be built (blocking); upstream may be pulled (note)
+    if images_present is not None:
+        needed = required_images(rc, project)
+        proj_missing = [i for i in needed if i.startswith(f"{project}/") and i not in images_present]
+        upstream_missing = [i for i in needed
+                            if not i.startswith(f"{project}/") and i not in images_present]
+        checks.append(Check("project images built locally", not proj_missing,
+                            "all built" if not proj_missing else f"build first: {', '.join(proj_missing)}"))
+        if upstream_missing:
+            checks.append(Check("upstream images cached", False,
+                                f"Docker will pull: {', '.join(upstream_missing)}", blocking=False))
+
+    go = all(c.ok for c in checks if c.blocking)
+    return go, checks
