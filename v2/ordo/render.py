@@ -354,7 +354,7 @@ def _render_registry_custom(mcp_servers: list[dict[str, Any]]) -> str:
 
 def _render_mcp(mcps: list, project: str = "ordo-v2") -> tuple[list[dict[str, Any]], list[str]]:
     """Build the mcp-gateway registry from kind=mcp plugins. Public images MUST be digest-pinned
-    (no Docker online-catalog roulette — the leak/drift source in the current stack). Locally-built
+    (no Docker online-catalog roulette — the leak/drift source V1 suffered). Locally-built
     project images (ordo-v2/*) are exempt: they're pinned by build context, not registry digest."""
     servers: list[dict[str, Any]] = []
     notes: list[str] = []

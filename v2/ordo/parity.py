@@ -1,7 +1,7 @@
 """Parity check: does the render engine reproduce an existing .env?
 
-This is merge-gate (a) — "renders today's stack from one source, zero hand-edits." Point it at
-the live stack's .env (read-only) and it reports any key where the rendered value differs.
+The promise is "render the stack from one source, zero hand-edits." Point it at a reference
+.env (read-only) and it reports any key where the rendered value differs.
 Only compares keys the renderer actually produces AND that exist in the reference (so unrelated
 keys in a real .env don't count as failures).
 """

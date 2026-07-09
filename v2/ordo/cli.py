@@ -5,8 +5,8 @@
     ordo doctor                 # sanity checks (catalog integrity, source validity)
     ordo serve                  # run the control-plane HTTP service (ops-controller)
 
-Never touches a running stack — render writes to an output dir only, and `serve`'s Docker
-backend is hard-scoped to the ordo-v2 project prefix.
+`render` writes to an output dir only (it starts nothing), and `serve`'s Docker backend is
+hard-scoped to the ordo-v2 project prefix so it only ever touches its own project's containers.
 """
 from __future__ import annotations
 
