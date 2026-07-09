@@ -27,6 +27,8 @@ class Plugin:
     provides: tuple[str, ...]
     compose_profile: str
     env: dict[str, str]
+    kind: str = "service"          # "service" (compose service) | "mcp" (agent tool server)
+    mcp: dict[str, Any] = dataclasses.field(default_factory=dict)  # image/env/tools for kind=mcp
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Plugin":
@@ -40,6 +42,8 @@ class Plugin:
             provides=tuple(d.get("provides", []) or []),
             compose_profile=str(d.get("compose_profile", "")),
             env={str(k): str(v) for k, v in (d.get("env", {}) or {}).items()},
+            kind=str(d.get("kind", "service")),
+            mcp=dict(d.get("mcp", {}) or {}),
         )
 
     def fits(self, hw: HardwareProfile) -> bool:

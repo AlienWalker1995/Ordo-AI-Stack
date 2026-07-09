@@ -1,0 +1,13 @@
+id: qdrant-rag
+name: Qdrant RAG (MCP tools)
+description: Vector search / retrieval tools exposed to the agent via MCP.
+kind: mcp                 # registers an MCP server (agent tool), not a compose service
+requires:
+  nvidia: false           # light / CPU
+  ram_gb: 1
+provides: [tools]
+mcp:
+  image: mcp/qdrant@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  env:
+    QDRANT_URL: http://qdrant:6333
+  tools: [qdrant_search, qdrant_store]
