@@ -1,5 +1,7 @@
 # codebase-memory-mcp
 
+> ℹ️ **Live under v2 (gateway-spawned, not a resident service).** The codebase-memory MCP is still active in production: it's a **build step** (image) that the v2 mcp-gateway spawns over stdio, registered in the rendered `v2/out/mcp-registry.yaml`. In v2 the *service* form (the one-shot `codebase-memory-mcp-image` builder in the root `docker-compose.yml`) is obsolete-as-a-service — the image is produced by `docker build` — while the browsable **UI** ships as the `codebase-memory-ui` service plugin (see [`../codebase-memory-ui/README.md`](../codebase-memory-ui/README.md)). The wiring, indexing, and security notes below remain accurate; the V1 `docker compose --profile codebase-memory build …` + `./scripts/mcp_add.sh` enablement is superseded by v2 plugin gating. See [`../v2/PARITY.md`](../v2/PARITY.md).
+
 Gateway-spawned MCP server that gives Hermes a **structural code knowledge graph**
 of the repos under your code root — call graphs, trace paths, architecture views,
 symbol search — so it can navigate code instead of grepping blindly.

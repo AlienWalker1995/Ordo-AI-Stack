@@ -1,5 +1,7 @@
 # secrets/
 
+> ⚠️ **Partially LEGACY — reconcile with v2/ (cutover 2026-07-09).** The SOPS + age **at-rest** model here (encrypted `*.sops` blobs, safe to commit) is unchanged. What changed is the **runtime materialization**: in the production **v2** stack, `ordo render` writes a keys-only `v2/out/secrets.env.example`; the operator fills real values into a gitignored **`v2/out/secrets.env`** (SOPS-decrypt or hand-set) that the rendered compose reads as a second `env_file`. The V1 `make decrypt-secrets` → `~/.ai-toolkit/runtime/` + `make up` two-`--env-file` flow described below is legacy. See [`../v2/CUTOVER.md`](../v2/CUTOVER.md) (Secrets) and [`../docs/LEGACY-CLEANUP.md`](../docs/LEGACY-CLEANUP.md).
+
 Encrypted-at-rest secrets for the Ordo AI stack. **All `*.sops` files in
 this directory are safe to commit to a public repo** — they decrypt only
 with the age private key at `~/.config/sops/age/keys.txt`.

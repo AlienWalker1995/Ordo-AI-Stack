@@ -37,7 +37,7 @@ def _cmd(service="llamacpp", profiles=None):
 def test_recreate_cmd_targets_the_ordo_v2_project():
     cmd = _cmd()
     assert cmd[0] == "docker-compose"
-    # project pinned to ordo-v2 — never the stopped V1 stack
+    # project pinned to ordo-v2 — never another project
     assert cmd[cmd.index("--project-name") + 1] == "ordo-v2"
     # project-directory is the mounted rendered out/ tree (where .env/secrets.env live)
     assert cmd[cmd.index("--project-directory") + 1] == "/workspace"
