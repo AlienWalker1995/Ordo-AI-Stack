@@ -1,5 +1,7 @@
 # MCP Module — Shared Model Context Protocol Gateway
 
+> ⚠️ **Partially LEGACY — reconcile with v2/ (cutover 2026-07-09).** The MCP gateway is still core, but in the production **v2** stack its config-wrapper image is built from [`v2/docker/mcp-gateway/`](../v2/docker/mcp-gateway/) (`ordo-v2/mcp-gateway:latest`) and the enabled MCP servers are **rendered** into `v2/out/mcp-registry.yaml` from `kind=mcp` plugin manifests (public images digest-pinned; project images like `qdrant-rag` pinned by build context) — not hand-managed via the root `docker-compose.yml` / `mcp/` build. The tool catalog, server descriptions, connection URLs, and policy notes below remain accurate; the **build path** (`mcp/Dockerfile`, root compose) and `mcp/.env` secret flow are V1. See [`v2/PARITY.md`](../v2/PARITY.md) (MCP section) and [`docs/LEGACY-CLEANUP.md`](../docs/LEGACY-CLEANUP.md).
+
 The [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) lets AI applications connect to external tools and data. This module runs Docker's [MCP Gateway](https://github.com/docker/mcp-gateway), giving all your Ordo AI Stack services access to the same MCP servers through one endpoint.
 
 ## Layout (everything MCP lives under `mcp/`)
