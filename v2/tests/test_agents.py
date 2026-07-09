@@ -53,6 +53,29 @@ def test_render_default_agent_uses_convention_image(tmp_path):
     assert c["services"]["agent"]["image"] == "ordo-v2/agent-hermes:latest"
 
 
+def test_hermes_manifest_declares_gateway_command():
+    # the agent-hermes image's default CMD is `hermes --help` (prints usage + exits); the manifest
+    # must start the persistent gateway or the container restart-loops. Regression guard for the
+    # phase-5 flip attempt #2 rollback.
+    assert AGENTS.get("hermes").command == ("hermes", "gateway")
+
+
+def test_render_agent_emits_gateway_command(tmp_path):
+    # the rendered agent service MUST override the image's no-op default CMD with `hermes gateway`,
+    # mirroring V1's compose. Without this the agent boots into `hermes --help` and crash-loops.
+    render(_src("hermes"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    assert c["services"]["agent"]["command"] == ["hermes", "gateway"]
+
+
+def test_render_agent_without_command_omits_it(tmp_path):
+    # an agent whose image self-starts (no manifest `command`) leaves compose `command` unset so the
+    # image default runs — the openai-agent manifest declares none.
+    render(_src("openai-agent"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    assert "command" not in c["services"]["agent"]
+
+
 def test_render_swaps_to_pinned_agent_image(tmp_path):
     render(_src("openai-agent"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())

@@ -6,6 +6,9 @@ description: >
 default: true
 # image omitted -> resolves to <project>/agent-hermes:latest (the operator builds this from their
 # Hermes data/); pin an explicit image here to ship a prebuilt one.
+# The agent-hermes image's default CMD is `hermes --help` (prints usage and exits); the gateway is
+# started explicitly so the container runs the persistent messaging gateway (mirrors V1 compose).
+command: [hermes, gateway]
 consumes:
   - model-gateway
   - mcp-gateway

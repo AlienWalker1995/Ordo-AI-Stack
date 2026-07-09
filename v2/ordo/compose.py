@@ -125,6 +125,7 @@ def _plugin_service(ps: "PluginService", plugin: "Plugin", *, net: str, env_file
 def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "hermes",
                    project: str = "ordo-v2", env_file: str = ".env",
                    agent_image: str | None = None,
+                   agent_command: list[str] | None = None,
                    llamacpp_image: str | None = None,
                    plugin_services: "list[tuple[Plugin, PluginService]] | None" = None,
                    secondary_gpu_uuid: str | None = None) -> dict[str, Any]:
@@ -169,6 +170,12 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         "agent": _svc(agent_img, net=net, env_file=env_file,
                       depends=["model-gateway", "mcp-gateway", "ops-controller"], secrets=True),
     }
+    # The agent image's default CMD may be a no-op (agent-hermes defaults to `hermes --help`, which
+    # prints usage and exits → restart loop). The manifest's `command` (Hermes: `hermes gateway`)
+    # starts the persistent orchestrator; emit it so the rendered service overrides that default,
+    # mirroring V1's compose. Empty -> omitted, so an agent whose image self-starts is unaffected.
+    if agent_command:
+        svcs["agent"]["command"] = list(agent_command)
     # optional plugin services, built from the resolved manifests (no hardcoded if-blocks).
     # render() only passes services whose plugin is enabled, so profile-gating already happened;
     # the per-service `profiles:` keeps them dormant until `--profile <p>` is used too.
