@@ -15,6 +15,9 @@ from typing import Any
 from .catalog import Catalog, DEFAULT_VRAM_RESERVE_GB, Model
 from .config import Source
 from .hardware import HardwareProfile, detect
+from .plugins import PluginRegistry
+
+DEFAULT_PLUGINS_DIR = Path(__file__).resolve().parent.parent / "plugins"
 
 # Deep-merge an override dict onto a derived dict (overrides win, survive regeneration).
 def _apply_overrides(derived: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
@@ -55,6 +58,7 @@ class RenderedConfig:
     hermes: dict[str, Any]
     model_gateway: dict[str, Any]
     plugins_enabled: list[str]
+    compose_profiles: list[str] = dataclasses.field(default_factory=list)
 
     def manifest(self) -> dict[str, Any]:
         return {
@@ -63,6 +67,7 @@ class RenderedConfig:
             "model": {"id": self.model.id, "file": self.model.file, "vram_gb": self.model.vram_gb},
             "ctx_size": self.ctx_size,
             "plugins_enabled": self.plugins_enabled,
+            "compose_profiles": self.compose_profiles,
             "warnings": self.warnings,
             "derived": {
                 "env.LLAMACPP_CTX_SIZE": self.env["LLAMACPP_CTX_SIZE"],
@@ -88,18 +93,13 @@ def _resolve_hardware(source: Source) -> HardwareProfile:
     return HardwareProfile.from_spec(source.hardware)
 
 
-def _plugins_for(source: Source, hw: HardwareProfile) -> list[str]:
-    """Media plugins are NVIDIA-only and self-declare that. 'auto' enables what can run."""
-    all_media = ["comfyui", "song-gen", "reels", "voice"]
-    if source.plugins == "auto":
-        return all_media if hw.has_gpu else []
-    return [p for p in source.plugins if hw.has_gpu or p not in all_media]
-
-
 def render(source: Source, catalog: Catalog,
+           plugins: PluginRegistry | None = None,
            reserve_gb: float = DEFAULT_VRAM_RESERVE_GB) -> RenderedConfig:
     hw = _resolve_hardware(source)
     model, warnings = catalog.resolve(hw, source.model, source.tier, reserve_gb)
+    if plugins is None:
+        plugins = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
 
     ctx = _max_ctx_for_vram(model, hw, reserve_gb)
 
@@ -126,8 +126,15 @@ def render(source: Source, catalog: Catalog,
     hermes = {"context_length": ctx, "agent": source.agent}
     model_gateway = {"ctx": ctx, "model_id": "local-chat"}
 
+    # Registry-driven plugin resolution: enable what's requested AND fits AND has its deps.
+    enabled, notes = plugins.resolve(source.plugins, hw)
+    warnings = warnings + notes
+    for p in enabled:
+        env.update(p.env)  # plugins contribute their declared env fragment
+    compose_profiles = sorted({p.compose_profile for p in enabled if p.compose_profile})
+
     return RenderedConfig(
         hardware=hw, model=model, ctx_size=ctx, tier=(model.tier),
         warnings=warnings, env=env, hermes=hermes, model_gateway=model_gateway,
-        plugins_enabled=_plugins_for(source, hw),
+        plugins_enabled=[p.id for p in enabled], compose_profiles=compose_profiles,
     )

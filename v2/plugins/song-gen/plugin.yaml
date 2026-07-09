@@ -1,0 +1,12 @@
+id: song-gen
+name: Song generation (ACE-Step 1.5 XL SFT)
+description: Text-to-song with sung vocals. Needs the ComfyUI backend + a large GPU.
+requires:
+  nvidia: true
+  vram_gb: 20           # ACE-Step 1.5 XL SFT DiT + qwen encoders + VAE
+  ram_gb: 16
+depends_on: [comfyui]   # won't enable unless comfyui is also enabled
+provides: [song]
+compose_profile: media
+env:
+  SONG_GEN_ENABLED: "1"
