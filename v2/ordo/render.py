@@ -15,12 +15,14 @@ from typing import Any
 import yaml
 
 from . import compose
+from .agents import AgentRegistry
 from .catalog import Catalog, DEFAULT_VRAM_RESERVE_GB, Model
 from .config import Source
 from .hardware import HardwareProfile, detect
 from .plugins import PluginRegistry
 
 DEFAULT_PLUGINS_DIR = Path(__file__).resolve().parent.parent / "plugins"
+DEFAULT_AGENTS_DIR = Path(__file__).resolve().parent.parent / "agents"
 
 # Deep-merge an override dict onto a derived dict (overrides win, survive regeneration).
 def _apply_overrides(derived: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
@@ -97,7 +99,9 @@ class RenderedConfig:
         (out / "docker-compose.yml").write_text(
             yaml.safe_dump(compose.render_compose(
                 has_gpu=self.hardware.has_gpu, compose_profiles=self.compose_profiles,
-                agent=self.hermes.get("agent", "hermes")), sort_keys=False), encoding="utf-8")
+                agent=self.hermes.get("agent", "hermes"),
+                agent_image=self.hermes.get("agent_image") or None), sort_keys=False),
+            encoding="utf-8")
 
 
 def _resolve_hardware(source: Source) -> HardwareProfile:
@@ -108,11 +112,14 @@ def _resolve_hardware(source: Source) -> HardwareProfile:
 
 def render(source: Source, catalog: Catalog,
            plugins: PluginRegistry | None = None,
-           reserve_gb: float = DEFAULT_VRAM_RESERVE_GB) -> RenderedConfig:
+           reserve_gb: float = DEFAULT_VRAM_RESERVE_GB,
+           agents: AgentRegistry | None = None) -> RenderedConfig:
     hw = _resolve_hardware(source)
     model, warnings = catalog.resolve(hw, source.model, source.tier, reserve_gb)
     if plugins is None:
         plugins = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
+    if agents is None:
+        agents = AgentRegistry.load(DEFAULT_AGENTS_DIR)
 
     ctx = _max_ctx_for_vram(model, hw, reserve_gb)
 
@@ -157,7 +164,12 @@ def render(source: Source, catalog: Catalog,
         "LLAMACPP_MMPROJ": str(lc["mmproj"]),
         "LLAMACPP_EXTRA_ARGS": str(lc["extra_args"]),
     }
-    hermes = {"context_length": ctx, "agent": source.agent}
+    # Resolve the chosen agent from the registry (Hermes is the default). Unknown id -> a warning
+    # + the naming convention, so a typo surfaces at render/preflight not at compose-up.
+    agent, agent_notes = agents.resolve(source.agent)
+    warnings = warnings + agent_notes
+    agent_image = agent.image_for("ordo-v2") if agent else ""
+    hermes = {"context_length": ctx, "agent": source.agent, "agent_image": agent_image}
     model_gateway = {"ctx": ctx, "model_id": "local-chat"}
 
     # Registry-driven plugin resolution: enable what's requested AND fits AND has its deps.

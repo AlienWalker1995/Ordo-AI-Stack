@@ -1,0 +1,11 @@
+id: openai-agent
+name: Generic OpenAI-compatible agent
+description: >
+  A minimal reference adapter for third parties: any agent that speaks the OpenAI chat API to the
+  model-gateway and MCP to the mcp-gateway. Proves the core is genuinely agent-agnostic — swap it
+  in with `agent: openai-agent` in ordo.yaml. Ships as a pinned image rather than an operator build.
+default: false
+image: ghcr.io/ordo-ai/agent-openai-compat:latest
+consumes:
+  - model-gateway
+  - mcp-gateway
