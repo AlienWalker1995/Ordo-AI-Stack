@@ -1,0 +1,35 @@
+# Plugin manifest (data-only) — the background job worker (reel/publish queue). LOCALLY-BUILT in V1
+# (dashboard + worker deps); V2 pins it as a project buildable image. Drives ComfyUI render jobs and
+# publish enqueues, so it depends on the comfyui plugin (and the core dashboard for the job store).
+id: worker
+name: Job worker (render/publish queue)
+description: Background worker that polls the dashboard job store and drives ComfyUI + publish flows.
+requires:
+  nvidia: false           # it orchestrates ComfyUI over HTTP; no GPU of its own
+  ram_gb: 1
+provides: [worker]
+depends_on: [comfyui]      # marshals ComfyUI render jobs — pointless without the media backend
+compose_profile: media
+env:
+  WORKER_ENABLED: "1"
+services:
+  - name: worker
+    image: ordo-v2/worker:latest
+    env:
+      DASHBOARD_DATA_PATH: /data/dashboard
+      COMFYUI_URL: http://comfyui:8188
+      COMFYUI_WORKFLOWS_DIR: /comfyui-workflows
+      COMFYUI_OUTPUT_DIR: /comfyui-output
+      WORKER_POLL_INTERVAL_SEC: ${WORKER_POLL_INTERVAL_SEC:-0.5}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      N8N_PUBLISH_WEBHOOK_URL: ${N8N_PUBLISH_WEBHOOK_URL:-}
+    volumes:
+      - ${DATA_PATH:-./data}/dashboard:/data/dashboard
+      - ${DATA_PATH:-./data}/comfyui-output:/comfyui-output:ro
+    depends_on: [dashboard, comfyui]
+    healthcheck:
+      test: ["CMD-SHELL", "[ -f /tmp/worker.heartbeat ]"]
+      start_period: 30s
+      interval: 30s
+      timeout: 5s
+      retries: 3

@@ -1,0 +1,73 @@
+# Plugin manifest (data-only) — the RAG stack: vector DB + embedding server + folder-watch ingester.
+# Groups the three V1 services that form retrieval: qdrant (store), llamacpp-embed (768-dim nomic
+# embeddings), rag-ingestion (watches a folder → chunks → embeds → upserts). The qdrant-rag MCP
+# plugin depends on this so the agent's qdrant_search only registers when the store is running.
+id: rag
+name: RAG (Qdrant + embeddings + ingestion)
+description: Vector store, local embedding server, and folder-watch ingester for retrieval.
+requires:
+  nvidia: false           # CPU-ok: qdrant + a CPU embed server run without a GPU
+  ram_gb: 4
+provides: [rag]
+compose_profile: rag
+env:
+  RAG_ENABLED: "1"
+services:
+  - name: qdrant
+    # Vector DB — pinned to the exact version V1 runs. No host port in V2 (reached at qdrant:6333
+    # on the project network; V1's 127.0.0.1 publish was host-debug only).
+    image: qdrant/qdrant:v1.18.2
+    volumes:
+      - ${DATA_PATH:-./data}/qdrant:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  - name: llamacpp-embed
+    # Embedding server — same upstream llama.cpp build as the chat backend, run in --embeddings mode
+    # on a small nomic GGUF. rag-ingestion + the qdrant-rag MCP both embed against THIS so ingest and
+    # query share the same 768-dim space. Stock upstream server image (Docker pulls it).
+    image: ghcr.io/ggml-org/llama.cpp:server
+    gpu: true               # rides the primary card when present; CPU-fallback via gpu_layers=0 upstream
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --model
+      - /models/${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}
+      - --ctx-size
+      - "8192"
+      - --embeddings
+    volumes:
+      - ${BASE_PATH:-.}/models/gguf:/models:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      start_period: 60s
+      interval: 15s
+      timeout: 10s
+      retries: 5
+  - name: rag-ingestion
+    # Folder-watch ingester — LOCALLY-BUILT in V1 (./rag-ingestion). V2 pins it as a project
+    # buildable image (build context v2/docker/rag-ingestion). Embeds directly against
+    # llamacpp-embed (litellm's /v1/embeddings 500s for the local embed model).
+    image: ordo-v2/rag-ingestion:latest
+    env:
+      MODEL_GATEWAY_URL: http://llamacpp-embed:8080
+      EMBED_MODEL: ${EMBED_MODEL:-${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}}
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: ${RAG_COLLECTION:-documents}
+      WATCH_DIR: /watch
+      CHUNK_SIZE: ${RAG_CHUNK_SIZE:-400}
+      CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-50}
+      SCAN_INTERVAL_SEC: ${RAG_SCAN_INTERVAL_SEC:-15}
+    volumes:
+      - ${DATA_PATH:-./data}/rag-input:/watch
+    depends_on: [llamacpp-embed, qdrant]
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/rag-ingestion.heartbeat"]
+      start_period: 60s
+      interval: 30s
+      timeout: 5s
+      retries: 3

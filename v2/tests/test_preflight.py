@@ -87,3 +87,34 @@ def test_patched_llamacpp_is_buildable_not_pullable():
     assert "v2/docker/llamacpp-patched" in proj.detail     # points at the build context
     # it must NOT show up as a pullable upstream image
     assert not any(c.name.startswith("upstream") and patched in c.detail for c in checks)
+
+
+def test_mcp_pinned_check_passes_with_real_images():
+    # qdrant-rag (project image) + searxng (real digest) → the digest-pinned check is OK
+    _go, checks = preflight.run(GPU, CATALOG, REGISTRY)
+    mcp = _byname(checks)["all enabled MCP images digest-pinned"]
+    assert mcp.ok and not mcp.blocking
+
+
+def test_secrets_check_absent_file_is_skipped(tmp_path):
+    # no secrets.env passed → no secrets check emitted at all (operator-managed, out-of-band)
+    _go, checks = preflight.run(GPU, CATALOG, REGISTRY)
+    assert not any(c.name.startswith("secrets present") for c in checks)
+
+
+def test_secrets_check_warns_on_missing_keys(tmp_path):
+    sec = tmp_path / "secrets.env"
+    sec.write_text("LITELLM_MASTER_KEY=abc\n")             # only one of the required keys filled
+    go, checks = preflight.run(GPU, CATALOG, REGISTRY, secrets_env=str(sec))
+    c = next(c for c in checks if c.name.startswith("secrets present"))
+    assert not c.ok and not c.blocking                     # non-blocking warning
+    assert "OPS_CONTROLLER_TOKEN" in c.detail and go is True  # still GO (only a warning)
+
+
+def test_secrets_check_ok_when_all_present(tmp_path):
+    rc = render(GPU, CATALOG, REGISTRY)
+    sec = tmp_path / "secrets.env"
+    sec.write_text("".join(f"{k}=x\n" for k in rc.required_secrets))
+    _go, checks = preflight.run(GPU, CATALOG, REGISTRY, secrets_env=str(sec))
+    c = next(c for c in checks if c.name.startswith("secrets present"))
+    assert c.ok

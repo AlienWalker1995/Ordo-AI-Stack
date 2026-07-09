@@ -51,6 +51,8 @@ def cmd_render(args: argparse.Namespace) -> int:
     rc = render(src, cat)
     rc.write(args.out)
     print(f"Rendered -> {args.out}/  (model={rc.model.id}, ctx={rc.ctx_size:,})")
+    print(f"secrets.env.example -> {len(rc.required_secrets)} required key(s): "
+          f"{', '.join(rc.required_secrets)}")
     # the drift-proof invariant, shown every render:
     m = rc.manifest()["derived"]
     consistent = len({str(v) for v in m.values()}) == 1
@@ -113,7 +115,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
     images = None if args.no_images else _local_images()
     go, checks = preflight.run(src, cat, reg, ref_env=args.ref, images_present=images,
-                               project=args.project)
+                               secrets_env=args.secrets, project=args.project)
     for c in checks:
         mark = "OK " if c.ok else ("!! " if c.blocking else "-- ")
         print(f"  [{mark}] {c.name}: {c.detail}")
@@ -199,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
     pn.set_defaults(func=cmd_native)
     pf = sub.add_parser("preflight")
     pf.add_argument("--ref", help="live .env to parity-check against (merge gate)")
+    pf.add_argument("--secrets", help="local secrets.env to check required keys against (non-blocking)")
     pf.add_argument("--project", default="ordo-v2")
     pf.add_argument("--no-images", action="store_true", help="skip the docker image-presence check")
     pf.set_defaults(func=cmd_preflight)

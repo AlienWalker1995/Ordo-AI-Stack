@@ -18,6 +18,7 @@ Pure logic here (docker/image presence is injected); the CLI wires the real `doc
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 
 from . import parity
 from .catalog import Catalog
@@ -50,10 +51,17 @@ def _is_buildable(image: str, project: str) -> bool:
     return image.startswith(f"{project}/") or "llamacpp-patched" in image
 
 
+def _missing_secret_keys(rc, secrets_env: str) -> list[str]:
+    """Keys the enabled stack requires that a present secrets.env leaves empty/absent."""
+    present = {k for k, v in parity.load_env(secrets_env).items() if v}
+    return [k for k in rc.required_secrets if k not in present]
+
+
 def run(
     source: Source, catalog: Catalog, registry: PluginRegistry, *,
     ref_env: str | None = None,
     images_present: set[str] | None = None,
+    secrets_env: str | None = None,
     project: str = "ordo-v2",
 ) -> tuple[bool, list[Check]]:
     rc = render(source, catalog, registry)
@@ -71,9 +79,12 @@ def run(
                         "pinned" if rc.model.sha256 else "NO sha256 — download refuses unless --allow-unverified",
                         blocking=False))
 
-    # 3. MCP images digest-pinned (drift/leak gate) — warn per unpinned server
-    unpinned_mcp = [s["id"] for s in rc.mcp_servers if "@sha256:" not in str(s.get("image", ""))
-                    or len(set(str(s["image"]).split("@sha256:")[-1])) <= 1]
+    # 3. MCP images digest-pinned (drift/leak gate) — warn per unpinned PUBLIC server. Locally-built
+    # project images (ordo-v2/*) are pinned by build context, not a registry digest, so exempt.
+    unpinned_mcp = [s["id"] for s in rc.mcp_servers
+                    if not str(s.get("image", "")).startswith(f"{project}/")
+                    and ("@sha256:" not in str(s.get("image", ""))
+                         or len(set(str(s["image"]).split("@sha256:")[-1])) <= 1)]
     checks.append(Check("all enabled MCP images digest-pinned", not unpinned_mcp,
                         "all pinned" if not unpinned_mcp else f"placeholder/unpinned: {', '.join(unpinned_mcp)}",
                         blocking=False))
@@ -112,6 +123,16 @@ def run(
         if upstream_missing:
             checks.append(Check("upstream images cached", False,
                                 f"Docker will pull: {', '.join(upstream_missing)}", blocking=False))
+
+    # 7. secrets present (non-blocking): if a local secrets.env exists, warn which required KEYS
+    # are still empty/absent. Missing secrets.env entirely is fine here — it's operator-managed and
+    # created out-of-band; this only helps catch a half-filled one before the flip.
+    if secrets_env is not None and Path(secrets_env).exists():
+        missing = _missing_secret_keys(rc, secrets_env)
+        checks.append(Check(f"secrets present in {secrets_env}", not missing,
+                            "all required secrets set" if not missing
+                            else f"{len(missing)} missing: {', '.join(missing)}",
+                            blocking=False))
 
     go = all(c.ok for c in checks if c.blocking)
     return go, checks
