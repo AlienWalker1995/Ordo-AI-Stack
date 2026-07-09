@@ -1,8 +1,14 @@
-# Ordo v2 substrate — config render engine (first slice)
+# Ordo v2 substrate — the config render engine behind production
 
-This directory is the **first slice** of the Ordo v2 rebuild (branch `arch/v2-substrate`).
-It is built in isolation — it does **not** touch or reconfigure the running stack. The engine
-renders config into `./out/`, never over the live `.env`.
+This directory **is** the Ordo stack now running in production. The 2026-07-09 cutover +
+consolidation are **done**: the stack runs entirely from `C:\dev\ordo-ai-stack`, `main` is the
+production branch, the separate `C:\dev\ordo-v2` worktree is retired, and the compose project is
+`ordo-v2` (24 services). The render engine below is how that stack's config is produced: one
+declarative source (`ordo.yaml`) renders into `./out/`, and services run from that rendered output —
+edits to *derived* config never survive a re-render, so drift is structurally impossible.
+
+The historical build-in-isolation record (the substrate was developed on branch `arch/v2-substrate`
+beside the old stack, then flipped) lives in [`FLIP.md`](FLIP.md) and [`CUTOVER.md`](CUTOVER.md).
 
 ## Why this exists (from the architecture interrogation)
 
@@ -16,8 +22,8 @@ sync (256K in Hermes vs 128K in llama.cpp → a compaction deadlock; a stale mod
 > outputs don't survive a re-render — so drift is structurally impossible. An explicit
 > `overrides:` block in the source is the escape hatch that *does* survive.
 
-This is the **first slice** because everything else (scheduler, plugins, installer) renders
-through it, and it's the direct fix for the #1 pain.
+This is the substrate everything else (scheduler, plugins, installer) renders through, and it's the
+direct fix for the #1 pain — now proven in production, not just in test.
 
 ## What's here
 
@@ -30,14 +36,17 @@ through it, and it's the direct fix for the #1 pain.
 | `ordo/config.py` | load/validate the declarative source |
 | `ordo/render.py` | `(source + hardware + catalog + plugins) → RenderedConfig`; writes `out/.env`, `out/hermes.context.json`, `out/manifest.json` |
 | `ordo/plugins.py` + `plugins/*/plugin.yaml` | **registry-driven** plugins: each manifest declares hardware needs + a config fragment; the renderer enables what fits (media = NVIDIA-only) and resolves `depends_on` |
-| `ordo/scheduler.py` | GPU **scheduler decision engine** — FIFO admission + co-run-when-it-fits + LRU idle-evict (replaces the reactive guardian; pure logic, a process broker drives it later) |
-| `ordo/cli.py` | `ordo detect | render | doctor` — the seed of the one-script |
-| `tests/` | 22 tests: mocked-profile render (5090 + CPU-only), drift-revert, ctx consistency, plugin gating/deps, scheduler co-run/FIFO/evict |
+| `ordo/scheduler.py` | GPU **scheduler decision engine** — FIFO admission + co-run-when-it-fits + LRU idle-evict (replaces the reactive guardian that caused the outage; the process broker drives it against the real `ordo-v2-` containers — live in production) |
+| `ordo/cli.py` | `ordo detect | render | doctor | serve | preflight | …` — the one-script control surface |
+| `tests/` | mocked-profile render (5090 + CPU-only), drift-revert, ctx consistency, plugin gating/deps, scheduler co-run/FIFO/evict, and per-defect-class regression guards from the parity audits (current suite: **172 passed, 2 skipped** — run below) |
 
-## Slices done on this branch
+## How it was built (development log — all of this is now live in production)
+The substrate was built slice-by-slice on `arch/v2-substrate`, each slice validated before the next.
+This is the build history; the cutover that took it to production is in [`FLIP.md`](FLIP.md).
+
 1. **Config render engine** — declarative source → drift-proof config + hardware right-sizing + checksummed catalog. ✅
 2. **Plugin registry** — data-only manifests, hardware-gated, dependency-resolved. ✅
-3. **Scheduler decision engine** — FIFO + co-run-if-fits + LRU idle-evict. ✅ (the process broker that drives it against real containers is a later slice — needs the live stack / operator.)
+3. **Scheduler decision engine** — FIFO + co-run-if-fits + LRU idle-evict. ✅ (the process broker that drives it against the real `ordo-v2-` containers landed in slice 9 and now runs in production as the `ops-controller` service — this is the arbiter that replaced the outage-causing reactive guardian.)
 4. **Guided-setup wizard** — `ordo setup` detects → proposes → writes `ordo.yaml` (headless path = CI). ✅
 5. **Full-stack parity render + `ordo parity`** — the renderer now reproduces the complete llama.cpp surface (model/ctx/mmproj/MTP args/…), and `ordo parity --ref <.env>` diffs it. ✅
    **Merge-gate (a) demonstrated live:** `ordo parity` vs the real running `.env` → **PARITY OK** (15 keys, 0 mismatches), read-only — proving the engine regenerates today's hand-tuned config from one source with no drift.
@@ -49,8 +58,7 @@ through it, and it's the direct fix for the #1 pain.
     **Validated live in a container:** switching the model over HTTP rewrote `ordo.yaml` **and** regenerated `.env` in one pass (`LLAMACPP_MODEL` + `LLAMACPP_CTX_SIZE` moved together — the drift bug is structurally impossible); unknown model → 404, source untouched. The socket it mounts to drive the broker is guard-scoped to `ordo-v2-*`, so it still can't touch the live stack.
 11. **`ordo preflight` GO/NO-GO gate + [`CUTOVER.md`](CUTOVER.md) runbook** — a read-only readiness check for the migration: ctx consistency (drift gate), model/MCP checksums, GPU-present-for-enabled-plugins, **parity vs the live `.env`**, and image readiness (project images blocking, upstream pull-able). Blocking failure → non-zero exit. The runbook is the operator's atomic-cutover procedure (build → preflight → up-beside → validate parity + restore personal backup → flip → rollback-ready). ✅
     **Validated live:** `ordo preflight --ref <live .env>` → **GO**, `parity vs live .env: 15 keys, 0 mismatch`; the unpinned 27b sha256 correctly surfaced as a non-blocking warning.
-12. **Dashboard SPA (the 6th core image)** — a single-file, localhost, no-auth control plane: live GPU/scheduler state, active model + ctx + tier, enabled plugins/MCP, warnings, and a **model-switch dropdown** that POSTs `/model-config` (drift-safe). `dashboard/nginx.conf` reverse-proxies `/api/*` to the ops-controller; `docker/dashboard.Dockerfile` builds it. ✅
-    **Validated live:** built + run beside the ops-controller on a scoped network — served the SPA and proxied `/api/status` + `/api/model-config` to the real control plane (model `huihui-qwen3.6-27b`, ctx 131,072). Now **all 6 core services have real images** (ops-controller + dashboard built here; llama.cpp/litellm/mcp-gateway upstream; agent swappable).
+12. **Dashboard (control plane)** — *a minimal V2-native SPA was built here first, but it was a regression: it dropped the operator's feature-rich V1 dashboard (GGUF mgmt, model-control flag cards, GPU/model-registry views, Grafana tab, token auth).* **In production the ORIGINAL V1-parity dashboard is reinstated** — service `dashboard` runs image `ordo-v2/dashboard-v1` (the V1 SPA reused unchanged) against a NEW backend service **`ops-api`** (a copy of V1's ops-controller with guardian/watchdogs OFF and per-service recreate on). Dashboard selection is now data-driven (`dashboards/<id>/dashboard.yaml`, mirrors the agent registry): `v2-native` stays the open-source default, this deployment pins `dashboard: v1-parity`. Every tab/widget was validated feature-by-feature — see [`PARITY-VALIDATION.md`](PARITY-VALIDATION.md) and the reinstatement writeup in [`AUDIT.md`](AUDIT.md). Note: the `ordo serve` scheduler control plane stays named `ops-controller` (its live clients depend on that name); `ops-api` is the separate dashboard backend.
 
 13. **One-command packaging + mocked-profile CI** — `pyproject.toml` installs the substrate as a real `ordo` command (`pip install ./v2`; runtime dep = just PyYAML, so the core runs anywhere); `python -m ordo` also works. A dedicated **`v2-substrate` CI job** (in `.github/workflows/ci.yml`, path-gated on `v2/**`, pinned deps) runs ruff + the full mocked-profile suite + a fresh-install render smoke — the merge-gate "mocked-profile CI" + "clean fresh-install" requirements. ✅
     **Validated:** simulated the CI on a `python:3.12` runner-equivalent — ruff clean, 67 tests, `python -m ordo render` from a clean checkout, and `pip install` → a working `ordo detect`.
@@ -85,27 +93,37 @@ through it, and it's the direct fix for the #1 pain.
     **Validated:** the full dual-GPU render enables all 12 service plugins + 2 MCP with **zero
     warnings**; the rendered compose with **all 10 profiles** passes the real `docker compose config`
     (27 entries, caddy the sole host-port publisher, CADDY_BIND `:?` failsafe preserved); the CPU-only
-    render validates too; `ordo preflight` → GO, MCP "all pinned". Live stack untouched.
+    render validates too; `ordo preflight` → GO, MCP "all pinned".
 
-**118 tests green.** `ordo render` writes the complete stack (`.env` + `docker-compose.yml` + `hermes.context.json` + `manifest.json` + `mcp-registry.yaml` + `secrets.env.example`); `ordo serve` runs the control plane that regenerates it drift-safely at runtime; `ordo preflight` gates the cutover.
+`ordo render` writes the complete stack (`.env` + `docker-compose.yml` + `hermes.context.json` +
+`manifest.json` + `mcp-registry.yaml` + `secrets.env.example`); `ordo serve` runs the control plane
+(service `ops-controller`) that regenerates it drift-safely at runtime; `ordo preflight` gated the
+cutover. **Test suite: 172 passed, 2 skipped** (verified 2026-07-09).
 
-## This completes every operator-independent slice
-Right-sizing · drift-proof config (parity-proven live) · plugins · MCP · scheduling + broker ·
-isolated runnable compose · **control-plane service + dashboard (built + validated)** ·
-**cutover gate + runbook** · wizard · diagnostics. All 6 core services have real images.
-All in one worktree, live stack untouched.
+## Operating this stack (it IS production now)
+The 24 services run under compose project `ordo-v2` from `C:\dev\ordo-ai-stack`, all reached through
+the edge (Caddy `:443` + oauth2-proxy Google SSO) — no core service publishes a host port. One data
+root at `C:\dev\ordo-ai-stack\data` (Hermes brain at `data\hermes`). Secrets live in gitignored
+`v2\out\secrets.env` (a second `env_file`).
 
-## What genuinely needs you now (can't be automated safely)
-- The **cutover itself** — follow [`CUTOVER.md`](CUTOVER.md): build images → `ordo preflight` → bring
-  `ordo-v2` up beside the live stack → validate parity + restore the personal backup → atomic flip,
-  old stack kept for rollback. Touches the live containers + the 5090, so it's yours to drive.
-- The **operator-specific images** — `agent-hermes` (wraps your Hermes `data/` + automation),
-  `comfyui`, `voice` (tied to your models). The generic core images (ops-controller, dashboard) are done.
+**Render discipline** (the drift cure, in daily operation):
+- Change config by editing the source `ordo.yaml`, then **re-render** — never hand-edit `out/.env`.
+- Always render from the real source: `ordo render --source out/ordo.yaml`.
+- **Re-render only inside a `--gpus all` container** (so hardware detection sees both cards); the
+  rendered `llamacpp` block must come out **byte-identical** to what's running.
+- Apply with `docker compose ... up -d --no-deps <svc>` (per-service, no cascade). The dashboard's
+  per-service recreate button does exactly this against the existing `out/` compose (no re-render).
 
-The 27b ultra model is now **sha256-pinned** (`c03727f9…` — computed from the on-disk weights), so
-`preflight`'s checksum gate is green for the model the live stack actually runs.
+## What the cutover produced (see FLIP.md / CUTOVER.md for the executed record)
+The 2026-07-09 cutover took this substrate to production: 3 flip attempts (2 clean ~7-min rollbacks
+that each converted a live defect into a test-guarded fix; success at ~3.75-min core downtime),
+then a consolidation that re-homed everything to `C:\dev\ordo-ai-stack` and merged to `main`. The
+operator-specific images (`agent-hermes` wrapping the Hermes `data/`, `comfyui`, `voice`) are built
+and running; the dashboard reinstatement is `ops-api` + `dashboard-v1` (above). The 27b model is
+**sha256-pinned** (`c03727f9…`, computed from the on-disk weights) so `preflight`'s checksum gate
+stays green.
 
-## Acceptance gate for THIS slice (from the plan)
+## Design acceptance gates (all met, proven in production)
 1. Renders a full config from one source with **zero hand-edits**.
 2. **Drift-revert**: a hand-edited derived value is corrected on the next render.
 3. Renders both a **5090 profile and a mocked CPU-only profile** into valid configs.
@@ -115,9 +133,5 @@ The 27b ultra model is now **sha256-pinned** (`c03727f9…` — computed from th
 ## Run the tests (no host Python needed)
 ```
 docker run --rm -v "$PWD:/w" -w /w python:3.11-slim \
-  sh -c "pip install -q pyyaml pytest && python -m pytest -q"
+  sh -c "pip install -q -r requirements-dev.txt && python -m pytest -q"
 ```
-
-## Explicitly NOT done here (needs the operator / later slices)
-Scheduler/broker, plugin registry runtime, the installer wizard, native path, and the actual
-cutover. This slice only proves the render engine. The live stack is untouched.
