@@ -39,6 +39,17 @@ def _gpu_pinned_reservation(uuid: str) -> dict[str, Any]:
         {"driver": "nvidia", "device_ids": [uuid], "capabilities": ["gpu"]}]}}}}
 
 
+def _utility_gpu_reservation() -> dict[str, Any]:
+    """A read-only GPU reservation: the `utility` capability injects `nvidia-smi` + NVML into
+    the container WITHOUT reserving compute. The V2 scheduler (ops-controller) detects VRAM by
+    shelling to nvidia-smi (hardware._detect_gpus); without this it sees CPU-only → total_vram=0
+    → it can't do the VRAM-fit co-run admission that REPLACES V1's reactive guardian, and it
+    drops every GPU plugin (comfyui/voice/worker) as 'not available'. V1's ops-controller has
+    exactly this (caps=[[utility]]). `count: all` (not a uuid pin) so it can read BOTH cards."""
+    return {"deploy": {"resources": {"reservations": {"devices": [
+        {"driver": "nvidia", "count": "all", "capabilities": ["utility"]}]}}}}
+
+
 def _pin_env(uuid: str) -> dict[str, str]:
     """The CUDA_VISIBLE_DEVICES / NVIDIA_VISIBLE_DEVICES pair — the ONLY thing that actually
     isolates a process to one card under Docker Desktop/WSL2 (device_ids alone is a no-op).
@@ -101,6 +112,44 @@ def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
     s["environment"] = {"ORDO_PROJECT": project}
     # --source/--catalog are global (pre-subcommand) flags; --project/--out belong to `serve`.
     s["command"] = ["--source", "/config/ordo.yaml", "serve", "--project", project, "--out", "/config/out"]
+    # Read-only GPU visibility so the scheduler can see real VRAM (mirrors V1's utility cap).
+    s.update(_utility_gpu_reservation())
+    s["environment"]["NVIDIA_DRIVER_CAPABILITIES"] = "utility"
+    return s
+
+
+def _model_gateway(project: str, net: str, env_file: str) -> dict[str, Any]:
+    """LiteLLM behind the `local-chat` alias. The agent gates on `model-gateway: service_healthy`
+    (audit G5), so this service MUST render a healthcheck or that gate is unsatisfiable and the
+    agent never starts. Mirror V1's exact probe: GET /v1/models with the LITELLM_MASTER_KEY bearer.
+    The image ships python3 (not curl), so use V1's python3 urllib form verbatim."""
+    s = _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file,
+             depends=["llamacpp"], secrets=True)
+    s["healthcheck"] = {
+        "test": ["CMD-SHELL", (
+            "python3 -c \"import os, urllib.request; "
+            "req = urllib.request.Request('http://localhost:11435/v1/models', "
+            "headers={'Authorization': 'Bearer ' + os.environ.get('LITELLM_MASTER_KEY', 'local')}); "
+            "urllib.request.urlopen(req)\""
+        )],
+        "interval": "30s", "timeout": "10s", "retries": 3, "start_period": "60s",
+    }
+    return s
+
+
+def _dashboard(project: str, net: str, env_file: str) -> dict[str, Any]:
+    """The V2-native control-plane SPA. V1's dashboard declares a container HEALTHCHECK on
+    `/api/health`, and the agent (hermes-gateway) gates on `dashboard: service_healthy` (the
+    audit's G5 depends-condition). Without a healthcheck on THIS service that `service_healthy`
+    gate is permanently unsatisfiable and the agent never starts — a live-only failure of the
+    same "V2 dropped a piece of V1 per-service config" class the parity audit targets. Emit the
+    healthcheck here; the V2 image ships `curl` (not V1's `python3`), so probe with curl."""
+    s = _svc(f"{project}/dashboard:latest", net=net, env_file=env_file,
+             depends=["ops-controller"], secrets=True)
+    s["healthcheck"] = {
+        "test": ["CMD-SHELL", "curl -sf http://localhost:8080/api/health || exit 1"],
+        "interval": "30s", "timeout": "10s", "retries": 3, "start_period": "30s",
+    }
     return s
 
 
@@ -253,12 +302,10 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
     svcs: dict[str, Any] = {
         "llamacpp": llamacpp,
         # LITELLM_MASTER_KEY + THROUGHPUT_RECORD_TOKEN are secrets (from secrets.env).
-        "model-gateway": _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file,
-                              depends=["llamacpp"], secrets=True),
+        "model-gateway": _model_gateway(project, net, env_file),
         "mcp-gateway": _mcp_gateway(project, net, env_file),
         "ops-controller": _ops_controller(project, net, env_file),
-        "dashboard": _svc(f"{project}/dashboard:latest", net=net, env_file=env_file,
-                          depends=["ops-controller"], secrets=True),
+        "dashboard": _dashboard(project, net, env_file),
         # OPS_CONTROLLER_TOKEN + Discord/backup tokens are secrets (from secrets.env).
         "agent": _svc(agent_img, net=net, env_file=env_file,
                       depends=["model-gateway", "mcp-gateway", "ops-controller"], secrets=True),

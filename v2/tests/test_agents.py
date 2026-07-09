@@ -127,6 +127,22 @@ def test_render_agent_has_user_env_and_healthcheck(tmp_path):
     assert agent["healthcheck"]["test"][-1].endswith("gateway_state.json")
 
 
+def test_service_healthy_depends_targets_all_have_healthchecks(tmp_path):
+    # Live-only failure class: the agent gates on `dashboard: service_healthy` (audit G5), but if
+    # the dashboard service renders WITHOUT a healthcheck, that gate is permanently unsatisfiable
+    # and Compose refuses to start the agent ("has no healthcheck configured"). Assert every
+    # service the agent depends on via `service_healthy` actually renders a healthcheck.
+    render(_src("hermes"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    svcs = c["services"]
+    dep = svcs["agent"].get("depends_on", {})
+    healthy_gated = [p for p, cond in dep.items()
+                     if (cond.get("condition") if isinstance(cond, dict) else cond) == "service_healthy"]
+    assert "dashboard" in healthy_gated  # guard the exact defect that rolled back attempt #3
+    for peer in healthy_gated:
+        assert "healthcheck" in svcs[peer], f"{peer} is service_healthy-gated but has no healthcheck"
+
+
 def test_render_agent_without_wiring_stays_minimal(tmp_path):
     # a third-party agent that declares no runtime wiring renders exactly as before (no volumes etc.)
     render(_src("openai-agent"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)

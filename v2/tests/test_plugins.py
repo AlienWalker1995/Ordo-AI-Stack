@@ -103,3 +103,18 @@ def test_dependency_drops_plugin_when_dep_absent():
 def test_explicit_list_respected():
     rc = render(_src(hardware=P_5090, plugins=["comfyui"]), CATALOG, REGISTRY)
     assert rc.plugins_enabled == ["comfyui"]
+
+
+def test_comfyui_alloc_conf_never_empty(tmp_path):
+    # Live-only crash class: an EMPTY PYTORCH_CUDA_ALLOC_CONF (present-but-blank) makes torch's
+    # allocator parser raise `ValueError: Unrecognized key ',' ...` at torch._C._cuda_init(),
+    # crash-looping ComfyUI on boot. V1 sets a real value; V2 must not render "".
+    import yaml
+    rc = render(_src(hardware=P_5090, plugins=["comfyui"]), CATALOG, REGISTRY)
+    rc.write(tmp_path)
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    env = c["services"]["comfyui"]["environment"]
+    val = env.get("PYTORCH_CUDA_ALLOC_CONF", "")
+    # after ${VAR:-default} substitution the rendered default must be non-empty and contain a real key
+    assert val and val.strip() not in ("", ",") and "expandable_segments" in val, \
+        f"PYTORCH_CUDA_ALLOC_CONF must render a valid non-empty allocator config, got {val!r}"

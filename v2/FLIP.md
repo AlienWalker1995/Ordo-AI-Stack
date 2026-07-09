@@ -260,3 +260,118 @@ llamacpp entrypoint+binds fix is preserved in the re-render (verified).
 - **Retry procedure unchanged** — re-run from step 1; step-1 delta-sync will re-mirror the newer V1 state.
   With BOTH render defects (llamacpp launch + agent launch) now fixed and test-guarded, attempt #3 should
   bring the full core up healthy.
+
+---
+
+## Phase-5 EXECUTED — attempt #3: SUCCESS — V2 IS NOW PRODUCTION (2026-07-09)
+
+**Outcome: the cutover LANDED. All 23 V2 services are up; core proven with a real HTTP-200 chat
+completion (fingerprint `b1-86b9470`), a non-empty MCP tool catalog + a live tool→qdrant data
+round-trip, the agent's Discord gateway connected with cron/skills/memories loaded, voice pinned to
+the 1070, comfyui with all 27 custom nodes, edge SSO redirecting to Google, and the root-cause cure
+demonstrated (llamacpp ran restarts=0 the whole time comfyui came up — no reactive guardian). Two
+NEW live-only defects surfaced and were FIXED UPSTREAM mid-flip (no rollback needed — they blocked
+only the agent's start-gate and the scheduler's GPU visibility, both recoverable in place).**
+
+### Timeline (UTC)
+- `15:00:54` — stopped V1 hermes-gateway + hermes-dashboard; robocopy `/MIR` delta-sync of the brain
+  (exit 1 = success; 15 files updated, 0 failed, 0 extras); cleared stale locks in the V2 copy only
+  (gateway.lock, auth.lock, shell-hooks-allowlist.json.lock; gateway.pid already absent). Confirmed
+  `history_backfill: false` survived the sync.
+- `15:01:14` — **V1 full stop** (`docker compose -p ordo-ai-stack stop`). 0 V1 running; 5090 → 4 MiB.
+- `15:01:33` — V2 core `up -d` (recreate). **Defect #5 detected immediately:** the agent's audit-added
+  `depends_on: dashboard: service_healthy` gate was **unsatisfiable** — Compose refused with
+  "dashboard has no healthcheck configured". Root cause below. Core minus-agent came up; the fix was a
+  small data-driven render change, so fixed-in-place rather than rolled back (well inside the window).
+- `15:04:58` — V2 core RE-UP after fix #5. All three `service_healthy` gates (model-gateway,
+  mcp-gateway, dashboard) went **Healthy**, agent **Started + healthy**. llamacpp wrapper built the
+  full argv, model loaded, `/health {"status":"ok"}`, 5090 → ~28.6 GB. **Chat proof:** `POST local-chat`
+  → **HTTP 200**, `model:"local-chat"`, `system_fingerprint:"b1-86b9470"`, content `"PONG"`.
+- `~15:10` — **Defect #6 detected** via ops-controller `/status`: scheduler reported `total_vram_gb: 0`
+  (CPU-only) and dropped comfyui/voice/worker as "not available". Root cause below (missing utility-GPU
+  visibility). Fixed-in-place; `15:11:35` ops-controller recreated → `nvidia-smi` now injected, `/status`
+  reports `RTX 5090 32GB`, `total_vram_gb: 31.8`, and all GPU plugins re-enabled.
+- `15:12:09–15:12:55` — profile groups up one at a time (rag → webui/automation/search/codebase-memory/
+  hermes-ui/monitoring/media/voice → **edge LAST**). No crash-loops (all RestartCount ≤ 1). Voice pinned
+  to the 1070 uuid, comfyui/llamacpp-embed to the 5090 uuid (verified by `docker inspect`).
+- `~15:13` — edge live: caddy bound tailnet `100.85.139.89:443` (both PortBindings AND NetworkSettings
+  populated — no silent-loss), `https://ultracam.tail63bdfc.ts.net/` → **302 /oauth2/start → 302
+  accounts.google.com** (Google SSO enforced).
+
+**Total production downtime for the CORE chat path ≈ 3.75 min** (15:01:14 V1 stop → 15:04:58 V2 core
+re-up healthy + serving 200). Full stack (all profiles + edge) settled by ~15:13.
+
+### Root causes (real fixes, not bandaids) — both fixed upstream this commit
+
+**Defect #5 — dashboard + model-gateway had no healthcheck, so the agent's `service_healthy` gates
+were unsatisfiable.** The 5.5 audit (G5) correctly ported the agent's `depends_on: {dashboard,
+model-gateway, mcp-gateway}: service_healthy` conditions, but ONLY `mcp-gateway` rendered a
+healthcheck. V1's dashboard (`/api/health` via python3) and model-gateway (`/v1/models` w/ bearer) BOTH
+declare healthchecks; V2 dropped them — the same "V2 silently omits a piece of V1 per-service config"
+class the audit targeted, just on services whose OWN healthcheck dimension the audit hadn't checked
+(both were logged as INTENTIONAL-DIFF "V2-native", which skipped their healthcheck audit).
+*Fix:* `ordo/compose.py` now renders `_dashboard()` (curl `/api/health` — the V2 image ships curl, not
+V1's python3) and `_model_gateway()` (V1's exact python3 `/v1/models` bearer probe — that image ships
+python3). Regression test `test_service_healthy_depends_targets_all_have_healthchecks` asserts EVERY
+service the agent gates on via `service_healthy` renders a healthcheck (guards the whole class).
+
+**Defect #6 — ops-controller had no GPU visibility, so the scheduler saw 0 VRAM.** V2's scheduler is
+the advertised replacement for V1's reactive guardian; its core job is VRAM-fit co-run admission. It
+detects VRAM by shelling to `nvidia-smi` inside its container (`hardware._detect_gpus`). V1's
+ops-controller reserves a GPU with `caps=[[utility]]` (the NVIDIA toolkit injects `nvidia-smi`/NVML
+without reserving compute); V2 rendered NO DeviceRequest at all → no `nvidia-smi` → CPU-only →
+`total_vram_gb: 0`, and comfyui/voice/song-gen/worker dropped as "not available". The audit's
+ops-controller INTENTIONAL-DIFF addressed its *guardian mounts* (correctly absent) but never checked
+the utility-GPU dimension. *Fix:* `_ops_controller()` now emits a `utility`-capability reservation
+(`count: all`, read-only — reads both cards, pins compute to neither) + `NVIDIA_DRIVER_CAPABILITIES=
+utility`. Regression test `test_ops_controller_has_utility_gpu_visibility` guards it. After the fix
+`/status` reports `RTX 5090 32GB · total_vram_gb 31.8` and all GPU plugins enabled.
+
+**Defect #7 — comfyui rendered `PYTORCH_CUDA_ALLOC_CONF: ""` (empty), crash-looping torch.** After
+the profile groups came up, comfyui restart-looped (exit 0, RestartCount climbing). Log:
+`ValueError: Unrecognized key ',' in CUDA allocator config` at `torch._C._cuda_init()` →
+`execution.py` crashes the server every boot. Root cause: the comfyui plugin manifest hardcoded
+`PYTORCH_CUDA_ALLOC_CONF: ""`; an EMPTY-but-present env var is WORSE than omitting it — torch's
+allocator parser rejects it. V1 sets the real value
+`expandable_segments:True,pinned_use_cuda_host_register:True` (overrides/compute.yml). The GPU itself
+was fine (nvidia-smi -L inside the container listed both cards; the 5090 uuid pin was correct) — purely
+a bad config string. *Fix:* `plugins/comfyui/plugin.yaml` defaults `PYTORCH_CUDA_ALLOC_CONF` to V1's
+value via `${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,pinned_use_cuda_host_register:True}`
+(operator-overridable, never empty). Regression test `test_comfyui_alloc_conf_never_empty` guards it;
+`docker compose config` confirms the resolved value matches V1.
+
+Re-rendered `out/` after each fix; **137/137 tests pass** (was 134; +3 new class guards), ruff clean,
+preflight **GO** each time. The attempt-1 llamacpp fix + attempt-2 agent-command fix are preserved in
+the re-render (verified by `docker inspect` on the running containers). Defects #5/#6 blocked only the
+agent start-gate + scheduler GPU visibility (recoverable in place, no rollback); #7 affected only the
+media plugin (comfyui) — core + all other services were already green when it surfaced.
+
+### Validations (with evidence)
+- **(a) Chat:** `POST local-chat` → HTTP 200, `system_fingerprint b1-86b9470`, content `"PONG"`/`"READY"`.
+- **(b) Agent:** Discord gateway `state: connected` (gateway_state.json); `hermes cron list` → 3+ active
+  jobs (Daily AI News, GitHub Monitor, social-relay-dialogue-reel `68681701c991`) with FUTURE next-runs
+  (no stale re-run; history_backfill:false held); full skill tree + SOUL.md/memories present;
+  `active_agents: 0` (not executing backfilled work). No permission errors on `/home/hermes/.hermes`.
+- **(c) MCP:** gateway spawned qdrant-rag + searxng over docker.sock, listed **6 tools** (searxng 4 +
+  qdrant-rag 2 — full, not docs-only). Live round-trip: `qdrant_status` → real qdrant, `points_count: 1`.
+- **(d) ops-controller `/status`:** GPU idle, 31.8 GB free, scheduler present, no guardian container.
+  dashboard `/api/health` → 200.
+- **(e) Voice:** stt healthy (`/v1/models` 200 via python3), tts voices list served (af_bella default);
+  both `device_ids` = 1070 uuid `GPU-20fac13a`.
+- **(f) Monitoring:** prometheus active targets all `up` (llamacpp:8080/metrics, gpu-exporter:9835,
+  prometheus). grafana `/api/health` → 200.
+- **(g) ComfyUI:** 27 custom nodes present (ACE-Step, GGUF, GeometryPack, LTXVideo, TRELLIS2, WhisperX,
+  KokoroTTS…); pinned to 5090 uuid. Crash-looped on the empty-alloc-conf defect #7, fixed in place;
+  torch CUDA init clean after the fix (nvidia-smi saw both cards throughout).
+- **(h) Edge:** caddy `:443` bound to tailnet IP; `/` → 302 `/oauth2/start` → 302 Google SSO.
+- **(i) qdrant/open-webui/n8n/searxng/codebase-memory-ui:** all healthy (200 on their probes).
+- **(j) ROOT-CAUSE PROOF:** llamacpp `RestartCount=0`, running since 15:05:02 through comfyui's entire
+  boot — V1's guardian would have evicted it; V2 has no guardian and llamacpp never blinked. Co-run chat
+  returned 200 WHILE comfyui was up.
+
+### State after this attempt
+- **V2 = PRODUCTION:** 23 running; all healthy except gpu-exporter `unhealthy` (pre-existing
+  driver-581.80 cosmetic — prometheus scrapes it `up`) and comfyui warming its 27 nodes on first boot.
+  Owns tailnet `:443`.
+- **V1 = stopped-intact (rollback asset):** 0 running, 29 containers `exited` (not removed), 6 named
+  volumes intact. Instant rollback remains `stop` V2 / `start` V1 until V2 is trusted (§5/§6).
