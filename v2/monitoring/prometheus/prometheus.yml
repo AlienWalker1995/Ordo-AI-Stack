@@ -1,0 +1,31 @@
+# Prometheus scrape config for the Ordo stack (monitoring profile).
+# Scrapes llama.cpp's native /metrics (enabled by --metrics in
+# scripts/llamacpp/run-llama-server.sh) and the nvidia GPU exporter.
+# All targets are on the internal `backend` network — no host exposure.
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # llama.cpp server exposes Prometheus metrics on its own port when started
+  # with --metrics (prompt/generation token rates, KV-cache usage, queue depth).
+  - job_name: llamacpp
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['llamacpp:8080']
+        labels:
+          service: llamacpp
+
+  # nvidia_gpu_exporter wraps nvidia-smi (works on consumer GPUs + WSL2, unlike
+  # DCGM). Reports utilization, VRAM, temperature, power per GPU.
+  - job_name: gpu
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['gpu-exporter:9835']
+        labels:
+          service: gpu

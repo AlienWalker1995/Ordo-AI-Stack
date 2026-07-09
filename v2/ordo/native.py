@@ -22,7 +22,9 @@ def llama_server_argv(env: dict[str, str], models_dir: str = "./models",
     def g(k: str, default: str = "") -> str:
         return str(env.get(k, default)).strip()
 
-    argv: list[str] = ["llama-server", "--host", host, "--port", str(port)]
+    # --metrics matches the container (compose.LLAMACPP_METRICS_ARG): Prometheus /metrics is
+    # always-on so the monitoring plugin can scrape native + Docker identically.
+    argv: list[str] = ["llama-server", "--host", host, "--port", str(port), "--metrics"]
     model = g("LLAMACPP_MODEL")
     if model:
         # env carries the filename; native joins it under the models dir (the container mounts it)

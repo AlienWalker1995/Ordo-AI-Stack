@@ -8,5 +8,7 @@ requires:
 depends_on: [comfyui]   # won't enable unless comfyui is also enabled
 provides: [song]
 compose_profile: media
+# song-gen runs as a workflow + models INSIDE the ComfyUI service (no separate container);
+# it contributes only the enable flag and rides comfyui's `media` profile. Hence no `services:`.
 env:
   SONG_GEN_ENABLED: "1"

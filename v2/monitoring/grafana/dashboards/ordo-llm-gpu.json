@@ -1,0 +1,83 @@
+{
+  "uid": "ordo-llm-gpu",
+  "title": "Ordo — llama.cpp & GPU",
+  "tags": ["ordo", "llama.cpp", "gpu"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Generation rate (tok/s)",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 1 }, "overrides": [] },
+      "targets": [ { "expr": "llamacpp:predicted_tokens_seconds", "refId": "A" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Prompt eval rate (tok/s)",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 1 }, "overrides": [] },
+      "targets": [ { "expr": "llamacpp:prompt_tokens_seconds", "refId": "A" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Decode rate (tok/s, 5m avg)",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 1 }, "overrides": [] },
+      "targets": [ { "expr": "rate(llamacpp:tokens_predicted_total[5m])", "refId": "A" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Requests processing / deferred",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 }, "overrides": [] },
+      "targets": [
+        { "expr": "llamacpp:requests_processing", "refId": "A", "legendFormat": "processing" },
+        { "expr": "llamacpp:requests_deferred", "refId": "B", "legendFormat": "deferred" }
+      ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Token throughput (tok/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "expr": "llamacpp:predicted_tokens_seconds", "refId": "A", "legendFormat": "generation" },
+        { "expr": "llamacpp:prompt_tokens_seconds", "refId": "B", "legendFormat": "prompt eval" }
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Smoothed throughput (5m rate)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(llamacpp:tokens_predicted_total[5m])", "refId": "A", "legendFormat": "generation" },
+        { "expr": "rate(llamacpp:prompt_tokens_total[5m])", "refId": "B", "legendFormat": "prompt" }
+      ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "GPU utilization",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "expr": "nvidia_smi_utilization_gpu_ratio * on(uuid) group_left(name) nvidia_smi_gpu_info", "refId": "A", "legendFormat": "{{name}}" } ]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "GPU VRAM used",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "expr": "nvidia_smi_memory_used_bytes * on(uuid) group_left(name) nvidia_smi_gpu_info", "refId": "A", "legendFormat": "{{name}}" } ]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "GPU temperature (°C)",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 20 },
+      "fieldConfig": { "defaults": { "unit": "celsius", "custom": { "drawStyle": "line", "fillOpacity": 0 } }, "overrides": [] },
+      "targets": [ { "expr": "nvidia_smi_temperature_gpu * on(uuid) group_left(name) nvidia_smi_gpu_info", "refId": "A", "legendFormat": "{{name}}" } ]
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "GPU power draw (W)",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 20 },
+      "fieldConfig": { "defaults": { "unit": "watt", "custom": { "drawStyle": "line", "fillOpacity": 0 } }, "overrides": [] },
+      "targets": [ { "expr": "nvidia_smi_power_draw_watts * on(uuid) group_left(name) nvidia_smi_gpu_info", "refId": "A", "legendFormat": "{{name}}" } ]
+    }
+  ]
+}

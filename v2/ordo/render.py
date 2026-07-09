@@ -65,6 +65,8 @@ class RenderedConfig:
     plugins_enabled: list[str]
     compose_profiles: list[str] = dataclasses.field(default_factory=list)
     mcp_servers: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    # (plugin, service) pairs for every enabled kind=service plugin — compose builds from these
+    plugin_services: list[Any] = dataclasses.field(default_factory=list)
 
     def manifest(self) -> dict[str, Any]:
         return {
@@ -83,6 +85,18 @@ class RenderedConfig:
             },
         }
 
+    def compose_dict(self, project: str = "ordo-v2") -> dict[str, Any]:
+        """The isolated, runnable compose for the v2 stack — built from the resolved plugin
+        services (data-driven), with the secondary-GPU uuid resolved for any secondary pin."""
+        sec = self.hardware.secondary_gpu
+        return compose.render_compose(
+            has_gpu=self.hardware.has_gpu, compose_profiles=self.compose_profiles,
+            agent=self.hermes.get("agent", "hermes"), project=project,
+            agent_image=self.hermes.get("agent_image") or None,
+            llamacpp_image=self.env.get("LLAMACPP_IMAGE") or None,
+            plugin_services=self.plugin_services,
+            secondary_gpu_uuid=(sec.uuid if sec else None))
+
     def write(self, out_dir: str | Path) -> None:
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
@@ -97,11 +111,7 @@ class RenderedConfig:
             yaml.safe_dump({"servers": self.mcp_servers}, sort_keys=False), encoding="utf-8")
         # an isolated, runnable compose for the v2 stack (own project/network, no port clashes)
         (out / "docker-compose.yml").write_text(
-            yaml.safe_dump(compose.render_compose(
-                has_gpu=self.hardware.has_gpu, compose_profiles=self.compose_profiles,
-                agent=self.hermes.get("agent", "hermes"),
-                agent_image=self.hermes.get("agent_image") or None,
-                llamacpp_image=self.env.get("LLAMACPP_IMAGE") or None), sort_keys=False),
+            yaml.safe_dump(self.compose_dict(), sort_keys=False),
             encoding="utf-8")
 
 
@@ -184,15 +194,17 @@ def render(source: Source, catalog: Catalog,
     services = [p for p in enabled if p.kind == "service"]
     mcps = [p for p in enabled if p.kind == "mcp"]
     for p in services:
-        env.update(p.env)  # compose services contribute their declared env fragment
+        env.update(p.env)  # plugin-level env fragment goes to the rendered .env
     compose_profiles = sorted({p.compose_profile for p in services if p.compose_profile})
+    # flatten to (plugin, service) pairs — compose builds each declared service from data
+    plugin_services = [(p, ps) for p in services for ps in p.services]
     mcp_servers, mcp_notes = _render_mcp(mcps)
 
     return RenderedConfig(
         hardware=hw, model=model, ctx_size=ctx, tier=(model.tier),
         warnings=warnings + mcp_notes, env=env, hermes=hermes, model_gateway=model_gateway,
         plugins_enabled=[p.id for p in services], compose_profiles=compose_profiles,
-        mcp_servers=mcp_servers,
+        mcp_servers=mcp_servers, plugin_services=plugin_services,
     )
 
 

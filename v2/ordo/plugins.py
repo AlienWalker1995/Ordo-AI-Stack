@@ -16,6 +16,33 @@ from .hardware import HardwareProfile
 
 
 @dataclasses.dataclass(frozen=True)
+class PluginService:
+    """One compose service a kind=service plugin declares — data, not code. compose.py
+    renders these directly instead of hardcoding per-plugin if-blocks."""
+    name: str
+    image: str
+    gpu: bool = False               # request a GPU reservation for this service
+    gpu_pin: str = ""               # ""|"secondary": pin to a specific card via CUDA_VISIBLE_DEVICES
+    env: dict[str, str] = dataclasses.field(default_factory=dict)
+    command: list[str] = dataclasses.field(default_factory=list)
+    volumes: list[str] = dataclasses.field(default_factory=list)
+    healthcheck: dict[str, Any] = dataclasses.field(default_factory=dict)
+    depends_on: list[str] = dataclasses.field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "PluginService":
+        return cls(
+            name=str(d["name"]), image=str(d["image"]),
+            gpu=bool(d.get("gpu", False)), gpu_pin=str(d.get("gpu_pin", "")),
+            env={str(k): str(v) for k, v in (d.get("env", {}) or {}).items()},
+            command=[str(c) for c in (d.get("command", []) or [])],
+            volumes=[str(v) for v in (d.get("volumes", []) or [])],
+            healthcheck=dict(d.get("healthcheck", {}) or {}),
+            depends_on=[str(x) for x in (d.get("depends_on", []) or [])],
+        )
+
+
+@dataclasses.dataclass(frozen=True)
 class Plugin:
     id: str
     name: str
@@ -29,6 +56,7 @@ class Plugin:
     env: dict[str, str]
     kind: str = "service"          # "service" (compose service) | "mcp" (agent tool server)
     mcp: dict[str, Any] = dataclasses.field(default_factory=dict)  # image/env/tools for kind=mcp
+    services: tuple[PluginService, ...] = ()  # compose services this plugin contributes (kind=service)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Plugin":
@@ -44,7 +72,14 @@ class Plugin:
             env={str(k): str(v) for k, v in (d.get("env", {}) or {}).items()},
             kind=str(d.get("kind", "service")),
             mcp=dict(d.get("mcp", {}) or {}),
+            services=tuple(PluginService.from_dict(s) for s in (d.get("services", []) or [])),
         )
+
+    @property
+    def needs_secondary_gpu(self) -> bool:
+        """True if ANY of this plugin's services must be pinned to a non-primary GPU
+        (its image has no kernels for the primary card, so primary-fallback would ship a crash)."""
+        return any(s.gpu_pin == "secondary" for s in self.services)
 
     def fits(self, hw: HardwareProfile) -> bool:
         if self.nvidia and not hw.has_gpu:
@@ -52,6 +87,10 @@ class Plugin:
         if self.vram_gb and hw.primary_vram_gb < self.vram_gb:
             return False
         if self.ram_gb and hw.ram_gb and hw.ram_gb < self.ram_gb:
+            return False
+        # A secondary-pinned plugin (voice) needs an actual second card — never fall back to the
+        # primary, because these images CRASH there (Pascal-only kernels).
+        if self.needs_secondary_gpu and hw.secondary_gpu is None:
             return False
         return True
 
@@ -94,6 +133,11 @@ class PluginRegistry:
                 continue
             if p.fits(hw):
                 enabled[pid] = p
+            elif p.needs_secondary_gpu and hw.has_gpu and hw.secondary_gpu is None:
+                # Always warn (even under 'auto'): this is the Pascal-1070 pin — falling back to
+                # the primary 5090 would ship a guaranteed crash, so we gate OFF instead.
+                notes.append(f"'{pid}' needs a SECONDARY GPU (its images have no kernels for the "
+                             "primary card) — only one GPU detected; disabled")
             elif requested != "auto":
                 notes.append(f"'{pid}' needs {'NVIDIA + ' if p.nvidia else ''}"
                              f"{p.vram_gb:.0f}GB VRAM — not available; skipped")
