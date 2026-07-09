@@ -64,7 +64,8 @@ resolve_registry_custom() {
         -e "s|PLACEHOLDER_DASHBOARD_AUTH_TOKEN|${DASHBOARD_AUTH_TOKEN:-}|g" \
         -e "s|PLACEHOLDER_COMFY_MCP_DEFAULT_MODEL|${COMFY_MCP_DEFAULT_MODEL:-flux1-schnell-fp8.safetensors}|g" \
         -e "s|PLACEHOLDER_N8N_API_KEY|${N8N_API_KEY:-}|g" \
-        -e "s|PLACEHOLDER_CODE_ROOT|${CODE_ROOT:-}|g" "$src" >"$dst"
+        -e "s|PLACEHOLDER_CODE_ROOT|${CODE_ROOT:-}|g" \
+        -e "s|PLACEHOLDER_MEMORY_VAULT_PATH|${MEMORY_VAULT_PATH:-}|g" "$src" >"$dst"
   else
     cp "$src" "$dst"
   fi
