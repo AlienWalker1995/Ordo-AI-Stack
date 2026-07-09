@@ -113,7 +113,7 @@ def test_ops_api_guardian_and_mutations_disabled(tmp_path):
     assert env["OPS_VRAM_PRESSURE_GB"] == "0"
     assert env["OPS_HERMES_WATCHDOG_ENABLED"] == "0"
     assert env["OPS_COMPOSE_MUTATIONS_ENABLED"] == "0"  # whole-stack /compose/* STAYS off
-    # SDK container actions must be scoped to the ordo-v2 project (never the stopped V1 stack)
+    # SDK container actions must be scoped to the ordo-v2 project (never another project)
     assert env["COMPOSE_PROJECT"] == "ordo-v2"
 
 
