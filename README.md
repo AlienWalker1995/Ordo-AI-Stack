@@ -9,6 +9,27 @@
 Docker Compose stack for local LLMs, chat UI, image/video (ComfyUI), and automation (n8n) — with a unified dashboard.
 ```
 
+> ## ⚠️ Production now runs from `v2/` — read this first
+>
+> **As of the 2026-07-09 cutover (`main` @ `d115035`, PR #72), the production stack is the Ordo v2 substrate under [`v2/`](v2/). `main` IS production.**
+>
+> **The authoritative operator doc is [`v2/README.md`](v2/README.md).** Bring-up, cutover, and day-2 operations live there and in [`v2/CUTOVER.md`](v2/CUTOVER.md) / [`v2/FLIP.md`](v2/FLIP.md).
+>
+> **What changed architecturally:**
+> - **Config is rendered, not hand-edited.** One declarative source (`v2/ordo.yaml`) → the render engine regenerates `.env`, compose, Hermes context, etc. into `v2/out/` (gitignored). Drift is structurally impossible. Root `.env` + `overrides/` are **no longer the source of truth.**
+> - **GPU arbitration is the `ordo serve` scheduler** (FIFO admission + co-run-when-it-fits + LRU idle-evict), **not** the old reactive guardian. The guardian caused the eviction-deadlock outage that triggered the rebuild and is **gone by design.**
+> - **Patched llama.cpp on the primary GPU (5090); voice pinned to the secondary GPU (1070).**
+> - **Dashboard = V1-parity control plane reinstated on the v2 stack** (backend service `ops-api`).
+> - **Agents are data manifests** under [`v2/agents/`](v2/agents/); **Hermes is the default agent** (runs as the `agent` service). See [`v2/agents/README.md`](v2/agents/README.md).
+> - **Secrets** live in a gitignored `v2/out/secrets.env` (rendered from `secrets.env.example`), separate from derived config.
+> - **Full V1→V2 service map:** [`v2/PARITY.md`](v2/PARITY.md).
+>
+> **Everything below (root `docker-compose.yml`, `./compose` / `.\compose.ps1`, `make up`, root `.env` + `overrides/`, the guardian) describes the LEGACY V1 stack.** It is **superseded and largely dead**, retained pending a separate deliberate cleanup PR — see [`docs/LEGACY-CLEANUP.md`](docs/LEGACY-CLEANUP.md). **Do not follow the V1 instructions below as if they were current.** For a V1-vs-V2 disposition of every path, start there.
+
+---
+
+<sub>The remainder of this README documents the **LEGACY V1** stack, preserved for historical reference and for the rollback asset. Current operators: use [`v2/README.md`](v2/README.md).</sub>
+
 <!--
   Badges (optional): add when repo URL and CI are stable, e.g.:
   [![CI](...)](...)  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)

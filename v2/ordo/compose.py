@@ -1,15 +1,16 @@
 """Render an ISOLATED docker-compose for the v2 stack from the resolved config.
 
-This is what makes 'start the new stack beside the old one' safe:
-  - a dedicated project name + network (no collision with the running stack),
+The isolation properties below are what let the stack stand on its own without
+colliding with anything else on the host:
+  - a dedicated project name + network (no collision with other compose projects),
   - NO host port publishes on core services (reached via the dashboard/agent, per the deployment
-    model) so nothing fights the current stack's ports,
+    model) so nothing fights other services' ports,
   - GPU reservations only when a GPU is present,
   - core services read the rendered .env (single source → no drift),
   - plugin services appear only behind their compose profile (media/voice).
 
 The images/build contexts are the substrate's own; this renders the SHAPE and wiring. The
-process broker (next slice) starts/stops these against the scheduler.
+process broker starts/stops these against the scheduler.
 """
 from __future__ import annotations
 
@@ -110,7 +111,7 @@ def _svc(image: str, *, net: str, env_file: str | None = None, gpu: bool = False
 def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
     """The control plane. It drives the broker, so it needs the Docker socket — but the
     DockerBackend guard scopes every start/stop to `<project>-*`, so socket access can NOT
-    reach the live ordo-ai-stack containers. The rendered config dir is mounted read-only
+    reach containers outside this project. The rendered config dir is mounted read-only
     so a runtime model switch re-renders in place (one write path stays inside the project)."""
     s = _svc(f"{project}/ops-controller:latest", net=net, env_file=env_file, secrets=True)
     s["volumes"] = [
@@ -338,7 +339,7 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
     llamacpp["command"] = [LLAMACPP_METRICS_ARG]
     # Pin the compute service to the PRIMARY card by uuid (V1 does this in gpu-assignments.yml).
     # Without the CUDA_VISIBLE_DEVICES pin, on a dual-GPU WSL2 box `count: all` lets llama.cpp see
-    # the 1070 too — a live-only failure the beside-run rollbacks were exactly the shape of. The
+    # the 1070 too — a failure that only surfaces against real dual-GPU hardware. The
     # `.env` still carries no pin; this is a compose-level env override on the service.
     if has_gpu and primary_gpu_uuid:
         llamacpp["deploy"] = _gpu_pinned_reservation(primary_gpu_uuid)["deploy"]
