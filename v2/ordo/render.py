@@ -14,6 +14,7 @@ from typing import Any
 
 import yaml
 
+from . import compose
 from .catalog import Catalog, DEFAULT_VRAM_RESERVE_GB, Model
 from .config import Source
 from .hardware import HardwareProfile, detect
@@ -92,6 +93,11 @@ class RenderedConfig:
         # the mcp-gateway registry, regenerated from kind=mcp plugins (no hand-edit, no drift)
         (out / "mcp-registry.yaml").write_text(
             yaml.safe_dump({"servers": self.mcp_servers}, sort_keys=False), encoding="utf-8")
+        # an isolated, runnable compose for the v2 stack (own project/network, no port clashes)
+        (out / "docker-compose.yml").write_text(
+            yaml.safe_dump(compose.render_compose(
+                has_gpu=self.hardware.has_gpu, compose_profiles=self.compose_profiles,
+                agent=self.hermes.get("agent", "hermes")), sort_keys=False), encoding="utf-8")
 
 
 def _resolve_hardware(source: Source) -> HardwareProfile:

@@ -1,0 +1,60 @@
+"""Rendered compose is isolated + correct so it can run beside the live stack."""
+from pathlib import Path
+
+import yaml
+
+from ordo import compose
+from ordo.catalog import Catalog
+from ordo.config import Source
+from ordo.plugins import PluginRegistry
+from ordo.render import render
+
+ROOT = Path(__file__).resolve().parent.parent
+CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
+REGISTRY = PluginRegistry.load(ROOT / "plugins")
+
+
+def test_core_services_present():
+    c = compose.render_compose(has_gpu=True, compose_profiles=["media", "voice"])
+    for s in compose.core_services() + ["agent"]:
+        assert s in c["services"]
+
+
+def test_isolated_no_port_clashes():
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo-v2")
+    assert c["name"] == "ordo-v2"
+    assert "ordo-v2-net" in c["networks"]
+    for name, svc in c["services"].items():
+        assert "ports" not in svc, f"{name} publishes a host port (would clash)"
+        assert "container_name" not in svc, f"{name} pins a name (would clash)"
+        assert svc["networks"] == ["ordo-v2-net"]
+
+
+def test_gpu_reservation_gated_by_hardware():
+    with_gpu = compose.render_compose(has_gpu=True, compose_profiles=[])
+    assert "deploy" in with_gpu["services"]["llamacpp"]
+    no_gpu = compose.render_compose(has_gpu=False, compose_profiles=[])
+    assert "deploy" not in no_gpu["services"]["llamacpp"]
+
+
+def test_plugin_services_behind_profiles():
+    c = compose.render_compose(has_gpu=True, compose_profiles=["media"])
+    assert c["services"]["comfyui"]["profiles"] == ["media"]
+    assert "voice" not in c["services"]                       # voice profile not enabled
+    c2 = compose.render_compose(has_gpu=True, compose_profiles=[])
+    assert "comfyui" not in c2["services"]
+
+
+def test_agent_swappable():
+    c = compose.render_compose(has_gpu=False, compose_profiles=[], agent="openclaw")
+    assert "agent-openclaw" in c["services"]["agent"]["image"]
+
+
+def test_render_writes_runnable_compose(tmp_path):
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto", "plugins": "auto"})
+    render(src, CATALOG, REGISTRY).write(tmp_path)
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    assert "llamacpp" in c["services"] and "agent" in c["services"]
+    assert c["services"]["comfyui"]["profiles"] == ["media"]   # media enabled on 5090
+    assert "deploy" in c["services"]["llamacpp"]               # GPU reserved
