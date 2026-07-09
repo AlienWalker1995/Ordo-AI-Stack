@@ -3,8 +3,8 @@
 The Scheduler is the pure decision core; the Broker is the imperative shell that reconciles those
 decisions into container start/stop via a pluggable backend:
   - MockBackend  — for tests (records what would start/stop).
-  - DockerBackend — real, but HARD-SCOPED to the v2 project prefix so it can NEVER touch the live
-    ordo-ai-stack containers (a guard refuses any name outside the project).
+  - DockerBackend — real, but HARD-SCOPED to its own project prefix so it can NEVER touch
+    containers outside that project (a guard refuses any name outside the project).
 
 Flow: request(job) → scheduler.submit + reconcile(); reconcile() = scheduler.pump() then start the
 newly-admitted containers and stop any LRU-evicted idle models. complete(job) frees the slot and
@@ -40,7 +40,7 @@ class DockerBackend:
     """Real backend, HARD-SCOPED to a compose project prefix.
 
     It only ever `docker start/stop`s containers named `<project>-*`, so it is structurally unable
-    to touch the live `ordo-ai-stack-*` containers. Passing a name outside the project raises.
+    to touch containers outside its own project. Passing a name outside the project raises.
     """
     def __init__(self, project: str = "ordo-v2"):
         self.project = project

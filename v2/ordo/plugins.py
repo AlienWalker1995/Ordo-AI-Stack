@@ -33,7 +33,7 @@ class PluginService:
     wants_secrets: bool = False
     # Host port publishes. RESERVED for the edge/front-door plugin (Caddy's :443) — core services
     # deliberately publish none (isolation). Opt-in behind the plugin's profile, so it stays dormant
-    # until `--profile edge` and can't collide with the live stack's edge during a beside-run.
+    # until `--profile edge` unless the edge plugin is enabled.
     ports: list[str] = dataclasses.field(default_factory=list)
 
     @classmethod

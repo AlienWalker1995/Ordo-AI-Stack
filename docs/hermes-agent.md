@@ -1,5 +1,7 @@
 # Hermes Agent (Docker-mode)
 
+> ⚠️ **Partially LEGACY (V1) — reconcile with v2/ (cutover 2026-07-09).** Hermes is still the stack's assistant-agent layer and **is the default agent** in v2 — but v2 models an agent as a **data manifest** ([`../v2/agents/hermes/agent.yaml`](../v2/agents/hermes/agent.yaml)) that the renderer wires into a single `agent` compose service (the hermes web UI ships as the separate `hermes-dashboard` service-plugin, profile `hermes-ui`). The agent contract (chat via model-gateway, tools via mcp-gateway, GPU via the ops-controller `/jobs` scheduler, `.env` read-only) is documented in [`../v2/agents/README.md`](../v2/agents/README.md). Hermes' persistent brain still lives under **`data/hermes/`** (one root, the primary checkout) and the Discord/`SOUL.md`/state notes below remain accurate. The `docker compose up -d` / `hermes/Dockerfile` bring-up + upgrade commands are V1-flavored — under v2 the agent image is built per [`../v2/CUTOVER.md`](../v2/CUTOVER.md) (`docker build … -t ordo-v2/agent-hermes:latest`) and selected via `agent: hermes` in `v2/ordo.yaml`. See [`LEGACY-CLEANUP.md`](LEGACY-CLEANUP.md).
+
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) is the stack's assistant-agent layer. It runs as two compose services — `hermes-gateway` (Discord / Telegram messaging) and `hermes-dashboard` (web UI at :9119) — that come up with the rest of the stack.
 
 ## Running

@@ -1,4 +1,4 @@
-"""Rendered compose is isolated + correct so it can run beside the live stack."""
+"""Rendered compose is isolated + correct so it can run without colliding with other projects."""
 from pathlib import Path
 
 import yaml

@@ -1,5 +1,7 @@
 # Ops Controller
 
+> ⚠️ **LEGACY — superseded by the V2 `ops-api` control plane ([`v2/docker/ops-api/`](../v2/docker/ops-api/)).** Since the 2026-07-09 cutover, the production control plane is `ordo serve` = `ordo-v2/ops-controller:latest`, built from `v2/docker/ops-api/` (its Dockerfile `COPY main.py` from that context). This root `ops-controller/` directory is **unused legacy V1 code** and is flagged for deletion in a separate cleanup PR — see [`docs/LEGACY-CLEANUP.md`](../docs/LEGACY-CLEANUP.md). The V2 control plane adds a scheduler-driven `/status`, `/model-config` (drift-safe model switch), and `/jobs` (GPU reservation); the endpoints below describe the retired V1 controller.
+
 Secure Docker Compose control plane. Exposes an authenticated API for start/stop/restart, logs, and image pulls. Dashboard calls this service; it never mounts docker.sock.
 
 **Status:** See [Product Requirements Document](../docs/Product%20Requirements%20Document.md) for design and decisions.
