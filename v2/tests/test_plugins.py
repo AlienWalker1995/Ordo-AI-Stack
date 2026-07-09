@@ -31,7 +31,8 @@ def _src(**kw):
 # but stay dormant behind their compose profile until requested. Voice/comfyui/song-gen are the
 # GPU-gated ones handled separately.
 CPU_OK_SERVICE_PLUGINS = {"monitoring", "rag", "worker", "automation", "open-webui",
-                          "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge"}
+                          "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
+                          "obsidian"}
 
 
 def test_registry_loaded_manifests():
