@@ -22,7 +22,7 @@ from .hardware import detect
 from .plugins import PluginRegistry
 from .render import DEFAULT_PLUGINS_DIR, render
 from .scheduler import Scheduler
-from . import doctor, native, parity, preflight, wizard
+from . import doctor, fetch, native, parity, preflight, wizard
 
 HERE = Path(__file__).resolve().parent.parent
 DEFAULT_SOURCE = HERE / "ordo.example.yaml"
@@ -121,6 +121,31 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     return 0 if go else 1
 
 
+def cmd_fetch(args: argparse.Namespace) -> int:
+    cat = Catalog.load(Path(args.catalog))
+    wanted = None if args.all else ([args.model] if args.model else None)
+    if not args.all and not args.model:
+        # default target: the model the current source resolves to
+        wanted = [render(Source.load(Path(args.source)), cat).model.id]
+    actions = fetch.plan(cat, wanted, args.models_dir, allow_unverified=args.allow_unverified)
+    for a in actions:
+        print(f"  [{a.action}] {a.model_id}: {a.reason}")
+    if args.plan_only:
+        return 0
+    blocked = [a for a in actions if a.action == fetch.REFUSE]
+    if blocked:
+        print(f"\nrefusing {len(blocked)} unpinned model(s); pass --allow-unverified to override")
+        return 1
+    todo = [a for a in actions if a.action in (fetch.DOWNLOAD, fetch.REDOWNLOAD)]
+    for a in todo:  # pragma: no cover - real network downloads
+        model = cat.get(a.model_id)
+        print(f"fetching {model.id} …")
+        result = fetch.fetch_one(model, args.models_dir, allow_unverified=args.allow_unverified)
+        print(f"  -> {result.reason}")
+    print(f"\n{len(todo)} fetched, {len(actions) - len(todo) - len(blocked)} already present")
+    return 0
+
+
 def cmd_native(args: argparse.Namespace) -> int:
     src, cat = _load(Path(args.source), Path(args.catalog))
     rc = render(src, cat)
@@ -161,6 +186,14 @@ def main(argv: list[str] | None = None) -> int:
     pd = sub.add_parser("doctor")
     pd.add_argument("--bundle", help="write a sanitized support bundle to this path")
     pd.set_defaults(func=cmd_doctor)
+    pget = sub.add_parser("fetch")
+    pget.add_argument("model", nargs="?", help="catalog model id (default: the source's model)")
+    pget.add_argument("--all", action="store_true", help="fetch every catalog model")
+    pget.add_argument("--models-dir", default="./models")
+    pget.add_argument("--allow-unverified", action="store_true",
+                      help="permit downloading a model with no pinned sha256 (unsafe)")
+    pget.add_argument("--plan-only", action="store_true", help="print the plan, download nothing")
+    pget.set_defaults(func=cmd_fetch)
     pn = sub.add_parser("native")
     pn.add_argument("--models-dir", default="./models", help="where the GGUF files live natively")
     pn.set_defaults(func=cmd_native)
