@@ -63,7 +63,9 @@ wizard · diagnostics. All in one worktree, live stack untouched.
   old stack kept for rollback. Touches the live containers + the 5090, so it's yours to drive.
 - The **dashboard SPA** — a UI to design/build (the control plane already serves the status/control data it needs).
 - The **remaining service images** — `agent-hermes`, `dashboard`, `comfyui`, `voice` build contexts (ops-controller's image is done).
-- **Pin the 27b sha256** — the ultra catalog entry is unpinned (preflight flags it); needs the real checksum.
+
+The 27b ultra model is now **sha256-pinned** (`c03727f9…` — computed from the on-disk weights), so
+`preflight`'s checksum gate is green for the model the live stack actually runs.
 
 ## Acceptance gate for THIS slice (from the plan)
 1. Renders a full config from one source with **zero hand-edits**.
