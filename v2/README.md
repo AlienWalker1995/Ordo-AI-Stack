@@ -52,6 +52,9 @@ through it, and it's the direct fix for the #1 pain.
 12. **Dashboard SPA (the 6th core image)** — a single-file, localhost, no-auth control plane: live GPU/scheduler state, active model + ctx + tier, enabled plugins/MCP, warnings, and a **model-switch dropdown** that POSTs `/model-config` (drift-safe). `dashboard/nginx.conf` reverse-proxies `/api/*` to the ops-controller; `docker/dashboard.Dockerfile` builds it. ✅
     **Validated live:** built + run beside the ops-controller on a scoped network — served the SPA and proxied `/api/status` + `/api/model-config` to the real control plane (model `huihui-qwen3.6-27b`, ctx 131,072). Now **all 6 core services have real images** (ops-controller + dashboard built here; llama.cpp/litellm/mcp-gateway upstream; agent swappable).
 
+13. **One-command packaging + mocked-profile CI** — `pyproject.toml` installs the substrate as a real `ordo` command (`pip install ./v2`; runtime dep = just PyYAML, so the core runs anywhere); `python -m ordo` also works. A dedicated **`v2-substrate` CI job** (in `.github/workflows/ci.yml`, path-gated on `v2/**`, pinned deps) runs ruff + the full mocked-profile suite + a fresh-install render smoke — the merge-gate "mocked-profile CI" + "clean fresh-install" requirements. ✅
+    **Validated:** simulated the CI on a `python:3.12` runner-equivalent — ruff clean, 67 tests, `python -m ordo render` from a clean checkout, and `pip install` → a working `ordo detect`.
+
 **67 tests green.** `ordo render` writes the complete stack (`.env` + `docker-compose.yml` + `hermes.context.json` + `manifest.json` + `mcp-registry.yaml`); `ordo serve` runs the control plane that regenerates it drift-safely at runtime; `ordo preflight` gates the cutover.
 
 ## This completes every operator-independent slice
