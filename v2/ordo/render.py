@@ -110,18 +110,39 @@ def render(source: Source, catalog: Catalog,
             "model": model.file,
             "gpu_layers": -1 if hw.has_gpu else 0,
             "kv_cache_type": "q8_0",
+            "parallel": 1,
+            "flash_attn": "auto",
+            "rope_scaling": "none",
+            "rope_scale": 1,
+            "yarn_orig_ctx": 0,
+            "n_predict": 65536,
+            "reasoning_budget": 32768,
+            "enable_kv_quant": 1,
+            "mmproj": model.mmproj or "",
+            "extra_args": model.extra_args,
         },
     }
     # `overrides:` survive regeneration; everything else is recomputed each render.
     derived = _apply_overrides(derived, source.overrides)
-    ctx = int(derived["llamacpp"]["ctx_size"])  # re-read in case an override pinned it
+    lc = derived["llamacpp"]
+    ctx = int(lc["ctx_size"])  # re-read in case an override pinned it
 
     env = {
-        "LLAMACPP_MODEL": str(derived["llamacpp"]["model"]),
+        "LLAMACPP_MODEL": str(lc["model"]),
         "LLAMACPP_CTX_SIZE": str(ctx),
-        "LLAMACPP_GPU_LAYERS": str(derived["llamacpp"]["gpu_layers"]),
-        "LLAMACPP_KV_CACHE_TYPE_K": str(derived["llamacpp"]["kv_cache_type"]),
-        "LLAMACPP_KV_CACHE_TYPE_V": str(derived["llamacpp"]["kv_cache_type"]),
+        "LLAMACPP_GPU_LAYERS": str(lc["gpu_layers"]),
+        "LLAMACPP_PARALLEL": str(lc["parallel"]),
+        "LLAMACPP_FLASH_ATTN": str(lc["flash_attn"]),
+        "LLAMACPP_ROPE_SCALING": str(lc["rope_scaling"]),
+        "LLAMACPP_ROPE_SCALE": str(lc["rope_scale"]),
+        "LLAMACPP_YARN_ORIG_CTX": str(lc["yarn_orig_ctx"]),
+        "LLAMACPP_N_PREDICT": str(lc["n_predict"]),
+        "LLAMACPP_REASONING_BUDGET": str(lc["reasoning_budget"]),
+        "LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION": str(lc["enable_kv_quant"]),
+        "LLAMACPP_KV_CACHE_TYPE_K": str(lc["kv_cache_type"]),
+        "LLAMACPP_KV_CACHE_TYPE_V": str(lc["kv_cache_type"]),
+        "LLAMACPP_MMPROJ": str(lc["mmproj"]),
+        "LLAMACPP_EXTRA_ARGS": str(lc["extra_args"]),
     }
     hermes = {"context_length": ctx, "agent": source.agent}
     model_gateway = {"ctx": ctx, "model_id": "local-chat"}
