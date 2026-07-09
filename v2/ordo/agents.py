@@ -38,6 +38,17 @@ class Agent:
     consumes: tuple[str, ...]
     env: dict[str, str]
     command: tuple[str, ...]         # () -> compose omits it and the image's default CMD runs
+    # ── runtime wiring (data-driven parity with the V1 agent container; phase-5.5 audit) ──
+    user: str = ""                   # "" -> compose omits `user:` and the image default applies
+    volumes: tuple[str, ...] = ()    # bind/volume specs (src:dst[:ro]); ${VAR} refs pass through
+    environment: dict[str, str] = dataclasses.field(default_factory=dict)  # non-secret env
+    # File-based Docker secrets the agent reads from /run/secrets/* — [{source, target}], the SAME
+    # host files as the operator's stack; independent of secrets.env (which is env-var secrets).
+    secret_files: tuple[dict[str, str], ...] = ()
+    # depends_on with optional health conditions: {peer: "service_healthy"|"service_started"}.
+    # Empty -> compose omits it (render adds the core-peer list). A value -> emitted with conditions.
+    depends_on: dict[str, str] = dataclasses.field(default_factory=dict)
+    healthcheck: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Agent":
@@ -49,6 +60,15 @@ class Agent:
             consumes=tuple(d.get("consumes", []) or []),
             env={str(k): str(v) for k, v in (d.get("env", {}) or {}).items()},
             command=tuple(str(c) for c in (d.get("command", []) or [])),
+            user=str(d.get("user", "") or ""),
+            volumes=tuple(str(v) for v in (d.get("volumes", []) or [])),
+            environment={str(k): str(v) for k, v in (d.get("environment", {}) or {}).items()},
+            secret_files=tuple(
+                {"source": str(s["source"]), "target": str(s["target"])}
+                for s in (d.get("secret_files", []) or [])
+            ),
+            depends_on={str(k): str(v) for k, v in (d.get("depends_on", {}) or {}).items()},
+            healthcheck=dict(d.get("healthcheck", {}) or {}),
         )
 
     def image_for(self, project: str) -> str:

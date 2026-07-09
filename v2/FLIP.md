@@ -10,8 +10,19 @@ Preconditions already satisfied by Phase 4 (verified):
 - Mutable data staged to the V2 data root `C:\dev\ordo-v2\data`; immutable big content (GGUF models,
   ComfyUI model caches) **shared by path** read-only from `C:\dev\ordo-ai-stack` (never copied).
 - `C:\dev\ordo-v2\v2\out\` is a self-contained runtime dir: rendered `.env` + `docker-compose.yml`,
-  `ordo.yaml` (for in-place re-render), `secrets.env` (gitignored, real values), `auth/`, `monitoring/`.
+  `ordo.yaml` (for in-place re-render), `secrets.env` (gitignored, real values), `auth/`,
+  `monitoring/`, and `mcp/` (the mcp-gateway's wrapper-native `servers.txt` + `registry-custom.yaml`).
 - V2 named volumes `ordo-v2_grafana-data` / `ordo-v2_prometheus-data` pre-populated from V1 history.
+
+Precondition added by **Phase 5.5** (the offline parity audit, after the #1/#2 rollbacks):
+- **`v2/AUDIT.md` has ZERO unresolved GAPs.** Every V2 service was diffed against its live V1
+  container across every runtime dimension and all 7 gaps (4 classes) were fixed in the render
+  engine/manifests with a regression test per class. `docker compose config` (all 10 profiles) →
+  exit 0; `ordo preflight` → GO (parity 24/24, 0 mismatch); 134 tests + ruff green. The two
+  render-defects that rolled back #1 (llamacpp launch) and #2 (agent launch) are joined by the
+  **primary-GPU-uuid pin** (llamacpp/comfyui/llamacpp-embed had `count: all` — a WSL2 no-op that
+  would have leaked compute onto the 1070) and the **mcp-gateway wiring** (docker.sock + rendered
+  catalog) as newly-closed pre-flight gaps. Re-render `out/` before the flip if `ordo.yaml` changed.
 
 All commands run from Git Bash with `export MSYS_NO_PATHCONV=1`, or from PowerShell (paths work as-is).
 

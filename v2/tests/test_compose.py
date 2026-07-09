@@ -113,6 +113,73 @@ def test_backend_image_flows_from_catalog_to_compose_and_env(tmp_path):
     assert c["services"]["llamacpp"]["image"] == rc.model.backend_image
 
 
+def _dual_gpu_src(plugins="auto"):
+    # a machine matching the operator's box: 5090 primary + 1070 secondary, each with a real uuid.
+    return Source.from_dict({"hardware": {"gpus": [
+        {"name": "RTX 5090", "vram_gb": 32, "uuid": "GPU-PRIMARY-uuid"},
+        {"name": "GTX 1070", "vram_gb": 8, "uuid": "GPU-SECONDARY-uuid"}],
+        "ram_gb": 128}, "model": "auto", "plugins": plugins})
+
+
+# ── Defect class: PRIMARY GPU pin (compute services must be pinned to the primary card by uuid, not
+#    `count: all`, or on a dual-GPU WSL2 box they leak onto the 1070 — a live-only failure). ──
+def test_llamacpp_pinned_to_primary_gpu_uuid():
+    c = render(_dual_gpu_src(plugins=[]), CATALOG, REGISTRY).compose_dict()
+    lc = c["services"]["llamacpp"]
+    devs = lc["deploy"]["resources"]["reservations"]["devices"][0]
+    assert devs["device_ids"] == ["GPU-PRIMARY-uuid"]        # pinned by uuid, not count:all
+    assert lc["environment"]["CUDA_VISIBLE_DEVICES"] == "GPU-PRIMARY-uuid"   # the WSL2-honored layer
+    assert lc["environment"]["NVIDIA_VISIBLE_DEVICES"] == "GPU-PRIMARY-uuid"
+
+
+def test_comfyui_and_embed_pinned_to_primary_gpu_uuid():
+    c = render(_dual_gpu_src(plugins=["comfyui", "rag"]), CATALOG, REGISTRY).compose_dict()
+    for name in ("comfyui", "llamacpp-embed"):
+        svc = c["services"][name]
+        assert svc["deploy"]["resources"]["reservations"]["devices"][0]["device_ids"] == \
+            ["GPU-PRIMARY-uuid"], f"{name} not pinned to primary uuid"
+        assert svc["environment"]["CUDA_VISIBLE_DEVICES"] == "GPU-PRIMARY-uuid"
+
+
+def test_voice_pinned_to_secondary_gpu_uuid():
+    c = render(_dual_gpu_src(plugins=["voice"]), CATALOG, REGISTRY).compose_dict()
+    for name in ("stt", "tts"):
+        svc = c["services"][name]
+        assert svc["deploy"]["resources"]["reservations"]["devices"][0]["device_ids"] == \
+            ["GPU-SECONDARY-uuid"], f"{name} not pinned to secondary (1070) uuid"
+        assert svc["environment"]["CUDA_VISIBLE_DEVICES"] == "GPU-SECONDARY-uuid"
+
+
+def test_gpu_pin_falls_back_when_no_uuid():
+    # a single mock GPU with no uuid (CI) must still render a valid reservation, not crash.
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto", "plugins": ["comfyui"]})
+    c = render(src, CATALOG, REGISTRY).compose_dict()
+    assert "deploy" in c["services"]["comfyui"]  # falls back to the all-GPU reservation shape
+
+
+# ── Defect class: depends_on health CONDITIONS (V1 gates the agent on service_healthy; a plain list
+#    lets it start while the gateways are still warming → 5xx storm). ──
+def test_agent_depends_on_health_conditions():
+    c = render(_dual_gpu_src(plugins=[]), CATALOG, REGISTRY).compose_dict()
+    dep = c["services"]["agent"]["depends_on"]
+    assert dep["model-gateway"] == {"condition": "service_healthy"}
+    assert dep["mcp-gateway"] == {"condition": "service_healthy"}
+    assert dep["dashboard"] == {"condition": "service_healthy"}
+    assert dep["ops-controller"] == {"condition": "service_started"}
+
+
+# ── Defect class: mcp-gateway runtime wiring (spawns MCP servers as containers → needs docker.sock;
+#    reads the rendered catalog from a mounted config dir; empty catalog = agent has no tools). ──
+def test_mcp_gateway_has_socket_config_and_healthcheck():
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo-v2")
+    mg = c["services"]["mcp-gateway"]
+    assert "/var/run/docker.sock:/var/run/docker.sock" in mg["volumes"]
+    assert "./mcp:/mcp-config" in mg["volumes"]
+    assert mg["environment"]["MCP_CONFIG_FILE"] == "/mcp-config/servers.txt"
+    assert "healthcheck" in mg
+
+
 def test_model_without_backend_image_keeps_default(tmp_path):
     # a small GPU best-fits a stock model (no backend_image) -> upstream image, no LLAMACPP_IMAGE
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 8}], "ram_gb": 32},

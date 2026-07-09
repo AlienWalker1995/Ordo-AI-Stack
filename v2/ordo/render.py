@@ -102,15 +102,23 @@ class RenderedConfig:
 
     def compose_dict(self, project: str = "ordo-v2") -> dict[str, Any]:
         """The isolated, runnable compose for the v2 stack — built from the resolved plugin
-        services (data-driven), with the secondary-GPU uuid resolved for any secondary pin."""
+        services (data-driven), with the primary- AND secondary-GPU uuids resolved for the pins."""
+        pri = self.hardware.primary_gpu
         sec = self.hardware.secondary_gpu
         return compose.render_compose(
             has_gpu=self.hardware.has_gpu, compose_profiles=self.compose_profiles,
             agent=self.hermes.get("agent", "hermes"), project=project,
             agent_image=self.hermes.get("agent_image") or None,
             agent_command=self.hermes.get("agent_command") or None,
+            agent_user=self.hermes.get("agent_user") or None,
+            agent_volumes=self.hermes.get("agent_volumes") or None,
+            agent_environment=self.hermes.get("agent_environment") or None,
+            agent_secret_files=self.hermes.get("agent_secret_files") or None,
+            agent_depends_on=self.hermes.get("agent_depends_on") or None,
+            agent_healthcheck=self.hermes.get("agent_healthcheck") or None,
             llamacpp_image=self.env.get("LLAMACPP_IMAGE") or None,
             plugin_services=self.plugin_services,
+            primary_gpu_uuid=(pri.uuid if pri else None),
             secondary_gpu_uuid=(sec.uuid if sec else None))
 
     def write(self, out_dir: str | Path) -> None:
@@ -132,9 +140,21 @@ class RenderedConfig:
         ]
         sec_lines += [f"{k}=" for k in self.required_secrets]
         (out / "secrets.env.example").write_text("\n".join(sec_lines) + "\n", encoding="utf-8")
-        # the mcp-gateway registry, regenerated from kind=mcp plugins (no hand-edit, no drift)
+        # the mcp-gateway registry, regenerated from kind=mcp plugins (no hand-edit, no drift). Kept
+        # as a human-readable summary; the LOAD-BEARING config the gateway wrapper actually reads is
+        # the wrapper-native pair below (servers.txt + registry-custom.yaml) under out/mcp/.
         (out / "mcp-registry.yaml").write_text(
             yaml.safe_dump({"servers": self.mcp_servers}, sort_keys=False), encoding="utf-8")
+        # mcp/ — the config dir mounted into mcp-gateway at /mcp-config. The wrapper
+        # (gateway-wrapper.sh) reads servers.txt (the enabled MCP ids) and merges registry-custom.yaml
+        # as an --additional-catalog. Emitted in EXACTLY the schema V1's wrapper consumes, so the same
+        # wrapper works unmodified — the rendered artifact matches its reader (no drift).
+        mcp_dir = out / "mcp"
+        mcp_dir.mkdir(parents=True, exist_ok=True)
+        (mcp_dir / "servers.txt").write_text(
+            ",".join(s["id"] for s in self.mcp_servers) + "\n", encoding="utf-8")
+        (mcp_dir / "registry-custom.yaml").write_text(
+            _render_registry_custom(self.mcp_servers), encoding="utf-8")
         # an isolated, runnable compose for the v2 stack (own project/network, no port clashes)
         (out / "docker-compose.yml").write_text(
             yaml.safe_dump(self.compose_dict(), sort_keys=False),
@@ -212,8 +232,18 @@ def render(source: Source, catalog: Catalog,
     warnings = warnings + agent_notes
     agent_image = agent.image_for("ordo-v2") if agent else ""
     agent_command = list(agent.command) if agent else []
-    hermes = {"context_length": ctx, "agent": source.agent, "agent_image": agent_image,
-              "agent_command": agent_command}
+    hermes = {
+        "context_length": ctx, "agent": source.agent, "agent_image": agent_image,
+        "agent_command": agent_command,
+        # Full runtime wiring for the agent service (data-driven parity with the V1 container).
+        # Empty/absent for an agent that declares none — compose omits each accordingly.
+        "agent_user": (agent.user if agent else ""),
+        "agent_volumes": (list(agent.volumes) if agent else []),
+        "agent_environment": (dict(agent.environment) if agent else {}),
+        "agent_secret_files": ([dict(s) for s in agent.secret_files] if agent else []),
+        "agent_depends_on": (dict(agent.depends_on) if agent else {}),
+        "agent_healthcheck": (dict(agent.healthcheck) if agent else {}),
+    }
     model_gateway = {"ctx": ctx, "model_id": "local-chat"}
 
     # Registry-driven plugin resolution: enable what's requested AND fits AND has its deps.
@@ -256,6 +286,28 @@ def _is_project_image(image: str, project: str = "ordo-v2") -> bool:
     registry to digest-pin against — it's pinned by its build context (like llamacpp-patched), so
     it's reproducible without an @sha256. Preflight surfaces it as 'build first', not a leak risk."""
     return image.startswith(f"{project}/")
+
+
+def _render_registry_custom(mcp_servers: list[dict[str, Any]]) -> str:
+    """Emit the gateway wrapper's `--additional-catalog` fragment (registry-custom.yaml) from the
+    rendered kind=mcp servers. Schema mirrors V1's data/mcp/registry-custom.yaml EXACTLY: a top-level
+    `registry:` map keyed by server id, each with type/title/description/image + env as a list of
+    {name, value}. The wrapper substitutes any PLACEHOLDER_* tokens at startup; we emit concrete
+    values from the manifest so there are none to substitute (secrets stay in secrets.env env-vars)."""
+    registry: dict[str, Any] = {}
+    for s in mcp_servers:
+        registry[s["id"]] = {
+            "type": "server",
+            "title": s.get("name", s["id"]),
+            "description": s.get("name", s["id"]),
+            "image": s.get("image", ""),
+            "env": [{"name": k, "value": v} for k, v in (s.get("env", {}) or {}).items()],
+        }
+    header = (
+        "# GENERATED by ordo render — the mcp-gateway --additional-catalog fragment.\n"
+        "# Rebuilt from the enabled kind=mcp plugins; do not hand-edit (change plugins/*/plugin.yaml).\n"
+    )
+    return header + yaml.safe_dump({"registry": registry}, sort_keys=False)
 
 
 def _render_mcp(mcps: list, project: str = "ordo-v2") -> tuple[list[dict[str, Any]], list[str]]:

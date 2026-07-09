@@ -24,7 +24,10 @@ services:
     # nodes live in the bind-mounted data/comfyui-storage checkout, and the models in models/comfyui
     # — NOT baked into the image — so pointing at the same image + the same binds gives full parity.
     image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot:cu128-slim}
-    gpu: true             # shares the primary (compute) GPU with llama.cpp
+    # Pin to the PRIMARY (compute) card by uuid — V1 pins comfyui to the 5090 in gpu-assignments.yml.
+    # `gpu: true` alone renders `count: all`, which on a dual-GPU WSL2 box lets ComfyUI also see the
+    # 1070; the uuid pin (CUDA_VISIBLE_DEVICES + device_ids) is the only thing WSL2 actually honors.
+    gpu_pin: primary      # shares the primary (compute) GPU with llama.cpp
     wants_secrets: true   # HF_TOKEN / GITHUB_PERSONAL_ACCESS_TOKEN resolve from secrets.env
     env:
       CLI_ARGS: ${COMFYUI_CLI_ARGS:---cpu --enable-manager}
