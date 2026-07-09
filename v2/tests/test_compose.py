@@ -88,6 +88,48 @@ def test_ops_controller_has_utility_gpu_visibility():
         "ops-controller must reserve a GPU with the `utility` cap so nvidia-smi works for the scheduler"
 
 
+def test_plain_gpu_service_reserves_gpu_capability():
+    # A regular compute GPU service (gpu=True) must reserve the `gpu` capability — the utility
+    # refactor must NOT change that (llamacpp/plugins get compute, not read-only visibility).
+    c = compose.render_compose(has_gpu=True, compose_profiles=[])
+    devs = c["services"]["llamacpp"]["deploy"]["resources"]["reservations"]["devices"]
+    assert any(d.get("capabilities") == ["gpu"] for d in devs), \
+        "a plain gpu:true service must reserve the compute `gpu` capability, not `utility`"
+
+
+def test_dashboard_backend_renders_utility_gpu_reservation():
+    # A dashboard backend that declares `gpu_capabilities: [utility]` must render an all-GPU
+    # (count: all) reservation with the utility cap — the fix for "No GPUs returned from registry".
+    backend = {"name": "ops-api", "image": "ordo-v2/ops-api:latest",
+               "gpu_capabilities": ["utility"]}
+    c = compose.render_compose(has_gpu=True, compose_profiles=[],
+                               dashboard={"backend": backend})
+    devs = c["services"]["ops-api"]["deploy"]["resources"]["reservations"]["devices"]
+    assert any(d.get("capabilities") == ["utility"] and d.get("count") == "all" for d in devs), \
+        "an ops-api backend with gpu_capabilities:[utility] must reserve all GPUs with the utility cap"
+
+
+def test_dashboard_backend_without_gpu_has_no_reservation():
+    # A backend that declares no GPU capabilities gets no reservation (unchanged behaviour).
+    backend = {"name": "some-api", "image": "x:latest"}
+    c = compose.render_compose(has_gpu=True, compose_profiles=[],
+                               dashboard={"backend": backend})
+    assert "deploy" not in c["services"]["some-api"]
+
+
+def test_v1_parity_ops_api_backend_has_utility_gpu(tmp_path):
+    # End-to-end through the real v1-parity manifest + render: the ops-api service the operator's
+    # dashboard depends on must carry the utility GPU reservation, else its GPU widgets go blank.
+    from ordo.dashboards import DashboardRegistry
+    dashboards = DashboardRegistry.load(ROOT / "dashboards")
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto", "plugins": "auto", "dashboard": "v1-parity"})
+    c = render(src, CATALOG, REGISTRY, dashboards=dashboards).compose_dict()
+    devs = c["services"]["ops-api"]["deploy"]["resources"]["reservations"]["devices"]
+    assert any(d.get("capabilities") == ["utility"] for d in devs), \
+        "the v1-parity ops-api backend must reserve a GPU with the utility cap (nvidia-smi injection)"
+
+
 def test_agent_swappable():
     c = compose.render_compose(has_gpu=False, compose_profiles=[], agent="openclaw")
     assert "agent-openclaw" in c["services"]["agent"]["image"]

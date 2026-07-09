@@ -62,6 +62,13 @@ backend:
   name: ops-api
   image: ordo-v2/ops-api:latest
   group_add_root: true            # Docker Desktop socket is root:root (mirrors V1 group_add: ["0"])
+  # Read-only GPU visibility: this backend IS a copy of V1's ops-controller and enumerates GPUs by
+  # shelling to nvidia-smi, which the NVIDIA runtime only injects when the service reserves a GPU
+  # with the `utility` capability. V1's ops-controller has exactly caps=[[utility]]; mirror it so
+  # the GPU/registry widgets see BOTH cards (5090 + 1070). Without it: "No GPUs returned from
+  # registry." Renders deploy.resources.reservations.devices: [{driver: nvidia, count: all,
+  # capabilities: [utility]}]. `count: all` (not a uuid pin) so it can read both cards.
+  gpu: utility
   depends_on:
     llamacpp: service_started
   # Socket-only probe (matches V1's ops-controller healthcheck — no urllib import cost).

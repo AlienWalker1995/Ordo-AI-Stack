@@ -24,6 +24,22 @@ from pathlib import Path
 from typing import Any
 
 
+def _gpu_caps(b: dict[str, Any]) -> tuple[str, ...]:
+    """Parse a backend's GPU reservation capabilities, data-driven. Accepts either the explicit
+    `gpu_capabilities: [utility]` list OR the `gpu: <cap>` shorthand string (e.g. `gpu: utility`).
+    Empty/absent -> no reservation. Mirrors the shorthand-or-list style used elsewhere in the
+    manifests so a service just declares what visibility it needs."""
+    caps = b.get("gpu_capabilities")
+    if caps:
+        return tuple(str(c) for c in caps)
+    gpu = b.get("gpu")
+    if isinstance(gpu, str) and gpu:
+        return (gpu,)
+    if isinstance(gpu, list) and gpu:
+        return tuple(str(c) for c in gpu)
+    return ()
+
+
 @dataclasses.dataclass(frozen=True)
 class DashboardBackend:
     """An OPTIONAL companion backend service a dashboard needs (e.g. the V1 ops-controller API,
@@ -39,6 +55,14 @@ class DashboardBackend:
     # (root:root socket) — mirrors V1's ops-controller `group_add: ["0"]`.
     group_add_root: bool = False
     wants_secrets: bool = True       # reads secrets.env (OPS_CONTROLLER_TOKEN etc.) as a 2nd env_file
+    # GPU visibility for the backend, as capabilities on an all-GPU reservation. The V1-parity
+    # `ops-api` backend enumerates GPUs/VRAM by shelling to nvidia-smi (it IS a copy of V1's
+    # ops-controller), which the NVIDIA runtime only injects when the service reserves a GPU with
+    # the `utility` capability — so this backend MUST declare `gpu: utility` (or the equivalent
+    # `gpu_capabilities: [utility]`) or it enumerates ZERO GPUs and the dashboard's GPU widgets
+    # report "No GPUs returned from registry". `count: all` (via the empty device_ids) so it reads
+    # BOTH cards. Empty -> no reservation (a backend that doesn't touch the GPU). Mirrors V1 exactly.
+    gpu_capabilities: tuple[str, ...] = ()
 
     def image_for(self, project: str) -> str:
         return self.image or f"{project}/{self.name}:latest"
@@ -72,6 +96,7 @@ class Dashboard:
                 healthcheck=dict(b.get("healthcheck", {}) or {}),
                 group_add_root=bool(b.get("group_add_root", False)),
                 wants_secrets=bool(b.get("wants_secrets", True)),
+                gpu_capabilities=_gpu_caps(b),
             )
         return cls(
             id=str(d["id"]), name=str(d.get("name", d["id"])),
