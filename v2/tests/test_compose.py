@@ -38,11 +38,33 @@ def test_gpu_reservation_gated_by_hardware():
 
 
 def test_plugin_services_behind_profiles():
-    c = compose.render_compose(has_gpu=True, compose_profiles=["media"])
+    # data-driven: render() resolves the enabled plugins → compose builds their services.
+    # On a single 32GB GPU, comfyui is enabled (media) and behind its profile; voice is off.
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto", "plugins": "auto"})
+    c = render(src, CATALOG, REGISTRY).compose_dict()
     assert c["services"]["comfyui"]["profiles"] == ["media"]
-    assert "voice" not in c["services"]                       # voice profile not enabled
+    assert "stt" not in c["services"] and "tts" not in c["services"]  # voice needs a 2nd GPU
+    # no plugins requested → only core + agent, no plugin services
     c2 = compose.render_compose(has_gpu=True, compose_profiles=[])
     assert "comfyui" not in c2["services"]
+
+
+def test_llamacpp_emits_metrics():
+    # render always emits --metrics so the monitoring plugin's prometheus can scrape :8080
+    c = compose.render_compose(has_gpu=True, compose_profiles=[])
+    assert c["services"]["llamacpp"]["command"] == ["--metrics"]
+
+
+def test_monitoring_named_volumes_declared():
+    # prometheus-data / grafana-data are named volumes → must appear at the top level
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto", "plugins": ["monitoring"]})
+    c = render(src, CATALOG, REGISTRY).compose_dict()
+    assert c["services"]["grafana"]["profiles"] == ["monitoring"]
+    assert "prometheus-data" in c["volumes"] and "grafana-data" in c["volumes"]
+    # gpu-exporter keeps the driver-581.80 field-pin command
+    assert any("query-field-names" in a for a in c["services"]["gpu-exporter"]["command"])
 
 
 def test_ops_controller_has_scoped_socket():

@@ -38,7 +38,8 @@ def test_cpu_only_profile_degrades_honestly():
     rc = render(_src(hardware=PROFILE_CPU), CATALOG)
     assert rc.model.cpu_ok is True                    # a CPU-runnable model was chosen
     assert rc.env["LLAMACPP_GPU_LAYERS"] == "0"       # no GPU offload
-    assert rc.plugins_enabled == []                   # no GPU → no media plugins
+    # no GPU → no media/voice plugins (monitoring is CPU-ok and remains available)
+    assert not ({"comfyui", "song-gen", "voice"} & set(rc.plugins_enabled))
     assert rc.model.ram_gb <= PROFILE_CPU["ram_gb"]   # fits system RAM
 
 

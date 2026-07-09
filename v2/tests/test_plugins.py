@@ -13,6 +13,12 @@ REGISTRY = PluginRegistry.load(ROOT / "plugins")
 P_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128, "cpu_cores": 32}
 P_CPU = {"gpus": [], "ram_gb": 16, "cpu_cores": 8}
 P_8GB = {"gpus": [{"name": "RTX 3070", "vram_gb": 8}], "ram_gb": 32, "cpu_cores": 12}
+# The real host: primary 5090 (compute) + secondary Pascal 1070 (voice must land here).
+UUID_5090 = "GPU-97fe65ee-5e2d-8c9b-32d0-362f510ceb96"
+UUID_1070 = "GPU-20fac13a-5e5b-1818-581f-63901612fd84"
+P_DUAL = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": UUID_5090},
+                   {"name": "GTX 1070", "vram_gb": 8, "uuid": UUID_1070}],
+          "ram_gb": 128, "cpu_cores": 32}
 
 
 def _src(**kw):
@@ -23,28 +29,52 @@ def _src(**kw):
 
 def test_registry_loaded_manifests():
     ids = {p.id for p in REGISTRY.plugins}
-    assert {"comfyui", "song-gen", "voice"} <= ids
+    assert {"comfyui", "song-gen", "voice", "monitoring"} <= ids
 
 
 def test_big_gpu_enables_all_and_merges_env():
+    # single 5090: media enables; monitoring (CPU-ok) enables; voice needs a SECOND card → off
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
-    assert set(rc.plugins_enabled) == {"comfyui", "song-gen", "voice"}
+    assert set(rc.plugins_enabled) == {"comfyui", "song-gen", "monitoring"}
     assert rc.env["COMFYUI_ENABLED"] == "1"
     assert rc.env["SONG_GEN_ENABLED"] == "1"
     assert "media" in rc.compose_profiles
 
 
-def test_cpu_disables_all_media():
+def test_dual_gpu_enables_voice_pinned_to_secondary():
+    # 5090 + 1070: everything including voice; voice pins to the 1070's uuid (Pascal kernels)
+    rc = render(_src(hardware=P_DUAL), CATALOG, REGISTRY)
+    assert {"comfyui", "song-gen", "voice", "monitoring"} <= set(rc.plugins_enabled)
+    assert "voice" in rc.compose_profiles
+    c = rc.compose_dict()
+    for svc in ("stt", "tts"):
+        env = c["services"][svc]["environment"]
+        assert env["CUDA_VISIBLE_DEVICES"] == UUID_1070
+        assert env["NVIDIA_VISIBLE_DEVICES"] == UUID_1070
+        dev = c["services"][svc]["deploy"]["resources"]["reservations"]["devices"][0]
+        assert dev["device_ids"] == [UUID_1070]           # pinned card, not `count: all`
+
+
+def test_single_gpu_disables_voice_with_warning():
+    # only the 5090: voice images crash there → gated OFF, never fall back to the primary
+    rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
+    assert "voice" not in rc.plugins_enabled
+    assert any("SECONDARY GPU" in w for w in rc.warnings)
+
+
+def test_cpu_disables_voice_and_media():
     rc = render(_src(hardware=P_CPU), CATALOG, REGISTRY)
-    assert rc.plugins_enabled == []
+    assert "voice" not in rc.plugins_enabled              # CPU-only → voice off
+    assert not ({"comfyui", "song-gen"} & set(rc.plugins_enabled))
     assert "COMFYUI_ENABLED" not in rc.env
+    assert rc.plugins_enabled == ["monitoring"]           # only the CPU-ok plugin
 
 
 def test_small_gpu_gates_by_vram():
-    # 8GB card: comfyui(6) + voice(4) fit; song-gen(20) does not
+    # single 8GB card: comfyui(6) fits; song-gen(20) does not; voice needs a 2nd card → off
     rc = render(_src(hardware=P_8GB), CATALOG, REGISTRY)
     assert "comfyui" in rc.plugins_enabled
-    assert "voice" in rc.plugins_enabled
+    assert "voice" not in rc.plugins_enabled
     assert "song-gen" not in rc.plugins_enabled
 
 

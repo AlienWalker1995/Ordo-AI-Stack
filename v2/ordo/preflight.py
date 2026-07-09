@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from . import compose, parity
+from . import parity
 from .catalog import Catalog
 from .config import Source
 from .plugins import PluginRegistry
@@ -36,10 +36,7 @@ class Check:
 
 def required_images(rc, project: str = "ordo-v2") -> list[str]:
     """The exact images the rendered compose will need (core + agent + enabled plugins)."""
-    c = compose.render_compose(has_gpu=rc.hardware.has_gpu,
-                               compose_profiles=rc.compose_profiles,
-                               agent=rc.hermes.get("agent", "hermes"), project=project,
-                               llamacpp_image=rc.env.get("LLAMACPP_IMAGE") or None)
+    c = rc.compose_dict(project=project)
     return sorted({svc["image"] for svc in c["services"].values()})
 
 

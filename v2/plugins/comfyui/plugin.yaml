@@ -1,5 +1,5 @@
-# Plugin manifest — declares hardware needs + the config fragment it contributes.
-# The renderer reads this (it does NOT execute plugin code): registry-driven, data-only.
+# Plugin manifest — declares hardware needs + the compose service(s) it contributes (data-only).
+# The renderer reads this (it does NOT execute plugin code): registry-driven, data-driven.
 id: comfyui
 name: ComfyUI media backend
 description: Image/audio/video generation backend. NVIDIA-only.
@@ -12,3 +12,8 @@ compose_profile: media
 # env this plugin contributes to the rendered .env when enabled
 env:
   COMFYUI_ENABLED: "1"
+# compose service(s) — compose.py renders these from data (no hardcoded if-blocks)
+services:
+  - name: comfyui
+    image: ordo-v2/comfyui:latest
+    gpu: true             # shares the primary (compute) GPU with llama.cpp
