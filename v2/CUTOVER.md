@@ -148,3 +148,31 @@ Only after v2 has fully earned it: prune the old project's containers/volumes/im
 - The old stack is only ever `down`ed (never pruned) at the flip, so rollback is one `up`.
 - The control-plane's Docker socket access is guard-scoped to `ordo-v2-*` — even the running v2
   cannot touch `ordo-ai-stack-*` containers.
+
+---
+
+## CONSOLIDATION EXECUTED (2026-07-09) — single-location, `main` is production
+
+The stack now runs **entirely from `C:\dev\ordo-ai-stack`** (repo primary checkout), one data root
+(`C:\dev\ordo-ai-stack\data`), `main` is the production branch, and the `C:\dev\ordo-v2` worktree is
+retired. Compose project name stays `ordo-v2`. Full executed record + evidence: **[`FLIP.md`](./FLIP.md)
+→ "CONSOLIDATION EXECUTED".** Summary: PR #72 merged to `main` (two CI defects fixed at the root);
+runtime copied to `v2/out/` at the primary checkout with `site.DATA_PATH` repointed to
+`C:/dev/ordo-ai-stack/data`; re-rendered on-GPU (compose byte-identical, `.env` diff = DATA_PATH +
+the two preserved runtime keys); data **renamed-aside** (never deleted); ~3.75 min chat-path downtime;
+validation green incl. the **0-`ordo-v2`-mounts** proof; worktree retired (payload renamed aside one
+generation); 29 exited V1 containers removed, **6 volumes + all images KEPT** (V1 reconstitutable).
+
+### Cleanup candidates for a SEPARATE deliberate PR (do NOT delete in a cutover pass)
+- **Dead legacy repo-root `ops-controller/`** — the V2 `ops-api` builds from `docker/ops-api` (its
+  Dockerfile `COPY main.py` from that context), NOT from the repo-root `ops-controller/`. That
+  top-level copy is unused legacy V1 code (the drift flag from `c2cec48`'s report). Remove it in a
+  dedicated cleanup PR after confirming no other consumer references it.
+- **Operator-retained soak artifacts** (delete after a soak day, not now):
+  `C:\dev\ordo-ai-stack\data-v1-snapshot\`, `C:\dev\ordo-v2-data-retired\`,
+  `C:\dev\ordo-v2-out-retired\` (contains the old `secrets.env` — shred, don't just delete-to-recycle).
+- **V1 prune (after soak, operator runs — NOT reversible):** containers are already removed; to
+  reclaim storage: `docker volume rm ordo-ai-stack_caddy_config ordo-ai-stack_caddy_data
+  ordo-ai-stack_grafana-data ordo-ai-stack_hermes-data ordo-ai-stack_openclaw-extensions
+  ordo-ai-stack_prometheus-data` then `docker image prune -a` **EXCEPT keep
+  `ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470`** (shared with the running V2 llamacpp).
