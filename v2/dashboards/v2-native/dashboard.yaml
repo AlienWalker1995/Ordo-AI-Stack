@@ -1,0 +1,18 @@
+id: v2-native
+name: V2-native SPA
+description: >
+  The substrate's default control-plane UI — a minimal single-file SPA served by nginx that
+  reverse-proxies /api/* straight to the `ordo serve` control plane (service `ops-controller`).
+  No separate backend service; the open-source default.
+default: true
+# image omitted -> resolves to <project>/dashboard:latest (built from docker/dashboard.Dockerfile).
+depends_on:
+  ops-controller: service_started
+# V1's dashboard declares a /api/health container healthcheck and the agent gates on
+# `dashboard: service_healthy`; keep that gate satisfiable. The V2 image ships curl.
+healthcheck:
+  test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/health || exit 1"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 30s

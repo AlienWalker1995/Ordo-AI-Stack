@@ -22,6 +22,13 @@ model: auto
 # Agent that manages the stack. Hermes is the default.
 agent: hermes
 
+# Control-plane UI (pluggable, like the agent — see dashboards/*/dashboard.yaml).
+#   v2-native  = the minimal single-file SPA over the `ordo serve` control plane (DEFAULT).
+#   v1-parity  = a feature-rich dashboard + its own `ops-api` backend (GGUF mgmt, model-control
+#                flag cards, GPU/model-registry views, Grafana tab). Its reactive guardian is OFF
+#                (the scheduler owns the GPU) and its compose-mutation endpoints are disabled.
+dashboard: v2-native
+
 # Optional plugins (media/song/reels/voice). "auto" = enable what the hardware can run;
 # a list forces specific ones. Media plugins are NVIDIA-only and self-declare that.
 plugins: auto
