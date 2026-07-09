@@ -1,0 +1,409 @@
+diff --git a/include/llama.h b/include/llama.h
+index 27e480674282..f0a1ba69e104 100644
+--- a/include/llama.h
++++ b/include/llama.h
+@@ -773,6 +773,19 @@ extern "C" {
+     // Check if the memory supports shifting
+     LLAMA_API bool llama_memory_can_shift(llama_memory_t mem);
+ 
++    // Expand the recurrent state to new_n_seq_max cells (for deferred backup allocation).
++    // Returns true on success. No-op if the memory is already large enough or has no recurrent component.
++    LLAMA_API bool llama_memory_recurrent_expand(llama_memory_t mem, uint32_t new_n_seq_max);
++
++    // Shrink the recurrent state to new_n_seq_max cells (frees GPU memory for prefill).
++    // Returns true on success. No-op if the memory is already small enough or has no recurrent component.
++    LLAMA_API bool llama_memory_recurrent_shrink(llama_memory_t mem, uint32_t new_n_seq_max);
++
++    // Context-level recurrent resize. These variants also invalidate the context scheduler/graph cache
++    // because recurrent tensors are reallocated and graph nodes hold tensor pointers.
++    LLAMA_API bool llama_context_recurrent_expand(struct llama_context * ctx, uint32_t new_n_seq_max);
++    LLAMA_API bool llama_context_recurrent_shrink(struct llama_context * ctx, uint32_t new_n_seq_max);
++
+     //
+     // State / sessions
+     //
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 529bc4a5e992..1460e1bf7f52 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -7,6 +7,9 @@
+ #include "llama-batch.h"
+ #include "llama-io.h"
+ #include "llama-memory.h"
++#include "llama-memory-hybrid.h"
++#include "llama-memory-hybrid-iswa.h"
++#include "llama-memory-recurrent.h"
+ #include "llama-mmap.h"
+ #include "llama-model.h"
+ #include "llama-ext.h"
+@@ -1181,6 +1184,40 @@ void llama_context::set_warmup(bool value) {
+     //sched_need_reserve = true;
+ }
+ 
++bool llama_context::resize_recurrent_memory(uint32_t new_n_seq_max, bool expand) {
++    if (!memory) {
++        return false;
++    }
++
++    auto * recr = dynamic_cast<llama_memory_recurrent *>(memory.get());
++    if (!recr) {
++        auto * hybrid = dynamic_cast<llama_memory_hybrid *>(memory.get());
++        if (hybrid) {
++            recr = hybrid->get_mem_recr();
++        } else {
++            auto * hybrid_iswa = dynamic_cast<llama_memory_hybrid_iswa *>(memory.get());
++            if (hybrid_iswa) {
++                recr = hybrid_iswa->get_mem_recr();
++            }
++        }
++    }
++    if (!recr) {
++        return true; // no recurrent component — nothing to resize
++    }
++
++    synchronize();
++
++    const bool ok = expand ? recr->expand(new_n_seq_max) : recr->shrink(new_n_seq_max);
++    if (ok) {
++        sched_need_reserve = true;
++        if (gf_res_prev) {
++            gf_res_prev->reset();
++        }
++    }
++
++    return ok;
++}
++
+ bool llama_context::set_sampler(llama_seq_id seq_id, llama_sampler * sampler) {
+     if (!sampler && sampling.samplers.count(seq_id) == 0) {
+         return true;
+@@ -3913,6 +3950,42 @@ bool llama_memory_can_shift(llama_memory_t mem) {
+     return mem->get_can_shift();
+ }
+ 
++bool llama_memory_recurrent_expand(llama_memory_t mem, uint32_t new_n_seq_max) {
++    if (!mem) return false;
++    auto * recr = dynamic_cast<llama_memory_recurrent *>(mem);
++    if (!recr) {
++        auto * hybrid = dynamic_cast<llama_memory_hybrid *>(mem);
++        if (hybrid) recr = hybrid->get_mem_recr();
++        else {
++            auto * hybrid_iswa = dynamic_cast<llama_memory_hybrid_iswa *>(mem);
++            if (hybrid_iswa) recr = hybrid_iswa->get_mem_recr();
++        }
++    }
++    return recr ? recr->expand(new_n_seq_max) : true;
++}
++
++bool llama_memory_recurrent_shrink(llama_memory_t mem, uint32_t new_n_seq_max) {
++    if (!mem) return false;
++    auto * recr = dynamic_cast<llama_memory_recurrent *>(mem);
++    if (!recr) {
++        auto * hybrid = dynamic_cast<llama_memory_hybrid *>(mem);
++        if (hybrid) recr = hybrid->get_mem_recr();
++        else {
++            auto * hybrid_iswa = dynamic_cast<llama_memory_hybrid_iswa *>(mem);
++            if (hybrid_iswa) recr = hybrid_iswa->get_mem_recr();
++        }
++    }
++    return recr ? recr->shrink(new_n_seq_max) : true;
++}
++
++bool llama_context_recurrent_expand(llama_context * ctx, uint32_t new_n_seq_max) {
++    return ctx ? ctx->resize_recurrent_memory(new_n_seq_max, true) : false;
++}
++
++bool llama_context_recurrent_shrink(llama_context * ctx, uint32_t new_n_seq_max) {
++    return ctx ? ctx->resize_recurrent_memory(new_n_seq_max, false) : false;
++}
++
+ // llama state API
+ 
+ // deprecated
+diff --git a/src/llama-context.h b/src/llama-context.h
+index 853052be2cad..b31d27d4a2a6 100644
+--- a/src/llama-context.h
++++ b/src/llama-context.h
+@@ -118,6 +118,8 @@ struct llama_context {
+     void set_causal_attn(bool value);
+     void set_warmup(bool value);
+ 
++    bool resize_recurrent_memory(uint32_t new_n_seq_max, bool expand);
++
+     void set_adapters_lora(llama_adapter_lora ** adapters, size_t n_adapters, float * scales);
+ 
+     bool adapters_lora_are_same(llama_adapter_lora ** adapters, size_t n_adapters, float * scales);
+diff --git a/src/llama-memory-recurrent.cpp b/src/llama-memory-recurrent.cpp
+index 6a4892fb471d..c1fdab22f722 100644
+--- a/src/llama-memory-recurrent.cpp
++++ b/src/llama-memory-recurrent.cpp
+@@ -700,6 +700,151 @@ bool llama_memory_recurrent::get_can_shift() const {
+     return true;
+ }
+ 
++bool llama_memory_recurrent::expand(uint32_t new_mem_size) {
++    return new_mem_size <= size || resize(new_mem_size);
++}
++
++bool llama_memory_recurrent::shrink(uint32_t new_mem_size) {
++    return new_mem_size >= size || resize(new_mem_size);
++}
++
++bool llama_memory_recurrent::resize(uint32_t new_mem_size) {
++    if (new_mem_size == size) {
++        return true;
++    }
++
++    const int32_t n_layer = hparams.n_layer();
++    const uint32_t old_size = size;
++    const uint32_t n_copy = std::min(old_size, new_mem_size);
++
++    struct buft_comparator {
++        bool operator()(const ggml_backend_buffer_type_t & lhs, const ggml_backend_buffer_type_t & rhs) const {
++            return strcmp(ggml_backend_buft_name(lhs), ggml_backend_buft_name(rhs)) < 0;
++        }
++    };
++
++    std::map<ggml_backend_buffer_type_t, ggml_context_ptr, buft_comparator> ctx_map;
++
++    auto ctx_for_buft = [&](ggml_backend_buffer_type_t buft) -> ggml_context * {
++        auto it = ctx_map.find(buft);
++        if (it == ctx_map.end()) {
++            ggml_init_params params = {
++                /*.mem_size   =*/ size_t(2u * n_layer * ggml_tensor_overhead()),
++                /*.mem_buffer =*/ NULL,
++                /*.no_alloc   =*/ true,
++            };
++            ggml_context * ctx = ggml_init(params);
++            if (!ctx) {
++                return nullptr;
++            }
++            ctx_map.emplace(buft, ctx);
++            return ctx;
++        }
++        return it->second.get();
++    };
++
++    std::vector<ggml_tensor *> old_r_l = r_l;
++    std::vector<ggml_tensor *> old_s_l = s_l;
++
++    for (int i = 0; i < n_layer; i++) {
++        if (!old_r_l[i] && !old_s_l[i]) {
++            continue;
++        }
++
++        ggml_backend_buffer_type_t buft = ggml_backend_buffer_get_type(old_r_l[i] ? old_r_l[i]->buffer : old_s_l[i]->buffer);
++        ggml_context * ctx = ctx_for_buft(buft);
++        if (!ctx) {
++            LLAMA_LOG_ERROR("%s: failed to create ggml context for resized rs cache\n", __func__);
++            return false;
++        }
++
++        if (old_r_l[i]) {
++            ggml_tensor * r = ggml_new_tensor_2d(ctx, old_r_l[i]->type, hparams.n_embd_r(), new_mem_size * (1 + n_rs_seq));
++            ggml_format_name(r, "cache_r_l%d", i);
++            r_l[i] = r;
++        }
++        if (old_s_l[i]) {
++            ggml_tensor * s = ggml_new_tensor_2d(ctx, old_s_l[i]->type, hparams.n_embd_s(), new_mem_size * (1 + n_rs_seq));
++            ggml_format_name(s, "cache_s_l%d", i);
++            s_l[i] = s;
++        }
++    }
++
++    std::vector<std::pair<ggml_context_ptr, ggml_backend_buffer_ptr>> new_ctxs_bufs;
++    for (auto & [buft, ctx] : ctx_map) {
++        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), buft);
++        if (!buf) {
++            LLAMA_LOG_ERROR("%s: failed to allocate resized rs buffer\n", __func__);
++            r_l = old_r_l;
++            s_l = old_s_l;
++            return false;
++        }
++        ggml_backend_buffer_clear(buf, 0);
++        new_ctxs_bufs.emplace_back(std::move(ctx), buf);
++    }
++
++    if (n_copy > 0) {
++        const uint32_t n_copy_rows = n_copy * (1 + n_rs_seq);
++        std::vector<uint8_t> tmp;
++        for (int i = 0; i < n_layer; i++) {
++            if (old_r_l[i] && r_l[i]) {
++                size_t bytes = ggml_row_size(old_r_l[i]->type, hparams.n_embd_r()) * n_copy_rows;
++                tmp.resize(bytes);
++                ggml_backend_tensor_get(old_r_l[i], tmp.data(), 0, bytes);
++                ggml_backend_tensor_set(r_l[i], tmp.data(), 0, bytes);
++            }
++            if (old_s_l[i] && s_l[i]) {
++                size_t bytes = ggml_row_size(old_s_l[i]->type, hparams.n_embd_s()) * n_copy_rows;
++                tmp.resize(bytes);
++                ggml_backend_tensor_get(old_s_l[i], tmp.data(), 0, bytes);
++                ggml_backend_tensor_set(s_l[i], tmp.data(), 0, bytes);
++            }
++        }
++    }
++
++    ctxs_bufs = std::move(new_ctxs_bufs);
++    cells.resize(new_mem_size);
++    size = new_mem_size;
++
++    uint32_t used_new = 0;
++    for (auto & cell : cells) {
++        cell.tail = -1;
++
++        for (auto it = cell.seq_id.begin(); it != cell.seq_id.end();) {
++            if (*it < 0 || (uint32_t) *it >= size) {
++                LLAMA_LOG_WARN("%s: dropping seq_id %d after resize %u -> %u\n",
++                        __func__, *it, old_size, new_mem_size);
++                it = cell.seq_id.erase(it);
++            } else {
++                ++it;
++            }
++        }
++
++        if (cell.seq_id.empty()) {
++            cell.pos  = -1;
++            cell.src  = -1;
++            cell.src0 = -1;
++            continue;
++        }
++
++        cell.src = -1;
++        cell.src0 = -1;
++
++        ++used_new;
++    }
++
++    used = used_new;
++
++    if (head >= size) {
++        head = 0;
++    }
++    if (n >= size) {
++        n = 0;
++    }
++
++    return true;
++}
++
+ size_t llama_memory_recurrent::total_size() const {
+     size_t size = 0;
+     for (const auto & [_, buf] : ctxs_bufs) {
+diff --git a/src/llama-memory-recurrent.h b/src/llama-memory-recurrent.h
+index b13b7b748f5e..2012e4dea250 100644
+--- a/src/llama-memory-recurrent.h
++++ b/src/llama-memory-recurrent.h
+@@ -61,6 +61,10 @@ class llama_memory_recurrent : public llama_memory_i {
+ 
+     bool get_can_shift() const override;
+ 
++    // Expand/shrink the recurrent state memory (for prompt cache save/restore)
++    bool expand(uint32_t new_mem_size);
++    bool shrink(uint32_t new_mem_size);
++
+     // state write/load
+ 
+     void state_write(llama_io_write_i & io, llama_seq_id seq_id = -1, llama_state_seq_flags flags = 0) const override;
+@@ -121,6 +125,8 @@ class llama_memory_recurrent : public llama_memory_i {
+     // ggml contexts for the KV cache along with the allocated backend buffers:
+     std::vector<std::pair<ggml_context_ptr, ggml_backend_buffer_ptr>> ctxs_bufs;
+ 
++    bool resize(uint32_t new_mem_size);
++
+     size_t total_size() const;
+ 
+     size_t size_r_bytes() const;
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index 39aa20b..a75f73a 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -929,6 +929,11 @@ private:
+     // Necessary similarity of prompt for slot selection
+     float slot_prompt_similarity = 0.0f;
+ 
++    // recurrent models need shrink/expand of recurrent state around prompt cache operations
++    bool is_recurrent_model = false;
++    // number of parallel sequences (needed to restore recurrent state after shrink)
++    int  n_parallel_user = 0;
++
+     std::string model_name; // name of the loaded model, to be used by API
+     std::set<std::string> model_aliases; // additional names for the model
+     std::set<std::string> model_tags;    // informational tags
+@@ -1171,6 +1176,9 @@ private:
+ 
+         vocab = llama_model_get_vocab(model_tgt);
+ 
++        is_recurrent_model = llama_model_is_recurrent(model_tgt) || llama_model_is_hybrid(model_tgt);
++        n_parallel_user = params_base.n_parallel;
++
+         n_ctx = llama_n_ctx(ctx_tgt);
+ 
+         add_bos_token = llama_vocab_get_add_bos(vocab);
+@@ -1581,6 +1589,39 @@ private:
+         return nullptr;
+     }
+ 
++    // Shrink recurrent state to 1 cell before saving/loading prompt cache.
++    // This frees GPU memory for the cache and ensures a clean recurrent state
++    // that matches the loaded KV cache. The subsequent expand restores capacity.
++    bool recurrent_shrink_for_prompt_cache() {
++        if (!is_recurrent_model) {
++            return true;
++        }
++
++        if (llama_context_recurrent_shrink(ctx_tgt, 1)) {
++            SRV_INF("%s", "shrunk recurrent state to 1 cell for prompt cache\n");
++            return true;
++        }
++
++        SRV_ERR("failed to shrink recurrent state (%s)\n", "prompt cache");
++        return false;
++    }
++
++    // Expand recurrent state back after prompt cache save/load completes.
++    void recurrent_expand_after_prompt_cache() {
++        if (!is_recurrent_model) {
++            return;
++        }
++
++        // Expand to n_parallel_user cells (the original allocation from model init).
++        // Context checkpoints will be re-created after this, referencing the new cells.
++        if (llama_context_recurrent_expand(ctx_tgt, n_parallel_user)) {
++            SRV_INF("expanded recurrent state to %d cells after prompt cache\n", n_parallel_user);
++            return;
++        }
++
++        SRV_ERR("failed to expand recurrent state (%s)\n", "prompt cache");
++    }
++
+     server_slot * get_available_slot(const server_task & task) {
+         server_slot * ret = nullptr;
+ 
+@@ -1668,12 +1709,19 @@ private:
+         }
+ 
+         if (ret) {
++            // Force prompt cache update for recurrent models to shrink/restore
++            // the recurrent state and avoid forced re-processing (issue #22746).
++            if (is_recurrent_model && prompt_cache) {
++                update_cache = true;
++            }
++
+             update_cache = update_cache && prompt_cache;
+ 
+             // cache prompts only for completion tasks
+             update_cache = update_cache && task.type == SERVER_TASK_TYPE_COMPLETION;
+ 
+             if (update_cache) {
++                recurrent_shrink_for_prompt_cache();
+                 SRV_TRC("%s", "updating prompt cache\n");
+ 
+                 const int64_t t_start = ggml_time_us();
+@@ -1685,6 +1733,7 @@ private:
+                 }
+ 
+                 prompt_cache->update();
++                recurrent_expand_after_prompt_cache();
+ 
+                 SRV_TRC("prompt cache update took %.2f ms\n", (ggml_time_us() - t_start) / 1000.0);
+             }

@@ -39,6 +39,7 @@ class Model:
     kv_kb_per_token: float | None = None
     mmproj: str | None = None          # vision projector (multimodal models)
     extra_args: str = ""               # model-specific llama.cpp flags (e.g. MTP spec-decode)
+    backend_image: str | None = None   # override the default llama.cpp image (e.g. a patched build)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Model":
@@ -52,6 +53,7 @@ class Model:
             ctx_default=int(d.get("ctx_default", 8192)), tier=str(d.get("tier", "low")),
             kv_kb_per_token=(float(d["kv_kb_per_token"]) if d.get("kv_kb_per_token") else None),
             mmproj=(d.get("mmproj") or None), extra_args=str(d.get("extra_args", "")),
+            backend_image=(d.get("backend_image") or None),
         )
 
     def _rank(self) -> tuple[int, float]:

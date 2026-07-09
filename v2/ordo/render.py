@@ -100,7 +100,8 @@ class RenderedConfig:
             yaml.safe_dump(compose.render_compose(
                 has_gpu=self.hardware.has_gpu, compose_profiles=self.compose_profiles,
                 agent=self.hermes.get("agent", "hermes"),
-                agent_image=self.hermes.get("agent_image") or None), sort_keys=False),
+                agent_image=self.hermes.get("agent_image") or None,
+                llamacpp_image=self.env.get("LLAMACPP_IMAGE") or None), sort_keys=False),
             encoding="utf-8")
 
 
@@ -140,6 +141,7 @@ def render(source: Source, catalog: Catalog,
             "enable_kv_quant": 1,
             "mmproj": model.mmproj or "",
             "extra_args": model.extra_args,
+            "image": model.backend_image or "",
         },
     }
     # `overrides:` survive regeneration; everything else is recomputed each render.
@@ -164,6 +166,10 @@ def render(source: Source, catalog: Catalog,
         "LLAMACPP_MMPROJ": str(lc["mmproj"]),
         "LLAMACPP_EXTRA_ARGS": str(lc["extra_args"]),
     }
+    # Only surface a backend-image override when the model declares one; the default image
+    # lives in compose.render_compose, so an empty var here would just be noise/drift.
+    if lc["image"]:
+        env["LLAMACPP_IMAGE"] = str(lc["image"])
     # Resolve the chosen agent from the registry (Hermes is the default). Unknown id -> a warning
     # + the naming convention, so a typo surfaces at render/preflight not at compose-up.
     agent, agent_notes = agents.resolve(source.agent)

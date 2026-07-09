@@ -58,6 +58,17 @@ def test_agent_swappable():
     assert "agent-openclaw" in c["services"]["agent"]["image"]
 
 
+def test_llamacpp_image_defaults_to_upstream():
+    c = compose.render_compose(has_gpu=True, compose_profiles=[])
+    assert c["services"]["llamacpp"]["image"] == "ghcr.io/ggml-org/llama.cpp:server"
+
+
+def test_llamacpp_image_override():
+    patched = "ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470"
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], llamacpp_image=patched)
+    assert c["services"]["llamacpp"]["image"] == patched
+
+
 def test_render_writes_runnable_compose(tmp_path):
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                             "model": "auto", "plugins": "auto"})
@@ -66,3 +77,27 @@ def test_render_writes_runnable_compose(tmp_path):
     assert "llamacpp" in c["services"] and "agent" in c["services"]
     assert c["services"]["comfyui"]["profiles"] == ["media"]   # media enabled on 5090
     assert "deploy" in c["services"]["llamacpp"]               # GPU reserved
+
+
+def test_backend_image_flows_from_catalog_to_compose_and_env(tmp_path):
+    # the 5090 best-fits huihui-qwen3.6-27b-q6, whose catalog entry pins the patched build
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto", "plugins": "auto"})
+    rc = render(src, CATALOG, REGISTRY)
+    assert rc.model.backend_image == "ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470"
+    assert rc.env["LLAMACPP_IMAGE"] == rc.model.backend_image
+    rc.write(tmp_path)
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    assert c["services"]["llamacpp"]["image"] == rc.model.backend_image
+
+
+def test_model_without_backend_image_keeps_default(tmp_path):
+    # a small GPU best-fits a stock model (no backend_image) -> upstream image, no LLAMACPP_IMAGE
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 8}], "ram_gb": 32},
+                            "model": "auto", "plugins": "auto"})
+    rc = render(src, CATALOG, REGISTRY)
+    assert rc.model.backend_image is None
+    assert "LLAMACPP_IMAGE" not in rc.env
+    rc.write(tmp_path)
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    assert c["services"]["llamacpp"]["image"] == "ghcr.io/ggml-org/llama.cpp:server"

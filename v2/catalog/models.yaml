@@ -67,4 +67,8 @@ models:
     kv_kb_per_token: 34.8
     mmproj: /models/mmproj-Huihui-Q6_K.gguf
     extra_args: "--reasoning-format deepseek --spec-type draft-mtp --spec-draft-n-max 10 --spec-draft-p-min 0.5"
+    # Qwen3.6 needs the SWA/hybrid-cache patched llama.cpp build — the stock
+    # ghcr.io/ggml-org/llama.cpp:server can't load this model. Pinned local image
+    # built from v2/docker/llamacpp-patched (not pullable from a registry).
+    backend_image: ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470
     tier: ultra
