@@ -1,0 +1,12 @@
+id: hermes
+name: Hermes
+description: >
+  The default Ordo agent — a persistent, skill-driven orchestrator. Chats via the model-gateway,
+  runs tools through the mcp-gateway, and requests GPU work through the ops-controller scheduler.
+default: true
+# image omitted -> resolves to <project>/agent-hermes:latest (the operator builds this from their
+# Hermes data/); pin an explicit image here to ship a prebuilt one.
+consumes:
+  - model-gateway
+  - mcp-gateway
+  - ops-controller

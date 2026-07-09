@@ -56,8 +56,12 @@ def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
 
 
 def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "hermes",
-                   project: str = "ordo-v2", env_file: str = ".env") -> dict[str, Any]:
+                   project: str = "ordo-v2", env_file: str = ".env",
+                   agent_image: str | None = None) -> dict[str, Any]:
     net = f"{project}-net"
+    # the agent is swappable (Hermes is the default); a registry manifest may pin any image,
+    # else fall back to the <project>/agent-<id>:latest convention.
+    agent_img = agent_image or f"{project}/agent-{agent}:latest"
     svcs: dict[str, Any] = {
         "llamacpp": _svc("ghcr.io/ggml-org/llama.cpp:server", net=net, env_file=env_file, gpu=has_gpu),
         "model-gateway": _svc("ghcr.io/berriai/litellm:main", net=net, env_file=env_file,
@@ -66,8 +70,7 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         "ops-controller": _ops_controller(project, net, env_file),
         "dashboard": _svc(f"{project}/dashboard:latest", net=net, env_file=env_file,
                           depends=["ops-controller"]),
-        # the agent is swappable; Hermes is the default
-        "agent": _svc(f"{project}/agent-{agent}:latest", net=net, env_file=env_file,
+        "agent": _svc(agent_img, net=net, env_file=env_file,
                       depends=["model-gateway", "mcp-gateway", "ops-controller"]),
     }
     # optional plugin services appear only behind their profile
