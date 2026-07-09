@@ -536,3 +536,45 @@ No background writer nulls the registry (only startup-reconcile + explicit HTTP 
 - **llamacpp UNTOUCHED:** container id `5d2d0510b871…` + RestartCount 0 — identical to pre-work.
 - **Scope:** ONLY `ops-api` recreated (`--no-deps`); **V1 untouched** (0 running, 29 exited).
 - **Offline:** ruff clean + **170 passed** (was 166; +4 GPU-reservation guards in `test_compose.py`).
+
+---
+
+## Final parity acceptance — full dashboard + cron sweep (2026-07-09, @40c6aff)
+
+The last gate before consolidation. Every V1 SPA tab/panel/control was **enumerated from source**
+(`ordo-ai-stack/dashboard/static/index.html` + `app.py` + sub-routers) and each exercised live
+against the reinstated `dashboard` (`ordo-v2/dashboard-v1`) + `ops-api`. Full per-item scorecard:
+**`v2/PARITY-VALIDATION.md`**. Result: **PARITY ACHIEVED, zero GAPs.**
+
+- **Auth (BY-DESIGN):** on-network callers hit the trusted-proxy branch (`172.27.0.0/16`) → must
+  send `X-Forwarded-Email` (the SSO identity header), so raw Bearer is ignored container-to-container.
+  All read paths validated via `X-Forwarded-Email` from the `caddy` container. Edge `:443` root →
+  `302 /oauth2/start` (SSO intact); `forward_auth oauth2-proxy` wired.
+- **Read paths (all 200):** services/health/dependencies, registry/gpus (**both GPUs**),
+  registry/models (5, real uuids), llm/models (5 GGUF), model-config (full flag catalog),
+  mcp/servers+health (5 servers ok), orchestration/{readiness,jobs,workflows,outputs,schedules},
+  throughput/{stats,service-usage}, performance/summary, rag/status, hardware(+service-pressure).
+- **Mutation controls:** every POST route (active-model, model-config apply, llm/comfyui pull+delete,
+  mcp add/remove, registry enable/assign-gpu, ops start/stop/restart, benchmark, default-model,
+  orchestration run) dry-checked via OPTIONS → **405 (registered), NOT 404** = all wired.
+  **None fired** (recreates already proven earlier; llamacpp/agent NOT touched).
+- **Grafana panels have data:** `ordo-llm-gpu` dashboard exists (Grafana v11.4.0);
+  prometheus `llamacpp:n_decode_total`=31 (non-empty) + `nvidia_smi_memory_used_bytes` for **both**
+  GPUs (1070 2.69GB, 5090 30.49GB).
+- **Sibling UIs:** hermes-dashboard(kanban):9119, codebase-memory-ui:9750, open-webui, n8n, searxng
+  all → 200.
+- **BY-DESIGN-DIFF (3):** guardian panel (scheduler replaced it; queue rollup field intentionally
+  false); whole-stack compose (ops-api route, wired 422, operator-gated, not fired); container auth
+  via X-Forwarded-Email. **Not-in-V1 (correct 404s):** /api/audit, /api/mcp/containers,
+  standalone /api/guardian/status.
+
+### Cron pipeline (one allowed mutation)
+`cron list --user hermes` → 7 jobs all active w/ FUTURE next-runs. Triggered the lightest
+(**GitHub Monitor `5cb290c34008`**, stack-audit) via `hermes cron run`. End-to-end PASS: output
+`2026-07-09_16-44-27.md` (40KB full multi-service audit → LLM inference worked, no 500s),
+`jobs.json` → `last_status:"ok"`, `last_delivery_error:null` (**Discord delivery succeeded**).
+MCP reachable from agent (gateway v2.0.1 initialize 200), skills loaded (stack-audit injected),
+Discord connected.
+
+**Attestation:** V1 untouched (all `Exited`); no GPU-bound service recreated (llamacpp/agent uptime
+unchanged); only mutation = the one cron trigger. **170 tests pass.**
