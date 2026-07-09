@@ -235,6 +235,11 @@ def _mcp_gateway(project: str, net: str, env_file: str) -> dict[str, Any]:
         "COMFYUI_URL": "http://comfyui:8188",
         "N8N_API_URL": "http://n8n:5678",
         "CODE_ROOT": "${CODE_ROOT:-/c/dev}",
+        # HOST path of the shared markdown memory vault. The wrapper substitutes it into the
+        # memory-vault MCP's catalog volume (PLACEHOLDER_MEMORY_VAULT_PATH) so the SPAWNED sibling
+        # container binds the same host dir the Obsidian GUI + host seeding write to. Empty-safe:
+        # if the memory-vault plugin isn't enabled, nothing references it.
+        "MEMORY_VAULT_PATH": "${MEMORY_VAULT_PATH:-}",
     }
     s["healthcheck"] = {
         "test": ["CMD-SHELL", "sh /mcp-scripts/healthcheck.sh"],
