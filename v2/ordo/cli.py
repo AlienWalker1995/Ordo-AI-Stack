@@ -17,7 +17,7 @@ from .config import Source
 from .hardware import detect
 from .plugins import PluginRegistry
 from .render import DEFAULT_PLUGINS_DIR, render
-from . import parity, wizard
+from . import doctor, parity, wizard
 
 HERE = Path(__file__).resolve().parent.parent
 DEFAULT_SOURCE = HERE / "ordo.example.yaml"
@@ -76,16 +76,21 @@ def cmd_parity(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    ok = True
     src, cat = _load(Path(args.source), Path(args.catalog))
+    reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
+    bundle = doctor.collect_bundle(src, cat, reg)
     print(f"source '{args.source}': valid")
-    unpinned = [m.id for m in cat.models if not m.sha256]
+    print(f"detected: {bundle['hardware']}")
+    print(f"sizing  : tier={bundle['sizing']['tier']} model={bundle['sizing']['model']} "
+          f"ctx={bundle['sizing']['ctx_size']:,}")
+    unpinned = bundle["catalog"]["unpinned_sha256"]
     if unpinned:
-        print(f"! {len(unpinned)} catalog model(s) have no sha256 (download will refuse "
-              f"unless --allow-unverified): {', '.join(unpinned)}")
-    hw = detect()
-    print(f"detected: {hw.summary()}")
-    return 0 if ok else 1
+        print(f"! {len(unpinned)} catalog model(s) have no sha256 (download refuses unless "
+              f"--allow-unverified): {', '.join(unpinned)}")
+    if args.bundle:
+        doctor.write_bundle(bundle, args.bundle)
+        print(f"support bundle -> {args.bundle} (secrets redacted)")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -104,7 +109,9 @@ def main(argv: list[str] | None = None) -> int:
     pp = sub.add_parser("parity")
     pp.add_argument("--ref", required=True, help="reference .env to compare the render against")
     pp.set_defaults(func=cmd_parity)
-    sub.add_parser("doctor").set_defaults(func=cmd_doctor)
+    pd = sub.add_parser("doctor")
+    pd.add_argument("--bundle", help="write a sanitized support bundle to this path")
+    pd.set_defaults(func=cmd_doctor)
     args = p.parse_args(argv)
     return args.func(args)
 

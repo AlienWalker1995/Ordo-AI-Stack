@@ -41,11 +41,17 @@ through it, and it's the direct fix for the #1 pain.
 4. **Guided-setup wizard** — `ordo setup` detects → proposes → writes `ordo.yaml` (headless path = CI). ✅
 5. **Full-stack parity render + `ordo parity`** — the renderer now reproduces the complete llama.cpp surface (model/ctx/mmproj/MTP args/…), and `ordo parity --ref <.env>` diffs it. ✅
    **Merge-gate (a) demonstrated live:** `ordo parity` vs the real running `.env` → **PARITY OK** (15 keys, 0 mismatches), read-only — proving the engine regenerates today's hand-tuned config from one source with no drift.
+6. **Scheduler status API + `ordo doctor` support bundle** — `Scheduler.status()` emits the busy/idle + free-VRAM + running/queued + ETA JSON the dashboard/agents poll; `ordo doctor [--bundle]` exports a secret-redacted diagnostics bundle. ✅ Demonstrated: a 17GB reel + a 4GB chat **co-run** (chat slips beside the render) — the exact eviction-deadlock that broke primus, gone.
 
-## Next (approaching the operator boundary)
-`ordo doctor` support-bundle · a status-API contract (busy/ETA the dashboard polls) · the process
-**broker** that drives the scheduler against real containers · the dashboard SPA · the **cutover**.
-The last few touch the live stack or need decisions — reserved for the operator.
+**36 tests green.** That's every operator-independent substrate piece: right-sizing, drift-proof config (parity-proven live), plugins, scheduling, setup, diagnostics.
+
+## Operator boundary — the rest needs you / the live stack
+- The **process broker** that drives the scheduler against real llama.cpp/ComfyUI containers.
+- The **dashboard SPA** (control plane) + agent adapters.
+- The **cutover** itself (atomic swap when the merge gate is fully green: full parity incl. personal
+  automation + Hermes backup restored, N-day testbed stability, mocked-profile CI, clean fresh-install).
+
+These are deliberately not automated here — the live stack is untouched and the migration is yours to drive.
 
 ## Acceptance gate for THIS slice (from the plan)
 1. Renders a full config from one source with **zero hand-edits**.

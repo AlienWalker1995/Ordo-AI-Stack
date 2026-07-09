@@ -26,6 +26,7 @@ class Job:
     id: str
     vram_gb: float
     kind: str = "generic"  # chat | media | batch_item
+    est_seconds: float = 0.0  # estimated duration (0 = unknown); drives the busy-ETA
 
 
 class Scheduler:
@@ -33,6 +34,7 @@ class Scheduler:
         self.total_vram_gb = float(total_vram_gb)
         self._queue: list[Job] = []
         self._running: dict[str, Job] = {}
+        self._elapsed: dict[str, float] = {}      # running job id -> seconds elapsed
         self._idle_cached: dict[str, float] = {}  # id -> vram held by an idle/cached model
         self._lru = itertools.count()             # recency counter for cached models
         self._lru_order: dict[str, int] = {}
@@ -89,11 +91,44 @@ class Scheduler:
                 # try reclaiming idle cached VRAM before giving up (LRU evict, not preemption)
                 evicted += self._unload_lru_until(head.vram_gb)
             if head.vram_gb <= self.free_vram_gb:
-                self._running[head.id] = self._queue.pop(0)
-                admitted.append(head.id)
+                job = self._queue.pop(0)
+                self._running[job.id] = job
+                self._elapsed[job.id] = 0.0
+                admitted.append(job.id)
             else:
                 break  # strict FIFO — head waits for a running job to complete
         return admitted, evicted
 
     def complete(self, job_id: str) -> None:
         self._running.pop(job_id, None)
+        self._elapsed.pop(job_id, None)
+
+    def tick(self, dt_seconds: float) -> None:
+        """Advance elapsed time for running jobs (drives the ETA)."""
+        for jid in self._running:
+            self._elapsed[jid] = self._elapsed.get(jid, 0.0) + dt_seconds
+
+    def _remaining(self, jid: str) -> float:
+        est = self._running[jid].est_seconds
+        return max(0.0, est - self._elapsed.get(jid, 0.0)) if est else 0.0
+
+    def status(self) -> dict:
+        """The status contract polled by the dashboard/agents (the 'GPU busy, ~Ns' source)."""
+        head_fits = bool(self._queue) and self._queue[0].vram_gb <= self.free_vram_gb
+        waiting = bool(self._queue) and not head_fits
+        # ETA to the next free slot: soonest running job to finish (only meaningful while waiting)
+        rem = [self._remaining(j) for j in self._running if self._running[j].est_seconds]
+        eta = round(min(rem), 1) if (waiting and rem) else (0.0 if head_fits else None)
+        return {
+            "state": "busy" if self._running else "idle",
+            "total_vram_gb": self.total_vram_gb,
+            "free_vram_gb": round(self.free_vram_gb, 1),
+            "running": [
+                {"id": j, "kind": self._running[j].kind,
+                 "remaining_s": round(self._remaining(j), 1)}
+                for j in self._running
+            ],
+            "queued": [{"id": j.id, "kind": j.kind, "vram_gb": j.vram_gb} for j in self._queue],
+            "waiting_on_vram": waiting,
+            "eta_seconds": eta,
+        }
