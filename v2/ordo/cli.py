@@ -22,7 +22,7 @@ from .hardware import detect
 from .plugins import PluginRegistry
 from .render import DEFAULT_PLUGINS_DIR, render
 from .scheduler import Scheduler
-from . import doctor, parity, wizard
+from . import doctor, parity, preflight, wizard
 
 HERE = Path(__file__).resolve().parent.parent
 DEFAULT_SOURCE = HERE / "ordo.example.yaml"
@@ -98,6 +98,29 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def _local_images() -> set[str]:  # pragma: no cover - shells to docker
+    import subprocess
+    try:
+        out = subprocess.run(["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"],
+                             capture_output=True, text=True, timeout=30)
+        return {ln.strip() for ln in out.stdout.splitlines() if ln.strip()}
+    except (OSError, subprocess.SubprocessError):
+        return set()
+
+
+def cmd_preflight(args: argparse.Namespace) -> int:
+    src, cat = _load(Path(args.source), Path(args.catalog))
+    reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
+    images = None if args.no_images else _local_images()
+    go, checks = preflight.run(src, cat, reg, ref_env=args.ref, images_present=images,
+                               project=args.project)
+    for c in checks:
+        mark = "OK " if c.ok else ("!! " if c.blocking else "-- ")
+        print(f"  [{mark}] {c.name}: {c.detail}")
+    print(f"\n{'GO — safe to cut over' if go else 'NO-GO — resolve the [!!] blocking checks above'}")
+    return 0 if go else 1
+
+
 def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a socket
     cat = Catalog.load(Path(args.catalog))
     reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
@@ -130,6 +153,11 @@ def main(argv: list[str] | None = None) -> int:
     pd = sub.add_parser("doctor")
     pd.add_argument("--bundle", help="write a sanitized support bundle to this path")
     pd.set_defaults(func=cmd_doctor)
+    pf = sub.add_parser("preflight")
+    pf.add_argument("--ref", help="live .env to parity-check against (merge gate)")
+    pf.add_argument("--project", default="ordo-v2")
+    pf.add_argument("--no-images", action="store_true", help="skip the docker image-presence check")
+    pf.set_defaults(func=cmd_preflight)
     pv = sub.add_parser("serve")
     pv.add_argument("--host", default="0.0.0.0")
     pv.add_argument("--port", type=int, default=9000)

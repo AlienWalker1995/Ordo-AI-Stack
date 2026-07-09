@@ -47,18 +47,23 @@ through it, and it's the direct fix for the #1 pain.
 9. **Process broker** — turns scheduler decisions into real container start/stop; the Docker backend is **hard-scoped to the `ordo-v2-` prefix so it can never touch the live stack**. ✅
 10. **Control-plane service (`ordo serve` = the `ops-controller` image)** — the substrate over HTTP: `GET /status` (live GPU/scheduler + manifest), `GET/POST /model-config` (drift-safe model switch), `POST /jobs[/complete]` (drive the broker). A real `docker/ops-controller.Dockerfile` (built + smoke-tested) makes the compose ref concrete. ✅
     **Validated live in a container:** switching the model over HTTP rewrote `ordo.yaml` **and** regenerated `.env` in one pass (`LLAMACPP_MODEL` + `LLAMACPP_CTX_SIZE` moved together — the drift bug is structurally impossible); unknown model → 404, source untouched. The socket it mounts to drive the broker is guard-scoped to `ordo-v2-*`, so it still can't touch the live stack.
+11. **`ordo preflight` GO/NO-GO gate + [`CUTOVER.md`](CUTOVER.md) runbook** — a read-only readiness check for the migration: ctx consistency (drift gate), model/MCP checksums, GPU-present-for-enabled-plugins, **parity vs the live `.env`**, and image readiness (project images blocking, upstream pull-able). Blocking failure → non-zero exit. The runbook is the operator's atomic-cutover procedure (build → preflight → up-beside → validate parity + restore personal backup → flip → rollback-ready). ✅
+    **Validated live:** `ordo preflight --ref <live .env>` → **GO**, `parity vs live .env: 15 keys, 0 mismatch`; the unpinned 27b sha256 correctly surfaced as a non-blocking warning.
 
-**60 tests green.** `ordo render` writes the complete stack (`.env` + `docker-compose.yml` + `hermes.context.json` + `manifest.json` + `mcp-registry.yaml`); `ordo serve` runs the control plane that regenerates all of it drift-safely at runtime.
+**67 tests green.** `ordo render` writes the complete stack (`.env` + `docker-compose.yml` + `hermes.context.json` + `manifest.json` + `mcp-registry.yaml`); `ordo serve` runs the control plane that regenerates it drift-safely at runtime; `ordo preflight` gates the cutover.
 
 ## This completes every operator-independent slice
 Right-sizing · drift-proof config (parity-proven live) · plugins · MCP · scheduling + broker ·
-isolated runnable compose · **control-plane service (built + validated)** · wizard · diagnostics.
-All in one worktree, live stack untouched.
+isolated runnable compose · **control-plane service (built + validated)** · **cutover gate + runbook** ·
+wizard · diagnostics. All in one worktree, live stack untouched.
 
 ## What genuinely needs you now (can't be automated safely)
+- The **cutover itself** — follow [`CUTOVER.md`](CUTOVER.md): build images → `ordo preflight` → bring
+  `ordo-v2` up beside the live stack → validate parity + restore the personal backup → atomic flip,
+  old stack kept for rollback. Touches the live containers + the 5090, so it's yours to drive.
 - The **dashboard SPA** — a UI to design/build (the control plane already serves the status/control data it needs).
-- The **remaining service images** — `agent-hermes`, `dashboard`, `comfyui`, `voice` are refs; those build contexts are stack-specific (ops-controller's image is done).
-- The **cutover** — bring `ordo-v2` up beside the live stack, validate, do the GPU handoff, keep the old for rollback. This touches the live stack + the 5090, so it's yours to drive (as you said).
+- The **remaining service images** — `agent-hermes`, `dashboard`, `comfyui`, `voice` build contexts (ops-controller's image is done).
+- **Pin the 27b sha256** — the ultra catalog entry is unpinned (preflight flags it); needs the real checksum.
 
 ## Acceptance gate for THIS slice (from the plan)
 1. Renders a full config from one source with **zero hand-edits**.
