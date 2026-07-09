@@ -59,7 +59,8 @@ models:
     backend: llama.cpp
     file: Huihui-Qwen3.6-27B-abliterated-ggml-model-Q6_K.gguf
     source: https://huggingface.co/huihui-ai
-    sha256: null
+    # sha256 of the 22,430,998,848-byte Q6_K weights, computed from the on-disk file.
+    sha256: c03727f9fdfb7c8c02a8d7a0662563a0b0d7a6e192a03834a45f58300408b4ea
     requires: { vram_gb: 21, ram_gb: 16, cpu_ok: false }
     ctx_default: 131072
     # hybrid attention/SSM: KV is ~34.8 KB/token over 16 full-attn layers (q8_0).
