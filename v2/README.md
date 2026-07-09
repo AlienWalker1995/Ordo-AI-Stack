@@ -45,16 +45,19 @@ through it, and it's the direct fix for the #1 pain.
 7. **MCP as `kind=mcp` plugins** — an MCP server is a manifest (pinned image + env + tools); the renderer composes enabled ones into `out/mcp-registry.yaml` (drift-free) and flags un-pinned images. Runs on CPU. ✅
 8. **Compose rendering** — `ordo render` emits an **isolated, runnable** `docker-compose.yml` (own project/network, no host-port clashes, GPU-gated, profile-gated plugins). ✅
 9. **Process broker** — turns scheduler decisions into real container start/stop; the Docker backend is **hard-scoped to the `ordo-v2-` prefix so it can never touch the live stack**. ✅
+10. **Control-plane service (`ordo serve` = the `ops-controller` image)** — the substrate over HTTP: `GET /status` (live GPU/scheduler + manifest), `GET/POST /model-config` (drift-safe model switch), `POST /jobs[/complete]` (drive the broker). A real `docker/ops-controller.Dockerfile` (built + smoke-tested) makes the compose ref concrete. ✅
+    **Validated live in a container:** switching the model over HTTP rewrote `ordo.yaml` **and** regenerated `.env` in one pass (`LLAMACPP_MODEL` + `LLAMACPP_CTX_SIZE` moved together — the drift bug is structurally impossible); unknown model → 404, source untouched. The socket it mounts to drive the broker is guard-scoped to `ordo-v2-*`, so it still can't touch the live stack.
 
-**52 tests green.** `ordo render` now writes the complete stack: `.env` + `docker-compose.yml` + `hermes.context.json` + `manifest.json` + `mcp-registry.yaml`.
+**60 tests green.** `ordo render` writes the complete stack (`.env` + `docker-compose.yml` + `hermes.context.json` + `manifest.json` + `mcp-registry.yaml`); `ordo serve` runs the control plane that regenerates all of it drift-safely at runtime.
 
 ## This completes every operator-independent slice
 Right-sizing · drift-proof config (parity-proven live) · plugins · MCP · scheduling + broker ·
-isolated runnable compose · wizard · diagnostics. All in one worktree, live stack untouched.
+isolated runnable compose · **control-plane service (built + validated)** · wizard · diagnostics.
+All in one worktree, live stack untouched.
 
 ## What genuinely needs you now (can't be automated safely)
-- The **dashboard SPA** — a UI to design/build (the substrate already emits the status/control data it needs).
-- **Real service images** — `ordo-v2/ops-controller`, `agent-hermes`, etc. are refs; the images/build contexts are stack-specific.
+- The **dashboard SPA** — a UI to design/build (the control plane already serves the status/control data it needs).
+- The **remaining service images** — `agent-hermes`, `dashboard`, `comfyui`, `voice` are refs; those build contexts are stack-specific (ops-controller's image is done).
 - The **cutover** — bring `ordo-v2` up beside the live stack, validate, do the GPU handoff, keep the old for rollback. This touches the live stack + the 5090, so it's yours to drive (as you said).
 
 ## Acceptance gate for THIS slice (from the plan)

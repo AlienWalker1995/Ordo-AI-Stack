@@ -3,8 +3,10 @@
     ordo detect                 # show detected hardware + what it would pick
     ordo render [--out DIR]     # render config from ordo.yaml into DIR (default ./out)
     ordo doctor                 # sanity checks (catalog integrity, source validity)
+    ordo serve                  # run the control-plane HTTP service (ops-controller)
 
-Never touches a running stack — render writes to an output dir only.
+Never touches a running stack — render writes to an output dir only, and `serve`'s Docker
+backend is hard-scoped to the ordo-v2 project prefix.
 """
 from __future__ import annotations
 
@@ -12,11 +14,14 @@ import argparse
 import sys
 from pathlib import Path
 
+from .broker import Broker, DockerBackend
 from .catalog import Catalog
 from .config import Source
+from .control import ControlPlane
 from .hardware import detect
 from .plugins import PluginRegistry
 from .render import DEFAULT_PLUGINS_DIR, render
+from .scheduler import Scheduler
 from . import doctor, parity, wizard
 
 HERE = Path(__file__).resolve().parent.parent
@@ -93,6 +98,19 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a socket
+    cat = Catalog.load(Path(args.catalog))
+    reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
+    hw = detect()
+    sched = Scheduler(hw.primary_vram_gb if hw.has_gpu else 0.0)
+    broker = Broker(sched, DockerBackend(project=args.project))
+    cp = ControlPlane(Path(args.source), cat, reg, args.out, scheduler=sched, broker=broker)
+    print(f"ops-controller on {args.host}:{args.port} (project={args.project}, "
+          f"{sched.total_vram_gb:.0f}GB GPU) — Ctrl-C to stop")
+    cp.serve(host=args.host, port=args.port)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="ordo", description="Ordo config render engine")
     p.add_argument("--source", default=str(DEFAULT_SOURCE))
@@ -112,6 +130,12 @@ def main(argv: list[str] | None = None) -> int:
     pd = sub.add_parser("doctor")
     pd.add_argument("--bundle", help="write a sanitized support bundle to this path")
     pd.set_defaults(func=cmd_doctor)
+    pv = sub.add_parser("serve")
+    pv.add_argument("--host", default="0.0.0.0")
+    pv.add_argument("--port", type=int, default=9000)
+    pv.add_argument("--out", default="out")
+    pv.add_argument("--project", default="ordo-v2", help="container project prefix the broker may touch")
+    pv.set_defaults(func=cmd_serve)
     args = p.parse_args(argv)
     return args.func(args)
 
