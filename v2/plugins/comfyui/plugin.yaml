@@ -12,8 +12,51 @@ compose_profile: media
 # env this plugin contributes to the rendered .env when enabled
 env:
   COMFYUI_ENABLED: "1"
+# HF/GitHub tokens for ComfyUI-Manager node/model installs come from secrets.env.
+secrets:
+  - HF_TOKEN
+  - GITHUB_PERSONAL_ACCESS_TOKEN
 # compose service(s) — compose.py renders these from data (no hardcoded if-blocks)
 services:
   - name: comfyui
-    image: ordo-v2/comfyui:latest
+    # Parity with V1: the operator's ComfyUI runtime image. V1 sets this via overrides/compute.yml
+    # to yanwk/comfyui-boot:cu128-slim (public, pullable). The ComfyUI application code + custom
+    # nodes live in the bind-mounted data/comfyui-storage checkout, and the models in models/comfyui
+    # — NOT baked into the image — so pointing at the same image + the same binds gives full parity.
+    image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot:cu128-slim}
     gpu: true             # shares the primary (compute) GPU with llama.cpp
+    wants_secrets: true   # HF_TOKEN / GITHUB_PERSONAL_ACCESS_TOKEN resolve from secrets.env
+    env:
+      CLI_ARGS: ${COMFYUI_CLI_ARGS:---cpu --enable-manager}
+      PYTORCH_CUDA_ALLOC_CONF: ""
+      OPS_CONTROLLER_URL: http://ops-controller:9000
+      OPS_CONTROLLER_TOKEN: ${OPS_CONTROLLER_TOKEN:-}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-local}
+      HF_TOKEN: ${HF_TOKEN:-}
+      GITHUB_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}
+    volumes:
+      # ComfyUI app code + custom nodes (git checkout) — the runtime image is just Python/CUDA.
+      # SHARED from the operator's V1 storage (contains the working ComfyUI checkout + nodes).
+      - ${COMFYUI_STORAGE_PATH:-${BASE_PATH:-.}/data/comfyui-storage}:/root
+      # Model caches (~30GB) — SHARED read-only from the operator's models tree (immutable weights).
+      - ${COMFYUI_MODELS_PATH:-${BASE_PATH:-.}/models/comfyui}:/root/ComfyUI/models:ro
+      # Render outputs — staged under the V2 data root.
+      - ${DATA_PATH:-./data}/comfyui-output:/root/ComfyUI/output
+    command:
+      # Install each custom node's pip deps (the image's writable layer is wiped on recreate), then
+      # exec the upstream entrypoint. HF_TOKEN / GITHUB_TOKEN come from the env above (secrets.env).
+      - bash
+      - -c
+      - |
+        for r in /root/ComfyUI/custom_nodes/*/requirements.txt; do
+          [ -f "$$r" ] || continue
+          echo "[deps] installing $$r"
+          pip install --no-cache-dir --no-warn-script-location -q -r "$$r" || echo "[deps] WARN failed $$r"
+        done
+        exec bash /runner-scripts/entrypoint.sh
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8188/"]
+      start_period: 420s
+      interval: 20s
+      timeout: 15s
+      retries: 12

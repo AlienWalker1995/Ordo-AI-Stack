@@ -68,3 +68,6 @@ docs/superpowers/
 # Bind sources are operator-local; the file itself contains no secrets but
 # reveals filesystem layout for secret files.
 overrides/secrets-path.yml
+
+# Phase-4 data-staging robocopy log (operator-local build artifact)
+.staging.log

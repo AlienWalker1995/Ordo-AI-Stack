@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import shlex
-from pathlib import Path
+from pathlib import PurePosixPath
 
 
 def llama_server_argv(env: dict[str, str], models_dir: str = "./models",
@@ -27,8 +27,10 @@ def llama_server_argv(env: dict[str, str], models_dir: str = "./models",
     argv: list[str] = ["llama-server", "--host", host, "--port", str(port), "--metrics"]
     model = g("LLAMACPP_MODEL")
     if model:
-        # env carries the filename; native joins it under the models dir (the container mounts it)
-        argv += ["--model", str(Path(models_dir) / model)]
+        # env carries the filename; native joins it under the models dir. The model path is a
+        # POSIX path (llama.cpp's container mount / the native /models dir), so use PurePosixPath —
+        # OS-native Path would emit backslashes on Windows and diverge from the container config.
+        argv += ["--model", str(PurePosixPath(models_dir) / model)]
     if g("LLAMACPP_CTX_SIZE"):
         argv += ["--ctx-size", g("LLAMACPP_CTX_SIZE")]
     if g("LLAMACPP_GPU_LAYERS"):

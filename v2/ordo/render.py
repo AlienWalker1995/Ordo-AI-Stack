@@ -225,6 +225,12 @@ def render(source: Source, catalog: Catalog,
     plugin_services = [(p, ps) for p in services for ps in p.services]
     mcp_servers, mcp_notes = _render_mcp(mcps)
 
+    # Host/site config (DATA_PATH/BASE_PATH/CODE_ROOT, edge hostnames, COMFYUI_IMAGE, …) flows
+    # verbatim into .env so plugin `${VAR}` refs resolve deterministically. Derived keys WIN over
+    # site (a site DATA_PATH can't shadow a computed LLAMACPP_CTX_SIZE) — protects the drift gate.
+    for k, v in (source.site or {}).items():
+        env.setdefault(str(k), str(v))
+
     # Secret KEYS the enabled stack needs: the always-present core set + each enabled plugin's
     # declared `secrets:`. Deduped, core-first order preserved. Values never rendered.
     required_secrets = list(CORE_SECRET_KEYS)
