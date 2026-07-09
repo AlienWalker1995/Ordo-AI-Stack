@@ -1,0 +1,67 @@
+# Ordo curated model catalog (LLM tier — the only thing the right-sizer auto-scales).
+#
+# Each entry declares its RESOURCE REQUIREMENTS so the sizer can best-fit to hardware,
+# and a SHA256 so downloads are verified before use (corrupt weights already burned us
+# once — mandatory checksum is a hard rule, not a nicety).
+#
+# `sha256: null` means "not yet pinned" — the download step MUST refuse to use a null-sha
+# entry unless the operator explicitly opts into unverified. Populate from Hugging Face.
+#
+# requires.vram_gb = weights only; the renderer adds a KV/compute headroom reserve on top,
+# so a 28GB-weights model does NOT get picked for a 32GB card (that mistake caused the
+# saturation → RAM-spill → 2.4 tok/s incident).
+
+version: 1
+
+models:
+  - id: qwen2.5-0.5b-instruct-q4
+    name: Qwen2.5 0.5B Instruct (Q4_K_M)
+    backend: llama.cpp
+    file: qwen2.5-0.5b-instruct-q4_k_m.gguf
+    source: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF
+    sha256: null
+    requires: { vram_gb: 0, ram_gb: 2, cpu_ok: true }
+    ctx_default: 32768
+    tier: cpu
+
+  - id: qwen2.5-3b-instruct-q4
+    name: Qwen2.5 3B Instruct (Q4_K_M)
+    backend: llama.cpp
+    file: qwen2.5-3b-instruct-q4_k_m.gguf
+    source: https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF
+    sha256: null
+    requires: { vram_gb: 3, ram_gb: 6, cpu_ok: true }
+    ctx_default: 32768
+    tier: low
+
+  - id: qwen2.5-7b-instruct-q4
+    name: Qwen2.5 7B Instruct (Q4_K_M)
+    backend: llama.cpp
+    file: qwen2.5-7b-instruct-q4_k_m.gguf
+    source: https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF
+    sha256: null
+    requires: { vram_gb: 6, ram_gb: 8, cpu_ok: false }
+    ctx_default: 65536
+    tier: medium
+
+  - id: qwen2.5-14b-instruct-q5
+    name: Qwen2.5 14B Instruct (Q5_K_M)
+    backend: llama.cpp
+    file: qwen2.5-14b-instruct-q5_k_m.gguf
+    source: https://huggingface.co/Qwen/Qwen2.5-14B-Instruct-GGUF
+    sha256: null
+    requires: { vram_gb: 11, ram_gb: 12, cpu_ok: false }
+    ctx_default: 98304
+    tier: high
+
+  - id: huihui-qwen3.6-27b-q6
+    name: Huihui Qwen3.6 27B Abliterated (Q6_K)
+    backend: llama.cpp
+    file: Huihui-Qwen3.6-27B-abliterated-ggml-model-Q6_K.gguf
+    source: https://huggingface.co/huihui-ai
+    sha256: null
+    requires: { vram_gb: 21, ram_gb: 16, cpu_ok: false }
+    ctx_default: 131072
+    # hybrid attention/SSM: KV is ~34.8 KB/token over 16 full-attn layers (q8_0).
+    kv_kb_per_token: 34.8
+    tier: ultra
