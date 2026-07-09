@@ -39,6 +39,22 @@ def _svc(image: str, *, net: str, env_file: str | None = None, gpu: bool = False
     return s
 
 
+def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
+    """The control plane. It drives the broker, so it needs the Docker socket — but the
+    DockerBackend guard scopes every start/stop to `<project>-*`, so socket access can NOT
+    reach the live ordo-ai-stack containers. The rendered config dir is mounted read-only
+    so a runtime model switch re-renders in place (one write path stays inside the project)."""
+    s = _svc(f"{project}/ops-controller:latest", net=net, env_file=env_file)
+    s["volumes"] = [
+        "/var/run/docker.sock:/var/run/docker.sock",  # broker start/stop (guard-scoped)
+        "./:/config",                                 # ordo.yaml + rendered out/ (single write path)
+    ]
+    s["environment"] = {"ORDO_PROJECT": project}
+    # --source/--catalog are global (pre-subcommand) flags; --project/--out belong to `serve`.
+    s["command"] = ["--source", "/config/ordo.yaml", "serve", "--project", project, "--out", "/config/out"]
+    return s
+
+
 def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "hermes",
                    project: str = "ordo-v2", env_file: str = ".env") -> dict[str, Any]:
     net = f"{project}-net"
@@ -47,7 +63,7 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         "model-gateway": _svc("ghcr.io/berriai/litellm:main", net=net, env_file=env_file,
                               depends=["llamacpp"]),
         "mcp-gateway": _svc("docker/mcp-gateway:latest", net=net, env_file=env_file),
-        "ops-controller": _svc(f"{project}/ops-controller:latest", net=net, env_file=env_file),
+        "ops-controller": _ops_controller(project, net, env_file),
         "dashboard": _svc(f"{project}/dashboard:latest", net=net, env_file=env_file,
                           depends=["ops-controller"]),
         # the agent is swappable; Hermes is the default

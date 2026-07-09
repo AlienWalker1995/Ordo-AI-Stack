@@ -45,6 +45,14 @@ def test_plugin_services_behind_profiles():
     assert "comfyui" not in c2["services"]
 
 
+def test_ops_controller_has_scoped_socket():
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo-v2")
+    ops = c["services"]["ops-controller"]
+    assert "/var/run/docker.sock:/var/run/docker.sock" in ops["volumes"]  # drives the broker
+    # but it's launched scoped to the project — the guard can't reach ordo-ai-stack-*
+    assert "--project" in ops["command"] and "ordo-v2" in ops["command"]
+
+
 def test_agent_swappable():
     c = compose.render_compose(has_gpu=False, compose_profiles=[], agent="openclaw")
     assert "agent-openclaw" in c["services"]["agent"]["image"]
