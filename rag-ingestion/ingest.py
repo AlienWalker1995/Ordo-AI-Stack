@@ -83,6 +83,20 @@ def _file_key(path: Path) -> str:
         return path.name
 
 
+def _is_hidden(path: Path) -> bool:
+    """True when any path component under WATCH_DIR starts with a dot.
+
+    Keeps tool/app internals out of the index — e.g. an Obsidian vault's
+    ``.obsidian/`` (workspace JSON) and ``.trash/`` (soft-deleted notes), or a
+    stray ``.git/``. Applies to both the periodic scan and watchdog events.
+    """
+    try:
+        rel = path.resolve().relative_to(WATCH_DIR)
+    except (ValueError, OSError):
+        rel = Path(path.name)
+    return any(part.startswith(".") for part in rel.parts)
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as fh:
@@ -193,13 +207,13 @@ def _iter_supported_files() -> list[Path]:
         [
             path
             for path in WATCH_DIR.rglob("*")
-            if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+            if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS and not _is_hidden(path)
         ]
     )
 
 
 def ingest_path(path: Path, state: dict[str, str]) -> bool:
-    if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+    if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS or _is_hidden(path):
         return False
     source = _file_key(path)
     digest = _sha256(path)
