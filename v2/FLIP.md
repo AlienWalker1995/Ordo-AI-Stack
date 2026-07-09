@@ -187,3 +187,65 @@ correctly but nothing consumed it.
 - **Retry procedure is unchanged** — re-run this runbook from step 1. The one delta: the Hermes brain was
   already delta-synced at 14:14 and V1's hermes kept writing after rollback, so the retry's step-1
   delta-sync will re-mirror the newer V1 state (correct by design).
+
+---
+
+## Phase-5 EXECUTED — attempt #2: ROLLED BACK (2026-07-09), then second render defect root-cause fixed
+
+**Outcome: clean rollback again. The attempt-1 llamacpp fix WORKED (llamacpp loaded the model, served
+a real HTTP-200 chat completion — the defect that killed attempt 1 is gone). A SECOND, independent
+render-engine defect surfaced: the `agent` (Hermes) container crash-looped on `hermes --help`. Found
+live, FIXED upstream in this commit — the next attempt should pass.**
+
+### Timeline (UTC)
+- `14:27:53` — stopped V1 hermes-gateway + hermes-dashboard; robocopy `/MIR` delta-sync of the brain
+  into `C:\dev\ordo-v2\data\hermes` (exit 1 = success; 15 files updated, 0 failed, 0 extras);
+  cleared stale locks in the V2 copy only (gateway.lock, auth.lock, shell-hooks-allowlist.json.lock;
+  gateway.pid already absent).
+- `14:28:09` — **V1 full stop** (`docker compose -p ordo-ai-stack stop`). 0 V1 running; 5090 VRAM → 4 MiB.
+- `14:28:30` — V2 core `up -d` (RECREATE from re-rendered out/): 6 containers. llamacpp **Recreated** with
+  the fixed entrypoint `/bin/sh /llamacpp-scripts/run-llama-server.sh` + both binds (`/models:ro`,
+  `/llamacpp-scripts:ro`) — verified by `docker inspect`.
+- `14:29–14:30` — **attempt-1 fix CONFIRMED WORKING:** llamacpp wrapper built the full argv
+  (`--model /models/Huihui-Qwen3.6-27B-…Q6_K.gguf --ctx-size 131072 --n-gpu-layers -1 …`), model
+  loaded, `/health → {"status":"ok"}`, 5090 climbed to ~24.7 GB. Chat proof via model-gateway:
+  `POST local-chat → HTTP 200`, `model:"local-chat"`, `system_fingerprint:"b1-86b9470"` (patched build).
+- `~14:31` — **defect #2 detected:** `ordo-v2-agent-1` in a restart loop, printing `hermes --help`
+  usage then exiting 0. Root cause below.
+- `14:32:57` — **ROLLBACK:** `docker compose -p ordo-v2 stop` (edge never came up → `:443` never contended).
+- `14:33:07` — `docker compose -p ordo-ai-stack start`. (Same transient `network … not found` on start
+  as attempt 1 — a stale ref as `ordo-v2-net` was torn down same session; healed, no container left down;
+  all 24 came back up.)
+- `~14:35` — V1 llamacpp `model loaded` → healthy, 5090 back to **29711 MiB** (normal resident).
+  V1 chat proof: `POST local-chat` → **HTTP 200**, `system_fingerprint:"b1-86b9470"`. All **24** V1
+  containers healthy again (gpu-exporter `unhealthy` = pre-existing driver-581.80, not a regression);
+  hermes-gateway loaded its full MCP catalog + Discord gateway reconnected.
+
+**Total production downtime ≈ 7 min** (14:28:09 stop → ~14:35 V1 serving again).
+
+### Root cause (the real fix, not a bandaid)
+The `agent-hermes` image's default `CMD` is `["hermes","--help"]` (prints usage + exits 0). V1's compose
+overrides this with `command: ["hermes","gateway"]` (`ordo-ai-stack/docker-compose.yml:1131`) to launch
+the persistent messaging gateway. **V2's render engine emitted the agent service with NO `command`,** so
+the image default won and the container restart-looped on `hermes --help`. The agent is swappable, so the
+launch command belongs in the agent manifest (data-driven), not hardcoded.
+
+**Fix (this commit):**
+- `agents/hermes/agent.yaml` — declares `command: [hermes, gateway]`.
+- `ordo/agents.py` — `Agent` gains a `command` field (parsed from the manifest; empty → omitted).
+- `ordo/render.py` — threads `agent.command` into the render context (`hermes.agent_command`).
+- `ordo/compose.py` — `render_compose` emits `command:` on the agent service when the manifest declares
+  one (empty → omitted, so a self-starting agent image is unaffected). Mirrors V1 exactly.
+- `tests/test_agents.py` — 3 regression guards: manifest declares `hermes gateway`; rendered agent
+  service carries `command: [hermes, gateway]`; an agent with no manifest command omits `command`.
+
+Re-rendered `out/`, **122/122 tests pass** (was 119; +3 new), preflight still **GO**. The attempt-1
+llamacpp entrypoint+binds fix is preserved in the re-render (verified).
+
+### State after this attempt
+- **V1 = intact rollback asset:** 24 running (== pre-flight), volumes/images untouched; owns tailnet `:443`.
+- **V2 = stopped-intact:** 6 containers `exited` (not removed), named volumes intact — ready for a clean
+  retry from the newly re-rendered `out/`.
+- **Retry procedure unchanged** — re-run from step 1; step-1 delta-sync will re-mirror the newer V1 state.
+  With BOTH render defects (llamacpp launch + agent launch) now fixed and test-guarded, attempt #3 should
+  bring the full core up healthy.

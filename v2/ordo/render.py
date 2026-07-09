@@ -108,6 +108,7 @@ class RenderedConfig:
             has_gpu=self.hardware.has_gpu, compose_profiles=self.compose_profiles,
             agent=self.hermes.get("agent", "hermes"), project=project,
             agent_image=self.hermes.get("agent_image") or None,
+            agent_command=self.hermes.get("agent_command") or None,
             llamacpp_image=self.env.get("LLAMACPP_IMAGE") or None,
             plugin_services=self.plugin_services,
             secondary_gpu_uuid=(sec.uuid if sec else None))
@@ -210,7 +211,9 @@ def render(source: Source, catalog: Catalog,
     agent, agent_notes = agents.resolve(source.agent)
     warnings = warnings + agent_notes
     agent_image = agent.image_for("ordo-v2") if agent else ""
-    hermes = {"context_length": ctx, "agent": source.agent, "agent_image": agent_image}
+    agent_command = list(agent.command) if agent else []
+    hermes = {"context_length": ctx, "agent": source.agent, "agent_image": agent_image,
+              "agent_command": agent_command}
     model_gateway = {"ctx": ctx, "model_id": "local-chat"}
 
     # Registry-driven plugin resolution: enable what's requested AND fits AND has its deps.

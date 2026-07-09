@@ -37,6 +37,7 @@ class Agent:
     default: bool
     consumes: tuple[str, ...]
     env: dict[str, str]
+    command: tuple[str, ...]         # () -> compose omits it and the image's default CMD runs
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Agent":
@@ -47,6 +48,7 @@ class Agent:
             default=bool(d.get("default", False)),
             consumes=tuple(d.get("consumes", []) or []),
             env={str(k): str(v) for k, v in (d.get("env", {}) or {}).items()},
+            command=tuple(str(c) for c in (d.get("command", []) or [])),
         )
 
     def image_for(self, project: str) -> str:
