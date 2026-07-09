@@ -1,8 +1,17 @@
-# FLIP — the exact next-phase cutover for this box (RTX 5090 + GTX 1070)
+# FLIP — the executed cutover for this box (RTX 5090 + GTX 1070)
 
-Phase 4 (build images, stage data/config, preflight GO) is **done** — see the bottom of this file
-for what was staged and when. This file is the **operator's** Phase 5 runbook: the atomic flip.
-Every command below was rendered/validated against the real box; run them **in order**.
+> **STATUS: EXECUTED — V2 IS PRODUCTION (2026-07-09).** The flip and the follow-on consolidation are
+> **done**: attempt #3 succeeded (~3.75-min core downtime) after two clean rollbacks that each turned
+> a live defect into a test-guarded fix, then the stack was consolidated to `C:\dev\ordo-ai-stack`
+> and merged to `main`. This file is the **record of what was executed**, with per-attempt timelines,
+> root-cause fixes, and validation evidence — see the "Phase-5 EXECUTED" attempts, the dashboard-
+> reinstatement / gap-fix sections, and "CONSOLIDATION EXECUTED" below. The Phase-5 command steps in
+> §§1–6 are preserved as the runbook that was followed (and the reference for any future flip); read
+> them as a completed procedure, not a pending one.
+
+Phase 4 (build images, stage data/config, preflight GO) was **done** — see the "Phase-4 staging
+record" for what was staged and when. §§1–6 are the **operator's** Phase 5 runbook (the atomic flip);
+every command was rendered/validated against the real box and run **in order**.
 
 Preconditions already satisfied by Phase 4 (verified):
 - All 9 `ordo-v2/*` project images built; the patched llama.cpp image present; every upstream image
