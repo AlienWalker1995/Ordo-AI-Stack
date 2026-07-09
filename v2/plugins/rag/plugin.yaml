@@ -41,6 +41,14 @@ services:
       - /models/${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}
       - --ctx-size
       - "8192"
+      # For embeddings each input must fit inside ONE physical batch — the upstream default
+      # (n_ubatch=512) 500s on any chunk over 512 tokens ("input is too large to process"), which a
+      # 400-word markdown chunk routinely is. 2048 covers the worst tokens-per-word case of the
+      # ingester's 400-word chunks with headroom, well inside the 8192 ctx.
+      - --batch-size
+      - "2048"
+      - --ubatch-size
+      - "2048"
       - --embeddings
     volumes:
       - ${BASE_PATH:-.}/models/gguf:/models:ro
@@ -66,6 +74,11 @@ services:
       SCAN_INTERVAL_SEC: ${RAG_SCAN_INTERVAL_SEC:-15}
     volumes:
       - ${DATA_PATH:-./data}/rag-input:/watch
+      # Obsidian memory vault as a second (read-only) input root, nested inside the watch tree so
+      # the recursive watcher/scanner picks it up with zero ingester config. Vault internals
+      # (.obsidian/, .trash/) are excluded by the ingester's hidden-path rule. Same var the
+      # memory-vault MCP mounts, so both views are the one vault.
+      - ${MEMORY_VAULT_PATH:-${DATA_PATH:-./data}/memory-vault}:/watch/memory-vault:ro
     depends_on: [llamacpp-embed, qdrant]
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/rag-ingestion.heartbeat"]
