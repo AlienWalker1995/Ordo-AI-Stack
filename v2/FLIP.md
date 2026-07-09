@@ -422,3 +422,60 @@ no GPU-bound service intentionally recreated.
   `total_vram 31.8`. **llamacpp UNTOUCHED** by the dashboard/ops-api applies: `RestartCount=0`,
   running since the correct-pin recreate, on the 5090.
 - **V1 untouched:** 0 running, 29 exited, original image IDs (`6760cc087b9b` / `17921b0f885b`) intact.
+
+## Gap-fix: per-service recreate controls (were 501 stubs → now WIRED-SAFE) — EXECUTED, live
+
+The reinstated V1 dashboard's recreate buttons proxied to `/services/{llamacpp,open-webui}/recreate`,
+which the 501 kill-switch stubbed → the buttons were broken. Wired them to a SAFE, replay-only path.
+
+### Change (data-driven, committed; no hand-edit of `out/`)
+- **`docker/ops-api/compose_recreate.py`** (new, pure/dep-free, unit-tested): `build_recreate_cmd` +
+  `discover_profiles`. The single command it emits is the ONLY thing that shells docker-compose for a
+  button recreate:
+  `docker-compose --project-name ordo-v2 --project-directory /workspace -f /workspace/docker-compose.yml
+  --profile <all> --env-file /workspace/.env --env-file /workspace/secrets.env up -d --no-deps
+  --force-recreate <svc>` — **BOTH env files**, **`--no-deps`**, **no re-render**.
+- **`docker/ops-api/main.py`**: new `OPS_SERVICE_RECREATE_ENABLED` gate (default OFF) rewires
+  `_recreate_service` + `/services/{id}/recreate` to the pure builder; whole-stack `/compose/*` stays
+  gated on `OPS_COMPOSE_MUTATIONS_ENABLED` → **501**. Profiles discovered from the compose file at
+  runtime (drift-free — sourced from the artifact being replayed). Timeout 120→180s (22GB reload).
+- **`docker/ops-api/Dockerfile`**: COPY the new module.
+- **`dashboards/v1-parity/dashboard.yaml`**: ops-api now bind-mounts the rendered `out/` tree RW at
+  `/workspace` (`./:/workspace:rw`, mirrors ops-controller's `./:/config`) so `/env/set` writes and the
+  recreate replay share ONE `.env` + `secrets.env`; sets `OPS_SERVICE_RECREATE_ENABLED=1`; moves the
+  gguf mount to `/gguf-models` so it doesn't nest under the RW out/ mount.
+
+### Re-render (manifest changed) — pin-identical, verified
+Re-rendered `out/` in a `--gpus all` CUDA container (real `detect()` → 5090+1070 uuids). `diff` of the
+new vs live `docker-compose.yml` = **ONLY the 3 intended ops-api lines** (`OPS_SERVICE_RECREATE_ENABLED`,
+`LLAMACPP_MODELS_DIR`, the two mount lines). **llamacpp block byte-identical** — pin stays
+`GPU-97fe65ee-5e2d-8c9b-32d0-362f510ceb96`. `docker compose config` (both env files) → exit 0. Only
+`ops-api` rebuilt + recreated (`--no-deps`).
+
+### Bug caught + fixed mid-flight (honest)
+1. First recreate crash-looped: `FileNotFoundError: /app/compose_recreate.py` — Dockerfile COPY missed
+   the new module. Fixed (added to COPY), rebuilt.
+2. First open-webui recreate returned `webui_error: "no such service: qdrant"` — open-webui
+   `depends_on: qdrant`, and qdrant is behind the `rag` profile; a per-service `up` without the
+   profile can't resolve the reference. **Root-cause fix (not a bandaid):** discover + pass ALL
+   profiles the stack runs with (from the artifact), so profiled `depends_on` resolves; `--no-deps`
+   still scopes the recreate to the one service. Re-verified.
+
+### Validations (with evidence)
+- **(a) open-webui recreate via the dashboard route** (`POST /api/config/default-model`, DASHBOARD_AUTH
+  bearer) → `webui_recreated: true`. New container id `d45c049f…` (was `9ad0848f…`), **healthy**,
+  RestartCount 0. **Secrets intact** (2026-06-26 regression check): `OAUTH2_PROXY_CLIENT_SECRET=GOCSPX-7…`,
+  `OAUTH2_PROXY_COOKIE_SECRET=OvX7lUy1…`, `SEARXNG_SECRET=09e4f80a…`, `OPS_CONTROLLER_TOKEN=81d8a9c4…`
+  all non-empty.
+- **(b) llamacpp recreate via the Model Control route** (`POST /api/llamacpp/switch`, same model,
+  idempotent). Pre-checks: scheduler `gpu.state=idle`, `running:[]`; no in-flight hermes work. Result:
+  new container id `5d2d0510…` (was `258a61c9…`), image `qwen36-swa-86b9470`, **pin still
+  `GPU-97fe65ee-…`** (CUDA_VISIBLE_DEVICES + device_ids), model resident **29070 MiB on the 5090**
+  (1070 untouched), RestartCount 0/stable, chat via model-gateway → **200, `fp=b1-86b9470`**,
+  `reasoning_content` populated (empty `content` is Qwen3.6 reasoning behavior, identical pre/post).
+- **(c) whole-stack stays disabled:** `/compose/{up,down,restart}` all → **501**; guardian
+  `{"enabled":false,"state":"disabled"}`.
+- **Scope:** only `ops-api` + `open-webui` + `llamacpp` recreated (rest "Up about an hour"); **V1
+  untouched** (0 running, 29 exited).
+- **Offline:** ruff clean (ordo + tests + the touched ops-api modules) + **166 passed** (was 151;
+  +15: 11 in `test_compose_recreate.py`, +4 render/gate guards in `test_dashboards.py`).

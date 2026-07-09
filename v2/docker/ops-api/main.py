@@ -59,6 +59,16 @@ except ModuleNotFoundError:  # pragma: no cover
     lf = _ilu.module_from_spec(_lf_spec)
     _lf_spec.loader.exec_module(lf)
 
+try:
+    import compose_recreate
+except ModuleNotFoundError:  # pragma: no cover
+    import importlib.util as _ilu
+    _cr_spec = _ilu.spec_from_file_location(
+        "compose_recreate", str(Path(__file__).resolve().parent / "compose_recreate.py"),
+    )
+    compose_recreate = _ilu.module_from_spec(_cr_spec)
+    _cr_spec.loader.exec_module(compose_recreate)
+
 app = FastAPI(title="Ops Controller", version="1.0.0")
 logger = logging.getLogger(__name__)
 
@@ -83,6 +93,25 @@ _COMPOSE_MUTATION_DISABLED_DETAIL = (
     "compose-mutation endpoints are disabled in the ordo-v2 stack; the `ordo serve` "
     "scheduler (service `ops-controller`) is the compose/lifecycle authority here"
 )
+# ── V2 PATCH (ops-api): SAFE per-service recreate gate ──────────────────────────
+# Whole-stack /compose/{up,down,restart} stays disabled (kill-switch above) — the V2
+# scheduler owns the stack lifecycle. But the V1 dashboard's REAL buttons (Model
+# Control flag-apply → /services/llamacpp/recreate; default-model → /services/
+# open-webui/recreate) proxy to PER-SERVICE recreate, and those must WORK. This
+# narrow gate enables ONLY the single-service recreate path via `_recreate_service`,
+# which replays the EXISTING rendered out/ compose (both env files, --no-deps,
+# --force-recreate; NO re-render) — see compose_recreate.build_recreate_cmd. It is
+# default-OFF so the substrate default and CI stay safe; this deployment sets it to 1.
+OPS_SERVICE_RECREATE_ENABLED = os.environ.get(
+    "OPS_SERVICE_RECREATE_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
+_SERVICE_RECREATE_DISABLED_DETAIL = (
+    "per-service recreate is disabled in this deployment; set OPS_SERVICE_RECREATE_ENABLED=1 "
+    "to allow the dashboard's per-service recreate buttons (whole-stack /compose/* stays off)"
+)
+# The rendered out/ dir is bind-mounted here (compose file + .env + secrets.env live
+# together). The recreate replays THAT tree in place — the same dir OPS_ENV_PATH writes
+# to — so a model switch's .env upsert and the recreate share one source of truth.
+COMPOSE_PROJECT_DIR = os.environ.get("COMPOSE_PROJECT_DIR", "/workspace")
 # ────────────────────────────────────────────────────────────────────────────────
 AUDIT_LOG_PATH = Path(os.environ.get("AUDIT_LOG_PATH", "/data/audit.log"))
 AUDIT_LOG_MAX_BYTES = int(os.environ.get("AUDIT_LOG_MAX_BYTES", "10485760"))  # 10MB default
@@ -257,30 +286,49 @@ def _compose_env(extra: dict | None = None) -> dict:
 
 
 def _recreate_service(service: str, request=None) -> dict:
-    """Run docker-compose up -d --no-deps <service>. Raises HTTPException on failure."""
-    # V2 PATCH: the shared compose-recreate chokepoint. In the ordo-v2 stack the
-    # `ordo serve` scheduler owns the compose lifecycle, so the callers that write
-    # source-of-truth state (/model-config, /registry/*/enable, /registry/*/assign-gpu)
-    # still persist that state to .env + the registry, but the container recreate is
-    # SKIPPED here (returns a benign "skipped" result) rather than shelling a
-    # docker-compose that would recreate without the operator's decrypted secrets.
-    # Apply the change to running containers via the V2 control plane.
-    if not OPS_COMPOSE_MUTATIONS_ENABLED:
+    """Recreate ONE service by replaying the EXISTING rendered out/ compose. No re-render.
+
+    V2 PATCH: the shared compose-recreate chokepoint, reached by the callers that write
+    source-of-truth state (/model-config, /env/set → llamacpp switch, default-model →
+    open-webui). Two gates, both default-OFF:
+      * OPS_COMPOSE_MUTATIONS_ENABLED — whole-stack compose lifecycle (stays OFF here).
+      * OPS_SERVICE_RECREATE_ENABLED — the NARROW per-service recreate the dashboard
+        buttons need (this deployment sets it to 1).
+    When per-service recreate is disabled AND whole-stack is disabled, we no-op with a
+    benign "skipped" result (the caller has already persisted state to .env/registry).
+    When enabled, we run docker-compose against the mounted out/ tree with BOTH env files
+    and --no-deps --force-recreate — so secret-dependent services keep their secrets (no
+    2026-06-26 regression) and only the named service is touched (no cascade). The llamacpp
+    5090 uuid pin is baked into the rendered compose, so replaying it can't drop the pin.
+    """
+    if not (OPS_SERVICE_RECREATE_ENABLED or OPS_COMPOSE_MUTATIONS_ENABLED):
         return {"ok": True, "service": service, "action": "recreate-skipped",
                 "detail": _COMPOSE_MUTATION_DISABLED_DETAIL}
     compose_files = [f.strip() for f in COMPOSE_FILE_ENV.split(";") if f.strip()]
-    cmd = ["docker-compose"]
-    for cf in compose_files:
-        cmd += ["-f", f"/workspace/{cf}"]
-    cmd += ["up", "-d", "--no-deps", service]
+    # Discover every profile the rendered compose declares and pass them all: a target service's
+    # depends_on may reference a PROFILED peer (open-webui -> qdrant, behind `rag`), and without
+    # the profile active compose aborts with "no such service" even though --no-deps never starts
+    # it. Sourcing profiles from the artifact being replayed keeps this drift-free (no hardcoding).
+    profiles: list[str] = []
+    try:
+        import yaml
+        first = Path(COMPOSE_PROJECT_DIR) / compose_files[0]
+        profiles = compose_recreate.discover_profiles(
+            yaml.safe_load(first.read_text(encoding="utf-8")) or {})
+    except Exception as exc:  # noqa: BLE001 — degrade to no-profiles (bare recreate) on any read error
+        logger.warning("[recreate] could not discover compose profiles (%s); proceeding without", exc)
+    cmd = compose_recreate.build_recreate_cmd(
+        service, project=COMPOSE_PROJECT, project_dir=COMPOSE_PROJECT_DIR,
+        compose_files=compose_files, profiles=profiles,
+    )
     env = _compose_env()
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True,
-            cwd="/workspace", env=env, timeout=120,
+            cwd=COMPOSE_PROJECT_DIR, env=env, timeout=180,
         )
     except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Service recreate timed out after 120 seconds")
+        raise HTTPException(status_code=504, detail="Service recreate timed out after 180 seconds")
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail=(result.stderr or result.stdout)[:500])
     return {"ok": True, "service": service, "action": "recreated"}
@@ -1481,34 +1529,30 @@ async def service_recreate(
     service_id: str, body: ConfirmBody, request: Request,
     _: None = Depends(verify_token),
 ):
-    """Recreate a service container via docker compose up -d so new env vars take effect."""
-    if not OPS_COMPOSE_MUTATIONS_ENABLED:  # V2 PATCH: scheduler owns compose recreate
-        raise HTTPException(status_code=501, detail=_COMPOSE_MUTATION_DISABLED_DETAIL)
+    """Recreate a service container via docker compose up -d so new env vars take effect.
+
+    V2 PATCH: whole-stack /compose/* stays 501 (kill-switch), but this per-service recreate
+    is the dashboard's REAL button path (Model Control → llamacpp; default-model → open-webui)
+    and must work when OPS_SERVICE_RECREATE_ENABLED=1. It delegates to the shared
+    `_recreate_service` chokepoint (single command path: both env files, --no-deps,
+    --force-recreate, replay of the existing rendered out/ tree — no re-render).
+    """
+    if not (OPS_SERVICE_RECREATE_ENABLED or OPS_COMPOSE_MUTATIONS_ENABLED):
+        raise HTTPException(status_code=501, detail=_SERVICE_RECREATE_DISABLED_DETAIL)
     if service_id not in ALLOWED_SERVICES:
         raise HTTPException(status_code=400, detail=f"Service {service_id} not in allowlist")
     if body.dry_run:
         return {"would": "recreate", "service": service_id}
     if not body.confirm:
         raise HTTPException(status_code=400, detail="Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
-    compose_files = [f.strip() for f in COMPOSE_FILE_ENV.split(";") if f.strip()]
-    cmd = ["docker-compose"]
-    for cf in compose_files:
-        cmd += ["-f", f"/workspace/{cf}"]
-    cmd += ["up", "-d", "--no-deps", service_id]
-    env = _compose_env()
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd="/workspace", env=env, timeout=120)
-    except subprocess.TimeoutExpired:
-        _audit("recreate", service_id, "error", "timed out after 120s",
+        result = _recreate_service(service_id, request)
+    except HTTPException as exc:
+        _audit("recreate", service_id, "error", str(exc.detail)[:200],
                correlation_id=_correlation_id(request))
-        raise HTTPException(status_code=504, detail="Service recreate timed out after 120 seconds")
-    ok = result.returncode == 0
-    detail = (result.stderr or result.stdout)[:200] if not ok else ""
-    _audit("recreate", service_id, "ok" if ok else "error", detail,
-           correlation_id=_correlation_id(request))
-    if not ok:
-        raise HTTPException(status_code=500, detail=(result.stderr or result.stdout)[:500])
-    return {"ok": True, "service": service_id, "action": "recreated"}
+        raise
+    _audit("recreate", service_id, "ok", "", correlation_id=_correlation_id(request))
+    return result
 
 
 @app.get("/audit")

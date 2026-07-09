@@ -105,15 +105,38 @@ def test_v2_scheduler_service_is_untouched_by_dashboard_choice(tmp_path):
 
 def test_ops_api_guardian_and_mutations_disabled(tmp_path):
     # the migration-triggering root cause must NOT come back: the reactive guardian + watchdogs are
-    # explicitly off, and the compose-mutation endpoints are disabled (V2 scheduler owns compose).
+    # explicitly off, and the WHOLE-STACK compose-mutation endpoints are disabled (scheduler owns them).
     c = _compose("v1-parity", tmp_path)
     env = c["services"]["ops-api"]["environment"]
     assert env["COMFYUI_SERIALIZE_LLAMACPP"] == "0"
     assert env["OPS_VRAM_PRESSURE_GB"] == "0"
     assert env["OPS_HERMES_WATCHDOG_ENABLED"] == "0"
-    assert env["OPS_COMPOSE_MUTATIONS_ENABLED"] == "0"
+    assert env["OPS_COMPOSE_MUTATIONS_ENABLED"] == "0"  # whole-stack /compose/* STAYS off
     # SDK container actions must be scoped to the ordo-v2 project (never the stopped V1 stack)
     assert env["COMPOSE_PROJECT"] == "ordo-v2"
+
+
+def test_ops_api_enables_safe_per_service_recreate(tmp_path):
+    # The dashboard's REAL buttons (Model Control → llamacpp, default-model → open-webui) proxy to
+    # per-service recreate — that narrow path MUST be enabled here (whole-stack mutations stay off).
+    c = _compose("v1-parity", tmp_path)
+    env = c["services"]["ops-api"]["environment"]
+    assert env["OPS_SERVICE_RECREATE_ENABLED"] == "1"     # per-service recreate ON
+    assert env["OPS_COMPOSE_MUTATIONS_ENABLED"] == "0"    # but whole-stack still OFF
+
+
+def test_ops_api_mounts_rendered_out_dir_for_recreate(tmp_path):
+    # A safe recreate REPLAYS the existing rendered out/ tree (compose + .env + secrets.env). ops-api
+    # must bind-mount that tree RW at the COMPOSE_PROJECT_DIR so /env/set writes and the recreate
+    # replay share one .env, and both env files are present for --env-file interpolation.
+    c = _compose("v1-parity", tmp_path)
+    ops = c["services"]["ops-api"]
+    assert "./:/workspace:rw" in ops["volumes"]           # the rendered out/ dir, RW
+    assert ops["environment"]["COMPOSE_PROJECT_DIR"] == "/workspace"
+    assert ops["environment"]["OPS_ENV_PATH"] == "/workspace/.env"
+    # gguf listing dir must NOT nest under the RW out/ mount (avoids mount-ordering fragility)
+    assert ops["environment"]["LLAMACPP_MODELS_DIR"] == "/gguf-models"
+    assert any(v.endswith(":/gguf-models:ro") for v in ops["volumes"])
 
 
 def test_v1_parity_dashboard_mounts_gguf_dir_for_llm_endpoints(tmp_path):

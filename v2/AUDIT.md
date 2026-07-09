@@ -71,12 +71,28 @@ tab and token auth are load-bearing. It has been reinstated, correctly and durab
   `COMFYUI_SERIALIZE_LLAMACPP` (default `0`), left unset (set to `0` for clarity), so the guardian
   thread never starts and `/guardian/status` returns a benign `{"enabled":false,"state":"disabled"}`
   (the dashboard's guardian panel degrades gracefully). The VRAM + self-heal watchdogs are likewise
-  off by default. The ONLY code patch is a minimal, commented `OPS_COMPOSE_MUTATIONS_ENABLED`
-  kill-switch (default OFF) that turns `/compose/*` + `/services/*/recreate` into a static **501**
-  and makes the shared `_recreate_service` chokepoint a no-op — so ops-api can NEVER shell
-  `docker-compose` against the stack (the 2026-06-26 secret-less-recreate outage shape). SDK
+  off by default. Two commented gates (both default OFF) split whole-stack vs per-service:
+  `OPS_COMPOSE_MUTATIONS_ENABLED` keeps `/compose/{up,down,restart}` a static **501** (the V2
+  `ordo serve` scheduler is the sole stack-lifecycle/GPU authority — never resurrected). SDK
   start/stop/restart stay scoped to `COMPOSE_PROJECT=ordo-v2` (compose-project label), so they can
-  only ever touch V2. The V2 scheduler remains the sole GPU/compose authority.
+  only ever touch V2.
+
+- **Per-service recreate: were 501 stubs, now WIRED-SAFE (this gap-fix).** The dashboard's REAL
+  buttons — Model Control flag-apply → `/services/llamacpp/recreate`, and default-model →
+  `/services/open-webui/recreate` — proxy to per-service recreate, which the earlier 501 stub broke.
+  A new narrow gate `OPS_SERVICE_RECREATE_ENABLED` (default OFF; this deployment sets `1`) enables
+  ONLY single-service recreate. The shared `_recreate_service` chokepoint now REPLAYS the EXISTING
+  rendered `out/` compose in place — **no re-render** — via `compose_recreate.build_recreate_cmd`:
+  `docker-compose --project-name ordo-v2 --project-directory <out> -f <out>/docker-compose.yml
+  --profile <every profile the stack runs with> --env-file <out>/.env --env-file <out>/secrets.env
+  up -d --no-deps --force-recreate <svc>`. Guardrails: **BOTH env files** (secrets present → no
+  2026-06-26 crash-loop), **`--no-deps`** (only the named service; no cascade), **all profiles**
+  discovered from the artifact itself (so a profiled `depends_on` like open-webui→qdrant resolves).
+  The `out/` tree is bind-mounted RW at `/workspace` so `/env/set` and the recreate share ONE `.env`.
+  The llamacpp 5090 uuid pin is baked into the rendered compose, so replaying it cannot drop it.
+  Whole-stack `/compose/*` stays 501. Live-validated (evidence in FLIP.md): open-webui recreated
+  with secrets intact + new container id; llamacpp recreated, pin still `GPU-97fe65ee-…`, model
+  resident ~29GB on the 5090, chat → 200 `fp=b1-86b9470`; only 3 services touched; V1 untouched.
 
 ## Verification (offline, no stack touched)
 - **Tests:** ruff clean + **134 passed** (was 122; **+12** across the 4 new defect classes:

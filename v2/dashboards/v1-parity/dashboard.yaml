@@ -75,6 +75,10 @@ backend:
     # Scope EVERY container/service action to the ordo-v2 project (compose-project label). This is
     # the guard that keeps SDK start/stop/restart from ever touching the stopped V1 stack.
     COMPOSE_PROJECT: ordo-v2
+    # The rendered out/ tree is bind-mounted RW at /workspace below (compose file + .env +
+    # secrets.env together). COMPOSE_PROJECT_DIR/OPS_ENV_PATH point INTO it so the model-config
+    # / default-model buttons' .env upsert (/env/set) and the per-service recreate replay share
+    # ONE source of truth — the exact file the recreate interpolates from.
     COMPOSE_PROJECT_DIR: /workspace
     OPS_ENV_PATH: /workspace/.env
     # Reactive-guardian + watchdogs: explicitly DISABLED (these are the defaults; set for clarity
@@ -82,20 +86,31 @@ backend:
     COMFYUI_SERIALIZE_LLAMACPP: "0"
     OPS_VRAM_PRESSURE_GB: "0"
     OPS_HERMES_WATCHDOG_ENABLED: "0"
-    # The compose-mutation endpoints stay disabled (V2 `ordo serve` owns the compose lifecycle).
+    # Whole-stack /compose/* stays DISABLED (V2 `ordo serve` owns the stack lifecycle).
     OPS_COMPOSE_MUTATIONS_ENABLED: "0"
+    # ...but the dashboard's REAL per-service recreate buttons (Model Control → llamacpp;
+    # default-model → open-webui) must WORK. This narrow gate enables ONLY single-service
+    # recreate, which replays the EXISTING rendered out/ compose with BOTH env files +
+    # --no-deps --force-recreate (no re-render; the llamacpp 5090 uuid pin is baked into the
+    # rendered compose so replaying it cannot drop the pin). See main.py "SAFE per-service recreate".
+    OPS_SERVICE_RECREATE_ENABLED: "1"
     COMFYUI_URL: http://comfyui:8188
     COMFYUI_CONTAINER_NAME: ordo-v2-comfyui-1
     COMFYUI_MODELS_DIR: /models/comfyui
     # Model registry + audit log live in the V2 data tree (staged, not the V1 tree).
     MODEL_REGISTRY_PATH: /data/model-registry.json
     AUDIT_LOG_PATH: /data/audit.log
-    # On-disk GGUF dir the model-config UI lists (shared read-only from the V1 tree).
-    LLAMACPP_MODELS_DIR: /workspace/models/gguf
+    # On-disk GGUF dir the model-config UI lists (shared read-only from the V1 tree). Kept OFF the
+    # /workspace subtree (mounted at /gguf-models below) so it doesn't nest under the RW out/ mount.
+    LLAMACPP_MODELS_DIR: /gguf-models
     BASE_PATH: ${BASE_PATH:-.}
     DATA_PATH: ${DATA_PATH:-./data}
   volumes:
     - /var/run/docker.sock:/var/run/docker.sock       # SDK start/stop (guard-scoped to ordo-v2-*)
-    - ${BASE_PATH:-.}/models/gguf:/workspace/models/gguf:ro
+    # The rendered out/ dir (docker-compose.yml + .env + secrets.env). RW so /env/set + /model-config
+    # upserts persist to the SAME .env the per-service recreate replays. `./` resolves to the compose
+    # project-directory (out/) at runtime — mirrors ops-controller's `./:/config` mount.
+    - ./:/workspace:rw
+    - ${BASE_PATH:-.}/models/gguf:/gguf-models:ro
     - ${BASE_PATH:-.}/models/comfyui:/models/comfyui:ro
     - ${DATA_PATH:-./data}/ops-controller:/data        # registry + audit log (staged, V2 data tree)
