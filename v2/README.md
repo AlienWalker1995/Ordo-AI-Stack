@@ -42,16 +42,20 @@ through it, and it's the direct fix for the #1 pain.
 5. **Full-stack parity render + `ordo parity`** — the renderer now reproduces the complete llama.cpp surface (model/ctx/mmproj/MTP args/…), and `ordo parity --ref <.env>` diffs it. ✅
    **Merge-gate (a) demonstrated live:** `ordo parity` vs the real running `.env` → **PARITY OK** (15 keys, 0 mismatches), read-only — proving the engine regenerates today's hand-tuned config from one source with no drift.
 6. **Scheduler status API + `ordo doctor` support bundle** — `Scheduler.status()` emits the busy/idle + free-VRAM + running/queued + ETA JSON the dashboard/agents poll; `ordo doctor [--bundle]` exports a secret-redacted diagnostics bundle. ✅ Demonstrated: a 17GB reel + a 4GB chat **co-run** (chat slips beside the render) — the exact eviction-deadlock that broke primus, gone.
+7. **MCP as `kind=mcp` plugins** — an MCP server is a manifest (pinned image + env + tools); the renderer composes enabled ones into `out/mcp-registry.yaml` (drift-free) and flags un-pinned images. Runs on CPU. ✅
+8. **Compose rendering** — `ordo render` emits an **isolated, runnable** `docker-compose.yml` (own project/network, no host-port clashes, GPU-gated, profile-gated plugins). ✅
+9. **Process broker** — turns scheduler decisions into real container start/stop; the Docker backend is **hard-scoped to the `ordo-v2-` prefix so it can never touch the live stack**. ✅
 
-**36 tests green.** That's every operator-independent substrate piece: right-sizing, drift-proof config (parity-proven live), plugins, scheduling, setup, diagnostics.
+**52 tests green.** `ordo render` now writes the complete stack: `.env` + `docker-compose.yml` + `hermes.context.json` + `manifest.json` + `mcp-registry.yaml`.
 
-## Operator boundary — the rest needs you / the live stack
-- The **process broker** that drives the scheduler against real llama.cpp/ComfyUI containers.
-- The **dashboard SPA** (control plane) + agent adapters.
-- The **cutover** itself (atomic swap when the merge gate is fully green: full parity incl. personal
-  automation + Hermes backup restored, N-day testbed stability, mocked-profile CI, clean fresh-install).
+## This completes every operator-independent slice
+Right-sizing · drift-proof config (parity-proven live) · plugins · MCP · scheduling + broker ·
+isolated runnable compose · wizard · diagnostics. All in one worktree, live stack untouched.
 
-These are deliberately not automated here — the live stack is untouched and the migration is yours to drive.
+## What genuinely needs you now (can't be automated safely)
+- The **dashboard SPA** — a UI to design/build (the substrate already emits the status/control data it needs).
+- **Real service images** — `ordo-v2/ops-controller`, `agent-hermes`, etc. are refs; the images/build contexts are stack-specific.
+- The **cutover** — bring `ordo-v2` up beside the live stack, validate, do the GPU handoff, keep the old for rollback. This touches the live stack + the 5090, so it's yours to drive (as you said).
 
 ## Acceptance gate for THIS slice (from the plan)
 1. Renders a full config from one source with **zero hand-edits**.
