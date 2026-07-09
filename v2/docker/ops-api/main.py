@@ -1663,16 +1663,52 @@ async def comfyui_install_node_requirements(
     return result
 
 
+# V2 PATCH (ops-api): per-container docker-stats fan-out cap. Each `c.stats(stream=False)` blocks
+# ~1-2s while the daemon samples cgroup counters TWICE (~1s apart) to compute the CPU delta — an
+# inherent, irreducible per-container cost. The calls are independent read-only socket I/O, so they
+# run CONCURRENTLY (see _sample_one_container). Bounded so a large stack can't open one daemon
+# connection per container at once. 32 covers this deployment's ~24 services in a single wave.
+_STATS_MAX_WORKERS = int(os.environ.get("OPS_STATS_MAX_WORKERS", "32"))
+
+
+def _sample_one_container(c, vram_by_pid: dict, gpu_total_gb: float) -> dict:
+    """Sample ONE running container's CPU/RAM (+VRAM if per-pid available). Blocking Docker I/O;
+    called from the stats thread pool. Never raises — a failed sample yields a running row with
+    zeroed metrics (matches the prior per-iteration `continue`)."""
+    row = {"cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0, "vram_gb": 0.0, "vram_pct": 0.0, "running": True}
+    try:
+        sample = c.stats(stream=False)
+    except Exception as e:
+        logger.debug("stats sample failed for %s: %s", getattr(c, "name", "?"), e)
+        return row
+    row["cpu_pct"] = _cpu_pct_from_stats(sample)
+    row["mem_gb"], row["mem_pct"] = _mem_from_stats(sample)
+    if vram_by_pid:
+        pids = _container_host_pids(c)
+        total_b = sum(vram_by_pid.get(pid, 0) for pid in pids)
+        if total_b > 0 and gpu_total_gb > 0:
+            row["vram_gb"] = round(total_b / 1e9, 2)
+            row["vram_pct"] = round(total_b / (gpu_total_gb * 1e9) * 100.0, 1)
+    return row
+
+
 @app.get("/stats/services")
 def stats_services(_: None = Depends(verify_token)):
     """Per-compose-service CPU/RAM/VRAM. Read-only, auth required (same as other ops routes).
 
-    Sync def: the body iterates every running container and calls Docker's
-    `c.stats(stream=False)`, which takes ~1s per container while the daemon
-    samples cgroup counters. With ~17 services this single endpoint blocks
-    for ~17 seconds. Running it as `async def` froze the entire uvicorn
-    event loop — manifesting as a stuck accept queue and timed-out probes
-    from every peer. Threadpool dispatch (this change) keeps the loop free.
+    Sync def: FastAPI dispatches it on the threadpool so the blocking Docker I/O
+    below never touches the asyncio event loop (running it as `async def` froze
+    the loop — a stuck accept queue + timed-out probes from every peer).
+
+    V2 PATCH (widget fix): each container's `c.stats(stream=False)` blocks ~1-2s
+    (the daemon samples cgroup counters twice to compute the CPU delta).
+    Iterating them SEQUENTIALLY made this endpoint scale as N×~2s — ~48s for
+    this stack's ~24 services, far past the dashboard's 3s service-pressure
+    timeout, so every hw-stat service widget rendered `running:false` (the
+    dashboard's `_empty_payload` fallback). The samples are independent
+    read-only calls, so we fan them out across a bounded thread pool: wall time
+    collapses to ~one sample (~2s) regardless of N. Root-cause fix (parallelism),
+    NOT a timeout bump.
     """
     try:
         containers = _get_containers()
@@ -1684,31 +1720,26 @@ def stats_services(_: None = Depends(verify_token)):
     vram_aggregate_unavailable = not gpu["per_pid_available"]
 
     services: dict[str, dict] = {}
+    running: list = []
     for c in containers:
         svc = (c.labels or {}).get("com.docker.compose.service")
         if not svc:
             continue
-        row = services.setdefault(svc, {
+        # Seed every declared service as not-running; the concurrent pass flips + fills the runners.
+        services.setdefault(svc, {
             "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
             "vram_gb": 0.0, "vram_pct": 0.0, "running": False,
         })
-        status = getattr(c, "status", "") or ""
-        if status != "running":
-            continue
-        row["running"] = True
-        try:
-            sample = c.stats(stream=False)
-        except Exception as e:
-            logger.debug("stats sample failed for %s: %s", svc, e)
-            continue
-        row["cpu_pct"] = _cpu_pct_from_stats(sample)
-        row["mem_gb"], row["mem_pct"] = _mem_from_stats(sample)
-        if vram_by_pid:
-            pids = _container_host_pids(c)
-            total_b = sum(vram_by_pid.get(pid, 0) for pid in pids)
-            if total_b > 0 and gpu["total_gb"] > 0:
-                row["vram_gb"] = round(total_b / 1e9, 2)
-                row["vram_pct"] = round(total_b / (gpu["total_gb"] * 1e9) * 100.0, 1)
+        if (getattr(c, "status", "") or "") == "running":
+            running.append((svc, c))
+
+    if running:
+        from concurrent.futures import ThreadPoolExecutor
+        gpu_total_gb = gpu["total_gb"]
+        with ThreadPoolExecutor(max_workers=min(_STATS_MAX_WORKERS, len(running))) as pool:
+            rows = pool.map(lambda pair: (pair[0], _sample_one_container(pair[1], vram_by_pid, gpu_total_gb)), running)
+            for svc, row in rows:
+                services[svc] = row
 
     gpu_out = None if gpu["total_gb"] == 0 else {k: v for k, v in gpu.items() if k != "per_pid_available"}
     return {

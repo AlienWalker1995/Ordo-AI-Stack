@@ -578,3 +578,82 @@ Discord connected.
 
 **Attestation:** V1 untouched (all `Exited`); no GPU-bound service recreated (llamacpp/agent uptime
 unchanged); only mutation = the one cron trigger. **170 tests pass.**
+
+---
+
+## hw-stat bar widget fix — storage + GPU widgets blank, services all not-running (2026-07-09)
+
+The dashboard's top hw-stat bar was live-broken three ways: the **storage** and **GPU** widgets were
+missing and every service showed **not-running**. A prior validation pass scored `/api/hardware` as
+PASS purely on its HTTP 200 — but the 200 carried **nulls**. Three root causes, all fixed at the
+source (data-driven manifest/schema/render + the ops-api build context — no hand-edit of `out/`).
+
+### Root causes (each verified live, then fixed)
+1. **GPU widgets blank** — the reinstated `dashboard` service reserved NO GPU (`docker inspect
+   ordo-v2-dashboard-1` → `DeviceRequests=null`), so the NVIDIA runtime never injected `nvidia-smi`
+   for `_probe_gpu()` / `gpu_stats.list_gpus()`. V1's dashboard container had `caps=[[utility]]`.
+   `/api/hardware` → `gpu:null`, `gpus:[]`. **Fix:** `gpu: utility` on the dashboard service — the
+   schema field existed on the *backend* only, so it was lifted to the top-level `Dashboard`
+   dataclass (`ordo/dashboards.py`), flowed through render (`ordo/render.py`) and applied in
+   `_dashboard()` (`ordo/compose.py`, reusing `_capability_gpu_reservation`).
+2. **Storage widget blank** — the render emits `BASE_PATH=<Windows host path>` into the shared `.env`
+   (compose NEEDS it there to interpolate `${BASE_PATH}` host volume mounts), but `env_file` also
+   injected that Windows path into the Linux dashboard container, where `psutil.disk_usage("C:/…")`
+   raised `FileNotFoundError` → `disk_*:null`. V1's dashboard set NO `BASE_PATH` → used app.py's
+   `/data/dashboard` default. **Fix:** a per-service `environment: BASE_PATH: /data/dashboard`
+   override (compose `environment:` beats `env_file`) in the manifest — pins ONLY the in-container
+   disk-probe target; the host-path `${BASE_PATH}` interpolation is untouched. Data-driven audit
+   confirmed the dashboard is the ONLY service that reads `BASE_PATH` for an in-container fs call
+   (ops-api's `BASE_PATH` is used solely to build env for compose subprocesses, where the host path
+   is correct — left as-is).
+3. **All services not-running** — ops-api `/stats/services` **timed out even at 40s**. Profiled live:
+   container listing 0.23s (project-scoped to `ordo-v2`, so V1's 29 exited containers do NOT leak
+   in — that theory was disproved), but each `c.stats(stream=False)` blocks **~2s** (the daemon
+   samples cgroup counters twice for the CPU delta) and the loop was **sequential** → ~24×2s ≈ 48s.
+   The dashboard's 3s call fell to `_empty_payload()` (every service `running:false`). The endpoint
+   code is a COPY of V1's ops-controller — i.e. **V1 was equally slow**; its docstring even admitted
+   "~17 seconds". **Fix (root cause, not a timeout bump):** the per-container samples are independent
+   read-only socket I/O, so fan them out across a bounded `ThreadPoolExecutor` — wall time collapses
+   to ~one sample regardless of N. Applied to the ops-api build context `docker/ops-api/main.py`
+   (the source the running ops-api actually builds from — NOT the repo-root legacy `ops-controller/`,
+   which V2 doesn't consume; verified via the ops-api Dockerfile `COPY main.py`).
+
+### Re-render (manifest + schema changed) — llamacpp byte-identical, verified
+Re-rendered `out/` in a `--gpus all` CUDA container (`nvidia/cuda:12.4.1-base` → real `detect()`
+listed 5090 `GPU-97fe65ee-…` + 1070 `GPU-20fac13a-…`), **`--source ordo.yaml`** (the operator source;
+the CLI default is `ordo.example.yaml` = v2-native — using it renders the wrong dashboard). `diff`
+new vs live `docker-compose.yml` = **ONLY 2 additions to the `dashboard` service**: `BASE_PATH:
+/data/dashboard` + the 8-line `deploy…devices:[{driver:nvidia,count:all,capabilities:[utility]}]`.
+Every other service block **byte-identical** (per-block SHA compared) — **llamacpp sha `856ef157…`
+both sides, 5090 pin `GPU-97fe65ee-…` intact**. `docker compose config` (both env files) → exit 0.
+`.env`/`secrets.env` NOT overwritten (live carries runtime `/env/set` keys). ops-api image rebuilt
+(stats fix in its build context); applied `up -d --no-deps --force-recreate ops-api dashboard`.
+
+### Validations (with evidence)
+- **`nvidia-smi -L` inside `ordo-v2-dashboard-1`** → lists **BOTH** cards (1070 + 5090).
+- **`/api/hardware`** (before → after): `disk_used_gb null→1180.0`, `disk_total_gb null→1999.8`,
+  `disk_pct null→59.0`; `gpu null→{1070, 2.6/8.6GB, util 1}`; `gpus []→[1070 8.6GB, 5090 34.2GB]`
+  (real util + temp). cpu/ram were always fine.
+- **`/api/hardware/service-pressure`** (before → after): elapsed **>40s (timeout) → 2.37s** (< the 3s
+  dashboard timeout); services **all `running:false` → 24/25 `running:true`** with real cpu/mem
+  (llamacpp mem 10.93GB, …). The 1 not-running (`hermes`) is a catalog display id with no V2 compose
+  service (agent runs as `agent`, shown running) — pre-existing, not this fix. `vram_gb:0` here is the
+  pre-existing WSL2 per-PID-VRAM limit (`vram_aggregate_unavailable:true`); VRAM reaches the UI via
+  `/api/hardware` `gpus`.
+
+### Tests
+- `ordo/dashboards.py`, `ordo/render.py`, `ordo/compose.py`, `dashboards/v1-parity/dashboard.yaml`:
+  +4 guards in `tests/test_dashboards.py` (dashboard reserves the `utility` cap; dashboard `BASE_PATH`
+  overridden to `/data/dashboard`; v2-native reserves no GPU). Substrate suite → **173 passed** (was
+  170), ruff clean.
+- `docker/ops-api/main.py` (stats fix): +2 guards in `tests/test_ops_api_stats.py` (all services
+  seeded + runners flipped/filled; 8×0.5s samples finish <2s = concurrent, not the ~4s a sequential
+  loop takes). Skipped in the bare substrate suite (needs fastapi/docker); **2 passed** in the
+  ops-api-deps container. ruff clean on `docker/ops-api/main.py`.
+
+### Attestation
+- **V1 (`ordo-ai-stack`) untouched** — read/inspect only.
+- **Only `ops-api` + `dashboard` recreated** (`--no-deps`). GPU-bound services **untouched** — same
+  container ids across the apply: llamacpp `5d2d0510b871`, agent `c3dd48cb52bb`, comfyui
+  `df29f2607941`, llamacpp-embed `1c7b6e36615e`, ops-controller `bd1c5804439f` (all RestartCount
+  unchanged). llamacpp 5090 pin preserved (byte-identical compose block).

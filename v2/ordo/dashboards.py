@@ -81,6 +81,14 @@ class Dashboard:
     healthcheck: dict[str, Any] = dataclasses.field(default_factory=dict)
     wants_secrets: bool = True
     backend: DashboardBackend | None = None
+    # GPU visibility for the dashboard SERVICE ITSELF (distinct from the backend's). The V1-parity
+    # dashboard's `/api/hardware` shells to nvidia-smi (_probe_gpu) and enumerates cards via
+    # gpu_stats.list_gpus for the hw-stat bar's GPU widgets — the NVIDIA runtime only injects
+    # nvidia-smi/NVML when the service reserves a GPU with the `utility` cap. V1's dashboard
+    # container has exactly caps=[[utility]]; without it here `/api/hardware` returns gpu:null +
+    # gpus:[]. Declared via `gpu: utility` (or `gpu_capabilities: [utility]`) in the manifest;
+    # `count: all` (empty device_ids) so it reads BOTH cards. Empty -> no reservation.
+    gpu_capabilities: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Dashboard":
@@ -109,6 +117,7 @@ class Dashboard:
             healthcheck=dict(d.get("healthcheck", {}) or {}),
             wants_secrets=bool(d.get("wants_secrets", True)),
             backend=backend,
+            gpu_capabilities=_gpu_caps(d),
         )
 
     def image_for(self, project: str) -> str:
