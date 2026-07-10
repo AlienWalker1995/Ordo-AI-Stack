@@ -13,7 +13,8 @@ import yaml
 
 from ordo.catalog import Catalog
 from ordo.config import Source
-from ordo.plugins import Plugin, PluginRegistry
+from ordo.compose import _plugin_service
+from ordo.plugins import Plugin, PluginRegistry, PluginService
 from ordo.render import _render_mcp, render
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -59,11 +60,27 @@ def test_obsidian_service_renders_digest_pinned_no_ports():
     assert obs["profiles"] == ["obsidian"]
     # the shared vault is bind-mounted into the GUI
     assert any(":/config/vaults/memory" in v for v in obs["volumes"])
+    # /dev/shm bumped past docker's 64MB default — the linuxserver docs require 1GB for the
+    # Electron app + Selkies streaming pipeline; at 64MB the stream WS drops mid-session.
+    assert obs["shm_size"] == "1gb"
 
 
 def test_obsidian_absent_when_not_requested():
     c = render(_src(["rag"]), CATALOG, REGISTRY).compose_dict()
     assert "obsidian" not in c["services"]
+
+
+def test_plugin_service_shm_size_passthrough_and_omit():
+    # data-driven: a service that declares shm_size emits it; one that doesn't omits the key
+    # entirely (so no service regresses to an explicit-but-empty shm_size).
+    p = Plugin.from_dict({"id": "x", "kind": "service", "compose_profile": "x", "services": []})
+    kw = dict(net="ordo-v2-net", env_file=".env", has_gpu=False,
+              primary_uuid=None, secondary_uuid=None, project="ordo-v2")
+    with_shm = _plugin_service(
+        PluginService.from_dict({"name": "s1", "image": "img", "shm_size": "1gb"}), p, **kw)
+    assert with_shm["shm_size"] == "1gb"
+    without = _plugin_service(PluginService.from_dict({"name": "s2", "image": "img"}), p, **kw)
+    assert "shm_size" not in without
 
 
 # ── memory-vault file-based MCP plugin ───────────────────────────────────────
