@@ -4,7 +4,7 @@
 
 Secure Docker Compose control plane. Exposes an authenticated API for start/stop/restart, logs, and image pulls. Dashboard calls this service; it never mounts docker.sock.
 
-**Status:** See [Product Requirements Document](../docs/Product%20Requirements%20Document.md) for design and decisions.
+**Status:** See the [Product Requirements Docs](../docs/product%20requirements%20docs/index.md) for design and decisions.
 
 ## Endpoints
 
