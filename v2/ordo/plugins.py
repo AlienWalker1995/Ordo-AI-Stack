@@ -35,6 +35,10 @@ class PluginService:
     # deliberately publish none (isolation). Opt-in behind the plugin's profile, so it stays dormant
     # until `--profile edge` unless the edge plugin is enabled.
     ports: list[str] = dataclasses.field(default_factory=list)
+    # /dev/shm size (compose `shm_size`, e.g. "1gb"). Docker defaults to 64MB, which starves
+    # Electron/Chromium + Selkies-style streaming GUIs (frame buffers live in shared memory) and
+    # drops the session mid-stream. Empty → omit the key (docker default). Data-driven like gpu.
+    shm_size: str = ""
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "PluginService":
@@ -48,6 +52,7 @@ class PluginService:
             depends_on=[str(x) for x in (d.get("depends_on", []) or [])],
             wants_secrets=bool(d.get("wants_secrets", False)),
             ports=[str(p) for p in (d.get("ports", []) or [])],
+            shm_size=str(d.get("shm_size", "")),
         )
 
 

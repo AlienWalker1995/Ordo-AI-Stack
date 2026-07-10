@@ -314,6 +314,8 @@ def _plugin_service(ps: "PluginService", plugin: "Plugin", *, net: str, env_file
         s["depends_on"] = dep
     if ps.ports:  # edge/front-door only (Caddy :443); gated behind the plugin's opt-in profile
         s["ports"] = list(ps.ports)
+    if ps.shm_size:  # bump /dev/shm past docker's 64MB default (Electron/Selkies streaming needs it)
+        s["shm_size"] = ps.shm_size
     return s
 
 
