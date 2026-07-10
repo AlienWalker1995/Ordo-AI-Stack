@@ -108,6 +108,23 @@ _SERVICE_RECREATE_DISABLED_DETAIL = (
     "per-service recreate is disabled in this deployment; set OPS_SERVICE_RECREATE_ENABLED=1 "
     "to allow the dashboard's per-service recreate buttons (whole-stack /compose/* stays off)"
 )
+# ── V2 PATCH (ops-api): guardian mutation kill-switch ───────────────────────────
+# In the ordo-v2 stack the `ordo serve` scheduler (service `ops-controller`) is the SINGLE GPU
+# arbiter with full media-lease semantics (evict the resident LLM for a GPU-heavy job, restore it
+# on completion, self-heal a stranded lease via TTL). This ops-api must NOT also stop/start
+# llama.cpp — two arbiters racing on the same card is exactly the deadlock the reel-cron failure
+# forensics traced. So the guardian's MUTATING routes (/guardian/hold, /guardian/release) are hard-
+# disabled and return 410 GONE pointing at the V2 contract. /guardian/status stays live (static
+# disabled state) because the dashboard reads it. The scheduler's own broker is the only thing that
+# may cycle llama.cpp now.
+_GUARDIAN_MUTATION_GONE_DETAIL = (
+    "guardian hold/release is removed in the ordo-v2 stack: the `ordo serve` scheduler "
+    "(service `ops-controller`) is the single GPU arbiter with media-lease semantics. "
+    "Acquire GPU capacity with `POST ops-controller:9000/jobs` "
+    '{"id": ..., "vram_gb": ..., "kind": "media"} and release it with '
+    '`POST ops-controller:9000/jobs/complete` {"id": ...} — the scheduler evicts the resident '
+    "LLM for the lease and restarts it automatically when the job completes."
+)
 # The rendered out/ dir is bind-mounted here (compose file + .env + secrets.env live
 # together). The recreate replays THAT tree in place — the same dir OPS_ENV_PATH writes
 # to — so a model switch's .env upsert and the recreate share one source of truth.
@@ -2340,51 +2357,22 @@ async def guardian_status(_: None = Depends(verify_token)):
 
 @app.post("/guardian/hold")
 async def guardian_hold(body: ConfirmBody, request: Request, _: None = Depends(verify_token)):
-    """Acquire a GPU lease: stop the guardian target (llamacpp) and HOLD it down —
-    the guardian will not resume it — until /guardian/release, so a VRAM-heavy
-    ComfyUI job (e.g. the VibeVoice dialogue render) owns the whole card. Blocks
-    until VRAM has actually been released (or a 90s cap). Auth required."""
-    target = COMFYUI_GUARDIAN_TARGET
-    if body.dry_run:
-        return {"would": "hold", "target": target}
-    min_free_gb = float(request.query_params.get("min_free_gb", "20"))
-    with _guardian_lock:
-        _guardian_status["held"] = True
-        _guardian_status["held_reason"] = request.query_params.get("reason", "gpu-lease")
-    for c in _containers_for_service(target):
-        try:
-            c.stop(timeout=30)
-        except Exception:
-            pass
-    deadline = time.time() + 90
-    free = _compute_gpu_free_gb()
-    while time.time() < deadline and free < min_free_gb:
-        time.sleep(2)
-        free = _compute_gpu_free_gb()
-    ready = free >= min_free_gb
-    _audit("guardian_hold", target, "ok" if ready else "error",
-           f"free_gb={free} min={min_free_gb}", correlation_id=_correlation_id(request))
-    return {"ok": True, "held": True, "target": target, "free_gb": free, "ready": ready}
+    """REMOVED in ordo-v2 — 410 GONE. The `ordo serve` scheduler is the single GPU arbiter now;
+    acquire a media lease via `POST ops-controller:9000/jobs` instead. This route no longer
+    stops/starts llama.cpp (two arbiters racing on the card was the reel-cron deadlock)."""
+    _audit("guardian_hold", COMFYUI_GUARDIAN_TARGET, "gone", "410 -> ops-controller /jobs",
+           correlation_id=_correlation_id(request))
+    raise HTTPException(status_code=410, detail=_GUARDIAN_MUTATION_GONE_DETAIL)
 
 
 @app.post("/guardian/release")
 async def guardian_release(body: ConfirmBody, request: Request, _: None = Depends(verify_token)):
-    """Release the GPU lease: clear the hold and restart the target (llamacpp).
-    Auth required."""
-    target = COMFYUI_GUARDIAN_TARGET
-    if body.dry_run:
-        return {"would": "release", "target": target}
-    with _guardian_lock:
-        _guardian_status["held"] = False
-        _guardian_status["held_reason"] = ""
-    for c in _containers_for_service(target):
-        try:
-            c.start()
-        except Exception:
-            pass
-    _guardian_transition("idle")
-    _audit("guardian_release", target, "ok", "", correlation_id=_correlation_id(request))
-    return {"ok": True, "held": False, "target": target}
+    """REMOVED in ordo-v2 — 410 GONE. Release a media lease via
+    `POST ops-controller:9000/jobs/complete`; the scheduler restarts llama.cpp automatically when
+    the GPU-heavy work drains. This route no longer mutates any container."""
+    _audit("guardian_release", COMFYUI_GUARDIAN_TARGET, "gone", "410 -> ops-controller /jobs/complete",
+           correlation_id=_correlation_id(request))
+    raise HTTPException(status_code=410, detail=_GUARDIAN_MUTATION_GONE_DETAIL)
 
 
 # Start the guardian thread at module import. Doing it here instead of via
