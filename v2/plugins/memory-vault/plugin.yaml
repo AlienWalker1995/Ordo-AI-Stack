@@ -1,6 +1,6 @@
 # Plugin manifest — data-only. Registers the file-based memory-vault MCP server (agent tool), not a
 # compose service. Gives Hermes/agents read+write access to the shared markdown memory vault (the
-# SAME host dir the Obsidian GUI browses) via mcpvault: read_note/write_note/patch_note/search_notes/
+# SAME host dir native Obsidian browses) via mcpvault: read_note/write_note/patch_note/search_notes/
 # frontmatter/tags/... — the durable memory substrate lives as plain markdown, not a hidden store.
 id: memory-vault
 name: Memory Vault (MCP tools)

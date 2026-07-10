@@ -183,26 +183,3 @@ def test_index_html_sends_no_cache(client):
     assert r.headers.get("cache-control") == "no-cache"
     # Still a validated cache — the ETag is what the browser revalidates against.
     assert r.headers.get("etag")
-
-
-# ── SSO-routed service entries (obsidian regression) ─────────────────────────
-
-def test_obsidian_entry_is_sso_routed_like_codebase_memory():
-    """The obsidian card must render the clean /obsidian/ SSO link, never a raw
-    :3000 URL. That requires the SAME entry shape as codebase-memory-ui: a `port`
-    (for the health probe), NO `url` key (so serviceOpenHref uses SSO_ROUTES),
-    and a hint that references the same-origin path, not a host:port."""
-    from dashboard.services_catalog import SERVICES
-
-    by_id = {s["id"]: s for s in SERVICES}
-    obsidian = by_id["obsidian"]
-    reference = by_id["codebase-memory-ui"]
-
-    # No `url` key -> serviceOpenHref falls through to SSO_ROUTES['obsidian'].
-    assert "url" not in obsidian, "obsidian must not set `url` (would leak :3000)"
-    assert "url" not in reference  # sanity: the working precedent has no url either
-    # Port exists for the health probe but is never rendered as a link/label.
-    assert obsidian["port"] == 3000
-    # Hint (shown only when offline) must not expose a raw host:port.
-    assert ":3000" not in obsidian["hint"]
-    assert "/obsidian/" in obsidian["hint"]
