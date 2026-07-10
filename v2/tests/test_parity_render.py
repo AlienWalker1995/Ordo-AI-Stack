@@ -25,8 +25,12 @@ EXPECTED_SERVICE_PLUGINS = {
     "rag", "worker", "automation", "open-webui",           # ported CPU-ok services
     "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
 }
-# memory-vault is a post-parity add (file-based markdown-memory MCP).
-EXPECTED_MCP = {"qdrant-rag", "searxng", "memory-vault"}
+# memory-vault is a post-parity add (file-based markdown-memory MCP). codebase-memory / comfyui /
+# n8n / orchestration are the RESTORED V1 roster (the V1→V2 migration had silently dropped them);
+# these are SERVER ids — the comfyui MCP plugin is id `comfyui-mcp` but renders under server_id
+# `comfyui` to preserve Hermes' V1 `comfyui__*` tool namespace.
+EXPECTED_MCP = {"qdrant-rag", "searxng", "memory-vault",
+                "codebase-memory", "comfyui", "n8n", "orchestration"}
 
 
 def _dual():
@@ -42,14 +46,15 @@ def test_dual_gpu_enables_the_full_parity_set():
 
 
 def test_parity_matrix_counts():
-    # 12 kind=service plugins (parity set) + 3 kind=mcp plugins (qdrant-rag, searxng,
-    # memory-vault) are registered and all enable on the full host.
+    # 12 kind=service plugins (parity set; obsidian removed on main) + 7 kind=mcp plugins
+    # (qdrant-rag, searxng, memory-vault + the restored codebase-memory / comfyui-mcp / n8n /
+    # orchestration) are registered and all enable on the full host.
     svc = [p for p in REGISTRY.plugins if p.kind == "service"]
     mcp = [p for p in REGISTRY.plugins if p.kind == "mcp"]
-    assert len(svc) == 12 and len(mcp) == 3
+    assert len(svc) == 12 and len(mcp) == 7
     rc = _dual()
     assert len(rc.plugins_enabled) == 12
-    assert len(rc.mcp_servers) == 3
+    assert len(rc.mcp_servers) == 7
 
 
 def test_ported_services_carry_pins_and_healthchecks():

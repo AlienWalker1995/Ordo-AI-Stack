@@ -235,6 +235,31 @@ def test_mcp_gateway_has_socket_config_and_healthcheck():
     assert "healthcheck" in mg
 
 
+# ── Defect class: restored MCP servers spawn as siblings and read the bind-allowlist + non-secret
+#    defaults from the gateway env (the wrapper substitutes PLACEHOLDER_* from the process env).
+#    codebase-memory's read-only /c/dev bind is REJECTED unless CODE_ROOT is on the allowlist. ──
+def test_mcp_gateway_env_wires_restored_server_placeholders():
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo-v2")
+    env = c["services"]["mcp-gateway"]["environment"]
+    # codebase-memory: read-only /c/dev bind is only accepted if CODE_ROOT is on the allowlist.
+    assert env["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"] == "${CODE_ROOT:-/c/dev}"
+    assert env["CODE_ROOT"] == "${CODE_ROOT:-/c/dev}"
+    # comfyui MCP's non-secret default checkpoint (safe to interpolate from .env-space).
+    assert env["COMFY_MCP_DEFAULT_MODEL"] == "${COMFY_MCP_DEFAULT_MODEL:-flux1-schnell-fp8.safetensors}"
+    # memory-vault must remain wired (no regression).
+    assert env["MEMORY_VAULT_PATH"] == "${MEMORY_VAULT_PATH:-}"
+
+
+def test_mcp_gateway_does_not_shadow_env_file_secrets():
+    # OPS_CONTROLLER_TOKEN / DASHBOARD_AUTH_TOKEN / N8N_API_KEY arrive via the secrets.env env_file.
+    # They must NOT be re-declared in `environment:` — a `${VAR:-}` there interpolates from .env/host
+    # (empty) and shadows the env_file value to empty, breaking the spawned MCP servers' auth.
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo-v2")
+    env = c["services"]["mcp-gateway"]["environment"]
+    for k in ("OPS_CONTROLLER_TOKEN", "DASHBOARD_AUTH_TOKEN", "N8N_API_KEY"):
+        assert k not in env, f"{k} must come from secrets.env env_file, not the environment block"
+
+
 def test_model_without_backend_image_keeps_default(tmp_path):
     # a small GPU best-fits a stock model (no backend_image) -> upstream image, no LLAMACPP_IMAGE
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 8}], "ram_gb": 32},

@@ -1,0 +1,45 @@
+# Plugin manifest — data-only. Registers the n8n MCP server (agent tool), not a compose service.
+# The n8n compose SERVICE is provided by the separate `automation` (kind=service) plugin; THIS plugin
+# only bridges the local n8n instance + the czlonkowski/n8n-mcp node & template catalog to Hermes via
+# the gateway. Ports V1's registry-custom.yaml `n8n` entry (the source of truth for its wiring).
+id: n8n
+name: n8n workflow automation (MCP tools)
+description: n8n workflow automation exposed to the agent via MCP — bridges the local n8n instance plus the full czlonkowski/n8n-mcp node and template catalog.
+kind: mcp                  # registers an MCP server (agent tool), not a compose service
+requires:
+  nvidia: false
+  ram_gb: 1
+provides: [tools]
+depends_on: [automation]   # queries the n8n service (automation kind=service plugin)
+# N8N_API_KEY is an operator secret (n8n personal API token). Declaring it here emits the key into
+# secrets.env.example; the rendered compose reads secrets.env as a second env_file, so the gateway
+# has $N8N_API_KEY in its env and gateway-wrapper.sh (1) substitutes PLACEHOLDER_N8N_API_KEY into this
+# catalog entry AND (2) writes n8n.api_key into the gateway's --secrets dotenv so the n8n_* instance
+# tools register (not just the docs-only subset).
+secrets:
+  - N8N_API_KEY
+mcp:
+  # Upstream czlonkowski/n8n-mcp image (mcp/n8n). Digest-pinned so the gateway resolves it from THIS
+  # catalog, never Docker's unpinned online catalog (the orphan-container/drift source V1 suffered).
+  image: mcp/n8n@sha256:061cdb8fbaa78f5a09787338715b180a0759057759f402c473b5f6ee13a8709e
+  # Needs network access to reach n8n:5678 — NOT offline.
+  disableNetwork: false
+  env:
+    N8N_API_URL: http://n8n:5678
+    # Substituted from the gateway's $N8N_API_KEY (sourced from secrets.env) by gateway-wrapper.sh.
+    N8N_API_KEY: PLACEHOLDER_N8N_API_KEY
+    # CRITICAL: silence the image's box-drawing startup banner + INFO logs. With stdio transport ANY
+    # non-JSON-RPC byte before the response makes the gateway crash ('invalid character') OR collapses
+    # the tool set to the docs-only ~23 instead of the full ~42. See project memory
+    # [project_ordo_n8n_mcp_image_docs_only].
+    LOG_LEVEL: error
+    N8N_DIAGNOSTICS_ENABLED: "false"
+    DISABLE_TELEMETRY: "true"
+  # Representative tools (the image registers the full czlonkowski catalog + n8n_* instance verbs when
+  # the API key is present); the gateway advertises the full set at runtime.
+  tools:
+    - list_nodes
+    - get_node_info
+    - search_templates
+    - n8n_list_workflows
+    - n8n_create_workflow
