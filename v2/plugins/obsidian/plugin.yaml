@@ -19,6 +19,11 @@ services:
     # SECURITY: this web GUI embeds a full desktop with a terminal + passwordless sudo. It is SSO-
     # gated at the Caddy edge and publishes NO host port (deployment model: everything via Caddy).
     # Never add a `ports:` publish here — that would expose an unauthenticated root shell on the LAN.
+    # Bump /dev/shm from docker's 64MB default to 1GB — the linuxserver docs require this for the
+    # Electron app + Selkies streaming pipeline (video frame buffers live in shared memory). At 64MB
+    # the pipeline starves and the browser's streaming WS drops mid-session ("no close frame"), which
+    # is exactly the "does not seem connected" symptom: page loads, stream starts, then tears down.
+    shm_size: "1gb"
     env:
       PUID: "1000"           # own the vault + config as uid 1000 (matches DATA_PATH ownership)
       PGID: "1000"
