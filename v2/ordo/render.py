@@ -393,6 +393,7 @@ def _render_mcp(mcps: list, project: str = "ordo-v2") -> tuple[list[dict[str, An
     project images (ordo-v2/*) are exempt: they're pinned by build context, not registry digest."""
     servers: list[dict[str, Any]] = []
     notes: list[str] = []
+    seen_ids: dict[str, str] = {}
     for p in mcps:
         image = str(p.mcp.get("image", ""))
         digest = image.split("@sha256:")[-1] if "@sha256:" in image else ""
@@ -402,8 +403,17 @@ def _render_mcp(mcps: list, project: str = "ordo-v2") -> tuple[list[dict[str, An
             notes.append(f"mcp '{p.id}': image is not digest-pinned — refuse in production")
         elif len(set(digest)) <= 1:  # placeholder like 000.../111...
             notes.append(f"mcp '{p.id}': image digest is a placeholder — set the real sha256")
+        # The gateway registry key (servers.txt id + tool-namespace prefix Hermes sees, e.g.
+        # `comfyui__system_stats`) defaults to the plugin id. A plugin may set mcp.server_id to
+        # DECOUPLE that key from its plugin id — needed when a kind=service plugin already owns the
+        # bare name (the comfyui SERVICE plugin owns `comfyui`, so its MCP plugin is id `comfyui-mcp`
+        # but keeps server_id `comfyui` to preserve V1's `comfyui__*` tool namespace).
+        server_id = str(p.mcp.get("server_id") or p.id)
+        if server_id in seen_ids:
+            notes.append(f"mcp '{p.id}': server_id '{server_id}' collides with plugin '{seen_ids[server_id]}'")
+        seen_ids[server_id] = p.id
         servers.append({
-            "id": p.id, "name": p.name, "image": image,
+            "id": server_id, "name": p.name, "image": image,
             "env": dict(p.mcp.get("env", {}) or {}),
             "tools": list(p.mcp.get("tools", []) or []),
             # Optional gateway-catalog passthrough (file-based MCP servers): a host bind for the data

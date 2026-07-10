@@ -235,6 +235,20 @@ def _mcp_gateway(project: str, net: str, env_file: str) -> dict[str, Any]:
         "COMFYUI_URL": "http://comfyui:8188",
         "N8N_API_URL": "http://n8n:5678",
         "CODE_ROOT": "${CODE_ROOT:-/c/dev}",
+        # Bind-mount allowlist for the SPAWNED sibling MCP servers. The gateway's hardened bind logic
+        # only accepts host binds whose source is on this list (and read-only). codebase-memory mounts
+        # $CODE_ROOT read-only at /c/dev, so the allowlist must contain CODE_ROOT — else the gateway
+        # rejects the mount and the codebase-memory server fails to spawn. Mirrors V1's gateway env.
+        "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS": "${CODE_ROOT:-/c/dev}",
+        # ComfyUI MCP's default checkpoint (a non-secret default, safe to interpolate from .env-space).
+        # The other secrets the spawned MCP servers need — OPS_CONTROLLER_TOKEN (comfyui),
+        # DASHBOARD_AUTH_TOKEN (orchestration), N8N_API_KEY (n8n) — are NOT declared here on purpose:
+        # they arrive via the `secrets.env` env_file (already layered on this service). Re-declaring
+        # them in `environment:` with `${VAR:-}` would interpolate from .env/host (where they're
+        # absent → empty) and SHADOW the env_file value to empty. gateway-wrapper.sh reads them from
+        # the process env (env_file) to substitute the PLACEHOLDER_* tokens + build the --secrets
+        # dotenv, so env_file delivery is sufficient and correct.
+        "COMFY_MCP_DEFAULT_MODEL": "${COMFY_MCP_DEFAULT_MODEL:-flux1-schnell-fp8.safetensors}",
         # HOST path of the shared markdown memory vault. The wrapper substitutes it into the
         # memory-vault MCP's catalog volume (PLACEHOLDER_MEMORY_VAULT_PATH) so the SPAWNED sibling
         # container binds the same host dir native Obsidian (opened at this path) + host seeding

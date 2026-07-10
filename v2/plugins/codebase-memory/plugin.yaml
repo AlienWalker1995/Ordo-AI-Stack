@@ -1,0 +1,57 @@
+# Plugin manifest — data-only. Registers the codebase-memory MCP server (agent tool), not a compose
+# service. Gives Hermes a code KNOWLEDGE GRAPH over the repos under the code root (mounted read-only
+# at /c/dev): structural queries grep can't do cheaply — call graphs, trace paths between symbols,
+# architecture overviews, symbol/snippet lookup. Ports V1's registry-custom.yaml `codebase-memory`
+# entry (the source of truth for its wiring). Companion to the codebase-memory-UI (3D graph) service,
+# but a SEPARATE process: this gateway-spawned MCP builds its own IN-MEMORY graph per spawn, so a
+# fresh session starts empty until index_repository is called (see the codebase-memory Hermes skill).
+id: codebase-memory
+name: Codebase Memory (MCP tools)
+description: Code knowledge-graph navigation (call graphs, trace paths, architecture, snippets) over the repos under the code root, via MCP.
+kind: mcp                  # registers an MCP server (agent tool), not a compose service
+requires:
+  nvidia: false            # bundled offline embeddings run on CPU — no GPU
+  ram_gb: 2
+provides: [tools]
+mcp:
+  # V1 builds this locally (ordo-ai-stack-codebase-memory-mcp:latest) from a self-contained Dockerfile
+  # that downloads + sha256-verifies the pinned DeusData/codebase-memory-mcp portable binary and bundles
+  # the offline nomic-embed-code embeddings. V2 mirrors it as a project buildable image (build context
+  # doc under v2/docker/codebase-memory-mcp): pinned by its build context (the Dockerfile's CBM_VERSION
+  # + CBM_SHA256), so preflight reports 'build first', not a placeholder-digest warning.
+  image: ordo-v2/codebase-memory-mcp:latest
+  # Keep the indexer container WARM across calls within a session — the graph is in-memory per spawn,
+  # so this preserves an index built via index_repository until the session ends (avoids re-index).
+  longLived: true
+  # The indexer is 100% local (bundled embeddings) — no egress needed. Blocks exfiltration of indexed
+  # code from the spawned container.
+  disableNetwork: true
+  volumes:
+    # Code root (HOST path from $CODE_ROOT) mounted READ-ONLY. Under the gateway's bind-mount hardening
+    # host binds must be read-only AND allow-listed via MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS (the
+    # gateway sets it to $CODE_ROOT). PLACEHOLDER_CODE_ROOT is substituted from the gateway's CODE_ROOT
+    # env by gateway-wrapper.sh (the gateway spawns this as a sibling via docker.sock, so the source
+    # must be a HOST path, not a gateway-container path).
+    - "PLACEHOLDER_CODE_ROOT:/c/dev:ro"
+    # Persistent SQLite index — a NAMED volume (exempt from the host-path read-only restriction, so it
+    # can be read-write). Survives container respawns.
+    - "codebase-memory-cache:/cache"
+  env:
+    CBM_CACHE_DIR: /cache
+    # Keep logs off stdout so they can't corrupt the stdio JSON-RPC channel.
+    CBM_LOG_LEVEL: error
+  tools:
+    - index_repository
+    - list_projects
+    - index_status
+    - search_graph
+    - trace_path
+    - query_graph
+    - get_graph_schema
+    - get_code_snippet
+    - get_architecture
+    - search_code
+    - detect_changes
+    - manage_adr
+    - ingest_traces
+    - delete_project
