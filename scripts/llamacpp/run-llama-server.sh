@@ -1,6 +1,14 @@
 #!/bin/sh
 set -eu
 
+# Capture the container CMD (docker `command:`) BEFORE we rebuild the arg list.
+# Compose renders `command: [--metrics]` (compose.LLAMACPP_METRICS_ARG) to enable
+# llama-server's native Prometheus /metrics endpoint that prometheus scrapes. The
+# `set --` below reassigns "$@" and would otherwise silently discard those CMD
+# args, leaving llama-server without --metrics (endpoint returns 501). Preserve
+# them and re-append at the end so last-wins parsing keeps operator intent.
+LLAMACPP_CMD_ARGS="$*"
+
 set -- \
   --host 0.0.0.0 \
   --port 8080 \
@@ -64,6 +72,13 @@ if [ -n "${LLAMACPP_EXTRA_ARGS:-}" ]; then
   # raw llama-server flags from .env without changing compose.
   # shellcheck disable=SC2086
   set -- "$@" ${LLAMACPP_EXTRA_ARGS}
+fi
+
+# Re-append the original container CMD (captured above, e.g. --metrics) LAST so it
+# survives the `set --` reset and llama-server's last-wins parsing honors it.
+if [ -n "${LLAMACPP_CMD_ARGS}" ]; then
+  # shellcheck disable=SC2086
+  set -- "$@" ${LLAMACPP_CMD_ARGS}
 fi
 
 echo "llama-server args: $*"
