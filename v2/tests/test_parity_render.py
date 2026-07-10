@@ -20,12 +20,10 @@ P_DUAL = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": UUID_5090},
           "ram_gb": 128, "cpu_cores": 32}
 
 # Every kind=service plugin V2 ships after the parity port (GPU + CPU-ok), on the real dual-GPU host.
-# obsidian is a post-parity add (the memory-vault GUI) — CPU-ok, so it enables on the full host too.
 EXPECTED_SERVICE_PLUGINS = {
     "comfyui", "song-gen", "voice", "monitoring",          # GPU / media / voice
     "rag", "worker", "automation", "open-webui",           # ported CPU-ok services
     "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
-    "obsidian",                                            # post-parity: memory-vault GUI
 }
 # memory-vault is a post-parity add (file-based markdown-memory MCP).
 EXPECTED_MCP = {"qdrant-rag", "searxng", "memory-vault"}
@@ -44,13 +42,13 @@ def test_dual_gpu_enables_the_full_parity_set():
 
 
 def test_parity_matrix_counts():
-    # 13 kind=service plugins (12 parity + obsidian) + 3 kind=mcp plugins (qdrant-rag, searxng,
+    # 12 kind=service plugins (parity set) + 3 kind=mcp plugins (qdrant-rag, searxng,
     # memory-vault) are registered and all enable on the full host.
     svc = [p for p in REGISTRY.plugins if p.kind == "service"]
     mcp = [p for p in REGISTRY.plugins if p.kind == "mcp"]
-    assert len(svc) == 13 and len(mcp) == 3
+    assert len(svc) == 12 and len(mcp) == 3
     rc = _dual()
-    assert len(rc.plugins_enabled) == 13
+    assert len(rc.plugins_enabled) == 12
     assert len(rc.mcp_servers) == 3
 
 

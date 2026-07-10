@@ -27,7 +27,7 @@ RUN npm install -g "@bitbonsai/mcpvault@${MCPVAULT_VERSION}" \
  && npm cache clean --force
 
 # Run as the base image's non-root `node` user (uid 1000) so vault writes are owned by 1000 — the
-# same uid the Obsidian GUI (PUID=1000) and DATA_PATH use, keeping the shared vault permission-clean.
+# same uid DATA_PATH uses (and the operator's own files), keeping the shared vault permission-clean.
 USER node
 
 # The vault is bind-mounted here (RW) by the gateway catalog (volumes: PLACEHOLDER_MEMORY_VAULT_PATH

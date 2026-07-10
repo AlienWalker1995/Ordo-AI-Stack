@@ -95,20 +95,19 @@ This is the build history; the cutover that took it to production is in [`FLIP.m
     (27 entries, caddy the sole host-port publisher, CADDY_BIND `:?` failsafe preserved); the CPU-only
     render validates too; `ordo preflight` → GO, MCP "all pinned".
 
-20. **Obsidian memory vault (GUI + file-based MCP)** — a shared markdown vault
+20. **Memory vault (file-based MCP)** — a shared markdown vault
     (`data/memory-vault`, seeded with `README`/`CONVENTIONS` + the `name`/`description`/`type`
     frontmatter schema) is the durable agent-memory substrate: plain `.md` files, no hidden store.
-    Two new plugins ship it: **`obsidian`** (`kind=service`, `linuxserver/obsidian` **digest-pinned**,
-    `SUBFOLDER=/obsidian/`, no host port — SSO-gated at `/obsidian/`; the GUI embeds a root shell so
-    it is edge-only, never published) and **`memory-vault`** (`kind=mcp`, `@bitbonsai/mcpvault`
-    version-pinned in `docker/mcpvault-mcp`, 15 tools: read/write/patch/search/frontmatter/tags/…).
-    Both mount the **same host vault dir**, so agent writes appear in the GUI and vice-versa. To let a
+    The **`memory-vault`** plugin ships it (`kind=mcp`, `@bitbonsai/mcpvault` version-pinned in
+    `docker/mcpvault-mcp`, 15 tools: read/write/patch/search/frontmatter/tags/…). The vault is browsed
+    with **native Obsidian on the operator's machine**, opened at `data/memory-vault` — the SAME host
+    dir the MCP mounts, so agent writes appear in the desktop app and vice-versa. To let a
     file-based MCP **write** its data dir, the render engine now passes the upstream gateway-catalog
     fields through — `volumes` (a **read-write** host bind, substituted from `MEMORY_VAULT_PATH` by
     the gateway wrapper), `command`, `longLived`, `disableNetwork` — which the previous image+env-only
     MCP render dropped; existing MCP entries render byte-identically (passthrough is opt-in). ✅
-    Validated live: `write_note` through the gateway persists a real file on disk that the GUI sees;
-    `read_note`/`search_notes` round-trip; `/obsidian/` → 302 Google SSO; llamacpp/agent untouched.
+    Validated live: `write_note` through the gateway persists a real file on disk that native Obsidian
+    sees; `read_note`/`search_notes` round-trip; llamacpp/agent untouched.
 
 `ordo render` writes the complete stack (`.env` + `docker-compose.yml` + `hermes.context.json` +
 `manifest.json` + `mcp-registry.yaml` + `secrets.env.example`); `ordo serve` runs the control plane

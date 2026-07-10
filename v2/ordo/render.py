@@ -359,7 +359,7 @@ def _render_registry_custom(mcp_servers: list[dict[str, Any]]) -> str:
     is a HOST path (the gateway spawns via the host docker.sock, so a gateway-container path would be
     wrong), typically a `PLACEHOLDER_*` token the wrapper substitutes from the gateway's env. A host
     bind without a `:ro` suffix is READ-WRITE — that is how a vault-writing MCP gets write access
-    (named-volume-only would hide the vault from the host + the Obsidian GUI sharing the same dir)."""
+    (named-volume-only would hide the vault from the host + native Obsidian browsing the same dir)."""
     registry: dict[str, Any] = {}
     for s in mcp_servers:
         entry: dict[str, Any] = {

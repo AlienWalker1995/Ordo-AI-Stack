@@ -44,14 +44,6 @@ SERVICES = [
      "check": "http://codebase-memory-ui:9750/codebase-memory/", "has_gpu": False,
      "hint": "3D code knowledge-graph. Open at https://<host>/codebase-memory/ (Google SSO). "
              "In-memory index — re-index after a restart. Opt-in: --profile codebase-memory"},
-    # Opt-in (--profile obsidian). Browser Obsidian over the shared markdown memory vault (the SAME
-    # host dir the memory-vault MCP reads/writes), served at https://<host>/obsidian/ on the shared
-    # :443 SSO origin. SUBFOLDER=/obsidian/ makes the app subpath-aware, so the health check hits the
-    # subpath and the "Open" link comes from SSO_ROUTES in the frontend (-> /obsidian/) — no `url`.
-    {"id": "obsidian", "name": "Obsidian", "port": 3000,
-     "check": "http://obsidian:3000/obsidian/", "has_gpu": False,
-     "hint": "Browser Obsidian GUI over the shared markdown memory vault. Open at "
-             "https://<host>/obsidian/ (Google SSO). Opt-in: --profile obsidian"},
 ]
 
 
