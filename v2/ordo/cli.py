@@ -169,13 +169,48 @@ def cmd_native(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a socket
+    import threading
+    import time
+
     cat = Catalog.load(Path(args.catalog))
     reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
+    src = Source.load(Path(args.source))
     hw = detect()
-    cloud_fallback = bool((Source.load(Path(args.source)).cloud_fallback or {}).get("enabled"))
+    cloud_fallback = bool((src.cloud_fallback or {}).get("enabled"))
     sched = Scheduler(hw.primary_vram_gb if hw.has_gpu else 0.0, cloud_fallback=cloud_fallback)
     broker = Broker(sched, DockerBackend(project=args.project))
     cp = ControlPlane(Path(args.source), cat, reg, args.out, scheduler=sched, broker=broker)
+
+    # Resident registration (the missing wiring): the render tells us the LLM's true GPU footprint
+    # (weights + KV at the rendered ctx). Register it as an idle-cached resident so a media lease can
+    # actually EVICT it — without this the scheduler thinks the whole card is free and never frees
+    # the LLM's VRAM (that was the live defect: /status showed free == total). Read from the same
+    # render the stack runs, so it can't drift from what `.env` loads.
+    if hw.has_gpu:
+        rc = render(src, cat, reg)
+        resident_gb = rc.resident_vram_gb()
+        sched.cache_idle(args.resident_service, resident_gb)
+        print(f"[scheduler] registered resident '{args.resident_service}' "
+              f"~{resident_gb:.1f}GB (model={rc.model.id}, ctx={rc.ctx_size}) as idle-cached",
+              flush=True)
+
+    # Lease clock + self-heal sweep: advance the scheduler's clock by the poll interval and force-
+    # complete any lease whose TTL has elapsed (a crashed client can never strand the resident down).
+    # sweep_leases() reconciles, which restores an evicted resident once the GPU work has drained.
+    def _lease_loop() -> None:
+        while True:
+            time.sleep(args.lease_poll_seconds)
+            try:
+                sched.tick(args.lease_poll_seconds)
+                swept = broker.sweep_leases()
+                if swept:
+                    print(f"[scheduler] lease TTL expired for {swept} — resident restored on drain",
+                          flush=True)
+            except Exception as e:  # noqa: BLE001 — the control plane must survive a sweep hiccup
+                print(f"[scheduler] lease sweep error: {e}", flush=True)
+
+    threading.Thread(target=_lease_loop, daemon=True, name="lease-sweep").start()
+
     print(f"ops-controller on {args.host}:{args.port} (project={args.project}, "
           f"{sched.total_vram_gb:.0f}GB GPU) — Ctrl-C to stop")
     cp.serve(host=args.host, port=args.port)
@@ -223,6 +258,10 @@ def main(argv: list[str] | None = None) -> int:
     pv.add_argument("--port", type=int, default=9000)
     pv.add_argument("--out", default="out")
     pv.add_argument("--project", default="ordo-v2", help="container project prefix the broker may touch")
+    pv.add_argument("--resident-service", default="llamacpp",
+                    help="compose service of the resident LLM the scheduler may evict/restore for a lease")
+    pv.add_argument("--lease-poll-seconds", type=float, default=10.0,
+                    help="how often the scheduler advances its lease clock + sweeps expired leases")
     pv.set_defaults(func=cmd_serve)
     args = p.parse_args(argv)
     return args.func(args)
