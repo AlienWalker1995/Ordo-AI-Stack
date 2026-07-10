@@ -11,11 +11,14 @@ which serves the visualization as a thread alongside the MCP server.
 
 ## Two upstream quirks this image handles
 1. **Absolute-asset SPA that binds `127.0.0.1` only.** The UI binds `127.0.0.1:9749`
-   and serves `/assets`, `/api`, `/rpc`, `/font-files` at the origin root with no
-   base-path option. The image runs **nginx** (on `0.0.0.0:9750`) which proxies to the
-   UI and `sub_filter`-rewrites those baked paths to the `/codebase-memory/` prefix
-   (see `nginx.conf`) — so Caddy serves it under that subpath on the shared `:443` SSO
-   origin without colliding with Open WebUI's root.
+   and serves `/assets`, `/api`, `/rpc` at the origin root with no base-path option.
+   The image runs **nginx** (on `0.0.0.0:9750`) which proxies to the UI and
+   `sub_filter`-rewrites those baked paths to the `/codebase-memory/` prefix (see
+   `nginx.conf`) — so Caddy serves it under that subpath on the shared `:443` SSO
+   origin without colliding with Open WebUI's root. (The 3D node-label fonts are
+   fetched from an external CDN — the unicode-font-resolver on jsdelivr — not this
+   origin, so `/font-files/` is deliberately **not** rewritten; doing so corrupts
+   the CDN URL and 404s every label font.)
 2. **The process is an MCP stdio server** — with no client attached it would read EOF
    on stdin and exit. The entrypoint keeps stdin open (`tail -f /dev/null | …`) so the
    UI stays up as a service.
