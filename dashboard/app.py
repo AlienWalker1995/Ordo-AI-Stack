@@ -2046,6 +2046,27 @@ _routes_model_config.register(app, _ops_request)
 
 # --- Static ---
 
+
+class _NoCacheHTMLStaticFiles(StaticFiles):
+    """StaticFiles that forces revalidation of the HTML app shell.
+
+    Starlette's StaticFiles sends an ETag + Last-Modified but NO Cache-Control,
+    which lets browsers apply *heuristic* freshness and serve a stale index.html
+    without revalidating — so a rebuilt dashboard (new SSO routes, new service
+    cards, etc.) can keep showing the old shell until a hard refresh. We add
+    `Cache-Control: no-cache` to HTML responses only: the browser still caches
+    the shell but MUST revalidate the ETag every load, so a new build is picked
+    up immediately. Hashed/static assets keep their default long-cache behavior.
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        content_type = response.headers.get("content-type", "")
+        if content_type.startswith("text/html"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
-    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+    app.mount("/", _NoCacheHTMLStaticFiles(directory=str(static_dir), html=True), name="static")
