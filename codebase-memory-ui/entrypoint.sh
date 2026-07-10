@@ -47,5 +47,7 @@ fi
 ( tail -f /dev/null | codebase-memory-mcp --ui=true --port=9749 ) &
 
 # nginx (foreground = container lifecycle) proxies /codebase-memory/* -> the UI on
-# 127.0.0.1:9749 and rewrites /assets,/api,/rpc,/font-files to the subpath.
+# 127.0.0.1:9749 and rewrites the baked origin-absolute /assets,/api,/rpc to the
+# subpath (node-label fonts come from an external CDN, so they are NOT rewritten;
+# see nginx.conf).
 exec nginx -g 'daemon off;'
