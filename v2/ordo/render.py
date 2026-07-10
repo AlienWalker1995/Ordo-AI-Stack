@@ -88,11 +88,25 @@ class RenderedConfig:
     # live in an operator-managed secrets.env; write() emits secrets.env.example (keys only).
     required_secrets: list[str] = dataclasses.field(default_factory=list)
 
+    def resident_vram_gb(self) -> float:
+        """The GPU footprint the resident LLM actually holds while cached: weights + KV at the
+        rendered context. This is the value the scheduler registers llama.cpp with as an evictable
+        idle resident — computed from the SAME render the stack runs, so it can't drift from what
+        `.env` tells llama.cpp to load. Weights-only (the catalog `vram_gb`) understates residency
+        and would make the scheduler think a media job fits beside the LLM when it doesn't; adding
+        the KV cache (ctx * kv_kb_per_token) gives the true footprint that must be freed for a lease.
+        """
+        weights = float(self.model.vram_gb)
+        kv_kb = self.model.kv_kb_per_token or 0.0
+        kv_gb = (self.ctx_size * kv_kb) / (1024.0 * 1024.0)  # ctx tokens * KB/token -> GB
+        return round(weights + kv_gb, 2)
+
     def manifest(self) -> dict[str, Any]:
         return {
             "hardware": self.hardware.summary(),
             "tier": self.tier,
-            "model": {"id": self.model.id, "file": self.model.file, "vram_gb": self.model.vram_gb},
+            "model": {"id": self.model.id, "file": self.model.file, "vram_gb": self.model.vram_gb,
+                      "resident_vram_gb": self.resident_vram_gb()},
             "ctx_size": self.ctx_size,
             "plugins_enabled": self.plugins_enabled,
             "compose_profiles": self.compose_profiles,

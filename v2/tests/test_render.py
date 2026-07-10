@@ -114,3 +114,32 @@ def test_catalog_entries_have_requirements():
     assert CATALOG.models, "catalog is empty"
     for m in CATALOG.models:
         assert m.ctx_default > 0 and m.tier
+
+
+# --- resident footprint: the value `ordo serve` registers the LLM with so a lease can evict it ---
+def test_resident_vram_gb_is_weights_plus_kv_at_ctx():
+    rc = render(_src(hardware=PROFILE_5090), CATALOG)
+    # weights (catalog vram_gb) + KV cache at the rendered ctx (ctx * kv_kb_per_token). Must EXCEED
+    # weights-only, or the scheduler would think a media job fits beside the LLM when it can't.
+    kv_gb = (rc.ctx_size * rc.model.kv_kb_per_token) / (1024.0 * 1024.0)
+    assert rc.resident_vram_gb() == round(rc.model.vram_gb + kv_gb, 2)
+    assert rc.resident_vram_gb() > rc.model.vram_gb
+    # the manifest carries it too (serve reads from the same render — no drift from what .env loads)
+    assert rc.manifest()["model"]["resident_vram_gb"] == rc.resident_vram_gb()
+
+
+def test_resident_footprint_forces_eviction_for_a_media_job_on_this_box():
+    # regression guard for the LIVE defect: with the resident registered at its true footprint, an
+    # ~18GB media job must NOT fit beside it on the 32GB card -> the lease is forced to evict the LLM.
+    rc = render(_src(hardware=PROFILE_5090), CATALOG)
+    free_beside_resident = rc.hardware.primary_vram_gb - rc.resident_vram_gb()
+    assert free_beside_resident < 18, "resident footprint too small — a media job would wrongly co-run"
+
+
+def test_resident_vram_gb_handles_missing_kv_rate():
+    # a model with no kv_kb_per_token (can't estimate KV) falls back to weights-only, never crashes.
+    m = next((m for m in CATALOG.models if m.kv_kb_per_token is None), None)
+    if m is None:
+        pytest.skip("every catalog model declares a KV rate")
+    rc = render(_src(hardware=PROFILE_5090, model=m.id), CATALOG)
+    assert rc.resident_vram_gb() == round(rc.model.vram_gb, 2)

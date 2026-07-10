@@ -132,3 +132,57 @@ def test_compose_endpoints_still_501_when_mutations_disabled_in_source():
         assert f"async def {handler}(" in _MAIN_SRC
     # each compose endpoint 501s on the whole-stack switch, and none reference the per-service gate
     assert _MAIN_SRC.count("if not OPS_COMPOSE_MUTATIONS_ENABLED:  # V2 PATCH: scheduler owns compose lifecycle") == 3
+
+
+# ── guardian mutation routes REMOVED — the scheduler is the single GPU arbiter (source-level, since
+#    main.py imports fastapi/docker which CI's throwaway container doesn't have, matching the gate
+#    tests above). The LIVE 410 responses are proven in the validation cycle. ──────────────────────
+
+def _handler_body(name: str) -> str:
+    """The source body of an `async def <name>(...)` handler, up to the next TOP-LEVEL construct.
+
+    Stops at the next column-0 statement (`@app.`, `async def`, `def`, `class`, or any other module-
+    level line starting in column 0) so the capture can't bleed into module code that follows the
+    handler (e.g. the guardian-thread spawn block) and produce false `.start()`/`.stop()` hits.
+    """
+    import re
+    m = re.search(rf"\nasync def {re.escape(name)}\(.*?\n(.*?)(?=\n@app\.|\nasync def |\ndef |\nclass |\n[A-Za-z_])",
+                  _MAIN_SRC, re.DOTALL)
+    assert m, f"handler {name} not found in main.py"
+    return m.group(1)
+
+
+def test_guardian_hold_and_release_return_410_gone():
+    for handler in ("guardian_hold", "guardian_release"):
+        body = _handler_body(handler)
+        assert "raise HTTPException(status_code=410" in body, f"{handler} must 410"
+        assert "_GUARDIAN_MUTATION_GONE_DETAIL" in body, f"{handler} must point at the V2 contract"
+
+
+def test_guardian_mutation_routes_no_longer_touch_containers():
+    # the whole point of removing the rival arbiter: these routes must NOT stop/start llama.cpp.
+    for handler in ("guardian_hold", "guardian_release"):
+        body = _handler_body(handler)
+        assert ".stop(" not in body and ".start(" not in body, f"{handler} still mutates a container"
+        assert "_containers_for_service" not in body, f"{handler} still resolves containers to mutate"
+
+
+def test_gone_detail_points_at_the_scheduler_jobs_contract():
+    # the 410 message must tell callers the exact V2 endpoints to migrate to.
+    assert "ops-controller:9000/jobs" in _MAIN_SRC
+    assert "ops-controller:9000/jobs/complete" in _MAIN_SRC
+
+
+def test_guardian_status_route_still_present_for_the_dashboard():
+    # /guardian/status stays live (static disabled state) — the dashboard reads it; only the
+    # MUTATING routes are gone.
+    assert "async def guardian_status(" in _MAIN_SRC
+    status_body = _handler_body("guardian_status")
+    assert "410" not in status_body  # status is not gone, only hold/release
+
+
+def test_guardian_background_loop_stays_gated_off_by_default():
+    # the background _guardian_loop (the OTHER way ops-api could stop llama.cpp) only spawns when
+    # COMFYUI_SERIALIZE_LLAMACPP is truthy — default "0". This deployment's manifest keeps it "0",
+    # so the scheduler is the sole arbiter. (Live env verified in validation.)
+    assert 'COMFYUI_SERIALIZE_LLAMACPP", "0"' in _MAIN_SRC
