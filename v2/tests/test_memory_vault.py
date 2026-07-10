@@ -1,11 +1,12 @@
-"""Obsidian memory-vault feature: the GUI service plugin + the file-based memory-vault MCP plugin.
+"""Memory-vault feature: the file-based memory-vault MCP plugin (plus the generic
+service-renderer shm_size passthrough it shares the render path with).
 
-Covers the manifests added for a shared markdown memory vault:
-  - obsidian (kind=service): digest-pinned image, SUBFOLDER subpath, no host ports, profile-gated,
-    the vault bind-mount.
+Covers the manifests for a shared markdown memory vault:
   - memory-vault (kind=mcp): renders into the gateway registry with a READ-WRITE vault volume,
     longLived + disableNetwork, and its tool set — proving the render engine now passes the
     file-based-MCP catalog fields through (they were previously dropped).
+  - shm_size: the generic service-renderer field (reusable), passed through when declared and
+    omitted otherwise.
 """
 from pathlib import Path
 
@@ -23,11 +24,6 @@ REGISTRY = PluginRegistry.load(ROOT / "plugins")
 P_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128}
 P_CPU = {"gpus": [], "ram_gb": 16}
 
-OBSIDIAN_DIGEST = (
-    "linuxserver/obsidian@sha256:"
-    "b8a0b2542f9c408f1710368f36c5349ae4dc4e69921d2b145929b16ee2919024"
-)
-
 
 def _src(plugins, hardware=P_5090):
     return Source.from_dict(
@@ -35,41 +31,7 @@ def _src(plugins, hardware=P_5090):
     )
 
 
-# ── obsidian GUI service plugin ──────────────────────────────────────────────
-def test_obsidian_manifest_loaded():
-    ids = {p.id for p in REGISTRY.plugins}
-    assert "obsidian" in ids
-    p = next(p for p in REGISTRY.plugins if p.id == "obsidian")
-    assert p.kind == "service"
-    assert p.compose_profile == "obsidian"
-
-
-def test_obsidian_service_renders_digest_pinned_no_ports():
-    c = render(_src(["obsidian"]), CATALOG, REGISTRY).compose_dict()
-    assert "obsidian" in c["services"]
-    obs = c["services"]["obsidian"]
-    # digest-pinned image (pin, don't float)
-    assert obs["image"] == OBSIDIAN_DIGEST
-    assert "@sha256:" in obs["image"]
-    # deployment model: NO host port publish (SSO edge only — the GUI embeds a root shell)
-    assert "ports" not in obs
-    # SUBFOLDER env drives the reverse-proxy subpath
-    assert obs["environment"]["SUBFOLDER"] == "/obsidian/"
-    assert obs["environment"]["TITLE"] == "Ordo Memory"
-    # profile-gated (opt-in)
-    assert obs["profiles"] == ["obsidian"]
-    # the shared vault is bind-mounted into the GUI
-    assert any(":/config/vaults/memory" in v for v in obs["volumes"])
-    # /dev/shm bumped past docker's 64MB default — the linuxserver docs require 1GB for the
-    # Electron app + Selkies streaming pipeline; at 64MB the stream WS drops mid-session.
-    assert obs["shm_size"] == "1gb"
-
-
-def test_obsidian_absent_when_not_requested():
-    c = render(_src(["rag"]), CATALOG, REGISTRY).compose_dict()
-    assert "obsidian" not in c["services"]
-
-
+# ── generic service-renderer shm_size passthrough ────────────────────────────
 def test_plugin_service_shm_size_passthrough_and_omit():
     # data-driven: a service that declares shm_size emits it; one that doesn't omits the key
     # entirely (so no service regresses to an explicit-but-empty shm_size).

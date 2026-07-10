@@ -2,7 +2,7 @@
 
 Gateway-spawned, stdio-transport MCP server that wraps [`@bitbonsai/mcpvault`](https://github.com/bitbonsai/mcpvault)
 to give Hermes/agents read+write access to the stack's **shared markdown memory vault** (the same
-host dir the browser Obsidian GUI browses).
+host dir native Obsidian browses when opened at that path).
 
 ## Build
 

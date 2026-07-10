@@ -147,17 +147,6 @@
             reverse_proxy codebase-memory-ui:9750
         }
 
-        # ---- Obsidian memory-vault GUI at /obsidian/ ----
-        # linuxserver/obsidian (selkies web desktop) is subfolder-aware via SUBFOLDER=/obsidian/,
-        # so it emits its own assets under /obsidian/ — `handle` (NO strip) keeps the prefix intact
-        # for the app. Caddy proxies the selkies websocket (video/input stream) natively; no extra
-        # config needed. SSO-gated (this GUI embeds a terminal w/ passwordless sudo — never bypass
-        # auth, never host-publish). Opt-in (--profile obsidian); 502s if the service isn't running.
-        @obsidian path /obsidian /obsidian/*
-        handle @obsidian {
-            reverse_proxy obsidian:3000
-        }
-
         # ---- Open WebUI mounted at /chat (prefix stripped) ----
         # /chat/* → open-webui with the /chat prefix removed, so the upstream
         # sees /, /c/<id>, /models, etc. This is the canonical chat path.
