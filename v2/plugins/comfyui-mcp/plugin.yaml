@@ -1,0 +1,42 @@
+# Plugin manifest — data-only. Registers the ComfyUI MCP server (agent tool), not a compose service.
+# The comfyui compose SERVICE is provided by the separate `comfyui` (kind=service) plugin; THIS plugin
+# only exposes ComfyUI's media tools (workflows, images, video, model pull, system stats, queue,
+# history, installed models/nodes/extensions) to Hermes via the gateway. Ports V1's registry-custom.yaml
+# `comfyui` entry (the source of truth for its wiring).
+#
+# Plugin id is `comfyui-mcp` (the service plugin already owns `comfyui`), but mcp.server_id pins the
+# GATEWAY registry key back to `comfyui` so Hermes keeps the V1 `comfyui__*` tool namespace.
+id: comfyui-mcp
+name: ComfyUI (MCP tools)
+description: ComfyUI media tools (workflows, images, video, model pull, system stats, queue, history, installed models/nodes/extensions) exposed to the agent via MCP.
+kind: mcp                  # registers an MCP server (agent tool), not a compose service
+requires:
+  nvidia: false            # the MCP is a thin HTTP client of comfyui:8188; the GPU work is comfyui's
+  ram_gb: 1
+provides: [tools]
+depends_on: [comfyui]      # queries the comfyui service (kind=service plugin) + ops-controller
+mcp:
+  # Gateway registry key + Hermes tool-namespace prefix (comfyui__*). Decoupled from the plugin id so
+  # it stays `comfyui` even though the plugin is `comfyui-mcp` (the comfyui SERVICE plugin owns the id).
+  server_id: comfyui
+  # V1 builds this locally (ordo-ai-stack-comfyui-mcp:latest). V2 mirrors it as a project buildable
+  # image (build context doc under v2/docker/comfyui-mcp): pinned by its build context (upstream commit
+  # e0101b2312f3 + stack overrides), so preflight reports 'build first' rather than a digest warning.
+  image: ordo-v2/comfyui-mcp:latest
+  # Needs network access to reach comfyui:8188 + ops-controller:9000 on ordo-v2-net — NOT offline.
+  disableNetwork: false
+  env:
+    COMFYUI_URL: http://comfyui:8188
+    OPS_CONTROLLER_URL: http://ops-controller:9000
+    # Substituted from the gateway env by gateway-wrapper.sh at startup (secrets stay out of the
+    # committed catalog; the gateway holds the real value from secrets.env).
+    OPS_CONTROLLER_TOKEN: PLACEHOLDER_OPS_CONTROLLER_TOKEN
+    COMFY_MCP_DEFAULT_MODEL: PLACEHOLDER_COMFY_MCP_DEFAULT_MODEL
+  # Representative read-only tools (the image registers the full set via register_system_tools /
+  # register_management_tools / register_workflow_tools); the gateway advertises everything at runtime.
+  tools:
+    - get_system_stats
+    - get_queue
+    - get_installed_models
+    - list_workflows
+    - run_workflow

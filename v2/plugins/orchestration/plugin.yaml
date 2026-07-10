@@ -1,0 +1,38 @@
+# Plugin manifest — data-only. Registers the orchestration MCP server (agent tool), not a compose
+# service. A STABLE adapter: exposes fixed verb names (list_templates / create_from_template /
+# run_workflow / await_run / list_jobs / publish_enqueue / schedules / registry parity verbs /
+# comfyui ops …) that delegate over HTTP to the dashboard control plane, insulating Hermes from
+# shifting raw gateway tool names. Ports V1's registry-custom.yaml `orchestration` entry (the source
+# of truth for its wiring). Backing verified in V2: ordo-v2/dashboard-v1 serves /api/orchestration/*.
+id: orchestration
+name: Orchestration (MCP tools)
+description: Stable orchestration adapter (fixed verbs; delegates to the dashboard /api/orchestration control plane, not shifting gateway tool names).
+kind: mcp                  # registers an MCP server (agent tool), not a compose service
+requires:
+  nvidia: false
+  ram_gb: 1
+provides: [tools]
+# No plugin-level depends_on: the target is the CORE `dashboard` service (always present, not a
+# plugin), so there's no plugin dependency to gate on. (A plugin `depends_on` must name an enabled
+# PLUGIN or the plugin is dropped; `dashboard` is core, so listing it would wrongly drop this MCP.)
+mcp:
+  # V1 builds this locally (ordo-ai-stack-orchestration-mcp:latest). V2 mirrors it as a project
+  # buildable image (build context doc under v2/docker/orchestration-mcp): pinned by its build context,
+  # so preflight reports 'build first' rather than a digest warning.
+  image: ordo-v2/orchestration-mcp:latest
+  # Needs network access to reach dashboard:8080 — NOT offline.
+  disableNetwork: false
+  env:
+    ORCHESTRATION_DASHBOARD_URL: http://dashboard:8080
+    # Bearer for the dashboard control plane. Substituted from the gateway's $DASHBOARD_AUTH_TOKEN
+    # (sourced from secrets.env) by gateway-wrapper.sh at startup.
+    DASHBOARD_AUTH_TOKEN: PLACEHOLDER_DASHBOARD_AUTH_TOKEN
+  tools:
+    - orchestration_readiness
+    - list_templates
+    - run_workflow
+    - await_run
+    - list_jobs
+    - comfyui_status
+    - list_models
+    - gpu_status
