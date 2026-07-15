@@ -27,16 +27,18 @@ services:
     image: ${AI_TOOLKIT_IMAGE:-ostris/aitoolkit@sha256:c199bf41a4830046f462d0ea622fa87d9fbbf6977354b6378345d2f1ed2348f5}
     gpu_pin: primary   # 5090: image torch is cu128 (Blackwell); training on the 1070 is a non-starter
     wants_secrets: true
+    # AI_TOOLKIT_AUTH / HF_TOKEN / OPS_CONTROLLER_TOKEN deliberately do NOT appear here:
+    # secrets flow in via secrets.env (wants_secrets). Re-declaring them as ${VAR:-} would
+    # substitute EMPTY from the rendered .env and OVERRIDE the real env_file value — an empty
+    # HF_TOKEN crashes huggingface_hub (blank Bearer header) and an empty AI_TOOLKIT_AUTH
+    # silently disables the UI's auth (both hit live 2026-07-15).
     env:
-      AI_TOOLKIT_AUTH: ${AI_TOOLKIT_AUTH:-}
       NODE_ENV: production
       TZ: UTC
       OPS_CONTROLLER_URL: http://ops-controller:9000
-      OPS_CONTROLLER_TOKEN: ${OPS_CONTROLLER_TOKEN:-}
       # ~full card: forces resident eviction and blocks co-runs = the exclusive-lease policy.
       ORDO_LEASE_VRAM_GB: ${AI_TOOLKIT_LEASE_VRAM_GB:-30}
       ORDO_LEASE_KIND: training
-      HF_TOKEN: ${HF_TOKEN:-}
     volumes:
       - ${DATA_PATH:-./data}/ai-toolkit/datasets:/app/ai-toolkit/datasets
       - ${DATA_PATH:-./data}/ai-toolkit/output:/app/ai-toolkit/output
