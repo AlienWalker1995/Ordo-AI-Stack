@@ -18,8 +18,10 @@ provides: [training]
 compose_profile: ""    # always-on with the core stack
 env:
   AI_TOOLKIT_ENABLED: "1"
+# No AI_TOOLKIT_AUTH: SSO at the Caddy edge is the ONLY gate (operator mandate 2026-07-15 —
+# auth is the edge's job, not baked into every service). With the var unset, the upstream
+# UI middleware approves all requests; the :8443 site is unreachable without an SSO session.
 secrets:
-  - AI_TOOLKIT_AUTH
   - HF_TOKEN
 services:
   - name: ai-toolkit
