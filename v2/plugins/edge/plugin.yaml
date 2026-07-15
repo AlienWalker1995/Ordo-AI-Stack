@@ -33,6 +33,8 @@ services:
       - --upstream=static://202
       - --redirect-url=https://${CADDY_TAILNET_HOSTNAME}/oauth2/callback
       - --whitelist-domain=.${CADDY_TAILNET_DOMAIN}
+      # ai-toolkit's :8443 site: rd= targets carry the port; the portless entry doesn't match them.
+      - --whitelist-domain=${CADDY_TAILNET_HOSTNAME}:8443
       - --cookie-domain=.${CADDY_TAILNET_DOMAIN}
       - --cookie-secure=true
       - --cookie-samesite=lax
@@ -53,6 +55,8 @@ services:
     # non-zero if it's empty/unset — an empty bind silently degrades to 0.0.0.0:443 (V1 lesson).
     ports:
       - "${CADDY_BIND:?CADDY_BIND must be set to the host tailnet IP — never empty or 0.0.0.0}:443:443"
+      # ai-toolkit UI site (no-basePath Next.js app — cannot share :443's path space).
+      - "${CADDY_BIND:?CADDY_BIND must be set to the host tailnet IP — never empty or 0.0.0.0}:8443:8443"
     env:
       CADDY_TAILNET_HOSTNAME: ${CADDY_TAILNET_HOSTNAME}
       CADDY_TAILNET_DOMAIN: ${CADDY_TAILNET_DOMAIN}

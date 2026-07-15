@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is loosely b
 
 ## [Unreleased]
 
+### Added
+- **ai-toolkit plugin**: ostris/ai-toolkit LoRA trainer as a core V2 service. Training runs
+  acquire an exclusive primary-GPU lease via ops-controller (new generic `POST /jobs/heartbeat`
+  renewable leases + `v2/assets/lease-exec.py` wrapper mounted at the UI's venv-python spawn
+  seam). UI at `https://<host>:8443/` (own Caddy site — the prebuilt Next.js app can't serve
+  under a subpath; SSO-gated like everything else).
+
 ### Changed
 - **v2 substrate rebuild + 2026-07-09 cutover — `main` is now production.** The stack was rebuilt on
   a declarative **render-engine substrate** (`v2/`): one source (`v2/ordo.yaml`) regenerates `.env`,

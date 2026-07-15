@@ -2186,12 +2186,19 @@
       n8n: '/n8n/',
       hermes: '/hermes/',
       'codebase-memory-ui': '/codebase-memory/',
+      // ':port/path' = same hostname, different SSO-gated port (AI Toolkit's Next.js UI
+      // can't serve under a subpath, so Caddy gives it :8443 — see auth/caddy/Caddyfile).
+      'ai-toolkit': ':8443/',
     };
 
     /** Prefer API `url` (paths + query) and match dashboard hostname. */
     function serviceOpenHref(s, host) {
       if (APP_PREFIX && SSO_ROUTES[s.id]) {
-        return location.origin + SSO_ROUTES[s.id];
+        const route = SSO_ROUTES[s.id];
+        if (route.startsWith(':')) {          // same hostname, dedicated SSO-gated port
+          return location.protocol + '//' + location.hostname + route;
+        }
+        return location.origin + route;
       }
       if (!s.url) return serviceUrl(host, s.port);
       try {

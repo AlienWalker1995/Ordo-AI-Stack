@@ -24,6 +24,7 @@ EXPECTED_SERVICE_PLUGINS = {
     "comfyui", "song-gen", "voice", "monitoring",          # GPU / media / voice
     "rag", "worker", "automation", "open-webui",           # ported CPU-ok services
     "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
+    "ai-toolkit",                                          # post-parity add: LoRA trainer (2026-07-15)
 }
 # memory-vault is a post-parity add (file-based markdown-memory MCP). codebase-memory / comfyui /
 # n8n / orchestration are the RESTORED V1 roster (the V1→V2 migration had silently dropped them);
@@ -46,14 +47,14 @@ def test_dual_gpu_enables_the_full_parity_set():
 
 
 def test_parity_matrix_counts():
-    # 12 kind=service plugins (parity set; obsidian removed on main) + 7 kind=mcp plugins
+    # 13 kind=service plugins (12 parity set + ai-toolkit) + 7 kind=mcp plugins
     # (qdrant-rag, searxng, memory-vault + the restored codebase-memory / comfyui-mcp / n8n /
     # orchestration) are registered and all enable on the full host.
     svc = [p for p in REGISTRY.plugins if p.kind == "service"]
     mcp = [p for p in REGISTRY.plugins if p.kind == "mcp"]
-    assert len(svc) == 12 and len(mcp) == 7
+    assert len(svc) == 13 and len(mcp) == 7
     rc = _dual()
-    assert len(rc.plugins_enabled) == 12
+    assert len(rc.plugins_enabled) == 13
     assert len(rc.mcp_servers) == 7
 
 
