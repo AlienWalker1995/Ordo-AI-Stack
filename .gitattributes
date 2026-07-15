@@ -14,3 +14,7 @@ codebase-memory-ui/nginx.conf text eol=lf
 #   parsing time "2026-XX-XX...Z\x0d": extra text: "\x0d"
 # when scripts/secrets/decrypt.sh runs on a Windows-mangled .sops file.
 *.sops text eol=lf
+
+# Bind-mounted into Linux containers as an executable (the ai-toolkit venv-python
+# lease seam) — a CRLF shebang (`python3\r`) breaks exec on Windows checkouts.
+v2/assets/* text eol=lf
