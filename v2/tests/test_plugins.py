@@ -46,9 +46,10 @@ def test_big_gpu_enables_all_and_merges_env():
     # single 5090: media enables; the CPU-ok service plugins enable; voice needs a SECOND card → off
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     # worker depends on comfyui (enabled here), so it's in the set too
-    assert set(rc.plugins_enabled) == {"comfyui", "song-gen"} | CPU_OK_SERVICE_PLUGINS
+    assert set(rc.plugins_enabled) == {"comfyui", "song-gen", "ai-toolkit"} | CPU_OK_SERVICE_PLUGINS
     assert "voice" not in rc.plugins_enabled
     assert rc.env["COMFYUI_ENABLED"] == "1"
+    assert rc.env["AI_TOOLKIT_ENABLED"] == "1"    # LoRA trainer enables on a big single GPU too
     assert rc.env["SONG_GEN_ENABLED"] == "1"
     assert rc.env["RAG_ENABLED"] == "1"           # a ported plugin's env fragment merges too
     assert "media" in rc.compose_profiles and "rag" in rc.compose_profiles
@@ -118,3 +119,17 @@ def test_comfyui_alloc_conf_never_empty(tmp_path):
     # after ${VAR:-default} substitution the rendered default must be non-empty and contain a real key
     assert val and val.strip() not in ("", ",") and "expandable_segments" in val, \
         f"PYTORCH_CUDA_ALLOC_CONF must render a valid non-empty allocator config, got {val!r}"
+
+
+def test_ai_toolkit_manifest_invariants():
+    import yaml
+    from pathlib import Path
+    manifest = Path(__file__).resolve().parent.parent / "plugins" / "ai-toolkit" / "plugin.yaml"
+    m = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    svc = m["services"][0]
+    assert svc["gpu_pin"] == "primary"                     # trainer needs the 5090 (cu128 torch)
+    assert "ports" not in svc                              # Caddy-only, no host publish
+    assert "ostris/aitoolkit@sha256:" in svc["image"]      # floating :latest upstream → digest pin
+    # the lease seam: the wrapper must be mounted at the UI's venv-python spawn path, read-only
+    assert any(v.endswith(":/app/ai-toolkit/venv/bin/python:ro") for v in svc["volumes"])
+    assert svc["env"]["ORDO_LEASE_KIND"] == "training"
