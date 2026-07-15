@@ -35,6 +35,12 @@ DEFAULT_LEASE_TTL_SECONDS = 1800.0  # 30 min — cap for a job with no estimate
 LEASE_TTL_EST_MULT = 2.0           # a job may legitimately run up to ~2x its estimate
 LEASE_TTL_MAX_SECONDS = 3600.0     # absolute ceiling — no lease outlives this
 
+# Renewable leases: a client that HEARTBEATS proves liveness, so its lease is extended past the
+# estimate-based caps above (those defend against clients that never call /jobs/complete — a
+# heartbeating client that dies simply stops beating and is swept within HEARTBEAT_TTL_SECONDS).
+# This is what lets a multi-hour job (LoRA training) hold a lease without weakening self-heal.
+HEARTBEAT_TTL_SECONDS = 900.0
+
 
 @dataclasses.dataclass
 class Job:
@@ -51,11 +57,13 @@ class Scheduler:
         cloud_fallback: bool = False,
         lease_ttl_default: float = DEFAULT_LEASE_TTL_SECONDS,
         lease_ttl_max: float = LEASE_TTL_MAX_SECONDS,
+        heartbeat_ttl: float = HEARTBEAT_TTL_SECONDS,
     ):
         self.total_vram_gb = float(total_vram_gb)
         self.cloud_fallback = bool(cloud_fallback)
         self.lease_ttl_default = float(lease_ttl_default)
         self.lease_ttl_max = float(lease_ttl_max)
+        self.heartbeat_ttl = float(heartbeat_ttl)
         self._queue: list[Job] = []
         self._running: dict[str, Job] = {}
         self._elapsed: dict[str, float] = {}      # running job id -> seconds elapsed
@@ -202,6 +210,19 @@ class Scheduler:
         self._running.pop(job_id, None)
         self._elapsed.pop(job_id, None)
         self._deadline.pop(job_id, None)
+
+    def heartbeat(self, job_id: str) -> bool:
+        """Renew a running job's lease: deadline moves to now + heartbeat_ttl (liveness-based).
+
+        Deliberately NOT capped by lease_ttl_max — the cap defends against clients that never
+        complete, and a heartbeating client re-proves liveness on every beat. Returns False (and
+        changes nothing) for a job that isn't running, so a client can detect a lost lease (e.g.
+        across an ops-controller restart) and re-acquire.
+        """
+        if job_id not in self._running:
+            return False
+        self._deadline[job_id] = self._clock + self.heartbeat_ttl
+        return True
 
     def sweep_expired_leases(self) -> list[str]:
         """Force-complete any running job whose lease TTL has elapsed. Returns the swept ids.
