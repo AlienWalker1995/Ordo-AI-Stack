@@ -141,3 +141,17 @@ def test_abstract_lease_job_never_touched_only_resident_is():
     b.complete("lease-test")                              # release the lease
     assert b.backend.started == ["llamacpp"]             # resident restarted; lease-test never touched
     assert "lease-test" not in b.backend.stopped and "lease-test" not in b.backend.started
+
+
+def test_broker_heartbeat_passes_through_without_reconcile():
+    sched = Scheduler(32)
+    backend = MockBackend()
+    b = Broker(sched, backend)
+    b.request(Job("train", 30, "training"))
+    started_before = list(backend.started)
+    stopped_before = list(backend.stopped)
+    assert b.heartbeat("train") is True
+    assert b.heartbeat("ghost") is False
+    # a heartbeat never starts or stops anything — it only moves a deadline
+    assert backend.started == started_before
+    assert backend.stopped == stopped_before

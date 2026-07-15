@@ -129,6 +129,10 @@ class Broker:
         self.backend.stop(job_id)
         self.reconcile()
 
+    def heartbeat(self, job_id: str) -> bool:
+        """Renew a running job's lease (liveness-based). No reconcile — nothing starts or stops."""
+        return self.scheduler.heartbeat(job_id)
+
     def sweep_leases(self) -> list[str]:
         """Force-complete stranded leases (TTL elapsed) and reconcile — restores the resident.
 

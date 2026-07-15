@@ -180,3 +180,51 @@ def test_status_surfaces_lease_and_resident_fields():
     assert st["idle_cached"] == {}
     assert st["running"][0]["lease_ttl_s"] == 240.0      # 120 * 2
     assert st["free_vram_gb"] == 32 - 18                 # evicted resident holds no VRAM
+
+
+# ── renewable leases: a live client heartbeats past any TTL; a dead one is still swept ────────────
+
+def test_heartbeat_extends_lease_beyond_absolute_cap():
+    s = Scheduler(total_vram_gb=32)
+    s.submit(Job("train", 30, "training"))     # no est_seconds → default 1800s TTL
+    s.pump()
+    # simulate 2h of runtime with a beat every 60s — the lease never expires
+    for _ in range(120):
+        s.tick(60)
+        assert s.heartbeat("train") is True
+        assert s.sweep_expired_leases() == []
+    assert "train" in s.running_ids
+
+
+def test_dead_client_stops_beating_and_is_swept_within_heartbeat_ttl():
+    s = Scheduler(total_vram_gb=32)
+    s.submit(Job("train", 30, "training"))
+    s.pump()
+    s.tick(60)
+    assert s.heartbeat("train") is True        # last sign of life
+    s.tick(900)                                # HEARTBEAT_TTL elapses with no further beats
+    assert s.sweep_expired_leases() == ["train"]
+    assert s.running_ids == []
+
+
+def test_heartbeat_unknown_or_completed_job_is_false_and_harmless():
+    s = Scheduler(total_vram_gb=32)
+    assert s.heartbeat("ghost") is False
+    s.submit(Job("j", 4, "chat"))
+    s.pump()
+    s.complete("j")
+    assert s.heartbeat("j") is False
+
+
+def test_heartbeat_lease_restores_resident_after_sweep():
+    # end-to-end lease semantics survive: a heartbeating training job that dies is swept
+    # and the evicted resident becomes restorable again (llamacpp can never be stranded down).
+    s = Scheduler(total_vram_gb=32)
+    s.cache_idle("llamacpp", 25)
+    s.submit(Job("train", 30, "training"))
+    s.pump()
+    assert "llamacpp" in s.evicted_residents
+    s.heartbeat("train")
+    s.tick(901)                                # client died right after its beat
+    assert s.sweep_expired_leases() == ["train"]
+    assert "llamacpp" in s.take_restorable()

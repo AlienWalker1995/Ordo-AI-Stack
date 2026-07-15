@@ -115,3 +115,28 @@ def test_complete_job_restores_resident_over_control_plane(tmp_path):
     assert after["evicted_residents"] == {}
     assert after["idle_cached"] == {"llamacpp": 25.0}         # re-armed as evictable
     assert "llamacpp" in cp.broker.backend.started            # broker actually issued the restart
+
+
+# ── renewable leases over the control plane ──────────────────────────────────────────────────────
+
+def test_heartbeat_route_renews_running_lease(tmp_path):
+    cp, _ = _cp(tmp_path)
+    cp.route("POST", "/jobs", {"id": "train", "vram_gb": 30, "kind": "training"})
+    cp.scheduler.tick(1700)                    # near the 1800s no-estimate TTL
+    code, body = cp.route("POST", "/jobs/heartbeat", {"id": "train"})
+    assert code == 200
+    ttl = next(r["lease_ttl_s"] for r in body["running"] if r["id"] == "train")
+    assert ttl == 900.0                        # renewed to HEARTBEAT_TTL_SECONDS
+    cp.scheduler.tick(200)                     # past the ORIGINAL deadline — but renewed
+    assert cp.scheduler.sweep_expired_leases() == []
+
+
+def test_heartbeat_unknown_job_is_404(tmp_path):
+    cp, _ = _cp(tmp_path)
+    code, body = cp.route("POST", "/jobs/heartbeat", {"id": "ghost"})
+    assert code == 404 and "error" in body
+
+
+def test_heartbeat_missing_id_is_400(tmp_path):
+    cp, _ = _cp(tmp_path)
+    assert cp.route("POST", "/jobs/heartbeat", {})[0] == 400
