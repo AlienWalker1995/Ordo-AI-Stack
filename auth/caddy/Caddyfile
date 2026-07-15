@@ -191,7 +191,9 @@
             copy_headers X-Auth-Request-Email>X-Forwarded-Email X-Auth-Request-User>X-Forwarded-User X-Auth-Request-Preferred-Username>X-Forwarded-Preferred-Username
             @unauthorized status 401
             handle_response @unauthorized {
-                redir https://{host}/oauth2/start?rd={scheme}://{host}{uri} 302
+                # {hostport} (not {host}): this site is non-default-port, and the rd= must
+                # return the user to :8443 after Google sign-in — {host} strips the port.
+                redir https://{hostport}/oauth2/start?rd={scheme}://{hostport}{uri} 302
             }
         }
         reverse_proxy ai-toolkit:8675
