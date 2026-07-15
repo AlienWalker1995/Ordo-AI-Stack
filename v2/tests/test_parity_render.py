@@ -140,3 +140,27 @@ def test_secrets_env_file_is_not_required():
     ef = c["services"]["model-gateway"]["env_file"]
     sec = next(f for f in ef if isinstance(f, dict) and f["path"] == "secrets.env")
     assert sec["required"] is False
+
+
+def test_edge_mounts_tracked_config_not_copies():
+    # The Caddyfile and SSO email allowlist are TRACKED repo files (tested by
+    # tests/test_caddyfile_invariants.py). The edge services must bind-mount them via
+    # ${BASE_PATH} so the tracked file is the single source of truth — a `./`-relative
+    # mount resolves against the compose project dir (v2/out) and serves a stale COPY
+    # (the drift that shipped an old Caddyfile on 2026-07-15).
+    c = _dual().compose_dict()
+    assert "${BASE_PATH:-.}/auth/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" in c["services"]["caddy"]["volumes"]
+    assert (
+        "${BASE_PATH:-.}/auth/oauth2-proxy/emails.txt:/etc/oauth2-proxy/emails.txt:ro"
+        in c["services"]["oauth2-proxy"]["volumes"]
+    )
+
+
+def test_ops_controller_image_ships_all_render_data():
+    # The ops-controller image is the in-place render/serve vehicle. If it lacks any of the
+    # renderer's data dirs, renders inside it silently regress (missing dashboards/ dropped the
+    # v1-parity dashboard from the live compose on 2026-07-15 — resolve() warned, but the
+    # compose still came out wrong). Guard every data dir the renderer loads.
+    dockerfile = (ROOT / "docker" / "ops-controller.Dockerfile").read_text(encoding="utf-8")
+    for data_dir in ("catalog", "plugins", "agents", "dashboards"):
+        assert f"COPY {data_dir} ./{data_dir}" in dockerfile, f"image must ship {data_dir}/"

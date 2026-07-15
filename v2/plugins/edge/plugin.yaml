@@ -42,7 +42,9 @@ services:
       - --authenticated-emails-file=/etc/oauth2-proxy/emails.txt
       - --skip-provider-button=true
     volumes:
-      - ./auth/oauth2-proxy/emails.txt:/etc/oauth2-proxy/emails.txt:ro
+      # ${BASE_PATH} (not ./): the allowlist is a TRACKED repo file; a ./-relative mount
+      # resolves against the compose project dir (v2/out) and serves a stale copy.
+      - ${BASE_PATH:-.}/auth/oauth2-proxy/emails.txt:/etc/oauth2-proxy/emails.txt:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:4180/ping"]
       interval: 30s
@@ -61,7 +63,10 @@ services:
       CADDY_TAILNET_HOSTNAME: ${CADDY_TAILNET_HOSTNAME}
       CADDY_TAILNET_DOMAIN: ${CADDY_TAILNET_DOMAIN}
     volumes:
-      - ./auth/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # ${BASE_PATH} (not ./): the Caddyfile is a TRACKED repo file (guarded by
+      # tests/test_caddyfile_invariants.py); the ./-relative mount served a stale cutover-era
+      # copy from v2/out/auth/ — the drift that shipped an old Caddyfile on 2026-07-15.
+      - ${BASE_PATH:-.}/auth/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ${TAILSCALE_CERT_DIR:-./auth/caddy/certs}:/etc/caddy/certs:ro
       - caddy_data:/data
       - caddy_config:/config
