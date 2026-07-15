@@ -167,3 +167,33 @@
         }
     }
 }
+
+# ---- AI Toolkit LoRA trainer on a dedicated SSO-gated port ----
+# The trainer UI is a prebuilt Next.js app with base="" (root-absolute /_next assets) and no
+# basePath support — it CANNOT be served under a subpath (same class of problem as Open WebUI,
+# see the ROOT comment above), and root on :443 is Open WebUI's. It gets its own HTTPS port:
+# same tailnet bind, same cert, same forward_auth gate. Cookies are port-agnostic, so an
+# existing :443 SSO session carries over; the OAuth callback stays on :443 (oauth2-proxy
+# --redirect-url) and rd= returns the user here (whitelisted host:8443 in the edge plugin).
+{$CADDY_TAILNET_HOSTNAME}:8443 {
+    tls /etc/caddy/certs/tailnet.crt /etc/caddy/certs/tailnet.key
+
+    handle /oauth2/* {
+        reverse_proxy oauth2-proxy:4180
+    }
+    handle /healthz {
+        respond "ok" 200
+    }
+
+    route {
+        forward_auth oauth2-proxy:4180 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-Email>X-Forwarded-Email X-Auth-Request-User>X-Forwarded-User X-Auth-Request-Preferred-Username>X-Forwarded-Preferred-Username
+            @unauthorized status 401
+            handle_response @unauthorized {
+                redir https://{host}/oauth2/start?rd={scheme}://{host}{uri} 302
+            }
+        }
+        reverse_proxy ai-toolkit:8675
+    }
+}
