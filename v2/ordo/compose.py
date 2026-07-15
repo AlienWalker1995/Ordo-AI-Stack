@@ -120,7 +120,10 @@ def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
     ]
     s["environment"] = {"ORDO_PROJECT": project}
     # --source/--catalog are global (pre-subcommand) flags; --project/--out belong to `serve`.
-    s["command"] = ["--source", "/config/ordo.yaml", "serve", "--project", project, "--out", "/config/out"]
+    # --out is /config ITSELF: the deployment mounts the dir holding ordo.yaml AND the rendered
+    # outputs (v2/out) as /config, so an in-place re-render (model switch) must write next to the
+    # source. "/config/out" nested into a dir nothing consumes — silent drift (found 2026-07-15).
+    s["command"] = ["--source", "/config/ordo.yaml", "serve", "--project", project, "--out", "/config"]
     # Read-only GPU visibility so the scheduler can see real VRAM (mirrors V1's utility cap).
     s.update(_utility_gpu_reservation())
     s["environment"]["NVIDIA_DRIVER_CAPABILITIES"] = "utility"

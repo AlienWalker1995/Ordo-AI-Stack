@@ -270,3 +270,14 @@ def test_model_without_backend_image_keeps_default(tmp_path):
     rc.write(tmp_path)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
     assert c["services"]["llamacpp"]["image"] == "ghcr.io/ggml-org/llama.cpp:server"
+
+
+def test_ops_controller_serve_out_matches_deployed_layout():
+    # The live deployment mounts the dir HOLDING ordo.yaml AND the rendered outputs as /config
+    # (compose project dir = v2/out). serve's --out must therefore be /config itself: writing to
+    # /config/out re-renders into a nested dir NOTHING consumes — a model switch would silently
+    # never reach the live .env/compose (found live 2026-07-15).
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo-v2")
+    cmd = c["services"]["ops-controller"]["command"]
+    assert cmd[cmd.index("--out") + 1] == "/config"
+    assert "./:/config" in c["services"]["ops-controller"]["volumes"]
