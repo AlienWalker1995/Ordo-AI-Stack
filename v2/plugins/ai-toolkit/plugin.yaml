@@ -1,0 +1,54 @@
+# Plugin manifest — AI Toolkit (ostris) LoRA trainer as a stack service (data-only).
+# NOTE: the plugin id `ai-toolkit` is unrelated to `~/.ai-toolkit/`, the operator secrets
+# runtime dir convention — cosmetic name collision, accepted in the design.
+#
+# GPU arbitration: the UI spawns every training run via `venv/bin/python run.py <cfg>` IFF a
+# venv/ dir exists (ui/cron/actions/startJob.ts upstream); the image ships NO venv (deps are in
+# system python), so mounting v2/assets/lease-exec.py at that path routes every training run
+# through an exclusive ops-controller lease — acquire before CUDA init, heartbeat while running,
+# release on exit. Nothing service-specific lives in the scheduler.
+id: ai-toolkit
+name: AI Toolkit LoRA trainer
+description: ostris/ai-toolkit web UI + trainer. Training runs lease the primary GPU via ops-controller.
+requires:
+  nvidia: true
+  vram_gb: 16          # minimum for a small LoRA run
+  ram_gb: 16
+provides: [training]
+compose_profile: ""    # always-on with the core stack
+env:
+  AI_TOOLKIT_ENABLED: "1"
+secrets:
+  - AI_TOOLKIT_AUTH
+  - HF_TOKEN
+services:
+  - name: ai-toolkit
+    # Upstream publishes only a floating :latest — digest-pinned per stack rule (bump deliberately).
+    image: ${AI_TOOLKIT_IMAGE:-ostris/aitoolkit@sha256:c199bf41a4830046f462d0ea622fa87d9fbbf6977354b6378345d2f1ed2348f5}
+    gpu_pin: primary   # 5090: image torch is cu128 (Blackwell); training on the 1070 is a non-starter
+    wants_secrets: true
+    env:
+      AI_TOOLKIT_AUTH: ${AI_TOOLKIT_AUTH:-}
+      NODE_ENV: production
+      TZ: UTC
+      OPS_CONTROLLER_URL: http://ops-controller:9000
+      OPS_CONTROLLER_TOKEN: ${OPS_CONTROLLER_TOKEN:-}
+      # ~full card: forces resident eviction and blocks co-runs = the exclusive-lease policy.
+      ORDO_LEASE_VRAM_GB: ${AI_TOOLKIT_LEASE_VRAM_GB:-30}
+      ORDO_LEASE_KIND: training
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - ${DATA_PATH:-./data}/ai-toolkit/datasets:/app/ai-toolkit/datasets
+      - ${DATA_PATH:-./data}/ai-toolkit/output:/app/ai-toolkit/output
+      - ${DATA_PATH:-./data}/ai-toolkit/config:/app/ai-toolkit/config
+      - ${DATA_PATH:-./data}/ai-toolkit/db/aitk_db.db:/app/ai-toolkit/aitk_db.db
+      # Base-model downloads (HF hub cache) — shared, large, survives recreates.
+      - ${BASE_PATH:-.}/models/hf-cache:/root/.cache/huggingface/hub
+      # The lease seam (see header comment). RO: the container must not mutate the wrapper.
+      - ${BASE_PATH:-.}/v2/assets/lease-exec.py:/app/ai-toolkit/venv/bin/python:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8675/"]
+      start_period: 120s
+      interval: 20s
+      timeout: 10s
+      retries: 6
