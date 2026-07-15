@@ -114,6 +114,16 @@ class ControlPlane:
         self.broker.complete(job_id)
         return self.scheduler.status()
 
+    def heartbeat_job(self, body: dict[str, Any]) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        job_id = str(body.get("id", "")).strip()
+        if not job_id:
+            return self._error(400, "body must include 'id'")
+        if not self.broker.heartbeat(job_id):
+            return self._error(404, f"no running job '{job_id}'")
+        return self.scheduler.status()
+
     # --- routing (also pure) ---
     def route(self, method: str, path: str, body: dict[str, Any] | None = None) -> tuple[int, dict]:
         body = body or {}
@@ -128,6 +138,8 @@ class ControlPlane:
             return self._as_response(self.request_job(body))
         if m == "POST" and path == "/jobs/complete":
             return self._as_response(self.complete_job(body))
+        if m == "POST" and path == "/jobs/heartbeat":
+            return self._as_response(self.heartbeat_job(body))
         if m == "GET" and path in ("/health", "/healthz"):
             return 200, {"ok": True}
         return 404, {"error": f"no route {method} {path}"}
