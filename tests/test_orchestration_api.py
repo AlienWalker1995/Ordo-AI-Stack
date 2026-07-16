@@ -264,3 +264,55 @@ def test_orch_registry_get_model_ok(dash_client, monkeypatch):
     r = dash_client.get("/api/orchestration/registry/models/local-chat")
     assert r.status_code == 200
     assert r.json()["kind"] == "chat"
+
+
+# ── GPU lease proxies (orchestration tab) ────────────────────────────────────────────────
+
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+class _FakeAsyncClient:
+    payload: dict = {}
+
+    def __init__(self, *a, **kw):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url):
+        return _FakeResp(self.payload)
+
+
+def test_gpu_route_unwraps_scheduler_status(client):
+    _FakeAsyncClient.payload = {
+        "manifest": {"x": 1},
+        "gpu": {"state": "busy", "running": [{"id": "lease-abc", "kind": "training"}],
+                "evicted_residents": {"llamacpp": 25.4}},
+    }
+    with patch("dashboard.routes_orchestration.httpx.AsyncClient", _FakeAsyncClient):
+        r = client.get("/api/orchestration/gpu")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["state"] == "busy" and body["running"][0]["kind"] == "training"
+    assert "manifest" not in body  # unwrapped to the gpu block
+
+
+def test_gpu_history_route_passes_through(client):
+    _FakeAsyncClient.payload = {"history": [{"id": "lease-abc", "outcome": "completed"}]}
+    with patch("dashboard.routes_orchestration.httpx.AsyncClient", _FakeAsyncClient):
+        r = client.get("/api/orchestration/gpu/history")
+    assert r.status_code == 200
+    assert r.json()["history"][0]["outcome"] == "completed"

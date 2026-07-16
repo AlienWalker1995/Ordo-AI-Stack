@@ -51,6 +51,10 @@ WORKFLOWS_DIR = Path(os.environ.get("COMFYUI_WORKFLOWS_DIR", "/comfyui-workflows
 N8N_PUBLISH_WEBHOOK_URL = os.environ.get("N8N_PUBLISH_WEBHOOK_URL", "").strip()
 OPS_CONTROLLER_URL = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000").rstrip("/")
 OPS_CONTROLLER_TOKEN = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
+# The V2 scheduler (GPU lease arbiter). Distinct from OPS_CONTROLLER_URL, which this
+# dashboard deployment points at ops-api (the V1-parity control API) — the scheduler's
+# /status and /jobs/history live only on the ordo-serve control plane.
+SCHEDULER_URL = os.environ.get("SCHEDULER_URL", "http://ops-controller:9000").rstrip("/")
 
 
 def _resolve_workflow_under_root(workflow_id: str, root: Path) -> Path | None:
@@ -654,3 +658,33 @@ async def orch_registry_assign_gpu(model_id: str, body: dict, request: Request):
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
+
+
+# ── GPU lease visibility (orchestration tab) ─────────────────────────────────────────────
+# Pure presentation proxies: the scheduler records/serves the truth; the dashboard displays it.
+
+
+@router.get("/gpu")
+async def orchestration_gpu() -> dict[str, Any]:
+    """Live scheduler state: running leases, queue, evicted residents, VRAM."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{SCHEDULER_URL}/status")
+            r.raise_for_status()
+            data = r.json()
+    except (httpx.HTTPError, ValueError) as e:
+        raise HTTPException(status_code=502, detail=f"scheduler unreachable: {e}") from e
+    # GET /status nests the scheduler block under "gpu"; tolerate a bare payload too.
+    return data.get("gpu", data) if isinstance(data, dict) else {}
+
+
+@router.get("/gpu/history")
+async def orchestration_gpu_history() -> dict[str, Any]:
+    """Finished leases (newest first) from the scheduler's durable lease record."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{SCHEDULER_URL}/jobs/history")
+            r.raise_for_status()
+            return r.json()
+    except (httpx.HTTPError, ValueError) as e:
+        raise HTTPException(status_code=502, detail=f"scheduler unreachable: {e}") from e

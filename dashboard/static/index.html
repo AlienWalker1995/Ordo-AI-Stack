@@ -1477,6 +1477,18 @@
       border-radius: var(--radius-sm); transition: border-color .15s;
     }
     .orch-job-row:hover { border-color: rgba(0,201,255,.2); }
+    .orch-evicted-banner {
+      padding: var(--space-2) var(--space-3); margin: var(--space-2) 0;
+      background: rgba(255,170,0,.08); border: 1px solid rgba(255,170,0,.35);
+      border-radius: var(--radius-sm); font-size: var(--text-sm);
+    }
+    .orch-vram {
+      position: relative; height: 22px; margin: var(--space-2) 0 var(--space-3);
+      background: var(--bg-elevated); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); overflow: hidden;
+    }
+    .orch-vram-fill { height: 100%; background: linear-gradient(90deg, rgba(0,201,255,.35), rgba(0,201,255,.65)); transition: width .4s; }
+    .orch-vram-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: var(--text-xs); }
     .orch-job-id {
       font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg);
       width: 7rem; flex-shrink: 0;
@@ -1939,6 +1951,8 @@
       <section id="orchestration-section">
         <h2>Orchestration</h2>
         <p class="section-desc">Workflow readiness and recent jobs.</p>
+        <div id="orch-gpu"></div>
+        <div id="orch-gpu-history"></div>
         <div id="orch-readiness" class="status-summary"></div>
         <div id="orch-jobs"></div>
       </section>
@@ -2736,10 +2750,63 @@
       } catch (e) { toast('Apply error: ' + e, 'error'); btn.disabled = false; btn.textContent = 'Apply & restart'; }
     }
 
+    let orchGpuTimer = null;
+    async function loadOrchGpu() {
+      const el = document.getElementById("orch-gpu");
+      const histEl = document.getElementById("orch-gpu-history");
+      if (!el || !histEl) return;
+      const fmtDur = (s) => s >= 3600 ? (s / 3600).toFixed(1) + "h" : s >= 60 ? Math.round(s / 60) + "m" : Math.round(s) + "s";
+      const kindBadge = (k) => ({ training: "badge-warn", media: "badge-muted", chat: "badge-success" }[k] || "badge-muted");
+      try {
+        const r = await api("/api/orchestration/gpu");
+        const g = await r.json();
+        const total = g.total_vram_gb || 0;
+        const used = Math.max(0, total - (g.free_vram_gb || 0));
+        const pct = total ? Math.round(used / total * 100) : 0;
+        const evicted = Object.keys(g.evicted_residents || {});
+        const running = (g.running || []).map(j => `
+          <div class="orch-job-row">
+            <span class="badge ${kindBadge(j.kind)}">${escapeHtml(String(j.kind || "?"))}</span>
+            <span class="orch-job-id" title="${escapeHtml(String(j.id))}">${escapeHtml(String(j.id))}</span>
+            <span class="orch-job-time">lease renews ${Math.round(j.lease_ttl_s || 0)}s</span>
+          </div>`).join("");
+        const queued = (g.queued || []).map(j => `
+          <div class="orch-job-row">
+            <span class="badge badge-muted">queued</span>
+            <span class="orch-job-id" title="${escapeHtml(String(j.id))}">${escapeHtml(String(j.id))}</span>
+            <span class="orch-job-time">${j.vram_gb} GB ${escapeHtml(String(j.kind || ""))}</span>
+          </div>`).join("");
+        el.innerHTML = `<h3>GPU leases</h3>`
+          + (evicted.length ? `<div class="orch-evicted-banner">🧠 ${escapeHtml(evicted.join(", "))} evicted — chat paused until the lease ends</div>` : "")
+          + `<div class="orch-vram"><div class="orch-vram-fill" style="width:${pct}%"></div>`
+          + `<span class="orch-vram-label">${used.toFixed(1)} / ${total.toFixed(0)} GB · ${escapeHtml(String(g.state || "?"))}</span></div>`
+          + (running ? `<div class="orch-jobs-list">${running}</div>` : `<p class="section-desc">Nothing holds the GPU.</p>`)
+          + (queued ? `<h4>Queued</h4><div class="orch-jobs-list">${queued}</div>` : "");
+      } catch (e) {
+        el.innerHTML = `<h3>GPU leases</h3><p class="section-desc">Scheduler unavailable: ${escapeHtml(String(e))}</p>`;
+      }
+      try {
+        const r = await api("/api/orchestration/gpu/history");
+        const hist = (await r.json()).history || [];
+        const rows = hist.slice(0, 20).map(h => {
+          const dur = (h.ended && h.started) ? fmtDur(h.ended - h.started) : "—";
+          const badge = h.outcome === "completed" ? "badge-success" : h.outcome === "swept" ? "badge-warn" : "badge-error";
+          return `<div class="orch-job-row">
+            <span class="badge ${badge}">${escapeHtml(String(h.outcome))}</span>
+            <span class="badge ${kindBadge(h.kind)}">${escapeHtml(String(h.kind || "?"))}</span>
+            <span class="orch-job-id" title="${escapeHtml(String(h.id))}">${escapeHtml(String(h.id))}</span>
+            <span class="orch-job-time">${h.vram_gb} GB · ${dur} · ${fmtAgo(h.ended || 0)}</span>
+          </div>`; }).join("");
+        histEl.innerHTML = `<h3>Lease history</h3>` + (rows ? `<div class="orch-jobs-list">${rows}</div>` : `<p class="section-desc">No finished leases yet.</p>`);
+      } catch (e) { histEl.innerHTML = ""; }
+    }
     async function loadOrchestrationTab() {
       const rd = document.getElementById("orch-readiness");
       const jobsEl = document.getElementById("orch-jobs");
       if (!rd || !jobsEl) return;
+      loadOrchGpu();
+      if (orchGpuTimer) clearInterval(orchGpuTimer);
+      orchGpuTimer = setInterval(loadOrchGpu, 5000);
       try {
         const r = await api("/api/orchestration/readiness");
         const ready = await r.json();
@@ -3935,6 +4002,7 @@
         if (typeof loadModelsRegistry === "function") loadModelsRegistry();
       }
       if (name === "orchestration" && typeof loadOrchestrationTab === "function") loadOrchestrationTab();
+      if (name !== "orchestration" && orchGpuTimer) { clearInterval(orchGpuTimer); orchGpuTimer = null; }
       if (name === "modelctl" && typeof loadModelControl === "function") loadModelControl();
     }
     document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => activateTab(b.dataset.tab)));
