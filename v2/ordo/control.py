@@ -38,6 +38,7 @@ class ControlPlane:
         out_dir: str | Path,
         scheduler: Scheduler | None = None,
         broker: Broker | None = None,
+        history=None,
     ):
         self.source_path = Path(source_path)
         self.catalog = catalog
@@ -45,6 +46,7 @@ class ControlPlane:
         self.out_dir = Path(out_dir)
         self.scheduler = scheduler
         self.broker = broker
+        self.history = history  # LeaseHistory sink (shared with the broker) — /jobs/history
 
     # --- core operations (pure, testable) ---
     def _render(self) -> Any:
@@ -140,6 +142,9 @@ class ControlPlane:
             return self._as_response(self.complete_job(body))
         if m == "POST" and path == "/jobs/heartbeat":
             return self._as_response(self.heartbeat_job(body))
+        if m == "GET" and path == "/jobs/history":
+            # Finished leases, newest first — what the orchestration tab's history table shows.
+            return 200, {"history": self.history.tail(100) if self.history else []}
         if m == "GET" and path in ("/health", "/healthz"):
             return 200, {"ok": True}
         return 404, {"error": f"no route {method} {path}"}

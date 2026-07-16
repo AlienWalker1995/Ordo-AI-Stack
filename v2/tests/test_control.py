@@ -140,3 +140,22 @@ def test_heartbeat_unknown_job_is_404(tmp_path):
 def test_heartbeat_missing_id_is_400(tmp_path):
     cp, _ = _cp(tmp_path)
     assert cp.route("POST", "/jobs/heartbeat", {})[0] == 400
+
+
+def test_jobs_history_route_serves_lease_records(tmp_path):
+    from ordo.lease_history import LeaseHistory
+    hist = LeaseHistory(tmp_path / "h.jsonl", now_fn=lambda: 42.0)
+    cp, _ = _cp(tmp_path)
+    cp.broker.history = hist
+    cp.history = hist
+    cp.route("POST", "/jobs", {"id": "reel", "vram_gb": 17, "kind": "media"})
+    cp.route("POST", "/jobs/complete", {"id": "reel"})
+    code, body = cp.route("GET", "/jobs/history")
+    assert code == 200
+    assert body["history"][0]["id"] == "reel"
+    assert body["history"][0]["outcome"] == "completed"
+
+
+def test_jobs_history_route_empty_without_sink(tmp_path):
+    cp, _ = _cp(tmp_path)
+    assert cp.route("GET", "/jobs/history") == (200, {"history": []})

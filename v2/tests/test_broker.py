@@ -155,3 +155,29 @@ def test_broker_heartbeat_passes_through_without_reconcile():
     # a heartbeat never starts or stops anything — it only moves a deadline
     assert backend.started == started_before
     assert backend.stopped == stopped_before
+
+
+def test_broker_records_lease_history_lifecycle(tmp_path):
+    from ordo.lease_history import LeaseHistory
+    hist = LeaseHistory(tmp_path / "h.jsonl", now_fn=lambda: 42.0)
+    sched = Scheduler(32)
+    sched.cache_idle("llamacpp", 25)
+    b = Broker(sched, MockBackend(), history=hist)
+    b.request(Job("train", 30, "training"))     # evicts resident, admits, starts
+    b.complete("train")
+    b.request(Job("huge", 99, "media"))          # can never fit -> rejected
+    outcomes = {r["id"]: r["outcome"] for r in hist.tail()}
+    assert outcomes == {"train": "completed", "huge": "rejected"}
+    train = next(r for r in hist.tail() if r["id"] == "train")
+    assert train["started"] is not None and train["kind"] == "training"
+
+
+def test_broker_records_swept_lease(tmp_path):
+    from ordo.lease_history import LeaseHistory
+    hist = LeaseHistory(tmp_path / "h.jsonl", now_fn=lambda: 42.0)
+    sched = Scheduler(32)
+    b = Broker(sched, MockBackend(), history=hist)
+    b.request(Job("crashy", 30, "training"))
+    sched.tick(4000)                             # blow past every TTL
+    assert b.sweep_leases() == ["crashy"]
+    assert hist.tail()[0]["outcome"] == "swept"

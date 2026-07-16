@@ -178,8 +178,14 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
     hw = detect()
     cloud_fallback = bool((src.cloud_fallback or {}).get("enabled"))
     sched = Scheduler(hw.primary_vram_gb if hw.has_gpu else 0.0, cloud_fallback=cloud_fallback)
-    broker = Broker(sched, DockerBackend(project=args.project))
-    cp = ControlPlane(Path(args.source), cat, reg, args.out, scheduler=sched, broker=broker)
+    # Durable lease record (served at GET /jobs/history for the dashboard's orchestration tab).
+    # Lives next to the rendered outputs — the same writable /config mount, no extra volume.
+    from .lease_history import LeaseHistory
+
+    history = LeaseHistory(Path(args.out) / "lease-history.jsonl")
+    broker = Broker(sched, DockerBackend(project=args.project), history=history)
+    cp = ControlPlane(Path(args.source), cat, reg, args.out, scheduler=sched, broker=broker,
+                      history=history)
 
     # Resident registration (the missing wiring): the render tells us the LLM's true GPU footprint
     # (weights + KV at the rendered ctx). Register it as an idle-cached resident so a media lease can

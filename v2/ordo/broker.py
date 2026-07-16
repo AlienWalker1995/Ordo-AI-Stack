@@ -104,9 +104,12 @@ class DockerBackend:
 
 
 class Broker:
-    def __init__(self, scheduler: Scheduler, backend: ContainerBackend):
+    def __init__(self, scheduler: Scheduler, backend: ContainerBackend, history=None):
         self.scheduler = scheduler
         self.backend = backend
+        # Optional LeaseHistory sink — the durable record of lease outcomes (the pure scheduler
+        # keeps only live state). Wall clocks are stamped by the sink, here in the shell.
+        self.history = history
 
     def reconcile(self) -> None:
         admitted, evicted = self.scheduler.pump()
@@ -114,6 +117,8 @@ class Broker:
             self.backend.stop(name)
         for job_id in admitted:   # then start the newly-admitted jobs
             self.backend.start(job_id)
+            if self.history:
+                self.history.started(job_id)
         # Finally, restore any evicted resident whose GPU-heavy work has drained (the second half of
         # the media-lease contract). take_restorable() only returns residents that fit now with an
         # empty queue, so this never thrashes the LLM between back-to-back renders.
@@ -121,10 +126,16 @@ class Broker:
             self.backend.start(name)
 
     def request(self, job: Job) -> None:
+        if self.history:
+            self.history.submitted(job.id, job.kind, job.vram_gb)
         self.scheduler.submit(job)
         self.reconcile()
+        if self.history and job.id in self.scheduler.status()["rejected"]:
+            self.history.rejected(job.id)
 
     def complete(self, job_id: str) -> None:
+        if self.history:
+            self.history.ended(job_id, "completed")
         self.scheduler.complete(job_id)
         self.backend.stop(job_id)
         self.reconcile()
@@ -143,5 +154,7 @@ class Broker:
         expired = self.scheduler.sweep_expired_leases()
         for job_id in expired:
             self.backend.stop(job_id)  # best-effort: ensure the stranded job's container is down
+            if self.history:
+                self.history.ended(job_id, "swept")
         self.reconcile()
         return expired
