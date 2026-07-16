@@ -133,6 +133,7 @@ def test_ai_toolkit_manifest_invariants():
     # the lease seam: the wrapper must be mounted at the UI's venv-python spawn path, read-only
     assert any(v.endswith(":/app/ai-toolkit/venv/bin/python:ro") for v in svc["volumes"])
     assert svc["env"]["ORDO_LEASE_KIND"] == "training"
+    assert svc.get("shm_size"), "trainer needs a real shm_size — torch pins tensors via /dev/shm"
     # Secret-backed keys must come from secrets.env (env_file) ONLY. An `environment:` entry like
     # `HF_TOKEN: ${HF_TOKEN:-}` substitutes EMPTY from the rendered .env and OVERRIDES the real
     # env_file value: huggingface_hub then sends a blank Bearer header and crashes the trainer,
