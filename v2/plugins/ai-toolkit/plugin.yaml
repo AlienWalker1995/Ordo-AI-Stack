@@ -38,6 +38,9 @@ services:
       NODE_ENV: production
       TZ: UTC
       OPS_CONTROLLER_URL: http://ops-controller:9000
+      # Same allocator config the comfyui plugin runs with: at near-full-card occupancy
+      # (22B trainer without offloading) fragmentation is what OOMs, not real usage.
+      PYTORCH_CUDA_ALLOC_CONF: ${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,pinned_use_cuda_host_register:True}
       # ~full card: forces resident eviction and blocks co-runs = the exclusive-lease policy.
       ORDO_LEASE_VRAM_GB: ${AI_TOOLKIT_LEASE_VRAM_GB:-30}
       ORDO_LEASE_KIND: training
