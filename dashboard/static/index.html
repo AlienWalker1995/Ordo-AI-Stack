@@ -1615,6 +1615,7 @@
           <button class="tab-btn" data-tab="services" role="tab">⚡ Services</button>
           <button class="tab-btn" data-tab="mcp" role="tab">🧩 MCP</button>
           <button class="tab-btn" data-tab="orchestration" role="tab">🛠️ Orchestration</button>
+          <button class="tab-btn" data-tab="grafana" role="tab">📊 Grafana</button>
         </nav>
       </div>
       <div class="header-actions">
@@ -1959,6 +1960,17 @@
     </div>
 
   </div>
+
+
+    <div class="tab-panel" data-tab="grafana">
+      <section id="grafana-section">
+        <h2>Grafana — llama.cpp &amp; GPU</h2>
+        <p class="section-desc">Real-time performance. Requires the <code>monitoring</code> profile; opens full Grafana in a <a id="grafana-open" href="#" target="_blank" rel="noopener">new tab</a>.</p>
+        <div id="grafana-embed" style="width:100%;height:78vh;border:1px solid var(--border,#333);border-radius:8px;overflow:hidden;background:#111;">
+          <!-- iframe injected lazily by loadGrafanaTab() on first activation -->
+        </div>
+      </section>
+    </div>
 
   <div class="toast-container" id="toasts" role="region" aria-label="Notifications" aria-live="polite"></div>
 
@@ -3982,8 +3994,25 @@
     });
     // ── End Compute Pressure ──────────────────────────────────
 
+    // Grafana is served as a sibling path on the same tailnet origin (/grafana/),
+    // behind the same SSO front door. kiosk mode hides Grafana's own chrome for a
+    // clean embed. Injected lazily so the iframe only loads when the tab is opened.
+    function loadGrafanaTab() {
+      const box = document.getElementById("grafana-embed");
+      const openLink = document.getElementById("grafana-open");
+      if (!box) return;
+      const base = location.origin + "/grafana/d/ordo-llm-gpu/ordo-llm-gpu";
+      if (openLink) openLink.href = base + "?refresh=10s";
+      if (box.querySelector("iframe")) return;  // already loaded
+      const iframe = document.createElement("iframe");
+      iframe.src = base + "?kiosk&refresh=10s";
+      iframe.style.cssText = "width:100%;height:100%;border:0;";
+      iframe.setAttribute("title", "Grafana — llama.cpp & GPU metrics");
+      box.appendChild(iframe);
+    }
+
     function activateTab(name) {
-      const tabs = ["models", "gpu", "registry", "modelctl", "services", "mcp", "orchestration"];
+      const tabs = ["models", "gpu", "registry", "modelctl", "services", "mcp", "orchestration", "grafana"];
       if (!tabs.includes(name)) name = "models";
       document.querySelectorAll(".tab-btn").forEach(b => {
         const on = b.dataset.tab === name;
@@ -4004,6 +4033,7 @@
       if (name === "orchestration" && typeof loadOrchestrationTab === "function") loadOrchestrationTab();
       if (name !== "orchestration" && orchGpuTimer) { clearInterval(orchGpuTimer); orchGpuTimer = null; }
       if (name === "modelctl" && typeof loadModelControl === "function") loadModelControl();
+      if (name === "grafana" && typeof loadGrafanaTab === "function") loadGrafanaTab();
     }
     document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => activateTab(b.dataset.tab)));
     window.addEventListener("hashchange", () => activateTab(location.hash.replace("#", "")));
