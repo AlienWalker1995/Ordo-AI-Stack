@@ -28,6 +28,10 @@ services:
     # Upstream publishes only a floating :latest — digest-pinned per stack rule (bump deliberately).
     image: ${AI_TOOLKIT_IMAGE:-ostris/aitoolkit@sha256:c199bf41a4830046f462d0ea622fa87d9fbbf6977354b6378345d2f1ed2348f5}
     gpu_pin: primary   # 5090: image torch is cu128 (Blackwell); training on the 1070 is a non-starter
+    # Torch shares offloaded/pinned tensors via /dev/shm; Docker's 64MB default dies with
+    # "unable to write to file </torch_...>: No space left on device" as soon as layer
+    # offloading or dataloader workers engage (hit live 2026-07-16).
+    shm_size: 8g
     wants_secrets: true
     # AI_TOOLKIT_AUTH / HF_TOKEN / OPS_CONTROLLER_TOKEN deliberately do NOT appear here:
     # secrets flow in via secrets.env (wants_secrets). Re-declaring them as ${VAR:-} would
