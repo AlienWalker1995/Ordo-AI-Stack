@@ -163,3 +163,37 @@ def test_sigint_is_forwarded_and_lease_released(tmp_path):
     p.wait(timeout=10)
     assert marker.read_text() == "int"          # child received the forwarded SIGINT
     assert stub.completes == ["train-test"]     # and the lease was released
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="/proc-based stall detection is Linux-only")
+def test_stalled_child_is_killed_and_lease_released(tmp_path):
+    # A child with frozen CPU+IO (pure sleep) past ORDO_LEASE_STALL_S must be terminated by
+    # the wrapper — the zombie-lease case: heartbeats alone would renew forever.
+    stub = _StubOps()
+    marker = tmp_path / "ran.txt"
+    env = _env(stub.url, {"ORDO_LEASE_STALL_S": "2", "ORDO_LEASE_HEARTBEAT_S": "0.5"})
+    r = subprocess.run(
+        [sys.executable, LEASE_EXEC, "-c", "import time; time.sleep(60); open('MARKER','w').write('no')".replace("MARKER", str(marker))],
+        env=env, capture_output=True, text=True, timeout=40,
+    )
+    assert r.returncode != 0
+    assert not marker.exists()                  # child never reached the end
+    assert "stall" in r.stderr.lower()
+    assert stub.completes == ["train-test"]     # lease released after the kill
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="/proc-based stall detection is Linux-only")
+def test_active_child_is_not_stall_killed(tmp_path):
+    # A child doing real work (CPU busy) must survive a tight stall window.
+    stub = _StubOps()
+    marker = tmp_path / "ran.txt"
+    code = ("import time\n"
+            "t = time.time()\n"
+            "x = 0\n"
+            "while time.time() - t < 4: x += 1\n"
+            f"open(r'{tmp_path / 'ran.txt'}', 'w').write('done')\n")
+    env = _env(stub.url, {"ORDO_LEASE_STALL_S": "2", "ORDO_LEASE_HEARTBEAT_S": "0.5"})
+    r = subprocess.run([sys.executable, LEASE_EXEC, "-c", code],
+                       env=env, capture_output=True, text=True, timeout=40)
+    assert r.returncode == 0, r.stderr
+    assert marker.read_text() == "done"

@@ -15,6 +15,11 @@ Contract (env):
   ORDO_LEASE_ACQUIRE_TIMEOUT_S  max wait for admission (default 3600)
   ORDO_LEASE_POLL_S             admission poll interval (default 5)
   ORDO_LEASE_HEARTBEAT_S        heartbeat interval (default 60)
+  ORDO_LEASE_STALL_S            kill the child if its CPU+IO counters are BOTH frozen this long
+                                (default 900; 0 disables). Heartbeats prove the WRAPPER lives,
+                                not that work progresses — a child hung in e.g. an mmap deadlock
+                                would otherwise hold the lease (and keep the resident LLM
+                                evicted) forever. Linux-only (/proc); no-op elsewhere.
 
 Behavior: POST /jobs → poll GET /status until admitted (fail on rejected/timeout) → run
 `sys.executable argv[1:]` → heartbeat while it runs (re-acquiring if the controller lost the
@@ -93,10 +98,29 @@ def _complete(job_id: str) -> None:
 
 def _heartbeat_loop(job_id: str, vram_gb: float, kind: str, child: subprocess.Popen) -> None:
     interval = float(os.environ.get("ORDO_LEASE_HEARTBEAT_S", "60"))
+    stall_s = float(os.environ.get("ORDO_LEASE_STALL_S", "900"))
+    last_activity = _child_activity(child.pid)
+    last_change = time.monotonic()
     while child.poll() is None:
         time.sleep(interval)
         if child.poll() is not None:
             return
+        if stall_s > 0:
+            activity = _child_activity(child.pid)
+            if activity is not None:
+                if activity != last_activity:
+                    last_activity, last_change = activity, time.monotonic()
+                elif time.monotonic() - last_change > stall_s:
+                    # Zombie lease: the wrapper is alive (heartbeating) but the child's CPU and
+                    # IO are both frozen — kill it so the lease releases and the resident LLM
+                    # comes back, instead of renewing a dead man's lease forever.
+                    _log(f"STALL: child pid {child.pid} frozen (no CPU/IO) for {stall_s:.0f}s — terminating")
+                    child.terminate()
+                    time.sleep(30)
+                    if child.poll() is None:
+                        _log("stall kill escalating to SIGKILL")
+                        child.kill()
+                    return
         try:
             _req("POST", "/jobs/heartbeat", {"id": job_id})
         except urllib.error.HTTPError as e:
@@ -112,6 +136,22 @@ def _heartbeat_loop(job_id: str, vram_gb: float, kind: str, child: subprocess.Po
                 _log(f"heartbeat failed: HTTP {e.code}")
         except (urllib.error.URLError, OSError) as e:
             _log(f"heartbeat failed: {e}")
+
+
+def _child_activity(pid: int) -> tuple[int, int] | None:
+    """(cpu_jiffies, io_bytes) for the child, or None where /proc is unavailable."""
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            parts = f.read().rsplit(")", 1)[1].split()
+        cpu = int(parts[11]) + int(parts[12])  # utime + stime (fields 14/15, after comm)
+        io = 0
+        with open(f"/proc/{pid}/io") as f:
+            for line in f:
+                if line.startswith(("read_bytes", "write_bytes")):
+                    io += int(line.split()[1])
+        return cpu, io
+    except (OSError, IndexError, ValueError):
+        return None
 
 
 def main() -> int:
