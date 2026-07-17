@@ -2780,7 +2780,7 @@
           <div class="orch-job-row">
             <span class="badge ${kindBadge(j.kind)}">${escapeHtml(String(j.kind || "?"))}</span>
             <span class="orch-job-id" title="${escapeHtml(String(j.id))}">${escapeHtml(String(j.id))}</span>
-            <span class="orch-job-time">lease renews ${Math.round(j.lease_ttl_s || 0)}s</span>
+            <span class="orch-job-time">held ${fmtDur(j.held_s || 0)} · lease renews ${Math.round(j.lease_ttl_s || 0)}s</span>
           </div>`).join("");
         const queued = (g.queued || []).map(j => `
           <div class="orch-job-row">

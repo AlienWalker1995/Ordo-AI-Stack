@@ -228,3 +228,17 @@ def test_heartbeat_lease_restores_resident_after_sweep():
     s.tick(901)                                # client died right after its beat
     assert s.sweep_expired_leases() == ["train"]
     assert "llamacpp" in s.take_restorable()
+
+
+def test_status_reports_lease_held_time():
+    s = Scheduler(total_vram_gb=32)
+    s.submit(Job("train", 30, "training"))
+    s.pump()
+    s.tick(1234)
+    s.heartbeat("train")                       # renewal must not reset held time
+    st = s.status()["running"][0]
+    assert st["held_s"] == 1234.0
+    s.complete("train")
+    s.submit(Job("next", 4, "chat"))
+    s.pump()
+    assert s.status()["running"][0]["held_s"] == 0.0   # fresh lease starts at zero
