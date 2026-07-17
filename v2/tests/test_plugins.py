@@ -132,6 +132,9 @@ def test_ai_toolkit_manifest_invariants():
     assert "ostris/aitoolkit@sha256:" in svc["image"]      # floating :latest upstream → digest pin
     # the lease seam: the wrapper must be mounted at the UI's venv-python spawn path, read-only
     assert any(v.endswith(":/app/ai-toolkit/venv/bin/python:ro") for v in svc["volumes"])
+    # HF cache must be a NAMED volume — an NTFS/9p bind mmap-hangs diffusers sharded loads.
+    hub = next(v for v in svc["volumes"] if "/root/.cache/huggingface/hub" in v)
+    assert not hub.startswith(("$", ".", "/")), "hub cache must be a named volume, not a bind"
     assert svc["env"]["ORDO_LEASE_KIND"] == "training"
     assert svc.get("shm_size"), "trainer needs a real shm_size — torch pins tensors via /dev/shm"
     # Secret-backed keys must come from secrets.env (env_file) ONLY. An `environment:` entry like

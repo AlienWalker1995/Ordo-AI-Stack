@@ -53,8 +53,12 @@ services:
       - ${DATA_PATH:-./data}/ai-toolkit/output:/app/ai-toolkit/output
       - ${DATA_PATH:-./data}/ai-toolkit/config:/app/ai-toolkit/config
       - ${DATA_PATH:-./data}/ai-toolkit/db/aitk_db.db:/app/ai-toolkit/aitk_db.db
-      # Base-model downloads (HF hub cache) — shared, large, survives recreates.
-      - ${BASE_PATH:-.}/models/hf-cache:/root/.cache/huggingface/hub
+      # HF hub cache in a NAMED VOLUME (ext4 inside the VM), NOT a host bind: diffusers'
+      # sharded from_pretrained mmaps the weights, and mmap over the 9p/NTFS bind mount
+      # hard-hangs (FLUX.2 load sat 9h at 809MB read, zero progress — 2026-07-17). Same
+      # failure family as the pixi-cache-on-9p incident. LTX's single-file streaming load
+      # merely tolerated the bind; the volume is correct for both.
+      - aitk-hf-cache:/root/.cache/huggingface/hub
       # The lease seam (see header comment). RO: the container must not mutate the wrapper.
       - ${BASE_PATH:-.}/v2/assets/lease-exec.py:/app/ai-toolkit/venv/bin/python:ro
     healthcheck:
