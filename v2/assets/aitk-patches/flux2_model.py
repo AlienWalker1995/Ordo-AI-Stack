@@ -101,20 +101,19 @@ class Flux2Model(BaseModel):
                 torch_dtype=dtype,
             )
         )
-        # PATCH(ordo, pinned to image digest c199bf41): quantize BEFORE moving to the GPU.
-        # Upstream does .to(device) first, but the bf16 checkpoint is 48GB — structurally
-        # impossible on a 32GB card. Quantized (qfloat8) it is ~24GB and fits. Device-only
-        # .to() after quanto-quantize (no dtype cast — that would touch quantized tensors).
+        # PATCH(ordo, pinned to image digest c199bf41): two upstream fixes for <48GB cards.
+        # 1. Quantize BEFORE any GPU move — upstream .to(device)'s the 48GB bf16 checkpoint
+        #    first, structurally impossible on a 32GB card; quantized it is ~24GB.
+        # 2. Attach the MemoryManager BEFORE the device move — a raw .to(device) ahead of
+        #    attach puts the full quantized TE on-GPU and the offload machinery never gets
+        #    to matter (that ordering still OOM'd at the VAE step). Post-attach, .to() is
+        #    the memory-managed hook and moves only unmanaged modules; managed layers
+        #    stream on demand. No dtype cast after quanto-quantize.
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing Mistral (on CPU, pre-move)")
             quantize(text_encoder, weights=get_qtype(self.model_config.qtype))
             freeze(text_encoder)
             flush()
-            text_encoder.to(self.device_torch)
-        else:
-            text_encoder.to(self.device_torch, dtype=dtype)
-
-        flush()
 
         if (
             self.model_config.layer_offloading
@@ -125,6 +124,13 @@ class Flux2Model(BaseModel):
                 self.device_torch,
                 offload_percent=self.model_config.layer_offloading_text_encoder_percent,
             )
+
+        if self.model_config.quantize_te:
+            text_encoder.to(self.device_torch)   # managed hook if attached; raw move otherwise
+        else:
+            text_encoder.to(self.device_torch, dtype=dtype)
+
+        flush()
 
         tokenizer = AutoProcessor.from_pretrained(MISTRAL_PATH)
         return text_encoder, tokenizer
