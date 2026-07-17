@@ -68,6 +68,7 @@ class Scheduler:
         self._running: dict[str, Job] = {}
         self._elapsed: dict[str, float] = {}      # running job id -> seconds elapsed
         self._deadline: dict[str, float] = {}     # running job id -> clock time its lease expires
+        self._started: dict[str, float] = {}      # running job id -> clock time it was admitted
         self._clock: float = 0.0                  # monotonic-ish clock advanced by tick()
         self._idle_cached: dict[str, float] = {}  # id -> vram held by an idle/cached model
         self._evicted: dict[str, float] = {}      # resident id -> vram it held (stopped, awaiting restore)
@@ -163,6 +164,7 @@ class Scheduler:
                 self._running[job.id] = job
                 self._elapsed[job.id] = 0.0
                 self._deadline[job.id] = self._clock + self._lease_ttl(job)
+                self._started[job.id] = self._clock
                 admitted.append(job.id)
             else:
                 break  # strict FIFO — head waits for a running job to complete
@@ -210,6 +212,7 @@ class Scheduler:
         self._running.pop(job_id, None)
         self._elapsed.pop(job_id, None)
         self._deadline.pop(job_id, None)
+        self._started.pop(job_id, None)
 
     def heartbeat(self, job_id: str) -> bool:
         """Renew a running job's lease: deadline moves to now + heartbeat_ttl (liveness-based).
@@ -269,7 +272,8 @@ class Scheduler:
             "running": [
                 {"id": j, "kind": self._running[j].kind,
                  "remaining_s": round(self._remaining(j), 1),
-                 "lease_ttl_s": round(self._lease_remaining(j), 1)}
+                 "lease_ttl_s": round(self._lease_remaining(j), 1),
+                 "held_s": round(self._clock - self._started.get(j, self._clock), 1)}
                 for j in self._running
             ],
             "queued": [{"id": j.id, "kind": j.kind, "vram_gb": j.vram_gb} for j in self._queue],
