@@ -61,6 +61,11 @@ services:
       - aitk-hf-cache:/root/.cache/huggingface/hub
       # The lease seam (see header comment). RO: the container must not mutate the wrapper.
       - ${BASE_PATH:-.}/v2/assets/lease-exec.py:/app/ai-toolkit/venv/bin/python:ro
+      # Upstream fix carried as a pinned patch (same seam pattern): ai-toolkit's flux2
+      # load_te() moves the 48GB bf16 Mistral to GPU BEFORE quantizing — impossible on a
+      # 32GB card. Patched copy quantizes on CPU first (~24GB on-device). Coupled to the
+      # pinned image digest; re-diff when bumping the image.
+      - ${BASE_PATH:-.}/v2/assets/aitk-patches/flux2_model.py:/app/ai-toolkit/extensions_built_in/diffusion_models/flux2/flux2_model.py:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8675/"]
       start_period: 120s
