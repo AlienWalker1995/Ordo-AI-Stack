@@ -3,7 +3,7 @@
 Kept in its own module (no fastapi/docker/httpx imports) so the exact argv can be
 unit-tested in the v2 substrate's throwaway container, whose dev deps are only
 pyyaml/pytest/ruff. `main.py` imports `build_recreate_cmd` from here; the command it
-returns is the ONLY thing that shells docker-compose against the ordo-v2 stack.
+returns is the ONLY thing that shells docker-compose against the ordo stack.
 
 Why this shape (the guardrails the 2026-06-26 and pin-drop incidents demand):
   * BOTH env files (`.env` + `secrets.env`) are passed with `--env-file`. Passing any
@@ -11,7 +11,7 @@ Why this shape (the guardrails the 2026-06-26 and pin-drop incidents demand):
     too. Without `secrets.env`, `${LITELLM_MASTER_KEY}`/`${OPS_CONTROLLER_TOKEN}`/… go
     UNSET and secret-dependent services crash-loop (the 2026-06-26 oauth2-proxy 11-byte
     cookie outage shape). Both are mandatory.
-  * `--project-name ordo-v2` + `--project-directory <out>` pin the recreate to the V2
+  * `--project-name ordo` + `--project-directory <out>` pin the recreate to the V2
     project and the EXISTING rendered tree — never another project, never a re-render.
   * `--no-deps` is MANDATORY: recreate ONLY the named service, never cascade-recreate its
     dependencies (which would drop their GPU pins / secrets and touch services the operator

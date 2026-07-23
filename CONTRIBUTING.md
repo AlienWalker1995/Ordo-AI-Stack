@@ -12,7 +12,7 @@ Thanks for contributing to Ordo.
     sh -c "pip install -q pyyaml pytest && python -m pytest -q"
   ```
   (or `pip install -e ./v2` then `cd v2 && python -m pytest -q`). CI runs a path-gated `v2-substrate` job — see `.github/workflows/ci.yml`.
-- **Render + deploy** — edit the declarative source `v2/ordo.yaml`, then `python -m ordo.cli render --out out` and bring up the rendered compose (`docker compose -p ordo-v2 …`). Never hand-edit `v2/out/*` — it's regenerated. See [`v2/README.md`](v2/README.md) and [`v2/CUTOVER.md`](v2/CUTOVER.md).
+- **Render + deploy** — edit the declarative source `v2/ordo.yaml`, then `python -m ordo.cli render --out out` and bring up the rendered compose (`docker compose -p ordo …`). Never hand-edit `v2/out/*` — it's regenerated. See [`v2/README.md`](v2/README.md) and [`v2/CUTOVER.md`](v2/CUTOVER.md).
 - **Service images** build from `v2/docker/<name>/` (each has a README with the exact context).
 
 ## What not to commit

@@ -88,8 +88,8 @@ def test_edge_publishes_the_only_host_port():
 def test_core_and_gateways_are_project_buildable_images():
     # model-gateway + mcp-gateway are now V2 project images (buildable-not-pullable), not upstream
     c = _dual().compose_dict()
-    assert c["services"]["model-gateway"]["image"] == "ordo-v2/model-gateway:latest"
-    assert c["services"]["mcp-gateway"]["image"] == "ordo-v2/mcp-gateway:latest"
+    assert c["services"]["model-gateway"]["image"] == "ordo/model-gateway:latest"
+    assert c["services"]["mcp-gateway"]["image"] == "ordo/mcp-gateway:latest"
 
 
 # --- secrets ---

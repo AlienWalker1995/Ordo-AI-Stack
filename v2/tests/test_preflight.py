@@ -45,7 +45,7 @@ def test_gpu_plugin_without_gpu_is_no_go():
 def test_missing_project_image_blocks():
     rc = render(GPU, CATALOG, REGISTRY)
     needed = preflight.required_images(rc)
-    present = {i for i in needed if not i.startswith("ordo-v2/")}   # only upstream cached
+    present = {i for i in needed if not i.startswith("ordo/")}   # only upstream cached
     go, checks = preflight.run(GPU, CATALOG, REGISTRY, images_present=present)
     img = _byname(checks)["project images built locally"]
     assert not img.ok and img.blocking and not go                  # NO-GO until images are built
@@ -69,7 +69,7 @@ def test_parity_mismatch_is_no_go(tmp_path):
 def test_required_images_include_core_and_ops():
     rc = render(GPU, CATALOG, REGISTRY)
     imgs = preflight.required_images(rc)
-    assert "ordo-v2/ops-controller:latest" in imgs
+    assert "ordo/ops-controller:latest" in imgs
     # the 5090 picks Qwen3.6, which pins the patched build — that image, not the stock one
     assert "ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470" in imgs
 

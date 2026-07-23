@@ -13,7 +13,7 @@ Local-first AI stack: LLMs, chat UI, image/video (ComfyUI), automation (n8n) —
 
 Its defining idea is **config-as-render**: one declarative source (`ordo.yaml`) is rendered into the running config (`.env`, `docker-compose.yml`, agent context, MCP registry). Derived files are regenerated, never hand-edited — so configuration drift is structurally impossible.
 
-> **Operators start here → [`v2/README.md`](v2/README.md)** — the authoritative guide to the render engine, bring-up, and day-2 operations. (The substrate lives under `v2/` and the running compose project is named `ordo-v2` — legacy directory/identifier names from the original build; the stack itself is simply **Ordo**.)
+> **Operators start here → [`v2/README.md`](v2/README.md)** — the authoritative guide to the render engine, bring-up, and day-2 operations. (The stack runs as compose project **`ordo`**; its render substrate lives in the `v2/` directory.)
 
 ## Overview
 

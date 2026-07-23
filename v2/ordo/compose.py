@@ -337,7 +337,7 @@ def _plugin_service(ps: "PluginService", plugin: "Plugin", *, net: str, env_file
 
 
 def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "hermes",
-                   project: str = "ordo-v2", env_file: str = ".env",
+                   project: str = "ordo", env_file: str = ".env",
                    agent_image: str | None = None,
                    agent_command: list[str] | None = None,
                    agent_user: str | None = None,

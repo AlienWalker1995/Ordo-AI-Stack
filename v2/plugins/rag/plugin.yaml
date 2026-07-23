@@ -62,7 +62,7 @@ services:
     # Folder-watch ingester — LOCALLY-BUILT in V1 (./rag-ingestion). V2 pins it as a project
     # buildable image (build context v2/docker/rag-ingestion). Embeds directly against
     # llamacpp-embed (litellm's /v1/embeddings 500s for the local embed model).
-    image: ordo-v2/rag-ingestion:latest
+    image: ordo/rag-ingestion:latest
     env:
       MODEL_GATEWAY_URL: http://llamacpp-embed:8080
       EMBED_MODEL: ${EMBED_MODEL:-${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}}

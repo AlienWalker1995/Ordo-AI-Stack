@@ -12,9 +12,9 @@ requires:
 provides: [tools]
 mcp:
   # Locally-built project image (build context v2/docker/mcpvault-mcp): wraps @bitbonsai/mcpvault
-  # pinned to an exact npm version. Like the other ordo-v2/* MCP images it's pinned by build context
+  # pinned to an exact npm version. Like the other ordo/* MCP images it's pinned by build context
   # (preflight shows 'build first'), not a registry digest.
-  image: ordo-v2/mcpvault-mcp:latest
+  image: ordo/mcpvault-mcp:latest
   # Keep the container warm across calls within a session (avoids respawn per tool call).
   longLived: true
   # 100% local filesystem tool — no egress. Blocks any exfiltration of vault contents from the
