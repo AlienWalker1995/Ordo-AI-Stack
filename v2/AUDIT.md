@@ -1,4 +1,6 @@
-# AUDIT — Phase 5.5 systematic runtime-config parity (V2 rendered ↔ V1 live)
+# AUDIT — Phase 5.5 systematic runtime-config parity (rendered ↔ previous live)
+
+> _Archival record of the one-time build+cutover that produced today's stack. There is no ongoing "V1/V2" split — the stack is simply **Ordo**. Here, "V1" = the previous stack and "V2" = the current substrate under `v2/`._
 
 **Goal:** kill the whole defect class that rolled back flip attempts #1 and #2 — the render engine
 silently omitting a piece of V1's per-service config that only mattered once the container ran.

@@ -1,4 +1,6 @@
-# Cutover runbook — migrating from the live stack to Ordo v2
+# Cutover runbook — migrating from the previous stack to Ordo
+
+> _Archival record of the one-time build+cutover that produced today's stack. There is no ongoing "V1/V2" split — the stack is simply **Ordo**. Here, "V1" = the previous stack and "V2" = the current substrate under `v2/`._
 
 > **STATUS: EXECUTED — 2026-07-09. This cutover is DONE.** Ordo v2 is now the production stack,
 > running entirely from `C:\dev\ordo-ai-stack` on `main` (compose project `ordo-v2`, 24 services).

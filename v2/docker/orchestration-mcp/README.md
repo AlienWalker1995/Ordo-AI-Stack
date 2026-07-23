@@ -11,7 +11,7 @@ There is no public registry to digest-pin against, so it's a **project buildable
 its build context); `ordo preflight` reports a missing one as "build first".
 
 Backing verified in V2: the `ordo-v2/dashboard-v1` image serves `/api/orchestration/*`
-(readiness probe returns `ok`), so this adapter's target exists in the V2 stack.
+(readiness probe returns `ok`), so this adapter's target exists in the stack.
 
 ## Build
 Build from the operator's authoritative source context (kept as the single source of truth — not
