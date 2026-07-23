@@ -1,7 +1,7 @@
 # codebase-memory-mcp (Code knowledge-graph MCP server)
 
 V2's Codebase-Memory MCP image, referenced by the `codebase-memory` plugin as
-`ordo-v2/codebase-memory-mcp:latest`. V1 builds it locally
+`ordo/codebase-memory-mcp:latest`. V1 builds it locally
 (`ordo-ai-stack-codebase-memory-mcp:latest`) from `C:\dev\ordo-ai-stack\codebase-memory-mcp` — a
 self-contained Dockerfile that downloads + sha256-verifies the pinned upstream
 `DeusData/codebase-memory-mcp` portable (statically-linked) release binary and bundles the offline
@@ -14,7 +14,7 @@ reports a missing one as "build first".
 Build from the operator's authoritative source context (kept as the single source of truth — not
 duplicated here to avoid drift), tagging the V2 image:
 ```
-docker build -t ordo-v2/codebase-memory-mcp:latest C:/dev/ordo-ai-stack/codebase-memory-mcp
+docker build -t ordo/codebase-memory-mcp:latest C:/dev/ordo-ai-stack/codebase-memory-mcp
 ```
 
 This image is gateway-spawned (stdio) and kept warm (`longLived: true`) so its in-memory graph

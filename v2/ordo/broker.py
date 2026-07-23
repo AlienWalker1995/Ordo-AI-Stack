@@ -48,8 +48,8 @@ class DockerBackend:
     A name passed here is a compose SERVICE name (e.g. `llamacpp`), NOT a raw container name.
     The actual container is resolved by compose LABELS
     (`com.docker.compose.project=<project>` + `com.docker.compose.service=<name>`), which is robust
-    to the `-1` replica suffix compose appends (the live defect: `docker stop ordo-v2-llamacpp`
-    failed because the container is `ordo-v2-llamacpp-1`). Resolving by label — the same mechanism
+    to the `-1` replica suffix compose appends (the live defect: `docker stop ordo-llamacpp`
+    failed because the container is `ordo-llamacpp-1`). Resolving by label — the same mechanism
     ops-api uses — is exact and, because the project label is pinned, structurally unable to touch a
     container outside this project.
 
@@ -58,7 +58,7 @@ class DockerBackend:
     it only reserves/releases VRAM. Residents (llama.cpp) always resolve, so evict/restore act on the
     real container. The `_guard` still refuses any name that would escape the project prefix.
     """
-    def __init__(self, project: str = "ordo-v2"):
+    def __init__(self, project: str = "ordo"):
         self.project = project
 
     def _guard(self, service: str) -> str:

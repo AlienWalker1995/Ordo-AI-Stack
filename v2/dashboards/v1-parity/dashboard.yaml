@@ -12,7 +12,7 @@ description: >
   `ops-controller` (its live clients depend on that name) with zero collision.
 default: false
 # The V1 dashboard image, tagged under the project namespace (built from V1's context verbatim).
-image: ordo-v2/dashboard-v1:latest
+image: ordo/dashboard-v1:latest
 # Read-only GPU visibility for the dashboard SERVICE ITSELF. Its `/api/hardware` route (the hw-stat
 # bar's GPU widgets) shells to nvidia-smi (_probe_gpu) + enumerates cards (gpu_stats.list_gpus),
 # which the NVIDIA runtime only injects when the service reserves a GPU with the `utility` cap.
@@ -74,10 +74,10 @@ volumes:
 # docker-compose against the stack. The reactive GUARDIAN needs no patch — it is opt-in via
 # COMFYUI_SERIALIZE_LLAMACPP (default "0"), left unset here, so the guardian thread never starts and
 # /guardian/status returns a benign {"enabled": false, "state": "disabled"}. SDK start/stop/restart
-# stay scoped to COMPOSE_PROJECT=ordo-v2 (compose-project label), so they only ever touch V2.
+# stay scoped to COMPOSE_PROJECT=ordo (compose-project label), so they only ever touch V2.
 backend:
   name: ops-api
-  image: ordo-v2/ops-api:latest
+  image: ordo/ops-api:latest
   group_add_root: true            # Docker Desktop socket is root:root (mirrors V1 group_add: ["0"])
   # Read-only GPU visibility: this backend IS a copy of V1's ops-controller and enumerates GPUs by
   # shelling to nvidia-smi, which the NVIDIA runtime only injects when the service reserves a GPU
@@ -96,9 +96,9 @@ backend:
     timeout: 5s
     retries: 3
   environment:
-    # Scope EVERY container/service action to the ordo-v2 project (compose-project label). This is
+    # Scope EVERY container/service action to the ordo project (compose-project label). This is
     # the guard that keeps SDK start/stop/restart from ever touching the stopped V1 stack.
-    COMPOSE_PROJECT: ordo-v2
+    COMPOSE_PROJECT: ordo
     # The rendered out/ tree is bind-mounted RW at /workspace below (compose file + .env +
     # secrets.env together). COMPOSE_PROJECT_DIR/OPS_ENV_PATH point INTO it so the model-config
     # / default-model buttons' .env upsert (/env/set) and the per-service recreate replay share
@@ -119,7 +119,7 @@ backend:
     # rendered compose so replaying it cannot drop the pin). See main.py "SAFE per-service recreate".
     OPS_SERVICE_RECREATE_ENABLED: "1"
     COMFYUI_URL: http://comfyui:8188
-    COMFYUI_CONTAINER_NAME: ordo-v2-comfyui-1
+    COMFYUI_CONTAINER_NAME: ordo-comfyui-1
     COMFYUI_MODELS_DIR: /models/comfyui
     # Model registry + audit log live in the V2 data tree (staged, not the V1 tree).
     MODEL_REGISTRY_PATH: /data/model-registry.json
@@ -130,7 +130,7 @@ backend:
     BASE_PATH: ${BASE_PATH:-.}
     DATA_PATH: ${DATA_PATH:-./data}
   volumes:
-    - /var/run/docker.sock:/var/run/docker.sock       # SDK start/stop (guard-scoped to ordo-v2-*)
+    - /var/run/docker.sock:/var/run/docker.sock       # SDK start/stop (guard-scoped to ordo-*)
     # The rendered out/ dir (docker-compose.yml + .env + secrets.env). RW so /env/set + /model-config
     # upserts persist to the SAME .env the per-service recreate replays. `./` resolves to the compose
     # project-directory (out/) at runtime — mirrors ops-controller's `./:/config` mount.

@@ -36,8 +36,8 @@ def test_plugin_service_shm_size_passthrough_and_omit():
     # data-driven: a service that declares shm_size emits it; one that doesn't omits the key
     # entirely (so no service regresses to an explicit-but-empty shm_size).
     p = Plugin.from_dict({"id": "x", "kind": "service", "compose_profile": "x", "services": []})
-    kw = dict(net="ordo-v2-net", env_file=".env", has_gpu=False,
-              primary_uuid=None, secondary_uuid=None, project="ordo-v2")
+    kw = dict(net="ordo-net", env_file=".env", has_gpu=False,
+              primary_uuid=None, secondary_uuid=None, project="ordo")
     with_shm = _plugin_service(
         PluginService.from_dict({"name": "s1", "image": "img", "shm_size": "1gb"}), p, **kw)
     assert with_shm["shm_size"] == "1gb"
@@ -54,7 +54,7 @@ def test_memory_vault_manifest_loaded():
 def test_memory_vault_mcp_render_passes_through_catalog_fields():
     rc = render(_src(["memory-vault"]), CATALOG, REGISTRY)
     mv = next(s for s in rc.mcp_servers if s["id"] == "memory-vault")
-    assert mv["image"] == "ordo-v2/mcpvault-mcp:latest"
+    assert mv["image"] == "ordo/mcpvault-mcp:latest"
     # keep-warm + offline lockdown for a pure-fs tool
     assert mv["longLived"] is True
     assert mv["disableNetwork"] is True
@@ -76,7 +76,7 @@ def test_memory_vault_registry_custom_yaml_has_rw_vault(tmp_path):
     reg = yaml.safe_load((tmp_path / "mcp" / "registry-custom.yaml").read_text())
     mv = reg["registry"]["memory-vault"]
     assert mv["type"] == "server"
-    assert mv["image"] == "ordo-v2/mcpvault-mcp:latest"
+    assert mv["image"] == "ordo/mcpvault-mcp:latest"
     assert mv["volumes"] == ["PLACEHOLDER_MEMORY_VAULT_PATH:/vault"]
     assert mv["longLived"] is True
     assert mv["disableNetwork"] is True
@@ -108,7 +108,7 @@ def test_render_mcp_passthrough_unit():
             "id": "vault-x",
             "kind": "mcp",
             "mcp": {
-                "image": "ordo-v2/vault-x:latest",
+                "image": "ordo/vault-x:latest",
                 "longLived": True,
                 "disableNetwork": True,
                 "volumes": ["PLACEHOLDER_MEMORY_VAULT_PATH:/vault"],
@@ -120,5 +120,5 @@ def test_render_mcp_passthrough_unit():
     s = servers[0]
     assert s["volumes"] == ["PLACEHOLDER_MEMORY_VAULT_PATH:/vault"]
     assert s["longLived"] is True and s["disableNetwork"] is True
-    # ordo-v2/* project image → no pinning warning
+    # ordo/* project image → no pinning warning
     assert not notes

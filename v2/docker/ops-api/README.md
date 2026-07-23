@@ -1,13 +1,13 @@
 # ops-api (V1-parity dashboard backend)
 
-V2's dashboard backend service (`ordo-v2/ops-api:latest`, compose service `ops-api`). It is the
-feature-rich FastAPI control API the **reinstated V1-parity dashboard** (`ordo-v2/dashboard-v1`,
+V2's dashboard backend service (`ordo/ops-api:latest`, compose service `ops-api`). It is the
+feature-rich FastAPI control API the **reinstated V1-parity dashboard** (`ordo/dashboard-v1`,
 service `dashboard`) talks to: `/model-config` (flag cards), `/registry/*` (model↔GPU registry),
 `/services/*` (per-service recreate), `/gpu/*`, `/mcp/*`, `/audit`, `/models/*` (GGUF mgmt),
 `/guardian/*` (status, benign when disabled). The dashboard reads `OPS_CONTROLLER_URL=http://ops-api:9000`.
 
 Do not confuse this with the `ordo serve` scheduler: that is the separate `ops-controller` service
-(image `ordo-v2/ops-controller:latest`), which stays the sole GPU/stack-lifecycle authority. `ops-api`
+(image `ordo/ops-controller:latest`), which stays the sole GPU/stack-lifecycle authority. `ops-api`
 is only the dashboard's data/action backend.
 
 ## What it is (and why it's safe)
@@ -25,12 +25,12 @@ by config (not code), so the outage class that motivated V2 can't recur:
   rendered `out/` compose in place (both env files, `--no-deps`, all profiles) — no re-render.
 - **GPU visibility** — reserves a GPU with the `utility` capability (`count: all`, no uuid pin) so
   `nvidia-smi` is injected and it enumerates BOTH cards for the registry/GPU widgets.
-- SDK start/stop/restart (and the recreate CLI) are scoped to `COMPOSE_PROJECT=ordo-v2`, so they can
+- SDK start/stop/restart (and the recreate CLI) are scoped to `COMPOSE_PROJECT=ordo`, so they can
   only ever touch V2.
 
 ## Build
 ```
-docker build -t ordo-v2/ops-api:latest docker/ops-api
+docker build -t ordo/ops-api:latest docker/ops-api
 ```
 
 The `Dockerfile` in this directory is the authoritative build (V1 ops-controller code + the minimal,

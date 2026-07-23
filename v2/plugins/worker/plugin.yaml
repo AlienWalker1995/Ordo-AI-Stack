@@ -14,7 +14,7 @@ env:
   WORKER_ENABLED: "1"
 services:
   - name: worker
-    image: ordo-v2/worker:latest
+    image: ordo/worker:latest
     env:
       DASHBOARD_DATA_PATH: /data/dashboard
       COMFYUI_URL: http://comfyui:8188

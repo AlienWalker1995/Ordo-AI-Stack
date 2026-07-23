@@ -14,7 +14,7 @@ mcp:
   # under v2/docker/qdrant-rag-mcp): pinned by its build context like llamacpp-patched, so preflight
   # reports 'build first', not the old placeholder-digest warning. It embeds queries via
   # llamacpp-embed to match rag-ingestion's 768-dim nomic vectors.
-  image: ordo-v2/qdrant-rag-mcp:latest
+  image: ordo/qdrant-rag-mcp:latest
   env:
     QDRANT_URL: http://qdrant:6333
     EMBED_URL: http://llamacpp-embed:8080

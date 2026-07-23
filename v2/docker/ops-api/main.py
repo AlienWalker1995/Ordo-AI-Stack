@@ -76,7 +76,7 @@ COMPOSE_PROJECT = os.environ.get("COMPOSE_PROJECT", "ordo-ai-stack")
 OPS_CONTROLLER_TOKEN = os.environ.get("OPS_CONTROLLER_TOKEN", "")
 
 # ── V2 PATCH (ops-api): compose-mutation kill-switch ────────────────────────────
-# This image is the V1-parity dashboard BACKEND running inside the V2 (`ordo-v2`)
+# This image is the V1-parity dashboard BACKEND running inside the V2 (`ordo`)
 # stack. In V2 the compose lifecycle authority is the `ordo serve` scheduler
 # (service `ops-controller`), NOT this process. The V1 compose-mutation endpoints
 # (/compose/{up,down,restart} and /services/{id}/recreate) shell out to
@@ -90,7 +90,7 @@ OPS_CONTROLLER_TOKEN = os.environ.get("OPS_CONTROLLER_TOKEN", "")
 OPS_COMPOSE_MUTATIONS_ENABLED = os.environ.get(
     "OPS_COMPOSE_MUTATIONS_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
 _COMPOSE_MUTATION_DISABLED_DETAIL = (
-    "compose-mutation endpoints are disabled in the ordo-v2 stack; the `ordo serve` "
+    "compose-mutation endpoints are disabled in the ordo stack; the `ordo serve` "
     "scheduler (service `ops-controller`) is the compose/lifecycle authority here"
 )
 # ── V2 PATCH (ops-api): SAFE per-service recreate gate ──────────────────────────
@@ -109,7 +109,7 @@ _SERVICE_RECREATE_DISABLED_DETAIL = (
     "to allow the dashboard's per-service recreate buttons (whole-stack /compose/* stays off)"
 )
 # ── V2 PATCH (ops-api): guardian mutation kill-switch ───────────────────────────
-# In the ordo-v2 stack the `ordo serve` scheduler (service `ops-controller`) is the SINGLE GPU
+# In the ordo stack the `ordo serve` scheduler (service `ops-controller`) is the SINGLE GPU
 # arbiter with full media-lease semantics (evict the resident LLM for a GPU-heavy job, restore it
 # on completion, self-heal a stranded lease via TTL). This ops-api must NOT also stop/start
 # llama.cpp — two arbiters racing on the same card is exactly the deadlock the reel-cron failure
@@ -118,7 +118,7 @@ _SERVICE_RECREATE_DISABLED_DETAIL = (
 # disabled state) because the dashboard reads it. The scheduler's own broker is the only thing that
 # may cycle llama.cpp now.
 _GUARDIAN_MUTATION_GONE_DETAIL = (
-    "guardian hold/release is removed in the ordo-v2 stack: the `ordo serve` scheduler "
+    "guardian hold/release is removed in the ordo stack: the `ordo serve` scheduler "
     "(service `ops-controller`) is the single GPU arbiter with media-lease semantics. "
     "Acquire GPU capacity with `POST ops-controller:9000/jobs` "
     '{"id": ..., "vram_gb": ..., "kind": "media"} and release it with '
@@ -2357,7 +2357,7 @@ async def guardian_status(_: None = Depends(verify_token)):
 
 @app.post("/guardian/hold")
 async def guardian_hold(body: ConfirmBody, request: Request, _: None = Depends(verify_token)):
-    """REMOVED in ordo-v2 — 410 GONE. The `ordo serve` scheduler is the single GPU arbiter now;
+    """REMOVED in ordo — 410 GONE. The `ordo serve` scheduler is the single GPU arbiter now;
     acquire a media lease via `POST ops-controller:9000/jobs` instead. This route no longer
     stops/starts llama.cpp (two arbiters racing on the card was the reel-cron deadlock)."""
     _audit("guardian_hold", COMFYUI_GUARDIAN_TARGET, "gone", "410 -> ops-controller /jobs",
@@ -2367,7 +2367,7 @@ async def guardian_hold(body: ConfirmBody, request: Request, _: None = Depends(v
 
 @app.post("/guardian/release")
 async def guardian_release(body: ConfirmBody, request: Request, _: None = Depends(verify_token)):
-    """REMOVED in ordo-v2 — 410 GONE. Release a media lease via
+    """REMOVED in ordo — 410 GONE. Release a media lease via
     `POST ops-controller:9000/jobs/complete`; the scheduler restarts llama.cpp automatically when
     the GPU-heavy work drains. This route no longer mutates any container."""
     _audit("guardian_release", COMFYUI_GUARDIAN_TARGET, "gone", "410 -> ops-controller /jobs/complete",
