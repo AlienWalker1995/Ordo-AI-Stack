@@ -1,8 +1,8 @@
 # Repository Guidelines
 
-> ⚠️ **Production is the v2 substrate (cutover 2026-07-09; `main` @ `d115035`, PR #72).** The stack is defined and operated from **[`v2/`](v2/)** — config is rendered from `v2/ordo.yaml` into `v2/out/` (gitignored), GPU work is scheduled by `ordo serve` (no reactive guardian), and agents are manifests under `v2/agents/` (Hermes default). The top-level V1 layout below (`docker-compose.yml`, `./compose`, root `ops-controller/`, root `model-gateway/`, etc.) is **LEGACY** — superseded, pending a separate cleanup PR ([`docs/LEGACY-CLEANUP.md`](docs/LEGACY-CLEANUP.md)). When working on the **production stack, work in `v2/`** and follow `v2/README.md`. The guidance below applies to the legacy V1 tree and any V1 code that still needs maintenance before removal.
+> ⚠️ **The stack is Ordo, defined and operated from [`v2/`](v2/).** Config is rendered from `v2/ordo.yaml` into `v2/out/` (gitignored), GPU work is scheduled by `ordo serve` (no reactive guardian), and agents are manifests under `v2/agents/` (Hermes default). The old top-level layout (`docker-compose.yml`, `./compose`, root `ops-controller/`, root `model-gateway/`, etc.) is the **pre-render stack — superseded and pending removal** ([`docs/LEGACY-CLEANUP.md`](docs/LEGACY-CLEANUP.md)). Work on the stack in `v2/` and follow `v2/README.md`. The guidance further below applies only to that old top-level tree while it still needs maintenance before removal.
 
-## Working on v2 (production)
+## Working on Ordo (the `v2/` substrate)
 - **Source of truth:** `v2/ordo.yaml` (declarative). Never hand-edit rendered outputs in `v2/out/` — they don't survive a re-render; use the source's `overrides:` block.
 - **Run the v2 tests (no host Python needed):**
   ```bash
@@ -10,13 +10,13 @@
     sh -c "pip install -q pyyaml pytest && python -m pytest -q"
   ```
   Or, with host Python: `pip install -e ./v2 && cd v2&& python -m pytest -q` (runtime dep is just PyYAML). CI runs a path-gated `v2-substrate` job (ruff + the mocked-profile suite + a fresh-install render smoke) — see `.github/workflows/ci.yml`.
-- **v2 service images** build from `v2/docker/<name>/` (each has a README with the exact context). The V2 control plane is `ops-api` (built from `v2/docker/ops-api/`), **not** the root `ops-controller/`.
+- **Service images** build from `v2/docker/<name>/` (each has a README with the exact context). The dashboard control plane is `ops-api` (built from `v2/docker/ops-api/`), **not** the old root `ops-controller/`.
 - **Agents** are data manifests at `v2/agents/<id>/agent.yaml`; Hermes is `default: true`. See `v2/agents/README.md`.
 
-## Project Structure & Module Organization (LEGACY V1)
-Legacy V1 Python services live in `dashboard/`, `model-gateway/`, `ops-controller/`, `orchestration-mcp/`, and `comfyui-mcp/`. Docker and environment entry points are at the repo root: `docker-compose.yml`, `compose.ps1`, `compose`. Tests are centralized in `tests/`, with fixtures under `tests/fixtures/`. Operational scripts live in `scripts/`, documentation in `docs/`, generated runtime data in `data/`, and local model assets in `models/`. Treat `overrides/compute.yml` as machine-specific generated output — do not edit it for persistent changes; use a separate override file instead. **Note:** the V2 stack has its own copies of the service build contexts under `v2/docker/` — edits to the production stack belong there, not in these root directories.
+## Project Structure & Module Organization (legacy top-level tree — pending removal)
+Legacy V1 Python services live in `dashboard/`, `model-gateway/`, `ops-controller/`, `orchestration-mcp/`, and `comfyui-mcp/`. Docker and environment entry points are at the repo root: `docker-compose.yml`, `compose.ps1`, `compose`. Tests are centralized in `tests/`, with fixtures under `tests/fixtures/`. Operational scripts live in `scripts/`, documentation in `docs/`, generated runtime data in `data/`, and local model assets in `models/`. Treat `overrides/compute.yml` as machine-specific generated output — do not edit it for persistent changes; use a separate override file instead. **Note:** Ordo has its own copies of the service build contexts under `v2/docker/` — edits to the stack belong there, not in these root directories.
 
-## Build, Test, and Development Commands (LEGACY V1)
+## Build, Test, and Development Commands (legacy top-level tree — pending removal)
 Install Python test dependencies with `pip install -r tests/requirements.txt`.
 
 - `python -m pytest tests/ -v`: run the full (legacy) Python test suite.
@@ -24,8 +24,8 @@ Install Python test dependencies with `pip install -r tests/requirements.txt`.
 - `python -m ruff check dashboard tests model-gateway ops-controller rag-ingestion scripts comfyui-mcp orchestration-mcp worker`: run lint checks used in CI.
 - `make test`, `make lint`, `make smoke-test`: Linux/macOS shortcuts for the core workflows.
 - `.\compose.ps1 up -d` or `./compose up -d`: bring up the **legacy V1** stack with hardware detection.
-- `.\compose.ps1 up -d --build --force-recreate` or `./compose up -d --build --force-recreate`: full V1 bring-up with hardware detection and rebuild.
-- `docker compose build <service> && docker compose up -d <service>`: rebuild and hot-swap a single V1 service.
+- `.\compose.ps1 up -d --build --force-recreate` or `./compose up -d --build --force-recreate`: full legacy bring-up with hardware detection and rebuild.
+- `docker compose build <service> && docker compose up -d <service>`: rebuild and hot-swap a single legacy service.
 
 ## Coding Style & Naming Conventions
 Target Python 3.12+. Ruff is the enforced linter; `pyproject.toml` sets a 120-character line length and enables `E`, `F`, `I`, and `UP` rules. Follow existing module patterns: `snake_case` for files, functions, and variables, `PascalCase` for classes, and `test_*.py` for tests. Keep service-specific logic inside its owning directory instead of adding cross-service utility modules at the repo root. Always use `from __future__ import annotations` at the top of Python files.

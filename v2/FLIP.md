@@ -1,5 +1,7 @@
 # FLIP — the executed cutover for this box (RTX 5090 + GTX 1070)
 
+> _Archival record of the one-time build+cutover that produced today's stack. There is no ongoing "V1/V2" split — the stack is simply **Ordo**. Here, "V1" = the previous stack and "V2" = the current substrate under `v2/`._
+
 > **STATUS: EXECUTED — V2 IS PRODUCTION (2026-07-09).** The flip and the follow-on consolidation are
 > **done**: attempt #3 succeeded (~3.75-min core downtime) after two clean rollbacks that each turned
 > a live defect into a test-guarded fix, then the stack was consolidated to `C:\dev\ordo-ai-stack`

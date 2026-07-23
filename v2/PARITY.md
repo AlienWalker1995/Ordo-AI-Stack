@@ -1,4 +1,6 @@
-# V1 → V2 service parity matrix
+# Service parity matrix (previous stack → Ordo)
+
+> _Archival record of the one-time build+cutover that produced today's stack. There is no ongoing "V1/V2" split — the stack is simply **Ordo**. Here, "V1" = the previous stack and "V2" = the current substrate under `v2/`._
 
 Maps every service defined in the live stack's `docker-compose.yml`
 (`C:\dev\ordo-ai-stack`, 31 service definitions) to its disposition in the V2 substrate. V2 is

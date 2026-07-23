@@ -1,10 +1,10 @@
 # Contributing
 
-Thanks for contributing to Ordo AI Stack.
+Thanks for contributing to Ordo.
 
-> **Production is the v2 substrate (`v2/`).** Since the 2026-07-09 cutover (`main` @ `d115035`, PR #72), the stack is defined/operated from `v2/`; the top-level V1 layout is legacy (see [docs/LEGACY-CLEANUP.md](docs/LEGACY-CLEANUP.md)). Changes to the production stack belong in `v2/`.
+> **The stack is Ordo, defined and operated from [`v2/`](v2/).** Config is rendered from `v2/ordo.yaml`; the old top-level layout is the pre-render stack, superseded and pending removal (see [docs/LEGACY-CLEANUP.md](docs/LEGACY-CLEANUP.md)). Changes to the stack belong in `v2/`.
 
-## Building and testing the v2 stack
+## Building and testing the stack
 
 - **Tests (no host Python needed)** — run in a throwaway container:
   ```bash

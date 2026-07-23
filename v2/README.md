@@ -1,14 +1,16 @@
-# Ordo v2 substrate — the config render engine behind production
+# Ordo — the config render substrate
 
-This directory **is** the Ordo stack now running in production. The 2026-07-09 cutover +
-consolidation are **done**: the stack runs entirely from `C:\dev\ordo-ai-stack`, `main` is the
-production branch, the separate `C:\dev\ordo-v2` worktree is retired, and the compose project is
-`ordo-v2` (24 services). The render engine below is how that stack's config is produced: one
-declarative source (`ordo.yaml`) renders into `./out/`, and services run from that rendered output —
-edits to *derived* config never survive a re-render, so drift is structurally impossible.
+This directory **is** Ordo: the config render engine and the stack it produces, running in
+production. One declarative source (`ordo.yaml`) renders into `./out/`, and services run from that
+rendered output — edits to *derived* config never survive a re-render, so drift is structurally
+impossible.
 
-The historical build-in-isolation record (the substrate was developed on branch `arch/v2-substrate`
-beside the old stack, then flipped) lives in [`FLIP.md`](FLIP.md) and [`CUTOVER.md`](CUTOVER.md).
+The stack runs entirely from `C:\dev\ordo-ai-stack` (`main` is the production branch) as compose
+project `ordo-v2` (24 services). *`ordo-v2`, the `ordo-v2/*` image tags, and this `v2/` directory
+are legacy identifier names carried over from the original build — the stack itself is simply
+**Ordo**; renaming those live identifiers is a separate maintenance-window task, not a config
+change.* The historical record of how the substrate was first built beside the old stack and then
+flipped into place lives in [`FLIP.md`](FLIP.md) and [`CUTOVER.md`](CUTOVER.md).
 
 ## Why this exists (from the architecture interrogation)
 
@@ -40,9 +42,12 @@ direct fix for the #1 pain — now proven in production, not just in test.
 | `ordo/cli.py` | `ordo detect | render | doctor | serve | preflight | …` — the one-script control surface |
 | `tests/` | mocked-profile render (5090 + CPU-only), drift-revert, ctx consistency, plugin gating/deps, scheduler co-run/FIFO/evict, and per-defect-class regression guards from the parity audits (current suite: **172 passed, 2 skipped** — run below) |
 
-## How it was built (development log — all of this is now live in production)
-The substrate was built slice-by-slice on `arch/v2-substrate`, each slice validated before the next.
-This is the build history; the cutover that took it to production is in [`FLIP.md`](FLIP.md).
+## Build history (archival engineering record)
+Ordo's render substrate was built slice-by-slice (originally beside the previous stack, on branch
+`arch/v2-substrate`), each slice validated before the next. **This section is the historical build
+log** — the "V1"/"V2" references below are that history (the previous stack vs this one), not a
+current split: today there is only Ordo. The cutover that took the substrate to production is in
+[`FLIP.md`](FLIP.md).
 
 1. **Config render engine** — declarative source → drift-proof config + hardware right-sizing + checksummed catalog. ✅
 2. **Plugin registry** — data-only manifests, hardware-gated, dependency-resolved. ✅
