@@ -97,14 +97,14 @@ def test_forced_model_too_big_warns_but_allows():
 def test_site_config_flows_to_env_but_never_shadows_derived():
     # host/site keys land in .env verbatim so ${DATA_PATH}/${BASE_PATH} resolve deterministically…
     src = _src(hardware=PROFILE_5090, site={
-        "DATA_PATH": "C:/dev/ordo-v2/data",
+        "DATA_PATH": "C:/dev/ordo/data",
         "BASE_PATH": "C:/dev/ordo-ai-stack",
         "CODE_ROOT": "C:/dev",
         # …but a site key can NEVER shadow a derived one (drift gate): derived ctx wins.
         "LLAMACPP_CTX_SIZE": "1",
     })
     rc = render(src, CATALOG)
-    assert rc.env["DATA_PATH"] == "C:/dev/ordo-v2/data"
+    assert rc.env["DATA_PATH"] == "C:/dev/ordo/data"
     assert rc.env["BASE_PATH"] == "C:/dev/ordo-ai-stack"
     assert rc.env["CODE_ROOT"] == "C:/dev"
     assert rc.env["LLAMACPP_CTX_SIZE"] == str(rc.ctx_size) != "1"

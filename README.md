@@ -1,187 +1,59 @@
 ```
-  ___          _       
- / _ \ _ __ __| | ___  
-| | | | '__/ _` |/ _ \ 
+  ___          _
+ / _ \ _ __ __| | ___
+| | | | '__/ _` |/ _ \
 | |_| | | | (_| | (_) |
  \___/|_|  \__,_|\___/
 
 ──────────────────────────────────────────────────
-Docker Compose stack for local LLMs, chat UI, image/video (ComfyUI), and automation (n8n) — with a unified dashboard.
+Local-first AI stack: LLMs, chat UI, image/video (ComfyUI), automation (n8n) — one declarative source, one dashboard.
 ```
 
-> ## ⚠️ Production now runs from `v2/` — read this first
->
-> **As of the 2026-07-09 cutover (`main` @ `d115035`, PR #72), the production stack is the Ordo v2 substrate under [`v2/`](v2/). `main` IS production.**
->
-> **The authoritative operator doc is [`v2/README.md`](v2/README.md).** Bring-up, cutover, and day-2 operations live there and in [`v2/CUTOVER.md`](v2/CUTOVER.md) / [`v2/FLIP.md`](v2/FLIP.md).
->
-> **What changed architecturally:**
-> - **Config is rendered, not hand-edited.** One declarative source (`v2/ordo.yaml`) → the render engine regenerates `.env`, compose, Hermes context, etc. into `v2/out/` (gitignored). Drift is structurally impossible. Root `.env` + `overrides/` are **no longer the source of truth.**
-> - **GPU arbitration is the `ordo serve` scheduler** (FIFO admission + co-run-when-it-fits + LRU idle-evict), **not** the old reactive guardian. The guardian caused the eviction-deadlock outage that triggered the rebuild and is **gone by design.**
-> - **Patched llama.cpp on the primary GPU (5090); voice pinned to the secondary GPU (1070).**
-> - **Dashboard = V1-parity control plane reinstated on the v2 stack** (backend service `ops-api`).
-> - **Agents are data manifests** under [`v2/agents/`](v2/agents/); **Hermes is the default agent** (runs as the `agent` service). See [`v2/agents/README.md`](v2/agents/README.md).
-> - **Secrets** live in a gitignored `v2/out/secrets.env` (rendered from `secrets.env.example`), separate from derived config.
-> - **Full V1→V2 service map:** [`v2/PARITY.md`](v2/PARITY.md).
->
-> **Everything below (root `docker-compose.yml`, `./compose` / `.\compose.ps1`, `make up`, root `.env` + `overrides/`, the guardian) describes the LEGACY V1 stack.** It is **superseded and largely dead**, retained pending a separate deliberate cleanup PR — see [`docs/LEGACY-CLEANUP.md`](docs/LEGACY-CLEANUP.md). **Do not follow the V1 instructions below as if they were current.** For a V1-vs-V2 disposition of every path, start there.
+**Ordo** is a local-first, single-operator AI stack. It runs llama.cpp-backed models behind an **OpenAI-compatible** LiteLLM gateway, **Open WebUI** for chat, **ComfyUI** for image/video diffusion, **n8n** for automation, and an **MCP gateway** for shared tools — all fronted by a unified **dashboard** and reached through a single **Caddy + oauth2-proxy + Tailscale + Google SSO** front door.
 
----
+Its defining idea is **config-as-render**: one declarative source (`ordo.yaml`) is rendered into the running config (`.env`, `docker-compose.yml`, agent context, MCP registry). Derived files are regenerated, never hand-edited — so configuration drift is structurally impossible.
 
-<sub>The remainder of this README documents the **LEGACY V1** stack, preserved for historical reference and for the rollback asset. Current operators: use [`v2/README.md`](v2/README.md).</sub>
-
-<!--
-  Badges (optional): add when repo URL and CI are stable, e.g.:
-  [![CI](...)](...)  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
--->
+> **Operators start here → [`v2/README.md`](v2/README.md)** — the authoritative guide to the render engine, bring-up, and day-2 operations. (The stack runs as compose project **`ordo`**; its render substrate lives in the `v2/` directory.)
 
 ## Overview
 
-**Ordo AI Stack** packages a **local-first, operator-deployed** stack: llama.cpp-backed models behind an **OpenAI-compatible** LiteLLM model gateway, **Open WebUI** for chat, **ComfyUI** for diffusion workflows, **n8n** for workflows, and an **MCP gateway** for shared tools. A **dashboard** provides a single place to inspect dependencies, pull models, and control the stack.
+**Deployment model:** a single homelab operator running on their own hardware. Every user-facing UI sits behind the front door — no UI service publishes a host port directly. The operator brings their own Tailscale tailnet and Google OAuth client; the stack stitches them together so every UI is reachable at `https://${CADDY_TAILNET_HOSTNAME}/<service>/` after one Google sign-in, gated by an email allowlist. See [docs/runbooks/auth.md](docs/runbooks/auth.md).
 
-**Deployment model:** Single homelab operator. All user-facing UIs sit behind a **Caddy + oauth2-proxy + Tailscale + Google SSO** front door — no UI service publishes a host port directly. The operator brings their own Tailscale tailnet and Google OAuth client; the stack stitches them together so every UI is reachable at `https://${CADDY_TAILNET_HOSTNAME}/<service>/` after a single Google sign-in, with an email allowlist gating access. See [docs/runbooks/auth.md](docs/runbooks/auth.md) for the one-time setup.
+**Who it is for:** a homelab operator running local AI models on their own machine, exposed over their tailnet to a small allowlist of personal Google accounts, with strong operator-deployment discipline.
 
-**Who it is for:** A homelab operator running the stack on their own hardware, exposed over their tailnet to a small allowlist of personal Google accounts. Local AI models, strong operator-deployment principles.
+## How it works
 
-**Docs:** [Getting started](docs/GETTING_STARTED.md) · [Auth front door](docs/runbooks/auth.md) · [Secrets](docs/runbooks/secrets.md) · [Configuration](docs/configuration.md) · [Data](docs/data.md) · [Hermes Agent](docs/hermes-agent.md) · [PRD index](docs/product%20requirements%20docs/index.md)
+Ordo is driven by a render engine, not by hand-edited compose files:
+
+- **One source of truth** — `v2/ordo.yaml` declares hardware, model, plugins, and overrides.
+- **`ordo render`** turns that source (+ detected hardware + model catalog + plugin manifests) into the complete runtime config under `v2/out/` (gitignored): `.env`, `docker-compose.yml`, agent context, `mcp-registry.yaml`, `manifest.json`, `secrets.env.example`.
+- **Services run from the rendered output.** To change anything, edit the source and re-render — edits to derived files never survive, so the LLM context size, model choice, and agent context can never fall out of sync (the drift class that motivated the design).
+- **GPU arbitration is a scheduler** (`ordo serve`, the `ops-controller` service): FIFO admission, co-run-when-it-fits, LRU idle-evict — a deterministic decision engine, not a reactive watchdog.
+- **Plugins and agents are data manifests.** A service, MCP server, or agent is a declarative manifest the renderer composes in when its hardware needs are met; **Hermes is the default agent**. See [`v2/agents/README.md`](v2/agents/README.md).
+
+Full engine reference, the plugin/agent registries, and the render-discipline runbook are in [`v2/README.md`](v2/README.md).
 
 ## Features
 
-All UI ports below are **internal** (container-network). Operators reach them via the Caddy front door under `https://${CADDY_TAILNET_HOSTNAME}/<path>/`; the only host-published ports are Caddy `:443` (tailnet-bound), and `127.0.0.1`-bound publishes of `model-gateway:11435`, `mcp-gateway:8811`, and `qdrant:6333` for host-side tools (Cursor, Cline, scripts).
+All UI ports are **internal** (container-network); operators reach them via the front door under `https://${CADDY_TAILNET_HOSTNAME}/<path>/`. The only host-published ports are Caddy `:443` (tailnet-bound) and `127.0.0.1`-bound publishes of `model-gateway`, `mcp-gateway`, and `qdrant` for host-side tools.
 
-- **Unified dashboard** (internal **8080**, front-door `/dash/`) — model lists, service links, dependency health, model pulls.
-- **Model gateway** (host `127.0.0.1:11435`, also internal) — LiteLLM OpenAI-compatible API in front of llama.cpp backends.
-- **Open WebUI** (internal **8080**, front-door `/`) — chat UI at the root of the tailnet hostname.
-- **ComfyUI** (internal **8188**, front-door `/comfy/`) — workflows; large optional model downloads on demand.
-- **n8n** (internal **5678**, front-door `/n8n/`) — automation.
-- **MCP gateway** (host `127.0.0.1:8811`, also internal) — shared MCP tools for host clients and in-stack services.
-- **Ops controller** (internal **9000**; no host port) — compose lifecycle from the dashboard with `OPS_CONTROLLER_TOKEN`.
-- **Hermes dashboard** (internal **9119**, front-door `/hermes/`) — assistant-agent UI.
-- **GPU profiles** — `scripts/detect_hardware.py` generates `overrides/compute.yml` (gitignored) for NVIDIA / AMD / Intel / CPU paths.
+- **Unified dashboard** (`/dash/`) — model lists, service links, dependency health, GPU/registry views, model pulls.
+- **Model gateway** — LiteLLM OpenAI-compatible API in front of llama.cpp backends.
+- **Open WebUI** (`/`) — chat UI at the root of the tailnet hostname.
+- **ComfyUI** (`/comfy/`) — image/video (LTX-2) workflows; large model downloads on demand.
+- **n8n** (`/n8n/`) — automation.
+- **MCP gateway** — shared MCP tools for host clients and in-stack services.
+- **Ops controller** — the render/scheduler control plane (no host port; token-auth).
+- **Hermes** (`/hermes/`) — the default assistant agent (chat via the model gateway, tools via the MCP gateway, GPU via the scheduler).
+- **Voice / RAG / monitoring** — optional plugins (STT+TTS, Qdrant retrieval, Grafana+Prometheus+GPU exporter) that enable when the hardware supports them.
 
-## Quickstart
+## Security
 
-**Prerequisites:**
+- **Front door:** Caddy + oauth2-proxy + Google SSO gates every browser-reachable UI at the network edge. Email allowlist in `auth/oauth2-proxy/emails.txt` (never commit a real email). See [docs/runbooks/auth.md](docs/runbooks/auth.md).
+- **No host ports on services:** only the edge Caddy publishes a port (tailnet-bound `:443`).
+- **Secret management:** SOPS + age. Only encrypted `secrets/*.sops` blobs and config are committed; plaintext is decrypted **on the host only**, outside every container's reach, and never enters the repo or a log. Derived `.env` and operator secrets stay in separate files (`secrets.env`, `required: false`). Never synthesize placeholder secret values to clear an error — decrypt on the host. Full notes: [SECURITY.md](SECURITY.md) · [docs/runbooks/secrets.md](docs/runbooks/secrets.md).
 
-- [Docker](https://docs.docker.com/get-docker/) with Compose, and enough disk for models.
-- [Tailscale](https://tailscale.com/) installed on the host machine, with a Tailscale-issued TLS cert for the chosen tailnet hostname (`tailscale cert ordo.<tailnet>.ts.net`).
-- A Google Cloud OAuth 2.0 Web client for the SSO front door (Client ID + secret).
-- [SOPS](https://github.com/getsops/sops) + [age](https://github.com/FiloSottile/age) for secrets at rest.
-- For **tests / lint**, Python **3.12+** (see `pyproject.toml`).
-
-1. Clone this repository and open a shell at the repo root.
-
-2. **Environment:** If `.env` is missing, init scripts can create it from `.env.example`. Otherwise copy manually:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-   Set at least **`BASE_PATH`**, **`CADDY_BIND`** (your tailnet IPv4 from `tailscale ip -4`), and **`CADDY_TAILNET_HOSTNAME`** (e.g. `ordo.<tailnet>.ts.net`). See comments in [`.env.example`](.env.example).
-
-3. **Auth front door (one-time):** Follow [docs/runbooks/auth.md](docs/runbooks/auth.md) to configure the Tailscale cert, Google OAuth client, cookie secret, and email allowlist.
-
-4. **Secrets (one-time):** Follow [docs/runbooks/secrets.md](docs/runbooks/secrets.md) — generate an age keypair, register your public key in `secrets/.sops.yaml`, and run `make decrypt-secrets` to materialize runtime tokens at `~/.ai-toolkit/runtime/secrets/`.
-
-5. **Full bring-up** — the `compose` wrapper runs hardware detection, then builds and starts the stack:
-
-   **Windows (PowerShell):**
-
-   ```powershell
-   .\compose.ps1 up -d --build --force-recreate
-   ```
-
-   **Linux / macOS:**
-
-   ```bash
-   ./compose up -d --build --force-recreate
-   ```
-
-6. From any device on your tailnet, browse to `https://${CADDY_TAILNET_HOSTNAME}/` — Google sign-in gates the front door, then Open WebUI loads at `/`, the dashboard at `/dash/`, n8n at `/n8n/`, ComfyUI at `/comfy/`, and the Hermes UI at `/hermes/`.
-
-**Lighter bring-up** (no forced rebuild/recreate; still runs hardware detection):
-
-```powershell
-.\compose.ps1 up -d
-```
-
-```bash
-./compose up -d
-```
-
-**CPU-only / minimal services:** bring up a subset after init, e.g. `./compose up -d llamacpp dashboard open-webui`.
-
-## Installation
-
-- **Runtime:** Everything runs in containers; install **Docker** and use the repo from a fixed path (set `BASE_PATH` accordingly).
-- **Development:** Python **3.12+**. Install test dependencies:
-
-  ```bash
-  pip install -r tests/requirements.txt
-  ```
-
-  On Linux/macOS you can use **`make test`**, **`make lint`**, and **`make smoke-test`** (see [Makefile](Makefile)).
-
-## Configuration
-
-Primary reference: **[`.env.example`](.env.example)** (copy to `.env`).
-
-| Area | Variables (examples) |
-|------|----------------------|
-| Paths | `BASE_PATH`, `DATA_PATH` |
-| Models | `MODELS`, `DEFAULT_MODEL` |
-| Security / APIs | `DASHBOARD_AUTH_TOKEN`, `OPS_CONTROLLER_TOKEN`, `WEBUI_AUTH`, `HF_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN` |
-| MCP | `MCP_GATEWAY_SERVERS` |
-| Compute | `COMPUTE_MODE`, `COMPOSE_FILE` (see comments for `overrides/*.yml`) |
-| RAG profile | `EMBED_MODEL`, `QDRANT_PORT`, `RAG_COLLECTION`, … |
-
-Auto-generated: **`overrides/compute.yml`** (from hardware detection). Do not commit secrets; `.env` is gitignored.
-
-## Usage
-
-- **Daily restart / full rebuild:** same as Quickstart step 3.
-- **On-demand one-off containers:**
-
-  ```bash
-  ./compose run --rm model-puller
-  ./compose run --rm comfyui-model-puller
-  ```
-
-- **RAG:** `docker compose --profile rag up -d` and ingest paths per [Getting started — RAG](docs/GETTING_STARTED.md#rag-documents-in-chat).
-- **MCP clients:** connect to `http://localhost:8811/mcp` (see [mcp/README.md](mcp/README.md)).
-
-### Dashboard
-
-Reach the dashboard at `https://${CADDY_TAILNET_HOSTNAME}/dash/` (Google SSO front door; allowlist via `auth/oauth2-proxy/emails.txt`). It lists models (GGUF/llama.cpp and ComfyUI), links to other services, dependency health, and Hugging Face model pulls. **`OPS_CONTROLLER_TOKEN`** lets it restart services and run **`POST /api/comfyui/install-node-requirements`**. **`DASHBOARD_AUTH_TOKEN`** is an optional bearer layer for non-browser API access; the browser path is gated by SSO at the proxy level.
-
-After code changes affecting the dashboard image: `.\compose.ps1 build dashboard` then `.\compose.ps1 up -d` (or `./compose` equivalents).
-
-### LLM models (GGUF / llama.cpp)
-
-The stack pulls GGUF files (served by llama.cpp) directly from Hugging Face. Repo lists and defaults come from **`.env`** (`GGUF_MODELS`, `DEFAULT_MODEL`). Pull via the dashboard's **Models** panel (enter a Hugging Face repo id, a `huggingface.co/…`/`.gguf` URL, or `.env` to pull all `GGUF_MODELS`), or from the CLI:
-
-```bash
-./compose run --rm gguf-puller
-```
-
-### ComfyUI (LTX-2)
-
-Large optional downloads on demand; first run can take a long time. Pull via the dashboard or `./compose run --rm comfyui-model-puller`.
-
-### Security
-
-- **Front door:** Caddy + oauth2-proxy + Google SSO gates all browser-reachable UIs at the network edge. Email allowlist in `auth/oauth2-proxy/emails.txt` (replace `YOUR_ALLOWLIST_EMAIL` locally — never commit your real email). See [docs/runbooks/auth.md](docs/runbooks/auth.md).
-- **Open WebUI:** runs with native auth disabled by default because Google SSO already gates it at the proxy; flip `WEBUI_AUTH=True` if you want a second auth layer for multi-user workspaces.
-- **Dashboard:** `DASHBOARD_AUTH_TOKEN` provides a bearer-token fallback for non-browser API access (e.g. host scripts). Browser traffic is SSO-gated.
-- **Ops controller:** requires `OPS_CONTROLLER_TOKEN` for dashboard-driven lifecycle and installs; no host port at all.
-- **Secret management:** SOPS + age. Only encrypted `secrets/*.sops` blobs and architecture/config are committed; **plaintext is decrypted on the host only**, into `~/.ai-toolkit/runtime/` (outside every container's reach), and never enters the repo or a chat/log. Env-form secrets load via two `--env-file`s (`.env` defaults + `runtime/.env`, last-wins); high-value tokens mount as Docker secrets at `/run/secrets/<name>`. The ops-controller mounts `runtime/.env` read-only so it can recreate secret-dependent services with real values. See [docs/runbooks/secrets.md](docs/runbooks/secrets.md).
-- Never commit `.env` or any plaintext secret, and never synthesize placeholder secret values to clear an error — decrypt on the host instead. Full notes: [SECURITY.md](SECURITY.md).
-
-### GPU / compute
-
-Hardware detection writes **`overrides/compute.yml`**. The `compose` wrapper runs detection before commands. **No GPU:** use a minimal service set (`./compose up -d llamacpp dashboard open-webui`); ComfyUI will be slower.
-
-### Architecture
+## Architecture
 
 ```
 Tailnet device → Caddy :443 (TLS) → oauth2-proxy (Google SSO + email allowlist)
@@ -190,80 +62,32 @@ Tailnet device → Caddy :443 (TLS) → oauth2-proxy (Google SSO + email allowli
                                           ├── /dash/     → Dashboard
                                           ├── /n8n/      → n8n
                                           ├── /comfy/    → ComfyUI
-                                          └── /hermes/   → Hermes dashboard
+                                          └── /hermes/   → Hermes (default agent)
                                                   │
                                                   ├── Model Gateway → LiteLLM → llama.cpp
                                                   ├── MCP Gateway → shared tools (SearXNG, n8n, ComfyUI, …)
-                                                  └── Ops Controller → Docker Compose lifecycle (token-auth, no host port)
+                                                  └── Ops Controller → render + GPU scheduler (token-auth, no host port)
 ```
 
-Local-first AI; operator-deployed front door. Dashboard does not mount `docker.sock`. Details: [PRD index](docs/product%20requirements%20docs/index.md).
+Local-first AI; operator-deployed front door. The dashboard does not mount `docker.sock`; the scheduler's process broker is hard-scoped to the stack's own containers. Details: [PRD index](docs/product%20requirements%20docs/index.md).
 
-### Data
+## Development & testing
 
-Bind mounts only. Set **`BASE_PATH`** (and optionally **`DATA_PATH`**). See [docs/data.md](docs/data.md).
-
-### MCP (Model Context Protocol)
-
-[MCP Gateway](mcp/) — configure servers with `MCP_GATEWAY_SERVERS` in `.env`. Endpoint: `http://localhost:8811/mcp`. See [mcp/README.md](mcp/README.md).
-
-### Hermes Agent
-
-Hermes Agent runs as two compose services (`hermes-gateway` + `hermes-dashboard`) with persistent state under `data/hermes/`. Setup and upgrade notes: [docs/hermes-agent.md](docs/hermes-agent.md).
-
-## Development
-
-- Python layout: `dashboard/`, `model-gateway/`, `ops-controller/`, `rag-ingestion/`, `scripts/`; Ruff config in [`pyproject.toml`](pyproject.toml).
-- **Do not commit:** `.env`, `data/`, `models/`, `overrides/compute.yml`, `mcp/.env` — see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Testing
+- **Runtime:** everything runs in containers; install Docker and set `BASE_PATH` to the repo path.
+- **Substrate:** the render engine is a real `ordo` command (`pip install ./v2`; runtime dep = just PyYAML). Python **3.12+** for tests/lint.
 
 ```bash
-pip install -r tests/requirements.txt
-python -m pytest tests/ -v
-python -m ruff check dashboard tests model-gateway ops-controller rag-ingestion scripts comfyui-mcp orchestration-mcp worker
+# render-engine tests (no host Python needed)
+docker run --rm -v "$PWD/v2:/w" -w /w python:3.11-slim \
+  sh -c "pip install -q -r requirements-dev.txt && python -m pytest -q"
 ```
 
-**Health / diagnostics:**
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): TruffleHog secret scan, pytest + ruff, and a real `docker compose config` gate on the rendered stack.
 
-```powershell
-.\scripts\doctor.ps1
-```
+## Docs
 
-```bash
-./scripts/doctor.sh
-```
-
-Optional: `DOCTOR_DEPS_TIMEOUT_SEC`; `DASHBOARD_AUTH_TOKEN` from `.env` when probing the dashboard.
-
-**Smoke (Docker required):**
-
-```powershell
-.\scripts\smoke_test.ps1
-```
-
-```bash
-./scripts/smoke_test.sh
-# or: make smoke-test
-```
-
-**CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): TruffleHog secret scan; **pytest** + **ruff**; **`docker compose config`**; optional **compose smoke** via workflow dispatch.
-
-## Troubleshooting
-
-1. **Services won’t start or images are stale** — Rebuild affected images and recreate, e.g. `docker compose build dashboard model-gateway` (or the `compose` wrapper), then `up -d`. Doctor **WARN** on missing `/api/dependencies` or `/ready` often indicates an old image.
-2. **Doctor warns on MCP (8811)** — Expected if that port is not published; use `overrides/mcp-expose.yml` or set `DOCTOR_STRICT=1` only when you intend strict probes (see doctor script comments in repo).
-3. **No GPU** — Use a minimal service set or CPU-oriented overrides; ComfyUI will be slower.
-4. **Exposing to a network** — Enable **Open WebUI** auth (`WEBUI_AUTH=True`), set `DASHBOARD_AUTH_TOKEN`, and harden **n8n** — see [SECURITY.md](SECURITY.md).
-
-## Roadmap
-
-Rolling changes: [CHANGELOG.md](CHANGELOG.md).
-
-## Contributing
-
-See **[CONTRIBUTING.md](CONTRIBUTING.md)**. Report security issues per **[SECURITY.md](SECURITY.md)** (do not use public issues for vulnerabilities).
+[Operator guide (`v2/README.md`)](v2/README.md) · [Auth front door](docs/runbooks/auth.md) · [Secrets](docs/runbooks/secrets.md) · [Data](docs/data.md) · [Hermes agent](v2/agents/README.md) · [PRD index](docs/product%20requirements%20docs/index.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
 
 ## License
 
-[MIT License](LICENSE) — Copyright (c) 2026 Ordo AI Stack contributors.
+[MIT License](LICENSE) — Copyright (c) 2026 Ordo contributors.

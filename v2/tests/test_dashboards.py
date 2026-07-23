@@ -37,14 +37,14 @@ def test_v2_native_is_the_default():
 
 def test_v2_native_image_convention():
     d = DASHBOARDS.get("v2-native")
-    assert d.image == "" and d.image_for("ordo-v2") == "ordo-v2/dashboard:latest"
+    assert d.image == "" and d.image_for("ordo") == "ordo/dashboard:latest"
 
 
 def test_v1_parity_pins_the_v1_image_and_backend():
     d = DASHBOARDS.get("v1-parity")
-    assert d.image_for("ordo-v2") == "ordo-v2/dashboard-v1:latest"
+    assert d.image_for("ordo") == "ordo/dashboard-v1:latest"
     assert d.backend and d.backend.name == "ops-api"
-    assert d.backend.image_for("ordo-v2") == "ordo-v2/ops-api:latest"
+    assert d.backend.image_for("ordo") == "ordo/ops-api:latest"
 
 
 def test_unknown_dashboard_falls_back_to_default_with_warning():
@@ -57,7 +57,7 @@ def test_unknown_dashboard_falls_back_to_default_with_warning():
 def test_default_render_uses_v2_native_spa(tmp_path):
     c = _compose("v2-native", tmp_path)
     dash = c["services"]["dashboard"]
-    assert dash["image"] == "ordo-v2/dashboard:latest"
+    assert dash["image"] == "ordo/dashboard:latest"
     assert "ops-api" not in c["services"]  # no separate backend for the default
     # keeps the /api/health healthcheck so the agent's `dashboard: service_healthy` gate holds
     assert "healthcheck" in dash
@@ -72,7 +72,7 @@ def test_v2_native_dashboard_still_gates_on_scheduler(tmp_path):
 # ── v1-parity render: reinstates the V1 dashboard + ops-api backend ─────────────
 def test_v1_parity_swaps_the_dashboard_image(tmp_path):
     c = _compose("v1-parity", tmp_path)
-    assert c["services"]["dashboard"]["image"] == "ordo-v2/dashboard-v1:latest"
+    assert c["services"]["dashboard"]["image"] == "ordo/dashboard-v1:latest"
 
 
 def test_v1_parity_dashboard_points_at_ops_api_not_scheduler(tmp_path):
@@ -89,7 +89,7 @@ def test_v1_parity_renders_ops_api_backend_service(tmp_path):
     c = _compose("v1-parity", tmp_path)
     assert "ops-api" in c["services"]
     ops = c["services"]["ops-api"]
-    assert ops["image"] == "ordo-v2/ops-api:latest"
+    assert ops["image"] == "ordo/ops-api:latest"
     # socket for SDK start/stop (guard-scoped) + the registry/audit data mount
     assert any(v.startswith("/var/run/docker.sock") for v in ops["volumes"])
     assert ops["group_add"] == ["0"]  # Docker Desktop root:root socket access
@@ -100,7 +100,7 @@ def test_v2_scheduler_service_is_untouched_by_dashboard_choice(tmp_path):
     # regardless of the dashboard selection — it is the GPU authority.
     c = _compose("v1-parity", tmp_path)
     ctrl = c["services"]["ops-controller"]
-    assert ctrl["image"] == "ordo-v2/ops-controller:latest"
+    assert ctrl["image"] == "ordo/ops-controller:latest"
     assert "serve" in ctrl["command"]
 
 
@@ -113,8 +113,8 @@ def test_ops_api_guardian_and_mutations_disabled(tmp_path):
     assert env["OPS_VRAM_PRESSURE_GB"] == "0"
     assert env["OPS_HERMES_WATCHDOG_ENABLED"] == "0"
     assert env["OPS_COMPOSE_MUTATIONS_ENABLED"] == "0"  # whole-stack /compose/* STAYS off
-    # SDK container actions must be scoped to the ordo-v2 project (never another project)
-    assert env["COMPOSE_PROJECT"] == "ordo-v2"
+    # SDK container actions must be scoped to the ordo project (never another project)
+    assert env["COMPOSE_PROJECT"] == "ordo"
 
 
 def test_ops_api_enables_safe_per_service_recreate(tmp_path):

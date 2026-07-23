@@ -17,7 +17,7 @@ secrets:
 services:
   - name: hermes-dashboard
     # Same image as the Hermes agent (V1 builds one hermes image, runs it as gateway + dashboard).
-    image: ordo-v2/agent-hermes:latest
+    image: ordo/agent-hermes:latest
     wants_secrets: true
     command: ["hermes", "dashboard", "--port", "9119", "--host", "0.0.0.0", "--no-open", "--insecure"]
     env:

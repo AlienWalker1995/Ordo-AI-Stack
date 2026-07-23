@@ -116,7 +116,7 @@ def test_comfyui_server_id_decoupled_from_plugin_id():
 def test_codebase_memory_wiring():
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     cb = next(s for s in rc.mcp_servers if s["id"] == "codebase-memory")
-    assert cb["image"] == "ordo-v2/codebase-memory-mcp:latest"
+    assert cb["image"] == "ordo/codebase-memory-mcp:latest"
     assert cb["longLived"] is True and cb["disableNetwork"] is True
     # read-only host code-root bind (placeholder wrapper-substituted) + named cache volume
     assert "PLACEHOLDER_CODE_ROOT:/c/dev:ro" in cb["volumes"]
@@ -160,9 +160,9 @@ def test_server_id_collision_is_flagged():
     from ordo.plugins import Plugin
     from ordo.render import _render_mcp
     a = Plugin.from_dict({"id": "a", "kind": "mcp",
-                          "mcp": {"image": "ordo-v2/x:latest", "server_id": "shared"}})
+                          "mcp": {"image": "ordo/x:latest", "server_id": "shared"}})
     b = Plugin.from_dict({"id": "b", "kind": "mcp",
-                          "mcp": {"image": "ordo-v2/y:latest", "server_id": "shared"}})
+                          "mcp": {"image": "ordo/y:latest", "server_id": "shared"}})
     _servers, notes = _render_mcp([a, b])
     assert any("collides" in n for n in notes)
 

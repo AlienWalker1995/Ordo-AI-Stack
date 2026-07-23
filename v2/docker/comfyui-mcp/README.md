@@ -1,6 +1,6 @@
 # comfyui-mcp (ComfyUI MCP server)
 
-V2's ComfyUI MCP image, referenced by the `comfyui` plugin as `ordo-v2/comfyui-mcp:latest`.
+V2's ComfyUI MCP image, referenced by the `comfyui` plugin as `ordo/comfyui-mcp:latest`.
 V1 builds it locally (`ordo-ai-stack-comfyui-mcp:latest`) from `C:\dev\ordo-ai-stack\comfyui-mcp`
 — the upstream `joenorton/comfyui-mcp-server` (pinned to commit `e0101b2312f3`) plus the stack's
 overrides (stdio-clean `print()` redirect, flat `run_workflow` args + default workflow, custom-node
@@ -13,7 +13,7 @@ build context); `ordo preflight` reports a missing one as "build first".
 Build from the operator's authoritative source context (kept as the single source of truth — not
 duplicated here to avoid drift), tagging the V2 image:
 ```
-docker build -t ordo-v2/comfyui-mcp:latest C:/dev/ordo-ai-stack/comfyui-mcp
+docker build -t ordo/comfyui-mcp:latest C:/dev/ordo-ai-stack/comfyui-mcp
 ```
 
 This image is gateway-spawned (stdio), so it appears in the rendered `mcp-registry.yaml`, not as a

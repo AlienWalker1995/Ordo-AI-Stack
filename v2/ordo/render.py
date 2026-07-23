@@ -119,7 +119,7 @@ class RenderedConfig:
             },
         }
 
-    def compose_dict(self, project: str = "ordo-v2") -> dict[str, Any]:
+    def compose_dict(self, project: str = "ordo") -> dict[str, Any]:
         """The isolated, runnable compose for the v2 stack — built from the resolved plugin
         services (data-driven), with the primary- AND secondary-GPU uuids resolved for the pins."""
         pri = self.hardware.primary_gpu
@@ -253,7 +253,7 @@ def render(source: Source, catalog: Catalog,
     # + the naming convention, so a typo surfaces at render/preflight not at compose-up.
     agent, agent_notes = agents.resolve(source.agent)
     warnings = warnings + agent_notes
-    agent_image = agent.image_for("ordo-v2") if agent else ""
+    agent_image = agent.image_for("ordo") if agent else ""
     agent_command = list(agent.command) if agent else []
     hermes = {
         "context_length": ctx, "agent": source.agent, "agent_image": agent_image,
@@ -278,7 +278,7 @@ def render(source: Source, catalog: Catalog,
     if dash:
         dashboard = {
             "id": dash.id,
-            "image": dash.image_for("ordo-v2"),
+            "image": dash.image_for("ordo"),
             "environment": dict(dash.environment),
             "volumes": list(dash.volumes),
             "depends_on": dict(dash.depends_on),
@@ -291,7 +291,7 @@ def render(source: Source, catalog: Catalog,
             b = dash.backend
             dashboard["backend"] = {
                 "name": b.name,
-                "image": b.image_for("ordo-v2"),
+                "image": b.image_for("ordo"),
                 "environment": dict(b.environment),
                 "volumes": list(b.volumes),
                 "depends_on": dict(b.depends_on),
@@ -337,8 +337,8 @@ def render(source: Source, catalog: Catalog,
     )
 
 
-def _is_project_image(image: str, project: str = "ordo-v2") -> bool:
-    """A locally-BUILT project MCP image (e.g. ordo-v2/qdrant-rag-mcp:latest). It has no public
+def _is_project_image(image: str, project: str = "ordo") -> bool:
+    """A locally-BUILT project MCP image (e.g. ordo/qdrant-rag-mcp:latest). It has no public
     registry to digest-pin against — it's pinned by its build context (like llamacpp-patched), so
     it's reproducible without an @sha256. Preflight surfaces it as 'build first', not a leak risk."""
     return image.startswith(f"{project}/")
@@ -387,10 +387,10 @@ def _render_registry_custom(mcp_servers: list[dict[str, Any]]) -> str:
     return header + yaml.safe_dump({"registry": registry}, sort_keys=False)
 
 
-def _render_mcp(mcps: list, project: str = "ordo-v2") -> tuple[list[dict[str, Any]], list[str]]:
+def _render_mcp(mcps: list, project: str = "ordo") -> tuple[list[dict[str, Any]], list[str]]:
     """Build the mcp-gateway registry from kind=mcp plugins. Public images MUST be digest-pinned
     (no Docker online-catalog roulette — the leak/drift source V1 suffered). Locally-built
-    project images (ordo-v2/*) are exempt: they're pinned by build context, not registry digest."""
+    project images (ordo/*) are exempt: they're pinned by build context, not registry digest."""
     servers: list[dict[str, Any]] = []
     notes: list[str] = []
     seen_ids: dict[str, str] = {}

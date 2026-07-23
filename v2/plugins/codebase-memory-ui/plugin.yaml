@@ -13,7 +13,7 @@ env:
   CODEBASE_MEMORY_UI_ENABLED: "1"
 services:
   - name: codebase-memory-ui
-    image: ordo-v2/codebase-memory-ui:latest
+    image: ordo/codebase-memory-ui:latest
     volumes:
       # Persistent per-container config/cache. NAMED volume — pinned name matches the raw name the
       # mcp-gateway uses when it spawns the MCP (-v codebase-memory-cache:/cache).

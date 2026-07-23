@@ -22,8 +22,8 @@ mcp:
   # V1 builds this locally (ordo-ai-stack-comfyui-mcp:latest). V2 mirrors it as a project buildable
   # image (build context doc under v2/docker/comfyui-mcp): pinned by its build context (upstream commit
   # e0101b2312f3 + stack overrides), so preflight reports 'build first' rather than a digest warning.
-  image: ordo-v2/comfyui-mcp:latest
-  # Needs network access to reach comfyui:8188 + ops-controller:9000 on ordo-v2-net — NOT offline.
+  image: ordo/comfyui-mcp:latest
+  # Needs network access to reach comfyui:8188 + ops-controller:9000 on ordo-net — NOT offline.
   disableNetwork: false
   env:
     COMFYUI_URL: http://comfyui:8188

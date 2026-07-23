@@ -1,4 +1,6 @@
-# V1 → V2 Dashboard & Cron Parity — Final Acceptance Validation
+# Dashboard & Cron Parity — Final Acceptance Validation (previous stack → Ordo)
+
+> _Archival record of the one-time build+cutover that produced today's stack. There is no ongoing "V1/V2" split — the stack is simply **Ordo**. Here, "V1" = the previous stack and "V2" = the current substrate under `v2/`._
 
 **Date:** 2026-07-09
 **Stack:** project `ordo-v2` (runtime `v2/out`), worktree `arch/v2-substrate` @ `40c6aff`

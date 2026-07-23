@@ -1,7 +1,7 @@
 """Unit tests for the ops-api SAFE per-service recreate command builder.
 
 `compose_recreate.build_recreate_cmd` is the ONLY thing that shells docker-compose against
-the ordo-v2 stack for a dashboard-button recreate. These tests pin its exact argv so a
+the ordo stack for a dashboard-button recreate. These tests pin its exact argv so a
 regression (missing secrets.env, a stray dep, a whole-stack up) is caught offline — the
 guardrails the 2026-06-26 secret-less-recreate and the llamacpp pin-drop incidents demand.
 
@@ -29,7 +29,7 @@ CR = _load()
 
 def _cmd(service="llamacpp", profiles=None):
     return CR.build_recreate_cmd(
-        service, project="ordo-v2", project_dir="/workspace",
+        service, project="ordo", project_dir="/workspace",
         compose_files=["docker-compose.yml"], profiles=profiles,
     )
 
@@ -37,8 +37,8 @@ def _cmd(service="llamacpp", profiles=None):
 def test_recreate_cmd_targets_the_ordo_v2_project():
     cmd = _cmd()
     assert cmd[0] == "docker-compose"
-    # project pinned to ordo-v2 — never another project
-    assert cmd[cmd.index("--project-name") + 1] == "ordo-v2"
+    # project pinned to ordo — never another project
+    assert cmd[cmd.index("--project-name") + 1] == "ordo"
     # project-directory is the mounted rendered out/ tree (where .env/secrets.env live)
     assert cmd[cmd.index("--project-directory") + 1] == "/workspace"
 
@@ -101,7 +101,7 @@ def test_discover_profiles_empty_compose_is_empty_list():
 
 def test_recreate_cmd_rejects_empty_service():
     with pytest.raises(ValueError):
-        CR.build_recreate_cmd("", project="ordo-v2", project_dir="/workspace",
+        CR.build_recreate_cmd("", project="ordo", project_dir="/workspace",
                               compose_files=["docker-compose.yml"])
 
 

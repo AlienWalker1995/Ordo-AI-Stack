@@ -23,12 +23,12 @@ def test_hermes_is_the_default():
 def test_image_convention_when_unpinned():
     hermes = AGENTS.get("hermes")
     assert hermes.image == ""                                   # unpinned -> operator builds it
-    assert hermes.image_for("ordo-v2") == "ordo-v2/agent-hermes:latest"
+    assert hermes.image_for("ordo") == "ordo/agent-hermes:latest"
 
 
 def test_pinned_image_is_honored():
     a = AGENTS.get("openai-agent")
-    assert a.image_for("ordo-v2") == "ghcr.io/ordo-ai/agent-openai-compat:latest"
+    assert a.image_for("ordo") == "ghcr.io/ordo-ai/agent-openai-compat:latest"
 
 
 def test_unknown_agent_is_flagged_not_crashed():
@@ -50,7 +50,7 @@ def _src(agent):
 def test_render_default_agent_uses_convention_image(tmp_path):
     render(_src("hermes"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
-    assert c["services"]["agent"]["image"] == "ordo-v2/agent-hermes:latest"
+    assert c["services"]["agent"]["image"] == "ordo/agent-hermes:latest"
 
 
 def test_hermes_manifest_declares_gateway_command():
@@ -87,7 +87,7 @@ def test_render_unknown_agent_warns_and_falls_back(tmp_path):
     assert any("typo-agent" in w and "registry" in w for w in rc.warnings)
     rc.write(tmp_path)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
-    assert c["services"]["agent"]["image"] == "ordo-v2/agent-typo-agent:latest"  # convention fallback
+    assert c["services"]["agent"]["image"] == "ordo/agent-typo-agent:latest"  # convention fallback
 
 
 # ── Defect class: agent runtime wiring (V2 agent had NO volumes/secrets/env/healthcheck → the brain,

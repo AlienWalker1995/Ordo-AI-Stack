@@ -5,14 +5,14 @@ V2's `model-gateway` core service. This is the small config-wrapper build V1 run
 canonical **`local-chat`** alias, the `local-embed` alias, the throughput callback, and the
 entrypoint that templates `__CTX_SIZE__` / `__MASTER_KEY__` at startup.
 
-V2 references it as a **project buildable image** (`ordo-v2/model-gateway:latest`) — pinned by
+V2 references it as a **project buildable image** (`ordo/model-gateway:latest`) — pinned by
 its build context, not pulled from a registry — so `ordo preflight` reports a missing one as
 "build first", never "Docker will pull". This is why V2 does NOT reference the unconfigured
 upstream `ghcr.io/berriai/litellm:main` directly: that image has no `local-chat` alias.
 
 ## Build
 ```
-docker build -t ordo-v2/model-gateway:latest v2/docker/model-gateway
+docker build -t ordo/model-gateway:latest v2/docker/model-gateway
 ```
 
 ## Files

@@ -21,13 +21,13 @@ def test_core_services_present():
 
 
 def test_isolated_no_port_clashes():
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo-v2")
-    assert c["name"] == "ordo-v2"
-    assert "ordo-v2-net" in c["networks"]
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
+    assert c["name"] == "ordo"
+    assert "ordo-net" in c["networks"]
     for name, svc in c["services"].items():
         assert "ports" not in svc, f"{name} publishes a host port (would clash)"
         assert "container_name" not in svc, f"{name} pins a name (would clash)"
-        assert svc["networks"] == ["ordo-v2-net"]
+        assert svc["networks"] == ["ordo-net"]
 
 
 def test_gpu_reservation_gated_by_hardware():
@@ -68,11 +68,11 @@ def test_monitoring_named_volumes_declared():
 
 
 def test_ops_controller_has_scoped_socket():
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo-v2")
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
     ops = c["services"]["ops-controller"]
     assert "/var/run/docker.sock:/var/run/docker.sock" in ops["volumes"]  # drives the broker
     # but it's launched scoped to the project — the guard can't reach ordo-ai-stack-*
-    assert "--project" in ops["command"] and "ordo-v2" in ops["command"]
+    assert "--project" in ops["command"] and "ordo" in ops["command"]
 
 
 def test_ops_controller_has_utility_gpu_visibility():
@@ -81,7 +81,7 @@ def test_ops_controller_has_utility_gpu_visibility():
     # only injects when the service reserves a GPU with the `utility` capability. Without it the
     # scheduler sees CPU-only (total_vram=0) and drops every GPU plugin. V1's ops-controller has
     # caps=[[utility]]; guard that V2 renders the same read-only visibility.
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo-v2")
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
     ops = c["services"]["ops-controller"]
     devs = ops["deploy"]["resources"]["reservations"]["devices"]
     assert any(d.get("capabilities") == ["utility"] for d in devs), \
@@ -100,7 +100,7 @@ def test_plain_gpu_service_reserves_gpu_capability():
 def test_dashboard_backend_renders_utility_gpu_reservation():
     # A dashboard backend that declares `gpu_capabilities: [utility]` must render an all-GPU
     # (count: all) reservation with the utility cap — the fix for "No GPUs returned from registry".
-    backend = {"name": "ops-api", "image": "ordo-v2/ops-api:latest",
+    backend = {"name": "ops-api", "image": "ordo/ops-api:latest",
                "gpu_capabilities": ["utility"]}
     c = compose.render_compose(has_gpu=True, compose_profiles=[],
                                dashboard={"backend": backend})
@@ -227,7 +227,7 @@ def test_agent_depends_on_health_conditions():
 # ── Defect class: mcp-gateway runtime wiring (spawns MCP servers as containers → needs docker.sock;
 #    reads the rendered catalog from a mounted config dir; empty catalog = agent has no tools). ──
 def test_mcp_gateway_has_socket_config_and_healthcheck():
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo-v2")
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
     mg = c["services"]["mcp-gateway"]
     assert "/var/run/docker.sock:/var/run/docker.sock" in mg["volumes"]
     assert "./mcp:/mcp-config" in mg["volumes"]
@@ -239,7 +239,7 @@ def test_mcp_gateway_has_socket_config_and_healthcheck():
 #    defaults from the gateway env (the wrapper substitutes PLACEHOLDER_* from the process env).
 #    codebase-memory's read-only /c/dev bind is REJECTED unless CODE_ROOT is on the allowlist. ──
 def test_mcp_gateway_env_wires_restored_server_placeholders():
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo-v2")
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
     env = c["services"]["mcp-gateway"]["environment"]
     # codebase-memory: read-only /c/dev bind is only accepted if CODE_ROOT is on the allowlist.
     assert env["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"] == "${CODE_ROOT:-/c/dev}"
@@ -254,7 +254,7 @@ def test_mcp_gateway_does_not_shadow_env_file_secrets():
     # OPS_CONTROLLER_TOKEN / DASHBOARD_AUTH_TOKEN / N8N_API_KEY arrive via the secrets.env env_file.
     # They must NOT be re-declared in `environment:` — a `${VAR:-}` there interpolates from .env/host
     # (empty) and shadows the env_file value to empty, breaking the spawned MCP servers' auth.
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo-v2")
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
     env = c["services"]["mcp-gateway"]["environment"]
     for k in ("OPS_CONTROLLER_TOKEN", "DASHBOARD_AUTH_TOKEN", "N8N_API_KEY"):
         assert k not in env, f"{k} must come from secrets.env env_file, not the environment block"
@@ -277,7 +277,7 @@ def test_ops_controller_serve_out_matches_deployed_layout():
     # (compose project dir = v2/out). serve's --out must therefore be /config itself: writing to
     # /config/out re-renders into a nested dir NOTHING consumes — a model switch would silently
     # never reach the live .env/compose (found live 2026-07-15).
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo-v2")
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
     cmd = c["services"]["ops-controller"]["command"]
     assert cmd[cmd.index("--out") + 1] == "/config"
     assert "./:/config" in c["services"]["ops-controller"]["volumes"]
