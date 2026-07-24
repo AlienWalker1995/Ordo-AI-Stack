@@ -1,6 +1,6 @@
 # codebase-memory-ui
 
-> ℹ️ **Live under v2.** This is a running production service. In the v2 stack it's the `codebase-memory-ui` **service plugin** (`ordo-v2/codebase-memory-ui:latest`, profile `codebase-memory`), built from [`v2/docker/codebase-memory-ui/`](../v2/docker/codebase-memory-ui/) — which references this directory as its build context. Enablement is via `v2/ordo.yaml` (plugin gating) rather than the V1 `docker compose --profile …` command shown below, but the behavior, nginx subpath rewrite, and SSO exposure are current. See [`v2/PARITY.md`](../v2/PARITY.md).
+> ℹ️ **Live in the Ordo stack.** This is a running production service. In the Ordo stack it's the `codebase-memory-ui` **service plugin** (`ordo-v2/codebase-memory-ui:latest`, profile `codebase-memory`), built from [`docker/codebase-memory-ui/`](../docker/codebase-memory-ui/) — which references this directory as its build context. Enablement is via `ordo.yaml` (plugin gating) rather than the V1 `docker compose --profile …` command shown below, but the behavior, nginx subpath rewrite, and SSO exposure are current. See [`docs/history/PARITY.md`](../docs/history/PARITY.md).
 
 Optional long-lived service that serves the **3D interactive code knowledge-graph**
 from the same index the headless `codebase-memory` MCP builds — so you can *browse*

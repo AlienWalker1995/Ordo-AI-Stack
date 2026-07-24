@@ -7,10 +7,10 @@ host dir native Obsidian browses when opened at that path).
 ## Build
 
 ```sh
-docker build -t ordo/mcpvault-mcp:latest v2/docker/mcpvault-mcp
+docker build -t ordo/mcpvault-mcp:latest docker/mcpvault-mcp
 ```
 
-Registered by the `memory-vault` kind=mcp plugin (`v2/plugins/memory-vault/plugin.yaml`); `ordo render`
+Registered by the `memory-vault` kind=mcp plugin (`plugins/memory-vault/plugin.yaml`); `ordo render`
 emits it into `out/mcp/servers.txt` + `out/mcp/registry-custom.yaml`.
 
 ## Pins

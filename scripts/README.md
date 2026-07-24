@@ -1,6 +1,6 @@
 # Scripts
 
-> ⚠️ **LEGACY (V1) — retired.** These scripts drove the V1 bring-up model: `ensure_dirs` + `detect_hardware.py` (→ `overrides/compute.yml`), the `./compose` / `.\compose.ps1` wrapper, and the model pullers. That V1 top-level tree (root `docker-compose.yml`, `compose`/`compose.ps1`, the root `Makefile`, `overrides/`, `scripts/detect_hardware.py`, the root `.env.example`) was **removed 2026-07-24** after the 2026-07-09 v2 cutover soak — it is no longer present in this repo, so several rows below are orphaned. In production **v2**, the stack is defined and operated entirely from `v2/` (edit `v2/ordo.yaml`, run `ordo render`, bring up the rendered compose from `v2/out/`); directory/config generation is the render engine, hardware detection is `ordo detect` (`hardware: auto`), model provisioning is **`ordo fetch`** (checksum-mandatory, offline-capable — replaces `pull_gguf_models.py` / the pullers), and GPU scheduling is `ordo serve` (not a reactive guardian). See [`../v2/README.md`](../v2/README.md) (+ [`../v2/CUTOVER.md`](../v2/CUTOVER.md)) and [`../docs/LEGACY-CLEANUP.md`](../docs/LEGACY-CLEANUP.md).
+> ⚠️ **LEGACY (V1) — retired.** These scripts drove the V1 bring-up model: `ensure_dirs` + `detect_hardware.py` (→ `overrides/compute.yml`), the `./compose` / `.\compose.ps1` wrapper, and the model pullers. That V1 top-level tree (root `docker-compose.yml`, `compose`/`compose.ps1`, the root `Makefile`, `overrides/`, `scripts/detect_hardware.py`, the root `.env.example`) was **removed 2026-07-24** after the 2026-07-09 v2 cutover soak — it is no longer present in this repo, so several rows below are orphaned. In production, the stack is defined and operated entirely from the repo root (edit `ordo.yaml`, run `ordo render`, bring up the rendered compose from `out/`); directory/config generation is the render engine, hardware detection is `ordo detect` (`hardware: auto`), model provisioning is **`ordo fetch`** (checksum-mandatory, offline-capable — replaces `pull_gguf_models.py` / the pullers), and GPU scheduling is `ordo serve` (not a reactive guardian). See [`../docs/operator-guide.md`](../docs/operator-guide.md) (+ [`../docs/history/CUTOVER.md`](../docs/history/CUTOVER.md)) and [`../docs/LEGACY-CLEANUP.md`](../docs/LEGACY-CLEANUP.md).
 
 Setup, operations, and maintenance scripts for the Ordo AI Stack.
 
@@ -8,7 +8,7 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 
 | Script | Purpose |
 |--------|---------|
-| `ensure_dirs.sh` / `.ps1` | Creates all data directories (`data/`, `models/`) for bind mounts, bootstraps configs. Written for the V1 bring-up model; its hardware-detection step called `detect_hardware.py`, which was removed along with the rest of the V1 tree. In v2, hardware detection and config generation happen at `ordo render` time (`hardware: auto` / `ordo detect`), rendered into `v2/out/`. |
+| `ensure_dirs.sh` / `.ps1` | Creates all data directories (`data/`, `models/`) for bind mounts, bootstraps configs. Written for the V1 bring-up model; its hardware-detection step called `detect_hardware.py`, which was removed along with the rest of the V1 tree. Hardware detection and config generation now happen at `ordo render` time (`hardware: auto` / `ordo detect`), rendered into `out/`. |
 
 ## Health and Diagnostics
 
