@@ -32,7 +32,9 @@ DEFAULT_DASHBOARDS_DIR = Path(__file__).resolve().parent.parent / "dashboards"
 CORE_SECRET_KEYS: tuple[str, ...] = (
     "LITELLM_MASTER_KEY",         # model-gateway master key (LiteLLM)
     "OPS_CONTROLLER_TOKEN",       # bearer between agent/dashboard/mcp ↔ ops-controller
-    "DASHBOARD_AUTH_TOKEN",       # dashboard API bearer
+    # NB: no DASHBOARD_AUTH_TOKEN — the dashboard has NO per-service auth. The Caddy edge
+    # (oauth2-proxy + Google SSO) is the ONLY gate; internal callers reach it over ordo-net.
+    # (operator mandate: auth is the edge's job, not baked into every service — 2026-07-15.)
     "THROUGHPUT_RECORD_TOKEN",    # model-gateway → dashboard throughput samples
     "HF_TOKEN",                   # Hugging Face (gated model pulls)
     "GITHUB_PERSONAL_ACCESS_TOKEN",  # mcp-gateway GitHub MCP + ComfyUI-Manager
