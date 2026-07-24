@@ -2,7 +2,7 @@
 """Ordo-AI-Stack image audit — "should we update this image?"
 
 Enumerates EVERY service in the *deployed* compose (the rendered
-`v2/out/docker-compose.yml`, not the root file), classifies each image by how it
+`out/docker-compose.yml`, not the root file), classifies each image by how it
 is pinned, resolves the latest upstream version where one exists, and emits a
 single JSON document. The daily cron injects that JSON into its prompt and the
 `stack-audit` skill writes the Discord digest — the model curates, it does not
@@ -11,7 +11,7 @@ a human-readable table for debugging.
 
 Design notes / hard-won facts baked in as code (previously scattered across the
 skill's reference files):
-  - Deployed compose is `v2/out/docker-compose.yml`; the root `docker-compose.yml`
+  - Deployed compose is `out/docker-compose.yml`; the root `docker-compose.yml`
     is a different, stale file. Auditing the wrong one was the original bug.
   - `${VAR:-default}` image refs resolve against `.env` then the inline default.
   - Severity is install-aware: a CVE in release notes is only SECURITY if the
@@ -79,7 +79,7 @@ HINTS = {
 }
 
 # Registry namespaces that mean "built here", not pulled from a registry.
-LOCAL_PREFIXES = ("ordo-v2/", "ordo-ai-stack-", "ordo-ai-stack/")
+LOCAL_PREFIXES = ("ordo/", "ordo-v2/", "ordo-ai-stack-", "ordo-ai-stack/")  # ordo/ = current; rest historical
 ROLLING_TAGS = {"latest", "stable", "main", "edge", "nightly", "dev",
                 "server", "server-cuda", "cpu", "cu128-slim", "cu124-slim"}
 BASE_IMAGE_RE = re.compile(r"^(python|alpine|ubuntu|debian|busybox|node|golang):", re.I)
