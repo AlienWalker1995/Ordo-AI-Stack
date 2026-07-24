@@ -17,4 +17,4 @@ codebase-memory-ui/nginx.conf text eol=lf
 
 # Bind-mounted into Linux containers as an executable (the trainer venv-python
 # lease seam) — a CRLF shebang (`python3\r`) breaks exec on Windows checkouts.
-v2/assets/* text eol=lf
+assets/* text eol=lf
