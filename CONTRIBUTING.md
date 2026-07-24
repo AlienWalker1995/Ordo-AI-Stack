@@ -2,7 +2,7 @@
 
 Thanks for contributing to Ordo.
 
-> **The stack is Ordo, defined and operated from [`v2/`](v2/).** Config is rendered from `v2/ordo.yaml`; the old top-level layout is the pre-render stack, superseded and pending removal (see [docs/LEGACY-CLEANUP.md](docs/LEGACY-CLEANUP.md)). Changes to the stack belong in `v2/`.
+> **The stack is Ordo, defined and operated entirely from [`v2/`](v2/).** Config is rendered from `v2/ordo.yaml` (tracked template: `v2/ordo.example.yaml`); the old top-level V1 tree was removed 2026-07-24 (see [docs/LEGACY-CLEANUP.md](docs/LEGACY-CLEANUP.md) for history). Changes to the stack belong in `v2/`.
 
 ## Building and testing the stack
 
@@ -23,7 +23,5 @@ This repo is public. **Never commit**:
 - **`v2/ordo.yaml`** — operator-real source (host paths, tailnet hostname/IP). Only `v2/ordo.example.yaml` is tracked. Gitignored.
 - **`data/`** — user-specific runtime state (Hermes session data, Discord guild/user IDs, MCP config). Gitignored.
 - **`models/`** — model files. Gitignored.
-- **`.env`** *(legacy V1)* — API keys, tokens, paths. Gitignored; use `.env.example` as a template.
-- **`overrides/compute.yml`** *(legacy V1)* — hardware-specific. Gitignored.
 
 Shared code should use placeholders (e.g. `YOUR_GUILD_ID`) or read from environment variables. See [SECURITY.md](SECURITY.md) for details.

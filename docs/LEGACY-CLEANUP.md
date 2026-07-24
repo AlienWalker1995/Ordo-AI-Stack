@@ -1,5 +1,18 @@
 # Legacy (V1) cleanup inventory
 
+> **EXECUTED (2026-07-24, commit `62540bf`).** The retirement this document planned has happened. The
+> V1 top-level tree is gone; the repo is now only the v2 stack (rendered from `v2/ordo.yaml` — see
+> `v2/README.md` and `v2/CUTOVER.md`). Removed: `ops-controller/`, `model-gateway/`, `mcp/`,
+> `overrides/`, the root `docker-compose.yml`, `Makefile`, `compose`, `compose.ps1`, `.env.example`,
+> `scripts/detect_hardware.py`, and the coupled root `tests/` cases that imported/exercised them
+> (`test_ops_controller_*`, `test_model_gateway_config`, `test_registry_parity`, `test_model_registry`,
+> `test_voice_services`, `test_compose_smoke`, `test_hermes_docker`, `test_comfyui_restart_harden`,
+> `test_detect_hardware_gpu`, `test_env_example`). **Correction to section C below:** `comfyui-mcp/`
+> and `orchestration-mcp/` are **not** dead — the 2026-07-10 audit predated their restore into v2; they
+> were **KEPT** because they are live v2 build sources (`ordo/comfyui-mcp`, `ordo/orchestration-mcp`).
+> Everything below this banner is the historical planning record as of the 2026-07-10 audit; read it
+> as "what was true then," not current state.
+
 **Status:** planning document for a **separate, deliberate deletion PR**. Nothing here is deleted by
 the doc-audit that produced this file. It is the evidence-backed map of which repo-root paths were
 superseded by the **v2 substrate** at the 2026-07-09 cutover, and what in `v2/` replaces each.
@@ -93,8 +106,8 @@ the non-path-gated root CI job regardless of V1's compose).
 
 | Root path | Verdict | Discriminating evidence |
 |---|---|---|
-| `comfyui-mcp/` | **A + B/CI** | NOT in the live MCP set — `v2/out/mcp/servers.txt` = `memory-vault,qdrant-rag,searxng`; `v2/out/mcp/registry-custom.yaml` defines only those 3. Built ONLY by root `docker-compose.yml` (`build: ./comfyui-mcp`, V1). BUT root `tests/test_comfyui_*` import `comfyui-mcp/managers/workflow_manager.py` and CI ruff-lints `comfyui-mcp` (`ci.yml` pytest job). → dead as a v2 service, but retires **with** its root tests + ci.yml entry, not before. |
-| `orchestration-mcp/` | **A + B/CI** | Not in `v2/out/mcp/*`; built only by root `docker-compose.yml` (`build: ./orchestration-mcp`). Ruff-linted by `ci.yml` (pytest job). Same coupling as above. |
+| `comfyui-mcp/` | **A + B/CI** *(SUPERSEDED — see top banner)* | At the time of this 2026-07-10 audit: NOT in the live MCP set — `v2/out/mcp/servers.txt` = `memory-vault,qdrant-rag,searxng`; `v2/out/mcp/registry-custom.yaml` defines only those 3. Built ONLY by root `docker-compose.yml` (`build: ./comfyui-mcp`, V1). BUT root `tests/test_comfyui_*` import `comfyui-mcp/managers/workflow_manager.py` and CI ruff-lints `comfyui-mcp` (`ci.yml` pytest job). → dead as a v2 service, but retires **with** its root tests + ci.yml entry, not before. **This verdict was wrong**: `comfyui-mcp/` was later restored as a live v2 build source (`ordo/comfyui-mcp`) and KEPT at the 2026-07-24 retirement. |
+| `orchestration-mcp/` | **A + B/CI** *(SUPERSEDED — see top banner)* | At the time of this 2026-07-10 audit: not in `v2/out/mcp/*`; built only by root `docker-compose.yml` (`build: ./orchestration-mcp`). Ruff-linted by `ci.yml` (pytest job). Same coupling as above. **This verdict was wrong**: `orchestration-mcp/` was later restored as a live v2 build source (`ordo/orchestration-mcp`) and KEPT at the 2026-07-24 retirement. |
 | `auth/` (Caddy + oauth2-proxy config, certs, emails) | **KEEP (B)** | De-facto **source of truth** for the edge assets. `v2/plugins/edge/plugin.yaml` bind-mounts `./auth/caddy/Caddyfile`, `./auth/caddy/certs`, `./auth/oauth2-proxy/emails.txt` (relative to `out/`). The render engine does **not** generate these — `out/auth/` was hand-staged from root `auth/` at the 2026-07-09 consolidation (`v2/FLIP.md`) and is **byte-identical** to root `auth/caddy/Caddyfile`. Live `ordo-v2-caddy-1` / `-oauth2-proxy-1` mount the `out/` copy; root `auth/` is the only committed source a re-render/rebuild of `edge` can restore from. **Do not delete.** |
 | `config/` (`comfyui-manager-seed.ini`) | **KEEP (B, bootstrap seed)** | One-time bootstrap: `scripts/ensure_dirs.{sh,ps1}` copy `config/comfyui-manager-seed.ini` → `data/comfyui-storage/ComfyUI/user/__manager/config.ini` only if absent. Not mounted by any compose/render, but it is the committed seed for a fresh ComfyUI bring-up. Low-risk to retire eventually, but it is the sole source of that seed — leave it. |
 | `tests/` (root V1 pytest suite) | **KEEP (B/CI)** | **Actively exercised by CI** — the `pytest` job (non-path-gated, runs on every push/PR to `main`) does `pip install -r tests/requirements.txt` + `pytest tests/`. It imports `ops-controller/main.py` (`conftest.py`), `comfyui-mcp/…`, `dashboard/…`, and asserts on root `docker-compose.yml`. Retires only as part of wholesale V1 retirement. |
@@ -146,10 +159,11 @@ single coupled change, gated on a maintainer's "soak is over, retire V1" decisio
 or not at all (a partial delete breaks CI):
 
 1. **In one PR**, delete the interlocked V1 unit together: root `docker-compose.yml`, `ops-controller/`,
-   `model-gateway/`, `comfyui-mcp/`, `orchestration-mcp/`, `mcp/`, `overrides/`, `Makefile`, `compose`,
-   `compose.ps1`, `.env.example`, and the **coupled root `tests/` cases** that import them
-   (`test_comfyui_*`, the `ops-controller/main.py` importers in `conftest.py` +
-   `test_comfyui_restart_harden.py`, `test_compose_smoke.py`, the `dashboard`-only V1 tests).
+   `model-gateway/`, `mcp/`, `overrides/`, `Makefile`, `compose`, `compose.ps1`, `.env.example`, and the
+   **coupled root `tests/` cases** that import them (the `ops-controller/main.py` importers in
+   `conftest.py` + `test_comfyui_restart_harden.py`, `test_compose_smoke.py`, the `dashboard`-only V1
+   tests). *(Note, added post-execution: `comfyui-mcp/` and `orchestration-mcp/` were restored as live
+   v2 build sources before this PR landed and must NOT be deleted — see the top banner.)*
 2. **In the SAME PR**, edit `.github/workflows/ci.yml`: drop the deleted paths from the `pytest` job's
    ruff line and from the `orchestration-stack-e2e` path filter, and delete/retire the
    `compose-validate`, `compose-smoke`, and `orchestration-stack-e2e` jobs (they validate the removed

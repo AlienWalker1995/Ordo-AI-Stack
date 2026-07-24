@@ -38,10 +38,10 @@ Services bind to `0.0.0.0` to allow access from other machines on your network. 
 
 ### Secrets
 
-- **Never commit** `.env` or `mcp/.env`. They are gitignored.
-- Use `.env.example` as a template; copy to `.env` and fill in values locally.
-- API keys (OpenAI, Anthropic, etc.) and tokens should only live in `.env` files, never in the repository.
-- **Never commit** `data/` — it is gitignored and contains user-specific runtime state (Hermes session data, Discord guild/user IDs, MCP config, etc.). All secrets and setup-specific values belong in `data/` or `.env`, not in shared code.
+- **Never commit** `v2/out/.env` or `v2/out/secrets.env`. They are gitignored, along with the operator-real `v2/ordo.yaml`.
+- Use `v2/ordo.example.yaml` and `v2/out/secrets.env.example` as templates; copy to `v2/ordo.yaml` / `v2/out/secrets.env`, fill in values locally, then run `ordo render` to produce `v2/out/.env` and `v2/out/docker-compose.yml`.
+- API keys (OpenAI, Anthropic, etc.) and tokens should only live in `v2/out/secrets.env`, never in the repository.
+- **Never commit** `data/` — it is gitignored and contains user-specific runtime state (Hermes session data, Discord guild/user IDs, MCP config, etc.). All secrets and setup-specific values belong in `data/` or `v2/out/secrets.env`, not in shared code.
 
 ### Data
 
@@ -50,7 +50,7 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 ## Pre-deployment checklist
 
 - [ ] `OPS_CONTROLLER_TOKEN` set (generate: `openssl rand -hex 32`)
-- [ ] `.env` not committed (in `.gitignore`)
+- [ ] `v2/out/.env` / `v2/out/secrets.env` not committed (in `.gitignore`)
 - [ ] Ops controller port (9000) not exposed to host/network
 - [ ] Dashboard bound to localhost or Tailscale-only when multi-user
 
@@ -70,7 +70,7 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 
 ## Break-glass
 
-1. **Reset OPS_CONTROLLER_TOKEN:** Generate new token, update `.env`, restart dashboard + ops-controller
+1. **Reset OPS_CONTROLLER_TOKEN:** Generate new token, update `v2/out/secrets.env`, then re-run `docker compose -p ordo … up` from `v2/out/` to restart dashboard + ops-controller
 2. **Restore data:** Restore `data/` from a local backup
 3. **Disable MCP tools:** Clear `data/mcp/servers.txt` or set to a single safe server
 4. **Safe mode:** Stop `mcp-gateway` and `hermes-gateway`; use `llamacpp` + `open-webui` only

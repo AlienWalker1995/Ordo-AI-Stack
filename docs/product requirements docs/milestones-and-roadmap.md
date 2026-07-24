@@ -103,8 +103,9 @@
 # Unit/contract tests
 python -m pytest tests/ -v
 
-# Compose smoke
-./compose up -d
+# Compose smoke (render, then bring up from v2/out/)
+cd v2 && python -m ordo.cli render --out out
+cd out && docker compose -p ordo up -d
 docker compose ps           # all services healthy within 3 min
 # model-gateway is host-published on 127.0.0.1; dashboard is NOT — go through the network from inside a container, or via the SSO front door with a session cookie:
 curl -s http://127.0.0.1:11435/v1/models | jq .data[].id

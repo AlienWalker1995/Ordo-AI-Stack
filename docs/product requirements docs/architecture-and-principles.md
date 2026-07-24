@@ -2,8 +2,8 @@
 
 ## Product Principles
 
-1. **Local-first:** Single `./compose up -d`. No cloud dependency for core flows. All data on host.
-2. **Compose as source of truth:** All services in compose. Controller talks to Docker for ops; no K8s.
+1. **Local-first:** Render + `docker compose -p ordo … up -d` from `v2/out/`. No cloud dependency for core flows. All data on host.
+2. **Compose as source of truth:** All services in the rendered compose (`v2/ordo.yaml` → `ordo render` → `v2/out/docker-compose.yml`). Controller talks to Docker for ops; no K8s.
 3. **Least privilege:** Dashboard never mounts docker.sock. Controller has minimal allowlisted actions. Non-root containers everywhere feasible. `cap_drop: [ALL]` as default; add back only what's required.
 4. **One model endpoint:** OpenAI-compatible API (`/v1/chat/completions`, `/v1/embeddings`) as canonical surface, fronting llama.cpp. Services should prefer the gateway over direct llama.cpp.
 5. **Pluggable providers:** LiteLLM gateway fronts llama.cpp and can add future OpenAI-compatible endpoints.
@@ -48,7 +48,7 @@
 │  │  │ (backend-only)  │  │ :9000 (int)     │  │ vector DB    │             │  │
 │  │  │ LLM inference   │  │ docker.sock     │  │ RAG backend  │             │  │
 │  │  │ GPU via         │  │ bearer auth     │  └──────────────┘             │  │
-│  │  │ compute.yml     │  │ audit log       │                               │  │
+│  │  │ render engine   │  │ audit log       │                               │  │
 │  │  └─────────────────┘  └─────────────────┘                               │  │
 │  │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐             │  │
 │  │  │ MCP Gateway     │  │ Dashboard :8080  │  │ RAG Ingest   │             │  │
@@ -71,7 +71,7 @@
 - **MCP Gateway** `:8811` — Docker MCP Gateway with 10s hot-reload; `registry.json` metadata reader; per-server health; docker.sock for spawning server containers.
 - **Ops Controller** `:9000` (internal) — Authenticated REST; start/stop/restart/logs/pull; append-only JSONL audit log; docker.sock access with allowlisted operations only.
 - **Dashboard** internal `:8080` (no host port published; reached via Caddy front door at `${CADDY_TAILNET_HOSTNAME}/dash/` behind oauth2-proxy / Google SSO) — No docker.sock; calls controller for ops; model inventory + default-model management; MCP tool management + health badges; throughput stats + benchmark; hardware stats; RAG status. Auth: the Caddy edge (oauth2-proxy / Google SSO) is the sole auth gate; no per-service dashboard token is set in this deployment. The dashboard app code retains an optional, dormant Bearer capability (`DASHBOARD_AUTH_TOKEN` + trusted-proxy header trust) that is unused here — edge SSO is the auth model, not a fallback to rely on.
-- **llama.cpp** `:8080` — LLM inference; backend-only (no host port); GPU via `overrides/compute.yml`.
+- **llama.cpp** `:8080` — LLM inference; backend-only (no host port); GPU pinning resolved by the render engine (`hardware: auto` / `ordo detect`) into `v2/out/`.
 - **Qdrant** `:6333` — Vector database; backend-only; used by Open WebUI for RAG and by `rag-ingestion` service.
 - **RAG Ingestion** — Watch-mode document ingester (`--profile rag`); reads `data/rag-input/`; chunks and embeds via model gateway; stores in Qdrant.
 - **Hermes** (`hermes-gateway` + `hermes-dashboard`) — Agent runtime; routes model calls through model-gateway and tool calls through mcp-gateway. State under `data/hermes/`. See [docs/hermes-agent.md](../hermes-agent.md) for setup.
@@ -129,7 +129,7 @@ All user-facing UIs (dashboard, Open WebUI, n8n, ComfyUI, hermes-dashboard) are 
 | model-gateway | Y | Y | Frontend for host MCP clients (`127.0.0.1:11435`); backend for llamacpp |
 | mcp-gateway | Y | — | Host port `127.0.0.1:8811` (localhost-only — for host MCP clients like Cline / VS Code); internal services use `http://mcp-gateway:8811` over the docker network |
 | ops-controller | — | Y | Internal only; no host port |
-| llamacpp | — | Y | Backend-only; no host port; GPU via `overrides/compute.yml` |
+| llamacpp | — | Y | Backend-only; no host port; GPU pinning resolved by the render engine (`hardware: auto` / `ordo detect`) into `v2/out/` |
 | qdrant | — | Y | Internal; `127.0.0.1:6333` host publish for one-off scripts only |
 | searxng | — | Y | Backend-only; queried by the `searxng` MCP server at `http://searxng:8080` |
 | comfyui | Y | — | Reached at `https://<tailnet>/comfy/` |
@@ -155,14 +155,12 @@ All user-facing UIs (dashboard, Open WebUI, n8n, ComfyUI, hermes-dashboard) are 
 
 ```
 ordo-ai-stack/
-├── dashboard/           # Ops dashboard (FastAPI)
-├── model-gateway/       # OpenAI-compat model proxy
-├── ops-controller/      # Authenticated Docker lifecycle API
-├── mcp/                 # MCP gateway (Dockerfile, gateway/, docs/)
+├── dashboard/           # Ops dashboard (FastAPI) — source for the v2 dashboard service
 ├── hermes/              # Hermes agent (Dockerfile, entrypoint.sh, plugins/, seed/)
 ├── rag-ingestion/       # Document ingester (Dockerfile, ingest.py)
-├── orchestration-mcp/   # Orchestration MCP server
-├── scripts/             # detect_hardware.py, ssrf-egress-block, smoke tests
+├── orchestration-mcp/   # Orchestration MCP server — builds the v2 orchestration-mcp service
+├── comfyui-mcp/         # ComfyUI MCP server — builds the v2 comfyui-mcp service
+├── scripts/             # ssrf-egress-block, smoke tests, doctor scripts
 ├── tests/               # Contract + smoke tests
 ├── product requirements docs/  # This documentation
 ├── docs/                # Getting started, runbooks
@@ -172,10 +170,12 @@ ordo-ai-stack/
 │   ├── qdrant/          # Vector DB storage
 │   ├── rag-input/       # Drop documents here
 │   └── hermes/          # Hermes runtime state
-├── docker-compose.yml
-├── compose              # Helper script (auto-detects hardware)
-├── overrides/           # Optional compose overrides
-├── .env.example
+├── v2/                  # Declarative stack source — the only bring-up path
+│   ├── ordo.example.yaml  # Tracked template; copy to ordo.yaml and edit
+│   ├── docker/             # Dockerfiles for model-gateway, ops-controller, dashboard, mcp-gateway, etc.
+│   ├── out/                # `ordo render` output: docker-compose.yml, .env, secrets.env (never hand-edited)
+│   ├── README.md           # Authoritative operating guide
+│   └── CUTOVER.md          # V1→v2 cutover notes
 └── SECURITY.md
 ```
 

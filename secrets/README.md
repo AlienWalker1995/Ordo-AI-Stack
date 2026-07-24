@@ -1,6 +1,6 @@
 # secrets/
 
-> ⚠️ **Partially LEGACY — reconcile with v2/ (cutover 2026-07-09).** The SOPS + age **at-rest** model here (encrypted `*.sops` blobs, safe to commit) is unchanged. What changed is the **runtime materialization**: in the production **v2** stack, `ordo render` writes a keys-only `v2/out/secrets.env.example`; the operator fills real values into a gitignored **`v2/out/secrets.env`** (SOPS-decrypt or hand-set) that the rendered compose reads as a second `env_file`. The V1 `make decrypt-secrets` → `~/.ai-toolkit/runtime/` + `make up` two-`--env-file` flow described below is legacy. See [`../v2/CUTOVER.md`](../v2/CUTOVER.md) (Secrets) and [`../docs/LEGACY-CLEANUP.md`](../docs/LEGACY-CLEANUP.md).
+> **Note.** The SOPS + age **at-rest** model here (encrypted `*.sops` blobs, safe to commit) is unchanged. Runtime materialization is owned by the **v2** render flow: `ordo render` writes a keys-only `v2/out/secrets.env.example`; the operator fills real values into a gitignored **`v2/out/secrets.env`** (SOPS-decrypt or hand-set) that the rendered compose reads as a second `env_file`. The old V1 `make decrypt-secrets` → `~/.ai-toolkit/runtime/` + `make up` two-`--env-file` flow was removed along with the rest of the V1 tree (2026-07-24, commit `62540bf`). See [`../v2/CUTOVER.md`](../v2/CUTOVER.md) (Secrets) and [`../docs/LEGACY-CLEANUP.md`](../docs/LEGACY-CLEANUP.md).
 
 Encrypted-at-rest secrets for the Ordo AI stack. **All `*.sops` files in
 this directory are safe to commit to a public repo** — they decrypt only
@@ -31,17 +31,19 @@ with the age private key at `~/.config/sops/age/keys.txt`.
 
 - Edit: `sops secrets/<file>.sops` opens decrypted in `$EDITOR`,
   re-encrypts on save.
-- Decrypt for runtime: `make decrypt-secrets` writes plaintext to
-  `~/.ai-toolkit/runtime/`. The runtime dir is outside `/workspace`
-  and the `HERMES_HOST_DEV_MOUNT`, so even a prompt-injected Hermes
-  cannot `cat` the decrypted files.
-- Bring up the stack: `make up` (runs decrypt-secrets, then
-  `docker compose --env-file .env --env-file ~/.ai-toolkit/runtime/.env up -d`
-  — two files, last-wins, so `.env` defaults are kept and runtime secrets win).
-- `ops-controller` mounts `runtime/.env` read-only and injects it when it
-  recreates secret-dependent services, so dashboard-driven recreate brings them
-  up with real values. It never holds the age key. See
-  `docs/runbooks/secrets.md`.
+- Decrypt for runtime: `ordo render` (run from `v2/`) writes
+  `v2/out/secrets.env.example` — the secret KEYS the enabled stack needs,
+  values empty. Copy it to `v2/out/secrets.env` and fill in real values
+  (SOPS-decrypt the relevant `secrets/<name>.sops` file, or hand-set).
+  `v2/out/secrets.env` is gitignored, never committed.
+- Bring up the stack: from `v2/out/`, `docker compose -p ordo up -d`
+  (the rendered compose reads `secrets.env` as a second, optional
+  `env_file` layered after `.env`, so derived config and operator
+  secrets stay in separate files).
+- The dashboard's per-service recreate (backend `ops-api`) replays the
+  rendered `v2/out/` tree — both `.env` and `secrets.env` — so a
+  secret-dependent service it recreates comes up with real values. It
+  never holds the age key. See `docs/runbooks/secrets.md`.
 - Add a new secret: `echo -n "$VALUE" | sops --encrypt --age age1...
   --input-type=binary --output-type=binary /dev/stdin >
   secrets/<name>.sops`.
