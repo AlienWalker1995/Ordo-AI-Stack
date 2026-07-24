@@ -17,7 +17,7 @@
 ## AuthN / AuthZ Tiers
 
 - **Tier 0:** No auth (health endpoints, read-only model list)
-- **Tier 1:** Bearer token (ops controller — `OPS_CONTROLLER_TOKEN`)
+- **Tier 1:** Bearer token (ops-api — `OPS_CONTROLLER_TOKEN`)
 - **Tier 2:** Edge SSO (Caddy oauth2-proxy + Google SSO + email allowlist) — the sole auth gate for every UI, including the dashboard; UI services have no host port and are reached only through the edge or the internal `ordo-net`. The dashboard has no per-service auth token in this deployment (`DASHBOARD_AUTH_TOKEN` unset, `AUTH_REQUIRED=False`); the app code's optional Bearer fallback is dormant
 - **Future Tier 3:** Per-role OIDC / RBAC beyond the edge's binary allow/deny gate (if deeper multi-user separation is needed)
 - **RBAC:** Currently binary (authed = full access). Future: read-only role (view logs, health) vs admin role (start/stop).

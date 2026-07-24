@@ -1,5 +1,7 @@
-# Pin to specific version for reproducible builds (floating :main-stable can break silently)
-FROM ghcr.io/berriai/litellm:main-stable
+# Pinned to the VERSION RUNNING in production (v1.82.3), by tag + digest (audit P1-4 — the
+# floating :main-stable regressed once and its newer bases dropped pip, breaking this build).
+# To bump: pick a specific vX.Y.Z, resolve its digest (docker manifest inspect -v), validate.
+FROM ghcr.io/berriai/litellm:v1.82.3@sha256:ac95e49049e0bb5f2c5a2b0f0452e5d968844b8196cf6efbd2e77d6ef862f7e5
 
 WORKDIR /app
 

@@ -15,14 +15,14 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 | Script | Purpose |
 |--------|---------|
 | `doctor.sh` / `.ps1` | Deep health probes (dashboard, model-gateway, MCP gateway). |
-| `smoke_test.sh` / `.ps1` | Quick smoke test: optionally starts services, then checks health endpoints. |
+| `smoke_test.sh` / `.ps1` | Quick smoke test against the rendered `out/docker-compose.yml` (project `ordo`): optionally starts services, then checks health in-network via `docker compose exec` (only Caddy publishes a host port). |
 
 ## MCP Gateway
 
 | Script | Purpose |
 |--------|---------|
-| `mcp_add.sh` / `.ps1` | Add an MCP server (e.g. `./scripts/mcp_add.sh fetch`). Gateway reloads in ~10s without container restart. |
-| `mcp_remove.sh` / `.ps1` | Remove an MCP server. Gateway reloads in ~10s. |
+| `mcp_add.sh` / `.ps1` | Add an MCP server (e.g. `./scripts/mcp_add.sh fetch`). Edits `out/mcp/servers.txt` (mounted into `ordo-mcp-gateway-1`); gateway reloads in ~10s without container restart. |
+| `mcp_remove.sh` / `.ps1` | Remove an MCP server. Edits `out/mcp/servers.txt`; gateway reloads in ~10s. |
 
 ## Security
 
@@ -37,7 +37,7 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 |--------|---------|
 | `comfyui/pull_comfyui_models.py` | Config-driven model downloader. V1 wired this to a `comfyui-model-puller` one-shot compose service (profile `comfyui-models`); that service was retired as obsolete-by-design in v2 (provisioning now belongs to the operator's ComfyUI image / `ordo fetch`-style flow) — run it standalone instead: `python scripts/comfyui/pull_comfyui_models.py`. |
 | `comfyui/models.json` | Model pack definitions for the downloader. |
-| `comfyui/install_node_requirements.sh` / `.ps1` | Install pip requirements for a ComfyUI custom node into the running container. |
+| `comfyui/install_node_requirements.sh` / `.ps1` | Install pip requirements for a ComfyUI custom node into the running container, via `docker compose --project-directory out -f out/docker-compose.yml -p ordo exec comfyui`. |
 | `comfyui/validate_comfyui_pipeline.py` | Diagnostic: validates ComfyUI host paths, checkpoints, workflow refs, and HTTP connectivity. |
 
 ## Model Downloads

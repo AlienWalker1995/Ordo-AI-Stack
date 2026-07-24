@@ -38,7 +38,7 @@ jobs:
         run: pip install -r tests/requirements.txt
 
       - name: Ruff lint
-        run: python -m ruff check ordo dashboard tests rag-ingestion scripts comfyui-mcp orchestration-mcp worker
+        run: python -m ruff check ordo dashboard tests rag-ingestion scripts comfyui-mcp orchestration-mcp worker docker
 
       - name: Create minimal .env for compose tests
         run: |
@@ -85,6 +85,13 @@ jobs:
       - name: Install pinned deps
         if: steps.filter.outputs.substrate == 'true'
         run: pip install -r requirements-dev.txt
+
+      # ops-api's substrate tests (test_ops_api_stats — the /stats/services concurrency
+      # regression guard) importorskip fastapi; without these deps they skipped on every
+      # CI run since the guard was written (audit P1-9/P1-10).
+      - name: Install ops-api deps (so its substrate tests actually run)
+        if: steps.filter.outputs.substrate == 'true'
+        run: pip install -r docker/ops-api/requirements.txt
 
       # No GPU on CI runners — every test uses a MOCKED hardware profile (the merge-gate
       # "mocked-profile CI" requirement). Also proves the config renders from a clean checkout.

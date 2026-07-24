@@ -41,14 +41,20 @@ detect_subnet() {
 
 get_subnet() {
   local subnet=""
+  local network_name=""
 
   if [ -n "$SUBNET_OVERRIDE" ]; then
     echo "$SUBNET_OVERRIDE"
     return
   fi
 
-  subnet=$(detect_subnet "ordo-ai-stack-frontend")
-  [ -z "$subnet" ] && subnet=$(detect_subnet "ordo-ai-stack_default")
+  # Autodetect the live v2 network (compose project "ordo" -> network "ordo-net")
+  # instead of hardcoding a name; falls through to the manual-SUBNET-override
+  # error below if docker isn't available or no matching network exists.
+  if command -v docker >/dev/null 2>&1; then
+    network_name=$(docker network ls --filter "name=^ordo-net$" --format '{{.Name}}' 2>/dev/null | head -n1)
+  fi
+  [ -n "$network_name" ] && subnet=$(detect_subnet "$network_name")
 
   echo "$subnet"
 }

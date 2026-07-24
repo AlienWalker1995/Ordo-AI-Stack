@@ -357,7 +357,10 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
     agent_img = agent_image or f"{project}/agent-{agent}:latest"
     # the llama.cpp image is the stock upstream build unless the chosen model pins a patched
     # one (e.g. Qwen3.6 SWA) via its catalog `backend_image` — flowed here through render.
-    llamacpp_img = llamacpp_image or "ghcr.io/ggml-org/llama.cpp:server"
+    # Pinned to the digest of the same stock image running as ordo-llamacpp-embed-1, resolved
+    # 2026-07-24 (re-resolve via `docker inspect ordo-llamacpp-embed-1` on bump).
+    llamacpp_img = (llamacpp_image
+                     or "ghcr.io/ggml-org/llama.cpp:server@sha256:295dc9897fa8a643e4a513fbcaada51d3b8db4b0afa4fda7aeae2386757de58b")
     llamacpp = _svc(llamacpp_img, net=net, env_file=env_file, gpu=has_gpu)
     # always-on Prometheus metrics endpoint (the monitoring plugin's prometheus scrapes it).
     llamacpp["command"] = [LLAMACPP_METRICS_ARG]

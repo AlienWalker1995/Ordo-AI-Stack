@@ -16,7 +16,7 @@ docker build -t ordo/model-gateway:latest docker/model-gateway
 ```
 
 ## Files
-- `Dockerfile` — pins `ghcr.io/berriai/litellm:main-stable`, installs the config + callback.
+- `Dockerfile` — pins `ghcr.io/berriai/litellm:v1.82.3@sha256:ac95e49049e0bb5f2c5a2b0f0452e5d968844b8196cf6efbd2e77d6ef862f7e5` (the running version; bump deliberately to a specific vX.Y.Z + digest), installs the config + callback.
 - `litellm_config.yaml` — the `local-chat` / `local-embed` model list (no secrets; `__MASTER_KEY__`
   and `__CTX_SIZE__` are entrypoint-substituted at runtime).
 - `entrypoint.sh` — renders the template with the rendered ctx + master key.

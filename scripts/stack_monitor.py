@@ -43,7 +43,7 @@ COMPOSE_CANDIDATES = [
     STACK_ROOT / "out" / "docker-compose.yml",  # rendered = deployed
     STACK_ROOT / "docker-compose.yml",                 # fallback
 ]
-ENV_FILE = STACK_ROOT / ".env"
+ENV_FILE = STACK_ROOT / "out" / ".env"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
 GLOBAL_DEADLINE_S = 100  # cron script timeout is 120s
 

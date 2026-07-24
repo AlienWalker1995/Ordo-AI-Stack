@@ -145,6 +145,11 @@ class ControlPlane:
         if m == "GET" and path == "/jobs/history":
             # Finished leases, newest first — what the orchestration tab's history table shows.
             return 200, {"history": self.history.tail(100) if self.history else []}
+        if m == "GET" and path == "/jobs/cloud-routed":
+            # Return-and-DRAIN the jobs the scheduler routed to cloud fallback: each job is
+            # handed out exactly once, to whichever agent polls this endpoint (audit P1-2 —
+            # previously drain_cloud_routed() had no caller and routed jobs sat forever).
+            return 200, {"cloud_routed": self.scheduler.drain_cloud_routed()}
         if m == "GET" and path in ("/health", "/healthz"):
             return 200, {"ok": True}
         return 404, {"error": f"no route {method} {path}"}

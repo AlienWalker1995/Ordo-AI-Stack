@@ -20,10 +20,10 @@ secrets:
 services:
   - name: comfyui
     # Parity with V1: the operator's ComfyUI runtime image. V1 sets this via overrides/compute.yml
-    # to yanwk/comfyui-boot:cu128-slim (public, pullable). The ComfyUI application code + custom
+    # to a digest-pinned yanwk/comfyui-boot (public, pullable; cu128-slim line — bump deliberately). The ComfyUI application code + custom
     # nodes live in the bind-mounted data/comfyui-storage checkout, and the models in models/comfyui
     # — NOT baked into the image — so pointing at the same image + the same binds gives full parity.
-    image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot:cu128-slim}
+    image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot@sha256:4172d960fe57c630d33f6bd8891aa7ecf55e7768559565c6b74e8d57e44512a9}
     # Pin to the PRIMARY (compute) card by uuid — V1 pins comfyui to the 5090 in gpu-assignments.yml.
     # `gpu: true` alone renders `count: all`, which on a dual-GPU WSL2 box lets ComfyUI also see the
     # 1070; the uuid pin (CUDA_VISIBLE_DEVICES + device_ids) is the only thing WSL2 actually honors.

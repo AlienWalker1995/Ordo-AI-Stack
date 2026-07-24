@@ -12,12 +12,18 @@ is a runtime invariant, not a static one.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 
 import pytest
 
-GATEWAY = "ordo-ai-stack-hermes-gateway-1"
-DASHBOARD = "ordo-ai-stack-hermes-dashboard-1"
+# Container names are "<compose project>-<service>-1"; the service that runs
+# the Hermes agent is `agent` (renamed from hermes-gateway). Derive the
+# project prefix from COMPOSE_PROJECT_NAME so a project rename doesn't
+# silently re-break this suite into a permanent skip.
+COMPOSE_PROJECT_NAME = os.environ.get("COMPOSE_PROJECT_NAME", "ordo")
+GATEWAY = f"{COMPOSE_PROJECT_NAME}-agent-1"
+DASHBOARD = f"{COMPOSE_PROJECT_NAME}-hermes-dashboard-1"
 
 
 def _container_running(name: str) -> bool:
@@ -94,7 +100,7 @@ def test_hermes_can_reach_ops_controller(gateway: str):
     """The whole point of Task 8: Hermes must still be able to call
     ops-controller for privileged verbs. A simple GET /health from inside
     hermes-gateway proves the network path is intact."""
-    r = _docker_exec(gateway, "wget", "-qO-", "http://ops-controller:9000/health")
+    r = _docker_exec(gateway, "curl", "-fsS", "http://ops-controller:9000/health")
     assert r.returncode == 0, (
         f"FAIL: hermes-gateway cannot reach ops-controller — stderr: {r.stderr!r}"
     )

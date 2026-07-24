@@ -9,38 +9,44 @@ recreate containers with arbitrary mounts.
 
 Plan C narrows the surface: Hermes no longer has the socket. When it
 needs to restart a service, fetch logs, or manage the compose stack,
-it makes an HTTP call to `ops-controller`, which is the single holder
-of the socket. Every privileged call is audited.
+it makes an HTTP call to `ops-api` (`OPS_API_URL=http://ops-api:9000`),
+which is the single holder of the socket. Every privileged call is
+audited. (The `ordo serve` scheduler at `ops-controller:9000` is a
+separate service — it only serves `/status`, `/model-config`, `/jobs*`
+and `/health`; it has none of these verbs.)
 
 ## What Hermes can still do
 
-Via `hermes/ops_client.py` (the wrapper that talks to ops-controller):
+Via `hermes/ops_client.py` (the wrapper that talks to `ops-api`):
 
 - `OpsClient().list_containers()` → `GET /containers`
 - `OpsClient().container_logs(name, tail=N)` → `GET /containers/{name}/logs`
 - `OpsClient().restart_container(name)` → `POST /containers/{name}/restart`
 - `OpsClient().compose_up(service=…)` / `compose_down(...)` /
-  `compose_restart(...)` → `POST /compose/{verb}`
+  `compose_restart(...)` → `POST /services/{service}/recreate` (up/restart)
+  or `POST /services/{service}/stop` (down)
 
-Whole-stack compose ops require an explicit `confirm=True`:
+Stack-wide compose mutations (`service=None`) are **not** supported —
+`ops-api`'s `/compose/{verb}` endpoints are a deliberate 501 (the render
+pipeline owns compose lifecycle now, not ad-hoc mutation calls).
+`OpsClient` raises `OpsClientError` immediately if you omit `service`:
 
 ```python
 ops = OpsClient()
-ops.compose_restart()                       # 400: confirm required
-ops.compose_restart(service="open-webui")   # OK — single service
-ops.compose_restart(confirm=True)           # OK — whole stack
+ops.compose_restart()                       # OpsClientError: stack-wide disabled
+ops.compose_restart(service="open-webui")   # OK — POST /services/open-webui/recreate
 ```
 
 ## What Hermes can no longer do
 
 - `docker exec` into other containers — by design. Specific named verbs
   only. If you find yourself wanting `exec`, add a named verb to the
-  `ops-controller` service source (see `docs/operator-guide.md`)
+  `ops-api` service source (see `docs/operator-guide.md`)
   instead of reintroducing arbitrary shell.
 - `docker inspect` other containers — high-value tokens that live in
   Docker secrets are now invisible to Hermes even with prompt injection.
 - Mount new volumes, create containers from arbitrary images, or invoke
-  any Docker SDK call ops-controller doesn't explicitly expose.
+  any Docker SDK call ops-api doesn't explicitly expose.
 
 ## UX caveat (vendored upstream)
 
@@ -82,33 +88,33 @@ Each line is one privileged call:
 Rotation: when `audit.jsonl` exceeds 50MB, it's renamed to
 `audit.1.jsonl` and a fresh `audit.jsonl` starts. One historical
 generation; older data is dropped. Increase `AUDIT_LOG_MAX_BYTES` (or
-the constructor default in the `ops-controller` service's audit
+the constructor default in the `ops-api` service's audit
 module) to retain more.
 
 ## Adding a new privileged verb
 
 1. Write a failing test in `tests/substrate/` covering the new endpoint.
-2. Implement the endpoint in the `ops-controller` service source
+2. Implement the endpoint in the `ops-api` service source
    (see `docs/operator-guide.md`). Pattern:
    `_: None = Depends(verify_token)` → do work → `_audit.record(...)`
    → return.
 3. Add a method on `OpsClient` in `hermes/ops_client.py`.
 4. Migrate any caller that needs it.
 5. Test, commit, then from `out/`: `docker compose -p ordo restart
-   ops-controller hermes-gateway`.
+   ops-api agent`.
 
 Resist `exec`. Specific verbs only.
 
-## Recovery — ops-controller down
+## Recovery — ops-api down
 
-When ops-controller is down, Hermes can't perform any privileged
+When ops-api is down, Hermes can't perform any privileged
 action. The stack itself stays up; only Hermes-driven ops are blocked.
 From the host directly (the rendered compose lives in `out/`,
 brought up per `docs/operator-guide.md`):
 
 ```bash
 cd out
-docker compose -p ordo restart ops-controller
+docker compose -p ordo restart ops-api
 ```
 
 The host shell retains full Docker access (this is intentional — the
@@ -117,13 +123,13 @@ host operator is still trusted).
 ## Recovery — Hermes ops_client misconfigured
 
 Symptom: every Hermes-initiated privileged op fails with
-`OPS_CONTROLLER_TOKEN env var is empty` or 401 from ops-controller.
+`OPS_CONTROLLER_TOKEN env var is empty` or 401 from ops-api.
 
 Fix: confirm `OPS_CONTROLLER_TOKEN` in `out/secrets.env` matches
-the value ops-controller uses. Both are rendered from the same
+the value ops-api uses. Both are rendered from the same
 source (`out/secrets.env.example` via `ordo render`).
 After fix, from `out/`: `docker compose -p ordo restart
-hermes-gateway hermes-dashboard`.
+agent hermes-dashboard`.
 
 ## Verifying Hermes is bounded
 
