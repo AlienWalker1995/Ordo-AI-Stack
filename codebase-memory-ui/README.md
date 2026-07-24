@@ -43,9 +43,19 @@ SPA's absolute paths so everything stays under the prefix. The dashboard's servi
 section links here via `SSO_ROUTES`.
 
 ## Enable
+Plugin gating happens at render time via `ordo.yaml`, not a V1 `--profile` flag. Set `CODE_ROOT`
+under the `site:` block and force the plugin on (or leave `plugins: auto`, which enables it
+whenever the host meets `requires:` in `plugins/codebase-memory-ui/plugin.yaml`):
+```yaml
+# ordo.yaml
+site:
+  CODE_ROOT: /home/me/dev
+plugins: [codebase-memory-ui]   # or: auto
 ```
-# set CODE_ROOT in .env first (host path of your repos), then:
-docker compose --profile codebase-memory up -d --build
+Then re-render and bring the stack up:
+```
+ordo render
+cd out && docker compose -p ordo up -d
 ```
 Then browse **`https://<CADDY_TAILNET_HOSTNAME>/codebase-memory/`** (Google SSO). Index a
 repo first (the UI's "index" action, or `POST /codebase-memory/rpc` `index_repository`)

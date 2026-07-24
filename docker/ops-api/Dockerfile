@@ -19,8 +19,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install docker compose v2 CLI (SDK start/stop use the socket; compose CLI is only
-# reachable when OPS_COMPOSE_MUTATIONS_ENABLED=1, which this deployment never sets).
+# Install docker compose v2 CLI (SDK start/stop use the socket; the compose CLI itself
+# is reachable via TWO gates: the narrow per-service recreate path — OPS_SERVICE_RECREATE_ENABLED=1,
+# which this deployment DOES set — and the whole-stack compose-mutation endpoints, gated behind
+# OPS_COMPOSE_MUTATIONS_ENABLED=1, which this deployment never sets).
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && curl -fsSL "https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64" \
        -o /usr/local/bin/docker-compose \

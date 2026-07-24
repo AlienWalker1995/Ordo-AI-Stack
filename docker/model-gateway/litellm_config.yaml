@@ -23,5 +23,5 @@ litellm_settings:
   stream_timeout: 1800
   # Ordo throughput recorder — posts each completion's tok/s + TTFT + service
   # to the dashboard at /api/throughput/record. See throughput_callback.py;
-  # PYTHONPATH=/app in Dockerfile makes the module importable.
+  # the Dockerfile COPYs it straight into site-packages, so it imports by name.
   callbacks: ["throughput_callback.throughput_recorder_instance"]

@@ -63,7 +63,7 @@ cat <<EOF
 ==> Internal tokens rotated in secrets/.env.sops.
 
 Next steps:
-  1. make decrypt-secrets         # write new values to ~/.ai-toolkit/runtime/.env
+  1. Copy the rotated values into out/secrets.env (the file compose reads).
   2. cd out
      docker compose -p ordo restart model-gateway dashboard ops-controller \\
          worker agent hermes-dashboard mcp-gateway oauth2-proxy

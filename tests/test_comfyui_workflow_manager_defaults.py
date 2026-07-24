@@ -121,3 +121,24 @@ def test_workflow_catalog_infers_audio_defaults(tmp_path: Path):
     assert song_entry["defaults"]["lyrics_strength"] == 0.99
     assert song_entry["defaults"]["cfg"] == 1.0
     assert "style_prompt" in song_entry["available_inputs"]
+
+
+def test_coerce_value_int_accepts_float_strings(tmp_path: Path):
+    # Locks parity with dashboard/param_placeholders.py::_coerce_value — both
+    # must use int(float(v)) for INT placeholders, not int(v).
+    module = _load_workflow_manager_module()
+    manager = module.WorkflowManager(tmp_path / "empty_workflows")
+
+    assert manager._coerce_value("8.0", int) == 8
+    assert manager._coerce_value(8.7, int) == 8
+
+
+def test_normalize_name_collapses_underscore_runs(tmp_path: Path):
+    # Locks parity with dashboard/param_placeholders.py::_normalize_name — both
+    # must collapse runs of non-alnum chars to a single "_" so the same PARAM_*
+    # placeholder text binds to the same param name in both modules.
+    module = _load_workflow_manager_module()
+    manager = module.WorkflowManager(tmp_path / "empty_workflows")
+
+    assert manager._normalize_name("lyrics__strength") == "lyrics_strength"
+    assert manager._normalize_name("lyrics---strength") == "lyrics_strength"

@@ -2,5 +2,5 @@
   "cline.apiProvider": "openai-compatible",
   "cline.openAiBaseUrl": "http://localhost:11435/v1",
   "cline.openAiApiKey": "local",
-  "cline.openAiModelId": "nemotron-cascade-2:latest"
+  "cline.openAiModelId": "local-chat"
 }

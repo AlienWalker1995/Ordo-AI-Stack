@@ -1,5 +1,5 @@
-# Only Dockerfile + entrypoint.sh are needed in the build context.
-# Exclude everything else (markdown, editor files, etc.).
+# Build context needs Dockerfile, entrypoint.sh, spa-patches.mjs, plugins/, seed/SOUL.md,
+# and ops_client.py (all explicitly COPYed). Exclude everything else (markdown, editor files, etc.).
 *.md
 .git
 .gitignore

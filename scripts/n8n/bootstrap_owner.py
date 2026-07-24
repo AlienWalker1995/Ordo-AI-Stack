@@ -16,8 +16,9 @@ Idempotent. Safe to re-run any time:
     Existing user_api_keys rows (which reference the owner by UUID, not by
     credentials) survive intact.
 
-Run from inside the docker network so n8n is reachable. Suggested invocation
-documented in .env.example.
+Run from inside the docker network so n8n is reachable, with
+N8N_OWNER_EMAIL / N8N_OWNER_PASSWORD set as env-form secrets in
+out/secrets.env (see docs/runbooks/secrets.md and scripts/README.md).
 """
 from __future__ import annotations
 

@@ -10,6 +10,11 @@
 > `test_detect_hardware_gpu`, `test_env_example`). **Correction to section C below:** `comfyui-mcp/`
 > and `orchestration-mcp/` are **not** dead — the 2026-07-10 audit predated their restore into v2; they
 > were **KEPT** because they are live v2 build sources (`ordo/comfyui-mcp`, `ordo/orchestration-mcp`).
+> **`overrides/` full arc:** removed here in `62540bf`, then accidentally re-added (as two brand-new,
+> unrelated files — `gpu-assignments.yml`, `secrets-path.yml`) by the same-day flatten commit `2d4bd9c`;
+> the repo-audit remediation pass (branch `fix/audit-p0-p1`, commit `9251e47`) removed them a second
+> time and added `/overrides/` to `.gitignore` so it can't silently resurface again. As of this writing
+> `overrides/` is untracked and gitignored — this banner's claim is current.
 > Everything below this banner is the historical planning record as of the 2026-07-10 audit; read it
 > as "what was true then," not current state.
 >

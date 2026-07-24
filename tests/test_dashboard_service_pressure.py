@@ -75,7 +75,7 @@ def test_service_pressure_missing_services_filled_as_zero():
 def test_service_pressure_ops_controller_unreachable(monkeypatch):
     import dashboard.app as app
     ac = MagicMock()
-    ac.__aenteer__ = AsyncMock(return_value=ac)
+    ac.__aenter__ = AsyncMock(return_value=ac)
     ac.__aexit__ = AsyncMock(return_value=None)
     ac.get = AsyncMock(side_effect=app._httpx.ConnectError("unreachable"))
     with patch("dashboard.app._httpx.AsyncClient", return_value=ac):

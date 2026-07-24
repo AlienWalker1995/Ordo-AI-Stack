@@ -281,27 +281,17 @@ async def llm_delete(req: PullRequest):
 
 @app.post("/api/llm/unload")
 async def llm_unload(req: PullRequest):
-    """Unload the currently active model from the gateway without deleting GGUF files."""
-    name = (req.model or "").strip()
-    if not name or ".." in name:
-        raise HTTPException(status_code=400, detail="Invalid model name")
-    try:
-        r = await _get_http_client().request(
-            "DELETE",
-            f"{MODEL_GATEWAY_URL.rstrip('/')}/api/delete",
-            headers=_model_gateway_headers(),
-            json={"name": name},
-            timeout=60.0,
-        )
-        if r.status_code == 404:
-            raise HTTPException(status_code=404, detail=f"Model '{name}' not found")
-        r.raise_for_status()
-        return {"ok": True, "message": f"Unloaded '{name}' from the gateway."}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Model gateway request failed: {e}") from e
-
+    """501 — Ollama-era relic. LiteLLM has no /api/delete; llama.cpp is the sole backend
+    (Ollama decommissioned 2026-07-01), so this could only ever 404/502 (audit P2-35).
+    Model lifecycle is the scheduler's job: switch models via the ops-controller
+    /model-config path (dashboard Model Control), which re-renders and recreates llamacpp."""
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "Unload is not a gateway operation: llama.cpp serves one active model, managed by "
+            "the render pipeline. Switch models via Model Control (/model-config) instead."
+        ),
+    )
 
 @app.post("/api/llamacpp/switch")
 async def llamacpp_switch_model(req: PullRequest, request: Request):
@@ -1524,11 +1514,11 @@ def _is_embedding_model(name: str) -> bool:
 @app.post("/api/throughput/benchmark")
 async def throughput_benchmark(req: ThroughputBenchmarkRequest):
     """Run a quick benchmark via model-gateway /v1/chat/completions."""
-    model = req.model.strip() or "llama3.2"
+    model = req.model.strip() or "local-chat"
     if _is_embedding_model(model):
         raise HTTPException(
             status_code=400,
-            detail=f"Model '{model}' is an embedding model and does not support text generation. Choose an LLM (e.g. llama3.2, deepseek-r1:7b).",
+            detail=f"Model '{model}' is an embedding model and does not support text generation. Choose an LLM (e.g. local-chat).",
         )
     prompt = "Say 'ok' and nothing else."
     url = f"{MODEL_GATEWAY_URL.rstrip('/')}/v1/chat/completions"

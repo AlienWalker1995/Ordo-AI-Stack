@@ -13,44 +13,28 @@ The **MCP gateway** service exposes one **MCP HTTP endpoint** (backend port **88
 
 ## Registry Format
 
-**Tool registry** (`data/mcp/registry.json`):
+**Tool registry** (`data/mcp/registry-custom.yaml`, rendered to `out/mcp/registry-custom.yaml`):
+a catalog fragment merged via `--additional-catalog` with Docker's online MCP catalog. Each entry
+is keyed by server id under a top-level `registry:` map:
 
-```json
-{
-  "version": 1,
-  "servers": {
-    "duckduckgo": {
-      "image": "mcp/duckduckgo",
-      "description": "Web search via DuckDuckGo",
-      "scopes": ["search"],
-      "allow_clients": ["*"],
-      "rate_limit_rpm": 60,
-      "timeout_sec": 30,
-      "env_schema": {}
-    },
-    "github-official": {
-      "image": "mcp/github-official",
-      "description": "GitHub issues, PRs, repos",
-      "scopes": ["github"],
-      "allow_clients": ["open-webui", "hermes"],
-      "env_schema": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": {"required": true, "secret": true}
-      }
-    },
-    "filesystem": {
-      "image": "mcp/filesystem",
-      "description": "File access — requires FILESYSTEM_ROOT configured",
-      "scopes": ["filesystem"],
-      "allow_clients": [],
-      "env_schema": {
-        "FILESYSTEM_ROOT": {"required": true, "secret": false}
-      }
-    }
-  }
-}
+```yaml
+registry:
+  qdrant-rag:
+    description: "Semantic RAG search over the stack's Qdrant `documents` collection…"
+    title: Qdrant RAG
+    type: server
+    image: ordo-ai-stack-qdrant-rag-mcp:latest
+    env:
+      - name: QDRANT_URL
+        value: http://qdrant:6333
+      - name: EMBED_URL
+        value: http://llamacpp-embed:8080
 ```
 
-**Note:** `allow_clients: []` disables by default. `allow_clients: ["*"]` is explicit opt-in.
+There is no `scopes` / `allow_clients` / `rate_limit_rpm` / `env_schema` field — that per-client
+policy schema below was a **design proposal that was never implemented**; see "Current Policy
+Model" for what actually exists today (`data/mcp/servers.txt`-driven enable/disable, no per-client
+enforcement).
 
 
 ## Policy API (Dashboard `/api/mcp`)

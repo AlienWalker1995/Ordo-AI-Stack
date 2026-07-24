@@ -66,7 +66,10 @@ models:
     # hybrid attention/SSM: KV is ~34.8 KB/token over 16 full-attn layers (q8_0).
     kv_kb_per_token: 34.8
     mmproj: /models/mmproj-Huihui-Q6_K.gguf
-    extra_args: "--reasoning-format deepseek --spec-type draft-mtp --spec-draft-n-max 10 --spec-draft-p-min 0.5"
+    # NB: no speculative/MTP flags — this is deliberately the NON-MTP GGUF sibling (llama.cpp
+    # cannot load the Qwen3.6 MTP variants), so --spec-type draft-mtp parsed but was inert:
+    # zero MTP/speculative init lines in the live server log (audit P2-15, verified 2026-07-24).
+    extra_args: "--reasoning-format deepseek"
     # Qwen3.6 needs the SWA/hybrid-cache patched llama.cpp build — the stock
     # ghcr.io/ggml-org/llama.cpp:server can't load this model. Pinned local image
     # built from docker/llamacpp-patched (not pullable from a registry).

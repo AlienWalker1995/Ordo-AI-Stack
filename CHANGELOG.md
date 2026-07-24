@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is loosely b
 
 ## [Unreleased]
 
+### Removed
+- **ai-toolkit plugin retired (2026-07-24, `2cc34e8`).** The `ai-toolkit` service plugin (below)
+  is gone from `plugins/`; LTX-trainer is promoted to sole LoRA trainer following the ai-toolkit
+  vs. LTX-trainer bake-off. The `:8443` SSO UI and the ai-toolkit-specific GPU lease wiring are
+  removed; LTX-trainer uses the same shared `lease-exec` seam.
+
 ### Added
 - **ai-toolkit plugin**: ostris/ai-toolkit LoRA trainer as a core V2 service. Training runs
   acquire an exclusive primary-GPU lease via ops-controller (new generic `POST /jobs/heartbeat`
