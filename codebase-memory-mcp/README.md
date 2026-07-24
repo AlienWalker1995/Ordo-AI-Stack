@@ -38,12 +38,16 @@ from those host-path restrictions and so can be read-write.
 
 ## Enabling it
 
-1. Set `CODE_ROOT` in `.env` to the **host** path that contains your repos, e.g.
-   `CODE_ROOT=C:/dev` (must match what Hermes sees at `/c/dev`).
-2. Build the image (opt-in profile):
-   `docker compose --profile codebase-memory build codebase-memory-mcp-image`
-3. Enable the server in the gateway: `./scripts/mcp_add.sh codebase-memory`
-   (the gateway hot-reloads in ~10s; no restart needed).
+1. Set `CODE_ROOT` in `ordo.yaml`'s `site:` block to the **host** path that contains
+   your repos, e.g. `CODE_ROOT: C:/dev` (must match what Hermes sees at `/c/dev`);
+   it flows verbatim into the rendered `.env`.
+2. Build the image (project-buildable — no public registry to digest-pin against; see
+   [`../docker/codebase-memory-mcp/README.md`](../docker/codebase-memory-mcp/README.md)):
+   `docker build -t ordo/codebase-memory-mcp:latest C:/dev/ordo-ai-stack/codebase-memory-mcp`
+3. The `codebase-memory` plugin ([`../plugins/codebase-memory/plugin.yaml`](../plugins/codebase-memory/plugin.yaml))
+   isn't NVIDIA-gated, so it's already on under the default `plugins: auto`. Run
+   `ordo render` (then bring the stack up from `out/`) to pick it up into
+   `out/mcp-registry.yaml`.
 
 ## Indexing
 

@@ -28,7 +28,7 @@ def test_image_convention_when_unpinned():
 
 def test_pinned_image_is_honored():
     a = AGENTS.get("openai-agent")
-    assert a.image_for("ordo") == "ghcr.io/ordo-ai/agent-openai-compat:latest"
+    assert a.image_for("ordo") == "ordo/agent-openai-agent:latest"
 
 
 def test_unknown_agent_is_flagged_not_crashed():
@@ -79,7 +79,7 @@ def test_render_agent_without_command_omits_it(tmp_path):
 def test_render_swaps_to_pinned_agent_image(tmp_path):
     render(_src("openai-agent"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
-    assert c["services"]["agent"]["image"] == "ghcr.io/ordo-ai/agent-openai-compat:latest"
+    assert c["services"]["agent"]["image"] == "ordo/agent-openai-agent:latest"
 
 
 def test_render_unknown_agent_warns_and_falls_back(tmp_path):

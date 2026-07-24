@@ -112,8 +112,8 @@ probe "dashboard /api/health"      "$DASH/api/health"
 probe_dependencies "dashboard /api/dependencies" "$DASH/api/dependencies"
 probe "model-gateway /health"      "$MG/health"
 probe_ready "model-gateway /ready"       "$MG/ready"
-echo "==> Probes (optional: MCP on localhost only if you use mcp-expose override)"
-probe_mcp_gateway_optional "mcp-gateway /mcp" "$MCP/mcp" "See overrides/mcp-expose.yml"
+echo "==> Probes (optional: mcp-gateway is ordo-net-internal only; no host-exposure override exists in v2)"
+probe_mcp_gateway_optional "mcp-gateway /mcp" "$MCP/mcp" "Not host-exposed by default; a WARN here is expected unless you've manually published the port."
 
 if [ "$FAIL" -ne 0 ]; then
   echo "==> doctor FAILED"

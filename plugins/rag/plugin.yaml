@@ -28,7 +28,8 @@ services:
     # Embedding server — same upstream llama.cpp build as the chat backend, run in --embeddings mode
     # on a small nomic GGUF. rag-ingestion + the qdrant-rag MCP both embed against THIS so ingest and
     # query share the same 768-dim space. Stock upstream server image (Docker pulls it).
-    image: ghcr.io/ggml-org/llama.cpp:server
+    # Pinned to the digest of the image running as ordo-llamacpp-embed-1, resolved 2026-07-24.
+    image: ghcr.io/ggml-org/llama.cpp:server@sha256:295dc9897fa8a643e4a513fbcaada51d3b8db4b0afa4fda7aeae2386757de58b
     # Pin to the PRIMARY (compute) card by uuid when present — V1 pins llamacpp-embed to the 5090 in
     # gpu-assignments.yml. On a CPU/no-GPU box the pin resolves to nothing → upstream CPU-fallback.
     gpu_pin: primary        # rides the primary card by uuid; CPU-fallback when no GPU is detected

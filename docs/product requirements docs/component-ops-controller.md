@@ -2,17 +2,69 @@
 
 ## Purpose
 
-Secure, authenticated REST API for Docker Compose lifecycle operations. The controller holds `docker.sock` so that the dashboard and other clients never need direct Docker access.
+The V2 control plane (`ordo serve`, `ordo/control.py`). Drives the GPU/job broker and
+scheduler, and performs the drift-safe model switch (writes the declarative `ordo.yaml`
+source, then re-renders `.env` + compose + Hermes ctx in one pass so they can never
+disagree). It holds `docker.sock` only for the broker's `start`/`stop` calls, and the
+`DockerBackend` guard scopes every one of those to the `<project>-*` prefix — it cannot
+reach containers outside this compose project.
+
+This is **not** the audited, Bearer-token-gated compose-lifecycle API — that is a
+separate, optional service, `ops-api`. See "Related service: ops-api" below.
 
 ## API Reference
 
 **Base URL:** `http://ops-controller:9000` (internal network; no host port)
 
-**Auth:** `Authorization: Bearer <OPS_CONTROLLER_TOKEN>`
+**Auth:** None. This is the agreed model (`ordo/control.py`): the dashboard is
+localhost-only / reached only through the Caddy edge, and auth is the edge's job, not
+baked into every internal service.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health`, `/healthz` | GET | Liveness |
+| `/status` | GET | GPU/scheduler state + the current rendered manifest |
+| `/model-config` | GET | Source model, resolved active model, tier, ctx size, catalog |
+| `/model-config` | POST | Switch active model (`{"model": "<id>"|"auto"}`); rewrites `ordo.yaml` and re-renders |
+| `/jobs` | POST | Request GPU capacity for a job (`id`, `vram_gb`) |
+| `/jobs/complete` | POST | Release a completed job (`id`) |
+| `/jobs/heartbeat` | POST | Heartbeat a running job (`id`) |
+| `/jobs/history` | GET | Last 100 finished leases, newest first |
+| `/jobs/cloud-routed` | GET | Return-and-drain jobs the scheduler routed to cloud fallback |
+
+## Design Principle
+
+**Recovery, not hot path.** Normal model and tool traffic flows agent clients → model
+gateway and agent clients → MCP gateway directly. Ops controller only arbitrates GPU
+capacity (the broker/scheduler) and performs model switches; no user request should
+require ops-controller success to complete a chat or tool call.
+
+## Non-Goals
+
+- Being in the hot path for chat/tool requests
+- Direct UI — all interactions go through the dashboard or the scheduler's own clients
+- Full compose lifecycle (start/stop/restart of arbitrary services, image pulls, log
+  tailing) — that is `ops-api`, see below
+
+## Dependencies
+
+- Docker socket (`/var/run/docker.sock`) — broker `start`/`stop` only, guard-scoped to `<project>-*`
+- Rendered config dir mounted read-write at `/config` (source `ordo.yaml` + rendered `out/`) — the single write path for a model switch
+
+## Related service: ops-api
+
+The V1-parity dashboard's optional backend (`dashboards/v1-parity/dashboard.yaml`,
+`docker/ops-api/main.py`), rendered as its own compose service named `ops-api` — not
+part of ops-controller. It owns the audited, Bearer-token-gated compose-lifecycle API:
+
+**Base URL:** `http://ops-api:9000` (internal network; no host port)
+
+**Auth:** `Authorization: Bearer <OPS_CONTROLLER_TOKEN>` (env var name is legacy from
+V1; the token gates `ops-api`, not `ops-controller`)
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/health` | GET | None | Liveness |
+| `/health` | GET | None | Docker daemon reachability |
 | `/services` | GET | None | List compose services + state |
 | `/services/{id}/start` | POST | Bearer | Start (confirm: true required) |
 | `/services/{id}/stop` | POST | Bearer | Stop (confirm: true required) |
@@ -22,11 +74,11 @@ Secure, authenticated REST API for Docker Compose lifecycle operations. The cont
 | `/mcp/containers` | GET | Bearer | List MCP server containers |
 | `/audit` | GET | Bearer | Audit log (limit=50) |
 
-**Safety:** All mutating endpoints require `{"confirm": true}`. Optional `{"dry_run": true}` returns planned action without executing.
+**Safety:** All mutating endpoints require `{"confirm": true}`. Optional `{"dry_run": true}` returns planned action without executing. Service targets are restricted to an `ALLOWED_SERVICES` allowlist in `docker/ops-api/main.py`. Whole-stack `/compose/*` mutations stay disabled by default (`OPS_COMPOSE_MUTATIONS_ENABLED=0`) — V2's `ordo serve` (ops-controller) owns stack lifecycle.
 
-## Audit Event Pipeline
+### Audit Event Pipeline (ops-api)
 
-### Schema
+#### Schema
 
 ```json
 {
@@ -41,7 +93,7 @@ Secure, authenticated REST API for Docker Compose lifecycle operations. The cont
 }
 ```
 
-### Fields
+#### Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -54,34 +106,21 @@ Secure, authenticated REST API for Docker Compose lifecycle operations. The cont
 | `correlation_id` | string | No | From `X-Request-ID` header |
 | `metadata` | object | No | Extra context (tail count, dry_run, etc.) |
 
-### Storage
+#### Storage
 
-`data/ops-controller/audit.log` — JSONL, append-only. Rotate at 10MB (`AUDIT_LOG_MAX_BYTES`). Export: `GET /audit?limit=N&since=ISO8601`.
+`data/ops-controller/audit.log` on the host (staged V2 data tree; mounted into the
+`ops-api` container at `/data`, `AUDIT_LOG_PATH=/data/audit.log`) — JSONL, append-only.
+Rotate at 10MB (`AUDIT_LOG_MAX_BYTES`). Export: `GET /audit?limit=N`.
 
-### Correlation ID Flow
+#### Correlation ID Flow
 
 1. External client sends `X-Request-ID: req-abc` to model gateway
 2. Model gateway logs it; includes in throughput record to dashboard
-3. Dashboard passes `X-Request-ID` when calling ops controller
-4. Ops controller includes in audit entry
-5. Result: one request traceable across model → throughput → ops → audit
+3. Dashboard passes `X-Request-ID` when calling `ops-api`
+4. `ops-api` includes it in the audit entry
+5. Result: one request traceable across model → throughput → ops-api → audit
 
-## Design Principle
-
-**Recovery, not hot path.** Normal model and tool traffic flows agent clients → model gateway and agent clients → MCP gateway directly. Dashboard observes and administers. Ops controller restarts services, surfaces logs, coordinates upgrades. No user request should require ops-controller success to complete a chat or tool call.
-
-## Known Limitations
+### Known Limitations (ops-api)
 
 - `actor` field in `_audit()` hardcoded to `"dashboard"` — acceptable for now; multi-actor needs identity propagation
 - No CSRF token — sufficient for localhost deployment
-
-## Non-Goals
-
-- Being in the hot path for chat/tool requests
-- Direct UI — all interactions go through the dashboard
-
-## Dependencies
-
-- Docker socket (`/var/run/docker.sock`)
-- `OPS_CONTROLLER_TOKEN` from `out/secrets.env` (rendered from `secrets.env.example`)
-- `ALLOWED_SERVICES` allowlist in code

@@ -34,8 +34,8 @@ docker build -t ordo/ops-api:latest docker/ops-api
 ```
 
 The `Dockerfile` in this directory is the authoritative build (V1 ops-controller code + the minimal,
-clearly-commented V2 kill-switch patch). See [`AUDIT.md`](../../AUDIT.md) "Dashboard reinstatement"
-and [`PARITY-VALIDATION.md`](../../PARITY-VALIDATION.md) for the feature-by-feature live validation.
+clearly-commented V2 kill-switch patch). See [`AUDIT.md`](../../docs/history/AUDIT.md) "Dashboard reinstatement"
+and [`PARITY-VALIDATION.md`](../../docs/history/PARITY-VALIDATION.md) for the feature-by-feature live validation.
 
 ## Auth / secrets
 `OPS_CONTROLLER_TOKEN` (Bearer for external/orchestration callers) and `HF_TOKEN` come from

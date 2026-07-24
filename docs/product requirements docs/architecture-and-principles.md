@@ -22,7 +22,15 @@
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────┐
-│  Host  (network: ordo-ai-stack-frontend = host-accessible)                    │
+│  Host                                                                          │
+│                                                                                │
+│  Caddy :443 — the ONLY host-published port (`${CADDY_BIND}:443`)              │
+│  oauth2-proxy (Google SSO) behind it; reverse-proxies every route below       │
+└────────────────────────────────────────┬─────────────────────────────────────┘
+                                          │
+┌────────────────────────────────────────▼─────────────────────────────────────┐
+│  network: ordo-net  (single Docker network — every service below, no host   │
+│  port of its own)                                                            │
 │                                                                                │
 │  ┌─────────────┐  ┌──────────┐  ┌──────────────────────────────────────────┐  │
 │  │ Open WebUI  │  │   N8N    │  │  Hermes  gateway + dashboard             │  │
@@ -31,7 +39,7 @@
 │  └──────┬──────┘  └────┬─────┘  └────────────────┬─────────────────────────┘  │
 │         │              │                           │                            │
 │  ┌──────▼──────────────▼───────────────────────────▼──────────────────────┐   │
-│  │  Model Gateway :11435  (frontend + backend)                             │   │
+│  │  Model Gateway :11435  (Caddy `/llm/*` → bearer key, no SSO)            │   │
 │  │  GET  /v1/models           — llama.cpp, TTL-cached 60s                 │   │
 │  │  POST /v1/chat/completions — streaming, tools, X-Request-ID            │   │
 │  │  POST /v1/responses        — OpenAI Responses API compat               │   │
@@ -40,28 +48,29 @@
 │  │  DELETE /v1/cache          — invalidate model list cache               │   │
 │  └──────────────────────────────────────────────────────────────────────┘    │
 │                                                                                │
-│  ┌──────────────────────────────────────────────────────────────────────────┐  │
-│  │  network: ordo-ai-stack-backend (internal — no direct host access)      │  │
-│  │                                                                          │  │
-│  │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐             │  │
-│  │  │ llama.cpp :8080 │  │ Ops Controller  │  │ Qdrant :6333 │             │  │
-│  │  │ (backend-only)  │  │ :9000 (int)     │  │ vector DB    │             │  │
-│  │  │ LLM inference   │  │ docker.sock     │  │ RAG backend  │             │  │
-│  │  │ GPU via         │  │ bearer auth     │  └──────────────┘             │  │
-│  │  │ render engine   │  │ audit log       │                               │  │
-│  │  └─────────────────┘  └─────────────────┘                               │  │
-│  │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐             │  │
-│  │  │ MCP Gateway     │  │ Dashboard :8080  │  │ RAG Ingest   │             │  │
-│  │  │ :8811           │  │ no docker.sock   │  │ --profile rag│             │  │
-│  │  │ docker.sock     │  │ auth: edge SSO   │  │ watches      │             │  │
-│  │  │ servers.txt     │  │ → ops ctrl API   │  │ data/rag-    │             │  │
-│  │  │ registry.json   │  │ registry.json    │  │ input/       │             │  │
-│  │  └─────────────────┘  └─────────────────┘  └──────────────┘             │  │
-│  │  ┌─────────────────┐                                                     │  │
-│  │  │ ComfyUI :8188   │                                                     │  │
-│  │  │ (frontend net)  │                                                     │  │
-│  │  └─────────────────┘                                                     │  │
-│  └──────────────────────────────────────────────────────────────────────────┘  │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐                  │
+│  │ llama.cpp :8080 │  │ ops-api :9000   │  │ Qdrant :6333 │                  │
+│  │ (no host port)  │  │ docker.sock     │  │ vector DB    │                  │
+│  │ LLM inference   │  │ bearer auth     │  │ RAG backend  │                  │
+│  │ GPU via         │  │ audit log       │  └──────────────┘                  │
+│  │ render engine   │  ├─────────────────┤                                     │
+│  │                 │  │ ops-controller  │                                     │
+│  │                 │  │ :9000 scheduler │                                     │
+│  │                 │  │ (no auth, no    │                                     │
+│  │                 │  │  docker verbs)  │                                     │
+│  └─────────────────┘  └─────────────────┘                                     │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐                  │
+│  │ MCP Gateway     │  │ Dashboard :8080  │  │ RAG Ingest   │                  │
+│  │ :8811           │  │ no docker.sock   │  │ --profile rag│                  │
+│  │ docker.sock     │  │ auth: edge SSO   │  │ watches      │                  │
+│  │ servers.txt     │  │ → ops ctrl API   │  │ data/rag-    │                  │
+│  │ registry.json   │  │ registry.json    │  │ input/       │                  │
+│  │ Caddy `/mcp` →  │  │                  │  │              │                  │
+│  │ bearer token    │  │                  │  │              │                  │
+│  └─────────────────┘  └─────────────────┘  └──────────────┘                  │
+│  ┌─────────────────┐                                                          │
+│  │ ComfyUI :8188   │                                                          │
+│  └─────────────────┘                                                          │
 └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -74,7 +83,7 @@
 - **llama.cpp** `:8080` — LLM inference; backend-only (no host port); GPU pinning resolved by the render engine (`hardware: auto` / `ordo detect`) into `out/`.
 - **Qdrant** `:6333` — Vector database; backend-only; used by Open WebUI for RAG and by `rag-ingestion` service.
 - **RAG Ingestion** — Watch-mode document ingester (`--profile rag`); reads `data/rag-input/`; chunks and embeds via model gateway; stores in Qdrant.
-- **Hermes** (`hermes-gateway` + `hermes-dashboard`) — Agent runtime; routes model calls through model-gateway and tool calls through mcp-gateway. State under `data/hermes/`. See [docs/hermes-agent.md](../hermes-agent.md) for setup.
+- **Hermes** (`agent` + `hermes-dashboard`) — Agent runtime; routes model calls through model-gateway and tool calls through mcp-gateway. State under `data/hermes/`. See [docs/hermes-agent.md](../hermes-agent.md) for setup.
 - **Supporting services** — Open WebUI (`:3000`, connected to Qdrant), N8N (`:5678`), ComfyUI (`:8188`).
 
 ## Data Flows
@@ -115,25 +124,25 @@ Audit query:      Dashboard → GET /audit (auth) → Controller reads JSONL
 
 ## Network Assignment
 
-All user-facing UIs (dashboard, Open WebUI, n8n, ComfyUI, hermes-dashboard) are reached through the Caddy front door at `${CADDY_TAILNET_HOSTNAME}:443` (Tailscale-bound) with oauth2-proxy / Google SSO in front. No UI service publishes a port on `0.0.0.0` or `127.0.0.1` by itself. Host-published ports are limited to: Caddy `:443` (tailnet bind), model-gateway `127.0.0.1:11435`, mcp-gateway `127.0.0.1:8811`, qdrant `127.0.0.1:6333` — each for host-side tools (Cline, MCP clients, scripts), not LAN exposure.
+All services run on a single Docker network, `ordo-net`. Caddy `:443` (`${CADDY_BIND}:443`) is the **only** port the stack publishes to the host — every UI and API reaches the outside world exclusively through the Caddy front door. User-facing UIs (dashboard, Open WebUI, n8n, ComfyUI, hermes-dashboard) sit behind oauth2-proxy / Google SSO at `${CADDY_TAILNET_HOSTNAME}`. Two programmatic surfaces bypass interactive SSO (a CLI/IDE client can't do a Google login) but still go through Caddy, gated by their own bearer token instead: model-gateway at `/llm/*` (LiteLLM's `LITELLM_MASTER_KEY`) and mcp-gateway at `/mcp` (`MCP_GATEWAY_TOKEN`). Nothing binds `127.0.0.1` or any other host address directly — model-gateway, mcp-gateway, and qdrant publish no host port at all.
 
-| Service | Frontend | Backend | Notes |
-|---------|----------|---------|-------|
-| caddy | Y | — | `${CADDY_BIND}:443` host bind (must be the tailnet IP); reverse-proxies everything else with forward_auth → oauth2-proxy |
-| oauth2-proxy | Y | — | Internal; sits behind Caddy; Google SSO with email allowlist (`auth/oauth2-proxy/emails.txt`) |
-| open-webui | Y | Y | Reached at `https://<tailnet>/` (root catch-all in Caddy); needs model-gateway, qdrant |
-| dashboard | Y | Y | Reached at `https://<tailnet>/dash/`; needs llamacpp, ops-controller, mcp-gateway |
-| n8n | Y | — | Reached at `https://<tailnet>/n8n/`; OAuth callbacks bypass auth via `/n8n/rest/oauth2-credential/callback*` |
-| hermes-gateway | Y | Y | No UI; needs model-gateway, mcp-gateway |
-| hermes-dashboard | Y | — | Reached at `https://<tailnet>/hermes/` |
-| model-gateway | Y | Y | Frontend for host MCP clients (`127.0.0.1:11435`); backend for llamacpp |
-| mcp-gateway | Y | — | Host port `127.0.0.1:8811` (localhost-only — for host MCP clients like Cline / VS Code); internal services use `http://mcp-gateway:8811` over the docker network |
-| ops-controller | — | Y | Internal only; no host port |
-| llamacpp | — | Y | Backend-only; no host port; GPU pinning resolved by the render engine (`hardware: auto` / `ordo detect`) into `out/` |
-| qdrant | — | Y | Internal; `127.0.0.1:6333` host publish for one-off scripts only |
-| searxng | — | Y | Backend-only; queried by the `searxng` MCP server at `http://searxng:8080` |
-| comfyui | Y | — | Reached at `https://<tailnet>/comfy/` |
-| rag-ingestion | — | Y | Backend-only; no ingress needed |
+| Service | Host port | Notes |
+|---------|-----------|-------|
+| caddy | `${CADDY_BIND}:443` | The only host-published port in the stack. Bound to `0.0.0.0` (operator-approved 2026-07-17 for LAN reachability on an internet-dark network — see `docs/runbooks/auth.md`); the `${CADDY_BIND:?...}` failsafe only rejects an empty/unset value, it does not distinguish a tailnet IP from `0.0.0.0`. Reverse-proxies everything else with forward_auth → oauth2-proxy |
+| oauth2-proxy | — | Internal; sits behind Caddy; Google SSO with email allowlist (`auth/oauth2-proxy/emails.txt`) |
+| open-webui | — | Reached at `https://<tailnet>/` (root catch-all in Caddy); needs model-gateway, qdrant |
+| dashboard | — | Reached at `https://<tailnet>/dash/`; needs llamacpp, ops-controller, mcp-gateway |
+| n8n | — | Reached at `https://<tailnet>/n8n/`; OAuth callbacks bypass auth via `/n8n/rest/oauth2-credential/callback*` |
+| agent (Hermes) | — | No UI; needs model-gateway, mcp-gateway |
+| hermes-dashboard | — | Reached at `https://<tailnet>/hermes/` |
+| model-gateway | — | No host port; reached internally at `http://model-gateway:11435` on `ordo-net`, and externally via Caddy `/llm/*` (bearer key, no SSO) |
+| mcp-gateway | — | No host port; reached internally at `http://mcp-gateway:8811` on `ordo-net`, and externally via Caddy `/mcp` (bearer token, no SSO) |
+| ops-controller | — | Internal only; no host port |
+| llamacpp | — | Backend-only; no host port; GPU pinning resolved by the render engine (`hardware: auto` / `ordo detect`) into `out/` |
+| qdrant | — | Internal only; reached at `http://qdrant:6333` on `ordo-net` |
+| searxng | — | Internal only; queried by the `searxng` MCP server at `http://searxng:8080` |
+| comfyui | — | Reached at `https://<tailnet>/comfy/` |
+| rag-ingestion | — | Internal only; no ingress needed |
 
 ## Compose Hardening
 
@@ -146,7 +155,7 @@ All user-facing UIs (dashboard, Open WebUI, n8n, ComfyUI, hermes-dashboard) are 
 | Healthchecks | All long-running services |
 | Resource limits | `qdrant` (512M), `rag-ingestion` (256M), plus per-service limits on model-gateway / dashboard / comfyui |
 | Log rotation | All services |
-| Pinned images | `llama.cpp` (by digest), `open-webui:v0.8.4`, `qdrant:v1.13.4`, etc. |
+| Pinned images | `llama.cpp` (by digest), `open-webui:v0.10.1`, `qdrant:v1.18.2`, etc. |
 | Explicit networks | `ordo-ai-stack-frontend`, `ordo-ai-stack-backend` declared; llama.cpp backend-only |
 | `restart: unless-stopped` | All long-running services |
 | One-shot `restart: "no"` | pullers, sync services |

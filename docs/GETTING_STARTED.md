@@ -52,10 +52,10 @@ Env knobs (optional): `EMBED_MODEL`, `RAG_COLLECTION`, `RAG_CHUNK_SIZE`, `RAG_CH
 
 ### Host tools (Cursor, CLI on the host machine)
 
-The llama.cpp backend is internal (no host port). Host tools reach the models through the model-gateway's OpenAI-compatible API on `127.0.0.1:11435`:
+`model-gateway` has no host port publish (core services publish nothing — see `ordo/compose.py`). Host and tailnet tools reach it through the Caddy front door at `/llm/`, which bypasses SSO for programmatic clients and instead requires the LiteLLM bearer key:
 
-- Point Cursor or any OpenAI-compatible client at `http://localhost:11435/v1`.
-- This is bound to `127.0.0.1` on the host machine only — not to the tailnet. Tailnet peers reach models through the SSO-gated front door (Open WebUI at `/`, or via the dashboard's model surface).
+- Point Cursor or any OpenAI-compatible client at `https://${CADDY_TAILNET_HOSTNAME}/llm/v1` with `Authorization: Bearer ${LITELLM_MASTER_KEY}`.
+- This works from the host and from any tailnet device — there is no `127.0.0.1:11435` shortcut. Publishing the port directly to the host requires a deliberate `ordo.yaml` override (a `services.model-gateway.ports` entry re-rendered through `ordo render`), which is not the shipped default.
 
 ## Tailscale + SSO front door
 
@@ -63,7 +63,7 @@ Single homelab operator with a small Google-account allowlist for friends / fami
 
 1. Install Tailscale on the host running Ordo AI Stack and on each device that needs access.
 2. Issue a Tailscale cert for your chosen hostname: `tailscale cert ordo.<tailnet>.ts.net` (writes to `auth/caddy/certs/`).
-3. Set `CADDY_BIND` to the tailnet IPv4 from `tailscale ip -4`, and `CADDY_TAILNET_HOSTNAME` to the hostname you certified.
+3. Set `CADDY_BIND` — the tailnet IPv4 from `tailscale ip -4` binds Caddy to that interface only; `0.0.0.0` is also a supported, operator-approved posture (binds all interfaces, still tailnet-dark since nothing else is published) if that suits your setup. Set `CADDY_TAILNET_HOSTNAME` to the hostname you certified.
 4. Set up the Google OAuth client and email allowlist per [docs/runbooks/auth.md](runbooks/auth.md).
 5. Browse to `https://${CADDY_TAILNET_HOSTNAME}/` from any tailnet device — Caddy terminates TLS with the Tailscale-issued cert, oauth2-proxy enforces Google sign-in against `auth/oauth2-proxy/emails.txt`, then the front door routes to Open WebUI (root), the dashboard (`/dash/`), n8n (`/n8n/`), ComfyUI (`/comfy/`), and Hermes (`/hermes/`).
 

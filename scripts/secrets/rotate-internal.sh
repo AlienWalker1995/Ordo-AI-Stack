@@ -64,9 +64,10 @@ cat <<EOF
 
 Next steps:
   1. make decrypt-secrets         # write new values to ~/.ai-toolkit/runtime/.env
-  2. docker compose restart \\
-       model-gateway dashboard ops-controller worker hermes-gateway \\
-       hermes-dashboard mcp-gateway oauth2-proxy
+  2. cd out
+     docker compose -p ordo restart model-gateway dashboard ops-controller \\
+         worker agent hermes-dashboard mcp-gateway oauth2-proxy
+     cd ..
   3. git commit secrets/.env.sops + push.
 
 All existing oauth2-proxy sessions invalidate (cookie secret rotated).

@@ -35,7 +35,7 @@ Full engine reference, the plugin/agent registries, and the render-discipline ru
 
 ## Features
 
-All UI ports are **internal** (container-network); operators reach them via the front door under `https://${CADDY_TAILNET_HOSTNAME}/<path>/`. The only host-published ports are Caddy `:443` (tailnet-bound) and `127.0.0.1`-bound publishes of `model-gateway`, `mcp-gateway`, and `qdrant` for host-side tools.
+All UI ports are **internal** (container-network); operators reach them via the front door under `https://${CADDY_TAILNET_HOSTNAME}/<path>/`. The only host-published port is Caddy `:443` (tailnet-bound) — `model-gateway`, `mcp-gateway`, and `qdrant` publish no host port and are reachable only on the project network.
 
 - **Unified dashboard** (`/dash/`) — model lists, service links, dependency health, GPU/registry views, model pulls.
 - **Model gateway** — LiteLLM OpenAI-compatible API in front of llama.cpp backends.

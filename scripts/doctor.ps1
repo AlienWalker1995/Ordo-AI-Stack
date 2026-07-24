@@ -152,8 +152,8 @@ Test-Probe "dashboard /api/health"      "$dash/api/health"
 Test-ProbeDependencies "dashboard /api/dependencies" "$dash/api/dependencies"
 Test-Probe "model-gateway /health"      "$mg/health"
 Test-ProbeReady "model-gateway /ready"       "$mg/ready"
-Write-Host "==> Probes (optional: MCP on localhost only if you use expose overrides)"
-Test-ProbeMcpGatewayHost "mcp-gateway /mcp" "$mcp/mcp" "See overrides/mcp-expose.yml"
+Write-Host "==> Probes (optional: mcp-gateway is ordo-net-internal only; no host-exposure override exists in v2)"
+Test-ProbeMcpGatewayHost "mcp-gateway /mcp" "$mcp/mcp" "Not host-exposed by default; a WARN here is expected unless you've manually published the port."
 
 if ($fail -ne 0) {
     Write-Host "==> doctor FAILED" -ForegroundColor Red

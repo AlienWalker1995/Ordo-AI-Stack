@@ -27,7 +27,7 @@ from .plugins import PluginRegistry
 from .render import render
 
 # ${VAR} or ${VAR:-default} — the compose interpolation syntax a plugin image ref may carry
-# (e.g. `${COMFYUI_IMAGE:-yanwk/comfyui-boot:cu128-slim}`). Resolved against the rendered .env
+# (e.g. `${COMFYUI_IMAGE:-yanwk/comfyui-boot@sha256:…}`). Resolved against the rendered .env
 # (with the `:-default` fallback) so the image-presence check compares the ACTUAL resolved ref.
 _VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
@@ -100,6 +100,24 @@ def run(
                          or len(set(str(s["image"]).split("@sha256:")[-1])) <= 1)]
     checks.append(Check("all enabled MCP images digest-pinned", not unpinned_mcp,
                         "all pinned" if not unpinned_mcp else f"placeholder/unpinned: {', '.join(unpinned_mcp)}",
+                        blocking=False))
+
+    # 3b. Plugin SERVICE images pinned (pin-don't-float gate; audit P1-5) — warn per service whose
+    # image is a rolling/floating tag. Accepted as pinned: a registry digest (@sha256:), a
+    # version-looking tag (:v1.2 / :2.28.3 / :v7.15.3-alpine), or a locally-built project image
+    # (pinned by build context). ${VAR:-default} refs are judged by their default.
+    def _float(img: str) -> bool:
+        img = str(img)
+        if img.startswith("${") and ":-" in img:            # unwrap ${VAR:-default}
+            img = img.split(":-", 1)[1].rstrip("}")
+        if _is_buildable(img, project) or "@sha256:" in img:
+            return False
+        tag = img.rsplit(":", 1)[-1] if ":" in img.rsplit("/", 1)[-1] else "latest"
+        return not re.match(r"^v?\d+(\.\d+)+", tag)          # not a version tag => rolling
+    floating = sorted({name for name, svc in rc.compose_dict(project=project)["services"].items()
+                       if _float(svc.get("image", ""))})
+    checks.append(Check("service images pinned (no rolling tags)", not floating,
+                        "all pinned" if not floating else f"rolling/floating: {', '.join(floating)}",
                         blocking=False))
 
     # 4. GPU present if media/voice plugins are enabled

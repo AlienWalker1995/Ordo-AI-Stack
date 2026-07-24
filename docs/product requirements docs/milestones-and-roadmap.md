@@ -62,9 +62,9 @@
 
 | Item | Notes |
 |------|--------|
-| mcp-gateway → backend only | Default compose; `overrides/mcp-expose.yml` for host access |
+| mcp-gateway → backend only | Single `ordo-net`; no host port published (edge-only publish model) |
 | CI pipeline | `.github/workflows/ci.yml` |
-| Audit log rotation | `ops-controller`: `AUDIT_LOG_MAX_BYTES` (default 10MB) |
+| Audit log rotation | `ops-api`: `AUDIT_LOG_MAX_BYTES` (default 10MB) |
 
 ### Still Open / Deferred
 

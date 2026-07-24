@@ -34,7 +34,7 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `HERMES_DASHBOARD_PORT` | `9119` | Host port for the Hermes dashboard |
+| `HERMES_DASHBOARD_PORT` | `9119` | Internal port the Hermes dashboard listens on (`ordo-net` only; reachable via Caddy, not a host port) |
 | `DISCORD_BOT_TOKEN` | *(empty)* | Discord bot token. Managed via SOPS (`secrets/discord_token.sops`) or `DISCORD_BOT_TOKEN_FILE=/run/secrets/discord_token`; inline `DISCORD_TOKEN=` in `.env` is no longer accepted. |
 | `DISCORD_ALLOWED_USERS` | *(empty)* | Comma-separated Discord user IDs authorized to DM / invoke the bot. Required for Discord use. |
 | `DISCORD_ALLOWED_CHANNELS` | *(empty)* | Comma-separated channel IDs where the bot may respond. Optional. |
@@ -48,7 +48,7 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 | `RAG_COLLECTION` | `documents` | Qdrant collection (must match Open WebUI / ingestion) |
 | `RAG_CHUNK_SIZE` | `400` | Chunk size in tokens |
 | `RAG_CHUNK_OVERLAP` | `50` | Chunk overlap in tokens |
-| `QDRANT_PORT` | `6333` | Qdrant host port (change if something else already uses 6333) |
+| `QDRANT_PORT` | `6333` | Internal port Qdrant listens on (`ordo-net` only, no host publish) |
 
 ### Voice STT/TTS (`--profile voice`)
 
@@ -100,62 +100,26 @@ docker compose -p ordo --profile voice up -d
 recreates). **TTS** (Kokoro) bakes its models into the image — no runtime download,
 no volume needed.
 
-## TurboQuant KV-Cache (llama.cpp)
+## Custom llama.cpp Build (llamacpp service)
 
-The `llamacpp` service runs a custom build from the [AmesianX/TurboQuant](https://github.com/AmesianX/TurboQuant) fork, produced by `docker/llamacpp-patched/Dockerfile` and pinned to a specific commit. On top of mainline's KV-cache quant types (`q4_0`, `q8_0`, etc.) it adds a family of TurboQuant types named `tbq*` and `tbqp*` that use Walsh–Hadamard rotation + Lloyd–Max scalar quantization, optionally with a 1-bit QJL residual (the `tbqp*` packed variants).
+The `llamacpp` service does **not** run a TurboQuant fork. `docker/llamacpp-patched/Dockerfile` clones mainline [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp), pinned to commit `86b94708f22478f900b76ca02e316f4f3418faff` (`86b9470`), and applies exactly two patches on top:
 
-### Which type should I pick?
+1. **Checkpoint search fix for hybrid/recurrent models** (`tools/server/server-context.cpp`) — addresses upstream issues #22384, #20225, #24055.
+2. **`recurrent_shrink`/`expand` API for prompt-cache operations** — a minimal diff for upstream PR #24785.
 
-| Type | Approach | Effective bpw | Quality |
-|---|---|---|---|
-| `tbqp3_0` | 2-bit Lloyd-Max + 1-bit QJL residual | ~2.5 bpw | Marginal dip — best compression, paper's two-stage variant |
-| `tbq3_0` | 3-bit Lloyd-Max after WHT rotation | ~3 bpw | Near-neutral |
-| `tbqp4_0` | 3-bit Lloyd-Max + 1-bit QJL residual | ~3.5 bpw | Very close to fp16 |
-| `tbq4_0` | 4-bit Lloyd-Max after WHT rotation | ~4 bpw | Closest to fp16 in the tbq family |
-| `q4_0` | Mainline block-scaled 4-bit | ~4.5 bpw | Small ppl loss |
+Both exist to support SWA/hybrid-cache models; the build fails loudly if either patch fails to apply, so bump the pinned commit only after re-verifying both still apply cleanly. The resulting image is tagged `ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470` in `out/docker-compose.yml`.
 
-Suffix variants (`_1`, `_2`, `_3`) are head-dim specialized: `_1` for head_dim=128, `_2` for head_dim=64, `_3` for double WHT per-head. Use `_0` unless benchmarking shows a head-dim-specific variant helps your model.
+### KV-cache quantization
 
-### Enabling it
+The `LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION` / `LLAMACPP_KV_CACHE_TYPE_K` / `LLAMACPP_KV_CACHE_TYPE_V` vars (set in `ordo.yaml`, re-render to apply) are real and wired into `scripts/llamacpp/run-llama-server.sh` as `--cache-type-k` / `--cache-type-v`. Because this is a mainline build, only mainline's KV-cache types are valid — `docker/ops-api/llamacpp_flags.py` is the source of truth and enumerates: `q8_0`, `q4_0`, `q4_1`, `q5_0`, `q5_1`, `iq4_nl`, `f16`. There is no TurboQuant fork here, so `tbq*`/`tbqp*` types do not exist on this build and the server will reject them at startup.
 
-Set in `ordo.yaml` (the `site:`/`overrides:` blocks — see `ordo.example.yaml`) and re-render:
-
-```
-LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION=1
-LLAMACPP_KV_CACHE_TYPE_K=tbqp3_0   # or tbq3_0 / tbqp4_0 / tbq4_0
-LLAMACPP_KV_CACHE_TYPE_V=tbqp3_0   # matching K and V is recommended
-```
-
-Then, from the repo root, `ordo render` (`python -m ordo.cli render --out out`); from `out/`, `docker compose -p ordo build llamacpp && docker compose -p ordo up -d llamacpp`. First build takes ~25–35 min (compiles CUDA kernels for Blackwell sm_120); subsequent builds reuse the buildx layer cache.
-
-### Non-negotiable: Flash Attention
-
-TurboQuant kernels silently corrupt output without Flash Attention. The shell wrapper at `scripts/llamacpp/run-llama-server.sh` appends `--flash-attn on` automatically whenever `LLAMACPP_KV_CACHE_TYPE_K` or `LLAMACPP_KV_CACHE_TYPE_V` contains `tbq`, overriding any `LLAMACPP_FLASH_ATTN=auto|off`. Do not try to disable this.
-
-### VRAM sizing cheat sheet
-
-Single-GPU budget = VRAM − driver overhead (~1.5 GB) − weights − compute buffer (~1.5 GB). Divide by per-token KV size for max on-GPU context.
-
-Example on 32 GB 5090 with a 19 GB Q4_K_M 31B model (10 GB KV budget):
-
-| KV type | Per-token KV | Max context fully on GPU |
-|---|---|---|
-| fp16 | ~533 KiB | ~20k |
-| q8_0 | ~283 KiB | ~38k |
-| q4_0 | ~150 KiB | ~72k |
-| tbq4_0 | ~130 KiB | ~80k |
-| tbq3_0 / tbqp4_0 | ~100 KiB | ~105k |
-| tbqp3_0 | ~83 KiB | ~128k |
-
-### Rollback to upstream
+### Rollback to stock upstream
 
 In `ordo.yaml`:
 ```
 LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda
-LLAMACPP_KV_CACHE_TYPE_K=q4_0
-LLAMACPP_KV_CACHE_TYPE_V=q4_0
 ```
-Re-render, then from `out/`: `docker compose -p ordo up -d llamacpp`. No code changes required. Upstream does not understand `tbq*` types and will reject them at startup.
+Re-render, then from `out/`: `docker compose -p ordo up -d llamacpp`. This drops the two hybrid/recurrent patches above; no other config changes are required.
 
 ## Model Registry
 
@@ -227,17 +191,12 @@ All `data/` and `models/` directories are bind-mounted and persist across contai
 
 ## Network Ports
 
-| Service | Host port | Description |
+The rendered compose (`out/docker-compose.yml`) publishes exactly one host port: Caddy. Every other service (dashboard, open-webui, model-gateway, comfyui, n8n, hermes-dashboard, mcp-gateway, qdrant, ops-api, ops-controller, etc.) has no `ports:` entry — they're reachable only from other containers on the internal `ordo-net` network, and from outside the host only through the Caddy front door.
+
+| Service | Published port | Description |
 |---|---|---|
-| Dashboard | `8080` | Dashboard API + control center |
-| Open WebUI | `3000` | Chat interface |
-| Model Gateway | `11435` | OpenAI-compatible model endpoint (LiteLLM in front of llama.cpp) |
-| ComfyUI | `8188` | Image / audio / video generation |
-| n8n | `5678` | Workflow automation |
-| Hermes dashboard | `9119` | Overridable via `HERMES_DASHBOARD_PORT` |
-| MCP Gateway | `8811` | Published on host so external clients (Cursor, Claude Desktop) can reach it |
-| Qdrant | `6333` | RAG profile only |
-| Ops Controller | internal `9000` | Not published on the host |
+| Caddy | `443` (bound to `CADDY_BIND`, the tailnet IP) | Sole host-published port; SSO-gated reverse proxy to every UI/API route |
+| Everything else | none (internal `ordo-net` only) | Reachable service-to-service by container DNS name (e.g. `http://ops-api:9000`), never from the host or LAN directly |
 
 ## Audit Log Schema
 
