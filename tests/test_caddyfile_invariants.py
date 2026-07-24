@@ -1,14 +1,11 @@
-"""Static invariants of `auth/caddy/Caddyfile` and `docker-compose.yml`.
+"""Static invariants of `auth/caddy/Caddyfile`.
 
 These are cheap grep-style assertions on textual content — no Caddy adapter
 or docker daemon required — that guard the security-fragile lines we'd
-notice only at integration smoke time. They exist because:
-
-* the n8n OAuth callback / webhook bypass list is the most easily-broken
-  line in the Caddyfile (a typo here either breaks Google OAuth callbacks
-  for n8n, or accidentally exempts a wider path than intended); and
-* the `CADDY_BIND` failsafe in compose is the only thing standing between
-  a misconfigured operator and a `0.0.0.0:443` Caddy bind.
+notice only at integration smoke time. They exist because the n8n OAuth
+callback / webhook bypass list is the most easily-broken line in the
+Caddyfile (a typo here either breaks Google OAuth callbacks for n8n, or
+accidentally exempts a wider path than intended).
 
 If any of these tests fail, treat it as a regression of an explicit
 security guarantee — not a refactor opportunity.
@@ -21,17 +18,11 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CADDYFILE = REPO_ROOT / "auth" / "caddy" / "Caddyfile"
-COMPOSE = REPO_ROOT / "docker-compose.yml"
 
 
 @pytest.fixture(scope="module")
 def caddyfile_text() -> str:
     return CADDYFILE.read_text(encoding="utf-8")
-
-
-@pytest.fixture(scope="module")
-def compose_text() -> str:
-    return COMPOSE.read_text(encoding="utf-8")
 
 
 def test_oauth2_endpoints_exempt_from_auth(caddyfile_text: str) -> None:
@@ -66,16 +57,6 @@ def test_n8n_webhook_bypasses_sso(caddyfile_text: str) -> None:
     )
 
 
-def test_caddy_bind_failsafe_is_required(compose_text: str) -> None:
-    """`${CADDY_BIND:?…}` makes compose refuse to start with empty CADDY_BIND.
-    Without it, an empty CADDY_BIND silently degrades to 0.0.0.0:443 and
-    Caddy publishes on every host interface. This guard is non-optional."""
-    assert "${CADDY_BIND:?" in compose_text, (
-        "docker-compose.yml lost the CADDY_BIND :? failsafe — empty values "
-        "would now silently bind to 0.0.0.0."
-    )
-
-
 def test_caddy_tls_uses_tailscale_cert(caddyfile_text: str) -> None:
     """Caddy must use the Tailscale-issued cert mounted at /etc/caddy/certs/,
     not attempt ACME auto-https against the .ts.net hostname (which would
@@ -85,14 +66,6 @@ def test_caddy_tls_uses_tailscale_cert(caddyfile_text: str) -> None:
     assert "/etc/caddy/certs/tailnet.key" in caddyfile_text
 
 
-def test_oauth2_proxy_emits_xauthrequest_headers(compose_text: str) -> None:
-    """oauth2-proxy emits X-Auth-Request-Email/User/Preferred-Username on
-    /oauth2/auth only when --set-xauthrequest=true. Caddy renames those
-    to X-Forwarded-Email/User/Preferred-Username for upstreams. Without
-    this flag the dashboard sees no email and fails closed (401)."""
-    assert "--set-xauthrequest=true" in compose_text
-
-
 def test_caddy_renames_xauthrequest_to_xforwarded(caddyfile_text: str) -> None:
     """Caddy `copy_headers Source>Target` syntax renames oauth2-proxy's
     X-Auth-Request-* headers into the X-Forwarded-* names that the
@@ -100,11 +73,8 @@ def test_caddy_renames_xauthrequest_to_xforwarded(caddyfile_text: str) -> None:
     assert "X-Auth-Request-Email>X-Forwarded-Email" in caddyfile_text
 
 
-def test_ai_toolkit_port_site_is_sso_gated(caddyfile_text: str) -> None:
-    """The :8443 AI Toolkit site is a SEPARATE Caddy site — the :443 forward_auth gate does
-    not cover it, so it must carry its own. If this fails, the trainer UI is exposed to the
-    tailnet with only its app password."""
-    assert ":8443 {" in caddyfile_text, "AI Toolkit :8443 site block missing"
-    site = caddyfile_text.split(":8443 {", 1)[1]
-    assert "forward_auth oauth2-proxy:4180" in site
-    assert "reverse_proxy ai-toolkit:8675" in site
+def test_no_ai_toolkit_port_site(caddyfile_text: str) -> None:
+    """ai-toolkit was retired 2026-07-24; its dedicated :8443 SSO site must be gone. A leftover
+    site block would keep an extra Caddy port open with a dead upstream (ai-toolkit:8675)."""
+    assert ":8443 {" not in caddyfile_text, "stale ai-toolkit :8443 site still present"
+    assert "ai-toolkit" not in caddyfile_text, "stale ai-toolkit reference in Caddyfile"

@@ -52,7 +52,7 @@ def _load_main(monkeypatch):
 
 class _FakeContainer:
     def __init__(self, svc, status="running", stats_delay=0.0):
-        self.name = f"ordo-v2-{svc}-1"
+        self.name = f"ordo-{svc}-1"
         self.status = status
         self.labels = {"com.docker.compose.service": svc}
         self._delay = stats_delay

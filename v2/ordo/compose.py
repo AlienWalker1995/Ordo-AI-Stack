@@ -245,7 +245,7 @@ def _mcp_gateway(project: str, net: str, env_file: str) -> dict[str, Any]:
         "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS": "${CODE_ROOT:-/c/dev}",
         # ComfyUI MCP's default checkpoint (a non-secret default, safe to interpolate from .env-space).
         # The other secrets the spawned MCP servers need — OPS_CONTROLLER_TOKEN (comfyui),
-        # DASHBOARD_AUTH_TOKEN (orchestration), N8N_API_KEY (n8n) — are NOT declared here on purpose:
+        # N8N_API_KEY (n8n) — are NOT declared here on purpose:
         # they arrive via the `secrets.env` env_file (already layered on this service). Re-declaring
         # them in `environment:` with `${VAR:-}` would interpolate from .env/host (where they're
         # absent → empty) and SHADOW the env_file value to empty. gateway-wrapper.sh reads them from
@@ -337,7 +337,7 @@ def _plugin_service(ps: "PluginService", plugin: "Plugin", *, net: str, env_file
 
 
 def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "hermes",
-                   project: str = "ordo-v2", env_file: str = ".env",
+                   project: str = "ordo", env_file: str = ".env",
                    agent_image: str | None = None,
                    agent_command: list[str] | None = None,
                    agent_user: str | None = None,

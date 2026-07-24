@@ -27,16 +27,16 @@ Open WebUI → Qdrant (`VECTOR_DB=qdrant`, `QDRANT_URI=http://qdrant:6333`) — 
 ## User Flow
 
 ```
-1. ./compose --profile rag up -d          # start Qdrant + rag-ingestion
-2. cp document.pdf data/rag-input/        # drop document
-3. rag-ingestion chunks + embeds + stores # automatic
-4. Open WebUI chat → toggle RAG           # retrieves relevant chunks
+1. docker compose -p ordo --profile rag up -d   # from v2/out/ (see v2/README.md); start Qdrant + rag-ingestion
+2. cp document.pdf data/rag-input/              # drop document
+3. rag-ingestion chunks + embeds + stores       # automatic
+4. Open WebUI chat → toggle RAG                 # retrieves relevant chunks
 ```
 
 ## Configuration
 
 ```yaml
-# docker-compose.yml (relevant env vars)
+# v2/out/docker-compose.yml (rendered from v2/ordo.yaml; relevant env vars)
 rag-ingestion:
   environment:
     - EMBED_MODEL=${EMBED_MODEL:-nomic-embed-text}
