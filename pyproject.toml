@@ -1,14 +1,33 @@
+# Ordo — packaging so the render substrate installs as a real one-command tool:
+#   pip install .   ->   ordo detect | render | preflight | serve | setup | doctor | parity
+# Runtime dependency is only PyYAML (the render engine is otherwise stdlib — this is the
+# "core runs anywhere, offline-capable after an online install" requirement).
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "ordo-ai-stack"
-version = "0"
-description = "Local LLM stack (Docker); tooling is per-service requirements.txt"
+name = "ordo"
+version = "1.0.0"
+description = "Ordo — a portable, self-configuring, hardware-right-sizing AI stack"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
+dependencies = ["pyyaml>=6.0"]
+
+[project.scripts]
+ordo = "ordo.cli:main"
+
+[tool.setuptools]
+packages = ["ordo"]
+
+# Ship the curated catalog + plugin manifests with the package (data the CLI reads by default).
+[tool.setuptools.package-data]
+ordo = ["../catalog/*.yaml", "../plugins/**/*.yaml"]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 120
-src = ["dashboard", "tests", "model-gateway", "ops-controller", "rag-ingestion", "scripts", "worker"]
+src = ["ordo", "dashboard", "tests", "rag-ingestion", "scripts", "worker"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
@@ -19,7 +38,7 @@ ignore = ["E501"]
 "dashboard/app.py" = ["E402"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["dashboard"]
+known-first-party = ["dashboard", "ordo"]
 
 [tool.pytest.ini_options]
 tmp_path_retention_policy = "none"

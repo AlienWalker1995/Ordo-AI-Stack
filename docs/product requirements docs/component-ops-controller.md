@@ -83,5 +83,5 @@ Secure, authenticated REST API for Docker Compose lifecycle operations. The cont
 ## Dependencies
 
 - Docker socket (`/var/run/docker.sock`)
-- `OPS_CONTROLLER_TOKEN` from `v2/out/secrets.env` (rendered from `v2/secrets.env.example`)
+- `OPS_CONTROLLER_TOKEN` from `out/secrets.env` (rendered from `secrets.env.example`)
 - `ALLOWED_SERVICES` allowlist in code

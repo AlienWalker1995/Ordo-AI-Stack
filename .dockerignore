@@ -1,24 +1,14 @@
-# Ignore heavy directories that bloat build context
-.git
-data/
-models/
-docs/
-.tmp-pytest*/
-
-# Python artifacts
-__pycache__
-*.pyc
-*.pyo
-
-# Environment / secrets
-.env
-.env.*
-
-# IDE / editor
-.vscode/
-.idea/
-*.swp
-
-# Misc
-*.md
-LICENSE
+# Root build-context ALLOWLIST. Only the ops-controller image builds with the repo ROOT as
+# its context (docker/ops-controller.Dockerfile COPYs ordo/ catalog/ plugins/ agents/
+# dashboards/); everything else is excluded so the context stays tiny and no operator
+# material (out/secrets.env, auth/caddy/certs/, data/, models/) can ever reach the daemon.
+# (Subdirectory build contexts — docker/*/, dashboard/, hermes/, worker/, … — are NOT
+# affected: a .dockerignore only applies to the context directory it sits in.)
+*
+!ordo/
+!catalog/
+!plugins/
+!agents/
+!dashboards/
+**/__pycache__
+**/*.pyc

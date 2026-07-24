@@ -1,0 +1,58 @@
+# Machine-local GPU pins. Generated from the model registry — edit via the dashboard GPU view.
+# Both layers (CUDA_VISIBLE_DEVICES + device_ids) are required (see detect_hardware.py / WSL2).
+services:
+  llamacpp:
+    environment:
+      - CUDA_VISIBLE_DEVICES=GPU-97fe65ee-5e2d-8c9b-32d0-362f510ceb96
+      - NVIDIA_VISIBLE_DEVICES=GPU-97fe65ee-5e2d-8c9b-32d0-362f510ceb96
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['GPU-97fe65ee-5e2d-8c9b-32d0-362f510ceb96']
+              capabilities: ['gpu']
+  llamacpp-embed:
+    environment:
+      - CUDA_VISIBLE_DEVICES=GPU-97fe65ee-5e2d-8c9b-32d0-362f510ceb96
+      - NVIDIA_VISIBLE_DEVICES=GPU-97fe65ee-5e2d-8c9b-32d0-362f510ceb96
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['GPU-97fe65ee-5e2d-8c9b-32d0-362f510ceb96']
+              capabilities: ['gpu']
+  comfyui:
+    environment:
+      - CUDA_VISIBLE_DEVICES=GPU-97fe65ee-5e2d-8c9b-32d0-362f510ceb96
+      - NVIDIA_VISIBLE_DEVICES=GPU-97fe65ee-5e2d-8c9b-32d0-362f510ceb96
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['GPU-97fe65ee-5e2d-8c9b-32d0-362f510ceb96']
+              capabilities: ['gpu']
+  stt:
+    environment:
+      - CUDA_VISIBLE_DEVICES=GPU-20fac13a-5e5b-1818-581f-63901612fd84
+      - NVIDIA_VISIBLE_DEVICES=GPU-20fac13a-5e5b-1818-581f-63901612fd84
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['GPU-20fac13a-5e5b-1818-581f-63901612fd84']
+              capabilities: ['gpu']
+  tts:
+    environment:
+      - CUDA_VISIBLE_DEVICES=GPU-20fac13a-5e5b-1818-581f-63901612fd84
+      - NVIDIA_VISIBLE_DEVICES=GPU-20fac13a-5e5b-1818-581f-63901612fd84
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['GPU-20fac13a-5e5b-1818-581f-63901612fd84']
+              capabilities: ['gpu']

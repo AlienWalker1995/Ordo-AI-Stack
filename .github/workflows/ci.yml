@@ -38,18 +38,20 @@ jobs:
         run: pip install -r tests/requirements.txt
 
       - name: Ruff lint
-        run: python -m ruff check dashboard tests rag-ingestion scripts comfyui-mcp orchestration-mcp worker
+        run: python -m ruff check ordo dashboard tests rag-ingestion scripts comfyui-mcp orchestration-mcp worker
 
       - name: Create minimal .env for compose tests
         run: |
           echo "BASE_PATH=." > .env
           echo "OPS_CONTROLLER_TOKEN=placeholder-for-ci" >> .env
 
+      # tests/substrate/ is the render-engine suite — it runs in the path-gated `substrate`
+      # job below (with its own pinned deps), so exclude it here to avoid double-running.
       - name: Run tests
-        run: python -m pytest tests/ -v
+        run: python -m pytest tests/ -v --ignore=tests/substrate
 
-  v2-substrate:
-    name: v2 substrate (mocked-profile)
+  substrate:
+    name: substrate (mocked-profile)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,36 +60,40 @@ jobs:
         id: filter
         with:
           filters: |
-            v2:
-              - 'v2/**'
+            substrate:
+              - 'ordo/**'
+              - 'catalog/**'
+              - 'plugins/**'
+              - 'agents/**'
+              - 'dashboards/**'
+              - 'docker/**'
+              - 'assets/**'
+              - 'tests/substrate/**'
+              - 'ordo.example.yaml'
+              - 'requirements-dev.txt'
+              - 'pyproject.toml'
+              - '.github/workflows/ci.yml'
 
       - name: Set up Python
-        if: steps.filter.outputs.v2 == 'true'
+        if: steps.filter.outputs.substrate == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: v2/requirements-dev.txt
+          cache-dependency-path: requirements-dev.txt
 
       - name: Install pinned deps
-        if: steps.filter.outputs.v2 == 'true'
-        run: pip install -r v2/requirements-dev.txt
-
-      - name: Ruff lint
-        if: steps.filter.outputs.v2 == 'true'
-        working-directory: v2
-        run: python -m ruff check ordo tests
+        if: steps.filter.outputs.substrate == 'true'
+        run: pip install -r requirements-dev.txt
 
       # No GPU on CI runners — every test uses a MOCKED hardware profile (the merge-gate
       # "mocked-profile CI" requirement). Also proves the config renders from a clean checkout.
       - name: Pytest (mocked profiles)
-        if: steps.filter.outputs.v2 == 'true'
-        working-directory: v2
-        run: PYTHONPATH=. python -m pytest -q
+        if: steps.filter.outputs.substrate == 'true'
+        run: PYTHONPATH=. python -m pytest tests/substrate -q
 
       - name: Fresh-install render smoke
-        if: steps.filter.outputs.v2 == 'true'
-        working-directory: v2
+        if: steps.filter.outputs.substrate == 'true'
         run: |
           PYTHONPATH=. python -m ordo --source ordo.example.yaml render --out /tmp/ordo-out
           test -f /tmp/ordo-out/.env && test -f /tmp/ordo-out/docker-compose.yml
@@ -96,15 +102,14 @@ jobs:
       # dict). `config` parses + validates; it does not create or start anything.
       # The rendered edge (caddy) requires CADDY_BIND (host tailnet IP) via ${CADDY_BIND:?...} —
       # an operator-supplied `site:` value the generic example intentionally leaves unset. Load the
-      # rendered .env and add a CI-only placeholder (never used at runtime) so config can interpolate,
-      # exactly as the repo-root compose-validate job does for the same strict-required var.
+      # rendered .env and add a CI-only placeholder (never used at runtime) so config can interpolate.
       - name: Rendered compose validates (docker engine)
-        if: steps.filter.outputs.v2 == 'true'
+        if: steps.filter.outputs.substrate == 'true'
         run: |
           echo "CADDY_BIND=127.0.0.1" >> /tmp/ordo-out/.env
           docker compose -f /tmp/ordo-out/docker-compose.yml --env-file /tmp/ordo-out/.env config >/dev/null
           echo "rendered compose accepted by docker compose config"
 
-      - name: Skip (no v2 changes)
-        if: steps.filter.outputs.v2 != 'true'
-        run: echo "Skipping v2 substrate — no changes under v2/."
+      - name: Skip (no substrate changes)
+        if: steps.filter.outputs.substrate != 'true'
+        run: echo "Skipping substrate — no changes under the render-engine paths."
