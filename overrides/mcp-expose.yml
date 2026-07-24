@@ -1,5 +1,0 @@
-# DEPRECATED: mcp-gateway is now published on the host by default in docker-compose.yml.
-# This override is intentionally a no-op so existing -f flags continue to work.
-# Remove from your launch scripts at your convenience.
-
-services: {}
