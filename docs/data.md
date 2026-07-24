@@ -1,6 +1,6 @@
 # Data Schemas, Lifecycle, and Persistence
 
-> ⚠️ **V1 removed 2026-07-24 (commit 62540bf) — the repo is now v2-only.** The stack keeps a **single data root** at `C:\dev\ordo-ai-stack\data`; `site.DATA_PATH` in `v2/ordo.yaml` renders it into the compose bind mounts. The per-directory schemas / bind-mount / backup guidance below still broadly describes what lives under `data/`, but config and bring-up now flow entirely through `v2/`: edit the declarative source `v2/ordo.yaml` (tracked template `v2/ordo.example.yaml`), run `ordo render` (`python -m ordo.cli render --out out`), then bring up the rendered compose from `v2/out/` (`docker compose -p ordo … up`). Never hand-edit rendered output. Authoritative guide: [`../v2/README.md`](../v2/README.md) (+ [`../v2/CUTOVER.md`](../v2/CUTOVER.md)). See [`LEGACY-CLEANUP.md`](LEGACY-CLEANUP.md).
+> ⚠️ **V1 removed 2026-07-24 (commit 62540bf); the repo was then flattened 2026-07-24 (commit 2d4bd9c) — there is no v2; there is only Ordo.** The stack keeps a **single data root** at `C:\dev\ordo-ai-stack\data`; `site.DATA_PATH` in `ordo.yaml` renders it into the compose bind mounts. The per-directory schemas / bind-mount / backup guidance below still broadly describes what lives under `data/`, but config and bring-up flow through the render substrate: edit the declarative source `ordo.yaml` (tracked template `ordo.example.yaml`), run `ordo render` (`python -m ordo.cli render --out out`), then bring up the rendered compose from `out/` (`docker compose -p ordo … up`). Never hand-edit rendered output. Authoritative guide: [`operator-guide.md`](operator-guide.md) (+ [`history/CUTOVER.md`](history/CUTOVER.md)). See [`LEGACY-CLEANUP.md`](LEGACY-CLEANUP.md).
 
 Reference for where data lives, how it moves, and what survives a restart / rebuild.
 
@@ -10,7 +10,7 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 
 | Source | Description | Consumer |
 |---|---|---|
-| `v2/out/.env` (rendered from `v2/ordo.yaml`) | Environment configuration | All services at startup |
+| `out/.env` (rendered from `ordo.yaml`) | Environment configuration | All services at startup |
 | `data/mcp/servers.txt` | Enabled MCP server list (comma-separated or one-per-line) | `mcp-gateway` |
 | `data/mcp/registry.json` | MCP server metadata, `allow_clients`, rate limits | `mcp-gateway`, dashboard |
 | `data/mcp/registry-custom.yaml` | Custom catalog fragment (e.g. ComfyUI MCP) | `mcp-gateway` |
@@ -93,25 +93,25 @@ Stored in Qdrant under `data/qdrant/`. Collection name defaults to `documents` (
 }
 ```
 
-Configuration: `EMBED_MODEL`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP` in `v2/out/.env` (rendered from `v2/ordo.yaml`).
+Configuration: `EMBED_MODEL`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP` in `out/.env` (rendered from `ordo.yaml`).
 
 ## Data Lifecycle
 
 ### Initialization
 
-Triggered by `ordo render` + first `docker compose -p ordo … up` from `v2/out/`.
+Triggered by `ordo render` + first `docker compose -p ordo … up` from `out/`.
 
 - Creates `data/` and `models/` subdirectories.
 - Copies the MCP registry template into `data/mcp/` if missing.
-- Hardware detection (`hardware: auto` / `ordo detect`) and GPU pinning happen at render time, not via a separate script — `ordo render` inspects the host and writes the resolved config directly into `v2/out/` (`.env`, `docker-compose.yml`); there is no `overrides/compute.yml` step to run.
+- Hardware detection (`hardware: auto` / `ordo detect`) and GPU pinning happen at render time, not via a separate script — `ordo render` inspects the host and writes the resolved config directly into `out/` (`.env`, `docker-compose.yml`); there is no `overrides/compute.yml` step to run.
 
 All directories created this way persist across restarts and rebuilds.
 
 ### Model Pull
 
-**llama.cpp GGUF:** from `v2/out/`, `docker compose -p ordo --profile models run --rm gguf-puller` with `GGUF_MODELS=org/repo` fetches GGUF files into `models/gguf/`. Also exposed from the dashboard.
+**llama.cpp GGUF:** from `out/`, `docker compose -p ordo --profile models run --rm gguf-puller` with `GGUF_MODELS=org/repo` fetches GGUF files into `models/gguf/`. Also exposed from the dashboard.
 
-**ComfyUI:** from `v2/out/`, `docker compose -p ordo run --rm comfyui-model-puller` downloads the pack defined by `COMFYUI_PACKS` (default includes LTX-2 variants) into `models/comfyui/`. First run can be tens of GB.
+**ComfyUI:** from `out/`, `docker compose -p ordo run --rm comfyui-model-puller` downloads the pack defined by `COMFYUI_PACKS` (default includes LTX-2 variants) into `models/comfyui/`. First run can be tens of GB.
 
 ### RAG Ingestion (`--profile rag`)
 
@@ -162,27 +162,27 @@ Hermes maintains its own state under `data/hermes/` — session records, Discord
 2. `models/gguf/`, `models/comfyui/` — expensive to re-download
 3. `data/ops-controller/audit.log*` — audit history
 4. `data/qdrant/` — RAG collection
-5. `v2/ordo.yaml` and `v2/out/secrets.env` — declarative source + operator secrets (**do not commit**)
+5. `ordo.yaml` and `out/secrets.env` — declarative source + operator secrets (**do not commit**)
 
 ### Full backup
 
 ```bash
-tar -czf ordo-ai-stack-backup-$(date +%Y%m%d).tar.gz data/ models/ v2/ordo.yaml v2/out/secrets.env
+tar -czf ordo-ai-stack-backup-$(date +%Y%m%d).tar.gz data/ models/ ordo.yaml out/secrets.env
 ```
 
 ### Selective backup (skip models, which are reproducible)
 
 ```bash
 tar -czf ordo-ai-stack-state-$(date +%Y%m%d).tar.gz \
-  data/hermes/ data/ops-controller/ data/qdrant/ data/mcp/ v2/ordo.yaml v2/out/secrets.env
+  data/hermes/ data/ops-controller/ data/qdrant/ data/mcp/ ordo.yaml out/secrets.env
 ```
 
 ### Restore
 
 ```bash
-cd v2/out && docker compose -p ordo down
+cd out && docker compose -p ordo down
 tar -xzf ordo-ai-stack-backup-<date>.tar.gz
-cd v2/out && docker compose -p ordo up -d
+cd out && docker compose -p ordo up -d
 ```
 
 ## Data Migration
@@ -190,7 +190,7 @@ cd v2/out && docker compose -p ordo up -d
 ### Move `data/` to a different disk
 
 ```yaml
-# v2/ordo.yaml
+# ordo.yaml
 site:
   DATA_PATH: /new/path/to/data
 ```
@@ -198,9 +198,9 @@ site:
 ```bash
 mkdir -p /new/path/to/data
 cp -a data/. /new/path/to/data/
-cd v2 && python -m ordo.cli render --out out
-cd v2/out && docker compose -p ordo down
-cd v2/out && docker compose -p ordo up -d
+python -m ordo.cli render --out out
+cd out && docker compose -p ordo down
+cd out && docker compose -p ordo up -d
 ```
 
 ## Data Cleanup

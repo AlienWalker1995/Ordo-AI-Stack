@@ -24,7 +24,7 @@ We will acknowledge receipt and aim to respond within a reasonable timeframe.
 
 ## Security Considerations
 
-> **Secrets under v2 (production, since the 2026-07-09 cutover):** operator secret **values** live in a gitignored **`v2/out/secrets.env`**, rendered from the keys-only `v2/out/secrets.env.example` and kept **separate from derived config** (`.env` stays config-only). Services that need secrets read `secrets.env` as a second `env_file` (`required: false`). Verify with `ordo preflight --secrets out/secrets.env`. **Never commit `v2/out/secrets.env`** (nor the operator-real `v2/ordo.yaml`, which carries host paths + tailnet identity). The SOPS + age at-rest model under `secrets/` still backs the encrypted material. The `.env` / `runtime/.env` notes below describe the legacy V1 secret flow.
+> **Secrets (production, since the 2026-07-09 cutover):** operator secret **values** live in a gitignored **`out/secrets.env`**, rendered from the keys-only `out/secrets.env.example` and kept **separate from derived config** (`.env` stays config-only). Services that need secrets read `secrets.env` as a second `env_file` (`required: false`). Verify with `ordo preflight --secrets out/secrets.env`. **Never commit `out/secrets.env`** (nor the operator-real `ordo.yaml`, which carries host paths + tailnet identity). The SOPS + age at-rest model under `secrets/` still backs the encrypted material. The `.env` / `runtime/.env` notes below describe the legacy V1 secret flow.
 
 ### Authentication
 
@@ -38,10 +38,10 @@ Services bind to `0.0.0.0` to allow access from other machines on your network. 
 
 ### Secrets
 
-- **Never commit** `v2/out/.env` or `v2/out/secrets.env`. They are gitignored, along with the operator-real `v2/ordo.yaml`.
-- Use `v2/ordo.example.yaml` and `v2/out/secrets.env.example` as templates; copy to `v2/ordo.yaml` / `v2/out/secrets.env`, fill in values locally, then run `ordo render` to produce `v2/out/.env` and `v2/out/docker-compose.yml`.
-- API keys (OpenAI, Anthropic, etc.) and tokens should only live in `v2/out/secrets.env`, never in the repository.
-- **Never commit** `data/` — it is gitignored and contains user-specific runtime state (Hermes session data, Discord guild/user IDs, MCP config, etc.). All secrets and setup-specific values belong in `data/` or `v2/out/secrets.env`, not in shared code.
+- **Never commit** `out/.env` or `out/secrets.env`. They are gitignored, along with the operator-real `ordo.yaml`.
+- Use `ordo.example.yaml` and `out/secrets.env.example` as templates; copy to `ordo.yaml` / `out/secrets.env`, fill in values locally, then run `ordo render` to produce `out/.env` and `out/docker-compose.yml`.
+- API keys (OpenAI, Anthropic, etc.) and tokens should only live in `out/secrets.env`, never in the repository.
+- **Never commit** `data/` — it is gitignored and contains user-specific runtime state (Hermes session data, Discord guild/user IDs, MCP config, etc.). All secrets and setup-specific values belong in `data/` or `out/secrets.env`, not in shared code.
 
 ### Data
 
@@ -50,7 +50,7 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 ## Pre-deployment checklist
 
 - [ ] `OPS_CONTROLLER_TOKEN` set (generate: `openssl rand -hex 32`)
-- [ ] `v2/out/.env` / `v2/out/secrets.env` not committed (in `.gitignore`)
+- [ ] `out/.env` / `out/secrets.env` not committed (in `.gitignore`)
 - [ ] Ops controller port (9000) not exposed to host/network
 - [ ] Dashboard bound to localhost or Tailscale-only when multi-user
 
@@ -70,7 +70,7 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 
 ## Break-glass
 
-1. **Reset OPS_CONTROLLER_TOKEN:** Generate new token, update `v2/out/secrets.env`, then re-run `docker compose -p ordo … up` from `v2/out/` to restart dashboard + ops-controller
+1. **Reset OPS_CONTROLLER_TOKEN:** Generate new token, update `out/secrets.env`, then re-run `docker compose -p ordo … up` from `out/` to restart dashboard + ops-controller
 2. **Restore data:** Restore `data/` from a local backup
 3. **Disable MCP tools:** Clear `data/mcp/servers.txt` or set to a single safe server
 4. **Safe mode:** Stop `mcp-gateway` and `hermes-gateway`; use `llamacpp` + `open-webui` only
