@@ -3,8 +3,8 @@
 
 Generic and stdlib-only: any GPU plugin bind-mounts this file (or prefixes its command with it)
 to route GPU-heavy work through the scheduler. Nothing here is specific to any one service.
-First consumer: the ai-toolkit plugin mounts it at /app/ai-toolkit/venv/bin/python — the path the
-AI-toolkit UI prefers when spawning trainers — so every training run leases the GPU first.
+Consumer: the ltx-trainer plugin mounts it at /ordo/lease-exec.py and launches every GPU
+run as `.venv/bin/python /ordo/lease-exec.py <script> …`, so each training run leases the GPU first.
 
 Contract (env):
   OPS_CONTROLLER_URL            scheduler base URL (required), e.g. http://ops-controller:9000

@@ -15,6 +15,6 @@ codebase-memory-ui/nginx.conf text eol=lf
 # when scripts/secrets/decrypt.sh runs on a Windows-mangled .sops file.
 *.sops text eol=lf
 
-# Bind-mounted into Linux containers as an executable (the ai-toolkit venv-python
+# Bind-mounted into Linux containers as an executable (the trainer venv-python
 # lease seam) — a CRLF shebang (`python3\r`) breaks exec on Windows checkouts.
 v2/assets/* text eol=lf
