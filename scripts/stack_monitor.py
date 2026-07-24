@@ -33,7 +33,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # ── Config ───────────────────────────────────────────────────────────────────
@@ -133,14 +133,14 @@ def is_prerelease(tag: str) -> bool:
 
 def compare(cur: str, latest: str):
     """Return (bucket, level); bucket in {major,minor,patch,same,unknown}."""
-    c, l = semver_tuple(cur), semver_tuple(latest)
-    if c is None or l is None:
+    c, lt = semver_tuple(cur), semver_tuple(latest)
+    if c is None or lt is None:
         return "unknown", 0
-    if l <= c:
+    if lt <= c:
         return "same", 0  # equal to / ahead of upstream — not an update
-    if l[0] != c[0]:
+    if lt[0] != c[0]:
         return "major", 3
-    if l[1] != c[1]:
+    if lt[1] != c[1]:
         return "minor", 2
     return "patch", 1
 
@@ -446,7 +446,7 @@ def audit():
     actionable = [r for r in results if r["tier"] in ("SECURITY", "UPDATE")]
 
     return {
-        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "date": datetime.now(UTC).strftime("%Y-%m-%d"),
         "compose": str(compose_path),
         "note": ("Audited the DEPLOYED compose. 'declared' = what compose ships; "
                  "compare against 'latest'. Tiers: SECURITY/UPDATE (act), "
