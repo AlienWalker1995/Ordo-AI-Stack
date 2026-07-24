@@ -65,7 +65,8 @@ class Plugin:
     vram_gb: float
     ram_gb: float
     depends_on: tuple[str, ...]
-    provides: tuple[str, ...]
+    provides: tuple[str, ...]   # documentation-only: resolve() matches literal plugin ids;
+                                # no capability-based resolution consumes this (audit P2-37)
     compose_profile: str
     env: dict[str, str]
     kind: str = "service"          # "service" (compose service) | "mcp" (agent tool server)

@@ -13,7 +13,10 @@ Retrieval-Augmented Generation (RAG) pipeline providing vector search and docume
 
 1. Drop documents into `data/rag-input/`
 2. `rag-ingestion` watches directory; chunks at `RAG_CHUNK_SIZE` tokens (default 400, overlap 50)
-3. Embeds via model gateway (`EMBED_MODEL`, default `nomic-embed-text`)
+3. Embeds directly against the `llamacpp-embed` service (`http://llamacpp-embed:8080`) — **not**
+   the LiteLLM model gateway; the env var carrying that URL is confusingly still named
+   `MODEL_GATEWAY_URL` (`EMBED_URL` is the current/preferred name, matching its sibling
+   `qdrant-rag-mcp/server.py`). Model is `EMBED_MODEL`, default `nomic-embed-text-v1.5.Q4_K_M.gguf`.
 4. Stores in Qdrant collection (`RAG_COLLECTION`, default `documents`)
 
 ## Query Flow
@@ -39,7 +42,8 @@ Open WebUI → Qdrant (`VECTOR_DB=qdrant`, `QDRANT_URI=http://qdrant:6333`) — 
 # out/docker-compose.yml (rendered from ordo.yaml; relevant env vars)
 rag-ingestion:
   environment:
-    - EMBED_MODEL=${EMBED_MODEL:-nomic-embed-text}
+    - MODEL_GATEWAY_URL=http://llamacpp-embed:8080   # despite the name, points at llamacpp-embed
+    - EMBED_MODEL=${EMBED_MODEL:-${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}}
     - QDRANT_COLLECTION=${RAG_COLLECTION:-documents}
     - CHUNK_SIZE=${RAG_CHUNK_SIZE:-400}
     - CHUNK_OVERLAP=${RAG_CHUNK_OVERLAP:-50}
@@ -48,8 +52,10 @@ rag-ingestion:
 ## Dependencies
 
 - **Qdrant** service on backend network
-- **Model gateway** for embeddings
-- `nomic-embed-text` model must be pulled before ingestion can embed
+- **`llamacpp-embed`** (plugins/rag/plugin.yaml) for embeddings — a small nomic GGUF served
+  directly by llama.cpp, not routed through the LiteLLM model gateway
+- `nomic-embed-text-v1.5.Q4_K_M.gguf` (or `LLAMACPP_EMBED_MODEL` override) must be present before
+  ingestion can embed
 
 ## Non-Goals
 

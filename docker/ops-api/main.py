@@ -23,9 +23,9 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
-# ``audit`` lives next to this module. In production (uvicorn main:app) and
-# in pytest with ``ops-controller/conftest.py`` it imports as a top-level
-# module; from tests in ``tests/`` that load this file via
+# ``audit`` lives next to this module. In production (uvicorn main:app) it
+# imports as a top-level module; from tests (e.g.
+# ``tests/substrate/test_ops_api_stats.py``) that load this file via
 # ``spec_from_file_location`` without touching sys.path, fall back to loading
 # the sibling file directly.
 try:
@@ -130,7 +130,10 @@ _GUARDIAN_MUTATION_GONE_DETAIL = (
 # to — so a model switch's .env upsert and the recreate share one source of truth.
 COMPOSE_PROJECT_DIR = os.environ.get("COMPOSE_PROJECT_DIR", "/workspace")
 # ────────────────────────────────────────────────────────────────────────────────
-AUDIT_LOG_PATH = Path(os.environ.get("AUDIT_LOG_PATH", "/data/audit.log"))
+# Single audit sink (audit P2-5): every privileged call — dashboard-facing _audit() and the
+# Hermes-facing endpoints — appends one fsync'd JSONL line via the AuditLog class below.
+# (Previously two parallel writers with different default paths and schemas.)
+AUDIT_LOG_PATH = Path(os.environ.get("AUDIT_LOG_PATH", "/data/audit.jsonl"))
 AUDIT_LOG_MAX_BYTES = int(os.environ.get("AUDIT_LOG_MAX_BYTES", "10485760"))  # 10MB default
 
 # Services we allow operations on (allowlist).
@@ -547,12 +550,12 @@ OPS_HERMES_WATCHDOG_GRACE_SECONDS = float(os.environ.get("OPS_HERMES_WATCHDOG_GR
 OPS_HERMES_WATCHDOG_PAUSE_FILE = os.environ.get("OPS_HERMES_WATCHDOG_PAUSE_FILE", "/data/watchdog.paused")
 
 # Comma-separated list of compose service NAMES the watchdog must NOT touch.
-# Defaults to ops-controller (we cannot watch our own host) plus any one-shot
+# Defaults to ops-api (we cannot watch our own host) plus any one-shot
 # init container service names if you have them. Override via env if needed.
 OPS_WATCHDOG_EXCLUDE = {
     s.strip() for s in os.environ.get(
         "OPS_WATCHDOG_EXCLUDE",
-        "ops-controller,comfyui-manager-setup,comfyui-mcp-image,orchestration-mcp-image",
+        "ops-api,comfyui-manager-setup,comfyui-mcp-image,orchestration-mcp-image",
     ).split(",") if s.strip()
 }
 
@@ -580,7 +583,7 @@ _cached_docker: docker.DockerClient | None = None
 # Structured audit log for the Hermes-facing privileged endpoints
 # (containers.list / container.logs / container.restart / compose.{up,down,restart}).
 # Schema: ``{ts, caller, action, target, result, ...extra}``. One JSON line per call.
-_audit_log = AuditLog(os.environ.get("AUDIT_LOG_PATH", "/data/audit.jsonl"))
+_audit_log = AuditLog(AUDIT_LOG_PATH, max_bytes=AUDIT_LOG_MAX_BYTES)
 
 
 def _docker_client() -> docker.DockerClient:
@@ -611,21 +614,6 @@ async def verify_token(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Invalid token")
 
 
-def _maybe_rotate_audit_log() -> None:
-    """If audit log exceeds AUDIT_LOG_MAX_BYTES, rotate: .log -> .log.1, start fresh."""
-    try:
-        if not AUDIT_LOG_PATH.exists():
-            return
-        if AUDIT_LOG_PATH.stat().st_size < AUDIT_LOG_MAX_BYTES:
-            return
-        rotated = AUDIT_LOG_PATH.with_suffix(AUDIT_LOG_PATH.suffix + ".1")
-        if rotated.exists():
-            rotated.unlink()
-        AUDIT_LOG_PATH.rename(rotated)
-    except Exception as e:
-        logger.warning("Audit log rotation failed: %s", e)
-
-
 def _audit(
     action: str,
     resource: str = "",
@@ -634,26 +622,25 @@ def _audit(
     correlation_id: str = "",
     metadata: dict | None = None,
 ):
-    """Append to audit log. Schema: docs/audit/SCHEMA.md. Rotates by size when over limit."""
+    """Append one audit record via the single AuditLog sink (JSONL, fsync'd, size-rotated).
+
+    Kept as a thin wrapper so the 30+ dashboard-facing call sites keep their signature;
+    schema fields: ts (epoch float), caller, action, target, result [+ detail/
+    correlation_id/metadata when present]. (audit P2-5 — was a second, divergent writer.)
+    """
     try:
-        AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _maybe_rotate_audit_log()
-        entry = {
-            "ts": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-            "action": action,
-            "resource": resource or "",
-            "actor": "dashboard",
-            "result": result,
-            "detail": detail or "",
-        }
+        extra: dict = {}
+        if detail:
+            extra["detail"] = detail
         if correlation_id:
-            entry["correlation_id"] = correlation_id
+            extra["correlation_id"] = correlation_id
         if metadata:
-            entry["metadata"] = metadata
-        with open(AUDIT_LOG_PATH, "a") as f:
-            f.write(json.dumps(entry) + "\n")
+            extra["metadata"] = metadata
+        _audit_log.record(action=action, target=resource or "", result=result,
+                          caller="dashboard", **extra)
     except Exception as e:
         logger.error("Audit write failed: %s", e)
+
 
 
 def _get_containers():
@@ -1374,9 +1361,9 @@ async def env_set(body: EnvSetBody, request: Request, _: None = Depends(verify_t
     if body.key == "LLAMACPP_EXTRA_ARGS":
         if not re.fullmatch(r"[a-zA-Z0-9 _.=:/-]*", body.value):
             raise HTTPException(status_code=400, detail="LLAMACPP_EXTRA_ARGS: only alphanumeric, spaces, dashes, dots, equals, colons, slashes allowed")
-    env_path = Path("/workspace/.env")
+    env_path = REGISTRY.env_path  # single source of truth (OPS_ENV_PATH; audit P2-7)
     if not env_path.exists():
-        raise HTTPException(status_code=404, detail=".env not found at /workspace/.env")
+        raise HTTPException(status_code=404, detail=f".env not found at {env_path}")
     content = env_path.read_text(encoding="utf-8")
     pattern = rf"^{re.escape(body.key)}=.*"
     if re.search(pattern, content, re.MULTILINE):
@@ -1392,10 +1379,10 @@ async def env_set(body: EnvSetBody, request: Request, _: None = Depends(verify_t
 
 @app.get("/env/{key}")
 async def env_get(key: str, _: None = Depends(verify_token)):
-    """Read a single allowed key from /workspace/.env (same file env_set writes)."""
+    """Read a single allowed key from the registry env file (same file env_set writes)."""
     if key not in ENV_ALLOWED_KEYS:
         raise HTTPException(status_code=400, detail=f"Key not in allowlist: {key!r}")
-    env_path = Path("/workspace/.env")
+    env_path = REGISTRY.env_path  # single source of truth (OPS_ENV_PATH; audit P2-7)
     if not env_path.exists():
         return {"key": key, "value": ""}
     content = env_path.read_text(encoding="utf-8")
@@ -1537,10 +1524,10 @@ async def service_recreate(
 @app.get("/audit")
 async def audit(limit: int = 50, _: None = Depends(verify_token)):
     """Read audit log. Auth required."""
-    if not AUDIT_LOG_PATH.exists():
+    if not _audit_log.path.exists():
         return {"entries": []}
     from collections import deque
-    with open(AUDIT_LOG_PATH, encoding="utf-8", errors="replace") as f:
+    with open(_audit_log.path, encoding="utf-8", errors="replace") as f:
         tail = deque(f, maxlen=limit)
     entries = []
     for line in reversed(tail):

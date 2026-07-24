@@ -21,8 +21,10 @@ def test_full_llamacpp_surface_rendered():
     for k in ["LLAMACPP_MODEL", "LLAMACPP_CTX_SIZE", "LLAMACPP_MMPROJ", "LLAMACPP_EXTRA_ARGS",
               "LLAMACPP_N_PREDICT", "LLAMACPP_FLASH_ATTN", "LLAMACPP_KV_CACHE_TYPE_K"]:
         assert k in env
-    # the ultra model carries its MTP spec-decode args + vision projector
-    assert "draft-mtp" in env["LLAMACPP_EXTRA_ARGS"]
+    # the ultra model carries its reasoning-format arg + vision projector. The MTP
+    # spec-decode flags were dropped as inert (audit P2-15 — non-MTP GGUF) and must not return.
+    assert "--reasoning-format deepseek" in env["LLAMACPP_EXTRA_ARGS"]
+    assert "draft-mtp" not in env["LLAMACPP_EXTRA_ARGS"]
     assert env["LLAMACPP_MMPROJ"].endswith("mmproj-Huihui-Q6_K.gguf")
 
 

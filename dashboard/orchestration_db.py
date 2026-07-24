@@ -1,6 +1,6 @@
 """SQLite-backed job store, publish outbox, workflow versions, and schedules.
 
-Replaces the in-memory + single-JSON approach in orchestration_jobs.py.
+Replaces the old in-memory + single-JSON approach (the orchestration_jobs.py compat shim was removed 2026-07-24 — import from this module directly).
 WAL mode allows concurrent dashboard readers + single worker writer safely.
 """
 

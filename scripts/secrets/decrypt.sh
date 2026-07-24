@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # Decrypt SOPS-encrypted secrets into ~/.ai-toolkit/runtime/.
-# Runs at `make up`. Requires the age private key at
-# ~/.config/sops/age/keys.txt (or wherever SOPS_AGE_KEY_FILE points).
+# Run manually before first bring-up and after rotating secrets. Requires
+# the age private key at ~/.config/sops/age/keys.txt (or wherever
+# SOPS_AGE_KEY_FILE points).
 
 cd "$(dirname "$0")/../.."
 

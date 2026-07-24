@@ -1,4 +1,4 @@
-"""Render an ISOLATED docker-compose for the v2 stack from the resolved config.
+"""Render an ISOLATED docker-compose for the stack from the resolved config.
 
 The isolation properties below are what let the stack stand on its own without
 colliding with anything else on the host:
@@ -19,8 +19,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .plugins import Plugin, PluginService
 
-# The mandatory 6-service core (from the architecture decisions). Caddy/oauth2-proxy is an
-# OPTIONAL remote-access plugin, so it's not here — a local floor install is localhost-only.
+# The mandatory 5-service core (from the architecture decisions), plus the agent (added
+# separately below) makes 6 mandatory services total. Caddy/oauth2-proxy is an OPTIONAL
+# remote-access plugin, so it's not here — a local floor install is localhost-only.
 _CORE = ["llamacpp", "model-gateway", "mcp-gateway", "ops-controller", "dashboard"]
 
 # --metrics turns on llama-server's native Prometheus endpoint at /metrics:8080 (token rates,

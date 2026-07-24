@@ -169,6 +169,12 @@ ordo-ai-stack/
 ├── rag-ingestion/       # Document ingester (Dockerfile, ingest.py)
 ├── orchestration-mcp/   # Orchestration MCP server — builds the orchestration-mcp service
 ├── comfyui-mcp/         # ComfyUI MCP server — builds the comfyui-mcp service
+├── qdrant-rag-mcp/      # Qdrant RAG MCP server — builds the qdrant-rag-mcp tool
+├── codebase-memory-mcp/ # Headless codebase-memory MCP (Dockerfile, README)
+├── codebase-memory-ui/  # Codebase-memory 3D graph UI — builds the codebase-memory-ui service plugin
+├── worker/              # Background job worker (Dockerfile, worker.py)
+├── auth/                # Edge auth: auth/caddy (Caddyfile), auth/oauth2-proxy (SSO allowlist)
+├── config/               # Misc static config (e.g. comfyui-manager-seed.ini)
 ├── ordo/                # Render substrate (Python package): `ordo render`, `ordo detect`, etc.
 ├── plugins/, agents/, catalog/, dashboards/, docker/, assets/, monitoring/  # Stack source (flattened to repo root 2026-07-24)
 ├── scripts/             # ssrf-egress-block, smoke tests, doctor scripts
@@ -176,16 +182,21 @@ ordo-ai-stack/
 ├── product requirements docs/  # This documentation
 ├── docs/                # Getting started, runbooks; docs/operator-guide.md is the authoritative operating guide; docs/history/ holds archival cutover notes
 ├── data/                # gitignored, runtime data
-│   ├── mcp/             # servers.txt, registry.json
+│   ├── mcp/             # servers.txt, registry-custom.yaml
 │   ├── ops-controller/  # audit.log
 │   ├── qdrant/          # Vector DB storage
 │   ├── rag-input/       # Drop documents here
 │   └── hermes/          # Hermes runtime state
+├── secrets/             # SOPS-encrypted secrets (*.sops, tracked); decrypted plaintext is gitignored
 ├── ordo.example.yaml    # Tracked template; copy to ordo.yaml and edit
 ├── ordo.yaml            # Operator-real source (gitignored)
 ├── out/                 # `ordo render` output: docker-compose.yml, .env, secrets.env (never hand-edited)
-└── SECURITY.md
+└── AGENTS.md, CONTRIBUTING.md, SECURITY.md, CHANGELOG.md
 ```
+
+Note: there is no repo-root `overrides/` — it was retired (`62540bf`), briefly and accidentally
+re-added by the flatten commit `2d4bd9c`, then removed again and gitignored in the audit-remediation
+pass (`9251e47`); see `docs/LEGACY-CLEANUP.md` for the full arc.
 
 ---
 

@@ -1,7 +1,7 @@
 # Prometheus scrape config for the Ordo stack (monitoring profile).
 # Scrapes llama.cpp's native /metrics (enabled by --metrics in
 # scripts/llamacpp/run-llama-server.sh) and the nvidia GPU exporter.
-# All targets are on the internal `backend` network — no host exposure.
+# All targets are on the internal `ordo-net` network — no host exposure.
 global:
   scrape_interval: 15s
   scrape_timeout: 10s

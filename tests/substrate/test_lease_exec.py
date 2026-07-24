@@ -159,7 +159,7 @@ def test_sigint_is_forwarded_and_lease_released(tmp_path):
     while not stub.jobs and time.time() < deadline:
         time.sleep(0.05)
     time.sleep(0.3)                             # let the child reach its sleep
-    p.send_signal(signal.SIGINT)                # what the AI-toolkit Stop button sends
+    p.send_signal(signal.SIGINT)                # e.g. a caller's Stop button / Ctrl-C
     p.wait(timeout=10)
     assert marker.read_text() == "int"          # child received the forwarded SIGINT
     assert stub.completes == ["train-test"]     # and the lease was released

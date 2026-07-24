@@ -1,8 +1,9 @@
 """Dependency-free canonical gpu-assignments YAML formatter.
 
-Importable by both pydantic-land (model_registry / ops-controller main) and the
-host-side setup script (scripts/detect_hardware.py) without pulling pydantic or
-any other ops-controller-specific dependency.
+Importable by pydantic-land (model_registry / ops-controller main) without pulling
+pydantic or any other ops-controller-specific dependency. (The former host-side
+setup script, scripts/detect_hardware.py, was removed in the V1 retirement; GPU
+detection now lives in ordo/hardware.py, driven at `ordo detect` / `ordo render` time.)
 
 Canonical implementation — all three emitters in the stack delegate here.
 """
@@ -14,7 +15,7 @@ def render_gpu_assignments_yaml(assignments: dict) -> str:
     (native-Linux). Replaces the duplicated format_gpu_assignments / render_gpu_assignments."""
     lines = [
         "# Machine-local GPU pins. Generated from the model registry — edit via the dashboard GPU view.",
-        "# Both layers (CUDA_VISIBLE_DEVICES + device_ids) are required (see detect_hardware.py / WSL2).",
+        "# Both layers (CUDA_VISIBLE_DEVICES + device_ids) are required (see ordo/hardware.py / WSL2).",
         "services:",
     ]
     for service, uuid in assignments.items():
@@ -39,7 +40,7 @@ def render_gpu_assignments_yaml(assignments: dict) -> str:
 def parse_gpu_assignments_yaml(text: str) -> dict:
     """Parse the fixed-format gpu-assignments.yml into {service: uuid}.
     Accepts both single- and double-quoted UUIDs so legacy files (double-quoted
-    from the old detect_hardware emitter) and new files (single-quoted) both parse."""
+    from the old, removed detect_hardware.py emitter) and new files (single-quoted) both parse."""
     result: dict = {}
     current = None
     for line in text.splitlines():

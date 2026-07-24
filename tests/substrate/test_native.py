@@ -56,8 +56,10 @@ def test_native_config_matches_the_rendered_container_config():
     # the SAME ctx value the container gets — one source, two deployment modes, no divergence
     assert _flag(p.llama_server, "--ctx-size") == rc.env["LLAMACPP_CTX_SIZE"]
     assert _flag(p.llama_server, "--model") == "/models/" + rc.env["LLAMACPP_MODEL"]
-    # the 27b's MTP spec-decode extra args carry into native too
-    assert "--spec-type" in p.llama_server
+    # the 27b's extra args carry into native too — and the retired inert MTP spec flags
+    # (audit P2-15: non-MTP GGUF, flags parsed but did nothing) must NOT resurface
+    assert "--reasoning-format" in p.llama_server
+    assert "--spec-type" not in p.llama_server
 
 
 def test_plan_is_honest_about_docker_only_pieces():

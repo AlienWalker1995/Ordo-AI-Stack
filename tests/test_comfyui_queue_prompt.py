@@ -7,9 +7,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# `mcp` is a comfyui-mcp service dep, not part of the test-runner deps in
-# tests/requirements.txt. Skip rather than fail when it isn't installed.
-pytest.importorskip("mcp.server.fastmcp")
+# `mcp`/fastmcp is a comfyui-mcp service dependency, not a test-runner dep —
+# it is deliberately absent from tests/requirements.txt and not installed in
+# CI. These tests are local-only: skip explicitly (with a documented reason,
+# not a bare import failure) rather than fail when it isn't installed. Run
+# them locally with the comfyui-mcp service environment active.
+pytest.importorskip(
+    "mcp.server.fastmcp",
+    reason="local-only: mcp/fastmcp is a comfyui-mcp service dependency, deliberately not installed in CI",
+)
 from mcp.server.fastmcp import FastMCP  # noqa: E402
 
 

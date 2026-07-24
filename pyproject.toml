@@ -27,7 +27,7 @@ ordo = ["../catalog/*.yaml", "../plugins/**/*.yaml"]
 [tool.ruff]
 target-version = "py312"
 line-length = 120
-src = ["ordo", "dashboard", "tests", "rag-ingestion", "scripts", "worker", "docker"]
+src = ["ordo", "dashboard", "tests", "rag-ingestion", "scripts", "worker", "docker", "hermes", "qdrant-rag-mcp"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
