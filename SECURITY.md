@@ -29,7 +29,7 @@ We will acknowledge receipt and aim to respond within a reasonable timeframe.
 ### Authentication
 
 - **Open WebUI:** The default `WEBUI_AUTH=False` disables login. This is intended for **local/single-user** use only. If you expose the stack to a network (e.g., via port forwarding or LAN access), **enable authentication** by setting `WEBUI_AUTH=True` in the environment.
-- **Dashboard / ops-controller:** Set `DASHBOARD_AUTH_TOKEN` and `OPS_CONTROLLER_TOKEN` (generate with `openssl rand -hex 32`) whenever the stack is reachable beyond localhost.
+- **Dashboard:** No per-service auth — it publishes no host port and is reached only through the Caddy edge (oauth2-proxy + Google SSO), which is the sole gate; internal callers reach it over the stack network. **ops-controller:** Set `OPS_CONTROLLER_TOKEN` (generate with `openssl rand -hex 32`) — it stays token-gated and its port is never exposed.
 - **n8n:** No built-in auth by default. If port **5678** is reachable from others (LAN, port-forward, Tailscale), enable n8n authentication (Basic Auth or full user management in n8n settings) or restrict access with a firewall / reverse proxy. Prefer not exposing n8n to the public internet without TLS and auth.
 
 ### Network Binding
@@ -38,10 +38,10 @@ Services bind to `0.0.0.0` to allow access from other machines on your network. 
 
 ### Secrets
 
-- **Never commit** `.env` or `mcp/.env`. They are gitignored.
-- Use `.env.example` as a template; copy to `.env` and fill in values locally.
-- API keys (OpenAI, Anthropic, etc.) and tokens should only live in `.env` files, never in the repository.
-- **Never commit** `data/` — it is gitignored and contains user-specific runtime state (Hermes session data, Discord guild/user IDs, MCP config, etc.). All secrets and setup-specific values belong in `data/` or `.env`, not in shared code.
+- **Never commit** `v2/out/.env` or `v2/out/secrets.env`. They are gitignored, along with the operator-real `v2/ordo.yaml`.
+- Use `v2/ordo.example.yaml` and `v2/out/secrets.env.example` as templates; copy to `v2/ordo.yaml` / `v2/out/secrets.env`, fill in values locally, then run `ordo render` to produce `v2/out/.env` and `v2/out/docker-compose.yml`.
+- API keys (OpenAI, Anthropic, etc.) and tokens should only live in `v2/out/secrets.env`, never in the repository.
+- **Never commit** `data/` — it is gitignored and contains user-specific runtime state (Hermes session data, Discord guild/user IDs, MCP config, etc.). All secrets and setup-specific values belong in `data/` or `v2/out/secrets.env`, not in shared code.
 
 ### Data
 
@@ -50,7 +50,7 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 ## Pre-deployment checklist
 
 - [ ] `OPS_CONTROLLER_TOKEN` set (generate: `openssl rand -hex 32`)
-- [ ] `.env` not committed (in `.gitignore`)
+- [ ] `v2/out/.env` / `v2/out/secrets.env` not committed (in `.gitignore`)
 - [ ] Ops controller port (9000) not exposed to host/network
 - [ ] Dashboard bound to localhost or Tailscale-only when multi-user
 
@@ -62,7 +62,7 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 | Controller compromise | Token in env; no default; never expose port |
 | MCP SSRF (browser worker) | Egress blocks for 100.64/10, RFC1918, 169.254.169.254 — `./scripts/ssrf-egress-block.sh --target all` |
 | Secret exfiltration (general) | Controller-only API keys; dashboard `/api/services` strips tokens from returned URLs |
-| Unauthenticated admin | Set `DASHBOARD_AUTH_TOKEN` for Tailscale/group use |
+| Unauthenticated admin | Dashboard reached only via the Caddy edge (oauth2-proxy + Google SSO); no host port |
 
 ## Audit
 
@@ -70,7 +70,7 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 
 ## Break-glass
 
-1. **Reset OPS_CONTROLLER_TOKEN:** Generate new token, update `.env`, restart dashboard + ops-controller
+1. **Reset OPS_CONTROLLER_TOKEN:** Generate new token, update `v2/out/secrets.env`, then re-run `docker compose -p ordo … up` from `v2/out/` to restart dashboard + ops-controller
 2. **Restore data:** Restore `data/` from a local backup
 3. **Disable MCP tools:** Clear `data/mcp/servers.txt` or set to a single safe server
 4. **Safe mode:** Stop `mcp-gateway` and `hermes-gateway`; use `llamacpp` + `open-webui` only

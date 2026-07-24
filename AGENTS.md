@@ -1,8 +1,8 @@
 # Repository Guidelines
 
-> ⚠️ **Production is the v2 substrate (cutover 2026-07-09; `main` @ `d115035`, PR #72).** The stack is defined and operated from **[`v2/`](v2/)** — config is rendered from `v2/ordo.yaml` into `v2/out/` (gitignored), GPU work is scheduled by `ordo serve` (no reactive guardian), and agents are manifests under `v2/agents/` (Hermes default). The top-level V1 layout below (`docker-compose.yml`, `./compose`, root `ops-controller/`, root `model-gateway/`, etc.) is **LEGACY** — superseded, pending a separate cleanup PR ([`docs/LEGACY-CLEANUP.md`](docs/LEGACY-CLEANUP.md)). When working on the **production stack, work in `v2/`** and follow `v2/README.md`. The guidance below applies to the legacy V1 tree and any V1 code that still needs maintenance before removal.
+> ⚠️ **The stack is Ordo, defined and operated entirely from [`v2/`](v2/).** Config is rendered from `v2/ordo.yaml` (tracked template: `v2/ordo.example.yaml`) into `v2/out/` (gitignored) via `ordo render`, GPU work is scheduled by `ordo serve` (no reactive guardian), and agents are manifests under `v2/agents/` (Hermes default). The old top-level V1 layout (root `docker-compose.yml`, `./compose` / `.\compose.ps1`, `Makefile`, `overrides/`, `scripts/detect_hardware.py`, root `.env.example`, and the root `ops-controller/`, `model-gateway/`, `mcp/` source dirs) was **removed 2026-07-24** (commit `62540bf`) — the repo is now just the v2 stack ([`docs/LEGACY-CLEANUP.md`](docs/LEGACY-CLEANUP.md) is the historical planning record for that removal). Work on the stack in `v2/` and follow `v2/README.md` (+ `v2/CUTOVER.md`). The "legacy top-level tree" guidance further below is kept only for the source dirs that survived the removal (`dashboard/`, `comfyui-mcp/`, `orchestration-mcp/`, etc., which still build live v2 service images) — it no longer describes a separate, independently-run stack.
 
-## Working on v2 (production)
+## Working on Ordo (the `v2/` substrate)
 - **Source of truth:** `v2/ordo.yaml` (declarative). Never hand-edit rendered outputs in `v2/out/` — they don't survive a re-render; use the source's `overrides:` block.
 - **Run the v2 tests (no host Python needed):**
   ```bash
@@ -10,22 +10,19 @@
     sh -c "pip install -q pyyaml pytest && python -m pytest -q"
   ```
   Or, with host Python: `pip install -e ./v2 && cd v2&& python -m pytest -q` (runtime dep is just PyYAML). CI runs a path-gated `v2-substrate` job (ruff + the mocked-profile suite + a fresh-install render smoke) — see `.github/workflows/ci.yml`.
-- **v2 service images** build from `v2/docker/<name>/` (each has a README with the exact context). The V2 control plane is `ops-api` (built from `v2/docker/ops-api/`), **not** the root `ops-controller/`.
+- **Service images** build from `v2/docker/<name>/` (each has a README with the exact context). The dashboard control plane is `ops-api` (built from `v2/docker/ops-api/`), **not** the old root `ops-controller/`.
 - **Agents** are data manifests at `v2/agents/<id>/agent.yaml`; Hermes is `default: true`. See `v2/agents/README.md`.
 
-## Project Structure & Module Organization (LEGACY V1)
-Legacy V1 Python services live in `dashboard/`, `model-gateway/`, `ops-controller/`, `orchestration-mcp/`, and `comfyui-mcp/`. Docker and environment entry points are at the repo root: `docker-compose.yml`, `compose.ps1`, `compose`. Tests are centralized in `tests/`, with fixtures under `tests/fixtures/`. Operational scripts live in `scripts/`, documentation in `docs/`, generated runtime data in `data/`, and local model assets in `models/`. Treat `overrides/compute.yml` as machine-specific generated output — do not edit it for persistent changes; use a separate override file instead. **Note:** the V2 stack has its own copies of the service build contexts under `v2/docker/` — edits to the production stack belong there, not in these root directories.
+## Project Structure & Module Organization (root service source dirs)
+The remaining root Python service sources are `dashboard/`, `orchestration-mcp/`, and `comfyui-mcp/` — these still build live v2 images (see `v2/docker/<name>/`). The old root `model-gateway/` and `ops-controller/` source dirs, and the `docker-compose.yml` / `compose.ps1` / `compose` entry points that built them, were removed 2026-07-24 (v2 now builds `model-gateway` and `ops-controller` self-contained from `v2/docker/model-gateway/` and `v2/docker/ops-controller.Dockerfile`; see `v2/README.md`). Tests are centralized in `tests/`, with fixtures under `tests/fixtures/`. Operational scripts live in `scripts/`, documentation in `docs/`, generated runtime data in `data/`, and local model assets in `models/`. The `overrides/` dir (`compute.yml`, `gpu-assignments.yml`) is gone — hardware/GPU detection now happens at `ordo render` time (`hardware: auto` / `ordo detect`) and is written into `v2/out/`. **Note:** Ordo has its own copies of the service build contexts under `v2/docker/` — edits to the stack belong there, not in these root directories.
 
-## Build, Test, and Development Commands (LEGACY V1)
+## Build, Test, and Development Commands (root service sources)
 Install Python test dependencies with `pip install -r tests/requirements.txt`.
 
-- `python -m pytest tests/ -v`: run the full (legacy) Python test suite.
+- `python -m pytest tests/ -v`: run the full root Python test suite.
 - `python -m pytest tests/ -q`: quiet run used for CI checks.
-- `python -m ruff check dashboard tests model-gateway ops-controller rag-ingestion scripts comfyui-mcp orchestration-mcp worker`: run lint checks used in CI.
-- `make test`, `make lint`, `make smoke-test`: Linux/macOS shortcuts for the core workflows.
-- `.\compose.ps1 up -d` or `./compose up -d`: bring up the **legacy V1** stack with hardware detection.
-- `.\compose.ps1 up -d --build --force-recreate` or `./compose up -d --build --force-recreate`: full V1 bring-up with hardware detection and rebuild.
-- `docker compose build <service> && docker compose up -d <service>`: rebuild and hot-swap a single V1 service.
+- `python -m ruff check dashboard tests rag-ingestion scripts comfyui-mcp orchestration-mcp worker`: run lint checks used in CI.
+- `docker compose build <service> && docker compose up -d <service>`: rebuild and hot-swap a single service, run from `v2/out/` against the rendered compose (see `v2/README.md`). There is no root `make up`/Makefile or `./compose` / `.\compose.ps1` wrapper anymore — bring-up is always `ordo render --out out` followed by `docker compose -p ordo ... up` from `v2/out/`.
 
 ## Coding Style & Naming Conventions
 Target Python 3.12+. Ruff is the enforced linter; `pyproject.toml` sets a 120-character line length and enables `E`, `F`, `I`, and `UP` rules. Follow existing module patterns: `snake_case` for files, functions, and variables, `PascalCase` for classes, and `test_*.py` for tests. Keep service-specific logic inside its owning directory instead of adding cross-service utility modules at the repo root. Always use `from __future__ import annotations` at the top of Python files.
@@ -34,7 +31,7 @@ Target Python 3.12+. Ruff is the enforced linter; `pyproject.toml` sets a 120-ch
 The dashboard backend is a FastAPI app in `dashboard/app.py` (~1950 lines). When adding endpoints:
 - Use `asyncio.to_thread(blocking_fn)` for any blocking I/O (pynvml, psutil, subprocess) — never block the event loop.
 - Shared in-process state (throughput samples, benchmarks) is protected by `_state_lock` (a `threading.Lock`). Always acquire it with `with _state_lock:`.
-- Hardware/health endpoints are public (no auth). All `/api/*` endpoints that modify state require auth when `DASHBOARD_AUTH_TOKEN` is set — check `_verify_auth(request)`.
+- Hardware/health endpoints are public (no auth). The `_verify_auth(request)` / `DASHBOARD_AUTH_TOKEN` Bearer path still exists in code but is **unset in the Ordo deployment** (`AUTH_REQUIRED=False`) — the Caddy edge SSO is the sole gate. Don't reintroduce a per-service token requirement.
 - New endpoints go immediately before the `# --- Static ---` comment at the bottom of `app.py`.
 - Error handling: catch exceptions from optional dependencies (pynvml, httpx) and return a degraded-but-valid response rather than a 500. Log at `DEBUG` level with `logger.debug(...)`.
 
@@ -53,4 +50,4 @@ Add or update `pytest` coverage for every behavior change. Prefer focused unit t
 Recent history uses Conventional Commit prefixes such as `feat:`. Continue with `feat:`, `fix:`, `docs:`, `refactor:`, or `test:` followed by a short imperative summary. Use `feat(service):` scope when the change is isolated to one service (e.g., `feat(dashboard):`, `fix(bridge):`). Pull requests should describe the user-visible change, list validation performed, link related issues, and include screenshots only when UI behavior in `dashboard/` changes.
 
 ## Security & Configuration Tips
-Never commit `.env`, `mcp/.env`, `data/`, `models/`, or `overrides/compute.yml`. Start from `.env.example`, keep tokens in environment variables, and review `SECURITY.md` before exposing services beyond localhost. When adding monitoring containers that need host process visibility, use `pid: host` in `overrides/compute.yml` (not in `docker-compose.yml`), and document why in an inline comment.
+Never commit `data/`, `models/`, or the rendered `v2/out/` (includes `v2/out/secrets.env`). Start from `v2/out/secrets.env.example`, keep tokens in environment variables, and review `SECURITY.md` before exposing services beyond localhost. (The root `.env` / SOPS `secrets/.env.sops` and the root `mcp/.env` / `overrides/compute.yml` were the V1 path; `mcp/` and `overrides/` no longer exist.) When adding monitoring containers that need host process visibility, use `pid: host` via `v2/ordo.yaml`'s `overrides:` block (not by hand-editing rendered `v2/out/docker-compose.yml`), and document why in an inline comment.

@@ -4,7 +4,7 @@ V2's `mcp-gateway` core service. This is the small wrapper build V1 runs
 (`ordo-ai-stack-mcp-gateway:latest`) — the pinned `docker/mcp-gateway` base plus a runtime
 config-reload wrapper (`gateway-wrapper.sh`) and a catalog-aware healthcheck.
 
-V2 references it as a **project buildable image** (`ordo-v2/mcp-gateway:latest`) — pinned by its
+V2 references it as a **project buildable image** (`ordo/mcp-gateway:latest`) — pinned by its
 build context, not pulled — so `ordo preflight` reports a missing one as "build first". V2 does
 NOT reference the bare upstream `docker/mcp-gateway:latest` because it lacks the reload wrapper +
 banner-suppression handling the stack depends on.
@@ -15,7 +15,7 @@ its mounted config dir at runtime — one source of truth, no drift.
 
 ## Build
 ```
-docker build -t ordo-v2/mcp-gateway:latest v2/docker/mcp-gateway
+docker build -t ordo/mcp-gateway:latest v2/docker/mcp-gateway
 ```
 
 ## Files

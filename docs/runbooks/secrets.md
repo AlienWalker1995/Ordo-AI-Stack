@@ -4,58 +4,71 @@
 
 - **One thing to safeguard**: `~/.config/sops/age/keys.txt` (your age private key).
 - All other secrets are encrypted at rest in `secrets/*.sops` (committed to
-  the public repo) and decrypted into `~/.ai-toolkit/runtime/` only when
-  needed.
-- The runtime directory is **outside** `/workspace` and the
-  `HERMES_HOST_DEV_MOUNT` bind-mount, so even a prompt-injected Hermes
-  cannot `cat` the decrypted files.
-- High-value tokens (Discord, GitHub PAT, HF, Civitai) are mounted into
+  the public repo). File-form tokens decrypt into
+  `~/.ai-toolkit/runtime/secrets/`; env-form internal tokens are materialized
+  into the gitignored `v2/out/secrets.env` (which the rendered compose reads
+  directly) — both only when needed.
+- `~/.ai-toolkit/runtime/secrets/` is **outside** `/workspace` and the
+  Hermes `/c/dev` mirror-mount, so a prompt-injected Hermes cannot `cat`
+  those files. `v2/out/secrets.env` is **not** — it lives under the
+  `/c/dev` tree the `agent` container mounts, so treat it with the same
+  care as any other file in the repo working copy.
+- High-value tokens (Discord, GitHub backup PAT) are mounted into
   containers as **Docker secrets** (files at `/run/secrets/<name>`), not
   env vars — so they don't appear in `docker inspect`. Web search is the
   self-hosted SearXNG MCP, which needs no external API key.
 
 ## How services receive secrets at runtime
 
-Two delivery paths, both fed from `~/.ai-toolkit/runtime/` (produced by
-`make decrypt-secrets`):
+Two delivery paths:
 
-- **Env-form** (`secrets/.env.sops` → `runtime/.env`): compose loads **two**
-  env files, last-wins — `docker compose --env-file .env --env-file
-  ~/.ai-toolkit/runtime/.env`. The committed `.env` holds only non-secret
-  defaults; the decrypted `runtime/.env` supplies the real values
-  (`OAUTH2_PROXY_*`, `OPS_CONTROLLER_TOKEN`, `LITELLM_MASTER_KEY`,
-  `SEARXNG_SECRET`, `N8N_OWNER_*`, …). `make up` always passes both.
+- **Env-form** (`secrets/.env.sops` → `v2/out/secrets.env`): `ordo render`
+  emits `v2/out/secrets.env.example` listing the required KEYS (values
+  empty). Copy it to the gitignored `v2/out/secrets.env` and fill in the
+  real values — by hand, or via `sops --decrypt --input-type=dotenv
+  --output-type=dotenv secrets/.env.sops`. The rendered
+  `v2/out/docker-compose.yml` already declares `secrets.env` as a second,
+  `required: false` `env_file` alongside the derived `v2/out/.env` on every
+  service that needs it, so a plain `docker compose -p ordo up -d`, run from
+  `v2/out/`, picks up the real values (`OAUTH2_PROXY_*`, `OPS_CONTROLLER_TOKEN`,
+  `LITELLM_MASTER_KEY`, `SEARXNG_SECRET`, `N8N_API_KEY`, …) with no
+  `--env-file` flags needed.
 - **File-form** (`secrets/<name>.sops` → `runtime/secrets/<name>`): mounted as
   Docker secrets at `/run/secrets/<name>`, so they never appear in
   `docker inspect`. Where an app SDK expects a plain env var, the consumer's
-  entrypoint **bridges** `<NAME>_FILE` → a `<NAME>` env var (e.g. hermes-gateway:
-  `DISCORD_BOT_TOKEN`, `GITHUB_BACKUP_PAT`). So agents read the token from their
+  entrypoint **bridges** `<NAME>_FILE` → a `<NAME>` env var (e.g. the `agent`
+  service: `DISCORD_BOT_TOKEN`, `GITHUB_BACKUP_PAT`). So agents read the token from their
   environment — they never see, need, or look for a plaintext secret in `.env`.
   The `ordo-hermes-backup` git remote authenticates the same way: a credential
   helper reads the SOPS-decrypted token, so no token is ever embedded in a URL.
 
-### ops-controller recreates with real secrets
+### ops-api recreates with real secrets
 
-The ops-controller recreates services in-container via its own `docker-compose`
-subprocess (the dashboard "recreate" and `POST /compose/*` paths). It mounts
-`~/.ai-toolkit/runtime/.env` **read-only** and injects it into those
-subprocesses (`_compose_env` in `ops-controller/main.py`), so a secret-dependent
-service it recreates (oauth2-proxy, caddy, searxng, n8n, dashboard,
-model-gateway/litellm) gets its real values — instead of coming up unset and
-crash-looping (e.g. oauth2-proxy on an 11-byte `placeholder` cookie secret).
-ops-controller holds only the **already-decrypted** runtime env, never the age
-key: decryption stays a host-only operation.
+The dashboard backend (`ops-api`) recreates services in-container via its own
+`docker-compose` subprocess (the dashboard "recreate" and `POST /compose/*`
+paths). Because the `ops-api` container itself loads `v2/out/secrets.env` as
+an `env_file`, its process already has the real values; it passes that
+environment through to the subprocess (`_compose_env` in
+`v2/docker/ops-api/main.py`), so a secret-dependent service it recreates
+(oauth2-proxy, caddy, searxng, n8n, dashboard, model-gateway/litellm) gets its
+real values — instead of coming up unset and crash-looping (e.g. oauth2-proxy
+on an 11-byte `placeholder` cookie secret). `ops-api` never holds the age key:
+decryption of the `.sops` blobs stays a host-only operation. (The GPU
+scheduler keeps the separate `ops-controller` service name — its live clients
+depend on it — but the secret-aware recreate path lives in `ops-api`.)
 
 > **Never paste secrets or the age key into chat, a log, or an issue, and never
 > "fix" a secret-stripped service by writing placeholder values into `.env` or
 > stubbing empty `secrets/*` files.** A `missing setting` / `not a directory`
-> error from a secret service means the runtime files weren't decrypted — the
-> fix is `make up` on the host, not a synthesized value.
+> error from a secret service means `v2/out/secrets.env` (or, for file-form
+> tokens, `~/.ai-toolkit/runtime/secrets/`) wasn't populated — the fix is
+> filling it on the host, not a synthesized value.
 
 **Boundary:** secrets stay local. Only the encrypted `.sops` blobs plus
-architecture/config (compose, this runbook) are published; plaintext is
-decrypted only into the host runtime dir, which is outside `/workspace` and the
-Hermes bind-mount.
+architecture/config (compose, this runbook) are published; plaintext lands in
+`~/.ai-toolkit/runtime/secrets/` (file-form, outside `/workspace` and the
+Hermes `/c/dev` mount) and in the gitignored `v2/out/secrets.env` (env-form,
+which **is** inside the Hermes `/c/dev` mirror-mount).
 
 ## First-time setup
 
@@ -75,7 +88,10 @@ Hermes bind-mount.
    `secrets/.sops.yaml` under the `creation_rules.[*].age` field.
    The public key is safe to commit; only the matching private key
    can decrypt.
-5. `make up` — decrypts secrets and brings up the stack.
+5. Render the stack (`python -m ordo.cli render --out out`, from `v2/`),
+   copy `v2/out/secrets.env.example` to `v2/out/secrets.env` and fill in real
+   values, then bring it up: `docker compose -p ordo up -d`, run from
+   `v2/out/` (see `v2/README.md`).
 
 ## Edit a secret
 
@@ -88,24 +104,34 @@ If your editor isn't picking up dotenv format on the env file, set
 `SOPS_EDITOR_VERSION=2` in your shell or pass `--input-type=dotenv`
 explicitly.
 
-After editing, restart the dependent service:
+For env-form keys, also copy the changed value into the rendered
+`v2/out/secrets.env` — that's the file compose actually reads; re-encrypting
+`secrets/.env.sops` alone doesn't propagate to it.
+
+After editing, restart the dependent service (run from `v2/out/`, project
+`ordo`):
 ```
-docker compose restart hermes-gateway   # for Discord
-docker compose restart mcp-gateway      # for GitHub PAT
-docker compose restart ops-controller   # for HF
+docker compose -p ordo restart agent          # for Discord
+docker compose -p ordo restart mcp-gateway    # for GitHub PAT
+docker compose -p ordo restart comfyui        # for HF
 ```
 
 ## Rotate internal tokens
 
-Internal tokens (`LITELLM_MASTER_KEY`, `DASHBOARD_AUTH_TOKEN`,
-`OPS_CONTROLLER_TOKEN`, `OAUTH2_PROXY_COOKIE_SECRET`) live inside
-`secrets/.env.sops`. Rotate all of them at once:
+Internal tokens (`LITELLM_MASTER_KEY`, `OPS_CONTROLLER_TOKEN`,
+`OAUTH2_PROXY_COOKIE_SECRET`) live inside `secrets/.env.sops`. (The dashboard
+has no per-service auth token in this deployment — the Caddy edge
+(oauth2-proxy + Google SSO) is the sole auth gate for every UI, including the
+dashboard; `DASHBOARD_AUTH_TOKEN` is not set and is not a secret to rotate
+here.) Rotate the rest at once:
 
 ```
-make rotate-internal-tokens
-make decrypt-secrets
-docker compose restart model-gateway dashboard ops-controller \
-    worker hermes-gateway hermes-dashboard mcp-gateway oauth2-proxy
+scripts/secrets/rotate-internal.sh          # re-encrypts secrets/.env.sops
+# copy the rotated values into v2/out/secrets.env (the file compose reads)
+cd v2/out
+docker compose -p ordo restart model-gateway dashboard ops-controller \
+    worker agent hermes-dashboard mcp-gateway oauth2-proxy
+cd ../..
 git add secrets/.env.sops
 git commit -m "chore(secrets): rotate internal tokens"
 git push
@@ -132,8 +158,9 @@ echo -n "$NEW_VALUE" | \
   sops --encrypt --age "$(grep '^# public key:' ~/.config/sops/age/keys.txt | awk '{print $4}')" \
        --input-type=binary --output-type=binary /dev/stdin \
        > secrets/<name>.sops
-make decrypt-secrets
-docker compose restart <consumer-service>
+scripts/secrets/decrypt.sh                          # file-form -> ~/.ai-toolkit/runtime/secrets/
+# env-form tokens (e.g. HF, GitHub PAT): also update the matching key in v2/out/secrets.env
+docker compose -p ordo restart <consumer-service>    # run from v2/out/
 git add secrets/<name>.sops && git commit && git push
 ```
 
@@ -171,8 +198,8 @@ HuggingFace, Tavily, etc.). Hook into pre-commit if you want.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `make decrypt-secrets` fails with `Failed to get the data key` | `SOPS_AGE_KEY_FILE` env var not set or key file unreadable | Set `SOPS_AGE_KEY_FILE=$HOME/.config/sops/age/keys.txt` and verify `chmod 600` |
+| `scripts/secrets/decrypt.sh` fails with `Failed to get the data key` | `SOPS_AGE_KEY_FILE` env var not set or key file unreadable | Set `SOPS_AGE_KEY_FILE=$HOME/.config/sops/age/keys.txt` and verify `chmod 600` |
 | `Error unmarshalling input json: invalid character` on .env.sops decrypt | SOPS 3.7.x doesn't auto-detect dotenv format | Use `--input-type=dotenv --output-type=dotenv` flags. The decrypt script already does this. |
 | Container starts but immediately exits with `cookie_secret must be 16, 24, or 32 bytes` | `OAUTH2_PROXY_COOKIE_SECRET` was generated with `openssl rand -base64 32` (44 chars) | Regenerate with `LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom \| head -c 32`, edit `secrets/.env.sops`, restart |
 | Hermes can't reach Discord but token "looks right" | Bridge from `_FILE` to env var didn't run | Confirm `hermes/entrypoint.sh` sources the bridge BEFORE calling the Discord SDK, and that the secret file at `/run/secrets/discord_token` exists in the container |
-| `docker compose up` fails with `secret "discord_token" file is not specified` | The compose `secrets:` block at file top points to a path that doesn't exist | Run `make decrypt-secrets` first to populate `~/.ai-toolkit/runtime/secrets/` |
+| `docker compose up` fails with a missing bind-mount source for `.../discord_token` or `.../github_backup_pat` | `~/.ai-toolkit/runtime/secrets/` isn't populated (`v2/out/docker-compose.yml` mounts file-form tokens from there via `OPERATOR_SECRETS_DIR`) | Run `scripts/secrets/decrypt.sh` first to populate `~/.ai-toolkit/runtime/secrets/` |

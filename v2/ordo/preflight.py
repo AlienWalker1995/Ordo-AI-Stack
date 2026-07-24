@@ -7,7 +7,7 @@ renders the target config and checks every gate we can verify WITHOUT starting a
   - the active model is sha256-pinned (corrupt-weights gate) and MCP images are digest-pinned,
   - if a GPU is expected for the enabled media/voice plugins, one is actually present,
   - parity vs a reference .env (merge-gate (a)) when a --ref is given,
-  - every image the rendered compose needs is available: project images (ordo-v2/*) must be
+  - every image the rendered compose needs is available: project images (ordo/*) must be
     built locally (blocking); upstream images (llama.cpp, litellm, …) may be absent — Docker
     pulls them (a note, not a blocker).
 
@@ -47,7 +47,7 @@ class Check:
     blocking: bool = True
 
 
-def required_images(rc, project: str = "ordo-v2") -> list[str]:
+def required_images(rc, project: str = "ordo") -> list[str]:
     """The exact images the rendered compose will need (core + agent + enabled plugins), with
     ${VAR:-default} refs expanded against the rendered .env so presence-matching is accurate."""
     c = rc.compose_dict(project=project)
@@ -75,7 +75,7 @@ def run(
     ref_env: str | None = None,
     images_present: set[str] | None = None,
     secrets_env: str | None = None,
-    project: str = "ordo-v2",
+    project: str = "ordo",
 ) -> tuple[bool, list[Check]]:
     rc = render(source, catalog, registry)
     checks: list[Check] = []
@@ -93,7 +93,7 @@ def run(
                         blocking=False))
 
     # 3. MCP images digest-pinned (drift/leak gate) — warn per unpinned PUBLIC server. Locally-built
-    # project images (ordo-v2/*) are pinned by build context, not a registry digest, so exempt.
+    # project images (ordo/*) are pinned by build context, not a registry digest, so exempt.
     unpinned_mcp = [s["id"] for s in rc.mcp_servers
                     if not str(s.get("image", "")).startswith(f"{project}/")
                     and ("@sha256:" not in str(s.get("image", ""))

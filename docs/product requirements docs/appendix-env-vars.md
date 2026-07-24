@@ -9,7 +9,7 @@
 | `DASHBOARD_URL` | model-gateway | Dashboard for throughput recording | `http://dashboard:8080` |
 | `OPS_CONTROLLER_URL` | dashboard | Ops controller URL | `http://ops-controller:9000` |
 | `OPS_CONTROLLER_TOKEN` | dashboard, ops-controller | Bearer token for ops API | *(required)* |
-| `DASHBOARD_AUTH_TOKEN` | dashboard | Bearer token for dashboard API | *(optional)* |
+| `DASHBOARD_AUTH_TOKEN` | dashboard | Optional dormant Bearer-auth fallback in dashboard code; not set in the Ordo deployment — the Caddy edge (oauth2-proxy + Google SSO) is the sole auth gate for the dashboard | *(unset; not used)* |
 | `DEFAULT_MODEL` | dashboard, open-webui | Default model shown in Open WebUI chat | *(optional)* |
 | `HERMES_DASHBOARD_PORT` | hermes-dashboard | Hermes dashboard host port | `9119` |
 | `DISCORD_BOT_TOKEN` | hermes-gateway | Discord bot token | *(optional)* |

@@ -1,686 +1,491 @@
 #!/usr/bin/env python3
-"""
-Ordo-AI-Stack — Package Audit & Update Manager
-══════════════════════════════════════════════════
-Comprehensive monitor that:
-  1. Checks ALL services in docker-compose.yml against their latest releases
-  2. Classifies severity: CRITICAL (security), HIGH (major), MEDIUM (minor), LOW (patch)
-  3. Outputs structured JSON for the cron job to consume
-  4. Can also APPLY updates if called with --apply
+"""Ordo-AI-Stack image audit — "should we update this image?"
 
-Usage:
-  python3 stack_monitor.py              # Audit only, outputs JSON to stdout
-  python3 stack_monitor.py --apply      # Audit + apply approved updates (see APPROVED_UPDATES)
-  python3 stack_monitor.py --json       # JSON output to stdout
+Enumerates EVERY service in the *deployed* compose (the rendered
+`v2/out/docker-compose.yml`, not the root file), classifies each image by how it
+is pinned, resolves the latest upstream version where one exists, and emits a
+single JSON document. The daily cron injects that JSON into its prompt and the
+`stack-audit` skill writes the Discord digest — the model curates, it does not
+collect. Output is JSON by default (what the cron consumes); `--pretty` renders
+a human-readable table for debugging.
+
+Design notes / hard-won facts baked in as code (previously scattered across the
+skill's reference files):
+  - Deployed compose is `v2/out/docker-compose.yml`; the root `docker-compose.yml`
+    is a different, stale file. Auditing the wrong one was the original bug.
+  - `${VAR:-default}` image refs resolve against `.env` then the inline default.
+  - Severity is install-aware: a CVE in release notes is only SECURITY if the
+    pinned version is actually behind the fix. A bare `v` prefix is not a diff.
+  - Pin kind drives the recommendation: semver→diffable, digest→manual bump,
+    rolling→flag as drift every run, local build→rebuild-on-source-change.
+  - No docker socket / no reliable git in the cron runtime, so we compare
+    *declared* (what compose deploys) against *latest upstream*. Declared is the
+    actionable surface; that is what an operator edits to update.
+
+Report-only: this script never mutates compose or opens PRs.
+Stdlib only (urllib). Per-source failure isolation, global deadline.
 """
 
 import json
 import os
 import re
-import subprocess
 import sys
-import unicodedata
+import time
+import urllib.parse
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
+# ── Config ───────────────────────────────────────────────────────────────────
 
-def _strip_invisible(text: str) -> str:
-    """Remove zero-width / invisible Unicode 'format' (Cf) characters.
+STACK_ROOT = Path(os.environ.get("ORDO_STACK_ROOT", "/c/dev/ordo-ai-stack"))
+COMPOSE_CANDIDATES = [
+    STACK_ROOT / "v2" / "out" / "docker-compose.yml",  # rendered = deployed
+    STACK_ROOT / "docker-compose.yml",                 # fallback
+]
+ENV_FILE = STACK_ROOT / ".env"
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
+GLOBAL_DEADLINE_S = 100  # cron script timeout is 120s
 
-    GitHub release names and commit messages routinely embed these — e.g. the
-    zero-width joiner U+200D inside emoji sequences like 👨‍💻, or a stray U+200B.
-    When this report is fed back into Hermes to format for Discord, that
-    invisible unicode trips the prompt-injection scanner and the whole daily
-    cron is blocked ("prompt contains invisible unicode U+200D"). Stripping Cf
-    characters keeps the report scanner-safe; visible text and emoji are
-    unaffected (a ZWJ emoji simply renders as its component glyphs).
-    """
-    return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+_START = time.monotonic()
+_INVISIBLE = dict.fromkeys(
+    [0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x2060, 0xfeff, 0x00ad,
+     0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069],
+    None,
+)
 
-
-def _scrub_invisible(obj):
-    """Recursively apply _strip_invisible to every string in a JSON-like value."""
-    if isinstance(obj, str):
-        return _strip_invisible(obj)
-    if isinstance(obj, dict):
-        return {k: _scrub_invisible(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_scrub_invisible(v) for v in obj]
-    return obj
-
-
-STACK_ROOT = Path(__file__).resolve().parent.parent
-COMPOSE = STACK_ROOT / "docker-compose.yml"
-MONITOR = STACK_ROOT / "data" / "hermes" / "scripts" / "github_monitor.py"
-HERMES_DOCKERFILE = STACK_ROOT / "hermes" / "Dockerfile"
-# ComfyUI ships no version in docker-compose.yml (it runs from a 3rd-party boot
-# image); the real installed version is build-stamped in this file.
-COMFYUI_VERSION_FILE = STACK_ROOT / "data" / "comfyui-storage" / "ComfyUI" / "comfyui_version.py"
-# LiteLLM has no version pin anywhere (model-gateway is FROM
-# ghcr.io/berriai/litellm:main-stable, a rolling tag) — read it live from the
-# running container instead.
-MODEL_GATEWAY_CONTAINER = os.environ.get("MODEL_GATEWAY_CONTAINER", "ordo-ai-stack-model-gateway-1")
-
-# All services to monitor (sources of truth).
-#
-# pin_source: "compose" (default) reads the version string from docker-compose.yml.
-#             "dockerfile" reads HERMES_PINNED_SHA from hermes/Dockerfile and
-#                          compares SHAs against the upstream tag.
-SERVICES = {
-    # GitHub-backed (API releases)
-    "n8n":         {"repo": "n8n-io/n8n",        "compose_key": "n8n",         "type": "github"},
-    "Open WebUI":  {"repo": "open-webui/open-webui", "compose_key": "open-webui", "type": "github"},
-    "Qdrant":      {"repo": "qdrant/qdrant",     "compose_key": "qdrant",      "type": "github"},
-    "Caddy":       {"repo": "caddyserver/caddy", "compose_key": "caddy",       "type": "github"},
-    "llama.cpp":   {"repo": "ggml-org/llama.cpp", "compose_key": "llamacpp-embed", "type": "github"},
-    "LiteLLM":     {"repo": "BerriAI/litellm",   "compose_key": None,          "type": "github"},  # Docker-only
-    "ComfyUI":     {"repo": "Comfy-Org/ComfyUI", "compose_key": None,          "type": "github"},  # Managed via comfyui-boot
-    # Docker images without GitHub releases
-    "ComfyUI-Manager": {"repo": "ltdrdata/ComfyUI-Manager", "compose_key": None, "type": "atom"},
-    "ComfyUI-KJNodes":   {"repo": "kijai/ComfyUI-KJNodes",  "compose_key": None, "type": "atom"},
-    "ComfyUI-VideoHelperSuite": {"repo": "Kosinkadink/ComfyUI-VideoHelperSuite", "compose_key": None, "type": "atom"},
-    "oauth2-proxy":  {"repo": "oauth2-proxy/oauth2-proxy", "compose_key": "oauth2-proxy", "type": "github"},
-    # Source-built image — pinned by SHA in hermes/Dockerfile, not in docker-compose.yml.
-    "Hermes Agent":  {"repo": "NousResearch/hermes-agent", "compose_key": None, "type": "github",
-                      "pin_source": "dockerfile"},
+# Per-service resolution hints, keyed by the registry-stripped image repo.
+# 'gh' = GitHub owner/repo for release notes + semver; 'hub'/'quay' = registry
+# repo for a tag-list fallback; 'upstream' = a different project to report as the
+# real thing being tracked (e.g. the comfyui boot image tracks ComfyUI proper).
+HINTS = {
+    "caddy":                        {"gh": "caddyserver/caddy", "hub": "library/caddy"},
+    "n8nio/n8n":                    {"gh": "n8n-io/n8n", "hub": "n8nio/n8n"},
+    "open-webui/open-webui":        {"gh": "open-webui/open-webui", "hub": "openwebui/open-webui",
+                                     "note": "versioned tags live on Docker Hub (docker.io/openwebui), not ghcr"},
+    "qdrant/qdrant":                {"gh": "qdrant/qdrant", "hub": "qdrant/qdrant"},
+    "oauth2-proxy/oauth2-proxy":    {"gh": "oauth2-proxy/oauth2-proxy", "quay": "oauth2-proxy/oauth2-proxy"},
+    "grafana/grafana":              {"gh": "grafana/grafana", "hub": "grafana/grafana"},
+    "prom/prometheus":              {"gh": "prometheus/prometheus", "hub": "prom/prometheus"},
+    "searxng/searxng":              {"gh": "searxng/searxng", "hub": "searxng/searxng",
+                                     "note": "rolling upstream — no semver releases; digest pin is correct"},
+    "utkuozdemir/nvidia_gpu_exporter": {"gh": "utkuozdemir/nvidia_gpu_exporter"},
+    "fedirz/faster-whisper-server": {"gh": "fedirz/faster-whisper-server", "hub": "fedirz/faster-whisper-server"},
+    "remsky/kokoro-fastapi-gpu":    {"gh": "remsky/Kokoro-FastAPI"},
+    "ggml-org/llama.cpp":           {"gh": "ggml-org/llama.cpp",
+                                     "note": "moving tag; prod runs a locally-patched build (see .env LLAMACPP_IMAGE)"},
+    "yanwk/comfyui-boot":           {"hub": "yanwk/comfyui-boot", "upstream": ("ComfyUI", "comfy-org/ComfyUI"),
+                                     "note": "boot wrapper; cu128-slim is a moving tag"},
 }
 
-# Last-resort fallbacks if a version can't be read from its real source.
-# NOTE: ComfyUI and LiteLLM are intentionally absent — they are resolved live
-# (see resolve_current_version). Do NOT add stale hardcodes for them; a wrong
-# value here silently produces a misleading audit (the old "v0.20.1" ComfyUI pin
-# was compared against upstream while the box actually ran 0.17.0).
-PINNED = {
-    "n8n":         "2.28.3",
-    "Open WebUI":  "v0.10.1",
-    "Qdrant":      "v1.18.2",
-    "Caddy":       "2.11.4",
-    "llama.cpp":   "server-cuda",  # rolling tag — classifies as ROLLING (manual review)
-    "oauth2-proxy":"v7.15.3-alpine",
-}
+# Registry namespaces that mean "built here", not pulled from a registry.
+LOCAL_PREFIXES = ("ordo-v2/", "ordo-ai-stack-", "ordo-ai-stack/")
+ROLLING_TAGS = {"latest", "stable", "main", "edge", "nightly", "dev",
+                "server", "server-cuda", "cpu", "cu128-slim", "cu124-slim"}
+BASE_IMAGE_RE = re.compile(r"^(python|alpine|ubuntu|debian|busybox|node|golang):", re.I)
 
 
-def run_cmd(cmd, timeout=30):
-    """Run a command and return (stdout, stderr, returncode).
+# ── Utilities ────────────────────────────────────────────────────────────────
 
-    Force UTF-8 decoding with replacement: GitHub release bodies routinely carry
-    non-ASCII bytes, and on a non-UTF-8 locale (e.g. a Windows host's cp1252)
-    the default decode raises mid-read, leaving stdout=None and crashing callers.
-    """
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True,
-                                encoding="utf-8", errors="replace", timeout=timeout)
-        return (result.stdout or ""), (result.stderr or ""), result.returncode
-    except subprocess.TimeoutExpired:
-        return "", "timeout", 1
+def budget_left() -> float:
+    return GLOBAL_DEADLINE_S - (time.monotonic() - _START)
 
 
-def read_hermes_pin():
-    """Read HERMES_PINNED_SHA from hermes/Dockerfile (None if missing/malformed)."""
-    if not HERMES_DOCKERFILE.exists():
+def scrub(text: str) -> str:
+    return (text or "").translate(_INVISIBLE)
+
+
+def http_json(url: str, headers=None, timeout: float = 15):
+    timeout = max(3, min(timeout, budget_left()))
+    req = urllib.request.Request(url, headers=headers or {})
+    req.add_header("User-Agent", "Ordo-AI-Stack-Monitor/4.0")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+
+def gh_headers():
+    h = {"Accept": "application/vnd.github+json"}
+    if GITHUB_TOKEN:
+        h["Authorization"] = f"token {GITHUB_TOKEN}"
+    return h
+
+
+# ── Version parsing ──────────────────────────────────────────────────────────
+
+_SEMVER_RE = re.compile(r"(\d+)\.(\d+)(?:\.(\d+))?")
+
+
+def semver_tuple(tag: str):
+    """Extract (major, minor, patch) from a tag, ignoring v/prefixes & -suffixes.
+    Returns None if no numeric version is present (rolling/word tags)."""
+    if not tag:
         return None
-    text = HERMES_DOCKERFILE.read_text()
-    m = re.search(r"^ARG HERMES_PINNED_SHA=([a-f0-9]+)", text, re.MULTILINE)
-    return m.group(1) if m else None
-
-
-def read_comfyui_version():
-    """Installed ComfyUI version, build-stamped in comfyui_version.py (e.g. 0.17.0).
-
-    ComfyUI has no pin in docker-compose.yml, so without this the monitor used a
-    hardcoded guess that drifted from reality. Returns None if the file is
-    missing/unreadable (caller falls back to ROLLING/manual).
-    """
-    if not COMFYUI_VERSION_FILE.exists():
+    tag = re.sub(r"^[a-zA-Z][\w.-]*@", "", tag)  # drop 'n8n@' style project prefix
+    m = _SEMVER_RE.search(tag)
+    if not m:
         return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+
+
+def is_prerelease(tag: str) -> bool:
+    return bool(re.search(r"-(rc|beta|alpha|dev|pre|next)|\.rc\.|-rc\.", tag, re.I))
+
+
+def compare(cur: str, latest: str):
+    """Return (bucket, level); bucket in {major,minor,patch,same,unknown}."""
+    c, lt = semver_tuple(cur), semver_tuple(latest)
+    if c is None or lt is None:
+        return "unknown", 0
+    if lt <= c:
+        return "same", 0  # equal to / ahead of upstream — not an update
+    if lt[0] != c[0]:
+        return "major", 3
+    if lt[1] != c[1]:
+        return "minor", 2
+    return "patch", 1
+
+
+# ── Compose parsing ──────────────────────────────────────────────────────────
+
+def load_env():
+    env = {}
     try:
-        m = re.search(r'__version__\s*=\s*["\']([\d.]+)["\']',
-                      COMFYUI_VERSION_FILE.read_text())
+        for line in ENV_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            env[k.strip()] = v.strip().strip('"').strip("'")
     except OSError:
-        return None
-    return m.group(1) if m else None
+        pass
+    return env
 
 
-def read_litellm_version():
-    """Live LiteLLM version from the running model-gateway container (e.g. 1.82.3).
-
-    LiteLLM is pinned only by the rolling `main-stable` image tag, so the
-    installed package is the single source of truth. Returns None if the
-    container is down or docker is unavailable (caller falls back to ROLLING).
-    """
-    cmd = ["docker", "exec", MODEL_GATEWAY_CONTAINER, "python", "-c",
-           "import importlib.metadata as m; print(m.version('litellm'))"]
-    stdout, _, rc = run_cmd(cmd, timeout=20)
-    if rc != 0 or not stdout.strip():
-        return None
-    version = stdout.strip().splitlines()[-1].strip()
-    return version if re.match(r"^\d", version) else None
+def resolve_ref(raw: str, env: dict) -> str:
+    """Resolve a compose image string, expanding ${VAR} / ${VAR:-default}."""
+    raw = raw.strip().strip('"').strip("'")
+    m = re.match(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-(.*))?\}$", raw)
+    if m:
+        var, default = m.group(1), m.group(2)
+        return env.get(var) or default or f"${{{var}}}"
+    return raw
 
 
-def resolve_current_version(name, compose_versions):
-    """Best source of truth for a service's currently-deployed version.
-
-    Most services read from docker-compose.yml. ComfyUI and LiteLLM have no
-    usable pin there and are read from their live/build-stamped source instead.
-    """
-    if name == "ComfyUI":
-        live = read_comfyui_version()
-        if live:
-            return live
-    if name == "LiteLLM":
-        live = read_litellm_version()
-        if live:
-            return live
-    return compose_versions.get(name, PINNED.get(name, "unknown"))
-
-
-def fetch_tag_sha(repo, tag):
-    """Resolve a tag name to its commit SHA via the GitHub API.
-
-    Handles both lightweight tags (object points directly at the commit) and
-    annotated tags (object points at a tag object, which must be dereferenced).
-    """
-    cmd = ["curl", "-s", "--max-time", "15", "-L",
-           "-H", "Accept: application/vnd.github.v3+json",
-           "-H", "User-Agent: Ordo-AI-Stack-Monitor/3.0",
-           f"https://api.github.com/repos/{repo}/git/refs/tags/{tag}"]
-    stdout, _, rc = run_cmd(cmd)
-    if rc != 0 or not stdout.strip():
-        return None
+def parse_compose(path: Path, env: dict):
+    """Return {service_name: image_ref}. Minimal hand-parse of service→image so
+    the cron runtime needs no yaml dependency."""
+    services = {}
     try:
-        data = json.loads(stdout)
-        obj = data.get("object", {})
-        sha = obj.get("sha")
-        if obj.get("type") == "tag" and sha:
-            # Annotated tag — dereference to the commit it points at.
-            cmd2 = ["curl", "-s", "--max-time", "15", "-L",
-                    "-H", "Accept: application/vnd.github.v3+json",
-                    "-H", "User-Agent: Ordo-AI-Stack-Monitor/3.0",
-                    f"https://api.github.com/repos/{repo}/git/tags/{sha}"]
-            stdout2, _, rc2 = run_cmd(cmd2)
-            if rc2 == 0 and stdout2.strip():
-                try:
-                    return json.loads(stdout2).get("object", {}).get("sha")
-                except json.JSONDecodeError:
-                    return None
-        return sha
-    except json.JSONDecodeError:
-        return None
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return services
+    in_services = False
+    cur_service = None
+    for line in text.splitlines():
+        if re.match(r"^services:\s*$", line):
+            in_services = True
+            continue
+        if in_services and re.match(r"^\S", line):  # dedent to col 0 ends the block
+            in_services = False
+            continue
+        if not in_services:
+            continue
+        m = re.match(r"^  ([A-Za-z0-9._-]+):\s*$", line)  # 2-space service header
+        if m:
+            cur_service = m.group(1)
+            continue
+        m = re.match(r"^\s+image:\s*(.+?)\s*$", line)
+        if m and cur_service:
+            services[cur_service] = resolve_ref(m.group(1), env)
+    return {k: v for k, v in services.items() if v}
 
 
-def fetch_compare_ahead(repo, base_sha, head_sha):
-    """How many commits is `head_sha` ahead of `base_sha`? Returns int or None."""
-    cmd = ["curl", "-s", "--max-time", "15", "-L",
-           "-H", "Accept: application/vnd.github.v3+json",
-           "-H", "User-Agent: Ordo-AI-Stack-Monitor/3.0",
-           f"https://api.github.com/repos/{repo}/compare/{base_sha}...{head_sha}"]
-    stdout, _, rc = run_cmd(cmd)
-    if rc != 0 or not stdout.strip():
-        return None
+# ── Image classification ─────────────────────────────────────────────────────
+
+def parse_image(ref: str):
+    """Split an image ref into (registry, repo, tag, digest)."""
+    digest = None
+    if "@" in ref:
+        ref, digest = ref.split("@", 1)
+    registry = ""
+    body = ref
+    first = ref.split("/", 1)[0]
+    if "/" in ref and ("." in first or ":" in first):  # host[:port]/...
+        registry, body = ref.split("/", 1)
+    tag = ""
+    if ":" in body.split("/")[-1]:
+        body, tag = body.rsplit(":", 1)
+    return registry, body, tag, digest
+
+
+def classify(ref: str):
+    registry, repo, tag, digest = parse_image(ref)
+    if any(repo.startswith(p) or ref.startswith(p) for p in LOCAL_PREFIXES):
+        return {"kind": "local_build", "repo": repo, "tag": tag or "latest"}
+    if BASE_IMAGE_RE.match(ref):
+        return {"kind": "base", "repo": repo, "tag": tag}
+    if digest:
+        return {"kind": "digest", "repo": repo, "tag": tag, "digest": digest[:19]}
+    if tag and (tag.lower() in ROLLING_TAGS or semver_tuple(tag) is None):
+        return {"kind": "rolling", "repo": repo, "tag": tag}
+    return {"kind": "semver", "repo": repo, "tag": tag}
+
+
+def hint_for(repo: str):
+    for key, val in HINTS.items():
+        if repo == key or repo.endswith("/" + key) or repo.split("/")[-1] == key:
+            return val
+    return {}
+
+
+# ── Upstream latest resolution ───────────────────────────────────────────────
+
+def github_latest(owner_repo: str):
+    """(tag, url, body) of latest non-prerelease release, or (None, '', '')."""
     try:
-        return json.loads(stdout).get("ahead_by")
-    except json.JSONDecodeError:
-        return None
-
-
-def evaluate_dockerfile_pinned(repo, latest_tag, body):
-    """Severity logic for SHA-pinned services (Hermes). Returns dict matching the entry shape."""
-    pinned_sha = read_hermes_pin()
-    if not pinned_sha:
-        return {"pinned": "?", "status": "unknown",
-                "message": "Could not read HERMES_PINNED_SHA from hermes/Dockerfile"}
-    if latest_tag is None:
-        return {"pinned": pinned_sha[:12], "status": "unknown",
-                "message": "Could not fetch latest release"}
-
-    latest_sha = fetch_tag_sha(repo, latest_tag)
-    if latest_sha is None:
-        return {"pinned": pinned_sha[:12], "latest": latest_tag, "status": "unknown",
-                "message": f"Could not resolve tag {latest_tag} to SHA"}
-
-    # CVE / security mention in release notes always wins.
-    body_lower = (body or "").lower()
-    has_cve = bool(re.search(r"CVE-\d{4}-\d{4,}", body or ""))
-    sec_kw = ["vulnerability", "exploit", "buffer overflow", "auth bypass",
-              "privilege escalation", "injection attack", "denial of service",
-              "cve-", "security advisory"]
-    is_security = has_cve or any(kw in body_lower for kw in sec_kw)
-
-    if pinned_sha == latest_sha:
-        severity = "SAFE"
-        message = f"On the latest tagged release ({latest_tag})"
-    elif is_security:
-        severity = "CRITICAL"
-        message = f"Security fix in {latest_tag} - update recommended immediately"
-    else:
-        ahead = fetch_compare_ahead(repo, pinned_sha, latest_sha)
-        severity = "HIGH"  # SHA-pinned with no semver - flag as worth reviewing
-        if ahead is not None:
-            message = f"{latest_tag} available - {ahead} commits ahead of pinned"
-        else:
-            message = f"{latest_tag} available - pinned is older"
-
-    return {
-        "pinned": f"{pinned_sha[:12]} (Dockerfile)",
-        "latest": f"{latest_tag} ({latest_sha[:12]})",
-        "severity": severity,
-        "message": message,
-        "manual_update": True,  # apply_updates can't bump Dockerfiles; user must do this by hand
-    }
-
-
-def fetch_latest_release(repo):
-    """Fetch latest release from GitHub API or Atom feed."""
-    # Try GitHub API first
-    cmd = ["curl", "-s", "--max-time", "20", "-L",
-           "-H", "Accept: application/vnd.github.v3+json",
-           "-H", "User-Agent: Ordo-AI-Stack-Monitor/3.0",
-           f"https://api.github.com/repos/{repo}/releases/latest"]
-    stdout, stderr, rc = run_cmd(cmd)
-    if rc == 0 and stdout.strip():
-        try:
-            data = json.loads(stdout)
-            if "tag_name" in data:
-                return data["tag_name"], data.get("body", ""), data.get("html_url", "")
-        except json.JSONDecodeError:
-            pass
-
-    # Fall back to Atom feed
-    cmd = ["curl", "-s", "--max-time", "20", "-L",
-           "-H", "User-Agent: Ordo-AI-Stack-Monitor/3.0",
-           f"https://github.com/{repo}/releases.atom?per_page=1"]
-    stdout, stderr, rc = run_cmd(cmd)
-    if rc == 0 and stdout.strip():
-        tag_m = re.search(r'<id>.*?tag:github\.com, [\d-]+.*?v?([\d.]+).*?</id>', stdout)
-        url_m = re.search(r'<link[^>]*href="([^"]+)"', stdout)
-        body_m = re.search(r'<summary[^>]*>(.*?)</summary>', stdout, re.DOTALL)
-
-        tag = tag_m.group(1) if tag_m else None
-        url = url_m.group(1) if url_m else ""
-        body = re.sub(r'<[^>]+>', '', body_m.group(1)).strip() if body_m else ""
-
-        if tag:
-            return tag, body, url
-
+        data = http_json(f"https://api.github.com/repos/{owner_repo}/releases/latest",
+                          headers=gh_headers())
+        if data.get("tag_name"):
+            return data["tag_name"], data.get("html_url", ""), data.get("body", "") or ""
+    except Exception:
+        pass
+    try:
+        rels = http_json(f"https://api.github.com/repos/{owner_repo}/releases?per_page=15",
+                         headers=gh_headers())
+        for r in rels:
+            if not r.get("prerelease") and not r.get("draft") and r.get("tag_name"):
+                return r["tag_name"], r.get("html_url", ""), r.get("body", "") or ""
+    except Exception:
+        pass
     return None, "", ""
 
 
-def classify_severity(current, latest, body=""):
-    """Classify update severity: CRITICAL, HIGH, MEDIUM, LOW, SAFE."""
-    if latest is None or not body:
-        return "LOW", "Unknown update — check manually"
-
-    # Security check — only CRITICAL for actual CVE/vulnerability mentions
-    body_lower = body.lower()
-    has_cve = bool(re.search(r'CVE-\d{4}-\d{4,}', body))
-    real_security_kw = ['vulnerability', 'exploit', 'buffer overflow',
-                        'auth bypass', 'privilege escalation', 'injection attack',
-                        'denial of service', 'cve-', 'vulnerability in',
-                        'security advisory']
-    if has_cve or any(kw in body_lower for kw in real_security_kw):
-        return "CRITICAL", "Security fix — update recommended immediately"
-
-    # Parse versions — strip v/@ prefixes
-    # Handle special cases: n8n@X.Y.Z, etc.
-    clean_current = current
-    clean_latest = latest
-    if clean_current.startswith('n8n@'):
-        clean_current = clean_current[4:]
-    if clean_latest.startswith('n8n@'):
-        clean_latest = clean_latest[4:]
-    clean_current = re.sub(r'^[v@]', '', clean_current).strip()
-    clean_latest = re.sub(r'^[v@]', '', clean_latest).strip()
-
+def dockerhub_latest_semver(repo: str):
     try:
-        p_parts = [int(x) for x in re.findall(r'\d+', clean_current)]
-        l_parts = [int(x) for x in re.findall(r'\d+', clean_latest)]
-
-        if not p_parts or not l_parts:
-            # No comparable semver — the current pin is a rolling tag or a
-            # source-built image (e.g. llama.cpp 'server-cuda'). Don't pretend
-            # it's a minor update; flag it for manual review instead.
-            return "ROLLING", (f"Pinned by rolling tag/built image ('{clean_current}') — "
-                               f"rebuild to pull latest ({clean_latest}); review release notes")
-
-        max_len = max(len(p_parts), len(l_parts))
-        p_parts.extend([0] * (max_len - len(p_parts)))
-        l_parts.extend([0] * (max_len - len(l_parts)))
-
-        if l_parts == p_parts:
-            return "SAFE", "Already up to date"
-
-        major_diff = l_parts[0] - p_parts[0]
-        minor_diff = l_parts[1] - p_parts[1] if len(l_parts) > 1 and len(p_parts) > 1 else 0
-
-        if major_diff > 0:
-            return "HIGH", f"Major version jump ({clean_current} → {clean_latest}) — review breaking changes"
-        elif minor_diff > 0:
-            return "MEDIUM", f"Minor update ({clean_current} → {clean_latest})"
-        else:
-            return "LOW", f"Patch update ({clean_current} → {clean_latest})"
-
-    except (ValueError, IndexError):
-        return "LOW", "Update available"
+        data = http_json(
+            f"https://hub.docker.com/v2/repositories/{repo}/tags"
+            f"?page_size=100&ordering=last_updated")
+        best, best_name = None, None
+        for t in data.get("results", []):
+            name = t.get("name", "")
+            if is_prerelease(name):
+                continue
+            sv = semver_tuple(name)
+            if sv and (best is None or sv > best):
+                best, best_name = sv, name
+        return best_name
+    except Exception:
+        return None
 
 
-def extract_highlights(body, max_items=4):
-    """Extract key highlights from release body."""
-    if not body:
-        return []
-    lines = []
-    for line in body.split('\n'):
-        stripped = line.strip()
-        if not stripped or stripped.startswith('>') or stripped.startswith('<!--'):
+def quay_latest_semver(repo: str):
+    try:
+        data = http_json(
+            f"https://quay.io/api/v1/repository/{repo}/tag/?limit=100&onlyActiveTags=true")
+        best, best_name = None, None
+        for t in data.get("tags", []):
+            name = t.get("name", "")
+            if is_prerelease(name):
+                continue
+            sv = semver_tuple(name)
+            if sv and (best is None or sv > best):
+                best, best_name = sv, name
+        return best_name
+    except Exception:
+        return None
+
+
+def resolve_latest(repo: str, hint: dict):
+    """Return (latest_tag, url, body). Prefer GitHub releases; fall back to a
+    registry tag list so digest/rolling images still get a version to report."""
+    if "gh" in hint:
+        tag, url, body = github_latest(hint["gh"])
+        if tag:
+            return tag, url, body
+    if "hub" in hint:
+        tag = dockerhub_latest_semver(hint["hub"])
+        if tag:
+            return tag, f"https://hub.docker.com/r/{hint['hub']}/tags", ""
+    if "quay" in hint:
+        tag = quay_latest_semver(hint["quay"])
+        if tag:
+            return tag, f"https://quay.io/repository/{hint['quay']}?tab=tags", ""
+    return None, "", ""
+
+
+# ── Severity ─────────────────────────────────────────────────────────────────
+
+_SECURITY_RE = re.compile(
+    r"CVE-\d{4}-\d{3,}|vulnerabilit|exploit|buffer overflow|auth(?:entication)? bypass"
+    r"|privilege escalation|\brce\b|remote code execution|security fix|security patch",
+    re.I,
+)
+
+
+def severity(kind: str, cur: str, latest, body: str):
+    """Return (tier, one-line reason). Tiers: SECURITY, UPDATE, DRIFT, REBUILD,
+    OK, UNKNOWN."""
+    if kind == "local_build":
+        return "REBUILD", "built from repo — rebuild if source changed since deploy"
+    if kind == "base":
+        bucket, _ = compare(cur, latest) if latest else ("unknown", 0)
+        if bucket in ("major", "minor", "patch"):
+            return "UPDATE", f"base image {cur} → {latest}"
+        return "OK", "base image current"
+    if kind == "rolling":
+        return "DRIFT", f"rolling tag ':{cur}' — unreproducible; latest upstream {latest or 'unknown'}"
+    if latest is None:
+        return "UNKNOWN", "could not resolve latest upstream"
+
+    bucket, _ = compare(cur, latest)
+    if kind == "digest":
+        # A pure digest pin (no tag) can't be diffed against a version, so we
+        # report the latest upstream for reference without claiming they match.
+        if bucket in ("major", "minor", "patch"):
+            base = f"digest-pinned; upstream now {latest} — manual bump"
+            if body and _SECURITY_RE.search(body):
+                return "SECURITY", f"upstream {latest} cites a security fix — review; " + base
+            return "UPDATE", base
+        if bucket == "same":
+            return "OK", f"digest-pinned; tag {cur} is current"
+        return "OK", f"digest-pinned; latest upstream is {latest} (bump manually if desired)"
+
+    # semver
+    if bucket == "same":
+        return "OK", f"up to date ({cur})"
+    if bucket == "unknown":
+        return "UNKNOWN", f"version format unclear ({cur} vs {latest})"
+    if body and _SECURITY_RE.search(body):
+        return "SECURITY", f"{cur} → {latest} — release notes cite a security fix"
+    return "UPDATE", f"{bucket} update {cur} → {latest}"
+
+
+# ── Highlights ───────────────────────────────────────────────────────────────
+
+def highlights(body: str, n: int = 3):
+    out = []
+    for line in (body or "").splitlines():
+        s = line.strip().lstrip("-*• ").strip()
+        if not s or s.startswith(("#", ">", "<!--", "|")):
             continue
-        # Skip markdown headings and section headers
-        if re.match(r'^#+\s', stripped):
-            continue
-        # Strip markdown links and bold/italic for cleaner output
-        clean = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', stripped)
-        clean = re.sub(r'\*{1,3}([^*]+)\*{1,3}', r'\1', clean)
-        clean = clean.strip()
-        if clean and len(clean) > 10 and not re.match(r'^https?://', clean):
-            lines.append(clean[:120])
-        if len(lines) >= max_items:
+        s = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)      # md links → text
+        s = re.sub(r"[*_`]{1,3}([^*_`]+)[*_`]{1,3}", r"\1", s)
+        s = re.sub(r"https?://\S+", "", s).strip()
+        s = scrub(s)
+        if len(s) > 12:
+            out.append(s[:130])
+        if len(out) >= n:
             break
-    return lines
+    return out
 
 
-def read_compose_versions():
-    """Read current pinned versions from docker-compose.yml."""
-    text = COMPOSE.read_text()
-    versions = {}
-    patterns = {
-        "n8n": r'docker\.n8n\.io/n8nio/n8n:([\d.]+)',
-        "Open WebUI": r'open-webui/open-webui:v([\d.]+)',
-        "Qdrant": r'qdrant/qdrant:v([\d.]+)',
-        "Caddy": r'caddy:([\d.]+)-alpine',
-        "llama.cpp": r'ghcr\.io/ggml-org/llama\.cpp:([a-z-]+)',
-        "oauth2-proxy": r'oauth2-proxy/oauth2-proxy:([\w-]+)',
-    }
-    for name, pat in patterns.items():
-        m = re.search(pat, text)
-        if m:
-            versions[name] = m.group(1)
-    return versions
+# ── Main ─────────────────────────────────────────────────────────────────────
 
+def audit():
+    env = load_env()
+    compose_path = next((p for p in COMPOSE_CANDIDATES if p.exists()), None)
+    if compose_path is None:
+        return {"error": f"no compose file found (tried {[str(p) for p in COMPOSE_CANDIDATES]})"}
 
-def apply_updates(updates):
-    """Apply version updates to docker-compose.yml and github_monitor.py."""
-    compose_text = COMPOSE.read_text()
-    monitor_text = MONITOR.read_text()
-    applied = {}
+    services = parse_compose(compose_path, env)
+    results = []
+    failures = []
+    resolved_cache = {}
 
-    for name, new_tag in updates.items():
-        # Update docker-compose.yml
-        patterns = {
-            "n8n": (r'docker\.n8n\.io/n8nio/n8n:[\d.]+', f'docker.n8n.io/n8nio/n8n:{new_tag}'),
-            "Open WebUI": (r'open-webui/open-webui:v[\d.]+', f'open-webui/open-webui:v{new_tag}'),
-            "Qdrant": (r'qdrant/qdrant:v[\d.]+', f'qdrant/qdrant:v{new_tag}'),
-            "Caddy": (r'caddy:([\d.]+)-alpine', f'caddy:{new_tag}-alpine'),
-        }
-        if name in patterns:
-            old_pattern, new_val = patterns[name]
-            if re.search(old_pattern, compose_text):
-                compose_text = re.sub(old_pattern, new_val, compose_text)
-                applied[name] = "docker-compose.yml"
+    for name, ref in sorted(services.items()):
+        info = classify(ref)
+        kind, repo, tag = info["kind"], info["repo"], info.get("tag", "")
+        hint = hint_for(repo)
+        latest, url, body = None, "", ""
 
-        # Update github_monitor.py PINNED dict
-        for key_display in ["n8n", "Open WebUI", "Qdrant", "Caddy"]:
-            if key_display.lower() == name.lower():
-                key_map = {"n8n": '"n8n"', "Open WebUI": '"Open WebUI"',
-                          "Qdrant": '"Qdrant"', "Caddy": '"Caddy"'}
-                if key_display in key_map:
-                    monitor_text = re.sub(
-                        rf'({key_map[key_display]}.*?"pinned":\s*")[\d.v-]+(")',
-                        rf'\g<1>{new_tag}\g<2>',
-                        monitor_text
-                    )
-                    if name not in applied:
-                        applied[name] = "github_monitor.py"
+        if kind in ("semver", "digest", "rolling", "base"):
+            if budget_left() < 8:
+                failures.append(f"{name}: skipped (time budget)")
+            elif repo in resolved_cache:
+                latest, url, body = resolved_cache[repo]
+            else:
+                try:
+                    if kind == "base":
+                        latest = dockerhub_latest_semver(
+                            repo if "/" in repo else f"library/{repo}")
+                        url = f"https://hub.docker.com/_/{repo.split('/')[-1]}"
+                    else:
+                        latest, url, body = resolve_latest(repo, hint)
+                except Exception as e:  # noqa: BLE001
+                    failures.append(f"{name}: {type(e).__name__}: {e}")
+                resolved_cache[repo] = (latest, url, body)
 
-    # Write updated files
-    COMPOSE.write_text(compose_text)
-    MONITOR.write_text(monitor_text)
+        tracks = None
+        if hint.get("upstream") and budget_left() > 8:
+            up_name, up_repo = hint["upstream"]
+            t, u, _ = github_latest(up_repo)
+            if t:
+                tracks = {"name": up_name, "latest": t, "url": u}
 
-    # Also update the Docker-Only table in github_monitor.py
-    if "n8n" in updates:
-        monitor_text = MONITOR.read_text()
-        monitor_text = re.sub(
-            r'(docker\.n8n\.io/n8nio/n8n:[\d.]+)',
-            f'docker.n8n.io/n8nio/n8n:{updates["n8n"]}',
-            monitor_text
-        )
-        MONITOR.write_text(monitor_text)
+        tier, reason = severity(kind, tag, latest, body)
+        results.append({
+            "service": name,
+            "image": ref,
+            "kind": kind,
+            "declared": tag or (info.get("digest", "") + "…" if kind == "digest" else ""),
+            "latest": latest,
+            "tier": tier,
+            "reason": scrub(reason),
+            "url": url,
+            "highlights": highlights(body) if tier in ("UPDATE", "SECURITY") else [],
+            "note": scrub(hint.get("note", "")),
+            "tracks_upstream": tracks,
+        })
 
-    return applied
+    order = {"SECURITY": 0, "UPDATE": 1, "DRIFT": 2, "REBUILD": 3, "UNKNOWN": 4, "OK": 5}
+    results.sort(key=lambda r: (order.get(r["tier"], 9), r["service"]))
 
-
-def restart_services(services_to_restart):
-    """Restart affected Docker services."""
-    if not services_to_restart:
-        return {}
-
-    results = {}
-    for svc in services_to_restart:
-        cmd = ["docker", "compose", "up", "-d", "--force-recreate", "--no-build", svc]
-        stdout, stderr, rc = run_cmd(cmd, timeout=120)
-        results[svc] = "success" if rc == 0 else f"failed: {stderr[:200]}"
-    return results
-
-
-def create_git_branch_and_pr(changes):
-    """Create a git branch, commit, push, and create a PR."""
-    branch_name = f"update/{datetime.now(UTC).strftime('%Y-%m-%d')}/stack-versions"
-    services = list(changes.keys())
-    commit_msg = f"chore: update stack versions ({', '.join(services)})"
-
-    # Get current branch
-    current_branch, _, _ = run_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"])
-    current_branch = current_branch.strip()
-
-    # Create and checkout new branch
-    run_cmd(["git", "checkout", "-b", branch_name])
-
-    # Add changes
-    run_cmd(["git", "add", str(COMPOSE), str(MONITOR)])
-
-    # Commit
-    run_cmd(["git", "config", "user.email", "hermes@ordo-ai-stack.local"])
-    run_cmd(["git", "config", "user.name", "Hermes Bot"])
-    run_cmd(["git", "commit", "-m", commit_msg])
-
-    # Push
-    stdout, stderr, rc = run_cmd(["git", "push", "origin", branch_name])
-    if rc != 0:
-        return {"error": f"Push failed: {stderr[:200]}"}
-
-    # Create PR via GitHub API
-    pr_body = f"""## Automated Stack Update
-
-**Date:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}
-**Services updated:** {', '.join(services)}
-
-### Changes
-"""
-    for svc, file in changes.items():
-        pr_body += f"- **{svc}**: updated in `{file}`\n"
-
-    pr_body += "\n---\n*Auto-generated by Ordo-AI-Stack Monitor*"
-
-    cmd = ["curl", "-s", "-X", "POST",
-           "-H", f"Authorization: token {os.environ.get('GITHUB_TOKEN', '')}",
-           "-H", "Accept: application/vnd.github.v3+json",
-           "https://api.github.com/repos/AlpineWalker1995/ordo-ai-stack/pulls",
-           "-d", json.dumps({
-               "title": f"Update stack versions ({', '.join(services)})",
-               "body": pr_body,
-               "head": branch_name,
-               "base": current_branch.strip(),
-           })]
-    stdout, stderr, rc = run_cmd(cmd)
+    counts = {}
+    for r in results:
+        counts[r["tier"]] = counts.get(r["tier"], 0) + 1
+    actionable = [r for r in results if r["tier"] in ("SECURITY", "UPDATE")]
 
     return {
-        "branch": branch_name,
-        "pr_created": rc == 0,
-        "pr_url": json.loads(stdout).get("html_url", "") if rc == 0 else None,
+        "date": datetime.now(UTC).strftime("%Y-%m-%d"),
+        "compose": str(compose_path),
+        "note": ("Audited the DEPLOYED compose. 'declared' = what compose ships; "
+                 "compare against 'latest'. Tiers: SECURITY/UPDATE (act), "
+                 "DRIFT (rolling/unpinned), REBUILD (local image), OK, UNKNOWN. "
+                 "Report-only — no changes are applied."),
+        "counts": counts,
+        "actionable_count": len(actionable),
+        "services": results,
+        "meta": {"source_failures": failures, "service_count": len(services)},
     }
+
+
+def render_pretty(data):
+    if "error" in data:
+        return f"ERROR: {data['error']}"
+    lines = [f"# Ordo-AI-Stack image audit — {data['date']}",
+             f"compose: {data['compose']}",
+             f"actionable: {data['actionable_count']}  counts: {data['counts']}", ""]
+    for r in data["services"]:
+        lines.append(f"[{r['tier']:8}] {r['service']:24} {(r['declared'] or r['kind']):>18}"
+                     f" -> {str(r['latest'] or '-'):<14} {r['reason']}")
+    if data["meta"]["source_failures"]:
+        lines.append("\nfailures: " + "; ".join(data["meta"]["source_failures"]))
+    return "\n".join(lines)
 
 
 def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="Ordo-AI-Stack Package Audit")
-    parser.add_argument("--apply", action="store_true", help="Apply updates if available")
-    parser.add_argument("--approve-file", type=str, default="/tmp/stack_approve.json",
-                        help="Path to approved updates JSON")
-    parser.add_argument("--json", action="store_true", help="Output JSON to stdout")
-    args = parser.parse_args()
-
-    compose_versions = read_compose_versions()
-    results = {"timestamp": datetime.now(UTC).isoformat(), "services": {}}
-    all_updates = {}
-
-    for name, info in SERVICES.items():
-        latest_tag, body, url = fetch_latest_release(info["repo"])
-
-        # Branch on pin_source — Dockerfile-pinned services use SHA comparison.
-        if info.get("pin_source") == "dockerfile":
-            entry = evaluate_dockerfile_pinned(info["repo"], latest_tag, body)
-            entry["url"] = url
-            entry["highlights"] = extract_highlights(body, max_items=4)
-            results["services"][name] = entry
-            if entry.get("severity") not in (None, "SAFE"):
-                all_updates[name] = latest_tag
-            continue
-
-        # Compose-pinned services (the original path), plus live-resolved
-        # current versions for ComfyUI/LiteLLM (no usable compose pin).
-        current = resolve_current_version(name, compose_versions)
-
-        if latest_tag is None:
-            results["services"][name] = {
-                "pinned": current, "status": "unknown", "message": "Could not fetch release"
-            }
-            continue
-
-        severity, message = classify_severity(current, latest_tag, body)
-        highlights = extract_highlights(body, max_items=4)
-
-        entry = {
-            "pinned": current,
-            "latest": latest_tag,
-            "severity": severity,
-            "message": message,
-            "url": url,
-            "highlights": highlights,
-        }
-        results["services"][name] = entry
-
-        if severity != "SAFE":
-            all_updates[name] = latest_tag
-
-    results["all_updates"] = all_updates
-    results["has_updates"] = len(all_updates) > 0
-
-    # Apply if requested and approved
-    if args.apply and all_updates:
-        approved_file = Path(args.approve_file)
-        approved = {}
-        if approved_file.exists():
-            try:
-                approved = json.loads(approved_file.read_text())
-            except (OSError, json.JSONDecodeError):
-                pass
-
-        if approved:
-            print(f"\nApplying approved updates: {approved}")
-            applied = apply_updates(approved)
-            results["applied"] = applied
-
-            # Determine services to restart
-            restart = [n for n in approved if n in {"n8n", "Open WebUI", "Qdrant", "Caddy"}]
-            if restart:
-                results["restart"] = restart_services(restart)
-
-            # Create PR
-            results["pr"] = create_git_branch_and_pr(applied)
-
-    # Strip invisible/zero-width unicode from all fetched text (release names,
-    # commit messages, etc.) before emitting. A ZWJ (U+200D) in an upstream
-    # title otherwise trips Hermes' prompt-injection scanner and blocks the
-    # daily GitHub-monitor cron.
-    results = _scrub_invisible(results)
-
-    if args.json:
-        print(json.dumps(results, indent=2))
+    pretty = "--pretty" in sys.argv
+    data = audit()
+    if pretty:
+        sys.stdout.write(render_pretty(data) + "\n")
     else:
-        # Human-readable output
-        print("# 📡 Ordo-AI-Stack — Package Audit")
-        print(f"**{datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}**\n")
-
-        critical = []
-        high = []
-        medium = []
-        low = []
-        rolling = []
-        safe = []
-
-        for name, info in results["services"].items():
-            sev = info.get("severity", "LOW")
-            entry = f"**{name}**: pinned `{info['pinned']}` → latest `{info.get('latest', '?')}` — {info['message']}"
-            if info.get("highlights"):
-                for h in info["highlights"]:
-                    entry += f"\n  • {h}"
-            if info.get("url"):
-                entry += f"\n  → {info['url']}"
-            entry += "\n"
-
-            if sev == "CRITICAL":
-                critical.append(entry)
-            elif sev == "HIGH":
-                high.append(entry)
-            elif sev == "MEDIUM":
-                medium.append(entry)
-            elif sev == "LOW":
-                low.append(entry)
-            elif sev == "ROLLING":
-                rolling.append(entry)
-            else:
-                safe.append(entry)
-
-        if critical:
-            print("## 🔴 CRITICAL (Security)\n")
-            for c in critical:
-                print(c)
-        if high:
-            print("## 🟠 HIGH (Major version jump)\n")
-            for h in high:
-                print(h)
-        if medium:
-            print("## 🟡 MEDIUM (Minor update)\n")
-            for m in medium:
-                print(m)
-        if low:
-            print("## 🟢 LOW (Patch update)\n")
-            for entry in low:
-                print(entry)
-        if rolling:
-            print("## 🔁 ROLLING / MANUAL (rebuild to update)\n")
-            for entry in rolling:
-                print(entry)
-        if safe:
-            print("## ✅ SAFE (Up to date)\n")
-            for s in safe:
-                print(s)
-
-        if all_updates:
-            print(f"\n---\n\n**📌 Updates available:** {len(all_updates)} services")
-            print("**Recommendation:** Review severity above, then approve updates.")
-        else:
-            print("\n\n**✅ Everything is up to date.**")
-
-    return 0
+        sys.stdout.write(json.dumps(data, indent=1, ensure_ascii=False) + "\n")
+    return 0 if "error" not in data else 1
 
 
 if __name__ == "__main__":
+    try:
+        sys.stdout.reconfigure(errors="replace")
+    except Exception:
+        pass
     sys.exit(main())

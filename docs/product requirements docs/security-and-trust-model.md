@@ -6,19 +6,20 @@
 |-------|--------|---------------|------------|
 | `docker.sock` (ops-controller) | Container escape → host RCE | Mounted; allowlisted actions only | Token auth; no host port; allowlist in code; run ops-controller read-only workspace mount |
 | `docker.sock` (mcp-gateway) | MCP server escapes → host pivot | Mounted; Docker MCP Gateway owns it | Accept: required for spawning server containers; isolate mcp-gateway to backend network |
-| Ops controller token | Token theft → privileged ops | Token in `.env`; no default | Generate with `openssl rand -hex 32`; never expose controller port to host |
+| Ops controller token | Token theft → privileged ops | Token in `v2/out/secrets.env`; no default | Generate with `openssl rand -hex 32`; never expose controller port to host |
 | MCP tools (filesystem) | Data exfiltration via tool | Enabled in servers.txt; broken without root-dir | Remove from default servers.txt; require explicit opt-in |
 | MCP tools (browser/playwright) | SSRF → RFC1918/metadata | No egress blocks yet | Add `DOCKER-USER` iptables egress block; document in runbooks |
 | Tool output → model | Prompt injection via tool output | No sandbox; tool output passed to model | Allowlists; structured tool calls (`<tool_result>` tags); validate tool schemas |
-| Dashboard auth | Unauthenticated admin | Optional `DASHBOARD_AUTH_TOKEN` | Document: set for networked use; pre-deployment checklist item |
+| Dashboard auth | Unauthenticated admin | Gated by the Caddy edge (oauth2-proxy + Google SSO + email allowlist); dashboard publishes no host port and is reached only via the edge or the internal `ordo-net` for service-to-service calls. App code retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer fallback, unused in this deployment | Edge SSO is the auth boundary for the dashboard; no per-service token to manage |
 | WEBUI_AUTH=False | Open WebUI accessible without auth | Explicit in compose env | Change default to `WEBUI_AUTH=${WEBUI_AUTH:-True}`; opt-out, not opt-in |
 | Model gateway | No auth on `/v1/` endpoints | None; local-first intentional | Acceptable for localhost; add API key support if exposed to LAN |
 
 ## AuthN / AuthZ Tiers
 
 - **Tier 0:** No auth (health endpoints, read-only model list)
-- **Tier 1:** Bearer token (ops controller — `OPS_CONTROLLER_TOKEN`; optional dashboard — `DASHBOARD_AUTH_TOKEN`)
-- **Future Tier 3:** OAuth / OIDC (if multi-user or Tailscale integration needed)
+- **Tier 1:** Bearer token (ops controller — `OPS_CONTROLLER_TOKEN`)
+- **Tier 2:** Edge SSO (Caddy oauth2-proxy + Google SSO + email allowlist) — the sole auth gate for every UI, including the dashboard; UI services have no host port and are reached only through the edge or the internal `ordo-net`. The dashboard has no per-service auth token in this deployment (`DASHBOARD_AUTH_TOKEN` unset, `AUTH_REQUIRED=False`); the app code's optional Bearer fallback is dormant
+- **Future Tier 3:** Per-role OIDC / RBAC beyond the edge's binary allow/deny gate (if deeper multi-user separation is needed)
 - **RBAC:** Currently binary (authed = full access). Future: read-only role (view logs, health) vs admin role (start/stop).
 
 ## Correlation ID Flow
@@ -33,20 +34,19 @@
 
 ### End-to-End
 
-- `.env` — gitignored, host-only, not committed
-- `mcp/.env` — gitignored, host-only; mount as Docker secret via compose `secrets:` block
+- `v2/out/secrets.env` — gitignored, host-only, rendered from `v2/out/secrets.env.example`; not committed
+- MCP tool secrets (e.g. `GITHUB_PERSONAL_ACCESS_TOKEN`, `N8N_API_KEY`, `MCP_GATEWAY_TOKEN`) — same `v2/out/secrets.env`, consumed by `mcp-gateway` via the rendered compose `env_file:`
 - Agent runtime state under `data/hermes/` — gitignored; Discord bot token is supplied via Docker secrets (file at `/run/secrets/discord_token`, SOPS-encrypted at rest under `secrets/discord_token.sops`); per-user allowlists are runtime state inside `data/hermes/`.
-- Gateway tokens — in `.env`, set via compose `environment:`
-- **Secret rotation:** Update `.env`, `docker compose up -d --force-recreate <service>`.
+- Gateway tokens — in `v2/out/secrets.env`, set via compose `env_file:`
+- **Secret rotation:** Update `v2/out/secrets.env` (or re-render via `ordo render`), then `docker compose -p ordo up -d --force-recreate <service>` from `v2/out/`.
 
 ### Stack Secrets
 
 | Secret | Location | Injected by | Notes |
 |--------|----------|-------------|-------|
-| `OPS_CONTROLLER_TOKEN` | `.env` | Compose `environment:` | Required for ops-controller privileged API |
-| `DASHBOARD_AUTH_TOKEN` | `.env` | Compose `environment:` | Optional Bearer auth on dashboard `/api/*` |
+| `OPS_CONTROLLER_TOKEN` | `v2/out/secrets.env` | Compose `env_file:` (`secrets.env`) | Required for ops-controller privileged API |
 | `DISCORD_BOT_TOKEN` | `secrets/discord_token.sops` | Docker secret → hermes-gateway (`/run/secrets/discord_token`) | Optional, only when Discord channel is used |
-| `HF_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN` | `.env` | Compose `environment:` | Optional, for gated HF model pulls and GitHub MCP |
+| `HF_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN` | `v2/out/secrets.env` | Compose `env_file:` (`secrets.env`) | Optional, for gated HF model pulls and GitHub MCP |
 
 ## SSRF Defenses (MCP)
 
@@ -87,7 +87,7 @@ cap_drop: [ALL]
 security_opt: ["no-new-privileges:true"]
 ```
 
-Resource limits, healthchecks, and `restart: unless-stopped` are applied per-service in `docker-compose.yml`. One-shot containers (pullers, setup scripts) use `restart: "no"`.
+Resource limits, healthchecks, and `restart: unless-stopped` are applied per-service in the rendered `v2/out/docker-compose.yml` (regenerated by `ordo render`, never hand-edited). One-shot containers (pullers, setup scripts) use `restart: "no"`.
 
 ## Security + Reliability Intersection
 

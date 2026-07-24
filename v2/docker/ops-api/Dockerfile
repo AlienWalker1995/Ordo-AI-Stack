@@ -1,4 +1,4 @@
-# ops-api — the V1-PARITY dashboard BACKEND, running inside the ordo-v2 stack.
+# ops-api — the V1-PARITY dashboard BACKEND, running inside the ordo stack.
 #
 # This is the feature-rich FastAPI control API the original (V1) dashboard talks to:
 # /model-config (flag cards), /registry/* (model↔GPU registry), /guardian/* (status),
@@ -14,7 +14,7 @@
 # starts. The V2 `ordo serve` scheduler (service `ops-controller`) remains the sole
 # GPU/compose authority.
 #
-# Build:  docker build -t ordo-v2/ops-api:latest docker/ops-api
+# Build:  docker build -t ordo/ops-api:latest docker/ops-api
 FROM python:3.12-slim
 
 WORKDIR /app

@@ -34,8 +34,9 @@ ops.compose_restart(confirm=True)           # OK — whole stack
 ## What Hermes can no longer do
 
 - `docker exec` into other containers — by design. Specific named verbs
-  only. If you find yourself wanting `exec`, add a named verb to
-  `ops-controller/main.py` instead of reintroducing arbitrary shell.
+  only. If you find yourself wanting `exec`, add a named verb to the
+  `ops-controller` service source under `v2/` (see `v2/README.md`)
+  instead of reintroducing arbitrary shell.
 - `docker inspect` other containers — high-value tokens that live in
   Docker secrets are now invisible to Hermes even with prompt injection.
 - Mount new volumes, create containers from arbitrary images, or invoke
@@ -81,17 +82,20 @@ Each line is one privileged call:
 Rotation: when `audit.jsonl` exceeds 50MB, it's renamed to
 `audit.1.jsonl` and a fresh `audit.jsonl` starts. One historical
 generation; older data is dropped. Increase `AUDIT_LOG_MAX_BYTES` (or
-the constructor default in `ops-controller/audit.py`) to retain more.
+the constructor default in the `ops-controller` service's audit
+module, under `v2/`) to retain more.
 
 ## Adding a new privileged verb
 
-1. Write a failing test in `ops-controller/test_endpoints.py`.
-2. Implement the endpoint in `ops-controller/main.py`. Pattern:
+1. Write a failing test in `v2/tests/` covering the new endpoint.
+2. Implement the endpoint in the `ops-controller` service source
+   under `v2/` (see `v2/README.md`). Pattern:
    `_: None = Depends(verify_token)` → do work → `_audit.record(...)`
    → return.
 3. Add a method on `OpsClient` in `hermes/ops_client.py`.
 4. Migrate any caller that needs it.
-5. Test, commit, restart `ops-controller` and `hermes-gateway`.
+5. Test, commit, then from `v2/out/`: `docker compose -p ordo restart
+   ops-controller hermes-gateway`.
 
 Resist `exec`. Specific verbs only.
 
@@ -99,10 +103,12 @@ Resist `exec`. Specific verbs only.
 
 When ops-controller is down, Hermes can't perform any privileged
 action. The stack itself stays up; only Hermes-driven ops are blocked.
-From the host directly:
+From the host directly (the rendered compose lives in `v2/out/`,
+brought up per `v2/README.md`):
 
 ```bash
-docker compose restart ops-controller
+cd v2/out
+docker compose -p ordo restart ops-controller
 ```
 
 The host shell retains full Docker access (this is intentional — the
@@ -113,10 +119,11 @@ host operator is still trusted).
 Symptom: every Hermes-initiated privileged op fails with
 `OPS_CONTROLLER_TOKEN env var is empty` or 401 from ops-controller.
 
-Fix: confirm `OPS_CONTROLLER_TOKEN` in
-`~/.ai-toolkit/runtime/.env` matches the value ops-controller uses.
-Both read from the same SOPS-encrypted source (`secrets/.env.sops`).
-After fix: `docker compose restart hermes-gateway hermes-dashboard`.
+Fix: confirm `OPS_CONTROLLER_TOKEN` in `v2/out/secrets.env` matches
+the value ops-controller uses. Both are rendered from the same
+source (`v2/out/secrets.env.example` via `ordo render`).
+After fix, from `v2/out/`: `docker compose -p ordo restart
+hermes-gateway hermes-dashboard`.
 
 ## Verifying Hermes is bounded
 

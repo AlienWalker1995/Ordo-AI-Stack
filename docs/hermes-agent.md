@@ -1,21 +1,28 @@
 # Hermes Agent (Docker-mode)
 
-> ⚠️ **Partially LEGACY (V1) — reconcile with v2/ (cutover 2026-07-09).** Hermes is still the stack's assistant-agent layer and **is the default agent** in v2 — but v2 models an agent as a **data manifest** ([`../v2/agents/hermes/agent.yaml`](../v2/agents/hermes/agent.yaml)) that the renderer wires into a single `agent` compose service (the hermes web UI ships as the separate `hermes-dashboard` service-plugin, profile `hermes-ui`). The agent contract (chat via model-gateway, tools via mcp-gateway, GPU via the ops-controller `/jobs` scheduler, `.env` read-only) is documented in [`../v2/agents/README.md`](../v2/agents/README.md). Hermes' persistent brain still lives under **`data/hermes/`** (one root, the primary checkout) and the Discord/`SOUL.md`/state notes below remain accurate. The `docker compose up -d` / `hermes/Dockerfile` bring-up + upgrade commands are V1-flavored — under v2 the agent image is built per [`../v2/CUTOVER.md`](../v2/CUTOVER.md) (`docker build … -t ordo-v2/agent-hermes:latest`) and selected via `agent: hermes` in `v2/ordo.yaml`. See [`LEGACY-CLEANUP.md`](LEGACY-CLEANUP.md).
+> ⚠️ **Naming note — v2 is the only stack (V1 top-level tree retired 2026-07-24, commit `62540bf`; see [`LEGACY-CLEANUP.md`](LEGACY-CLEANUP.md)).** Hermes is the stack's assistant-agent layer and **is the default agent**. v2 models an agent as a **data manifest** ([`../v2/agents/hermes/agent.yaml`](../v2/agents/hermes/agent.yaml)) that the renderer wires into a single `agent` compose service (the hermes web UI ships as the separate `hermes-dashboard` service-plugin, profile `hermes-ui`) — the body of this doc still uses the pre-cutover `hermes-gateway` naming below, so read `hermes-gateway` as the `agent` service. The agent contract (chat via model-gateway, tools via mcp-gateway, GPU via the ops-controller `/jobs` scheduler, `.env` read-only) is documented in [`../v2/agents/README.md`](../v2/agents/README.md). Hermes' persistent brain still lives under **`data/hermes/`** (one root, the primary checkout) and the Discord/`SOUL.md`/state notes below remain accurate. The agent image is built from the root **`hermes/Dockerfile`** (that directory is a kept, live v2 build source — see [`LEGACY-CLEANUP.md`](LEGACY-CLEANUP.md)) per [`../v2/CUTOVER.md`](../v2/CUTOVER.md) (`docker build -t ordo/agent-hermes:latest ./hermes`) and selected via `agent: hermes` in `v2/ordo.yaml`. The stack is brought up entirely from `v2/`: edit `v2/ordo.yaml` (template `v2/ordo.example.yaml`), render with `ordo render` (`python -m ordo.cli render --out out`), then `docker compose -p ordo … up` from `v2/out/` — see [`../v2/README.md`](../v2/README.md) and [`../v2/CUTOVER.md`](../v2/CUTOVER.md).
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) is the stack's assistant-agent layer. It runs as two compose services — `hermes-gateway` (Discord / Telegram messaging) and `hermes-dashboard` (web UI at :9119) — that come up with the rest of the stack.
 
 ## Running
 
+Bring up the whole stack from `v2/` (there is no root `docker-compose.yml` — the stack is rendered, not hand-run):
+
 ```bash
-docker compose up -d
+cd v2
+python -m ordo.cli render --out out   # renders v2/ordo.yaml -> v2/out/{.env,docker-compose.yml,secrets.env.example,…}
+cd out
+docker compose -p ordo up -d
 ```
 
 That's it. Hermes starts automatically, waits for model-gateway / mcp-gateway / dashboard to be healthy, then registers messaging platforms (if configured) and serves the web UI.
 
 Web UI: `https://${CADDY_TAILNET_HOSTNAME}/hermes/` (Google SSO front door — see [docs/runbooks/auth.md](runbooks/auth.md)).
-Logs: `docker compose logs -f hermes-gateway hermes-dashboard`
-Restart: `docker compose restart hermes-gateway`
-Stop only Hermes: `docker compose stop hermes-gateway hermes-dashboard`
+Logs: `docker compose -p ordo logs -f hermes-gateway hermes-dashboard`
+Restart: `docker compose -p ordo restart hermes-gateway`
+Stop only Hermes: `docker compose -p ordo stop hermes-gateway hermes-dashboard`
+
+(All `docker compose` commands below assume you're in `v2/out/`, the rendered output directory, with `-p ordo`.)
 
 ## State
 
@@ -30,11 +37,11 @@ All persistent state lives in `data/hermes/`:
 | `data/hermes/cron/` | Scheduled jobs |
 | `data/hermes/logs/` | Hermes's own log files (separate from `docker compose logs`) |
 
-`data/hermes/` is gitignored. To start from a clean slate: `docker compose down`, `rm -rf data/hermes/*`, `docker compose up -d`.
+`data/hermes/` is gitignored. To start from a clean slate: `docker compose -p ordo down`, `rm -rf data/hermes/*`, `docker compose -p ordo up -d`.
 
 ## Discord setup
 
-Same flow as before — the env vars move into the container via `docker-compose.yml`, not into a host-side `.env` Hermes reads.
+Same flow as before — the env vars move into the container via the rendered `v2/out/docker-compose.yml`, not into a host-side `.env` Hermes reads.
 
 ### One-time Discord Developer Portal setup
 
@@ -44,28 +51,29 @@ Same flow as before — the env vars move into the container via `docker-compose
 4. **OAuth2 → URL Generator:** scopes `bot` + `applications.commands`; permissions `274878286912` (View Channels, Send Messages, Read Message History, Embed Links, Attach Files, Send Messages in Threads, Add Reactions). Copy the URL; use it to invite the bot to your server.
 5. Discord → Settings → Advanced → enable **Developer Mode**. Right-click your own username → *Copy User ID*. This becomes `DISCORD_ALLOWED_USERS`.
 
-### `.env` entries
+### Config entries
 
-Add to `.env`:
+There is no root `.env` — Hermes' non-secret Discord vars are set under `site:` in `v2/ordo.yaml` (template `v2/ordo.example.yaml`), which flows verbatim into the rendered `v2/out/.env`:
 
+```yaml
+site:
+  DISCORD_ALLOWED_USERS: <your-user-id-from-step-5>
+  DISCORD_REQUIRE_MENTION: false
 ```
-DISCORD_BOT_TOKEN=<token-from-step-2>
-DISCORD_ALLOWED_USERS=<your-user-id-from-step-5>
-DISCORD_REQUIRE_MENTION=false
-```
 
-The Discord bot token is loaded via Docker secrets (`/run/secrets/discord_token`, sourced from `secrets/discord_token.sops` after `make decrypt-secrets`). The legacy inline `DISCORD_TOKEN=` in `.env` is no longer accepted — re-encrypt it under SOPS or set `DISCORD_BOT_TOKEN_FILE=/run/secrets/discord_token` directly. See [docs/runbooks/secrets.md](runbooks/secrets.md).
+The Discord bot token is loaded via Docker secrets (`/run/secrets/discord_token`), sourced as a file-based secret per `v2/agents/hermes/agent.yaml`'s `secret_files` entry: drop the token at `${OPERATOR_SECRETS_DIR:-$HOME/.ai-toolkit/runtime/secrets}/discord_token` (set `OPERATOR_SECRETS_DIR` under `site:` to relocate it). This is a plain-value token bind mount, not the SOPS/`secrets/*.sops` flow — that root secrets path was retired with the rest of V1.
 
-After editing `.env`:
+After editing `v2/ordo.yaml`:
 
 ```bash
-docker compose up -d hermes-gateway   # recreate with new env
+cd v2 && python -m ordo.cli render --out out   # re-render
+cd out && docker compose -p ordo up -d --no-deps hermes-gateway   # recreate with new env
 ```
 
 ### Verifying
 
 ```bash
-docker compose logs --tail=50 hermes-gateway | grep -i discord
+docker compose -p ordo logs --tail=50 hermes-gateway | grep -i discord
 ```
 
 Expected: `[Discord] Connected as <botname>#<discriminator>`. If the bot appears in Discord as offline, check the Message Content Intent — that's the #1 cause.
@@ -91,26 +99,26 @@ Any other keys you add manually (skills, memory providers, display preferences) 
 
 The image ships a small bundled plugin called `push-through` and seeds an opinionated `SOUL.md` on first run. Together they push the agent toward Claude Code-style behavior: execute via tools, never return a plan for approval, only stop when the work is verifiably done.
 
-Persistent state lives in the host bind mount `${BASE_PATH:-.}/data/hermes/`, mounted at `/home/hermes/.hermes` inside the container. The legacy named Docker volume `ordo-ai-stack_hermes-data` still exists for rollback (see the `volumes:` section at the bottom of `docker-compose.yml`) but is not in the live path; host-side edits under `data/hermes/` are what the running containers see.
+Persistent state lives in the host bind mount `${BASE_PATH:-.}/data/hermes/`, mounted at `/home/hermes/.hermes` inside the container; host-side edits under `data/hermes/` are what the running containers see.
 
 First-run seeding is gated by `/home/hermes/.hermes/.ordo-push-through-seeded`. After that sentinel exists, the entrypoint never re-seeds — your toggles stick.
 
 To turn the nudge off:
 
 ```bash
-docker compose exec hermes-gateway hermes plugins disable push-through
+docker compose -p ordo exec hermes-gateway hermes plugins disable push-through
 ```
 
 To opt back in:
 
 ```bash
-docker compose exec hermes-gateway hermes plugins enable push-through
+docker compose -p ordo exec hermes-gateway hermes plugins enable push-through
 ```
 
 To replace your existing `SOUL.md` with the shipped opinionated default (one-liner — also reuses the seed inside the image):
 
 ```bash
-docker compose exec hermes-gateway sh -c "cp /opt/ordo-seed/SOUL.md /home/hermes/.hermes/SOUL.md"
+docker compose -p ordo exec hermes-gateway sh -c "cp /opt/ordo-seed/SOUL.md /home/hermes/.hermes/SOUL.md"
 ```
 
 If `hermes plugins enable push-through` returns non-zero on container start (older Hermes builds), the seeding block swallows the error and writes the sentinel anyway — enable manually with the command above.
@@ -123,32 +131,32 @@ The Hermes upstream SHA is pinned in `hermes/Dockerfile` as `ARG HERMES_PINNED_S
 
 1. Check recent commits: `git ls-remote https://github.com/NousResearch/hermes-agent.git main` — pick a SHA.
 2. Edit `hermes/Dockerfile`, change the `ARG HERMES_PINNED_SHA` default.
-3. `docker compose build hermes-gateway hermes-dashboard` (rebuilds both with the new pin).
-4. `docker compose up -d hermes-gateway hermes-dashboard` (recreates).
+3. Rebuild the image from the root `hermes/` build context (per `v2/CUTOVER.md`): `docker build -t ordo/agent-hermes:latest ./hermes` (run from the repo root).
+4. `cd v2/out && docker compose -p ordo up -d hermes-gateway hermes-dashboard` (recreates with the rebuilt image).
 
-You can also override without editing the file: `docker compose build --build-arg HERMES_PINNED_SHA=<sha> hermes-gateway`.
+You can also override without editing the file: `docker build --build-arg HERMES_PINNED_SHA=<sha> -t ordo/agent-hermes:latest ./hermes`.
 
 ## Troubleshooting
 
 **Service is `unhealthy`:**
 
 ```bash
-docker compose logs hermes-gateway | tail -50
-docker compose logs hermes-dashboard | tail -50
+docker compose -p ordo logs hermes-gateway | tail -50
+docker compose -p ordo logs hermes-dashboard | tail -50
 ```
 
 **Web UI returns 502 / connection refused at the Caddy front door:**
-- Check that the dashboard container is running: `docker compose ps hermes-dashboard`.
-- Confirm hermes-dashboard is on `proxy-net` so Caddy can reach it: `docker inspect ordo-ai-stack-hermes-dashboard-1 --format '{{json .NetworkSettings.Networks}}'`.
-- Check Caddy logs for routing errors: `docker compose logs caddy | grep -i hermes`.
+- Check that the dashboard container is running: `docker compose -p ordo ps hermes-dashboard`.
+- Confirm hermes-dashboard is on `ordo-net` so Caddy can reach it: `docker inspect ordo-hermes-dashboard-1 --format '{{json .NetworkSettings.Networks}}'`.
+- Check Caddy logs for routing errors: `docker compose -p ordo logs caddy | grep -i hermes`.
 
 **Discord bot shows online but doesn't reply:**
 - Message Content Intent disabled in Developer Portal.
 
 **Clean restart (throws away all sessions + skills):**
 ```bash
-docker compose down
+docker compose -p ordo down
 rm -rf data/hermes/*
-docker compose up -d
+docker compose -p ordo up -d
 ```
 

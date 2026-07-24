@@ -40,15 +40,15 @@ def test_evicted_idle_model_is_stopped():
 
 
 def test_docker_backend_scopes_to_its_project_via_compose_service_name():
-    d = DockerBackend(project="ordo-v2")
+    d = DockerBackend(project="ordo")
     # a bare compose service name passes through — the container is resolved by the compose-project
     # LABEL filter (in _resolve), which structurally can only match containers in this project.
     assert d._guard("llamacpp") == "llamacpp"
     assert d._guard("codebase-memory-ui") == "codebase-memory-ui"        # dashes in a service name are fine
     # a fully-qualified container name for THIS project is normalized back to the bare service
     # (strips the project prefix AND the -N replica suffix) so the label filter matches exactly.
-    assert d._guard("ordo-v2-llamacpp-1") == "llamacpp"
-    assert d._guard("ordo-v2-agent") == "agent"
+    assert d._guard("ordo-llamacpp-1") == "llamacpp"
+    assert d._guard("ordo-agent") == "agent"
     # anything shaped like a raw path / not a bare service name is refused (belt-and-braces)
     import pytest
     for bad in ("../etc", "a/b", " spaced ", ""):

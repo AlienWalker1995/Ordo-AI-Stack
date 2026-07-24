@@ -6,7 +6,7 @@
     ordo serve                  # run the control-plane HTTP service (ops-controller)
 
 `render` writes to an output dir only (it starts nothing), and `serve`'s Docker backend is
-hard-scoped to the ordo-v2 project prefix so it only ever touches its own project's containers.
+hard-scoped to the ordo project prefix so it only ever touches its own project's containers.
 """
 from __future__ import annotations
 
@@ -256,14 +256,14 @@ def main(argv: list[str] | None = None) -> int:
     pf = sub.add_parser("preflight")
     pf.add_argument("--ref", help="live .env to parity-check against (merge gate)")
     pf.add_argument("--secrets", help="local secrets.env to check required keys against (non-blocking)")
-    pf.add_argument("--project", default="ordo-v2")
+    pf.add_argument("--project", default="ordo")
     pf.add_argument("--no-images", action="store_true", help="skip the docker image-presence check")
     pf.set_defaults(func=cmd_preflight)
     pv = sub.add_parser("serve")
     pv.add_argument("--host", default="0.0.0.0")
     pv.add_argument("--port", type=int, default=9000)
     pv.add_argument("--out", default="out")
-    pv.add_argument("--project", default="ordo-v2", help="container project prefix the broker may touch")
+    pv.add_argument("--project", default="ordo", help="container project prefix the broker may touch")
     pv.add_argument("--resident-service", default="llamacpp",
                     help="compose service of the resident LLM the scheduler may evict/restore for a lease")
     pv.add_argument("--lease-poll-seconds", type=float, default=10.0,
