@@ -25,7 +25,7 @@ P_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128}
 P_CPU = {"gpus": [], "ram_gb": 16}
 
 VAULT_MOUNT = "${MEMORY_VAULT_PATH:-${DATA_PATH:-./data}/memory-vault}:/watch/memory-vault:ro"
-INGEST_PY = ROOT.parent / "rag-ingestion" / "ingest.py"
+INGEST_PY = ROOT / "rag-ingestion" / "ingest.py"
 
 
 def _src(plugins, hardware=P_5090):

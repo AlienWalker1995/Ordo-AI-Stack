@@ -21,10 +21,14 @@
      --key-file  auth/caddy/certs/tailnet.key \
      ordo.<tailnet>.ts.net
    ```
-5. Set `CADDY_BIND` in `.env` to your tailnet IP from `tailscale ip -4`.
-   The `:?` failsafe in the compose `caddy.ports` mapping refuses to
-   start with an empty value — by design, since an empty bind would
-   silently degrade to `0.0.0.0:443`.
+5. Set `CADDY_BIND` in `.env`. Default guidance: your tailnet IP from
+   `tailscale ip -4`, which restricts Caddy to the tailnet interface.
+   `CADDY_BIND=0.0.0.0` is also a supported, deliberate option (binds
+   every interface, including LAN; the network's NAT/router remains
+   the internet boundary) — this is how the live stack is currently
+   configured (operator-approved 2026-07-17). The `:?` failsafe in the
+   compose `caddy.ports` mapping only refuses an empty/unset value; it
+   does not distinguish a tailnet IP from `0.0.0.0`.
 6. Replace `auth/oauth2-proxy/emails.txt` locally with your real
    allowlist (do **not** commit your real email — repo file stays
    `YOUR_ALLOWLIST_EMAIL`). Run
@@ -68,7 +72,7 @@ levers:
 
 `docker compose restart oauth2-proxy`. Caddy's `forward_auth` retries
 automatically. If oauth2-proxy is unhealthy on boot, check
-`docker logs ordo-ai-stack-oauth2-proxy-1` for `OAUTH2_PROXY_*` env
+`docker logs ordo-oauth2-proxy-1` for `OAUTH2_PROXY_*` env
 mismatch — the most common cause is a `OAUTH2_PROXY_COOKIE_SECRET` that
 isn't exactly 16/24/32 bytes.
 
@@ -103,7 +107,7 @@ the `restart caddy` to stay well ahead of expiry.
 | Browser stuck redirecting | Cookie domain mismatch | Confirm `CADDY_TAILNET_DOMAIN` matches `<tailnet>.ts.net` exactly |
 | `redirect_uri_mismatch` from Google | OAuth client redirect URI doesn't match | Update GCP console authorized redirect URI to match `CADDY_TAILNET_HOSTNAME` |
 | 502 from Caddy on `/dash/` | Dashboard not on proxy-net | Add `proxy-net` to dashboard's networks; `docker compose up -d --force-recreate dashboard caddy` |
-| 401 / `AUTH_FAIL` on every `/api/*` call from `/dash/` | Historical (pre-2026-07-24): the dashboard trusted only `DASHBOARD_TRUSTED_PROXY_NET`/`DASHBOARD_TRUST_PROXY_HEADERS`, and Docker DNS returning a non-`proxy-net` Caddy IP could trip that check | `DASHBOARD_TRUSTED_PROXY_NET`/`DASHBOARD_TRUST_PROXY_HEADERS` were removed from the deployment after this subnet-drift bug — the dashboard no longer runs its own proxy-trust check; the Caddy edge (SSO) is the sole auth gate. If `AUTH_FAIL` recurs, check Caddy's `forward_auth`/oauth2-proxy config and network membership (verify with `docker inspect ordo-ai-stack-caddy-1 --format '{{json .NetworkSettings.Networks}}'` — Caddy should be on `proxy-net` only), not dashboard trusted-proxy settings |
+| 401 / `AUTH_FAIL` on every `/api/*` call from `/dash/` | Historical (pre-2026-07-24): the dashboard trusted only `DASHBOARD_TRUSTED_PROXY_NET`/`DASHBOARD_TRUST_PROXY_HEADERS`, and Docker DNS returning a non-`proxy-net` Caddy IP could trip that check | `DASHBOARD_TRUSTED_PROXY_NET`/`DASHBOARD_TRUST_PROXY_HEADERS` were removed from the deployment after this subnet-drift bug — the dashboard no longer runs its own proxy-trust check; the Caddy edge (SSO) is the sole auth gate. If `AUTH_FAIL` recurs, check Caddy's `forward_auth`/oauth2-proxy config and network membership (verify with `docker inspect ordo-caddy-1 --format '{{json .NetworkSettings.Networks}}'` — Caddy should be on `proxy-net` only), not dashboard trusted-proxy settings |
 | `handle @auth { forward_auth }` returns empty 202 instead of upstream UI | Caddyfile uses `handle` (terminal) instead of `route` (sequential) for SSO + reverse_proxy | Wrap `forward_auth` and the `handle_path /<ui>/*` blocks in a single `route { … }` block so the request continues past forward_auth on 2xx — see `auth/caddy/Caddyfile` |
 | Any Google account can sign in despite `emails.txt` allowlist | oauth2-proxy started with both `--email-domain=*` and `--authenticated-emails-file=…` (these are OR conditions; wildcard wins) | Remove `--email-domain=*` from oauth2-proxy command. The file is now the only gate |
 | oauth2-proxy `cookie_secret must be 16, 24, or 32 bytes` | Used `openssl rand -base64 32` (44 chars) | Use `tr -dc 'a-zA-Z0-9' </dev/urandom \| head -c 32` to get exactly 32 raw bytes |

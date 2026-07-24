@@ -137,7 +137,10 @@ def test_agent_swappable():
 
 def test_llamacpp_image_defaults_to_upstream():
     c = compose.render_compose(has_gpu=True, compose_profiles=[])
-    assert c["services"]["llamacpp"]["image"] == "ghcr.io/ggml-org/llama.cpp:server"
+    assert c["services"]["llamacpp"]["image"] == (
+        "ghcr.io/ggml-org/llama.cpp:server"
+        "@sha256:295dc9897fa8a643e4a513fbcaada51d3b8db4b0afa4fda7aeae2386757de58b"
+    )
 
 
 def test_llamacpp_image_override():
@@ -269,7 +272,10 @@ def test_model_without_backend_image_keeps_default(tmp_path):
     assert "LLAMACPP_IMAGE" not in rc.env
     rc.write(tmp_path)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
-    assert c["services"]["llamacpp"]["image"] == "ghcr.io/ggml-org/llama.cpp:server"
+    assert c["services"]["llamacpp"]["image"] == (
+        "ghcr.io/ggml-org/llama.cpp:server"
+        "@sha256:295dc9897fa8a643e4a513fbcaada51d3b8db4b0afa4fda7aeae2386757de58b"
+    )
 
 
 def test_ops_controller_serve_out_matches_deployed_layout():

@@ -1,0 +1,38 @@
+# Plugin manifest (data-only) — n8n workflow automation. Served under /n8n/ behind the edge
+# (Caddy prefix-strip) in V1; here it's a backend service reached at n8n:5678. Routes model traffic
+# through the model-gateway and is driven by the n8n MCP server on the mcp-gateway.
+id: automation
+name: n8n workflow automation
+description: Low-code workflow automation (publish/relay flows, OAuth callbacks, webhooks).
+requires:
+  nvidia: false
+  ram_gb: 2
+provides: [automation]
+compose_profile: automation
+env:
+  AUTOMATION_ENABLED: "1"
+services:
+  - name: n8n
+    # Pinned to the exact version V1 runs (V1 uses ${N8N_IMAGE:-...2.28.3}). Pin, don't float.
+    image: docker.n8n.io/n8nio/n8n:2.28.3
+    env:
+      N8N_HOST: 0.0.0.0
+      N8N_PORT: "5678"
+      # Mounted at /n8n/ via the edge's prefix-strip; N8N_PATH makes n8n emit /n8n/assets/... URLs.
+      N8N_PATH: /n8n/
+      N8N_PROXY_HOPS: "1"
+      N8N_USER_MANAGEMENT_DISABLED: "true"
+      OPENAI_API_BASE_URL: ${OPENAI_API_BASE:-http://model-gateway:11435/v1}
+      OPENAI_API_KEY: local
+      WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
+      N8N_EDITOR_BASE_URL: ${N8N_WEBHOOK_URL:-}
+      N8N_AUTH_EXCLUDE_ENDPOINTS: rest/oauth2-credential/callback,webhook
+      N8N_SECURE_COOKIE: "false"
+    volumes:
+      - ${DATA_PATH:-./data}/n8n-data:/home/node/.n8n
+      - ${DATA_PATH:-./data}/n8n-files:/files
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:5678/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

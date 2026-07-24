@@ -5,6 +5,10 @@
 # Requires: docker compose, comfyui service up; BASE_PATH optional (defaults to repo root).
 set -euo pipefail
 
+# On Windows Git Bash, MSYS mangles absolute container paths (e.g. /root/ComfyUI/...) passed
+# through to docker.exe into host paths before they reach the container. No-op elsewhere.
+export MSYS_NO_PATHCONV=1
+
 NODE_PATH="${1:?Usage: $0 <path-under-custom_nodes> e.g. Juno-ComfyUI or juno-comfyui-nodes-main}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,5 +25,5 @@ if [[ ! -f "$REQ" ]]; then
 fi
 
 cd "$BASE"
-exec docker compose exec comfyui \
+exec docker compose --project-directory out -f out/docker-compose.yml -p ordo exec comfyui \
   python3 -m pip install -r "/root/ComfyUI/custom_nodes/$NODE_PATH_POSIX/requirements.txt"

@@ -51,7 +51,12 @@ site: {}
   #                                                # (e.g. discord_token, github_backup_pat)
   # CADDY_TAILNET_HOSTNAME: host.tailnet.ts.net   # edge front door (profile edge)
   # CADDY_TAILNET_DOMAIN: tailnet.ts.net
-  # CADDY_BIND: 100.x.y.z                # host tailnet IP Caddy binds :443 to (never 0.0.0.0)
+  # CADDY_BIND: 100.x.y.z                # host tailnet IP Caddy binds :443 to (restricts to the
+  #                                       # tailnet interface). CADDY_BIND=0.0.0.0 is also a
+  #                                       # supported, deliberate option (binds every interface,
+  #                                       # including LAN; the network's NAT/router remains the
+  #                                       # internet boundary) — this is how the live stack is
+  #                                       # currently configured (operator-approved 2026-07-17).
 
 # Escape hatch: values here SURVIVE regeneration and override derived config. Use sparingly —
 # this is the one place a human/agent pins something the sizer would otherwise compute.

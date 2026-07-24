@@ -1,12 +1,14 @@
 # Remove an MCP server from the gateway. Run from repo root.
 # Usage: .\scripts\mcp_remove.ps1 <server-name>
-# Config is stored in data/mcp/servers.txt; gateway reloads in ~10s (no container restart).
+# Config is stored in out/mcp/servers.txt (mounted into ordo-mcp-gateway-1 at /mcp-config);
+# gateway reloads in ~10s (no container restart). out/ is rendered by `ordo render` -- this
+# script edits the rendered file directly and does not survive a future re-render.
 param([Parameter(Mandatory=$true)][string]$Server)
 
 $ErrorActionPreference = "Stop"
 $base = if ($env:BASE_PATH) { $env:BASE_PATH -replace '\\', '/' } else { (Get-Location).Path }
-$data = if ($env:DATA_PATH) { $env:DATA_PATH -replace '\\', '/' } else { Join-Path $base "data" }
-$configFile = Join-Path $data "mcp\servers.txt"
+$out = if ($env:OUT_PATH) { $env:OUT_PATH -replace '\\', '/' } else { Join-Path $base "out" }
+$configFile = Join-Path $out "mcp\servers.txt"
 
 if (-not (Test-Path $configFile)) {
     Write-Host "No MCP config found at $configFile" -ForegroundColor Red

@@ -118,3 +118,12 @@ def test_secrets_check_ok_when_all_present(tmp_path):
     _go, checks = preflight.run(GPU, CATALOG, REGISTRY, secrets_env=str(sec))
     c = next(c for c in checks if c.name.startswith("secrets present"))
     assert c.ok
+
+
+def test_service_images_pin_gate_flags_rolling_tags():
+    # Audit P1-5: the digest-pin gate previously covered only MCP images; plugin service
+    # images could float silently. The gate accepts digests, version tags, ${VAR:-default}
+    # judged by default, and project-buildable images — and flags rolling tags.
+    go, checks = preflight.run(GPU, CATALOG, REGISTRY)
+    chk = _byname(checks)["service images pinned (no rolling tags)"]
+    assert chk.ok, f"unexpected floating images in the default render: {chk.detail}"

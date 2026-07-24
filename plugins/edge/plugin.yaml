@@ -51,10 +51,13 @@ services:
   - name: caddy
     image: caddy:2.11.4-alpine
     wants_secrets: true       # MCP_GATEWAY_TOKEN resolves from secrets.env
-    # CADDY_BIND MUST be the host tailnet IP. The :? failsafe makes `docker compose config` exit
-    # non-zero if it's empty/unset — an empty bind silently degrades to 0.0.0.0:443 (V1 lesson).
+    # CADDY_BIND failsafe: the ${VAR:?} form only rejects an EMPTY/unset value — it makes
+    # `docker compose config` exit non-zero if CADDY_BIND is unset, catching the V1 lesson where
+    # an empty bind silently degraded to 0.0.0.0:443 with no operator intent behind it. It does
+    # NOT reject 0.0.0.0 as a value. CADDY_BIND=0.0.0.0 is the current operator-approved posture
+    # (2026-07-17, LAN-reachable, internet-dark verified) — a deliberate choice, not drift.
     ports:
-      - "${CADDY_BIND:?CADDY_BIND must be set to the host tailnet IP — never empty or 0.0.0.0}:443:443"
+      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:443:443"
     env:
       CADDY_TAILNET_HOSTNAME: ${CADDY_TAILNET_HOSTNAME}
       CADDY_TAILNET_DOMAIN: ${CADDY_TAILNET_DOMAIN}

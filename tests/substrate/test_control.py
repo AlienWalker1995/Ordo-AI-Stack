@@ -159,3 +159,13 @@ def test_jobs_history_route_serves_lease_records(tmp_path):
 def test_jobs_history_route_empty_without_sink(tmp_path):
     cp, _ = _cp(tmp_path)
     assert cp.route("GET", "/jobs/history") == (200, {"history": []})
+
+
+def test_jobs_cloud_routed_route_drains_exactly_once(tmp_path):
+    # Audit P1-2: drain_cloud_routed() previously had no caller — cloud-routed jobs sat
+    # in the scheduler forever. GET /jobs/cloud-routed is the drain path: each routed
+    # job is handed out exactly once, then the list is empty.
+    cp, _ = _cp(tmp_path)
+    cp.scheduler._cloud_routed = ["too-big-job"]  # simulate a fallback routing
+    assert cp.route("GET", "/jobs/cloud-routed") == (200, {"cloud_routed": ["too-big-job"]})
+    assert cp.route("GET", "/jobs/cloud-routed") == (200, {"cloud_routed": []})
