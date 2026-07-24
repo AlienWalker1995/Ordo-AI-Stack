@@ -1,4 +1,4 @@
-"""Ordo v2 substrate — config render engine (first slice)."""
+"""Ordo substrate — config render engine (first slice)."""
 from .catalog import Catalog, Model
 from .config import Source
 from .hardware import HardwareProfile, detect

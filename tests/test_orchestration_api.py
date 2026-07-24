@@ -163,6 +163,25 @@ def test_apply_param_placeholders_fills_optional_audio_defaults():
     assert isinstance(out["52"]["inputs"]["seed"], int)
 
 
+def test_coerce_value_int_accepts_float_strings():
+    # Locks parity with comfyui-mcp/managers/workflow_manager.py::_coerce_value —
+    # both must use int(float(v)) for INT placeholders, not int(v).
+    from dashboard.param_placeholders import _coerce_value
+
+    assert _coerce_value("8.0", int) == 8
+    assert _coerce_value(8.7, int) == 8
+
+
+def test_normalize_name_collapses_underscore_runs():
+    # Locks parity with comfyui-mcp/managers/workflow_manager.py::_normalize_name —
+    # both must collapse runs of non-alnum chars to a single "_" so the same
+    # PARAM_* placeholder text binds to the same param name in both modules.
+    from dashboard.param_placeholders import _normalize_name
+
+    assert _normalize_name("lyrics__strength") == "lyrics_strength"
+    assert _normalize_name("lyrics---strength") == "lyrics_strength"
+
+
 # ── /api/orchestration/registry/* passthrough (Hermes path) ──────────────────
 
 

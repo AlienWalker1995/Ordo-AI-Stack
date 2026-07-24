@@ -138,8 +138,10 @@
 
         # ---- codebase-memory 3D graph UI at /codebase-memory/ ----
         # Absolute-asset SPA served under a subpath: the codebase-memory-ui container
-        # runs nginx, which proxies to the UI and rewrites its baked /assets,/api,/rpc,
-        # /font-files to the /codebase-memory/ prefix (see codebase-memory-ui/nginx.conf).
+        # runs nginx, which proxies to the UI and rewrites its baked /assets,/api,/rpc
+        # to the /codebase-memory/ prefix (see codebase-memory-ui/nginx.conf). /font-files
+        # is deliberately NOT rewritten — it's an external CDN URL, not an origin-relative
+        # app path; rewriting it 404s the label fonts.
         # `handle` (no strip) keeps the prefix so nginx's location matches. Opt-in
         # (--profile codebase-memory); 502s if the service isn't running.
         @codebasememory path /codebase-memory /codebase-memory/*

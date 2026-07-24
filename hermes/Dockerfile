@@ -21,10 +21,11 @@ RUN git clone --no-single-branch "$HERMES_REPO" hermes-agent \
 
 WORKDIR /build/hermes-agent/web
 
-# Ordo AI Stack patch: rewrite the SPA's hardcoded root-absolute URLs
-# (/api/*, /ds-assets/*, /dashboard-plugins/*, four /api/* WebSocket
-# endpoints, plus the Vite base + React Router basename) so it can be
-# served under /hermes/ via Caddy's prefix-strip reverse proxy.
+# Ordo AI Stack patch: exactly TWO rewrites (see spa-patches.mjs — the Vite
+# config base and the Backdrop.tsx /ds-assets image path) so the SPA can be
+# served under /hermes/ via Caddy's prefix-strip reverse proxy. The remaining
+# root-absolute /api/* calls work as-is because the browser resolves them
+# against the stripped-prefix origin routes Caddy forwards.
 # Each patch fails the build loudly if its anchor moves on a SHA bump.
 COPY spa-patches.mjs /tmp/spa-patches.mjs
 RUN node /tmp/spa-patches.mjs

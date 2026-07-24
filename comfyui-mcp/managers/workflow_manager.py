@@ -1,4 +1,11 @@
-"""Workflow management for loading and processing ComfyUI workflows"""
+"""Workflow management for loading and processing ComfyUI workflows
+
+MIRRORED MODULE: the placeholder-parsing/normalization/coercion logic in this file
+(_parse_placeholder, _normalize_name, _coerce_value) is a mirrored copy of
+dashboard/param_placeholders.py. The two must produce IDENTICAL bindings for the
+same PARAM_* placeholder text — keep _normalize_name's underscore-run collapse and
+_coerce_value's int(float(v)) coercion in sync between both files when either changes.
+"""
 from __future__ import annotations
 
 import copy
@@ -6,6 +13,7 @@ import json
 import logging
 import os
 import random
+import re
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Protocol
@@ -538,11 +546,14 @@ class WorkflowManager:
         return param_name, annotation, value
 
     def _normalize_name(self, raw: str):
+        # MIRRORED: keep in sync with dashboard/param_placeholders.py::_normalize_name
+        # (collapses runs of non-alnum chars to a single "_" so e.g. "lyrics__strength"
+        # and "lyrics_strength" bind to the same param name in both modules).
         cleaned = [
             (char.lower() if char.isalnum() else "_")
             for char in raw.strip()
         ]
-        normalized = "".join(cleaned).strip("_")
+        normalized = re.sub(r"_+", "_", "".join(cleaned)).strip("_")
         return normalized or "param"
 
     def _derive_tool_name(self, stem: str):
@@ -603,7 +614,9 @@ class WorkflowManager:
             if annotation is str:
                 return str(value)
             if annotation is int:
-                return int(value)
+                # MIRRORED: keep in sync with dashboard/param_placeholders.py::_coerce_value
+                # (int(float(v)) so numeric strings like "8.0" coerce instead of raising).
+                return int(float(value))
             if annotation is float:
                 return float(value)
             if annotation is bool:

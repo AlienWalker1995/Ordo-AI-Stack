@@ -122,7 +122,7 @@ class RenderedConfig:
         }
 
     def compose_dict(self, project: str = "ordo") -> dict[str, Any]:
-        """The isolated, runnable compose for the v2 stack — built from the resolved plugin
+        """The isolated, runnable compose for the stack — built from the resolved plugin
         services (data-driven), with the primary- AND secondary-GPU uuids resolved for the pins."""
         pri = self.hardware.primary_gpu
         sec = self.hardware.secondary_gpu
@@ -177,7 +177,7 @@ class RenderedConfig:
             ",".join(s["id"] for s in self.mcp_servers) + "\n", encoding="utf-8")
         (mcp_dir / "registry-custom.yaml").write_text(
             _render_registry_custom(self.mcp_servers), encoding="utf-8")
-        # an isolated, runnable compose for the v2 stack (own project/network, no port clashes)
+        # an isolated, runnable compose for the stack (own project/network, no port clashes)
         (out / "docker-compose.yml").write_text(
             yaml.safe_dump(self.compose_dict(), sort_keys=False),
             encoding="utf-8")

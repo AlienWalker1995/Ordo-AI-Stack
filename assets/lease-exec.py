@@ -11,7 +11,7 @@ Contract (env):
   OPS_CONTROLLER_TOKEN          optional bearer token (sent when set)
   ORDO_LEASE_VRAM_GB            VRAM to lease (required); ~full card => exclusive lease
   ORDO_LEASE_KIND               job kind label (default "generic")
-  ORDO_LEASE_JOB_ID             explicit job id (default: lease-$AITK_JOB_ID, else lease-<random>)
+  ORDO_LEASE_JOB_ID             explicit job id (default: lease-<random>)
   ORDO_LEASE_ACQUIRE_TIMEOUT_S  max wait for admission (default 3600)
   ORDO_LEASE_POLL_S             admission poll interval (default 5)
   ORDO_LEASE_HEARTBEAT_S        heartbeat interval (default 60)
@@ -164,11 +164,7 @@ def main() -> int:
         return 2
     vram_gb = float(vram_env)
     kind = os.environ.get("ORDO_LEASE_KIND", "generic")
-    job_id = os.environ.get("ORDO_LEASE_JOB_ID", "").strip() or (
-        f"lease-{os.environ['AITK_JOB_ID']}"
-        if os.environ.get("AITK_JOB_ID")
-        else f"lease-{uuid.uuid4().hex[:8]}"
-    )
+    job_id = os.environ.get("ORDO_LEASE_JOB_ID", "").strip() or f"lease-{uuid.uuid4().hex[:8]}"
 
     try:
         _acquire(job_id, vram_gb, kind)
@@ -182,7 +178,7 @@ def main() -> int:
         if child.poll() is None:
             child.send_signal(signum)
 
-    signal.signal(signal.SIGINT, _forward)       # AI-toolkit's Stop button sends SIGINT
+    signal.signal(signal.SIGINT, _forward)       # e.g. a caller's Stop button / Ctrl-C
     signal.signal(signal.SIGTERM, _forward)
 
     threading.Thread(target=_heartbeat_loop, args=(job_id, vram_gb, kind, child), daemon=True).start()

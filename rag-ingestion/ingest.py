@@ -30,7 +30,10 @@ except Exception:  # pragma: no cover - polling path still works without watchdo
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [rag-ingestion] %(levelname)s %(message)s")
 logger = logging.getLogger("rag-ingestion")
 
-MODEL_GATEWAY_URL = os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435").rstrip("/")
+# EMBED_URL is the current name (matches its sibling, qdrant-rag-mcp/server.py); MODEL_GATEWAY_URL
+# is kept as a fallback for backward compat with plugins/rag/plugin.yaml's existing env, which
+# despite the name actually points this service straight at llamacpp-embed, not the LiteLLM gateway.
+EMBED_URL = os.environ.get("EMBED_URL", os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435")).rstrip("/")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "nomic-embed-text-v1.5.Q4_K_M.gguf").strip()
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333").rstrip("/")
 QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "documents").strip()
@@ -147,7 +150,7 @@ def _ensure_collection(vector_size: int) -> None:
 def _embed(chunks: list[str]) -> list[list[float]]:
     with httpx.Client(timeout=120.0) as client:
         r = client.post(
-            f"{MODEL_GATEWAY_URL}/v1/embeddings",
+            f"{EMBED_URL}/v1/embeddings",
             json={"model": EMBED_MODEL, "input": chunks},
             headers={"Content-Type": "application/json"},
         )

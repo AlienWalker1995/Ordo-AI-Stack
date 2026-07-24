@@ -42,9 +42,15 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 
 ## Model Downloads
 
+GGUF model provisioning is **`ordo fetch`** (checksum-mandatory, offline-capable). The V1
+`pull_gguf_models.py` script and its `model-puller` one-shot Docker service are gone;
+`ordo/ops-api` no longer shells out to either (`/models/gguf-pull` now returns 501).
+
+## n8n
+
 | Script | Purpose |
 |--------|---------|
-| `pull_gguf_models.py` | Downloads GGUF files from HuggingFace. V1 used this via a `model-puller` one-shot Docker service; that service is gone in v2, which provisions GGUF models via **`ordo fetch`** (checksum-mandatory, offline-capable) instead. |
+| `n8n/bootstrap_owner.py` | Applies `N8N_OWNER_EMAIL` / `N8N_OWNER_PASSWORD` (env-form secrets in `out/secrets.env`, see `docs/runbooks/secrets.md`) to the running n8n instance — first-run owner bootstrap, or updates the existing owner's email/password on re-run. Idempotent; run from inside the docker network so `n8n:5678` is reachable. |
 
 ## Usage
 
