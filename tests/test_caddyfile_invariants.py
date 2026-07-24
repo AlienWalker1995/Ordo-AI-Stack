@@ -100,11 +100,8 @@ def test_caddy_renames_xauthrequest_to_xforwarded(caddyfile_text: str) -> None:
     assert "X-Auth-Request-Email>X-Forwarded-Email" in caddyfile_text
 
 
-def test_ai_toolkit_port_site_is_sso_gated(caddyfile_text: str) -> None:
-    """The :8443 AI Toolkit site is a SEPARATE Caddy site — the :443 forward_auth gate does
-    not cover it, so it must carry its own. If this fails, the trainer UI is exposed to the
-    tailnet with only its app password."""
-    assert ":8443 {" in caddyfile_text, "AI Toolkit :8443 site block missing"
-    site = caddyfile_text.split(":8443 {", 1)[1]
-    assert "forward_auth oauth2-proxy:4180" in site
-    assert "reverse_proxy ai-toolkit:8675" in site
+def test_no_ai_toolkit_port_site(caddyfile_text: str) -> None:
+    """ai-toolkit was retired 2026-07-24; its dedicated :8443 SSO site must be gone. A leftover
+    site block would keep an extra Caddy port open with a dead upstream (ai-toolkit:8675)."""
+    assert ":8443 {" not in caddyfile_text, "stale ai-toolkit :8443 site still present"
+    assert "ai-toolkit" not in caddyfile_text, "stale ai-toolkit reference in Caddyfile"

@@ -12,7 +12,6 @@ OPS_SERVICE_MAP = {
     "comfyui": "comfyui",
     "n8n": "n8n",
     "qdrant": "qdrant",
-    "ai-toolkit": "ai-toolkit",
 }
 
 SERVICES = [
@@ -45,13 +44,9 @@ SERVICES = [
      "check": "http://codebase-memory-ui:9750/codebase-memory/", "has_gpu": False,
      "hint": "3D code knowledge-graph. Open at https://<host>/codebase-memory/ (Google SSO). "
              "In-memory index — re-index after a restart. Opt-in: --profile codebase-memory"},
-    # AI Toolkit LoRA trainer (V2 plugin `ai-toolkit`). Served on its own SSO-gated port
-    # (:8443) because the prebuilt Next.js UI can't live under a subpath. Training runs take
-    # an exclusive GPU lease via ops-controller (lease-exec wrapper at the venv-python seam).
-    {"id": "ai-toolkit", "name": "AI Toolkit (LoRA)", "port": 8443,
-     "check": "http://ai-toolkit:8675/", "has_gpu": True,
-     "hint": "LoRA trainer. Open at https://<host>:8443/ (Google SSO). "
-             "Training runs take an exclusive GPU lease via ops-controller."},
+    # LTX-trainer (LoRA) is headless (CLI-only, no web UI) — it has no dashboard card. It's a
+    # compose service managed via the ops-api (restart), and GPU runs take an exclusive lease
+    # via ops-controller. Nothing to surface in the service health grid.
 ]
 
 

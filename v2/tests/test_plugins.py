@@ -46,10 +46,10 @@ def test_big_gpu_enables_all_and_merges_env():
     # single 5090: media enables; the CPU-ok service plugins enable; voice needs a SECOND card → off
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     # worker depends on comfyui (enabled here), so it's in the set too
-    assert set(rc.plugins_enabled) == {"comfyui", "song-gen", "ai-toolkit"} | CPU_OK_SERVICE_PLUGINS
+    assert set(rc.plugins_enabled) == {"comfyui", "song-gen", "ltx-trainer"} | CPU_OK_SERVICE_PLUGINS
     assert "voice" not in rc.plugins_enabled
     assert rc.env["COMFYUI_ENABLED"] == "1"
-    assert rc.env["AI_TOOLKIT_ENABLED"] == "1"    # LoRA trainer enables on a big single GPU too
+    assert "ltx-trainer" in rc.plugins_enabled    # LoRA trainer enables on a big single GPU too
     assert rc.env["SONG_GEN_ENABLED"] == "1"
     assert rc.env["RAG_ENABLED"] == "1"           # a ported plugin's env fragment merges too
     assert "media" in rc.compose_profiles and "rag" in rc.compose_profiles
@@ -121,25 +121,28 @@ def test_comfyui_alloc_conf_never_empty(tmp_path):
         f"PYTORCH_CUDA_ALLOC_CONF must render a valid non-empty allocator config, got {val!r}"
 
 
-def test_ai_toolkit_manifest_invariants():
+def test_ltx_trainer_manifest_invariants():
+    # LTX-trainer is the stack's sole LoRA trainer (ai-toolkit retired 2026-07-24).
     import yaml
     from pathlib import Path
-    manifest = Path(__file__).resolve().parent.parent / "plugins" / "ai-toolkit" / "plugin.yaml"
+    manifest = Path(__file__).resolve().parent.parent / "plugins" / "ltx-trainer" / "plugin.yaml"
     m = yaml.safe_load(manifest.read_text(encoding="utf-8"))
     svc = m["services"][0]
     assert svc["gpu_pin"] == "primary"                     # trainer needs the 5090 (cu128 torch)
-    assert "ports" not in svc                              # Caddy-only, no host publish
-    assert "ostris/aitoolkit@sha256:" in svc["image"]      # floating :latest upstream → digest pin
-    # the lease seam: the wrapper must be mounted at the UI's venv-python spawn path, read-only
-    assert any(v.endswith(":/app/ai-toolkit/venv/bin/python:ro") for v in svc["volumes"])
-    # HF cache must be a NAMED volume — an NTFS/9p bind mmap-hangs diffusers sharded loads.
+    assert "ports" not in svc                              # headless CLI, no host publish / UI
+    assert svc["image"].startswith("${LTX_TRAINER_IMAGE:-ordo/ltx-trainer:")  # locally built, SHA-pinned
+    # the lease seam: the wrapper must be mounted at /ordo/lease-exec.py, read-only
+    assert any(v.endswith(":/ordo/lease-exec.py:ro") for v in svc["volumes"])
+    # HF cache must be a NAMED volume — an NTFS/9p bind mmap-hangs sharded loads.
     hub = next(v for v in svc["volumes"] if "/root/.cache/huggingface/hub" in v)
     assert not hub.startswith(("$", ".", "/")), "hub cache must be a named volume, not a bind"
+    # datasets are reparented onto this plugin's own data dir — no residual ai-toolkit path.
+    assert not any("/ai-toolkit/" in v for v in svc["volumes"]), "no dead ai-toolkit paths"
     assert svc["env"]["ORDO_LEASE_KIND"] == "training"
     assert svc.get("shm_size"), "trainer needs a real shm_size — torch pins tensors via /dev/shm"
     # Secret-backed keys must come from secrets.env (env_file) ONLY. An `environment:` entry like
     # `HF_TOKEN: ${HF_TOKEN:-}` substitutes EMPTY from the rendered .env and OVERRIDES the real
-    # env_file value: huggingface_hub then sends a blank Bearer header and crashes the trainer,
-    # and an empty AI_TOOLKIT_AUTH silently DISABLES the UI's auth (both found live 2026-07-15).
+    # env_file value: huggingface_hub then sends a blank Bearer header and crashes the trainer
+    # (found live 2026-07-15).
     for key in list(m["secrets"]) + ["OPS_CONTROLLER_TOKEN"]:
         assert key not in svc["env"], f"{key} must not be re-declared in the env block"
