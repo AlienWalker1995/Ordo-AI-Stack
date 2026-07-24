@@ -7,7 +7,7 @@
 
 ## Product Vision
 
-A self-hosted AI platform that any developer can run with `./compose up -d`. Core guarantees:
+A self-hosted AI platform that any developer can run by rendering `v2/ordo.yaml` (`ordo render`) and bringing it up with `docker compose -p ordo … up -d` from `v2/out/`. Core guarantees:
 
 1. **One model endpoint** — Every service reaches every model served by llama.cpp via a single OpenAI-compatible gateway. No per-service provider config.
 2. **Shared tools with health** — MCP tools served from a central gateway with registry metadata, per-server health badges, and policy controls.
@@ -19,28 +19,28 @@ A self-hosted AI platform that any developer can run with `./compose up -d`. Cor
 
 | Capability | Status | Key Files |
 |-----------|--------|-----------|
-| OpenAI-compat model gateway (llama.cpp) | Live | `model-gateway/` |
-| Model list TTL cache + cache-bust endpoint | Live | `model-gateway/main.py` |
-| `X-Request-ID` correlation end-to-end | Live | `model-gateway/main.py`, `dashboard/app.py`, `ops-controller/main.py` |
-| Responses API (`/v1/responses`) | Live | `model-gateway/main.py` |
-| Completions compat (`/v1/completions`) | Live | `model-gateway/main.py` |
-| MCP Gateway with hot-reload | Live | `mcp/`, `docker-compose.yml` |
+| OpenAI-compat model gateway (llama.cpp) | Live | `v2/docker/model-gateway/` |
+| Model list TTL cache + cache-bust endpoint | Live | `v2/docker/model-gateway/` |
+| `X-Request-ID` correlation end-to-end | Live | `v2/docker/model-gateway/`, `dashboard/app.py`, `v2/ordo/` (`ordo serve`) |
+| Responses API (`/v1/responses`) | Live | `v2/docker/model-gateway/` |
+| Completions compat (`/v1/completions`) | Live | `v2/docker/model-gateway/` |
+| MCP Gateway with hot-reload | Live | `v2/docker/mcp-gateway/`, `v2/out/docker-compose.yml` |
 | MCP registry.json metadata layer | Live | `dashboard/app.py`, `data/mcp/registry.json` |
 | MCP health endpoint + UI badges | Live | `dashboard/app.py` |
-| Ops Controller (start/stop/restart/logs/pull) | Live | `ops-controller/main.py` |
-| Append-only JSONL audit log | Live | `ops-controller/main.py` |
+| Ops Controller (start/stop/restart/logs/pull) | Live | `v2/ordo/` (`ordo serve`) |
+| Append-only JSONL audit log | Live | `v2/ordo/` (`ordo serve`) |
 | Dashboard auth via Caddy edge SSO (oauth2-proxy + Google + allowlist); optional dormant per-service Bearer token in code, unused in deployment | Live | `dashboard/app.py` |
 | Dashboard throughput stats + benchmark | Live | `dashboard/app.py` |
 | Dashboard hardware stats | Live | `dashboard/app.py` |
 | Dashboard default-model management | Live | `dashboard/app.py` |
-| RAG pipeline (Qdrant + rag-ingestion) | Live | `rag-ingestion/`, `docker-compose.yml` |
-| Open WebUI → Qdrant vector DB | Live | `docker-compose.yml` |
+| RAG pipeline (Qdrant + rag-ingestion) | Live | `rag-ingestion/`, `v2/out/docker-compose.yml` |
+| Open WebUI → Qdrant vector DB | Live | `v2/out/docker-compose.yml` |
 | RAG status endpoint | Live | `dashboard/app.py` |
-| Docker hardening (cap_drop, read_only, networks) | Live | `docker-compose.yml` |
-| Explicit frontend/backend networks | Live | `docker-compose.yml` |
-| llama.cpp backend-only (no host port) | Live | `docker-compose.yml` |
+| Docker hardening (cap_drop, read_only, networks) | Live | `v2/out/docker-compose.yml` |
+| Explicit frontend/backend networks | Live | `v2/out/docker-compose.yml` |
+| llama.cpp backend-only (no host port) | Live | `v2/out/docker-compose.yml` |
 | SSRF egress block scripts | Live | `scripts/ssrf-egress-block.sh`, `.ps1` |
-| Hermes agent (gateway + dashboard) | Live | `docker-compose.yml`, `hermes/` |
+| Hermes agent (gateway + dashboard) | Live | `v2/out/docker-compose.yml`, `hermes/` |
 | Contract + smoke tests | Live | `tests/` |
 
 ## Open Risks
