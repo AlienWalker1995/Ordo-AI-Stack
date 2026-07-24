@@ -1,13 +1,15 @@
-"""ops-router — Hermes plugin exposing ops-controller verbs as first-class tools.
+"""ops-router — Hermes plugin exposing ops-api verbs as first-class tools.
 
-Replaces the lost docker.sock surface (Plan C). Five tools wrap ops-controller's
-HTTP API so the model never has to know about curl or HTTP:
+Replaces the lost docker.sock surface (Plan C). Five tools wrap the ops-api
+control plane's HTTP API (Bearer-gated, OPS_API_URL=http://ops-api:9000 — NOT
+the ordo-serve scheduler, which has none of these routes) so the model never
+has to know about curl or HTTP:
 
 - list_containers    -> GET  /containers
 - container_logs     -> GET  /containers/{name}/logs
 - restart_container  -> POST /containers/{name}/restart       (bounce existing container)
-- compose_restart    -> POST /compose/restart                 (compose-aware restart, same env)
-- compose_up         -> POST /compose/up                      (recreate; picks up new .env / volumes / network)
+- compose_restart    -> POST /services/{name}/recreate        (per-service; stack-wide is 501 by design)
+- compose_up         -> POST /services/{name}/recreate        (picks up new .env / volumes / network)
 
 When to use which:
 - Process is wedged or a bind-mounted file changed   -> restart_container / compose_restart

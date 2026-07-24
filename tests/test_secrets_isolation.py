@@ -1,9 +1,16 @@
 """Verify Hermes' bind-mounts cannot see decrypted runtime secrets and
 that high-value tokens don't appear as plaintext env vars in containers."""
 import json
+import os
 import subprocess
 
 import pytest
+
+# Container names are "<compose project>-<service>-1"; the service that runs
+# the Hermes agent is `agent` (renamed from hermes-gateway). Derive the
+# project prefix from COMPOSE_PROJECT_NAME so a project rename doesn't
+# silently re-break this suite into a permanent skip.
+COMPOSE_PROJECT_NAME = os.environ.get("COMPOSE_PROJECT_NAME", "ordo")
 
 
 def _docker_exec(container: str, *cmd: str) -> subprocess.CompletedProcess:
@@ -24,7 +31,7 @@ def _container_running(name: str) -> bool:
 
 @pytest.fixture(scope="module")
 def hermes_gateway() -> str:
-    name = "ordo-ai-stack-hermes-gateway-1"
+    name = f"{COMPOSE_PROJECT_NAME}-agent-1"
     if not _container_running(name):
         pytest.skip(f"{name} not running; bring the stack up to run this suite")
     return name

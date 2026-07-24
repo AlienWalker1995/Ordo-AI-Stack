@@ -30,11 +30,11 @@ We will acknowledge receipt and aim to respond within a reasonable timeframe.
 
 - **Open WebUI:** The default `WEBUI_AUTH=False` disables login. This is intended for **local/single-user** use only. If you expose the stack to a network (e.g., via port forwarding or LAN access), **enable authentication** by setting `WEBUI_AUTH=True` in the environment.
 - **Dashboard:** No per-service auth — it publishes no host port and is reached only through the Caddy edge (oauth2-proxy + Google SSO), which is the sole gate; internal callers reach it over the stack network. **ops-controller:** Set `OPS_CONTROLLER_TOKEN` (generate with `openssl rand -hex 32`) — it stays token-gated and its port is never exposed.
-- **n8n:** No built-in auth by default. If port **5678** is reachable from others (LAN, port-forward, Tailscale), enable n8n authentication (Basic Auth or full user management in n8n settings) or restrict access with a firewall / reverse proxy. Prefer not exposing n8n to the public internet without TLS and auth.
+- **n8n:** No built-in auth of its own and publishes no host port — port 5678 is reachable only inside the `ordo-net` stack network. The Caddy edge gates `/n8n/*` behind oauth2-proxy + Google SSO; the only unauthenticated surface is two narrow bypass routes (`/n8n/rest/oauth2-credential/callback`, `/n8n/webhook/*`) needed for external OAuth callbacks and webhooks (see `auth/caddy/Caddyfile`).
 
 ### Network Binding
 
-Services bind to `0.0.0.0` to allow access from other machines on your network. Use a firewall to restrict access if needed.
+Only Caddy publishes a host port (`443`), bound to `CADDY_BIND`. The rendered compose's `${CADDY_BIND:?…}` failsafe rejects an **empty/unset** value (it does not police the address itself); the default guidance is the host's tailnet IP, and an operator may deliberately bind `0.0.0.0` to accept LAN exposure (with NAT/no-port-forward as the internet boundary). All other services publish no host ports and are reachable only over the internal `ordo-net` network, gated by the Caddy edge (oauth2-proxy + Google SSO).
 
 ### Secrets
 

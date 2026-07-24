@@ -207,37 +207,14 @@ def parse_gpu_assignments_yaml(text: str) -> dict:
     return model_registry.parse_gpu_assignments_yaml(text)
 
 
-def render_gpu_assignments(assignments: dict) -> str:
-    """Render {service: uuid} to the override YAML.
-
-    Delegates to model_registry.render_gpu_assignments_yaml so both the legacy
-    /gpu/assign path and the /registry/assign-gpu path always emit the same
-    quote style and header, preventing the cross-style parse mismatch that could
-    wipe pins during a rollback."""
-    return model_registry.render_gpu_assignments_yaml(assignments)
-
-
 class GpuAssignBody(BaseModel):
     service: str
     gpu_uuid: str
     confirm: bool = False
 
 
-def _write_gpu_assignments(mapping: dict) -> None:
-    GPU_ASSIGNMENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = GPU_ASSIGNMENTS_PATH.with_suffix(".tmp")
-    tmp.write_text(render_gpu_assignments(mapping), encoding="utf-8")
-    os.replace(str(tmp), str(GPU_ASSIGNMENTS_PATH))
-
-
-def apply_gpu_assignment(service: str, gpu_uuid: str) -> dict:
-    """Read current assignments, set service->gpu_uuid, write atomically. Returns new map."""
-    current = {}
-    if GPU_ASSIGNMENTS_PATH.exists():
-        current = parse_gpu_assignments_yaml(GPU_ASSIGNMENTS_PATH.read_text(encoding="utf-8"))
-    current[service] = gpu_uuid
-    _write_gpu_assignments(current)
-    return current
+# (The gpu-assignments.yml write helpers were removed with the runtime-reassignment
+# endpoints — GPU pins are render-time now; the file is a V1 relic nothing reads.)
 
 
 # ---------------------------------------------------------------------------
@@ -1336,38 +1313,23 @@ async def gpu_assignments(_: None = Depends(verify_token)):
 
 @app.post("/gpu/assign")
 async def gpu_assign(body: GpuAssignBody, request: Request, _: None = Depends(verify_token)):
-    """Pin a GPU service to a specific GPU UUID, then recreate it so the pin takes effect."""
-    if body.service not in GPU_ASSIGNABLE_SERVICES:
-        raise HTTPException(status_code=400, detail=f"Service {body.service} not GPU-assignable")
-    if not _GPU_UUID_RE.fullmatch(body.gpu_uuid):
-        raise HTTPException(status_code=400, detail="Invalid GPU UUID format")
-    if not body.confirm:
-        raise HTTPException(status_code=400, detail="Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
-    prev = {}
-    if GPU_ASSIGNMENTS_PATH.exists():
-        prev = parse_gpu_assignments_yaml(GPU_ASSIGNMENTS_PATH.read_text(encoding="utf-8"))
-    apply_gpu_assignment(body.service, body.gpu_uuid)
-    try:
-        _recreate_service(body.service, request)
-    except HTTPException as exc:
-        _write_gpu_assignments(prev)  # rollback
-        detail = str(exc.detail)
-        _audit("gpu_assign", body.service, "error", detail[:200], correlation_id=_correlation_id(request))
-        raise
-    _audit("gpu_assign", body.service, "ok", body.gpu_uuid, correlation_id=_correlation_id(request))
+    """410 GONE — GPU pins are baked at `ordo render` time, not runtime.
 
-    # Keep the model registry in sync so it never goes stale when an old client
-    # uses the legacy /gpu/assign path. Update any record whose service matches.
-    # Guarded so a registry failure never breaks the legacy response.
-    try:
-        for mid, record in REGISTRY.list_models().items():
-            if record.service == body.service:
-                record.gpu_uuid = body.gpu_uuid
-                REGISTRY.upsert(record)
-    except Exception as _reg_exc:  # noqa: BLE001
-        logger.warning("legacy /gpu/assign: registry sync failed (non-fatal): %s", _reg_exc)
-
-    return {"ok": True, "service": body.service, "gpu_uuid": body.gpu_uuid, "action": "reassigned"}
+    The V1 flow (write overrides/gpu-assignments.yml, recreate) is a no-op under
+    the render substrate: nothing reads that file back, and _recreate_service
+    replays the already-rendered compose byte-for-byte (audit P0-1, 2026-07-24).
+    Returning {"ok": true} while changing nothing was a lie; this is the honest
+    answer, mirroring the /guardian/* retirement.
+    """
+    _audit("gpu_assign", body.service, "gone", "render-time pins", correlation_id=_correlation_id(request))
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "GPU reassignment moved to the render pipeline: set the pin in ordo.yaml "
+            "(overrides:) and re-render (`ordo render`), then recreate the service. "
+            "Runtime reassignment was a silent no-op and has been retired."
+        ),
+    )
 
 
 @app.get("/mcp/containers")
@@ -1948,69 +1910,6 @@ async def models_download_status(_: None = Depends(verify_token)):
         return dict(_dl_status)
 
 
-def _run_model_pull(packs_csv: str, correlation_id: str = "") -> None:
-    """Run comfyui-model-puller via docker compose. COMFYUI_PACKS may be comma-separated (e.g. ltx-2.3-t2v-basic,ltx-2.3-extras)."""
-    with _pull_lock:
-        _pull_status.update(
-            {
-                "running": True,
-                "output": f"Starting packs: {packs_csv}",
-                "done": False,
-                "success": None,
-                "pack": packs_csv,
-            }
-        )
-    compose_files = [f.strip() for f in COMPOSE_FILE_ENV.split(";") if f.strip()]
-    cmd = ["docker-compose"]
-    for cf in compose_files:
-        cmd += ["-f", f"/workspace/{cf}"]
-    cmd += ["--profile", "comfyui-models", "run", "--rm", "-e", f"COMFYUI_PACKS={packs_csv}", "comfyui-model-puller"]
-    env = {**os.environ, "BASE_PATH": BASE_PATH, "DATA_PATH": os.environ.get("DATA_PATH", BASE_PATH + "/data")}
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            cwd="/workspace",
-            env=env,
-        )
-        output_lines = []
-        for line in proc.stdout:
-            output_lines.append(line.rstrip())
-            with _pull_lock:
-                _pull_status["output"] = "\n".join(output_lines[-20:])
-        proc.wait(timeout=7200)
-        ok = proc.returncode == 0
-        _audit("model_pull", packs_csv, "ok" if ok else "error", f"exit={proc.returncode}", correlation_id=correlation_id)
-        with _pull_lock:
-            _pull_status["success"] = ok
-            _pull_status["output"] = "\n".join(output_lines[-30:])
-            if not ok:
-                _pull_status["output"] += f"\nExit code: {proc.returncode}"
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        logger.error("Model pull timed out after 7200s")
-        _audit("model_pull", packs_csv, "error", "timeout after 7200s", correlation_id=correlation_id)
-        with _pull_lock:
-            _pull_status["success"] = False
-            _pull_status["output"] += "\nError: timed out after 2 hours"
-    except Exception as e:
-        logger.error("Model pull failed: %s", e)
-        _audit("model_pull", packs_csv, "error", str(e)[:200], correlation_id=correlation_id)
-        with _pull_lock:
-            _pull_status["success"] = False
-            _pull_status["output"] += f"\nError: {e}"
-    finally:
-        with _pull_lock:
-            _pull_status["running"] = False
-            _pull_status["done"] = True
-
-
-class ModelPullRequest(BaseModel):
-    pack: str
-    confirm: bool = False
-
 
 def _valid_packs() -> set[str]:
     """Load valid pack names from models.json."""
@@ -2045,32 +1944,28 @@ async def models_packs(_: None = Depends(verify_token)):
     return {"ok": True, "packs": packs_out}
 
 
+class ModelPullRequest(BaseModel):
+    pack: str
+    confirm: bool = False
+
+
 @app.post("/models/pull")
 async def models_pull(body: ModelPullRequest, request: Request, _: None = Depends(verify_token)):
-    """Run comfyui-model-puller for one or more comma-separated packs (e.g. ltx-2.3-t2v-basic,ltx-2.3-extras). Auth required."""
-    parts = [p.strip().lower() for p in (body.pack or "").split(",") if p.strip()]
-    if not parts:
-        raise HTTPException(status_code=400, detail="pack is required (comma-separated names allowed)")
-    valid = _valid_packs()
-    unknown = [p for p in parts if p not in valid]
-    if unknown:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown pack(s): {unknown}. Valid: {', '.join(sorted(valid))}",
-        )
-    packs_csv = ",".join(parts)
-    if not body.confirm:
-        raise HTTPException(status_code=400, detail="Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
-    with _pull_lock:
-        if _pull_status.get("running"):
-            raise HTTPException(status_code=409, detail="A pull is already in progress")
-    thread = threading.Thread(
-        target=_run_model_pull,
-        args=(packs_csv, _correlation_id(request)),
-        daemon=True,
+    """501 — the V1 comfyui-model-puller service/profile was not ported to the render substrate.
+
+    The old flow shelled `docker-compose --profile comfyui-models run comfyui-model-puller`
+    against the rendered compose, which defines neither the profile nor the service —
+    every invocation failed after returning "started" (audit P1-3, 2026-07-24).
+    Use the in-process download path instead: POST /models/download.
+    """
+    _audit("model_pull", body.pack or "", "gone", "puller not ported", correlation_id=_correlation_id(request))
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "Pack pulls are not available: the V1 comfyui-model-puller was not ported to the "
+            "render substrate. Use POST /models/download (in-process) for individual models."
+        ),
     )
-    thread.start()
-    return {"status": "started", "pack": packs_csv}
 
 
 @app.get("/models/pull/status")
@@ -2079,74 +1974,6 @@ async def models_pull_status(_: None = Depends(verify_token)):
     with _pull_lock:
         return dict(_pull_status)
 
-
-def _run_gguf_pull(repos_csv: str, correlation_id: str = "") -> None:
-    """Run gguf-puller (docker compose --profile models). Empty repos_csv uses GGUF_MODELS from project .env."""
-    label = repos_csv.strip() or "(GGUF_MODELS from .env)"
-    with _gguf_pull_lock:
-        _gguf_pull_status.update(
-            {
-                "running": True,
-                "output": f"Starting gguf-puller for {label}…\n",
-                "done": False,
-                "success": None,
-                "repos": label,
-            }
-        )
-    compose_files = [f.strip() for f in COMPOSE_FILE_ENV.split(";") if f.strip()]
-    cmd = ["docker-compose"]
-    for cf in compose_files:
-        cmd += ["-f", f"/workspace/{cf}"]
-    cmd += ["--profile", "models", "run", "--rm"]
-    if repos_csv.strip():
-        cmd += ["-e", f"GGUF_MODELS={repos_csv.strip()}"]
-    cmd += ["gguf-puller"]
-    env = {
-        **os.environ,
-        "BASE_PATH": BASE_PATH,
-        "DATA_PATH": os.environ.get("DATA_PATH", BASE_PATH + "/data"),
-    }
-    if HF_TOKEN:
-        env["HF_TOKEN"] = HF_TOKEN
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            cwd="/workspace",
-            env=env,
-        )
-        output_lines: list[str] = []
-        for line in proc.stdout:
-            output_lines.append(line.rstrip())
-            with _gguf_pull_lock:
-                _gguf_pull_status["output"] = "\n".join(output_lines[-40:])
-        proc.wait(timeout=7200)
-        ok = proc.returncode == 0
-        _audit("gguf_pull", label, "ok" if ok else "error", f"exit={proc.returncode}", correlation_id=correlation_id)
-        with _gguf_pull_lock:
-            _gguf_pull_status["success"] = ok
-            _gguf_pull_status["output"] = "\n".join(output_lines[-50:])
-            if not ok:
-                _gguf_pull_status["output"] += f"\nExit code: {proc.returncode}"
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        logger.error("GGUF pull timed out after 7200s")
-        _audit("gguf_pull", label, "error", "timeout after 7200s", correlation_id=correlation_id)
-        with _gguf_pull_lock:
-            _gguf_pull_status["success"] = False
-            _gguf_pull_status["output"] += "\nError: timed out after 2 hours"
-    except Exception as e:
-        logger.error("GGUF pull failed: %s", e)
-        _audit("gguf_pull", label, "error", str(e)[:200], correlation_id=correlation_id)
-        with _gguf_pull_lock:
-            _gguf_pull_status["success"] = False
-            _gguf_pull_status["output"] += f"\nError: {e}"
-    finally:
-        with _gguf_pull_lock:
-            _gguf_pull_status["running"] = False
-            _gguf_pull_status["done"] = True
 
 
 class GgufPullRequest(BaseModel):
@@ -2158,28 +1985,21 @@ class GgufPullRequest(BaseModel):
 
 @app.post("/models/gguf-pull")
 async def models_gguf_pull(body: GgufPullRequest, request: Request, _: None = Depends(verify_token)):
-    """Run gguf-puller container. Auth required."""
-    if not body.confirm:
-        raise HTTPException(status_code=400, detail="Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
-    raw = (body.repos or "").strip()
-    if raw:
-        for part in raw.split(","):
-            p = part.strip()
-            if not p or ".." in p or "/" not in p:
-                raise HTTPException(status_code=400, detail=f"Invalid repo segment: {part!r}")
-            a, b = p.split("/", 1)
-            if not a or not b or "/" in b:
-                raise HTTPException(status_code=400, detail=f"Invalid Hugging Face repo id: {p!r}")
-    with _gguf_pull_lock:
-        if _gguf_pull_status.get("running"):
-            raise HTTPException(status_code=409, detail="A GGUF pull is already in progress")
-    thread = threading.Thread(
-        target=_run_gguf_pull,
-        args=(raw, _correlation_id(request)),
-        daemon=True,
+    """501 — the V1 gguf-puller service/profile was not ported to the render substrate.
+
+    The old flow shelled `docker-compose --profile models run gguf-puller` against the
+    rendered compose, which defines neither the profile nor the service — every
+    invocation failed after returning "started" (audit P1-3, 2026-07-24).
+    Use the in-process GGUF path instead: POST /models/download.
+    """
+    _audit("gguf_pull", (body.repos or ""), "gone", "puller not ported", correlation_id=_correlation_id(request))
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "GGUF pack pulls are not available: the V1 gguf-puller was not ported to the "
+            "render substrate. Use POST /models/download (in-process) instead."
+        ),
     )
-    thread.start()
-    return {"status": "started", "repos": raw or "(from .env)"}
 
 
 @app.get("/models/gguf-pull/status")
@@ -2490,60 +2310,24 @@ async def registry_assign_gpu(
     request: Request,
     _: None = Depends(verify_token),
 ):
-    """Pin a model to a GPU UUID, update gpu-assignments.yml, and recreate the service."""
-    rec = REGISTRY.get(model_id)
-    if rec is None:
-        raise HTTPException(status_code=404, detail=f"Model {model_id!r} not found")
-    if not _GPU_UUID_RE.fullmatch(body.gpu_uuid):
-        raise HTTPException(status_code=400, detail="Invalid GPU UUID format")
-    if not body.confirm:
-        raise HTTPException(
-            status_code=400,
-            detail="Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.",
-        )
-    # Capacity guard (skip when force=True)
-    # Exclude the record itself so reassigning to the same GPU doesn't double-count.
-    if not body.force:
-        others = [m for m in REGISTRY.list_models().values() if m.id != rec.id]
-        fits, used, total = model_registry.capacity_check(
-            _live_gpus(), body.gpu_uuid, others, rec.est_vram_gb,
-        )
-        if not fits:
-            raise HTTPException(
-                status_code=409,
-                detail=f"VRAM insufficient: {used + rec.est_vram_gb:.1f} GB requested, {total:.1f} GB available on {body.gpu_uuid}. Use force=true to override.",
-            )
-    # Save previous pin for rollback
-    prev_uuid = rec.gpu_uuid
-    rec.gpu_uuid = body.gpu_uuid
-    rec.updated_by = request.headers.get("X-Actor", "dashboard")
-    REGISTRY.upsert(rec)
-    # Rewrite gpu-assignments.yml
-    assignments = {m.service: m.gpu_uuid for m in REGISTRY.list_models().values() if m.gpu_uuid}
-    try:
-        _write_text_atomic(GPU_ASSIGNMENTS_PATH, model_registry.render_gpu_assignments_yaml(assignments))
-    except Exception as exc:
-        # Rollback registry
-        rec.gpu_uuid = prev_uuid
-        REGISTRY.upsert(rec)
-        _audit("registry_assign_gpu", model_id, "error", str(exc)[:200], correlation_id=_correlation_id(request))
-        raise HTTPException(status_code=500, detail=f"Failed to write gpu-assignments.yml: {exc}") from exc
-    # Recreate service
-    try:
-        _recreate_service(rec.service, request)
-    except HTTPException as exc:
-        # Rollback both registry and YAML
-        rec.gpu_uuid = prev_uuid
-        REGISTRY.upsert(rec)
-        prev_assignments = {m.service: m.gpu_uuid for m in REGISTRY.list_models().values() if m.gpu_uuid}
-        try:
-            _write_text_atomic(GPU_ASSIGNMENTS_PATH, model_registry.render_gpu_assignments_yaml(prev_assignments))
-        except Exception:
-            pass
-        _audit("registry_assign_gpu", model_id, "error", str(exc.detail)[:200], correlation_id=_correlation_id(request))
-        raise
-    _audit("registry_assign_gpu", model_id, "ok", body.gpu_uuid, correlation_id=_correlation_id(request))
-    return {"ok": True, "id": model_id, "gpu_uuid": body.gpu_uuid}
+    """410 GONE — GPU pins are baked at `ordo render` time, not runtime.
+
+    The V1 flow (update the registry record, rewrite gpu-assignments.yml,
+    recreate) is a no-op under the render substrate: nothing reads that file
+    back, and _recreate_service replays the already-rendered compose
+    byte-for-byte — so the registry record would claim a pin reality never got
+    (audit P0-1, 2026-07-24). Mirrors the /guardian/* retirement. The registry
+    read paths (/registry/models, /registry/gpus) remain the intent/record layer.
+    """
+    _audit("registry_assign_gpu", model_id, "gone", "render-time pins", correlation_id=_correlation_id(request))
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "GPU reassignment moved to the render pipeline: set the pin in ordo.yaml "
+            "(overrides:) and re-render (`ordo render`), then recreate the service. "
+            "Runtime reassignment was a silent no-op and has been retired."
+        ),
+    )
 
 
 @app.post("/registry/models/{model_id}/enable")

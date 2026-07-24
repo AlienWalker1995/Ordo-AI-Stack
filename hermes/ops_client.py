@@ -1,8 +1,14 @@
-"""HTTP client for ops-controller's privileged verbs.
+"""HTTP client for the ops-api control plane's privileged verbs.
 
 Hermes uses this in place of raw `docker` / `docker compose` shelling.
 The class is intentionally narrow — every method maps to one named
-ops-controller endpoint. There is no `exec` or arbitrary-shell verb.
+ops-api endpoint. There is no `exec` or arbitrary-shell verb.
+
+NB: the container/compose verbs live on the **ops-api** service (Bearer-gated,
+`http://ops-api:9000`), NOT on the `ordo serve` scheduler at ops-controller:9000
+— the scheduler serves only /status, /model-config, /jobs* and /health. This
+client originally pointed at the scheduler and every tool 404'd (audit P0-2,
+fixed 2026-07-24).
 """
 from __future__ import annotations
 
@@ -13,7 +19,7 @@ import httpx
 
 
 class OpsClientError(RuntimeError):
-    """Raised when ops-controller returns a non-2xx response."""
+    """Raised when ops-api returns a non-2xx response."""
 
 
 class OpsClient:
@@ -23,7 +29,9 @@ class OpsClient:
         token: str | None = None,
         timeout: float = 60.0,
     ):
-        self.url = url or os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000")
+        # OPS_API_URL, deliberately NOT OPS_CONTROLLER_URL: that var points at the
+        # scheduler, which has none of these routes (the original mis-wiring).
+        self.url = url or os.environ.get("OPS_API_URL", "http://ops-api:9000")
         token = token or os.environ.get("OPS_CONTROLLER_TOKEN", "")
         if not token:
             raise OpsClientError("OPS_CONTROLLER_TOKEN env var is empty")
@@ -66,8 +74,18 @@ class OpsClient:
         return self._compose("restart", service, confirm)
 
     def _compose(self, verb: str, service: str | None, confirm: bool) -> dict[str, Any]:
-        body = {"service": service, "confirm": confirm}
-        r = self._client.post(f"/compose/{verb}", json=body)
+        # ops-api's stack-wide /compose/* endpoints are a deliberate 501 (compose
+        # mutations are the render pipeline's job). The supported per-service
+        # equivalent is POST /services/{id}/recreate (up/restart) — use it.
+        if service is None:
+            raise OpsClientError(
+                "stack-wide compose verbs are disabled on ops-api (501 by design); "
+                "pass a service name for a per-service recreate, or use the render pipeline"
+            )
+        if verb == "down":
+            r = self._client.post(f"/services/{service}/stop")
+        else:  # up / restart -> recreate (picks up new .env / volumes / network)
+            r = self._client.post(f"/services/{service}/recreate", json={"confirm": confirm})
         self._check(r)
         return r.json()
 

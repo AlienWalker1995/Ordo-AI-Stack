@@ -77,7 +77,7 @@ Agent clients (Hermes today, others later) connect to the gateway via the single
 
 ## Dependencies
 
-- **docker-compose** service **mcp-gateway** (build context `mcp/`).
+- **docker-compose** service **mcp-gateway** (build context `docker/mcp-gateway`).
 - **Docker socket** (for gateway features that spawn tool containers, per upstream behavior).
 - **data/mcp/servers.txt** – Comma-separated server list (default: `duckduckgo,n8n,searxng,comfyui,orchestration`). The `gateway-wrapper.sh` watches this file and **restarts the gateway process** when it changes, so edits cause a brief tool-discovery interruption.
 

@@ -15,6 +15,10 @@ data/
 /ordo.yaml
 .validate-out/
 .validate-cpu/
+# Machine-local V1-era override files (GPU UUID pins, secret-path shims). The dir was
+# retired with the V1 tree; anything regenerated here is operator-local, never source
+# (two leftovers were accidentally re-committed by the flatten sweep — audit P1-1).
+/overrides/
 
 # Secrets / keys (never commit)
 *.pem
