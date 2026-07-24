@@ -145,7 +145,8 @@ def test_orchestration_wiring():
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     orc = next(s for s in rc.mcp_servers if s["id"] == "orchestration")
     assert orc["env"]["ORCHESTRATION_DASHBOARD_URL"] == "http://dashboard:8080"
-    assert orc["env"]["DASHBOARD_AUTH_TOKEN"] == "PLACEHOLDER_DASHBOARD_AUTH_TOKEN"
+    # No per-service dashboard auth (edge SSO is the only gate) — orchestration carries no Bearer.
+    assert "DASHBOARD_AUTH_TOKEN" not in orc["env"]
     assert orc["disableNetwork"] is False
 
 

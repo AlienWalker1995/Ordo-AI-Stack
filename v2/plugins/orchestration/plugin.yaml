@@ -24,9 +24,8 @@ mcp:
   disableNetwork: false
   env:
     ORCHESTRATION_DASHBOARD_URL: http://dashboard:8080
-    # Bearer for the dashboard control plane. Substituted from the gateway's $DASHBOARD_AUTH_TOKEN
-    # (sourced from secrets.env) by gateway-wrapper.sh at startup.
-    DASHBOARD_AUTH_TOKEN: PLACEHOLDER_DASHBOARD_AUTH_TOKEN
+    # No DASHBOARD_AUTH_TOKEN: the dashboard has no per-service auth (edge SSO is the only gate),
+    # so this internal caller reaches dashboard:8080 over ordo-net without a Bearer.
   tools:
     - orchestration_readiness
     - list_templates

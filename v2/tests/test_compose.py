@@ -251,12 +251,12 @@ def test_mcp_gateway_env_wires_restored_server_placeholders():
 
 
 def test_mcp_gateway_does_not_shadow_env_file_secrets():
-    # OPS_CONTROLLER_TOKEN / DASHBOARD_AUTH_TOKEN / N8N_API_KEY arrive via the secrets.env env_file.
-    # They must NOT be re-declared in `environment:` — a `${VAR:-}` there interpolates from .env/host
-    # (empty) and shadows the env_file value to empty, breaking the spawned MCP servers' auth.
+    # OPS_CONTROLLER_TOKEN / N8N_API_KEY arrive via the secrets.env env_file. They must NOT be
+    # re-declared in `environment:` — a `${VAR:-}` there interpolates from .env/host (empty) and
+    # shadows the env_file value to empty, breaking the spawned MCP servers' auth.
     c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
     env = c["services"]["mcp-gateway"]["environment"]
-    for k in ("OPS_CONTROLLER_TOKEN", "DASHBOARD_AUTH_TOKEN", "N8N_API_KEY"):
+    for k in ("OPS_CONTROLLER_TOKEN", "N8N_API_KEY"):
         assert k not in env, f"{k} must come from secrets.env env_file, not the environment block"
 
 

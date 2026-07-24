@@ -34,7 +34,7 @@ Target Python 3.12+. Ruff is the enforced linter; `pyproject.toml` sets a 120-ch
 The dashboard backend is a FastAPI app in `dashboard/app.py` (~1950 lines). When adding endpoints:
 - Use `asyncio.to_thread(blocking_fn)` for any blocking I/O (pynvml, psutil, subprocess) — never block the event loop.
 - Shared in-process state (throughput samples, benchmarks) is protected by `_state_lock` (a `threading.Lock`). Always acquire it with `with _state_lock:`.
-- Hardware/health endpoints are public (no auth). All `/api/*` endpoints that modify state require auth when `DASHBOARD_AUTH_TOKEN` is set — check `_verify_auth(request)`.
+- Hardware/health endpoints are public (no auth). The `_verify_auth(request)` / `DASHBOARD_AUTH_TOKEN` Bearer path still exists in code but is **unset in the Ordo deployment** (`AUTH_REQUIRED=False`) — the Caddy edge SSO is the sole gate. Don't reintroduce a per-service token requirement.
 - New endpoints go immediately before the `# --- Static ---` comment at the bottom of `app.py`.
 - Error handling: catch exceptions from optional dependencies (pynvml, httpx) and return a degraded-but-valid response rather than a 500. Log at `DEBUG` level with `logger.debug(...)`.
 
