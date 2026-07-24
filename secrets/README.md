@@ -10,9 +10,8 @@ with the age private key at `~/.config/sops/age/keys.txt`.
 
 - `.sops.yaml` — SOPS recipient config (your age public key only).
 - `.env.sops` — env-form internal tokens (`LITELLM_MASTER_KEY`,
-  `DASHBOARD_AUTH_TOKEN`, `OPS_CONTROLLER_TOKEN`,
-  `OAUTH2_PROXY_CLIENT_ID`, `OAUTH2_PROXY_CLIENT_SECRET`,
-  `OAUTH2_PROXY_COOKIE_SECRET`).
+  `OPS_CONTROLLER_TOKEN`, `OAUTH2_PROXY_CLIENT_ID`,
+  `OAUTH2_PROXY_CLIENT_SECRET`, `OAUTH2_PROXY_COOKIE_SECRET`).
 - `discord_token.sops` — Discord bot token. Mounted as
   `/run/secrets/discord_token` on `hermes-gateway`.
 - `github_pat.sops` — GitHub fine-grained PAT. Mounted on

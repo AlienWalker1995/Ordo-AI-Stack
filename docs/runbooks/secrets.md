@@ -97,9 +97,12 @@ docker compose restart ops-controller   # for HF
 
 ## Rotate internal tokens
 
-Internal tokens (`LITELLM_MASTER_KEY`, `DASHBOARD_AUTH_TOKEN`,
-`OPS_CONTROLLER_TOKEN`, `OAUTH2_PROXY_COOKIE_SECRET`) live inside
-`secrets/.env.sops`. Rotate all of them at once:
+Internal tokens (`LITELLM_MASTER_KEY`, `OPS_CONTROLLER_TOKEN`,
+`OAUTH2_PROXY_COOKIE_SECRET`) live inside `secrets/.env.sops`. (The dashboard
+has no per-service auth token in this deployment — the Caddy edge
+(oauth2-proxy + Google SSO) is the sole auth gate for every UI, including the
+dashboard; `DASHBOARD_AUTH_TOKEN` is not set and is not a secret to rotate
+here.) Rotate the rest at once:
 
 ```
 make rotate-internal-tokens

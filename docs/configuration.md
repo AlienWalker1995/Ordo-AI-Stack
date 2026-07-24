@@ -22,10 +22,11 @@ Copy `.env.example` to `.env` and set at least `BASE_PATH`. Everything else has 
 | `DEFAULT_MODEL` | `local-chat` | Canonical model alias used by Open WebUI, Hermes, and LiteLLM |
 | `GGUF_MODELS` | *(see `.env.example`)* | Hugging Face repo(s) of GGUF files to pull for llama.cpp (`docker compose --profile models run --rm gguf-puller`) |
 | `OPS_CONTROLLER_TOKEN` | *(empty)* | Required for dashboard-driven service lifecycle (`openssl rand -hex 32`) |
-| `DASHBOARD_AUTH_TOKEN` | *(empty)* | Optional Bearer auth on dashboard `/api/*` |
 | `HF_TOKEN` | *(empty)* | Hugging Face token for gated model downloads |
 | `GITHUB_PERSONAL_ACCESS_TOKEN` | *(empty)* | GitHub MCP server token; also passed to `comfyui` as `GITHUB_TOKEN` for Manager API |
 | `COMPUTE_MODE` | *(auto-detected)* | Override GPU type: `nvidia`, `amd`, `intel`, `cpu` |
+
+> The dashboard has no per-service auth token in this deployment — the Caddy edge (oauth2-proxy + Google SSO + email allowlist) is the sole authentication gate for the dashboard, same as every other UI. The dashboard app code retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer fallback, but it is not set here and is not a recommended secret — don't generate or configure it.
 
 ### Hermes Agent
 
@@ -258,7 +259,6 @@ DEFAULT_MODEL=local-chat
 
 # Ops
 OPS_CONTROLLER_TOKEN=ops-controller-token-here
-DASHBOARD_AUTH_TOKEN=dashboard-token-here
 
 # Optional
 HF_TOKEN=
