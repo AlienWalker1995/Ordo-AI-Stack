@@ -38,7 +38,7 @@ jobs:
         run: pip install -r tests/requirements.txt
 
       - name: Ruff lint
-        run: python -m ruff check ordo dashboard tests rag-ingestion scripts comfyui-mcp orchestration-mcp worker docker
+        run: python -m ruff check ordo dashboard tests rag-ingestion scripts comfyui-mcp orchestration-mcp worker docker hermes qdrant-rag-mcp
 
       - name: Create minimal .env for compose tests
         run: |

@@ -9,7 +9,7 @@ A web-based control plane that provides a single pane of glass for:
 
 ## API Reference
 
-**Base URL:** `http://dashboard:8080` (`:8080` host port)
+**Base URL:** `http://dashboard:8080` (internal `ordo-net` only — no host port; reached via the Caddy edge)
 
 **Auth:** The dashboard is reached only through the Caddy edge (oauth2-proxy + Google SSO with an email allowlist) — the edge is the sole auth gate; the dashboard has no per-service auth token in the Ordo deployment. In the table below, `Y` marks `/api/*` routes gated by an authenticated edge session; `None` marks health/status routes left open. The dashboard app code also retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer-auth capability for host scripts/non-browser access, but it is not set or required in this deployment.
 

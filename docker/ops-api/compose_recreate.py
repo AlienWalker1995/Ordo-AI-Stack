@@ -1,7 +1,7 @@
 """Pure, dependency-free construction of the SAFE per-service compose-recreate command.
 
 Kept in its own module (no fastapi/docker/httpx imports) so the exact argv can be
-unit-tested in the v2 substrate's throwaway container, whose dev deps are only
+unit-tested in the substrate's throwaway container, whose dev deps are only
 pyyaml/pytest/ruff. `main.py` imports `build_recreate_cmd` from here; the command it
 returns is the ONLY thing that shells docker-compose against the ordo stack.
 

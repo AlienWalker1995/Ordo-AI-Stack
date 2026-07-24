@@ -155,6 +155,7 @@ class Scheduler:
                 # stall every smaller job queued behind it forever. Then keep pumping the rest.
                 self._queue.pop(0)
                 (self._cloud_routed if self.cloud_fallback else self._rejected).append(head.id)
+                del self._rejected[:-50]  # bound: append-only for process lifetime otherwise (audit P3-16)
                 continue
             if head.vram_gb > self.free_vram_gb:
                 # try reclaiming idle cached VRAM before giving up (LRU evict, not preemption)

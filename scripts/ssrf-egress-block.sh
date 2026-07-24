@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Block MCP gateway containers from reaching private ranges
-# and cloud metadata. Reduces SSRF risk. See docs/runbooks/SECURITY_HARDENING.md.
+# and cloud metadata. Reduces SSRF risk. See the "SSRF Defenses (MCP)"
+# section of docs/product requirements docs/security-and-trust-model.md.
 #
 # Usage:
-#   ./scripts/ssrf-egress-block.sh                        # block MCP subnet
+#   ./scripts/ssrf-egress-block.sh                        # block MCP subnet (auto-detects ordo-net)
 #   ./scripts/ssrf-egress-block.sh --dry-run              # print commands only
 #   ./scripts/ssrf-egress-block.sh --remove               # remove rules
 #   ./scripts/ssrf-egress-block.sh 172.18.0.0/16          # explicit subnet override
+#
+# No --target flag exists — these are the only flags implemented.
 #
 # Persistence: apt install iptables-persistent && sudo netfilter-persistent save
 

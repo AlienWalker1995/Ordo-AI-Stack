@@ -78,3 +78,6 @@ docs/superpowers/
 
 # Python packaging build artifacts (pip install -e . drops these)
 *.egg-info/
+
+# Python build tree (setuptools build/ — held a stale pre-flatten copy once; audit P2-36)
+/build/

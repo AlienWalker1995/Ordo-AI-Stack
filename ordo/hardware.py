@@ -123,10 +123,13 @@ def _detect_ram_gb() -> float:
 
             m = MEMORYSTATUSEX()
             m.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
-            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
-            return round(m.ullTotalPhys / 1024**3, 1)
-        except Exception:
-            pass
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)) and m.ullTotalPhys:
+                return round(m.ullTotalPhys / 1024**3, 1)
+        except (AttributeError, OSError) as exc:  # narrow: ctypes/kernel32 unavailable only
+            print(f"[ordo] WARNING: Windows RAM detection failed ({exc}); "
+                  "ram_gb=0.0 disables RAM gating — set hardware.ram_gb in ordo.yaml")
+    # 0.0 means UNKNOWN (RAM gate is waived by Plugin.fits); detection failure is loud above
+    # rather than silent (audit P2-38).
     return 0.0
 
 

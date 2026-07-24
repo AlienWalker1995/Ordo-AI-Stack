@@ -92,7 +92,7 @@ if [[ -f "$detect_script" ]]; then
 fi
 
 # SSRF egress block: run after first 'docker compose up' to block cloud metadata access from MCP containers.
-# See docs/runbooks/SECURITY_HARDENING.md
+# See the "SSRF Defenses (MCP)" section of docs/product requirements docs/security-and-trust-model.md
 if [[ -f "$base/scripts/ssrf-egress-block.sh" ]] && command -v iptables >/dev/null 2>&1; then
   echo "Note: After first 'docker compose up', run: sudo ./scripts/ssrf-egress-block.sh (blocks SSRF from MCP)"
 fi

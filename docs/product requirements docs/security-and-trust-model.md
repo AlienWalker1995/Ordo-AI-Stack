@@ -66,8 +66,12 @@ SSRF scripts live at `scripts/ssrf-egress-block.sh` (Linux/WSL2) and `scripts/ss
 When browser/playwright is active, worker containers can make arbitrary outbound HTTP requests. Apply RFC1918 + metadata blocks:
 
 ```bash
-./scripts/ssrf-egress-block.sh --target all
+./scripts/ssrf-egress-block.sh
 ```
+
+(No `--target` flag exists. The script auto-detects the `ordo-net` subnet;
+pass `--dry-run` to preview, `--remove` to undo, or an explicit
+`SUBNET` argument, e.g. `172.18.0.0/16`, to override detection.)
 
 Blocked ranges: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` (RFC1918), `100.64.0.0/10` (Tailscale CGNAT), `169.254.169.254/32`, `169.254.170.2/32` (cloud metadata). DNS (port 53) is explicitly allowed.
 

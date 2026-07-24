@@ -6,7 +6,8 @@ rendered output — edits to *derived* config never survive a re-render, so drif
 impossible.
 
 The stack runs entirely from `C:\dev\ordo-ai-stack` (`main` is the production branch) as compose
-project **`ordo`** (24 services) — containers `ordo-*`, images `ordo/*`, network `ordo-net`. The
+project **`ordo`** (25 services, verified by a fresh `ordo render` with this operator's full plugin
+set — see `out/docker-compose.yml`) — containers `ordo-*`, images `ordo/*`, network `ordo-net`. The
 render substrate lives at the repo root (there is no `v2/` directory — there is one Ordo). The
 historical record of how it was first built beside the old stack and then flipped into place lives
 in [`history/FLIP.md`](history/FLIP.md) and [`history/CUTOVER.md`](history/CUTOVER.md).
