@@ -8,7 +8,7 @@ The **MCP gateway** service exposes one **MCP HTTP endpoint** (backend port **88
 
 - **Catalog merge** – Upstream Docker MCP gateway plus repo **`registry-custom.yaml`** (e.g. ComfyUI, orchestration) via `gateway-wrapper.sh`.
 - **Dynamic ComfyUI MCP** – Spawns or connects to the **ComfyUI** service using `COMFYUI_URL` (Docker DNS name `comfyui` on the stack network).
-- **Secrets injection** – API keys (GitHub PAT, `N8N_API_KEY`, `DASHBOARD_AUTH_TOKEN` for orchestration) arrive via Docker secrets / compose environment, not committed config. SOPS-managed at rest under `secrets/*.sops`.
+- **Secrets injection** – API keys (GitHub PAT, `N8N_API_KEY`) arrive via Docker secrets / compose environment, not committed config. SOPS-managed at rest under `secrets/*.sops`. Orchestration calls to the dashboard cross the internal `ordo-net` network; the dashboard has no per-service auth token in the Ordo deployment (`DASHBOARD_AUTH_TOKEN` is unset/not required — the Caddy edge with oauth2-proxy SSO is the auth gate for the dashboard UI, not this token).
 - **Operational boundary** – Default compose keeps **8811** on the internal network; optional overrides expose it for external clients.
 
 ## Registry Format

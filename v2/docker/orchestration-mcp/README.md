@@ -6,7 +6,9 @@ V2's Orchestration MCP image, referenced by the `orchestration` plugin as
 adapter exposing STABLE tool names (list_templates / create_from_template / run_workflow /
 await_run / list_jobs / publish_enqueue / schedules / registry parity verbs / comfyui ops …) that
 delegate over HTTP to the dashboard control plane at `http://dashboard:8080/api/orchestration/*`
-(Bearer `DASHBOARD_AUTH_TOKEN`). It insulates the agent from shifting raw gateway tool names.
+(no Bearer token — reached over the internal `ordo-net` network; the Caddy edge's oauth2-proxy SSO
+is the auth gate for the dashboard, not a per-service token). It insulates the agent from shifting
+raw gateway tool names.
 There is no public registry to digest-pin against, so it's a **project buildable image** (pinned by
 its build context); `ordo preflight` reports a missing one as "build first".
 
@@ -22,5 +24,6 @@ docker build -t ordo/orchestration-mcp:latest C:/dev/ordo-ai-stack/orchestration
 
 This image is gateway-spawned (stdio), so it appears in the rendered `mcp-registry.yaml`, not as a
 long-lived compose service. It needs network access to reach `dashboard:8080` (`disableNetwork`
-unset). `DASHBOARD_AUTH_TOKEN` is substituted from the gateway env into its catalog entry at
-gateway startup.
+unset). No auth token is substituted into its catalog entry — the dashboard has no per-service auth
+token in the Ordo deployment, so calls over `ordo-net` go unauthenticated by design (the Caddy edge
+is the sole authentication gate, and it isn't in this internal service-to-service path).

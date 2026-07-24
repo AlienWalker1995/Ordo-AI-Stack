@@ -11,7 +11,7 @@ A web-based control plane that provides a single pane of glass for:
 
 **Base URL:** `http://dashboard:8080` (`:8080` host port)
 
-**Auth:** Bearer token (`DASHBOARD_AUTH_TOKEN`) on all `/api/*` except health, auth/config, hardware, rag/status.
+**Auth:** The dashboard is reached only through the Caddy edge (oauth2-proxy + Google SSO with an email allowlist) — the edge is the sole auth gate; the dashboard has no per-service auth token in the Ordo deployment. In the table below, `Y` marks `/api/*` routes gated by an authenticated edge session; `None` marks health/status routes left open. The dashboard app code also retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer-auth capability for host scripts/non-browser access, but it is not set or required in this deployment.
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
@@ -54,7 +54,8 @@ A web-based control plane that provides a single pane of glass for:
 - **MCP Gateway Explorer** – Provides a tab to list registered MCP servers, invoke tools, and view tool output (via `gateway__call`). Uses the unified model-gateway for AI calls.
 
 ## Security Model
-- All mutating UI actions require the `DASHBOARD_AUTH_TOKEN` (read from `.env`). The UI validates the token and includes it in the `Authorization: Bearer …` header for all Ops Controller calls.
+- All mutating UI actions are gated by the Caddy edge (oauth2-proxy + Google SSO with an email allowlist); the dashboard publishes no host port and is unreachable except through the edge or over the internal `ordo-net` docker network. Calls to the Ops Controller are authenticated separately with the `OPS_CONTROLLER_TOKEN` (read from `.env`), sent as an `Authorization: Bearer …` header.
+- The dashboard app also retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer-auth fallback (with trusted-proxy header trust) for non-browser/host-script access. It is not set in the Ordo deployment (`AUTH_REQUIRED=False`) and is not a required or recommended secret.
 
 ## Non-Goals
 - Direct end-user chat UI. The chat UI lives in Open WebUI; the dashboard is for *operations*.
@@ -64,12 +65,12 @@ A web-based control plane that provides a single pane of glass for:
 - `docker compose` (v2) installed on the host.
 - `OPERATIONS` environment variables:
   - `OPS_CONTROLLER_TOKEN` – auth for the Ops Controller.
-  - `DASHBOARD_AUTH_TOKEN` – for UI-to-controller auth.
+  - `DASHBOARD_AUTH_TOKEN` – not set in this deployment. Optional, dormant Bearer-auth fallback supported by the dashboard app code; the Caddy edge (SSO) is the dashboard's actual auth gate, so this is not a required or recommended secret.
 - The `dashboard` service itself (FastAPI app with a static vanilla-JS frontend in `dashboard/static/index.html`) runs inside the Ordo AI Stack.
 
 ## Typical Use Flow
 1. From a tailnet device, open `https://${CADDY_TAILNET_HOSTNAME}/dash/` and complete Google sign-in.
-2. The SSO front door (Caddy + oauth2-proxy) gates browser access; `DASHBOARD_AUTH_TOKEN` is a bearer-token fallback for host scripts and non-browser API access.
+2. The SSO front door (Caddy + oauth2-proxy) is the dashboard's sole auth gate — there is no per-service dashboard auth token in this deployment. The dashboard app code retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer fallback for host scripts / non-browser API access, but it is not set here.
 3. Use the "Services" tab to stop or restart a service if an issue is suspected.
 4. Pull a new LLM (GGUF) or ComfyUI model from the relevant tab.
 5. In the "MCP" tab, add a new tool server (e.g., a custom web search provider) by clicking "Add" and filling the JSON manifest.

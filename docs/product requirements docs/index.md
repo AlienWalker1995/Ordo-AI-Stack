@@ -29,7 +29,7 @@ A self-hosted AI platform that any developer can run with `./compose up -d`. Cor
 | MCP health endpoint + UI badges | Live | `dashboard/app.py` |
 | Ops Controller (start/stop/restart/logs/pull) | Live | `ops-controller/main.py` |
 | Append-only JSONL audit log | Live | `ops-controller/main.py` |
-| Dashboard auth (Bearer) | Live | `dashboard/app.py` |
+| Dashboard auth via Caddy edge SSO (oauth2-proxy + Google + allowlist); optional dormant per-service Bearer token in code, unused in deployment | Live | `dashboard/app.py` |
 | Dashboard throughput stats + benchmark | Live | `dashboard/app.py` |
 | Dashboard hardware stats | Live | `dashboard/app.py` |
 | Dashboard default-model management | Live | `dashboard/app.py` |
