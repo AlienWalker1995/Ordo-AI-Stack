@@ -12,6 +12,13 @@
 > were **KEPT** because they are live v2 build sources (`ordo/comfyui-mcp`, `ordo/orchestration-mcp`).
 > Everything below this banner is the historical planning record as of the 2026-07-10 audit; read it
 > as "what was true then," not current state.
+>
+> **Further update (2026-07-24, commit `2d4bd9c`).** The `v2/` directory itself was flattened into the
+> repo root — it no longer exists as a path. Its contents now live at the root (`ordo.yaml`, `out/`,
+> `ordo/`, `plugins/`, `agents/`, `catalog/`, `dashboards/`, `docker/`, `tests/substrate/`, etc.), and
+> `v2/README.md`/`v2/CUTOVER.md` moved to `docs/operator-guide.md`/`docs/history/CUTOVER.md`. Every
+> `v2/…` path referenced in this document (including elsewhere in this banner) is now historical, as
+> of the 2026-07-09/2026-07-10 timeframe it describes — not a current location.
 
 **Status:** planning document for a **separate, deliberate deletion PR**. Nothing here is deleted by
 the doc-audit that produced this file. It is the evidence-backed map of which repo-root paths were

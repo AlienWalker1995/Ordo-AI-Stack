@@ -1,18 +1,18 @@
 # model-gateway (LiteLLM config-wrapper)
 
-V2's `model-gateway` core service. This is the small config-wrapper build V1 runs
+The Ordo stack's `model-gateway` core service. This is the small config-wrapper build V1 runs
 (`ordo-ai-stack-model-gateway:latest`) — a pinned LiteLLM base plus the stack's config: the
 canonical **`local-chat`** alias, the `local-embed` alias, the throughput callback, and the
 entrypoint that templates `__CTX_SIZE__` / `__MASTER_KEY__` at startup.
 
-V2 references it as a **project buildable image** (`ordo/model-gateway:latest`) — pinned by
+The Ordo stack references it as a **project buildable image** (`ordo/model-gateway:latest`) — pinned by
 its build context, not pulled from a registry — so `ordo preflight` reports a missing one as
-"build first", never "Docker will pull". This is why V2 does NOT reference the unconfigured
+"build first", never "Docker will pull". This is why the Ordo stack does NOT reference the unconfigured
 upstream `ghcr.io/berriai/litellm:main` directly: that image has no `local-chat` alias.
 
 ## Build
 ```
-docker build -t ordo/model-gateway:latest v2/docker/model-gateway
+docker build -t ordo/model-gateway:latest docker/model-gateway
 ```
 
 ## Files

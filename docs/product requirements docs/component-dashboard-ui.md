@@ -49,17 +49,17 @@ A web-based control plane that provides a single pane of glass for:
 
 ## Core Responsibilities
 
-- **Docker Lifecycle** – Calls the Ops Controller API (`/services/{id}/start|stop|restart`) using the `OPS_CONTROLLER_TOKEN` from the rendered `v2/out/.env`. The UI never mounts `docker.sock`; it uses the controller as a secure proxy.
+- **Docker Lifecycle** – Calls the Ops Controller API (`/services/{id}/start|stop|restart`) using the `OPS_CONTROLLER_TOKEN` from the rendered `out/.env`. The UI never mounts `docker.sock`; it uses the controller as a secure proxy.
 - **Model Management** – Lists available models, triggers `model-puller` containers, and shows pull progress. Stores model choices in the dashboard data directory (`data/dashboard/`, bind-mounted as `/data/dashboard` in the container).
 - **MCP Gateway Explorer** – Provides a tab to list registered MCP servers, invoke tools, and view tool output (via `gateway__call`). Uses the unified model-gateway for AI calls.
 
 ## Security Model
-- All mutating UI actions are gated by the Caddy edge (oauth2-proxy + Google SSO with an email allowlist); the dashboard publishes no host port and is unreachable except through the edge or over the internal `ordo-net` docker network. Calls to the Ops Controller are authenticated separately with the `OPS_CONTROLLER_TOKEN` (read from the rendered `v2/out/.env`), sent as an `Authorization: Bearer …` header.
+- All mutating UI actions are gated by the Caddy edge (oauth2-proxy + Google SSO with an email allowlist); the dashboard publishes no host port and is unreachable except through the edge or over the internal `ordo-net` docker network. Calls to the Ops Controller are authenticated separately with the `OPS_CONTROLLER_TOKEN` (read from the rendered `out/.env`), sent as an `Authorization: Bearer …` header.
 - The dashboard app also retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer-auth fallback (with trusted-proxy header trust) for non-browser/host-script access. It is not set in the Ordo deployment (`AUTH_REQUIRED=False`) and is not a required or recommended secret.
 
 ## Non-Goals
 - Direct end-user chat UI. The chat UI lives in Open WebUI; the dashboard is for *operations*.
-- Storage of model weights. Models are stored in the persistent Docker volumes defined in the rendered `v2/out/docker-compose.yml`.
+- Storage of model weights. Models are stored in the persistent Docker volumes defined in the rendered `out/docker-compose.yml`.
 
 ## Dependencies
 - `docker compose` (v2) installed on the host.

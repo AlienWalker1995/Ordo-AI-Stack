@@ -40,7 +40,7 @@ from pathlib import Path
 
 STACK_ROOT = Path(os.environ.get("ORDO_STACK_ROOT", "/c/dev/ordo-ai-stack"))
 COMPOSE_CANDIDATES = [
-    STACK_ROOT / "v2" / "out" / "docker-compose.yml",  # rendered = deployed
+    STACK_ROOT / "out" / "docker-compose.yml",  # rendered = deployed
     STACK_ROOT / "docker-compose.yml",                 # fallback
 ]
 ENV_FILE = STACK_ROOT / ".env"

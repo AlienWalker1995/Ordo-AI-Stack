@@ -41,7 +41,7 @@ Converts Responses API input items and tool definitions to chat-completions form
 
 ## Provider Abstraction (LiteLLM)
 
-- LiteLLM proxy (config in `v2/docker/model-gateway/litellm_config.yaml`) fronts the local `llamacpp` and `llamacpp-embed` services; both speak the OpenAI-compatible API natively, so requests proxy directly.
+- LiteLLM proxy (config in `docker/model-gateway/litellm_config.yaml`) fronts the local `llamacpp` and `llamacpp-embed` services; both speak the OpenAI-compatible API natively, so requests proxy directly.
 - TTL model list cache (60s default; stale-serve on provider error)
 - `DELETE /v1/cache` to invalidate cache on demand
 - `X-Request-ID` generated or forwarded on every chat/embeddings call
@@ -60,7 +60,7 @@ Converts Responses API input items and tool definitions to chat-completions form
 ## Configuration
 
 ```yaml
-# v2/out/docker-compose.yml (rendered from v2/ordo.yaml via `ordo render`)
+# out/docker-compose.yml (rendered from ordo.yaml via `ordo render`)
 model-gateway:
   environment:
     - LLAMACPP_URL=http://llamacpp:8080
@@ -74,5 +74,5 @@ model-gateway:
 - Persistent storage of model results — the gateway only forwards results.
 
 ## Dependencies
-- Docker service **`model-gateway`** (built from `v2/docker/model-gateway/`, config at `v2/docker/model-gateway/litellm_config.yaml`; compose env such as `LLAMACPP_URL`, `MODEL_GATEWAY_URL` for consumers).
-- `v2/out/.env` / `v2/out/secrets.env` (rendered via `ordo render` from `v2/ordo.yaml`) / compose for llama.cpp attachment and context limits.
+- Docker service **`model-gateway`** (built from `docker/model-gateway/`, config at `docker/model-gateway/litellm_config.yaml`; compose env such as `LLAMACPP_URL`, `MODEL_GATEWAY_URL` for consumers).
+- `out/.env` / `out/secrets.env` (rendered via `ordo render` from `ordo.yaml`) / compose for llama.cpp attachment and context limits.

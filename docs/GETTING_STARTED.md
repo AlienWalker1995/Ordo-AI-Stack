@@ -1,6 +1,6 @@
 # Getting Started
 
-> ⚠️ **See [`../v2/README.md`](../v2/README.md) for the authoritative getting-started + operator doc.** Ordo is defined and operated entirely from the render substrate (bring-up via `ordo render` → `docker compose -p ordo … up`, see [`../v2/CUTOVER.md`](../v2/CUTOVER.md)). The workflow commands below reflect that flow — they assume you've rendered the stack once (`v2/out/`) and run `docker compose` from there under project `ordo`. See [`LEGACY-CLEANUP.md`](LEGACY-CLEANUP.md) for the retired pre-render (root `docker-compose.yml` / `./compose`) bring-up this page used to document.
+> ⚠️ **See [`operator-guide.md`](operator-guide.md) for the authoritative getting-started + operator doc.** Ordo is defined and operated entirely from the render substrate (bring-up via `ordo render` → `docker compose -p ordo … up`, see [`history/CUTOVER.md`](history/CUTOVER.md)). The workflow commands below reflect that flow — they assume you've rendered the stack once (`out/`) and run `docker compose` from there under project `ordo`. See [`LEGACY-CLEANUP.md`](LEGACY-CLEANUP.md) for the retired pre-render (root `docker-compose.yml` / `./compose`) bring-up this page used to document.
 
 Quick paths to common workflows for a single homelab operator. The stack assumes you've completed the one-time auth setup ([docs/runbooks/auth.md](runbooks/auth.md)) and secrets setup ([docs/runbooks/secrets.md](runbooks/secrets.md)), so the Caddy front door is up at `https://${CADDY_TAILNET_HOSTNAME}/` and you can sign in with a Google account on `auth/oauth2-proxy/emails.txt`.
 
@@ -8,7 +8,7 @@ Quick paths to common workflows for a single homelab operator. The stack assumes
 
 ### I want to chat
 
-1. Start (from `v2/out/`): `docker compose -p ordo up -d caddy oauth2-proxy llamacpp dashboard open-webui`
+1. Start (from `out/`): `docker compose -p ordo up -d caddy oauth2-proxy llamacpp dashboard open-webui`
 2. Pull a model via the dashboard (`https://${CADDY_TAILNET_HOSTNAME}/dash/` → Starter pack, or pick one)
 3. Open `https://${CADDY_TAILNET_HOSTNAME}/` — Open WebUI
 
@@ -16,20 +16,20 @@ No GPU required for chat (llama.cpp runs on CPU, slower but works).
 
 ### I want to generate images (LTX-2)
 
-1. Render the stack (`ordo render` from `v2/` — hardware, including NVIDIA/AMD/Intel/CPU, is auto-detected), then from `v2/out/`: `docker compose -p ordo --profile media up -d` (brings up Caddy + oauth2-proxy + AI services + ComfyUI)
+1. Render the stack (`ordo render` from the repo root — hardware, including NVIDIA/AMD/Intel/CPU, is auto-detected), then from `out/`: `docker compose -p ordo --profile media up -d` (brings up Caddy + oauth2-proxy + AI services + ComfyUI)
 2. Pull LTX-2 models via the dashboard (~60 GB, first run takes a while)
 3. Open `https://${CADDY_TAILNET_HOSTNAME}/comfy/` — ComfyUI
 
 ### I want workflow automation
 
-1. Start (from `v2/out/`): `docker compose -p ordo up -d caddy oauth2-proxy llamacpp n8n`
+1. Start (from `out/`): `docker compose -p ordo up -d caddy oauth2-proxy llamacpp n8n`
 2. Open `https://${CADDY_TAILNET_HOSTNAME}/n8n/` — n8n
 
 ### Full stack
 
-**Recommended:** follow the [`v2/README.md`](../v2/README.md) bring-up (`ordo render` → `docker compose -p ordo up -d` from `v2/out/`) — hardware auto-detection, model selection, and plugin gating all happen at render time. Caddy + oauth2-proxy come up alongside the AI services and front-door them automatically.
+**Recommended:** follow the [`operator-guide.md`](operator-guide.md) bring-up (`ordo render` → `docker compose -p ordo up -d` from `out/`) — hardware auto-detection, model selection, and plugin gating all happen at render time. Caddy + oauth2-proxy come up alongside the AI services and front-door them automatically.
 
-Alternatively, from `v2/out/`: `docker compose -p ordo up -d` — same services without re-rendering, if `v2/out/` is already current.
+Alternatively, from `out/`: `docker compose -p ordo up -d` — same services without re-rendering, if `out/` is already current.
 
 **Hermes dashboard:** `https://${CADDY_TAILNET_HOSTNAME}/hermes/`. See [hermes-agent.md](hermes-agent.md) for setup and Discord configuration.
 
@@ -38,7 +38,7 @@ Alternatively, from `v2/out/`: `docker compose -p ordo up -d` — same services 
 Use local files as context in **Open WebUI** via Qdrant + the `rag-ingestion` service.
 
 1. **Provide the embedding model** (once): place the embedding GGUF (**`nomic-embed-text`**, or your `EMBED_MODEL`) under `models/gguf/` so the `llamacpp-embed` service can serve it.
-2. **Start the RAG profile** (adds Qdrant + `rag-ingestion`), from `v2/out/`:
+2. **Start the RAG profile** (adds Qdrant + `rag-ingestion`), from `out/`:
    ```bash
    docker compose -p ordo --profile rag up -d
    ```
@@ -46,7 +46,7 @@ Use local files as context in **Open WebUI** via Qdrant + the `rag-ingestion` se
 4. **Open WebUI** → enable RAG for chat (vector DB is already pointed at Qdrant in compose).
 5. **Check status:** dashboard `GET /api/rag/status` or open the dashboard UI — collection name defaults to `documents` (`RAG_COLLECTION`).
 
-Env knobs (optional): `EMBED_MODEL`, `RAG_COLLECTION`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP` — set via the `overrides:` block in `v2/ordo.yaml` (tracked template: [`v2/ordo.example.yaml`](../v2/ordo.example.yaml)) and re-render. The dashboard **RAG** section shows Qdrant collection point count when the stack can reach Qdrant. See the PRD **WS6: RAG Pipeline** for the full picture.
+Env knobs (optional): `EMBED_MODEL`, `RAG_COLLECTION`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP` — set via the `overrides:` block in `ordo.yaml` (tracked template: [`ordo.example.yaml`](../ordo.example.yaml)) and re-render. The dashboard **RAG** section shows Qdrant collection point count when the stack can reach Qdrant. See the PRD **WS6: RAG Pipeline** for the full picture.
 
 **Optional — [Agentic Design Patterns](https://github.com/Mathews-Tom/Agentic-Design-Patterns) (MIT book text):** clone or copy the `.md` tree into `data/rag-input/` (for example `git clone --depth 1 https://github.com/Mathews-Tom/Agentic-Design-Patterns.git data/rag-input/agentic-design-patterns`), then run the steps above so `rag-ingestion` can index it.
 
@@ -75,4 +75,4 @@ Traffic between tailnet devices is WireGuard-encrypted; Caddy adds app-layer TLS
 - [Data](data.md) — data schemas, lifecycle, and persistence rules
 - [Hermes Agent](hermes-agent.md) — agent setup, Discord wiring, upgrade notes
 - [PRD index](product%20requirements%20docs/index.md) — platform design and components
-- [MCP Gateway](../v2/docker/mcp-gateway/README.md) — web search, GitHub, etc.
+- [MCP Gateway](../docker/mcp-gateway/README.md) — web search, GitHub, etc.

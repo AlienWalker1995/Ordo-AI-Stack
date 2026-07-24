@@ -13,7 +13,7 @@ Local-first AI stack: LLMs, chat UI, image/video (ComfyUI), automation (n8n) —
 
 Its defining idea is **config-as-render**: one declarative source (`ordo.yaml`) is rendered into the running config (`.env`, `docker-compose.yml`, agent context, MCP registry). Derived files are regenerated, never hand-edited — so configuration drift is structurally impossible.
 
-> **Operators start here → [`v2/README.md`](v2/README.md)** — the authoritative guide to the render engine, bring-up, and day-2 operations. (The stack runs as compose project **`ordo`**; its render substrate lives in the `v2/` directory.)
+> **Operators start here → [`docs/operator-guide.md`](docs/operator-guide.md)** — the authoritative guide to the render engine, bring-up, and day-2 operations. (The stack runs as compose project **`ordo`**.)
 
 ## Overview
 
@@ -25,13 +25,13 @@ Its defining idea is **config-as-render**: one declarative source (`ordo.yaml`) 
 
 Ordo is driven by a render engine, not by hand-edited compose files:
 
-- **One source of truth** — `v2/ordo.yaml` declares hardware, model, plugins, and overrides.
-- **`ordo render`** turns that source (+ detected hardware + model catalog + plugin manifests) into the complete runtime config under `v2/out/` (gitignored): `.env`, `docker-compose.yml`, agent context, `mcp-registry.yaml`, `manifest.json`, `secrets.env.example`.
+- **One source of truth** — `ordo.yaml` declares hardware, model, plugins, and overrides.
+- **`ordo render`** turns that source (+ detected hardware + model catalog + plugin manifests) into the complete runtime config under `out/` (gitignored): `.env`, `docker-compose.yml`, agent context, `mcp-registry.yaml`, `manifest.json`, `secrets.env.example`.
 - **Services run from the rendered output.** To change anything, edit the source and re-render — edits to derived files never survive, so the LLM context size, model choice, and agent context can never fall out of sync (the drift class that motivated the design).
 - **GPU arbitration is a scheduler** (`ordo serve`, the `ops-controller` service): FIFO admission, co-run-when-it-fits, LRU idle-evict — a deterministic decision engine, not a reactive watchdog.
-- **Plugins and agents are data manifests.** A service, MCP server, or agent is a declarative manifest the renderer composes in when its hardware needs are met; **Hermes is the default agent**. See [`v2/agents/README.md`](v2/agents/README.md).
+- **Plugins and agents are data manifests.** A service, MCP server, or agent is a declarative manifest the renderer composes in when its hardware needs are met; **Hermes is the default agent**. See [`agents/README.md`](agents/README.md).
 
-Full engine reference, the plugin/agent registries, and the render-discipline runbook are in [`v2/README.md`](v2/README.md).
+Full engine reference, the plugin/agent registries, and the render-discipline runbook are in [`docs/operator-guide.md`](docs/operator-guide.md).
 
 ## Features
 
@@ -74,19 +74,19 @@ Local-first AI; operator-deployed front door. The dashboard does not mount `dock
 ## Development & testing
 
 - **Runtime:** everything runs in containers; install Docker and set `BASE_PATH` to the repo path.
-- **Substrate:** the render engine is a real `ordo` command (`pip install ./v2`; runtime dep = just PyYAML). Python **3.12+** for tests/lint.
+- **Substrate:** the render engine is a real `ordo` command (`pip install .`; runtime dep = just PyYAML). Python **3.12+** for tests/lint.
 
 ```bash
 # render-engine tests (no host Python needed)
-docker run --rm -v "$PWD/v2:/w" -w /w python:3.11-slim \
-  sh -c "pip install -q -r requirements-dev.txt && python -m pytest -q"
+docker run --rm -v "$PWD:/w" -w /w python:3.11-slim \
+  sh -c "pip install -q -r requirements-dev.txt && PYTHONPATH=. python -m pytest -q tests/substrate"
 ```
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): TruffleHog secret scan, pytest + ruff, and a real `docker compose config` gate on the rendered stack.
 
 ## Docs
 
-[Operator guide (`v2/README.md`)](v2/README.md) · [Auth front door](docs/runbooks/auth.md) · [Secrets](docs/runbooks/secrets.md) · [Data](docs/data.md) · [Hermes agent](v2/agents/README.md) · [PRD index](docs/product%20requirements%20docs/index.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
+[Operator guide (`docs/operator-guide.md`)](docs/operator-guide.md) · [Auth front door](docs/runbooks/auth.md) · [Secrets](docs/runbooks/secrets.md) · [Data](docs/data.md) · [Hermes agent](agents/README.md) · [PRD index](docs/product%20requirements%20docs/index.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
 
 ## License
 
