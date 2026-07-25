@@ -42,9 +42,6 @@ export default function StubTab({ title, endpoints = [], note }) {
   )
 }
 
-export const ModelsTab = () => (
-  <StubTab title="Model Control" endpoints={['/api/model-config', '/api/llm/*', '/api/active-model', '/api/registry/*']} />
-)
 export const HardwareTab = () => (
   <StubTab title="Hardware / GPU Detail" endpoints={['/api/hardware', '/api/hardware/service-pressure', '/api/gpu/*']} />
 )

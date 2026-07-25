@@ -8,9 +8,11 @@ import ServicesTab from './components/ServicesTab.jsx'
 import McpTab from './components/McpTab.jsx'
 import GrafanaTab from './components/GrafanaTab.jsx'
 import DependenciesTab from './components/DependenciesTab.jsx'
+import ModelsTab from './components/ModelsTab.jsx'
+import ModelctlTab from './components/ModelctlTab.jsx'
 import { ToastProvider } from './components/Toast.jsx'
 import {
-  ModelsTab, HardwareTab, ThroughputTab,
+  HardwareTab, ThroughputTab,
   OrchestrationTab, RagTab, ComfyTab,
 } from './components/StubTab.jsx'
 
@@ -18,7 +20,7 @@ import {
 const TABS = [
   { id: 'services', label: '⚡ Services', Component: ServicesTab },
   { id: 'models', label: '📦 Models', Component: ModelsTab },
-  { id: 'modelctl', label: '⚙️ Model', Component: ModelsTab },
+  { id: 'modelctl', label: '⚙️ Model', Component: ModelctlTab },
   { id: 'mcp', label: '🧩 MCP', Component: McpTab },
   { id: 'gpu', label: '🖥️ Hardware', Component: HardwareTab },
   { id: 'throughput', label: '📈 Throughput', Component: ThroughputTab },
