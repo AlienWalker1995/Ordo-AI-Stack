@@ -153,9 +153,9 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src https://fonts.gstatic.com; "
-        "script-src 'self' 'unsafe-inline'; "  # TODO: extract JS to external file and remove unsafe-inline
+        "style-src 'self' 'unsafe-inline'; "  # unsafe-inline: React emits inline style={{…}}
+        "font-src 'self'; "
+        "script-src 'self'; "  # Vite build emits only external hashed ES modules — no inline scripts
         "img-src 'self' data:; "
         "connect-src 'self'; "
         "frame-ancestors 'none'; "
