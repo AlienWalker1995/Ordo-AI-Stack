@@ -23,6 +23,8 @@ import dataclasses
 from pathlib import Path
 from typing import Any
 
+from .buildspec import BuildSpec
+
 
 def _gpu_caps(b: dict[str, Any]) -> tuple[str, ...]:
     """Parse a backend's GPU reservation capabilities, data-driven. Accepts either the explicit
@@ -63,6 +65,9 @@ class DashboardBackend:
     # report "No GPUs returned from registry". `count: all` (via the empty device_ids) so it reads
     # BOTH cards. Empty -> no reservation (a backend that doesn't touch the GPU). Mirrors V1 exactly.
     gpu_capabilities: tuple[str, ...] = ()
+    # Build-context identity (METADATA; NEVER rendered). Absent -> `services/<name>/` (the backend's
+    # own dir, e.g. `ops-api` -> services/ops-api). See ordo.buildspec.
+    build: BuildSpec = dataclasses.field(default_factory=BuildSpec)
 
     def image_for(self, project: str) -> str:
         return self.image or f"{project}/{self.name}:latest"
@@ -89,6 +94,10 @@ class Dashboard:
     # gpus:[]. Declared via `gpu: utility` (or `gpu_capabilities: [utility]`) in the manifest;
     # `count: all` (empty device_ids) so it reads BOTH cards. Empty -> no reservation.
     gpu_capabilities: tuple[str, ...] = ()
+    # Build-context identity (METADATA; NEVER rendered). Absent -> the dashboard's own `services/<id>/`.
+    # The v1-parity dashboard's Dockerfile is nested (services/v1-parity/dashboard), so it declares
+    # an explicit `build.context`. See ordo.buildspec.
+    build: BuildSpec = dataclasses.field(default_factory=BuildSpec)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Dashboard:
@@ -105,6 +114,7 @@ class Dashboard:
                 group_add_root=bool(b.get("group_add_root", False)),
                 wants_secrets=bool(b.get("wants_secrets", True)),
                 gpu_capabilities=_gpu_caps(b),
+                build=BuildSpec.from_dict(b.get("build")),
             )
         return cls(
             id=str(d["id"]), name=str(d.get("name", d["id"])),
@@ -118,6 +128,7 @@ class Dashboard:
             wants_secrets=bool(d.get("wants_secrets", True)),
             backend=backend,
             gpu_capabilities=_gpu_caps(d),
+            build=BuildSpec.from_dict(d.get("build")),
         )
 
     def image_for(self, project: str) -> str:

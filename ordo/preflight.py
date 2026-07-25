@@ -20,11 +20,17 @@ import dataclasses
 import re
 from pathlib import Path
 
-from . import parity
+from . import buildspec, parity
+from .agents import AgentRegistry
 from .catalog import Catalog
 from .config import Source
+from .dashboards import DashboardRegistry
 from .plugins import PluginRegistry
-from .render import render
+from .render import (
+    DEFAULT_AGENTS_DIR,
+    DEFAULT_DASHBOARDS_DIR,
+    render,
+)
 
 # ${VAR} or ${VAR:-default} — the compose interpolation syntax a plugin image ref may carry
 # (e.g. `${COMFYUI_IMAGE:-yanwk/comfyui-boot@sha256:…}`). Resolved against the rendered .env
@@ -54,16 +60,6 @@ def required_images(rc, project: str = "ordo") -> list[str]:
     return sorted({_expand(svc["image"], rc.env) for svc in c["services"].values()})
 
 
-def _is_buildable(image: str, project: str) -> bool:
-    """True for images this repo builds locally (so a registry pull can NOT provide them).
-
-    Project images (`<project>/*`) are always local. The patched llama.cpp build is also
-    local-only — it has a docker/ build context but no registry to pull from — so a missing
-    one is 'build first', not 'Docker will pull'.
-    """
-    return image.startswith(f"{project}/") or "llamacpp-patched" in image
-
-
 def _missing_secret_keys(rc, secrets_env: str) -> list[str]:
     """Keys the enabled stack requires that a present secrets.env leaves empty/absent."""
     present = {k for k, v in parity.load_env(secrets_env).items() if v}
@@ -76,8 +72,24 @@ def run(
     images_present: set[str] | None = None,
     secrets_env: str | None = None,
     project: str = "ordo",
+    agents: AgentRegistry | None = None,
+    dashboards: DashboardRegistry | None = None,
 ) -> tuple[bool, list[Check]]:
-    rc = render(source, catalog, registry)
+    # Load the agent/dashboard registries the SAME way render() does (from the co-located manifest
+    # dirs) so the image→context resolver sees exactly what was rendered.
+    if agents is None:
+        agents = AgentRegistry.load(DEFAULT_AGENTS_DIR)
+    if dashboards is None:
+        dashboards = DashboardRegistry.load(DEFAULT_DASHBOARDS_DIR)
+    rc = render(source, catalog, registry, agents=agents, dashboards=dashboards)
+    # Single image→context resolver over substrate + manifests. A project image resolves to a build
+    # context (or buildspec.EXTERNAL for an out-of-band image); an upstream pull image resolves to
+    # None. This REPLACES the old `_is_buildable` substring special-case + the hardcoded llamacpp hint.
+    resolve_ctx = buildspec.context_resolver(registry, agents, dashboards, project=project)
+
+    def _is_buildable(image: str) -> bool:
+        return resolve_ctx(image) is not None
+
     checks: list[Check] = []
 
     # 1. drift gate — one ctx value everywhere
@@ -110,7 +122,7 @@ def run(
         img = str(img)
         if img.startswith("${") and ":-" in img:            # unwrap ${VAR:-default}
             img = img.split(":-", 1)[1].rstrip("}")
-        if _is_buildable(img, project) or "@sha256:" in img:
+        if _is_buildable(img) or "@sha256:" in img:
             return False
         tag = img.rsplit(":", 1)[-1] if ":" in img.rsplit("/", 1)[-1] else "latest"
         return not re.match(r"^v?\d+(\.\d+)+", tag)          # not a version tag => rolling
@@ -138,17 +150,18 @@ def run(
     # 6. images available — project images must be built (blocking); upstream may be pulled (note)
     if images_present is not None:
         needed = required_images(rc, project)
-        proj_missing = [i for i in needed if _is_buildable(i, project) and i not in images_present]
+        proj_missing = [i for i in needed if _is_buildable(i) and i not in images_present]
         upstream_missing = [i for i in needed
-                            if not _is_buildable(i, project) and i not in images_present]
+                            if not _is_buildable(i) and i not in images_present]
         detail = "all built"
         if proj_missing:
+            # Generic build-from hint derived from the single resolver — every project image gets
+            # a context pointer (no per-image special-case). An out-of-band image (EXTERNAL) has no
+            # in-repo context, so it's shown bare.
             hints = []
             for i in proj_missing:
-                if "llamacpp-patched" in i:
-                    hints.append(f"{i} (build from services/llamacpp-patched)")
-                else:
-                    hints.append(i)
+                ctx = resolve_ctx(i)
+                hints.append(f"{i} (build from {ctx})" if ctx and ctx != buildspec.EXTERNAL else i)
             detail = f"build first: {', '.join(hints)}"
         checks.append(Check("project images built locally", not proj_missing, detail))
         if upstream_missing:

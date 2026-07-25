@@ -24,6 +24,21 @@ if TYPE_CHECKING:
 # remote-access plugin, so it's not here — a local floor install is localhost-only.
 _CORE = ["llamacpp", "model-gateway", "mcp-gateway", "ops-controller", "dashboard"]
 
+# Build contexts for the SUBSTRATE services — the project images hardcoded below that have NO
+# manifest (`_model_gateway`/`_mcp_gateway`/`_ops_controller`, and the patched llama.cpp build
+# pinned via a model's catalog `backend_image`). Manifest services (plugins/agents/dashboards,
+# incl. the v1-parity dashboard's `ops-api` backend) declare their own context via `build:` in
+# the manifest; only these hardcoded ones need to be declared here. `ordo.buildspec` reads this
+# to give preflight + the substrate test a single image→context resolver — so a rename/typo fails
+# CI, not deploy. Keyed by the image `repo/name` (matched on the `…-<name>` suffix too, for the
+# `ordo-ai-stack-llamacpp-patched` build tag). This is build METADATA — never rendered into compose.
+SUBSTRATE_BUILD_CONTEXTS: dict[str, str] = {
+    "model-gateway": "services/model-gateway",
+    "mcp-gateway": "services/mcp-gateway",
+    "ops-controller": "services/ops-controller",
+    "llamacpp-patched": "services/llamacpp-patched",
+}
+
 # --metrics turns on llama-server's native Prometheus endpoint at /metrics:8080 (token rates,
 # queue depth). Always-on — it's cheap, and the monitoring plugin's prometheus scrapes it.
 LLAMACPP_METRICS_ARG = "--metrics"

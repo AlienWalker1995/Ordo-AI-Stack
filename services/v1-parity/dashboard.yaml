@@ -13,6 +13,11 @@ description: >
 default: false
 # The V1 dashboard image, tagged under the project namespace (built from V1's context verbatim).
 image: ordo/dashboard-v1:latest
+# Build context is NESTED (the Dockerfile lives in the dashboard/ subdir, not this manifest's own
+# services/v1-parity/ folder), so it's declared explicitly — the resolver/substrate test otherwise
+# defaults to services/<id>. METADATA only; never rendered into compose.
+build:
+  context: services/v1-parity/dashboard
 # Read-only GPU visibility for the dashboard SERVICE ITSELF. Its `/api/hardware` route (the hw-stat
 # bar's GPU widgets) shells to nvidia-smi (_probe_gpu) + enumerates cards (gpu_stats.list_gpus),
 # which the NVIDIA runtime only injects when the service reserves a GPU with the `utility` cap.

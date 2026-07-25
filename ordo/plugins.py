@@ -12,6 +12,7 @@ from typing import Any
 
 import yaml
 
+from .buildspec import BuildSpec
 from .hardware import HardwareProfile
 
 
@@ -82,6 +83,10 @@ class Plugin:
     # render emits these into secrets.env.example; the rendered compose reads them via a second
     # env_file `secrets.env` — derived (.env) config and operator secrets stay in separate files.
     secrets: tuple[str, ...] = ()
+    # Build-context identity (METADATA for preflight/tests; NEVER rendered into compose). Absent ->
+    # the plugin's own `services/<id>/` + `Dockerfile`. Declared only when the context isn't the
+    # plugin's own dir. See ordo.buildspec.
+    build: BuildSpec = dataclasses.field(default_factory=BuildSpec)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Plugin:
@@ -99,6 +104,7 @@ class Plugin:
             mcp=dict(d.get("mcp", {}) or {}),
             services=tuple(PluginService.from_dict(s) for s in (d.get("services", []) or [])),
             secrets=tuple(str(s) for s in (d.get("secrets", []) or [])),
+            build=BuildSpec.from_dict(d.get("build")),
         )
 
     @property

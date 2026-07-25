@@ -84,9 +84,25 @@ def test_patched_llamacpp_is_buildable_not_pullable():
     go, checks = preflight.run(GPU, CATALOG, REGISTRY, images_present=present)
     proj = _byname(checks)["project images built locally"]
     assert not proj.ok and proj.blocking and not go        # NO-GO — it can't be pulled
-    assert "services/llamacpp-patched" in proj.detail     # points at the build context
+    # GENERIC hint from the single resolver (no per-image special-case): llamacpp-patched, whose
+    # image name has NO `ordo/` prefix, still resolves to its build context through the substrate map.
+    assert f"{patched} (build from services/llamacpp-patched)" in proj.detail
     # it must NOT show up as a pullable upstream image
     assert not any(c.name.startswith("upstream") and patched in c.detail for c in checks)
+
+
+def test_all_project_images_get_a_generic_build_from_hint():
+    # Every missing PROJECT image (not just llamacpp) gets a "build from <context>" pointer derived
+    # from the single resolver — the whole point of deleting the one-image special-case. Folder-id ≠
+    # image-name (e.g. ordo/rag-ingestion -> services/rag) resolves to the real folder.
+    rc = render(GPU, CATALOG, REGISTRY)
+    needed = preflight.required_images(rc)
+    go, checks = preflight.run(GPU, CATALOG, REGISTRY, images_present=set())  # nothing cached
+    proj = _byname(checks)["project images built locally"]
+    assert not proj.ok and not go
+    assert "ordo/model-gateway:latest (build from services/model-gateway)" in proj.detail
+    if "ordo/rag-ingestion:latest" in needed:
+        assert "ordo/rag-ingestion:latest (build from services/rag)" in proj.detail
 
 
 def test_mcp_pinned_check_passes_with_real_images():
