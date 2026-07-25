@@ -12,7 +12,8 @@
 # to the base image. Pinned + checksum-verified per the stack's "pin, don't float"
 # rule: to bump, change CBM_VERSION and CBM_SHA256 together (sha256 comes from the
 # release's checksums.txt for codebase-memory-mcp-linux-${CBM_ARCH}-portable.tar.gz).
-FROM debian:bookworm-slim
+# debian:bookworm-slim
+FROM debian@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 
 ARG CBM_VERSION=v0.8.1
 ARG CBM_ARCH=amd64

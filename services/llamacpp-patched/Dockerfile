@@ -1,4 +1,5 @@
-FROM nvidia/cuda:12.8.0-devel-ubuntu22.04 AS builder
+# nvidia/cuda:12.8.0-devel-ubuntu22.04
+FROM nvidia/cuda@sha256:54f18e2a8e1b3d03f77b9a6dc905533da46ac93a5513f10e8ba8e560db9fa5ab AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake git curl libgomp1 python3 \
     && rm -rf /var/lib/apt/lists/*
@@ -71,7 +72,8 @@ RUN cmake --build build --config Release --target llama-server llama-quantize -j
 RUN mkdir -p /src/build/so-libraries && \
     find /src/build/bin /src/build/lib -name "lib*.so*" -exec cp -t /src/build/so-libraries/ {} + 2>/dev/null || true
 
-FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
+# nvidia/cuda:12.8.0-runtime-ubuntu22.04
+FROM nvidia/cuda@sha256:b0e5afeabc356a9c41148c50f219d3117d46cb6ec23c590e3a0ebaa1db0ff946
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*

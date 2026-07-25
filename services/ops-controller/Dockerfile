@@ -4,7 +4,8 @@
 # Renders config, exposes /status + /model-config + /jobs, and drives the GPU broker.
 # It needs the Docker CLI to start/stop containers, but the broker's DockerBackend
 # guard scopes every action to the ordo project prefix, so it can never touch anything else.
-FROM python:3.11-slim
+# python:3.11-slim
+FROM python@sha256:6d85378d88a19cd4d76079817532d62232be95757cb45945a99fec8e8084b9c2
 
 # Static Docker client only (no daemon) — the broker shells out to `docker start/stop`.
 COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
