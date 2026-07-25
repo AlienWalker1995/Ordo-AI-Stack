@@ -106,24 +106,12 @@
 }
 
 # ---- :8445 — n8n ----
-# N8N_PATH=/n8n/ only sets n8n's PUBLIC url prefix (webhook/OAuth/editor base) —
-# n8n still serves its real files, REST API and push websocket at ROOT (/assets,
-# /rest, /static). So the browser is told to fetch /n8n/assets/… but those live
-# at /assets/…; we MUST strip /n8n (exactly as the :443 webhook/OAuth passthroughs
-# below already do — "n8n's internal routes live at /rest/…, not /n8n/rest/…").
-# `/` 302s to /n8n/, then handle_path strips the prefix. Proxying UNSTRIPPED 404s
-# every asset to n8n's SPA HTML fallback → nosniff-blocked blank page. n8n's public
-# base (N8N_WEBHOOK_URL, OAuth callbacks) stays on :443/n8n/* — nothing re-registers.
+# Served at root: N8N_PATH=/ tells n8n to emit root-absolute asset URLs, so a plain
+# pass-through proxy works with no prefix surgery. n8n's EXTERNAL public base
+# (N8N_WEBHOOK_URL, OAuth callbacks) still lives at :443/n8n/* — those passthroughs
+# below strip /n8n and are unchanged.
 :8445 {
-    import tls_tailnet
-    import sso_port_gate
-    route {
-        import sso_forward_auth
-        redir / /n8n/ 302
-        handle_path /n8n/* {
-            reverse_proxy n8n:5678
-        }
-    }
+    import sso_service n8n:5678
 }
 
 # ---- :8446 — ComfyUI ----
@@ -132,39 +120,17 @@
 }
 
 # ---- :8447 — Hermes ----
-# The Hermes dashboard server derives its base from X-Forwarded-Prefix
-# (runtime-injected window.__HERMES_BASE_PATH__), so it keeps serving under
-# /hermes/ here exactly as it did on :443 — zero image changes.
+# Served at its origin root behind a plain SSO proxy — no prefix strip, no
+# forwarded-prefix header base injection.
 :8447 {
-    import tls_tailnet
-    import sso_port_gate
-    route {
-        import sso_forward_auth
-        redir / /hermes/ 302
-        handle_path /hermes/* {
-            reverse_proxy hermes-dashboard:9119 {
-                header_up X-Forwarded-Prefix /hermes
-            }
-        }
-    }
+    import sso_service hermes-dashboard:9119
 }
 
 # ---- :8448 — codebase-memory 3D graph ----
-# The container's nginx rewrites the SPA's baked /assets,/api,/rpc to the
-# /codebase-memory/ prefix (see codebase-memory-ui/nginx.conf), so the app
-# keeps its subpath on this port. /font-files stays un-rewritten (external
-# CDN URL — rewriting it 404s the label fonts).
+# Served at its origin root behind a plain SSO proxy — the container's nginx
+# proxies straight through with no path rewriting (see codebase-memory-ui/nginx.conf).
 :8448 {
-    import tls_tailnet
-    import sso_port_gate
-    route {
-        import sso_forward_auth
-        redir / /codebase-memory/ 302
-        @codebasememory path /codebase-memory /codebase-memory/*
-        handle @codebasememory {
-            reverse_proxy codebase-memory-ui:9750
-        }
-    }
+    import sso_service codebase-memory-ui:9750
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -226,8 +192,8 @@
     redir /chat* https://{host}:8443/ 302
     redir /dash* https://{host}:8444/ 302
     redir /comfy* https://{host}:8446/ 302
-    redir /hermes* https://{host}:8447/hermes/ 302
-    redir /codebase-memory* https://{host}:8448/codebase-memory/ 302
+    redir /hermes* https://{host}:8447/ 302
+    redir /codebase-memory* https://{host}:8448/ 302
     redir /grafana* https://{host}:8444/grafana/ 302
     # /n8n UI → its port. NB: Caddy sorts `redir` BEFORE `handle` regardless of file
     # order, so a bare `redir /n8n*` would shadow the webhook/OAuth passthrough handles
@@ -266,10 +232,10 @@
                 <ul>
                 <li><a href="https://{host}:8443/">Chat<small>Open WebUI · :8443</small></a></li>
                 <li><a href="https://{host}:8444/">Dashboard<small>control hub · :8444</small></a></li>
-                <li><a href="https://{host}:8447/hermes/">Hermes<small>agent · :8447</small></a></li>
+                <li><a href="https://{host}:8447/">Hermes<small>agent · :8447</small></a></li>
                 <li><a href="https://{host}:8446/">ComfyUI<small>media · :8446</small></a></li>
                 <li><a href="https://{host}:8445/">n8n<small>automation · :8445</small></a></li>
-                <li><a href="https://{host}:8448/codebase-memory/">Code graph<small>memory · :8448</small></a></li>
+                <li><a href="https://{host}:8448/">Code graph<small>memory · :8448</small></a></li>
                 </ul></main></body></html>
                 HTML
         }

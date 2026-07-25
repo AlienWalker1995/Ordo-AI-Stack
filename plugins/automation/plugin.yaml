@@ -18,8 +18,10 @@ services:
     env:
       N8N_HOST: 0.0.0.0
       N8N_PORT: "5678"
-      # Mounted at /n8n/ via the edge's prefix-strip; N8N_PATH makes n8n emit /n8n/assets/... URLs.
-      N8N_PATH: /n8n/
+      # Served at root on the edge (:8445) via a plain pass-through proxy; N8N_PATH=/
+      # makes n8n emit root-absolute /assets/... URLs. The external /n8n base
+      # (WEBHOOK_URL, N8N_EDITOR_BASE_URL) is carried by those vars, not this one.
+      N8N_PATH: /
       N8N_PROXY_HOPS: "1"
       N8N_USER_MANAGEMENT_DISABLED: "true"
       OPENAI_API_BASE_URL: ${OPENAI_API_BASE:-http://model-gateway:11435/v1}
