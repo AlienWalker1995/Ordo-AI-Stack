@@ -2218,6 +2218,11 @@
 
     /** Prefer API `url` (paths + query) and match dashboard hostname. */
     function serviceOpenHref(s, host) {
+      // Clean per-service tailnet name (https://chat.<domain>/ …), served by the
+      // backend when the tailnet-names sidecars are enabled. Single source of truth:
+      // the domain + service→label map live server-side, not guessed from
+      // location.hostname (which yields a dead dash.<domain>:port under clean URLs).
+      if (s.open_url) return s.open_url;
       if (APP_PREFIX && SSO_ROUTES[s.id]) {
         const route = SSO_ROUTES[s.id];
         if (route.startsWith(':')) {          // same hostname, dedicated SSO-gated port
@@ -2284,7 +2289,9 @@
         const services = d.services || [];
         const mcpSvc = services.find(s => s.id === 'mcp');
         if (mcpSvc) {
-          const mcpUrl = serviceUrl(host, mcpSvc.port || 8811) + '/mcp';
+          // MCP is the Bearer API on the :443 front door (https://<host>/mcp), not a
+          // published :8811 port — the backend gives us the real external URL.
+          const mcpUrl = d.mcp_external_url || (serviceUrl(host, mcpSvc.port || 8811) + '/mcp');
           document.querySelectorAll('.mcp-ext-url').forEach(el => { el.textContent = mcpUrl; });
         }
         const okCount = services.filter(s => s.ok).length;

@@ -1,6 +1,6 @@
 #!/bin/sh
-# Start the codebase-memory 3D graph UI as a long-lived service, served under the
-# /codebase-memory/ subpath by nginx (which rewrites the SPA's absolute paths).
+# Start the codebase-memory 3D graph UI as a long-lived service, served at its
+# origin root by nginx (a plain pass-through proxy — no path rewriting).
 #
 # The upstream graph is IN-MEMORY and is populated ONLY by an explicit index call
 # (POST /api/index {"root_path":...}); it is wiped on every container restart. So
@@ -46,8 +46,6 @@ fi
 # so keep stdin open (`tail -f /dev/null`) to hold the process — and the UI — up.
 ( tail -f /dev/null | codebase-memory-mcp --ui=true --port=9749 ) &
 
-# nginx (foreground = container lifecycle) proxies /codebase-memory/* -> the UI on
-# 127.0.0.1:9749 and rewrites the baked origin-absolute /assets,/api,/rpc to the
-# subpath (node-label fonts come from an external CDN, so they are NOT rewritten;
-# see nginx.conf).
+# nginx (foreground = container lifecycle) proxies / -> the UI on 127.0.0.1:9749
+# at the origin root with no path rewriting (see nginx.conf).
 exec nginx -g 'daemon off;'

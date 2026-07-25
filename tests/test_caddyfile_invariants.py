@@ -102,13 +102,20 @@ def test_every_service_port_has_a_site(caddyfile_text: str) -> None:
         assert upstream in caddyfile_text, f"missing upstream {upstream}"
 
 
-def test_sso_gate_is_shared_and_port_aware(caddyfile_text: str) -> None:
+def test_sso_gate_is_shared_and_host_based(caddyfile_text: str) -> None:
     """All ported sites import the single (sso_forward_auth) snippet, whose rd=
-    uses {hostport} so sign-in returns to the originating port. If the snippet
-    or its {hostport} disappears, every ported UI either loses SSO or strands
-    users on :443 after Google sign-in."""
+    uses {host} (portless), NOT {hostport}.
+
+    Why portless: the per-service Tailscale sidecar nodes (chat/dash/…
+    .<tailnet>.ts.net) `serve`-forward their clean Host with no port, so the gate
+    must match on the portless host — {hostport} would emit a bogus
+    chat.<tailnet>:8443 rd and break sidecar sign-in. The one whitelisted
+    wildcard domain in the edge plugin covers every resulting rd. If this flips
+    back to {hostport}, the clean-URL sidecars lose SSO."""
     assert "(sso_forward_auth)" in caddyfile_text, "shared SSO snippet missing"
-    assert "rd={scheme}://{hostport}{uri}" in caddyfile_text, "rd= must carry {hostport}"
+    assert "rd={scheme}://{host}{uri}" in caddyfile_text, "rd= must carry {host}"
+    assert "rd={scheme}://{hostport}" not in caddyfile_text, (
+        "rd= must NOT use {hostport} — it breaks the Tailscale sidecar clean URLs")
     # every service site pulls the gate in
     assert caddyfile_text.count("import sso_forward_auth") + \
         caddyfile_text.count("import sso_service") >= len(SERVICE_PORTS) + 1, (
@@ -125,8 +132,71 @@ def test_root_no_longer_serves_a_ui_catchall(caddyfile_text: str) -> None:
 
 
 def test_legacy_paths_redirect_to_ports(caddyfile_text: str) -> None:
-    """Old bookmarks must keep working: each pre-port subpath 302s to its port."""
-    for legacy, port in (("/chat", "8443"), ("/dash", "8444"), ("/n8n", "8445"),
+    """Old bookmarks must keep working: each pre-port subpath 302s to its port.
+
+    n8n is special: a bare `redir /n8n*` is FORBIDDEN because Caddy sorts redir
+    before handle and it would shadow the :443 webhook/OAuth passthroughs. The
+    real redirect goes through the @n8n_ui matcher (which excludes those paths),
+    so assert the matcher-based redirect, not a literal `redir /n8n`."""
+    for legacy, port in (("/chat", "8443"), ("/dash", "8444"),
                          ("/comfy", "8446"), ("/hermes", "8447"), ("/codebase-memory", "8448")):
         assert f"redir {legacy}" in caddyfile_text, f"missing legacy redirect for {legacy}"
         assert f":{port}" in caddyfile_text
+    # n8n: the real redirect is the matcher form, NOT a bare `redir /n8n`.
+    assert "redir @n8n_ui https://{host}:8445/ 302" in caddyfile_text, (
+        "n8n legacy redirect must use the @n8n_ui matcher targeting :8445 — a bare "
+        "`redir /n8n` would shadow the webhook/OAuth passthroughs")
+
+
+# ── converged uniform-serving model (feat/clean-tailnet-urls) ───────────────────
+# The three formerly-divergent UIs (n8n strip_prefix, Hermes X-Forwarded-Prefix,
+# codebase-memory nginx sub_filter) now serve at their origin root behind a plain
+# `import sso_service <upstream>` — identical to :8443/:8446. These invariants FAIL
+# if any adapter (handle_path, redir-to-subpath bounce, X-Forwarded-Prefix) returns.
+
+NGINX_CONF = REPO_ROOT / "codebase-memory-ui" / "nginx.conf"
+
+
+def _site_block(text: str, port: str) -> str:
+    """Return the body of the `:<port> { … }` site block (brace-matched)."""
+    marker = f":{port} {{"
+    start = text.index(marker) + len(marker)
+    depth = 1
+    i = start
+    while i < len(text) and depth:
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+        i += 1
+    return text[start:i - 1]
+
+
+def test_formerly_divergent_ports_serve_at_root(caddyfile_text: str) -> None:
+    """8445/8447/8448 each proxy at root via `import sso_service <upstream>` with
+    no adapter — no handle_path, no `redir /` bounce to a subpath."""
+    for port, upstream in (("8445", "n8n:5678"),
+                           ("8447", "hermes-dashboard:9119"),
+                           ("8448", "codebase-memory-ui:9750")):
+        block = _site_block(caddyfile_text, port)
+        assert f"import sso_service {upstream}" in block, (
+            f":{port} must serve {upstream} via `import sso_service` at root")
+        assert "handle_path" not in block, (
+            f":{port} reintroduced handle_path — an adapter is back")
+        assert "redir /" not in block, (
+            f":{port} reintroduced a redir bounce — an adapter is back")
+
+
+def test_no_forwarded_prefix_injection(caddyfile_text: str) -> None:
+    """No site may inject X-Forwarded-Prefix — that was the Hermes subpath adapter."""
+    assert "X-Forwarded-Prefix" not in caddyfile_text, (
+        "X-Forwarded-Prefix reintroduced — the Hermes subpath adapter is back")
+
+
+def test_codebase_memory_ui_serves_at_root() -> None:
+    """codebase-memory-ui/nginx.conf must be a plain root proxy: no sub_filter
+    rewrites, no /codebase-memory/ subpath, a `location /` at the root."""
+    nginx = NGINX_CONF.read_text(encoding="utf-8")
+    assert "sub_filter" not in nginx, "sub_filter reintroduced — the nginx subpath adapter is back"
+    assert "/codebase-memory/" not in nginx, "/codebase-memory/ subpath reintroduced in nginx.conf"
+    assert "location /" in nginx, "nginx.conf lost its root `location /` proxy"

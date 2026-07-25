@@ -25,6 +25,7 @@ EXPECTED_SERVICE_PLUGINS = {
     "rag", "worker", "automation", "open-webui",           # ported CPU-ok services
     "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
     "ltx-trainer",                                        # LoRA trainer (sole trainer since 2026-07-24)
+    "tailnet-names",                                      # post-parity: per-service Tailscale clean-URL sidecars
 }
 # memory-vault is a post-parity add (file-based markdown-memory MCP). codebase-memory / comfyui /
 # n8n / orchestration are the RESTORED V1 roster (the V1→V2 migration had silently dropped them);
@@ -47,14 +48,14 @@ def test_dual_gpu_enables_the_full_parity_set():
 
 
 def test_parity_matrix_counts():
-    # 13 kind=service plugins (12 parity set + ltx-trainer) + 7 kind=mcp plugins
+    # 14 kind=service plugins (12 parity set + ltx-trainer + tailnet-names) + 7 kind=mcp plugins
     # (qdrant-rag, searxng, memory-vault + the restored codebase-memory / comfyui-mcp / n8n /
     # orchestration) are registered and all enable on the full host.
     svc = [p for p in REGISTRY.plugins if p.kind == "service"]
     mcp = [p for p in REGISTRY.plugins if p.kind == "mcp"]
-    assert len(svc) == 13 and len(mcp) == 7
+    assert len(svc) == 14 and len(mcp) == 7
     rc = _dual()
-    assert len(rc.plugins_enabled) == 13
+    assert len(rc.plugins_enabled) == 14
     assert len(rc.mcp_servers) == 7
 
 
@@ -110,6 +111,16 @@ def test_secrets_env_example_generated_keys_only(tmp_path):
     assert {"SEARXNG_SECRET", "OAUTH2_PROXY_CLIENT_ID", "MCP_GATEWAY_TOKEN"} <= set(rc.required_secrets)
 
 
+def test_throughput_record_token_is_not_a_required_secret():
+    """THROUGHPUT_RECORD_TOKEN must NOT be demanded as a required secret: there is no SOPS source
+    that can supply it, and the dashboard only enforces it "when set" (the /api/throughput/record
+    route is open when the var is empty). Requiring it would list an unfulfillable key in
+    secrets.env.example and fail a secrets-completeness preflight for a key nothing can provide."""
+    rc = _dual()
+    assert "THROUGHPUT_RECORD_TOKEN" not in rc.required_secrets
+    assert "THROUGHPUT_RECORD_TOKEN" not in CORE_SECRET_KEYS
+
+
 def test_secrets_scoped_to_enabled_plugins():
     # a CPU-only render without the edge? edge is CPU-ok so it stays; but a render that pins only
     # comfyui should NOT pull in edge/searxng secrets — secrets track the enabled set.
@@ -148,10 +159,16 @@ def test_edge_mounts_tracked_config_not_copies():
     # ${BASE_PATH} so the tracked file is the single source of truth — a `./`-relative
     # mount resolves against the compose project dir (out) and serves a stale COPY
     # (the drift that shipped an old Caddyfile on 2026-07-15).
+    #
+    # These two are SECURITY-CRITICAL, so they use the fail-loud `${BASE_PATH:?...}` form (not
+    # `:-.`): an empty/unset BASE_PATH would otherwise make Docker fabricate an empty dir at the
+    # mount → zero-email allowlist → deny-all outage. `:?` rejects an empty value at compose-config
+    # time. (Guarded in detail by test_compose.test_edge_security_mounts_fail_loud_on_empty_base_path.)
     c = _dual().compose_dict()
-    assert "${BASE_PATH:-.}/auth/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" in c["services"]["caddy"]["volumes"]
+    assert ("${BASE_PATH:?BASE_PATH must be set (non-empty)}/auth/caddy/Caddyfile:/etc/caddy/Caddyfile:ro"
+            in c["services"]["caddy"]["volumes"])
     assert (
-        "${BASE_PATH:-.}/auth/oauth2-proxy/emails.txt:/etc/oauth2-proxy/emails.txt:ro"
+        "${BASE_PATH:?BASE_PATH must be set (non-empty)}/auth/oauth2-proxy/emails.txt:/etc/oauth2-proxy/emails.txt:ro"
         in c["services"]["oauth2-proxy"]["volumes"]
     )
 

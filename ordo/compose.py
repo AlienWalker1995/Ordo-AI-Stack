@@ -298,6 +298,11 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: st
     adding a service is a manifest edit, not a code change here. `${...}` / `./...` refs and
     named volumes pass straight through to compose (project-scoped, no live-stack collision)."""
     s: dict[str, Any] = {"image": ps.image, "restart": "unless-stopped", "networks": [net]}
+    if ps.network_mode:
+        # compose forbids networks: alongside network_mode: — the service lives in the
+        # target's namespace (e.g. the tailnet-name sidecars inside Caddy's netns).
+        s.pop("networks")
+        s["network_mode"] = ps.network_mode
     files = _env_files(env_file, ps.wants_secrets)
     if files:
         s["env_file"] = files
