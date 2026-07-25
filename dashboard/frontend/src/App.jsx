@@ -1,7 +1,6 @@
 // App shell: dark-theme header with the hardware stat bar, a tab nav, and one panel
-// per section. Services is fully ported; every other tab is a stub seam a later
-// iteration fills. Active tab is synced to the URL hash (deep-linkable, matching the
-// legacy hash routing).
+// per section. All eleven tabs are fully ported from the legacy vanilla-JS shell. Active
+// tab is synced to the URL hash (deep-linkable, matching the legacy hash routing).
 import { useEffect, useState } from 'react'
 import HwStatBar from './components/HwStatBar.jsx'
 import ServicesTab from './components/ServicesTab.jsx'
@@ -10,13 +9,13 @@ import GrafanaTab from './components/GrafanaTab.jsx'
 import DependenciesTab from './components/DependenciesTab.jsx'
 import ModelsTab from './components/ModelsTab.jsx'
 import ModelctlTab from './components/ModelctlTab.jsx'
+import HardwareTab from './components/HardwareTab.jsx'
+import ThroughputTab from './components/ThroughputTab.jsx'
+import OrchestrationTab from './components/OrchestrationTab.jsx'
+import RagTab from './components/RagTab.jsx'
+import ComfyTab from './components/ComfyTab.jsx'
 import { ToastProvider } from './components/Toast.jsx'
-import {
-  HardwareTab, ThroughputTab,
-  OrchestrationTab, RagTab, ComfyTab,
-} from './components/StubTab.jsx'
 
-// Services first — it is the fully-implemented tab this iteration ships.
 const TABS = [
   { id: 'services', label: '⚡ Services', Component: ServicesTab },
   { id: 'models', label: '📦 Models', Component: ModelsTab },

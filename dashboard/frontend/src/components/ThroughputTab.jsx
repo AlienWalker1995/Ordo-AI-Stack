@@ -1,0 +1,224 @@
+// Throughput tab — inference telemetry + an on-demand benchmark. Port of the legacy
+// loadPerfHero + loadThroughputServiceUsage + runThroughputBenchmark. Consumes:
+//   - GET  /api/throughput/stats         — per-model tok/s percentiles + last_benchmark
+//   - GET  /api/throughput/service-usage — which service drove which model, recent tok/s
+//   - GET  /api/performance/summary      — context size + fleet summary
+//   - GET  /api/llm/models               — to pick the benchmark target model
+//   - POST /api/throughput/benchmark     — run a quick tok/s benchmark (confirm + pending)
+// Telemetry polls every 10s (paused when hidden); the benchmark is a manual action that
+// disables the button while running and refreshes the telemetry when it lands.
+import { useCallback, useState } from 'react'
+import { api, usePolling } from '../api.js'
+import { useToast } from './Toast.jsx'
+
+const EMBED_RE = /embed|bge|mxbai|arctic-embed|granite-embedding|paraphrase-multilingual/
+const isEmbeddingModel = (name) => EMBED_RE.test((name || '').toLowerCase())
+
+// Legacy tpsBarColor thresholds (kept as hex so the color ramp matches the old UI exactly).
+function tpsColor(tps) {
+  if (!tps) return '#8a90a8'
+  if (tps >= 30) return '#00e676'
+  if (tps >= 15) return '#b2ff59'
+  if (tps >= 8) return '#ffd740'
+  if (tps >= 3) return '#ff9100'
+  return '#ff4444'
+}
+const fmt = (v) => (v == null || v === 0 || Number.isNaN(v)) ? '—' : (Math.round(v * 10) / 10).toString()
+const fmtInt = (v) => (v == null || v === 0 || Number.isNaN(v)) ? '—' : Math.round(v).toString()
+function fmtAgo(ts) {
+  if (!ts) return ''
+  const secs = Date.now() / 1000 - ts
+  if (secs < 0) return ''
+  if (secs < 60) return 'just now'
+  if (secs < 3600) return Math.round(secs / 60) + 'm ago'
+  if (secs < 86400) return Math.round(secs / 3600) + 'h ago'
+  return Math.round(secs / 86400) + 'd ago'
+}
+
+const BTN =
+  'inline-flex h-9 items-center justify-center whitespace-nowrap rounded-sm border border-border bg-surface px-4 text-[0.8125rem] font-medium tracking-[0.02em] text-fg transition-all hover:border-accent/30 hover:bg-accent/[0.07] hover:text-accent disabled:cursor-not-allowed disabled:opacity-40'
+const PANEL = 'rounded-md border border-border-subtle bg-bg-elevated p-5'
+const RAIL_LABEL = 'text-[0.58rem] font-bold uppercase tracking-[0.1em] text-muted'
+const RAIL_VAL = 'mt-0.5 font-mono text-[0.9rem] font-semibold tabular-nums text-fg'
+
+function Metric({ label, value }) {
+  return (
+    <div className="rounded-sm border border-border-subtle bg-bg px-3 py-2 text-center">
+      <div className={RAIL_LABEL}>{label}</div>
+      <div className={RAIL_VAL}>{value}</div>
+    </div>
+  )
+}
+
+export default function ThroughputTab() {
+  const toast = useToast()
+
+  const { data, error, refresh } = usePolling(async () => {
+    const [stats, usage, summary, llm] = await Promise.all([
+      api.get('/api/throughput/stats').catch(() => ({ ok: false, models: {} })),
+      api.get('/api/throughput/service-usage').catch(() => ({ ok: false, by_model: {} })),
+      api.get('/api/performance/summary').catch(() => null),
+      api.get('/api/llm/models').catch(() => ({ models: [] })),
+    ])
+    return { stats, usage, summary, llm }
+  }, 10000)
+
+  const stats = data?.stats
+  const summary = data?.summary
+  const llms = (data?.llm?.models || []).filter((m) => !isEmbeddingModel(m.name))
+
+  // Busiest / most-sampled model wins the hero (matches legacy entries.sort by sample_count).
+  const models = stats?.ok && stats.models ? stats.models : {}
+  const entries = Object.entries(models)
+  entries.sort((a, b) => (b[1].sample_count || 0) - (a[1].sample_count || 0))
+  const hero = entries[0]
+  const ctx = summary?.llamacpp_ctx_size || 0
+  const ctxLabel = ctx ? (ctx >= 1000 ? `${Math.round(ctx / 1000)}K ctx` : `${ctx} ctx`) : 'no ctx'
+
+  // ---- Benchmark (confirm + pending) ----
+  const [running, setRunning] = useState(false)
+  const [result, setResult] = useState(null) // fresh run result
+  const lastBench = stats?.last_benchmark || null
+  const shownBench = result || lastBench
+
+  const runBenchmark = useCallback(async () => {
+    // No model selector in the single-model UI — first non-embedding LLM, else hero, else default.
+    const model = llms[0]?.name || (hero && hero[0]) || 'local-chat'
+    if (!confirm(`Run a throughput benchmark on "${model}"?\n\nThis sends a short generation through the Model Gateway and reports tok/s.`)) return
+    setRunning(true)
+    try {
+      const d = await api.post('/api/throughput/benchmark', { model })
+      setResult(d)
+      toast(`Benchmark: ${d.output_tokens_per_sec} tok/s (${d.model})`, 'success')
+      refresh()
+    } catch (e) {
+      toast(`Benchmark failed: ${e.message || e}`, 'error')
+    } finally {
+      setRunning(false)
+    }
+  }, [llms, hero, toast, refresh])
+
+  // ---- Service usage rows ----
+  const byModel = data?.usage?.ok ? (data.usage.by_model || {}) : {}
+  const usageRows = []
+  Object.entries(byModel).forEach(([model, info]) => {
+    (info.services || []).forEach((svc) => usageRows.push({ model, svc }))
+  })
+  usageRows.sort((a, b) => (b.svc.last_ts || 0) - (a.svc.last_ts || 0))
+  const maxTps = Math.max(1, ...usageRows.map((r) => r.svc.last_tps || 0))
+
+  return (
+    <section className="mb-5 rounded-lg border border-border bg-card p-6 shadow-card">
+      <h2 className="section-rule mb-4 flex items-center gap-3 text-[0.62rem] font-bold uppercase tracking-[0.18em] text-muted">
+        Throughput
+      </h2>
+      <p className="mb-5 text-[0.8125rem] leading-[1.5] text-muted">
+        Live inference throughput of the active local model — updated after every completion
+        through the Model Gateway. Run a benchmark to seed the dashboard.
+      </p>
+
+      {error && !data ? (
+        <div className="flex items-center gap-2 rounded-sm border border-border-subtle border-l-[3px] border-l-warning bg-warning/[0.04] px-4 py-3 text-[0.8125rem] font-medium" role="status">
+          Could not load throughput telemetry — check that the dashboard API is up.
+        </div>
+      ) : !data ? (
+        <div className="space-y-3">{[0, 1].map((i) => <div key={i} className="skeleton h-28 w-full" />)}</div>
+      ) : (
+        <>
+          {/* Hero + percentile rail */}
+          <div className={`${PANEL} mb-6`}>
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <div className="min-w-0">
+                <span className="text-[0.6rem] font-bold uppercase tracking-[0.12em] text-muted">Active model</span>
+                <div className="mt-0.5 truncate font-mono text-[0.95rem] font-semibold text-fg" title={hero ? hero[0] : ''}>
+                  {hero ? hero[0] : 'No samples yet'}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="font-mono text-[1.6rem] font-bold leading-none text-accent">{hero ? fmt(hero[1].latest) : '—'}</div>
+                <div className="text-[0.6rem] font-semibold uppercase tracking-[0.1em] text-muted">tok/s latest</div>
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.72rem] text-muted">
+              <span>{hero ? `${hero[1].sample_count || 0} samples` : '0 samples'}</span>
+              <span>·</span>
+              <span>{ctxLabel}</span>
+              {hero && <><span>·</span><span>{hero[1].sample_count ? 'within last 24h' : 'no traffic yet'}</span></>}
+            </div>
+
+            <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
+              <Metric label="p50 tok/s" value={hero ? fmt(hero[1].p50) : '—'} />
+              <Metric label="p95 tok/s" value={hero ? fmt(hero[1].p95) : '—'} />
+              <Metric label="p99 tok/s" value={hero ? fmt(hero[1].p99) : '—'} />
+              <Metric label="peak tok/s" value={hero ? fmt(hero[1].peak) : '—'} />
+              <Metric label="TTFT p50" value={hero ? fmtInt(hero[1].ttft_p50_ms) : '—'} />
+              <Metric label="TTFT p95" value={hero ? fmtInt(hero[1].ttft_p95_ms) : '—'} />
+            </div>
+          </div>
+
+          {/* Benchmark runner */}
+          <div className={`${PANEL} mb-6`}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <span className="text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted">Benchmark</span>
+                <p className="mt-1 text-[0.8rem] text-fg-muted">
+                  Target: <code className="text-accent-soft">{llms[0]?.name || (hero && hero[0]) || 'local-chat'}</code>
+                </p>
+              </div>
+              <button type="button" className={BTN} disabled={running} onClick={runBenchmark}>
+                {running ? 'Running…' : '▶ Run benchmark'}
+              </button>
+            </div>
+            {running && (
+              <div className="mt-3 flex items-center gap-2 rounded-sm border border-border-subtle border-l-[3px] border-l-warning bg-warning/[0.06] px-3 py-2 text-[0.8rem] text-warning" role="status" aria-live="polite">
+                <span className="status-dot pending" aria-hidden="true" />
+                Running benchmark — generating through the Model Gateway…
+              </div>
+            )}
+            {shownBench && !running && (
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <Metric label="tok/s" value={`${shownBench.output_tokens_per_sec ?? '—'}`} />
+                <Metric label="output tokens" value={`${shownBench.output_tokens ?? '—'}`} />
+                <Metric label="eval ms" value={typeof shownBench.eval_duration_ms === 'number' ? `${shownBench.eval_duration_ms}` : '—'} />
+                <Metric label="load ms" value={typeof shownBench.load_duration_ms === 'number' ? `${shownBench.load_duration_ms}` : '—'} />
+              </div>
+            )}
+          </div>
+
+          {/* Service usage */}
+          <div>
+            <h3 className="mb-1 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted">Service activity</h3>
+            <p className="mb-3 text-[0.8125rem] leading-[1.5] text-muted">
+              Recent traffic by service and model. Traffic from Open WebUI, Claude Code, and n8n appears here.
+            </p>
+            {usageRows.length === 0 ? (
+              <div className="rounded-md border border-border-subtle bg-bg-elevated px-4 py-6 text-center text-[0.8125rem] text-muted">
+                No service activity yet — run a benchmark or send traffic through the gateway.
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {usageRows.map(({ model, svc }, i) => (
+                  <div key={model + (svc.name || '') + i} className="flex items-center gap-3 rounded-sm border border-border-subtle bg-bg-elevated px-4 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-mono text-[0.78rem] text-fg" title={model}>{model}</div>
+                      <div className="truncate text-[0.7rem] text-muted">{svc.name || ''}</div>
+                    </div>
+                    <div className="hidden h-1.5 w-32 shrink-0 overflow-hidden rounded-full bg-bg sm:block">
+                      <div className="h-full rounded-full" style={{ width: `${Math.round((svc.last_tps || 0) / maxTps * 100)}%`, background: tpsColor(svc.last_tps) }} />
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div className="font-mono text-[0.78rem] font-semibold tabular-nums" style={{ color: tpsColor(svc.last_tps) }}>
+                        {svc.last_tps || 0} tok/s
+                      </div>
+                      <div className="text-[0.65rem] text-muted">{fmtAgo(svc.last_ts)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
