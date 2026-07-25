@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Durable job worker: polls SQLite queue, executes ComfyUI jobs, delivers publish outbox, fires schedules.
 
-Runs as a separate container. Shares /data/dashboard volume with dashboard (SQLite WAL mode).
+Runs as a separate container. Shares the /data/dashboard volume (and its SQLite DB)
+with the dashboard. The DB uses DELETE journal mode, NOT WAL: it lives on a 9p Docker
+bind mount where WAL's `-shm` mmap is unreliable and a stale `-shm` can crash-loop the
+control plane (see dashboard/orchestration_db.py). There is therefore no WAL checkpoint
+to run here.
 """
 
 from __future__ import annotations
@@ -24,7 +28,6 @@ sys.path.insert(0, "/app")
 from dashboard.orchestration_db import (
     JobState,
     OrchestrationJob,
-    checkpoint_wal,
     claim_next_job,
     create_job,
     get_due_schedules,
@@ -33,6 +36,7 @@ from dashboard.orchestration_db import (
     load_store,
     mark_outbox_delivered,
     mark_outbox_delivered_by_id,
+    reap_dead_outbox,
     record_outbox_attempt,
     recover_stale_running_jobs,
     tick_schedule,
@@ -58,7 +62,6 @@ WORKER_POLL_SEC = float(os.environ.get("WORKER_POLL_INTERVAL_SEC", "0.5"))
 WORKER_CONCURRENCY = max(1, int(os.environ.get("WORKER_CONCURRENCY", "1")))
 SCHEDULE_CHECK_SEC = float(os.environ.get("WORKER_SCHEDULE_CHECK_SEC", "30"))
 OUTBOX_CHECK_SEC = float(os.environ.get("WORKER_OUTBOX_CHECK_SEC", "5"))
-WAL_CHECKPOINT_SEC = float(os.environ.get("WORKER_WAL_CHECKPOINT_SEC", "300"))
 VACUUM_SEC = float(os.environ.get("WORKER_VACUUM_SEC", "86400"))
 MAX_RETRIES = int(os.environ.get("WORKER_MAX_JOB_RETRIES", "2"))
 PUBLISH_MAX_ATTEMPTS = int(os.environ.get("WORKER_PUBLISH_MAX_ATTEMPTS", "5"))
@@ -291,7 +294,6 @@ def main() -> None:
 
     last_schedule_check = 0.0
     last_outbox_check = 0.0
-    last_wal_checkpoint = 0.0
     last_vacuum = time.time()
     with concurrent.futures.ThreadPoolExecutor(max_workers=WORKER_CONCURRENCY) as pool:
         inflight: dict[concurrent.futures.Future[None], str] = {}
@@ -315,6 +317,12 @@ def main() -> None:
             if time.time() - last_outbox_check >= OUTBOX_CHECK_SEC:
                 try:
                     process_outbox()
+                    # Dead-letter entries that have exhausted their retry budget so the
+                    # owning job reaches a terminal state instead of stranding forever.
+                    reaped = reap_dead_outbox(DATA_DIR, max_attempts=PUBLISH_MAX_ATTEMPTS)
+                    if reaped:
+                        logger.warning("Dead-lettered %d exhausted outbox entr%s",
+                                       reaped, "y" if reaped == 1 else "ies")
                 except Exception as exc:
                     logger.error("Outbox processing error: %s", exc)
                 last_outbox_check = time.time()
@@ -325,13 +333,6 @@ def main() -> None:
                 except Exception as exc:
                     logger.error("Schedule check error: %s", exc)
                 last_schedule_check = time.time()
-
-            if time.time() - last_wal_checkpoint >= WAL_CHECKPOINT_SEC:
-                try:
-                    checkpoint_wal(DATA_DIR)
-                except Exception as exc:
-                    logger.error("WAL checkpoint error: %s", exc)
-                last_wal_checkpoint = time.time()
 
             if time.time() - last_vacuum >= VACUUM_SEC and not inflight:
                 def _on_vacuum_done(f):
@@ -355,12 +356,6 @@ def main() -> None:
                 except Exception:
                     logger.exception("Job %s failed during shutdown drain", jid)
             logger.info("All in-flight jobs drained.")
-
-        # Final WAL checkpoint — ensure all writes are flushed to the main DB file
-        try:
-            checkpoint_wal(DATA_DIR)
-        except Exception as exc:
-            logger.error("Final WAL checkpoint failed: %s", exc)
 
     logger.info("Worker shut down gracefully.")
 

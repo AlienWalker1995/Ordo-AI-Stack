@@ -62,6 +62,22 @@ def _advance_job_to_artifact_ready(db_dir: Path, job_id: str) -> None:
         update_job(db_dir, job_id, state=state)
 
 
+def _advance_job_to_publish_enqueued(db_dir: Path, job_id: str) -> None:
+    """Walk a queued job all the way to publish_enqueued via valid transitions."""
+    from dashboard.orchestration_db import JobState, update_job
+
+    _advance_job_to_artifact_ready(db_dir, job_id)
+    update_job(db_dir, job_id, state=JobState.publish_enqueued)
+
+
+def _exhaust_outbox_attempts(db_dir: Path, row_id: int, max_attempts: int = 5) -> None:
+    """Record enough attempts on an outbox row to exhaust its retry budget."""
+    from dashboard.orchestration_db import record_outbox_attempt
+
+    for _ in range(max_attempts):
+        record_outbox_attempt(db_dir, row_id, error="fail")
+
+
 # ── Publish callback endpoint tests ──────────────────────────────────────────
 
 
@@ -369,3 +385,134 @@ class TestOutboxDB:
         # Should appear with higher max_attempts
         pending = get_pending_outbox(db_dir, max_attempts=10)
         assert len(pending) == 1
+
+
+# ── DELETE-journal invariant (guards the hard-won 9p lesson) ──────────────────
+
+
+class TestDeleteJournalInvariant:
+    """The orchestration DB must use DELETE journal mode, never WAL.
+
+    WAL's -shm mmap crash-loops the control plane on the 9p bind mount; this test
+    guards that invariant, which previously had ZERO coverage.
+    """
+
+    def test_journal_mode_is_delete_and_no_wal_sidecar(self, db_dir: Path):
+        import sqlite3
+
+        from dashboard.orchestration_db import _connect, init_db
+
+        init_db(db_dir)
+        # Perform a real write through the production connection path.
+        job_id = _create_job(db_dir)
+        assert job_id
+
+        db_path = db_dir / "orchestration" / "orchestration.sqlite3"
+        assert db_path.is_file()
+
+        # The production connection path must report DELETE journal mode.
+        with _connect(db_dir) as conn:
+            mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        assert str(mode).lower() == "delete"
+
+        # A raw connection (no PRAGMA override) sees the persisted mode too — proving
+        # the DB was never switched to WAL on disk.
+        raw = sqlite3.connect(str(db_path))
+        try:
+            persisted = raw.execute("PRAGMA journal_mode").fetchone()[0]
+        finally:
+            raw.close()
+        assert str(persisted).lower() == "delete"
+
+        # No WAL/-shm sidecar files may exist next to the DB.
+        assert not (db_path.parent / "orchestration.sqlite3-wal").exists()
+        assert not (db_path.parent / "orchestration.sqlite3-shm").exists()
+
+
+# ── Outbox dead-letter reaper ─────────────────────────────────────────────────
+
+
+class TestOutboxReaper:
+    """reap_dead_outbox: strand-free terminal handling for exhausted outbox rows."""
+
+    def test_exhausted_entry_transitions_job_to_failed(self, db_dir: Path):
+        """A retry-exhausted outbox entry drives its job publish_enqueued -> failed."""
+        from dashboard.orchestration_db import (
+            JobState,
+            create_outbox_entry,
+            get_job,
+            get_pending_outbox,
+            init_db,
+            reap_dead_outbox,
+        )
+
+        init_db(db_dir)
+        job_id = _create_job(db_dir)
+        _advance_job_to_publish_enqueued(db_dir, job_id)
+        create_outbox_entry(db_dir, job_id, "http://n8n:5678/hook", {"job_id": job_id})
+
+        row_id = get_pending_outbox(db_dir)[0]["id"]
+        _exhaust_outbox_attempts(db_dir, row_id, max_attempts=5)
+
+        # Sanity: before reaping the job is still stranded in publish_enqueued.
+        assert get_job(db_dir, job_id).state == JobState.publish_enqueued
+
+        reaped = reap_dead_outbox(db_dir, max_attempts=5)
+        assert reaped == 1
+
+        j = get_job(db_dir, job_id)
+        assert j.state == JobState.failed
+        assert j.publish_status == "publish_failed: retries exhausted"
+
+    def test_dead_lettered_rows_not_counted_pending(self, db_dir: Path):
+        """get_outbox_stats stops counting dead-lettered rows under 'pending'."""
+        from dashboard.orchestration_db import (
+            create_outbox_entry,
+            get_outbox_stats,
+            get_pending_outbox,
+            init_db,
+            reap_dead_outbox,
+        )
+
+        init_db(db_dir)
+        job_id = _create_job(db_dir)
+        _advance_job_to_publish_enqueued(db_dir, job_id)
+        create_outbox_entry(db_dir, job_id, "http://n8n:5678/hook", {"job_id": job_id})
+
+        row_id = get_pending_outbox(db_dir)[0]["id"]
+        _exhaust_outbox_attempts(db_dir, row_id, max_attempts=5)
+
+        # Before reaping it is still counted as pending.
+        assert get_outbox_stats(db_dir)["pending"] == 1
+
+        reap_dead_outbox(db_dir, max_attempts=5)
+
+        stats = get_outbox_stats(db_dir)
+        assert stats["pending"] == 0
+        assert stats["dead_lettered"] == 1
+        assert stats["delivered"] == 0
+
+    def test_reaper_is_idempotent(self, db_dir: Path):
+        """Running the reaper twice is a no-op on the second pass."""
+        from dashboard.orchestration_db import (
+            JobState,
+            create_outbox_entry,
+            get_job,
+            get_pending_outbox,
+            init_db,
+            reap_dead_outbox,
+        )
+
+        init_db(db_dir)
+        job_id = _create_job(db_dir)
+        _advance_job_to_publish_enqueued(db_dir, job_id)
+        create_outbox_entry(db_dir, job_id, "http://n8n:5678/hook", {"job_id": job_id})
+
+        row_id = get_pending_outbox(db_dir)[0]["id"]
+        _exhaust_outbox_attempts(db_dir, row_id, max_attempts=5)
+
+        assert reap_dead_outbox(db_dir, max_attempts=5) == 1
+        # Second pass finds nothing to do.
+        assert reap_dead_outbox(db_dir, max_attempts=5) == 0
+        # Job remains terminally failed.
+        assert get_job(db_dir, job_id).state == JobState.failed
