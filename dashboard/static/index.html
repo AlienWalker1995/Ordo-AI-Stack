@@ -403,6 +403,18 @@
     }
     .service-card.fail .hint { color: var(--fg); border-top-color: rgba(255,51,88,.15); }
     .service-card .hint a { color: var(--accent); }
+    /* Background jobs — headless workers, secondary treatment set apart from the grid. */
+    .bg-jobs { margin-top: var(--space-6); padding-top: var(--space-5); border-top: 1px solid var(--border-subtle); }
+    .bg-jobs-heading {
+      font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .08em;
+      color: var(--muted); font-weight: 600; margin: 0 0 var(--space-1);
+    }
+    .bg-jobs-desc { margin-top: 0; margin-bottom: var(--space-4); }
+    /* Background cards read as muted/idle by default (no health probe -> neutral, never a false-red). */
+    .bg-jobs .service-card { background: var(--surface); opacity: .9; }
+    .bg-jobs .service-card:hover { opacity: 1; }
+    .bg-jobs .service-card .service { cursor: default; }
+    .bg-jobs .service-card .service:hover { opacity: 1; }
     .status-summary {
       display: flex; align-items: center; gap: var(--space-2);
       margin-bottom: var(--space-4); padding: var(--space-3) var(--space-4);
@@ -1658,6 +1670,14 @@
         <div class="skeleton skeleton-line" style="height:52px;width:100%;"></div>
         <div class="skeleton skeleton-line" style="height:52px;width:100%;"></div>
       </div>
+      <!-- Headless background jobs (worker / rag-ingestion): no browsable UI, so they
+           render apart from the interactive cards above — alive dot + start/stop only,
+           no "Open" link. Hidden entirely when no background service is enabled. -->
+      <div id="background-jobs-section" class="bg-jobs" style="display:none;">
+        <h3 class="bg-jobs-heading">Background jobs</h3>
+        <p class="section-desc bg-jobs-desc">Headless workers — no web UI to open, controlled from here.</p>
+        <div class="services" id="background-jobs"></div>
+      </div>
     </section>
 
     <section id="dependencies-section">
@@ -2278,8 +2298,144 @@
             (targetOk ? ' — still booting, check logs if it stays red' : ''));
     }
 
+    // One service card's HTML. Interactive cards wrap the status dot in an "Open" link;
+    // background jobs (headless, no browsable UI) render a plain, non-linked status row —
+    // same status dot + start/stop/restart controls, just no link and a neutral state.
+    function serviceCardHtml(s, host, isBackground) {
+      const okCls = s.ok === true ? 'ok-status' : s.ok === false ? 'fail' : '';
+      const dotCls = s.ok === true ? 'ok' : s.ok === false ? 'fail' : '';
+      const statusRow = isBackground
+        ? `<div class="service" style="cursor:default;">
+              <span class="status ${dotCls}" aria-hidden="true" title="${s.ok === true ? 'Healthy' : s.ok === false ? 'Offline' : 'No health probe'}"></span>
+              <span class="label">${s.ok === true ? 'Running' : s.ok === false ? 'Offline' : 'Unknown'}</span>
+            </div>`
+        : `<a href="${serviceOpenHref(s, host)}" target="_blank" rel="noopener" class="service" style="text-decoration:none;color:inherit;" aria-label="Open ${escapeHtml(s.name)} (opens in new tab)">
+              <span class="status ${s.ok ? 'ok' : 'fail'}" aria-hidden="true" title="${s.ok ? 'Healthy' : 'Offline'}"></span>
+              <span class="label">${s.ok ? 'Running' : 'Offline'}</span>
+              <span class="external" aria-hidden="true">↗</span>
+            </a>`;
+      return `
+          <div class="service-card ${okCls}" data-service-id="${escapeHtml(s.id)}">
+            <div class="service-name">
+              <span class="service-icon" aria-hidden="true">${SERVICE_ICONS[s.id] || '●'}</span>
+              ${escapeHtml(s.name)}
+            </div>
+            ${statusRow}
+            ${opsAvailable ? `
+            <div class="row">
+              <button type="button" class="btn-icon btn-ops-start" data-service-id="${escapeHtml(s.id)}" title="Start" aria-label="Start ${escapeHtml(s.name)}">▶</button>
+              <button type="button" class="btn-icon btn-ops-stop" data-service-id="${escapeHtml(s.id)}" title="Stop" aria-label="Stop ${escapeHtml(s.name)}">⏹</button>
+              <button type="button" class="btn-icon btn-ops-restart" data-service-id="${escapeHtml(s.id)}" title="Restart" aria-label="Restart ${escapeHtml(s.name)}">↻</button>
+              <button type="button" class="btn-icon btn-ops-logs" data-service-id="${escapeHtml(s.id)}" title="View logs" aria-label="View logs for ${escapeHtml(s.name)}">📋</button>
+            </div>
+            ` : ''}
+            ${!s.ok && s.hint ? `<div class="hint">${escapeHtml(s.hint)}</div>` : ''}
+          </div>`;
+    }
+
+    // Wire the start/stop/restart/logs buttons for every service-card inside `container`.
+    // Called for both the interactive grid and the background-jobs grid so each keeps its
+    // full lifecycle controls regardless of which section it renders in.
+    function wireServiceControls(container) {
+      container.querySelectorAll('.btn-ops-start').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const id = btn.dataset.serviceId;
+          btn.classList.add('loading');
+          try {
+            const r = await api('/api/ops/services/' + id + '/start', { method: 'POST' });
+            const d = await r.json();
+            if (r.ok) {
+              toast('Starting ' + id + '…');
+              watchService(id, 'start');
+            } else {
+              toast((d.detail || 'Failed') + '', 'error');
+            }
+          } catch (err) {
+            toast('Start failed: ' + (err.message || err), 'error');
+          } finally {
+            btn.classList.remove('loading');
+          }
+        });
+      });
+      container.querySelectorAll('.btn-ops-stop').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const id = btn.dataset.serviceId;
+          if (!confirm('Stop service "' + id + '"? Active connections will be dropped.')) return;
+          btn.classList.add('loading');
+          try {
+            const r = await api('/api/ops/services/' + id + '/stop', { method: 'POST' });
+            const d = await r.json();
+            if (r.ok) {
+              toast('Stopping ' + id + '…');
+              watchService(id, 'stop');
+            } else {
+              toast((d.detail || 'Failed') + '', 'error');
+            }
+          } catch (err) {
+            toast('Stop failed: ' + (err.message || err), 'error');
+          } finally {
+            btn.classList.remove('loading');
+          }
+        });
+      });
+      container.querySelectorAll('.btn-ops-restart').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const id = btn.dataset.serviceId;
+          if (!confirm('Restart service "' + id + '"? This will briefly interrupt the service.')) return;
+          btn.classList.add('loading');
+          try {
+            const r = await api('/api/ops/services/' + id + '/restart', { method: 'POST' });
+            const d = await r.json();
+            if (r.ok) {
+              toast('Restarting ' + id + '…');
+              watchService(id, 'restart');
+            } else {
+              toast((d.detail || 'Failed') + '', 'error');
+            }
+          } catch (err) {
+            toast('Restart failed: ' + (err.message || err), 'error');
+          } finally {
+            btn.classList.remove('loading');
+          }
+        });
+      });
+      container.querySelectorAll('.btn-ops-logs').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const id = btn.dataset.serviceId;
+          try {
+            const r = await api('/api/ops/services/' + id + '/logs?tail=100');
+            const d = await r.json();
+            if (r.ok && d.logs) {
+              const win = window.open('', '_blank', 'width=900,height=600');
+              if (!win) { toast('Enable popups to view logs', 'error'); return; }
+              win.document.write(`<!DOCTYPE html><html><head><title>${escapeHtml(id)} logs</title><style>
+                body{margin:0;background:#020307;color:#dde2ee;font-family:'JetBrains Mono',monospace;font-size:12px}
+                pre{padding:1.5rem;white-space:pre-wrap;word-break:break-all;line-height:1.6;margin:0}
+                .bar{position:sticky;top:0;padding:8px 16px;background:#07080e;border-bottom:1px solid #1c1f2e;font-size:13px;font-weight:600;color:#00c9ff;letter-spacing:.04em}
+              </style></head><body><div class="bar">${escapeHtml(id)} — last 100 lines</div><pre>${escapeHtml(d.logs)}</pre></body></html>`);
+              win.document.close();
+            } else {
+              toast((d.detail || 'No logs') + '', 'error');
+            }
+          } catch (err) {
+            toast('Logs failed: ' + (err.message || err), 'error');
+          }
+        });
+      });
+    }
+
     async function loadServices() {
       const el = document.getElementById('services');
+      const bgSection = document.getElementById('background-jobs-section');
+      const bgEl = document.getElementById('background-jobs');
       const summaryEl = document.getElementById('status-summary');
       const host = window.location.hostname || 'localhost';
       await checkOpsAvailable();
@@ -2294,135 +2450,37 @@
           const mcpUrl = d.mcp_external_url || (serviceUrl(host, mcpSvc.port || 8811) + '/mcp');
           document.querySelectorAll('.mcp-ext-url').forEach(el => { el.textContent = mcpUrl; });
         }
-        const okCount = services.filter(s => s.ok).length;
-        const total = services.length;
+        // Split headless background jobs (worker / rag-ingestion, flagged `background`
+        // by the catalog) out of the interactive grid. The summary + "all running"
+        // count reflect only the interactive, health-probed services — background jobs
+        // have no health check, so counting them would perpetually skew the total.
+        const interactive = services.filter(s => !s.background);
+        const background = services.filter(s => s.background);
+        const okCount = interactive.filter(s => s.ok).length;
+        const total = interactive.length;
         summaryEl.style.display = 'block';
         summaryEl.className = 'status-summary ' + (okCount === total ? 'all-ok' : 'has-issues');
         summaryEl.innerHTML = okCount === total
           ? `✓ All ${total} services running`
           : `${okCount}/${total} services running — see hints on failed cards`;
-        el.innerHTML = services.map(s => `
-          <div class="service-card ${s.ok ? 'ok-status' : 'fail'}" data-service-id="${escapeHtml(s.id)}">
-            <div class="service-name">
-              <span class="service-icon" aria-hidden="true">${SERVICE_ICONS[s.id] || '●'}</span>
-              ${escapeHtml(s.name)}
-            </div>
-            <a href="${serviceOpenHref(s, host)}" target="_blank" rel="noopener" class="service" style="text-decoration:none;color:inherit;" aria-label="Open ${s.name} (opens in new tab)">
-              <span class="status ${s.ok ? 'ok' : 'fail'}" aria-hidden="true" title="${s.ok ? 'Healthy' : 'Offline'}"></span>
-              <span class="label">${s.ok ? 'Running' : 'Offline'}</span>
-              <span class="external" aria-hidden="true">↗</span>
-            </a>
-            ${opsAvailable ? `
-            <div class="row">
-              <button type="button" class="btn-icon btn-ops-start" data-service-id="${escapeHtml(s.id)}" title="Start" aria-label="Start ${s.name}">▶</button>
-              <button type="button" class="btn-icon btn-ops-stop" data-service-id="${escapeHtml(s.id)}" title="Stop" aria-label="Stop ${s.name}">⏹</button>
-              <button type="button" class="btn-icon btn-ops-restart" data-service-id="${escapeHtml(s.id)}" title="Restart" aria-label="Restart ${s.name}">↻</button>
-              <button type="button" class="btn-icon btn-ops-logs" data-service-id="${escapeHtml(s.id)}" title="View logs" aria-label="View logs for ${s.name}">📋</button>
-            </div>
-            ` : ''}
-            ${!s.ok && s.hint ? `<div class="hint">${escapeHtml(s.hint)}</div>` : ''}
-          </div>
-        `).join('');
-        el.querySelectorAll('.btn-ops-start').forEach(btn => {
-          btn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const id = btn.dataset.serviceId;
-            btn.classList.add('loading');
-            try {
-              const r = await api('/api/ops/services/' + id + '/start', { method: 'POST' });
-              const d = await r.json();
-              if (r.ok) {
-                toast('Starting ' + id + '…');
-                watchService(id, 'start');
-              } else {
-                toast((d.detail || 'Failed') + '', 'error');
-              }
-            } catch (err) {
-              toast('Start failed: ' + (err.message || err), 'error');
-            } finally {
-              btn.classList.remove('loading');
-            }
-          });
-        });
-        el.querySelectorAll('.btn-ops-stop').forEach(btn => {
-          btn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const id = btn.dataset.serviceId;
-            if (!confirm('Stop service "' + id + '"? Active connections will be dropped.')) return;
-            btn.classList.add('loading');
-            try {
-              const r = await api('/api/ops/services/' + id + '/stop', { method: 'POST' });
-              const d = await r.json();
-              if (r.ok) {
-                toast('Stopping ' + id + '…');
-                watchService(id, 'stop');
-              } else {
-                toast((d.detail || 'Failed') + '', 'error');
-              }
-            } catch (err) {
-              toast('Stop failed: ' + (err.message || err), 'error');
-            } finally {
-              btn.classList.remove('loading');
-            }
-          });
-        });
-        el.querySelectorAll('.btn-ops-restart').forEach(btn => {
-          btn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const id = btn.dataset.serviceId;
-            if (!confirm('Restart service "' + id + '"? This will briefly interrupt the service.')) return;
-            btn.classList.add('loading');
-            try {
-              const r = await api('/api/ops/services/' + id + '/restart', { method: 'POST' });
-              const d = await r.json();
-              if (r.ok) {
-                toast('Restarting ' + id + '…');
-                watchService(id, 'restart');
-              } else {
-                toast((d.detail || 'Failed') + '', 'error');
-              }
-            } catch (err) {
-              toast('Restart failed: ' + (err.message || err), 'error');
-            } finally {
-              btn.classList.remove('loading');
-            }
-          });
-        });
-        el.querySelectorAll('.btn-ops-logs').forEach(btn => {
-          btn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const id = btn.dataset.serviceId;
-            try {
-              const r = await api('/api/ops/services/' + id + '/logs?tail=100');
-              const d = await r.json();
-              if (r.ok && d.logs) {
-                const win = window.open('', '_blank', 'width=900,height=600');
-                if (!win) { toast('Enable popups to view logs', 'error'); return; }
-                win.document.write(`<!DOCTYPE html><html><head><title>${escapeHtml(id)} logs</title><style>
-                  body{margin:0;background:#020307;color:#dde2ee;font-family:'JetBrains Mono',monospace;font-size:12px}
-                  pre{padding:1.5rem;white-space:pre-wrap;word-break:break-all;line-height:1.6;margin:0}
-                  .bar{position:sticky;top:0;padding:8px 16px;background:#07080e;border-bottom:1px solid #1c1f2e;font-size:13px;font-weight:600;color:#00c9ff;letter-spacing:.04em}
-
-
-    </style></head><body><div class="bar">${escapeHtml(id)} — last 100 lines</div><pre>${escapeHtml(d.logs)}</pre></body></html>`);
-                win.document.close();
-              } else {
-                toast((d.detail || 'No logs') + '', 'error');
-              }
-            } catch (err) {
-              toast('Logs failed: ' + (err.message || err), 'error');
-            }
-          });
-        });
+        el.innerHTML = interactive.map(s => serviceCardHtml(s, host, false)).join('');
+        wireServiceControls(el);
+        // Background-jobs section: render + reveal only when there are any (else it
+        // stays hidden — no empty header). Same lifecycle controls, no "Open" link.
+        if (background.length) {
+          bgEl.innerHTML = background.map(s => serviceCardHtml(s, host, true)).join('');
+          wireServiceControls(bgEl);
+          bgSection.style.display = 'block';
+        } else {
+          bgEl.innerHTML = '';
+          bgSection.style.display = 'none';
+        }
       } catch (e) {
         summaryEl.style.display = 'block';
         summaryEl.className = 'status-summary has-issues';
         summaryEl.innerHTML = 'Could not reach services';
         el.innerHTML = '<div class="empty">Run: docker compose up -d</div>';
+        if (bgSection) bgSection.style.display = 'none';
       }
     }
 

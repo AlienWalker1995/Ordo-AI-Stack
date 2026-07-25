@@ -129,9 +129,12 @@ SERVICES = [
     # port — their only liveness signal is a file-heartbeat container healthcheck, unreachable
     # from this container. So they carry NO `check` (card shows a neutral "unknown" state, not a
     # false-red or a guessed URL) but ARE operator-controllable via the ops-api (start/stop/restart).
-    {"id": "worker", "name": "Media Worker", "port": None, "check": None, "has_gpu": False, "plugin": "worker", "category": "media",
+    # `background: True` moves them out of the interactive service grid into the frontend's
+    # separate "Background jobs" section (no "Open" link — there's no browsable UI). This is the
+    # ONLY marker for that split; nothing else should carry it (locked by test_background_flag).
+    {"id": "worker", "name": "Media Worker", "port": None, "check": None, "has_gpu": False, "plugin": "worker", "category": "media", "background": True,
      "hint": "Headless ComfyUI render worker (no web UI). Health via container healthcheck. Logs: docker compose logs worker"},
-    {"id": "rag-ingestion", "name": "RAG Ingestion", "port": None, "check": None, "has_gpu": False, "plugin": "rag", "category": "rag",
+    {"id": "rag-ingestion", "name": "RAG Ingestion", "port": None, "check": None, "has_gpu": False, "plugin": "rag", "category": "rag", "background": True,
      "hint": "Headless folder-watch embedder for Qdrant (no web UI). Health via container healthcheck. Logs: docker compose logs rag-ingestion"},
     # LTX-trainer (LoRA) is headless (CLI-only, no web UI) — it has no dashboard card. It's a
     # compose service managed via the ops-api (restart), and GPU runs take an exclusive lease

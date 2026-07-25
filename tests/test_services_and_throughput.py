@@ -51,6 +51,20 @@ def test_services_have_required_fields(client):
         assert "hint" in svc
 
 
+def test_background_flag_flows_through_services_endpoint(client, monkeypatch):
+    """The additive `background` key reaches the frontend via /api/services — routes_hub
+    spreads the catalog entry (minus `check`), so it must not strip it. Force the
+    manifest fail-open path so the plugin-gated worker/rag-ingestion cards are present."""
+    monkeypatch.delenv("MANIFEST_PATH", raising=False)
+    r = client.get("/api/services")
+    by_id = {s["id"]: s for s in r.json()["services"]}
+    assert by_id["worker"]["background"] is True
+    assert by_id["rag-ingestion"]["background"] is True
+    # Interactive services never carry a truthy background flag.
+    assert not by_id["llamacpp"].get("background")
+    assert not by_id["webui"].get("background")
+
+
 def test_services_do_not_leak_auth_token(client, monkeypatch):
     """Regression: sensitive auth tokens must not appear in public /api/services URLs."""
     monkeypatch.setattr("dashboard.settings.DASHBOARD_AUTH_TOKEN", "secret-test-token-1234")
