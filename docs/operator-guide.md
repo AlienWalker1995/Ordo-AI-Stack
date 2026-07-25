@@ -148,7 +148,7 @@ prebuilt SPA the root it was actually compiled for. One data root at
 `out\secrets.env` (a second `env_file`).
 
 This Tailscale front door is the **default of three swappable access layers** — the edge
-(`plugins/edge`) and clean-URL names (`plugins/tailnet-names`) are plugins, so the same rendered stack
+(`services/edge`) and clean-URL names (`services/tailnet-names`) are plugins, so the same rendered stack
 can instead sit behind a self-hosted public domain or a cloud VM (both keeping the same Google SSO
 gate). Only the Tailscale model is wired today; the others' required pieces are documented in
 [`deployment-models.md`](deployment-models.md).
