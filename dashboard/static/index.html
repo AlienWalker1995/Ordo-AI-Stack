@@ -2289,7 +2289,9 @@
         const services = d.services || [];
         const mcpSvc = services.find(s => s.id === 'mcp');
         if (mcpSvc) {
-          const mcpUrl = serviceUrl(host, mcpSvc.port || 8811) + '/mcp';
+          // MCP is the Bearer API on the :443 front door (https://<host>/mcp), not a
+          // published :8811 port — the backend gives us the real external URL.
+          const mcpUrl = d.mcp_external_url || (serviceUrl(host, mcpSvc.port || 8811) + '/mcp');
           document.querySelectorAll('.mcp-ext-url').forEach(el => { el.textContent = mcpUrl; });
         }
         const okCount = services.filter(s => s.ok).length;

@@ -6,7 +6,7 @@ import asyncio
 from fastapi import APIRouter, Request
 
 from dashboard.dependency_registry import probe_all
-from dashboard.services_catalog import SERVICES, _check_service, tailnet_open_url
+from dashboard.services_catalog import SERVICES, _check_service, mcp_external_url, tailnet_open_url
 from dashboard.settings import AUTH_REQUIRED
 
 router = APIRouter(prefix="/api", tags=["hub"])
@@ -33,7 +33,7 @@ async def services():
         }
 
     results = await asyncio.gather(*[_probe(s) for s in SERVICES])
-    return {"services": list(results)}
+    return {"services": list(results), "mcp_external_url": mcp_external_url()}
 
 
 @router.get("/auth/config")

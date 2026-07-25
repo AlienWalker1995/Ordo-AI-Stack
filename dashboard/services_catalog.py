@@ -19,6 +19,14 @@ TAILNET_LABELS = {
 }
 
 
+def mcp_external_url() -> str | None:
+    """The MCP gateway's real external endpoint: the Bearer-gated /mcp route on the
+    :443 front door (https://<host>/mcp) — NOT a :8811 port, which isn't published.
+    Returns None when the edge host is unknown so the frontend keeps its fallback."""
+    host = os.environ.get("CADDY_TAILNET_HOSTNAME", "").strip()
+    return f"https://{host}/mcp" if host else None
+
+
 def tailnet_open_url(service_id: str) -> str | None:
     """Clean per-service URL (https://<label>.<domain>/) when the tailnet-names sidecar
     layer is enabled, else None. Both signals come from the rendered env: the enable flag
