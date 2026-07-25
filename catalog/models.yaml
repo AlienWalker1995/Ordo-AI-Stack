@@ -18,8 +18,8 @@ models:
     name: Qwen2.5 0.5B Instruct (Q4_K_M)
     backend: llama.cpp
     file: qwen2.5-0.5b-instruct-q4_k_m.gguf
-    source: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF
-    sha256: null
+    source: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+    sha256: 74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db
     requires: { vram_gb: 0, ram_gb: 2, cpu_ok: true }
     ctx_default: 32768
     tier: cpu
@@ -28,8 +28,8 @@ models:
     name: Qwen2.5 3B Instruct (Q4_K_M)
     backend: llama.cpp
     file: qwen2.5-3b-instruct-q4_k_m.gguf
-    source: https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF
-    sha256: null
+    source: https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf
+    sha256: 626b4a6678b86442240e33df819e00132d3ba7dddfe1cdc4fbb18e0a9615c62d
     requires: { vram_gb: 3, ram_gb: 6, cpu_ok: true }
     ctx_default: 32768
     tier: low
@@ -37,9 +37,11 @@ models:
   - id: qwen2.5-7b-instruct-q4
     name: Qwen2.5 7B Instruct (Q4_K_M)
     backend: llama.cpp
-    file: qwen2.5-7b-instruct-q4_k_m.gguf
-    source: https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF
-    sha256: null
+    # Single-file GGUF from bartowski — the official Qwen repo ships this quant split into
+    # multi-part files, which the single-URL fetcher can't reassemble.
+    file: Qwen2.5-7B-Instruct-Q4_K_M.gguf
+    source: https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf
+    sha256: 65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423
     requires: { vram_gb: 6, ram_gb: 8, cpu_ok: false }
     ctx_default: 65536
     tier: medium
@@ -47,9 +49,11 @@ models:
   - id: qwen2.5-14b-instruct-q5
     name: Qwen2.5 14B Instruct (Q5_K_M)
     backend: llama.cpp
-    file: qwen2.5-14b-instruct-q5_k_m.gguf
-    source: https://huggingface.co/Qwen/Qwen2.5-14B-Instruct-GGUF
-    sha256: null
+    # Single-file GGUF from bartowski — the official Qwen repo ships this quant split into
+    # multi-part files, which the single-URL fetcher can't reassemble.
+    file: Qwen2.5-14B-Instruct-Q5_K_M.gguf
+    source: https://huggingface.co/bartowski/Qwen2.5-14B-Instruct-GGUF/resolve/main/Qwen2.5-14B-Instruct-Q5_K_M.gguf
+    sha256: 48ad2dafedac636f62847f5338c356cd21f5cfa6b1e2c885360cb10c890b8cb2
     requires: { vram_gb: 11, ram_gb: 12, cpu_ok: false }
     ctx_default: 98304
     tier: high
