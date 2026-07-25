@@ -38,6 +38,12 @@ environment:
   MODEL_GATEWAY_URL: http://model-gateway:11435
   MODEL_GATEWAY_API_KEY: ${LITELLM_MASTER_KEY:-local}
   MCP_GATEWAY_URL: http://mcp-gateway:8811
+  # Single source of truth for the MCP server list: the SAME out/mcp/servers.txt the
+  # gateway reads (mounted below at /mcp-config). Without this the dashboard falls back
+  # to a stale hardcoded MCP_GATEWAY_SERVERS default (phantom duckduckgo, missing real
+  # servers) and add/remove 409s ("no volume"). With it, /api/mcp/servers + /health
+  # reflect the real set and add/remove hot-reload via the gateway's servers.txt poll.
+  MCP_CONFIG_PATH: /mcp-config/servers.txt
   COMFYUI_URL: http://comfyui:8188
   QDRANT_URL: http://qdrant:6333
   # On-disk model dirs (bind-mounted below): /api/llm/* scans GGUF_MODELS_DIR; MODELS_DIR is comfyui.
@@ -63,12 +69,27 @@ environment:
   # (Only the dashboard reads BASE_PATH for an in-container fs call; ops-api's BASE_PATH stays the
   # host path — it's used solely to interpolate ${BASE_PATH} for compose subprocesses, where correct.)
   BASE_PATH: /data/dashboard
+  # The rendered manifest (out/manifest.json) — the machine-readable enabled-plugin set.
+  # The service grid gates its cards on manifest.plugins_enabled (services_catalog.visible_services)
+  # so it reflects what THIS render actually enabled and can't silently omit an enabled service.
+  # Mounted read-only; the dashboard only reads it. Fails open (full catalog) if ever absent.
+  MANIFEST_PATH: /ordo-manifest.json
 # The dashboard reads on-disk GGUFs directly for /api/llm/* (shared read-only from the V1 tree via
 # BASE_PATH) and lists comfyui models via MODELS_DIR; its own state lives in the staged V2 data tree.
 volumes:
   - ${BASE_PATH:-.}/models/gguf:/gguf-models
   - ${BASE_PATH:-.}/models/comfyui:/models
   - ${DATA_PATH:-./data}/dashboard:/data/dashboard
+  # The rendered out/mcp dir — the EXACT same servers.txt the mcp-gateway mounts
+  # (ordo/compose.py: "./mcp:/mcp-config"). RW so the Manage-MCPs UI can add/remove
+  # (the gateway hot-reloads on its 5s poll). NB: servers.txt is render-owned, so a
+  # re-render reseeds it from the enabled mcp plugins — UI toggles are live but persist
+  # only if reflected in ordo.yaml (proper enable/disable-via-UI write-back is a follow-up).
+  - ./mcp:/mcp-config
+  # The rendered manifest (out/manifest.json). `./` resolves to the compose project-dir
+  # (out/) at runtime — same convention as the mcp mount above. Read-only: the grid's
+  # enabled-gate only reads plugins_enabled. See MANIFEST_PATH above.
+  - ./manifest.json:/ordo-manifest.json:ro
 
 # ── The V1-parity BACKEND (service `ops-api`) ──────────────────────────────────────────────────
 # The feature-rich FastAPI control API. Built from a COPY of V1's ops-controller with ONE minimal

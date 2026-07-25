@@ -6,7 +6,12 @@ import asyncio
 from fastapi import APIRouter, Request
 
 from dashboard.dependency_registry import probe_all
-from dashboard.services_catalog import SERVICES, _check_service, mcp_external_url, tailnet_open_url
+from dashboard.services_catalog import (
+    _check_service,
+    mcp_external_url,
+    tailnet_open_url,
+    visible_services,
+)
 from dashboard.settings import AUTH_REQUIRED
 
 router = APIRouter(prefix="/api", tags=["hub"])
@@ -32,7 +37,10 @@ async def services():
             "open_url": tailnet_open_url(svc["id"]),
         }
 
-    results = await asyncio.gather(*[_probe(s) for s in SERVICES])
+    # Gate the grid on the render manifest's enabled plugin set so it reflects what's
+    # actually deployed (and can't silently omit an enabled service). Fails open to the
+    # full catalog when the manifest isn't mounted.
+    results = await asyncio.gather(*[_probe(s) for s in visible_services()])
     return {"services": list(results), "mcp_external_url": mcp_external_url()}
 
 
@@ -61,7 +69,7 @@ async def health():
         ok, err = await _check_service(svc["check"], client) if svc.get("check") else (None, "")
         return {"id": svc["id"], "ok": ok, "error": err}
 
-    results = await asyncio.gather(*[_probe(s) for s in SERVICES])
+    results = await asyncio.gather(*[_probe(s) for s in visible_services()])
     all_ok = all(r["ok"] for r in results if r["ok"] is not None)
     return {"ok": all_ok, "services": list(results)}
 
