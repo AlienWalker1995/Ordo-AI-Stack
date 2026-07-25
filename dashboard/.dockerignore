@@ -4,8 +4,8 @@ __pycache__
 .gitignore
 
 # Defense-in-depth: the Dockerfile only COPYs a narrow, explicit file list (*.py,
-# dependency_registry.json, templates/, static/, entrypoint.sh), so none of this should ever
-# be reachable — but if the COPY list ever widens, don't let secret material ride along.
+# templates/, static/, entrypoint.sh), so none of this should ever be reachable — but if
+# the COPY list ever widens, don't let secret material ride along.
 .env
 .env.*
 *.pem

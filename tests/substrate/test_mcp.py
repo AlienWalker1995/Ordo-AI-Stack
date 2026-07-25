@@ -1,4 +1,5 @@
 """kind=mcp plugins: rendered into a pinned mcp-gateway registry, drift-free."""
+import json
 from pathlib import Path
 
 import yaml
@@ -178,3 +179,38 @@ def test_restored_servers_in_written_servers_txt(tmp_path):
     cb = reg["registry"]["codebase-memory"]
     assert cb["longLived"] is True and cb["disableNetwork"] is True
     assert "PLACEHOLDER_CODE_ROOT:/c/dev:ro" in cb["volumes"]
+
+
+# ── server_id → plugin_id map: emitted so the dashboard can persist a UI MCP toggle into ordo.yaml's
+#    plugins list (servers.txt is render-owned and would otherwise reseed the toggle away). ──
+def test_render_builds_server_plugin_map():
+    rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
+    m = rc.mcp_server_plugin_map
+    # server_id → plugin_id; comfyui SERVER maps to the comfyui-mcp PLUGIN (decoupled id)
+    assert m["comfyui"] == "comfyui-mcp"
+    # the identity-mapped ones (server_id defaults to plugin id)
+    assert m["qdrant-rag"] == "qdrant-rag" and m["searxng"] == "searxng"
+    assert m["n8n"] == "n8n" and m["orchestration"] == "orchestration"
+    assert m["codebase-memory"] == "codebase-memory" and m["memory-vault"] == "memory-vault"
+    # keyed by SERVER id, never the decoupled plugin id
+    assert "comfyui-mcp" not in m
+
+
+def test_map_covers_all_registered_mcp_plugins_even_when_disabled():
+    # CPU render disables GPU media plugins, but the map must still cover EVERY registered kind=mcp
+    # plugin (enabled + available-but-disabled) so the UI can re-enable one. comfyui-mcp depends on
+    # the comfyui service (GPU) so it isn't ENABLED on CPU — but it must still be in the map.
+    rc_cpu = render(_src(hardware=P_CPU), CATALOG, REGISTRY)
+    all_mcp_plugins = {p.id for p in REGISTRY.plugins if p.kind == "mcp"}
+    assert set(rc_cpu.mcp_server_plugin_map.values()) == all_mcp_plugins
+    assert rc_cpu.mcp_server_plugin_map["comfyui"] == "comfyui-mcp"  # disabled here, still mapped
+
+
+def test_write_emits_server_plugin_map_json(tmp_path):
+    render(_src(hardware=P_5090), CATALOG, REGISTRY).write(tmp_path)
+    m = json.loads((tmp_path / "mcp" / "server-plugin-map.json").read_text())
+    assert m["comfyui"] == "comfyui-mcp"
+    assert {"qdrant-rag", "searxng", "n8n", "orchestration",
+            "codebase-memory", "memory-vault"} <= set(m)
+    # lives alongside servers.txt in the dir the dashboard mounts at /mcp-config
+    assert (tmp_path / "mcp" / "servers.txt").exists()

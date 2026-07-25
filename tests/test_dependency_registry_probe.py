@@ -1,4 +1,8 @@
-"""Unit tests for dashboard dependency HTTP probes (M7)."""
+"""Unit tests for the dashboard dependency HTTP probe (M7).
+
+The probe now lives in dashboard.services_catalog (the single catalog); the old
+dependency_registry module/JSON was consolidated away.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -17,24 +21,24 @@ def _make_mock_client(status_code: int) -> MagicMock:
     return client
 
 
-def test_mcp_gateway_http_400_counts_as_reachable():
-    """Naive GET /mcp returns 400; gateway is still up for MCP clients."""
-    from dashboard.dependency_registry import _probe_one
+def test_soft_4xx_counts_as_reachable():
+    """Naive GET /mcp returns 400; a soft_4xx endpoint is still up for MCP clients."""
+    from dashboard.services_catalog import _probe_one
 
     client = _make_mock_client(400)
     ok, _lat, err = asyncio.run(
-        _probe_one("http://mcp-gateway:8811/mcp", client, entry_id="mcp-gateway")
+        _probe_one("http://mcp-gateway:8811/mcp", client, soft_4xx=True)
     )
     assert ok is True
     assert err is None
 
 
 def test_other_services_http_400_still_fails():
-    from dashboard.dependency_registry import _probe_one
+    from dashboard.services_catalog import _probe_one
 
     client = _make_mock_client(400)
     ok, _lat, err = asyncio.run(
-        _probe_one("http://model-gateway:11435/health", client, entry_id="model-gateway")
+        _probe_one("http://model-gateway:11435/health", client, soft_4xx=False)
     )
     assert ok is False
     assert err == "HTTP 400"

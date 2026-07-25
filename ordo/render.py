@@ -89,6 +89,12 @@ class RenderedConfig:
     plugins_enabled: list[str]
     compose_profiles: list[str] = dataclasses.field(default_factory=list)
     mcp_servers: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    # server_id → plugin_id for EVERY registered kind=mcp plugin (enabled AND available-but-disabled).
+    # Emitted to out/mcp/server-plugin-map.json (the dir the dashboard mounts). The dashboard reads it
+    # to translate a UI MCP toggle back to the ordo.yaml plugin it must add/remove — so a toggle that
+    # today only writes servers.txt (ephemeral, reseeded on re-render) ALSO updates the source of
+    # truth and PERSISTS. Covers disabled plugins too, so the UI can re-enable an available one.
+    mcp_server_plugin_map: dict[str, str] = dataclasses.field(default_factory=dict)
     # (plugin, service) pairs for every enabled kind=service plugin — compose builds from these
     plugin_services: list[Any] = dataclasses.field(default_factory=list)
     # secret env KEYS the enabled services need (core + plugins). Values are NEVER rendered — they
@@ -182,6 +188,13 @@ class RenderedConfig:
             ",".join(s["id"] for s in self.mcp_servers) + "\n", encoding="utf-8")
         (mcp_dir / "registry-custom.yaml").write_text(
             _render_registry_custom(self.mcp_servers), encoding="utf-8")
+        # server_id → plugin_id for ALL registered kind=mcp plugins (enabled + available-but-disabled).
+        # JSON (stdlib-readable, no extra dep) alongside servers.txt in the dir the dashboard mounts at
+        # /mcp-config. The dashboard uses it to persist a UI MCP toggle into ordo.yaml's plugins list,
+        # so the toggle survives the next re-render (which regenerates servers.txt from that same list).
+        (mcp_dir / "server-plugin-map.json").write_text(
+            json.dumps(self.mcp_server_plugin_map, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8")
         # an isolated, runnable compose for the stack (own project/network, no port clashes)
         (out / "docker-compose.yml").write_text(
             yaml.safe_dump(self.compose_dict(), sort_keys=False),
@@ -319,6 +332,14 @@ def render(source: Source, catalog: Catalog,
     # flatten to (plugin, service) pairs — compose builds each declared service from data
     plugin_services = [(p, ps) for p in services for ps in p.services]
     mcp_servers, mcp_notes = _render_mcp(mcps)
+    # server_id → plugin_id for EVERY registered kind=mcp plugin, not just the enabled ones. The
+    # server_id defaults to the plugin id (mirrors _render_mcp), decoupled only when a plugin sets
+    # mcp.server_id (e.g. plugin `comfyui-mcp` → server `comfyui`). Lets the dashboard re-enable a
+    # currently-disabled MCP by mapping its server id to the plugin to add back to ordo.yaml.
+    mcp_server_plugin_map = {
+        str(p.mcp.get("server_id") or p.id): p.id
+        for p in plugins.plugins if p.kind == "mcp"
+    }
 
     # Host/site config (DATA_PATH/BASE_PATH/CODE_ROOT, edge hostnames, COMFYUI_IMAGE, …) flows
     # verbatim into .env so plugin `${VAR}` refs resolve deterministically. Derived keys WIN over
@@ -339,7 +360,8 @@ def render(source: Source, catalog: Catalog,
         warnings=warnings + mcp_notes, env=env, hermes=hermes, model_gateway=model_gateway,
         dashboard=dashboard,
         plugins_enabled=[p.id for p in services], compose_profiles=compose_profiles,
-        mcp_servers=mcp_servers, plugin_services=plugin_services,
+        mcp_servers=mcp_servers, mcp_server_plugin_map=mcp_server_plugin_map,
+        plugin_services=plugin_services,
         required_secrets=required_secrets,
     )
 

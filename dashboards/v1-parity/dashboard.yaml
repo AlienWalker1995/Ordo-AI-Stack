@@ -44,6 +44,15 @@ environment:
   # servers) and add/remove 409s ("no volume"). With it, /api/mcp/servers + /health
   # reflect the real set and add/remove hot-reload via the gateway's servers.txt poll.
   MCP_CONFIG_PATH: /mcp-config/servers.txt
+  # The operator source (out/ordo.yaml), mounted RW below. servers.txt is RENDER-OWNED — a re-render
+  # reseeds it from the enabled kind=mcp plugins in ordo.yaml's `plugins:` list — so a UI MCP toggle
+  # to servers.txt alone is EPHEMERAL. With this set, enable/disable ALSO edits ordo.yaml's plugins
+  # list (the single source of truth), so the next `ordo render` regenerates the SAME servers.txt (no
+  # drift). Unset → dashboard falls back to servers.txt-only + surfaces a 'not persistent' note.
+  # out/ordo.yaml carries host paths but NO secrets (those live in secrets.env), so it's safe behind
+  # the edge SSO. The server_id→plugin_id map the toggle needs is emitted to /mcp-config alongside
+  # servers.txt (out/mcp/server-plugin-map.json).
+  ORDO_SOURCE_PATH: /ordo-source.yaml
   COMFYUI_URL: http://comfyui:8188
   QDRANT_URL: http://qdrant:6333
   # On-disk model dirs (bind-mounted below): /api/llm/* scans GGUF_MODELS_DIR; MODELS_DIR is comfyui.
@@ -83,9 +92,15 @@ volumes:
   # The rendered out/mcp dir — the EXACT same servers.txt the mcp-gateway mounts
   # (ordo/compose.py: "./mcp:/mcp-config"). RW so the Manage-MCPs UI can add/remove
   # (the gateway hot-reloads on its 5s poll). NB: servers.txt is render-owned, so a
-  # re-render reseeds it from the enabled mcp plugins — UI toggles are live but persist
-  # only if reflected in ordo.yaml (proper enable/disable-via-UI write-back is a follow-up).
+  # re-render reseeds it from the enabled mcp plugins — so the toggle handler ALSO writes
+  # ordo.yaml (mounted below) to persist enable/disable across re-render. `./mcp` also carries
+  # server-plugin-map.json (server_id→plugin_id) the handler reads to find the plugin to edit.
   - ./mcp:/mcp-config
+  # The operator source (out/ordo.yaml). RW so an MCP enable/disable persists into its `plugins:`
+  # list (the single source of truth) — a surgical, comment-preserving line add/remove. `./`
+  # resolves to the compose project-dir (out/) at runtime — same convention as the mcp mount above.
+  # Contains host paths but NO secrets (secrets live in secrets.env), so it's safe behind edge SSO.
+  - ./ordo.yaml:/ordo-source.yaml:rw
   # The rendered manifest (out/manifest.json). `./` resolves to the compose project-dir
   # (out/) at runtime — same convention as the mcp mount above. Read-only: the grid's
   # enabled-gate only reads plugins_enabled. See MANIFEST_PATH above.

@@ -86,6 +86,27 @@ def test_catalog_ids_are_unique():
     assert len(ids) == len(set(ids))
 
 
+def test_only_headless_workers_carry_background_flag():
+    """worker + rag-ingestion are the pure no-UI background jobs; ONLY they carry
+    `background: True` (the marker the frontend uses to split them into a separate
+    'Background jobs' section). Every other card stays an interactive service — so a
+    stray flag can't quietly demote an openable service out of the main grid."""
+    bg = {s["id"] for s in SERVICES if s.get("background")}
+    assert bg == {"worker", "rag-ingestion"}
+    for s in SERVICES:
+        if s["id"] not in bg:
+            assert not s.get("background"), f"{s['id']} unexpectedly flagged background"
+
+
+def test_background_jobs_have_no_ui_open_target():
+    """Background jobs are headless: no port and no health check, so the frontend has
+    nothing to build an 'Open' link from (and shows a neutral, not false-red, state)."""
+    for s in SERVICES:
+        if s.get("background"):
+            assert s.get("port") is None, f"{s['id']} background job should have no port"
+            assert s.get("check") is None, f"{s['id']} background job should have no check"
+
+
 def test_every_card_declares_plugin_gate():
     """Every entry must carry an explicit `plugin` key (None for core) so the
     enabled-gate is total — a forgotten key would make a card ungate-able."""
