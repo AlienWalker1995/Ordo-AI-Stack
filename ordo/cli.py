@@ -46,7 +46,40 @@ def cmd_detect(args: argparse.Namespace) -> int:
     return 0
 
 
+def _guard_render_source(args: argparse.Namespace) -> None:
+    """Refuse to silently render the PUBLIC EXAMPLE over an operator's live out-dir.
+
+    Root cause of the SSO outage: `--source` defaults to ordo.example.yaml, so a bare
+    `ordo render` on the operator box rendered the example into ./out and stripped the
+    operator's host-paths (BASE_PATH/DATA_PATH/…) out of .env → empty allowlist mount → deny-all.
+
+    When `--source` was NOT given explicitly AND the target --out already holds an `ordo.yaml`
+    that DIFFERS from the example, that existing file is the operator's real source. Prefer it
+    (render from it, no clobber) unless the caller forces the example with --force. An explicit
+    `--source ordo.example.yaml` (what CI passes) is untouched — source_explicit short-circuits.
+    """
+    # Absent source_explicit (a hand-built namespace, not the main() path) → treat as explicit and
+    # skip the guard: such a caller set args.source deliberately.
+    if getattr(args, "source_explicit", True) or getattr(args, "force", False):
+        return
+    existing = Path(args.out) / "ordo.yaml"
+    if not existing.exists():
+        return
+    try:
+        existing_text = existing.read_text(encoding="utf-8")
+        example_text = DEFAULT_SOURCE.read_text(encoding="utf-8") if DEFAULT_SOURCE.exists() else ""
+    except OSError:
+        return
+    if existing_text == example_text:
+        return  # out/ordo.yaml IS the example — rendering the example changes nothing
+    # The out-dir carries a real, non-example source. Use it instead of clobbering with the example.
+    print(f"note: --source not given and {existing} differs from the example — rendering from it "
+          f"(operator config preserved). Pass --source explicitly or --force to override.")
+    args.source = str(existing)
+
+
 def cmd_render(args: argparse.Namespace) -> int:
+    _guard_render_source(args)
     src, cat = _load(Path(args.source), Path(args.catalog))
     rc = render(src, cat)
     rc.write(args.out)
@@ -225,12 +258,17 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="ordo", description="Ordo config render engine")
-    p.add_argument("--source", default=str(DEFAULT_SOURCE))
+    # Default is a SENTINEL (None), resolved to DEFAULT_SOURCE below, so cmd_render can tell an
+    # explicit `--source ordo.example.yaml` apart from the implicit default (see _guard_render_source).
+    p.add_argument("--source", default=None)
     p.add_argument("--catalog", default=str(DEFAULT_CATALOG))
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("detect").set_defaults(func=cmd_detect)
     pr = sub.add_parser("render")
     pr.add_argument("--out", default="out")
+    pr.add_argument("--force", action="store_true",
+                    help="render the default/example source even if --out holds a differing ordo.yaml "
+                         "(overrides the anti-clobber guard)")
     pr.set_defaults(func=cmd_render)
     ps = sub.add_parser("setup")
     ps.add_argument("--out", default="ordo.yaml")
@@ -270,6 +308,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="how often the scheduler advances its lease clock + sweeps expired leases")
     pv.set_defaults(func=cmd_serve)
     args = p.parse_args(argv)
+    # Distinguish an explicit `--source` from the implicit default, then resolve the sentinel so
+    # every command still sees a concrete path (unchanged behaviour for all but cmd_render's guard).
+    args.source_explicit = args.source is not None
+    if args.source is None:
+        args.source = str(DEFAULT_SOURCE)
     return args.func(args)
 
 

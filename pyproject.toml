@@ -43,3 +43,9 @@ known-first-party = ["dashboard", "ordo"]
 [tool.pytest.ini_options]
 tmp_path_retention_policy = "none"
 asyncio_mode = "auto"
+# Collect ONLY the real suite. A bare `pytest` used to recurse into vendored trees under
+# data/comfyui-storage/** (custom-node test files that error on import) and into rendered/tmp
+# output dirs, producing ~134 collection errors. Scoping collection to tests/ + excluding the
+# non-source dirs makes `pytest` and `pytest tests/` behave identically.
+testpaths = ["tests"]
+norecursedirs = ["data", "models", "out", "secrets", "tmp*", ".git", "*.egg-info"]

@@ -35,7 +35,12 @@ CORE_SECRET_KEYS: tuple[str, ...] = (
     # NB: no DASHBOARD_AUTH_TOKEN — the dashboard has NO per-service auth. The Caddy edge
     # (oauth2-proxy + Google SSO) is the ONLY gate; internal callers reach it over ordo-net.
     # (operator mandate: auth is the edge's job, not baked into every service — 2026-07-15.)
-    "THROUGHPUT_RECORD_TOKEN",    # model-gateway → dashboard throughput samples
+    # NB: THROUGHPUT_RECORD_TOKEN is intentionally NOT required. There is no SOPS source that can
+    # supply it, and the dashboard only enforces it "when set" (dashboard/app.py) — the /api/
+    # throughput/record route is open when the var is empty. Demanding a key nothing can provide
+    # would make secrets.env.example (and any preflight secrets-completeness check) list an
+    # unfulfillable key. It stays an OPTIONAL var: set it to harden the internal route, or leave
+    # it unset. (2026-07-24 hardening audit.)
     "HF_TOKEN",                   # Hugging Face (gated model pulls)
     "GITHUB_PERSONAL_ACCESS_TOKEN",  # mcp-gateway GitHub MCP + ComfyUI-Manager
 )

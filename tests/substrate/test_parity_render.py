@@ -111,6 +111,16 @@ def test_secrets_env_example_generated_keys_only(tmp_path):
     assert {"SEARXNG_SECRET", "OAUTH2_PROXY_CLIENT_ID", "MCP_GATEWAY_TOKEN"} <= set(rc.required_secrets)
 
 
+def test_throughput_record_token_is_not_a_required_secret():
+    """THROUGHPUT_RECORD_TOKEN must NOT be demanded as a required secret: there is no SOPS source
+    that can supply it, and the dashboard only enforces it "when set" (the /api/throughput/record
+    route is open when the var is empty). Requiring it would list an unfulfillable key in
+    secrets.env.example and fail a secrets-completeness preflight for a key nothing can provide."""
+    rc = _dual()
+    assert "THROUGHPUT_RECORD_TOKEN" not in rc.required_secrets
+    assert "THROUGHPUT_RECORD_TOKEN" not in CORE_SECRET_KEYS
+
+
 def test_secrets_scoped_to_enabled_plugins():
     # a CPU-only render without the edge? edge is CPU-ok so it stays; but a render that pins only
     # comfyui should NOT pull in edge/searxng secrets — secrets track the enabled set.
@@ -149,10 +159,16 @@ def test_edge_mounts_tracked_config_not_copies():
     # ${BASE_PATH} so the tracked file is the single source of truth — a `./`-relative
     # mount resolves against the compose project dir (out) and serves a stale COPY
     # (the drift that shipped an old Caddyfile on 2026-07-15).
+    #
+    # These two are SECURITY-CRITICAL, so they use the fail-loud `${BASE_PATH:?...}` form (not
+    # `:-.`): an empty/unset BASE_PATH would otherwise make Docker fabricate an empty dir at the
+    # mount → zero-email allowlist → deny-all outage. `:?` rejects an empty value at compose-config
+    # time. (Guarded in detail by test_compose.test_edge_security_mounts_fail_loud_on_empty_base_path.)
     c = _dual().compose_dict()
-    assert "${BASE_PATH:-.}/auth/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" in c["services"]["caddy"]["volumes"]
+    assert ("${BASE_PATH:?BASE_PATH must be set (non-empty)}/auth/caddy/Caddyfile:/etc/caddy/Caddyfile:ro"
+            in c["services"]["caddy"]["volumes"])
     assert (
-        "${BASE_PATH:-.}/auth/oauth2-proxy/emails.txt:/etc/oauth2-proxy/emails.txt:ro"
+        "${BASE_PATH:?BASE_PATH must be set (non-empty)}/auth/oauth2-proxy/emails.txt:/etc/oauth2-proxy/emails.txt:ro"
         in c["services"]["oauth2-proxy"]["volumes"]
     )
 
