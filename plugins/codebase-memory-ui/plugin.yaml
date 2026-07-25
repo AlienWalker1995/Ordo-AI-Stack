@@ -1,9 +1,9 @@
 # Plugin manifest (data-only) — the Codebase-Memory 3D graph visualization UI (long-lived, opt-in).
 # LOCALLY-BUILT in V1; V2 pins it as a project buildable image. Indexes its own copy of the code
-# root (mounted read-only) and serves the graph at /codebase-memory/ behind the edge.
+# root (mounted read-only) and serves the graph at its own root on the edge port :8448.
 id: codebase-memory-ui
 name: Codebase Memory UI (code graph)
-description: 3D code knowledge-graph visualizer over the read-only code root; served under /codebase-memory/.
+description: 3D code knowledge-graph visualizer over the read-only code root; served at its origin root on :8448.
 requires:
   nvidia: false
   ram_gb: 2
@@ -21,7 +21,7 @@ services:
       # Source tree (read-only) so the UI's own process can index and visualize it.
       - ${CODE_ROOT:-/c/dev}:/c/dev:ro
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:9750/codebase-memory/ || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:9750/ || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 5

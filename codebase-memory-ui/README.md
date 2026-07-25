@@ -1,6 +1,6 @@
 # codebase-memory-ui
 
-> ℹ️ **Live in the Ordo stack.** This is a running production service. In the Ordo stack it's the `codebase-memory-ui` **service plugin** (`ordo-v2/codebase-memory-ui:latest`, profile `codebase-memory`), built from [`docker/codebase-memory-ui/`](../docker/codebase-memory-ui/) — which references this directory as its build context. Enablement is via `ordo.yaml` (plugin gating) rather than the V1 `docker compose --profile …` command shown below, but the behavior, nginx subpath rewrite, and SSO exposure are current. See [`docs/history/PARITY.md`](../docs/history/PARITY.md).
+> ℹ️ **Live in the Ordo stack.** This is a running production service. In the Ordo stack it's the `codebase-memory-ui` **service plugin** (image `ordo/codebase-memory-ui:latest`, profile `codebase-memory`), built from [`docker/codebase-memory-ui/`](../docker/codebase-memory-ui/) — which references this directory as its build context. Enablement is via `ordo.yaml` (plugin gating) rather than the V1 `docker compose --profile …` command shown below. Since the 2026-07-24 edge convergence it gets its **own dedicated SSO-gated port (`:8448`) and is served at its origin ROOT** — the container's nginx is now a plain pass-through (no `sub_filter`). See [`docs/history/PARITY.md`](../docs/history/PARITY.md).
 
 Optional long-lived service that serves the **3D interactive code knowledge-graph**
 from the same index the headless `codebase-memory` MCP builds — so you can *browse*
@@ -12,13 +12,13 @@ which serves the visualization as a thread alongside the MCP server.
 ## Two upstream quirks this image handles
 1. **Absolute-asset SPA that binds `127.0.0.1` only.** The UI binds `127.0.0.1:9749`
    and serves `/assets`, `/api`, `/rpc` at the origin root with no base-path option.
-   The image runs **nginx** (on `0.0.0.0:9750`) which proxies to the UI and
-   `sub_filter`-rewrites those baked paths to the `/codebase-memory/` prefix (see
-   `nginx.conf`) — so Caddy serves it under that subpath on the shared `:443` SSO
-   origin without colliding with Open WebUI's root. (The 3D node-label fonts are
-   fetched from an external CDN — the unicode-font-resolver on jsdelivr — not this
-   origin, so `/font-files/` is deliberately **not** rewritten; doing so corrupts
-   the CDN URL and 404s every label font.)
+   The image runs **nginx** (on `0.0.0.0:9750`) purely to expose that loopback-bound UI
+   on the container network — it **proxies straight through with no path rewriting**
+   (see `nginx.conf`). Because the service now has its own dedicated port (`:8448`) and
+   is served at the origin ROOT, the absolute asset paths resolve as-is; there is no
+   `sub_filter` and no `/codebase-memory/` prefix anymore. (The 3D node-label fonts are
+   fetched from an external CDN — the unicode-font-resolver on jsdelivr — not this origin;
+   since nothing is rewritten at all, that CDN URL is untouched.)
 2. **The process is an MCP stdio server** — with no client attached it would read EOF
    on stdin and exit. The entrypoint keeps stdin open (`tail -f /dev/null | …`) so the
    UI stays up as a service.
@@ -36,10 +36,12 @@ this, plus the `codebase-memory-cache` volume at `/cache` for config.
 > (e.g. `secrets/`, `data/` are excluded — verified).
 
 ## Exposure (SSO)
-Served at **`https://<host>/codebase-memory/`** on the shared `:443` origin, behind the
-existing Google SSO — no dedicated port. Caddy routes `/codebase-memory/*` to this
-container (the `@codebasememory` handle in `auth/caddy/Caddyfile`); nginx rewrites the
-SPA's absolute paths so everything stays under the prefix. The dashboard's services
+Served at **`https://<host>:8448/`** — its own dedicated SSO-gated Caddy port, at the
+origin ROOT, behind the existing Google SSO. Caddy's `:8448` site block is a plain
+`import sso_service codebase-memory-ui:9750` (see `auth/caddy/Caddyfile`) — no path
+rewriting at the edge, and the container's nginx proxies straight through, so the SPA's
+absolute asset paths resolve directly. The old `https://<host>/codebase-memory/` URL
+still works — Caddy's `:443` front door 302s it to `:8448/`. The dashboard's services
 section links here via `SSO_ROUTES`.
 
 ## Enable
@@ -57,8 +59,8 @@ Then re-render and bring the stack up:
 ordo render
 cd out && docker compose -p ordo up -d
 ```
-Then browse **`https://<CADDY_TAILNET_HOSTNAME>/codebase-memory/`** (Google SSO). Index a
-repo first (the UI's "index" action, or `POST /codebase-memory/rpc` `index_repository`)
+Then browse **`https://<CADDY_TAILNET_HOSTNAME>:8448/`** (Google SSO). Index a
+repo first (the UI's "index" action, or `POST /rpc` `index_repository`)
 or the graph will be empty.
 
 ## Note

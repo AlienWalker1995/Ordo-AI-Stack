@@ -278,6 +278,40 @@ def test_model_without_backend_image_keeps_default(tmp_path):
     )
 
 
+def test_edge_security_mounts_fail_loud_on_empty_base_path():
+    """The oauth2-proxy allowlist (emails.txt) and the Caddyfile are SECURITY-CRITICAL host
+    binds. They MUST use the `${BASE_PATH:?...}` fail-loud form, not `${BASE_PATH:-.}`: an
+    empty/unset BASE_PATH with `:-.` makes Docker fabricate an empty directory at the mount
+    → zero-email allowlist → deny-all outage (this happened). `:?` makes `docker compose config`
+    reject an empty value instead. Matches the CADDY_BIND `:?` precedent in the same plugin."""
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto", "plugins": ["edge"]})
+    c = render(src, CATALOG, REGISTRY).compose_dict()
+
+    emails_mounts = [v for v in c["services"]["oauth2-proxy"]["volumes"] if "emails.txt" in v]
+    assert emails_mounts, "oauth2-proxy has no emails.txt allowlist mount"
+    for v in emails_mounts:
+        assert "${BASE_PATH:?" in v, f"emails.txt mount not fail-loud on empty BASE_PATH: {v}"
+        assert "${BASE_PATH:-" not in v, f"emails.txt mount still uses the clobber-prone :- form: {v}"
+
+    caddyfile_mounts = [v for v in c["services"]["caddy"]["volumes"] if "/Caddyfile" in v]
+    assert caddyfile_mounts, "caddy has no Caddyfile mount"
+    for v in caddyfile_mounts:
+        assert "${BASE_PATH:?" in v, f"Caddyfile mount not fail-loud on empty BASE_PATH: {v}"
+        assert "${BASE_PATH:-" not in v, f"Caddyfile mount still uses the clobber-prone :- form: {v}"
+
+
+def test_gpu_exporter_has_no_impossible_healthcheck():
+    """The nvidia_gpu_exporter image is distroless (no wget/shell), so any wget-based healthcheck
+    can never pass → permanently unhealthy (FailingStreak 300+). Prometheus scrapes :9835 directly
+    and nothing depends_on it as service_healthy, so the probe is pure false-red. It must be gone."""
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto", "plugins": ["monitoring"]})
+    c = render(src, CATALOG, REGISTRY).compose_dict()
+    assert "healthcheck" not in c["services"]["gpu-exporter"], (
+        "gpu-exporter still declares a healthcheck the distroless image can never pass")
+
+
 def test_ops_controller_serve_out_matches_deployed_layout():
     # The live deployment mounts the dir HOLDING ordo.yaml AND the rendered outputs as /config
     # (compose project dir = out). serve's --out must therefore be /config itself: writing to

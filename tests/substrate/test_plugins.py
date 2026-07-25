@@ -27,11 +27,13 @@ def _src(**kw):
     return Source.from_dict(base)
 
 
-# The CPU-ok service plugins ported for V1 parity — enable on ANY hardware (they run without a GPU),
-# but stay dormant behind their compose profile until requested. Voice/comfyui/song-gen are the
-# GPU-gated ones handled separately.
+# The CPU-ok service plugins — enable on ANY hardware (they run without a GPU), but stay dormant
+# behind their compose profile until requested. Voice/comfyui/song-gen are the GPU-gated ones
+# handled separately. All but tailnet-names are the V1-parity port; tailnet-names is the post-parity
+# per-service Tailscale clean-URL sidecar set, which rides the edge profile the same CPU-ok way.
 CPU_OK_SERVICE_PLUGINS = {"monitoring", "rag", "worker", "automation", "open-webui",
-                          "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge"}
+                          "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
+                          "tailnet-names"}
 
 
 def test_registry_loaded_manifests():

@@ -6,10 +6,9 @@
 # server. Three upstream quirks this image works around:
 #   1. The UI HTTP server binds 127.0.0.1 ONLY (src/ui/httpd.c) — unreachable from
 #      other containers. nginx (on 0.0.0.0:9750) proxies to 127.0.0.1:9749.
-#   2. The UI is an absolute-asset SPA with no base-path option; nginx serves it
-#      under /codebase-memory/ and sub_filter-rewrites its baked /assets,/api,/rpc
-#      paths to that prefix so it can live on the shared :443 SSO origin (see
-#      nginx.conf). No port, no collision with Open WebUI's root.
+#   2. The UI is an absolute-asset SPA with no base-path option; it gets its own
+#      dedicated SSO-gated edge port (:8448) and nginx proxies it straight through
+#      at the root it was built for — no path rewriting (see nginx.conf).
 #   3. The process is an MCP stdio server; with no client it would hit EOF on stdin
 #      and exit. The entrypoint keeps stdin open so the UI stays up.
 #
@@ -52,8 +51,8 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 ENV CBM_CACHE_DIR=/cache
 ENV CBM_LOG_LEVEL=error
 
-# nginx serves the rewritten SPA under /codebase-memory/ here; the UI itself listens
-# on 127.0.0.1:9749 inside the container.
+# nginx serves the SPA at root here; the UI itself listens on 127.0.0.1:9749
+# inside the container.
 EXPOSE 9750
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

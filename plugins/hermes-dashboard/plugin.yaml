@@ -1,10 +1,10 @@
 # Plugin manifest (data-only) — the Hermes web dashboard (the `hermes dashboard` SPA), served at
-# /hermes/ behind the edge. V1 runs it from the SAME image as the hermes-gateway agent. It's
+# its origin root on the edge port :8447. V1 runs it from the SAME image as the hermes-gateway agent. It's
 # Hermes-specific (uses the agent-hermes image), so it's opt-in behind its own profile; enable it
 # only when the chosen agent is Hermes. Distinct from the V2-native core `dashboard` (control plane).
 id: hermes-dashboard
 name: Hermes dashboard (agent SPA)
-description: The Hermes agent's own web chat/skill dashboard, served under /hermes/.
+description: The Hermes agent's own web chat/skill dashboard, served at its origin root on :8447.
 requires:
   nvidia: false
   ram_gb: 1
