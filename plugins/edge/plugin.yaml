@@ -33,6 +33,15 @@ services:
       - --upstream=static://202
       - --redirect-url=https://${CADDY_TAILNET_HOSTNAME}/oauth2/callback
       - --whitelist-domain=.${CADDY_TAILNET_DOMAIN}
+      # Port-per-service model: rd= targets carry the service port; the portless
+      # entry doesn't match them, so each SSO-gated port needs its own entry
+      # (the OAuth callback itself stays on :443 — one Google redirect URI).
+      - --whitelist-domain=${CADDY_TAILNET_HOSTNAME}:8443
+      - --whitelist-domain=${CADDY_TAILNET_HOSTNAME}:8444
+      - --whitelist-domain=${CADDY_TAILNET_HOSTNAME}:8445
+      - --whitelist-domain=${CADDY_TAILNET_HOSTNAME}:8446
+      - --whitelist-domain=${CADDY_TAILNET_HOSTNAME}:8447
+      - --whitelist-domain=${CADDY_TAILNET_HOSTNAME}:8448
       - --cookie-domain=.${CADDY_TAILNET_DOMAIN}
       - --cookie-secure=true
       - --cookie-samesite=lax
@@ -56,8 +65,19 @@ services:
     # an empty bind silently degraded to 0.0.0.0:443 with no operator intent behind it. It does
     # NOT reject 0.0.0.0 as a value. CADDY_BIND=0.0.0.0 is the current operator-approved posture
     # (2026-07-17, LAN-reachable, internet-dark verified) — a deliberate choice, not drift.
+    # Port-per-service model (2026-07-24): every UI service gets its own SSO-gated
+    # Caddy listener — each prebuilt SPA is served at the root it was compiled for,
+    # ending the subpath-rewrite bandaid class (webui root-catchall, hermes header
+    # base, n8n strip_prefix, cbm nginx rewrites). :443 = front door (landing, OAuth
+    # callback, /llm + /mcp APIs, n8n webhook passthroughs, legacy-path 302s).
     ports:
       - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:443:443"
+      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8443:8443"   # chat (Open WebUI)
+      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8444:8444"   # dashboard (+ /grafana/)
+      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8445:8445"   # n8n UI
+      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8446:8446"   # ComfyUI
+      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8447:8447"   # Hermes
+      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8448:8448"   # codebase-memory
     env:
       CADDY_TAILNET_HOSTNAME: ${CADDY_TAILNET_HOSTNAME}
       CADDY_TAILNET_DOMAIN: ${CADDY_TAILNET_DOMAIN}
