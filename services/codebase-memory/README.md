@@ -1,6 +1,14 @@
 # codebase-memory-mcp
 
-> ℹ️ **Gateway-spawned, not a resident service.** The codebase-memory MCP is still active in production: it's a **build step** (image) that the mcp-gateway spawns over stdio, registered in the rendered `out/mcp-registry.yaml`. The *service* form (the one-shot `codebase-memory-mcp-image` builder in the root `docker-compose.yml`) is obsolete-as-a-service — the image is produced by `docker build` — while the browsable **UI** ships as the `codebase-memory-ui` service plugin (see [`../codebase-memory-ui/README.md`](../codebase-memory-ui/README.md)). The wiring, indexing, and security notes below remain accurate; the V1 `docker compose --profile codebase-memory build …` + `./scripts/mcp_add.sh` enablement is superseded by plugin gating. See [`../docs/history/PARITY.md`](../docs/history/PARITY.md).
+> ℹ️ **Gateway-spawned, not a resident service.** The codebase-memory MCP is still active in production: it's a **build step** (image) that the mcp-gateway spawns over stdio, registered in the rendered `out/mcp-registry.yaml`. The *service* form (the one-shot `codebase-memory-mcp-image` builder in the root `docker-compose.yml`) is obsolete-as-a-service — the image is produced by `docker build` — while the browsable **UI** ships as the `codebase-memory-ui` service plugin (see [`../codebase-memory-ui/README.md`](../codebase-memory-ui/README.md)). The wiring, indexing, and security notes below remain accurate; the V1 `docker compose --profile codebase-memory build …` + `./scripts/mcp_add.sh` enablement is superseded by plugin gating. See [`../../docs/history/PARITY.md`](../../docs/history/PARITY.md).
+
+## Build
+Project buildable image (no public registry to digest-pin against — pinned by this build context:
+the `Dockerfile`'s `CBM_VERSION` + `CBM_SHA256`), so `ordo preflight` reports a missing one as
+"build first":
+```
+docker build -t ordo/codebase-memory-mcp:latest services/codebase-memory
+```
 
 Gateway-spawned MCP server that gives Hermes a **structural code knowledge graph**
 of the repos under your code root — call graphs, trace paths, architecture views,
@@ -41,10 +49,9 @@ from those host-path restrictions and so can be read-write.
 1. Set `CODE_ROOT` in `ordo.yaml`'s `site:` block to the **host** path that contains
    your repos, e.g. `CODE_ROOT: C:/dev` (must match what Hermes sees at `/c/dev`);
    it flows verbatim into the rendered `.env`.
-2. Build the image (project-buildable — no public registry to digest-pin against; see
-   [`../docker/codebase-memory-mcp/README.md`](../docker/codebase-memory-mcp/README.md)):
-   `docker build -t ordo/codebase-memory-mcp:latest C:/dev/ordo-ai-stack/codebase-memory-mcp`
-3. The `codebase-memory` plugin ([`../plugins/codebase-memory/plugin.yaml`](../plugins/codebase-memory/plugin.yaml))
+2. Build the image (see the **Build** section above):
+   `docker build -t ordo/codebase-memory-mcp:latest services/codebase-memory`
+3. The `codebase-memory` plugin (co-located [`plugin.yaml`](plugin.yaml))
    isn't NVIDIA-gated, so it's already on under the default `plugins: auto`. Run
    `ordo render` (then bring the stack up from `out/`) to pick it up into
    `out/mcp-registry.yaml`.

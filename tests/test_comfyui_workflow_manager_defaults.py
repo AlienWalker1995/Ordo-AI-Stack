@@ -36,7 +36,7 @@ def _load_workflow_manager_module():
     sys.modules["models"] = models_pkg
     sys.modules["models.workflow"] = workflow_mod
 
-    path = Path("comfyui-mcp/managers/workflow_manager.py")
+    path = Path("services/comfyui-mcp/managers/workflow_manager.py")
     spec = importlib.util.spec_from_file_location("test_workflow_manager", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)

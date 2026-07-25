@@ -41,7 +41,7 @@ def _load_module(env_override: dict | None = None):
 
     env = env_override or {}
     with patch.dict("os.environ", env, clear=False):
-        path = Path("comfyui-mcp/managers/workflow_manager.py")
+        path = Path("services/comfyui-mcp/managers/workflow_manager.py")
         spec = importlib.util.spec_from_file_location(
             f"test_wfm_{id(env)}", path
         )

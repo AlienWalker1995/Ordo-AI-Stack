@@ -17,7 +17,7 @@ provides: [tools]
 # PLUGIN or the plugin is dropped; `dashboard` is core, so listing it would wrongly drop this MCP.)
 mcp:
   # V1 builds this locally (ordo-ai-stack-orchestration-mcp:latest). V2 mirrors it as a project
-  # buildable image (build context doc under docker/orchestration-mcp): pinned by its build context,
+  # buildable image (build context services/orchestration): pinned by its build context,
   # so preflight reports 'build first' rather than a digest warning.
   image: ordo/orchestration-mcp:latest
   # Needs network access to reach dashboard:8080 — NOT offline.

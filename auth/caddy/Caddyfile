@@ -128,7 +128,7 @@
 
 # ---- :8448 — codebase-memory 3D graph ----
 # Served at its origin root behind a plain SSO proxy — the container's nginx
-# proxies straight through with no path rewriting (see codebase-memory-ui/nginx.conf).
+# proxies straight through with no path rewriting (see services/codebase-memory-ui/nginx.conf).
 :8448 {
     import sso_service codebase-memory-ui:9750
 }

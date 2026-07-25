@@ -2,7 +2,7 @@
 
 MIRRORED MODULE: this file's placeholder-parsing/normalization/coercion logic
 (_parse_placeholder, _normalize_name, _coerce_value) is mirrored in
-comfyui-mcp/managers/workflow_manager.py. The two must produce IDENTICAL bindings
+services/comfyui-mcp/managers/workflow_manager.py. The two must produce IDENTICAL bindings
 for the same PARAM_* placeholder text — keep _normalize_name's underscore-run
 collapse and _coerce_value's int(float(v)) coercion in sync between both files
 when either changes.

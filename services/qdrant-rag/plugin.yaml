@@ -11,7 +11,7 @@ depends_on: [rag]         # needs the qdrant + embed services (rag plugin) to an
 mcp:
   # V1 runs this MCP from a LOCALLY-BUILT image (ordo-ai-stack-qdrant-rag-mcp:latest) — there is no
   # public registry to digest-pin against. V2 mirrors it as a project buildable image (build context
-  # under docker/qdrant-rag-mcp): pinned by its build context like llamacpp-patched, so preflight
+  # services/qdrant-rag): pinned by its build context like llamacpp-patched, so preflight
   # reports 'build first', not the old placeholder-digest warning. It embeds queries via
   # llamacpp-embed to match rag-ingestion's 768-dim nomic vectors.
   image: ordo/qdrant-rag-mcp:latest

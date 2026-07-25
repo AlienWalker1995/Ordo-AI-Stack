@@ -3,7 +3,7 @@
 #   - worker         (worker/Dockerfile: COPYs worker/ + dashboard/ modules it imports)
 # Everything else is excluded so the context stays tiny and no operator material
 # (out/secrets.env, auth/caddy/certs/, data/, models/) can ever reach the daemon.
-# (Subdirectory build contexts — docker/*/, hermes/, rag-ingestion/, … — are NOT
+# (Subdirectory build contexts — docker/*/, hermes/, services/*/, … — are NOT
 # affected: a .dockerignore only applies to the context directory it sits in.)
 *
 !ordo/

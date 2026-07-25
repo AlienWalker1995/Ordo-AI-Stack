@@ -17,7 +17,7 @@ mcp:
   # V1 builds this locally (ordo-ai-stack-codebase-memory-mcp:latest) from a self-contained Dockerfile
   # that downloads + sha256-verifies the pinned DeusData/codebase-memory-mcp portable binary and bundles
   # the offline nomic-embed-code embeddings. V2 mirrors it as a project buildable image (build context
-  # doc under docker/codebase-memory-mcp): pinned by its build context (the Dockerfile's CBM_VERSION
+  # services/codebase-memory): pinned by its build context (the Dockerfile's CBM_VERSION
   # + CBM_SHA256), so preflight reports 'build first', not a placeholder-digest warning.
   image: ordo/codebase-memory-mcp:latest
   # Keep the indexer container WARM across calls within a session — the graph is in-memory per spawn,

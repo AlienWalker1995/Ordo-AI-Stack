@@ -7,7 +7,7 @@ hermes/entrypoint.sh text eol=lf
 scripts/llamacpp/run-llama-server.sh text eol=lf
 # nginx config is COPYed into the codebase-memory-ui image; keep LF so nginx
 # doesn't choke on CRLF after a Windows checkout.
-codebase-memory-ui/nginx.conf text eol=lf
+services/codebase-memory-ui/nginx.conf text eol=lf
 
 # SOPS-encrypted files must keep LF endings or `sops` chokes parsing the
 # embedded timestamp metadata. The failure surfaces as

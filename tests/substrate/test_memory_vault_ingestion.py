@@ -25,7 +25,7 @@ P_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128}
 P_CPU = {"gpus": [], "ram_gb": 16}
 
 VAULT_MOUNT = "${MEMORY_VAULT_PATH:-${DATA_PATH:-./data}/memory-vault}:/watch/memory-vault:ro"
-INGEST_PY = ROOT / "rag-ingestion" / "ingest.py"
+INGEST_PY = ROOT / "services" / "rag" / "ingest.py"
 
 
 def _src(plugins, hardware=P_5090):
@@ -74,7 +74,7 @@ def test_rag_renders_on_cpu_with_vault_mount():
 # ── ingester: hidden-path rule keeps vault internals out of the index ───────
 @pytest.fixture()
 def ingest(monkeypatch, tmp_path):
-    """Load rag-ingestion/ingest.py by path with a stubbed httpx (not a dev dep —
+    """Load services/rag/ingest.py by path with a stubbed httpx (not a dev dep —
     these tests never touch the network) and WATCH_DIR pointed at tmp_path."""
     if not INGEST_PY.is_file():
         pytest.skip("rag-ingestion build context not present")

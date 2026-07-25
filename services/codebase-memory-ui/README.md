@@ -1,6 +1,13 @@
 # codebase-memory-ui
 
-> ℹ️ **Live in the Ordo stack.** This is a running production service. In the Ordo stack it's the `codebase-memory-ui` **service plugin** (image `ordo/codebase-memory-ui:latest`, profile `codebase-memory`), built from [`docker/codebase-memory-ui/`](../docker/codebase-memory-ui/) — which references this directory as its build context. Enablement is via `ordo.yaml` (plugin gating) rather than the V1 `docker compose --profile …` command shown below. Since the 2026-07-24 edge convergence it gets its **own dedicated SSO-gated port (`:8448`) and is served at its origin ROOT** — the container's nginx is now a plain pass-through (no `sub_filter`). See [`docs/history/PARITY.md`](../docs/history/PARITY.md).
+> ℹ️ **Live in the Ordo stack.** This is a running production service. In the Ordo stack it's the `codebase-memory-ui` **service plugin** (image `ordo/codebase-memory-ui:latest`, profile `codebase-memory`), built from **this directory** (`services/codebase-memory-ui/`, its self-contained build context). Enablement is via `ordo.yaml` (plugin gating) rather than the V1 `docker compose --profile …` command shown below. Since the 2026-07-24 edge convergence it gets its **own dedicated SSO-gated port (`:8448`) and is served at its origin ROOT** — the container's nginx is now a plain pass-through (no `sub_filter`). See [`docs/history/PARITY.md`](../../docs/history/PARITY.md).
+
+## Build
+Project buildable image (no public registry to digest-pin against — pinned by this build context),
+so `ordo preflight` reports a missing one as "build first":
+```
+docker build -t ordo/codebase-memory-ui:latest services/codebase-memory-ui
+```
 
 Optional long-lived service that serves the **3D interactive code knowledge-graph**
 from the same index the headless `codebase-memory` MCP builds — so you can *browse*
@@ -47,7 +54,7 @@ section links here via `SSO_ROUTES`.
 ## Enable
 Plugin gating happens at render time via `ordo.yaml`, not a V1 `--profile` flag. Set `CODE_ROOT`
 under the `site:` block and force the plugin on (or leave `plugins: auto`, which enables it
-whenever the host meets `requires:` in `plugins/codebase-memory-ui/plugin.yaml`):
+whenever the host meets `requires:` in the co-located [`plugin.yaml`](plugin.yaml)):
 ```yaml
 # ordo.yaml
 site:
