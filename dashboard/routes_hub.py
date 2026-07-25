@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 from dashboard.services_catalog import (
     _check_service,
     mcp_external_url,
+    model_gateway_open_url,
     probe_all,
     tailnet_open_url,
     visible_services,
@@ -25,16 +26,24 @@ async def services():
 
     async def _probe(svc: dict) -> dict:
         ok, err = await _check_service(svc["check"], client) if svc.get("check") else (None, "")
+        # Server-owned Open link, one source of truth (no hostname guess in the browser):
+        #  * model-gateway is user-facing but has no tailnet sidecar — its Open link points
+        #    at the LiteLLM Swagger UI through the edge (https://<host>/llm/).
+        #  * the sidecar UIs get their clean per-service tailnet name (https://chat.<domain>/ …)
+        #    when the tailnet-names layer is enabled.
+        # Either is None when the edge host is unknown, so the frontend falls back to its
+        # port/SSO route rather than rendering a broken link.
+        open_url = (
+            model_gateway_open_url()
+            if svc["id"] == "model-gateway"
+            else tailnet_open_url(svc["id"])
+        )
         return {
             **{k: v for k, v in svc.items() if k != "check"},
             "ok": ok,
             "error": err if not ok else None,
             "hint": svc.get("hint", ""),
-            # Clean per-service tailnet name (https://chat.<domain>/ …) when the
-            # tailnet-names sidecars are enabled; None otherwise so the frontend
-            # falls back to its port/SSO route. Server-owned so the URL has one
-            # source of truth, not a hostname guess in the browser.
-            "open_url": tailnet_open_url(svc["id"]),
+            "open_url": open_url,
         }
 
     # Gate the grid on the render manifest's enabled plugin set so it reflects what's

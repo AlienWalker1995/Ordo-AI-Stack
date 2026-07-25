@@ -44,6 +44,24 @@ def mcp_external_url() -> str | None:
     return f"https://{host}/mcp" if host else None
 
 
+# LiteLLM auto-generates its OpenAPI docs and serves the Swagger UI at its ROOT path
+# (`GET model-gateway:11435/` returns the swagger HTML; `/docs` 404s — confirmed by probe).
+# The :443 front door's `/llm/*` route strips the `/llm` prefix and proxies to
+# model-gateway:11435, so the browsable swagger URL through the edge is
+# `https://<host>/llm/` (the stripped prefix maps back onto the service root).
+MODEL_GATEWAY_SWAGGER_PATH = "/llm/"
+
+
+def model_gateway_open_url() -> str | None:
+    """Browsable Open link for the model-gateway card: the LiteLLM Swagger UI reached
+    through the edge (`https://<host>/llm/`). model-gateway is the one user-facing entry
+    in the main grid that has no tailnet sidecar name, so its Open link is built here from
+    the edge host. Returns None when the edge host is unknown so the frontend falls back to
+    its port/SSO route rather than emitting a broken link."""
+    host = os.environ.get("CADDY_TAILNET_HOSTNAME", "").strip()
+    return f"https://{host}{MODEL_GATEWAY_SWAGGER_PATH}" if host else None
+
+
 def tailnet_open_url(service_id: str) -> str | None:
     """Clean per-service URL (https://<label>.<domain>/) when the tailnet-names sidecar
     layer is enabled, else None. Both signals come from the rendered env: the enable flag
@@ -85,7 +103,7 @@ OPS_SERVICE_MAP = {
 # grid reflects what the render actually enabled. NB: the plugin id is NOT the compose
 # profile (e.g. open-webui's profile is `webui` but its plugin id is `open-webui`).
 SERVICES = [
-    {"id": "llamacpp", "name": "llama.cpp", "port": 8080, "url": "http://localhost:8080", "check": "http://llamacpp:8080/health", "has_gpu": True, "plugin": None, "category": "inference",
+    {"id": "llamacpp", "name": "llama.cpp", "port": 8080, "url": "http://localhost:8080", "check": "http://llamacpp:8080/health", "has_gpu": True, "plugin": None, "category": "inference", "background": True,
      "hint": "Backend-only; use model-gateway :11435 from host. Run: docker compose up -d llamacpp"},
     {"id": "model-gateway", "name": "Model Gateway", "port": 11435, "url": "http://localhost:11435", "check": "http://model-gateway:11435/health/liveliness", "has_gpu": False, "plugin": None, "category": "inference",
      "hint": "OpenAI-compatible proxy (LiteLLM). Routes inference to llama.cpp."},
@@ -94,13 +112,13 @@ SERVICES = [
     # The MCP gateway answers a bare GET to /mcp with a 4xx (it expects POST/SSE with an
     # Mcp-Session-Id) — `check_4xx_ok` tells the strict dependency probe that a <500 there
     # still means "up". The grid probe (_check_service) already treats <500 as reachable.
-    {"id": "mcp", "name": "MCP Gateway", "port": 8811, "url": "http://localhost:8811", "check": "http://mcp-gateway:8811/mcp", "has_gpu": False, "plugin": None, "category": "tools", "check_4xx_ok": True,
+    {"id": "mcp", "name": "MCP Gateway", "port": 8811, "url": "http://localhost:8811", "check": "http://mcp-gateway:8811/mcp", "has_gpu": False, "plugin": None, "category": "tools", "check_4xx_ok": True, "background": True,
      "hint": "Add/remove tools from the dashboard. Connect at http://localhost:8811/mcp — see docker/mcp-gateway/README.md"},
     {"id": "comfyui", "name": "ComfyUI", "port": 8188, "url": "http://localhost:8188", "check": "http://comfyui:8188", "has_gpu": True, "plugin": "comfyui", "category": "media",
      "hint": "ComfyUI uses auto-detected compute (NVIDIA/AMD/Intel/CPU). Run ./compose up -d. Pull LTX-2 via dashboard."},
     {"id": "n8n", "name": "N8N", "port": 5678, "url": "http://localhost:5678", "check": "http://n8n:5678", "has_gpu": False, "plugin": "automation", "category": "automation",
      "hint": "Check: docker compose logs n8n"},
-    {"id": "qdrant", "name": "Qdrant", "port": 6333, "url": "http://localhost:6333", "has_gpu": False, "plugin": "rag", "category": "rag",
+    {"id": "qdrant", "name": "Qdrant", "port": 6333, "url": "http://localhost:6333", "has_gpu": False, "plugin": "rag", "category": "rag", "background": True,
      "check": "http://qdrant:6333/readyz",
      "hint": "Vector DB for RAG. Drop files in data/rag-input/ (with --profile rag) or upload via Open WebUI Documents tab."},
     # Hermes Agent runs as two compose services (hermes-gateway + hermes-dashboard). The dashboard
@@ -120,18 +138,24 @@ SERVICES = [
     # ── Voice (--profile voice / plugin `voice`) ──────────────────────────────────────────
     # STT + TTS both pin the 1070 (the 5090 lacks the kernels). Check URLs mirror each
     # service's compose healthcheck (confirmed 200 endpoints), probed via internal DNS.
-    {"id": "stt", "name": "Speech-to-Text (Whisper)", "port": 8000, "check": "http://stt:8000/v1/models", "has_gpu": True, "plugin": "voice", "category": "voice",
+    {"id": "stt", "name": "Speech-to-Text (Whisper)", "port": 8000, "check": "http://stt:8000/v1/models", "has_gpu": True, "plugin": "voice", "category": "voice", "background": True,
      "hint": "faster-whisper-server (OpenAI-compatible). GPU-pinned to the 1070. Opt-in: --profile voice"},
-    {"id": "tts", "name": "Text-to-Speech (Kokoro)", "port": 8880, "check": "http://tts:8880/v1/audio/voices", "has_gpu": True, "plugin": "voice", "category": "voice",
+    {"id": "tts", "name": "Text-to-Speech (Kokoro)", "port": 8880, "check": "http://tts:8880/v1/audio/voices", "has_gpu": True, "plugin": "voice", "category": "voice", "background": True,
      "hint": "kokoro-fastapi (OpenAI-compatible). GPU-pinned to the 1070. Opt-in: --profile voice"},
     # ── Headless background workers ───────────────────────────────────────────────────────
     # worker (plugin `worker`, profile media) and rag-ingestion (plugin `rag`) expose NO HTTP
     # port — their only liveness signal is a file-heartbeat container healthcheck, unreachable
     # from this container. So they carry NO `check` (card shows a neutral "unknown" state, not a
     # false-red or a guessed URL) but ARE operator-controllable via the ops-api (start/stop/restart).
-    # `background: True` moves them out of the interactive service grid into the frontend's
-    # separate "Background jobs" section (no "Open" link — there's no browsable UI). This is the
-    # ONLY marker for that split; nothing else should carry it (locked by test_background_flag).
+    #
+    # `background: True` is the marker the frontend uses to move a service OUT of the main
+    # user-facing grid into the secondary "Background jobs" section (no "Open" link). Its
+    # meaning is "NOT a browsable user-facing UI" — not merely "headless worker". So besides
+    # these two portless workers it ALSO tags the infra/backend services that have a port &
+    # health check but no browsable UI a person visits: llamacpp, mcp (MCP Gateway), qdrant,
+    # stt, tts (see their entries above). The main grid is ONLY the user-facing UIs
+    # (webui/comfyui/n8n/hermes/codebase-memory-ui) plus model-gateway (its Open link points
+    # at the LiteLLM Swagger UI through the edge; see model_gateway_open_url() below).
     {"id": "worker", "name": "Media Worker", "port": None, "check": None, "has_gpu": False, "plugin": "worker", "category": "media", "background": True,
      "hint": "Headless ComfyUI render worker (no web UI). Health via container healthcheck. Logs: docker compose logs worker"},
     {"id": "rag-ingestion", "name": "RAG Ingestion", "port": None, "check": None, "has_gpu": False, "plugin": "rag", "category": "rag", "background": True,

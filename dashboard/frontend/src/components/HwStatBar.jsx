@@ -14,12 +14,18 @@ function barClass(pct) {
 }
 const clampPct = (pct) => Math.min(100, Math.max(0, Number(pct) || 0))
 
+// Shared utility strings (kept faithful to the legacy .hw-stat tokens).
+const HW_STAT = 'flex min-w-[90px] flex-1 flex-col gap-0.5 rounded-sm border border-border bg-bg-elevated px-4 py-3 transition-colors hover:border-accent/20'
+const HW_LABEL = 'text-[0.6rem] font-bold uppercase tracking-[0.12em] text-muted'
+const HW_VAL = 'whitespace-nowrap font-mono text-[0.8125rem] font-semibold tabular-nums text-fg'
+const HW_FILL = 'hw-bar-fill mt-1 h-0.5 overflow-hidden rounded-full bg-surface'
+
 function StatCard({ label, value, pct, barKind = '' }) {
   return (
-    <div className="hw-stat">
-      <span className="hw-stat-label">{label}</span>
-      <span className="hw-stat-val">{value}</span>
-      <div className={`hw-bar-fill ${barClass(pct)} ${barKind}`.trim()}>
+    <div className={HW_STAT}>
+      <span className={HW_LABEL}>{label}</span>
+      <span className={HW_VAL}>{value}</span>
+      <div className={`${HW_FILL} ${barClass(pct)} ${barKind}`.trim()}>
         <span style={{ width: clampPct(pct) + '%' }} />
       </div>
     </div>
@@ -78,23 +84,28 @@ function GpuCard({ gpus }) {
 
   return (
     <div
-      className="hw-stat hw-stat-gpu hw-gpu-cycle"
+      className={`${HW_STAT} min-w-[180px] flex-[2] cursor-pointer`}
       title={multi ? 'Click to show next GPU (auto-cycles; hover to pause)' : undefined}
       onMouseEnter={() => { pausedRef.current = true }}
       onMouseLeave={() => { pausedRef.current = false }}
       onClick={() => { if (multi) setIdx((i) => (i + 1) % gpus.length) }}
     >
-      <div className="hw-gpu-top">
-        <span className="hw-stat-label" title={g.name || 'GPU'}>
-          {name}{multi && <span className="hw-gpu-count"> {idx + 1}/{gpus.length}</span>}
+      <div className="flex items-center justify-between gap-2">
+        <span className={HW_LABEL} title={g.name || 'GPU'}>
+          {name}{multi && <span className="font-semibold text-fg-muted"> {idx + 1}/{gpus.length}</span>}
         </span>
         {multi && (
-          <span className="hw-gpu-dots">
+          <span className="inline-flex shrink-0 items-center gap-1">
             {gpus.map((gg, i) => (
               <button
                 key={i}
                 type="button"
-                className={`hw-gpu-dot${i === idx ? ' active' : ''}`}
+                className={
+                  'h-1.5 w-1.5 cursor-pointer rounded-full border-0 p-0 transition-all hover:bg-fg-muted ' +
+                  (i === idx
+                    ? 'scale-125 bg-accent [box-shadow:0_0_6px_#00c9ff]'
+                    : 'bg-border')
+                }
                 title={(gg.name || 'GPU').replace(/NVIDIA\s+/i, '')}
                 aria-label={`Show GPU ${i + 1}`}
                 onClick={(e) => { e.stopPropagation(); setIdx(i) }}
@@ -103,13 +114,13 @@ function GpuCard({ gpus }) {
           </span>
         )}
       </div>
-      <span className="hw-stat-val">{usedStr}</span>
-      <span className="hw-stat-gpu-free">{freeStr + temp}</span>
-      <div className={`hw-bar-fill ${barClass(vramPct)}`.trim()}>
+      <span className={HW_VAL}>{usedStr}</span>
+      <span className="mt-px font-mono text-[0.6rem] text-muted">{freeStr + temp}</span>
+      <div className={`${HW_FILL} ${barClass(vramPct)}`.trim()}>
         <span style={{ width: vramPct.toFixed(0) + '%' }} />
       </div>
-      <span className="hw-stat-sublabel">Compute · {util}%</span>
-      <div className="hw-bar-fill gpu-util"><span style={{ width: util + '%' }} /></div>
+      <span className="mt-2 text-[0.55rem] font-semibold uppercase tracking-[0.1em] text-muted">Compute · {util}%</span>
+      <div className={`${HW_FILL} gpu-util`}><span style={{ width: util + '%' }} /></div>
     </div>
   )
 }
@@ -137,7 +148,11 @@ export default function HwStatBar() {
   const gpus = deriveGpus(d)
 
   return (
-    <div className={`hw-bar ${stale ? 'stale' : ''}`.trim()} aria-label="System resources" title={stale ? 'Hardware data may be stale' : undefined}>
+    <div
+      className={`mb-5 flex flex-wrap items-start gap-3 transition-opacity ${stale ? 'opacity-50' : ''}`.trim()}
+      aria-label="System resources"
+      title={stale ? 'Hardware data may be stale' : undefined}
+    >
       <StatCard label="CPU" value={`${Number(cpu).toFixed(0)}%`} pct={cpu} />
       <StatCard label="RAM" value={`${ramUsed} / ${ramTotal} GB`} pct={ramPct} />
       {hasDisk && <StatCard label="Disk" value={`${d.disk_used_gb} / ${d.disk_total_gb} GB`} pct={diskPct} />}

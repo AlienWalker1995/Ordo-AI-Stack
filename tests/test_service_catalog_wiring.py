@@ -86,25 +86,31 @@ def test_catalog_ids_are_unique():
     assert len(ids) == len(set(ids))
 
 
-def test_only_headless_workers_carry_background_flag():
-    """worker + rag-ingestion are the pure no-UI background jobs; ONLY they carry
-    `background: True` (the marker the frontend uses to split them into a separate
-    'Background jobs' section). Every other card stays an interactive service — so a
-    stray flag can't quietly demote an openable service out of the main grid."""
+def test_non_user_facing_services_carry_background_flag():
+    """`background: True` marks NON-user-facing services — the ones the frontend moves out
+    of the main grid (which is only browsable UIs) into the secondary 'Background jobs'
+    section (no 'Open' link). That is the backend infra (llamacpp, mcp, qdrant, stt, tts)
+    plus the two portless headless workers (worker, rag-ingestion). The user-facing UIs —
+    webui/comfyui/n8n/hermes/codebase-memory-ui — and model-gateway (its Open link is the
+    LiteLLM Swagger UI) must NOT carry it, so an openable service can't be quietly demoted."""
     bg = {s["id"] for s in SERVICES if s.get("background")}
-    assert bg == {"worker", "rag-ingestion"}
+    assert bg == {"worker", "rag-ingestion", "llamacpp", "mcp", "qdrant", "stt", "tts"}
+    user_facing = {"webui", "comfyui", "n8n", "hermes", "codebase-memory-ui", "model-gateway"}
     for s in SERVICES:
-        if s["id"] not in bg:
-            assert not s.get("background"), f"{s['id']} unexpectedly flagged background"
+        if s["id"] in user_facing:
+            assert not s.get("background"), f"{s['id']} is user-facing and must not be background"
+        assert (s["id"] in bg) == bool(s.get("background")), f"{s['id']} background flag mismatch"
 
 
-def test_background_jobs_have_no_ui_open_target():
-    """Background jobs are headless: no port and no health check, so the frontend has
-    nothing to build an 'Open' link from (and shows a neutral, not false-red, state)."""
-    for s in SERVICES:
-        if s.get("background"):
-            assert s.get("port") is None, f"{s['id']} background job should have no port"
-            assert s.get("check") is None, f"{s['id']} background job should have no check"
+def test_headless_workers_have_no_ui_open_target():
+    """The two pure headless workers expose no port and no health check, so the frontend has
+    nothing to build a link from (and shows a neutral 'unknown' state, not a false-red). The
+    other background services (llamacpp/mcp/qdrant/stt/tts) ARE probeable — they keep their
+    check — they're just not user-facing, so the frontend omits their 'Open' link via the flag."""
+    for wid in ("worker", "rag-ingestion"):
+        s = next(x for x in SERVICES if x["id"] == wid)
+        assert s.get("port") is None, f"{wid} headless worker should have no port"
+        assert s.get("check") is None, f"{wid} headless worker should have no check"
 
 
 def test_every_card_declares_plugin_gate():

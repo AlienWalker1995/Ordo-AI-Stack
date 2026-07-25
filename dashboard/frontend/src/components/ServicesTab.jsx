@@ -23,6 +23,11 @@ const SERVICE_ICONS = {
   qdrant: '🗄',
 }
 
+// Shared Tailwind utility strings (faithful to the legacy .btn-icon / .section-desc tokens).
+const BTN_ICON =
+  'inline-flex h-9 min-w-9 items-center justify-center whitespace-nowrap rounded-sm border border-border bg-surface px-3 text-[0.8125rem] font-medium tracking-[0.02em] text-fg transition-all hover:border-accent/30 hover:bg-accent/[0.07] hover:text-accent disabled:cursor-not-allowed disabled:opacity-40'
+const SECTION_DESC = 'mb-4 text-[0.8125rem] leading-[1.5] text-muted'
+
 // Dashboard behind the SSO front door mounts at /dash; UI services are then reachable
 // only through their SSO-gated port on the same hostname. Ported verbatim from legacy.
 const APP_PREFIX = (location.pathname.match(/^\/dash(?=\/|$)/) || [''])[0]
@@ -73,41 +78,55 @@ function ServiceCard({ s, isBackground, opsAvailable, pending, onAction, onLogs 
     title = s.ok ? 'Healthy' : 'Offline'
   }
 
+  const dot = <span className={`status-dot ${dotCls}`.trim()} aria-hidden="true" title={title} />
+  const labelEl = (
+    <span className={`min-w-0 flex-1 text-[0.88rem] font-medium ${pending ? 'text-warning' : ''}`.trim()}>
+      {label}
+    </span>
+  )
+
   const statusRow = (isBackground || pending) ? (
-    <div className="service static-row" style={{ cursor: 'default' }}>
-      <span className={`status ${dotCls}`.trim()} aria-hidden="true" title={title} />
-      <span className="label">{label}</span>
+    <div className="flex cursor-default items-center gap-3 py-2 text-fg">
+      {dot}
+      {labelEl}
     </div>
   ) : (
     <a
       href={serviceOpenHref(s)}
       target="_blank"
       rel="noopener"
-      className="service"
+      className="flex items-center gap-3 py-2 text-fg no-underline transition-opacity hover:opacity-[0.82]"
       aria-label={`Open ${s.name} (opens in new tab)`}
     >
-      <span className={`status ${dotCls}`.trim()} aria-hidden="true" title={title} />
-      <span className="label">{label}</span>
-      <span className="external" aria-hidden="true">↗</span>
+      {dot}
+      {labelEl}
+      <span className="shrink-0 text-[0.7rem] opacity-55" aria-hidden="true">↗</span>
     </a>
   )
 
   return (
-    <div className={`service-card ${okCls}`.trim()} data-service-id={s.id}>
-      <div className="service-name">
-        <span className="service-icon" aria-hidden="true">{icon}</span>
+    <div
+      className={`service-card flex min-h-[4.5rem] flex-col rounded-md px-5 py-4 ${okCls} ${isBackground ? 'bg-job' : ''}`.trim()}
+      data-service-id={s.id}
+    >
+      <div className="mb-2 flex items-center gap-2 text-[0.8125rem] font-semibold tracking-[0.02em] text-fg">
+        <span className="w-6 shrink-0 text-center text-base leading-none" aria-hidden="true">{icon}</span>
         {s.name}
       </div>
       {statusRow}
       {opsAvailable && (
-        <div className="row">
-          <button type="button" className="btn-icon" title="Start" aria-label={`Start ${s.name}`} disabled={!!pending} onClick={() => onAction(s.id, 'start')}>▶</button>
-          <button type="button" className="btn-icon" title="Stop" aria-label={`Stop ${s.name}`} disabled={!!pending} onClick={() => onAction(s.id, 'stop')}>⏹</button>
-          <button type="button" className="btn-icon" title="Restart" aria-label={`Restart ${s.name}`} disabled={!!pending} onClick={() => onAction(s.id, 'restart')}>↻</button>
-          <button type="button" className="btn-icon" title="View logs" aria-label={`View logs for ${s.name}`} onClick={() => onLogs(s.id)}>📋</button>
+        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1 border-t border-border-subtle pt-2">
+          <button type="button" className={BTN_ICON} title="Start" aria-label={`Start ${s.name}`} disabled={!!pending} onClick={() => onAction(s.id, 'start')}>▶</button>
+          <button type="button" className={BTN_ICON} title="Stop" aria-label={`Stop ${s.name}`} disabled={!!pending} onClick={() => onAction(s.id, 'stop')}>⏹</button>
+          <button type="button" className={BTN_ICON} title="Restart" aria-label={`Restart ${s.name}`} disabled={!!pending} onClick={() => onAction(s.id, 'restart')}>↻</button>
+          <button type="button" className={BTN_ICON} title="View logs" aria-label={`View logs for ${s.name}`} onClick={() => onLogs(s.id)}>📋</button>
         </div>
       )}
-      {!s.ok && s.hint && !pending && <div className="hint">{s.hint}</div>}
+      {!s.ok && s.hint && !pending && (
+        <div className="mt-3 break-words border-t border-border-subtle pl-6 pt-3 text-[0.8125rem] leading-[1.5] text-fg-muted">
+          {s.hint}
+        </div>
+      )}
     </div>
   )
 }
@@ -128,18 +147,30 @@ function LogsModal({ id, onClose }) {
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  const pre = 'max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-sm border border-border-subtle bg-bg p-4 font-mono text-[0.7rem] leading-[1.5] text-fg-muted'
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={`${id} logs`} onClick={onClose}>
-      <div className="modal-content modal-logs" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h2>{id} — last 100 lines</h2>
-          <button type="button" className="btn-icon" aria-label="Close logs" onClick={onClose}>✕</button>
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/[0.82] p-4 backdrop-blur-[4px]"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${id} logs`}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-[900px] rounded-[10px] border border-border border-t-2 border-t-accent bg-bg-elevated p-6 shadow-card-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="m-0 font-display text-[1.0625rem] font-bold uppercase tracking-[0.04em] text-fg">
+            {id} — last 100 lines
+          </h2>
+          <button type="button" className={BTN_ICON} aria-label="Close logs" onClick={onClose}>✕</button>
         </div>
         {state.loading
-          ? <pre>Loading…</pre>
+          ? <pre className={pre}>Loading…</pre>
           : state.error
-            ? <pre>{state.error}</pre>
-            : <pre>{state.logs}</pre>}
+            ? <pre className={pre}>{state.error}</pre>
+            : <pre className={pre}>{state.logs}</pre>}
       </div>
     </div>
   )
@@ -211,31 +242,42 @@ export default function ServicesTab() {
     }
   }, [toast, watchService])
 
+  const statusSummary = (extra) =>
+    `flex items-center gap-2 mb-4 px-4 py-3 rounded-sm text-[0.8125rem] font-medium bg-bg-elevated border border-border-subtle ${extra}`
+  const ALL_OK = 'border-l-[3px] border-l-success bg-success/[0.05]'
+  const ISSUES = 'border-l-[3px] border-l-warning bg-warning/[0.04]'
+  const GRID = 'grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(200px,1fr))] max-[600px]:grid-cols-1'
+
   return (
-    <section id="services-section">
-      <h2>Services</h2>
-      <p className="section-desc">
+    <section
+      id="services-section"
+      className="mb-5 rounded-lg border border-border bg-card p-6 shadow-card"
+    >
+      <h2 className="section-rule mb-4 flex items-center gap-3 text-[0.62rem] font-bold uppercase tracking-[0.18em] text-muted">
+        Services
+      </h2>
+      <p className={SECTION_DESC}>
         Click a service to open it. MCP Gateway provides shared tools for Open WebUI, N8N, and Cursor.
       </p>
 
       {error ? (
         <>
-          <div className="status-summary has-issues" role="status">Could not reach services</div>
-          <div className="empty">Run: <code>docker compose up -d</code></div>
+          <div className={statusSummary(ISSUES)} role="status">Could not reach services</div>
+          <div className="py-4 text-[0.8125rem] text-muted">Run: <code>docker compose up -d</code></div>
         </>
       ) : (
         <>
           {total > 0 && (
-            <div className={`status-summary ${okCount === total ? 'all-ok' : 'has-issues'}`} role="status" aria-live="polite">
+            <div className={statusSummary(okCount === total ? ALL_OK : ISSUES)} role="status" aria-live="polite">
               {okCount === total
                 ? `✓ All ${total} services running`
                 : `${okCount}/${total} services running — see hints on failed cards`}
             </div>
           )}
 
-          <div className="services">
+          <div className={GRID}>
             {interactive.length === 0 && !data
-              ? [0, 1, 2].map((i) => <div key={i} className="skeleton skeleton-line" />)
+              ? [0, 1, 2].map((i) => <div key={i} className="skeleton h-[0.9rem]" />)
               : interactive.map((s) => (
                 <ServiceCard
                   key={s.id}
@@ -250,10 +292,10 @@ export default function ServicesTab() {
           </div>
 
           {background.length > 0 && (
-            <div className="bg-jobs">
-              <h3 className="bg-jobs-heading">Background jobs</h3>
-              <p className="section-desc bg-jobs-desc">Headless workers — no web UI to open, controlled from here.</p>
-              <div className="services">
+            <div className="mt-6 border-t border-border-subtle pt-5">
+              <h3 className="mb-1 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted">Background jobs</h3>
+              <p className="mb-4 text-[0.8125rem] leading-[1.5] text-muted">Backend services and headless workers — no browsable UI, controlled from here.</p>
+              <div className={GRID}>
                 {background.map((s) => (
                   <ServiceCard
                     key={s.id}

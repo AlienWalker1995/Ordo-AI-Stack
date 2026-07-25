@@ -54,29 +54,45 @@ export default function App() {
 
   return (
     <ToastProvider>
-      <div className="container">
-        <header>
-          <div className="header-brand">
-            <h1>Ordo AI Stack</h1>
-            <p className="subtitle">Control interface — services, models, and hardware for the local AI stack.</p>
+      <div className="mx-auto max-w-container animate-fade-up px-6 py-8">
+        <header className="mb-8 flex items-start gap-6">
+          <div className="min-w-0 flex-1">
+            <h1 className="font-display text-[2.5rem] font-bold uppercase leading-[1.15] tracking-[0.04em] text-fg [text-shadow:0_0_28px_rgba(0,201,255,0.22)]">
+              Ordo AI Stack
+            </h1>
+            <p className="mt-2 text-[0.8125rem] font-normal tracking-[0.01em] text-muted">
+              Control interface — services, models, and hardware for the local AI stack.
+            </p>
           </div>
         </header>
 
         <HwStatBar />
 
-        <nav className="tab-bar" role="tablist" aria-label="Dashboard sections">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={`tab-btn ${active === t.id ? 'active' : ''}`.trim()}
-              role="tab"
-              aria-selected={active === t.id}
-              onClick={() => select(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
+        <nav
+          className="mb-5 mt-4 flex flex-wrap gap-1 border-b border-border max-md:flex-nowrap max-md:overflow-x-auto max-md:[scrollbar-width:none]"
+          role="tablist"
+          aria-label="Dashboard sections"
+        >
+          {TABS.map((t) => {
+            const isActive = active === t.id
+            return (
+              <button
+                key={t.id}
+                type="button"
+                className={
+                  'shrink-0 cursor-pointer rounded-t-sm border-b-2 px-4 py-2 font-semibold tracking-[0.01em] transition-colors hover:bg-white/[0.03] ' +
+                  (isActive
+                    ? 'border-accent text-accent'
+                    : 'border-transparent text-fg-muted hover:text-fg')
+                }
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => select(t.id)}
+              >
+                {t.label}
+              </button>
+            )
+          })}
         </nav>
 
         <main>

@@ -25,11 +25,23 @@ export function ToastProvider({ children }) {
   return (
     <ToastContext.Provider value={toast}>
       {children}
-      <div className="toast-container" role="region" aria-label="Notifications" aria-live="polite">
+      <div
+        className="fixed bottom-6 right-6 z-[500] flex flex-col gap-2 max-md:inset-x-4 max-md:bottom-4"
+        role="region"
+        aria-label="Notifications"
+        aria-live="polite"
+      >
         {toasts.map((t) => (
           <div
             key={t.id}
-            className={`toast ${t.type}`.trim()}
+            className={
+              'min-w-[200px] max-w-[340px] cursor-pointer animate-toast-in rounded-sm border border-l-[3px] border-border bg-surface px-5 py-3 text-[0.8125rem] shadow-card-lg ' +
+              (t.type === 'success'
+                ? 'border-l-success bg-success/[0.08]'
+                : t.type === 'error'
+                  ? 'border-l-danger bg-danger/10'
+                  : 'border-l-accent')
+            }
             role="status"
             aria-live="polite"
             onClick={() => remove(t.id)}
