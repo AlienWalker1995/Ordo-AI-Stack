@@ -69,6 +69,11 @@ environment:
   # (Only the dashboard reads BASE_PATH for an in-container fs call; ops-api's BASE_PATH stays the
   # host path — it's used solely to interpolate ${BASE_PATH} for compose subprocesses, where correct.)
   BASE_PATH: /data/dashboard
+  # The rendered manifest (out/manifest.json) — the machine-readable enabled-plugin set.
+  # The service grid gates its cards on manifest.plugins_enabled (services_catalog.visible_services)
+  # so it reflects what THIS render actually enabled and can't silently omit an enabled service.
+  # Mounted read-only; the dashboard only reads it. Fails open (full catalog) if ever absent.
+  MANIFEST_PATH: /ordo-manifest.json
 # The dashboard reads on-disk GGUFs directly for /api/llm/* (shared read-only from the V1 tree via
 # BASE_PATH) and lists comfyui models via MODELS_DIR; its own state lives in the staged V2 data tree.
 volumes:
@@ -81,6 +86,10 @@ volumes:
   # re-render reseeds it from the enabled mcp plugins — UI toggles are live but persist
   # only if reflected in ordo.yaml (proper enable/disable-via-UI write-back is a follow-up).
   - ./mcp:/mcp-config
+  # The rendered manifest (out/manifest.json). `./` resolves to the compose project-dir
+  # (out/) at runtime — same convention as the mcp mount above. Read-only: the grid's
+  # enabled-gate only reads plugins_enabled. See MANIFEST_PATH above.
+  - ./manifest.json:/ordo-manifest.json:ro
 
 # ── The V1-parity BACKEND (service `ops-api`) ──────────────────────────────────────────────────
 # The feature-rich FastAPI control API. Built from a COPY of V1's ops-controller with ONE minimal
