@@ -2,15 +2,15 @@
 
 > ⚠️ **See [`operator-guide.md`](operator-guide.md) for the authoritative getting-started + operator doc.** Ordo is defined and operated entirely from the render substrate (bring-up via `ordo render` → `docker compose -p ordo … up`, see [`history/CUTOVER.md`](history/CUTOVER.md)). The workflow commands below reflect that flow — they assume you've rendered the stack once (`out/`) and run `docker compose` from there under project `ordo`. See [`LEGACY-CLEANUP.md`](LEGACY-CLEANUP.md) for the retired pre-render (root `docker-compose.yml` / `./compose`) bring-up this page used to document.
 
-Quick paths to common workflows for a single homelab operator. The stack assumes you've completed the one-time auth setup ([docs/runbooks/auth.md](runbooks/auth.md)) and secrets setup ([docs/runbooks/secrets.md](runbooks/secrets.md)), so the Caddy front door is up at `https://${CADDY_TAILNET_HOSTNAME}/` and you can sign in with a Google account on `auth/oauth2-proxy/emails.txt`.
+Quick paths to common workflows for a single homelab operator. The stack assumes you've completed the one-time auth setup ([docs/runbooks/auth.md](runbooks/auth.md)) and secrets setup ([docs/runbooks/secrets.md](runbooks/secrets.md)), so Caddy is up on `${CADDY_TAILNET_HOSTNAME}` — `:443` is the landing page (plus `/oauth2`, `/llm/*`, `/mcp`, n8n's webhook/OAuth passthroughs, and 302s from legacy subpaths) and each UI service has its own SSO-gated port (`:8443` Open WebUI, `:8444` dashboard, `:8445` n8n, `:8446` ComfyUI, `:8447` Hermes, `:8448` codebase-memory) — and you can sign in with a Google account on `auth/oauth2-proxy/emails.txt`. One sign-in covers every port.
 
 ## Workflows
 
 ### I want to chat
 
 1. Start (from `out/`): `docker compose -p ordo up -d caddy oauth2-proxy llamacpp dashboard open-webui`
-2. Pull a model via the dashboard (`https://${CADDY_TAILNET_HOSTNAME}/dash/` → Starter pack, or pick one)
-3. Open `https://${CADDY_TAILNET_HOSTNAME}/` — Open WebUI
+2. Pull a model via the dashboard (`https://${CADDY_TAILNET_HOSTNAME}:8444/` → Starter pack, or pick one)
+3. Open `https://${CADDY_TAILNET_HOSTNAME}:8443/` — Open WebUI
 
 No GPU required for chat (llama.cpp runs on CPU, slower but works).
 
@@ -18,20 +18,20 @@ No GPU required for chat (llama.cpp runs on CPU, slower but works).
 
 1. Render the stack (`ordo render` from the repo root — hardware, including NVIDIA/AMD/Intel/CPU, is auto-detected), then from `out/`: `docker compose -p ordo --profile media up -d` (brings up Caddy + oauth2-proxy + AI services + ComfyUI)
 2. Pull LTX-2 models via the dashboard (~60 GB, first run takes a while)
-3. Open `https://${CADDY_TAILNET_HOSTNAME}/comfy/` — ComfyUI
+3. Open `https://${CADDY_TAILNET_HOSTNAME}:8446/` — ComfyUI
 
 ### I want workflow automation
 
 1. Start (from `out/`): `docker compose -p ordo up -d caddy oauth2-proxy llamacpp n8n`
-2. Open `https://${CADDY_TAILNET_HOSTNAME}/n8n/` — n8n
+2. Open `https://${CADDY_TAILNET_HOSTNAME}:8445/` — n8n (the UI lives on this port; n8n's public webhook/OAuth-callback base, `N8N_WEBHOOK_URL=https://${CADDY_TAILNET_HOSTNAME}/n8n`, is unchanged and stays on `:443`)
 
 ### Full stack
 
-**Recommended:** follow the [`operator-guide.md`](operator-guide.md) bring-up (`ordo render` → `docker compose -p ordo up -d` from `out/`) — hardware auto-detection, model selection, and plugin gating all happen at render time. Caddy + oauth2-proxy come up alongside the AI services and front-door them automatically.
+**Recommended:** follow the [`operator-guide.md`](operator-guide.md) bring-up (`ordo render` → `docker compose -p ordo up -d` from `out/`) — hardware auto-detection, model selection, and plugin gating all happen at render time. Caddy + oauth2-proxy come up alongside the AI services and front-door them automatically, each on its own SSO-gated port.
 
 Alternatively, from `out/`: `docker compose -p ordo up -d` — same services without re-rendering, if `out/` is already current.
 
-**Hermes dashboard:** `https://${CADDY_TAILNET_HOSTNAME}/hermes/`. See [hermes-agent.md](hermes-agent.md) for setup and Discord configuration.
+**Hermes dashboard:** `https://${CADDY_TAILNET_HOSTNAME}:8447/hermes/`. See [hermes-agent.md](hermes-agent.md) for setup and Discord configuration.
 
 ### RAG (documents in chat)
 
@@ -59,13 +59,23 @@ Env knobs (optional): `EMBED_MODEL`, `RAG_COLLECTION`, `RAG_CHUNK_SIZE`, `RAG_CH
 
 ## Tailscale + SSO front door
 
-Single homelab operator with a small Google-account allowlist for friends / family / co-workers — that's the deployment model. UI services don't publish host ports; everything goes through Caddy on the tailnet.
+Single homelab operator with a small Google-account allowlist for friends / family / co-workers — that's the deployment model. Caddy is the only service that publishes host ports; every other service is reached through it, one dedicated port per UI (port-per-service model, since 2026-07-24 — each prebuilt SPA is served at the root it was compiled for, instead of being mounted under a subpath):
+
+| Port | Service |
+| --- | --- |
+| `:443` | Front door — landing page, `/oauth2` (the one Google callback), `/llm/*` (LiteLLM API, Bearer), `/mcp` (Bearer), n8n's webhook/OAuth passthroughs (`/n8n/webhook/*`, `/n8n/rest/oauth2-credential/callback`), and 302s from every legacy subpath |
+| `:8443` | Open WebUI (chat) |
+| `:8444` | Dashboard (+ `/grafana/` embed) |
+| `:8445` | n8n (UI) |
+| `:8446` | ComfyUI |
+| `:8447` | Hermes (at `/hermes/` on this port) |
+| `:8448` | codebase-memory (at `/codebase-memory/` on this port) |
 
 1. Install Tailscale on the host running Ordo AI Stack and on each device that needs access.
 2. Issue a Tailscale cert for your chosen hostname: `tailscale cert ordo.<tailnet>.ts.net` (writes to `auth/caddy/certs/`).
 3. Set `CADDY_BIND` — the tailnet IPv4 from `tailscale ip -4` binds Caddy to that interface only; `0.0.0.0` is also a supported, operator-approved posture (binds all interfaces, still tailnet-dark since nothing else is published) if that suits your setup. Set `CADDY_TAILNET_HOSTNAME` to the hostname you certified.
-4. Set up the Google OAuth client and email allowlist per [docs/runbooks/auth.md](runbooks/auth.md).
-5. Browse to `https://${CADDY_TAILNET_HOSTNAME}/` from any tailnet device — Caddy terminates TLS with the Tailscale-issued cert, oauth2-proxy enforces Google sign-in against `auth/oauth2-proxy/emails.txt`, then the front door routes to Open WebUI (root), the dashboard (`/dash/`), n8n (`/n8n/`), ComfyUI (`/comfy/`), and Hermes (`/hermes/`).
+4. Set up the Google OAuth client and email allowlist per [docs/runbooks/auth.md](runbooks/auth.md) — no new redirect URI is needed for the port model; the OAuth callback stays on `:443`.
+5. Browse to `https://${CADDY_TAILNET_HOSTNAME}/` from any tailnet device for the landing page, or go straight to a service's port (e.g. `https://${CADDY_TAILNET_HOSTNAME}:8443/` for Open WebUI). Caddy terminates TLS with the Tailscale-issued cert, oauth2-proxy enforces Google sign-in against `auth/oauth2-proxy/emails.txt`, and one sign-in covers every port — the SSO cookie is domain-scoped and each port's post-login redirect carries `{hostport}` so you land back where you started. Old subpath bookmarks (`/chat`, `/dash`, `/n8n`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`) still work — `:443` 302s them to the matching port.
 
 Traffic between tailnet devices is WireGuard-encrypted; Caddy adds app-layer TLS for the Google OAuth flow and the SSO cookie. Open WebUI's own auth (`WEBUI_AUTH`) is off by default because the proxy already gates it; flip to `True` only if you want per-user workspaces inside Open WebUI on top of the shared SSO gate.
 
