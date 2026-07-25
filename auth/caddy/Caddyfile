@@ -172,6 +172,18 @@
     # Bypasses Google SSO but requires a static Bearer (MCP_GATEWAY_TOKEN)
     # because the gateway has NO auth of its own. Unstripped — the gateway
     # serves at /mcp. flush_interval -1 keeps SSE unbuffered.
+    # Fail loud: an empty MCP_GATEWAY_TOKEN would collapse the required bearer
+    # to "Bearer " and degrade this SSO-bypass route to an open endpoint. Reject
+    # the whole route (503) when the secret renders empty so it fails closed
+    # instead of open. No-op while the secret is set; the valid-token path below
+    # is untouched.
+    @mcp_no_token {
+        path /mcp /mcp/*
+        expression `{env.MCP_GATEWAY_TOKEN} == ""`
+    }
+    handle @mcp_no_token {
+        respond "MCP gateway auth misconfigured: MCP_GATEWAY_TOKEN is empty" 503
+    }
     @mcp_unauthed {
         path /mcp /mcp/*
         not header Authorization "Bearer {$MCP_GATEWAY_TOKEN}"

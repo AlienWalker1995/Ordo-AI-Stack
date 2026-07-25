@@ -142,7 +142,7 @@ def _model_gateway(project: str, net: str, env_file: str) -> dict[str, Any]:
         "test": ["CMD-SHELL", (
             "python3 -c \"import os, urllib.request; "
             "req = urllib.request.Request('http://localhost:11435/v1/models', "
-            "headers={'Authorization': 'Bearer ' + os.environ.get('LITELLM_MASTER_KEY', 'local')}); "
+            "headers={'Authorization': 'Bearer ' + os.environ['LITELLM_MASTER_KEY']}); "
             "urllib.request.urlopen(req)\""
         )],
         "interval": "30s", "timeout": "10s", "retries": 3, "start_period": "60s",

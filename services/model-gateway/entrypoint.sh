@@ -1,7 +1,11 @@
 #!/bin/sh
 set -eu
 
-MASTER_KEY="${LITELLM_MASTER_KEY:-local}"
+# Fail loud: LITELLM_MASTER_KEY is the ONLY auth on the SSO-bypassing /llm edge
+# route. Refuse to start on an empty secret rather than bake a guessable default.
+: "${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY must be set (SOPS/secrets.env) — refusing to start with a guessable default}"
+
+MASTER_KEY="${LITELLM_MASTER_KEY}"
 CTX_SIZE="${LLAMACPP_CTX_SIZE:-262144}"
 
 sed -e "s|__MASTER_KEY__|${MASTER_KEY}|g" \
