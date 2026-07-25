@@ -2205,12 +2205,15 @@
     // for the same services on port 443 instead — route the open links
     // through those. Services without an SSO route (llamacpp/model-gateway/
     // mcp/qdrant) fall through to the original direct-port behavior.
+    // Port-per-service model (2026-07-24): every UI has its own SSO-gated port on the
+    // same hostname (':port/path' = same hostname, different port — one SSO session
+    // covers all of them, the oauth2-proxy cookie is domain-scoped).
     const SSO_ROUTES = {
-      comfyui: '/comfy/',
-      webui: '/',
-      n8n: '/n8n/',
-      hermes: '/hermes/',
-      'codebase-memory-ui': '/codebase-memory/',
+      comfyui: ':8446/',
+      webui: ':8443/',
+      n8n: ':8445/',
+      hermes: ':8447/hermes/',
+      'codebase-memory-ui': ':8448/codebase-memory/',
     };
 
     /** Prefer API `url` (paths + query) and match dashboard hostname. */
