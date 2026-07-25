@@ -16,7 +16,7 @@ Retrieval-Augmented Generation (RAG) pipeline providing vector search and docume
 3. Embeds directly against the `llamacpp-embed` service (`http://llamacpp-embed:8080`) — **not**
    the LiteLLM model gateway; the env var carrying that URL is confusingly still named
    `MODEL_GATEWAY_URL` (`EMBED_URL` is the current/preferred name, matching its sibling
-   `qdrant-rag-mcp/server.py`). Model is `EMBED_MODEL`, default `nomic-embed-text-v1.5.Q4_K_M.gguf`.
+   `services/qdrant-rag/server.py`). Model is `EMBED_MODEL`, default `nomic-embed-text-v1.5.Q4_K_M.gguf`.
 4. Stores in Qdrant collection (`RAG_COLLECTION`, default `documents`)
 
 ## Query Flow
@@ -52,7 +52,7 @@ rag-ingestion:
 ## Dependencies
 
 - **Qdrant** service on backend network
-- **`llamacpp-embed`** (plugins/rag/plugin.yaml) for embeddings — a small nomic GGUF served
+- **`llamacpp-embed`** (services/rag/plugin.yaml) for embeddings — a small nomic GGUF served
   directly by llama.cpp, not routed through the LiteLLM model gateway
 - `nomic-embed-text-v1.5.Q4_K_M.gguf` (or `LLAMACPP_EMBED_MODEL` override) must be present before
   ingestion can embed

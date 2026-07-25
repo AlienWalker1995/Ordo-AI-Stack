@@ -66,7 +66,7 @@ A web-based control plane that provides a single pane of glass for:
 - `OPERATIONS` environment variables:
   - `OPS_CONTROLLER_TOKEN` – auth for the Ops Controller.
   - `DASHBOARD_AUTH_TOKEN` – not set in this deployment. Optional, dormant Bearer-auth fallback supported by the dashboard app code; the Caddy edge (SSO) is the dashboard's actual auth gate, so this is not a required or recommended secret.
-- The `dashboard` service itself (FastAPI app with a static vanilla-JS frontend in `dashboard/static/index.html`) runs inside the Ordo AI Stack.
+- The `dashboard` service itself (FastAPI app with a React/Vite SPA frontend in `services/v1-parity/dashboard/frontend/`) runs inside the Ordo AI Stack.
 
 ## Typical Use Flow
 1. From a tailnet device, open `https://${CADDY_TAILNET_HOSTNAME}:8444/` and complete Google sign-in (the legacy `/dash` path 302s here for old bookmarks).

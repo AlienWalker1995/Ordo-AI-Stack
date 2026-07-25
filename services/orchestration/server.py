@@ -358,8 +358,11 @@ def assign_model_gpu(model_id: str, gpu_uuid: str, confirm: bool = False) -> dic
 @mcp.tool()
 def register_model(record_json: str) -> dict:
     """Define a new managed model. record_json: JSON with id, kind, service, runtime, source, est_vram_gb."""
-    import json as _json
-    return _post("/api/orchestration/registry/models", _json.loads(record_json))
+    try:
+        record = json.loads(record_json)
+    except json.JSONDecodeError as e:
+        return {"error": f"Invalid JSON in record_json: {e}"}
+    return _post("/api/orchestration/registry/models", record)
 
 
 if __name__ == "__main__":

@@ -21,33 +21,32 @@ Install Python test dependencies with `pip install -r tests/requirements.txt`.
 
 - `python -m pytest tests/ -v`: run the full root Python test suite.
 - `python -m pytest tests/ -q`: quiet run used for CI checks.
-- `python -m ruff check dashboard tests rag-ingestion scripts comfyui-mcp orchestration-mcp worker`: run lint checks used in CI.
+- `python -m ruff check .`: run lint checks used in CI (ruff honors `.gitignore`, so one command covers `ordo/`, every `services/<id>/`, `scripts/`, and `tests/`).
 - `docker compose build <service> && docker compose up -d <service>`: rebuild and hot-swap a single service, run from `out/` against the rendered compose (see `docs/operator-guide.md`). There is no root `make up`/Makefile or `./compose` / `.\compose.ps1` wrapper anymore — bring-up is always `ordo render --out out` followed by `docker compose -p ordo ... up` from `out/`.
 
 ## Coding Style & Naming Conventions
 Target Python 3.12+. Ruff is the enforced linter; `pyproject.toml` sets a 120-character line length and enables `E`, `F`, `I`, and `UP` rules. Follow existing module patterns: `snake_case` for files, functions, and variables, `PascalCase` for classes, and `test_*.py` for tests. Keep service-specific logic inside its owning directory instead of adding cross-service utility modules at the repo root. Always use `from __future__ import annotations` at the top of Python files.
 
-## Dashboard Service Patterns (`dashboard/`)
-The dashboard backend is a FastAPI app in `dashboard/app.py` (~1950 lines). When adding endpoints:
+## Dashboard Service Patterns (`services/v1-parity/dashboard/`)
+The dashboard backend is a FastAPI app in `services/v1-parity/dashboard/app.py` (with endpoint groups split across sibling `routes_*.py` modules). When adding endpoints:
 - Use `asyncio.to_thread(blocking_fn)` for any blocking I/O (pynvml, psutil, subprocess) — never block the event loop.
 - Shared in-process state (throughput samples, benchmarks) is protected by `_state_lock` (a `threading.Lock`). Always acquire it with `with _state_lock:`.
 - Hardware/health endpoints are public (no auth). The `_verify_auth(request)` / `DASHBOARD_AUTH_TOKEN` Bearer path still exists in code but is **unset in the Ordo deployment** (`AUTH_REQUIRED=False`) — the Caddy edge SSO is the sole gate. Don't reintroduce a per-service token requirement.
 - New endpoints go immediately before the `# --- Static ---` comment at the bottom of `app.py`.
 - Error handling: catch exceptions from optional dependencies (pynvml, httpx) and return a degraded-but-valid response rather than a 500. Log at `DEBUG` level with `logger.debug(...)`.
 
-## Frontend Conventions (`dashboard/static/index.html`)
-The dashboard frontend is a single vanilla JS/HTML file — no build step, no framework. When modifying it:
-- All colors are CSS custom properties in `:root`. Never hardcode hex values in component styles; add a new variable to `:root` if needed.
-- Fonts: `Barlow Condensed` for section labels and row labels (uppercase, `letter-spacing: .05em`), `DM Sans` for body text, `JetBrains Mono` for all numeric values and status codes.
-- New sections follow a `<section id="...">` wrapper with the generic `section` CSS selector providing card styling. Insert sections by their logical position in the page, not at the bottom.
-- JavaScript uses `fetch` + `async/await`. Polling intervals use `setInterval` at the bottom of the script block. New polls go alongside existing ones.
-- No new npm dependencies. No build step. No bundler.
+## Frontend Conventions (`services/v1-parity/dashboard/frontend/`)
+The dashboard frontend is a **React 18 SPA built with Vite + Tailwind** (it has a build step — not a vanilla-JS single file). Source lives under `frontend/src/`: entry `main.jsx`, root `App.jsx`, one component per tab in `src/components/` (e.g. `ServicesTab.jsx`, `ModelctlTab.jsx`), the `/api/*` client in `src/api.js`, and base styles in `src/index.css`. When modifying it:
+- **Design tokens live in `tailwind.config.js`** (the "Ordo Nexus" dark theme — `bg`/`fg`/`accent`/… colors, `Barlow Condensed`/`DM Sans`/`JetBrains Mono` font families, radii, shadows, animations). Style with Tailwind utilities that reference these tokens (`bg-bg`, `text-fg`, `text-accent`, `font-mono`); never hardcode hex values. `src/index.css` holds only the base backdrop and the keyframe/pseudo-element effects that are awkward as utilities.
+- Fonts: `font-display` (`Barlow Condensed`) for section and row labels, `font-sans` (`DM Sans`) for body text, `font-mono` (`JetBrains Mono`) for numeric values and status codes.
+- Data flows through `fetch` + `async/await` in `src/api.js`; polling lives in the owning tab component (React effects/intervals). Add a new tab as a `*Tab.jsx` component wired into `App.jsx`.
+- **Build:** `npm ci && npm run build` (Vite) emits hashed assets to `frontend/dist/`, which the FastAPI backend serves; config is `vite.config.js` / `tailwind.config.js` / `postcss.config.js`.
 
 ## Testing Guidelines
 Add or update `pytest` coverage for every behavior change. Prefer focused unit tests near related coverage — e.g., `tests/test_dashboard_gpu_processes.py` for GPU process endpoint changes. Use `fastapi.testclient.TestClient` for endpoint tests. Mock external dependencies (pynvml, httpx, docker) with `unittest.mock.patch` or pytest `monkeypatch`. Use fixtures from `tests/fixtures/` when possible.
 
 ## Commit & Pull Request Guidelines
-Recent history uses Conventional Commit prefixes such as `feat:`. Continue with `feat:`, `fix:`, `docs:`, `refactor:`, or `test:` followed by a short imperative summary. Use `feat(service):` scope when the change is isolated to one service (e.g., `feat(dashboard):`, `fix(bridge):`). Pull requests should describe the user-visible change, list validation performed, link related issues, and include screenshots only when UI behavior in `dashboard/` changes.
+Recent history uses Conventional Commit prefixes such as `feat:`. Continue with `feat:`, `fix:`, `docs:`, `refactor:`, or `test:` followed by a short imperative summary. Use `feat(service):` scope when the change is isolated to one service (e.g., `feat(dashboard):`, `fix(bridge):`). Pull requests should describe the user-visible change, list validation performed, link related issues, and include screenshots only when UI behavior in `services/v1-parity/dashboard/` changes.
 
 ## Security & Configuration Tips
 Never commit `data/`, `models/`, or the rendered `out/` (includes `out/secrets.env`). Start from `out/secrets.env.example`, keep tokens in environment variables, and review `SECURITY.md` before exposing services beyond localhost. (The root `.env` / SOPS `secrets/.env.sops` and the root `mcp/.env` / `overrides/compute.yml` were the V1 path; `mcp/` and `overrides/` no longer exist.) When adding monitoring containers that need host process visibility, use `pid: host` via `ordo.yaml`'s `overrides:` block (not by hand-editing rendered `out/docker-compose.yml`), and document why in an inline comment.

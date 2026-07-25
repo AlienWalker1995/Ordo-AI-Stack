@@ -13,7 +13,7 @@ Thanks for contributing to Ordo.
   ```
   (or `pip install -e .` then `python -m pytest tests/substrate` from the repo root, with `PYTHONPATH=.`). CI runs a path-gated `substrate` job — see `.github/workflows/ci.yml`.
 - **Render + deploy** — edit the declarative source `ordo.yaml`, then `ordo render` and bring up the rendered compose from `out/` (`docker compose -p ordo …`). Never hand-edit `out/*` — it's regenerated. See [`docs/operator-guide.md`](docs/operator-guide.md) and [`docs/history/CUTOVER.md`](docs/history/CUTOVER.md).
-- **Service images** build from `docker/<name>/` (each has a README with the exact context).
+- **Service images** build from `services/<id>/` (each has a README with the exact context).
 
 ## Edge serving contract
 

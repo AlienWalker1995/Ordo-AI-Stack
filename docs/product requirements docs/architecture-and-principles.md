@@ -230,19 +230,25 @@ dashboard iframe expects that prefix), and n8n's external
 
 ```
 ordo-ai-stack/
-├── dashboard/           # Ops dashboard (FastAPI) — source for the dashboard service
-├── hermes/              # Hermes agent (Dockerfile, entrypoint.sh, plugins/, seed/)
-├── rag-ingestion/       # Document ingester (Dockerfile, ingest.py)
-├── orchestration-mcp/   # Orchestration MCP server — builds the orchestration-mcp service
-├── comfyui-mcp/         # ComfyUI MCP server — builds the comfyui-mcp service
-├── qdrant-rag-mcp/      # Qdrant RAG MCP server — builds the qdrant-rag-mcp tool
-├── codebase-memory-mcp/ # Headless codebase-memory MCP (Dockerfile, README)
-├── codebase-memory-ui/  # Codebase-memory 3D graph UI — builds the codebase-memory-ui service plugin
-├── worker/              # Background job worker (Dockerfile, worker.py)
-├── auth/                # Edge auth: auth/caddy (Caddyfile), auth/oauth2-proxy (SSO allowlist)
-├── config/               # Misc static config (e.g. comfyui-manager-seed.ini)
+├── services/            # Every stack service, self-contained under services/<id>/: its render
+│                        #   manifest (plugin.yaml / agent.yaml / dashboard.yaml) co-located with
+│                        #   its build context (Dockerfile + sources). One dir per service, e.g.:
+│   ├── v1-parity/dashboard/  # Ops dashboard — FastAPI backend + React/Vite SPA (frontend/)
+│   ├── rag/             # Document ingester (Dockerfile, ingest.py)
+│   ├── orchestration/   # Orchestration MCP server
+│   ├── comfyui-mcp/     # ComfyUI MCP server
+│   ├── qdrant-rag/      # Qdrant RAG MCP server
+│   ├── codebase-memory/ # Headless codebase-memory MCP
+│   ├── codebase-memory-ui/  # Codebase-memory 3D graph UI service
+│   ├── worker/          # Background job worker (Dockerfile, worker.py)
+│   └── …                # edge, model-gateway, mcp-gateway, monitoring, voice, native, …
+├── hermes/              # Hermes agent build context (Dockerfile, entrypoint.sh, plugins/, seed/); manifest at services/hermes/agent.yaml
 ├── ordo/                # Render substrate (Python package): `ordo render`, `ordo detect`, etc.
-├── plugins/, agents/, catalog/, dashboards/, docker/, assets/, monitoring/  # Stack source (flattened to repo root 2026-07-24)
+├── catalog/             # Curated model catalog (models.yaml)
+├── auth/                # Edge auth: auth/caddy (Caddyfile), auth/oauth2-proxy (SSO allowlist)
+├── config/              # Misc static config (e.g. comfyui-manager-seed.ini)
+├── assets/              # Shared render/runtime helpers (lease-exec.py, tailscale-serve)
+├── monitoring/          # Grafana + Prometheus config (monitoring plugin)
 ├── scripts/             # ssrf-egress-block, smoke tests, doctor scripts
 ├── tests/               # Contract + smoke tests; render-substrate tests under tests/substrate/
 ├── product requirements docs/  # This documentation

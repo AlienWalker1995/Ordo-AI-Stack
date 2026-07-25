@@ -6,7 +6,7 @@ V2-native single-file SPA (`native`, the open-source default) that talks straigh
 operator's feature-rich V1 dashboard (`v1-parity`: GGUF model management via /api/llm/*,
 model-control flag cards, GPU/model-registry views, Grafana tab, token auth) — WITHOUT patching
 the substrate. Selection is data-driven, mirroring the agent registry: drop a
-`dashboards/<id>/dashboard.yaml` in and set `dashboard: <id>` in ordo.yaml.
+`services/<id>/dashboard.yaml` in and set `dashboard: <id>` in ordo.yaml.
 
 A dashboard manifest declares:
   - `image`  ("" -> the <project>/dashboard:latest convention),

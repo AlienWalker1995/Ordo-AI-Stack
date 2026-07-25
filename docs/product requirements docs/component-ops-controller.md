@@ -53,7 +53,7 @@ require ops-controller success to complete a chat or tool call.
 
 ## Related service: ops-api
 
-The V1-parity dashboard's optional backend (`dashboards/v1-parity/dashboard.yaml`,
+The V1-parity dashboard's optional backend (`services/v1-parity/dashboard.yaml`,
 `services/ops-api/main.py`), rendered as its own compose service named `ops-api` — not
 part of ops-controller. It owns the audited, Bearer-token-gated compose-lifecycle API:
 
