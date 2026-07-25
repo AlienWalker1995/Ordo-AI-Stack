@@ -42,7 +42,7 @@ Use local files as context in **Open WebUI** via Qdrant + the `rag-ingestion` se
    ```bash
    docker compose -p ordo --profile rag up -d
    ```
-3. **Drop documents** under `data/rag-input/` (paths come from your `DATA_PATH` / `BASE_PATH`; default is `<repo>/data/rag-input/`). Supported types include `.txt`, `.md`, `.pdf`, and common code extensions — see `rag-ingestion/ingest.py` for `SUPPORTED_EXTENSIONS`.
+3. **Drop documents** under `data/rag-input/` (paths come from your `DATA_PATH` / `BASE_PATH`; default is `<repo>/data/rag-input/`). Supported types include `.txt`, `.md`, `.pdf`, and common code extensions — see `services/rag/ingest.py` for `SUPPORTED_EXTENSIONS`.
 4. **Open WebUI** → enable RAG for chat (vector DB is already pointed at Qdrant in compose).
 5. **Check status:** dashboard `GET /api/rag/status` or open the dashboard UI — collection name defaults to `documents` (`RAG_COLLECTION`).
 

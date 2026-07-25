@@ -3,7 +3,7 @@
 An Ordo "agent" is the orchestrator container that drives the stack. It is swappable: the core
 (llama.cpp + gateways + ops-controller + dashboard) is agent-agnostic, and any container that
 honours the contract below can be the agent. Like plugins, agents are declared as data manifests,
-not code, so a third party ships an agent by dropping an `agents/<id>/agent.yaml` in.
+not code, so a third party ships an agent by dropping a `services/<id>/agent.yaml` in.
 
 The contract every agent image MUST honour (open standards, per the architecture decisions):
   - CHAT: talk to the model via the model-gateway's OpenAI-compatible endpoint (never bind the

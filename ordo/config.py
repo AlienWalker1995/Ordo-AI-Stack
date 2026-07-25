@@ -15,7 +15,7 @@ class Source:
     model: str = "auto"
     agent: str = "hermes"
     # Control-plane UI (pluggable, like the agent). "native" is the substrate default (minimal
-    # SPA); a deployment may select a registered dashboard (e.g. "v1-parity") in dashboards/*.
+    # SPA); a deployment may select a registered dashboard (e.g. "v1-parity") in services/*.
     dashboard: str = "native"
     plugins: Any = "auto"           # "auto" or list[str]
     cloud_fallback: dict[str, Any] = dataclasses.field(default_factory=lambda: {"enabled": False})

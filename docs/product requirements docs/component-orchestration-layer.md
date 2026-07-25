@@ -5,7 +5,7 @@ A lightweight, plug‑in‑driven orchestrator that stitches together all AI ser
 
 ## Current Implementation
 
-The orchestration layer today is an **MCP server** (`orchestration-mcp/server.py`) with hardcoded tool definitions. The dashboard exposes orchestration functionality via HTTP routes (`routes_orchestration.py`) and includes readiness checks (`orchestration_readiness.py`) and job tracking (`orchestration_db.py`).
+The orchestration layer today is an **MCP server** (`services/orchestration/server.py`) with hardcoded tool definitions. The dashboard exposes orchestration functionality via HTTP routes (`routes_orchestration.py`) and includes readiness checks (`orchestration_readiness.py`) and job tracking (`orchestration_db.py`).
 
 ### What exists now
 - MCP-based orchestration tools registered in the MCP gateway via `registry-custom.yaml`.

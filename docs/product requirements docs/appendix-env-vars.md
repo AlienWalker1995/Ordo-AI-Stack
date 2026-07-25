@@ -7,7 +7,7 @@
 | `LLAMACPP_URL` | model-gateway, dashboard | llama.cpp internal URL | `http://llamacpp:8080` |
 | `MODEL_CACHE_TTL_SEC` | model-gateway | Model list cache TTL seconds | `60` |
 | `DASHBOARD_URL` | model-gateway | Dashboard for throughput recording | `http://dashboard:8080` |
-| `OPS_CONTROLLER_URL` | dashboard | Deliberately overridden for the V1-parity dashboard to point at the `ops-api` backend, not the V2 scheduler (`dashboards/v1-parity/dashboard.yaml`) | `http://ops-api:9000` |
+| `OPS_CONTROLLER_URL` | dashboard | Deliberately overridden for the V1-parity dashboard to point at the `ops-api` backend, not the V2 scheduler (`services/v1-parity/dashboard.yaml`) | `http://ops-api:9000` |
 | `OPS_CONTROLLER_URL` | agent, mcp-gateway, hermes-dashboard, comfyui, comfyui-mcp, ltx-trainer | V2 scheduler (`ops-controller`) URL for GPU leases | `http://ops-controller:9000` |
 | `OPS_CONTROLLER_TOKEN` | dashboard, ops-controller | Bearer token for ops API | *(required)* |
 | `DASHBOARD_AUTH_TOKEN` | dashboard | Optional dormant Bearer-auth fallback in dashboard code; not set in the Ordo deployment — the Caddy edge (oauth2-proxy + Google SSO) is the sole auth gate for the dashboard | *(unset; not used)* |
@@ -21,7 +21,7 @@
 | `OPENAI_API_BASE` | open-webui, n8n | OpenAI-compat base URL | `http://model-gateway:11435/v1` |
 | `GGUF_MODELS` | gguf-puller | Hugging Face repo(s) of GGUF files to pull | *(empty)* |
 | `COMPUTE_MODE` | compose | CPU/nvidia/amd | auto-detected |
-| `QDRANT_PORT` | qdrant | Not wired to anything — consumers hardcode `http://qdrant:6333` (e.g. `plugins/qdrant-rag/plugin.yaml`); no host publish (`ordo-net` only) | `6333` |
+| `QDRANT_PORT` | qdrant | Not wired to anything — consumers hardcode `http://qdrant:6333` (e.g. `services/qdrant-rag/plugin.yaml`); no host publish (`ordo-net` only) | `6333` |
 | `EMBED_MODEL` | rag-ingestion | Embedding model for RAG | `nomic-embed-text` |
 | `RAG_COLLECTION` | rag-ingestion, dashboard | Qdrant collection name | `documents` |
 | `RAG_CHUNK_SIZE` | rag-ingestion | Token chunk size for document splitting | `400` |

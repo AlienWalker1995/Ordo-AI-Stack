@@ -372,7 +372,9 @@ def _set_env_keys(kv: dict, request=None) -> None:
     for key, value in kv.items():
         pattern = rf"^{re.escape(key)}=.*"
         if re.search(pattern, content, re.MULTILINE):
-            content = re.sub(pattern, f"{key}={value}", content, flags=re.MULTILINE)
+            # Function replacement: bypasses re escape processing so a value containing
+            # backslashes / \g / \1 etc. is written literally instead of raising re.error.
+            content = re.sub(pattern, lambda _m: f"{key}={value}", content, flags=re.MULTILINE)
         else:
             content = content.rstrip("\n") + f"\n{key}={value}\n"
     _write_text_atomic(env_path, content)
@@ -420,7 +422,9 @@ def _render_model_config_to_env(effective):
             raise HTTPException(status_code=400, detail=f"Illegal newline in {key}")
         pattern = rf"^{re.escape(key)}=.*"
         if re.search(pattern, content, re.MULTILINE):
-            content = re.sub(pattern, f"{key}={val}", content, flags=re.MULTILINE)
+            # Function replacement: bypasses re escape processing so a value containing
+            # backslashes / \g / \1 etc. is written literally instead of raising re.error.
+            content = re.sub(pattern, lambda _m: f"{key}={val}", content, flags=re.MULTILINE)
         else:
             content = content.rstrip("\n") + f"\n{key}={val}\n"
     _write_text_atomic(env_path, content)

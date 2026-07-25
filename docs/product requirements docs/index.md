@@ -21,21 +21,21 @@ A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`
 |-----------|--------|-----------|
 | OpenAI-compat model gateway (llama.cpp) | Live | `services/model-gateway/` |
 | Model list TTL cache + cache-bust endpoint | Live | `services/model-gateway/` |
-| `X-Request-ID` correlation end-to-end | Live | `services/model-gateway/`, `dashboard/app.py`, `ordo/` (`ordo serve`) |
+| `X-Request-ID` correlation end-to-end | Live | `services/model-gateway/`, `services/v1-parity/dashboard/app.py`, `ordo/` (`ordo serve`) |
 | Responses API (`/v1/responses`) | Live | `services/model-gateway/` |
 | Completions compat (`/v1/completions`) | Live | `services/model-gateway/` |
 | MCP Gateway with hot-reload | Live | `services/mcp-gateway/`, `out/docker-compose.yml` |
-| MCP registry.json metadata layer | Live | `dashboard/app.py`, `data/mcp/registry.json` |
-| MCP health endpoint + UI badges | Live | `dashboard/app.py` |
+| MCP registry.json metadata layer | Live | `services/v1-parity/dashboard/app.py`, `data/mcp/registry.json` |
+| MCP health endpoint + UI badges | Live | `services/v1-parity/dashboard/app.py` |
 | Ops Controller (start/stop/restart/logs/pull) | Live | `ordo/` (`ordo serve`) |
 | Append-only JSONL audit log | Live | `ordo/` (`ordo serve`) |
-| Dashboard auth via Caddy edge SSO (oauth2-proxy + Google + allowlist); optional dormant per-service Bearer token in code, unused in deployment | Live | `dashboard/app.py` |
-| Dashboard throughput stats + benchmark | Live | `dashboard/app.py` |
-| Dashboard hardware stats | Live | `dashboard/app.py` |
-| Dashboard default-model management | Live | `dashboard/app.py` |
-| RAG pipeline (Qdrant + rag-ingestion) | Live | `rag-ingestion/`, `out/docker-compose.yml` |
+| Dashboard auth via Caddy edge SSO (oauth2-proxy + Google + allowlist); optional dormant per-service Bearer token in code, unused in deployment | Live | `services/v1-parity/dashboard/app.py` |
+| Dashboard throughput stats + benchmark | Live | `services/v1-parity/dashboard/app.py` |
+| Dashboard hardware stats | Live | `services/v1-parity/dashboard/app.py` |
+| Dashboard default-model management | Live | `services/v1-parity/dashboard/app.py` |
+| RAG pipeline (Qdrant + rag-ingestion) | Live | `services/rag/`, `out/docker-compose.yml` |
 | Open WebUI → Qdrant vector DB | Live | `out/docker-compose.yml` |
-| RAG status endpoint | Live | `dashboard/app.py` |
+| RAG status endpoint | Live | `services/v1-parity/dashboard/app.py` |
 | Docker hardening (cap_drop, read_only, networks) | Live | `out/docker-compose.yml` |
 | Explicit frontend/backend networks | Live | `out/docker-compose.yml` |
 | llama.cpp backend-only (no host port) | Live | `out/docker-compose.yml` |
