@@ -252,7 +252,7 @@ class TestOutboxDB:
             db_dir, job_id, "http://example.com/hook", {"job_id": job_id}
         )
 
-        db_path = db_dir / "orchestration" / "orchestration.db"
+        db_path = db_dir / "orchestration" / "orchestration.sqlite3"
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
 
@@ -295,7 +295,7 @@ class TestOutboxDB:
         )
 
         # Get the row_id
-        db_path = db_dir / "orchestration" / "orchestration.db"
+        db_path = db_dir / "orchestration" / "orchestration.sqlite3"
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
         row = conn.execute(
@@ -353,7 +353,7 @@ class TestOutboxDB:
             record_outbox_attempt(db_dir, row_id, error="fail")
 
         # Reset next_retry_at to the past so the backoff filter doesn't hide it
-        db_path = db_dir / "orchestration" / "orchestration.db"
+        db_path = db_dir / "orchestration" / "orchestration.sqlite3"
         conn = sqlite3.connect(str(db_path))
         conn.execute(
             "UPDATE publish_outbox SET next_retry_at='2000-01-01T00:00:00Z' WHERE id=?",
