@@ -3,11 +3,13 @@ name: Generic OpenAI-compatible agent
 description: >
   A minimal reference adapter for third parties: any agent that speaks the OpenAI chat API to the
   model-gateway and MCP to the mcp-gateway. Proves the core is genuinely agent-agnostic — swap it
-  in with `agent: openai-agent` in ordo.yaml. Ships as a project-buildable `:latest`, pinned by its
-  build context — the same convention every other locally-built image in this repo follows (see
-  `ordo/agent-hermes:latest`, `ordo/model-gateway:latest`) — not an upstream registry pull.
+  in with `agent: openai-agent` in ordo.yaml. A third party ships the image built from their own
+  tree (there is no in-repo Dockerfile), so `build.external` marks it built out-of-band.
 default: false
 image: ordo/agent-openai-agent:latest
+# Built out-of-band (no in-repo Dockerfile) — a third party supplies the image. METADATA only.
+build:
+  external: true
 consumes:
   - model-gateway
   - mcp-gateway

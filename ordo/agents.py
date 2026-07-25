@@ -23,6 +23,8 @@ from typing import Any
 
 import yaml
 
+from .buildspec import BuildSpec
+
 # The core services an agent may declare it consumes — used to validate a manifest isn't asking
 # for something the core doesn't provide.
 KNOWN_SERVICES = frozenset({"model-gateway", "mcp-gateway", "ops-controller", "dashboard"})
@@ -49,6 +51,10 @@ class Agent:
     # Empty -> compose omits it (render adds the core-peer list). A value -> emitted with conditions.
     depends_on: dict[str, str] = dataclasses.field(default_factory=dict)
     healthcheck: dict[str, Any] = dataclasses.field(default_factory=dict)
+    # Build-context identity (METADATA for preflight/tests; NEVER rendered into compose). Agents are
+    # pluggable: an operator/third-party often ships a PREBUILT image (no in-repo Dockerfile) — those
+    # declare `build: {external: true}`. Absent -> the agent's own `services/<id>/`. See ordo.buildspec.
+    build: BuildSpec = dataclasses.field(default_factory=BuildSpec)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Agent:
@@ -69,6 +75,7 @@ class Agent:
             ),
             depends_on={str(k): str(v) for k, v in (d.get("depends_on", {}) or {}).items()},
             healthcheck=dict(d.get("healthcheck", {}) or {}),
+            build=BuildSpec.from_dict(d.get("build")),
         )
 
     def image_for(self, project: str) -> str:
