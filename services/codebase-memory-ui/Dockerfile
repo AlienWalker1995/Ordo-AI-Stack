@@ -19,7 +19,8 @@
 # Pinned + checksum-verified (portable/static UI build). Bump CBM_VERSION +
 # CBM_UI_SHA256 together (sha256 from the release checksums.txt,
 # codebase-memory-mcp-ui-linux-${CBM_ARCH}-portable.tar.gz line).
-FROM debian:bookworm-slim
+# debian:bookworm-slim
+FROM debian@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 
 ARG CBM_VERSION=v0.8.1
 ARG CBM_ARCH=amd64

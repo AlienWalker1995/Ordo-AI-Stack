@@ -26,6 +26,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && curl -fsSL "https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64" \
        -o /usr/local/bin/docker-compose \
+    && echo "ed1917fb54db184192ea9d0717bcd59e3662ea79db48bff36d3475516c480a6b  /usr/local/bin/docker-compose" | sha256sum -c - \
     && chmod +x /usr/local/bin/docker-compose \
     && apt-mark manual ca-certificates \
     && apt-get purge -y --auto-remove curl && rm -rf /var/lib/apt/lists/*

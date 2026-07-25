@@ -6,7 +6,8 @@
 # Everything is pinned: the upstream commit (LTX2_SHA), uv, and the repo's committed uv.lock
 # (torch 2.9.1 cu128 wheels — Blackwell/5090-capable). Bump LTX2_SHA deliberately and rebuild:
 #   docker build -f services/ltx-trainer/Dockerfile -t ordo/ltx-trainer:<sha12> services/ltx-trainer
-FROM nvidia/cuda:12.8.1-base-ubuntu24.04
+# nvidia/cuda:12.8.1-base-ubuntu24.04
+FROM nvidia/cuda@sha256:133c78a0575303be34164d0b90137a042172bdf60696af01a3c424ab402d86e2
 
 ARG LTX2_SHA=9377758131b1ffde4b7f766804590a6617bf2ab9
 ARG UV_VERSION=0.11.29

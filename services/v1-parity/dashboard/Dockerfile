@@ -1,7 +1,8 @@
 # ── Stage 1: build the React SPA (frontend/dist) ────────────────────────────────
 # Produces hashed ES-module assets that satisfy the backend's strict CSP
 # (script-src 'self'). npm ci uses the committed lockfile for a reproducible build.
-FROM node:lts-alpine AS frontend
+# node:lts-alpine
+FROM node@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS frontend
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
@@ -9,7 +10,8 @@ COPY frontend/ ./
 RUN npm run build
 
 # ── Stage 2: Python/FastAPI runtime ─────────────────────────────────────────────
-FROM python:3.12-slim
+# python:3.12-slim
+FROM python@sha256:3d5ed973e45820f5ba5e46bd065bd88b3a504ff0724d85980dcd05eab361fcf4
 
 WORKDIR /app
 
