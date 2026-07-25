@@ -19,7 +19,7 @@ secrets:
   - HF_TOKEN
 services:
   - name: ltx-trainer
-    # Locally built from docker/ltx-trainer.Dockerfile — tag pins the upstream repo SHA.
+    # Locally built from services/ltx-trainer/Dockerfile — tag pins the upstream repo SHA.
     image: ${LTX_TRAINER_IMAGE:-ordo/ltx-trainer:9377758131b1}
     gpu_pin: primary   # cu128 torch (Blackwell); training on the 1070 is a non-starter
     # Torch shares offloaded/pinned tensors via /dev/shm; Docker's 64MB default dies as soon

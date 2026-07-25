@@ -5,7 +5,7 @@ description: >
   reverse-proxies /api/* straight to the `ordo serve` control plane (service `ops-controller`).
   No separate backend service; the open-source default.
 default: true
-# image omitted -> resolves to <project>/dashboard:latest (built from docker/dashboard-native/).
+# image omitted -> resolves to <project>/dashboard:latest (built from services/native/).
 depends_on:
   ops-controller: service_started
 # V1's dashboard declares a /api/health container healthcheck and the agent gates on

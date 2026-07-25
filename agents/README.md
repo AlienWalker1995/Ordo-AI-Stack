@@ -43,5 +43,5 @@ agent: my-agent
 service. An unknown id is surfaced as a warning at render/preflight (and falls back to the naming
 convention) rather than failing mysteriously at `compose up`.
 
-See [`hermes/agent.yaml`](hermes/agent.yaml) (the default, operator-built) and
-[`openai-agent/agent.yaml`](openai-agent/agent.yaml) (a pinned generic reference adapter).
+See [`services/hermes/agent.yaml`](../services/hermes/agent.yaml) (the default, operator-built) and
+[`services/openai-agent/agent.yaml`](../services/openai-agent/agent.yaml) (a pinned generic reference adapter).

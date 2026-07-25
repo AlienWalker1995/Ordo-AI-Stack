@@ -12,7 +12,7 @@
 | `OPS_CONTROLLER_TOKEN` | dashboard, ops-controller | Bearer token for ops API | *(required)* |
 | `DASHBOARD_AUTH_TOKEN` | dashboard | Optional dormant Bearer-auth fallback in dashboard code; not set in the Ordo deployment — the Caddy edge (oauth2-proxy + Google SSO) is the sole auth gate for the dashboard | *(unset; not used)* |
 | `DEFAULT_MODEL` | dashboard, open-webui | Default model shown in Open WebUI chat | *(optional)* |
-| `HERMES_DASHBOARD_PORT` | hermes-dashboard | Not wired to anything — the dashboard's listen port is hardcoded via `--port 9119` in `plugins/hermes-dashboard/plugin.yaml`; documented here for reference only | `9119` |
+| `HERMES_DASHBOARD_PORT` | hermes-dashboard | Not wired to anything — the dashboard's listen port is hardcoded via `--port 9119` in `services/hermes-dashboard/plugin.yaml`; documented here for reference only | `9119` |
 | `DISCORD_BOT_TOKEN_FILE` | agent | Docker secret file path for the Discord bot token; the entrypoint reads it into `DISCORD_BOT_TOKEN` inside the container. Plaintext `DISCORD_BOT_TOKEN` env is never set — `tests/test_secrets_isolation.py` asserts it's absent | `/run/secrets/discord_token` |
 | `DISCORD_ALLOWED_USERS` | agent | Comma-separated Discord user IDs authorized to DM/invoke | *(required for Discord use)* |
 | `MCP_GATEWAY_PORT` | mcp-gateway | Internal port the gateway listens on (`ordo-net` only; no host publish — only Caddy publishes a port) | `8811` |

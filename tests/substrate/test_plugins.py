@@ -128,7 +128,7 @@ def test_ltx_trainer_manifest_invariants():
     from pathlib import Path
 
     import yaml
-    manifest = Path(__file__).resolve().parents[2] / "plugins" / "ltx-trainer" / "plugin.yaml"
+    manifest = Path(__file__).resolve().parents[2] / "services" / "ltx-trainer" / "plugin.yaml"
     m = yaml.safe_load(manifest.read_text(encoding="utf-8"))
     svc = m["services"][0]
     assert svc["gpu_pin"] == "primary"                     # trainer needs the 5090 (cu128 torch)
