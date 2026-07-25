@@ -1,7 +1,13 @@
 """SQLite-backed job store, publish outbox, workflow versions, and schedules.
 
 Replaces the old in-memory + single-JSON approach (the orchestration_jobs.py compat shim was removed 2026-07-24 — import from this module directly).
-WAL mode allows concurrent dashboard readers + single worker writer safely.
+
+Journal mode is DELETE (a plain rollback journal), NOT WAL. This DB lives on a
+9p/Windows Docker bind mount and is opened by both the dashboard and the worker;
+WAL's shared-memory `-shm` mmap is unreliable there ("disk I/O error") and a stale
+`-shm` from an abruptly-replaced container gets stuck busy and crash-loops the whole
+control plane. See `_connect` for the full rationale. Concurrency is a single worker
+writer + dashboard readers over a small, transient store — DELETE mode is safe here.
 """
 
 from __future__ import annotations
@@ -111,6 +117,7 @@ CREATE TABLE IF NOT EXISTS publish_outbox (
     last_attempt_at TEXT,
     next_retry_at TEXT,
     delivered_at TEXT,
+    dead_lettered_at TEXT,
     error TEXT,
     idempotency_key TEXT UNIQUE,
     FOREIGN KEY (job_id) REFERENCES jobs(job_id)
@@ -154,8 +161,20 @@ def init_db(data_dir: Path) -> None:
     """Create tables and migrate legacy JSON store if present."""
     with _connect(data_dir) as conn:
         conn.executescript(_SCHEMA)
+        _migrate_add_outbox_dead_letter(conn)
         conn.commit()
     _migrate_json_store(data_dir)
+
+
+def _migrate_add_outbox_dead_letter(conn: sqlite3.Connection) -> None:
+    """Idempotently add publish_outbox.dead_lettered_at to pre-existing DBs.
+
+    CREATE TABLE IF NOT EXISTS never alters an already-created table, so DBs
+    provisioned before the dead-letter reaper landed need the column added.
+    """
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(publish_outbox)").fetchall()}
+    if "dead_lettered_at" not in cols:
+        conn.execute("ALTER TABLE publish_outbox ADD COLUMN dead_lettered_at TEXT")
 
 
 def _migrate_json_store(data_dir: Path) -> None:
@@ -421,23 +440,15 @@ def get_outbox_stats(data_dir: Path) -> dict[str, int]:
     with _connect(data_dir) as conn:
         row = conn.execute(
             "SELECT "
-            "SUM(CASE WHEN delivered_at IS NULL THEN 1 ELSE 0 END) AS pending, "
-            "SUM(CASE WHEN delivered_at IS NOT NULL THEN 1 ELSE 0 END) AS delivered "
+            "SUM(CASE WHEN delivered_at IS NULL AND dead_lettered_at IS NULL THEN 1 ELSE 0 END) AS pending, "
+            "SUM(CASE WHEN delivered_at IS NOT NULL THEN 1 ELSE 0 END) AS delivered, "
+            "SUM(CASE WHEN dead_lettered_at IS NOT NULL AND delivered_at IS NULL THEN 1 ELSE 0 END) AS dead_lettered "
             "FROM publish_outbox"
         ).fetchone()
-    return {"pending": int(row["pending"] or 0), "delivered": int(row["delivered"] or 0)}
-
-
-def checkpoint_wal(data_dir: Path) -> dict[str, Any]:
-    with _connect(data_dir) as conn:
-        row = conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
-    if not row:
-        return {"ok": False}
     return {
-        "ok": True,
-        "busy": int(row[0]),
-        "log_frames": int(row[1]),
-        "checkpointed_frames": int(row[2]),
+        "pending": int(row["pending"] or 0),
+        "delivered": int(row["delivered"] or 0),
+        "dead_lettered": int(row["dead_lettered"] or 0),
     }
 
 
@@ -490,6 +501,7 @@ def get_pending_outbox(data_dir: Path, max_attempts: int = 5) -> list[dict[str, 
         rows = conn.execute(
             """SELECT * FROM publish_outbox
                WHERE delivered_at IS NULL
+               AND dead_lettered_at IS NULL
                AND attempts < ?
                AND (next_retry_at IS NULL OR next_retry_at <= ?)
                ORDER BY id ASC LIMIT 20""",
@@ -537,6 +549,54 @@ def record_outbox_attempt(data_dir: Path, row_id: int, error: str | None = None)
             next_retry = (datetime.now(UTC) + timedelta(seconds=delay_sec)).isoformat().replace("+00:00", "Z")
             conn.execute("UPDATE publish_outbox SET next_retry_at=? WHERE id=?", (next_retry, row_id))
         conn.commit()
+
+
+def reap_dead_outbox(data_dir: Path, max_attempts: int = 5) -> int:
+    """Dead-letter outbox entries that have exhausted their retry budget.
+
+    Once `attempts >= max_attempts`, `get_pending_outbox` stops polling the row but
+    nothing else fires, so an undelivered entry — and the `publish_enqueued` job that
+    owns it — would sit unresolved forever (counted under `pending` in the stats,
+    needing manual DB surgery). This reaper scans for those stranded rows, stamps
+    `dead_lettered_at`, and drives the owning job through the only valid terminal
+    transition for a publish-stuck job: `publish_enqueued -> failed` (see
+    `_VALID_TRANSITIONS`), recording the reason in `publish_status`.
+
+    Idempotent: a second run finds nothing because `dead_lettered_at` is now set, and
+    the job's terminal state no longer satisfies the `publish_enqueued` guard in
+    `update_job`. Returns the number of rows dead-lettered on this pass.
+
+    Meant to be called from the worker's existing poll loop — no thread of its own.
+    """
+    now = _now_iso()
+    with _connect(data_dir) as conn:
+        rows = conn.execute(
+            "SELECT id, job_id FROM publish_outbox "
+            "WHERE delivered_at IS NULL AND dead_lettered_at IS NULL AND attempts >= ?",
+            (max_attempts,),
+        ).fetchall()
+        if not rows:
+            return 0
+        ids = [r["id"] for r in rows]
+        placeholders = ", ".join("?" for _ in ids)
+        conn.execute(
+            f"UPDATE publish_outbox SET dead_lettered_at=? WHERE id IN ({placeholders})",
+            [now, *ids],
+        )
+        conn.commit()
+        job_ids = {r["job_id"] for r in rows}
+    # Transition owning jobs on fresh connections (update_job opens its own); the
+    # publish_enqueued guard in update_job makes this a no-op for jobs already
+    # resolved, keeping the whole reap idempotent.
+    for jid in job_ids:
+        update_job(
+            data_dir,
+            jid,
+            state=JobState.failed,
+            publish_status="publish_failed: retries exhausted",
+            error="publish delivery failed after max attempts (dead-lettered)",
+        )
+    return len(rows)
 
 
 # ── Workflow versions ──────────────────────────────────────────────────────────
