@@ -2252,5 +2252,18 @@ async def legacy_shell():
     return FileResponse(str(legacy), media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
+@app.get("/", include_in_schema=False)
+async def _app_shell():
+    """Serve the SPA app shell with revalidation headers. Uses the React build's index when
+    present (production image / local `npm run build`), else the preserved legacy shell — so
+    `/` still returns a 200 shell in a headless env (CI/tests) where the React build hasn't
+    run and `static/` has no `index.html`. Registered before the catch-all mount so it wins
+    for the exact `/` path; hashed assets are still served by the mount below."""
+    index = _spa_dir / "index.html"
+    if not index.exists():
+        index = static_dir / "legacy-index.html"
+    return FileResponse(str(index), media_type="text/html", headers={"Cache-Control": "no-cache"})
+
+
 if _spa_dir.exists():
     app.mount("/", _NoCacheHTMLStaticFiles(directory=str(_spa_dir), html=True), name="static")
