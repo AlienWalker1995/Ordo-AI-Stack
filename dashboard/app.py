@@ -1237,10 +1237,13 @@ def _persist_mcp_toggle(server: str, action: str) -> dict:
         original = path.read_text(encoding="utf-8")
         edited = _edit_plugins_list(original, plugin, action)
         if edited != original:
-            # Atomic write-then-rename (survives bind-mount ownership mismatch, like servers.txt).
-            tmp = path.with_suffix(path.suffix + ".tmp")
-            tmp.write_text(edited, encoding="utf-8")
-            tmp.replace(path)
+            # In-place write (NOT write-temp-then-rename): ordo.yaml is a SINGLE-FILE bind mount,
+            # so the app user can neither create a sibling `.tmp` (its dir is the read-only container
+            # root) nor rename over the mount. `edited` is already validated inside _edit_plugins_list
+            # (round-trips through yaml.safe_load + asserts the exact plugins-set change), so writing
+            # the known-good content directly is safe. (servers.txt keeps temp+rename because it lives
+            # in a directory mount where a sibling tmp is writable.)
+            path.write_text(edited, encoding="utf-8")
         return {"persistent": True, "plugin": plugin, "note": None}
     except (ValueError, OSError) as e:
         logger.warning("ordo.yaml persist failed for server=%s plugin=%s action=%s: %s",
