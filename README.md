@@ -44,8 +44,8 @@ Caddy is the **only** service that publishes host ports — seven SSO-gated port
 - **n8n** (`:8445`) — automation; the public webhook base (`N8N_WEBHOOK_URL=https://${CADDY_TAILNET_HOSTNAME}/n8n`) is unchanged and still passes through `:443`.
 - **MCP gateway** — shared MCP tools for host clients and in-stack services, reachable at `:443/mcp` (Bearer auth).
 - **Ops controller** — the render/scheduler control plane (no host port; token-auth).
-- **Hermes** (`:8447`, served at `/hermes/` on its own port) — the default assistant agent (chat via the model gateway, tools via the MCP gateway, GPU via the scheduler).
-- **codebase-memory** (`:8448`, served at `/codebase-memory/` on its own port) — shared codebase-memory MCP UI.
+- **Hermes** (`:8447`, served at its own port root) — the default assistant agent (chat via the model gateway, tools via the MCP gateway, GPU via the scheduler).
+- **codebase-memory** (`:8448`, served at its own port root) — shared codebase-memory MCP UI.
 - **Voice / RAG / monitoring** — optional plugins (STT+TTS, Qdrant retrieval, Grafana+Prometheus+GPU exporter) that enable when the hardware supports them.
 
 ## Security
@@ -66,8 +66,8 @@ Tailnet device → Caddy (TLS, ${CADDY_TAILNET_HOSTNAME}) → oauth2-proxy (Goog
                     ├── :8444 → Dashboard (+ /grafana/ embed), served at its own root
                     ├── :8445 → n8n UI, served at its own root
                     ├── :8446 → ComfyUI, served at its own root
-                    ├── :8447 → Hermes (default agent), at /hermes/ on its own port
-                    └── :8448 → codebase-memory, at /codebase-memory/ on its own port
+                    ├── :8447 → Hermes (default agent), served at its own root
+                    └── :8448 → codebase-memory, served at its own root
                                         │
                                         ├── Model Gateway → LiteLLM → llama.cpp
                                         ├── MCP Gateway → shared tools (SearXNG, n8n, ComfyUI, …)

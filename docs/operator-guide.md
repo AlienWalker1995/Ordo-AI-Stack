@@ -132,11 +132,12 @@ mounting every app under a subpath of a single `:443`:
 | `:8444` | Dashboard (+ `/grafana/` embed) |
 | `:8445` | n8n UI |
 | `:8446` | ComfyUI |
-| `:8447` | Hermes (served at `/hermes/` on its own port) |
-| `:8448` | codebase-memory (served at `/codebase-memory/` on its own port) |
+| `:8447` | Hermes (served at its own port root) |
+| `:8448` | codebase-memory (served at its own port root) |
 
-One Google sign-in covers all seven ports — the oauth2-proxy cookie is domain-scoped and each
-port's `rd=` carries `{hostport}` so sign-in returns you to the port you came from; the Google
+One Google sign-in covers all seven ports **and the clean per-service tailnet names** — the
+oauth2-proxy cookie is domain-scoped and the SSO gate's `rd=` carries `{host}` (portless), so a
+single wildcard `--whitelist-domain=.<domain>` covers every port and sidecar name at once; the Google
 OAuth client needs no new redirect URIs. Old subpath URLs (`/chat`, `/dash`, `/n8n`, `/comfy`,
 `/hermes`, `/codebase-memory`, `/grafana`) 302 from `:443` to their new ports, so bookmarks keep
 working, and n8n's public webhook base (`N8N_WEBHOOK_URL=https://<host>/n8n`) is unchanged. This

@@ -34,7 +34,7 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `HERMES_DASHBOARD_PORT` | `9119` | Internal port the Hermes dashboard listens on (`ordo-net` only, no host publish; Caddy reverse-proxies it at `${CADDY_TAILNET_HOSTNAME}:8447/hermes/`) |
+| `HERMES_DASHBOARD_PORT` | `9119` | Internal port the Hermes dashboard listens on (`ordo-net` only, no host publish; Caddy reverse-proxies it at `${CADDY_TAILNET_HOSTNAME}:8447/`, served at the origin root) |
 | `DISCORD_BOT_TOKEN` | *(empty)* | Discord bot token. Managed via SOPS (`secrets/discord_token.sops`) or `DISCORD_BOT_TOKEN_FILE=/run/secrets/discord_token`; inline `DISCORD_TOKEN=` in `.env` is no longer accepted. |
 | `DISCORD_ALLOWED_USERS` | *(empty)* | Comma-separated Discord user IDs authorized to DM / invoke the bot. Required for Discord use. |
 | `DISCORD_ALLOWED_CHANNELS` | *(empty)* | Comma-separated channel IDs where the bot may respond. Optional. |
@@ -202,8 +202,8 @@ One Google sign-in covers all seven ports **and the clean per-service tailnet na
 | `8444` | Dashboard | Served at root; Grafana rides along at `/grafana/` on this port |
 | `8445` | n8n UI | Served at root; the public webhook base (`N8N_WEBHOOK_URL=https://host/n8n`) stays on `:443`, unchanged |
 | `8446` | ComfyUI | Served at root |
-| `8447` | Hermes | Served at `/hermes/` on this port (header-derived base, same as before — just moved off `:443`) |
-| `8448` | codebase-memory | Served at `/codebase-memory/` on this port |
+| `8447` | Hermes | Served at root (plain SSO proxy — the header-derived-base injection was removed when it moved off `:443`) |
+| `8448` | codebase-memory | Served at root (the container's nginx now proxies straight through, no `sub_filter`) |
 | (none) | Everything else | Reachable service-to-service by container DNS name (e.g. `http://ops-api:9000`), never from the host or LAN directly |
 
 Old subpath URLs (`/chat`, `/dash`, `/n8n`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`) still work — Caddy 302s them from `:443` to the matching port — so existing bookmarks don't break.

@@ -31,7 +31,7 @@ No GPU required for chat (llama.cpp runs on CPU, slower but works).
 
 Alternatively, from `out/`: `docker compose -p ordo up -d` — same services without re-rendering, if `out/` is already current.
 
-**Hermes dashboard:** `https://${CADDY_TAILNET_HOSTNAME}:8447/hermes/`. See [hermes-agent.md](hermes-agent.md) for setup and Discord configuration.
+**Hermes dashboard:** `https://${CADDY_TAILNET_HOSTNAME}:8447/`. See [hermes-agent.md](hermes-agent.md) for setup and Discord configuration.
 
 ### RAG (documents in chat)
 
@@ -68,14 +68,14 @@ Single homelab operator with a small Google-account allowlist for friends / fami
 | `:8444` | Dashboard (+ `/grafana/` embed) |
 | `:8445` | n8n (UI) |
 | `:8446` | ComfyUI |
-| `:8447` | Hermes (at `/hermes/` on this port) |
-| `:8448` | codebase-memory (at `/codebase-memory/` on this port) |
+| `:8447` | Hermes (served at this port's root) |
+| `:8448` | codebase-memory (served at this port's root) |
 
 1. Install Tailscale on the host running Ordo AI Stack and on each device that needs access.
 2. Issue a Tailscale cert for your chosen hostname: `tailscale cert ordo.<tailnet>.ts.net` (writes to `auth/caddy/certs/`).
 3. Set `CADDY_BIND` — the tailnet IPv4 from `tailscale ip -4` binds Caddy to that interface only; `0.0.0.0` is also a supported, operator-approved posture (binds all interfaces, still tailnet-dark since nothing else is published) if that suits your setup. Set `CADDY_TAILNET_HOSTNAME` to the hostname you certified.
 4. Set up the Google OAuth client and email allowlist per [docs/runbooks/auth.md](runbooks/auth.md) — no new redirect URI is needed for the port model; the OAuth callback stays on `:443`.
-5. Browse to `https://${CADDY_TAILNET_HOSTNAME}/` from any tailnet device for the landing page, or go straight to a service's port (e.g. `https://${CADDY_TAILNET_HOSTNAME}:8443/` for Open WebUI). Caddy terminates TLS with the Tailscale-issued cert, oauth2-proxy enforces Google sign-in against `auth/oauth2-proxy/emails.txt`, and one sign-in covers every port — the SSO cookie is domain-scoped and each port's post-login redirect carries `{hostport}` so you land back where you started. Old subpath bookmarks (`/chat`, `/dash`, `/n8n`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`) still work — `:443` 302s them to the matching port.
+5. Browse to `https://${CADDY_TAILNET_HOSTNAME}/` from any tailnet device for the landing page, or go straight to a service's port (e.g. `https://${CADDY_TAILNET_HOSTNAME}:8443/` for Open WebUI). Caddy terminates TLS with the Tailscale-issued cert, oauth2-proxy enforces Google sign-in against `auth/oauth2-proxy/emails.txt`, and one sign-in covers every port — the SSO cookie is domain-scoped and the post-login redirect carries `{host}` (portless), so a single wildcard `--whitelist-domain=.<domain>` covers every port and clean sidecar name at once. Old subpath bookmarks (`/chat`, `/dash`, `/n8n`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`) still work — `:443` 302s them to the matching port.
 
 Traffic between tailnet devices is WireGuard-encrypted; Caddy adds app-layer TLS for the Google OAuth flow and the SSO cookie. Open WebUI's own auth (`WEBUI_AUTH`) is off by default because the proxy already gates it; flip to `True` only if you want per-user workspaces inside Open WebUI on top of the shared SSO gate.
 
