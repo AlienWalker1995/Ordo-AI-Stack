@@ -7,7 +7,7 @@
 # and the :8443-:8448 port layer are untouched underneath.
 #
 # Chosen by the 2026-07-24 clean-URLs judge panel (architect-refereed) over native VIP
-# Services (beta + cloud-side config + would tag-convert the load-bearing ordo-host node)
+# Services (beta + cloud-side config + would tag-convert the load-bearing tailnet node)
 # and a custom domain (needs a registrar + DNS-01 Caddy build). All mechanisms here are GA:
 # TS_AUTHKEY/TS_STATE_DIR/TS_SERVE_CONFIG containerboot, userspace networking, node certs.
 #

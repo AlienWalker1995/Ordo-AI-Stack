@@ -10,5 +10,10 @@
 !ordo/
 !catalog/
 !services/
+# Re-exclude heavy gitignored/build artifacts the !services/ allowlist would otherwise pull into
+# the root context (worker + ops-controller builds) — chiefly the dashboard's ~54M frontend
+# node_modules and any built dist/. Keeps the context tiny and the images reproducible.
+**/node_modules
+**/dist
 **/__pycache__
 **/*.pyc

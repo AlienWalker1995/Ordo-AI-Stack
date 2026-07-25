@@ -20,14 +20,14 @@ ordo = "ordo.cli:main"
 [tool.setuptools]
 packages = ["ordo"]
 
-# Ship the curated catalog + plugin manifests with the package (data the CLI reads by default).
+# Ship the curated catalog + service manifests with the package (data the CLI reads by default).
 [tool.setuptools.package-data]
-ordo = ["../catalog/*.yaml", "../plugins/**/*.yaml"]
+ordo = ["../catalog/*.yaml", "../services/**/*.yaml"]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 120
-src = ["ordo", "services/v1-parity/dashboard", "tests", "services/rag", "scripts", "services/worker", "docker", "hermes", "services/qdrant-rag"]
+src = ["ordo", "services", "tests", "scripts", "hermes"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
