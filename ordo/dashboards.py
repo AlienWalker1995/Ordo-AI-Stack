@@ -131,14 +131,23 @@ class DashboardRegistry:
 
     @classmethod
     def load(cls, dashboards_dir: str | Path) -> DashboardRegistry:
+        import yaml
         base = Path(dashboards_dir)
-        found: list[Dashboard] = []
-        if base.is_dir():
-            for manifest in sorted(base.glob("*/dashboard.yaml")):
-                import yaml
+        # Transition shim (services/ reorg) — see PluginRegistry.load: also load a sibling
+        # services/<id>/dashboard.yaml, keyed by folder id, services/ wins, sorted by id.
+        roots = [base] if base.name == "services" else [base, base.parent / "services"]
+        by_id: dict[str, Dashboard] = {}
+        for root in roots:
+            if not root.is_dir():
+                continue
+            is_services = root.name == "services"
+            for manifest in sorted(root.glob("*/dashboard.yaml")):
+                did = manifest.parent.name
+                if did in by_id and not is_services:
+                    continue
                 data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
-                found.append(Dashboard.from_dict(data))
-        return cls(found)
+                by_id[did] = Dashboard.from_dict(data)
+        return cls([by_id[k] for k in sorted(by_id)])
 
     def get(self, dashboard_id: str) -> Dashboard | None:
         return self._by_id.get(dashboard_id)

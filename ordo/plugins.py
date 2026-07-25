@@ -129,12 +129,24 @@ class PluginRegistry:
     @classmethod
     def load(cls, plugins_dir: str | Path) -> PluginRegistry:
         base = Path(plugins_dir)
-        found: list[Plugin] = []
-        if base.is_dir():
-            for manifest in sorted(base.glob("*/plugin.yaml")):
+        # Transition shim (services/ reorg): also load co-located manifests from a sibling
+        # `services/<id>/plugin.yaml`, so a manifest can move into services/ WITHOUT changing
+        # render output. Manifests are keyed by their folder name (the id); a services/ entry
+        # wins over a duplicate in the legacy dir. Sorted by id so output order is stable no
+        # matter which dir each manifest lives in (== the old alphabetical-by-dir order).
+        roots = [base] if base.name == "services" else [base, base.parent / "services"]
+        by_id: dict[str, Plugin] = {}
+        for root in roots:
+            if not root.is_dir():
+                continue
+            is_services = root.name == "services"
+            for manifest in sorted(root.glob("*/plugin.yaml")):
+                pid = manifest.parent.name
+                if pid in by_id and not is_services:
+                    continue
                 data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
-                found.append(Plugin.from_dict(data))
-        return cls(found)
+                by_id[pid] = Plugin.from_dict(data)
+        return cls([by_id[k] for k in sorted(by_id)])
 
     def get(self, plugin_id: str) -> Plugin | None:
         return self._by_id.get(plugin_id)
