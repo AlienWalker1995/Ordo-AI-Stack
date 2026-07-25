@@ -5,10 +5,10 @@ import asyncio
 
 from fastapi import APIRouter, Request
 
-from dashboard.dependency_registry import probe_all
 from dashboard.services_catalog import (
     _check_service,
     mcp_external_url,
+    probe_all,
     tailnet_open_url,
     visible_services,
 )
@@ -76,6 +76,6 @@ async def health():
 
 @router.get("/dependencies")
 async def dependencies():
-    """Canonical dependency registry with live probes (M7). No auth required."""
+    """Live dependency probes derived from the single service catalog. No auth required."""
     from dashboard.app import _get_http_client
     return await probe_all(_get_http_client())

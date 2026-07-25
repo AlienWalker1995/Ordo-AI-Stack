@@ -12,7 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # app.py imports dashboard.* — copy package tree and expose it on PYTHONPATH
 COPY *.py ./dashboard/
-COPY dependency_registry.json ./dashboard/
 COPY templates ./dashboard/templates/
 COPY static ./dashboard/static/
 

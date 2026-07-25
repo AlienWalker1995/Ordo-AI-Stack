@@ -1,9 +1,22 @@
-"""Service list for dashboard health/UI and ops ID mapping. Separated from app.py for maintainability."""
+"""Single source of truth for "what services exist + how to probe them".
+
+Feeds three surfaces, all derived from the one `SERVICES` catalog:
+  * the service grid   — GET /api/services, /api/health (visible_services())
+  * ops lifecycle wiring — OPS_SERVICE_MAP
+  * the dependency panel — GET /api/dependencies (dependency_services() + probe_all())
+
+The dependency panel used to be a second hardcoded catalog (dependency_registry.json);
+it now derives from this one catalog plus INFRA_DEPENDENCIES, so a service's check URL /
+name / hint / category lives in exactly one place. Separated from app.py for maintainability.
+"""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import time
+from typing import Any
 
 import httpx as _httpx
 
@@ -72,25 +85,28 @@ OPS_SERVICE_MAP = {
 # grid reflects what the render actually enabled. NB: the plugin id is NOT the compose
 # profile (e.g. open-webui's profile is `webui` but its plugin id is `open-webui`).
 SERVICES = [
-    {"id": "llamacpp", "name": "llama.cpp", "port": 8080, "url": "http://localhost:8080", "check": "http://llamacpp:8080/health", "has_gpu": True, "plugin": None,
+    {"id": "llamacpp", "name": "llama.cpp", "port": 8080, "url": "http://localhost:8080", "check": "http://llamacpp:8080/health", "has_gpu": True, "plugin": None, "category": "inference",
      "hint": "Backend-only; use model-gateway :11435 from host. Run: docker compose up -d llamacpp"},
-    {"id": "model-gateway", "name": "Model Gateway", "port": 11435, "url": "http://localhost:11435", "check": "http://model-gateway:11435/health/liveliness", "has_gpu": False, "plugin": None,
+    {"id": "model-gateway", "name": "Model Gateway", "port": 11435, "url": "http://localhost:11435", "check": "http://model-gateway:11435/health/liveliness", "has_gpu": False, "plugin": None, "category": "inference",
      "hint": "OpenAI-compatible proxy (LiteLLM). Routes inference to llama.cpp."},
-    {"id": "webui", "name": "Open WebUI", "port": 3000, "url": "http://localhost:3000", "check": "http://open-webui:8080", "has_gpu": False, "plugin": "open-webui",
+    {"id": "webui", "name": "Open WebUI", "port": 3000, "url": "http://localhost:3000", "check": "http://open-webui:8080", "has_gpu": False, "plugin": "open-webui", "category": "interface",
      "hint": "Uses model-gateway for chat. Check: docker compose logs open-webui"},
-    {"id": "mcp", "name": "MCP Gateway", "port": 8811, "url": "http://localhost:8811", "check": "http://mcp-gateway:8811/mcp", "has_gpu": False, "plugin": None,
+    # The MCP gateway answers a bare GET to /mcp with a 4xx (it expects POST/SSE with an
+    # Mcp-Session-Id) — `check_4xx_ok` tells the strict dependency probe that a <500 there
+    # still means "up". The grid probe (_check_service) already treats <500 as reachable.
+    {"id": "mcp", "name": "MCP Gateway", "port": 8811, "url": "http://localhost:8811", "check": "http://mcp-gateway:8811/mcp", "has_gpu": False, "plugin": None, "category": "tools", "check_4xx_ok": True,
      "hint": "Add/remove tools from the dashboard. Connect at http://localhost:8811/mcp — see docker/mcp-gateway/README.md"},
-    {"id": "comfyui", "name": "ComfyUI", "port": 8188, "url": "http://localhost:8188", "check": "http://comfyui:8188", "has_gpu": True, "plugin": "comfyui",
+    {"id": "comfyui", "name": "ComfyUI", "port": 8188, "url": "http://localhost:8188", "check": "http://comfyui:8188", "has_gpu": True, "plugin": "comfyui", "category": "media",
      "hint": "ComfyUI uses auto-detected compute (NVIDIA/AMD/Intel/CPU). Run ./compose up -d. Pull LTX-2 via dashboard."},
-    {"id": "n8n", "name": "N8N", "port": 5678, "url": "http://localhost:5678", "check": "http://n8n:5678", "has_gpu": False, "plugin": "automation",
+    {"id": "n8n", "name": "N8N", "port": 5678, "url": "http://localhost:5678", "check": "http://n8n:5678", "has_gpu": False, "plugin": "automation", "category": "automation",
      "hint": "Check: docker compose logs n8n"},
-    {"id": "qdrant", "name": "Qdrant", "port": 6333, "url": "http://localhost:6333", "has_gpu": False, "plugin": "rag",
+    {"id": "qdrant", "name": "Qdrant", "port": 6333, "url": "http://localhost:6333", "has_gpu": False, "plugin": "rag", "category": "rag",
      "check": "http://qdrant:6333/readyz",
      "hint": "Vector DB for RAG. Drop files in data/rag-input/ (with --profile rag) or upload via Open WebUI Documents tab."},
     # Hermes Agent runs as two compose services (hermes-gateway + hermes-dashboard). The dashboard
     # container probes via internal DNS — unhealthy means the Hermes services haven't started.
     {"id": "hermes", "name": "Hermes Agent", "port": 9119, "url": "http://localhost:9119",
-     "check": "http://hermes-dashboard:9119/", "has_gpu": False, "plugin": "hermes-dashboard",
+     "check": "http://hermes-dashboard:9119/", "has_gpu": False, "plugin": "hermes-dashboard", "category": "agent",
      "hint": "Managed by docker compose. Logs: docker compose logs hermes-dashboard"},
     # Opt-in (--profile codebase-memory). 3D code knowledge-graph visualization, served at
     # https://<host>/codebase-memory/ on its own SSO-gated port :8448 (the codebase-memory-ui
@@ -98,24 +114,24 @@ SERVICES = [
     # in the frontend (-> /codebase-memory/), so no `url` is needed. The health check hits the
     # nginx subpath, which proxies through to the UI.
     {"id": "codebase-memory-ui", "name": "Codebase Memory", "port": 9750,
-     "check": "http://codebase-memory-ui:9750/codebase-memory/", "has_gpu": False, "plugin": "codebase-memory-ui",
+     "check": "http://codebase-memory-ui:9750/codebase-memory/", "has_gpu": False, "plugin": "codebase-memory-ui", "category": "knowledge",
      "hint": "3D code knowledge-graph. Open at https://<host>:8448/codebase-memory/ (Google SSO). "
              "In-memory index — re-index after a restart. Opt-in: --profile codebase-memory"},
     # ── Voice (--profile voice / plugin `voice`) ──────────────────────────────────────────
     # STT + TTS both pin the 1070 (the 5090 lacks the kernels). Check URLs mirror each
     # service's compose healthcheck (confirmed 200 endpoints), probed via internal DNS.
-    {"id": "stt", "name": "Speech-to-Text (Whisper)", "port": 8000, "check": "http://stt:8000/v1/models", "has_gpu": True, "plugin": "voice",
+    {"id": "stt", "name": "Speech-to-Text (Whisper)", "port": 8000, "check": "http://stt:8000/v1/models", "has_gpu": True, "plugin": "voice", "category": "voice",
      "hint": "faster-whisper-server (OpenAI-compatible). GPU-pinned to the 1070. Opt-in: --profile voice"},
-    {"id": "tts", "name": "Text-to-Speech (Kokoro)", "port": 8880, "check": "http://tts:8880/v1/audio/voices", "has_gpu": True, "plugin": "voice",
+    {"id": "tts", "name": "Text-to-Speech (Kokoro)", "port": 8880, "check": "http://tts:8880/v1/audio/voices", "has_gpu": True, "plugin": "voice", "category": "voice",
      "hint": "kokoro-fastapi (OpenAI-compatible). GPU-pinned to the 1070. Opt-in: --profile voice"},
     # ── Headless background workers ───────────────────────────────────────────────────────
     # worker (plugin `worker`, profile media) and rag-ingestion (plugin `rag`) expose NO HTTP
     # port — their only liveness signal is a file-heartbeat container healthcheck, unreachable
     # from this container. So they carry NO `check` (card shows a neutral "unknown" state, not a
     # false-red or a guessed URL) but ARE operator-controllable via the ops-api (start/stop/restart).
-    {"id": "worker", "name": "Media Worker", "port": None, "check": None, "has_gpu": False, "plugin": "worker",
+    {"id": "worker", "name": "Media Worker", "port": None, "check": None, "has_gpu": False, "plugin": "worker", "category": "media",
      "hint": "Headless ComfyUI render worker (no web UI). Health via container healthcheck. Logs: docker compose logs worker"},
-    {"id": "rag-ingestion", "name": "RAG Ingestion", "port": None, "check": None, "has_gpu": False, "plugin": "rag",
+    {"id": "rag-ingestion", "name": "RAG Ingestion", "port": None, "check": None, "has_gpu": False, "plugin": "rag", "category": "rag",
      "hint": "Headless folder-watch embedder for Qdrant (no web UI). Health via container healthcheck. Logs: docker compose logs rag-ingestion"},
     # LTX-trainer (LoRA) is headless (CLI-only, no web UI) — it has no dashboard card. It's a
     # compose service managed via the ops-api (restart), and GPU runs take an exclusive lease
@@ -198,3 +214,96 @@ async def _check_service(url: str, client: _httpx.AsyncClient | None = None) -> 
         if "remoteprotocolerror" in err or "protocol" in err or "closed" in err or "disconnected" in err:
             return (True, "")
         return (False, str(e))
+
+
+# ── Dependency panel (GET /api/dependencies) ────────────────────────────────────────────
+#
+# Core infrastructure that is a genuine runtime dependency but has NO service-grid card
+# (no user-facing UI / Open link). It lives here — in the single catalog — rather than in a
+# separate registry file. Always present in every render, so no plugin gate.
+INFRA_DEPENDENCIES: list[dict[str, Any]] = [
+    {"id": "ops-controller", "name": "Ops Controller", "category": "ops",
+     "check": "http://ops-controller:9000/health",
+     "hint": "Lifecycle/recovery; not on hot path for chat."},
+    {"id": "dashboard", "name": "Dashboard", "category": "control",
+     "check": "http://localhost:8080/api/health",
+     "hint": "Self-check only works when the probe runs inside the dashboard container (uses localhost)."},
+]
+
+DEP_DESCRIPTION = (
+    "Live dependency probes derived from the single service catalog (manifest-gated) "
+    "plus core infrastructure. Sourced from services_catalog — no separate registry."
+)
+
+
+def dependency_services(
+    services: list[dict] | None = None, enabled: set[str] | None = None
+) -> list[dict]:
+    """The manifest-gated dependency view of the single catalog.
+
+    = every VISIBLE service that exposes a health `check` (headless workers with no
+    check are excluded so they don't show a false-red), PLUS the always-on core
+    INFRA_DEPENDENCIES that have no grid card. This is the one source behind
+    /api/dependencies — there is no separate dependency registry.
+    """
+    probeable = [s for s in visible_services(services, enabled) if s.get("check")]
+    return probeable + [dict(e) for e in INFRA_DEPENDENCIES]
+
+
+async def _probe_one(
+    url: str,
+    client: _httpx.AsyncClient,
+    timeout_sec: float = 3.0,
+    *,
+    soft_4xx: bool = False,
+) -> tuple[bool, float | None, str | None]:
+    """Strict health probe: 2xx == up. `soft_4xx` relaxes that to <500 for endpoints
+    (e.g. the MCP gateway) that answer a bare GET with a 4xx while still being up."""
+    t0 = time.perf_counter()
+    try:
+        r = await client.get(url, timeout=timeout_sec)
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        ok = 200 <= r.status_code < 300
+        if not ok and soft_4xx and r.status_code < 500:
+            ok = True
+        err = None if ok else f"HTTP {r.status_code}"
+        return ok, latency_ms, err
+    except (_httpx.RequestError, OSError) as e:
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        return False, latency_ms, str(e)
+
+
+async def _probe_dependency(entry: dict[str, Any], client: _httpx.AsyncClient) -> dict[str, Any]:
+    """Probe one catalog entry and shape it for the /api/dependencies response."""
+    url = entry.get("check") or ""
+    ok, lat, err = (
+        await _probe_one(url, client, soft_4xx=bool(entry.get("check_4xx_ok")))
+        if url
+        else (False, None, "no check_url")
+    )
+    return {
+        "id": entry.get("id"),
+        "name": entry.get("name"),
+        "category": entry.get("category"),
+        "hint": entry.get("hint", ""),
+        "ok": ok,
+        "latency_ms": round(lat, 2) if lat is not None else None,
+        "error": err,
+    }
+
+
+async def probe_all(client: _httpx.AsyncClient | None = None) -> dict[str, Any]:
+    """Build the GET /api/dependencies payload by probing dependency_services().
+
+    Response shape (backward-compatible with the old dependency_registry): a top-level
+    {version, description, entries[]} where each entry carries id/name/category/hint plus
+    the live ok/latency_ms/error the dashboard's dependency panel renders.
+    """
+    entries = dependency_services()
+    c = client or _httpx.AsyncClient(timeout=3.0, follow_redirects=True)
+    try:
+        results = await asyncio.gather(*[_probe_dependency(e, c) for e in entries])
+    finally:
+        if client is None:
+            await c.aclose()
+    return {"version": 1, "description": DEP_DESCRIPTION, "entries": list(results)}
