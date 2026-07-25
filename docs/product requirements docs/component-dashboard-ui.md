@@ -9,7 +9,7 @@ A web-based control plane that provides a single pane of glass for:
 
 ## API Reference
 
-**Base URL:** `http://dashboard:8080` (internal `ordo-net` only — no host port; reached via the Caddy edge)
+**Base URL:** `http://dashboard:8080` (internal `ordo-net` only — no host port; reached via the Caddy edge at `https://${CADDY_TAILNET_HOSTNAME}:8444/`, its dedicated SSO-gated port under the port-per-service model — see [Architecture & Principles](architecture-and-principles.md))
 
 **Auth:** The dashboard is reached only through the Caddy edge (oauth2-proxy + Google SSO with an email allowlist) — the edge is the sole auth gate; the dashboard has no per-service auth token in the Ordo deployment. In the table below, `Y` marks `/api/*` routes gated by an authenticated edge session; `None` marks health/status routes left open. The dashboard app code also retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer-auth capability for host scripts/non-browser access, but it is not set or required in this deployment.
 
@@ -69,7 +69,7 @@ A web-based control plane that provides a single pane of glass for:
 - The `dashboard` service itself (FastAPI app with a static vanilla-JS frontend in `dashboard/static/index.html`) runs inside the Ordo AI Stack.
 
 ## Typical Use Flow
-1. From a tailnet device, open `https://${CADDY_TAILNET_HOSTNAME}/dash/` and complete Google sign-in.
+1. From a tailnet device, open `https://${CADDY_TAILNET_HOSTNAME}:8444/` and complete Google sign-in (the legacy `/dash` path 302s here for old bookmarks).
 2. The SSO front door (Caddy + oauth2-proxy) is the dashboard's sole auth gate — there is no per-service dashboard auth token in this deployment. The dashboard app code retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer fallback for host scripts / non-browser API access, but it is not set here.
 3. Use the "Services" tab to stop or restart a service if an issue is suspected.
 4. Pull a new LLM (GGUF) or ComfyUI model from the relevant tab.

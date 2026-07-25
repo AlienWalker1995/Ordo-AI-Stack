@@ -5,6 +5,10 @@
 1. Google Cloud Console → create OAuth 2.0 Web client.
    - Authorized origin: `https://ordo.<tailnet>.ts.net`
    - Authorized redirect: `https://ordo.<tailnet>.ts.net/oauth2/callback`
+   - This is the ONE callback for the whole stack: Caddy's port-per-service
+     model (`:443` front door plus `:8443`–`:8448`, one per UI) shares a
+     single domain-scoped oauth2-proxy cookie and this single `:443`
+     redirect URI across every port — no per-port redirect URIs to add.
 2. Capture the Client ID + secret into local `.env` as
    `OAUTH2_PROXY_CLIENT_ID` / `OAUTH2_PROXY_CLIENT_SECRET`.
 3. Generate cookie secret. **Must be exactly 16, 24, or 32 raw bytes** —
@@ -26,9 +30,11 @@
    `CADDY_BIND=0.0.0.0` is also a supported, deliberate option (binds
    every interface, including LAN; the network's NAT/router remains
    the internet boundary) — this is how the live stack is currently
-   configured (operator-approved 2026-07-17). The `:?` failsafe in the
-   compose `caddy.ports` mapping only refuses an empty/unset value; it
-   does not distinguish a tailnet IP from `0.0.0.0`.
+   configured (operator-approved 2026-07-17). The `:?` failsafe applies
+   to all seven compose `caddy.ports` mappings (`:443` front door plus
+   the per-service `:8443`–`:8448` ports) and only refuses an
+   empty/unset value; it does not distinguish a tailnet IP from
+   `0.0.0.0`.
 6. Replace `auth/oauth2-proxy/emails.txt` locally with your real
    allowlist (do **not** commit your real email — repo file stays
    `YOUR_ALLOWLIST_EMAIL`). Run
@@ -106,10 +112,10 @@ the `restart caddy` to stay well ahead of expiry.
 |---|---|---|
 | Browser stuck redirecting | Cookie domain mismatch | Confirm `CADDY_TAILNET_DOMAIN` matches `<tailnet>.ts.net` exactly |
 | `redirect_uri_mismatch` from Google | OAuth client redirect URI doesn't match | Update GCP console authorized redirect URI to match `CADDY_TAILNET_HOSTNAME` |
-| 502 from Caddy on `/dash/` | Dashboard not on proxy-net | Add `proxy-net` to dashboard's networks; `docker compose up -d --force-recreate dashboard caddy` |
-| 401 / `AUTH_FAIL` on every `/api/*` call from `/dash/` | Historical (pre-2026-07-24): the dashboard trusted only `DASHBOARD_TRUSTED_PROXY_NET`/`DASHBOARD_TRUST_PROXY_HEADERS`, and Docker DNS returning a non-`proxy-net` Caddy IP could trip that check | `DASHBOARD_TRUSTED_PROXY_NET`/`DASHBOARD_TRUST_PROXY_HEADERS` were removed from the deployment after this subnet-drift bug — the dashboard no longer runs its own proxy-trust check; the Caddy edge (SSO) is the sole auth gate. If `AUTH_FAIL` recurs, check Caddy's `forward_auth`/oauth2-proxy config and network membership (verify with `docker inspect ordo-caddy-1 --format '{{json .NetworkSettings.Networks}}'` — Caddy should be on `proxy-net` only), not dashboard trusted-proxy settings |
-| `handle @auth { forward_auth }` returns empty 202 instead of upstream UI | Caddyfile uses `handle` (terminal) instead of `route` (sequential) for SSO + reverse_proxy | Wrap `forward_auth` and the `handle_path /<ui>/*` blocks in a single `route { … }` block so the request continues past forward_auth on 2xx — see `auth/caddy/Caddyfile` |
+| 502 from Caddy on `:8444` (dashboard port) | Dashboard not on proxy-net | Add `proxy-net` to dashboard's networks; `docker compose up -d --force-recreate dashboard caddy` |
+| 401 / `AUTH_FAIL` on every `/api/*` call from the `:8444` dashboard port | Historical (pre-2026-07-24): the dashboard trusted only `DASHBOARD_TRUSTED_PROXY_NET`/`DASHBOARD_TRUST_PROXY_HEADERS`, and Docker DNS returning a non-`proxy-net` Caddy IP could trip that check | `DASHBOARD_TRUSTED_PROXY_NET`/`DASHBOARD_TRUST_PROXY_HEADERS` were removed from the deployment after this subnet-drift bug — the dashboard no longer runs its own proxy-trust check; the Caddy edge (SSO) is the sole auth gate. If `AUTH_FAIL` recurs, check Caddy's `forward_auth`/oauth2-proxy config and network membership (verify with `docker inspect ordo-caddy-1 --format '{{json .NetworkSettings.Networks}}'` — Caddy should be on `proxy-net` only), not dashboard trusted-proxy settings |
+| An SSO-gated port (`:8443`–`:8448`) returns empty 202 instead of the upstream UI | Caddyfile uses `handle` (terminal) instead of `route` (sequential) for SSO + reverse_proxy on that port's site block | Wrap `forward_auth` (the `sso_forward_auth` snippet) and the `reverse_proxy`/`handle_path /<ui>/*` blocks in a single `route { … }` block so the request continues past forward_auth on 2xx — see the per-port site blocks in `auth/caddy/Caddyfile` |
 | Any Google account can sign in despite `emails.txt` allowlist | oauth2-proxy started with both `--email-domain=*` and `--authenticated-emails-file=…` (these are OR conditions; wildcard wins) | Remove `--email-domain=*` from oauth2-proxy command. The file is now the only gate |
 | oauth2-proxy `cookie_secret must be 16, 24, or 32 bytes` | Used `openssl rand -base64 32` (44 chars) | Use `tr -dc 'a-zA-Z0-9' </dev/urandom \| head -c 32` to get exactly 32 raw bytes |
-| `/n8n/webhook/...` returns 302 to oauth2-proxy | Bypass matcher missing | Confirm `auth/caddy/Caddyfile` `@auth not path` line excludes `/n8n/rest/oauth2-credential/callback /n8n/webhook/*` |
+| `/n8n/webhook/...` (on `:443`) returns 302 to oauth2-proxy instead of proxying to n8n | The `:443` site's dedicated `handle /n8n/webhook/*` / `handle /n8n/rest/oauth2-credential/callback*` passthrough blocks are missing, out of order, or shadowed | Confirm `auth/caddy/Caddyfile`'s `:443` site has `handle /n8n/rest/oauth2-credential/callback*` and `handle /n8n/webhook/*` (each `uri strip_prefix /n8n` then `reverse_proxy n8n:5678`) *before* the catch-all SSO `route {}` block, and that the legacy-redirect `@n8n_ui` matcher explicitly excludes both paths (Caddy sorts `redir` before `handle` regardless of file order) |
 | Caddy unhealthy, logs ok | In-container healthcheck targets `http://localhost/healthz` (port 80) | Caddyfile must include the `:80` site block that responds to `/healthz` (separate from the HTTPS host block) |

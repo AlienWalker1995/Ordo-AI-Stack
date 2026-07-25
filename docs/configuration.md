@@ -26,7 +26,7 @@ Set `site.BASE_PATH` in `ordo.yaml` (template: `ordo.example.yaml`) and re-rende
 | `GITHUB_PERSONAL_ACCESS_TOKEN` | *(empty)* | GitHub MCP server token; also passed to `comfyui` as `GITHUB_TOKEN` for Manager API; set as a secret in `out/secrets.env` |
 | `COMPUTE_MODE` | *(V1 only — removed)* | Superseded by the `hardware:` block in `ordo.yaml` (see [Compute Configuration](#compute-configuration) below) — GPU type is decided by the render engine, not this env var |
 
-> The dashboard has no per-service auth token in this deployment — the Caddy edge (oauth2-proxy + Google SSO + email allowlist) is the sole authentication gate for the dashboard, same as every other UI. The dashboard app code retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer fallback, but it is not set here and is not a recommended secret — don't generate or configure it.
+> The dashboard has no per-service auth token in this deployment — the Caddy edge (oauth2-proxy + Google SSO + email allowlist) is the sole authentication gate for the dashboard, same as every other UI, no matter which of Caddy's seven ports it's served on (see [Network Ports](#network-ports)). The dashboard app code retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer fallback, but it is not set here and is not a recommended secret — don't generate or configure it.
 
 ### Hermes Agent
 
@@ -34,7 +34,7 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `HERMES_DASHBOARD_PORT` | `9119` | Internal port the Hermes dashboard listens on (`ordo-net` only; reachable via Caddy, not a host port) |
+| `HERMES_DASHBOARD_PORT` | `9119` | Internal port the Hermes dashboard listens on (`ordo-net` only, no host publish; Caddy reverse-proxies it at `${CADDY_TAILNET_HOSTNAME}:8447/hermes/`) |
 | `DISCORD_BOT_TOKEN` | *(empty)* | Discord bot token. Managed via SOPS (`secrets/discord_token.sops`) or `DISCORD_BOT_TOKEN_FILE=/run/secrets/discord_token`; inline `DISCORD_TOKEN=` in `.env` is no longer accepted. |
 | `DISCORD_ALLOWED_USERS` | *(empty)* | Comma-separated Discord user IDs authorized to DM / invoke the bot. Required for Discord use. |
 | `DISCORD_ALLOWED_CHANNELS` | *(empty)* | Comma-separated channel IDs where the bot may respond. Optional. |
@@ -191,12 +191,22 @@ All `data/` and `models/` directories are bind-mounted and persist across contai
 
 ## Network Ports
 
-The rendered compose (`out/docker-compose.yml`) publishes exactly one host port: Caddy. Every other service (dashboard, open-webui, model-gateway, comfyui, n8n, hermes-dashboard, mcp-gateway, qdrant, ops-api, ops-controller, etc.) has no `ports:` entry — they're reachable only from other containers on the internal `ordo-net` network, and from outside the host only through the Caddy front door.
+Caddy is still the **only** service with published host ports — every other service (dashboard, open-webui, model-gateway, comfyui, n8n, hermes-dashboard, mcp-gateway, qdrant, ops-api, ops-controller, etc.) has no `ports:` entry and is reachable only from other containers on the internal `ordo-net` network. But since 2026-07-24 Caddy itself is **port-per-service**: it publishes seven SSO-gated host ports on `${CADDY_TAILNET_HOSTNAME}` (all bound to `CADDY_BIND`) instead of routing every UI under subpaths of a single `:443`. Each prebuilt SPA is served at the root it was compiled for, ending the subpath-rewrite workarounds (Open WebUI root-catchall 404s, Hermes header-based base injection, n8n `strip_prefix`, codebase-memory nginx rewrites).
 
-| Service | Published port | Description |
+One Google sign-in covers all seven ports — the oauth2-proxy session cookie is domain-scoped, the one OAuth callback stays on `:443`, and each port's `rd=` redirect carries `{hostport}` (whitelisted per-port in the edge plugin) so sign-in returns you to the port you came from. No new Google OAuth redirect URIs are needed.
+
+| Port | Service | Notes |
 |---|---|---|
-| Caddy | `443` (bound to `CADDY_BIND`, the tailnet IP) | Sole host-published port; SSO-gated reverse proxy to every UI/API route |
-| Everything else | none (internal `ordo-net` only) | Reachable service-to-service by container DNS name (e.g. `http://ops-api:9000`), never from the host or LAN directly |
+| `443` | Front door | Landing page; `/oauth2/*` (the one Google callback); `/llm/*` → LiteLLM API (Bearer, SSO-bypassed); `/mcp` → MCP gateway (Bearer, SSO-bypassed); `/n8n/webhook/*` and `/n8n/rest/oauth2-credential/callback*` passthroughs (external URLs unchanged); 302s from every legacy subpath (`/chat`, `/dash`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`, `/n8n`) to its new port |
+| `8443` | Open WebUI (chat) | Served at root |
+| `8444` | Dashboard | Served at root; Grafana rides along at `/grafana/` on this port |
+| `8445` | n8n UI | Served at root; the public webhook base (`N8N_WEBHOOK_URL=https://host/n8n`) stays on `:443`, unchanged |
+| `8446` | ComfyUI | Served at root |
+| `8447` | Hermes | Served at `/hermes/` on this port (header-derived base, same as before — just moved off `:443`) |
+| `8448` | codebase-memory | Served at `/codebase-memory/` on this port |
+| (none) | Everything else | Reachable service-to-service by container DNS name (e.g. `http://ops-api:9000`), never from the host or LAN directly |
+
+Old subpath URLs (`/chat`, `/dash`, `/n8n`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`) still work — Caddy 302s them from `:443` to the matching port — so existing bookmarks don't break.
 
 ## Audit Log Schema
 

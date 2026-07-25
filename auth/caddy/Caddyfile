@@ -1,12 +1,12 @@
 {
-    # Listen only on the tailnet interface; the bind address is
+    # Listen only on the interface compose gives us; the bind address is
     # controlled at compose level via CADDY_BIND.
     auto_https off
 }
 
 # Plain-HTTP healthz on :80 for the in-container Docker healthcheck
-# (caddy:2-alpine's wget targets http://localhost/healthz). The 443
-# host block below also serves /healthz publicly for tailnet probes.
+# (caddy:2-alpine's wget targets http://localhost/healthz). Every HTTPS
+# site below also serves /healthz for tailnet probes.
 :80 {
     handle /healthz {
         respond "ok" 200
@@ -16,9 +16,144 @@
     }
 }
 
-{$CADDY_TAILNET_HOSTNAME} {
-    # Tailscale-issued cert (mounted in by host).
+# ─────────────────────────────────────────────────────────────────────────────
+# PORT-PER-SERVICE MODEL (2026-07-24). Every UI service gets its own dedicated
+# SSO-gated HTTPS port on the tailnet hostname. Rationale: subpath mounting
+# repeatedly fought prebuilt SPAs with baked root-absolute bases — Open WebUI
+# hard-404s under a prefix (client-side router; proven with a real browser on
+# v0.10.1), Hermes needed header-driven base injection, n8n needed strip_prefix
+# surgery, codebase-memory needed nginx rewrites. Ports end that problem class:
+# each app is served at the root it was built for.
+#
+#   :443   front door — landing page, /oauth2 (the ONE Google callback),
+#          /llm + /mcp API routes, n8n webhook/OAuth passthroughs, and 302s
+#          from every legacy subpath so old bookmarks keep working.
+#   :8443  Open WebUI (chat)        :8444  Dashboard (+ /grafana/ embed)
+#   :8445  n8n                      :8446  ComfyUI
+#   :8447  Hermes                   :8448  codebase-memory
+#
+# SSO works across all ports with ONE session: the oauth2-proxy cookie is
+# domain-scoped (port-agnostic), the OAuth callback stays on :443, and each
+# ported site's rd= carries {hostport} (whitelisted in the edge plugin) so
+# sign-in returns you to the port you came from.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Shared TLS material (Tailscale-issued cert, mounted in by the host).
+(tls_tailnet) {
     tls /etc/caddy/certs/tailnet.crt /etc/caddy/certs/tailnet.key
+}
+
+# Shared SSO gate for a dedicated service port. NOTE {hostport} (not {host})
+# in the rd= redirect: these sites are non-default-port, and {host} would
+# strip the port and strand the user on :443 after Google sign-in.
+(sso_port_gate) {
+    handle /oauth2/* {
+        reverse_proxy oauth2-proxy:4180
+    }
+    handle /healthz {
+        respond "ok" 200
+    }
+}
+(sso_forward_auth) {
+    forward_auth oauth2-proxy:4180 {
+        uri /oauth2/auth
+        copy_headers X-Auth-Request-Email>X-Forwarded-Email X-Auth-Request-User>X-Forwarded-User X-Auth-Request-Preferred-Username>X-Forwarded-Preferred-Username
+        @unauthorized status 401
+        handle_response @unauthorized {
+            redir https://{hostport}/oauth2/start?rd={scheme}://{hostport}{uri} 302
+        }
+    }
+}
+# The whole site for a simple ported service: TLS + SSO + proxy-everything.
+(sso_service) {
+    import tls_tailnet
+    import sso_port_gate
+    route {
+        import sso_forward_auth
+        reverse_proxy {args[0]}
+    }
+}
+
+# ---- :8443 — Open WebUI (chat) ----
+# Prebuilt SvelteKit SPA with base="" (root-absolute /_app, /static, /api, /ws).
+# It MUST be served at a root — under /chat/ its client-side router renders
+# "404: Not Found" (browser-verified on v0.10.1, same as v0.9.2). A port root
+# is a root, so it gets one.
+{$CADDY_TAILNET_HOSTNAME}:8443 {
+    import sso_service open-webui:8080
+}
+
+# ---- :8444 — Dashboard (operator hub) + Grafana embed ----
+# Grafana rides this port at /grafana/ (GF_SERVER_SERVE_FROM_SUB_PATH +
+# root_url /grafana/) so the dashboard's Grafana tab keeps its same-origin
+# iframe. `handle` (NOT handle_path) keeps the prefix Grafana expects.
+{$CADDY_TAILNET_HOSTNAME}:8444 {
+    import tls_tailnet
+    import sso_port_gate
+    route {
+        import sso_forward_auth
+        handle /grafana/* {
+            reverse_proxy grafana:3000
+        }
+        reverse_proxy dashboard:8080
+    }
+}
+
+# ---- :8445 — n8n ----
+# UI only. n8n's PUBLIC base (N8N_WEBHOOK_URL, registered OAuth callbacks,
+# live webhook URLs) stays on :443/n8n/* — see the passthroughs in the :443
+# site — so nothing external needs re-registration.
+{$CADDY_TAILNET_HOSTNAME}:8445 {
+    import sso_service n8n:5678
+}
+
+# ---- :8446 — ComfyUI ----
+{$CADDY_TAILNET_HOSTNAME}:8446 {
+    import sso_service comfyui:8188
+}
+
+# ---- :8447 — Hermes ----
+# The Hermes dashboard server derives its base from X-Forwarded-Prefix
+# (runtime-injected window.__HERMES_BASE_PATH__), so it keeps serving under
+# /hermes/ here exactly as it did on :443 — zero image changes.
+{$CADDY_TAILNET_HOSTNAME}:8447 {
+    import tls_tailnet
+    import sso_port_gate
+    route {
+        import sso_forward_auth
+        redir / /hermes/ 302
+        handle_path /hermes/* {
+            reverse_proxy hermes-dashboard:9119 {
+                header_up X-Forwarded-Prefix /hermes
+            }
+        }
+    }
+}
+
+# ---- :8448 — codebase-memory 3D graph ----
+# The container's nginx rewrites the SPA's baked /assets,/api,/rpc to the
+# /codebase-memory/ prefix (see codebase-memory-ui/nginx.conf), so the app
+# keeps its subpath on this port. /font-files stays un-rewritten (external
+# CDN URL — rewriting it 404s the label fonts).
+{$CADDY_TAILNET_HOSTNAME}:8448 {
+    import tls_tailnet
+    import sso_port_gate
+    route {
+        import sso_forward_auth
+        redir / /codebase-memory/ 302
+        @codebasememory path /codebase-memory /codebase-memory/*
+        handle @codebasememory {
+            reverse_proxy codebase-memory-ui:9750
+        }
+    }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# :443 — the front door. OAuth callback, API routes, external passthroughs,
+# the landing page, and legacy-path redirects. No UI app lives here anymore.
+# ─────────────────────────────────────────────────────────────────────────────
+{$CADDY_TAILNET_HOSTNAME} {
+    import tls_tailnet
 
     # ---- public bypass routes (auth not required) ----
     handle /oauth2/* {
@@ -27,15 +162,10 @@
     handle /healthz {
         respond "ok" 200
     }
-    # These bypass forward_auth (no SSO required) so external services
-    # (Google OAuth, IG Graph API webhooks, etc.) can hit them. The
-    # `uri strip_prefix /n8n` directive strips only the `/n8n` prefix
-    # (not the full matched path) before proxying — n8n's internal routes
-    # are registered at `/rest/...` and `/webhook/...`, NOT `/n8n/rest/...`
-    # even with N8N_PATH=/n8n/, so without the strip the requests fall through
-    # to n8n's SPA catch-all and the callback handler never runs (verified
-    # live 2026-05-18: OAuth callbacks returned 200 + n8n SPA HTML instead of
-    # processing the code/state).
+    # External services (Google OAuth for n8n credentials, IG Graph webhooks…)
+    # hit these registered URLs — they MUST stay on :443 and MUST keep working.
+    # strip_prefix because n8n's internal routes live at /rest/... and
+    # /webhook/..., not /n8n/rest/... (verified live 2026-05-18).
     handle /n8n/rest/oauth2-credential/callback* {
         uri strip_prefix /n8n
         reverse_proxy n8n:5678
@@ -48,19 +178,15 @@
     # ---- LiteLLM model gateway (OpenAI-compatible API) for tailnet API clients ----
     # Bypasses SSO: programmatic clients (Cline, Cursor, scripts) can't do an
     # interactive Google login. Auth is LiteLLM's own Bearer key
-    # (LITELLM_MASTER_KEY), which model-gateway enforces — so this is safe to
-    # expose over the tailnet (Caddy binds the tailnet interface only).
-    # handle_path strips /llm so LiteLLM sees /v1/... (e.g. /llm/v1/chat/completions).
+    # (LITELLM_MASTER_KEY), which model-gateway enforces.
     handle_path /llm/* {
         reverse_proxy model-gateway:11435
     }
 
-    # ---- MCP gateway (aggregated tools) for tailnet MCP clients (Cline/Cursor) ----
-    # Bypasses Google SSO (programmatic clients can't do an interactive login) but
-    # requires a static Bearer token (MCP_GATEWAY_TOKEN, from SOPS) because the
-    # gateway has NO auth of its own. /mcp is passed through UNSTRIPPED — the
-    # gateway serves the MCP endpoint at /mcp. flush_interval -1 keeps the
-    # streamable-HTTP / SSE responses unbuffered. Reachable only over the tailnet.
+    # ---- MCP gateway (aggregated tools) for tailnet MCP clients ----
+    # Bypasses Google SSO but requires a static Bearer (MCP_GATEWAY_TOKEN)
+    # because the gateway has NO auth of its own. Unstripped — the gateway
+    # serves at /mcp. flush_interval -1 keeps SSE unbuffered.
     @mcp_unauthed {
         path /mcp /mcp/*
         not header Authorization "Bearer {$MCP_GATEWAY_TOKEN}"
@@ -75,97 +201,61 @@
         }
     }
 
-    # ---- Open WebUI at ROOT (no auth needed for the redirect) ----
-    # Open WebUI's upstream v0.9.2 image is a prebuilt SvelteKit SPA with
-    # base="" (assets are root-absolute: /_app, /static, /api, /ws). It MUST be
-    # served at / — serving it under /chat made the *client-side* router 404 on
-    # the /chat/ path even though the server returned 200 (logo loads, then the
-    # SvelteKit router can't match /chat/ → its own 404 page). Open WebUI is the
-    # root app via the catch-all reverse_proxy at the bottom of the route block.
-    # Old /chat links 302 to / so they keep working.
-    redir /chat* / 302
+    # ---- legacy-path 302s (no auth needed for a redirect) ----
+    # Every pre-port bookmark keeps working. Deep chat/app paths are session
+    # state, not stable URLs — landing on the service root is correct.
+    redir /chat* https://{host}:8443/ 302
+    redir /dash* https://{host}:8444/ 302
+    redir /comfy* https://{host}:8446/ 302
+    redir /hermes* https://{host}:8447/hermes/ 302
+    redir /codebase-memory* https://{host}:8448/codebase-memory/ 302
+    redir /grafana* https://{host}:8444/grafana/ 302
+    # /n8n UI → its port. NB: Caddy sorts `redir` BEFORE `handle` regardless of file
+    # order, so a bare `redir /n8n*` would shadow the webhook/OAuth passthrough handles
+    # above (verified live 2026-07-24: /n8n/webhook/* 302'd instead of proxying). The
+    # matcher must therefore exclude the external-facing paths explicitly.
+    @n8n_ui {
+        path /n8n /n8n/*
+        not path /n8n/webhook/* /n8n/rest/oauth2-credential/callback*
+    }
+    redir @n8n_ui https://{host}:8445/ 302
 
-    # ---- everything else: forward_auth + then route to upstream ----
-    # `route` (vs `handle`) keeps directives in source order and lets the
-    # request continue past forward_auth to the matching handle_path block.
-    # Caddy's `handle` blocks are MUTUALLY EXCLUSIVE — only one runs per
-    # request — so a `handle { forward_auth }` would terminate the request
-    # immediately after auth succeeds, returning the 202 to the browser
-    # instead of proxying to the upstream UI.
+    # ---- landing page + everything else (SSO-gated) ----
     route {
-        forward_auth oauth2-proxy:4180 {
-            uri /oauth2/auth
-            copy_headers X-Auth-Request-Email>X-Forwarded-Email X-Auth-Request-User>X-Forwarded-User X-Auth-Request-Preferred-Username>X-Forwarded-Preferred-Username
-            # Convert oauth2-proxy's 401 (no session) into a 302 redirect
-            # to /oauth2/start, preserving the original URL via rd= so the
-            # user is bounced back to it after Google sign-in.
-            @unauthorized status 401
-            handle_response @unauthorized {
-                redir https://{host}/oauth2/start?rd={scheme}://{host}{uri} 302
-            }
+        import sso_forward_auth
+        handle / {
+            header Content-Type "text/html; charset=utf-8"
+            respond <<HTML
+                <!doctype html><html lang="en"><head><meta charset="utf-8">
+                <meta name="viewport" content="width=device-width,initial-scale=1">
+                <title>Ordo</title><style>
+                body{background:#0d0d0f;color:#e8e8ea;font:16px/1.6 system-ui,sans-serif;
+                     display:grid;place-items:center;min-height:100vh;margin:0}
+                main{max-width:640px;padding:2rem}
+                h1{font-weight:600;letter-spacing:.02em;margin:0 0 .25rem}
+                h1 span{color:#e5484d}
+                p{color:#9a9aa0;margin:.25rem 0 1.5rem}
+                ul{list-style:none;padding:0;margin:0;display:grid;gap:.5rem;
+                   grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+                a{display:block;padding:.8rem 1rem;background:#17171a;border:1px solid #26262b;
+                  border-radius:10px;color:#e8e8ea;text-decoration:none}
+                a:hover{border-color:#e5484d}
+                a small{display:block;color:#7a7a80;font-size:.78rem}
+                </style></head><body><main>
+                <h1>Ordo<span>.</span></h1>
+                <p>One sign-in, one port per service.</p>
+                <ul>
+                <li><a href="https://{host}:8443/">Chat<small>Open WebUI · :8443</small></a></li>
+                <li><a href="https://{host}:8444/">Dashboard<small>control hub · :8444</small></a></li>
+                <li><a href="https://{host}:8447/hermes/">Hermes<small>agent · :8447</small></a></li>
+                <li><a href="https://{host}:8446/">ComfyUI<small>media · :8446</small></a></li>
+                <li><a href="https://{host}:8445/">n8n<small>automation · :8445</small></a></li>
+                <li><a href="https://{host}:8448/codebase-memory/">Code graph<small>memory · :8448</small></a></li>
+                </ul></main></body></html>
+                HTML
         }
-
-        # ---- protected upstreams (run only after forward_auth passes) ----
-        handle_path /dash/* {
-            reverse_proxy dashboard:8080
-        }
-        handle_path /n8n/* {
-            reverse_proxy n8n:5678
-        }
-        handle_path /hermes/* {
-            # Tell the Hermes dashboard server it's mounted at /hermes so the
-            # SPA can rewrite its absolute asset/API/WS/plugin URLs at runtime
-            # (server reads X-Forwarded-Prefix and injects window.__HERMES_BASE_PATH__).
-            # Required since the upstream upgrade to commit 5fdcfd8 retired the
-            # build-time spa-patches.mjs string-replaces in favor of header-driven base.
-            reverse_proxy hermes-dashboard:9119 {
-                header_up X-Forwarded-Prefix /hermes
-            }
-        }
-        handle_path /comfy/* {
-            reverse_proxy comfyui:8188
-        }
-
-        # ---- Grafana at /grafana/ (opt-in: --profile monitoring) ----
-        # Grafana serves from the subpath (GF_SERVER_SERVE_FROM_SUB_PATH + root_url
-        # /grafana/), so `handle` (NOT handle_path — keep the prefix) proxies straight
-        # through. SSO-gated by the forward_auth above; Grafana itself is anonymous
-        # read-only. Embedded in the dashboard's Grafana tab. 502s if the profile
-        # isn't running.
-        handle /grafana/* {
-            reverse_proxy grafana:3000
-        }
-
-        # ---- codebase-memory 3D graph UI at /codebase-memory/ ----
-        # Absolute-asset SPA served under a subpath: the codebase-memory-ui container
-        # runs nginx, which proxies to the UI and rewrites its baked /assets,/api,/rpc
-        # to the /codebase-memory/ prefix (see codebase-memory-ui/nginx.conf). /font-files
-        # is deliberately NOT rewritten — it's an external CDN URL, not an origin-relative
-        # app path; rewriting it 404s the label fonts.
-        # `handle` (no strip) keeps the prefix so nginx's location matches. Opt-in
-        # (--profile codebase-memory); 502s if the service isn't running.
-        @codebasememory path /codebase-memory /codebase-memory/*
-        handle @codebasememory {
-            reverse_proxy codebase-memory-ui:9750
-        }
-
-        # ---- Open WebUI mounted at /chat (prefix stripped) ----
-        # /chat/* → open-webui with the /chat prefix removed, so the upstream
-        # sees /, /c/<id>, /models, etc. This is the canonical chat path.
-        handle_path /chat/* {
-            reverse_proxy open-webui:8080
-        }
-
-        # ---- root catch-all: Open WebUI assets + any unprefixed route ----
-        # Open WebUI is a SvelteKit SPA built with base="" (no subpath
-        # support), so it emits absolute paths like /_app/*, /static/*,
-        # /api/*, /ws, /manifest.json. The /chat/* mount above strips its
-        # prefix, so those assets are requested at root and resolved here.
-        # Bare / is redirected to /chat/ in the bypass block above. All other
-        # apps are properly prefix-aware (dashboard /dash/, hermes /hermes/,
-        # n8n /n8n/, comfy /comfy/); only Open WebUI needs this root fallback.
         handle {
-            reverse_proxy open-webui:8080
+            respond "not found" 404
         }
     }
 }

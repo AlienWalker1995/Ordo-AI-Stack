@@ -20,12 +20,24 @@
 
 ## Current Architecture
 
+Port-per-service model (2026-07-24): Caddy is still the **only** service that
+publishes host ports, but it now listens on **seven** SSO-gated ports on
+`${CADDY_TAILNET_HOSTNAME}` instead of one — each prebuilt SPA gets the root
+it was compiled for, retiring the subpath-rewrite bandaids (Open WebUI
+root-catchall, Hermes header-injected base, n8n `strip_prefix` surgery,
+codebase-memory nginx rewrites).
+
 ```
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │  Host                                                                          │
 │                                                                                │
-│  Caddy :443 — the ONLY host-published port (`${CADDY_BIND}:443`)              │
-│  oauth2-proxy (Google SSO) behind it; reverse-proxies every route below       │
+│  Caddy — the ONLY host-published ports (`${CADDY_BIND}:<port>` for each)      │
+│  :443 front door (landing page, /oauth2, /llm, /mcp, n8n webhook/OAuth        │
+│       passthroughs, legacy-path 302s)                                        │
+│  :8443 Open WebUI   :8444 Dashboard (+ /grafana/)   :8445 n8n                 │
+│  :8446 ComfyUI      :8447 Hermes (at /hermes/)      :8448 codebase-memory     │
+│  oauth2-proxy (Google SSO, one domain-scoped session across all ports)       │
+│  behind it; reverse-proxies every route below                                │
 └────────────────────────────────────────┬─────────────────────────────────────┘
                                           │
 ┌────────────────────────────────────────▼─────────────────────────────────────┐
@@ -34,12 +46,12 @@
 │                                                                                │
 │  ┌─────────────┐  ┌──────────┐  ┌──────────────────────────────────────────┐  │
 │  │ Open WebUI  │  │   N8N    │  │  Hermes  gateway + dashboard             │  │
-│  │ :3000       │  │ :5678    │  │  model → gateway                         │  │
+│  │ :8080       │  │ :5678    │  │  model → gateway                         │  │
 │  │ → gateway   │  │ → gw     │  │  MCP tools → mcp-gateway                 │  │
 │  └──────┬──────┘  └────┬─────┘  └────────────────┬─────────────────────────┘  │
 │         │              │                           │                            │
 │  ┌──────▼──────────────▼───────────────────────────▼──────────────────────┐   │
-│  │  Model Gateway :11435  (Caddy `/llm/*` → bearer key, no SSO)            │   │
+│  │  Model Gateway :11435  (Caddy `:443/llm/*` → bearer key, no SSO)        │   │
 │  │  GET  /v1/models           — llama.cpp, TTL-cached 60s                 │   │
 │  │  POST /v1/chat/completions — streaming, tools, X-Request-ID            │   │
 │  │  POST /v1/responses        — OpenAI Responses API compat               │   │
@@ -65,8 +77,8 @@
 │  │ docker.sock     │  │ auth: edge SSO   │  │ watches      │                  │
 │  │ servers.txt     │  │ → ops ctrl API   │  │ data/rag-    │                  │
 │  │ registry.json   │  │ registry.json    │  │ input/       │                  │
-│  │ Caddy `/mcp` →  │  │                  │  │              │                  │
-│  │ bearer token    │  │                  │  │              │                  │
+│  │ Caddy `:443/mcp`│  │                  │  │              │                  │
+│  │ → bearer token  │  │                  │  │              │                  │
 │  └─────────────────┘  └─────────────────┘  └──────────────┘                  │
 │  ┌─────────────────┐                                                          │
 │  │ ComfyUI :8188   │                                                          │
@@ -79,27 +91,30 @@
 - **Model Gateway** `:11435` — OpenAI-compatible LiteLLM proxy in front of llama.cpp; streaming, Responses API, completions compat, embeddings; TTL model cache; cache-bust endpoint; `X-Request-ID` propagation; throughput recording.
 - **MCP Gateway** `:8811` — Docker MCP Gateway with 10s hot-reload; `registry.json` metadata reader; per-server health; docker.sock for spawning server containers.
 - **Ops Controller** `:9000` (internal) — Authenticated REST; start/stop/restart/logs/pull; append-only JSONL audit log; docker.sock access with allowlisted operations only.
-- **Dashboard** internal `:8080` (no host port published; reached via Caddy front door at `${CADDY_TAILNET_HOSTNAME}/dash/` behind oauth2-proxy / Google SSO) — No docker.sock; calls controller for ops; model inventory + default-model management; MCP tool management + health badges; throughput stats + benchmark; hardware stats; RAG status. Auth: the Caddy edge (oauth2-proxy / Google SSO) is the sole auth gate; no per-service dashboard token is set in this deployment. The dashboard app code retains an optional, dormant Bearer capability (`DASHBOARD_AUTH_TOKEN` + trusted-proxy header trust) that is unused here — edge SSO is the auth model, not a fallback to rely on.
+- **Dashboard** internal `:8080` (no host port of its own; published to the tailnet by Caddy on its own dedicated port, `${CADDY_TAILNET_HOSTNAME}:8444`, behind oauth2-proxy / Google SSO; Grafana rides the same port at `/grafana/`) — No docker.sock; calls controller for ops; model inventory + default-model management; MCP tool management + health badges; throughput stats + benchmark; hardware stats; RAG status. Auth: the Caddy edge (oauth2-proxy / Google SSO) is the sole auth gate; no per-service dashboard token is set in this deployment. The dashboard app code retains an optional, dormant Bearer capability (`DASHBOARD_AUTH_TOKEN` + trusted-proxy header trust) that is unused here — edge SSO is the auth model, not a fallback to rely on.
 - **llama.cpp** `:8080` — LLM inference; backend-only (no host port); GPU pinning resolved by the render engine (`hardware: auto` / `ordo detect`) into `out/`.
 - **Qdrant** `:6333` — Vector database; backend-only; used by Open WebUI for RAG and by `rag-ingestion` service.
 - **RAG Ingestion** — Watch-mode document ingester (`--profile rag`); reads `data/rag-input/`; chunks and embeds via model gateway; stores in Qdrant.
-- **Hermes** (`agent` + `hermes-dashboard`) — Agent runtime; routes model calls through model-gateway and tool calls through mcp-gateway. State under `data/hermes/`. See [docs/hermes-agent.md](../hermes-agent.md) for setup.
-- **Supporting services** — Open WebUI (`:3000`, connected to Qdrant), N8N (`:5678`), ComfyUI (`:8188`).
+- **Hermes** (`agent` + `hermes-dashboard`) — Agent runtime; routes model calls through model-gateway and tool calls through mcp-gateway. State under `data/hermes/`. Published to the tailnet by Caddy on its own dedicated port, `${CADDY_TAILNET_HOSTNAME}:8447/hermes/`. See [docs/hermes-agent.md](../hermes-agent.md) for setup.
+- **Supporting services** — Open WebUI (internal `:8080`, connected to Qdrant, published at `${CADDY_TAILNET_HOSTNAME}:8443`), N8N (internal `:5678`, published at `${CADDY_TAILNET_HOSTNAME}:8445`; public webhook/OAuth-callback base stays `:443/n8n/*`), ComfyUI (internal `:8188`, published at `${CADDY_TAILNET_HOSTNAME}:8446`).
 
 ## Data Flows
 
 ```
-Model request:    Client → Model Gateway (X-Request-ID) → llama.cpp
+Model request:    Client → Caddy :443/llm/* (bearer key) → Model Gateway (X-Request-ID) → llama.cpp
                                       ↓ throughput
                                   Dashboard /api/throughput/record
 
-Tool call:        Client → MCP Gateway (registry policy check) → MCP server container
+Tool call:        Client → Caddy :443/mcp (bearer token) → MCP Gateway (registry policy check) → MCP server container
 
 Ops action:       Dashboard → Ops Controller (Bearer auth) → Docker socket
                                       ↓ audit event
                               data/ops-controller/audit.log
 
 Audit query:      Dashboard → GET /audit (auth) → Controller reads JSONL
+
+UI request:       Browser → Caddy :<service-port> (Google SSO, domain-scoped
+                   session) → service container, served at its own root
 ```
 
 ## Goal Satisfaction (Confirmed by Code)
@@ -119,30 +134,65 @@ Audit query:      Dashboard → GET /audit (auth) → Controller reads JSONL
 |-----|------|-------------|----------|
 | `WEBUI_AUTH` defaults to `False` | G4 | Open WebUI ships open; target default is `True` | Medium |
 | MCP per-client policy unenforced | G2 | `allow_clients` in registry.json not enforced at gateway level — requires Docker MCP Gateway `X-Client-ID` support | Medium |
-| mcp-gateway on frontend network | G5 | Should be backend-only for internal services; currently published on `127.0.0.1:8811` (localhost-only) so host MCP clients (Cline / VS Code) still work, but no LAN exposure | Low |
+| mcp-gateway on frontend network | G5 | Should be backend-only for internal services; currently publishes no host port at all — reached only via Caddy `:443/mcp` (bearer token), not `127.0.0.1:8811` (that localhost-only exposure is stale) | Low |
 | Reliability / readiness contracts | G1–G2 | Health today is partly architectural; see [Reliability & Contracts](reliability-and-contracts.md) | High |
 
 ## Network Assignment
 
-All services run on a single Docker network, `ordo-net`. Caddy `:443` (`${CADDY_BIND}:443`) is the **only** port the stack publishes to the host — every UI and API reaches the outside world exclusively through the Caddy front door. User-facing UIs (dashboard, Open WebUI, n8n, ComfyUI, hermes-dashboard) sit behind oauth2-proxy / Google SSO at `${CADDY_TAILNET_HOSTNAME}`. Two programmatic surfaces bypass interactive SSO (a CLI/IDE client can't do a Google login) but still go through Caddy, gated by their own bearer token instead: model-gateway at `/llm/*` (LiteLLM's `LITELLM_MASTER_KEY`) and mcp-gateway at `/mcp` (`MCP_GATEWAY_TOKEN`). Nothing binds `127.0.0.1` or any other host address directly — model-gateway, mcp-gateway, and qdrant publish no host port at all.
+All services run on a single Docker network, `ordo-net`. **Caddy is the only
+service the stack publishes to the host** — but since the 2026-07-24
+port-per-service model, Caddy itself listens on **seven** host ports
+(`${CADDY_BIND}:443` plus `${CADDY_BIND}:8443`–`:8448`), one per UI plus the
+`:443` front door. Every UI and API still reaches the outside world
+exclusively through Caddy; nothing else binds a host port at all. Each
+prebuilt SPA is served at the root it was compiled for — `:8443` Open WebUI,
+`:8444` Dashboard (+ `/grafana/` embed), `:8445` n8n, `:8446` ComfyUI, `:8447`
+Hermes (at `/hermes/`), `:8448` codebase-memory (at `/codebase-memory/`) —
+retiring the subpath-rewrite bandaids (Open WebUI root-catchall, Hermes
+header-injected base, n8n `strip_prefix`, codebase-memory nginx rewrites)
+that the single-port model needed.
+
+`:443` remains the front door: the landing page, the one Google OAuth
+callback (`/oauth2/*`), the two bearer-gated programmatic APIs
+(`/llm/*`, `/mcp`), n8n's external webhook/OAuth-callback passthroughs
+(`/n8n/webhook/*`, `/n8n/rest/oauth2-credential/callback*` — unchanged so
+nothing external needs re-registration), and 302 redirects from every
+legacy subpath (`/chat`, `/dash`, `/comfy`, `/hermes`, `/codebase-memory`,
+`/grafana`, `/n8n`) to the new port, so old bookmarks keep working.
+
+All user-facing UIs sit behind oauth2-proxy / Google SSO, one Google
+sign-in for all seven ports: the oauth2-proxy session cookie is
+domain-scoped (port-agnostic), the OAuth callback always stays on `:443`,
+and each ported site's `rd=` redirect carries `{hostport}` (not `{host}`)
+so sign-in returns the user to the port they came from — each port is
+individually whitelisted in the oauth2-proxy plugin config. The Google
+OAuth client itself needs no new redirect URIs. Two programmatic surfaces
+bypass interactive SSO (a CLI/IDE client can't do a Google login) but still
+go through Caddy `:443`, gated by their own bearer token instead:
+model-gateway at `/llm/*` (LiteLLM's `LITELLM_MASTER_KEY`) and mcp-gateway
+at `/mcp` (`MCP_GATEWAY_TOKEN`). Nothing binds `127.0.0.1` or any other host
+address directly — model-gateway, mcp-gateway, and qdrant publish no host
+port at all.
 
 | Service | Host port | Notes |
 |---------|-----------|-------|
-| caddy | `${CADDY_BIND}:443` | The only host-published port in the stack. Bound to `0.0.0.0` (operator-approved 2026-07-17 for LAN reachability on an internet-dark network — see `docs/runbooks/auth.md`); the `${CADDY_BIND:?...}` failsafe only rejects an empty/unset value, it does not distinguish a tailnet IP from `0.0.0.0`. Reverse-proxies everything else with forward_auth → oauth2-proxy |
-| oauth2-proxy | — | Internal; sits behind Caddy; Google SSO with email allowlist (`auth/oauth2-proxy/emails.txt`) |
-| open-webui | — | Reached at `https://<tailnet>/` (root catch-all in Caddy); needs model-gateway, qdrant |
-| dashboard | — | Reached at `https://<tailnet>/dash/`; needs llamacpp, ops-controller, mcp-gateway |
-| n8n | — | Reached at `https://<tailnet>/n8n/`; OAuth callbacks bypass auth via `/n8n/rest/oauth2-credential/callback*` |
+| caddy | `${CADDY_BIND}:443`, `:8443`–`:8448` | The only host-published ports in the stack (seven total: the `:443` front door plus one per UI service). Bound to `0.0.0.0` (operator-approved 2026-07-17 for LAN reachability on an internet-dark network — see `docs/runbooks/auth.md`); the `${CADDY_BIND:?...}` failsafe only rejects an empty/unset value, it does not distinguish a tailnet IP from `0.0.0.0`. Reverse-proxies everything else with forward_auth → oauth2-proxy |
+| oauth2-proxy | — | Internal; sits behind Caddy; Google SSO with email allowlist (`auth/oauth2-proxy/emails.txt`); one domain-scoped session covers all seven Caddy ports |
+| open-webui | — | Reached at `https://<tailnet>:8443/` (its own port, served at its compiled root); needs model-gateway, qdrant |
+| dashboard | — | Reached at `https://<tailnet>:8444/` (Grafana embed at `.../grafana/` on the same port); needs llamacpp, ops-controller, mcp-gateway |
+| n8n | — | UI reached at `https://<tailnet>:8445/`; public webhook base and OAuth-callback URL stay on `:443` (`https://<tailnet>/n8n/webhook/*`, `.../n8n/rest/oauth2-credential/callback*`, unchanged so nothing external needs re-registration) |
 | agent (Hermes) | — | No UI; needs model-gateway, mcp-gateway |
-| hermes-dashboard | — | Reached at `https://<tailnet>/hermes/` |
-| model-gateway | — | No host port; reached internally at `http://model-gateway:11435` on `ordo-net`, and externally via Caddy `/llm/*` (bearer key, no SSO) |
-| mcp-gateway | — | No host port; reached internally at `http://mcp-gateway:8811` on `ordo-net`, and externally via Caddy `/mcp` (bearer token, no SSO) |
+| hermes-dashboard | — | Reached at `https://<tailnet>:8447/hermes/` |
+| model-gateway | — | No host port; reached internally at `http://model-gateway:11435` on `ordo-net`, and externally via Caddy `:443/llm/*` (bearer key, no SSO) |
+| mcp-gateway | — | No host port; reached internally at `http://mcp-gateway:8811` on `ordo-net`, and externally via Caddy `:443/mcp` (bearer token, no SSO) |
 | ops-controller | — | Internal only; no host port |
 | llamacpp | — | Backend-only; no host port; GPU pinning resolved by the render engine (`hardware: auto` / `ordo detect`) into `out/` |
 | qdrant | — | Internal only; reached at `http://qdrant:6333` on `ordo-net` |
 | searxng | — | Internal only; queried by the `searxng` MCP server at `http://searxng:8080` |
-| comfyui | — | Reached at `https://<tailnet>/comfy/` |
+| comfyui | — | Reached at `https://<tailnet>:8446/` (its own port, served at its compiled root) |
 | rag-ingestion | — | Internal only; no ingress needed |
+| grafana | — | Internal only; embedded in the dashboard at `https://<tailnet>:8444/grafana/` (same-origin iframe, `handle` not `handle_path` so the prefix Grafana expects is preserved) |
+| codebase-memory-ui | — | Reached at `https://<tailnet>:8448/codebase-memory/` |
 
 ## Compose Hardening
 

@@ -2,14 +2,14 @@
 
 ## Purpose
 
-The **MCP gateway** service exposes one **MCP HTTP endpoint** (backend port **8811** in the default compose) that aggregates multiple logical servers—web search, n8n, ComfyUI workflows, orchestration helpers, etc.—so clients (Hermes, n8n, other agents) use **one URL** and one authentication pattern.
+The **MCP gateway** service exposes one **MCP HTTP endpoint** (backend port **8811** in the default compose) that aggregates multiple logical servers—web search, n8n, ComfyUI workflows, orchestration helpers, etc.—so clients (Hermes, n8n, other agents) use **one URL** and one authentication pattern. Under the port-per-service edge model (2026-07-24), the gateway is not one of the ported UI services — it stays an API route on the shared **:443** front door (`https://${CADDY_TAILNET_HOSTNAME}/mcp`, unstripped), gated by a static Bearer token rather than Google SSO. Internal clients on `ordo-net` still reach it directly at `http://mcp-gateway:8811/mcp`.
 
 ## Key Responsibilities
 
 - **Catalog merge** – Upstream Docker MCP gateway plus repo **`registry-custom.yaml`** (e.g. ComfyUI, orchestration) via `gateway-wrapper.sh`.
 - **Dynamic ComfyUI MCP** – Spawns or connects to the **ComfyUI** service using `COMFYUI_URL` (Docker DNS name `comfyui` on the stack network).
 - **Secrets injection** – API keys (GitHub PAT, `N8N_API_KEY`) arrive via Docker secrets / compose environment, not committed config. SOPS-managed at rest under `secrets/*.sops`. Orchestration calls to the dashboard cross the internal `ordo-net` network; the dashboard has no per-service auth token in the Ordo deployment (`DASHBOARD_AUTH_TOKEN` is unset/not required — the Caddy edge with oauth2-proxy SSO is the auth gate for the dashboard UI, not this token).
-- **Operational boundary** – Default compose keeps **8811** on the internal network; optional overrides expose it for external clients.
+- **Operational boundary** – Default compose keeps **8811** on the internal `ordo-net` network only (no published host port); the gateway is not directly Docker-published. The standard path for external/tailnet clients is Caddy's **:443** front door at `/mcp` (Bearer-gated via `MCP_GATEWAY_TOKEN`), which reverse-proxies to `mcp-gateway:8811` — Caddy is the only service that publishes host ports.
 
 ## Registry Format
 
@@ -52,7 +52,7 @@ enforcement).
 
 ## Client Integration
 
-Agent clients (Hermes today, others later) connect to the gateway via the single MCP URL `http://mcp-gateway:8811/mcp`. Tools surface under names like `gateway__duckduckgo_search`. Per-client policy enforcement is planned for M6 via `X-Client-ID` + `allow_clients`, along with auto-disable after 3 consecutive health failures.
+Agent clients on the internal `ordo-net` network (Hermes today, others later) connect to the gateway via the single MCP URL `http://mcp-gateway:8811/mcp`. External/tailnet MCP clients instead go through the Caddy edge at `https://${CADDY_TAILNET_HOSTNAME}/mcp` (:443, Bearer `MCP_GATEWAY_TOKEN`, no Google SSO). Tools surface under names like `gateway__duckduckgo_search`. Per-client policy enforcement is planned for M6 via `X-Client-ID` + `allow_clients`, along with auto-disable after 3 consecutive health failures.
 
 ## Non-Goals
 
