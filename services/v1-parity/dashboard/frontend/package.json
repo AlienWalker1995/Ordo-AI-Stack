@@ -1,0 +1,23 @@
+{
+  "name": "ordo-dashboard-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "React port of the Ordo dashboard SPA (consumes the existing FastAPI /api/* backend).",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.5.4",
+    "postcss": "^8.5.23",
+    "tailwindcss": "^3.4.19",
+    "vite": "^5.4.11"
+  }
+}

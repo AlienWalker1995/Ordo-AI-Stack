@@ -15,7 +15,7 @@ pytest.importorskip("mcp.server.fastmcp")
 
 def test_queue_prompt_registered_in_system_tools():
     """queue_prompt must appear in the tool list after register_system_tools."""
-    mcp_root = Path("comfyui-mcp")
+    mcp_root = Path("services/comfyui-mcp")
     if str(mcp_root) not in sys.path:
         sys.path.insert(0, str(mcp_root))
 
@@ -31,7 +31,7 @@ def test_queue_prompt_registered_in_system_tools():
 
 def test_queue_prompt_minimal_flux_workflow():
     """A minimal Flux txt2img workflow structure passes validation."""
-    mcp_root = Path("comfyui-mcp")
+    mcp_root = Path("services/comfyui-mcp")
     if str(mcp_root) not in sys.path:
         sys.path.insert(0, str(mcp_root))
 

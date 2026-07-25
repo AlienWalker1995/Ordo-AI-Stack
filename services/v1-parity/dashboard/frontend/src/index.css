@@ -1,0 +1,187 @@
+/* ═══════════════════════════════════════════════════════════════
+   ORDO NEXUS — Control Interface (React port, Tailwind)
+   Design tokens live in tailwind.config.js (colors / fonts / radius /
+   shadows / animations). This file adds only what utilities express
+   poorly: the base body backdrop and the keyframe/glow effects
+   (status-dot pulse, service-card accent border, skeleton shimmer).
+   ═══════════════════════════════════════════════════════════════ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-bg text-fg font-sans min-h-screen;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+  /* Dual fixed backdrop: radial cyan/purple glow + subtle dotted grid. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -2;
+    pointer-events: none;
+    background:
+      radial-gradient(60rem 60rem at 15% -10%, rgba(0, 201, 255, 0.06), transparent 60%),
+      radial-gradient(50rem 50rem at 100% 0%, rgba(124, 77, 255, 0.05), transparent 55%);
+  }
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-image: radial-gradient(circle, rgba(28, 31, 46, 0.7) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  :focus-visible {
+    outline: 1.5px solid theme('colors.accent');
+    outline-offset: 3px;
+  }
+  a {
+    color: theme('colors.accent');
+    text-decoration-color: rgba(0, 201, 255, 0.4);
+  }
+  a:hover {
+    text-decoration-color: theme('colors.accent');
+  }
+  code {
+    @apply font-mono;
+  }
+}
+
+@layer components {
+  /* Section heading rule: accent tick + trailing hairline. */
+  .section-rule::before {
+    content: '';
+    display: block;
+    width: 2px;
+    height: 1em;
+    background: theme('colors.accent');
+    border-radius: 2px;
+    flex-shrink: 0;
+    box-shadow: 0 0 8px theme('colors.accent');
+  }
+  .section-rule::after {
+    content: '';
+    display: block;
+    flex: 1;
+    height: 1px;
+    background: theme('colors.border-subtle');
+  }
+
+  /* Status dot — three states with keyframe pulse + glow (awkward inline). */
+  .status-dot {
+    @apply w-2 h-2 rounded-full shrink-0 bg-muted;
+  }
+  .status-dot.ok {
+    background: theme('colors.success');
+    box-shadow: 0 0 10px theme('colors.success');
+    animation: pulse-dot 2.5s ease-in-out infinite;
+  }
+  .status-dot.fail {
+    background: theme('colors.danger');
+    box-shadow: 0 0 8px theme('colors.danger');
+  }
+  .status-dot.pending {
+    background: theme('colors.warning');
+    animation: pulse-pending 0.9s ease-in-out infinite;
+  }
+
+  /* Service card — background/border own their hover + health states here (utilities
+     would out-specify a components-layer hover), so JSX only adds layout utilities. */
+  .service-card {
+    background: theme('colors.bg-elevated');
+    border: 1px solid theme('colors.border-subtle');
+    border-left: 2px solid theme('colors.border');
+    transition: all 0.25s ease;
+  }
+  .service-card:hover {
+    border-color: rgba(0, 201, 255, 0.2);
+    border-left-color: theme('colors.accent');
+    background: theme('colors.surface');
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  }
+  .service-card.ok-status,
+  .service-card.ok-status:hover {
+    border-left-color: theme('colors.success');
+  }
+  .service-card.fail {
+    border-color: rgba(255, 51, 88, 0.2);
+    border-left-color: theme('colors.danger');
+    background: rgba(255, 51, 88, 0.1);
+  }
+  .service-card.pending {
+    border-left-color: theme('colors.warning');
+  }
+  /* Background-jobs treatment: set apart from the main grid. */
+  .service-card.bg-job {
+    background: theme('colors.surface');
+    opacity: 0.9;
+  }
+  .service-card.bg-job:hover {
+    opacity: 1;
+  }
+
+  /* Health bars in the hardware stat cards. */
+  .hw-bar-fill > span {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+    background: theme('colors.accent');
+    transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .hw-bar-fill.warn > span {
+    background: theme('colors.warning');
+  }
+  .hw-bar-fill.danger > span {
+    background: theme('colors.danger');
+    box-shadow: 0 0 6px theme('colors.danger');
+  }
+  .hw-bar-fill.gpu-util > span {
+    background: theme('colors.accent');
+    opacity: 0.65;
+  }
+
+  /* Skeleton shimmer. */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      theme('colors.border') 25%,
+      theme('colors.surface-hover') 50%,
+      theme('colors.border') 75%
+    );
+    background-size: 200% 100%;
+    @apply animate-skeleton rounded-sm;
+  }
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 8px theme('colors.success');
+  }
+  50% {
+    opacity: 0.7;
+    box-shadow: 0 0 4px theme('colors.success');
+  }
+}
+@keyframes pulse-pending {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 8px theme('colors.warning');
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 3px theme('colors.warning');
+  }
+}

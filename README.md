@@ -29,7 +29,7 @@ Ordo is driven by a render engine, not by hand-edited compose files:
 - **`ordo render`** turns that source (+ detected hardware + model catalog + plugin manifests) into the complete runtime config under `out/` (gitignored): `.env`, `docker-compose.yml`, agent context, `mcp-registry.yaml`, `manifest.json`, `secrets.env.example`.
 - **Services run from the rendered output.** To change anything, edit the source and re-render — edits to derived files never survive, so the LLM context size, model choice, and agent context can never fall out of sync (the drift class that motivated the design).
 - **GPU arbitration is a scheduler** (`ordo serve`, the `ops-controller` service): FIFO admission, co-run-when-it-fits, LRU idle-evict — a deterministic decision engine, not a reactive watchdog.
-- **Plugins and agents are data manifests.** A service, MCP server, or agent is a declarative manifest the renderer composes in when its hardware needs are met; **Hermes is the default agent**. See [`agents/README.md`](agents/README.md).
+- **Plugins and agents are data manifests.** A service, MCP server, or agent is a declarative manifest the renderer composes in when its hardware needs are met; **Hermes is the default agent**. See [`docs/agents.md`](docs/agents.md).
 
 Full engine reference, the plugin/agent registries, and the render-discipline runbook are in [`docs/operator-guide.md`](docs/operator-guide.md).
 
@@ -98,7 +98,7 @@ ones add exposure and hardening requirements. See [docs/deployment-models.md](do
 
 ## Docs
 
-[Operator guide (`docs/operator-guide.md`)](docs/operator-guide.md) · [Access & deployment models](docs/deployment-models.md) · [Auth front door](docs/runbooks/auth.md) · [Secrets](docs/runbooks/secrets.md) · [Data](docs/data.md) · [Hermes agent](agents/README.md) · [PRD index](docs/product%20requirements%20docs/index.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
+[Operator guide (`docs/operator-guide.md`)](docs/operator-guide.md) · [Access & deployment models](docs/deployment-models.md) · [Auth front door](docs/runbooks/auth.md) · [Secrets](docs/runbooks/secrets.md) · [Data](docs/data.md) · [Hermes agent](docs/agents.md) · [PRD index](docs/product%20requirements%20docs/index.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
 
 ## License
 

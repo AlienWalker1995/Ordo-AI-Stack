@@ -53,16 +53,40 @@ def test_services_have_required_fields(client):
 
 def test_background_flag_flows_through_services_endpoint(client, monkeypatch):
     """The additive `background` key reaches the frontend via /api/services — routes_hub
-    spreads the catalog entry (minus `check`), so it must not strip it. Force the
-    manifest fail-open path so the plugin-gated worker/rag-ingestion cards are present."""
+    spreads the catalog entry (minus `check`), so it must not strip it. `background` now
+    marks every NON-user-facing service (backend infra + headless workers), which the
+    frontend splits into its 'Background jobs' section. Force the manifest fail-open path
+    so the plugin-gated voice/rag/worker cards are present."""
     monkeypatch.delenv("MANIFEST_PATH", raising=False)
     r = client.get("/api/services")
     by_id = {s["id"]: s for s in r.json()["services"]}
-    assert by_id["worker"]["background"] is True
-    assert by_id["rag-ingestion"]["background"] is True
-    # Interactive services never carry a truthy background flag.
-    assert not by_id["llamacpp"].get("background")
-    assert not by_id["webui"].get("background")
+    for bg_id in ("worker", "rag-ingestion", "llamacpp", "mcp", "qdrant", "stt", "tts"):
+        assert by_id[bg_id]["background"] is True, f"{bg_id} should be background"
+    # User-facing UIs (main grid) never carry a truthy background flag.
+    for ui_id in ("webui", "comfyui", "n8n", "hermes", "codebase-memory-ui", "model-gateway"):
+        assert not by_id[ui_id].get("background"), f"{ui_id} must stay user-facing"
+
+
+def test_model_gateway_is_user_facing_with_swagger_open_url(client, monkeypatch):
+    """model-gateway stays in the main grid (user-facing, not background) and its Open link
+    points at the LiteLLM Swagger UI through the edge's /llm/ route (which strips /llm and
+    proxies to model-gateway:11435, whose swagger renders at its root)."""
+    monkeypatch.delenv("MANIFEST_PATH", raising=False)
+    monkeypatch.setenv("CADDY_TAILNET_HOSTNAME", "ordo.example.ts.net")
+    r = client.get("/api/services")
+    mg = {s["id"]: s for s in r.json()["services"]}["model-gateway"]
+    assert not mg.get("background")
+    assert mg["open_url"] == "https://ordo.example.ts.net/llm/"
+
+
+def test_model_gateway_open_url_falls_back_when_host_unset(client, monkeypatch):
+    """With no edge host known, model-gateway's open_url is None so the frontend falls back
+    to its port/SSO route rather than emitting a broken link."""
+    monkeypatch.delenv("MANIFEST_PATH", raising=False)
+    monkeypatch.delenv("CADDY_TAILNET_HOSTNAME", raising=False)
+    r = client.get("/api/services")
+    mg = {s["id"]: s for s in r.json()["services"]}["model-gateway"]
+    assert mg["open_url"] is None
 
 
 def test_services_do_not_leak_auth_token(client, monkeypatch):

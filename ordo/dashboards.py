@@ -131,14 +131,15 @@ class DashboardRegistry:
 
     @classmethod
     def load(cls, dashboards_dir: str | Path) -> DashboardRegistry:
+        import yaml
+        # Co-located manifests: each dashboard declares itself in `services/<id>/dashboard.yaml`.
+        # sorted() over the glob keys the registry by path (== by folder id) so order is stable.
         base = Path(dashboards_dir)
-        found: list[Dashboard] = []
-        if base.is_dir():
-            for manifest in sorted(base.glob("*/dashboard.yaml")):
-                import yaml
-                data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
-                found.append(Dashboard.from_dict(data))
-        return cls(found)
+        dashboards = [
+            Dashboard.from_dict(yaml.safe_load(manifest.read_text(encoding="utf-8")) or {})
+            for manifest in sorted(base.glob("*/dashboard.yaml"))
+        ]
+        return cls(dashboards)
 
     def get(self, dashboard_id: str) -> Dashboard | None:
         return self._by_id.get(dashboard_id)

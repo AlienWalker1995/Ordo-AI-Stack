@@ -26,7 +26,7 @@ def mcp_app():
     from pathlib import Path
 
     # Ensure comfyui-mcp package is importable
-    mcp_root = Path("comfyui-mcp")
+    mcp_root = Path("services/comfyui-mcp")
     if str(mcp_root) not in sys.path:
         sys.path.insert(0, str(mcp_root))
 

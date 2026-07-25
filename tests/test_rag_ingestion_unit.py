@@ -30,7 +30,7 @@ def _stub_watchdog() -> None:
 
 def _load_ingest():
     _stub_watchdog()
-    path = Path(__file__).resolve().parent.parent / "rag-ingestion" / "ingest.py"
+    path = Path(__file__).resolve().parent.parent / "services" / "rag" / "ingest.py"
     spec = importlib.util.spec_from_file_location("rag_ingest", path)
     mod = importlib.util.module_from_spec(spec)
     sys.modules["rag_ingest"] = mod

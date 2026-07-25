@@ -54,7 +54,7 @@ require ops-controller success to complete a chat or tool call.
 ## Related service: ops-api
 
 The V1-parity dashboard's optional backend (`dashboards/v1-parity/dashboard.yaml`,
-`docker/ops-api/main.py`), rendered as its own compose service named `ops-api` — not
+`services/ops-api/main.py`), rendered as its own compose service named `ops-api` — not
 part of ops-controller. It owns the audited, Bearer-token-gated compose-lifecycle API:
 
 **Base URL:** `http://ops-api:9000` (internal network; no host port)
@@ -74,7 +74,7 @@ V1; the token gates `ops-api`, not `ops-controller`)
 | `/mcp/containers` | GET | Bearer | List MCP server containers |
 | `/audit` | GET | Bearer | Audit log (limit=50) |
 
-**Safety:** All mutating endpoints require `{"confirm": true}`. Optional `{"dry_run": true}` returns planned action without executing. Service targets are restricted to an `ALLOWED_SERVICES` allowlist in `docker/ops-api/main.py`. Whole-stack `/compose/*` mutations stay disabled by default (`OPS_COMPOSE_MUTATIONS_ENABLED=0`) — V2's `ordo serve` (ops-controller) owns stack lifecycle.
+**Safety:** All mutating endpoints require `{"confirm": true}`. Optional `{"dry_run": true}` returns planned action without executing. Service targets are restricted to an `ALLOWED_SERVICES` allowlist in `services/ops-api/main.py`. Whole-stack `/compose/*` mutations stay disabled by default (`OPS_COMPOSE_MUTATIONS_ENABLED=0`) — V2's `ordo serve` (ops-controller) owns stack lifecycle.
 
 ### Audit Event Pipeline (ops-api)
 

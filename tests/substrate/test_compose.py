@@ -11,7 +11,7 @@ from ordo.render import render
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
-REGISTRY = PluginRegistry.load(ROOT / "plugins")
+REGISTRY = PluginRegistry.load(ROOT / "services")
 
 
 def test_core_services_present():
@@ -121,7 +121,7 @@ def test_v1_parity_ops_api_backend_has_utility_gpu(tmp_path):
     # End-to-end through the real v1-parity manifest + render: the ops-api service the operator's
     # dashboard depends on must carry the utility GPU reservation, else its GPU widgets go blank.
     from ordo.dashboards import DashboardRegistry
-    dashboards = DashboardRegistry.load(ROOT / "dashboards")
+    dashboards = DashboardRegistry.load(ROOT / "services")
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                             "model": "auto", "plugins": "auto", "dashboard": "v1-parity"})
     c = render(src, CATALOG, REGISTRY, dashboards=dashboards).compose_dict()

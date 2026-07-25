@@ -128,13 +128,15 @@ class PluginRegistry:
 
     @classmethod
     def load(cls, plugins_dir: str | Path) -> PluginRegistry:
+        # Co-located manifests: each plugin declares itself in `services/<id>/plugin.yaml`.
+        # sorted() over the glob keys the registry by path (== by folder id) so output order
+        # is stable and independent of filesystem enumeration order.
         base = Path(plugins_dir)
-        found: list[Plugin] = []
-        if base.is_dir():
-            for manifest in sorted(base.glob("*/plugin.yaml")):
-                data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
-                found.append(Plugin.from_dict(data))
-        return cls(found)
+        plugins = [
+            Plugin.from_dict(yaml.safe_load(manifest.read_text(encoding="utf-8")) or {})
+            for manifest in sorted(base.glob("*/plugin.yaml"))
+        ]
+        return cls(plugins)
 
     def get(self, plugin_id: str) -> Plugin | None:
         return self._by_id.get(plugin_id)

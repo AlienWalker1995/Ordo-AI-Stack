@@ -49,7 +49,7 @@ The dashboard backend (`ops-api`) recreates services in-container via its own
 paths). Because the `ops-api` container itself loads `out/secrets.env` as
 an `env_file`, its process already has the real values; it passes that
 environment through to the subprocess (`_compose_env` in
-`docker/ops-api/main.py`), so a secret-dependent service it recreates
+`services/ops-api/main.py`), so a secret-dependent service it recreates
 (oauth2-proxy, caddy, searxng, n8n, dashboard, model-gateway/litellm) gets its
 real values — instead of coming up unset and crash-looping (e.g. oauth2-proxy
 on an 11-byte `placeholder` cookie secret). `ops-api` never holds the age key:

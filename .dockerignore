@@ -1,17 +1,19 @@
 # Root build-context ALLOWLIST. Two images build with the repo ROOT as their context:
-#   - ops-controller (docker/ops-controller.Dockerfile: COPYs ordo/ catalog/ plugins/ agents/ dashboards/)
-#   - worker         (worker/Dockerfile: COPYs worker/ + dashboard/ modules it imports)
+#   - ops-controller (services/ops-controller/Dockerfile: COPYs ordo/ catalog/ services/)
+#   - worker         (services/worker/Dockerfile: COPYs services/worker/ +
+#                     services/v1-parity/dashboard/ modules it imports)
 # Everything else is excluded so the context stays tiny and no operator material
 # (out/secrets.env, auth/caddy/certs/, data/, models/) can ever reach the daemon.
-# (Subdirectory build contexts — docker/*/, hermes/, rag-ingestion/, … — are NOT
-# affected: a .dockerignore only applies to the context directory it sits in.)
+# (Subdirectory build contexts that set their own context dir are NOT affected:
+# a .dockerignore only applies to the context directory it sits in.)
 *
 !ordo/
 !catalog/
-!plugins/
-!agents/
-!dashboards/
-!dashboard/
-!worker/
+!services/
+# Re-exclude heavy gitignored/build artifacts the !services/ allowlist would otherwise pull into
+# the root context (worker + ops-controller builds) — chiefly the dashboard's ~54M frontend
+# node_modules and any built dist/. Keeps the context tiny and the images reproducible.
+**/node_modules
+**/dist
 **/__pycache__
 **/*.pyc

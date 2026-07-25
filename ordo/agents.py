@@ -85,13 +85,14 @@ class AgentRegistry:
 
     @classmethod
     def load(cls, agents_dir: str | Path) -> AgentRegistry:
+        # Co-located manifests: each agent declares itself in `services/<id>/agent.yaml`.
+        # sorted() over the glob keys the registry by path (== by folder id) so order is stable.
         base = Path(agents_dir)
-        found: list[Agent] = []
-        if base.is_dir():
-            for manifest in sorted(base.glob("*/agent.yaml")):
-                data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
-                found.append(Agent.from_dict(data))
-        return cls(found)
+        agents = [
+            Agent.from_dict(yaml.safe_load(manifest.read_text(encoding="utf-8")) or {})
+            for manifest in sorted(base.glob("*/agent.yaml"))
+        ]
+        return cls(agents)
 
     def get(self, agent_id: str) -> Agent | None:
         return self._by_id.get(agent_id)

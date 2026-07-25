@@ -164,7 +164,7 @@ def test_apply_param_placeholders_fills_optional_audio_defaults():
 
 
 def test_coerce_value_int_accepts_float_strings():
-    # Locks parity with comfyui-mcp/managers/workflow_manager.py::_coerce_value —
+    # Locks parity with services/comfyui-mcp/managers/workflow_manager.py::_coerce_value —
     # both must use int(float(v)) for INT placeholders, not int(v).
     from dashboard.param_placeholders import _coerce_value
 
@@ -173,7 +173,7 @@ def test_coerce_value_int_accepts_float_strings():
 
 
 def test_normalize_name_collapses_underscore_runs():
-    # Locks parity with comfyui-mcp/managers/workflow_manager.py::_normalize_name —
+    # Locks parity with services/comfyui-mcp/managers/workflow_manager.py::_normalize_name —
     # both must collapse runs of non-alnum chars to a single "_" so the same
     # PARAM_* placeholder text binds to the same param name in both modules.
     from dashboard.param_placeholders import _normalize_name

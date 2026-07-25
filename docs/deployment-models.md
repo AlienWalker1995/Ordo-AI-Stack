@@ -9,9 +9,9 @@ between deployments is only **the front door in front of them**. Two facts make 
   `mcp-gateway`, `qdrant`, …) publishes **no** host port — each is reachable only on the internal
   `ordo-net` network, or *through* Caddy. So changing how the world reaches the stack means changing
   exactly one thing: Caddy's listeners and their TLS/DNS.
-- **The edge is a plugin.** Caddy + oauth2-proxy ship as the opt-in [`edge`](../plugins/edge/plugin.yaml)
+- **The edge is a plugin.** Caddy + oauth2-proxy ship as the opt-in [`edge`](../services/edge/plugin.yaml)
   plugin (compose profile `edge`), and the clean per-service hostnames ship as a *second* plugin,
-  [`tailnet-names`](../plugins/tailnet-names/plugin.yaml). Picking a deployment model = choosing and
+  [`tailnet-names`](../services/tailnet-names/plugin.yaml). Picking a deployment model = choosing and
   adapting those two plugins (and the [`Caddyfile`](../auth/caddy/Caddyfile) they mount). The
   scheduler, agents, model gateway, and every UI container are byte-identical across all three models
   below.
@@ -56,7 +56,7 @@ tailnet; there is no public DNS record and no port open to the internet.
   `:8445` n8n, `:8446` ComfyUI, `:8447` Hermes, `:8448` codebase-memory. Every prebuilt SPA is served
   at the root it was compiled for. (See [operator-guide](operator-guide.md) and
   [configuration → Network Ports](configuration.md#network-ports).)
-- **Clean per-service hostnames** via the [`tailnet-names`](../plugins/tailnet-names/plugin.yaml)
+- **Clean per-service hostnames** via the [`tailnet-names`](../services/tailnet-names/plugin.yaml)
   plugin: one minimal Tailscale sidecar per UI joins the tailnet as its own node —
   `chat|dash|n8n|comfy|hermes|graph.<tailnet>.ts.net` — and `tailscale serve` forwards its clean host
   into the *existing* SSO-gated Caddy port over loopback (`network_mode: service:caddy`). So
@@ -117,7 +117,7 @@ membership.
 - **A wildcard TLS cert via ACME DNS-01.** DNS-01 lets Caddy prove domain control by writing a TXT
   record through your DNS provider's API, so it can issue `*.example.com` **without any inbound `:80`**
   reaching the host. *This is the piece that does not exist in the repo today:* the shipped
-  `caddy:2.11.4-alpine` image in [`plugins/edge/plugin.yaml`](../plugins/edge/plugin.yaml) has **no
+  `caddy:2.11.4-alpine` image in [`services/edge/plugin.yaml`](../services/edge/plugin.yaml) has **no
   DNS-provider module**, and the [Caddyfile](../auth/caddy/Caddyfile) runs with `auto_https off` and a
   static `tls /etc/caddy/certs/tailnet.{crt,key}` mount.
   - **Requires:** a custom Caddy build (e.g. `xcaddy` with `caddy-dns/<provider>`) swapped into the
@@ -258,6 +258,6 @@ that posture. The difference is exposure, and the public models (2 and 3) *add* 
 - [Auth front door runbook](runbooks/auth.md) — one-time SSO setup, cert renewal, troubleshooting
 - [Secrets runbook](runbooks/secrets.md) — SOPS + age, `secrets.env` model
 - [Configuration](configuration.md#network-ports) — env vars and the port-per-service layout
-- Plugins: [`edge`](../plugins/edge/plugin.yaml) (Caddy + oauth2-proxy) ·
-  [`tailnet-names`](../plugins/tailnet-names/plugin.yaml) (per-service sidecars) ·
+- Plugins: [`edge`](../services/edge/plugin.yaml) (Caddy + oauth2-proxy) ·
+  [`tailnet-names`](../services/tailnet-names/plugin.yaml) (per-service sidecars) ·
   [`Caddyfile`](../auth/caddy/Caddyfile) (the only host-port publisher)

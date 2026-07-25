@@ -7,7 +7,7 @@ stack's ~24 running services it took ~48s (past the 3s timeout) and the dashboar
 `_empty_payload` branch: every service rendered `running:false`. The fix fans the independent
 samples out across a bounded thread pool so wall time collapses to ~one sample regardless of N.
 
-These tests load the ops-api's `main.py` (build context `docker/ops-api/`) with a stubbed docker SDK
+These tests load the ops-api's `main.py` (build context `services/ops-api/`) with a stubbed docker SDK
 and assert BOTH the correctness (all services seeded, runners flipped+filled) and the concurrency
 (wall time ~= one sample, not N). Skipped where fastapi/docker aren't installed (the bare substrate
 dev suite) — they run in the ops-api runtime-deps environment.
@@ -23,7 +23,7 @@ import pytest
 pytest.importorskip("fastapi", reason="ops-api runtime deps (fastapi/docker) not present")
 
 ROOT = Path(__file__).resolve().parents[2]
-_OPS_API = ROOT / "docker" / "ops-api"
+_OPS_API = ROOT / "services" / "ops-api"
 
 
 def _load_main(monkeypatch):

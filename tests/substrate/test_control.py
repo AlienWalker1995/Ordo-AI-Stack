@@ -11,7 +11,7 @@ from ordo.scheduler import Scheduler
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
-REGISTRY = PluginRegistry.load(ROOT / "plugins")
+REGISTRY = PluginRegistry.load(ROOT / "services")
 
 
 def _cp(tmp_path, model="auto", with_broker=True):

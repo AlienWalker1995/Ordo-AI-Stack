@@ -20,14 +20,14 @@ ordo = "ordo.cli:main"
 [tool.setuptools]
 packages = ["ordo"]
 
-# Ship the curated catalog + plugin manifests with the package (data the CLI reads by default).
+# Ship the curated catalog + service manifests with the package (data the CLI reads by default).
 [tool.setuptools.package-data]
-ordo = ["../catalog/*.yaml", "../plugins/**/*.yaml"]
+ordo = ["../catalog/*.yaml", "../services/**/*.yaml"]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 120
-src = ["ordo", "dashboard", "tests", "rag-ingestion", "scripts", "worker", "docker", "hermes", "qdrant-rag-mcp"]
+src = ["ordo", "services", "tests", "scripts", "hermes"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
@@ -35,7 +35,7 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 # Imports intentionally ordered after _state_lock / app for readability
-"dashboard/app.py" = ["E402"]
+"services/v1-parity/dashboard/app.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["dashboard", "ordo"]
@@ -49,3 +49,9 @@ asyncio_mode = "auto"
 # non-source dirs makes `pytest` and `pytest tests/` behave identically.
 testpaths = ["tests"]
 norecursedirs = ["data", "models", "out", "secrets", "tmp*", ".git", "*.egg-info"]
+# services/ reorg import roots (keeps every `import` resolving without editing any import stmt):
+#   - services/v1-parity -> `import dashboard` (the v1-parity dashboard package, 22 test files
+#     + services/worker/worker.py do `from dashboard.X import Y`)
+#   - services            -> `import worker.worker` (worker is now services/worker/; the
+#     orchestration e2e tests run the worker inline via `from worker.worker import ...`)
+pythonpath = ["services/v1-parity", "services"]

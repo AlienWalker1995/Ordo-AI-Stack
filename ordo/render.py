@@ -22,9 +22,11 @@ from .dashboards import DashboardRegistry
 from .hardware import HardwareProfile, detect
 from .plugins import PluginRegistry
 
-DEFAULT_PLUGINS_DIR = Path(__file__).resolve().parent.parent / "plugins"
-DEFAULT_AGENTS_DIR = Path(__file__).resolve().parent.parent / "agents"
-DEFAULT_DASHBOARDS_DIR = Path(__file__).resolve().parent.parent / "dashboards"
+# Render data now lives co-located under services/<id>/ (plugin.yaml / agent.yaml / dashboard.yaml);
+# each registry globs its own manifest kind out of the shared services/ root.
+DEFAULT_PLUGINS_DIR = Path(__file__).resolve().parent.parent / "services"
+DEFAULT_AGENTS_DIR = Path(__file__).resolve().parent.parent / "services"
+DEFAULT_DASHBOARDS_DIR = Path(__file__).resolve().parent.parent / "services"
 
 # Secret env KEYS the CORE services need at runtime (values operator-managed in secrets.env, never
 # rendered). model-gateway/mcp-gateway/ops-controller/dashboard/agent read these; plugins add more

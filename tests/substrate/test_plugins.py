@@ -8,7 +8,7 @@ from ordo.render import render
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
-REGISTRY = PluginRegistry.load(ROOT / "plugins")
+REGISTRY = PluginRegistry.load(ROOT / "services")
 
 P_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128, "cpu_cores": 32}
 P_CPU = {"gpus": [], "ram_gb": 16, "cpu_cores": 8}
@@ -128,7 +128,7 @@ def test_ltx_trainer_manifest_invariants():
     from pathlib import Path
 
     import yaml
-    manifest = Path(__file__).resolve().parents[2] / "plugins" / "ltx-trainer" / "plugin.yaml"
+    manifest = Path(__file__).resolve().parents[2] / "services" / "ltx-trainer" / "plugin.yaml"
     m = yaml.safe_load(manifest.read_text(encoding="utf-8"))
     svc = m["services"][0]
     assert svc["gpu_pin"] == "primary"                     # trainer needs the 5090 (cu128 torch)

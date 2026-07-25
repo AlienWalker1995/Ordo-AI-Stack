@@ -154,7 +154,7 @@ def test_legacy_paths_redirect_to_ports(caddyfile_text: str) -> None:
 # `import sso_service <upstream>` — identical to :8443/:8446. These invariants FAIL
 # if any adapter (handle_path, redir-to-subpath bounce, X-Forwarded-Prefix) returns.
 
-NGINX_CONF = REPO_ROOT / "codebase-memory-ui" / "nginx.conf"
+NGINX_CONF = REPO_ROOT / "services" / "codebase-memory-ui" / "nginx.conf"
 
 
 def _site_block(text: str, port: str) -> str:
@@ -194,7 +194,7 @@ def test_no_forwarded_prefix_injection(caddyfile_text: str) -> None:
 
 
 def test_codebase_memory_ui_serves_at_root() -> None:
-    """codebase-memory-ui/nginx.conf must be a plain root proxy: no sub_filter
+    """services/codebase-memory-ui/nginx.conf must be a plain root proxy: no sub_filter
     rewrites, no /codebase-memory/ subpath, a `location /` at the root."""
     nginx = NGINX_CONF.read_text(encoding="utf-8")
     assert "sub_filter" not in nginx, "sub_filter reintroduced — the nginx subpath adapter is back"
