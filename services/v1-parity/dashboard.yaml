@@ -41,7 +41,7 @@ environment:
   # Backend service URLs the dashboard reads at runtime (all V2 service names).
   LLAMACPP_URL: http://llamacpp:8080
   MODEL_GATEWAY_URL: http://model-gateway:11435
-  MODEL_GATEWAY_API_KEY: ${LITELLM_MASTER_KEY:-local}
+  MODEL_GATEWAY_API_KEY: ${LITELLM_MASTER_KEY}
   MCP_GATEWAY_URL: http://mcp-gateway:8811
   # Single source of truth for the MCP server list: the SAME out/mcp/servers.txt the
   # gateway reads (mounted below at /mcp-config). Without this the dashboard falls back
