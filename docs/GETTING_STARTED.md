@@ -79,8 +79,14 @@ Single homelab operator with a small Google-account allowlist for friends / fami
 
 Traffic between tailnet devices is WireGuard-encrypted; Caddy adds app-layer TLS for the Google OAuth flow and the SSO cookie. Open WebUI's own auth (`WEBUI_AUTH`) is off by default because the proxy already gates it; flip to `True` only if you want per-user workspaces inside Open WebUI on top of the shared SSO gate.
 
+> The Tailscale front door above is **one of three swappable access layers** — the same rendered
+> stack can also sit behind a self-hosted public domain or a cloud VM, all keeping the same Google SSO
+> gate. See [Access & deployment models](deployment-models.md) for what each requires and how they
+> differ (only the Tailscale model is wired by default).
+
 ## Next steps
 
+- [Access & deployment models](deployment-models.md) — the three swappable edge layers (Tailscale / domain / cloud)
 - [Configuration](configuration.md) — environment variables and service setup
 - [Data](data.md) — data schemas, lifecycle, and persistence rules
 - [Hermes Agent](hermes-agent.md) — agent setup, Discord wiring, upgrade notes

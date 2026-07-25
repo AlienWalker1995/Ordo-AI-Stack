@@ -6,7 +6,7 @@ import asyncio
 from fastapi import APIRouter, Request
 
 from dashboard.dependency_registry import probe_all
-from dashboard.services_catalog import SERVICES, _check_service
+from dashboard.services_catalog import SERVICES, _check_service, tailnet_open_url
 from dashboard.settings import AUTH_REQUIRED
 
 router = APIRouter(prefix="/api", tags=["hub"])
@@ -25,6 +25,11 @@ async def services():
             "ok": ok,
             "error": err if not ok else None,
             "hint": svc.get("hint", ""),
+            # Clean per-service tailnet name (https://chat.<domain>/ …) when the
+            # tailnet-names sidecars are enabled; None otherwise so the frontend
+            # falls back to its port/SSO route. Server-owned so the URL has one
+            # source of truth, not a hostname guess in the browser.
+            "open_url": tailnet_open_url(svc["id"]),
         }
 
     results = await asyncio.gather(*[_probe(s) for s in SERVICES])

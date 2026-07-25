@@ -1,7 +1,37 @@
 """Service list for dashboard health/UI and ops ID mapping. Separated from app.py for maintainability."""
 from __future__ import annotations
 
+import os
+
 import httpx as _httpx
+
+# Dashboard service id -> clean per-service tailnet subdomain label (the tailnet-names
+# sidecar plugin serves each UI as https://<label>.<domain>/). Only UI services have a
+# sidecar; backend-only services (llamacpp/model-gateway/mcp/qdrant) have no clean name
+# and keep their internal URLs. hermes/graph land on their port's root, which 302s to
+# the /hermes/ and /codebase-memory/ subpaths, so a bare https://<label>.<domain>/ works.
+TAILNET_LABELS = {
+    "webui": "chat",
+    "comfyui": "comfy",
+    "n8n": "n8n",
+    "hermes": "hermes",
+    "codebase-memory-ui": "graph",
+}
+
+
+def tailnet_open_url(service_id: str) -> str | None:
+    """Clean per-service URL (https://<label>.<domain>/) when the tailnet-names sidecar
+    layer is enabled, else None. Both signals come from the rendered env: the enable flag
+    the plugin emits (TAILNET_NAMES_ENABLED) and the edge domain (CADDY_TAILNET_DOMAIN).
+    Gating on the flag — not merely on the domain being set — keeps the links correct on
+    a port-per-service deployment that has the edge but NOT the sidecars."""
+    if os.environ.get("TAILNET_NAMES_ENABLED", "").strip().lower() not in ("1", "true"):
+        return None
+    domain = os.environ.get("CADDY_TAILNET_DOMAIN", "").strip()
+    label = TAILNET_LABELS.get(service_id)
+    if not domain or not label:
+        return None
+    return f"https://{label}.{domain}/"
 
 # Map dashboard service id -> ops-controller service id
 OPS_SERVICE_MAP = {

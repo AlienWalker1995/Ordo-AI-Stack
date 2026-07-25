@@ -89,9 +89,16 @@ docker run --rm -v "$PWD:/w" -w /w python:3.11-slim \
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): TruffleHog secret scan, pytest + ruff, and a real `docker compose config` gate on the rendered stack.
 
+## Access & deployment models
+
+The stack's UIs are served through a **swappable edge layer** — the same rendered compose stack
+behind any of three front doors: a private **Tailscale tailnet** (the current default), a
+**self-hosted public domain**, or a **cloud VM**. All three keep the same Google SSO gate; the public
+ones add exposure and hardening requirements. See [docs/deployment-models.md](docs/deployment-models.md).
+
 ## Docs
 
-[Operator guide (`docs/operator-guide.md`)](docs/operator-guide.md) · [Auth front door](docs/runbooks/auth.md) · [Secrets](docs/runbooks/secrets.md) · [Data](docs/data.md) · [Hermes agent](agents/README.md) · [PRD index](docs/product%20requirements%20docs/index.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
+[Operator guide (`docs/operator-guide.md`)](docs/operator-guide.md) · [Access & deployment models](docs/deployment-models.md) · [Auth front door](docs/runbooks/auth.md) · [Secrets](docs/runbooks/secrets.md) · [Data](docs/data.md) · [Hermes agent](agents/README.md) · [PRD index](docs/product%20requirements%20docs/index.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
 
 ## License
 

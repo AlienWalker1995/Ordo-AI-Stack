@@ -23,6 +23,11 @@ requires:
 depends_on: [edge]     # meaningless without the Caddy listeners it fronts
 provides: [names]      # documentation-only (resolve() matches literal ids)
 compose_profile: edge  # rides with the front door
+env:
+  # Signals consumers (the dashboard) that clean per-service tailnet names exist,
+  # so they link to https://<svc>.<domain>/ instead of a :844x port. Mirrors every
+  # other plugin's <ID>_ENABLED flag; the domain itself is CADDY_TAILNET_DOMAIN.
+  TAILNET_NAMES_ENABLED: "1"
 secrets:
   - TS_AUTHKEY
 services:

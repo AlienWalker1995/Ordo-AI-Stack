@@ -146,6 +146,12 @@ prebuilt SPA the root it was actually compiled for. One data root at
 `C:\dev\ordo-ai-stack\data` (Hermes brain at `data\hermes`). Secrets live in gitignored
 `out\secrets.env` (a second `env_file`).
 
+This Tailscale front door is the **default of three swappable access layers** — the edge
+(`plugins/edge`) and clean-URL names (`plugins/tailnet-names`) are plugins, so the same rendered stack
+can instead sit behind a self-hosted public domain or a cloud VM (both keeping the same Google SSO
+gate). Only the Tailscale model is wired today; the others' required pieces are documented in
+[`deployment-models.md`](deployment-models.md).
+
 **Render discipline** (the drift cure, in daily operation):
 - Change config by editing the source `ordo.yaml`, then **re-render** — never hand-edit `out/.env`.
 - Always render from the real source: `ordo render --source out/ordo.yaml`.

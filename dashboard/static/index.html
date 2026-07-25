@@ -2218,6 +2218,11 @@
 
     /** Prefer API `url` (paths + query) and match dashboard hostname. */
     function serviceOpenHref(s, host) {
+      // Clean per-service tailnet name (https://chat.<domain>/ …), served by the
+      // backend when the tailnet-names sidecars are enabled. Single source of truth:
+      // the domain + service→label map live server-side, not guessed from
+      // location.hostname (which yields a dead dash.<domain>:port under clean URLs).
+      if (s.open_url) return s.open_url;
       if (APP_PREFIX && SSO_ROUTES[s.id]) {
         const route = SSO_ROUTES[s.id];
         if (route.startsWith(':')) {          // same hostname, dedicated SSO-gated port
