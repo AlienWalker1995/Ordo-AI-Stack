@@ -11,7 +11,7 @@ from ordo.render import CORE_SECRET_KEYS, render
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
-REGISTRY = PluginRegistry.load(ROOT / "plugins")
+REGISTRY = PluginRegistry.load(ROOT / "services")
 
 UUID_5090 = "GPU-97fe65ee-5e2d-8c9b-32d0-362f510ceb96"
 UUID_1070 = "GPU-20fac13a-5e5b-1818-581f-63901612fd84"
@@ -175,9 +175,11 @@ def test_edge_mounts_tracked_config_not_copies():
 
 def test_ops_controller_image_ships_all_render_data():
     # The ops-controller image is the in-place render/serve vehicle. If it lacks any of the
-    # renderer's data dirs, renders inside it silently regress (missing dashboards/ dropped the
-    # v1-parity dashboard from the live compose on 2026-07-15 — resolve() warned, but the
-    # compose still came out wrong). Guard every data dir the renderer loads.
-    dockerfile = (ROOT / "docker" / "ops-controller.Dockerfile").read_text(encoding="utf-8")
-    for data_dir in ("catalog", "plugins", "agents", "dashboards"):
+    # renderer's data, renders inside it silently regress (a missing dashboard manifest dropped
+    # the v1-parity dashboard from the live compose on 2026-07-15 — resolve() warned, but the
+    # compose still came out wrong). The render manifests are now co-located under services/<id>/
+    # (plugin.yaml / agent.yaml / dashboard.yaml), so shipping services/ ships every one of them;
+    # guard catalog/ and services/ (the two data trees the renderer loads).
+    dockerfile = (ROOT / "services" / "ops-controller" / "Dockerfile").read_text(encoding="utf-8")
+    for data_dir in ("catalog", "services"):
         assert f"COPY {data_dir} ./{data_dir}" in dockerfile, f"image must ship {data_dir}/"

@@ -19,7 +19,8 @@ An Ordo agent image MUST:
 
 ## Adding an agent
 
-Drop a manifest at `agents/<id>/agent.yaml`:
+Every service's render data is co-located under `services/<id>/`, so an agent's manifest lives
+alongside its build context. Drop a manifest at `services/<id>/agent.yaml`:
 
 ```yaml
 id: my-agent

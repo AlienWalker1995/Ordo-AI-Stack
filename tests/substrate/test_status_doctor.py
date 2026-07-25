@@ -9,7 +9,7 @@ from ordo.scheduler import Job, Scheduler
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
-REGISTRY = PluginRegistry.load(ROOT / "plugins")
+REGISTRY = PluginRegistry.load(ROOT / "services")
 
 
 # --- status contract (the dashboard/agents poll this for "GPU busy, ~Ns") ---

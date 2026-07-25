@@ -15,7 +15,7 @@ docker build -t ordo/agent-hermes:latest C:/dev/ordo-ai-stack/hermes
 ```
 
 Referenced (not duplicated) — the Hermes build context + the operator's `data/` are the single
-source of truth. Swapping the agent (see `agents/README.md`) points the `agent` service at a
+source of truth. Swapping the agent (see `../../docs/agents.md`) points the `agent` service at a
 different image; the core stays agent-agnostic.
 
 Runtime secrets (`OPS_CONTROLLER_TOKEN`, Discord/backup tokens) come from `secrets.env`, never baked.

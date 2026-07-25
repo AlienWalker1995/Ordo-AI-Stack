@@ -38,7 +38,7 @@ jobs:
         run: pip install -r tests/requirements.txt
 
       - name: Ruff lint
-        run: python -m ruff check ordo services/v1-parity/dashboard tests services/rag scripts services/comfyui-mcp services/orchestration services/worker docker hermes services/qdrant-rag
+        run: python -m ruff check ordo services/v1-parity/dashboard tests services/rag scripts services/comfyui-mcp services/orchestration services/worker hermes services/qdrant-rag
 
       - name: Create minimal .env for compose tests
         run: |
@@ -63,10 +63,7 @@ jobs:
             substrate:
               - 'ordo/**'
               - 'catalog/**'
-              - 'plugins/**'
-              - 'agents/**'
-              - 'dashboards/**'
-              - 'docker/**'
+              - 'services/**'
               - 'assets/**'
               - 'tests/substrate/**'
               - 'ordo.example.yaml'

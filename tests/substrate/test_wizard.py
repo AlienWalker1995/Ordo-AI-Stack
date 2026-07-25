@@ -10,7 +10,7 @@ from ordo.render import render
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
-REGISTRY = PluginRegistry.load(ROOT / "plugins")
+REGISTRY = PluginRegistry.load(ROOT / "services")
 HW_5090 = HardwareProfile.from_spec({"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128})
 HW_CPU = HardwareProfile.from_spec({"gpus": [], "ram_gb": 16})
 

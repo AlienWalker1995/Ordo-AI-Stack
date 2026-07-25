@@ -26,7 +26,7 @@ def _ops_get(path: str, timeout: int = 60) -> dict:
             "ok": False,
             "error": (
                 "OPS_CONTROLLER_TOKEN is not set on the ComfyUI MCP server. "
-                "Set it in .env and pass it through plugins/comfyui-mcp/plugin.yaml's mcp.env block "
+                "Set it in .env and pass it through services/comfyui-mcp/plugin.yaml's mcp.env block "
                 "(OPS_CONTROLLER_TOKEN: PLACEHOLDER_OPS_CONTROLLER_TOKEN, substituted by gateway-wrapper.sh at startup)."
             ),
         }
@@ -54,7 +54,7 @@ def _ops_post(path: str, body: dict[str, Any], timeout: int = 600) -> dict:
             "ok": False,
             "error": (
                 "OPS_CONTROLLER_TOKEN is not set on the ComfyUI MCP server. "
-                "Set it in .env and pass it through plugins/comfyui-mcp/plugin.yaml's mcp.env block "
+                "Set it in .env and pass it through services/comfyui-mcp/plugin.yaml's mcp.env block "
                 "(OPS_CONTROLLER_TOKEN: PLACEHOLDER_OPS_CONTROLLER_TOKEN, substituted by gateway-wrapper.sh at startup) "
                 "so spawned MCP containers can reach ops-controller."
             ),

@@ -9,7 +9,7 @@ from ordo.render import render
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
-REGISTRY = PluginRegistry.load(ROOT / "plugins")
+REGISTRY = PluginRegistry.load(ROOT / "services")
 
 GPU = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                         "model": "auto", "plugins": "auto"})

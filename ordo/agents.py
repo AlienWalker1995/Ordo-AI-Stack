@@ -85,22 +85,14 @@ class AgentRegistry:
 
     @classmethod
     def load(cls, agents_dir: str | Path) -> AgentRegistry:
+        # Co-located manifests: each agent declares itself in `services/<id>/agent.yaml`.
+        # sorted() over the glob keys the registry by path (== by folder id) so order is stable.
         base = Path(agents_dir)
-        # Transition shim (services/ reorg) — see PluginRegistry.load: also load a sibling
-        # services/<id>/agent.yaml, keyed by folder id, services/ wins, sorted by id.
-        roots = [base] if base.name == "services" else [base, base.parent / "services"]
-        by_id: dict[str, Agent] = {}
-        for root in roots:
-            if not root.is_dir():
-                continue
-            is_services = root.name == "services"
-            for manifest in sorted(root.glob("*/agent.yaml")):
-                aid = manifest.parent.name
-                if aid in by_id and not is_services:
-                    continue
-                data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
-                by_id[aid] = Agent.from_dict(data)
-        return cls([by_id[k] for k in sorted(by_id)])
+        agents = [
+            Agent.from_dict(yaml.safe_load(manifest.read_text(encoding="utf-8")) or {})
+            for manifest in sorted(base.glob("*/agent.yaml"))
+        ]
+        return cls(agents)
 
     def get(self, agent_id: str) -> Agent | None:
         return self._by_id.get(agent_id)
