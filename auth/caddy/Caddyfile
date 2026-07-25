@@ -106,11 +106,21 @@
 }
 
 # ---- :8445 — n8n ----
-# UI only. n8n's PUBLIC base (N8N_WEBHOOK_URL, registered OAuth callbacks,
-# live webhook URLs) stays on :443/n8n/* — see the passthroughs in the :443
-# site — so nothing external needs re-registration.
+# n8n serves its whole UI under N8N_PATH=/n8n/ (assets at /n8n/assets/…), so —
+# like Hermes and codebase-memory — its clean name lands on that subpath: `/`
+# 302s to /n8n/ and everything else proxies through UNSTRIPPED (n8n owns the
+# /n8n prefix natively, unlike Hermes which needs X-Forwarded-Prefix). A plain
+# root sso_service here 404s every /n8n/asset to n8n's SPA fallback → MIME-blocked
+# blank page. n8n's PUBLIC base (N8N_WEBHOOK_URL, OAuth callbacks) still lives on
+# :443/n8n/* via the passthroughs in the :443 site — nothing external re-registers.
 :8445 {
-    import sso_service n8n:5678
+    import tls_tailnet
+    import sso_port_gate
+    route {
+        import sso_forward_auth
+        redir / /n8n/ 302
+        reverse_proxy n8n:5678
+    }
 }
 
 # ---- :8446 — ComfyUI ----
