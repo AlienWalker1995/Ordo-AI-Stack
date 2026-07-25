@@ -32,16 +32,12 @@ services:
       - --set-xauthrequest=true
       - --upstream=static://202
       - --redirect-url=https://${CADDY_TAILNET_HOSTNAME}/oauth2/callback
+      # One wildcard covers every rd= target. The Caddy SSO gate builds rd=
+      # with {host} (portless), so rd= is always https://<name>.<domain>/… —
+      # both the sidecar clean names (chat/dash/…) and the direct :844x ports
+      # collapse to a portless host here, all matched by this one entry. (The
+      # OAuth callback itself stays on :443 — one Google redirect URI.)
       - --whitelist-domain=.${CADDY_TAILNET_DOMAIN}
-      # Port-per-service model: rd= targets carry the service port; the portless
-      # entry doesn't match them, so each SSO-gated port needs its own entry
-      # (the OAuth callback itself stays on :443 — one Google redirect URI).
-      - --whitelist-domain=${CADDY_TAILNET_HOSTNAME}:8443
-      - --whitelist-domain=${CADDY_TAILNET_HOSTNAME}:8444
-      - --whitelist-domain=${CADDY_TAILNET_HOSTNAME}:8445
-      - --whitelist-domain=${CADDY_TAILNET_HOSTNAME}:8446
-      - --whitelist-domain=${CADDY_TAILNET_HOSTNAME}:8447
-      - --whitelist-domain=${CADDY_TAILNET_HOSTNAME}:8448
       - --cookie-domain=.${CADDY_TAILNET_DOMAIN}
       - --cookie-secure=true
       - --cookie-samesite=lax

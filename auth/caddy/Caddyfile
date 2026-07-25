@@ -32,10 +32,11 @@
 #   :8445  n8n                      :8446  ComfyUI
 #   :8447  Hermes                   :8448  codebase-memory
 #
-# SSO works across all ports with ONE session: the oauth2-proxy cookie is
-# domain-scoped (port-agnostic), the OAuth callback stays on :443, and each
-# ported site's rd= carries {hostport} (whitelisted in the edge plugin) so
-# sign-in returns you to the port you came from.
+# SSO works across all ports (and the per-service Tailscale sidecar names —
+# chat/dash/… .<tailnet>.ts.net) with ONE session: the oauth2-proxy cookie is
+# domain-scoped (port-agnostic), the OAuth callback stays on :443, and the
+# shared gate builds rd= with {host} — see the (sso_forward_auth) note below
+# for why {host}, not {hostport}.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Shared TLS material (Tailscale-issued cert, mounted in by the host).
@@ -43,9 +44,7 @@
     tls /etc/caddy/certs/tailnet.crt /etc/caddy/certs/tailnet.key
 }
 
-# Shared SSO gate for a dedicated service port. NOTE {hostport} (not {host})
-# in the rd= redirect: these sites are non-default-port, and {host} would
-# strip the port and strand the user on :443 after Google sign-in.
+# Shared SSO gate for a dedicated service port.
 (sso_port_gate) {
     handle /oauth2/* {
         reverse_proxy oauth2-proxy:4180
@@ -54,6 +53,13 @@
         respond "ok" 200
     }
 }
+# rd= uses {host} (portless), NOT {hostport}. The per-service Tailscale sidecar
+# nodes (chat/dash/… .<tailnet>.ts.net) `serve`-forward their clean Host with no
+# port, so the gate MUST match on the portless host — {hostport} would emit a
+# bogus chat.<tailnet>:8443 rd and break the sidecar sign-in. Cost: a first
+# sign-in via a bare :844x port lands on the :443 hub instead of returning to
+# the port; the domain-scoped cookie then covers every port + name, so it's a
+# one-time extra click, not a broken flow.
 (sso_forward_auth) {
     forward_auth oauth2-proxy:4180 {
         uri /oauth2/auth
