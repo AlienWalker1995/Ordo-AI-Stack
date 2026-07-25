@@ -42,9 +42,6 @@ export default function StubTab({ title, endpoints = [], note }) {
   )
 }
 
-export const McpTab = () => (
-  <StubTab title="MCP Management" endpoints={['/api/mcp/*']} />
-)
 export const ModelsTab = () => (
   <StubTab title="Model Control" endpoints={['/api/model-config', '/api/llm/*', '/api/active-model', '/api/registry/*']} />
 )
@@ -57,19 +54,9 @@ export const ThroughputTab = () => (
 export const OrchestrationTab = () => (
   <StubTab title="Orchestration / Jobs" endpoints={['/api/orchestration', '/api/jobs', '/api/orchestration/readiness']} />
 )
-export const GrafanaTab = () => (
-  <StubTab
-    title="Grafana"
-    note="The full port embeds Grafana via an <iframe src='/grafana/'>. Deferred to a later iteration."
-    endpoints={['/grafana/']}
-  />
-)
 export const RagTab = () => (
   <StubTab title="RAG Status" endpoints={['/api/rag/status']} />
 )
 export const ComfyTab = () => (
   <StubTab title="ComfyUI Models & Packs" endpoints={['/api/comfyui/*']} />
-)
-export const DependenciesTab = () => (
-  <StubTab title="Dependencies" endpoints={['/api/dependencies']} />
 )

@@ -5,10 +5,13 @@
 import { useEffect, useState } from 'react'
 import HwStatBar from './components/HwStatBar.jsx'
 import ServicesTab from './components/ServicesTab.jsx'
+import McpTab from './components/McpTab.jsx'
+import GrafanaTab from './components/GrafanaTab.jsx'
+import DependenciesTab from './components/DependenciesTab.jsx'
 import { ToastProvider } from './components/Toast.jsx'
 import {
-  McpTab, ModelsTab, HardwareTab, ThroughputTab,
-  OrchestrationTab, GrafanaTab, RagTab, ComfyTab, DependenciesTab,
+  ModelsTab, HardwareTab, ThroughputTab,
+  OrchestrationTab, RagTab, ComfyTab,
 } from './components/StubTab.jsx'
 
 // Services first — it is the fully-implemented tab this iteration ships.
