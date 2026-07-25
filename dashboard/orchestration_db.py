@@ -61,13 +61,22 @@ def _now_iso() -> str:
 def _db_path(data_dir: Path) -> Path:
     d = data_dir / "orchestration"
     d.mkdir(parents=True, exist_ok=True)
-    return d / "orchestration.db"
+    # `.sqlite3`, not the old `.db`: a stale WAL `-shm` mmap on the 9p bind mount can get
+    # wedged busy (undeletable until a Docker restart) and disk-I/O-error the old file. A
+    # fresh filename side-steps the wedged orphan; combined with DELETE journal mode above,
+    # no `-shm` is ever created again so this can't recur. (Job store is transient.)
+    return d / "orchestration.sqlite3"
 
 
 def _connect(data_dir: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(_db_path(data_dir)), timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    # Rollback journal, NOT WAL. This db lives on a 9p/Windows Docker bind mount AND is
+    # opened by BOTH the dashboard and the worker; WAL's shared-memory (-shm) mmap is
+    # unreliable there ("disk I/O error"), and a stale -shm from an abruptly-replaced
+    # container gets stuck busy and crash-loops the whole control plane. DELETE mode uses
+    # a plain -journal (no mmap), which is 9p-safe and fine for this small transient store.
+    conn.execute("PRAGMA journal_mode=DELETE")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
