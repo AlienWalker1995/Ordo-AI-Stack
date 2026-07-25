@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 import httpx as _httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -2232,5 +2232,25 @@ class _NoCacheHTMLStaticFiles(StaticFiles):
 
 
 static_dir = Path(__file__).parent / "static"
-if static_dir.exists():
-    app.mount("/", _NoCacheHTMLStaticFiles(directory=str(static_dir), html=True), name="static")
+frontend_dist = Path(__file__).parent / "frontend" / "dist"
+
+# The dashboard SPA is the React build in frontend/dist when present (production image
+# and any local `npm run build`), otherwise the legacy vanilla shell in static/. The
+# legacy shell is always preserved and reachable at /legacy-index.html (a fallback while
+# the React port is validated). A production Vite build emits hashed ES modules referenced
+# with script-src 'self', so it satisfies the app's strict CSP. All /api/* and /grafana/*
+# routes are registered above and take precedence over these catch-all static mounts.
+_spa_dir = frontend_dist if (frontend_dist / "index.html").exists() else static_dir
+
+
+@app.get("/legacy-index.html", include_in_schema=False)
+async def legacy_shell():
+    """Serve the preserved legacy vanilla-JS dashboard shell."""
+    legacy = static_dir / "legacy-index.html"
+    if not legacy.exists():
+        raise HTTPException(status_code=404, detail="legacy shell not present")
+    return FileResponse(str(legacy), media_type="text/html", headers={"Cache-Control": "no-cache"})
+
+
+if _spa_dir.exists():
+    app.mount("/", _NoCacheHTMLStaticFiles(directory=str(_spa_dir), html=True), name="static")

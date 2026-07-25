@@ -3,6 +3,11 @@ __pycache__
 .git
 .gitignore
 
+# Frontend build inputs/outputs: the image installs deps (npm ci) and builds inside the
+# node stage, so never ship the host's node_modules or a stale local dist into the context.
+frontend/node_modules
+frontend/dist
+
 # Defense-in-depth: the Dockerfile only COPYs a narrow, explicit file list (*.py,
 # templates/, static/, entrypoint.sh), so none of this should ever be reachable — but if
 # the COPY list ever widens, don't let secret material ride along.
