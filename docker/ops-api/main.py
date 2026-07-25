@@ -143,6 +143,10 @@ ALLOWED_SERVICES = {
     "caddy", "oauth2-proxy", "searxng",
     "llamacpp", "llamacpp-embed", "dashboard", "open-webui", "model-gateway", "mcp-gateway",
     "comfyui", "n8n", "qdrant", "stt", "tts", "codebase-memory-ui", "ltx-trainer",
+    # hermes-dashboard is the Hermes UI service (safe to cycle); the `agent`/gateway is
+    # deliberately NOT allowlisted — its self-restart is delicate. worker + rag-ingestion
+    # are the media/rag background workers, operator-controllable from the dashboard grid.
+    "hermes-dashboard", "worker", "rag-ingestion",
 }
 
 # .env keys we allow updating via the API
