@@ -30,7 +30,7 @@ by config (not code), so the outage class that motivated V2 can't recur:
 
 ## Build
 ```
-docker build -t ordo/ops-api:latest docker/ops-api
+docker build -t ordo/ops-api:latest services/ops-api
 ```
 
 The `Dockerfile` in this directory is the authoritative build (V1 ops-controller code + the minimal,

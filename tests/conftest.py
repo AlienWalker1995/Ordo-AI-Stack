@@ -1,6 +1,6 @@
 """Top-level conftest for the ``tests/`` suite.
 
-Several tests import ``docker/ops-api/main.py`` via ``spec_from_file_location``
+Several tests import ``services/ops-api/main.py`` via ``spec_from_file_location``
 and trigger its module-level ``_audit_log = AuditLog(AUDIT_LOG_PATH)``. The
 default path is ``/data/audit.jsonl`` (the production volume mount), and
 ``AuditLog.__init__`` calls ``mkdir(parents=True)`` on the parent — which

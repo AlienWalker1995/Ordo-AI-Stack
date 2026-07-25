@@ -14,7 +14,7 @@
 # starts. The V2 `ordo serve` scheduler (service `ops-controller`) remains the sole
 # GPU/compose authority.
 #
-# Build:  docker build -t ordo/ops-api:latest docker/ops-api
+# Build:  docker build -t ordo/ops-api:latest services/ops-api
 FROM python:3.12-slim
 
 WORKDIR /app

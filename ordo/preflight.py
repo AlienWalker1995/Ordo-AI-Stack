@@ -146,7 +146,7 @@ def run(
             hints = []
             for i in proj_missing:
                 if "llamacpp-patched" in i:
-                    hints.append(f"{i} (build from docker/llamacpp-patched)")
+                    hints.append(f"{i} (build from services/llamacpp-patched)")
                 else:
                     hints.append(i)
             detail = f"build first: {', '.join(hints)}"

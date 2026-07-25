@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-_CR_PATH = ROOT / "docker" / "ops-api" / "compose_recreate.py"
+_CR_PATH = ROOT / "services" / "ops-api" / "compose_recreate.py"
 
 
 def _load():
@@ -111,7 +111,7 @@ def test_env_files_constant_is_dot_env_then_secrets():
 
 
 # ── gate defaults (source-level guard; the live default is verified in validation) ──────────────
-_MAIN_SRC = (ROOT / "docker" / "ops-api" / "main.py").read_text(encoding="utf-8")
+_MAIN_SRC = (ROOT / "services" / "ops-api" / "main.py").read_text(encoding="utf-8")
 
 
 def test_service_recreate_gate_defaults_off_in_source():

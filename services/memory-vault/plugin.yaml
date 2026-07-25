@@ -11,7 +11,7 @@ requires:
   ram_gb: 1
 provides: [tools]
 mcp:
-  # Locally-built project image (build context docker/mcpvault-mcp): wraps @bitbonsai/mcpvault
+  # Locally-built project image (build context services/memory-vault): wraps @bitbonsai/mcpvault
   # pinned to an exact npm version. Like the other ordo/* MCP images it's pinned by build context
   # (preflight shows 'build first'), not a registry digest.
   image: ordo/mcpvault-mcp:latest

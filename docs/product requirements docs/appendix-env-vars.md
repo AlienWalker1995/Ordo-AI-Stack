@@ -16,7 +16,7 @@
 | `DISCORD_BOT_TOKEN_FILE` | agent | Docker secret file path for the Discord bot token; the entrypoint reads it into `DISCORD_BOT_TOKEN` inside the container. Plaintext `DISCORD_BOT_TOKEN` env is never set — `tests/test_secrets_isolation.py` asserts it's absent | `/run/secrets/discord_token` |
 | `DISCORD_ALLOWED_USERS` | agent | Comma-separated Discord user IDs authorized to DM/invoke | *(required for Discord use)* |
 | `MCP_GATEWAY_PORT` | mcp-gateway | Internal port the gateway listens on (`ordo-net` only; no host publish — only Caddy publishes a port) | `8811` |
-| `MODEL_GATEWAY_PORT` | model-gateway | Not wired to anything — `docker/model-gateway/entrypoint.sh` hardcodes `--port 11435`; documented here for reference only | `11435` |
+| `MODEL_GATEWAY_PORT` | model-gateway | Not wired to anything — `services/model-gateway/entrypoint.sh` hardcodes `--port 11435`; documented here for reference only | `11435` |
 | `WEBUI_AUTH` | open-webui | Enable Open WebUI auth | `False` (target `True` in M6) |
 | `OPENAI_API_BASE` | open-webui, n8n | OpenAI-compat base URL | `http://model-gateway:11435/v1` |
 | `GGUF_MODELS` | gguf-puller | Hugging Face repo(s) of GGUF files to pull | *(empty)* |

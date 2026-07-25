@@ -19,12 +19,12 @@ A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`
 
 | Capability | Status | Key Files |
 |-----------|--------|-----------|
-| OpenAI-compat model gateway (llama.cpp) | Live | `docker/model-gateway/` |
-| Model list TTL cache + cache-bust endpoint | Live | `docker/model-gateway/` |
-| `X-Request-ID` correlation end-to-end | Live | `docker/model-gateway/`, `dashboard/app.py`, `ordo/` (`ordo serve`) |
-| Responses API (`/v1/responses`) | Live | `docker/model-gateway/` |
-| Completions compat (`/v1/completions`) | Live | `docker/model-gateway/` |
-| MCP Gateway with hot-reload | Live | `docker/mcp-gateway/`, `out/docker-compose.yml` |
+| OpenAI-compat model gateway (llama.cpp) | Live | `services/model-gateway/` |
+| Model list TTL cache + cache-bust endpoint | Live | `services/model-gateway/` |
+| `X-Request-ID` correlation end-to-end | Live | `services/model-gateway/`, `dashboard/app.py`, `ordo/` (`ordo serve`) |
+| Responses API (`/v1/responses`) | Live | `services/model-gateway/` |
+| Completions compat (`/v1/completions`) | Live | `services/model-gateway/` |
+| MCP Gateway with hot-reload | Live | `services/mcp-gateway/`, `out/docker-compose.yml` |
 | MCP registry.json metadata layer | Live | `dashboard/app.py`, `data/mcp/registry.json` |
 | MCP health endpoint + UI badges | Live | `dashboard/app.py` |
 | Ops Controller (start/stop/restart/logs/pull) | Live | `ordo/` (`ordo serve`) |

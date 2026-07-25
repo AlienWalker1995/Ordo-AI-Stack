@@ -91,4 +91,4 @@ Traffic between tailnet devices is WireGuard-encrypted; Caddy adds app-layer TLS
 - [Data](data.md) — data schemas, lifecycle, and persistence rules
 - [Hermes Agent](hermes-agent.md) — agent setup, Discord wiring, upgrade notes
 - [PRD index](product%20requirements%20docs/index.md) — platform design and components
-- [MCP Gateway](../docker/mcp-gateway/README.md) — web search, GitHub, etc.
+- [MCP Gateway](../services/mcp-gateway/README.md) — web search, GitHub, etc.

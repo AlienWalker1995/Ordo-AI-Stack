@@ -390,7 +390,7 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
     ]
     # model-gateway + mcp-gateway are V1 CUSTOM-BUILT config-wrapper images (LiteLLM + the
     # `local-chat` alias config; docker/mcp-gateway + the reload wrapper). V2 pins them as its own
-    # project-namespaced BUILDABLE images (build contexts under docker/{model-gateway,mcp-gateway})
+    # project-namespaced BUILDABLE images (build contexts under services/{model-gateway,mcp-gateway})
     # so preflight reports 'build first' not 'Docker will pull' — matching the llamacpp-patched
     # precedent. The V2-native ops-controller + dashboard remain the new control plane.
     svcs: dict[str, Any] = {

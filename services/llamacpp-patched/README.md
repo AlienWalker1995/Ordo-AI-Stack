@@ -19,11 +19,11 @@ against — a reproducible build, not a floating `:server` tag.
 
 ## Build
 ```
-docker build -t ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470 docker/llamacpp-patched
+docker build -t ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470 services/llamacpp-patched
 ```
 
 This image is **local-only** — it is not published to any registry, so `ordo preflight`
-reports a missing one as "build from docker/llamacpp-patched", not "Docker will pull".
+reports a missing one as "build from services/llamacpp-patched", not "Docker will pull".
 
 ## Files
 - `Dockerfile` — two-stage CUDA build (12.8 devel → runtime), pinned commit + both patches.

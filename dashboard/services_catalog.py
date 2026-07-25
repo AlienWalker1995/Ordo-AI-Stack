@@ -113,7 +113,7 @@ SERVICES = [
     # Mcp-Session-Id) — `check_4xx_ok` tells the strict dependency probe that a <500 there
     # still means "up". The grid probe (_check_service) already treats <500 as reachable.
     {"id": "mcp", "name": "MCP Gateway", "port": 8811, "url": "http://localhost:8811", "check": "http://mcp-gateway:8811/mcp", "has_gpu": False, "plugin": None, "category": "tools", "check_4xx_ok": True, "background": True,
-     "hint": "Add/remove tools from the dashboard. Connect at http://localhost:8811/mcp — see docker/mcp-gateway/README.md"},
+     "hint": "Add/remove tools from the dashboard. Connect at http://localhost:8811/mcp — see services/mcp-gateway/README.md"},
     {"id": "comfyui", "name": "ComfyUI", "port": 8188, "url": "http://localhost:8188", "check": "http://comfyui:8188", "has_gpu": True, "plugin": "comfyui", "category": "media",
      "hint": "ComfyUI uses auto-detected compute (NVIDIA/AMD/Intel/CPU). Run ./compose up -d. Pull LTX-2 via dashboard."},
     {"id": "n8n", "name": "N8N", "port": 5678, "url": "http://localhost:5678", "check": "http://n8n:5678", "has_gpu": False, "plugin": "automation", "category": "automation",

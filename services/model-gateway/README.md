@@ -12,7 +12,7 @@ upstream `ghcr.io/berriai/litellm:main` directly: that image has no `local-chat`
 
 ## Build
 ```
-docker build -t ordo/model-gateway:latest docker/model-gateway
+docker build -t ordo/model-gateway:latest services/model-gateway
 ```
 
 ## Files

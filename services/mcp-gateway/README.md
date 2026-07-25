@@ -15,7 +15,7 @@ its mounted config dir at runtime — one source of truth, no drift.
 
 ## Build
 ```
-docker build -t ordo/mcp-gateway:latest docker/mcp-gateway
+docker build -t ordo/mcp-gateway:latest services/mcp-gateway
 ```
 
 ## Files

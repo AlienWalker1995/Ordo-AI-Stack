@@ -102,7 +102,7 @@ no volume needed.
 
 ## Custom llama.cpp Build (llamacpp service)
 
-The `llamacpp` service does **not** run a TurboQuant fork. `docker/llamacpp-patched/Dockerfile` clones mainline [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp), pinned to commit `86b94708f22478f900b76ca02e316f4f3418faff` (`86b9470`), and applies exactly two patches on top:
+The `llamacpp` service does **not** run a TurboQuant fork. `services/llamacpp-patched/Dockerfile` clones mainline [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp), pinned to commit `86b94708f22478f900b76ca02e316f4f3418faff` (`86b9470`), and applies exactly two patches on top:
 
 1. **Checkpoint search fix for hybrid/recurrent models** (`tools/server/server-context.cpp`) — addresses upstream issues #22384, #20225, #24055.
 2. **`recurrent_shrink`/`expand` API for prompt-cache operations** — a minimal diff for upstream PR #24785.
@@ -111,7 +111,7 @@ Both exist to support SWA/hybrid-cache models; the build fails loudly if either 
 
 ### KV-cache quantization
 
-The `LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION` / `LLAMACPP_KV_CACHE_TYPE_K` / `LLAMACPP_KV_CACHE_TYPE_V` vars (set in `ordo.yaml`, re-render to apply) are real and wired into `scripts/llamacpp/run-llama-server.sh` as `--cache-type-k` / `--cache-type-v`. Because this is a mainline build, only mainline's KV-cache types are valid — `docker/ops-api/llamacpp_flags.py` is the source of truth and enumerates: `q8_0`, `q4_0`, `q4_1`, `q5_0`, `q5_1`, `iq4_nl`, `f16`. There is no TurboQuant fork here, so `tbq*`/`tbqp*` types do not exist on this build and the server will reject them at startup.
+The `LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION` / `LLAMACPP_KV_CACHE_TYPE_K` / `LLAMACPP_KV_CACHE_TYPE_V` vars (set in `ordo.yaml`, re-render to apply) are real and wired into `scripts/llamacpp/run-llama-server.sh` as `--cache-type-k` / `--cache-type-v`. Because this is a mainline build, only mainline's KV-cache types are valid — `services/ops-api/llamacpp_flags.py` is the source of truth and enumerates: `q8_0`, `q4_0`, `q4_1`, `q5_0`, `q5_1`, `iq4_nl`, `f16`. There is no TurboQuant fork here, so `tbq*`/`tbqp*` types do not exist on this build and the server will reject them at startup.
 
 ### Rollback to stock upstream
 
@@ -126,7 +126,7 @@ Re-render, then from `out/`: `docker compose -p ordo up -d llamacpp`. This drops
 The model registry is the single source of truth for which model runs on which GPU. It is backed by `data/model-registry.json` and managed via:
 
 - **Dashboard** — Models view (swap active model, set VRAM estimate) and GPU view (reassign GPU pin per model).
-- **Hermes verbs** — `list_models`, `gpu_status`, `set_active_model`, `assign_model_gpu`, `register_model` (see [docker/mcp-gateway/README.md](../docker/mcp-gateway/README.md)).
+- **Hermes verbs** — `list_models`, `gpu_status`, `set_active_model`, `assign_model_gpu`, `register_model` (see [services/mcp-gateway/README.md](../services/mcp-gateway/README.md)).
 - **ops-controller REST API** — `/registry/*` endpoints (auth required):
 
 | Endpoint | Method | Purpose |
@@ -145,7 +145,7 @@ The registry path can be overridden with `MODEL_REGISTRY_PATH` (default `/data/m
 
 ## MCP Server Configuration
 
-Repo templates live under `docker/mcp-gateway/`; runtime files are in `data/mcp/` (bind-mounted into the gateway). See [docker/mcp-gateway/README.md](../docker/mcp-gateway/README.md).
+Repo templates live under `services/mcp-gateway/`; runtime files are in `data/mcp/` (bind-mounted into the gateway). See [services/mcp-gateway/README.md](../services/mcp-gateway/README.md).
 
 Enabled servers are listed in `data/mcp/servers.txt` (one per line). Metadata, per-server `allow_clients`, and rate limits live in `data/mcp/registry.json`.
 

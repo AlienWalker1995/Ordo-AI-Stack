@@ -28,7 +28,7 @@ from dashboard.services_catalog import (  # noqa: E402
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-OPS_API_MAIN = REPO_ROOT / "docker" / "ops-api" / "main.py"
+OPS_API_MAIN = REPO_ROOT / "services" / "ops-api" / "main.py"
 
 
 def _ops_api_allowed_services() -> set[str]:

@@ -61,7 +61,7 @@ Agent clients on the internal `ordo-net` network (Hermes today, others later) co
 
 ## Dependencies
 
-- **docker-compose** service **mcp-gateway** (build context `docker/mcp-gateway`).
+- **docker-compose** service **mcp-gateway** (build context `services/mcp-gateway`).
 - **Docker socket** (for gateway features that spawn tool containers, per upstream behavior).
 - **data/mcp/servers.txt** – Comma-separated server list (default: `duckduckgo,n8n,searxng,comfyui,orchestration`). The `gateway-wrapper.sh` watches this file and **restarts the gateway process** when it changes, so edits cause a brief tool-discovery interruption.
 

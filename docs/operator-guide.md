@@ -104,7 +104,7 @@ current split: today there is only Ordo. The cutover that took the substrate to 
     (`data/memory-vault`, seeded with `README`/`CONVENTIONS` + the `name`/`description`/`type`
     frontmatter schema) is the durable agent-memory substrate: plain `.md` files, no hidden store.
     The **`memory-vault`** plugin ships it (`kind=mcp`, `@bitbonsai/mcpvault` version-pinned in
-    `docker/mcpvault-mcp`, 15 tools: read/write/patch/search/frontmatter/tags/…). The vault is browsed
+    `services/memory-vault`, 15 tools: read/write/patch/search/frontmatter/tags/…). The vault is browsed
     with **native Obsidian on the operator's machine**, opened at `data/memory-vault` — the SAME host
     dir the MCP mounts, so agent writes appear in the desktop app and vice-versa. To let a
     file-based MCP **write** its data dir, the render engine now passes the upstream gateway-catalog
