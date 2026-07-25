@@ -1,6 +1,7 @@
 # Root build-context ALLOWLIST. Two images build with the repo ROOT as their context:
 #   - ops-controller (docker/ops-controller.Dockerfile: COPYs ordo/ catalog/ plugins/ agents/ dashboards/)
-#   - worker         (worker/Dockerfile: COPYs worker/ + dashboard/ modules it imports)
+#   - worker         (services/worker/Dockerfile: COPYs services/worker/worker.py +
+#                     services/v1-parity/dashboard/ modules it imports)
 # Everything else is excluded so the context stays tiny and no operator material
 # (out/secrets.env, auth/caddy/certs/, data/, models/) can ever reach the daemon.
 # (Subdirectory build contexts — docker/*/, hermes/, services/*/, … — are NOT
@@ -11,7 +12,6 @@
 !plugins/
 !agents/
 !dashboards/
-!dashboard/
-!worker/
+!services/
 **/__pycache__
 **/*.pyc
