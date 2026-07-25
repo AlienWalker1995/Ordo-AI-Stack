@@ -38,7 +38,7 @@ services:
       PYTORCH_CUDA_ALLOC_CONF: ${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,pinned_use_cuda_host_register:True}
       OPS_CONTROLLER_URL: http://ops-controller:9000
       OPS_CONTROLLER_TOKEN: ${OPS_CONTROLLER_TOKEN:-}
-      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-local}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       HF_TOKEN: ${HF_TOKEN:-}
       GITHUB_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}
     volumes:

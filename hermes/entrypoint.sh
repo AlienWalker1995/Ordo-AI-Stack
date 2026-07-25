@@ -56,11 +56,16 @@ fi
 
 HERMES_BIN=/opt/hermes-agent/.venv/bin/hermes
 
+# Fail loud: LITELLM_MASTER_KEY is the gateway bearer this agent authenticates with. It arrives
+# from secrets.env (SOPS) via the service's env_file. A guessable `local` default silently locks
+# the agent out once the gateway rejects it — refuse to start with no key rather than seed a bad one.
+: "${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY must be set (SOPS/secrets.env) — refusing to seed a guessable default}"
+
 # Seed model + MCP endpoints to Docker-network DNS. hermes config set is idempotent
 # and overwrites stale values (e.g. localhost: from a prior host-mode install).
 gosu hermes "$HERMES_BIN" config set model.provider        "custom"                        >/dev/null
 gosu hermes "$HERMES_BIN" config set model.base_url        "http://model-gateway:11435/v1" >/dev/null
-gosu hermes "$HERMES_BIN" config set model.api_key         "${LITELLM_MASTER_KEY:-local}"  >/dev/null
+gosu hermes "$HERMES_BIN" config set model.api_key         "${LITELLM_MASTER_KEY}"         >/dev/null
 gosu hermes "$HERMES_BIN" config set model.default         "local-chat"                    >/dev/null
 # Context window: single source of truth is LLAMACPP_CTX_SIZE in .env. The
 # compose file plumbs it into this container's env; the seed below overwrites

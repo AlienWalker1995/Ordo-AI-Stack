@@ -22,7 +22,7 @@ services:
     env:
       ENABLE_OLLAMA_API: "false"
       OPENAI_API_BASE_URL: ${OPENAI_API_BASE:-http://model-gateway:11435/v1}
-      OPENAI_API_KEY: ${LITELLM_MASTER_KEY:-local}
+      OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
       WEBUI_AUTH: ${WEBUI_AUTH:-False}
       DEFAULT_MODELS: ${OPEN_WEBUI_DEFAULT_MODEL:-local-chat}
       VECTOR_DB: qdrant
@@ -30,7 +30,7 @@ services:
       QDRANT_URL: http://qdrant:6333
       RAG_EMBEDDING_ENGINE: openai
       RAG_OPENAI_API_BASE_URL: http://model-gateway:11435/v1
-      RAG_OPENAI_API_KEY: ${LITELLM_MASTER_KEY:-local}
+      RAG_OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
       RAG_EMBEDDING_MODEL: ${EMBED_MODEL:-${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}}
     volumes:
       - ${DATA_PATH:-./data}/open-webui:/app/backend/data

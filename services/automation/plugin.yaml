@@ -25,7 +25,9 @@ services:
       N8N_PROXY_HOPS: "1"
       N8N_USER_MANAGEMENT_DISABLED: "true"
       OPENAI_API_BASE_URL: ${OPENAI_API_BASE:-http://model-gateway:11435/v1}
-      OPENAI_API_KEY: local
+      # Interpolated from secrets.env at compose-up (both --env-file passed); no guessable
+      # default — an unset key fails loud (gateway rejects) rather than silently sending `local`.
+      OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
       WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
       N8N_EDITOR_BASE_URL: ${N8N_WEBHOOK_URL:-}
       N8N_AUTH_EXCLUDE_ENDPOINTS: rest/oauth2-credential/callback,webhook
