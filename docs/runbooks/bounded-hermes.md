@@ -17,7 +17,7 @@ and `/health`; it has none of these verbs.)
 
 ## What Hermes can still do
 
-Via `hermes/ops_client.py` (the wrapper that talks to `ops-api`):
+Via `services/hermes/ops_client.py` (the wrapper that talks to `ops-api`):
 
 - `OpsClient().list_containers()` → `GET /containers`
 - `OpsClient().container_logs(name, tail=N)` → `GET /containers/{name}/logs`
@@ -61,7 +61,7 @@ are three ways to bridge that gap:
    OpsClient().restart_container("open-webui")
    ```
 2. **Hermes plugin** (future). Register a `pre_tool_call` hook
-   (similar to `hermes/plugins/push-through/`) that intercepts the
+   (similar to `services/hermes/plugins/push-through/`) that intercepts the
    built-in docker / terminal tools and routes them through
    `OpsClient`. Smaller blast radius than forking upstream.
 3. **Fork upstream** (last resort). Maintain a fork of
@@ -98,7 +98,7 @@ module) to retain more.
    (see `docs/operator-guide.md`). Pattern:
    `_: None = Depends(verify_token)` → do work → `_audit.record(...)`
    → return.
-3. Add a method on `OpsClient` in `hermes/ops_client.py`.
+3. Add a method on `OpsClient` in `services/hermes/ops_client.py`.
 4. Migrate any caller that needs it.
 5. Test, commit, then from `out/`: `docker compose -p ordo restart
    ops-api agent`.

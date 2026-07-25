@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hermes/entrypoint.sh — container startup.
+# services/hermes/entrypoint.sh — container startup.
 # 1. As root: ensure $HERMES_HOME is writable by the unprivileged hermes user
 #    (bind mounts from the host can land with mismatched ownership on Docker
 #    Desktop / virtiofs; without a chmod here, hermes crash-loops on

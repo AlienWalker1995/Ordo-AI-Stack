@@ -241,8 +241,8 @@ ordo-ai-stack/
 │   ├── codebase-memory/ # Headless codebase-memory MCP
 │   ├── codebase-memory-ui/  # Codebase-memory 3D graph UI service
 │   ├── worker/          # Background job worker (Dockerfile, worker.py)
+│   ├── hermes/          # Hermes agent build context (Dockerfile, entrypoint.sh, plugins/, seed/) + its agent.yaml manifest
 │   └── …                # edge, model-gateway, mcp-gateway, monitoring, voice, native, …
-├── hermes/              # Hermes agent build context (Dockerfile, entrypoint.sh, plugins/, seed/); manifest at services/hermes/agent.yaml
 ├── ordo/                # Render substrate (Python package): `ordo render`, `ordo detect`, etc.
 ├── catalog/             # Curated model catalog (models.yaml)
 ├── auth/                # Edge auth: auth/caddy (Caddyfile), auth/oauth2-proxy (SSO allowlist)

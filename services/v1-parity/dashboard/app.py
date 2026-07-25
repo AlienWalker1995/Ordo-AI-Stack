@@ -199,7 +199,7 @@ async def auth_middleware(request: Request, call_next):
 
 
 MODEL_GATEWAY_URL = os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435").rstrip("/")
-MODEL_GATEWAY_API_KEY = os.environ.get("MODEL_GATEWAY_API_KEY", os.environ.get("LITELLM_MASTER_KEY", "local")).strip()
+MODEL_GATEWAY_API_KEY = (os.environ.get("MODEL_GATEWAY_API_KEY") or os.environ.get("LITELLM_MASTER_KEY", "")).strip()
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://comfyui:8188").rstrip("/")
 MODELS_DIR = Path(os.environ.get("MODELS_DIR", "/models"))
 SCRIPTS_DIR = Path(os.environ.get("SCRIPTS_DIR", "/scripts"))
