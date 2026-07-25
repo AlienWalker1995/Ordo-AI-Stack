@@ -39,6 +39,11 @@ class PluginService:
     # Electron/Chromium + Selkies-style streaming GUIs (frame buffers live in shared memory) and
     # drops the session mid-stream. Empty → omit the key (docker default). Data-driven like gpu.
     shm_size: str = ""
+    # compose `network_mode` (e.g. "service:caddy" — share another service's network namespace).
+    # Used by the tailnet-name sidecars, whose `tailscale serve` can only proxy to 127.0.0.1, so
+    # they join Caddy's netns and hit its port listeners on loopback. Mutually exclusive with
+    # `networks:` — the renderer omits the network attachment when this is set.
+    network_mode: str = ""
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PluginService:
@@ -53,6 +58,7 @@ class PluginService:
             wants_secrets=bool(d.get("wants_secrets", False)),
             ports=[str(p) for p in (d.get("ports", []) or [])],
             shm_size=str(d.get("shm_size", "")),
+            network_mode=str(d.get("network_mode", "")),
         )
 
 

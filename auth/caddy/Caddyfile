@@ -60,7 +60,7 @@
         copy_headers X-Auth-Request-Email>X-Forwarded-Email X-Auth-Request-User>X-Forwarded-User X-Auth-Request-Preferred-Username>X-Forwarded-Preferred-Username
         @unauthorized status 401
         handle_response @unauthorized {
-            redir https://{hostport}/oauth2/start?rd={scheme}://{hostport}{uri} 302
+            redir https://{host}/oauth2/start?rd={scheme}://{host}{uri} 302
         }
     }
 }
@@ -79,7 +79,7 @@
 # It MUST be served at a root — under /chat/ its client-side router renders
 # "404: Not Found" (browser-verified on v0.10.1, same as v0.9.2). A port root
 # is a root, so it gets one.
-{$CADDY_TAILNET_HOSTNAME}:8443 {
+:8443 {
     import sso_service open-webui:8080
 }
 
@@ -87,7 +87,7 @@
 # Grafana rides this port at /grafana/ (GF_SERVER_SERVE_FROM_SUB_PATH +
 # root_url /grafana/) so the dashboard's Grafana tab keeps its same-origin
 # iframe. `handle` (NOT handle_path) keeps the prefix Grafana expects.
-{$CADDY_TAILNET_HOSTNAME}:8444 {
+:8444 {
     import tls_tailnet
     import sso_port_gate
     route {
@@ -103,12 +103,12 @@
 # UI only. n8n's PUBLIC base (N8N_WEBHOOK_URL, registered OAuth callbacks,
 # live webhook URLs) stays on :443/n8n/* — see the passthroughs in the :443
 # site — so nothing external needs re-registration.
-{$CADDY_TAILNET_HOSTNAME}:8445 {
+:8445 {
     import sso_service n8n:5678
 }
 
 # ---- :8446 — ComfyUI ----
-{$CADDY_TAILNET_HOSTNAME}:8446 {
+:8446 {
     import sso_service comfyui:8188
 }
 
@@ -116,7 +116,7 @@
 # The Hermes dashboard server derives its base from X-Forwarded-Prefix
 # (runtime-injected window.__HERMES_BASE_PATH__), so it keeps serving under
 # /hermes/ here exactly as it did on :443 — zero image changes.
-{$CADDY_TAILNET_HOSTNAME}:8447 {
+:8447 {
     import tls_tailnet
     import sso_port_gate
     route {
@@ -135,7 +135,7 @@
 # /codebase-memory/ prefix (see codebase-memory-ui/nginx.conf), so the app
 # keeps its subpath on this port. /font-files stays un-rewritten (external
 # CDN URL — rewriting it 404s the label fonts).
-{$CADDY_TAILNET_HOSTNAME}:8448 {
+:8448 {
     import tls_tailnet
     import sso_port_gate
     route {

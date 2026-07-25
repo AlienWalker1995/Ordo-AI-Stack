@@ -1,0 +1,148 @@
+# Plugin manifest — tailnet service names ("clean URLs"). One minimal Tailscale sidecar
+# node per UI service: chat/dash/n8n/comfy/hermes/graph each join the tailnet as their own
+# node (<name>.${CADDY_TAILNET_DOMAIN}), terminate TLS with their auto-issued, auto-renewed
+# MagicDNS cert via `tailscale serve`, and proxy into the EXISTING SSO-gated Caddy port
+# listener over loopback (network_mode: service:caddy — serve can only target 127.0.0.1,
+# so the sidecars live in Caddy's netns). The Google SSO layer, the :443 OAuth callback,
+# and the :8443-:8448 port layer are untouched underneath.
+#
+# Chosen by the 2026-07-24 clean-URLs judge panel (architect-refereed) over native VIP
+# Services (beta + cloud-side config + would tag-convert the load-bearing ultracam node)
+# and a custom domain (needs a registrar + DNS-01 Caddy build). All mechanisms here are GA:
+# TS_AUTHKEY/TS_STATE_DIR/TS_SERVE_CONFIG containerboot, userspace networking, node certs.
+#
+# Operator prerequisites (one-time): a reusable auth key tagged tag:ordo-edge (tagOwners
+# entry in the tailnet ACL), stored as TS_AUTHKEY in out/secrets.env (SOPS-backed; this
+# repo is public). Each sidecar consumes ~1 of the plan's 50 free tagged resources.
+id: tailnet-names
+name: Tailnet service names (clean URLs)
+description: Per-service Tailscale sidecar nodes — chat/dash/n8n/comfy/hermes/graph.<tailnet>.ts.net, TLS auto-managed, proxying to the SSO-gated Caddy ports.
+requires:
+  nvidia: false
+  ram_gb: 1
+depends_on: [edge]     # meaningless without the Caddy listeners it fronts
+provides: [names]      # documentation-only (resolve() matches literal ids)
+compose_profile: edge  # rides with the front door
+secrets:
+  - TS_AUTHKEY
+services:
+  - name: tailnet-chat
+    image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
+    network_mode: service:caddy
+    wants_secrets: true          # TS_AUTHKEY arrives via secrets.env — NEVER re-declared in env
+    depends_on: [caddy]
+    env:
+      TS_HOSTNAME: chat
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_AUTH_ONCE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - ts-state-chat:/var/lib/tailscale
+      - ${BASE_PATH:-.}/assets/tailscale-serve/chat.json:/config/serve.json:ro
+    healthcheck:
+      test: ["CMD", "tailscale", "status", "--peers=false"]
+      start_period: 30s
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  - name: tailnet-dash
+    image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
+    network_mode: service:caddy
+    wants_secrets: true
+    depends_on: [caddy]
+    env:
+      TS_HOSTNAME: dash
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_AUTH_ONCE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - ts-state-dash:/var/lib/tailscale
+      - ${BASE_PATH:-.}/assets/tailscale-serve/dash.json:/config/serve.json:ro
+    healthcheck:
+      test: ["CMD", "tailscale", "status", "--peers=false"]
+      start_period: 30s
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  - name: tailnet-n8n
+    image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
+    network_mode: service:caddy
+    wants_secrets: true
+    depends_on: [caddy]
+    env:
+      TS_HOSTNAME: n8n
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_AUTH_ONCE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - ts-state-n8n:/var/lib/tailscale
+      - ${BASE_PATH:-.}/assets/tailscale-serve/n8n.json:/config/serve.json:ro
+    healthcheck:
+      test: ["CMD", "tailscale", "status", "--peers=false"]
+      start_period: 30s
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  - name: tailnet-comfy
+    image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
+    network_mode: service:caddy
+    wants_secrets: true
+    depends_on: [caddy]
+    env:
+      TS_HOSTNAME: comfy
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_AUTH_ONCE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - ts-state-comfy:/var/lib/tailscale
+      - ${BASE_PATH:-.}/assets/tailscale-serve/comfy.json:/config/serve.json:ro
+    healthcheck:
+      test: ["CMD", "tailscale", "status", "--peers=false"]
+      start_period: 30s
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  - name: tailnet-hermes
+    image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
+    network_mode: service:caddy
+    wants_secrets: true
+    depends_on: [caddy]
+    env:
+      TS_HOSTNAME: hermes
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_AUTH_ONCE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - ts-state-hermes:/var/lib/tailscale
+      - ${BASE_PATH:-.}/assets/tailscale-serve/hermes.json:/config/serve.json:ro
+    healthcheck:
+      test: ["CMD", "tailscale", "status", "--peers=false"]
+      start_period: 30s
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  - name: tailnet-graph
+    image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
+    network_mode: service:caddy
+    wants_secrets: true
+    depends_on: [caddy]
+    env:
+      TS_HOSTNAME: graph
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_AUTH_ONCE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - ts-state-graph:/var/lib/tailscale
+      - ${BASE_PATH:-.}/assets/tailscale-serve/graph.json:/config/serve.json:ro
+    healthcheck:
+      test: ["CMD", "tailscale", "status", "--peers=false"]
+      start_period: 30s
+      interval: 30s
+      timeout: 10s
+      retries: 3
