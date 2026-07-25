@@ -1,10 +1,10 @@
-"""Tests for hermes.ops_client.OpsClient — the ops-api HTTP wrapper.
+"""Tests for the Hermes OpsClient — the ops-api HTTP wrapper.
 
-Moved here from hermes/test_ops_client.py (audit P1-8): the pytest CI job
+Moved here from the sibling copy (audit P1-8): the pytest CI job
 only collects tests/, so the sibling copy never ran. The module is loaded
 by file path (importlib spec_from_file_location) rather than
-``from hermes.ops_client import ...`` so collection doesn't depend on
-``hermes/`` being importable as a package (it has no __init__.py).
+``from services.hermes.ops_client import ...`` so collection doesn't depend
+on the build context being importable as a package (it has no __init__.py).
 
 Also updated for the fixed wiring (audit P0-2): OpsClient now talks to
 **ops-api** (OPS_API_URL, default http://ops-api:9000), not the
@@ -25,7 +25,7 @@ import respx
 from httpx import Response
 
 ROOT = Path(__file__).resolve().parents[1]
-OPS_CLIENT_PY = ROOT / "hermes" / "ops_client.py"
+OPS_CLIENT_PY = ROOT / "services" / "hermes" / "ops_client.py"
 
 _spec = importlib.util.spec_from_file_location("hermes_ops_client_under_test", OPS_CLIENT_PY)
 ops_client_mod = importlib.util.module_from_spec(_spec)

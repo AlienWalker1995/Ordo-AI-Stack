@@ -4,13 +4,9 @@ description: >
   The default Ordo agent — a persistent, skill-driven orchestrator. Chats via the model-gateway,
   runs tools through the mcp-gateway, and requests GPU work through the ops-controller scheduler.
 default: true
-# image omitted -> resolves to <project>/agent-hermes:latest (the operator builds this from their
-# Hermes data/); pin an explicit image here to ship a prebuilt one.
-# The agent-hermes image is built OUT-OF-BAND (no in-repo Dockerfile — it's built from the operator's
-# Hermes tree), so `build.external` declares that: the substrate test exempts it from the
-# "must resolve to a Dockerfile" check. METADATA only; never rendered into compose.
-build:
-  external: true
+# image omitted -> resolves to <project>/agent-hermes:latest, built from this co-located build
+# context (services/hermes/ + its Dockerfile — the default, so no explicit `build:` is needed);
+# pin an explicit image here to ship a prebuilt one instead.
 # The agent-hermes image's default CMD is `hermes --help` (prints usage and exits); the gateway is
 # started explicitly so the container runs the persistent messaging gateway (mirrors V1 compose).
 command: [hermes, gateway]
@@ -39,7 +35,7 @@ environment:
   PYTHONIOENCODING: utf-8
   # Scheduler (GPU leases, /status, /model-config) — the `ordo serve` control plane.
   OPS_CONTROLLER_URL: http://ops-controller:9000
-  # Container/compose verbs (ops-router tools via hermes/ops_client.py) live on the
+  # Container/compose verbs (ops-router tools via services/hermes/ops_client.py) live on the
   # SEPARATE Bearer-gated ops-api service — NOT the scheduler (which 404s them; audit P0-2).
   OPS_API_URL: http://ops-api:9000
   # STT provider base URL — the local faster-whisper service (voice profile). Harmless if voice off.

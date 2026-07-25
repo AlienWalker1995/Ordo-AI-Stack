@@ -3,7 +3,7 @@
 # (e.g. on Windows checkouts with autocrlf=true).
 *.sh text eol=lf
 services/v1-parity/dashboard/entrypoint.sh text eol=lf
-hermes/entrypoint.sh text eol=lf
+services/hermes/entrypoint.sh text eol=lf
 scripts/llamacpp/run-llama-server.sh text eol=lf
 # nginx config is COPYed into the codebase-memory-ui image; keep LF so nginx
 # doesn't choke on CRLF after a Windows checkout.

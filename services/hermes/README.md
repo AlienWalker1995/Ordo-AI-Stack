@@ -5,13 +5,13 @@ the `<project>/agent-<id>` convention as `ordo/agent-hermes:latest`, and reused 
 `hermes-dashboard` plugin (V1 runs one Hermes image as both the gateway and the dashboard).
 
 This is an **operator-specific** image: it wraps the operator's Hermes `data/` (SOUL.md, skills,
-automation) on top of the pinned Hermes base. V1 builds it from `C:\dev\ordo-ai-stack\hermes`
-(`Dockerfile`, multi-stage: node builds the SPA, python runtime installs Hermes at a pinned SHA).
-Project buildable image, so `ordo preflight` reports a missing one as "build first".
+automation) on top of the pinned Hermes base. It builds from this co-located context
+`services/hermes/` (`Dockerfile`, multi-stage: node builds the SPA, python runtime installs Hermes
+at a pinned SHA). Project buildable image, so `ordo preflight` reports a missing one as "build first".
 
 ## Build
 ```
-docker build -t ordo/agent-hermes:latest C:/dev/ordo-ai-stack/hermes
+docker build -t ordo/agent-hermes:latest C:/dev/ordo-ai-stack/services/hermes
 ```
 
 Referenced (not duplicated) — the Hermes build context + the operator's `data/` are the single

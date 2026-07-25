@@ -20,8 +20,8 @@ message contains docker / container / restart / logs intent — guards against
 the model defaulting to `terminal: docker ...` (which has no socket and always
 fails with "Cannot connect to the Docker daemon").
 
-The OpsClient is the canonical hermes/ops_client.py copied into this plugin
-directory at Docker build time (see hermes/Dockerfile).
+The OpsClient is the canonical services/hermes/ops_client.py copied into this plugin
+directory at Docker build time (see services/hermes/Dockerfile).
 """
 from __future__ import annotations
 

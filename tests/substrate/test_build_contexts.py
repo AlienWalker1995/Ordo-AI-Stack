@@ -85,10 +85,17 @@ def test_folder_id_differs_from_image_name_resolves_to_folder():
         assert RESOLVE(img) == ctx, f"{img} resolved to {RESOLVE(img)!r}, expected {ctx!r}"
 
 
+def test_hermes_resolves_to_its_in_repo_context():
+    """agent-hermes has a co-located in-repo build context (services/hermes/ + Dockerfile), so it
+    must resolve to that real folder — NOT external. Guards the reorg: a manifest that re-declares
+    hermes external, or a move that strands its Dockerfile, fails here."""
+    assert RESOLVE("ordo/agent-hermes:latest") == "services/hermes"
+    assert (ROOT / "services/hermes/Dockerfile").is_file()
+
+
 def test_external_agents_declared_out_of_band():
     """Pluggable agent images with no in-repo Dockerfile must be declared external (not silently
     treated as pullable) — so a NEW agent lacking both a Dockerfile and build.external fails CI."""
-    assert RESOLVE("ordo/agent-hermes:latest") == buildspec.EXTERNAL
     assert RESOLVE("ordo/agent-openai-agent:latest") == buildspec.EXTERNAL
 
 
