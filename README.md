@@ -11,9 +11,32 @@ Local-first AI stack: LLMs, chat UI, image/video (ComfyUI), automation (n8n) —
 
 **Ordo** is a local-first, single-operator AI stack. It runs llama.cpp-backed models behind an **OpenAI-compatible** LiteLLM gateway, **Open WebUI** for chat, **ComfyUI** for image/video diffusion, **n8n** for automation, and an **MCP gateway** for shared tools — all fronted by a unified **dashboard** and reached through a single **Caddy + oauth2-proxy + Tailscale + Google SSO** front door.
 
-Its defining idea is **config-as-render**: one declarative source (`ordo.yaml`) is rendered into the running config (`.env`, `docker-compose.yml`, agent context, MCP registry). Derived files are regenerated, never hand-edited — so configuration drift is structurally impossible.
+Every choice about your stack is made in one place — an **interactive terminal wizard** — and captured in one declarative source (`ordo.yaml`) that is rendered into the running config. Derived files are regenerated, never hand-edited, so configuration drift is structurally impossible.
 
-> **Operators start here → [`docs/operator-guide.md`](docs/operator-guide.md)** — the authoritative guide to the render engine, bring-up, and day-2 operations. (The stack runs as compose project **`ordo`**.)
+## Install
+
+One command takes a fresh machine from nothing to a configured stack. It installs the `ordo` CLI and drops you straight into the setup wizard:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AlienWalker1995/Ordo-AI-Stack/main/install.sh | sh
+```
+
+Under the hood the one-liner checks prerequisites (git, Docker + `docker compose` v2, Python 3.11+; warns if there's no NVIDIA GPU), clones the repo to `~/ordo` (override with `ORDO_DIR=`), installs the CLI into a virtualenv, and launches the wizard. That's the only step — everything else is the wizard.
+
+### The setup wizard — `ordo init`
+
+The wizard **is** the configuration experience: every decision about your stack is made here, in the terminal, with a sensible default on each prompt (press **Enter** to accept it).
+
+1. **Hardware** — confirms the auto-detected GPU / RAM / CPU (or pin it later for reproducibility).
+2. **Model** — accepts the best-fit pick from the catalog, or choose another by tier.
+3. **Capabilities** — which optional groups to turn on (chat is always on): image/video, RAG, voice, automation (n8n), web search, monitoring. Default is hardware-gated auto.
+4. **Access** — your tailnet hostname (`CADDY_TAILNET_HOSTNAME`) and the Caddy bind address; it shows your `tailscale ip -4` and offers to provision a `tailscale cert`.
+5. **Google SSO** — prints the exact Google Cloud console URL and callback, then collects the OAuth client id/secret and your email allowlist.
+6. **Secrets** — internal keys (LiteLLM, ops, MCP, cookie, SearXNG, n8n) are **auto-generated**; external tokens (Hugging Face, Tailscale, GitHub) are prompted and skippable.
+
+It writes `out/ordo.yaml` and `out/secrets.env` (chmod 600, never committed), then **offers** to render the config, download the model, and bring the stack up — finishing with your dashboard URL. Nothing is started unless you say yes; a piped or `--yes` install only writes config and stops.
+
+Re-run `ordo init` any time to reconfigure. **Prefer to drive the render engine by hand?** Skip the wizard and follow `ordo render` → `ordo preflight` → `docker compose up` in the **[operator guide](docs/operator-guide.md)**.
 
 ## Overview
 
