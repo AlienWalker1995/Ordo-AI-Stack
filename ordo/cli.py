@@ -94,14 +94,94 @@ def cmd_render(args: argparse.Namespace) -> int:
     return 0 if consistent else 1
 
 
-def cmd_setup(args: argparse.Namespace) -> int:
-    cat = Catalog.load(Path(args.catalog))
+def _run(cmd: list[str], cwd: Path | None = None,
+         env: dict[str, str] | None = None) -> int:  # pragma: no cover - shells out
+    import os
+    import subprocess
+    full_env = None
+    if env:
+        full_env = dict(os.environ)
+        full_env.update(env)
+    print(f"  $ {' '.join(cmd)}")
+    try:
+        return subprocess.run(cmd, cwd=str(cwd) if cwd else None, env=full_env).returncode
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"  ! command failed: {e}")
+        return 1
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    # --catalog may arrive via the global (before the subcommand) or the subparser (after it);
+    # the subparser default is None, so fall back to the resolved global/bundled default.
+    cat = Catalog.load(Path(args.catalog or DEFAULT_CATALOG))
     reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
+    out = Path(args.out)
     interactive = not args.yes and sys.stdin.isatty()
-    out = wizard.run(cat, reg, args.out, interactive=interactive,
-                     answers={} if not interactive else None)
-    print(f"Wrote {out} — now run: ordo render")
+
+    # Live-tree guard: refuse to clobber an existing config unless --force. Protects the operator's
+    # running out/ (ordo.yaml + secrets.env) from an accidental `ordo init` with the default --out.
+    for existing in (out / "ordo.yaml", out / "secrets.env"):
+        if existing.exists() and not args.force:
+            print(f"refusing to overwrite existing {existing} — pass --out to a fresh directory "
+                  f"or --force to replace it (this protects a running stack's config).")
+            return 1
+
+    emails_path = HERE / "auth" / "oauth2-proxy" / "emails.txt"
+    result = wizard.run(cat, reg, out, interactive=interactive,
+                        answers={} if not interactive else None,
+                        emails_path=emails_path)
+
+    print(f"\nWrote {result.source_path}")
+    print(f"Wrote {result.secrets_path}  (chmod 600)")
+    if result.emails_path:
+        print(f"Wrote {result.emails_path}  (SSO allowlist)")
+    if result.generated_secret_keys:
+        print(f"  generated {len(result.generated_secret_keys)} internal secret(s): "
+              f"{', '.join(result.generated_secret_keys)}")
+    if result.provided_secret_keys:
+        print(f"  stored {len(result.provided_secret_keys)} provided secret(s): "
+              f"{', '.join(result.provided_secret_keys)}")
+    if result.blank_secret_keys:
+        print(f"  ! {len(result.blank_secret_keys)} external secret(s) left BLANK "
+              f"(fill in {result.secrets_path} before bring-up): {', '.join(result.blank_secret_keys)}")
+    for w in result.warnings:
+        print(f"  ! {w}")
+
+    if not interactive:
+        # Headless/CI: config only. NEVER render/fetch/bring-up unattended (the safety line).
+        print(f"\nConfig written. Next (review first): ordo render --source {result.source_path} "
+              f"--out {out}")
+        return 0
+
+    # pragma: no cover below (interactive offers)
+    print("\n— Next steps —")
+    if _prompt_yn(f"Render the config now (ordo render --out {out})?", default=True):
+        _run([sys.executable, "-m", "ordo", "--source", str(result.source_path),
+              "render", "--out", str(out)])
+    if _prompt_yn("Download the selected model now (ordo fetch)?", default=False):
+        _run([sys.executable, "-m", "ordo", "--source", str(result.source_path),
+              "fetch", "--models-dir", args.models_dir])
+    profiles = ",".join(result.compose_profiles)
+    if _prompt_yn(f"Bring the stack up now (docker compose -p ordo up -d, "
+                  f"profiles: {profiles or '(core only)'})?", default=False):
+        env = {"COMPOSE_PROFILES": profiles} if profiles else {}
+        _run(["docker", "compose", "-p", "ordo", "--env-file", ".env", "--env-file",
+              "secrets.env", "up", "-d"], cwd=out, env=env)
+        host = result.caddy_hostname or "<hostname>"
+        print(f"\nDashboard: https://{host}:8444/")
+    else:
+        print(f"\nWhen ready:  cd {out} && "
+              f"{'COMPOSE_PROFILES=' + profiles + ' ' if profiles else ''}"
+              f"docker compose -p ordo --env-file .env --env-file secrets.env up -d")
     return 0
+
+
+def _prompt_yn(msg: str, default: bool = True) -> bool:  # pragma: no cover - interactive only
+    d = "Y/n" if default else "y/N"
+    ans = input(f"{msg} [{d}]: ").strip().lower()
+    if not ans:
+        return default
+    return ans in ("y", "yes")
 
 
 def cmd_parity(args: argparse.Namespace) -> int:
@@ -270,10 +350,25 @@ def main(argv: list[str] | None = None) -> int:
                     help="render the default/example source even if --out holds a differing ordo.yaml "
                          "(overrides the anti-clobber guard)")
     pr.set_defaults(func=cmd_render)
-    ps = sub.add_parser("setup")
-    ps.add_argument("--out", default="ordo.yaml")
-    ps.add_argument("--yes", action="store_true", help="non-interactive (accept detected)")
-    ps.set_defaults(func=cmd_setup)
+    # `init` = the one-command install wizard (hardware → model → capabilities → tailnet+SSO →
+    # secrets → write ordo.yaml + secrets.env, then offer render/fetch/up). `setup` is a
+    # backwards-compatible alias. Both write a DIRECTORY (--out) holding the config the stack runs.
+    for name in ("init", "setup"):
+        pi = sub.add_parser(name)
+        pi.add_argument("--out", default="out",
+                        help="directory for ordo.yaml + secrets.env (default: out)")
+        pi.add_argument("--yes", action="store_true",
+                        help="non-interactive: write config only, never render/bring-up")
+        pi.add_argument("--force", action="store_true",
+                        help="overwrite existing ordo.yaml/secrets.env in --out (clobbers a running "
+                             "stack's config)")
+        pi.add_argument("--models-dir", default="./models",
+                        help="where `ordo fetch` downloads GGUFs (if offered)")
+        # Accept --catalog after the subcommand too (the global one must precede it); a value here
+        # overrides the global default so `ordo init --catalog X` works as written.
+        pi.add_argument("--catalog", default=None,
+                        help="model catalog to size against (defaults to the bundled catalog)")
+        pi.set_defaults(func=cmd_init)
     pp = sub.add_parser("parity")
     pp.add_argument("--ref", required=True, help="reference .env to compare the render against")
     pp.set_defaults(func=cmd_parity)

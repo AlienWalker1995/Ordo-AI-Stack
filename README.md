@@ -15,6 +15,26 @@ Its defining idea is **config-as-render**: one declarative source (`ordo.yaml`) 
 
 > **Operators start here → [`docs/operator-guide.md`](docs/operator-guide.md)** — the authoritative guide to the render engine, bring-up, and day-2 operations. (The stack runs as compose project **`ordo`**.)
 
+## Install
+
+One command takes a fresh machine from nothing to a configured stack:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AlienWalker1995/Ordo-AI-Stack/main/install.sh | sh
+```
+
+It checks prerequisites (git, Docker + `docker compose`, Python 3.11+; warns if there's no NVIDIA GPU), clones the repo, installs the `ordo` CLI into a virtualenv, and launches the interactive setup wizard (`ordo init`). **The wizard asks you:**
+
+- **Hardware** — confirms the auto-detected GPU/RAM/CPU (or pin it later for reproducibility).
+- **Model** — accepts the best-fit pick from the catalog, or choose another by tier.
+- **Capabilities** — which optional groups to enable (chat is always on): image/video, RAG, voice, automation (n8n), web search, monitoring. Default is hardware-gated auto.
+- **Tailnet + Google SSO** — your `CADDY_TAILNET_HOSTNAME`, the Caddy bind address, the Google OAuth client id/secret, and the email allowlist.
+- **Secrets** — internal ones (LiteLLM/ops/MCP/cookie/SearXNG/n8n keys) are auto-generated; external ones (Google, Hugging Face, Tailscale, GitHub) are prompted (skippable). All written to `out/secrets.env` (chmod 600, never committed).
+
+It then offers to render, fetch the model, and bring the stack up — and prints your dashboard URL. Nothing is brought up unless you say yes (and never under `--yes`/piped installs, which only write config).
+
+**Prefer step-by-step?** Skip the wizard and follow the render/bring-up walkthrough in **[`docs/operator-guide.md`](docs/operator-guide.md)** — `ordo render` → `ordo preflight` → `docker compose up`.
+
 ## Overview
 
 **Deployment model:** a single homelab operator running on their own hardware. Every user-facing UI sits behind the front door — Caddy is the only service that publishes host ports. Each prebuilt SPA is served on its own port, at the root it was compiled for: `${CADDY_TAILNET_HOSTNAME}:8443` (Open WebUI), `:8444` (Dashboard), `:8445` (n8n), `:8446` (ComfyUI), `:8447` (Hermes), `:8448` (codebase-memory) — plus `:443` as the front door (landing page, the one Google OAuth callback, `/llm/*` and `/mcp` API access, and n8n webhook/OAuth passthroughs). The operator brings their own Tailscale tailnet and Google OAuth client; the stack stitches them together so one Google sign-in (domain-scoped cookie) covers every port, gated by an email allowlist. Old subpath bookmarks (`/chat`, `/dash`, `/n8n`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`) still work — Caddy 302s them to their port. See [docs/runbooks/auth.md](docs/runbooks/auth.md).
