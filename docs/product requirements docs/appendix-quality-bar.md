@@ -8,7 +8,7 @@
 |------|-------|--------------------------|
 | Dashboard | 8 | health, auth middleware, proxy auth, registry routes, service pressure, ComfyUI packs, dependencies, performance |
 | ComfyUI | 5 | API client, workflow manager defaults, queue prompt (+ integration), default model env |
-| Orchestration | 5 | API, e2e, outbox, workflow versioning, desk-influencer workflow |
+| Orchestration | 5 | API, e2e, outbox, workflow versioning |
 | RAG | 2 | ingestion chunking/embedding, status |
 | Ops / secrets / stack | 6 | secrets isolation, Caddyfile invariants, stack-monitor sanitize/versions, storage purge, settings validation |
 | GPU / hardware | 3 | GPU stats, GPU routes, llama.cpp turboquant |
