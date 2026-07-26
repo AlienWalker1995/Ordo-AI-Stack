@@ -127,9 +127,15 @@ def cmd_init(args: argparse.Namespace) -> int:
             return 1
 
     emails_path = HERE / "auth" / "oauth2-proxy" / "emails.txt"
-    result = wizard.run(cat, reg, out, interactive=interactive,
-                        answers={} if not interactive else None,
-                        emails_path=emails_path)
+    try:
+        result = wizard.run(cat, reg, out, interactive=interactive,
+                            answers={} if not interactive else None,
+                            emails_path=emails_path)
+    except wizard.SetupCancelled:
+        # Operator aborted (Ctrl-C / declined the review). Nothing was written — the review-and
+        # -confirm gate is the last step before any file is created.
+        print("\nSetup cancelled - nothing was written.")
+        return 130
 
     print(f"\nWrote {result.source_path}")
     print(f"Wrote {result.secrets_path}  (chmod 600)")
@@ -178,7 +184,13 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def _prompt_yn(msg: str, default: bool = True) -> bool:  # pragma: no cover - interactive only
     d = "Y/n" if default else "y/N"
-    ans = input(f"{msg} [{d}]: ").strip().lower()
+    try:
+        ans = input(f"{msg} [{d}]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        # Ctrl-C during the post-setup offers: config is already written, so just decline the
+        # remaining bring-up prompts rather than erroring out.
+        print()
+        return False
     if not ans:
         return default
     return ans in ("y", "yes")
@@ -337,6 +349,13 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Never let a stray non-ASCII byte crash the wizard on a legacy console (e.g. Windows cp1252):
+    # degrade unencodable chars to a placeholder instead of raising UnicodeEncodeError mid-prompt.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, ValueError):
+            pass  # not a reconfigurable TextIOWrapper (redirected/wrapped) — fine, leave as-is
     p = argparse.ArgumentParser(prog="ordo", description="Ordo config render engine")
     # Default is a SENTINEL (None), resolved to DEFAULT_SOURCE below, so cmd_render can tell an
     # explicit `--source ordo.example.yaml` apart from the implicit default (see _guard_render_source).

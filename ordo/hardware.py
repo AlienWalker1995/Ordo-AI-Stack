@@ -56,8 +56,8 @@ class HardwareProfile:
     def summary(self) -> str:
         if self.has_gpu:
             g = max(self.gpus, key=lambda x: x.vram_gb)
-            return f"{g.name} {g.vram_gb:.0f}GB · {self.ram_gb:.0f}GB RAM · {self.cpu_cores} cores · {self.platform}"
-        return f"CPU-only · {self.ram_gb:.0f}GB RAM · {self.cpu_cores} cores · {self.platform}"
+            return f"{g.name} {g.vram_gb:.0f}GB | {self.ram_gb:.0f}GB RAM | {self.cpu_cores} cores | {self.platform}"
+        return f"CPU-only | {self.ram_gb:.0f}GB RAM | {self.cpu_cores} cores | {self.platform}"
 
     @classmethod
     def from_spec(cls, spec: dict[str, Any]) -> HardwareProfile:
