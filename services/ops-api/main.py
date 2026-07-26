@@ -112,7 +112,7 @@ _SERVICE_RECREATE_DISABLED_DETAIL = (
 # In the ordo stack the `ordo serve` scheduler (service `ops-controller`) is the SINGLE GPU
 # arbiter with full media-lease semantics (evict the resident LLM for a GPU-heavy job, restore it
 # on completion, self-heal a stranded lease via TTL). This ops-api must NOT also stop/start
-# llama.cpp — two arbiters racing on the same card is exactly the deadlock the reel-cron failure
+# llama.cpp — two arbiters racing on the same card is exactly the GPU-arbitration deadlock the failure
 # forensics traced. So the guardian's MUTATING routes (/guardian/hold, /guardian/release) are hard-
 # disabled and return 410 GONE pointing at the V2 contract. /guardian/status stays live (static
 # disabled state) because the dashboard reads it. The scheduler's own broker is the only thing that
@@ -2174,7 +2174,7 @@ async def guardian_status(_: None = Depends(verify_token)):
 async def guardian_hold(body: ConfirmBody, request: Request, _: None = Depends(verify_token)):
     """REMOVED in ordo — 410 GONE. The `ordo serve` scheduler is the single GPU arbiter now;
     acquire a media lease via `POST ops-controller:9000/jobs` instead. This route no longer
-    stops/starts llama.cpp (two arbiters racing on the card was the reel-cron deadlock)."""
+    stops/starts llama.cpp (two arbiters racing on the card was the GPU-arbitration deadlock)."""
     _audit("guardian_hold", COMFYUI_GUARDIAN_TARGET, "gone", "410 -> ops-controller /jobs",
            correlation_id=_correlation_id(request))
     raise HTTPException(status_code=410, detail=_GUARDIAN_MUTATION_GONE_DETAIL)

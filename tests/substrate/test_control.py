@@ -64,12 +64,12 @@ def test_set_unknown_model_is_404_and_writes_nothing(tmp_path):
 
 def test_job_lifecycle_drives_scheduler(tmp_path):
     cp, _ = _cp(tmp_path)
-    cp.route("POST", "/jobs", {"id": "reel", "vram_gb": 17, "kind": "media"})
+    cp.route("POST", "/jobs", {"id": "render", "vram_gb": 17, "kind": "media"})
     cp.route("POST", "/jobs", {"id": "chat", "vram_gb": 4, "kind": "chat"})
     st = cp.route("GET", "/status")[1]["gpu"]
     running = {r["id"] for r in st["running"]}
-    assert running == {"reel", "chat"}             # co-run: chat slips beside the reel
-    _, after = cp.route("POST", "/jobs/complete", {"id": "reel"})
+    assert running == {"render", "chat"}             # co-run: chat slips beside the render
+    _, after = cp.route("POST", "/jobs/complete", {"id": "render"})
     assert {r["id"] for r in after["running"]} == {"chat"}
 
 
@@ -96,7 +96,7 @@ def _cp_with_resident(tmp_path, resident_gb=25):
 def test_status_exposes_evicted_residents_and_lease_ttl(tmp_path):
     cp, _ = _cp_with_resident(tmp_path)
     # a media job that doesn't fit beside the resident -> evicts + stops it via the broker
-    code, body = cp.route("POST", "/jobs", {"id": "reel", "vram_gb": 18, "kind": "media",
+    code, body = cp.route("POST", "/jobs", {"id": "render", "vram_gb": 18, "kind": "media",
                                             "est_seconds": 120})
     assert code == 200
     assert body["evicted_residents"] == {"llamacpp": 25.0}    # lease surface in the /jobs response
@@ -108,9 +108,9 @@ def test_status_exposes_evicted_residents_and_lease_ttl(tmp_path):
 
 def test_complete_job_restores_resident_over_control_plane(tmp_path):
     cp, _ = _cp_with_resident(tmp_path)
-    cp.route("POST", "/jobs", {"id": "reel", "vram_gb": 18, "kind": "media"})
+    cp.route("POST", "/jobs", {"id": "render", "vram_gb": 18, "kind": "media"})
     assert cp.scheduler.evicted_residents == {"llamacpp": 25}
-    _, after = cp.route("POST", "/jobs/complete", {"id": "reel"})
+    _, after = cp.route("POST", "/jobs/complete", {"id": "render"})
     # completing the media job drains the queue -> broker restores the resident; status reflects it
     assert after["evicted_residents"] == {}
     assert after["idle_cached"] == {"llamacpp": 25.0}         # re-armed as evictable
@@ -148,11 +148,11 @@ def test_jobs_history_route_serves_lease_records(tmp_path):
     cp, _ = _cp(tmp_path)
     cp.broker.history = hist
     cp.history = hist
-    cp.route("POST", "/jobs", {"id": "reel", "vram_gb": 17, "kind": "media"})
-    cp.route("POST", "/jobs/complete", {"id": "reel"})
+    cp.route("POST", "/jobs", {"id": "render", "vram_gb": 17, "kind": "media"})
+    cp.route("POST", "/jobs/complete", {"id": "render"})
     code, body = cp.route("GET", "/jobs/history")
     assert code == 200
-    assert body["history"][0]["id"] == "reel"
+    assert body["history"][0]["id"] == "render"
     assert body["history"][0]["outcome"] == "completed"
 
 

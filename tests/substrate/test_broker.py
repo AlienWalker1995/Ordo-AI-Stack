@@ -66,25 +66,25 @@ def _broker_with_resident(total=32, resident_gb=25):
 
 def test_media_lease_stops_resident_then_restarts_it_on_completion():
     b = _broker_with_resident()
-    b.request(Job("reel", 18, "media"))                 # evicts llamacpp -> stop; starts reel
+    b.request(Job("render", 18, "media"))                 # evicts llamacpp -> stop; starts render
     assert "llamacpp" in b.backend.stopped
-    assert "reel" in b.backend.started
+    assert "render" in b.backend.started
     b.backend.started.clear()                            # focus on what completion does
-    b.complete("reel")                                   # media done -> restore the resident
-    assert "reel" in b.backend.stopped                   # the job container is stopped
+    b.complete("render")                                   # media done -> restore the resident
+    assert "render" in b.backend.stopped                   # the job container is stopped
     assert b.backend.started == ["llamacpp"]             # resident RESTARTED by the broker
 
 
 def test_no_resident_restart_between_back_to_back_renders():
     b = _broker_with_resident()
-    b.request(Job("reel1", 18, "media"))                # reel1 runs (llamacpp stopped)
-    b.request(Job("reel2", 18, "media"))                # reel2 queued
+    b.request(Job("render1", 18, "media"))                # render1 runs (llamacpp stopped)
+    b.request(Job("render2", 18, "media"))                # render2 queued
     b.backend.started.clear()
-    b.complete("reel1")                                  # reel2 admitted — resident NOT restarted
-    assert "reel2" in b.backend.started
-    assert "llamacpp" not in b.backend.started           # anti-thrash: still down for reel2
+    b.complete("render1")                                  # render2 admitted — resident NOT restarted
+    assert "render2" in b.backend.started
+    assert "llamacpp" not in b.backend.started           # anti-thrash: still down for render2
     b.backend.started.clear()
-    b.complete("reel2")
+    b.complete("render2")
     assert b.backend.started == ["llamacpp"]             # only after the queue fully drains
 
 
@@ -92,18 +92,18 @@ def test_sweep_leases_restarts_resident_for_a_stranded_job():
     s = Scheduler(32)
     s.cache_idle("llamacpp", 25)
     b = Broker(s, MockBackend())
-    b.request(Job("reel", 18, "media", est_seconds=30))  # TTL = 60s
+    b.request(Job("render", 18, "media", est_seconds=30))  # TTL = 60s
     b.backend.started.clear()
     s.tick(70)                                           # past the 60s TTL (serve loop ticks the clock)
     swept = b.sweep_leases()
-    assert swept == ["reel"]
-    assert "reel" in b.backend.stopped                   # stranded job's container stopped
+    assert swept == ["render"]
+    assert "render" in b.backend.stopped                   # stranded job's container stopped
     assert b.backend.started == ["llamacpp"]             # resident self-healed back up
 
 
 def test_sweep_is_noop_when_no_lease_expired():
     b = _broker_with_resident()
-    b.request(Job("reel", 18, "media", est_seconds=600))
+    b.request(Job("render", 18, "media", est_seconds=600))
     b.backend.started.clear()
     b.backend.stopped.clear()
     b.scheduler.tick(5)

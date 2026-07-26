@@ -29,7 +29,7 @@ agent: hermes
 #                (the scheduler owns the GPU) and its compose-mutation endpoints are disabled.
 dashboard: v2-native
 
-# Optional plugins (media/song/reels/voice). "auto" = enable what the hardware can run;
+# Optional plugins (media/song/voice). "auto" = enable what the hardware can run;
 # a list forces specific ones. Media plugins are NVIDIA-only and self-declare that.
 plugins: auto
 

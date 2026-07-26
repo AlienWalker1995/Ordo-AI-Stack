@@ -1,4 +1,4 @@
-# Plugin manifest (data-only) — the background job worker (reel/publish queue). LOCALLY-BUILT in V1
+# Plugin manifest (data-only) — the background job worker (job/publish queue). LOCALLY-BUILT in V1
 # (dashboard + worker deps); V2 pins it as a project buildable image. Drives ComfyUI render jobs and
 # publish enqueues, so it depends on the comfyui plugin (and the core dashboard for the job store).
 id: worker
