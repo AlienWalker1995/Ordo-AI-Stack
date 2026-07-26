@@ -252,7 +252,7 @@ ordo-ai-stack/
 ├── scripts/             # ssrf-egress-block, smoke tests, doctor scripts
 ├── tests/               # Contract + smoke tests; render-substrate tests under tests/substrate/
 ├── product requirements docs/  # This documentation
-├── docs/                # Getting started, runbooks; docs/operator-guide.md is the authoritative operating guide; docs/history/ holds archival cutover notes
+├── docs/                # Getting started, runbooks; docs/operator-guide.md is the authoritative operating guide
 ├── data/                # gitignored, runtime data
 │   ├── mcp/             # servers.txt, registry-custom.yaml
 │   ├── ops-controller/  # audit.log
@@ -268,7 +268,7 @@ ordo-ai-stack/
 
 Note: there is no repo-root `overrides/` — it was retired (`62540bf`), briefly and accidentally
 re-added by the flatten commit `2d4bd9c`, then removed again and gitignored in the audit-remediation
-pass (`9251e47`); see `docs/LEGACY-CLEANUP.md` for the full arc.
+pass (`9251e47`).
 
 ---
 

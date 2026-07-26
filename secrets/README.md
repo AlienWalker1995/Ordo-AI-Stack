@@ -1,6 +1,6 @@
 # secrets/
 
-> **Note.** The SOPS + age **at-rest** model here (encrypted `*.sops` blobs, safe to commit) is unchanged. Runtime materialization is owned by the render substrate: `ordo render` writes a keys-only `out/secrets.env.example`; the operator fills real values into a gitignored **`out/secrets.env`** (SOPS-decrypt or hand-set) that the rendered compose reads as a second `env_file`. The old V1 `make decrypt-secrets` → `~/.ai-toolkit/runtime/` + `make up` two-`--env-file` flow was removed along with the rest of the V1 tree (2026-07-24, commit `62540bf`). See [`../docs/history/CUTOVER.md`](../docs/history/CUTOVER.md) (Secrets) and [`../docs/LEGACY-CLEANUP.md`](../docs/LEGACY-CLEANUP.md).
+> **Note.** The SOPS + age **at-rest** model here (encrypted `*.sops` blobs, safe to commit) is unchanged. Runtime materialization is owned by the render substrate: `ordo render` writes a keys-only `out/secrets.env.example`; the operator fills real values into a gitignored **`out/secrets.env`** (SOPS-decrypt or hand-set) that the rendered compose reads as a second `env_file`. The old V1 `make decrypt-secrets` → `~/.ai-toolkit/runtime/` + `make up` two-`--env-file` flow was removed along with the rest of the V1 tree (2026-07-24, commit `62540bf`).
 
 Encrypted-at-rest secrets for the Ordo AI stack. **All `*.sops` files in
 this directory are safe to commit to a public repo** — they decrypt only
