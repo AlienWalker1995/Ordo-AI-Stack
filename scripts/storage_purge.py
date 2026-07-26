@@ -7,9 +7,9 @@ never decides what to delete — a Hermes cron just runs this script and relays
 its report.
 
 Retention policy (see docs/superpowers/specs/2026-06-19-storage-purge-design.md):
-  - Reel drafts (data/drafts/<YYYY-MM-DD>_<slug>/): delete > 60 days (analytics
+  - Job drafts (data/drafts/<YYYY-MM-DD>_<slug>/): delete > 60 days (analytics
     window floor). Age comes from the folder-name date prefix, NOT mtime
-    (reel-metrics rewrites meta.json and would reset mtime).
+    (metrics rewrites meta.json and would reset mtime).
   - ComfyUI output (data/comfyui-output/): delete files > 21 days (mtime).
   - ComfyUI input/temp (data/comfyui-storage/ComfyUI/{input,temp}): > 21 days.
   - Backups/snapshots (data/_backups/*, data/hermes/state-snapshots/*): keep

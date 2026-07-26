@@ -84,9 +84,9 @@ def _sched_with_resident(total=32, resident_gb=25):
 
 def test_media_job_evicts_resident_and_records_it_for_restore():
     s = _sched_with_resident()               # 32 total, 25 resident -> 7 free (a media job won't fit)
-    s.submit(Job("reel", 18, "media"))
+    s.submit(Job("render", 18, "media"))
     admitted, evicted = s.pump()
-    assert admitted == ["reel"]
+    assert admitted == ["render"]
     assert evicted == ["llamacpp"]                       # resident stopped to free VRAM
     assert "llamacpp" in s.evicted_residents             # tracked with its footprint for restore
     assert s.evicted_residents["llamacpp"] == 25
@@ -95,9 +95,9 @@ def test_media_job_evicts_resident_and_records_it_for_restore():
 
 def test_resident_restored_when_media_completes_and_queue_drains():
     s = _sched_with_resident()
-    s.submit(Job("reel", 18, "media"))
-    s.pump()                                             # evicts llamacpp, runs reel
-    s.complete("reel")                                   # media done -> queue empty
+    s.submit(Job("render", 18, "media"))
+    s.pump()                                             # evicts llamacpp, runs render
+    s.complete("render")                                   # media done -> queue empty
     restored = s.take_restorable()
     assert restored == {"llamacpp": 25}                  # resident restarted with its footprint
     assert "llamacpp" in s.idle_cached                   # re-armed as evictable for the next lease
@@ -106,9 +106,9 @@ def test_resident_restored_when_media_completes_and_queue_drains():
 
 def test_no_restore_while_a_media_job_still_running():
     s = _sched_with_resident()
-    s.submit(Job("reel", 18, "media"))
+    s.submit(Job("render", 18, "media"))
     s.pump()
-    # reel still running — restoring the LLM now would immediately need re-eviction: don't.
+    # render still running — restoring the LLM now would immediately need re-eviction: don't.
     assert s.take_restorable() == {}
     assert "llamacpp" in s.evicted_residents
 
@@ -117,16 +117,16 @@ def test_no_thrash_between_back_to_back_media_jobs():
     # Two queued media renders: complete the first, and the resident must NOT flap on/off — it stays
     # evicted until the WHOLE media queue drains (the anti-thrash rule).
     s = _sched_with_resident()
-    s.submit(Job("reel1", 18, "media"))
-    s.submit(Job("reel2", 18, "media"))
-    s.pump()                                             # reel1 runs (evicts llamacpp); reel2 queued
-    assert s.running_ids == ["reel1"] and s.queued_ids == ["reel2"]
-    s.complete("reel1")                                  # reel2 now admittable
-    assert s.take_restorable() == {}                     # DON'T restore — reel2 still needs the card
-    s.pump()                                             # reel2 admitted
-    assert s.running_ids == ["reel2"]
-    assert s.take_restorable() == {}                     # still no restore while reel2 runs
-    s.complete("reel2")
+    s.submit(Job("render1", 18, "media"))
+    s.submit(Job("render2", 18, "media"))
+    s.pump()                                             # render1 runs (evicts llamacpp); render2 queued
+    assert s.running_ids == ["render1"] and s.queued_ids == ["render2"]
+    s.complete("render1")                                  # render2 now admittable
+    assert s.take_restorable() == {}                     # DON'T restore — render2 still needs the card
+    s.pump()                                             # render2 admitted
+    assert s.running_ids == ["render2"]
+    assert s.take_restorable() == {}                     # still no restore while render2 runs
+    s.complete("render2")
     assert s.take_restorable() == {"llamacpp": 25}       # only now — queue fully drained
 
 
@@ -134,13 +134,13 @@ def test_lease_ttl_auto_completes_stranded_job():
     # A crashed client never calls complete() — the TTL sweep force-completes the lease so the
     # resident can be restored (self-heal; a stranded lease must never kill the brain forever).
     s = _sched_with_resident()
-    s.submit(Job("reel", 18, "media", est_seconds=60))   # TTL = 60 * 2 = 120s
+    s.submit(Job("render", 18, "media", est_seconds=60))   # TTL = 60 * 2 = 120s
     s.pump()
     s.tick(90)
     assert s.sweep_expired_leases() == []                # not yet past the 120s TTL
-    assert s.running_ids == ["reel"]
+    assert s.running_ids == ["render"]
     s.tick(40)                                           # now 130s elapsed > 120s TTL
-    assert s.sweep_expired_leases() == ["reel"]          # force-completed
+    assert s.sweep_expired_leases() == ["render"]          # force-completed
     assert s.running_ids == []
     assert s.take_restorable() == {"llamacpp": 25}       # resident restored after the stranded lease
 
@@ -163,7 +163,7 @@ def test_recache_resident_clears_evicted_and_rearms():
     # take_restorable re-caches; an explicit cache_idle (e.g. after a manual restart) must also clear
     # the evicted record so the resident is a normal evictable again.
     s = _sched_with_resident()
-    s.submit(Job("reel", 18, "media"))
+    s.submit(Job("render", 18, "media"))
     s.pump()
     assert "llamacpp" in s.evicted_residents
     s.cache_idle("llamacpp", 25)                         # re-registered as resident
@@ -173,7 +173,7 @@ def test_recache_resident_clears_evicted_and_rearms():
 
 def test_status_surfaces_lease_and_resident_fields():
     s = _sched_with_resident()
-    s.submit(Job("reel", 18, "media", est_seconds=120))
+    s.submit(Job("render", 18, "media", est_seconds=120))
     s.pump()
     st = s.status()
     assert st["evicted_residents"] == {"llamacpp": 25}

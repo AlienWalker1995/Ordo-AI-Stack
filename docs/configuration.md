@@ -93,7 +93,7 @@ docker compose -p ordo --profile voice up -d
   Hermes config schema does **not** persist a TTS `base_url` (and there is no env for
   it), so this Hermes version cannot target local Kokoro for replies. The Kokoro
   service is still deployed + registry-managed and reachable at `http://tts:8880/v1`
-  for n8n / the reel pipeline / scripts / a future Hermes that honours a TTS base URL.
+  for n8n / the media/render pipeline / scripts / a future Hermes that honours a TTS base URL.
   For a fully-local reply voice today, use Hermes' native `neutts` provider (on-device).
 
 **STT** weights download once to `${DATA_PATH}/voice/hf-cache` (persists across

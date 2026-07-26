@@ -22,7 +22,7 @@ fi
 export HERMES_HOME
 
 # Same ownership/writability check for the gameplay manifest used by the
-# social-relay reel pipeline. ComfyUI writes outputs into this directory as
+# render output pipeline. ComfyUI writes outputs into this directory as
 # root, which leaves the manifest unwritable for the unprivileged hermes user
 # the agent's execute_code sandbox runs as (uid 1000). Without this, the cron
 # completes its run but cannot record the gameplay segment in `used`, so the
