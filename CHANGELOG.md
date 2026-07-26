@@ -36,7 +36,7 @@ All notable changes to this project are documented here. The format is loosely b
   `d115035`). The old V1 stack was kept intact as a rollback asset (containers removed, volumes +
   images retained). See `v2/CUTOVER.md` + `v2/FLIP.md`. The **top-level V1 layout** (root
   `docker-compose.yml`, root `ops-controller/`, root `model-gateway/`, `overrides/`, the guardian) is
-  now **LEGACY**, pending a separate deliberate cleanup PR — inventory in `docs/LEGACY-CLEANUP.md`.
+  now **LEGACY**, pending a separate deliberate cleanup PR.
 
 ### Added
 - **Codebase-Memory MCP — opt-in `--profile codebase-memory` code knowledge graph for Hermes.**
