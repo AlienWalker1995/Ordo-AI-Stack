@@ -4,8 +4,8 @@
 
 | Asset | Threat | Current State | Mitigation |
 |-------|--------|---------------|------------|
-| `docker.sock` (ops-controller) | Container escape → host RCE | Mounted; allowlisted actions only | Token auth; no host port; allowlist in code; run ops-controller read-only workspace mount |
-| `docker.sock` (mcp-gateway) | MCP server escapes → host pivot | Mounted; Docker MCP Gateway owns it | Accept: required for spawning server containers; isolate mcp-gateway to backend network |
+| `docker.sock` (ops-api) | Container escape → host RCE | Mounted; allowlisted actions only | Bearer-token auth; no host port; allowlist in code; every privileged call audited. (The `ordo serve` scheduler on ops-controller mounts a *separate* `<project>-*`-scoped docker.sock for render/broker lifecycle only — auth-free by design, exposes no start/stop/logs/pull API.) |
+| `docker.sock` (mcp-gateway) | MCP server escapes → host pivot | Mounted; Docker MCP Gateway owns it | Accept: required for spawning server containers; mcp-gateway sits on the single `ordo-net` and publishes no host port (reached only via Caddy `:443/mcp`, bearer token) |
 | Ops controller token | Token theft → privileged ops | Token in `out/secrets.env`; no default | Generate with `openssl rand -hex 32`; never expose controller port to host |
 | MCP tools (filesystem) | Data exfiltration via tool | Enabled in servers.txt; broken without root-dir | Remove from default servers.txt; require explicit opt-in |
 | MCP tools (browser/playwright) | SSRF → RFC1918/metadata | No egress blocks yet | Add `DOCKER-USER` iptables egress block; document in runbooks |
@@ -26,8 +26,8 @@
 
 1. External client sends `X-Request-ID: req-abc` to model gateway
 2. Model gateway logs it; includes in throughput record to dashboard
-3. Dashboard passes `X-Request-ID` when calling ops controller
-4. Ops controller includes in audit entry
+3. Dashboard passes `X-Request-ID` when calling ops-api
+4. Ops-api includes in audit entry
 5. Result: one request traceable across model → throughput → ops → audit
 
 ## Secret Handling
@@ -44,7 +44,7 @@
 
 | Secret | Location | Injected by | Notes |
 |--------|----------|-------------|-------|
-| `OPS_CONTROLLER_TOKEN` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Required for ops-controller privileged API |
+| `OPS_CONTROLLER_TOKEN` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Required for the ops-api privileged (Bearer) API |
 | `DISCORD_BOT_TOKEN` | `secrets/discord_token.sops` | Docker secret → hermes-gateway (`/run/secrets/discord_token`) | Optional, only when Discord channel is used |
 | `HF_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Optional, for gated HF model pulls and GitHub MCP |
 
@@ -79,7 +79,7 @@ Blocked ranges: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` (RFC1918), `100.
 
 - Tool results returned in structured boundaries by the MCP gateway and agent
 - Agents treat tool output as **data**, not **instructions**
-- Validate tool output schemas where possible (MCP `registry.json` `outputSchema` field)
+- Validate tool output schemas where possible (MCP `registry-custom.yaml` `outputSchema` field)
 - Structured boundaries help the model distinguish injected text from genuine prompts
 
 ## Container Hardening

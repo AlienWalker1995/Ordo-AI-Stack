@@ -25,10 +25,10 @@ A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`
 | Responses API (`/v1/responses`) | Live | `services/model-gateway/` |
 | Completions compat (`/v1/completions`) | Live | `services/model-gateway/` |
 | MCP Gateway with hot-reload | Live | `services/mcp-gateway/`, `out/docker-compose.yml` |
-| MCP registry.json metadata layer | Live | `services/v1-parity/dashboard/app.py`, `data/mcp/registry.json` |
+| MCP registry metadata layer (`registry-custom.yaml`) | Live | `services/mcp-gateway/`, `data/mcp/registry-custom.yaml` |
 | MCP health endpoint + UI badges | Live | `services/v1-parity/dashboard/app.py` |
-| Ops Controller (start/stop/restart/logs/pull) | Live | `ordo/` (`ordo serve`) |
-| Append-only JSONL audit log | Live | `ordo/` (`ordo serve`) |
+| Ops API — container lifecycle (start/stop/restart/logs/pull) | Live | `services/ops-api/main.py` |
+| Append-only JSONL audit log | Live | `services/ops-api/main.py`, `services/ops-api/audit.py` |
 | Dashboard auth via Caddy edge SSO (oauth2-proxy + Google + allowlist); optional dormant per-service Bearer token in code, unused in deployment | Live | `services/v1-parity/dashboard/app.py` |
 | Dashboard throughput stats + benchmark | Live | `services/v1-parity/dashboard/app.py` |
 | Dashboard hardware stats | Live | `services/v1-parity/dashboard/app.py` |
@@ -37,10 +37,10 @@ A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`
 | Open WebUI → Qdrant vector DB | Live | `out/docker-compose.yml` |
 | RAG status endpoint | Live | `services/v1-parity/dashboard/app.py` |
 | Docker hardening (cap_drop, read_only, networks) | Live | `out/docker-compose.yml` |
-| Explicit frontend/backend networks | Live | `out/docker-compose.yml` |
+| Single `ordo-net` Docker network (edge-only host-port publish) | Live | `out/docker-compose.yml` |
 | llama.cpp backend-only (no host port) | Live | `out/docker-compose.yml` |
 | SSRF egress block scripts | Live | `scripts/ssrf-egress-block.sh`, `.ps1` |
-| Hermes agent (gateway + dashboard) | Live | `out/docker-compose.yml`, `hermes/` |
+| Hermes agent (gateway + dashboard) | Live | `out/docker-compose.yml`, `services/hermes/` |
 | Contract + smoke tests | Live | `tests/` |
 
 ## Open Risks
