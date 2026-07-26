@@ -10,6 +10,49 @@ project **`ordo`** (25 services, verified by a fresh `ordo render` with this ope
 set — see `out/docker-compose.yml`) — containers `ordo-*`, images `ordo/*`, network `ordo-net`. The
 render substrate lives at the repo root (there is no `v2/` directory — there is one Ordo).
 
+## Install & first run
+
+**From a fresh machine — one command installs the CLI and launches the setup wizard:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AlienWalker1995/Ordo-AI-Stack/main/install.sh | sh
+```
+
+It checks prerequisites (git, Docker + `docker compose` v2, Python 3.11+; warns if there's no
+NVIDIA GPU), clones the repo to `~/ordo` (override with `ORDO_DIR=`), installs `ordo` into a
+virtualenv, and runs **`ordo init`** — the interactive wizard that configures the whole stack.
+
+**The wizard (`ordo init`) is the setup path.** Every prompt has a sensible default (press **Enter**
+to accept); it walks you through:
+
+1. **Hardware** — confirm the auto-detected GPU / RAM / CPU (or pin it later for reproducibility).
+2. **Model** — accept the best-fit catalog pick, or choose another by tier.
+3. **Capabilities** — optional groups to enable (chat is always on): image/video, RAG, voice,
+   automation (n8n), web search, monitoring. Default is hardware-gated auto.
+4. **Access** — tailnet hostname (`CADDY_TAILNET_HOSTNAME`) + Caddy bind address; shows your
+   `tailscale ip -4` and offers to provision a `tailscale cert`.
+5. **Google SSO** — prints the exact Google Cloud console URL + callback, then collects the OAuth
+   client id/secret and your email allowlist.
+6. **Secrets** — internal keys (LiteLLM, ops, MCP, cookie, SearXNG, n8n) are auto-generated;
+   external tokens (Hugging Face, Tailscale, GitHub) are prompted and skippable.
+
+It writes `out/ordo.yaml` + `out/secrets.env` (chmod 600, never committed), then **offers** to
+render, download the model, and bring the stack up — printing your dashboard URL. Nothing starts
+unless you say yes. Re-run `ordo init` any time to reconfigure.
+
+**Manual / already-cloned path** — the wizard just automates this; you can drive the engine directly:
+
+```bash
+ordo init                                     # re-run the wizard in an existing checkout
+# …or step through it by hand:
+ordo --source out/ordo.yaml render --out out  # regenerate out/ from the source (NEVER bare `ordo render`)
+ordo preflight --ref out/.env                 # read-only GO/NO-GO readiness gate
+# bring up — COMPOSE_PROFILES must list the capability profiles you enabled (the wizard sets these for you):
+cd out && COMPOSE_PROFILES=edge,webui,… docker compose -p ordo --env-file .env --env-file secrets.env up -d
+```
+
+Everything below is the reference for *how* that render engine works and *why* it's built this way.
+
 ## Why this exists (from the architecture interrogation)
 
 Nearly every failure of the current stack traced to **config drift**: the LLM context size,
