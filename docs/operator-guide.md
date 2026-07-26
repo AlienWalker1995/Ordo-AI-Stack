@@ -33,22 +33,26 @@ no NVIDIA GPU), clones the repo (`~/ordo`, or `%USERPROFILE%\ordo` on Windows �
 wizard that configures the whole stack.
 
 **The wizard (`ordo init`) is the setup path.** Every prompt has a sensible default (press **Enter**
-to accept); it walks you through:
+to accept); **Ctrl-C** cancels at any point and nothing is written until you confirm at the end. It
+walks you through:
 
 1. **Hardware** — confirm the auto-detected GPU / RAM / CPU (or pin it later for reproducibility).
 2. **Model** — accept the best-fit catalog pick, or choose another by tier.
 3. **Capabilities** — optional groups to enable (chat is always on): image/video, RAG, voice,
    automation (n8n), web search, monitoring. Default is hardware-gated auto.
-4. **Access** — tailnet hostname (`CADDY_TAILNET_HOSTNAME`) + Caddy bind address; shows your
-   `tailscale ip -4` and offers to provision a `tailscale cert`.
-5. **Google SSO** — prints the exact Google Cloud console URL + callback, then collects the OAuth
-   client id/secret and your email allowlist.
-6. **Secrets** — internal keys (LiteLLM, ops, MCP, cookie, SearXNG, n8n) are auto-generated;
-   external tokens (Hugging Face, Tailscale, GitHub) are prompted and skippable.
+4. **Secure front door** — set up the Tailscale + Google SSO gate now, or skip it (with an explicit
+   warning that the stack then runs unauthenticated). When you set it up, the tailnet hostname
+   (`CADDY_TAILNET_HOSTNAME`), OAuth client id/secret, and email allowlist are **required** — a blank
+   answer prompts to defer-or-retry rather than silently shipping a broken gate. Prints the exact
+   Google console URL + callback and offers to provision a `tailscale cert`.
+5. **External tokens** — Hugging Face, Tailscale, GitHub; all optional (Enter to skip). Internal
+   keys (LiteLLM, ops, MCP, cookie, SearXNG, n8n) are auto-generated.
+6. **Review & confirm** — a summary of every choice with a final **Y/n**; decline and nothing is
+   written.
 
-It writes `out/ordo.yaml` + `out/secrets.env` (chmod 600, never committed), then **offers** to
-render, download the model, and bring the stack up — printing your dashboard URL. Nothing starts
-unless you say yes. Re-run `ordo init` any time to reconfigure.
+On confirm it writes `out/ordo.yaml` + `out/secrets.env` (chmod 600, never committed), then
+**offers** to render, download the model, and bring the stack up — printing your dashboard URL.
+Nothing starts unless you say yes. Re-run `ordo init` any time to reconfigure.
 
 **Manual / already-cloned path** — the wizard just automates this; you can drive the engine directly:
 

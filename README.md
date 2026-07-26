@@ -40,16 +40,16 @@ Either path checks prerequisites (git, Docker + `docker compose` v2, Python 3.11
 
 ### The setup wizard — `ordo init`
 
-The wizard **is** the configuration experience: every decision about your stack is made here, in the terminal, with a sensible default on each prompt (press **Enter** to accept it).
+The wizard **is** the configuration experience: every decision about your stack is made here, in the terminal, with a sensible default on each prompt (press **Enter** to accept it). Press **Ctrl-C** at any prompt to cancel — nothing is written until you review and confirm at the end.
 
 1. **Hardware** — confirms the auto-detected GPU / RAM / CPU (or pin it later for reproducibility).
 2. **Model** — accepts the best-fit pick from the catalog, or choose another by tier.
 3. **Capabilities** — which optional groups to turn on (chat is always on): image/video, RAG, voice, automation (n8n), web search, monitoring. Default is hardware-gated auto.
-4. **Access** — your tailnet hostname (`CADDY_TAILNET_HOSTNAME`) and the Caddy bind address; it shows your `tailscale ip -4` and offers to provision a `tailscale cert`.
-5. **Google SSO** — prints the exact Google Cloud console URL and callback, then collects the OAuth client id/secret and your email allowlist.
-6. **Secrets** — internal keys (LiteLLM, ops, MCP, cookie, SearXNG, n8n) are **auto-generated**; external tokens (Hugging Face, Tailscale, GitHub) are prompted and skippable.
+4. **Secure front door** — set up the Tailscale + Google SSO gate now, or skip it (with an explicit warning that the stack then runs unauthenticated). If you set it up, the tailnet hostname, OAuth client id/secret, and email allowlist are **required** — leave one blank and the wizard asks whether to defer it or re-enter, so you never ship a half-configured gate. It prints the exact Google console URL + callback and offers to provision a `tailscale cert`.
+5. **External tokens** — Hugging Face, Tailscale, and GitHub tokens; all optional (Enter to skip). Internal keys (LiteLLM, ops, MCP, cookie, SearXNG, n8n) are **auto-generated** for you.
+6. **Review & confirm** — a summary of every choice (hardware, model, capabilities, front door, secrets) with a final **Y/n**. Decline and nothing is written.
 
-It writes `out/ordo.yaml` and `out/secrets.env` (chmod 600, never committed), then **offers** to render the config, download the model, and bring the stack up — finishing with your dashboard URL. Nothing is started unless you say yes; a piped or `--yes` install only writes config and stops.
+On confirm it writes `out/ordo.yaml` and `out/secrets.env` (chmod 600, never committed), then **offers** to render the config, download the model, and bring the stack up — finishing with your dashboard URL. Nothing is started unless you say yes; a piped or `--yes` install only writes config and stops.
 
 Re-run `ordo init` any time to reconfigure. **Prefer to drive the render engine by hand?** Skip the wizard and follow `ordo render` → `ordo preflight` → `docker compose up` in the **[operator guide](docs/operator-guide.md)**.
 

@@ -126,3 +126,24 @@ def test_run_headless_full_answers_render(tmp_path):
     render(src, CATALOG, REGISTRY)   # must not raise
     assert result.caddy_bind == "100.64.0.1"
     assert "HF_TOKEN" in result.provided_secret_keys
+
+
+def test_hostname_error_accepts_valid_and_rejects_junk():
+    assert wizard.hostname_error("ordo.tail1234.ts.net") is None
+    assert wizard.hostname_error("") is not None                 # empty
+    assert wizard.hostname_error("ordo") is not None             # not fully-qualified
+    assert wizard.hostname_error("https://ordo.ts.net") is not None   # has a scheme
+    assert wizard.hostname_error("ordo.ts.net:443") is not None       # has a port
+    assert wizard.hostname_error("ordo .ts.net") is not None          # has a space
+
+
+def test_parse_emails_splits_dedupes_and_preserves_order():
+    assert wizard.parse_emails("a@x.io, b@y.io") == ["a@x.io", "b@y.io"]
+    assert wizard.parse_emails("a@x.io  a@x.io\nb@y.io") == ["a@x.io", "b@y.io"]  # dedupe
+    assert wizard.parse_emails("") == []
+    assert wizard.parse_emails("  ,  ,  ") == []
+
+
+def test_invalid_emails_flags_only_malformed():
+    assert wizard.invalid_emails(["a@x.io", "b@y.co.uk"]) == []
+    assert wizard.invalid_emails(["nope", "a@x.io", "also@bad"]) == ["nope", "also@bad"]
