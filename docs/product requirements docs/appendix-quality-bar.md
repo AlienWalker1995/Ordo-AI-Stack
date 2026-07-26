@@ -2,18 +2,18 @@
 
 ## Test Suite (Current `tests/`)
 
-57 test files: 34 in `tests/` plus 23 in `tests/substrate/` (the render-engine suite).
+62 test files: 37 in `tests/` plus 25 in `tests/substrate/` (the render-engine suite).
 
 | Area | Files | Representative coverage |
 |------|-------|--------------------------|
 | Dashboard | 8 | health, auth middleware, proxy auth, registry routes, service pressure, ComfyUI packs, dependencies, performance |
 | ComfyUI | 5 | API client, workflow manager defaults, queue prompt (+ integration), default model env |
-| Orchestration | 5 | API, e2e, outbox, workflow versioning |
+| Orchestration | 4 | API, e2e, outbox, workflow versioning |
 | RAG | 2 | ingestion chunking/embedding, status |
-| Ops / secrets / stack | 6 | secrets isolation, Caddyfile invariants, stack-monitor sanitize/versions, storage purge, settings validation |
+| Ops / secrets / stack | 7 | secrets isolation, Caddyfile invariants, stack-monitor sanitize/versions, storage purge, settings validation, service-catalog wiring |
 | GPU / hardware | 3 | GPU stats, GPU routes, llama.cpp turboquant |
-| Misc / policy | 5 | dependency-registry probe, Hermes socket absent, MCP policy, services & throughput, text sanitizers |
-| Substrate (render engine) | 23 | agents, broker, cloud fallback, compose (+ recreate), control, dashboards, fetch, lease exec/history, MCP, memory vault (+ ingestion), native, ops-api stats, parity (+ render), plugins, preflight, render, scheduler, status doctor, wizard |
+| Misc / policy | 8 | dependency-registry probe, catalog-derived dependencies, Hermes socket absent, Hermes ops client, MCP policy, MCP persist, services & throughput, text sanitizers |
+| Substrate (render engine) | 25 | agents, broker, build contexts, cli render guard, cloud fallback, compose (+ recreate), control, dashboards, fetch, lease exec/history, MCP, memory vault (+ ingestion), native, ops-api stats, parity (+ render), plugins, preflight, render, scheduler, status doctor, wizard |
 
 CI (`.github/workflows/ci.yml`): `secret-scan` (TruffleHog), `pytest` (`tests/`, excluding `tests/substrate/`), and `substrate` (path-gated, mocked-profile).
 
@@ -37,13 +37,13 @@ CI (`.github/workflows/ci.yml`): `secret-scan` (TruffleHog), `pytest` (`tests/`,
 - [ ] New MCP tools: `allow_clients` explicitly set in registry
 - [ ] No new host port exposures without justification
 - [ ] Audit events emitted for all privileged actions
-- [ ] New env vars documented in [Environment Variables Reference](appendix-env-vars.md) and `.env.example`
+- [ ] New env vars documented in [Environment Variables Reference](appendix-env-vars.md), `ordo.example.yaml`, and `out/secrets.env.example`
 
 ## Break-Glass Procedures
 
 1. Reset admin token: see [Rollback Procedures](appendix-rollback.md) #5
 2. Restore data: `rsync -a <backup>/data/ data/`; `docker compose up -d`
 3. Disable all tools: `echo "" > data/mcp/servers.txt`
-4. Invalidate model cache: `curl -X DELETE http://localhost:11435/v1/cache`
+4. Invalidate model cache (model-gateway has no host port — go in-network or via the Caddy `/llm` edge): `docker compose -p ordo exec dashboard curl -X DELETE http://model-gateway:11435/v1/cache` (or `curl -X DELETE -H "Authorization: Bearer $LITELLM_MASTER_KEY" https://<host>/llm/v1/cache`)
 5. Disable unsafe services (from `out/`): `docker compose -p ordo stop mcp-gateway agent comfyui rag-ingestion`
 6. Safe mode: `docker compose up -d llamacpp model-gateway dashboard open-webui qdrant`

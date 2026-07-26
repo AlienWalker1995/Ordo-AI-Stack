@@ -51,7 +51,7 @@ rag-ingestion:
 
 ## Dependencies
 
-- **Qdrant** service on backend network
+- **Qdrant** service (on the single `ordo-net`; internal, no host port)
 - **`llamacpp-embed`** (services/rag/plugin.yaml) for embeddings — a small nomic GGUF served
   directly by llama.cpp, not routed through the LiteLLM model gateway
 - `nomic-embed-text-v1.5.Q4_K_M.gguf` (or `LLAMACPP_EMBED_MODEL` override) must be present before

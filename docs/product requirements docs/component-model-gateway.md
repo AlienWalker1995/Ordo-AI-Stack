@@ -55,7 +55,7 @@ Converts Responses API input items and tool definitions to chat-completions form
 | Open WebUI | `OPENAI_API_BASE_URL=http://model-gateway:11435/v1` | Same | None |
 | Hermes | `http://model-gateway:11435/v1` | Same | None |
 | N8N | No LLM node set | `OPENAI_API_BASE=http://model-gateway:11435/v1` | Docs only |
-| Cursor/external | `http://localhost:11435/v1` | Same | None |
+| Cursor/external | Via Caddy `:443/llm/v1` (bearer `LITELLM_MASTER_KEY`; no host port on model-gateway) | Same | None |
 
 ## Configuration
 

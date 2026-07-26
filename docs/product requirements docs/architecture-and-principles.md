@@ -7,7 +7,7 @@
 3. **Least privilege:** Dashboard never mounts docker.sock. Controller has minimal allowlisted actions. Non-root containers everywhere feasible. `cap_drop: [ALL]` as default; add back only what's required.
 4. **One model endpoint:** OpenAI-compatible API (`/v1/chat/completions`, `/v1/embeddings`) as canonical surface, fronting llama.cpp. Services should prefer the gateway over direct llama.cpp.
 5. **Pluggable providers:** LiteLLM gateway fronts llama.cpp and can add future OpenAI-compatible endpoints.
-6. **Shared tools, guarded:** Central MCP registry (`registry.json`) with metadata. Per-client allowlists. Health checks; auto-disable failing tools. Secrets outside plaintext.
+6. **Shared tools, guarded:** Central MCP registry (`registry-custom.yaml`) with metadata. Per-client allowlists. Health checks; auto-disable failing tools. Secrets outside plaintext.
 7. **Safe-by-default ops:** Controller token required (no default). Destructive actions require `confirm: true`. Dry-run mode. Audit log for every privileged action.
 8. **Auditable by design:** Every privileged call → audit event with `ts`, `action`, `resource`, `actor`, `result`, `correlation_id`. Append-only. Exportable.
 9. **Deny-by-default:** Unknown services blocked at MCP (`allow_clients: ["*"]` is explicit opt-in, not omission-default). Auth enabled where supported.
@@ -76,7 +76,7 @@ codebase-memory nginx rewrites).
 │  │ :8811           │  │ no docker.sock   │  │ --profile rag│                  │
 │  │ docker.sock     │  │ auth: edge SSO   │  │ watches      │                  │
 │  │ servers.txt     │  │ → ops ctrl API   │  │ data/rag-    │                  │
-│  │ registry.json   │  │ registry.json    │  │ input/       │                  │
+│  │ registry-custom │  │ registry.json    │  │ input/       │                  │
 │  │ Caddy `:443/mcp`│  │                  │  │              │                  │
 │  │ → bearer token  │  │                  │  │              │                  │
 │  └─────────────────┘  └─────────────────┘  └──────────────┘                  │
@@ -89,8 +89,9 @@ codebase-memory nginx rewrites).
 ## Components
 
 - **Model Gateway** `:11435` — OpenAI-compatible LiteLLM proxy in front of llama.cpp; streaming, Responses API, completions compat, embeddings; TTL model cache; cache-bust endpoint; `X-Request-ID` propagation; throughput recording.
-- **MCP Gateway** `:8811` — Docker MCP Gateway with 10s hot-reload; `registry.json` metadata reader; per-server health; docker.sock for spawning server containers.
-- **Ops Controller** `:9000` (internal) — Authenticated REST; start/stop/restart/logs/pull; append-only JSONL audit log; docker.sock access with allowlisted operations only.
+- **MCP Gateway** `:8811` — Docker MCP Gateway with 10s hot-reload; `registry-custom.yaml` metadata reader; per-server health; docker.sock for spawning server containers.
+- **Ops API** `:9000` (internal) — Authenticated REST (Bearer); start/stop/restart/logs/pull; append-only JSONL audit log; docker.sock access with allowlisted operations only. This is the audited, bearer-gated control plane the dashboard calls for lifecycle actions.
+- **Ops Controller** `:9000` (internal) — The `ordo serve` GPU-lease scheduler; no host port and deliberately **no auth and no container-lifecycle verbs**. It holds a `<project>-*`-scoped docker.sock only to start/stop the render/broker containers it schedules — it does not expose the start/stop/restart/logs/pull API (that is Ops API).
 - **Dashboard** internal `:8080` (no host port of its own; published to the tailnet by Caddy on its own dedicated port, `${CADDY_TAILNET_HOSTNAME}:8444`, behind oauth2-proxy / Google SSO; Grafana rides the same port at `/grafana/`) — No docker.sock; calls controller for ops; model inventory + default-model management; MCP tool management + health badges; throughput stats + benchmark; hardware stats; RAG status. Auth: the Caddy edge (oauth2-proxy / Google SSO) is the sole auth gate; no per-service dashboard token is set in this deployment. The dashboard app code retains an optional, dormant Bearer capability (`DASHBOARD_AUTH_TOKEN` + trusted-proxy header trust) that is unused here — edge SSO is the auth model, not a fallback to rely on.
 - **llama.cpp** `:8080` — LLM inference; backend-only (no host port); GPU pinning resolved by the render engine (`hardware: auto` / `ordo detect`) into `out/`.
 - **Qdrant** `:6333` — Vector database; backend-only; used by Open WebUI for RAG and by `rag-ingestion` service.
@@ -107,11 +108,11 @@ Model request:    Client → Caddy :443/llm/* (bearer key) → Model Gateway (X-
 
 Tool call:        Client → Caddy :443/mcp (bearer token) → MCP Gateway (registry policy check) → MCP server container
 
-Ops action:       Dashboard → Ops Controller (Bearer auth) → Docker socket
+Ops action:       Dashboard → Ops API (Bearer auth) → Docker socket
                                       ↓ audit event
                               data/ops-controller/audit.log
 
-Audit query:      Dashboard → GET /audit (auth) → Controller reads JSONL
+Audit query:      Dashboard → GET /audit (auth) → Ops API reads JSONL
 
 UI request:       Browser → Caddy :<service-port> (Google SSO, domain-scoped
                    session) → service container, served at its own root
@@ -122,8 +123,8 @@ UI request:       Browser → Caddy :<service-port> (Google SSO, domain-scoped
 | Goal | Status | Evidence |
 |------|--------|----------|
 | **G1: Any service → any model** | Done | Gateway `:11435` fronting llama.cpp; streaming, embeddings, tool-calling, Responses API. Open WebUI uses `OPENAI_API_BASE_URL` → gateway. Hermes and other clients route via the same `/v1` surface. |
-| **G2: Shared tools with health** | Done | MCP Gateway + `registry.json` metadata; `GET /api/mcp/health` per-server; dashboard health badges. |
-| **G3: Dashboard as control center** | Done | Ops Controller: start/stop/restart/logs/pull; no host port; bearer auth. Hardware stats, throughput benchmark, default-model management, RAG status. |
+| **G2: Shared tools with health** | Done | MCP Gateway + `registry-custom.yaml` metadata; `GET /api/mcp/health` per-server; dashboard health badges. |
+| **G3: Dashboard as control center** | Done | Ops API: start/stop/restart/logs/pull; no host port; bearer auth. Hardware stats, throughput benchmark, default-model management, RAG status. |
 | **G4: Security + auditing** | Done | Audit JSONL. Dashboard auth is the Caddy edge (oauth2-proxy / Google SSO); no per-service dashboard token in this deployment (app code retains a dormant, unused optional Bearer capability). `SECURITY.md` + threat table. SSRF scripts. |
 | **G5: Docker best practices** | Done | `cap_drop: [ALL]`, `security_opt`, `read_only`, `tmpfs`, log rotation, resource limits, healthchecks, explicit named networks on all custom services. |
 | **G6: RAG pipeline** | Done | Qdrant vector DB. `rag-ingestion` service. Open WebUI connected to Qdrant. `GET /api/rag/status` in dashboard. |
@@ -133,8 +134,8 @@ UI request:       Browser → Caddy :<service-port> (Google SSO, domain-scoped
 | Gap | Goal | Description | Severity |
 |-----|------|-------------|----------|
 | `WEBUI_AUTH` defaults to `False` | G4 | Open WebUI ships open; target default is `True` | Medium |
-| MCP per-client policy unenforced | G2 | `allow_clients` in registry.json not enforced at gateway level — requires Docker MCP Gateway `X-Client-ID` support | Medium |
-| mcp-gateway on frontend network | G5 | Should be backend-only for internal services; currently publishes no host port at all — reached only via Caddy `:443/mcp` (bearer token), not `127.0.0.1:8811` (that localhost-only exposure is stale) | Low |
+| MCP per-client policy unenforced | G2 | `allow_clients` in registry-custom.yaml not enforced at gateway level — requires Docker MCP Gateway `X-Client-ID` support | Medium |
+| mcp-gateway network isolation | G5 | Single `ordo-net` (the frontend/backend split was retired); mcp-gateway publishes no host port at all — reached only via Caddy `:443/mcp` (bearer token), not `127.0.0.1:8811` (that localhost-only exposure is stale) | Low |
 | Reliability / readiness contracts | G1–G2 | Health today is partly architectural; see [Reliability & Contracts](reliability-and-contracts.md) | High |
 
 ## Network Assignment
@@ -222,7 +223,7 @@ dashboard iframe expects that prefix), and n8n's external
 | Resource limits | `qdrant` (512M), `rag-ingestion` (256M), plus per-service limits on model-gateway / dashboard / comfyui |
 | Log rotation | All services |
 | Pinned images | `llama.cpp` (by digest), `open-webui:v0.10.1`, `qdrant:v1.18.2`, etc. |
-| Explicit networks | `ordo-ai-stack-frontend`, `ordo-ai-stack-backend` declared; llama.cpp backend-only |
+| Explicit networks | Single `ordo-net` declared; every service attaches to it; only Caddy publishes host ports |
 | `restart: unless-stopped` | All long-running services |
 | One-shot `restart: "no"` | pullers, sync services |
 

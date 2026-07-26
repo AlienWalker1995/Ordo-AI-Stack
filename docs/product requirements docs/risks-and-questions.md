@@ -8,9 +8,9 @@
 | `cap_drop: [ALL]` breaks N8N or ComfyUI | Service fails if needing capabilities | Apply to custom-build services first; test third-party separately; add `cap_add` as needed | Remove `cap_drop` from affected service |
 | ops-controller user change breaks docker.sock access | 403 on all docker operations | Verify docker group GID on host; set `user: "1000:<gid>"` | Revert user to root temporarily |
 | Model gateway cache serves stale model list | Users see deleted models | Cache TTL is 60s; `DELETE /v1/cache` to invalidate | Set `MODEL_CACHE_TTL_SEC=0` to disable cache |
-| WEBUI_AUTH=True breaks existing setups | Users locked out of Open WebUI | Document in UPGRADE.md; `WEBUI_AUTH=False` to opt out | `WEBUI_AUTH=False` in `.env` |
+| WEBUI_AUTH=True breaks existing setups | Users locked out of Open WebUI | Document the change in `CHANGELOG.md` / the operator guide; `WEBUI_AUTH=False` to opt out | `WEBUI_AUTH=False` in `ordo.yaml` (renders to `out/.env`) |
 | docker.sock in two services | Two attack surfaces for container escape | Accept: both required. Mitigate with allowlists, auth, no host ports | Remove one; document trade-off |
-| MCP filesystem SSRF | Tool access to host filesystem | Removed from default; `allow_clients: []` in registry | Clear from servers.txt |
+| MCP filesystem SSRF | Tool access to host filesystem | Removed from default; `allow_clients: []` in `registry-custom.yaml` | Clear from servers.txt |
 | Prompt injection via MCP tool output | Model manipulated by tool results | Allowlists; structured output in tool_result tags; monitor | Remove suspicious tool from servers.txt |
 | Performance regression from gateway proxy | >10ms added latency | Thin async proxy; benchmarked acceptable. Cache helps | Point services directly at llama.cpp (`http://llamacpp:8080/v1`) escape hatch |
 
@@ -19,7 +19,7 @@
 | # | Question | Status |
 |---|----------|--------|
 | 1 | **Ops-controller docker GID:** `user: "1000:<gid>"` value depends on host docker GID | Resolved — ops-controller runs without explicit user |
-| 2 | **Open WebUI `OPENAI_API_BASE`:** Does `open-webui:v0.8.4` support this env? | Resolved — uses `OPENAI_API_BASE_URL`; working |
+| 2 | **Open WebUI `OPENAI_API_BASE`:** Does `open-webui` (running `v0.10.1`) support this env? | Resolved — uses `OPENAI_API_BASE_URL`; working |
 | 3 | **MCP gateway policy:** Does Docker MCP Gateway support `X-Client-ID` for per-client allowlist? | Open — not yet; deferred to M6 |
 | 5 | **llama.cpp host port:** Remove to reduce attack surface? | Resolved — backend-only; no host port |
 | 6 | **Audit log rotation** | Resolved — size-based rotation (`AUDIT_LOG_MAX_BYTES`) |

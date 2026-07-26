@@ -7,8 +7,8 @@
 | **M0** | Done | Audit schema, Docker healthchecks, log rotation, SECURITY.md, runbooks |
 | **M1** | Done | Model Gateway: OpenAI-compat, llama.cpp, streaming, embeddings, throughput |
 | **M2** | Done | Ops Controller: start/stop/restart/logs/pull/audit; dashboard calls controller; bearer auth |
-| **M3** | Done | MCP registry.json + health API; cap_drop/read_only hardening; model list cache; Open WebUI → gateway default |
-| **M4** | Done | Explicit Docker networks (frontend/backend); correlation IDs (X-Request-ID → audit); smoke tests |
+| **M3** | Done | MCP registry-custom.yaml + health API; cap_drop/read_only hardening; model list cache; Open WebUI → gateway default |
+| **M4** | Done | Single `ordo-net` Docker network (edge-only host-port publish); correlation IDs (X-Request-ID → audit); smoke tests |
 | **M5** | Done | Dashboard MCP health dots (green/yellow/red); SSRF egress scripts; hardware stats; throughput benchmark; default-model management |
 | **M5-ext** | Done | RAG pipeline (Qdrant + rag-ingestion); Open WebUI → Qdrant; RAG status endpoint; Responses API + completions compat; cache-bust endpoint |
 | **M6** | Partial | **Done:** mcp-gateway backend-only; CI; audit log rotation. **Deferred:** MCP per-client / `X-Client-ID` (upstream). **Skipped:** `WEBUI_AUTH` default → True |
@@ -33,7 +33,7 @@
 ## M4 — Networks + Correlation + Smoke Tests (Done)
 
 **User-visible outcomes:**
-- Explicit `ordo-ai-stack-frontend` / `ordo-ai-stack-backend` networks; llama.cpp/ops-controller on backend only
+- Single `ordo-net` Docker network (edge-only host-port publish); llama.cpp/ops-controller reachable only in-network
 - Request IDs: `X-Request-ID` forwarded dashboard → ops-controller and stored in audit entries
 - Smoke tests: `tests/test_compose_smoke.py`
 
@@ -77,7 +77,7 @@
 ### M6 Acceptance Criteria
 
 - **Given** `docker compose up -d`, **When** env does not set `WEBUI_AUTH`, **Then** Open WebUI requires login
-- **Given** `docker inspect mcp-gateway`, **Then** `NetworkSettings.Networks` contains only `ordo-ai-stack-backend`
+- **Given** `docker inspect mcp-gateway`, **Then** `NetworkSettings.Networks` contains only `ordo-net`
 - **Given** audit log exceeds 10MB, **When** next privileged action occurs, **Then** old log renamed to `audit.log.1`
 - **Given** push to main branch, **When** CI runs, **Then** all contract + smoke tests pass
 
@@ -107,8 +107,10 @@ python -m pytest tests/ -v
 python -m ordo.cli render --out out
 cd out && docker compose -p ordo up -d
 docker compose ps           # all services healthy within 3 min
-# model-gateway is host-published on 127.0.0.1; dashboard is NOT — go through the network from inside a container, or via the SSO front door with a session cookie:
-curl -s http://127.0.0.1:11435/v1/models | jq .data[].id
+# model-gateway publishes NO host port (only Caddy publishes host ports) — reach it in-network from another container:
+docker compose exec dashboard curl -s http://model-gateway:11435/v1/models | jq .data[].id
+# or externally via the Caddy /llm edge route (bearer = LITELLM_MASTER_KEY):
+# curl -s -H "Authorization: Bearer $LITELLM_MASTER_KEY" https://<host>/llm/v1/models | jq .data[].id
 docker compose exec dashboard curl -s http://localhost:8080/api/mcp/health | jq .health
 docker compose exec dashboard curl -s http://localhost:8080/api/rag/status | jq .
 docker inspect $(docker compose ps -q model-gateway) --format '{{.HostConfig.CapDrop}}'
