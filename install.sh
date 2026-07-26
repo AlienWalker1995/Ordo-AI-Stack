@@ -18,15 +18,22 @@ die()  { printf '\033[1;31mERROR:\033[0m %s\n' "$1" >&2; exit 1; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# Is stdin a terminal? Piped `curl | sh` is NOT — prompts must fall back to defaults / env vars.
-if [ -t 0 ]; then INTERACTIVE=1; else INTERACTIVE=0; fi
+# Find an interactive input source. Under `curl | sh` stdin is the script itself (not a terminal),
+# but /dev/tty still reaches the real terminal — so a piped install can STILL be fully interactive.
+if [ -t 0 ]; then
+    TTY_IN="/dev/stdin"; INTERACTIVE=1
+elif { true </dev/tty; } 2>/dev/null; then
+    TTY_IN="/dev/tty"; INTERACTIVE=1
+else
+    TTY_IN=""; INTERACTIVE=0
+fi
 
 ask() {
     # ask "Prompt" "default" -> echoes answer (default when non-interactive or empty)
     _prompt="$1"; _default="$2"
     if [ "$INTERACTIVE" -eq 1 ]; then
         printf '%s [%s]: ' "$_prompt" "$_default" >&2
-        read -r _ans || _ans=""
+        read -r _ans <"$TTY_IN" || _ans=""
         [ -n "$_ans" ] && printf '%s' "$_ans" || printf '%s' "$_default"
     else
         printf '%s' "$_default"
@@ -97,10 +104,12 @@ info "ordo installed: $(ordo --help >/dev/null 2>&1 && echo ok)"
 # ── 4. Run the wizard ────────────────────────────────────────────────────────
 info "Launching the setup wizard"
 if [ "$INTERACTIVE" -eq 1 ]; then
-    ordo init --out out
+    # Redirect the wizard's stdin from the real terminal so its prompts work even when this
+    # script was itself piped in (curl | sh consumes stdin; /dev/tty still reaches the console).
+    ordo init --out out <"$TTY_IN"
 else
-    # Piped (no TTY): write config non-interactively, then tell the operator how to finish.
-    warn "No terminal attached (piped install) — writing config non-interactively (no bring-up)."
+    # Truly headless (no terminal at all, e.g. CI): write config non-interactively.
+    warn "No terminal available — writing config non-interactively (no bring-up)."
     ordo init --yes --out out
     cat <<EOF
 
