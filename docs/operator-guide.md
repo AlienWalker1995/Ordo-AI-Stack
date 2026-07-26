@@ -12,15 +12,25 @@ render substrate lives at the repo root (there is no `v2/` directory — there i
 
 ## Install & first run
 
-**From a fresh machine — one command installs the CLI and launches the setup wizard:**
+**From a fresh machine — one command installs the CLI and launches the setup wizard, in the same
+terminal. Run the line for your platform:**
 
 ```bash
+# macOS / Linux (bash · zsh · or Git Bash on Windows)
 curl -fsSL https://raw.githubusercontent.com/AlienWalker1995/Ordo-AI-Stack/main/install.sh | sh
+# …or without curl:
+wget -qO- https://raw.githubusercontent.com/AlienWalker1995/Ordo-AI-Stack/main/install.sh | sh
 ```
 
-It checks prerequisites (git, Docker + `docker compose` v2, Python 3.11+; warns if there's no
-NVIDIA GPU), clones the repo to `~/ordo` (override with `ORDO_DIR=`), installs `ordo` into a
-virtualenv, and runs **`ordo init`** — the interactive wizard that configures the whole stack.
+```powershell
+# Windows — PowerShell (not cmd; `curl | sh` needs a POSIX shell, so native Windows uses this)
+irm https://raw.githubusercontent.com/AlienWalker1995/Ordo-AI-Stack/main/install.ps1 | iex
+```
+
+Either path checks prerequisites (git, Docker + `docker compose` v2, Python 3.11+; warns if there's
+no NVIDIA GPU), clones the repo (`~/ordo`, or `%USERPROFILE%\ordo` on Windows — override with the
+`ORDO_DIR` env var), installs `ordo` into a virtualenv, and runs **`ordo init`** — the interactive
+wizard that configures the whole stack.
 
 **The wizard (`ordo init`) is the setup path.** Every prompt has a sensible default (press **Enter**
 to accept); it walks you through:

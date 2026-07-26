@@ -15,13 +15,28 @@ Every choice about your stack is made in one place — an **interactive terminal
 
 ## Install
 
-One command takes a fresh machine from nothing to a configured stack. It installs the `ordo` CLI and drops you straight into the setup wizard:
+One command takes a fresh machine from nothing to a configured stack — it installs the `ordo` CLI and drops you straight into the interactive setup wizard, **in the same terminal**. Open your normal terminal and run the line for your platform:
+
+**macOS / Linux** (bash · zsh · or Git Bash on Windows):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AlienWalker1995/Ordo-AI-Stack/main/install.sh | sh
 ```
 
-Under the hood the one-liner checks prerequisites (git, Docker + `docker compose` v2, Python 3.11+; warns if there's no NVIDIA GPU), clones the repo to `~/ordo` (override with `ORDO_DIR=`), installs the CLI into a virtualenv, and launches the wizard. That's the only step — everything else is the wizard.
+```bash
+# no curl? use wget:
+wget -qO- https://raw.githubusercontent.com/AlienWalker1995/Ordo-AI-Stack/main/install.sh | sh
+```
+
+**Windows** (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/AlienWalker1995/Ordo-AI-Stack/main/install.ps1 | iex
+```
+
+> The Windows line must run in **PowerShell**, not `cmd`. (`curl … | sh` only works inside a POSIX shell — Git Bash or WSL — so on native Windows use the PowerShell one-liner.)
+
+Either path checks prerequisites (git, Docker + `docker compose` v2, Python 3.11+; warns if there's no NVIDIA GPU), clones the repo (`~/ordo`, or `%USERPROFILE%\ordo` on Windows — override with the `ORDO_DIR` env var), installs the CLI into a virtualenv, and launches the wizard. That's the only step — everything else is the wizard.
 
 ### The setup wizard — `ordo init`
 
