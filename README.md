@@ -44,7 +44,7 @@ The wizard **is** the configuration experience: every decision about your stack 
 
 1. **Hardware** — confirms the auto-detected GPU / RAM / CPU (or pin it later for reproducibility).
 2. **Model** — accepts the best-fit pick from the catalog, or choose another by tier.
-3. **Capabilities** — which optional groups to turn on (chat is always on): image/video, RAG, voice, automation (n8n), web search, monitoring. Default is hardware-gated auto.
+3. **Capabilities** — which optional groups to turn on (chat is always on): image/video, RAG, voice, automation (n8n), web search, monitoring, **notes sync** (cross-device Obsidian). Default is hardware-gated auto.
 4. **Secure front door** — set up the Tailscale + Google SSO gate now, or skip it (with an explicit warning that the stack then runs unauthenticated). If you set it up, the tailnet hostname, OAuth client id/secret, and email allowlist are **required** — leave one blank and the wizard asks whether to defer it or re-enter, so you never ship a half-configured gate. It prints the exact Google console URL + callback and offers to provision a `tailscale cert`.
 5. **External tokens** — Hugging Face, Tailscale, and GitHub tokens; all optional (Enter to skip). Internal keys (LiteLLM, ops, MCP, cookie, SearXNG, n8n) are **auto-generated** for you.
 6. **Review & confirm** — a summary of every choice (hardware, model, capabilities, front door, secrets) with a final **Y/n**. Decline and nothing is written.
@@ -136,7 +136,7 @@ ones add exposure and hardening requirements. See [docs/deployment-models.md](do
 
 ## Docs
 
-[Operator guide (`docs/operator-guide.md`)](docs/operator-guide.md) · [Access & deployment models](docs/deployment-models.md) · [Auth front door](docs/runbooks/auth.md) · [Secrets](docs/runbooks/secrets.md) · [Data](docs/data.md) · [Hermes agent](docs/hermes-agent.md) · [PRD index](docs/product%20requirements%20docs/index.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
+[Operator guide (`docs/operator-guide.md`)](docs/operator-guide.md) · [Access & deployment models](docs/deployment-models.md) · [Auth front door](docs/runbooks/auth.md) · [Secrets](docs/runbooks/secrets.md) · [Notes sync (Obsidian)](docs/runbooks/notes-sync.md) · [Data](docs/data.md) · [Hermes agent](docs/hermes-agent.md) · [PRD index](docs/product%20requirements%20docs/index.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
 
 ## License
 

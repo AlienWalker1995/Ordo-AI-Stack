@@ -200,3 +200,20 @@ def test_codebase_memory_ui_serves_at_root() -> None:
     assert "sub_filter" not in nginx, "sub_filter reintroduced — the nginx subpath adapter is back"
     assert "/codebase-memory/" not in nginx, "/codebase-memory/ subpath reintroduced in nginx.conf"
     assert "location /" in nginx, "nginx.conf lost its root `location /` proxy"
+
+
+def test_couchdb_livesync_bypasses_sso_and_blocks_fauxton(caddyfile_text: str) -> None:
+    """The Obsidian Self-hosted LiveSync sync endpoint (/couchdb) must bypass Google SSO — the
+    LiveSync clients are not browsers and authenticate to CouchDB directly (require_valid_user,
+    set by the bridge). It lives on the :443 front door (a bypass route like /llm and /mcp), NOT
+    behind the shared SSO gate. Fauxton (/_utils, the admin UI) must be blocked outright so it is
+    never internet-reachable when the endpoint is exposed via Tailscale Funnel."""
+    assert "handle_path /couchdb/*" in caddyfile_text, (
+        "Caddyfile missing the /couchdb LiveSync route — Obsidian cross-device sync will fail.")
+    assert "reverse_proxy couchdb:5984" in caddyfile_text, "/couchdb must proxy to couchdb:5984"
+    assert "/couchdb/_utils" in caddyfile_text, (
+        "Fauxton (/couchdb/_utils) must be explicitly blocked — the CouchDB admin UI must never be "
+        "internet-reachable via Funnel.")
+    # on the :443 front door, not inside an :844x SSO-gated port block
+    root_site = caddyfile_text.split("{$CADDY_TAILNET_HOSTNAME} {", 1)[1]
+    assert "handle_path /couchdb/*" in root_site, "/couchdb must be on the :443 front door (SSO bypass)"

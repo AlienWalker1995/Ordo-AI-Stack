@@ -1,0 +1,79 @@
+# Plugin manifest (data-only) — Obsidian cross-device sync via Self-hosted LiveSync.
+#
+# CouchDB is the sync server every native Obsidian app (iOS / Mac / PC) talks to through the
+# Self-hosted LiveSync plugin — real-time, multi-directional. `livesync-bridge` is a headless
+# daemon that mirrors that CouchDB database to plain `.md` files under the shared memory vault's
+# `notes/` folder, so the 24/7 AI stack (memory-vault MCP + rag-ingestion) sees your notes with
+# NO desktop app in the loop. Reachable from any tailscaled device through the edge
+# (:443 /couchdb, CouchDB's own auth — a non-browser sync client can't pass Google SSO), and
+# off-tailnet via Tailscale Funnel. Opt-in behind the `notes` profile.
+id: obsidian-livesync
+name: Obsidian sync (CouchDB LiveSync + file bridge)
+description: Cross-device Obsidian sync (CouchDB + Self-hosted LiveSync) mirrored to the vault's notes/ folder so the AI can use it.
+requires:
+  nvidia: false
+  ram_gb: 2
+provides: [notes]
+compose_profile: notes
+env:
+  NOTES_ENABLED: "1"
+  # Non-secret sync coordinates — shared by both services (via the derived .env env_file) and
+  # documented for LiveSync client setup. The password + E2EE passphrase are secrets (below).
+  COUCHDB_USER: ordoadmin
+  COUCHDB_INTERNAL_URL: http://couchdb:5984
+  LIVESYNC_DATABASE: obsidian-notes
+secrets:
+  # Minted by the wizard (SECRET_GENERATORS). COUCHDB_PASSWORD is the CouchDB admin password
+  # (require_valid_user gates everything). LIVESYNC_E2EE_PASSPHRASE encrypts note CONTENT at rest
+  # in CouchDB — enter it identically in every Obsidian LiveSync client; it is mirrored into the
+  # bridge so it can materialize plaintext files. Both reach the containers via secrets.env
+  # (env_file), never ${..} interpolation, so `docker compose config` never needs the value.
+  - COUCHDB_PASSWORD
+  - LIVESYNC_E2EE_PASSPHRASE
+services:
+  - name: couchdb
+    # The sync server the Obsidian LiveSync clients replicate against. No host port — reached
+    # through the edge at :443/couchdb. Reads COUCHDB_USER (.env) + COUCHDB_PASSWORD (secrets.env)
+    # to create its admin; the bridge then sets require_valid_user + Obsidian CORS via the _config
+    # API (a bind-mounted ini crashes this image's chown-under-set-e entrypoint on Docker Desktop).
+    image: couchdb:3.4.3@sha256:d603d4086836b1e20f1ec35d2d38e49359639c2eb56a54c8ba0ddbdff0f3dabe
+    wants_secrets: true
+    volumes:
+      - ${DATA_PATH:-./data}/couchdb:/opt/couchdb/data
+    healthcheck:
+      # /dev/tcp port-open probe (no curl dependency; matches qdrant). True readiness (+ DB
+      # creation) is handled by the bridge's own wait-loop before it starts syncing.
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/5984'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+  - name: livesync-bridge
+    # Headless CouchDB <-> filesystem mirror (vrtmrz/livesync-bridge, pinned + built to ordo/*).
+    # Waits for CouchDB, ensures the system + notes databases exist (idempotent), renders its
+    # config from env, then materializes LiveSync notes as plain .md under the vault's notes/
+    # folder (uid 1000, vault-aligned) so the AI reads them with no desktop Obsidian running.
+    image: ordo/livesync-bridge:latest
+    wants_secrets: true
+    env:
+      # Docker Desktop bind mounts don't emit inotify events, so the bridge's file watcher can't see
+      # host/AI writes to notes/ live (same limitation rag-ingestion handles with a poll). Chokidar
+      # polling detects them — validated: an AI/host-written note reaches CouchDB in ~3s. The reverse
+      # direction (device -> CouchDB -> file) is network-driven and always live.
+      CHOKIDAR_USEPOLLING: "1"
+      CHOKIDAR_INTERVAL: "3000"
+    volumes:
+      # The vault's notes/ subfolder <-> the bridge's storage root. Same MEMORY_VAULT_PATH the
+      # memory-vault MCP (RW) and rag-ingestion (RO) mount, so notes land in the ONE shared vault
+      # (kept separate from the AI-managed memories/). Pre-create it uid-1000-owned (ensure_dirs).
+      - ${MEMORY_VAULT_PATH:-${DATA_PATH:-./data}/memory-vault}/notes:/app/data/notes
+    # Start-order only (plugin-manifest services don't carry compose health conditions). The
+    # bridge's own `until curl _up` loop is the real readiness gate — it waits for CouchDB and
+    # re-checks on every restart, which is stronger than a one-shot service_healthy anyway.
+    depends_on: [couchdb]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /app/dat/config.json"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s

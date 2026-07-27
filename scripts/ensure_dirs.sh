@@ -23,6 +23,8 @@ dirs=(
   "$data/n8n-files"
   "$data/dashboard"
   "$data/qdrant"
+  "$data/couchdb"
+  "$data/memory-vault/notes"
   "$base/models/comfyui/checkpoints"
   "$base/models/comfyui/loras"
   "$base/models/comfyui/latent_upscale_models"

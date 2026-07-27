@@ -1,0 +1,48 @@
+# Plugin manifest (data-only) — OFF-TAILNET public access for the Obsidian sync endpoint via
+# Tailscale Funnel. A single Tailscale sidecar joins the tailnet as `notes.<CADDY_TAILNET_DOMAIN>`
+# and Funnels its :443 to CouchDB (shared netns) so Obsidian LiveSync works from devices with NO
+# Tailscale at all. The public endpoint is protected by CouchDB's own auth (require_valid_user) and
+# LiveSync end-to-end encryption (note content is encrypted at rest in CouchDB).
+#
+# DELIBERATELY a SEPARATE plugin + profile (`notes-funnel`, NOT `notes`): exposing notes to the
+# public internet is an opt-in flip, never automatic with the sync feature. It stays dormant until
+# BOTH the operator adds `notes-funnel` to COMPOSE_PROFILES AND the tailnet ACL grants this node the
+# `funnel` attribute (one-time, operator-only — see docs/runbooks/notes-sync.md). Rendering +
+# compose-config are validated here; live reachability requires those operator prerequisites.
+id: obsidian-livesync-funnel
+name: Obsidian sync - public access (Tailscale Funnel)
+description: Off-tailnet public HTTPS for the CouchDB LiveSync endpoint via Tailscale Funnel (notes.<tailnet>). Opt-in.
+requires:
+  nvidia: false
+  ram_gb: 1
+depends_on: [obsidian-livesync]   # meaningless without the CouchDB it fronts
+provides: [notes-funnel]
+compose_profile: notes-funnel
+env:
+  NOTES_FUNNEL_ENABLED: "1"
+secrets:
+  # Reusable tagged auth key (tag:ordo-edge) — same key the tailnet-names sidecars use.
+  - TS_AUTHKEY
+services:
+  - name: notes-funnel
+    # Tailscale sidecar in CouchDB's network namespace, so `tailscale serve` can proxy to CouchDB
+    # over loopback (serve targets 127.0.0.1 only). AllowFunnel in the serve config makes it public.
+    image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
+    network_mode: service:couchdb
+    wants_secrets: true          # TS_AUTHKEY arrives via secrets.env - NEVER re-declared in env
+    depends_on: [couchdb]
+    env:
+      TS_HOSTNAME: notes
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_AUTH_ONCE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - ts-state-notes:/var/lib/tailscale
+      - ${BASE_PATH:-.}/assets/tailscale-serve/notes-funnel.json:/config/serve.json:ro
+    healthcheck:
+      test: ["CMD", "tailscale", "status", "--peers=false"]
+      start_period: 30s
+      interval: 30s
+      timeout: 10s
+      retries: 3
