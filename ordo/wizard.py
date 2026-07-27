@@ -74,6 +74,11 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
         "plugins": ["monitoring"],
         "gpu": False,
     },
+    "notes": {
+        "label": "Notes sync (Obsidian / CouchDB LiveSync, cross-device)",
+        "plugins": ["obsidian-livesync"],
+        "gpu": False,
+    },
 }
 
 
@@ -95,6 +100,11 @@ SECRET_GENERATORS: dict[str, Any] = {
     "OAUTH2_PROXY_COOKIE_SECRET": _cookie_secret,
     "SEARXNG_SECRET": lambda: _secrets.token_hex(32),
     "N8N_API_KEY": lambda: _secrets.token_urlsafe(32),
+    # Obsidian notes sync (CouchDB LiveSync). token_urlsafe is base64url — JSON-safe for the
+    # bridge's generated config, and shell-safe. The E2EE passphrase encrypts note content at rest
+    # in CouchDB; the operator enters the SAME value in every Obsidian LiveSync client.
+    "COUCHDB_PASSWORD": lambda: _secrets.token_urlsafe(24),
+    "LIVESYNC_E2EE_PASSPHRASE": lambda: _secrets.token_urlsafe(32),
 }
 
 # External secrets — human-readable prompt text (order = display order). A key that is required

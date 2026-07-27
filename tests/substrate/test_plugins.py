@@ -33,7 +33,7 @@ def _src(**kw):
 # per-service Tailscale clean-URL sidecar set, which rides the edge profile the same CPU-ok way.
 CPU_OK_SERVICE_PLUGINS = {"monitoring", "rag", "worker", "automation", "open-webui",
                           "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
-                          "tailnet-names"}
+                          "tailnet-names", "obsidian-livesync", "obsidian-livesync-funnel"}
 
 
 def test_registry_loaded_manifests():

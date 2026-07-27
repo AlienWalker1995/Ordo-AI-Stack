@@ -39,7 +39,8 @@ walks you through:
 1. **Hardware** — confirm the auto-detected GPU / RAM / CPU (or pin it later for reproducibility).
 2. **Model** — accept the best-fit catalog pick, or choose another by tier.
 3. **Capabilities** — optional groups to enable (chat is always on): image/video, RAG, voice,
-   automation (n8n), web search, monitoring. Default is hardware-gated auto.
+   automation (n8n), web search, monitoring, notes sync (cross-device Obsidian /
+   [CouchDB LiveSync](runbooks/notes-sync.md)). Default is hardware-gated auto.
 4. **Secure front door** — set up the Tailscale + Google SSO gate now, or skip it (with an explicit
    warning that the stack then runs unauthenticated). When you set it up, the tailnet hostname
    (`CADDY_TAILNET_HOSTNAME`), OAuth client id/secret, and email allowlist are **required** — a blank

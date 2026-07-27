@@ -198,6 +198,21 @@
         }
     }
 
+    # ---- CouchDB — Obsidian Self-hosted LiveSync sync endpoint ----
+    # Bypasses Google SSO: the Obsidian LiveSync clients (iOS/Mac/PC) are not browsers and can't do
+    # the interactive OAuth dance — they authenticate to CouchDB directly with Basic auth, which
+    # CouchDB enforces (require_valid_user, set by the bridge). On :443 so it rides Tailscale Funnel
+    # for off-tailnet sync. Fauxton (/_utils, the admin UI) is blocked outright — it must never be
+    # internet-reachable; LiveSync needs only the data/session/changes APIs. LiveSync server URI =
+    # https://<host>/couchdb (handle_path strips the /couchdb prefix so CouchDB sees /<db>, /_session…).
+    @couchdb_admin path /couchdb/_utils /couchdb/_utils/*
+    handle @couchdb_admin {
+        respond "Forbidden" 403
+    }
+    handle_path /couchdb/* {
+        reverse_proxy couchdb:5984
+    }
+
     # ---- legacy-path 302s (no auth needed for a redirect) ----
     # Every pre-port bookmark keeps working. Deep chat/app paths are session
     # state, not stable URLs — landing on the service root is correct.

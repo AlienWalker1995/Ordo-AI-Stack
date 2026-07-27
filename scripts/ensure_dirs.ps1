@@ -17,6 +17,8 @@ $dirs = @(
     (Join-Path $data "n8n-files"),
     (Join-Path $data "dashboard"),
     (Join-Path $data "qdrant"),
+    (Join-Path $data "couchdb"),
+    (Join-Path $data "memory-vault\notes"),
     (Join-Path $base "models\comfyui\checkpoints"),
     (Join-Path $base "models\comfyui\loras"),
     (Join-Path $base "models\comfyui\latent_upscale_models"),
