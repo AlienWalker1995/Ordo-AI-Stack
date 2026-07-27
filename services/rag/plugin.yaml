@@ -80,6 +80,11 @@ services:
       # (.obsidian/, .trash/) are excluded by the ingester's hidden-path rule. Same var the
       # memory-vault MCP mounts, so both views are the one vault.
       - ${MEMORY_VAULT_PATH:-${DATA_PATH:-./data}/memory-vault}:/watch/memory-vault:ro
+      # Stack documentation (operator guide, runbooks, PRDs, agent docs) as a THIRD read-only input
+      # root, nested in the watch tree like the vault so the recursive scanner auto-indexes it with
+      # zero ingester config — making the stack's own docs semantically searchable by Hermes and any
+      # other qdrant_search client. ${BASE_PATH} is the host repo root (must be a host path).
+      - ${BASE_PATH:-.}/docs:/watch/stack-docs:ro
     depends_on: [llamacpp-embed, qdrant]
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/rag-ingestion.heartbeat"]
