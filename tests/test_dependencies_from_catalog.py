@@ -75,15 +75,16 @@ def test_dependency_services_manifest_gated_and_appends_infra(tmp_path, monkeypa
 
 def test_headless_services_excluded_even_when_enabled(tmp_path, monkeypatch):
     manifest = tmp_path / "manifest.json"
-    manifest.write_text(json.dumps({"plugins_enabled": ["worker", "rag"]}), encoding="utf-8")
+    manifest.write_text(json.dumps({"plugins_enabled": ["obsidian-livesync", "rag"]}), encoding="utf-8")
     monkeypatch.setenv("MANIFEST_PATH", str(manifest))
 
     ids = [e["id"] for e in dependency_services()]
-    # worker + rag-ingestion expose no `check` -> excluded (no false-red row).
-    assert "worker" not in ids
+    # livesync-bridge + rag-ingestion expose no `check` -> excluded (no false-red row).
+    assert "livesync-bridge" not in ids
     assert "rag-ingestion" not in ids
-    # qdrant (rag plugin, has a check) IS included.
+    # Check-bearing services from the same plugins ARE included: qdrant (rag), couchdb (obsidian-livesync).
     assert "qdrant" in ids
+    assert "couchdb" in ids
 
 
 def test_probe_all_shape_and_fields(monkeypatch):
@@ -100,6 +101,6 @@ def test_probe_all_shape_and_fields(monkeypatch):
     for e in out["entries"]:
         assert FRONTEND_ENTRY_FIELDS <= set(e)
     ids = {e["id"] for e in out["entries"]}
-    # Infra always probed; headless workers never appear.
+    # Infra always probed; headless (check-less) workers never appear.
     assert {"ops-controller", "dashboard"} <= ids
-    assert "worker" not in ids and "rag-ingestion" not in ids
+    assert "livesync-bridge" not in ids and "rag-ingestion" not in ids

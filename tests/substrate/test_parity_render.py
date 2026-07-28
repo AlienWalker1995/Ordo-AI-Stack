@@ -22,7 +22,7 @@ P_DUAL = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": UUID_5090},
 # Every kind=service plugin V2 ships after the parity port (GPU + CPU-ok), on the real dual-GPU host.
 EXPECTED_SERVICE_PLUGINS = {
     "comfyui", "song-gen", "voice", "monitoring",          # GPU / media / voice
-    "rag", "worker", "automation", "open-webui",           # ported CPU-ok services
+    "rag", "automation", "open-webui",                     # ported CPU-ok services
     "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
     "ltx-trainer",                                        # LoRA trainer (sole trainer since 2026-07-24)
     "tailnet-names",                                      # post-parity: per-service Tailscale clean-URL sidecars
@@ -50,14 +50,15 @@ def test_dual_gpu_enables_the_full_parity_set():
 
 
 def test_parity_matrix_counts():
-    # 16 kind=service plugins (12 parity set + ltx-trainer + tailnet-names + obsidian-livesync +
+    # 15 kind=service plugins (11 parity set + ltx-trainer + tailnet-names + obsidian-livesync +
     # obsidian-livesync-funnel) + 7 kind=mcp plugins (qdrant-rag, searxng, memory-vault + the
     # restored codebase-memory / comfyui-mcp / n8n / orchestration) all enable on the full host.
+    # (The media "worker" plugin was retired, dropping the parity set from 12 to 11.)
     svc = [p for p in REGISTRY.plugins if p.kind == "service"]
     mcp = [p for p in REGISTRY.plugins if p.kind == "mcp"]
-    assert len(svc) == 16 and len(mcp) == 7
+    assert len(svc) == 15 and len(mcp) == 7
     rc = _dual()
-    assert len(rc.plugins_enabled) == 16
+    assert len(rc.plugins_enabled) == 15
     assert len(rc.mcp_servers) == 7
 
 

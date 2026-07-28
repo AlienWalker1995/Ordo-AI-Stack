@@ -31,7 +31,7 @@ def _src(**kw):
 # behind their compose profile until requested. Voice/comfyui/song-gen are the GPU-gated ones
 # handled separately. All but tailnet-names are the V1-parity port; tailnet-names is the post-parity
 # per-service Tailscale clean-URL sidecar set, which rides the edge profile the same CPU-ok way.
-CPU_OK_SERVICE_PLUGINS = {"monitoring", "rag", "worker", "automation", "open-webui",
+CPU_OK_SERVICE_PLUGINS = {"monitoring", "rag", "automation", "open-webui",
                           "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
                           "tailnet-names", "obsidian-livesync", "obsidian-livesync-funnel"}
 
@@ -40,14 +40,13 @@ def test_registry_loaded_manifests():
     ids = {p.id for p in REGISTRY.plugins}
     assert {"comfyui", "song-gen", "voice", "monitoring"} <= ids
     # the ported V1-parity plugins are registered too
-    assert {"rag", "worker", "automation", "open-webui", "searxng-web",
+    assert {"rag", "automation", "open-webui", "searxng-web",
             "codebase-memory-ui", "hermes-dashboard", "edge"} <= ids
 
 
 def test_big_gpu_enables_all_and_merges_env():
     # single 5090: media enables; the CPU-ok service plugins enable; voice needs a SECOND card → off
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
-    # worker depends on comfyui (enabled here), so it's in the set too
     assert set(rc.plugins_enabled) == {"comfyui", "song-gen", "ltx-trainer"} | CPU_OK_SERVICE_PLUGINS
     assert "voice" not in rc.plugins_enabled
     assert rc.env["COMFYUI_ENABLED"] == "1"
@@ -83,9 +82,7 @@ def test_cpu_disables_voice_and_media():
     assert "voice" not in rc.plugins_enabled              # CPU-only → voice off
     assert not ({"comfyui", "song-gen"} & set(rc.plugins_enabled))
     assert "COMFYUI_ENABLED" not in rc.env
-    # worker depends on comfyui (GPU-only) → dropped on CPU; the rest of the CPU-ok set stays
-    assert set(rc.plugins_enabled) == CPU_OK_SERVICE_PLUGINS - {"worker"}
-    assert "worker" not in rc.plugins_enabled
+    assert set(rc.plugins_enabled) == CPU_OK_SERVICE_PLUGINS
 
 
 def test_small_gpu_gates_by_vram():
