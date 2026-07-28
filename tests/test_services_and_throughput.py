@@ -67,6 +67,30 @@ def test_background_flag_flows_through_services_endpoint(client, monkeypatch):
         assert not by_id[ui_id].get("background"), f"{ui_id} must stay user-facing"
 
 
+def test_headless_worker_shows_true_container_health(client, monkeypatch):
+    """check:None background workers (worker/rag-ingestion/livesync-bridge) have no HTTP
+    endpoint to probe. The grid derives their up/down from ops-api container state+health
+    rather than showing a neutral 'unknown': running+healthy -> ok True; not-running -> ok
+    False (with a reason). A container ops-api doesn't report stays 'unknown' (ok None)."""
+    monkeypatch.delenv("MANIFEST_PATH", raising=False)  # fail open so the worker cards show
+
+    async def _fake_ops(method, path, *a, **k):
+        assert path == "/services"
+        return 200, {"services": [
+            {"id": "worker", "state": "running", "health": "healthy"},
+            {"id": "rag-ingestion", "state": "exited", "health": None},
+            # livesync-bridge intentionally omitted -> should remain unknown (ok None)
+        ]}
+
+    monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
+    r = client.get("/api/services")
+    by_id = {s["id"]: s for s in r.json()["services"]}
+    assert by_id["worker"]["ok"] is True
+    assert by_id["rag-ingestion"]["ok"] is False
+    assert by_id["rag-ingestion"]["error"], "a down worker must carry a container-state reason"
+    assert by_id["livesync-bridge"]["ok"] is None, "unreported container stays 'unknown'"
+
+
 def test_model_gateway_is_user_facing_with_swagger_open_url(client, monkeypatch):
     """model-gateway stays in the main grid (user-facing, not background) and its Open link
     points at the LiteLLM Swagger UI through the edge's /llm/ route (which strips /llm and
