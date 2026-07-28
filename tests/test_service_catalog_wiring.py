@@ -94,7 +94,8 @@ def test_non_user_facing_services_carry_background_flag():
     webui/comfyui/n8n/hermes/codebase-memory-ui — and model-gateway (its Open link is the
     LiteLLM Swagger UI) must NOT carry it, so an openable service can't be quietly demoted."""
     bg = {s["id"] for s in SERVICES if s.get("background")}
-    assert bg == {"worker", "rag-ingestion", "llamacpp", "mcp", "qdrant", "stt", "tts"}
+    assert bg == {"worker", "rag-ingestion", "llamacpp", "mcp", "qdrant", "stt", "tts",
+                  "couchdb", "livesync-bridge", "notes-funnel"}
     user_facing = {"webui", "comfyui", "n8n", "hermes", "codebase-memory-ui", "model-gateway"}
     for s in SERVICES:
         if s["id"] in user_facing:
@@ -139,7 +140,7 @@ def test_visible_services_shows_all_for_live_enabled_set():
     enabled = {
         "automation", "codebase-memory-ui", "comfyui", "edge", "hermes-dashboard",
         "ltx-trainer", "monitoring", "open-webui", "rag", "searxng-web", "song-gen",
-        "tailnet-names", "voice", "worker",
+        "tailnet-names", "voice", "worker", "obsidian-livesync", "obsidian-livesync-funnel",
     }
     visible_ids = {s["id"] for s in visible_services(enabled=enabled)}
     assert visible_ids == {s["id"] for s in SERVICES}

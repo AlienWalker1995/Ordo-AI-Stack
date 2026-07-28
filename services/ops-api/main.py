@@ -147,6 +147,8 @@ ALLOWED_SERVICES = {
     # deliberately NOT allowlisted — its self-restart is delicate. worker + rag-ingestion
     # are the media/rag background workers, operator-controllable from the dashboard grid.
     "hermes-dashboard", "worker", "rag-ingestion",
+    # Obsidian notes-sync background services (couchdb + bridge + opt-in funnel).
+    "couchdb", "livesync-bridge", "notes-funnel",
 }
 
 # .env keys we allow updating via the API
