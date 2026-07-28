@@ -241,7 +241,6 @@ ordo-ai-stack/
 │   ├── qdrant-rag/      # Qdrant RAG MCP server
 │   ├── codebase-memory/ # Headless codebase-memory MCP
 │   ├── codebase-memory-ui/  # Codebase-memory 3D graph UI service
-│   ├── worker/          # Background job worker (Dockerfile, worker.py)
 │   ├── hermes/          # Hermes agent build context (Dockerfile, entrypoint.sh, plugins/, seed/) + its agent.yaml manifest
 │   └── …                # edge, model-gateway, mcp-gateway, monitoring, voice, native, …
 ├── ordo/                # Render substrate (Python package): `ordo render`, `ordo detect`, etc.

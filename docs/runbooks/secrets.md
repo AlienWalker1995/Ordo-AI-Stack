@@ -88,7 +88,7 @@ scripts/secrets/rotate-internal.sh          # re-encrypts secrets/.env.sops
 # copy the rotated values into out/secrets.env
 cd out
 docker compose -p ordo restart model-gateway dashboard ops-controller \
-    worker agent hermes-dashboard mcp-gateway oauth2-proxy
+    agent hermes-dashboard mcp-gateway oauth2-proxy
 cd ../..
 git add secrets/.env.sops && git commit -m "chore(secrets): rotate internal tokens" && git push
 ```

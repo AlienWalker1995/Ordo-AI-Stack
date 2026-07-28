@@ -144,9 +144,10 @@ ALLOWED_SERVICES = {
     "llamacpp", "llamacpp-embed", "dashboard", "open-webui", "model-gateway", "mcp-gateway",
     "comfyui", "n8n", "qdrant", "stt", "tts", "codebase-memory-ui", "ltx-trainer",
     # hermes-dashboard is the Hermes UI service (safe to cycle); the `agent`/gateway is
-    # deliberately NOT allowlisted — its self-restart is delicate. worker + rag-ingestion
-    # are the media/rag background workers, operator-controllable from the dashboard grid.
-    "hermes-dashboard", "worker", "rag-ingestion",
+    # deliberately NOT allowlisted — its self-restart is delicate. rag-ingestion is the rag
+    # background worker, operator-controllable from the dashboard grid. (The media `worker`
+    # was retired — see CHANGELOG.)
+    "hermes-dashboard", "rag-ingestion",
     # Obsidian notes-sync background services (couchdb + bridge + opt-in funnel).
     "couchdb", "livesync-bridge", "notes-funnel",
 }

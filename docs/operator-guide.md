@@ -132,7 +132,9 @@ current split: today there is only Ordo.
     **service-level parity** with the live stack. Every V1 `docker-compose.yml` service is accounted
     for: 12 already-covered (core/existing plugins), **9 ported now** as new
     `kind=service` plugin manifests — **`rag`** (qdrant + llamacpp-embed + rag-ingestion),
-    **`worker`**, **`automation`** (n8n), **`open-webui`**, **`searxng-web`**,
+    **`worker`** *(the headless render/publish job-queue worker — since retired, see
+    CHANGELOG; media generation now runs via Hermes cron + the direct render/publish
+    scripts)*, **`automation`** (n8n), **`open-webui`**, **`searxng-web`**,
     **`codebase-memory-ui`**, **`hermes-dashboard`**, and the opt-in **`edge`** (Caddy + oauth2-proxy,
     the *only* host-port publish, profile `edge`) — and 4 obsolete-by-design (model pullers → `ordo
     fetch`; the manager-setup shim → image build; the reactive guardian → the V2 scheduler). Each

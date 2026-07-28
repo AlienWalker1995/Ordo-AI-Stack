@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""MCP adapter with stable tool names; delegates to dashboard /api/orchestration (HTTP control plane)."""
+"""MCP adapter with stable tool names; delegates to dashboard /api/orchestration (HTTP control plane).
+
+NOTE: the render/publish JOB worker was retired (see CHANGELOG). The job-execution, publish, and
+schedule tools that used to live here were removed with it — those dashboard endpoints now return
+410 Gone. What remains are the worker-INDEPENDENT verbs: workflow authoring/versioning, outputs,
+readiness, the ComfyUI status/restart pair (used for fault recovery), and the model registry / GPU
+views. Media generation itself runs via Hermes cron + the direct render_publish scripts.
+"""
 
 from __future__ import annotations
 
@@ -61,30 +68,6 @@ def _post(path: str, body: dict[str, Any]) -> dict[str, Any]:
         return r.json()
 
 
-def _patch(path: str, body: dict[str, Any]) -> dict[str, Any]:
-    with httpx.Client(timeout=30.0) as client:
-        r = client.patch(f"{BASE}{path}", headers=_headers(), json=body)
-        if r.status_code >= 400:
-            try:
-                detail = r.json()
-            except (ValueError, UnicodeDecodeError):
-                detail = {"detail": r.text}
-            raise RuntimeError(json.dumps(detail))
-        return r.json()
-
-
-def _delete(path: str) -> dict[str, Any]:
-    with httpx.Client(timeout=30.0) as client:
-        r = client.delete(f"{BASE}{path}", headers=_headers())
-        if r.status_code >= 400:
-            try:
-                detail = r.json()
-            except (ValueError, UnicodeDecodeError):
-                detail = {"detail": r.text}
-            raise RuntimeError(json.dumps(detail))
-        return r.json()
-
-
 mcp = FastMCP("orchestration")
 
 
@@ -102,7 +85,7 @@ def orchestration_readiness() -> dict:
 
 @mcp.tool()
 def list_templates() -> dict:
-    """List available typed templates (generate_image, generate_video, etc.) that can be used with create_from_template and run_workflow. Use this dedicated tool instead of generic gateway call tools for this operation."""
+    """List available typed templates (generate_image, generate_video, etc.) that can be used with create_from_template. Use this dedicated tool instead of generic gateway call tools for this operation."""
     result = _get("/api/orchestration/workflows")
     return {"templates": result.get("templates", [])}
 
@@ -179,122 +162,12 @@ def rollback_workflow(workflow_id: str, to_version: int) -> dict:
     return _post(f"/api/orchestration/workflows/{workflow_id}/rollback?to_version={to_version}", {})
 
 
-# ── Job execution ─────────────────────────────────────────────────────────────
-
-@mcp.tool()
-def run_workflow(
-    template_id: str | None = None,
-    workflow_id: str | None = None,
-    params_json: str = "{}",
-) -> dict:
-    """Queue a workflow run via the worker. Returns job_id immediately. Use this dedicated tool instead of generic gateway call tools. Only API-format workflows are supported; UI/Editor exports from the ComfyUI web interface are invalid. CRITICAL: Provide the raw ID only. Do NOT include the 'gateway__' prefix. MANDATORY SEQUENCE: After triggering a run, you MUST call await_run with the returned job_id to monitor state. Do not attempt to fetch outputs or assume completion until await_run returns a terminal state (completed/failed). DISCOVERY REQUIRED: Perform a fresh discovery via list_workflows or list_templates to verify the current ID before execution."""
-    try:
-        params = json.loads(params_json) if params_json else {}
-    except json.JSONDecodeError as e:
-        return {"error": f"Invalid JSON in params_json: {e}"}
-    body: dict[str, Any] = {"params": params}
-    if template_id:
-        body["template_id"] = template_id
-    workflow_id = _sanitize_workflow_id(workflow_id)
-    if workflow_id:
-        body["workflow_id"] = workflow_id
-    return _post("/api/orchestration/run", body)
-
-
-@mcp.tool()
-def await_run(job_id: str) -> dict:
-    """Get execution receipt and current state for a job. CRITICAL: Provide the raw ID only. Do NOT include the 'gateway__' prefix or any other namespace prefix. DISCOVERY REQUIRED: Always verify the job_id is current and valid."""
-    return _get(f"/api/orchestration/jobs/{job_id}")
-
-
-@mcp.tool()
-def list_jobs(state: str | None = None, limit: int = 20) -> dict:
-    """List recent jobs, optionally filtered by state. Use this dedicated tool instead of generic gateway call tools for this operation."""
-    params: dict[str, Any] = {"limit": limit}
-    if state:
-        params["state"] = state
-    return _get("/api/orchestration/jobs", params=params)
-
-
-@mcp.tool()
-def cancel_run(job_id: str) -> dict:
-    """Request cancellation of a queued or validated job. CRITICAL: Provide the raw ID only. Do NOT include the 'gateway__' prefix or any other namespace prefix inside the arguments of this tool."""
-    return _post(f"/api/orchestration/jobs/{job_id}/cancel", {})
-
-
-# ── Publish pipeline ──────────────────────────────────────────────────────────
-
-@mcp.tool()
-def publish_enqueue(job_id: str, webhook_url: str | None = None, payload_json: str = "{}") -> dict:
-    """Write to durable publish outbox (worker delivers with retries to n8n). CRITICAL: Provide the raw ID only. Do NOT include the 'gateway__' prefix or any other namespace prefix inside the arguments of this tool."""
-    try:
-        payload = json.loads(payload_json) if payload_json else {}
-    except json.JSONDecodeError as e:
-        return {"error": f"Invalid JSON in payload_json: {e}"}
-    body: dict[str, Any] = {"job_id": job_id, "payload": payload}
-    if webhook_url:
-        body["webhook_url"] = webhook_url
-    return _post("/api/orchestration/publish/enqueue", body)
-
-
-@mcp.tool()
-def publish_status(job_id: str) -> dict:
-    """Publish pipeline status and delivery history for a job. CRITICAL: Provide the raw ID only. Do NOT include the 'gateway__' prefix or any other namespace prefix inside the arguments of this tool."""
-    return _get("/api/orchestration/publish/status", params={"job_id": job_id})
-
-
 # ── Outputs ───────────────────────────────────────────────────────────────────
 
 @mcp.tool()
 def list_outputs() -> dict:
     """List generated ComfyUI output files via the API (no filesystem mount required). Use this dedicated tool instead of generic gateway call tools for this operation."""
     return _get("/api/orchestration/outputs")
-
-
-# ── Schedules ─────────────────────────────────────────────────────────────────
-
-@mcp.tool()
-def create_schedule(
-    cron_expr: str,
-    template_id: str | None = None,
-    workflow_id: str | None = None,
-    params_json: str = "{}",
-) -> dict:
-    """Schedule a recurring ComfyUI workflow run using a cron expression (e.g. '0 9 * * *' = 9am daily). CRITICAL: Provide the raw ID only. Do NOT include the 'gateway__' prefix or any other namespace prefix."""
-    try:
-        params = json.loads(params_json) if params_json else {}
-    except json.JSONDecodeError as e:
-        return {"error": f"Invalid JSON in params_json: {e}"}
-    body: dict[str, Any] = {"cron_expr": cron_expr, "params": params}
-    if template_id:
-        body["template_id"] = template_id
-    workflow_id = _sanitize_workflow_id(workflow_id)
-    if workflow_id:
-        body["workflow_id"] = workflow_id
-    return _post("/api/orchestration/schedules", body)
-
-
-@mcp.tool()
-def list_schedules() -> dict:
-    """List orchestration workflow schedules (ComfyUI jobs)."""
-    return _get("/api/orchestration/schedules")
-
-
-@mcp.tool()
-def update_schedule(schedule_id: str, enabled: bool | None = None, cron_expr: str | None = None) -> dict:
-    """Enable/disable a schedule or change its cron expression. CRITICAL: Provide the raw ID only. Do NOT include the 'gateway__' prefix or any other namespace prefix inside the arguments of this tool."""
-    body: dict[str, Any] = {}
-    if enabled is not None:
-        body["enabled"] = enabled
-    if cron_expr is not None:
-        body["cron_expr"] = cron_expr
-    return _patch(f"/api/orchestration/schedules/{schedule_id}", body)
-
-
-@mcp.tool()
-def delete_schedule(schedule_id: str) -> dict:
-    """Remove a schedule permanently. CRITICAL: Provide the raw ID only. Do NOT include the 'gateway__' prefix or any other namespace prefix inside the arguments of this tool."""
-    return _delete(f"/api/orchestration/schedules/{schedule_id}")
 
 
 # ── ComfyUI ops ───────────────────────────────────────────────────────────────
