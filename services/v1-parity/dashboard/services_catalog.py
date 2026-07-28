@@ -160,6 +160,15 @@ SERVICES = [
      "hint": "Headless ComfyUI render worker (no web UI). Health via container healthcheck. Logs: docker compose logs worker"},
     {"id": "rag-ingestion", "name": "RAG Ingestion", "port": None, "check": None, "has_gpu": False, "plugin": "rag", "category": "rag", "background": True,
      "hint": "Headless folder-watch embedder for Qdrant (no web UI). Health via container healthcheck. Logs: docker compose logs rag-ingestion"},
+    # Obsidian cross-device notes sync — headless background services (no web UI). CouchDB is the
+    # sync server (reached via :443/couchdb); the bridge mirrors it to data/memory-vault/notes/ so
+    # the AI reads notes; the funnel sidecar (opt-in) exposes it off-tailnet.
+    {"id": "couchdb", "name": "CouchDB (notes sync)", "port": None, "check": "http://couchdb:5984/_up", "has_gpu": False, "plugin": "obsidian-livesync", "category": "notes", "background": True,
+     "hint": "Sync server for Obsidian Self-hosted LiveSync. Reached via :443/couchdb. Logs: docker compose logs couchdb"},
+    {"id": "livesync-bridge", "name": "LiveSync Bridge", "port": None, "check": None, "has_gpu": False, "plugin": "obsidian-livesync", "category": "notes", "background": True,
+     "hint": "Headless CouchDB <-> data/memory-vault/notes/ mirror so the AI reads Obsidian notes. Health via container healthcheck. Logs: docker compose logs livesync-bridge"},
+    {"id": "notes-funnel", "name": "Notes Funnel (Tailscale)", "port": None, "check": None, "has_gpu": False, "plugin": "obsidian-livesync-funnel", "category": "notes", "background": True,
+     "hint": "Opt-in Tailscale Funnel exposing the notes endpoint off-tailnet (no web UI). Logs: docker compose logs notes-funnel"},
     # LTX-trainer (LoRA) is headless (CLI-only, no web UI) — it has no dashboard card. It's a
     # compose service managed via the ops-api (restart), and GPU runs take an exclusive lease
     # via ops-controller. Nothing to surface in the service health grid.
