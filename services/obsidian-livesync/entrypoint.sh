@@ -35,12 +35,23 @@ cfg() {  # cfg <section> <key> <value>
         -H 'Content-Type: application/json' -d "\"$3\"" >/dev/null 2>&1 || true
 }
 # CORS so the Obsidian desktop (app://obsidian.md) + mobile (capacitor://localhost) webviews can
-# authenticate through the proxy.
+# authenticate. LiveSync's config checker looks for enable_cors under [chttpd] (3.x's HTTP daemon)
+# as well as [httpd] — set both. WWW-Authenticate makes CouchDB return a proper Basic auth
+# challenge (LiveSync flags its absence). The size bumps are LiveSync's recommended values — all
+# four are exactly what LiveSync's "Fix" button would apply.
 cfg httpd enable_cors true
+cfg chttpd enable_cors true
 cfg cors origins "app://obsidian.md,capacitor://localhost,http://localhost"
 cfg cors credentials true
 cfg cors methods "GET, PUT, POST, HEAD, DELETE"
 cfg cors headers "accept, authorization, content-type, origin, referer"
+cfg chttpd max_http_request_size 4294967296
+cfg couchdb max_document_size 50000000
+# WWW-Authenticate carries embedded quotes, which cfg()'s simple wrapper can't JSON-encode — PUT
+# it directly as pre-escaped JSON.
+curl -fsS -X PUT -u "${COUCHDB_USER}:${COUCHDB_PASSWORD}" \
+    "${COUCHDB_INTERNAL_URL}/_node/_local/_config/httpd/WWW-Authenticate" \
+    -H 'Content-Type: application/json' -d '"Basic realm=\"couchdb\""' >/dev/null 2>&1 || true
 # Close the server to anonymous access (matters: this endpoint is reachable off-tailnet via
 # Funnel). Exempt /_up so healthchecks still work. Set LAST + as admin, so we can't lock ourselves
 # out mid-config.
