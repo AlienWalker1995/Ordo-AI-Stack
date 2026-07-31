@@ -93,7 +93,6 @@ OPS_SERVICE_MAP = {
     # Voice + background workers (added with their manifest-gated cards below).
     "stt": "stt",
     "tts": "tts",
-    "worker": "worker",
     "rag-ingestion": "rag-ingestion",
 }
 
@@ -143,21 +142,25 @@ SERVICES = [
     {"id": "tts", "name": "Text-to-Speech (Kokoro)", "port": 8880, "check": "http://tts:8880/v1/audio/voices", "has_gpu": True, "plugin": "voice", "category": "voice", "background": True,
      "hint": "kokoro-fastapi (OpenAI-compatible). GPU-pinned to the 1070. Opt-in: --profile voice"},
     # ── Headless background workers ───────────────────────────────────────────────────────
-    # worker (plugin `worker`, profile media) and rag-ingestion (plugin `rag`) expose NO HTTP
-    # port — their only liveness signal is a file-heartbeat container healthcheck, unreachable
-    # from this container. So they carry NO `check` (card shows a neutral "unknown" state, not a
-    # false-red or a guessed URL) but ARE operator-controllable via the ops-api (start/stop/restart).
+    # rag-ingestion (plugin `rag`) and livesync-bridge (plugin `obsidian-livesync`) expose NO
+    # HTTP port — their only liveness signal is a file-heartbeat container healthcheck. They
+    # carry NO `check`; the grid instead reads their true up/down from ops-api container health
+    # (see routes_hub) rather than showing a neutral "unknown". They ARE operator-controllable
+    # via the ops-api (start/stop/restart).
+    #
+    # (The former "Media Worker" — a headless render/publish job processor — was RETIRED: the
+    # live media pipeline runs via Hermes cron + the direct render_publish scripts, not a queue
+    # worker. Its card, ops-api entry, and the /api/orchestration job/schedule/publish endpoints
+    # are gone; see CHANGELOG.)
     #
     # `background: True` is the marker the frontend uses to move a service OUT of the main
     # user-facing grid into the secondary "Background jobs" section (no "Open" link). Its
     # meaning is "NOT a browsable user-facing UI" — not merely "headless worker". So besides
-    # these two portless workers it ALSO tags the infra/backend services that have a port &
+    # the portless workers it ALSO tags the infra/backend services that have a port &
     # health check but no browsable UI a person visits: llamacpp, mcp (MCP Gateway), qdrant,
     # stt, tts (see their entries above). The main grid is ONLY the user-facing UIs
     # (webui/comfyui/n8n/hermes/codebase-memory-ui) plus model-gateway (its Open link points
     # at the LiteLLM Swagger UI through the edge; see model_gateway_open_url() below).
-    {"id": "worker", "name": "Media Worker", "port": None, "check": None, "has_gpu": False, "plugin": "worker", "category": "media", "background": True,
-     "hint": "Headless ComfyUI render worker (no web UI). Health via container healthcheck. Logs: docker compose logs worker"},
     {"id": "rag-ingestion", "name": "RAG Ingestion", "port": None, "check": None, "has_gpu": False, "plugin": "rag", "category": "rag", "background": True,
      "hint": "Headless folder-watch embedder for Qdrant (no web UI). Health via container healthcheck. Logs: docker compose logs rag-ingestion"},
     # Obsidian cross-device notes sync — headless background services (no web UI). CouchDB is the
@@ -179,7 +182,7 @@ SERVICES = [
 # services (llamacpp/model-gateway/mcp) carry plugin=None and are intentionally NOT here.
 CARD_PLUGINS = frozenset({
     "open-webui", "comfyui", "automation", "rag",
-    "hermes-dashboard", "codebase-memory-ui", "voice", "worker",
+    "hermes-dashboard", "codebase-memory-ui", "voice",
 })
 
 

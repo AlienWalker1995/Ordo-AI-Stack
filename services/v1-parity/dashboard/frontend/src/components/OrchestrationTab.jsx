@@ -1,11 +1,14 @@
-// Orchestration tab — read-only status of the GPU scheduler + job queue. Port of the legacy
+// Orchestration tab — read-only status of the GPU scheduler. Port of the legacy
 // loadOrchestrationTab + loadOrchGpu. Consumes:
 //   - GET /api/orchestration/readiness   — upstream readiness (200 ok / 503 not-ready)
 //   - GET /api/orchestration/gpu         — live leases: running, queued, evicted, VRAM, state
 //   - GET /api/orchestration/gpu/history — finished leases (newest first)
-//   - GET /api/orchestration/jobs        — orchestration job list ({jobs, count})
 // Polls every 10s (usePolling pauses while hidden). Nothing here mutates state — the tab is a
 // window onto the scheduler, matching the legacy panel.
+//
+// NOTE: the "Recent jobs" panel (GET /api/orchestration/jobs) was removed when the dashboard
+// media-worker (SQLite job queue) was retired — that endpoint is now neutralized to HTTP 410.
+// The GPU scheduler itself (`/gpu*`) is independent of the worker and stays live.
 import { api, usePolling } from '../api.js'
 
 const BADGE = 'inline-flex items-center rounded-full border px-2 py-0.5 text-[0.62rem] font-semibold uppercase tracking-[0.06em]'
@@ -15,14 +18,6 @@ const B_WARN = 'border-warning/30 bg-warning/10 text-warning'
 const B_MUTED = 'border-border-subtle bg-bg text-muted'
 
 const kindBadge = (k) => ({ training: B_WARN, media: B_MUTED, chat: B_SUCCESS }[k] || B_MUTED)
-
-function jobStateBadge(s) {
-  s = String(s || '').toLowerCase()
-  if (/ready|done|complete|success|finish/.test(s)) return B_SUCCESS
-  if (/error|fail|cancel/.test(s)) return B_ERROR
-  if (/run|queue|pend|active|progress/.test(s)) return B_WARN
-  return B_MUTED
-}
 const outcomeBadge = (o) => (o === 'completed' ? B_SUCCESS : o === 'swept' ? B_WARN : B_ERROR)
 
 function fmtDur(s) {
@@ -48,22 +43,19 @@ const SUBHEAD = 'mb-2 text-[0.7rem] font-semibold uppercase tracking-[0.08em] te
 
 export default function OrchestrationTab() {
   const { data, error } = usePolling(async () => {
-    const [readiness, gpu, history, jobs] = await Promise.all([
+    const [readiness, gpu, history] = await Promise.all([
       // readiness returns 503 (not an exception we want to swallow) when not ready — the
       // body carries {ok:false, detail}, so surface that instead of a hard error.
       api.get('/api/orchestration/readiness').catch((e) => (e.body && typeof e.body === 'object' ? e.body : { ok: false, detail: e.message })),
       api.get('/api/orchestration/gpu').catch((e) => ({ _error: e.message || String(e) })),
       api.get('/api/orchestration/gpu/history').catch(() => ({ history: [] })),
-      api.get('/api/orchestration/jobs').catch((e) => ({ _error: e.message || String(e) })),
     ])
-    return { readiness, gpu, history, jobs }
+    return { readiness, gpu, history }
   }, 10000)
 
   const readiness = data?.readiness
   const gpu = data?.gpu
   const history = data?.history?.history || []
-  const jobsData = data?.jobs
-  const jobs = Array.isArray(jobsData) ? jobsData : (jobsData?.jobs || [])
 
   const gpuErr = gpu?._error
   const total = Number(gpu?.total_vram_gb) || 0
@@ -80,7 +72,7 @@ export default function OrchestrationTab() {
       </h2>
       <p className="mb-5 text-[0.8125rem] leading-[1.5] text-muted">
         Live view of the GPU scheduler — which jobs hold the GPU, what is queued, and the
-        orchestration job history. Read-only; refreshes every 10 seconds.
+        lease history. Read-only; refreshes every 10 seconds.
       </p>
 
       {error && !data ? (
@@ -108,7 +100,7 @@ export default function OrchestrationTab() {
             {readiness?.detail && <span className="text-fg-muted">{String(readiness.detail)}</span>}
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="max-w-2xl">
             {/* GPU leases */}
             <div>
               <h3 className={SUBHEAD}>GPU leases</h3>
@@ -181,37 +173,6 @@ export default function OrchestrationTab() {
                     )
                   })}
                 </div>
-              )}
-            </div>
-
-            {/* Jobs */}
-            <div>
-              <h3 className={SUBHEAD}>Recent jobs</h3>
-              {jobsData?._error ? (
-                <p className="text-[0.8125rem] text-muted">Jobs unavailable: <span className="font-mono text-[0.75rem]">{jobsData._error}</span></p>
-              ) : jobs.length === 0 ? (
-                <p className="text-[0.8125rem] text-muted">No jobs.</p>
-              ) : (
-                <>
-                  <p className="mb-2 text-[0.75rem] text-muted">
-                    {jobs.length} job{jobs.length === 1 ? '' : 's'}{jobs.length > 20 ? ' · showing 20' : ''}
-                  </p>
-                  <div className="space-y-1.5">
-                    {jobs.slice(0, 20).map((j, i) => {
-                      const id = String(j.job_id || '?')
-                      const st = String(j.state || '?')
-                      const tsRaw = j.updated_at || j.created_at
-                      const ts = tsRaw ? Date.parse(tsRaw) / 1000 : 0
-                      return (
-                        <Row key={id + i}>
-                          <span className="min-w-0 flex-1 truncate font-mono text-[0.75rem] text-fg-muted" title={id}>{id.slice(0, 16)}</span>
-                          <span className={`${BADGE} ${jobStateBadge(st)}`}>{st.replace(/_/g, ' ')}</span>
-                          <span className={JOB_TIME}>{fmtAgo(ts)}</span>
-                        </Row>
-                      )
-                    })}
-                  </div>
-                </>
               )}
             </div>
           </div>

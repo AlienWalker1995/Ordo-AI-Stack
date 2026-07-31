@@ -5,6 +5,21 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Removed
+- **Media worker service retired (2026-07-28).** The headless dashboard "media worker"
+  (`services/worker/` plugin, container `worker`, image `ordo/worker`) — a durable SQLite-queue
+  job processor that drove ComfyUI render + publish jobs and cron-style schedules — is gone. It
+  had processed nothing since 2026-06-14 (0 schedules, 0 outbox rows): the live reel pipeline is
+  driven entirely by **Hermes cron + the direct `render_publish_dialogue.py` script** (ComfyUI +
+  an `ops-controller` GPU lease + an n8n webhook), never by this worker. Removed: the plugin
+  manifest/Dockerfile/`worker.py` under `services/worker/`, its compose service and `WORKER_*`
+  env vars (`WORKER_ENABLED`, `WORKER_POLL_INTERVAL_SEC`, `WORKER_CONCURRENCY`), its dashboard
+  health card ("Media Worker"), and its `ops-api` `ALLOWED_SERVICES` / dashboard
+  `OPS_SERVICE_MAP` entries. The dashboard Orchestration tab drops its "Recent jobs" panel. The
+  worker-backed `/api/orchestration` endpoints (`/run`, `/jobs*`, `/publish/*`, `/schedules*`)
+  are retired; the worker-**independent** endpoints stay live — `/readiness`, `/workflows*`,
+  `/validate`, `/outputs`, `/comfyui/status`, `/comfyui/restart`, `/registry/*`, `/gpu*` — as
+  does the orchestration MCP server's `comfyui_status`/`workflows`/`outputs`/`registry`/`gpu`
+  tool surface (its job/schedule/publish tools are dropped with the worker).
 - **ai-toolkit plugin retired (2026-07-24, `2cc34e8`).** The `ai-toolkit` service plugin (below)
   is gone from `plugins/`; LTX-trainer is promoted to sole LoRA trainer following the ai-toolkit
   vs. LTX-trainer bake-off. The `:8443` SSO UI and the ai-toolkit-specific GPU lease wiring are

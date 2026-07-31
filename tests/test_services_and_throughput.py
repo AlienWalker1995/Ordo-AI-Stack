@@ -56,11 +56,11 @@ def test_background_flag_flows_through_services_endpoint(client, monkeypatch):
     spreads the catalog entry (minus `check`), so it must not strip it. `background` now
     marks every NON-user-facing service (backend infra + headless workers), which the
     frontend splits into its 'Background jobs' section. Force the manifest fail-open path
-    so the plugin-gated voice/rag/worker cards are present."""
+    so the plugin-gated voice/rag cards are present."""
     monkeypatch.delenv("MANIFEST_PATH", raising=False)
     r = client.get("/api/services")
     by_id = {s["id"]: s for s in r.json()["services"]}
-    for bg_id in ("worker", "rag-ingestion", "llamacpp", "mcp", "qdrant", "stt", "tts"):
+    for bg_id in ("rag-ingestion", "llamacpp", "mcp", "qdrant", "stt", "tts"):
         assert by_id[bg_id]["background"] is True, f"{bg_id} should be background"
     # User-facing UIs (main grid) never carry a truthy background flag.
     for ui_id in ("webui", "comfyui", "n8n", "hermes", "codebase-memory-ui", "model-gateway"):
@@ -68,27 +68,25 @@ def test_background_flag_flows_through_services_endpoint(client, monkeypatch):
 
 
 def test_headless_worker_shows_true_container_health(client, monkeypatch):
-    """check:None background workers (worker/rag-ingestion/livesync-bridge) have no HTTP
+    """check:None background workers (rag-ingestion/livesync-bridge) have no HTTP
     endpoint to probe. The grid derives their up/down from ops-api container state+health
     rather than showing a neutral 'unknown': running+healthy -> ok True; not-running -> ok
-    False (with a reason). A container ops-api doesn't report stays 'unknown' (ok None)."""
-    monkeypatch.delenv("MANIFEST_PATH", raising=False)  # fail open so the worker cards show
+    False (with a reason)."""
+    monkeypatch.delenv("MANIFEST_PATH", raising=False)  # fail open so the headless cards show
 
     async def _fake_ops(method, path, *a, **k):
         assert path == "/services"
         return 200, {"services": [
-            {"id": "worker", "state": "running", "health": "healthy"},
-            {"id": "rag-ingestion", "state": "exited", "health": None},
-            # livesync-bridge intentionally omitted -> should remain unknown (ok None)
+            {"id": "rag-ingestion", "state": "running", "health": "healthy"},
+            {"id": "livesync-bridge", "state": "exited", "health": None},
         ]}
 
     monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
     r = client.get("/api/services")
     by_id = {s["id"]: s for s in r.json()["services"]}
-    assert by_id["worker"]["ok"] is True
-    assert by_id["rag-ingestion"]["ok"] is False
-    assert by_id["rag-ingestion"]["error"], "a down worker must carry a container-state reason"
-    assert by_id["livesync-bridge"]["ok"] is None, "unreported container stays 'unknown'"
+    assert by_id["rag-ingestion"]["ok"] is True
+    assert by_id["livesync-bridge"]["ok"] is False
+    assert by_id["livesync-bridge"]["error"], "a down worker must carry a container-state reason"
 
 
 def test_model_gateway_is_user_facing_with_swagger_open_url(client, monkeypatch):

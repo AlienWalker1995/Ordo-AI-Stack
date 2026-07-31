@@ -4,38 +4,23 @@ from __future__ import annotations
 
 import asyncio
 import difflib
-import ipaddress
 import json
 import logging
 import os
-import socket
 from pathlib import Path
-from typing import Any, Literal
-from urllib.parse import urlparse
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from dashboard.orchestration_db import (
-    JobState,
-    cancel_job,
-    create_job,
-    create_outbox_entry,
-    create_schedule,
-    delete_schedule,
-    get_job,
     get_workflow_version,
-    list_jobs,
-    list_schedules,
     list_workflow_versions,
     load_store,
-    mark_outbox_delivered,
     promote_workflow_version,
     rollback_workflow,
     save_workflow_version,
-    update_job,
-    update_schedule,
 )
 from dashboard.orchestration_readiness import compute_readiness
 from dashboard.text_sanitizers import sanitize_workflow_id
@@ -234,144 +219,55 @@ async def rollback_workflow_endpoint(workflow_id: str, to_version: int = Query(.
 
 # ── Job execution ─────────────────────────────────────────────────────────────
 
-class RunBody(BaseModel):
-    template_id: str | None = None
-    workflow_id: str | None = None
-    params: dict[str, Any] = Field(default_factory=dict)
-    await_completion: bool = False  # kept for API compatibility; worker handles execution
+# The media "worker" (headless render/publish job processor) was RETIRED. The live media
+# pipeline runs via Hermes cron + the direct render_publish scripts (ComfyUI + ops-controller
+# GPU lease + n8n webhook), never this queue. The job / publish / schedule endpoints below stay
+# MOUNTED but return 410 Gone, so any stale caller fails loudly instead of enqueueing into a dead
+# queue. The worker-INDEPENDENT verbs on this router (readiness, workflows, validate, outputs,
+# comfyui/*, registry/*, gpu*) remain fully live.
+_WORKER_RETIRED = (
+    "The render/publish job worker was retired. This endpoint is gone; the live media pipeline "
+    "runs via Hermes cron + the direct render_publish scripts. Worker-independent orchestration "
+    "verbs (workflows, validate, outputs, comfyui/*, registry, gpu) remain."
+)
 
 
 @router.post("/run")
-async def run_workflow(body: RunBody):
-    """Queue a job for the worker. Returns job_id immediately."""
-    r = await asyncio.to_thread(compute_readiness)
-    if not r.get("ok"):
-        raise HTTPException(status_code=503, detail={"readiness": r})
-    workflow_id = sanitize_workflow_id(body.workflow_id)
-    if not body.template_id and not workflow_id:
-        raise HTTPException(status_code=400, detail="template_id or workflow_id required")
-    job = create_job(
-        DATA_DIR,
-        template_id=body.template_id,
-        workflow_id=workflow_id,
-        params=body.params,
-    )
-    return {"job_id": job.job_id, "state": JobState.queued.value}
+async def run_workflow():
+    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
 
 
 @router.get("/jobs")
-async def list_jobs_endpoint(state: str | None = None, limit: int = 100):
-    """List orchestration jobs, optionally filtered by state (queued, running, failed, etc.)."""
-    limit = max(1, min(limit, 1000))
-    if state is not None:
-        try:
-            JobState(state)
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid state. Must be one of: {[s.value for s in JobState]}")
-    jobs = list_jobs(DATA_DIR, state=state, limit=limit)
-    return {"jobs": [j.to_dict() for j in jobs], "count": len(jobs)}
+async def list_jobs_endpoint():
+    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
 
 
 @router.get("/jobs/{job_id}")
 async def job_status(job_id: str):
-    j = get_job(DATA_DIR, job_id)
-    if not j:
-        raise HTTPException(status_code=404, detail="Unknown job_id")
-    return j.to_dict()
+    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
 
 
 @router.post("/jobs/{job_id}/cancel")
 async def cancel_job_endpoint(job_id: str):
-    j = cancel_job(DATA_DIR, job_id)
-    if not j:
-        raise HTTPException(status_code=404, detail="Unknown job_id")
-    return {"ok": True, "job_id": job_id, "state": j.state.value}
+    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
 
 
-# ── Publish pipeline ──────────────────────────────────────────────────────────
-
-class PublishEnqueueBody(BaseModel):
-    job_id: str
-    webhook_url: str | None = None
-    payload: dict[str, Any] = Field(default_factory=dict)
+# ── Publish pipeline — RETIRED (see _WORKER_RETIRED above) ─────────────────────
 
 
 @router.post("/publish/enqueue")
-async def publish_enqueue(body: PublishEnqueueBody):
-    """Write to durable outbox (worker delivers with retries). No live HTTP call here."""
-    url = (body.webhook_url or N8N_PUBLISH_WEBHOOK_URL).strip()
-    if not url:
-        raise HTTPException(
-            status_code=503,
-            detail="Set N8N_PUBLISH_WEBHOOK_URL or pass webhook_url.",
-        )
-    # SSRF protection: reject internal/private IPs
-    try:
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https"):
-            raise HTTPException(status_code=400, detail="webhook_url must use http or https")
-        hostname = parsed.hostname or ""
-        resolved = await asyncio.to_thread(socket.getaddrinfo, hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-        for _, _, _, _, addr in resolved:
-            ip = ipaddress.ip_address(addr[0])
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                # Allow Docker internal network (common for n8n webhooks)
-                if not (ip.is_private and (hostname.endswith((".internal", ".local")) or "." not in hostname)):
-                    raise HTTPException(status_code=400, detail="webhook_url must not resolve to a private IP")
-    except (ValueError, socket.gaierror):
-        pass  # Allow unresolvable hostnames (Docker DNS resolves at delivery time)
-    j = get_job(DATA_DIR, body.job_id)
-    if not j:
-        raise HTTPException(status_code=404, detail="Unknown job_id")
-    envelope = {
-        "job_id": body.job_id,
-        "state": j.state.value,
-        "outputs": j.outputs,
-        "payload": body.payload,
-    }
-    idem_key = create_outbox_entry(DATA_DIR, body.job_id, url, envelope)
-    update_job(DATA_DIR, body.job_id, state=JobState.publish_enqueued,
-               publish_webhook=url, publish_status="enqueued")
-    return {"ok": True, "job_id": body.job_id, "state": JobState.publish_enqueued.value,
-            "idempotency_key": idem_key}
-
-
-class PublishCallbackBody(BaseModel):
-    job_id: str
-    status: Literal["delivered", "failed"]
-    idempotency_key: str | None = None
-    platform: str | None = None
-    post_url: str | None = None
-    error: str | None = None
+async def publish_enqueue():
+    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
 
 
 @router.post("/publish/callback")
-async def publish_callback(body: PublishCallbackBody):
-    """Called by n8n after delivering to the social platform."""
-    j = get_job(DATA_DIR, body.job_id)
-    if not j:
-        raise HTTPException(status_code=404, detail="Unknown job_id")
-    if body.status == "delivered":
-        update_job(DATA_DIR, body.job_id, state=JobState.published,
-                   publish_status="published")
-        if body.idempotency_key:
-            mark_outbox_delivered(DATA_DIR, body.idempotency_key)
-    else:
-        update_job(DATA_DIR, body.job_id, publish_status=f"failed: {body.error or 'unknown'}")
-    return {"ok": True, "job_id": body.job_id}
+async def publish_callback():
+    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
 
 
 @router.get("/publish/status")
-async def publish_status(job_id: str):
-    j = get_job(DATA_DIR, job_id)
-    if not j:
-        raise HTTPException(status_code=404, detail="Unknown job_id")
-    return {
-        "job_id": job_id,
-        "state": j.state.value,
-        "publish_webhook": j.publish_webhook,
-        "publish_status": j.publish_status,
-    }
+async def publish_status():
+    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
 
 
 # ── Outputs (replaces raw filesystem mount) ───────────────────────────────────
@@ -406,69 +302,28 @@ async def list_outputs():
 
 # ── Schedules ─────────────────────────────────────────────────────────────────
 
-class CreateScheduleBody(BaseModel):
-    cron_expr: str
-    template_id: str | None = None
-    workflow_id: str | None = None
-    params: dict[str, Any] = Field(default_factory=dict)
+# RETIRED with the media worker (see _WORKER_RETIRED above) — the worker's cron scheduler is
+# gone; scheduled media runs are Hermes cron jobs now, not rows in this store.
 
 
 @router.post("/schedules")
-async def create_schedule_endpoint(body: CreateScheduleBody):
-    """Create a cron-scheduled workflow run. Requires template_id or workflow_id and a cron expression."""
-    workflow_id = sanitize_workflow_id(body.workflow_id)
-    if not body.template_id and not workflow_id:
-        raise HTTPException(status_code=400, detail="template_id or workflow_id required")
-    try:
-        from croniter import croniter
-        croniter(body.cron_expr)
-    except ImportError:
-        pass  # croniter not installed — skip validation (validated at fire time)
-    except (ValueError, KeyError) as e:
-        raise HTTPException(status_code=400, detail=f"Invalid cron expression: {e}") from e
-    try:
-        s = create_schedule(DATA_DIR, body.cron_expr, body.template_id, workflow_id, body.params)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    return s
+async def create_schedule_endpoint():
+    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
 
 
 @router.get("/schedules")
 async def list_schedules_endpoint():
-    return {"schedules": list_schedules(DATA_DIR)}
-
-
-class UpdateScheduleBody(BaseModel):
-    enabled: bool | None = None
-    cron_expr: str | None = None
+    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
 
 
 @router.patch("/schedules/{schedule_id}")
-async def update_schedule_endpoint(schedule_id: str, body: UpdateScheduleBody):
-    fields: dict[str, Any] = {}
-    if body.enabled is not None:
-        fields["enabled"] = 1 if body.enabled else 0
-    if body.cron_expr is not None:
-        try:
-            from croniter import croniter
-            croniter(body.cron_expr)
-        except ImportError:
-            pass  # croniter not installed — skip validation
-        except (ValueError, KeyError) as e:
-            raise HTTPException(status_code=400, detail=f"Invalid cron expression: {e}")
-        fields["cron_expr"] = body.cron_expr
-    s = update_schedule(DATA_DIR, schedule_id, **fields)
-    if not s:
-        raise HTTPException(status_code=404, detail="Schedule not found")
-    return s
+async def update_schedule_endpoint(schedule_id: str):
+    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
 
 
 @router.delete("/schedules/{schedule_id}")
 async def delete_schedule_endpoint(schedule_id: str):
-    ok = delete_schedule(DATA_DIR, schedule_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Schedule not found")
-    return {"ok": True}
+    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
 
 
 # ── ComfyUI ops ───────────────────────────────────────────────────────────────
