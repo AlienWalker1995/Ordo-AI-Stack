@@ -121,3 +121,65 @@ def test_ingest_path_still_refuses_unsupported_extensions(ingest, tmp_path):
     attachment.parent.mkdir()
     attachment.write_bytes(b"\x89PNG")
     assert ingest.ingest_path(attachment, {}) is False
+
+
+# ── embed input hygiene: image links and oversized chunks ───────────────────
+def test_image_targets_stripped_but_alt_text_kept(ingest):
+    # Hash filenames are retrieval noise and tokenize ~10x denser than prose (a
+    # 400-word run of image links reached 13k tokens live); OCR alt text is signal.
+    text = (
+        "intro line\n"
+        "![Four Steps To Analyze](8661c936213418aea1a62a145ae992bd.png)\n"
+        "![](0046c9ea1f484a54a165db88617642ba.jpeg)\n"
+        "closing ![inline alt](abc123.png) text\n"
+    )
+    out = ingest._strip_image_targets(text)
+    assert "8661c936" not in out and "0046c9ea" not in out and "abc123" not in out
+    assert "Four Steps To Analyze" in out
+    assert "closing inline alt text" in out
+    # non-image constructs are untouched
+    assert ingest._strip_image_targets("a [link](x.md) b") == "a [link](x.md) b"
+
+
+class _FakeResp:
+    def __init__(self, status_code, vectors=None):
+        self.status_code = status_code
+        self._vectors = vectors or []
+
+    def json(self):
+        return {"data": [{"embedding": v} for v in self._vectors]}
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"status {self.status_code}")
+
+
+class _FakeClient:
+    """Rejects inputs over a token budget the way llamacpp-embed does (whole batch)."""
+
+    def __init__(self, max_chars):
+        self.max_chars = max_chars
+        self.calls = []
+
+    def post(self, url, json=None, headers=None):
+        texts = json["input"]
+        self.calls.append(texts)
+        if any(len(t) > self.max_chars for t in texts):
+            return _FakeResp(500)
+        return _FakeResp(200, vectors=[[0.1] * 3 for _ in texts])
+
+
+def test_embed_falls_back_to_per_chunk_truncation(ingest, monkeypatch):
+    # One oversized chunk must not fail the whole file: the batch 500s, then each
+    # chunk embeds individually, the big one truncated by halving until it fits.
+    client = _FakeClient(max_chars=100)
+    monkeypatch.setattr(
+        ingest.httpx, "Client",
+        lambda timeout: type("Ctx", (), {
+            "__enter__": lambda s: client, "__exit__": lambda s, *a: False})(),
+        raising=False,
+    )
+    vectors = ingest._embed(["small chunk", "x" * 350])
+    assert len(vectors) == 2 and all(len(v) == 3 for v in vectors)
+    # halving: 350 -> 175 -> 87 (fits under 100)
+    assert any(texts == ["x" * 87] for texts in client.calls)

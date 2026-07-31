@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -108,6 +109,17 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+# Markdown image destinations are retrieval noise (hash filenames carry no meaning) and
+# tokenize ~10x denser than prose — a 400-word run of ![alt](hash.png) links reached 13k
+# tokens live, overflowing any usable embed context. Keep the alt text (OCR captions are
+# real retrieval signal), drop the destination.
+IMAGE_LINK_RE = re.compile(r"!\[([^\]]*)\]\([^)\s]*\)")
+
+
+def _strip_image_targets(text: str) -> str:
+    return IMAGE_LINK_RE.sub(r"\1", text)
+
+
 def _read_text(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
@@ -147,6 +159,31 @@ def _ensure_collection(vector_size: int) -> None:
         create.raise_for_status()
 
 
+def _embed_one(client: httpx.Client, chunk: str) -> list[float]:
+    """Embed a single chunk, halving it on 'too large' rejections so one oversized
+    chunk (dense tokens: CJK OCR text, pathological markdown) degrades to a truncated
+    embedding instead of failing the whole file forever."""
+    text = chunk
+    for attempt in range(4):
+        r = client.post(
+            f"{EMBED_URL}/v1/embeddings",
+            json={"model": EMBED_MODEL, "input": [text]},
+            headers={"Content-Type": "application/json"},
+        )
+        if r.status_code < 400:
+            items = r.json().get("data", [])
+            if items and items[0].get("embedding"):
+                return items[0]["embedding"]
+        if attempt < 3:
+            text = text[: max(1, len(text) // 2)]
+            logger.warning(
+                "Embed rejected a chunk (%d); retrying truncated to %d chars",
+                r.status_code, len(text),
+            )
+    r.raise_for_status()
+    raise RuntimeError("embedding response contained no vector")
+
+
 def _embed(chunks: list[str]) -> list[list[float]]:
     with httpx.Client(timeout=120.0) as client:
         r = client.post(
@@ -154,7 +191,11 @@ def _embed(chunks: list[str]) -> list[list[float]]:
             json={"model": EMBED_MODEL, "input": chunks},
             headers={"Content-Type": "application/json"},
         )
-        r.raise_for_status()
+        if r.status_code >= 400:
+            # One oversized chunk fails the whole batch — fall back to per-chunk
+            # embedding with truncation so the rest of the file still indexes.
+            logger.warning("Batch embed failed (%d); retrying per-chunk", r.status_code)
+            return [_embed_one(client, c) for c in chunks]
     data = r.json()
     items = data.get("data", [])
     return [item.get("embedding", []) for item in items if item.get("embedding")]
@@ -222,7 +263,7 @@ def ingest_path(path: Path, state: dict[str, str]) -> bool:
     digest = _sha256(path)
     if state.get(source) == digest:
         return False
-    text = _read_text(path)
+    text = _strip_image_targets(_read_text(path))
     chunks = _chunk(text, CHUNK_SIZE, CHUNK_OVERLAP)
     if not chunks:
         logger.info("Skipping %s: no extractable text", source)
