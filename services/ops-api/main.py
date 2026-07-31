@@ -821,7 +821,13 @@ def health():
 
 @app.get("/services")
 def list_services():
-    """List compose services. No auth for read-only."""
+    """List compose services with container state + healthcheck status. No auth for read-only.
+
+    `state` is the docker lifecycle state (running/exited/…); `health` is the healthcheck
+    verdict (healthy/unhealthy/starting) or None when the container declares no healthcheck.
+    The dashboard uses this to give headless workers (no HTTP endpoint to probe) a true
+    up/down signal instead of a neutral "unknown".
+    """
     try:
         containers = _get_containers()
         seen = set()
@@ -833,7 +839,11 @@ def list_services():
                 continue
             seen.add(svc)
             state = c.status if hasattr(c, "status") else "unknown"
-            services.append({"id": svc, "name": svc, "state": state})
+            try:
+                health = (c.attrs.get("State") or {}).get("Health", {}).get("Status")
+            except Exception:
+                health = None
+            services.append({"id": svc, "name": svc, "state": state, "health": health})
         return {"services": sorted(services, key=lambda s: s["id"])}
     except Exception as e:
         logger.warning("Service list failed: %s", e)

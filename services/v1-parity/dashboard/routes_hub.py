@@ -21,11 +21,39 @@ router = APIRouter(prefix="/api", tags=["hub"])
 @router.get("/services")
 async def services():
     """Service links and live health status."""
-    from dashboard.app import _get_http_client
+    from dashboard.app import _get_http_client, _ops_request
     client = _get_http_client()
 
+    # Container state/health from ops-api (docker.sock). This is the ONLY liveness signal for the
+    # headless background workers (worker, rag-ingestion, livesync-bridge) that expose no HTTP
+    # `check` — without it their card would show a neutral "unknown". Fetched ONCE here (not per
+    # service) and merged into the check:None branch below. Fails soft: if ops-api is unreachable
+    # or the token is unset, those services fall back to "unknown", never a false-red.
+    container_by_id: dict[str, dict] = {}
+    code, data = await _ops_request("GET", "/services")
+    if code == 200 and isinstance(data.get("services"), list):
+        container_by_id = {c["id"]: c for c in data["services"] if c.get("id")}
+
+    def _container_health(svc_id: str) -> tuple[bool | None, str]:
+        """(ok, error) from container state/health for a service with no HTTP check.
+        Returns (None, "") — a neutral 'unknown' — when ops-api has no row for it."""
+        c = container_by_id.get(svc_id)
+        if not c:
+            return None, ""
+        state, health = c.get("state"), c.get("health")
+        if state != "running":
+            return False, f"container {state or 'missing'}"
+        if health == "unhealthy":
+            return False, "container unhealthy"
+        if health == "starting":
+            return None, ""  # still coming up — neutral, not red
+        return True, ""  # running + (healthy | no healthcheck declared)
+
     async def _probe(svc: dict) -> dict:
-        ok, err = await _check_service(svc["check"], client) if svc.get("check") else (None, "")
+        if svc.get("check"):
+            ok, err = await _check_service(svc["check"], client)
+        else:
+            ok, err = _container_health(svc["id"])
         # Server-owned Open link, one source of truth (no hostname guess in the browser):
         #  * model-gateway is user-facing but has no tailnet sidecar — its Open link points
         #    at the LiteLLM Swagger UI through the edge (https://<host>/llm/).

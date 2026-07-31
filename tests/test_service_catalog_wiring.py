@@ -95,7 +95,7 @@ def test_non_user_facing_services_carry_background_flag():
     LiteLLM Swagger UI) must NOT carry it, so an openable service can't be quietly demoted."""
     bg = {s["id"] for s in SERVICES if s.get("background")}
     assert bg == {"worker", "rag-ingestion", "llamacpp", "mcp", "qdrant", "stt", "tts",
-                  "couchdb", "livesync-bridge", "notes-funnel"}
+                  "couchdb", "livesync-bridge"}
     user_facing = {"webui", "comfyui", "n8n", "hermes", "codebase-memory-ui", "model-gateway"}
     for s in SERVICES:
         if s["id"] in user_facing:
