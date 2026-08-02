@@ -28,6 +28,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.middleware.gzip import GZipMiddleware
 
 from dashboard import gpu_stats, settings
 from dashboard import routes_gpu as _routes_gpu
@@ -196,6 +197,17 @@ async def auth_middleware(request: Request, call_next):
         )
         return JSONResponse(status_code=401, content={"detail": "Bearer token required"})
     return await call_next(request)
+
+
+# GZip compression for text responses (JSON payloads, the HTML shell, JS/CSS assets).
+# add_middleware inserts at the outermost position, so it wraps the auth/security http
+# middlewares and compresses the final response body after they run. minimum_size=500
+# skips tiny payloads (401 bodies, small JSON) where compression is net-negative.
+# There are NO streaming/SSE endpoints in this app (grep: no StreamingResponse /
+# EventSourceResponse / text/event-stream; the only `yield` is the lifespan cm), so
+# response buffering is not a concern; Starlette's GZipMiddleware also streams-compresses
+# StreamingResponse chunk-by-chunk rather than buffering, were one ever added.
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
 MODEL_GATEWAY_URL = os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435").rstrip("/")
@@ -2220,7 +2232,15 @@ class _NoCacheHTMLStaticFiles(StaticFiles):
     cards, etc.) can keep showing the old shell until a hard refresh. We add
     `Cache-Control: no-cache` to HTML responses only: the browser still caches
     the shell but MUST revalidate the ETag every load, so a new build is picked
-    up immediately. Hashed/static assets keep their default long-cache behavior.
+    up immediately.
+
+    Vite emits every JS/CSS chunk under ``assets/`` with a content hash in the
+    filename (``index-a1b2c3d4.js``), so a changed file gets a NEW URL — the old
+    URL can safely be cached forever. We mark those responses
+    ``public, max-age=31536000, immutable`` so browsers never revalidate them,
+    eliminating a conditional request per asset per load. Non-hashed files at the
+    SPA root (favicon, manifest, etc.) are left with StaticFiles' default (ETag /
+    Last-Modified revalidation) so they can't go stale.
     """
 
     async def get_response(self, path, scope):
@@ -2228,6 +2248,9 @@ class _NoCacheHTMLStaticFiles(StaticFiles):
         content_type = response.headers.get("content-type", "")
         if content_type.startswith("text/html"):
             response.headers["Cache-Control"] = "no-cache"
+        elif response.status_code == 200 and path.replace("\\", "/").startswith("assets/"):
+            # Content-hashed Vite assets — immutable, cache for a year.
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return response
 
 

@@ -125,8 +125,16 @@ function GpuCard({ gpus }) {
   )
 }
 
+// Coarse "N seconds/minutes ago" for the stale marker — no live per-second ticking.
+function agoLabel(ms) {
+  if (ms == null) return null
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000))
+  if (s < 60) return `${s}s ago`
+  return `${Math.round(s / 60)}m ago`
+}
+
 export default function HwStatBar() {
-  const { data } = usePolling(() => api.get('/api/hardware'), 5000)
+  const { data, error, lastUpdated } = usePolling(() => api.get('/api/hardware'), 5000)
   const [stale, setStale] = useState(false)
   const lastOkRef = useRef(Date.now())
 
@@ -135,6 +143,10 @@ export default function HwStatBar() {
     const t = setInterval(() => setStale(Date.now() - lastOkRef.current > 15000), 3000)
     return () => clearInterval(t)
   }, [])
+
+  // Calm reconnecting/stale marker: the latest poll failed OR data has gone stale, and we
+  // have at least one prior successful fetch to timestamp. Muted, no glow/pulse.
+  const showReconnecting = (!!error || stale) && lastUpdated != null
 
   const d = data || {}
   const cpu = d.cpu_pct != null ? d.cpu_pct : 0
@@ -148,15 +160,22 @@ export default function HwStatBar() {
   const gpus = deriveGpus(d)
 
   return (
-    <div
-      className={`mb-5 flex flex-wrap items-start gap-3 transition-opacity ${stale ? 'opacity-50' : ''}`.trim()}
-      aria-label="System resources"
-      title={stale ? 'Hardware data may be stale' : undefined}
-    >
-      <StatCard label="CPU" value={`${Number(cpu).toFixed(0)}%`} pct={cpu} />
-      <StatCard label="RAM" value={`${ramUsed} / ${ramTotal} GB`} pct={ramPct} />
-      {hasDisk && <StatCard label="Disk" value={`${d.disk_used_gb} / ${d.disk_total_gb} GB`} pct={diskPct} />}
-      <GpuCard gpus={gpus} />
+    <div className="mb-5">
+      <div
+        className={`flex flex-wrap items-start gap-3 transition-opacity ${stale ? 'opacity-50' : ''}`.trim()}
+        aria-label="System resources"
+        title={stale ? 'Hardware data may be stale' : undefined}
+      >
+        <StatCard label="CPU" value={`${Number(cpu).toFixed(0)}%`} pct={cpu} />
+        <StatCard label="RAM" value={`${ramUsed} / ${ramTotal} GB`} pct={ramPct} />
+        {hasDisk && <StatCard label="Disk" value={`${d.disk_used_gb} / ${d.disk_total_gb} GB`} pct={diskPct} />}
+        <GpuCard gpus={gpus} />
+      </div>
+      {showReconnecting && (
+        <p className="mt-1.5 text-micro font-semibold text-muted" role="status" aria-live="polite">
+          Reconnecting… last updated {agoLabel(lastUpdated)}
+        </p>
+      )}
     </div>
   )
 }
