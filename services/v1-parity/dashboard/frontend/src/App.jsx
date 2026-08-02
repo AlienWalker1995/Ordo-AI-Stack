@@ -61,7 +61,7 @@ export default function App() {
       <div className="mx-auto max-w-container animate-fade-up px-6 py-8">
         <header className="mb-8 flex items-start gap-6">
           <div className="min-w-0 flex-1">
-            <h1 className="font-display text-[2.5rem] font-bold uppercase leading-[1.15] tracking-[0.04em] text-fg [text-shadow:0_0_28px_rgba(0,201,255,0.22)]">
+            <h1 className="font-display text-[2.5rem] font-bold uppercase leading-[1.15] tracking-[0.04em] text-fg">
               Ordo AI Stack
             </h1>
             <p className="mt-2 text-[0.8125rem] font-normal tracking-[0.01em] text-muted">

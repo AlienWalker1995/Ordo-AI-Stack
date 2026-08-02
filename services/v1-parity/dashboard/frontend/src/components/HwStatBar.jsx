@@ -103,7 +103,7 @@ function GpuCard({ gpus }) {
                 className={
                   'h-1.5 w-1.5 cursor-pointer rounded-full border-0 p-0 transition-all hover:bg-fg-muted ' +
                   (i === idx
-                    ? 'scale-125 bg-accent [box-shadow:0_0_6px_#00c9ff]'
+                    ? 'scale-125 bg-accent'
                     : 'bg-border')
                 }
                 title={(gg.name || 'GPU').replace(/NVIDIA\s+/i, '')}
