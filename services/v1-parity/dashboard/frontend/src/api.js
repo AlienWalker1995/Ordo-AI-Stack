@@ -90,11 +90,16 @@ export function useFetch(fetcher, deps = []) {
 }
 
 // Auto-refreshing fetch. Polls `fetcher` every `intervalMs`. Pauses while the tab is
-// hidden (no point hammering the backend for an off-screen panel) and resumes on focus.
+// hidden (Page Visibility API — no point hammering the backend for an off-screen panel):
+// no next tick is scheduled while `document.hidden`, and returning to visible triggers an
+// immediate fetch and resumes the interval. Returns `error` and `lastUpdated` (ms epoch of
+// the last SUCCESSFUL fetch) additively so callers can surface a calm stale/reconnecting
+// indicator instead of presenting stale numbers as live.
 export function usePolling(fetcher, intervalMs = 5000, deps = []) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [lastUpdated, setLastUpdated] = useState(null)
   const fetcherRef = useRef(fetcher)
   fetcherRef.current = fetcher
 
@@ -103,6 +108,7 @@ export function usePolling(fetcher, intervalMs = 5000, deps = []) {
       const d = await fetcherRef.current()
       setData(d)
       setError(null)
+      setLastUpdated(Date.now())
     } catch (e) {
       if (e.name !== 'AbortError') setError(e)
     } finally {
@@ -114,15 +120,25 @@ export function usePolling(fetcher, intervalMs = 5000, deps = []) {
     let timer = null
     let stopped = false
     const schedule = () => {
-      if (stopped) return
+      // Don't queue the next fetch while stopped or hidden; visibilitychange resumes it.
+      if (stopped || document.hidden) return
       timer = setTimeout(async () => {
-        if (!document.hidden) await tick()
+        timer = null
+        if (!stopped && !document.hidden) await tick()
         schedule()
       }, intervalMs)
     }
     tick()
     schedule()
-    const onVis = () => { if (!document.hidden) tick() }
+    const onVis = () => {
+      if (document.hidden) {
+        if (timer) { clearTimeout(timer); timer = null }
+      } else {
+        // Back to visible: fetch immediately, then resume the interval.
+        tick()
+        if (!timer) schedule()
+      }
+    }
     document.addEventListener('visibilitychange', onVis)
     return () => {
       stopped = true
@@ -132,5 +148,5 @@ export function usePolling(fetcher, intervalMs = 5000, deps = []) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [intervalMs, ...deps])
 
-  return { data, error, loading, refresh: tick }
+  return { data, error, loading, lastUpdated, refresh: tick }
 }
