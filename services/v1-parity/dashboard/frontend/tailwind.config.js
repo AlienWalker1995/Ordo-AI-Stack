@@ -37,6 +37,29 @@ export default {
         sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'],
         mono: ['ui-monospace', 'SFMono-Regular', '"SF Mono"', 'Menlo', 'Consolas', '"Liberation Mono"', 'monospace'],
       },
+      // A deliberate role-based type scale (extends, does not replace, Tailwind's defaults).
+      // Hierarchy is carried by SIZE + WEIGHT + LINE-HEIGHT + TONE — not by uppercasing and
+      // letter-spacing every small label. Large display is optically tightened (needs no
+      // caps to read as a title); small roles stay near-normal tracking so sentence-case
+      // labels read as calm text, not a uniform small-caps stamp.
+      //   display  — the app wordmark (one per screen)
+      //   title    — dialog / prominent inline titles
+      //   heading  — in-panel sub-section headings (sentence case, brighter tone)
+      //   body     — descriptions and running text
+      //   label    — form + field labels (sentence case, muted)
+      //   caption  — captions, table headers, secondary meta
+      //   micro    — dense stat labels
+      // NOTE: the single UPPERCASE treatment left in the system is the `.section-rule`
+      // panel header (see index.css) — the one deliberate eyebrow, nothing else.
+      fontSize: {
+        display: ['2.25rem', { lineHeight: '1.1', letterSpacing: '-0.02em', fontWeight: '700' }],
+        title: ['1.0625rem', { lineHeight: '1.3', letterSpacing: '-0.01em', fontWeight: '700' }],
+        heading: ['0.9rem', { lineHeight: '1.35', fontWeight: '600' }],
+        body: ['0.8125rem', { lineHeight: '1.6' }],
+        label: ['0.75rem', { lineHeight: '1.4', fontWeight: '500' }],
+        caption: ['0.7rem', { lineHeight: '1.45' }],
+        micro: ['0.62rem', { lineHeight: '1.4', letterSpacing: '0.01em' }],
+      },
       borderRadius: {
         sm: '5px',
         md: '7px',
@@ -53,9 +76,11 @@ export default {
         container: '1200px',
       },
       keyframes: {
+        // Content is visible by default — the entrance animates TRANSFORM only, never
+        // opacity (nothing is hidden behind opacity:0 waiting on JS/animation to reveal it).
         'fade-up': {
-          from: { opacity: '0', transform: 'translateY(8px)' },
-          to: { opacity: '1', transform: 'none' },
+          from: { transform: 'translateY(6px)' },
+          to: { transform: 'none' },
         },
         'toast-in': {
           from: { opacity: '0', transform: 'translateX(16px) scale(.96)' },

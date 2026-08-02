@@ -11,7 +11,7 @@
 // The GPU scheduler itself (`/gpu*`) is independent of the worker and stays live.
 import { api, usePolling } from '../api.js'
 
-const BADGE = 'inline-flex items-center rounded-full border px-2 py-0.5 text-[0.62rem] font-semibold uppercase tracking-[0.06em]'
+const BADGE = 'inline-flex items-center rounded-full border px-2 py-0.5 text-micro font-semibold'
 const B_SUCCESS = 'border-success/30 bg-success/10 text-success'
 const B_ERROR = 'border-danger/30 bg-danger/10 text-danger'
 const B_WARN = 'border-warning/30 bg-warning/10 text-warning'
@@ -39,7 +39,7 @@ function Row({ children }) {
 }
 const JOB_ID = 'min-w-0 flex-1 truncate font-mono text-[0.75rem] text-fg-muted'
 const JOB_TIME = 'shrink-0 font-mono text-[0.7rem] text-muted'
-const SUBHEAD = 'mb-2 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted'
+const SUBHEAD = 'mb-2 text-heading text-fg'
 
 export default function OrchestrationTab() {
   const { data, error } = usePolling(async () => {
@@ -110,12 +110,12 @@ export default function OrchestrationTab() {
                 <>
                   {evicted.length > 0 && (
                     <div className="mb-3 rounded-sm border border-warning/30 bg-warning/[0.08] px-3 py-2 text-[0.78rem] text-warning">
-                      🧠 {evicted.join(', ')} evicted — chat paused until the lease ends
+                      {evicted.join(', ')} evicted - chat paused until the lease ends
                     </div>
                   )}
-                  <div className="mb-1 flex items-center justify-between text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted">
+                  <div className="mb-1 flex items-center justify-between text-label text-muted">
                     <span>VRAM</span>
-                    <span className="font-mono normal-case tracking-normal text-fg-muted">
+                    <span className="font-mono text-fg-muted">
                       {used.toFixed(1)} / {total.toFixed(0)} GB · {gpu?.state || '?'}
                     </span>
                   </div>
@@ -140,7 +140,7 @@ export default function OrchestrationTab() {
 
                   {queued.length > 0 && (
                     <>
-                      <h4 className="mb-1 mt-4 text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-muted">Queued</h4>
+                      <h4 className="mb-1 mt-4 text-caption font-semibold text-muted">Queued</h4>
                       <div className="space-y-1.5">
                         {queued.map((j, i) => (
                           <Row key={j.id || i}>

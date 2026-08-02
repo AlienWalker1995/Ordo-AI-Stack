@@ -65,7 +65,7 @@ export default function DependenciesTab() {
           <div className="space-y-6">
             {groups.map(([cat, items]) => (
               <div key={cat}>
-                <h3 className="mb-2 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted">
+                <h3 className="mb-2 text-heading text-fg">
                   {cat}
                 </h3>
                 <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))] max-[600px]:grid-cols-1">

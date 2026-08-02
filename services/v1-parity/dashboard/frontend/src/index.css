@@ -21,16 +21,16 @@
     -moz-osx-font-smoothing: grayscale;
     overflow-x: hidden;
   }
-  /* Backdrop: a single, neutral top-down tonal lift — atmosphere from tone alone.
-     No blue→purple glow blobs, no dotted graph-paper grid (both read as AI-slop tells);
-     depth comes from the surface hierarchy instead. */
+  /* Backdrop: a single, barely-there top-down tonal lift — atmosphere from tone alone.
+     A linear top-down wash (not a radial "glow" halo, which reads as an AI-slop tell) and
+     no dotted graph-paper grid; depth comes from the surface hierarchy instead. */
   body::before {
     content: '';
     position: fixed;
     inset: 0;
     z-index: -1;
     pointer-events: none;
-    background: radial-gradient(120% 80% at 50% -20%, rgba(255, 255, 255, 0.028), transparent 62%);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.022), transparent 34%);
   }
   :focus-visible {
     outline: 1.5px solid theme('colors.accent');
@@ -49,9 +49,10 @@
 }
 
 @layer components {
-  /* Section heading rule: a calm accent tick + trailing hairline that structures each
-     dense panel header. The tick is a grounded mark (no glow halo) so it reads as
-     hierarchy, not ornament. */
+  /* Section heading rule: a single calm accent tick that anchors each panel header. The
+     tick is a grounded mark (no glow halo) so it reads as hierarchy, not ornament. The
+     old trailing hairline was faux-structure (a decorative rule spanning the row) and has
+     been dropped — the tick alone carries the header. */
   .section-rule::before {
     content: '';
     display: block;
@@ -61,27 +62,18 @@
     border-radius: 999px;
     flex-shrink: 0;
   }
-  .section-rule::after {
-    content: '';
-    display: block;
-    flex: 1;
-    height: 1px;
-    background: theme('colors.border-subtle');
-  }
 
-  /* Status dot — three states encoded by colour + a calm tonal ring instead of a glow
-     halo. Only "pending" animates (a gentle opacity pulse) because motion there is
-     meaningful: it marks an in-flight transition, not decoration. */
+  /* Status dot — state encoded by colour alone, a bare mark with no ring halo (the halo
+     read as a decorative glow). Only "pending" animates (a gentle opacity pulse) because
+     motion there is meaningful: it marks an in-flight transition, not decoration. */
   .status-dot {
     @apply w-2 h-2 rounded-full shrink-0 bg-muted;
   }
   .status-dot.ok {
     background: theme('colors.success');
-    box-shadow: 0 0 0 3px rgba(43, 182, 115, 0.16);
   }
   .status-dot.fail {
     background: theme('colors.danger');
-    box-shadow: 0 0 0 3px rgba(229, 73, 95, 0.16);
   }
   .status-dot.pending {
     background: theme('colors.warning');
@@ -98,10 +90,11 @@
       background-color 0.18s ease,
       border-color 0.18s ease;
   }
-  /* Hover changes state cleanly through tone — a lighter surface and a lit left edge —
-     with no lift, no shadow bloom, no glowing border (the classic slop hover trio). */
+  /* Hover changes state cleanly through tone — a single lighter-surface shift, with no
+     lift, no shadow bloom, no glowing border (the classic slop hover trio). The left edge
+     is reserved as a STATE indicator (ok / fail / pending below), not a decorative hover
+     accent, so hovering never repaints it. */
   .service-card:hover {
-    border-left-color: theme('colors.accent');
     background: theme('colors.surface');
   }
   .service-card.ok-status,
@@ -164,5 +157,19 @@
   }
   50% {
     opacity: 0.5;
+  }
+}
+
+/* Reduced-motion: honour the OS preference. Content is already visible by default (no
+   opacity gating), so collapsing durations here simply removes movement without hiding
+   anything. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

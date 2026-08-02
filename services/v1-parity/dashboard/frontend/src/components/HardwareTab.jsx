@@ -49,7 +49,7 @@ function Bar({ pct, kind = '' }) {
 function StatBlock({ label, value, sub, pct }) {
   return (
     <div className="rounded-md border border-border-subtle bg-bg-elevated p-4">
-      <span className="text-[0.6rem] font-bold uppercase tracking-[0.12em] text-muted">{label}</span>
+      <span className="text-micro font-semibold text-muted">{label}</span>
       <div className="mt-1 font-mono text-[0.95rem] font-semibold tabular-nums text-fg">{value}</div>
       <Bar pct={pct} />
       {sub && <p className="mt-1 font-mono text-[0.65rem] text-muted">{sub}</p>}
@@ -70,15 +70,15 @@ function GpuDetailCard({ g }) {
       <div className="mb-3 flex items-start justify-between gap-3">
         <span className="min-w-0 truncate text-[0.9rem] font-semibold text-fg" title={g.name || 'GPU'}>{name}</span>
         {g.temp_c != null && (
-          <span className="shrink-0 rounded-full border border-border-subtle bg-bg px-2 py-0.5 font-mono text-[0.7rem] text-muted">
+          <span className="shrink-0 rounded-sm border border-border-subtle bg-bg px-2 py-0.5 font-mono text-[0.7rem] text-muted">
             {g.temp_c}°C
           </span>
         )}
       </div>
 
-      <div className="mb-1 flex items-center justify-between text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted">
+      <div className="mb-1 flex items-center justify-between text-label text-muted">
         <span>VRAM</span>
-        <span className="font-mono normal-case tracking-normal text-fg-muted">
+        <span className="font-mono text-fg-muted">
           {used != null ? `${fmt1(used)} / ${fmt1(total)} GB` : `— / ${fmt1(total)} GB`}
         </span>
       </div>
@@ -87,9 +87,9 @@ function GpuDetailCard({ g }) {
         {used != null ? `${fmt1(total - used)} GB free · ${Math.round(vramPct)}% used` : 'VRAM reading unavailable'}
       </p>
 
-      <div className="mt-3 mb-1 flex items-center justify-between text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted">
+      <div className="mt-3 mb-1 flex items-center justify-between text-label text-muted">
         <span>Compute</span>
-        <span className="font-mono normal-case tracking-normal text-fg-muted">{util}%</span>
+        <span className="font-mono text-fg-muted">{util}%</span>
       </div>
       <Bar pct={util} kind="gpu-util" />
     </div>
@@ -163,7 +163,7 @@ export default function HardwareTab() {
           </div>
 
           {/* Per-GPU detail cards */}
-          <h3 className="mb-3 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted">GPUs</h3>
+          <h3 className="mb-3 text-heading text-fg">GPUs</h3>
           {!hw ? (
             <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
               {[0, 1].map((i) => <div key={i} className="skeleton h-40 w-full" />)}
@@ -180,7 +180,7 @@ export default function HardwareTab() {
 
           {/* Service pressure table */}
           <div className="mt-8 border-t border-border-subtle pt-6">
-            <h3 className="mb-1 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted">Service pressure</h3>
+            <h3 className="mb-1 text-heading text-fg">Service pressure</h3>
             <p className="mb-4 text-[0.8125rem] leading-[1.5] text-muted">
               CPU, memory, and VRAM each service is consuming, busiest first.
               {vramUnavail && ' Per-service VRAM breakdown is unavailable on this host.'}
@@ -197,7 +197,7 @@ export default function HardwareTab() {
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[560px] border-collapse text-[0.8125rem]">
                   <thead>
-                    <tr className="text-left text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-muted">
+                    <tr className="text-left text-caption font-medium text-muted">
                       <th className="border-b border-border-subtle px-3 py-2">Service</th>
                       <th className="border-b border-border-subtle px-3 py-2 text-right">CPU</th>
                       <th className="border-b border-border-subtle px-3 py-2">Memory</th>

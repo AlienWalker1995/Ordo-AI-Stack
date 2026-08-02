@@ -38,7 +38,7 @@ function fmtAgo(ts) {
 const BTN =
   'inline-flex h-9 items-center justify-center whitespace-nowrap rounded-sm border border-border bg-surface px-4 text-[0.8125rem] font-medium tracking-[0.02em] text-fg transition-all hover:border-accent/30 hover:bg-accent/[0.07] hover:text-accent disabled:cursor-not-allowed disabled:opacity-40'
 const PANEL = 'rounded-md border border-border-subtle bg-bg-elevated p-5'
-const RAIL_LABEL = 'text-[0.58rem] font-bold uppercase tracking-[0.1em] text-muted'
+const RAIL_LABEL = 'text-micro font-semibold text-muted'
 const RAIL_VAL = 'mt-0.5 font-mono text-[0.9rem] font-semibold tabular-nums text-fg'
 
 function Metric({ label, value }) {
@@ -129,14 +129,14 @@ export default function ThroughputTab() {
           <div className={`${PANEL} mb-6`}>
             <div className="flex flex-wrap items-baseline justify-between gap-3">
               <div className="min-w-0">
-                <span className="text-[0.6rem] font-bold uppercase tracking-[0.12em] text-muted">Active model</span>
+                <span className="text-micro font-semibold text-muted">Active model</span>
                 <div className="mt-0.5 truncate font-mono text-[0.95rem] font-semibold text-fg" title={hero ? hero[0] : ''}>
                   {hero ? hero[0] : 'No samples yet'}
                 </div>
               </div>
               <div className="text-right">
                 <div className="font-mono text-[1.6rem] font-bold leading-none text-accent">{hero ? fmt(hero[1].latest) : '—'}</div>
-                <div className="text-[0.6rem] font-semibold uppercase tracking-[0.1em] text-muted">tok/s latest</div>
+                <div className="text-micro font-semibold text-muted">tok/s latest</div>
               </div>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.72rem] text-muted">
@@ -160,13 +160,13 @@ export default function ThroughputTab() {
           <div className={`${PANEL} mb-6`}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <span className="text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted">Benchmark</span>
+                <span className="text-heading text-fg">Benchmark</span>
                 <p className="mt-1 text-[0.8rem] text-fg-muted">
                   Target: <code className="text-accent-soft">{llms[0]?.name || (hero && hero[0]) || 'local-chat'}</code>
                 </p>
               </div>
               <button type="button" className={BTN} disabled={running} onClick={runBenchmark}>
-                {running ? 'Running…' : '▶ Run benchmark'}
+                {running ? 'Running…' : 'Run benchmark'}
               </button>
             </div>
             {running && (
@@ -187,7 +187,7 @@ export default function ThroughputTab() {
 
           {/* Service usage */}
           <div>
-            <h3 className="mb-1 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted">Service activity</h3>
+            <h3 className="mb-1 text-heading text-fg">Service activity</h3>
             <p className="mb-3 text-[0.8125rem] leading-[1.5] text-muted">
               Recent traffic by service and model. Traffic from Open WebUI, Claude Code, and n8n appears here.
             </p>

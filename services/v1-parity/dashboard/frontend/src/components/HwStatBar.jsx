@@ -16,7 +16,7 @@ const clampPct = (pct) => Math.min(100, Math.max(0, Number(pct) || 0))
 
 // Shared utility strings (kept faithful to the legacy .hw-stat tokens).
 const HW_STAT = 'flex min-w-[90px] flex-1 flex-col gap-0.5 rounded-sm border border-border bg-bg-elevated px-4 py-3 transition-colors hover:border-accent/20'
-const HW_LABEL = 'text-[0.6rem] font-bold uppercase tracking-[0.12em] text-muted'
+const HW_LABEL = 'text-micro font-semibold text-muted'
 const HW_VAL = 'whitespace-nowrap font-mono text-[0.8125rem] font-semibold tabular-nums text-fg'
 const HW_FILL = 'hw-bar-fill mt-1 h-0.5 overflow-hidden rounded-full bg-surface'
 
@@ -119,7 +119,7 @@ function GpuCard({ gpus }) {
       <div className={`${HW_FILL} ${barClass(vramPct)}`.trim()}>
         <span style={{ width: vramPct.toFixed(0) + '%' }} />
       </div>
-      <span className="mt-2 text-[0.55rem] font-semibold uppercase tracking-[0.1em] text-muted">Compute · {util}%</span>
+      <span className="mt-2 text-micro font-semibold text-muted">Compute · {util}%</span>
       <div className={`${HW_FILL} gpu-util`}><span style={{ width: util + '%' }} /></div>
     </div>
   )
