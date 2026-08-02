@@ -17,17 +17,17 @@ import ComfyTab from './components/ComfyTab.jsx'
 import { ToastProvider } from './components/Toast.jsx'
 
 const TABS = [
-  { id: 'services', label: '⚡ Services', Component: ServicesTab },
-  { id: 'models', label: '📦 Models', Component: ModelsTab },
-  { id: 'modelctl', label: '⚙️ Model', Component: ModelctlTab },
-  { id: 'mcp', label: '🧩 MCP', Component: McpTab },
-  { id: 'gpu', label: '🖥️ Hardware', Component: HardwareTab },
-  { id: 'throughput', label: '📈 Throughput', Component: ThroughputTab },
-  { id: 'orchestration', label: '🛠️ Orchestration', Component: OrchestrationTab },
-  { id: 'rag', label: '🔍 RAG', Component: RagTab },
-  { id: 'comfyui', label: '🎨 ComfyUI', Component: ComfyTab },
-  { id: 'grafana', label: '📊 Grafana', Component: GrafanaTab },
-  { id: 'dependencies', label: '🔗 Dependencies', Component: DependenciesTab },
+  { id: 'services', label: 'Services', Component: ServicesTab },
+  { id: 'models', label: 'Models', Component: ModelsTab },
+  { id: 'modelctl', label: 'Model', Component: ModelctlTab },
+  { id: 'mcp', label: 'MCP', Component: McpTab },
+  { id: 'gpu', label: 'Hardware', Component: HardwareTab },
+  { id: 'throughput', label: 'Throughput', Component: ThroughputTab },
+  { id: 'orchestration', label: 'Orchestration', Component: OrchestrationTab },
+  { id: 'rag', label: 'RAG', Component: RagTab },
+  { id: 'comfyui', label: 'ComfyUI', Component: ComfyTab },
+  { id: 'grafana', label: 'Grafana', Component: GrafanaTab },
+  { id: 'dependencies', label: 'Dependencies', Component: DependenciesTab },
 ]
 
 const TAB_IDS = new Set(TABS.map((t) => t.id))
@@ -61,11 +61,11 @@ export default function App() {
       <div className="mx-auto max-w-container animate-fade-up px-6 py-8">
         <header className="mb-8 flex items-start gap-6">
           <div className="min-w-0 flex-1">
-            <h1 className="font-display text-[2.5rem] font-bold uppercase leading-[1.15] tracking-[0.04em] text-fg">
+            <h1 className="font-display text-display text-fg">
               Ordo AI Stack
             </h1>
-            <p className="mt-2 text-[0.8125rem] font-normal tracking-[0.01em] text-muted">
-              Control interface — services, models, and hardware for the local AI stack.
+            <p className="mt-2 text-body text-muted">
+              Control interface: services, models, and hardware for the local AI stack.
             </p>
           </div>
         </header>

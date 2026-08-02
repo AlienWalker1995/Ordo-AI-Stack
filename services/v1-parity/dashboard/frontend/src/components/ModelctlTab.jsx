@@ -36,7 +36,7 @@ const INPUT =
   'h-9 rounded-sm border border-border bg-bg px-3 text-[0.8125rem] text-fg outline-none transition-colors focus:border-accent/50 disabled:cursor-not-allowed disabled:opacity-40'
 const BTN =
   'inline-flex h-9 items-center justify-center whitespace-nowrap rounded-sm border border-border bg-surface px-4 text-[0.8125rem] font-medium tracking-[0.02em] text-fg transition-all hover:border-accent/30 hover:bg-accent/[0.07] hover:text-accent disabled:cursor-not-allowed disabled:opacity-40'
-const LABEL = 'mb-2 block text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted'
+const LABEL = 'mb-2 block text-label text-muted'
 const SECTION = 'mb-5 rounded-lg border border-border bg-card p-6 shadow-card'
 const H2 = 'section-rule mb-4 flex items-center gap-3 text-[0.62rem] font-bold uppercase tracking-[0.18em] text-muted'
 const DESC = 'mb-5 text-[0.8125rem] leading-[1.5] text-muted'
@@ -168,7 +168,7 @@ function ModelConfigCard() {
             if (!fs.length) return null
             return (
               <div key={g} className="mb-5">
-                <div className="mb-2 text-[0.7rem] font-semibold uppercase tracking-[0.05em] text-muted">{label}</div>
+                <div className="mb-2 text-label font-semibold text-fg-muted">{label}</div>
                 <div className="flex flex-col gap-1.5">
                   {fs.map((f) => {
                     const overridden = (f.key in ov) || (f.key in dirty && dirty[f.key] !== null) ||
@@ -185,7 +185,7 @@ function ModelConfigCard() {
                         {renderInput(f)}
                         <span
                           className={
-                            'flex-[0_0_5rem] rounded-full px-2 py-0.5 text-center text-[0.62rem] font-semibold ' +
+                            'flex-[0_0_5rem] rounded-sm px-2 py-0.5 text-center text-micro font-semibold ' +
                             (overridden ? 'bg-accent/20 text-accent' : 'bg-border text-muted')
                           }
                         >
@@ -274,7 +274,7 @@ function RegistryCard() {
     }
   }
 
-  const TH = 'px-3 py-2 text-left text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-muted'
+  const TH = 'px-3 py-2 text-left text-caption font-medium text-muted'
   const TD = 'px-3 py-2.5 align-middle text-[0.8rem] text-fg-muted'
 
   return (
@@ -317,7 +317,7 @@ function RegistryCard() {
                   <tr key={id} className="border-b border-border-subtle last:border-0 hover:bg-white/[0.02]">
                     <td className={TD}><code className="text-[0.78rem] text-fg">{id}</code></td>
                     <td className={TD}>
-                      <span className={'inline-flex items-center rounded-full border px-2 py-0.5 text-[0.65rem] font-semibold ' + kindBadgeClass(m.kind)}>
+                      <span className={'inline-flex items-center rounded-sm border px-2 py-0.5 text-caption font-medium ' + kindBadgeClass(m.kind)}>
                         {m.kind || 'n/a'}
                       </span>
                     </td>

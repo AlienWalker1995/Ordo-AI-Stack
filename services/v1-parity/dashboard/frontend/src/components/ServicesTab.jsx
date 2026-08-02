@@ -14,15 +14,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, usePolling } from '../api.js'
 import { useToast } from './Toast.jsx'
 
-const SERVICE_ICONS = {
-  'model-gateway': '⇌',
-  webui: '💬',
-  mcp: '🔌',
-  comfyui: '🎨',
-  n8n: '⚡',
-  qdrant: '🗄',
-}
-
 // Shared Tailwind utility strings (faithful to the legacy .btn-icon / .section-desc tokens).
 const BTN_ICON =
   'inline-flex h-9 min-w-9 items-center justify-center whitespace-nowrap rounded-sm border border-border bg-surface px-3 text-[0.8125rem] font-medium tracking-[0.02em] text-fg transition-all hover:border-accent/30 hover:bg-accent/[0.07] hover:text-accent disabled:cursor-not-allowed disabled:opacity-40'
@@ -64,7 +55,6 @@ function serviceOpenHref(s) {
 function ServiceCard({ s, isBackground, opsAvailable, pending, onAction, onLogs }) {
   const okCls = pending ? 'pending' : s.ok === true ? 'ok-status' : s.ok === false ? 'fail' : ''
   const dotCls = pending ? 'pending' : s.ok === true ? 'ok' : s.ok === false ? 'fail' : ''
-  const icon = SERVICE_ICONS[s.id] || '●'
 
   let label, title
   if (pending) {
@@ -109,21 +99,20 @@ function ServiceCard({ s, isBackground, opsAvailable, pending, onAction, onLogs 
       className={`service-card flex min-h-[4.5rem] flex-col rounded-md px-5 py-4 ${okCls} ${isBackground ? 'bg-job' : ''}`.trim()}
       data-service-id={s.id}
     >
-      <div className="mb-2 flex items-center gap-2 text-[0.8125rem] font-semibold tracking-[0.02em] text-fg">
-        <span className="w-6 shrink-0 text-center text-base leading-none" aria-hidden="true">{icon}</span>
+      <div className="mb-2 flex items-center text-[0.8125rem] font-semibold text-fg">
         {s.name}
       </div>
       {statusRow}
       {opsAvailable && (
         <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1 border-t border-border-subtle pt-2">
-          <button type="button" className={BTN_ICON} title="Start" aria-label={`Start ${s.name}`} disabled={!!pending} onClick={() => onAction(s.id, 'start')}>▶</button>
-          <button type="button" className={BTN_ICON} title="Stop" aria-label={`Stop ${s.name}`} disabled={!!pending} onClick={() => onAction(s.id, 'stop')}>⏹</button>
-          <button type="button" className={BTN_ICON} title="Restart" aria-label={`Restart ${s.name}`} disabled={!!pending} onClick={() => onAction(s.id, 'restart')}>↻</button>
-          <button type="button" className={BTN_ICON} title="View logs" aria-label={`View logs for ${s.name}`} onClick={() => onLogs(s.id)}>📋</button>
+          <button type="button" className={BTN_ICON} title="Start" aria-label={`Start ${s.name}`} disabled={!!pending} onClick={() => onAction(s.id, 'start')}>Start</button>
+          <button type="button" className={BTN_ICON} title="Stop" aria-label={`Stop ${s.name}`} disabled={!!pending} onClick={() => onAction(s.id, 'stop')}>Stop</button>
+          <button type="button" className={BTN_ICON} title="Restart" aria-label={`Restart ${s.name}`} disabled={!!pending} onClick={() => onAction(s.id, 'restart')}>Restart</button>
+          <button type="button" className={BTN_ICON} title="View logs" aria-label={`View logs for ${s.name}`} onClick={() => onLogs(s.id)}>Logs</button>
         </div>
       )}
       {!s.ok && s.hint && !pending && (
-        <div className="mt-3 break-words border-t border-border-subtle pl-6 pt-3 text-[0.8125rem] leading-[1.5] text-fg-muted">
+        <div className="mt-3 break-words border-t border-border-subtle pt-3 text-[0.8125rem] leading-[1.5] text-fg-muted">
           {s.hint}
         </div>
       )}
@@ -161,8 +150,8 @@ function LogsModal({ id, onClose }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="m-0 font-display text-[1.0625rem] font-bold uppercase tracking-[0.04em] text-fg">
-            {id} — last 100 lines
+          <h2 className="m-0 font-display text-title text-fg">
+            {id}: last 100 lines
           </h2>
           <button type="button" className={BTN_ICON} aria-label="Close logs" onClick={onClose}>✕</button>
         </div>
@@ -293,7 +282,7 @@ export default function ServicesTab() {
 
           {background.length > 0 && (
             <div className="mt-6 border-t border-border-subtle pt-5">
-              <h3 className="mb-1 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted">Background jobs</h3>
+              <h3 className="mb-1 text-heading text-fg">Background jobs</h3>
               <p className="mb-4 text-[0.8125rem] leading-[1.5] text-muted">Backend services and headless workers — no browsable UI, controlled from here.</p>
               <div className={GRID}>
                 {background.map((s) => (

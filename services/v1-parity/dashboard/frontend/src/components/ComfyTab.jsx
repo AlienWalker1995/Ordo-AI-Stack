@@ -29,8 +29,8 @@ const BTN =
 const INPUT =
   'h-9 rounded-sm border border-border bg-bg px-3 text-[0.8125rem] text-fg outline-none transition-colors focus:border-accent/50 disabled:cursor-not-allowed disabled:opacity-40'
 const PANEL = 'rounded-md border border-border-subtle bg-bg-elevated p-5'
-const SUBHEAD = 'mb-2 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted'
-const BADGE = 'inline-flex items-center rounded-full border px-2 py-0.5 text-[0.62rem] font-semibold uppercase tracking-[0.06em]'
+const SUBHEAD = 'mb-2 text-heading text-fg'
+const BADGE = 'inline-flex items-center rounded-full border px-2 py-0.5 text-micro font-semibold'
 
 // --- Status + restart control ---------------------------------------------------
 function StatusControl() {
@@ -87,7 +87,7 @@ function StatusControl() {
         <div className="flex items-center gap-3">
           <span className={`status-dot ${restarting ? 'pending' : up ? 'ok' : 'fail'}`} aria-hidden="true" />
           <div>
-            <span className="text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted">ComfyUI service</span>
+            <span className="text-label text-muted">ComfyUI service</span>
             <div className="mt-0.5 flex items-center gap-2">
               <span className={`${BADGE} ${badgeCls}`}>{restarting ? 'restarting' : up ? 'up' : state}</span>
               {!restarting && (
@@ -99,7 +99,7 @@ function StatusControl() {
           </div>
         </div>
         <button type="button" className={BTN} disabled={restarting} onClick={restart}>
-          {restarting ? 'Restarting…' : '↻ Restart'}
+          {restarting ? 'Restarting…' : 'Restart'}
         </button>
       </div>
     </div>

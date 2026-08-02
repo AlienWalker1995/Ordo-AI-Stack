@@ -13,7 +13,7 @@ function statusBadge(status) {
   return 'border-warning/30 bg-warning/10 text-warning'
 }
 
-const BADGE = 'inline-flex items-center rounded-full border px-2.5 py-0.5 text-[0.7rem] font-semibold uppercase tracking-[0.06em]'
+const BADGE = 'inline-flex items-center rounded-full border px-2.5 py-0.5 text-caption font-medium'
 
 export default function RagTab() {
   const { data, error } = usePolling(() => api.get('/api/rag/status'), 30000)
@@ -41,17 +41,17 @@ export default function RagTab() {
         <div className="rounded-md border border-border-subtle border-l-[3px] border-l-success bg-bg-elevated p-5">
           <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
             <div>
-              <span className="block text-[0.6rem] font-bold uppercase tracking-[0.12em] text-muted">Collection</span>
+              <span className="block text-micro font-semibold text-muted">Collection</span>
               <code className="mt-1 block font-mono text-[0.85rem] text-accent-soft">{data.collection || 'documents'}</code>
             </div>
             <div>
-              <span className="block text-[0.6rem] font-bold uppercase tracking-[0.12em] text-muted">Points indexed</span>
+              <span className="block text-micro font-semibold text-muted">Points indexed</span>
               <span className="mt-1 block font-mono text-[0.95rem] font-semibold tabular-nums text-fg">
                 {(data.points_count ?? 0).toLocaleString()}
               </span>
             </div>
             <div>
-              <span className="block text-[0.6rem] font-bold uppercase tracking-[0.12em] text-muted">Status</span>
+              <span className="block text-micro font-semibold text-muted">Status</span>
               <span className={`mt-1 ${BADGE} ${statusBadge(status)}`}>{status}</span>
             </div>
           </div>
@@ -74,7 +74,7 @@ export default function RagTab() {
 
       {/* How to ingest */}
       <div className="mt-6 border-t border-border-subtle pt-5">
-        <h3 className="mb-2 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted">How to add documents</h3>
+        <h3 className="mb-2 text-heading text-fg">How to add documents</h3>
         <ul className="ml-4 list-disc space-y-1.5 text-[0.8125rem] leading-[1.55] text-fg-muted">
           <li>Drop files into the memory vault — the ingestion pipeline embeds and indexes them automatically.</li>
           <li>Upload through <span className="font-medium text-fg">Open WebUI → Documents</span> to add sources to the collection.</li>

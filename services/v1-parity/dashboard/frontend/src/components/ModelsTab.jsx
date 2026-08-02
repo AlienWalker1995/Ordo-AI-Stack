@@ -45,7 +45,7 @@ const INPUT =
   'h-9 rounded-sm border border-border bg-bg px-3 text-[0.8125rem] text-fg outline-none transition-colors focus:border-accent/50 disabled:cursor-not-allowed disabled:opacity-40'
 const BTN =
   'inline-flex h-9 items-center justify-center whitespace-nowrap rounded-sm border border-border bg-surface px-4 text-[0.8125rem] font-medium tracking-[0.02em] text-fg transition-all hover:border-accent/30 hover:bg-accent/[0.07] hover:text-accent disabled:cursor-not-allowed disabled:opacity-40'
-const LABEL = 'mb-2 block text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted'
+const LABEL = 'mb-2 block text-label text-muted'
 const PANEL = 'rounded-md border border-border-subtle bg-bg-elevated p-5'
 
 export default function ModelsTab() {
@@ -329,7 +329,7 @@ export default function ModelsTab() {
                 >
                   <span className="min-w-0 flex-1 truncate font-mono text-[0.8rem] text-fg" title={m.name}>{m.name}</span>
                   {active && (
-                    <span className="inline-flex items-center rounded-full border border-success/30 bg-success/[0.1] px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-[0.06em] text-success">active</span>
+                    <span className="inline-flex items-center rounded-full border border-success/30 bg-success/[0.1] px-2 py-0.5 text-micro font-semibold text-success">active</span>
                   )}
                   <span className="shrink-0 text-[0.75rem] tabular-nums text-muted">{formatSize(m.size || 0)}</span>
                   <button
