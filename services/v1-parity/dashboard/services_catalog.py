@@ -132,7 +132,7 @@ SERVICES = [
     # nginx subpath, which proxies through to the UI.
     {"id": "codebase-memory-ui", "name": "Codebase Memory", "port": 9750,
      "check": "http://codebase-memory-ui:9750/codebase-memory/", "has_gpu": False, "plugin": "codebase-memory-ui", "category": "knowledge",
-     "hint": "3D code knowledge-graph. Open at https://<host>:8448/codebase-memory/ (Google SSO). "
+     "hint": "3D code knowledge-graph. Open via its clean `graph` tailnet name (the Open button; Google SSO). "
              "In-memory index — re-index after a restart. Opt-in: --profile codebase-memory"},
     # ── Voice (--profile voice / plugin `voice`) ──────────────────────────────────────────
     # STT + TTS both pin the 1070 (the 5090 lacks the kernels). Check URLs mirror each
