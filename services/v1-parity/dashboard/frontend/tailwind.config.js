@@ -8,26 +8,28 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Surfaces
-        bg: '#020307',
-        'bg-elevated': '#07080e',
-        surface: '#0c0e15',
-        'surface-hover': '#131620',
-        card: '#0c0e15',
-        border: '#1c1f2e',
-        'border-subtle': '#111320',
-        // Text
-        fg: '#dde2ee',
-        'fg-muted': '#848da4',
-        muted: '#8a90a8',
-        // Accent: electric cyan
-        accent: '#00c9ff',
-        'accent-soft': '#4dd8ff',
-        // Semantic
-        success: '#00d47a',
-        warning: '#ffb300',
-        danger: '#ff3358',
-        info: '#7c4dff',
+        // Surfaces — neutral graphite, a hair warm. Deliberately NOT the slate-indigo /
+        // blue-charcoal (#0c0e15) default dark theme; elevation reads through tone, not hue.
+        bg: '#0a0a0b',
+        'bg-elevated': '#111113',
+        surface: '#161618',
+        'surface-hover': '#1e1e21',
+        card: '#161618',
+        border: '#2b2b30',
+        'border-subtle': '#1f1f23',
+        // Text — neutral, blue cast removed so it reads as ink on graphite, not tinted glass.
+        fg: '#eaeaec',
+        'fg-muted': '#9a9aa3',
+        muted: '#9a9aa3',
+        // Accent: a single disciplined cyan, slightly tempered from electric so it can
+        // carry state without shouting. Held as the ONLY chromatic accent across the UI.
+        accent: '#2bb8e6',
+        'accent-soft': '#63cdee',
+        // Semantic — reserved for state only, tuned to sit on graphite without neon glare.
+        success: '#2bb673',
+        warning: '#e0a52e',
+        danger: '#e5495f',
+        info: '#5a7290',
       },
       fontFamily: {
         // Native system-font stacks — fully self-contained, zero external font hosts.
@@ -42,9 +44,10 @@ export default {
         lg: '14px',
       },
       boxShadow: {
-        card: '0 3px 18px rgba(2,3,7,.75), 0 1px 4px rgba(2,3,7,.4)',
-        'card-lg': '0 8px 36px rgba(2,3,7,.88), 0 2px 8px rgba(2,3,7,.5)',
-        'glow-accent': '0 0 16px rgba(0,201,255,.2)',
+        // Tight, low-offset, single-direction fall-off tinted to the near-black base —
+        // depth from a grounded soft shadow, not a big symmetric black halo.
+        card: '0 1px 2px rgba(0,0,0,.5), 0 4px 12px rgba(0,0,0,.28)',
+        'card-lg': '0 2px 6px rgba(0,0,0,.55), 0 12px 32px rgba(0,0,0,.42)',
       },
       maxWidth: {
         container: '1200px',
