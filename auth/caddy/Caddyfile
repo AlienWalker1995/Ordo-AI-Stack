@@ -214,15 +214,18 @@
     }
 
     # ---- legacy-path 302s (no auth needed for a redirect) ----
-    # Every pre-port bookmark keeps working. Deep chat/app paths are session
-    # state, not stable URLs — landing on the service root is correct.
-    redir /chat* https://{host}:8443/ 302
-    redir /dash* https://{host}:8444/ 302
-    redir /comfy* https://{host}:8446/ 302
-    redir /hermes* https://{host}:8447/ 302
-    redir /codebase-memory* https://{host}:8448/ 302
-    redir /grafana* https://{host}:8444/grafana/ 302
-    # /n8n UI → its port. NB: Caddy sorts `redir` BEFORE `handle` regardless of file
+    # Canonical URLs are the clean per-service tailnet SUBDOMAINS (chat/dash/hermes/…),
+    # served by the tailnet-names sidecars → these :844x ports. Every pre-port AND
+    # bare-port bookmark keeps working: subpath bookmarks land on the subdomain root
+    # (deep app paths are session state, not stable URLs). The :844x port sites remain
+    # reachable directly as the internal proxy target + a fallback if a sidecar is down.
+    redir /chat* https://chat.{$CADDY_TAILNET_DOMAIN}/ 302
+    redir /dash* https://dash.{$CADDY_TAILNET_DOMAIN}/ 302
+    redir /comfy* https://comfy.{$CADDY_TAILNET_DOMAIN}/ 302
+    redir /hermes* https://hermes.{$CADDY_TAILNET_DOMAIN}/ 302
+    redir /codebase-memory* https://graph.{$CADDY_TAILNET_DOMAIN}/ 302
+    redir /grafana* https://dash.{$CADDY_TAILNET_DOMAIN}/grafana/ 302
+    # /n8n UI → its subdomain. NB: Caddy sorts `redir` BEFORE `handle` regardless of file
     # order, so a bare `redir /n8n*` would shadow the webhook/OAuth passthrough handles
     # above (verified live 2026-07-24: /n8n/webhook/* 302'd instead of proxying). The
     # matcher must therefore exclude the external-facing paths explicitly.
@@ -230,7 +233,7 @@
         path /n8n /n8n/*
         not path /n8n/webhook/* /n8n/rest/oauth2-credential/callback*
     }
-    redir @n8n_ui https://{host}:8445/ 302
+    redir @n8n_ui https://n8n.{$CADDY_TAILNET_DOMAIN}/ 302
 
     # ---- landing page + everything else (SSO-gated) ----
     route {
@@ -255,14 +258,14 @@
                 a small{display:block;color:#7a7a80;font-size:.78rem}
                 </style></head><body><main>
                 <h1>Ordo<span>.</span></h1>
-                <p>One sign-in, one port per service.</p>
+                <p>One sign-in, one clean name per service.</p>
                 <ul>
-                <li><a href="https://{host}:8443/">Chat<small>Open WebUI · :8443</small></a></li>
-                <li><a href="https://{host}:8444/">Dashboard<small>control hub · :8444</small></a></li>
-                <li><a href="https://{host}:8447/">Hermes<small>agent · :8447</small></a></li>
-                <li><a href="https://{host}:8446/">ComfyUI<small>media · :8446</small></a></li>
-                <li><a href="https://{host}:8445/">n8n<small>automation · :8445</small></a></li>
-                <li><a href="https://{host}:8448/">Code graph<small>memory · :8448</small></a></li>
+                <li><a href="https://chat.{$CADDY_TAILNET_DOMAIN}/">Chat<small>Open WebUI · chat</small></a></li>
+                <li><a href="https://dash.{$CADDY_TAILNET_DOMAIN}/">Dashboard<small>control hub · dash</small></a></li>
+                <li><a href="https://hermes.{$CADDY_TAILNET_DOMAIN}/">Hermes<small>agent · hermes</small></a></li>
+                <li><a href="https://comfy.{$CADDY_TAILNET_DOMAIN}/">ComfyUI<small>media · comfy</small></a></li>
+                <li><a href="https://n8n.{$CADDY_TAILNET_DOMAIN}/">n8n<small>automation · n8n</small></a></li>
+                <li><a href="https://graph.{$CADDY_TAILNET_DOMAIN}/">Code graph<small>memory · graph</small></a></li>
                 </ul></main></body></html>
                 HTML
         }

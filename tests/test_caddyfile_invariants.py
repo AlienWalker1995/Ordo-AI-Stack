@@ -131,20 +131,29 @@ def test_root_no_longer_serves_a_ui_catchall(caddyfile_text: str) -> None:
     assert "reverse_proxy" not in tail, ":443 catch-all proxies a UI again — port model regressed"
 
 
-def test_legacy_paths_redirect_to_ports(caddyfile_text: str) -> None:
-    """Old bookmarks must keep working: each pre-port subpath 302s to its port.
+def test_legacy_paths_redirect_to_subdomains(caddyfile_text: str) -> None:
+    """Old bookmarks must keep working AND land on the canonical URL: each pre-port
+    subpath 302s to the clean per-service tailnet subdomain (chat/dash/hermes/…),
+    not the :844x port. The port sites still exist as the sidecars' proxy target +
+    a direct fallback, but the user-facing redirect targets are the subdomains.
 
     n8n is special: a bare `redir /n8n*` is FORBIDDEN because Caddy sorts redir
     before handle and it would shadow the :443 webhook/OAuth passthroughs. The
     real redirect goes through the @n8n_ui matcher (which excludes those paths),
     so assert the matcher-based redirect, not a literal `redir /n8n`."""
-    for legacy, port in (("/chat", "8443"), ("/dash", "8444"),
-                         ("/comfy", "8446"), ("/hermes", "8447"), ("/codebase-memory", "8448")):
-        assert f"redir {legacy}" in caddyfile_text, f"missing legacy redirect for {legacy}"
-        assert f":{port}" in caddyfile_text
-    # n8n: the real redirect is the matcher form, NOT a bare `redir /n8n`.
-    assert "redir @n8n_ui https://{host}:8445/ 302" in caddyfile_text, (
-        "n8n legacy redirect must use the @n8n_ui matcher targeting :8445 — a bare "
+    for legacy, target in (
+        ("/chat*", "https://chat.{$CADDY_TAILNET_DOMAIN}/"),
+        ("/dash*", "https://dash.{$CADDY_TAILNET_DOMAIN}/"),
+        ("/comfy*", "https://comfy.{$CADDY_TAILNET_DOMAIN}/"),
+        ("/hermes*", "https://hermes.{$CADDY_TAILNET_DOMAIN}/"),
+        ("/codebase-memory*", "https://graph.{$CADDY_TAILNET_DOMAIN}/"),
+        ("/grafana*", "https://dash.{$CADDY_TAILNET_DOMAIN}/grafana/"),
+    ):
+        assert f"redir {legacy} {target} 302" in caddyfile_text, (
+            f"legacy redirect for {legacy} must target the canonical subdomain {target}")
+    # n8n: the real redirect is the matcher form targeting the n8n subdomain, NOT a bare `redir /n8n`.
+    assert "redir @n8n_ui https://n8n.{$CADDY_TAILNET_DOMAIN}/ 302" in caddyfile_text, (
+        "n8n legacy redirect must use the @n8n_ui matcher targeting the n8n subdomain — a bare "
         "`redir /n8n` would shadow the webhook/OAuth passthroughs")
 
 
