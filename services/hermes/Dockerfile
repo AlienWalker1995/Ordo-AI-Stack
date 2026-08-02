@@ -21,15 +21,15 @@ RUN git clone --no-single-branch "$HERMES_REPO" hermes-agent \
 
 WORKDIR /build/hermes-agent/web
 
-# Ordo AI Stack patch: exactly TWO rewrites (see spa-patches.mjs — the Vite
-# config base and the Backdrop.tsx /ds-assets image path) so the SPA can be
-# served under /hermes/ via Caddy's prefix-strip reverse proxy. The remaining
-# root-absolute /api/* calls work as-is because the browser resolves them
-# against the stripped-prefix origin routes Caddy forwards.
-# Each patch fails the build loudly if its anchor moves on a SHA bump.
-COPY spa-patches.mjs /tmp/spa-patches.mjs
-RUN node /tmp/spa-patches.mjs
-
+# No SPA base rewrite. The stack serves Hermes at its ORIGIN ROOT on the dedicated
+# edge port :8447 (auth/caddy/Caddyfile — the port-per-service model), so the upstream
+# root-absolute asset URLs (/assets, /ds-assets, /api, the WS endpoints) resolve as-is.
+# Any future subpath deployment (X-Forwarded-Prefix) is handled at RUNTIME by upstream
+# web_server.py's mount_spa, which rewrites /assets, /ds-assets, /fonts and /favicon in
+# index.html + CSS to honour the prefix. A build-time `base: '/hermes/'` (the old
+# spa-patches.mjs, removed) baked a prefix the port model never strips → the browser
+# requested /hermes/assets/*.js, hit the SPA catch-all, got index.html, and rendered a
+# blank page. Building at the upstream root base is the fix.
 RUN npm install && npm run build
 # Produces: /build/hermes-agent/hermes_cli/web_dist/
 
