@@ -1,4 +1,7 @@
 model_list:
+  # local-chat: the stable auto-routing alias every consumer (Hermes, reels, dashboard) uses.
+  # Backed by the GPU model; falls over to the CPU A3B via router_settings below when the GPU
+  # llamacpp is evicted for a media render. DO NOT rename — lots depends on this id.
   - model_name: "local-chat"
     litellm_params:
       model: "openai/local-chat"
@@ -9,6 +12,28 @@ model_list:
     model_info:
       max_input_tokens: __CTX_SIZE__
 
+  # Explicit, pickable REAL models so callers/UI see WHICH model they're using, not just the
+  # opaque `local-chat`. qwen3.6-27b = the GPU chat model; qwen3.6-35b-a3b-cpu = the always-on
+  # CPU fallback (also local-chat's failover target). The CPU one is only reachable when the
+  # opt-in `llamacpp-cpu` service is running; otherwise it just sits unavailable (harmless).
+  - model_name: "qwen3.6-27b"
+    litellm_params:
+      model: "openai/local-chat"
+      api_base: "http://llamacpp:8080/v1"
+      api_key: "local"
+      timeout: 1800
+      stream_timeout: 1800
+    model_info:
+      max_input_tokens: __CTX_SIZE__
+
+  - model_name: "qwen3.6-35b-a3b-cpu"
+    litellm_params:
+      model: "openai/local-chat"
+      api_base: "http://llamacpp-cpu:8080/v1"
+      api_key: "local"
+      timeout: 1800
+      stream_timeout: 1800
+
   - model_name: "local-embed"
     litellm_params:
       model: "openai/local-embed"
@@ -17,6 +42,15 @@ model_list:
 
 general_settings:
   master_key: "__MASTER_KEY__"
+
+# Graceful degradation: local-chat runs on the GPU; if that deployment is unreachable (the
+# scheduler evicted llamacpp to give the 5090 to a render), LiteLLM fails the request over to
+# the always-on CPU A3B so chat/agents keep working instead of erroring — then recovers to the
+# GPU model as soon as it's healthy again (short cooldown). No effect until llamacpp-cpu runs.
+router_settings:
+  fallbacks: [{"local-chat": ["qwen3.6-35b-a3b-cpu"]}]
+  cooldown_time: 30
+  num_retries: 1
 
 litellm_settings:
   request_timeout: 1800

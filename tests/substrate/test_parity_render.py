@@ -28,6 +28,7 @@ EXPECTED_SERVICE_PLUGINS = {
     "tailnet-names",                                      # post-parity: per-service Tailscale clean-URL sidecars
     "obsidian-livesync",                                 # cross-device Obsidian notes sync (CouchDB LiveSync + bridge)
     "obsidian-livesync-funnel",                          # opt-in off-tailnet public access (Tailscale Funnel)
+    "llamacpp-cpu",                                      # CPU LLM fallback (needs 24GB RAM, no GPU); dormant behind the cpu-fallback profile
 }
 # memory-vault is a post-parity add (file-based markdown-memory MCP). codebase-memory / comfyui /
 # n8n / orchestration are the RESTORED V1 roster (the V1→V2 migration had silently dropped them);
@@ -50,15 +51,16 @@ def test_dual_gpu_enables_the_full_parity_set():
 
 
 def test_parity_matrix_counts():
-    # 15 kind=service plugins (11 parity set + ltx-trainer + tailnet-names + obsidian-livesync +
-    # obsidian-livesync-funnel) + 7 kind=mcp plugins (qdrant-rag, searxng, memory-vault + the
-    # restored codebase-memory / comfyui-mcp / n8n / orchestration) all enable on the full host.
-    # (The media "worker" plugin was retired, dropping the parity set from 12 to 11.)
+    # 16 kind=service plugins (11 parity set + ltx-trainer + tailnet-names + obsidian-livesync +
+    # obsidian-livesync-funnel + llamacpp-cpu) + 7 kind=mcp plugins (qdrant-rag, searxng,
+    # memory-vault + the restored codebase-memory / comfyui-mcp / n8n / orchestration) all enable
+    # on the full host. (The media "worker" plugin was retired, dropping the parity set from 12 to
+    # 11; llamacpp-cpu — the CPU LLM fallback — was added post-parity, bringing service plugins to 16.)
     svc = [p for p in REGISTRY.plugins if p.kind == "service"]
     mcp = [p for p in REGISTRY.plugins if p.kind == "mcp"]
-    assert len(svc) == 15 and len(mcp) == 7
+    assert len(svc) == 16 and len(mcp) == 7
     rc = _dual()
-    assert len(rc.plugins_enabled) == 15
+    assert len(rc.plugins_enabled) == 16
     assert len(rc.mcp_servers) == 7
 
 

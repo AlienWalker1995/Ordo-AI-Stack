@@ -1,0 +1,67 @@
+# Plugin manifest (data-only) — CPU LLM fallback for local-chat.
+#
+# A second llama.cpp chat server pinned to CPU/RAM (never the GPU), always up. When the
+# `ordo serve` scheduler evicts the GPU llamacpp to hand the 5090 to a media render, LiteLLM
+# fails `local-chat` over to THIS instance so chat/agent requests keep working (degraded)
+# instead of erroring — then routes back to the GPU model when it returns. Routing lives in
+# the model-gateway (LiteLLM); this plugin only provides the CPU deployment.
+#
+# Model: Qwen3.6-35B-A3B (unsloth UD-Q4_K_M) — a MoE with ~3B active params, so it stays
+# responsive on CPU (~15-25 tok/s) while keeping near-27B quality. ~20GB weights in RAM.
+#
+# Enabled in the `auto` parity set on any host with >=24GB RAM, but its service is DORMANT behind
+# the `cpu-fallback` compose profile — the container only starts when COMPOSE_PROFILES includes
+# `cpu-fallback` (same pattern as obsidian-livesync-funnel). Safe to merge without touching the
+# running stack: no profile active => nothing runs, and LiteLLM's fallback target just sits
+# unreachable (harmless) until the profile is turned on.
+id: llamacpp-cpu
+name: CPU LLM Fallback (Qwen3.6-35B-A3B)
+description: Always-on CPU llama.cpp chat server that LiteLLM fails local-chat over to while the GPU is busy.
+requires:
+  nvidia: false           # deliberately CPU-only — never contends for the 5090
+  ram_gb: 24              # ~20GB A3B weights (Q4) + KV cache
+provides: [llm-cpu-fallback]
+compose_profile: cpu-fallback
+services:
+  - name: llamacpp-cpu
+    # Same upstream llama.cpp server image as the GPU chat backend + llamacpp-embed (Docker pulls it).
+    image: ghcr.io/ggml-org/llama.cpp:server@sha256:295dc9897fa8a643e4a513fbcaada51d3b8db4b0afa4fda7aeae2386757de58b
+    # Force CPU: CUDA_VISIBLE_DEVICES="" hides every GPU from this container so it can NEVER grab
+    # VRAM the render/GPU-llamacpp own, even though the image is a CUDA build. --n-gpu-layers 0 too.
+    environment:
+      CUDA_VISIBLE_DEVICES: ""
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --model
+      - /models/${LLAMACPP_CPU_MODEL:-Qwen3.6-35B-A3B-UD-Q4_K_M.gguf}
+      - --n-gpu-layers
+      - "0"
+      # Moderate ctx: a huge KV cache is slow to prefill on CPU. 32k covers agent turns with
+      # headroom; q8 KV keeps it a few GB of RAM. Override via LLAMACPP_CPU_CTX if needed.
+      - --ctx-size
+      - "${LLAMACPP_CPU_CTX:-32768}"
+      - --parallel
+      - "1"
+      - --jinja                     # use the GGUF's chat template (Qwen3.6)
+      - --reasoning-format
+      - deepseek                    # match the GPU backend's reasoning handling
+      - --cache-type-k
+      - q8_0
+      - --cache-type-v
+      - q8_0
+      # MUST use --no-mmap: the models/gguf Docker Desktop bind mount is 9p, which can't mmap a
+      # 20GB file (it hangs at "loading model" with ~0 RAM used). Read it fully into RAM instead —
+      # the GPU llamacpp does the same. 117GB RAM easily holds the ~20GB A3B.
+      - --no-mmap
+      - --metrics
+    volumes:
+      - ${BASE_PATH:-.}/models/gguf:/models:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      start_period: 240s            # loading ~20GB into RAM on CPU is slow; give it room
+      interval: 20s
+      timeout: 10s
+      retries: 12
