@@ -39,10 +39,16 @@ services:
       - /models/${LLAMACPP_CPU_MODEL:-Qwen3.6-35B-A3B-UD-Q4_K_M.gguf}
       - --n-gpu-layers
       - "0"
-      # Moderate ctx: a huge KV cache is slow to prefill on CPU. 32k covers agent turns with
-      # headroom; q8 KV keeps it a few GB of RAM. Override via LLAMACPP_CPU_CTX if needed.
+      # Ctx MUST match the GPU backend's window (llamacpp serves n_ctx=131072). This is the failover
+      # target for `local-chat`: a failover must accept anything the primary would, or it rejects
+      # requests exactly when the GPU is evicted — which is when it's needed. This value is NOT how
+      # much a client fills (Hermes compacts far earlier); it's the model window. Undersizing it
+      # bites live: a 38k-token turn 503'd against a 32k ctx ("exceeds available context size").
+      # Cost is near-zero: ctx-size sets the KV *allocation* (~6-7GB at q8, trivial vs 117GB RAM),
+      # NOT per-request work — llama.cpp prefills only the actual tokens sent, so a bigger window
+      # adds no latency to normal turns. Override via LLAMACPP_CPU_CTX.
       - --ctx-size
-      - "${LLAMACPP_CPU_CTX:-32768}"
+      - "${LLAMACPP_CPU_CTX:-131072}"
       - --parallel
       - "1"
       - --jinja                     # use the GGUF's chat template (Qwen3.6)
