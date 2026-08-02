@@ -45,9 +45,11 @@ def test_registry_loaded_manifests():
 
 
 def test_big_gpu_enables_all_and_merges_env():
-    # single 5090: media enables; the CPU-ok service plugins enable; voice needs a SECOND card → off
+    # single 5090: media enables; the CPU-ok service plugins enable; voice needs a SECOND card → off.
+    # llamacpp-cpu (CPU LLM fallback) is CPU-ok but RAM-gated at 24GB, so it rides big-RAM hosts like
+    # this 128GB 5090 box (but NOT the 16GB P_CPU profile — see test_cpu_disables_voice_and_media).
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
-    assert set(rc.plugins_enabled) == {"comfyui", "song-gen", "ltx-trainer"} | CPU_OK_SERVICE_PLUGINS
+    assert set(rc.plugins_enabled) == {"comfyui", "song-gen", "ltx-trainer", "llamacpp-cpu"} | CPU_OK_SERVICE_PLUGINS
     assert "voice" not in rc.plugins_enabled
     assert rc.env["COMFYUI_ENABLED"] == "1"
     assert "ltx-trainer" in rc.plugins_enabled    # LoRA trainer enables on a big single GPU too
