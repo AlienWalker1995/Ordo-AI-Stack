@@ -29,6 +29,10 @@ services:
     # 1070; the uuid pin (CUDA_VISIBLE_DEVICES + device_ids) is the only thing WSL2 actually honors.
     gpu_pin: primary      # shares the primary (compute) GPU with llama.cpp
     wants_secrets: true   # HF_TOKEN / GITHUB_PERSONAL_ACCESS_TOKEN resolve from secrets.env
+    # Docker's 64MB /dev/shm default starves the TRELLIS2 image-to-3D node: its comfy-env
+    # isolation worker passes every tensor result through shared memory (torch share_memory_),
+    # and 64MB can't even hold the resident models — share_memory_ fails mid-run. 8g matches ltx-trainer.
+    shm_size: 8g
     env:
       CLI_ARGS: ${COMFYUI_CLI_ARGS:---cpu --enable-manager}
       # V1's proven allocator config (overrides/compute.yml). An EMPTY string here is worse than
