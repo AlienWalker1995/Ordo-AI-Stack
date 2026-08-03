@@ -167,18 +167,28 @@ def cmd_init(args: argparse.Namespace) -> int:
     if _prompt_yn("Download the selected model now (ordo fetch)?", default=False):
         _run([sys.executable, "-m", "ordo", "--source", str(result.source_path),
               "fetch", "--models-dir", args.models_dir])
+    # Onboarding default: bring up CORE + Hermes ONLY (no COMPOSE_PROFILES) so you get a capable
+    # agent with a minimal footprint, then ask Hermes to install optional services on request.
+    # `plugins: auto` has already RENDERED every fitting optional service dormant behind its profile,
+    # so installing later is a cheap recreate ("install open-webui"). The full configured stack (all
+    # profiles — front door + every service) is the printed alternative.
     profiles = ",".join(result.compose_profiles)
-    if _prompt_yn(f"Bring the stack up now (docker compose -p ordo up -d, "
-                  f"profiles: {profiles or '(core only)'})?", default=False):
-        env = {"COMPOSE_PROFILES": profiles} if profiles else {}
+    if _prompt_yn("Bring up CORE + Hermes now (a capable agent, minimal footprint; install optional "
+                  "services later by asking Hermes)?", default=False):
         _run(["docker", "compose", "-p", "ordo", "--env-file", ".env", "--env-file",
-              "secrets.env", "up", "-d"], cwd=out, env=env)
-        host = result.caddy_hostname or "<hostname>"
-        print(f"\nDashboard: https://{host}:8444/")
+              "secrets.env", "up", "-d"], cwd=out)  # no COMPOSE_PROFILES -> core + agent only
+        print("\nHermes is coming up. Once it's loaded (via its chat gateway), ask it to install "
+              "services — e.g. \"install open-webui\", \"turn on web search\".")
+        if profiles:
+            print(f"Full configured stack (front door + all services) when you want it:\n  cd {out} "
+                  f"&& COMPOSE_PROFILES={profiles} docker compose -p ordo --env-file .env "
+                  f"--env-file secrets.env up -d")
     else:
-        print(f"\nWhen ready:  cd {out} && "
-              f"{'COMPOSE_PROFILES=' + profiles + ' ' if profiles else ''}"
+        print(f"\nWhen ready — CORE + Hermes:  cd {out} && "
               f"docker compose -p ordo --env-file .env --env-file secrets.env up -d")
+        if profiles:
+            print(f"Full configured stack:       cd {out} && COMPOSE_PROFILES={profiles} "
+                  f"docker compose -p ordo --env-file .env --env-file secrets.env up -d")
     return 0
 
 

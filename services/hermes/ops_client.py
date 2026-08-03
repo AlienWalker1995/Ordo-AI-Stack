@@ -28,6 +28,7 @@ class OpsClient:
         url: str | None = None,
         token: str | None = None,
         timeout: float = 60.0,
+        ctl_url: str | None = None,
     ):
         # OPS_API_URL, deliberately NOT OPS_CONTROLLER_URL: that var points at the
         # scheduler, which has none of these routes (the original mis-wiring).
@@ -37,11 +38,18 @@ class OpsClient:
             raise OpsClientError("OPS_CONTROLLER_TOKEN env var is empty")
         self._headers = {"Authorization": f"Bearer {token}"}
         self._client = httpx.Client(base_url=self.url, headers=self._headers, timeout=timeout)
+        # The ordo-serve scheduler (ops-controller) — service-plugin install/render lives HERE (the
+        # render authority: /plugins), separate from the Bearer-gated ops-api verbs above. ControlPlane
+        # is authless by design (it trusts the localhost/tailnet boundary; auth is Caddy's job), so
+        # this client sends no token.
+        self.ctl_url = ctl_url or os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000")
+        self._ctl = httpx.Client(base_url=self.ctl_url, timeout=timeout)
 
     def _check(self, r: httpx.Response) -> None:
         if r.status_code >= 400:
             try:
-                detail = r.json().get("detail", r.text)
+                j = r.json()
+                detail = j.get("detail") or j.get("error") or r.text
             except Exception:
                 detail = r.text
             raise OpsClientError(f"{r.status_code} {detail}")
@@ -89,5 +97,24 @@ class OpsClient:
         self._check(r)
         return r.json()
 
+    # --- control-plane (ops-controller scheduler, authless): service-plugin install/enable ---
+    # These are the render authority: they edit ordo.yaml's plugin list + re-render out/. They do NOT
+    # start containers — the caller then brings each service up via compose_up() (ops-api recreate).
+    def list_plugins(self) -> dict[str, Any]:
+        r = self._ctl.get("/plugins")
+        self._check(r)
+        return r.json()
+
+    def enable_plugin(self, plugin_id: str, *, confirm: bool = False) -> dict[str, Any]:
+        r = self._ctl.post(f"/plugins/{plugin_id}/enable", json={"confirm": confirm})
+        self._check(r)
+        return r.json()
+
+    def disable_plugin(self, plugin_id: str, *, confirm: bool = False) -> dict[str, Any]:
+        r = self._ctl.post(f"/plugins/{plugin_id}/disable", json={"confirm": confirm})
+        self._check(r)
+        return r.json()
+
     def close(self) -> None:
         self._client.close()
+        self._ctl.close()
