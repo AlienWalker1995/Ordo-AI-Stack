@@ -521,6 +521,8 @@ def _collect_answers(catalog: Catalog, registry: PluginRegistry, pl: WizardPlan,
         secret_line += f"; blank: {', '.join(blank)}"
     print(f"  secrets       {secret_line}")
     print(f"  writes        {out_dir / 'ordo.yaml'}  +  {out_dir / 'secrets.env'}")
+    print("\n  Onboarding: the stack comes up as CORE + Hermes on the model above (minimal footprint).")
+    print("  Optional services stay off until you ask Hermes to install them (\"install open-webui\").")
     if not _confirm("\nWrite this configuration?", default=True):
         raise SetupCancelled
 

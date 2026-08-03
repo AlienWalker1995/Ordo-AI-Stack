@@ -150,6 +150,9 @@ ALLOWED_SERVICES = {
     "hermes-dashboard", "rag-ingestion",
     # Obsidian notes-sync background services (couchdb + bridge + opt-in funnel).
     "couchdb", "livesync-bridge", "notes-funnel",
+    # Services installable on request via the control-plane /plugins path (Hermes-driven onboarding):
+    # the monitoring stack and the always-on CPU-fallback LLM. (song-gen rides comfyui — no own svc.)
+    "grafana", "prometheus", "gpu-exporter", "llamacpp-cpu",
 }
 
 # .env keys we allow updating via the API

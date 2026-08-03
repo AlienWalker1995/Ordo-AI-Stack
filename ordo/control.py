@@ -27,6 +27,16 @@ from .config import Source
 from .plugins import PluginRegistry
 from .render import render
 from .scheduler import Job, Scheduler
+from .source_edit import edit_plugins_list
+
+# Service plugins Hermes may install/enable on request (kind=service, profile-gated). The core
+# substrate (llamacpp, model-gateway, mcp-gateway, ops-controller, dashboard, agent), the edge /
+# front-door (edge, tailnet-names — secret-dependent, host `make up` only), and the agent itself are
+# NOT here, so they can never be created/removed via this path — the allowlist is the security gate.
+INSTALLABLE_PLUGINS = frozenset({
+    "comfyui", "song-gen", "voice", "rag", "open-webui", "monitoring",
+    "automation", "searxng-web", "codebase-memory-ui", "obsidian-livesync", "llamacpp-cpu",
+})
 
 
 class ControlPlane:
@@ -95,6 +105,155 @@ class ControlPlane:
         return {"ok": True, "active_model": rc.model.id, "ctx_size": rc.ctx_size,
                 "warnings": rc.warnings, "wrote": str(self.out_dir)}
 
+    # --- service-plugin install/enable (render authority for Hermes-driven onboarding) ---
+    def _secrets_present(self) -> set[str]:
+        """Secret KEYS with a non-empty value in out/secrets.env (empty if the file is absent). Lets an
+        enable request tell whether a service's secrets are provisioned, so a secret-dependent service
+        is escalated to a host `make up` rather than started broken."""
+        p = self.out_dir / "secrets.env"
+        present: set[str] = set()
+        if p.exists():
+            for line in p.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                if v.strip().strip('"').strip("'"):
+                    present.add(k.strip())
+        return present
+
+    def _deps_closure(self, plugin_id: str, already: set[str]) -> list[str]:
+        """`plugin_id` + its transitive `depends_on` not already enabled — the set that must be added
+        to the plugins list so the target resolves (the dep gate drops a plugin whose deps are off)."""
+        need: list[str] = []
+        seen = set(already)
+        stack = [plugin_id]
+        while stack:
+            pid = stack.pop()
+            if pid in seen:
+                continue
+            seen.add(pid)
+            need.append(pid)
+            p = self.registry.get(pid)
+            if p:
+                stack.extend(d for d in p.depends_on if d not in seen)
+        return need
+
+    def _plugin_view(self, p: Any, enabled: set[str], present: set[str], hw: Any) -> dict[str, Any]:
+        return {
+            "id": p.id, "name": p.name, "description": p.description,
+            "services": [s.name for s in p.services],
+            "compose_profile": p.compose_profile,
+            "secrets": list(p.secrets),
+            "missing_secrets": [k for k in p.secrets if k not in present],
+            "fits": p.fits(hw),
+            "enabled": p.id in enabled,
+        }
+
+    def list_plugins(self) -> dict[str, Any]:
+        """The installable-service catalog for the agent skill: each allowlisted plugin with its
+        services, compose profile, secret keys, hardware fit, and whether it's already enabled."""
+        rc = self._render()
+        enabled = set(rc.plugins_enabled)
+        present = self._secrets_present()
+        return {"plugins": [
+            self._plugin_view(p, enabled, present, rc.hardware)
+            for p in self.registry.plugins if p.id in INSTALLABLE_PLUGINS
+        ]}
+
+    def enable_plugin(self, plugin_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Enable a service plugin the drift-safe way (same one-write-path as set_model_config): add
+        it (+ any unmet deps) to ordo.yaml's `plugins:` list, re-render, regenerate out/. Under
+        `plugins: auto` a fitting plugin is ALREADY rendered (dormant behind its profile), so this is
+        a no-op edit and the caller just recreates the service. Refuses anything not in
+        INSTALLABLE_PLUGINS, and anything that doesn't fit the hardware."""
+        if plugin_id not in INSTALLABLE_PLUGINS:
+            return self._error(403, f"'{plugin_id}' is not an installable service (core, edge/"
+                               "front-door, and the agent are refused)",
+                               installable=sorted(INSTALLABLE_PLUGINS))
+        plugin = self.registry.get(plugin_id)
+        if plugin is None:
+            return self._error(404, f"plugin '{plugin_id}' is not in the registry")
+        src = Source.load(self.source_path)
+        rc = self._render()
+        hw = rc.hardware
+        services = [s.name for s in plugin.services]
+        present = self._secrets_present()
+
+        if plugin_id in set(rc.plugins_enabled):
+            # already rendered (the common case under plugins: auto) — no source edit; recreate only
+            return {"ok": True, "already_rendered": True, "plugin": plugin_id,
+                    "services": services, "compose_profile": plugin.compose_profile,
+                    "wants_secrets": bool(plugin.secrets),
+                    "missing_secrets": [k for k in plugin.secrets if k not in present],
+                    "warnings": []}
+
+        if not plugin.fits(hw):
+            _, notes = self.registry.resolve([plugin_id], hw)
+            reason = next((n for n in notes if plugin_id in n),
+                          f"'{plugin_id}' does not fit this hardware")
+            return self._error(409, reason)
+
+        if src.plugins == "auto" or src.plugins is None:
+            # fits + auto but not enabled -> a dependency was gated off (dropped by the dep fixpoint)
+            _, notes = self.registry.resolve([plugin_id], hw)
+            reason = next((n for n in notes if plugin_id in n),
+                          f"'{plugin_id}' could not be enabled (an unmet dependency)")
+            return self._error(409, reason)
+
+        # explicit plugin list: add the plugin + any unmet deps, VALIDATE the render, then persist.
+        to_add = self._deps_closure(plugin_id, set(rc.plugins_enabled))
+        blocked = [pid for pid in to_add if pid not in INSTALLABLE_PLUGINS]
+        if blocked:
+            return self._error(409, f"'{plugin_id}' requires {blocked}, which are not installable")
+        text = self.source_path.read_text(encoding="utf-8")
+        try:
+            for pid in to_add:
+                text = edit_plugins_list(text, pid, "add")
+        except ValueError as e:
+            return self._error(422, f"cannot safely edit ordo.yaml plugins list: {e}")
+        edited = Source.from_dict(yaml.safe_load(text))
+        rc2 = render(edited, self.catalog, self.registry)
+        if plugin_id not in set(rc2.plugins_enabled):
+            return self._error(409, f"'{plugin_id}' still not enabled after the edit (unmet "
+                               "dependency or fit) — nothing written")
+        # commit: ONE write path — the source text, then regenerate every derived output.
+        self.source_path.write_text(text, encoding="utf-8")
+        rc2.write(self.out_dir)
+        return {"ok": True, "already_rendered": False, "plugin": plugin_id,
+                "services": services, "compose_profile": plugin.compose_profile,
+                "wants_secrets": bool(plugin.secrets),
+                "missing_secrets": [k for k in plugin.secrets if k not in self._secrets_present()],
+                "added": to_add, "warnings": rc2.warnings, "wrote": str(self.out_dir)}
+
+    def disable_plugin(self, plugin_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Remove a service plugin from an EXPLICIT plugins list + re-render (symmetric to enable).
+        Under `plugins: auto` there's no list item to remove — the caller stops the container, but it
+        returns on the next render unless the operator sets an explicit list; that is reported."""
+        if plugin_id not in INSTALLABLE_PLUGINS:
+            return self._error(403, f"'{plugin_id}' is not an installable service")
+        plugin = self.registry.get(plugin_id)
+        if plugin is None:
+            return self._error(404, f"plugin '{plugin_id}' is not in the registry")
+        services = [s.name for s in plugin.services]
+        src = Source.load(self.source_path)
+        if src.plugins == "auto" or src.plugins is None:
+            return {"ok": True, "transient": True, "plugin": plugin_id, "services": services,
+                    "note": "plugins is 'auto'; the container is stopped but returns on the next "
+                            "render — set an explicit plugin list to persist a disable"}
+        text = self.source_path.read_text(encoding="utf-8")
+        try:
+            new_text = edit_plugins_list(text, plugin_id, "remove")
+        except ValueError as e:
+            return self._error(422, f"cannot safely edit ordo.yaml plugins list: {e}")
+        if new_text == text:
+            return {"ok": True, "already_absent": True, "plugin": plugin_id, "services": services}
+        edited = Source.from_dict(yaml.safe_load(new_text))
+        rc2 = render(edited, self.catalog, self.registry)
+        self.source_path.write_text(new_text, encoding="utf-8")
+        rc2.write(self.out_dir)
+        return {"ok": True, "plugin": plugin_id, "services": services, "wrote": str(self.out_dir)}
+
     def request_job(self, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
             return self._error(503, "no broker configured")
@@ -136,6 +295,12 @@ class ControlPlane:
             return 200, self.get_model_config()
         if m == "POST" and path == "/model-config":
             return self._as_response(self.set_model_config(body))
+        if m == "GET" and path == "/plugins":
+            return 200, self.list_plugins()
+        if m == "POST" and path.startswith("/plugins/") and path.endswith("/enable"):
+            return self._as_response(self.enable_plugin(path[len("/plugins/"):-len("/enable")], body))
+        if m == "POST" and path.startswith("/plugins/") and path.endswith("/disable"):
+            return self._as_response(self.disable_plugin(path[len("/plugins/"):-len("/disable")], body))
         if m == "POST" and path == "/jobs":
             return self._as_response(self.request_job(body))
         if m == "POST" and path == "/jobs/complete":

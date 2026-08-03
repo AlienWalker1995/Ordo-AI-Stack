@@ -128,6 +128,75 @@ def _compose_up(args: dict, **kwargs) -> str:
         return _err(f"unexpected error: {exc}")
 
 
+def _list_installable(args: dict, **kwargs) -> str:
+    try:
+        return json.dumps({"ok": True, **_get_client().list_plugins()})
+    except OpsClientError as exc:
+        return _err(str(exc))
+    except Exception as exc:
+        logger.exception("list_installable_services failed")
+        return _err(f"unexpected error: {exc}")
+
+
+def _enable_service(args: dict, **kwargs) -> str:
+    """Install/enable an optional service: render authority (ops-controller /plugins/{id}/enable)
+    to add + re-render it, then bring each of its services up via the ops-api recreate executor.
+    Secret-dependent services that lack their secrets are rendered but NOT started — escalated to a
+    host `make up`, never started broken."""
+    plugin_id = (args.get("plugin_id") or "").strip()
+    if not plugin_id:
+        return _err("plugin_id is required")
+    if not bool(args.get("confirm")):
+        return _err("enable_service requires confirm=true")
+    try:
+        client = _get_client()
+        r = client.enable_plugin(plugin_id, confirm=True)  # render authority (may raise 403/404/409)
+        missing = r.get("missing_secrets") or []
+        if missing:
+            return json.dumps({
+                "ok": True, "plugin": plugin_id, "rendered": True, "brought_up": False,
+                "missing_secrets": missing,
+                "escalate": ("secret-dependent service — run `cd /c/dev/ordo-ai-stack && make up` on "
+                             f"the HOST to supply {missing}, then it will start. Do not fake secrets."),
+            })
+        started = [client.compose_up(service=svc, confirm=True) for svc in r.get("services", [])]
+        return json.dumps({
+            "ok": True, "plugin": plugin_id, "rendered": True, "brought_up": True,
+            "already_rendered": r.get("already_rendered"),
+            "services": r.get("services", []), "compose_profile": r.get("compose_profile"),
+            "started": started, "warnings": r.get("warnings", []),
+        })
+    except OpsClientError as exc:
+        return _err(str(exc))
+    except Exception as exc:
+        logger.exception("enable_service failed")
+        return _err(f"unexpected error: {exc}")
+
+
+def _disable_service(args: dict, **kwargs) -> str:
+    plugin_id = (args.get("plugin_id") or "").strip()
+    if not plugin_id:
+        return _err("plugin_id is required")
+    if not bool(args.get("confirm")):
+        return _err("disable_service requires confirm=true")
+    try:
+        client = _get_client()
+        r = client.disable_plugin(plugin_id, confirm=True)
+        stopped = []
+        for svc in r.get("services", []):
+            try:
+                stopped.append(client.compose_down(service=svc, confirm=True))
+            except OpsClientError as exc:
+                stopped.append({"service": svc, "error": str(exc)})
+        return json.dumps({"ok": True, "plugin": plugin_id, "stopped": stopped,
+                           "transient": r.get("transient", False), "note": r.get("note")})
+    except OpsClientError as exc:
+        return _err(str(exc))
+    except Exception as exc:
+        logger.exception("disable_service failed")
+        return _err(f"unexpected error: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # Tool schemas — descriptions are how the model decides when to use these
 # ---------------------------------------------------------------------------
@@ -253,6 +322,62 @@ COMPOSE_UP_SCHEMA = {
 }
 
 
+LIST_INSTALLABLE_SCHEMA = {
+    "name": "list_installable_services",
+    "description": (
+        "List the OPTIONAL Ordo services that can be installed/enabled on request — each with its "
+        "id, what it provides, whether it fits this hardware, whether it's already enabled, and any "
+        "secret keys it needs. Use to answer 'what can I install?' or before enable_service."
+    ),
+    "parameters": {"type": "object", "properties": {}, "required": []},
+}
+
+ENABLE_SERVICE_SCHEMA = {
+    "name": "enable_service",
+    "description": (
+        "Install / enable an OPTIONAL Ordo stack service that is NOT yet running (open-webui, "
+        "comfyui, rag, voice, automation, searxng-web, monitoring, obsidian-livesync, llamacpp-cpu). "
+        "This RE-RENDERS the stack to include the service (adding it to ordo.yaml when needed) and "
+        "brings it up with its compose profile — the correct verb when the service isn't rendered/"
+        "running yet. If a service already exists but is stopped, use compose_up instead. Core, edge/"
+        "front-door, and the agent are refused. A secret-dependent service missing its secrets is "
+        "rendered but NOT started — you must tell the operator to run `make up` on the host (never "
+        "fabricate secrets). Requires confirm=true."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "plugin_id": {
+                "type": "string",
+                "description": "Service plugin id to install, e.g. 'open-webui', 'comfyui', 'rag', 'monitoring'.",
+            },
+            "confirm": {
+                "type": "boolean",
+                "description": "Required (true) — guards against prompt-injected installs.",
+            },
+        },
+        "required": ["plugin_id", "confirm"],
+    },
+}
+
+DISABLE_SERVICE_SCHEMA = {
+    "name": "disable_service",
+    "description": (
+        "Disable / turn off an optional Ordo service: removes it from an explicit plugin list + "
+        "re-renders, then stops its container(s). Under `plugins: auto` the container is stopped but "
+        "returns on the next render (this is reported). Requires confirm=true."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "plugin_id": {"type": "string", "description": "Service plugin id to disable."},
+            "confirm": {"type": "boolean", "description": "Required (true)."},
+        },
+        "required": ["plugin_id", "confirm"],
+    },
+}
+
+
 # ---------------------------------------------------------------------------
 # pre_llm_call intent nudge
 # ---------------------------------------------------------------------------
@@ -271,6 +396,7 @@ _DOCKER_INTENT = re.compile(
     r"|compose\s+(?:up|down|restart)"
     r"|service\s+(?:up|down|restart)"
     r"|container\s+(?:up|down|restart)"
+    r"|(?:install|enable|turn\s+on|spin\s+up|set\s+up)\s+(?:a\s+|the\s+)?[\w-]+"
     r")\b",
     re.IGNORECASE,
 )
@@ -285,8 +411,14 @@ _NUDGE = (
     "`compose_up(service=...)` (recreate) — `restart_container` and "
     "`compose_restart` only bounce the existing container and will NOT pick up "
     "env changes. The OPS_CONTROLLER_TOKEN is already in your env — do NOT "
-    "generate a new one or write tokens to .env. For deeper context, load the "
-    "`devops/ops-controller-api` skill."
+    "generate a new one or write tokens to .env. "
+    "To INSTALL / ENABLE a service that is NOT yet running (open-webui, comfyui, "
+    "rag, monitoring, …), use `enable_service(plugin_id, confirm=true)` — it "
+    "re-renders the stack and brings the service up (this is NOT the same as "
+    "`compose_up`, which only recreates an ALREADY-rendered service). Use "
+    "`list_installable_services` to see options, and load the "
+    "`devops/install-service` skill for the full flow. For deeper container ops, "
+    "load the `devops/ops-controller-api` skill."
 )
 
 
@@ -342,5 +474,29 @@ def register(ctx) -> None:
         handler=_compose_up,
         description="Compose recreate: applies .env / volume / network changes.",
         emoji="⬆️",
+    )
+    ctx.register_tool(
+        name="list_installable_services",
+        toolset="ops-router",
+        schema=LIST_INSTALLABLE_SCHEMA,
+        handler=_list_installable,
+        description="List optional services installable on request (id, fit, enabled, secret keys).",
+        emoji="📦",
+    )
+    ctx.register_tool(
+        name="enable_service",
+        toolset="ops-router",
+        schema=ENABLE_SERVICE_SCHEMA,
+        handler=_enable_service,
+        description="Install/enable a not-yet-running optional service: re-render + bring it up.",
+        emoji="➕",
+    )
+    ctx.register_tool(
+        name="disable_service",
+        toolset="ops-router",
+        schema=DISABLE_SERVICE_SCHEMA,
+        handler=_disable_service,
+        description="Disable an optional service: remove from the plugin list + stop it.",
+        emoji="➖",
     )
     ctx.register_hook("pre_llm_call", _intent_nudge)

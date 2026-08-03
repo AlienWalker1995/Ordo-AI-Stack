@@ -1108,8 +1108,11 @@ def _read_mcp_registry() -> dict:
 # preserving every other line + comment. ordo.yaml stays the single source of truth: the next
 # `ordo render` regenerates the SAME servers.txt → no drift.
 
-# A `  - <plugin-id>` item in a block-style YAML list (indent, dash, id, optional trailing comment).
-_PLUGIN_ITEM_RE = re.compile(r"^(?P<indent>\s+)-\s+(?P<id>[A-Za-z0-9._-]+)\s*(?:#.*)?$")
+# A `- <plugin-id>` item in a block-style YAML list (optional indent, dash, id, optional trailing
+# comment). Zero-indent items are what `yaml.safe_dump` emits (a wizard-written source), so accept
+# them too. MIRRORS ordo/source_edit.PLUGIN_ITEM_RE — keep the two in sync (the canonical is in the
+# ordo package; the dashboard image doesn't vendor `ordo`, so this is a validated copy).
+_PLUGIN_ITEM_RE = re.compile(r"^(?P<indent>[ \t]*)-\s+(?P<id>[A-Za-z0-9._-]+)\s*(?:#.*)?$")
 
 
 def _server_plugin_map_path() -> Path | None:
