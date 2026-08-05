@@ -87,12 +87,6 @@ if command -v chown >/dev/null 2>&1; then
   chown -R 1000:1000 "$base/models/comfyui" "$data" 2>/dev/null && echo "OK chown models+data (dashboard non-root)" || true
 fi
 
-# Auto-detect GPU and generate overrides/compute.yml
-detect_script="$base/scripts/detect_hardware.py"
-if [[ -f "$detect_script" ]]; then
-  BASE_PATH="$base" python3 "$detect_script" 2>/dev/null && echo "OK Hardware detected (overrides/compute.yml)"
-fi
-
 # SSRF egress block: run after first 'docker compose up' to block cloud metadata access from MCP containers.
 # See the "SSRF Defenses (MCP)" section of docs/product requirements docs/security-and-trust-model.md
 if [[ -f "$base/scripts/ssrf-egress-block.sh" ]] && command -v iptables >/dev/null 2>&1; then

@@ -46,7 +46,7 @@ class SetupCancelled(Exception):
 CAPABILITIES: dict[str, dict[str, Any]] = {
     "image-video": {
         "label": "Image + video generation (ComfyUI, LTX-2)",
-        "plugins": ["comfyui", "comfyui-mcp", "song-gen", "worker"],
+        "plugins": ["comfyui", "comfyui-mcp", "song-gen"],
         "gpu": True,
     },
     "rag": {

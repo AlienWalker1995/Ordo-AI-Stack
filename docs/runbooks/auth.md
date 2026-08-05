@@ -95,7 +95,7 @@ automatically). If it's unhealthy on boot, check
 |---|---|---|
 | Browser stuck redirecting | Cookie domain mismatch | Confirm `CADDY_TAILNET_DOMAIN` matches `<tailnet>.ts.net` exactly |
 | `redirect_uri_mismatch` from Google | OAuth client redirect URI doesn't match | Update the GCP console redirect URI to match `CADDY_TAILNET_HOSTNAME` |
-| 502 from Caddy on a UI port | Service not on `proxy-net` | Add `proxy-net` to the service's networks; `docker compose up -d --force-recreate <svc> caddy` |
+| 502 from Caddy on a UI port | Service not on `ordo-net` (the single rendered network) or its container is down | `docker compose up -d --force-recreate <svc>`; NEVER recreate caddy with `--no-deps` (it orphans the netns members) |
 | An SSO-gated port returns an empty 202 instead of the UI | Caddyfile uses `handle` (terminal) instead of `route` for SSO + reverse_proxy | Wrap `forward_auth` (`sso_forward_auth`) and the `reverse_proxy`/`handle_path` blocks in one `route { … }` so the request continues past forward_auth on 2xx |
 | Any Google account signs in despite `emails.txt` | oauth2-proxy started with both `--email-domain=*` and `--authenticated-emails-file=…` (OR'd; wildcard wins) | Remove `--email-domain=*`; the file is then the only gate |
 | `cookie_secret must be 16, 24, or 32 bytes` | Used `openssl rand -base64 32` (44 chars) | Use `tr -dc 'a-zA-Z0-9' </dev/urandom \| head -c 32` for exactly 32 raw bytes |

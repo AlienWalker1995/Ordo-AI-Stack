@@ -54,4 +54,4 @@ norecursedirs = ["data", "models", "out", "secrets", "tmp*", ".git", "*.egg-info
 #     + services/worker/worker.py do `from dashboard.X import Y`)
 #   - services            -> `import worker.worker` (worker is now services/worker/; the
 #     orchestration e2e tests run the worker inline via `from worker.worker import ...`)
-pythonpath = ["services/v1-parity", "services"]
+pythonpath = ["services/v1-parity"]

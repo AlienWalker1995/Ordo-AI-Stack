@@ -4,7 +4,7 @@
 # /model-config (flag cards), /registry/* (model↔GPU registry), /guardian/* (status),
 # /services/*, /gpu/*, /mcp/containers, /audit, /models/* (GGUF mgmt helpers).
 #
-# It is BUILT FROM A COPY of C:/dev/ordo-ai-stack/ops-controller with ONE minimal,
+# It began as a copy of the V1 ops-controller source (root dir removed 2026-07-24) with ONE minimal,
 # clearly-commented patch (see main.py "V2 PATCH"): an OPS_COMPOSE_MUTATIONS_ENABLED
 # kill-switch (default OFF) that turns the compose-mutation endpoints into a static
 # 501 so this backend can NEVER shell `docker-compose up/down` against the stack

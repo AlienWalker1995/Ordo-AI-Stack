@@ -20,7 +20,7 @@ Set `site.BASE_PATH` in `ordo.yaml` (template: `ordo.example.yaml`) and re-rende
 |---|---|---|
 | `DATA_PATH` | `${BASE_PATH}/data` | Override data directory location |
 | `DEFAULT_MODEL` | `local-chat` | Canonical model alias used by Open WebUI, Hermes, and LiteLLM |
-| `GGUF_MODELS` | *(see `ordo.example.yaml`)* | Hugging Face repo(s) of GGUF files to pull for llama.cpp (from `out/`: `docker compose -p ordo --profile models run --rm gguf-puller`) |
+| `GGUF_MODELS` | *(see `ordo.example.yaml`)* | Hugging Face repo(s) of GGUF files to pull for llama.cpp (pulled via `ordo fetch` / the dashboard; the V1 `gguf-puller` service was not ported) |
 | `OPS_CONTROLLER_TOKEN` | *(empty)* | Required for dashboard-driven service lifecycle (`openssl rand -hex 32`); set as a secret in `out/secrets.env` (rendered from `secrets.env.example`) |
 | `HF_TOKEN` | *(empty)* | Hugging Face token for gated model downloads; set as a secret in `out/secrets.env` |
 | `GITHUB_PERSONAL_ACCESS_TOKEN` | *(empty)* | GitHub MCP server token; also passed to `comfyui` as `GITHUB_TOKEN` for Manager API; set as a secret in `out/secrets.env` |

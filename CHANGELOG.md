@@ -474,14 +474,14 @@ All notable changes to this project are documented here. The format is loosely b
 
 - **MCP module layout:** Gateway templates (`gateway-wrapper.sh`, `registry-custom.yaml`) moved under **`mcp/gateway/`**.
 
-- **Docs — automated social/video pipeline:** [`docs/architecture/automated-social-content-pipeline.md`](docs/architecture/automated-social-content-pipeline.md) — target end state (generate → normalize → publish → observe) and how MCP, ComfyUI, n8n, and the dashboard fit together.
+- **Docs — automated social/video pipeline:** `docs/architecture/automated-social-content-pipeline.md` (doc since removed) — target end state (generate → normalize → publish → observe) and how MCP, ComfyUI, n8n, and the dashboard fit together.
 
 - **ComfyUI MCP — stack management tools:** **`comfyui-mcp/tools/management.py`** registers **`install_custom_node_requirements`** and **`restart_comfyui`** (HTTP to ops-controller). **`comfyui-mcp/Dockerfile`** patches upstream **`server.py`** to load them. **`docker-compose`** passes **`OPS_CONTROLLER_URL`** / **`OPS_CONTROLLER_TOKEN`** into **`comfyui-mcp`** and **`mcp-gateway`**. **`mcp/registry-custom.yaml`** + **`gateway-wrapper.sh`** substitute **`PLACEHOLDER_OPS_CONTROLLER_TOKEN`** at gateway startup for spawned ComfyUI MCP containers. **TOOLS.md** / **comfyui-assets** / **TROUBLESHOOTING** document **`gateway__call`** + inner tool names (same paradigm as n8n).
 
 - **`ordo-ai-stack initialize`:** Single entry (`./ordo-ai-stack`, `.\ordo-ai-stack.ps1`, or `.\ordo-ai-stack.cmd`) runs `ensure_dirs`, workspace seeding, then `docker compose up -d --build --force-recreate` from the repo root (set `BASE_PATH` or run from the install directory). **`data/qdrant`** is created by `ensure_dirs` for the RAG profile volume.
 - **Housekeeping:** This changelog; PRD milestone updates for M6 (partial, non-auth) and resolved open questions where features already exist (CI, audit rotation, M7 spine).
 
-- **Docs — architecture:** Index at [`docs/architecture/README.md`](docs/architecture/README.md). Removed **`mcp-comfyui-reliability.md`** in favor of a merged ComfyUI/MCP architecture doc — why the stack feels brittle, **`gateway__call`** vs flat tools, Dashboard/n8n alternatives, and the parity matrix.
+- **Docs — architecture:** Index at `docs/architecture/README.md` (dir since removed). Removed **`mcp-comfyui-reliability.md`** in favor of a merged ComfyUI/MCP architecture doc — why the stack feels brittle, **`gateway__call`** vs flat tools, Dashboard/n8n alternatives, and the parity matrix.
 
 - **MCP — ComfyUI via gateway only:** Dashboard **`MCP_GATEWAY_SERVERS`** default in **`docker-compose.yml`** now includes **`comfyui`** (with duckduckgo, n8n, playwright) so new installs do not seed **`servers.txt`** with DuckDuckGo-only. **`TOOLS.md`** / **`.example`**, **`TROUBLESHOOTING`**, **`mcp/README.md`**, **`docs/docker-runtime.md`**, **`comfyui-assets.md`**: document valid **`gateway__comfyui__*`** tool names; **`gateway__run_workflow`** is invalid.
 
