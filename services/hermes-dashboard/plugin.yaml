@@ -10,6 +10,21 @@ requires:
   ram_gb: 1
 provides: [hermes-dashboard]
 compose_profile: hermes-ui
+# HARD dependency on the edge (Caddy + oauth2-proxy), same gate tailnet-names uses.
+# Caddy/oauth2-proxy/Tailscale are all OPTIONAL layers a user may not enable, so this
+# must be declared rather than assumed:
+#   - this service publishes NO host port (the stack's UI model — reachable only through
+#     the SSO'd edge), so without the edge there is no way to reach it at all;
+#   - it runs in caddy's network namespace and binds 127.0.0.1 (see the service below).
+#     Without a caddy container to attach to, `network_mode: service:caddy` is not a
+#     degraded mode — compose cannot start the container at all;
+#   - Hermes >= v0.20.0 refuses a non-loopback bind without an auth provider of its own,
+#     so the "just bind 0.0.0.0 instead" fallback would require a second credential and a
+#     second login, which is the complexity the loopback design exists to avoid.
+# Declaring it means the dep gate DROPS this plugin with a clear note when edge is off
+# (instead of rendering a container that cannot start), and the wizard's _deps_closure
+# auto-adds `edge` when an operator enables this one.
+depends_on: [edge]
 env:
   HERMES_DASHBOARD_ENABLED: "1"
 secrets:
