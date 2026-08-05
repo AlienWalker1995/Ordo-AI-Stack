@@ -59,8 +59,13 @@ FROM python:3.11-slim AS runtime
 ARG HERMES_REPO
 ARG HERMES_PINNED_SHA
 
+# libopus0 + ffmpeg: Discord VOICE. discord.py voice needs the Opus codec to encode/decode
+# voice frames and ffmpeg for audio transcode; without libopus the gateway logs
+# "Opus codec not found — voice channel playback disabled" and voice mode is dead.
+# Upstream's own checklist is scripts/discord-voice-doctor.py — run it in the container
+# after any change here; it must report Opus + ffmpeg green.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ca-certificates curl gosu \
+        git ca-certificates curl gosu libopus0 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # uv — fast Python package manager.
@@ -161,6 +166,46 @@ else:
     print("patched MEDIA_DELIVERY_EXTS with 3D/maker formats")
 
 assert '".stl"' in b.read_text(), "hermes: 3D ext patch did not stick"
+PYEOF
+
+# Ordo AI Stack patch: Discord voice AUTO-JOIN. Upstream v0.20.0 ships full-duplex voice
+# but its only activation is the /voice join slash command; on_voice_state_update merely
+# LOGS joins and early-returns when the bot is not connected. Operator wants "if I am in
+# the voice channel it should work": when an allowlisted user is in a voice channel, the
+# bot joins it (and follows channel switches). Gated by HERMES_DISCORD_VOICE_AUTO_JOIN so
+# unset env = exact upstream behavior. The existing inactivity timeout still handles leave.
+# Anchored on the handler's unique docstring; asserts fail the BUILD loudly if upstream
+# moves it (the 2026-08-05 media-patch rot lesson: never patch blind).
+RUN python3 - <<'PYEOF'
+import pathlib
+b = pathlib.Path("/opt/hermes-agent/plugins/platforms/discord/adapter.py")
+s = b.read_text()
+anchor = '''            async def on_voice_state_update(member, before, after):
+                """Track voice channel join/leave events."""'''
+assert s.count(anchor) == 1, "hermes voice: on_voice_state_update anchor moved/ambiguous"
+assert "async def join_voice_channel" in s, "hermes voice: join_voice_channel gone — auto-join patch needs a new call path"
+assert "import os" in s, "hermes voice: adapter no longer imports os"
+inject = anchor + '''
+                # Ordo AI Stack: auto-join the allowlisted user's voice channel.
+                if os.environ.get("HERMES_DISCORD_VOICE_AUTO_JOIN", "").strip().lower() in ("1", "true", "yes"):
+                    try:
+                        _allowed = set()
+                        for _tok in os.environ.get("DISCORD_ALLOWED_USERS", "").split(","):
+                            _digits = "".join(ch for ch in _tok if ch.isdigit())
+                            if len(_digits) >= 15:
+                                _allowed.add(int(_digits))
+                        _vc = adapter_self._voice_clients.get(member.guild.id)
+                        if (member.id in _allowed and after.channel is not None
+                                and member != adapter_self._client.user
+                                and (_vc is None or getattr(_vc, "channel", None) != after.channel)):
+                            logger.info("Voice auto-join: following %s into %s", member.display_name, after.channel.name)
+                            await adapter_self.join_voice_channel(after.channel)
+                    except Exception:
+                        logger.exception("Voice auto-join failed")'''
+s = s.replace(anchor, inject, 1)
+b.write_text(s)
+assert "Voice auto-join: following" in b.read_text(), "hermes voice: auto-join patch did not stick"
+print("patched Discord adapter with voice auto-join (env-gated)")
 PYEOF
 
 # Web UI — copy built SPA from stage 1.
