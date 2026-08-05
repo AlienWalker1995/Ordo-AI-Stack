@@ -26,7 +26,12 @@ services:
       LLAMACPP_CTX_SIZE: ${LLAMACPP_CTX_SIZE:-262144}
       HERMES_WEB_DIST: /opt/hermes-agent/hermes_cli/web_dist
     volumes:
-      - ${DATA_PATH:-./data}/hermes:/home/hermes/.hermes
+      # Same named volume as the agent — the dashboard reads/writes the SAME brain (skills, chat
+      # sessions, cron). Must stay identical to services/hermes/agent.yaml's mount or the two
+      # services diverge onto separate stores. Named, not a ${DATA_PATH} bind, because Windows-side
+      # writes flip the bind's POSIX metadata to root:0700 and lock out uid 1000 — see the long
+      # note in services/hermes/agent.yaml (outage 2026-08-04, 22h of silent cron failure).
+      - hermes-home:/home/hermes/.hermes
     depends_on: [model-gateway, mcp-gateway, dashboard, ops-controller]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9119/"]

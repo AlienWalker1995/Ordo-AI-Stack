@@ -62,14 +62,33 @@ environment:
   DISCORD_REACTIONS: ${DISCORD_REACTIONS:-true}
   TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
 
-# Bind mounts. THE BRAIN is the Hermes home (${DATA_PATH}/hermes). /workspace/data holds the
-# mutable data the skills reference by absolute path (/workspace/data/drafts,
+# Mounts. THE BRAIN is a NAMED VOLUME, deliberately not a host bind — see below. /workspace/data
+# holds the mutable data the skills reference by absolute path (/workspace/data/drafts,
 # /workspace/data/social-relay, /workspace/data/comfyui-output, …); ${DATA_PATH} IS that data
 # subtree, so it mounts at /workspace/data. /c/dev is the load-bearing mirror mount (sibling
 # repos + the Ordo runtime dir) — keep the path name exactly.
+#
+# WHY THE BRAIN IS A NAMED VOLUME (was `${DATA_PATH}/hermes:/home/hermes/.hermes`):
+# The gateway runs as uid 1000 (hermes) — the entrypoint drops from root via gosu, and that user
+# is the security boundary for the agent's execute_code sandbox. On Docker Desktop/Windows the
+# host bind is DrvFs/9p, where POSIX ownership is synthesized from Windows ACLs. Any Windows-side
+# write into the tree can discard that metadata and flip directories back to `root:root 0700`.
+# uid 1000 then loses the TRAVERSE bit on its own home and every path under it becomes
+# unreadable. That happened 2026-08-04 15:00 UTC: cron read no jobs.json for 22h (~29 missed
+# runs), Discord could not create pairing/discord-approved.json, and kanban.db failed to open.
+# The entrypoint's `chmod -R a+rwX` repairs this, but only ONCE at container start — a mid-run
+# flip is never rechecked, and nothing crashes, so `restart: unless-stopped` never fires.
+# A named volume lives on ext4 inside the WSL2 VM, where the container owns the metadata outright
+# and Windows has no path to it. That removes the failure mode instead of repairing it on a timer.
 volumes:
-  - ${DATA_PATH:-./data}/hermes:/home/hermes/.hermes          # THE BRAIN (staged, delta-synced at flip)
+  - hermes-home:/home/hermes/.hermes                           # THE BRAIN (named volume — see above)
   - ${DATA_PATH:-./data}:/workspace/data                       # staged mutable data (skills' /workspace/data/*)
+  # The SAME volume, mounted a second time at the path skills hardcode. Cron jobs invoke scripts as
+  # /workspace/data/hermes/skills/... (absolute), so both paths MUST resolve to one object; binding
+  # only /home/hermes/.hermes would leave this path pointing at the retired host copy and silently
+  # run stale scripts. Compose orders mounts parent-before-child, so this lands on top of the line
+  # above. Keep these two entries in sync — they are one store with two names.
+  - hermes-home:/workspace/data/hermes                         # same volume, skills' absolute path
   - ${CODE_ROOT:-/c/dev}:/c/dev                                # mirror mount (load-bearing path name)
 
 # File-based secrets Hermes reads from /run/secrets/* (independent of secrets.env — these are the
@@ -81,9 +100,20 @@ secret_files:
     target: /run/secrets/github_backup_pat
 
 # gateway_state.json is written by `hermes gateway` on startup (Docker mode writes no pid file).
+#
+# Probe AS uid 1000 (gosu hermes), never as root. The previous check was
+# `test -f .../gateway_state.json`, which could not detect the 2026-08-04 outage for three reasons:
+#   1. it ran as ROOT, so mode-0700 root-owned dirs — the exact fault — looked fine;
+#   2. it tested EXISTENCE, and the file is written once at startup, so it stays true forever;
+#   3. it never touched anything the agent actually depends on at runtime.
+# Result: `healthy`, FailingStreak=0, for 22h of total cron/Discord failure. These probes assert
+# what the gateway genuinely needs — that the unprivileged user can still READ its state and WRITE
+# its home — so a permission flip trips the healthcheck within ~90s (3 × 30s) instead of never.
+# The cron leg is guarded on the directory existing so a fresh install (no jobs yet, scheduler has
+# not created cron/) does not report unhealthy. timeout is 10s: three gosu spawns under 9p load.
 healthcheck:
-  test: ["CMD-SHELL", "test -f /home/hermes/.hermes/gateway_state.json"]
+  test: ["CMD-SHELL", "gosu hermes test -r /home/hermes/.hermes/gateway_state.json && gosu hermes test -w /home/hermes/.hermes && { [ ! -d /home/hermes/.hermes/cron ] || gosu hermes test -w /home/hermes/.hermes/cron; }"]
   start_period: 60s
   interval: 30s
-  timeout: 5s
+  timeout: 10s
   retries: 3
