@@ -3,11 +3,32 @@
 # Stage 1: node builds the web UI bundle.
 # Stage 2: python runtime with hermes installed; copies web_dist from stage 1.
 
-ARG HERMES_PINNED_SHA=5fdcfd851f7e693fb72a9ea6a6ef25142e63259e
+# Upstream pin. ALWAYS record which release the SHA is — a bare 40-hex string tells a
+# future reader nothing, and this pin silently rotted 2.5 months (see below).
+#   v2026.8.3 (v0.20.0, 2026-08-03) — commit 3c27eb62, the tag's dereferenced commit.
+#   NOTE: `git/ref/tags/<tag>` returns the ANNOTATED TAG object here, not the commit;
+#   deref via `git/tags/<sha>` or the checkout below resolves to the wrong object.
+# Previous pin 5fdcfd85 was a 2026-05-19 commit left 11 releases behind, several citing
+# security fixes. It went unnoticed because the daily stack audit grades locally-built
+# images as REBUILD and never looked upstream; scripts/stack_monitor.py now audits this
+# very ARG (see its `pinned_sources` block), so bumping this line is what clears the
+# SECURITY row it emits. Keep the `<X>_PINNED_SHA` / `<X>_REPO` naming — discovery is
+# by that convention, not a hardcoded table.
+ARG HERMES_PINNED_SHA=3c27eb6234bf91b8ceee9e9071591b31e9b148cb
 ARG HERMES_REPO=https://github.com/NousResearch/hermes-agent.git
 
 # ── Stage 1: web-builder ──
-FROM node:20-slim AS web-builder
+# Upstream's ROOT package.json (hermes-agent@1.0.0) declares:
+#   engines: {"node": ">=22.22.0", "npm": "<11.10.0 || >=11.17.0"}
+# node:20-slim (node 20.20.2 / npm 10.8.2) fails `npm install` outright with EBADENGINE
+# at the v2026.8.3 pin. Note the npm range EXCLUDES 11.10.0–11.16.x, so "newest npm" is
+# not automatically valid — node:26-slim ships npm 11.18.0, which clears it.
+# Checking web/package.json is NOT sufficient; it declares no engines and the constraint
+# lives in the workspace root.
+# This stage only produces the static web bundle (the runtime stage is python:3.11-slim),
+# so the major bump carries no runtime risk. Digest-pinned, not a rolling tag, per the
+# stack's pin-don't-float rule — bump tag and digest together.
+FROM node:26-slim@sha256:80f12a4030a00d8f78ebc4602bc3ef0f984932f498649b8ed3c0a740a6dff4a8 AS web-builder
 ARG HERMES_REPO
 ARG HERMES_PINNED_SHA
 
@@ -75,12 +96,29 @@ WORKDIR /opt/hermes-agent
 RUN uv venv --python 3.11 \
     && uv pip install -e ".[all]"
 
-# Ordo AI Stack patch: replace SQLite journal_mode=WAL with DELETE across all
-# Hermes DB handles. WAL mode requires mmap/shared-memory features that don't
-# work reliably on Docker Desktop Windows bind mounts (9p/virtiofs filesystem).
-# DELETE mode is slower but works on any POSIX-ish filesystem.
-RUN find /opt/hermes-agent -type f -name "*.py" -not -path "*/tests/*" -not -path "*/.venv/*" \
-    -exec sed -i 's/PRAGMA journal_mode=WAL/PRAGMA journal_mode=DELETE/g' {} +
+# REMOVED 2026-08-05: the journal_mode=WAL -> DELETE sed. Do not reinstate without
+# reading this — it is now actively harmful, for two independent reasons.
+#
+# 1. Its premise is gone. It existed because WAL needs mmap/shared-memory that is
+#    unreliable on Docker Desktop Windows bind mounts (9p/virtiofs). Hermes' brain
+#    is no longer a bind mount — state.db, kanban.db and sessions.db all live in the
+#    `hermes-home` NAMED VOLUME (ext4 in the WSL2 VM), where WAL works normally and
+#    is faster. The only SQLite files left on the 9p bind (dashboard orchestration.db,
+#    open-webui webui.db) belong to other services and were never in this sed's path.
+#
+# 2. It corrupted upstream's own handling. v2026.8.3 added
+#    hermes_state.apply_wal_with_fallback(), which probes WAL and degrades to DELETE
+#    on filesystems that refuse it — including the silent-refusal case. A blunt sed
+#    rewrites the pragma INSIDE that probe, so the function executes
+#    `PRAGMA journal_mode=DELETE`, observes mode != "wal", and takes its
+#    "WAL refused without raising" branch: a false fallback WARNING on every open, and
+#    a raised WalUnsupportedError anywhere `require_wal=True` (no such call sites
+#    today — which is the only reason this degraded quietly instead of crashing).
+#    It also rewrote comments and docstrings, leaving upstream source claiming
+#    "PRAGMA journal_mode=DELETE raises ..." where it meant WAL.
+#
+# Upstream's detection is strictly better than the sed: correct on ext4, correct on a
+# WAL-hostile filesystem, and it cannot rot the way an anchor-matching patch does.
 
 # Ordo AI Stack patch: allow 3D/maker file types as native outbound attachments.
 # Upstream's outbound media allowlists (gateway/platforms/base.py) omit
@@ -94,15 +132,35 @@ RUN python3 - <<'PYEOF'
 import pathlib
 b = pathlib.Path("/opt/hermes-agent/gateway/platforms/base.py")
 s = b.read_text()
-s = s.replace("apk|ipa)", "apk|ipa|stl|3mf|obj|step|stp|gcode|ply|glb|gltf)")
-s = s.replace(
-    "'.html', '.htm',",
-    "'.html', '.htm', '.stl', '.3mf', '.obj', '.step', '.stp', '.gcode', '.ply', '.glb', '.gltf',",
-)
-assert "apk|ipa|stl" in s, "hermes MEDIA: regex allowlist anchor moved"
-assert "'.htm', '.stl'" in s, "hermes _LOCAL_MEDIA_EXTS anchor moved"
-b.write_text(s)
-print("patched outbound media allowlists for 3D/maker formats")
+
+# v2026.8.3 consolidated what used to be TWO hand-maintained allowlists (a regex
+# alternation + _LOCAL_MEDIA_EXTS) into ONE tuple, MEDIA_DELIVERY_EXTS, from which
+# both are now derived. So this patch has exactly one insertion point — but it is
+# only correct while that consolidation holds. Assert it, or a future upstream
+# split silently half-patches us (regex updated, path detection not).
+assert "MEDIA_DELIVERY_EXTS" in s, "hermes: MEDIA_DELIVERY_EXTS gone — allowlist restructured"
+assert "_LOCAL_MEDIA_EXTS = MEDIA_DELIVERY_EXTS" in s, \
+    "hermes: _LOCAL_MEDIA_EXTS no longer aliases MEDIA_DELIVERY_EXTS — needs a second patch site"
+assert "sorted((e.lstrip(\".\") for e in MEDIA_DELIVERY_EXTS)" in s, \
+    "hermes: MEDIA: regex alternation no longer derived from MEDIA_DELIVERY_EXTS"
+
+if '".stl"' in s:
+    print("outbound media allowlist already carries 3D/maker formats — nothing to do")
+else:
+    # Anchor on comment + closing paren: the bare '".html", ".htm",' line also occurs
+    # in _TEXT_INJECT_EXTENSIONS (followed by ".css"), and patching THAT would make
+    # Hermes inline 3D files as text instead of attaching them.
+    anchor = '    # Web / rendered output\n    ".html", ".htm",\n)'
+    assert s.count(anchor) == 1, "hermes: MEDIA_DELIVERY_EXTS tail anchor missing or ambiguous"
+    exts = ['.stl', '.3mf', '.obj', '.step', '.stp', '.gcode', '.ply', '.glb', '.gltf']
+    s = s.replace(anchor,
+                  '    # Web / rendered output\n    ".html", ".htm",\n'
+                  '    # Ordo AI Stack: 3D / maker formats\n    '
+                  + ", ".join('"%s"' % e for e in exts) + ',\n)')
+    b.write_text(s)
+    print("patched MEDIA_DELIVERY_EXTS with 3D/maker formats")
+
+assert '".stl"' in b.read_text(), "hermes: 3D ext patch did not stick"
 PYEOF
 
 # Web UI — copy built SPA from stage 1.
