@@ -19,33 +19,34 @@ services:
     # Same image as the Hermes agent (V1 builds one hermes image, runs it as gateway + dashboard).
     image: ordo/agent-hermes:latest
     wants_secrets: true
-    command: ["hermes", "dashboard", "--port", "9119", "--host", "0.0.0.0", "--no-open", "--insecure"]
+    # Binds LOOPBACK, inside caddy's network namespace. This is what keeps the whole
+    # stack on ONE auth model — oauth2-proxy at the edge, nothing per-service.
+    #
+    # Hermes >= v0.20.0 hard-refuses a NON-loopback bind unless the dashboard registers an
+    # auth provider of its own, and `--insecure` no longer bypasses it. Every way of
+    # satisfying that from outside was worse:
+    #   - injecting `Authorization: Basic` from Caddy is a silent no-op (the bundled
+    #     `basic` provider is login-form + session-cookie only, reads no inbound header);
+    #   - no provider trusts oauth2-proxy's X-Auth-Request-* identity, so the edge session
+    #     cannot be handed through;
+    #   - a `basic` or OIDC provider means a SECOND credential and a second login behind
+    #     the SSO gate we already have.
+    # Joining caddy's netns sidesteps all of it: the bind IS loopback, so v0.20.0's gate
+    # never engages, and Caddy reaches it at 127.0.0.1:9119 (see auth/caddy/Caddyfile
+    # :8447). No dashboard credential exists to manage, rotate, or leak.
+    #
+    # TRADE-OFF, know this before touching the edge: this service now shares caddy's
+    # network namespace like the tailnet sidecars do. Recreating caddy DESTROYS that
+    # namespace and orphans every member. Never `--no-deps` a caddy recreate; recreate
+    # caddy and its netns members together or they silently lose networking while still
+    # reporting healthy.
+    command: ["hermes", "dashboard", "--port", "9119", "--host", "127.0.0.1", "--no-open", "--insecure"]
+    network_mode: service:caddy
     env:
       PYTHONIOENCODING: utf-8
       OPS_CONTROLLER_URL: http://ops-controller:9000
       LLAMACPP_CTX_SIZE: ${LLAMACPP_CTX_SIZE:-262144}
       HERMES_WEB_DIST: /opt/hermes-agent/hermes_cli/web_dist
-      # ── Dashboard SSO (OIDC) ──
-      # Hermes >= v0.20.0 refuses a non-loopback bind unless it has an auth provider of
-      # its own, and `--insecure` no longer bypasses that. Caddy CANNOT front it with an
-      # injected Authorization header (the bundled `basic` provider is login-form +
-      # session-cookie only and reads no inbound header), and no provider trusts
-      # oauth2-proxy's X-Auth-Request-* identity. So the dashboard speaks OIDC directly.
-      #
-      # Reuses the SAME Google OAuth client as oauth2-proxy (--provider=google) so there
-      # is one client to manage; the operator only adds a second redirect URI to it:
-      #     https://hermes.<tailnet>/auth/callback
-      # Until that URI is registered, Google returns redirect_uri_mismatch and the
-      # dashboard falls back to the `basic` provider — the login still works, so this is
-      # safe to deploy before the console change.
-      #
-      # SECURITY: this provider enforces NO email allowlist of its own ("the IDP's own
-      # allowlist is authoritative"), and Google does not restrict which accounts may use
-      # an OAuth client. The gate that actually limits access stays oauth2-proxy's
-      # --authenticated-emails-file at the edge. Do not expose :9119 outside the Caddy gate.
-      HERMES_DASHBOARD_OIDC_ISSUER: ${HERMES_DASHBOARD_OIDC_ISSUER:-https://accounts.google.com}
-      HERMES_DASHBOARD_OIDC_CLIENT_ID: ${OAUTH2_PROXY_CLIENT_ID:-}
-      HERMES_DASHBOARD_OIDC_CLIENT_SECRET: ${OAUTH2_PROXY_CLIENT_SECRET:-}
     volumes:
       # Same named volume as the agent — the dashboard reads/writes the SAME brain (skills, chat
       # sessions, cron). Must stay identical to services/hermes/agent.yaml's mount or the two
@@ -53,7 +54,9 @@ services:
       # writes flip the bind's POSIX metadata to root:0700 and lock out uid 1000 — see the long
       # note in services/hermes/agent.yaml (outage 2026-08-04, 22h of silent cron failure).
       - hermes-home:/home/hermes/.hermes
-    depends_on: [model-gateway, mcp-gateway, dashboard, ops-controller]
+    # caddy is REQUIRED here, not optional: network_mode: service:caddy cannot attach if
+    # the target container does not exist yet.
+    depends_on: [caddy, model-gateway, mcp-gateway, dashboard, ops-controller]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9119/"]
       start_period: 30s

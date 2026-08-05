@@ -89,16 +89,34 @@ def test_headless_worker_shows_true_container_health(client, monkeypatch):
     assert by_id["livesync-bridge"]["error"], "a down worker must carry a container-state reason"
 
 
-def test_model_gateway_is_user_facing_with_swagger_open_url(client, monkeypatch):
-    """model-gateway stays in the main grid (user-facing, not background) and its Open link
-    points at the LiteLLM Swagger UI through the edge's /llm/ route (which strips /llm and
-    proxies to model-gateway:11435, whose swagger renders at its root)."""
+def test_model_gateway_open_url_prefers_its_subdomain(client, monkeypatch):
+    """model-gateway stays in the main grid (user-facing) and its Open link is the
+    llm.<domain> subdomain — the same shape as every other service.
+
+    It must NOT be the edge's `/llm/` route. That route strips its prefix, and LiteLLM's
+    swagger HTML then requests root-absolute `/swagger/*` assets, which escape the handler
+    and 404: the document returns 200 and the page renders blank. `/llm/*` stays the
+    SSO-bypassing API base for programmatic bearer clients, not a browser entry."""
     monkeypatch.delenv("MANIFEST_PATH", raising=False)
     monkeypatch.setenv("CADDY_TAILNET_HOSTNAME", "ordo.example.ts.net")
+    monkeypatch.setenv("CADDY_TAILNET_DOMAIN", "example.ts.net")
+    monkeypatch.setenv("TAILNET_NAMES_ENABLED", "1")
     r = client.get("/api/services")
     mg = {s["id"]: s for s in r.json()["services"]}["model-gateway"]
     assert not mg.get("background")
-    assert mg["open_url"] == "https://ordo.example.ts.net/llm/"
+    assert mg["open_url"] == "https://llm.example.ts.net/"
+    assert "/llm/" not in mg["open_url"]
+
+
+def test_model_gateway_open_url_falls_back_to_port_without_sidecars(client, monkeypatch):
+    """With the sidecar layer disabled there is no subdomain, so the Open link falls back to
+    the SSO'd port ROOT (:8449) — still a root, never the prefix-stripped /llm/ route."""
+    monkeypatch.delenv("MANIFEST_PATH", raising=False)
+    monkeypatch.delenv("TAILNET_NAMES_ENABLED", raising=False)
+    monkeypatch.setenv("CADDY_TAILNET_HOSTNAME", "ordo.example.ts.net")
+    r = client.get("/api/services")
+    mg = {s["id"]: s for s in r.json()["services"]}["model-gateway"]
+    assert mg["open_url"] == "https://ordo.example.ts.net:8449/"
 
 
 def test_model_gateway_open_url_falls_back_when_host_unset(client, monkeypatch):
