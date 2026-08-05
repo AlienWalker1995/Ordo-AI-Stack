@@ -122,6 +122,19 @@
 # ---- :8447 — Hermes ----
 # Served at its origin root behind a plain SSO proxy — no prefix strip, no
 # forwarded-prefix header base injection.
+#
+# NOTE (2026-08-05): Hermes >= v0.20.0 REFUSES to bind a non-loopback address
+# unless the dashboard itself has an auth provider ("There is no unauthenticated
+# public-bind option" — a hard SystemExit in hermes_cli/web_server.py; the
+# `--insecure` flag no longer bypasses it). Binding 127.0.0.1 is not an option
+# either: Caddy reaches the dashboard across the container network.
+#
+# Injecting an `Authorization: Basic` header from here does NOT satisfy it — the
+# bundled `basic` provider is login-form + session-cookie only and reads no
+# inbound Authorization header (verified: unauthenticated AND header-injected
+# requests both 302 to /login?next=%2F). Do not re-add such an injection; it is
+# a silent no-op. The dashboard's own auth provider is configured in its
+# config.yaml (dashboard.basic_auth), which is what lets it bind at all.
 :8447 {
     import sso_service hermes-dashboard:9119
 }
