@@ -321,3 +321,66 @@ def test_ops_controller_serve_out_matches_deployed_layout():
     cmd = c["services"]["ops-controller"]["command"]
     assert cmd[cmd.index("--out") + 1] == "/config"
     assert "./:/config" in c["services"]["ops-controller"]["volumes"]
+
+
+# ── netns members must not outlive the namespace they join ──────────────────────
+# Caddy / oauth2-proxy / Tailscale are OPTIONAL layers an operator may never enable.
+# A `network_mode: service:X` whose X is not rendered is NOT a degraded mode — compose
+# cannot start that container at all. Every service joining caddy's namespace (the
+# tailnet-name sidecars, hermes-dashboard) must therefore be gated by `depends_on: [edge]`
+# at PLUGIN level so the dep gate drops it when the edge is off.
+#
+# These use the full render() path on purpose: compose.render_compose() emits only the
+# core services, so a netns assertion written against it inspects an empty set and can
+# never fail.
+
+def _render_with_plugins(plugins, tmp_path):
+    src = Source.from_dict({
+        "hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+        "model": "auto", "agent": "hermes", "plugins": list(plugins),
+    })
+    render(src, CATALOG, REGISTRY).write(tmp_path)
+    return yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+
+
+def test_no_service_joins_a_namespace_that_is_not_rendered(tmp_path):
+    """Across plugin combinations, every `network_mode: service:X` resolves to a rendered X."""
+    combos = [
+        [],
+        ["edge"],
+        ["edge", "hermes-dashboard"],
+        ["hermes-dashboard"],            # the regression: SPA without the edge
+        ["edge", "tailnet-names"],
+        ["tailnet-names"],               # sidecars without the edge
+        ["open-webui", "automation"],
+    ]
+    for i, plugins in enumerate(combos):
+        c = _render_with_plugins(plugins, tmp_path / f"r{i}")
+        for name, svc in c["services"].items():
+            mode = str(svc.get("network_mode", ""))
+            if mode.startswith("service:"):
+                target = mode.split("service:", 1)[1]
+                assert target in c["services"], (
+                    f"{name} joins '{target}' netns but '{target}' is not rendered for "
+                    f"plugins={plugins} — gate its plugin with depends_on")
+
+
+def test_hermes_dashboard_is_dropped_when_the_edge_is_disabled(tmp_path):
+    """Enabling the Hermes SPA without the edge yields NO hermes-dashboard service rather
+    than one wired to a caddy that does not exist. It publishes no host port and binds
+    loopback inside caddy's namespace, so without the edge it is both unreachable and
+    unstartable — dropping it is the honest outcome."""
+    c = _render_with_plugins(["hermes-dashboard"], tmp_path)
+    assert "hermes-dashboard" not in c["services"]
+    assert "service:caddy" not in yaml.safe_dump(c)
+
+
+def test_hermes_dashboard_renders_in_caddy_netns_when_the_edge_is_on(tmp_path):
+    """The positive case, so the test above cannot be satisfied by the plugin simply
+    never rendering: with the edge enabled it IS present, in caddy's namespace, on loopback."""
+    c = _render_with_plugins(["edge", "hermes-dashboard"], tmp_path)
+    hd = c["services"]["hermes-dashboard"]
+    assert hd["network_mode"] == "service:caddy"
+    assert "caddy" in c["services"]
+    assert "127.0.0.1" in hd["command"]
+    assert "networks" not in hd, "compose forbids networks: alongside network_mode:"

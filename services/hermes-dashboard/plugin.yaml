@@ -10,6 +10,21 @@ requires:
   ram_gb: 1
 provides: [hermes-dashboard]
 compose_profile: hermes-ui
+# HARD dependency on the edge (Caddy + oauth2-proxy), same gate tailnet-names uses.
+# Caddy/oauth2-proxy/Tailscale are all OPTIONAL layers a user may not enable, so this
+# must be declared rather than assumed:
+#   - this service publishes NO host port (the stack's UI model — reachable only through
+#     the SSO'd edge), so without the edge there is no way to reach it at all;
+#   - it runs in caddy's network namespace and binds 127.0.0.1 (see the service below).
+#     Without a caddy container to attach to, `network_mode: service:caddy` is not a
+#     degraded mode — compose cannot start the container at all;
+#   - Hermes >= v0.20.0 refuses a non-loopback bind without an auth provider of its own,
+#     so the "just bind 0.0.0.0 instead" fallback would require a second credential and a
+#     second login, which is the complexity the loopback design exists to avoid.
+# Declaring it means the dep gate DROPS this plugin with a clear note when edge is off
+# (instead of rendering a container that cannot start), and the wizard's _deps_closure
+# auto-adds `edge` when an operator enables this one.
+depends_on: [edge]
 env:
   HERMES_DASHBOARD_ENABLED: "1"
 secrets:
@@ -19,7 +34,29 @@ services:
     # Same image as the Hermes agent (V1 builds one hermes image, runs it as gateway + dashboard).
     image: ordo/agent-hermes:latest
     wants_secrets: true
-    command: ["hermes", "dashboard", "--port", "9119", "--host", "0.0.0.0", "--no-open", "--insecure"]
+    # Binds LOOPBACK, inside caddy's network namespace. This is what keeps the whole
+    # stack on ONE auth model — oauth2-proxy at the edge, nothing per-service.
+    #
+    # Hermes >= v0.20.0 hard-refuses a NON-loopback bind unless the dashboard registers an
+    # auth provider of its own, and `--insecure` no longer bypasses it. Every way of
+    # satisfying that from outside was worse:
+    #   - injecting `Authorization: Basic` from Caddy is a silent no-op (the bundled
+    #     `basic` provider is login-form + session-cookie only, reads no inbound header);
+    #   - no provider trusts oauth2-proxy's X-Auth-Request-* identity, so the edge session
+    #     cannot be handed through;
+    #   - a `basic` or OIDC provider means a SECOND credential and a second login behind
+    #     the SSO gate we already have.
+    # Joining caddy's netns sidesteps all of it: the bind IS loopback, so v0.20.0's gate
+    # never engages, and Caddy reaches it at 127.0.0.1:9119 (see auth/caddy/Caddyfile
+    # :8447). No dashboard credential exists to manage, rotate, or leak.
+    #
+    # TRADE-OFF, know this before touching the edge: this service now shares caddy's
+    # network namespace like the tailnet sidecars do. Recreating caddy DESTROYS that
+    # namespace and orphans every member. Never `--no-deps` a caddy recreate; recreate
+    # caddy and its netns members together or they silently lose networking while still
+    # reporting healthy.
+    command: ["hermes", "dashboard", "--port", "9119", "--host", "127.0.0.1", "--no-open", "--insecure"]
+    network_mode: service:caddy
     env:
       PYTHONIOENCODING: utf-8
       OPS_CONTROLLER_URL: http://ops-controller:9000
@@ -32,7 +69,9 @@ services:
       # writes flip the bind's POSIX metadata to root:0700 and lock out uid 1000 — see the long
       # note in services/hermes/agent.yaml (outage 2026-08-04, 22h of silent cron failure).
       - hermes-home:/home/hermes/.hermes
-    depends_on: [model-gateway, mcp-gateway, dashboard, ops-controller]
+    # caddy is REQUIRED here, not optional: network_mode: service:caddy cannot attach if
+    # the target container does not exist yet.
+    depends_on: [caddy, model-gateway, mcp-gateway, dashboard, ops-controller]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9119/"]
       start_period: 30s

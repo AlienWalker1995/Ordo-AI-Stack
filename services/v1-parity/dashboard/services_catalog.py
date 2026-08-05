@@ -33,6 +33,10 @@ TAILNET_LABELS = {
     "n8n": "n8n",
     "hermes": "hermes",
     "codebase-memory-ui": "graph",
+    # model-gateway was the one user-facing service with no subdomain, so its Open link
+    # had to be hand-built against the edge host. It has a sidecar now (tailnet-llm →
+    # caddy :8449), so it resolves through the same path as everything else.
+    "model-gateway": "llm",
 }
 
 
@@ -46,20 +50,28 @@ def mcp_external_url() -> str | None:
 
 # LiteLLM auto-generates its OpenAPI docs and serves the Swagger UI at its ROOT path
 # (`GET model-gateway:11435/` returns the swagger HTML; `/docs` 404s — confirmed by probe).
-# The :443 front door's `/llm/*` route strips the `/llm` prefix and proxies to
-# model-gateway:11435, so the browsable swagger URL through the edge is
-# `https://<host>/llm/` (the stripped prefix maps back onto the service root).
-MODEL_GATEWAY_SWAGGER_PATH = "/llm/"
+#
+# It MUST be opened at an origin ROOT, which is why this is a subdomain (llm.<tailnet> →
+# caddy :8449) and not `/llm/`. The :443 `/llm/*` route strips its prefix, and the swagger
+# HTML then references ROOT-ABSOLUTE assets (`/swagger/swagger-ui.css`, `/swagger/…js`).
+# Through `/llm/` the document returns 200 but every asset resolves to
+# `https://<host>/swagger/…`, escapes the `/llm/*` handler, hits the front door and 404s —
+# a blank page that reads as an outage. `/llm/*` remains the SSO-BYPASSING API base for
+# programmatic clients (LITELLM_MASTER_KEY bearer); it is not a browser entry.
+MODEL_GATEWAY_SWAGGER_PORT = 8449
 
 
 def model_gateway_open_url() -> str | None:
-    """Browsable Open link for the model-gateway card: the LiteLLM Swagger UI reached
-    through the edge (`https://<host>/llm/`). model-gateway is the one user-facing entry
-    in the main grid that has no tailnet sidecar name, so its Open link is built here from
-    the edge host. Returns None when the edge host is unknown so the frontend falls back to
-    its port/SSO route rather than emitting a broken link."""
+    """Browsable Open link for the model-gateway card.
+
+    Prefers the subdomain (`https://llm.<domain>/`) like every other service; falls back to
+    the SSO'd port root (`https://<host>:8449/`) when the sidecar layer is disabled, and to
+    None when the edge host is unknown so the frontend emits no broken link."""
+    subdomain = tailnet_open_url("model-gateway")
+    if subdomain:
+        return subdomain
     host = os.environ.get("CADDY_TAILNET_HOSTNAME", "").strip()
-    return f"https://{host}{MODEL_GATEWAY_SWAGGER_PATH}" if host else None
+    return f"https://{host}:{MODEL_GATEWAY_SWAGGER_PORT}/" if host else None
 
 
 def tailnet_open_url(service_id: str) -> str | None:
@@ -120,10 +132,18 @@ SERVICES = [
     {"id": "qdrant", "name": "Qdrant", "port": 6333, "url": "http://localhost:6333", "has_gpu": False, "plugin": "rag", "category": "rag", "background": True,
      "check": "http://qdrant:6333/readyz",
      "hint": "Vector DB for RAG. Drop files in data/rag-input/ (with --profile rag) or upload via Open WebUI Documents tab."},
-    # Hermes Agent runs as two compose services (hermes-gateway + hermes-dashboard). The dashboard
-    # container probes via internal DNS — unhealthy means the Hermes services haven't started.
+    # Hermes Agent runs as two compose services (agent + hermes-dashboard).
+    # NO HTTP `check` on purpose — it falls through to the container-state signal.
+    # hermes-dashboard runs in caddy's network namespace (network_mode: service:caddy) and binds
+    # 127.0.0.1:9119, so Hermes >= v0.20.0's non-loopback auth gate never engages and oauth2-proxy
+    # stays the one gate. The cost is that `hermes-dashboard` no longer resolves on ordo-net and
+    # 9119 is unreachable from any other container — the old `http://hermes-dashboard:9119/` probe
+    # could ONLY fail, rendering a healthy Hermes as down. Container state is also the truer signal
+    # here: that container's own healthcheck curls 127.0.0.1:9119 from inside the namespace, so it
+    # actually proves the dashboard serves. Do not re-add an HTTP check unless it stops being
+    # loopback-only.
     {"id": "hermes", "name": "Hermes Agent", "port": 9119, "url": "http://localhost:9119",
-     "check": "http://hermes-dashboard:9119/", "has_gpu": False, "plugin": "hermes-dashboard", "category": "agent",
+     "has_gpu": False, "plugin": "hermes-dashboard", "category": "agent",
      "hint": "Managed by docker compose. Logs: docker compose logs hermes-dashboard"},
     # Opt-in (--profile codebase-memory). 3D code knowledge-graph visualization, served at
     # https://<host>/codebase-memory/ on its own SSO-gated port :8448 (the codebase-memory-ui

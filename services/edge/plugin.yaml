@@ -77,6 +77,7 @@ services:
       - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8446:8446"   # ComfyUI
       - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8447:8447"   # Hermes
       - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8448:8448"   # codebase-memory
+      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8449:8449"   # LiteLLM swagger (model-gateway)
     env:
       CADDY_TAILNET_HOSTNAME: ${CADDY_TAILNET_HOSTNAME}
       CADDY_TAILNET_DOMAIN: ${CADDY_TAILNET_DOMAIN}

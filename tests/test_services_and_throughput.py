@@ -89,16 +89,74 @@ def test_headless_worker_shows_true_container_health(client, monkeypatch):
     assert by_id["livesync-bridge"]["error"], "a down worker must carry a container-state reason"
 
 
-def test_model_gateway_is_user_facing_with_swagger_open_url(client, monkeypatch):
-    """model-gateway stays in the main grid (user-facing, not background) and its Open link
-    points at the LiteLLM Swagger UI through the edge's /llm/ route (which strips /llm and
-    proxies to model-gateway:11435, whose swagger renders at its root)."""
+def test_hermes_health_comes_from_container_state_under_its_compose_name(client, monkeypatch):
+    """The hermes card has no HTTP `check` and must resolve its container row through
+    OPS_SERVICE_MAP (`hermes` -> `hermes-dashboard`).
+
+    Regression: hermes-dashboard moved into caddy's netns and binds 127.0.0.1, so
+    `hermes-dashboard:9119` stopped resolving on ordo-net and the old HTTP probe could only
+    ever fail — a healthy Hermes rendered as down. Dropping the probe alone is not enough:
+    ops-api keys /services by COMPOSE service name, so a lookup on the raw card id `hermes`
+    misses and the card goes permanently grey instead of green."""
+    monkeypatch.delenv("MANIFEST_PATH", raising=False)
+
+    async def _fake_ops(method, path, *a, **k):
+        assert path == "/services"
+        return 200, {"services": [
+            {"id": "hermes-dashboard", "state": "running", "health": "healthy"},
+        ]}
+
+    monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
+    hermes = {s["id"]: s for s in client.get("/api/services").json()["services"]}["hermes"]
+    assert hermes["ok"] is True, "hermes must read healthy from its compose-named container row"
+    assert hermes.get("error") is None
+    assert "check" not in hermes, "the unreachable HTTP probe must not come back"
+
+
+def test_hermes_card_reports_down_when_its_container_is_down(client, monkeypatch):
+    """The container-state path must still be able to say NO — otherwise dropping the HTTP
+    check would have traded a false-red for a permanent false-green."""
+    monkeypatch.delenv("MANIFEST_PATH", raising=False)
+
+    async def _fake_ops(method, path, *a, **k):
+        return 200, {"services": [
+            {"id": "hermes-dashboard", "state": "exited", "health": None},
+        ]}
+
+    monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
+    hermes = {s["id"]: s for s in client.get("/api/services").json()["services"]}["hermes"]
+    assert hermes["ok"] is False
+    assert hermes["error"], "a down hermes must carry a container-state reason"
+
+
+def test_model_gateway_open_url_prefers_its_subdomain(client, monkeypatch):
+    """model-gateway stays in the main grid (user-facing) and its Open link is the
+    llm.<domain> subdomain — the same shape as every other service.
+
+    It must NOT be the edge's `/llm/` route. That route strips its prefix, and LiteLLM's
+    swagger HTML then requests root-absolute `/swagger/*` assets, which escape the handler
+    and 404: the document returns 200 and the page renders blank. `/llm/*` stays the
+    SSO-bypassing API base for programmatic bearer clients, not a browser entry."""
     monkeypatch.delenv("MANIFEST_PATH", raising=False)
     monkeypatch.setenv("CADDY_TAILNET_HOSTNAME", "ordo.example.ts.net")
+    monkeypatch.setenv("CADDY_TAILNET_DOMAIN", "example.ts.net")
+    monkeypatch.setenv("TAILNET_NAMES_ENABLED", "1")
     r = client.get("/api/services")
     mg = {s["id"]: s for s in r.json()["services"]}["model-gateway"]
     assert not mg.get("background")
-    assert mg["open_url"] == "https://ordo.example.ts.net/llm/"
+    assert mg["open_url"] == "https://llm.example.ts.net/"
+    assert "/llm/" not in mg["open_url"]
+
+
+def test_model_gateway_open_url_falls_back_to_port_without_sidecars(client, monkeypatch):
+    """With the sidecar layer disabled there is no subdomain, so the Open link falls back to
+    the SSO'd port ROOT (:8449) — still a root, never the prefix-stripped /llm/ route."""
+    monkeypatch.delenv("MANIFEST_PATH", raising=False)
+    monkeypatch.delenv("TAILNET_NAMES_ENABLED", raising=False)
+    monkeypatch.setenv("CADDY_TAILNET_HOSTNAME", "ordo.example.ts.net")
+    r = client.get("/api/services")
+    mg = {s["id"]: s for s in r.json()["services"]}["model-gateway"]
+    assert mg["open_url"] == "https://ordo.example.ts.net:8449/"
 
 
 def test_model_gateway_open_url_falls_back_when_host_unset(client, monkeypatch):

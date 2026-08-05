@@ -182,14 +182,31 @@ def _site_block(text: str, port: str) -> str:
 
 
 def test_formerly_divergent_ports_serve_at_root(caddyfile_text: str) -> None:
-    """8445/8447/8448 each proxy at root via `import sso_service <upstream>` with
-    no adapter — no handle_path, no `redir /` bounce to a subpath."""
-    for port, upstream in (("8445", "n8n:5678"),
-                           ("8447", "hermes-dashboard:9119"),
-                           ("8448", "codebase-memory-ui:9750")):
+    """8445/8447/8448/8449 each proxy at root via `import sso_service <upstream>` with
+    no adapter — no handle_path, no `redir /` bounce to a subpath.
+
+    :8447's upstream is 127.0.0.1 and it uses (sso_service_loopback), both deliberate:
+    hermes-dashboard runs inside caddy's network namespace (network_mode: service:caddy)
+    so it can bind LOOPBACK. Hermes >= v0.20.0 hard-refuses a non-loopback bind unless
+    the dashboard registers an auth provider of its own, which would mean a second
+    credential and a second login behind the SSO gate. Loopback keeps oauth2-proxy the
+    ONE auth gate — but it also turns on that build's Host-header validation, which
+    accepts only loopback Host values and 400s the inherited `hermes.<tailnet>` Host.
+    (sso_service_loopback) is (sso_service) plus the Host rewrite that satisfies it.
+    The invariant this test actually protects — served at origin root with no PATH
+    adapter (handle_path / redir bounce / X-Forwarded-Prefix) — is unchanged.
+
+    :8449 is the LiteLLM swagger UI. It needs a port root because the :443 `/llm/*`
+    route strips its prefix and the swagger HTML then requests root-absolute
+    `/swagger/*` assets, which escape the handler and 404.
+    """
+    for port, snippet, upstream in (("8445", "sso_service", "n8n:5678"),
+                                    ("8447", "sso_service_loopback", "127.0.0.1:9119"),
+                                    ("8448", "sso_service", "codebase-memory-ui:9750"),
+                                    ("8449", "sso_service", "model-gateway:11435")):
         block = _site_block(caddyfile_text, port)
-        assert f"import sso_service {upstream}" in block, (
-            f":{port} must serve {upstream} via `import sso_service` at root")
+        assert f"import {snippet} {upstream}" in block, (
+            f":{port} must serve {upstream} via `import {snippet}` at root")
         assert "handle_path" not in block, (
             f":{port} reintroduced handle_path — an adapter is back")
         assert "redir /" not in block, (

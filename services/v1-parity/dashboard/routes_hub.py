@@ -6,6 +6,7 @@ import asyncio
 from fastapi import APIRouter, Request
 
 from dashboard.services_catalog import (
+    OPS_SERVICE_MAP,
     _check_service,
     mcp_external_url,
     model_gateway_open_url,
@@ -36,8 +37,12 @@ async def services():
 
     def _container_health(svc_id: str) -> tuple[bool | None, str]:
         """(ok, error) from container state/health for a service with no HTTP check.
-        Returns (None, "") — a neutral 'unknown' — when ops-api has no row for it."""
-        c = container_by_id.get(svc_id)
+        Returns (None, "") — a neutral 'unknown' — when ops-api has no row for it.
+
+        ops-api keys /services by COMPOSE service name, which is not always the card id
+        (`hermes` -> `hermes-dashboard`). Resolve through OPS_SERVICE_MAP first or the
+        lookup misses and a running service renders as a permanent grey 'unknown'."""
+        c = container_by_id.get(OPS_SERVICE_MAP.get(svc_id, svc_id))
         if not c:
             return None, ""
         state, health = c.get("state"), c.get("health")
@@ -55,8 +60,10 @@ async def services():
         else:
             ok, err = _container_health(svc["id"])
         # Server-owned Open link, one source of truth (no hostname guess in the browser):
-        #  * model-gateway is user-facing but has no tailnet sidecar — its Open link points
-        #    at the LiteLLM Swagger UI through the edge (https://<host>/llm/).
+        #  * model-gateway resolves to its own llm.<domain> sidecar like everything else, and
+        #    falls back to the SSO'd port ROOT (:8449) when the sidecar layer is off. Never
+        #    the edge's /llm/ route: that strips the prefix and LiteLLM's root-absolute
+        #    /swagger/* assets then escape the handler and 404 into a blank page.
         #  * the sidecar UIs get their clean per-service tailnet name (https://chat.<domain>/ …)
         #    when the tailnet-names layer is enabled.
         # Either is None when the edge host is unknown, so the frontend falls back to its

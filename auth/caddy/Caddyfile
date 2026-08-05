@@ -80,6 +80,25 @@
     }
 }
 
+# Same as (sso_service), but rewrites Host to the loopback upstream.
+# Required for an upstream bound to 127.0.0.1 that validates the Host header against
+# its bound interface (anti-DNS-rebinding, GHSA-ppp5-vxwm-4cf7). Hermes >= v0.20.0 does
+# exactly this: on a loopback bind it accepts ONLY loopback Host values, so the inherited
+# `Host: <service>.<tailnet>` is rejected with 400 "Invalid Host header". A 0.0.0.0 bind
+# skips the check entirely — which is why this only appears once a service moves to
+# loopback. Use ONLY for loopback upstreams; everything else keeps (sso_service) so the
+# origin Host reaches the app.
+(sso_service_loopback) {
+    import tls_tailnet
+    import sso_port_gate
+    route {
+        import sso_forward_auth
+        reverse_proxy {args[0]} {
+            header_up Host {args[0]}
+        }
+    }
+}
+
 # ---- :8443 — Open WebUI (chat) ----
 # Prebuilt SvelteKit SPA with base="" (root-absolute /_app, /static, /api, /ws).
 # It MUST be served at a root — under /chat/ its client-side router renders
@@ -122,8 +141,23 @@
 # ---- :8447 — Hermes ----
 # Served at its origin root behind a plain SSO proxy — no prefix strip, no
 # forwarded-prefix header base injection.
+#
+# Reached at 127.0.0.1, NOT hermes-dashboard:9119 — the service runs inside THIS
+# container's network namespace (network_mode: service:caddy).
+#
+# Hermes >= v0.20.0 hard-refuses a non-loopback bind unless the dashboard registers
+# an auth provider of its own, and `--insecure` no longer bypasses it. Injecting
+# `Authorization: Basic` from here does NOT satisfy it: the bundled `basic` provider
+# is login-form + session-cookie only and reads no inbound header (verified —
+# unauthenticated AND header-injected requests both 302 to /login?next=%2F). No
+# provider trusts oauth2-proxy's X-Auth-Request-* identity either. Giving the
+# dashboard a loopback bind inside this namespace means its gate never engages, so
+# oauth2-proxy stays the ONE auth gate and there is no second credential anywhere.
+#
+# Recreating caddy destroys this namespace and orphans hermes-dashboard along with
+# the tailnet sidecars — recreate them together, never with --no-deps.
 :8447 {
-    import sso_service hermes-dashboard:9119
+    import sso_service_loopback 127.0.0.1:9119
 }
 
 # ---- :8448 — codebase-memory 3D graph ----
@@ -131,6 +165,24 @@
 # proxies straight through with no path rewriting (see services/codebase-memory-ui/nginx.conf).
 :8448 {
     import sso_service codebase-memory-ui:9750
+}
+
+# ---- :8449 — LiteLLM Swagger UI (model-gateway) ----
+# The BROWSABLE face of model-gateway, behind SSO like every other UI here.
+#
+# It needs an origin ROOT. The :443 `/llm/*` route (further down) strips its prefix
+# and LiteLLM then emits ROOT-ABSOLUTE asset paths — `/swagger/swagger-ui.css`,
+# `/swagger/…js`. Through `/llm/` the HTML returns 200 but every asset resolves to
+# `https://<host>/swagger/…`, escapes the `/llm/*` handler, falls through to the
+# front door and 404s: a blank page that looks like the service is down. Same class
+# of bug as the Hermes SPA base-path issue and the n8n prefix strip.
+#
+# Keep BOTH: `/llm/*` on :443 stays the SSO-BYPASSING programmatic API base for
+# Cline/Cursor/scripts (LITELLM_MASTER_KEY bearer, no interactive login possible),
+# and this port is the human/browser entry. They are different audiences; do not
+# collapse them, and do not point the dashboard's Open link back at `/llm/`.
+:8449 {
+    import sso_service model-gateway:11435
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
