@@ -4,6 +4,16 @@
 
 Setup, operations, and maintenance scripts for the Ordo AI Stack.
 
+## Live at runtime (do NOT treat as legacy)
+
+| Script | Role |
+| --- | --- |
+| `llamacpp/run-llama-server.sh` | **Bind-mounted entrypoint** of the llamacpp container (`${BASE_PATH}/scripts/llamacpp:/llamacpp-scripts:ro` in the rendered compose). Deleting it takes the LLM down on next restart. |
+| `stack_monitor.py` | Daily image/pin audit — invoked by Hermes cron via the `/c/dev` mirror mount; tested by `tests/test_stack_monitor_*.py`. |
+| `storage_purge.py` | Weekly storage purge — invoked by Hermes cron (`cd /c/dev/ordo-ai-stack && python3 scripts/storage_purge.py`); tested by `tests/test_storage_purge.py`. |
+| `secrets/decrypt.sh`, `secrets/rotate-internal.sh`, `secrets/audit-git-history.sh` | The documented secrets flow (`docs/runbooks/secrets.md`); decrypt materializes the host files Docker secrets mount from. |
+| `comfyui/pull_comfyui_models.py` + `comfyui/models.json` | Spawned by the live dashboard (`app.py`) for ComfyUI model-pack downloads. |
+
 ## Setup
 
 | Script | Purpose |

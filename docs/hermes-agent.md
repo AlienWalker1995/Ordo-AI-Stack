@@ -29,7 +29,7 @@ All persistent state lives in `data/hermes/`:
 
 | Path | Contents |
 |---|---|
-| `data/hermes/config.yaml` | Hermes config (endpoints, Discord behavior, skills preferences) |
+| `config.yaml` in the `ordo_hermes-home` volume (`/home/hermes/.hermes/config.yaml`) | Hermes config (endpoints, Discord behavior, skills preferences) |
 | `data/hermes/sessions/` | Conversation history |
 | `data/hermes/memories/` | FTS5-indexed memories |
 | `data/hermes/skills/` | Installed and auto-generated skills |
@@ -79,7 +79,7 @@ Expected: `[Discord] Connected as <botname>#<discriminator>`. If the bot appears
 
 ## Configuration endpoints (seeded automatically)
 
-The container's entrypoint seeds `data/hermes/config.yaml` on every start so the Docker-network endpoints are correct:
+The container's entrypoint seeds `config.yaml` inside the `ordo_hermes-home` volume (`/home/hermes/.hermes/config.yaml`) on every start so the Docker-network endpoints are correct (the brain moved off the `data/hermes` bind, 2026-08-05 #143):
 
 ```yaml
 model:

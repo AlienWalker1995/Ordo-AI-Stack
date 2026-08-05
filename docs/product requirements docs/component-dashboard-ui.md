@@ -20,7 +20,7 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/auth/config` | GET | None | Auth method in use |
 | `/api/rag/status` | GET | None | Qdrant collection status + point count |
 | `/api/llm/models` | GET | Y | Installed GGUF models (llama.cpp) |
-| `/api/llm/pull` | POST | Y | Pull a GGUF model from Hugging Face (background download; V1 gguf-puller service not ported) |
+| `/api/llm/pull` | POST | Y | NOT PORTED — proxies to ops `/models/gguf-pull`, which returns 501 unconditionally; pull GGUFs with `ordo fetch --models-dir models/gguf` |
 | `/api/llm/pull/status` | GET | Y | GGUF pull progress |
 | `/api/llm/delete` | POST | Y | Delete a GGUF model file from disk |
 | `/api/llm/unload` | POST | Y | Unload the active model from the gateway (keeps files) |

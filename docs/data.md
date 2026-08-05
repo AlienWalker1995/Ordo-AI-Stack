@@ -12,7 +12,7 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 |---|---|---|
 | `out/.env` (rendered from `ordo.yaml`) | Environment configuration | All services at startup |
 | `data/mcp/servers.txt` | Enabled MCP server list (comma-separated or one-per-line) | `mcp-gateway` |
-| `data/mcp/registry.json` | MCP server metadata, `allow_clients`, rate limits | `mcp-gateway`, dashboard |
+| `data/mcp/servers.txt` + `registry-custom.yaml` | enabled MCP servers + custom-server metadata | `mcp-gateway`, dashboard |
 | `data/mcp/registry-custom.yaml` | Custom catalog fragment (e.g. ComfyUI MCP) | `mcp-gateway` |
 | `data/rag-input/` | Drop zone for RAG documents | `rag-ingestion` watch directory |
 | `models/gguf/` | llama.cpp GGUF files | `llamacpp` / `llamacpp-embed` bind mount |
@@ -51,7 +51,7 @@ Size-bounded: `ops-controller` rotates to `audit.log.1` when `AUDIT_LOG_MAX_BYTE
 
 ### MCP Registry
 
-**Location:** `data/mcp/registry.json`. JSON, one entry per MCP server.
+**Location:** `data/mcp/servers.txt` (one enabled server per line) plus `data/mcp/registry-custom.yaml` (custom-server metadata). There is no `registry.json` — that was the V1 layout.
 
 ```json
 {
@@ -109,7 +109,7 @@ All directories created this way persist across restarts and rebuilds.
 
 ### Model Pull
 
-**llama.cpp GGUF:** `ordo fetch` (checksum-mandatory) downloads catalog models into `models/gguf/`; the dashboard's model-pull UI drives the same path. (The V1 `gguf-puller` compose service was not ported — its old endpoints return 501.)
+**llama.cpp GGUF:** `ordo fetch --models-dir models/gguf` (checksum-mandatory) downloads catalog models into the dir llama.cpp bind-mounts. The default `--models-dir` is `./models`, which llama.cpp does NOT mount — pass `models/gguf` explicitly. The dashboard's GGUF-pull UI was not ported (its backing endpoint returns 501); use `ordo fetch`.
 
 **ComfyUI:** the dashboard's ComfyUI model-pack UI (backed by `scripts/comfyui/pull_comfyui_models.py`) downloads packs into `models/comfyui/`. First run can be tens of GB. (The V1 `comfyui-model-puller` compose service was not ported — its old endpoints return 501.)
 

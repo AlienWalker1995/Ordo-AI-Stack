@@ -49,9 +49,7 @@ asyncio_mode = "auto"
 # non-source dirs makes `pytest` and `pytest tests/` behave identically.
 testpaths = ["tests"]
 norecursedirs = ["data", "models", "out", "secrets", "tmp*", ".git", "*.egg-info"]
-# services/ reorg import roots (keeps every `import` resolving without editing any import stmt):
-#   - services/v1-parity -> `import dashboard` (the v1-parity dashboard package, 22 test files
-#     + services/worker/worker.py do `from dashboard.X import Y`)
-#   - services            -> `import worker.worker` (worker is now services/worker/; the
-#     orchestration e2e tests run the worker inline via `from worker.worker import ...`)
+# services/ reorg import root: tests import the v1-parity dashboard package as
+# `from dashboard.X import Y` without editing any import statement. (A second entry for the
+# retired media worker was removed with it, 2026-07-31 #133.)
 pythonpath = ["services/v1-parity"]

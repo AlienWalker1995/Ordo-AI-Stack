@@ -249,7 +249,7 @@ ordo-ai-stack/
 ├── config/              # Misc static config (e.g. comfyui-manager-seed.ini)
 ├── assets/              # Shared render/runtime helpers (lease-exec.py, tailscale-serve)
 ├── monitoring/          # Grafana + Prometheus config (monitoring plugin)
-├── scripts/             # ssrf-egress-block, smoke tests, doctor scripts
+├── scripts/             # llamacpp runtime assets, secrets flow, smoke tests, cron-run monitors
 ├── tests/               # Contract + smoke tests; render-substrate tests under tests/substrate/
 ├── product requirements docs/  # This documentation
 ├── docs/                # Getting started, runbooks; docs/operator-guide.md is the authoritative operating guide

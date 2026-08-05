@@ -74,7 +74,12 @@ def test_wizard_capabilities_reference_only_registered_plugins():
             f"— retired plugin left behind? (see the retirement-residue seam, audit 2026-08-05)")
 
 
-_MD_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+# Inline links, including titled links ([x](path "title")) and paths containing spaces
+# (this repo has a space-bearing docs dir) — both shapes the first regex missed entirely
+# (QA audit 2026-08-05: a titled dead link was invisible to CI).
+_MD_LINK = re.compile(r"\[[^\]]*\]\(\s*([^)]+?)(?:\s+\"[^\"]*\")?\s*\)")
+_FENCED_CODE = re.compile(r"^```.*?^```", re.M | re.S)
+_HAS_SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")  # http:, mailto:, vscode:, ftp:, …
 # Historical records legitimately reference deleted files; runtime dirs are gitignored
 # and absent for cloners by design.
 _EXEMPT_SOURCES = {"CHANGELOG.md"}
@@ -99,13 +104,21 @@ def test_relative_markdown_links_resolve():
         if rel_source in _EXEMPT_SOURCES:
             continue
         text = md.read_text(encoding="utf-8", errors="replace")
+        # Strip fenced code blocks: a doc teaching link syntax must not fail CI.
+        text = _FENCED_CODE.sub("", text)
         for raw in _MD_LINK.findall(text):
-            if raw.startswith(("http://", "https://", "mailto:", "#")):
+            raw = raw.strip()
+            # Any URI scheme (http, mailto, vscode, ftp, …) and protocol-relative
+            # URLs are external — only repo paths are ours to validate.
+            if raw.startswith(("#", "//")) or _HAS_SCHEME.match(raw):
                 continue
-            target = urllib.parse.unquote(raw.split("#", 1)[0])
+            target = urllib.parse.unquote(raw.split("#", 1)[0].split("?", 1)[0])
             if not target:
                 continue
-            resolved = (md.parent / target).resolve()
+            # Root-relative resolves from the repo root (GitHub rendering semantics),
+            # relative from the doc's own directory.
+            base = ROOT if target.startswith("/") else md.parent
+            resolved = (base / target.lstrip("/")).resolve()
             try:
                 rel_target = resolved.relative_to(ROOT).as_posix()
             except ValueError:

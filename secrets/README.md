@@ -23,10 +23,10 @@ with the age private key at `~/.config/sops/age/keys.txt`.
   repo's credential helper reads it. Not used by the stack services themselves.
 - `hf_token.sops` — HuggingFace token (gated model downloads). Mounted
   on `ops-controller`, `dashboard`, and the comfyui
-  model puller.
+  model-pack downloads (the dashboard-spawned `pull_comfyui_models.py`).
 - `civitai_token.sops` — Civitai token (LoRA downloads). Mounted on
-  the comfyui model puller.
-- `n8n_api_key.sops` — n8n API key (workflow automation MCP + dashboard integration).
+  the comfyui model-pack downloads (the dashboard-spawned `pull_comfyui_models.py`).
+- `n8n_api_key.sops` — n8n API key (n8n MCP server + gateway wiring; `N8N_API_KEY` in `out/secrets.env`).
 - `tailscale_authkey.sops` — reusable tagged `TS_AUTHKEY` for the tailnet-names and
   notes-funnel sidecars (env-form; consumed via `out/secrets.env`).
 
