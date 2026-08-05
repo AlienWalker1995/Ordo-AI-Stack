@@ -28,5 +28,9 @@ reports a missing one as "build from services/llamacpp-patched", not "Docker wil
 ## Files
 - `Dockerfile` — two-stage CUDA build (12.8 devel → runtime), pinned commit + both patches.
 - `pr24785-minimal.diff` — PATCH 2 source.
-- `launch.txt` — the tuned server launch flags + rationale (context/offload, MTP spec-decode,
-  batching, KV cache, sampling) captured from the live stack for reference.
+
+(An old `launch.txt` flag snapshot was removed 2026-08-05: it predated the render substrate
+and contradicted the live config on every distinguishing flag — `-c 196608` vs the deployed
+131072, an MTP `--spec-type` the flag builder strips as inert, a model no longer in the
+catalog. The launch surface is owned by `catalog/models.yaml` + `services/ops-api/llamacpp_flags.py`
++ `scripts/llamacpp/run-llama-server.sh`; tuning rationale belongs in the catalog entry comments.)

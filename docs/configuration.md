@@ -20,7 +20,7 @@ Set `site.BASE_PATH` in `ordo.yaml` (template: `ordo.example.yaml`) and re-rende
 |---|---|---|
 | `DATA_PATH` | `${BASE_PATH}/data` | Override data directory location |
 | `DEFAULT_MODEL` | `local-chat` | Canonical model alias used by Open WebUI, Hermes, and LiteLLM |
-| `GGUF_MODELS` | *(see `ordo.example.yaml`)* | Hugging Face repo(s) of GGUF files to pull for llama.cpp (pulled via `ordo fetch` / the dashboard; the V1 `gguf-puller` service was not ported) |
+| `GGUF_MODELS` | *(see `ordo.example.yaml`)* | Hugging Face repo(s) of GGUF files to pull for llama.cpp (pulled via `ordo fetch --models-dir models/gguf`; the dashboard GGUF-pull UI and the V1 `gguf-puller` service were not ported — the endpoint returns 501) |
 | `OPS_CONTROLLER_TOKEN` | *(empty)* | Required for dashboard-driven service lifecycle (`openssl rand -hex 32`); set as a secret in `out/secrets.env` (rendered from `secrets.env.example`) |
 | `HF_TOKEN` | *(empty)* | Hugging Face token for gated model downloads; set as a secret in `out/secrets.env` |
 | `GITHUB_PERSONAL_ACCESS_TOKEN` | *(empty)* | GitHub MCP server token; also passed to `comfyui` as `GITHUB_TOKEN` for Manager API; set as a secret in `out/secrets.env` |
@@ -82,7 +82,7 @@ docker compose -p ordo --profile voice up -d
 
 - **STT (voice memo → text): fully local.** Hermes' STT openai provider takes its
   base URL from the `STT_OPENAI_BASE_URL` env, which the rendered `out/docker-compose.yml` sets on
-  `hermes-gateway` to `http://stt:8000/v1`. Set in `data/hermes/config.yaml`:
+  `hermes-gateway` to `http://stt:8000/v1`. Set in the brain volume's `config.yaml` (`docker exec ordo-agent-1 sh -c 'vi /home/hermes/.hermes/config.yaml'` — the `data/hermes` bind was retired for the `ordo_hermes-home` volume, #143):
   `stt.provider: openai`, `stt.openai.model: Systran/faster-whisper-small`,
   `stt.openai.api_key: local`, `stt.enabled: true`. Inbound Discord voice messages
   are then auto-transcribed on the secondary GPU.
@@ -123,7 +123,7 @@ Re-render, then from `out/`: `docker compose -p ordo up -d llamacpp`. This drops
 
 ## Model Registry
 
-The model registry is the single source of truth for which model runs on which GPU. It is backed by `data/model-registry.json` and managed via:
+The model registry is the single source of truth for which model runs on which GPU. It is backed by `data/ops-controller/model-registry.json` (mounted at `/data/model-registry.json` in ops-api) and managed via:
 
 - **Dashboard** — Models view (swap active model, set VRAM estimate) and GPU view (reassign GPU pin per model).
 - **Hermes verbs** — `list_models`, `gpu_status`, `set_active_model`, `assign_model_gpu`, `register_model` (see [services/mcp-gateway/README.md](../services/mcp-gateway/README.md)).
@@ -147,7 +147,7 @@ The registry path can be overridden with `MODEL_REGISTRY_PATH` (default `/data/m
 
 Repo templates live under `services/mcp-gateway/`; runtime files are in `data/mcp/` (bind-mounted into the gateway). See [services/mcp-gateway/README.md](../services/mcp-gateway/README.md).
 
-Enabled servers are listed in `data/mcp/servers.txt` (one per line). Metadata, per-server `allow_clients`, and rate limits live in `data/mcp/registry.json`.
+Enabled servers are listed in `data/mcp/servers.txt` (one per line). Custom-server metadata lives in `data/mcp/registry-custom.yaml`.
 
 Default servers: `duckduckgo`, `n8n`, `searxng`, `comfyui`, `orchestration`, `playwright` (the `searxng` server proxies the self-hosted SearXNG instance — no external API key; `playwright` is stack-pinned headless-Chromium browser automation). V1's `MCP_GATEWAY_SERVERS` env-var override in the root `.env` no longer applies (that file was removed) — edit `data/mcp/servers.txt` directly instead.
 

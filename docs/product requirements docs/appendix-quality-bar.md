@@ -2,18 +2,18 @@
 
 ## Test Suite (Current `tests/`)
 
-64 test files: 36 in `tests/` plus 28 in `tests/substrate/` (the render-engine suite).
+65 test files: 36 in `tests/` plus 29 in `tests/substrate/` (the render-engine suite).
 
 | Area | Files | Representative coverage |
 |------|-------|--------------------------|
 | Dashboard | 8 | health, auth middleware, proxy auth, registry routes, service pressure, ComfyUI packs, dependencies, performance |
-| ComfyUI | 5 | API client, workflow manager defaults, queue prompt (+ integration), default model env |
+| ComfyUI | 4 | workflow manager defaults, queue prompt (+ integration), default model env |
 | Orchestration | 4 | API, e2e, outbox, workflow versioning |
 | RAG | 2 | ingestion chunking/embedding, status |
 | Ops / secrets / stack | 7 | secrets isolation, Caddyfile invariants, stack-monitor sanitize/versions, storage purge, settings validation, service-catalog wiring |
 | GPU / hardware | 3 | GPU stats, GPU routes, llama.cpp turboquant |
 | Misc / policy | 8 | dependency-registry probe, catalog-derived dependencies, Hermes socket absent, Hermes ops client, MCP policy, MCP persist, services & throughput, text sanitizers |
-| Substrate (render engine) | 28 | agents, broker, build contexts, cli render guard, cloud fallback, compose (+ recreate), control, dashboards, fetch, lease exec/history, MCP, memory vault (+ ingestion), native, ops-api stats, parity (+ render), plugins, preflight, render, scheduler, status doctor, wizard |
+| Substrate (render engine) | 29 | agents, broker, build contexts, cli render guard, cloud fallback, compose (+ recreate), control, dashboards, fetch, lease exec/history, MCP, memory vault (+ ingestion), native, ops-api stats, parity (+ render), plugins, preflight, render, scheduler, status doctor, wizard |
 
 CI (`.github/workflows/ci.yml`): `secret-scan` (TruffleHog), `pytest` (`tests/`, excluding `tests/substrate/`), and `substrate` (path-gated, mocked-profile).
 
