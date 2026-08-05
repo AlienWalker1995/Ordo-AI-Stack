@@ -39,6 +39,7 @@ from pathlib import Path
 # ── Config ───────────────────────────────────────────────────────────────────
 
 STACK_ROOT = Path(os.environ.get("ORDO_STACK_ROOT", "/c/dev/ordo-ai-stack"))
+SERVICES_DIR = STACK_ROOT / "services"
 COMPOSE_CANDIDATES = [
     STACK_ROOT / "out" / "docker-compose.yml",  # rendered = deployed
     STACK_ROOT / "docker-compose.yml",                 # fallback
@@ -379,6 +380,117 @@ def highlights(body: str, n: int = 3):
     return out
 
 
+# ── Pinned upstream sources ──────────────────────────────────────────────────
+#
+# The image table above answers "is this IMAGE behind?" — but a locally-built
+# image (LOCAL_PREFIXES) is only ever REBUILD/"rebuild if source changed", and
+# "source" there silently means TWO things: our Dockerfile, and the upstream repo
+# that Dockerfile clones at a pinned SHA. The second was invisible.
+#
+# Live miss (2026-08-05): services/hermes/Dockerfile pinned
+# HERMES_PINNED_SHA=5fdcfd85 (a 2026-05-19 commit) while upstream had shipped six
+# releases carrying security fixes. Every audit reported `agent` as REBUILD and
+# said nothing, because ordo/agent-hermes is a local build and nothing ever looked
+# at NousResearch/hermes-agent. A pin that nobody watches is drift with extra steps.
+#
+# Discovery is by CONVENTION, not a per-service table: any services/*/Dockerfile
+# declaring `ARG <X>_PINNED_SHA=` next to `ARG <X>_REPO=<github url>` is picked up
+# automatically, so a future pinned build is covered without editing this file.
+
+_ARG_RE = re.compile(r"^\s*ARG\s+([A-Z0-9_]+)=(\S+)", re.M)
+_GH_URL_RE = re.compile(r"github\.com[/:]([^/]+/[^/.\s]+?)(?:\.git)?$")
+
+
+def discover_pinned_sources():
+    """[{service, arg, sha, gh}] for every Dockerfile pinning an upstream git SHA."""
+    out = []
+    if not SERVICES_DIR.is_dir():
+        return out
+    for dockerfile in sorted(SERVICES_DIR.glob("*/Dockerfile")):
+        try:
+            text = dockerfile.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        args = {m.group(1): m.group(2).strip("\"'") for m in _ARG_RE.finditer(text)}
+        for key, sha in args.items():
+            if not key.endswith("_PINNED_SHA") or not re.fullmatch(r"[0-9a-f]{7,40}", sha):
+                continue
+            m = _GH_URL_RE.search(args.get(f"{key[:-len('_PINNED_SHA')]}_REPO", ""))
+            if m:
+                out.append({"service": dockerfile.parent.name, "arg": key,
+                            "sha": sha, "gh": m.group(1)})
+    return out
+
+
+def github_commit_date(owner_repo: str, sha: str) -> str:
+    """YYYY-MM-DD the pinned commit was authored, or '' if unresolvable."""
+    try:
+        data = http_json(f"https://api.github.com/repos/{owner_repo}/commits/{sha}",
+                         headers=gh_headers())
+        return ((data.get("commit") or {}).get("author") or {}).get("date", "")[:10]
+    except Exception:
+        return ""
+
+
+def github_releases_after(owner_repo: str, iso_date: str):
+    """Non-prerelease releases published after iso_date, newest first."""
+    try:
+        rels = http_json(f"https://api.github.com/repos/{owner_repo}/releases?per_page=30",
+                         headers=gh_headers())
+    except Exception:
+        return []
+    return [r for r in rels
+            if not r.get("prerelease") and not r.get("draft")
+            and (r.get("published_at") or "")[:10] > iso_date]
+
+
+def audit_pinned_sources():
+    """Report each pinned upstream source with the same tier vocabulary as images."""
+    entries = []
+    for src in discover_pinned_sources():
+        row = {"service": src["service"], "arg": src["arg"], "repo": src["gh"],
+               "pinned_sha": src["sha"][:12], "pinned_date": "", "latest": None,
+               "releases_behind": 0, "tier": "UNKNOWN", "reason": "", "url": "",
+               "highlights": []}
+        if budget_left() < 12:
+            row["reason"] = "skipped (time budget)"
+            entries.append(row)
+            continue
+        latest, url, body = github_latest(src["gh"])
+        row["latest"], row["url"] = latest, url
+        row["pinned_date"] = github_commit_date(src["gh"], src["sha"])
+        if not latest:
+            row["reason"] = f"could not resolve latest release for {src['gh']}"
+            entries.append(row)
+            continue
+        if not row["pinned_date"]:
+            row["tier"] = "UNKNOWN"
+            row["reason"] = f"pinned SHA {row['pinned_sha']} not found upstream (force-push? wrong repo?)"
+            entries.append(row)
+            continue
+        missed = github_releases_after(src["gh"], row["pinned_date"])
+        row["releases_behind"] = len(missed)
+        if not missed:
+            row["tier"] = "OK"
+            row["reason"] = f"pin ({row['pinned_date']}) is current with {latest}"
+            entries.append(row)
+            continue
+        # Scan EVERY missed release for security language, not just the newest —
+        # the fix that matters is often several releases back from HEAD.
+        sec = next((r for r in missed if _SECURITY_RE.search(r.get("body") or "")), None)
+        span = f"{len(missed)} release(s) behind — pinned {row['pinned_date']}, latest {latest}"
+        if sec:
+            row["tier"] = "SECURITY"
+            row["reason"] = f"{sec.get('tag_name')} cites a security fix; {span}"
+            row["highlights"] = highlights(sec.get("body") or "")
+        else:
+            row["tier"] = "UPDATE"
+            row["reason"] = span
+            row["highlights"] = highlights(body)
+        entries.append(row)
+    return entries
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def audit():
@@ -445,16 +557,26 @@ def audit():
         counts[r["tier"]] = counts.get(r["tier"], 0) + 1
     actionable = [r for r in results if r["tier"] in ("SECURITY", "UPDATE")]
 
+    # Locally-built images are only ever REBUILD, so the upstream repo their
+    # Dockerfile pins is audited separately — see the pinned-sources block above.
+    # These count as actionable: a stale pin is exactly as real as a stale image.
+    pinned = audit_pinned_sources()
+    actionable += [p for p in pinned if p["tier"] in ("SECURITY", "UPDATE")]
+
     return {
         "date": datetime.now(UTC).strftime("%Y-%m-%d"),
         "compose": str(compose_path),
         "note": ("Audited the DEPLOYED compose. 'declared' = what compose ships; "
                  "compare against 'latest'. Tiers: SECURITY/UPDATE (act), "
                  "DRIFT (rolling/unpinned), REBUILD (local image), OK, UNKNOWN. "
+                 "'pinned_sources' covers upstream repos that locally-built images "
+                 "clone at a fixed SHA — a REBUILD image can still be months behind "
+                 "upstream, which the image table alone cannot see. "
                  "Report-only — no changes are applied."),
         "counts": counts,
         "actionable_count": len(actionable),
         "services": results,
+        "pinned_sources": pinned,
         "meta": {"source_failures": failures, "service_count": len(services)},
     }
 
@@ -468,6 +590,11 @@ def render_pretty(data):
     for r in data["services"]:
         lines.append(f"[{r['tier']:8}] {r['service']:24} {(r['declared'] or r['kind']):>18}"
                      f" -> {str(r['latest'] or '-'):<14} {r['reason']}")
+    if data.get("pinned_sources"):
+        lines.append("\npinned upstream sources (locally-built images):")
+        for p in data["pinned_sources"]:
+            lines.append(f"[{p['tier']:8}] {p['service']:24} {p['pinned_sha']:>18}"
+                         f" -> {str(p['latest'] or '-'):<14} {p['reason']}")
     if data["meta"]["source_failures"]:
         lines.append("\nfailures: " + "; ".join(data["meta"]["source_failures"]))
     return "\n".join(lines)
