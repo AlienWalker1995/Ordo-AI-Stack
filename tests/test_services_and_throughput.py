@@ -89,6 +89,46 @@ def test_headless_worker_shows_true_container_health(client, monkeypatch):
     assert by_id["livesync-bridge"]["error"], "a down worker must carry a container-state reason"
 
 
+def test_hermes_health_comes_from_container_state_under_its_compose_name(client, monkeypatch):
+    """The hermes card has no HTTP `check` and must resolve its container row through
+    OPS_SERVICE_MAP (`hermes` -> `hermes-dashboard`).
+
+    Regression: hermes-dashboard moved into caddy's netns and binds 127.0.0.1, so
+    `hermes-dashboard:9119` stopped resolving on ordo-net and the old HTTP probe could only
+    ever fail — a healthy Hermes rendered as down. Dropping the probe alone is not enough:
+    ops-api keys /services by COMPOSE service name, so a lookup on the raw card id `hermes`
+    misses and the card goes permanently grey instead of green."""
+    monkeypatch.delenv("MANIFEST_PATH", raising=False)
+
+    async def _fake_ops(method, path, *a, **k):
+        assert path == "/services"
+        return 200, {"services": [
+            {"id": "hermes-dashboard", "state": "running", "health": "healthy"},
+        ]}
+
+    monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
+    hermes = {s["id"]: s for s in client.get("/api/services").json()["services"]}["hermes"]
+    assert hermes["ok"] is True, "hermes must read healthy from its compose-named container row"
+    assert hermes.get("error") is None
+    assert "check" not in hermes, "the unreachable HTTP probe must not come back"
+
+
+def test_hermes_card_reports_down_when_its_container_is_down(client, monkeypatch):
+    """The container-state path must still be able to say NO — otherwise dropping the HTTP
+    check would have traded a false-red for a permanent false-green."""
+    monkeypatch.delenv("MANIFEST_PATH", raising=False)
+
+    async def _fake_ops(method, path, *a, **k):
+        return 200, {"services": [
+            {"id": "hermes-dashboard", "state": "exited", "health": None},
+        ]}
+
+    monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
+    hermes = {s["id"]: s for s in client.get("/api/services").json()["services"]}["hermes"]
+    assert hermes["ok"] is False
+    assert hermes["error"], "a down hermes must carry a container-state reason"
+
+
 def test_model_gateway_open_url_prefers_its_subdomain(client, monkeypatch):
     """model-gateway stays in the main grid (user-facing) and its Open link is the
     llm.<domain> subdomain — the same shape as every other service.

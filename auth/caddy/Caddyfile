@@ -80,6 +80,25 @@
     }
 }
 
+# Same as (sso_service), but rewrites Host to the loopback upstream.
+# Required for an upstream bound to 127.0.0.1 that validates the Host header against
+# its bound interface (anti-DNS-rebinding, GHSA-ppp5-vxwm-4cf7). Hermes >= v0.20.0 does
+# exactly this: on a loopback bind it accepts ONLY loopback Host values, so the inherited
+# `Host: <service>.<tailnet>` is rejected with 400 "Invalid Host header". A 0.0.0.0 bind
+# skips the check entirely — which is why this only appears once a service moves to
+# loopback. Use ONLY for loopback upstreams; everything else keeps (sso_service) so the
+# origin Host reaches the app.
+(sso_service_loopback) {
+    import tls_tailnet
+    import sso_port_gate
+    route {
+        import sso_forward_auth
+        reverse_proxy {args[0]} {
+            header_up Host {args[0]}
+        }
+    }
+}
+
 # ---- :8443 — Open WebUI (chat) ----
 # Prebuilt SvelteKit SPA with base="" (root-absolute /_app, /static, /api, /ws).
 # It MUST be served at a root — under /chat/ its client-side router renders
@@ -138,7 +157,7 @@
 # Recreating caddy destroys this namespace and orphans hermes-dashboard along with
 # the tailnet sidecars — recreate them together, never with --no-deps.
 :8447 {
-    import sso_service 127.0.0.1:9119
+    import sso_service_loopback 127.0.0.1:9119
 }
 
 # ---- :8448 — codebase-memory 3D graph ----

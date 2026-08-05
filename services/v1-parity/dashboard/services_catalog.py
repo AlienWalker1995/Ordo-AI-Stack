@@ -132,10 +132,18 @@ SERVICES = [
     {"id": "qdrant", "name": "Qdrant", "port": 6333, "url": "http://localhost:6333", "has_gpu": False, "plugin": "rag", "category": "rag", "background": True,
      "check": "http://qdrant:6333/readyz",
      "hint": "Vector DB for RAG. Drop files in data/rag-input/ (with --profile rag) or upload via Open WebUI Documents tab."},
-    # Hermes Agent runs as two compose services (hermes-gateway + hermes-dashboard). The dashboard
-    # container probes via internal DNS — unhealthy means the Hermes services haven't started.
+    # Hermes Agent runs as two compose services (agent + hermes-dashboard).
+    # NO HTTP `check` on purpose — it falls through to the container-state signal.
+    # hermes-dashboard runs in caddy's network namespace (network_mode: service:caddy) and binds
+    # 127.0.0.1:9119, so Hermes >= v0.20.0's non-loopback auth gate never engages and oauth2-proxy
+    # stays the one gate. The cost is that `hermes-dashboard` no longer resolves on ordo-net and
+    # 9119 is unreachable from any other container — the old `http://hermes-dashboard:9119/` probe
+    # could ONLY fail, rendering a healthy Hermes as down. Container state is also the truer signal
+    # here: that container's own healthcheck curls 127.0.0.1:9119 from inside the namespace, so it
+    # actually proves the dashboard serves. Do not re-add an HTTP check unless it stops being
+    # loopback-only.
     {"id": "hermes", "name": "Hermes Agent", "port": 9119, "url": "http://localhost:9119",
-     "check": "http://hermes-dashboard:9119/", "has_gpu": False, "plugin": "hermes-dashboard", "category": "agent",
+     "has_gpu": False, "plugin": "hermes-dashboard", "category": "agent",
      "hint": "Managed by docker compose. Logs: docker compose logs hermes-dashboard"},
     # Opt-in (--profile codebase-memory). 3D code knowledge-graph visualization, served at
     # https://<host>/codebase-memory/ on its own SSO-gated port :8448 (the codebase-memory-ui
