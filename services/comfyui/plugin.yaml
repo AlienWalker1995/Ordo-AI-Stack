@@ -29,6 +29,12 @@ services:
     # 1070; the uuid pin (CUDA_VISIBLE_DEVICES + device_ids) is the only thing WSL2 actually honors.
     gpu_pin: primary      # shares the primary (compute) GPU with llama.cpp
     wants_secrets: true   # HF_TOKEN / GITHUB_PERSONAL_ACCESS_TOKEN resolve from secrets.env
+    # Docker defaults /dev/shm to 64MB, which starves torch DataLoader workers and the VAE
+    # decode path on large frames. The DEPLOYED out/docker-compose.yml already carried
+    # `shm_size: 8g`, but it was hand-added to the generated file, which this source did not
+    # reproduce — so any re-render silently reverted ComfyUI to 64MB. Declaring it here
+    # reconciles source with what is actually running; do not remove without checking renders.
+    shm_size: 8g
     env:
       CLI_ARGS: ${COMFYUI_CLI_ARGS:---cpu --enable-manager}
       # V1's proven allocator config (overrides/compute.yml). An EMPTY string here is worse than
