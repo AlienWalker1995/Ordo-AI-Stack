@@ -1,7 +1,6 @@
-# Root build-context ALLOWLIST. Two images build with the repo ROOT as their context:
+# Root build-context ALLOWLIST. One image builds with the repo ROOT as its context:
 #   - ops-controller (services/ops-controller/Dockerfile: COPYs ordo/ catalog/ services/)
-#   - worker         (services/worker/Dockerfile: COPYs services/worker/ +
-#                     services/v1-parity/dashboard/ modules it imports)
+# (The media worker also built from root until its retirement, 2026-07-28 #133.)
 # Everything else is excluded so the context stays tiny and no operator material
 # (out/secrets.env, auth/caddy/certs/, data/, models/) can ever reach the daemon.
 # (Subdirectory build contexts that set their own context dir are NOT affected:
@@ -11,7 +10,7 @@
 !catalog/
 !services/
 # Re-exclude heavy gitignored/build artifacts the !services/ allowlist would otherwise pull into
-# the root context (worker + ops-controller builds) — chiefly the dashboard's ~54M frontend
+# the root context (the ops-controller build) — chiefly the dashboard's ~54M frontend
 # node_modules and any built dist/. Keeps the context tiny and the images reproducible.
 **/node_modules
 **/dist

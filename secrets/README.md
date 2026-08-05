@@ -22,10 +22,13 @@ with the age private key at `~/.config/sops/age/keys.txt`.
   entrypoint bridges it to the `GITHUB_BACKUP_PAT` env var, and the backup
   repo's credential helper reads it. Not used by the stack services themselves.
 - `hf_token.sops` — HuggingFace token (gated model downloads). Mounted
-  on `ops-controller`, `dashboard`, `gguf-puller`, and the comfyui
+  on `ops-controller`, `dashboard`, and the comfyui
   model puller.
 - `civitai_token.sops` — Civitai token (LoRA downloads). Mounted on
   the comfyui model puller.
+- `n8n_api_key.sops` — n8n API key (workflow automation MCP + dashboard integration).
+- `tailscale_authkey.sops` — reusable tagged `TS_AUTHKEY` for the tailnet-names and
+  notes-funnel sidecars (env-form; consumed via `out/secrets.env`).
 
 ## Working with these files
 

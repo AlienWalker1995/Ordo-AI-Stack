@@ -109,9 +109,9 @@ All directories created this way persist across restarts and rebuilds.
 
 ### Model Pull
 
-**llama.cpp GGUF:** from `out/`, `docker compose -p ordo --profile models run --rm gguf-puller` with `GGUF_MODELS=org/repo` fetches GGUF files into `models/gguf/`. Also exposed from the dashboard.
+**llama.cpp GGUF:** `ordo fetch` (checksum-mandatory) downloads catalog models into `models/gguf/`; the dashboard's model-pull UI drives the same path. (The V1 `gguf-puller` compose service was not ported — its old endpoints return 501.)
 
-**ComfyUI:** from `out/`, `docker compose -p ordo run --rm comfyui-model-puller` downloads the pack defined by `COMFYUI_PACKS` (default includes LTX-2 variants) into `models/comfyui/`. First run can be tens of GB.
+**ComfyUI:** the dashboard's ComfyUI model-pack UI (backed by `scripts/comfyui/pull_comfyui_models.py`) downloads packs into `models/comfyui/`. First run can be tens of GB. (The V1 `comfyui-model-puller` compose service was not ported — its old endpoints return 501.)
 
 ### RAG Ingestion (`--profile rag`)
 

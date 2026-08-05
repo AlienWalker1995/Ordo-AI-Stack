@@ -83,12 +83,4 @@ if ($needsCreate -and (Test-Path $rootExample)) {
     Write-Host "OK .env (created)"
 }
 
-# Auto-detect GPU and generate overrides/compute.yml
-$detectScript = Join-Path $base "scripts\detect_hardware.py"
-if (Test-Path $detectScript) {
-    $env:BASE_PATH = $base -replace '\\', '/'
-    python $detectScript 2>$null
-    if ($LASTEXITCODE -eq 0) { Write-Host "OK Hardware detected (overrides/compute.yml)" }
-}
-
 Write-Host "Directories ready."

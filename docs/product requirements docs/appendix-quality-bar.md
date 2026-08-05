@@ -2,7 +2,7 @@
 
 ## Test Suite (Current `tests/`)
 
-62 test files: 37 in `tests/` plus 25 in `tests/substrate/` (the render-engine suite).
+64 test files: 36 in `tests/` plus 28 in `tests/substrate/` (the render-engine suite).
 
 | Area | Files | Representative coverage |
 |------|-------|--------------------------|
@@ -13,7 +13,7 @@
 | Ops / secrets / stack | 7 | secrets isolation, Caddyfile invariants, stack-monitor sanitize/versions, storage purge, settings validation, service-catalog wiring |
 | GPU / hardware | 3 | GPU stats, GPU routes, llama.cpp turboquant |
 | Misc / policy | 8 | dependency-registry probe, catalog-derived dependencies, Hermes socket absent, Hermes ops client, MCP policy, MCP persist, services & throughput, text sanitizers |
-| Substrate (render engine) | 25 | agents, broker, build contexts, cli render guard, cloud fallback, compose (+ recreate), control, dashboards, fetch, lease exec/history, MCP, memory vault (+ ingestion), native, ops-api stats, parity (+ render), plugins, preflight, render, scheduler, status doctor, wizard |
+| Substrate (render engine) | 28 | agents, broker, build contexts, cli render guard, cloud fallback, compose (+ recreate), control, dashboards, fetch, lease exec/history, MCP, memory vault (+ ingestion), native, ops-api stats, parity (+ render), plugins, preflight, render, scheduler, status doctor, wizard |
 
 CI (`.github/workflows/ci.yml`): `secret-scan` (TruffleHog), `pytest` (`tests/`, excluding `tests/substrate/`), and `substrate` (path-gated, mocked-profile).
 

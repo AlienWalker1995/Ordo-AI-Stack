@@ -80,6 +80,5 @@ See [Reliability & Service Contracts](reliability-and-contracts.md) for full det
 - [Rollback Procedures](appendix-rollback.md) – Per-component rollback playbook.
 - [Quality Bar](appendix-quality-bar.md) – Test suite, performance targets, security review checklist.
 - [Open WebUI](https://docs.openwebui.com/) – Day-to-day chat interface (port 3000); not owned by this repo but wired into the stack via compose.
-- [Future Expansions](component-future.md) – Placeholder for components not yet split out.
 
 *Add or split components as the codebase grows.*

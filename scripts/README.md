@@ -1,6 +1,6 @@
 # Scripts
 
-> ⚠️ **LEGACY (V1) — retired.** These scripts drove the V1 bring-up model: `ensure_dirs` + `detect_hardware.py` (→ `overrides/compute.yml`), the `./compose` / `.\compose.ps1` wrapper, and the model pullers. That V1 top-level tree (root `docker-compose.yml`, `compose`/`compose.ps1`, the root `Makefile`, `overrides/`, `scripts/detect_hardware.py`, the root `.env.example`) was **removed 2026-07-24** after the 2026-07-09 v2 cutover soak — it is no longer present in this repo, so several rows below are orphaned. In production, the stack is defined and operated entirely from the repo root (edit `ordo.yaml`, run `ordo render`, bring up the rendered compose from `out/`); directory/config generation is the render engine, hardware detection is `ordo detect` (`hardware: auto`), model provisioning is **`ordo fetch`** (checksum-mandatory, offline-capable — replaces `pull_gguf_models.py` / the pullers), and GPU scheduling is `ordo serve` (not a reactive guardian). See [`../docs/operator-guide.md`](../docs/operator-guide.md).
+> ⚠️ **Mixed lifecycle — read per-row.** Some of these scripts are LIVE (bind-mounted into containers, invoked by Hermes cron, or the documented secrets flow); only the V1 *bring-up* model is retired:  `ensure_dirs` + `detect_hardware.py` (→ `overrides/compute.yml`), the `./compose` / `.\compose.ps1` wrapper, and the model pullers. That V1 top-level tree (root `docker-compose.yml`, `compose`/`compose.ps1`, the root `Makefile`, `overrides/`, `scripts/detect_hardware.py`, the root `.env.example`) was **removed 2026-07-24** after the 2026-07-09 v2 cutover soak — it is no longer present in this repo, so several rows below are orphaned. In production, the stack is defined and operated entirely from the repo root (edit `ordo.yaml`, run `ordo render`, bring up the rendered compose from `out/`); directory/config generation is the render engine, hardware detection is `ordo detect` (`hardware: auto`), model provisioning is **`ordo fetch`** (checksum-mandatory, offline-capable — replaces `pull_gguf_models.py` / the pullers), and GPU scheduling is `ordo serve` (not a reactive guardian). See [`../docs/operator-guide.md`](../docs/operator-guide.md).
 
 Setup, operations, and maintenance scripts for the Ordo AI Stack.
 
@@ -14,7 +14,6 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 
 | Script | Purpose |
 |--------|---------|
-| `doctor.sh` / `.ps1` | Deep health probes (dashboard, model-gateway, MCP gateway). |
 | `smoke_test.sh` / `.ps1` | Quick smoke test against the rendered `out/docker-compose.yml` (project `ordo`): optionally starts services, then checks health in-network via `docker compose exec` (only Caddy publishes a host port). |
 
 ## MCP Gateway
@@ -37,8 +36,6 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 |--------|---------|
 | `comfyui/pull_comfyui_models.py` | Config-driven model downloader. V1 wired this to a `comfyui-model-puller` one-shot compose service (profile `comfyui-models`); that service was retired as obsolete-by-design in v2 (provisioning now belongs to the operator's ComfyUI image / `ordo fetch`-style flow) — run it standalone instead: `python scripts/comfyui/pull_comfyui_models.py`. |
 | `comfyui/models.json` | Model pack definitions for the downloader. |
-| `comfyui/install_node_requirements.sh` / `.ps1` | Install pip requirements for a ComfyUI custom node into the running container, via `docker compose --project-directory out -f out/docker-compose.yml -p ordo exec comfyui`. |
-| `comfyui/validate_comfyui_pipeline.py` | Diagnostic: validates ComfyUI host paths, checkpoints, workflow refs, and HTTP connectivity. |
 
 ## Model Downloads
 
