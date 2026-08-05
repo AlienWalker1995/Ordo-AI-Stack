@@ -104,10 +104,22 @@ def test_render_agent_mounts_brain_workspace_and_mirror(tmp_path):
     render(_src("hermes"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
     vols = c["services"]["agent"]["volumes"]
-    # THE BRAIN at the staged path (never the live-stack path), plus /workspace/data + /c/dev mirror
-    assert any(v.endswith(":/home/hermes/.hermes") and "DATA_PATH" in v for v in vols)
+    # THE BRAIN is a NAMED VOLUME, plus /workspace/data + /c/dev mirror.
+    # It must NOT be a ${DATA_PATH} host bind: on Docker Desktop/Windows that bind's POSIX
+    # ownership is synthesized from Windows ACLs, so a host write can flip dirs to root:0700 and
+    # strip the traverse bit from uid 1000 (the user the gateway drops to via gosu). That happened
+    # 2026-08-04 and silently killed cron for 22h. Assert the volume AND assert the bind is gone,
+    # so a well-meaning "restore host access" change trips this test instead of production.
+    assert "hermes-home:/home/hermes/.hermes" in vols
+    assert not any(v.endswith(":/home/hermes/.hermes") and "DATA_PATH" in v for v in vols)
+    # The SAME volume is mounted a second time at the path cron jobs hardcode for skill scripts
+    # (/workspace/data/hermes/skills/...). Without it that path falls through to the host copy
+    # under the /workspace/data bind and silently runs stale scripts.
+    assert "hermes-home:/workspace/data/hermes" in vols
     assert any(v.endswith(":/workspace/data") for v in vols)
     assert any(v.endswith(":/c/dev") for v in vols)
+    # Compose requires a bare-name volume source to be declared at top level or it refuses to start.
+    assert "hermes-home" in (c.get("volumes") or {})
 
 
 def test_render_agent_mounts_file_secrets_readonly(tmp_path):
@@ -124,7 +136,16 @@ def test_render_agent_has_user_env_and_healthcheck(tmp_path):
     agent = c["services"]["agent"]
     assert agent["user"] == "root"
     assert agent["environment"]["OPS_CONTROLLER_URL"] == "http://ops-controller:9000"
-    assert agent["healthcheck"]["test"][-1].endswith("gateway_state.json")
+    # The healthcheck MUST probe as the unprivileged runtime user, not as root. The container's
+    # `user: root` is only the entry identity — the gateway drops to uid 1000 via gosu. A root
+    # probe cannot see a root-owned 0700 lockout of the brain, which is why the old
+    # `test -f .../gateway_state.json` reported healthy through 22h of total cron failure on
+    # 2026-08-04 (it also only tested EXISTENCE of a file written once at startup).
+    probe = agent["healthcheck"]["test"][-1]
+    assert "gosu hermes" in probe
+    assert "gateway_state.json" in probe
+    # Guard the specific regression: a bare root `test -f` on the state file is not a liveness probe.
+    assert not probe.strip().startswith("test -f")
 
 
 def test_service_healthy_depends_targets_all_have_healthchecks(tmp_path):
