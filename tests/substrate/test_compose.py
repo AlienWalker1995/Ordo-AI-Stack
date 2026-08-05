@@ -131,8 +131,14 @@ def test_v1_parity_ops_api_backend_has_utility_gpu(tmp_path):
 
 
 def test_agent_swappable():
-    c = compose.render_compose(has_gpu=False, compose_profiles=[], agent="openclaw")
-    assert "agent-openclaw" in c["services"]["agent"]["image"]
+    """The agent is pluggable: any id renders as <project>/agent-<id>:latest.
+
+    Uses a deliberately fictional id. The previous fixture named a real (now dead)
+    agent, which read as if that one were special-cased — an arbitrary name proves
+    the convention is generic, which is the actual contract under test.
+    """
+    c = compose.render_compose(has_gpu=False, compose_profiles=[], agent="someagent")
+    assert "agent-someagent" in c["services"]["agent"]["image"]
 
 
 def test_llamacpp_image_defaults_to_upstream():
