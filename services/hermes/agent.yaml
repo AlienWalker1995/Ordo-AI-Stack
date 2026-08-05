@@ -53,6 +53,12 @@ environment:
   DISCORD_BOT_TOKEN_FILE: /run/secrets/discord_token
   GITHUB_BACKUP_PAT_FILE: /run/secrets/github_backup_pat
   DISCORD_ALLOWED_USERS: ${DISCORD_ALLOWED_USERS:-}
+  # Voice auto-join (Ordo patch in services/hermes/Dockerfile): when an allowlisted user is
+  # in a voice channel, the bot joins/follows automatically — no /voice join needed. "1" on
+  # this deployment by operator directive ("if I am in the voice channel it should work");
+  # set 0 to restore upstream summon-only behavior. STT is the local faster-whisper
+  # (STT_OPENAI_BASE_URL above); TTS is the local Kokoro (tts.openai.base_url in config.yaml).
+  HERMES_DISCORD_VOICE_AUTO_JOIN: ${HERMES_DISCORD_VOICE_AUTO_JOIN:-1}
   DISCORD_ALLOWED_CHANNELS: ${DISCORD_ALLOWED_CHANNELS:-}
   DISCORD_ALLOWED_ROLES: ${DISCORD_ALLOWED_ROLES:-}
   DISCORD_REQUIRE_MENTION: ${DISCORD_REQUIRE_MENTION:-true}
