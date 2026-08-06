@@ -168,44 +168,49 @@ else:
 assert '".stl"' in b.read_text(), "hermes: 3D ext patch did not stick"
 PYEOF
 
-# Ordo AI Stack patch: Discord voice AUTO-JOIN. Upstream v0.20.0 ships full-duplex voice
-# but its only activation is the /voice join slash command; on_voice_state_update merely
-# LOGS joins and early-returns when the bot is not connected. Operator wants "if I am in
-# the voice channel it should work": when an allowlisted user is in a voice channel, the
-# bot joins it (and follows channel switches). Gated by HERMES_DISCORD_VOICE_AUTO_JOIN so
-# unset env = exact upstream behavior. The existing inactivity timeout still handles leave.
-# Anchored on the handler's unique docstring; asserts fail the BUILD loudly if upstream
-# moves it (the 2026-08-05 media-patch rot lesson: never patch blind).
+# Ordo AI Stack patch (DIAGNOSTIC ONLY): name the caller on every voice-channel leave.
+#
+# An AUTO-JOIN patch briefly lived here (2026-08-05, three iterations) and was REMOVED
+# the same day — do not reintroduce it. Lessons, paid for live:
+#   * Upstream has NO auto-join; it is open idea #33683. The web claims of a
+#     `discord.voice.auto_join` config are extrapolated from that issue — verify with a
+#     code search (`auto_join_channels` -> 0 hits), not docs summaries.
+#   * Every mystery that looked like "the adapter double-fires events" — duplicate
+#     threads per message, doubled voice_state logs, "Already connected" zombies, an
+#     unexplained voice disconnect — was actually a LEAKED SECOND GATEWAY: a
+#     `docker compose run --rm agent` debug container survives when the compose client
+#     is timeout-killed, and two processes then share one bot token and one brain.
+#     Before debugging "impossible" duplicate behavior: `docker ps --filter
+#     name=ordo-agent-run`. Never leave a foreground gateway run unreaped.
+#   * Even so, patching event handlers we don't own remains the wrong seam — the
+#     adapter's voice lifecycle (locks, receiver, mixer) is not a public surface.
+#   * The SUPPORTED equivalent of "if I'm in the channel it works": run /voice join once
+#     and set `discord.voice_channel_inactivity_timeout_seconds: 0` in config.yaml
+#     (minimum=0 means 0 disables the auto-leave) — the bot stays resident in the VC.
+# What remains below is one INFO line instrumenting leave_voice_channel, because a leave
+# fired 2026-08-05 23:43 with NO recorded initiator (provably not the inactivity timeout).
+# Remove once upstream logs its own leave reasons.
 RUN python3 - <<'PYEOF'
 import pathlib
 b = pathlib.Path("/opt/hermes-agent/plugins/platforms/discord/adapter.py")
 s = b.read_text()
-anchor = '''            async def on_voice_state_update(member, before, after):
-                """Track voice channel join/leave events."""'''
-assert s.count(anchor) == 1, "hermes voice: on_voice_state_update anchor moved/ambiguous"
-assert "async def join_voice_channel" in s, "hermes voice: join_voice_channel gone — auto-join patch needs a new call path"
-assert "import os" in s, "hermes voice: adapter no longer imports os"
-inject = anchor + '''
-                # Ordo AI Stack: auto-join the allowlisted user's voice channel.
-                if os.environ.get("HERMES_DISCORD_VOICE_AUTO_JOIN", "").strip().lower() in ("1", "true", "yes"):
-                    try:
-                        _allowed = set()
-                        for _tok in os.environ.get("DISCORD_ALLOWED_USERS", "").split(","):
-                            _digits = "".join(ch for ch in _tok if ch.isdigit())
-                            if len(_digits) >= 15:
-                                _allowed.add(int(_digits))
-                        _vc = adapter_self._voice_clients.get(member.guild.id)
-                        if (member.id in _allowed and after.channel is not None
-                                and member != adapter_self._client.user
-                                and (_vc is None or getattr(_vc, "channel", None) != after.channel)):
-                            logger.info("Voice auto-join: following %s into %s", member.display_name, after.channel.name)
-                            await adapter_self.join_voice_channel(after.channel)
-                    except Exception:
-                        logger.exception("Voice auto-join failed")'''
-s = s.replace(anchor, inject, 1)
+
+# Instrument leave_voice_channel with its caller. Something tore the bot out of the
+# channel ~30s after TTS on 2026-08-05 (not the inactivity timeout — 300s, and its
+# text notification never fired) and INFO logs recorded no initiator. One line names
+# the caller on every future leave instead of leaving us to guess again.
+anchor2 = '''    async def leave_voice_channel(self, guild_id: int) -> None:
+        """Disconnect from the voice channel in a guild."""'''
+assert s.count(anchor2) == 1, "hermes voice: leave_voice_channel anchor moved/ambiguous"
+inject2 = anchor2 + '''
+        import traceback as _tb
+        logger.info("leave_voice_channel(guild=%s) called by:\\n%s", guild_id,
+                    "".join(_tb.format_stack(limit=6)[:-1]))'''
+s = s.replace(anchor2, inject2, 1)
+
 b.write_text(s)
-assert "Voice auto-join: following" in b.read_text(), "hermes voice: auto-join patch did not stick"
-print("patched Discord adapter with voice auto-join (env-gated)")
+assert "leave_voice_channel(guild=%s) called by" in b.read_text(), "hermes voice: leave instrumentation did not stick"
+print("patched Discord adapter with leave instrumentation")
 PYEOF
 
 # Web UI — copy built SPA from stage 1.
