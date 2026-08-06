@@ -17,7 +17,7 @@ secrets:
 services:
   - name: open-webui
     # Pinned to the exact version V1 runs (V1 uses ${OPEN_WEBUI_IMAGE:-...v0.10.1}). Pin, don't float.
-    image: ghcr.io/open-webui/open-webui:v0.10.1
+    image: ghcr.io/open-webui/open-webui:v0.11.0
     wants_secrets: true     # LITELLM_MASTER_KEY resolves from secrets.env
     env:
       ENABLE_OLLAMA_API: "false"
