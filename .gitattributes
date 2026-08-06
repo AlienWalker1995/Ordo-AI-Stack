@@ -18,3 +18,11 @@ services/codebase-memory-ui/nginx.conf text eol=lf
 # Bind-mounted into Linux containers as an executable (the trainer venv-python
 # lease seam) — a CRLF shebang (`python3\r`) breaks exec on Windows checkouts.
 assets/* text eol=lf
+
+# YAML manifests are LF always — agents editing from Windows-adjacent runtimes kept
+# committing CRLF rewrites that turned 3-line pin bumps into 358-line diffs (PR #154).
+# `text eol=lf` makes git normalize on checkin AND checkout, ending the class.
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.py text eol=lf

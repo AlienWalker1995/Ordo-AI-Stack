@@ -79,3 +79,25 @@ models:
     # built from services/llamacpp-patched (not pullable from a registry).
     backend_image: ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470
     tier: ultra
+
+  - id: fable-qwen3.6-27b-q6
+    name: Qwen3.6 27B Fable-Fusion 711 (Q6_K, uncensored)
+    backend: llama.cpp
+    file: Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q6_K.gguf
+    source: https://huggingface.co/DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-NEO-MAX-MTP-GGUF
+    # sha256 of the 24,033,705,440-byte Q6_K weights, computed from the on-disk file 2026-07-25.
+    sha256: 2e8a9bdb478cad4ad53a3b02568ed6f5a6c7f8f569e8c030e4806438ca49828e
+    requires: { vram_gb: 23, ram_gb: 16, cpu_ok: false }
+    ctx_default: 131072
+    # Same Qwen3.6-27B hybrid attention/SSM as the huihui sibling: KV ~34.8 KB/token (q8_0).
+    kv_kb_per_token: 34.8
+    # Shared Qwen3.6-27B vision projector — loads cleanly across these 27B finetunes.
+    mmproj: /models/mmproj-Huihui-Q6_K.gguf
+    # This IS the MTP GGUF variant, but it loads fine as a plain model on the patched build:
+    # llama.cpp ignores the MTP head and no --spec/--draft flags are passed, so MTP is inert
+    # (same effective behavior as the huihui non-MTP sibling). Verified in the live server log
+    # 2026-07-25: "model loaded", zero MTP/speculative init lines, ~49 tok/s.
+    extra_args: "--reasoning-format deepseek"
+    # Qwen3.6 needs the SWA/hybrid-cache patched llama.cpp build — same image as huihui.
+    backend_image: ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470
+    tier: ultra
