@@ -16,7 +16,7 @@ services:
   - name: qdrant
     # Vector DB — pinned to the exact version V1 runs. No host port in V2 (reached at qdrant:6333
     # on the project network; V1's 127.0.0.1 publish was host-debug only).
-    image: qdrant/qdrant:v1.18.2
+    image: qdrant/qdrant:v1.19.0
     volumes:
       - ${DATA_PATH:-./data}/qdrant:/qdrant/storage
     healthcheck:

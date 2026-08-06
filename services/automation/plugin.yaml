@@ -14,7 +14,7 @@ env:
 services:
   - name: n8n
     # Pinned to the exact version V1 runs (V1 uses ${N8N_IMAGE:-...2.28.3}). Pin, don't float.
-    image: docker.n8n.io/n8nio/n8n:2.28.3
+    image: docker.n8n.io/n8nio/n8n:2.33.5
     env:
       N8N_HOST: 0.0.0.0
       N8N_PORT: "5678"
