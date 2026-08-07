@@ -213,6 +213,51 @@ assert "leave_voice_channel(guild=%s) called by" in b.read_text(), "hermes voice
 print("patched Discord adapter with leave instrumentation")
 PYEOF
 
+# Ordo AI Stack patch: /voice join must PRESERVE an existing per-channel voice mode.
+#
+# Upstream's join handler unconditionally sets the bound text channel's mode to "all"
+# (speak EVERY reply, typed text included) and persists it — clobbering an operator's
+# saved "voice_only" ("voice in -> voice out; text in -> text out"). The only recovery
+# is remembering to run /voice on after EVERY rejoin; forgetting it silently degrades
+# to the bot talking over the text channel. Unlike the removed auto-join patch (a
+# missing surface), this is a one-line bug on the SUPPORTED tri-state surface —
+# upstream reaffirmed the voice_mode design when closing PR #19521, and their meta
+# issue #78207 lane 02 tracks exactly this decision layer. setdefault keeps upstream's
+# "all" for channels with no saved mode (non-breaking) and respects a saved one.
+# Drop this block when an upstream fix lands.
+RUN python3 - <<'PYEOF'
+import pathlib
+b = pathlib.Path("/opt/hermes-agent/gateway/run.py")
+s = b.read_text()
+
+anchor = '''            self._voice_mode[self._voice_key(event.source.platform, event.source.chat_id)] = "all"
+            self._save_voice_modes()'''
+assert s.count(anchor) == 1, "hermes voice: join-handler mode-set anchor moved/ambiguous"
+s = s.replace(anchor, '''            _vkey = self._voice_key(event.source.platform, event.source.chat_id)
+            self._voice_mode.setdefault(_vkey, "all")
+            self._save_voice_modes()''', 1)
+
+# The canned reply hard-codes "I'll speak my replies" — false when a preserved mode
+# is voice_only/off. Reflect the effective mode instead.
+reply_anchor = '''            return (
+                f"Joined voice channel **{voice_channel.name}**.\\n"
+                f"I'll speak my replies and listen to you. Use /voice leave to disconnect."
+            )'''
+assert s.count(reply_anchor) == 1, "hermes voice: join-handler reply anchor moved/ambiguous"
+s = s.replace(reply_anchor, '''            _vmode = self._voice_mode.get(_vkey, "all")
+            _speak = ("I'll speak my replies and listen to you."
+                      if _vmode == "all"
+                      else f"I'll listen; replies follow your saved voice mode ({_vmode}).")
+            return (
+                f"Joined voice channel **{voice_channel.name}**.\\n"
+                f"{_speak} Use /voice leave to disconnect."
+            )''', 1)
+
+b.write_text(s)
+assert 'self._voice_mode.setdefault(_vkey, "all")' in b.read_text(), "hermes voice: join mode-preserve patch did not stick"
+print("patched gateway: /voice join preserves saved voice mode")
+PYEOF
+
 # Web UI — copy built SPA from stage 1.
 COPY --from=web-builder --chown=hermes:hermes \
     /build/hermes-agent/hermes_cli/web_dist/ \
