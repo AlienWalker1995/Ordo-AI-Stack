@@ -55,8 +55,15 @@ services:
       # and llamacpp (--no-mmap). Volume seeded from a fresh v0.30.2 clone + the operator's
       # custom_nodes/user/input; the old bind is retained as rollback then retired.
       - comfyui-app:/root
-      # Model caches (~30GB) — SHARED read-only from the operator's models tree (immutable weights).
-      - ${COMFYUI_MODELS_PATH:-${BASE_PATH:-.}/models/comfyui}:/root/ComfyUI/models:ro
+      # Model weights (~390GB) — NAMED VOLUME (ext4), not the old models/comfyui 9p bind.
+      # The 9p bridge wedges on metadata walks (p9_client_rpc D-state) — this tree is why
+      # --enable-assets had to be disabled, and it was the largest remaining exposure of
+      # the seam that took out the Hermes brain (#143), the app tree (#156) and the gguf
+      # models (#158). Seeded from the host tree 2026-08-07; the dashboard model-pack
+      # pull UI writes into the same volume (its RW /models mount), so downloads land
+      # where ComfyUI reads. (The old COMFYUI_MODELS_PATH override relocated the host
+      # bind — moot for a named volume, removed.)
+      - comfyui-models:/root/ComfyUI/models:ro
       # Render outputs — staged under the V2 data root.
       - ${DATA_PATH:-./data}/comfyui-output:/root/ComfyUI/output
     command:

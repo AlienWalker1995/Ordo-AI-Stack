@@ -1,6 +1,6 @@
 # Hermes Agent (Docker-mode)
 
-> ⚠️ **Naming note — v2 is the only stack (V1 top-level tree retired 2026-07-24, commit `62540bf`). The repo was later flattened (2026-07-24, commit `2d4bd9c`): the `v2/` directory no longer exists — its contents live at the repo root; there is no v2, there is only Ordo.** Hermes is the stack's assistant-agent layer and **is the default agent**. The stack models an agent as a **data manifest** ([`../services/hermes/agent.yaml`](../services/hermes/agent.yaml)) that the renderer wires into a single `agent` compose service (the hermes web UI ships as the separate `hermes-dashboard` service-plugin, profile `hermes-ui`). The agent contract (chat via model-gateway, tools via mcp-gateway, GPU via the ops-controller `/jobs` scheduler, `.env` read-only) is documented in [`agents.md`](agents.md). Hermes' persistent brain still lives under **`data/hermes/`** (one root, the primary checkout) and the Discord/`SOUL.md`/state notes below remain accurate. The agent image is built from its co-located build context **`services/hermes/`** (`Dockerfile` alongside the `agent.yaml` manifest) via `docker build -t ordo/agent-hermes:latest ./services/hermes` and selected via `agent: hermes` in `ordo.yaml`. The stack is brought up entirely from the repo root: edit `ordo.yaml` (template `ordo.example.yaml`), render with `ordo render` (`python -m ordo.cli render --out out`), then `docker compose -p ordo … up` from `out/` — see [`operator-guide.md`](operator-guide.md).
+> ⚠️ **Naming note — v2 is the only stack (V1 top-level tree retired 2026-07-24, commit `62540bf`). The repo was later flattened (2026-07-24, commit `2d4bd9c`): the `v2/` directory no longer exists — its contents live at the repo root; there is no v2, there is only Ordo.** Hermes is the stack's assistant-agent layer and **is the default agent**. The stack models an agent as a **data manifest** ([`../services/hermes/agent.yaml`](../services/hermes/agent.yaml)) that the renderer wires into a single `agent` compose service (the hermes web UI ships as the separate `hermes-dashboard` service-plugin, profile `hermes-ui`). The agent contract (chat via model-gateway, tools via mcp-gateway, GPU via the ops-controller `/jobs` scheduler, `.env` read-only) is documented in [`agents.md`](agents.md). Hermes' persistent brain lives in the **`hermes-home` named volume** (moved off the `data/hermes/` bind 2026-08-05, #143) and the Discord/`SOUL.md`/state notes below remain accurate. The agent image is built from its co-located build context **`services/hermes/`** (`Dockerfile` alongside the `agent.yaml` manifest) via `docker build -t ordo/agent-hermes:latest ./services/hermes` and selected via `agent: hermes` in `ordo.yaml`. The stack is brought up entirely from the repo root: edit `ordo.yaml` (template `ordo.example.yaml`), render with `ordo render` (`python -m ordo.cli render --out out`), then `docker compose -p ordo … up` from `out/` — see [`operator-guide.md`](operator-guide.md).
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) is the stack's assistant-agent layer. It runs as two compose services — `agent` (Discord / Telegram messaging) and `hermes-dashboard` (web UI, container port 9119, published by Caddy at `https://${CADDY_TAILNET_HOSTNAME}:8447/` — served at its origin root behind a plain SSO proxy, no forwarded-prefix base injection) — that come up with the rest of the stack.
 
@@ -25,18 +25,25 @@ Stop only Hermes: `docker compose -p ordo stop agent hermes-dashboard`
 
 ## State
 
-All persistent state lives in `data/hermes/`:
+All persistent state (the "brain") lives in the **`hermes-home` named volume**, mounted at
+`/home/hermes/.hermes` (and again at `/workspace/data/hermes` — the absolute path skills
+hardcode; the two are one store). It moved off the `data/hermes/` host bind 2026-08-05
+(#143) after a Windows-side write flipped the 9p-synthesized permissions and silently
+killed cron for 22h — the volume removes that failure mode.
 
-| Path | Contents |
+| Path (inside the volume) | Contents |
 |---|---|
-| `config.yaml` in the `ordo_hermes-home` volume (`/home/hermes/.hermes/config.yaml`) | Hermes config (endpoints, Discord behavior, skills preferences) |
-| `data/hermes/sessions/` | Conversation history |
-| `data/hermes/memories/` | FTS5-indexed memories |
-| `data/hermes/skills/` | Installed and auto-generated skills |
-| `data/hermes/cron/` | Scheduled jobs |
-| `data/hermes/logs/` | Hermes's own log files (separate from `docker compose logs`) |
+| `config.yaml` | Hermes config (endpoints, Discord behavior, skills preferences) |
+| `sessions/` | Conversation history |
+| `memories/` | FTS5-indexed memories |
+| `skills/` | Installed and auto-generated skills |
+| `cron/` | Scheduled jobs |
+| `logs/` | Hermes's own log files (separate from `docker compose logs`) |
 
-`data/hermes/` is gitignored. To start from a clean slate: `docker compose -p ordo down`, `rm -rf data/hermes/*`, `docker compose -p ordo up -d`.
+Edit brain files via `docker exec ordo-agent-1 gosu hermes …` (or the
+`\\wsl$\docker-desktop\...\volumes\ordo_hermes-home\_data` path from Windows). To start
+from a clean slate: `docker compose -p ordo down`, `docker volume rm ordo_hermes-home`,
+`docker compose -p ordo up -d`.
 
 ## Discord setup
 
@@ -98,7 +105,7 @@ Any other keys you add manually (skills, memory providers, display preferences) 
 
 The image ships a small bundled plugin called `push-through` and seeds an opinionated `SOUL.md` on first run. Together they push the agent toward Claude Code-style behavior: execute via tools, never return a plan for approval, only stop when the work is verifiably done.
 
-Persistent state lives in the host bind mount `${BASE_PATH:-.}/data/hermes/`, mounted at `/home/hermes/.hermes` inside the container; host-side edits under `data/hermes/` are what the running containers see.
+Persistent state lives in the `hermes-home` named volume, mounted at `/home/hermes/.hermes` inside the container; edit it via `docker exec` as the `hermes` user (host-side `data/hermes/` is retired and no longer read).
 
 First-run seeding is gated by `/home/hermes/.hermes/.ordo-push-through-seeded`. After that sentinel exists, the entrypoint never re-seeds — your toggles stick.
 
@@ -155,7 +162,7 @@ docker compose -p ordo logs hermes-dashboard | tail -50
 **Clean restart (throws away all sessions + skills):**
 ```bash
 docker compose -p ordo down
-rm -rf data/hermes/*
+docker volume rm ordo_hermes-home
 docker compose -p ordo up -d
 ```
 

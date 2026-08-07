@@ -94,7 +94,10 @@ volumes:
   # RW view of the SAME models-gguf volume the llama.cpp services read — the pull UI
   # must land files where the backends look; 9p bind retired 2026-08-07 (see ordo/compose.py).
   - models-gguf:/gguf-models
-  - ${BASE_PATH:-.}/models/comfyui:/models
+  # RW view of the SAME comfyui-models volume ComfyUI reads — the model-pack pull UI
+  # downloads land where ComfyUI looks; 9p bind retired 2026-08-07 (Stage 2, see
+  # services/comfyui/plugin.yaml for the seam rationale).
+  - comfyui-models:/models
   - ${DATA_PATH:-./data}/dashboard:/data/dashboard
   # The rendered out/mcp dir — the EXACT same servers.txt the mcp-gateway mounts
   # (ordo/compose.py: "./mcp:/mcp-config"). RW so the Manage-MCPs UI can add/remove
@@ -181,5 +184,5 @@ backend:
     # project-directory (out/) at runtime — mirrors ops-controller's `./:/config` mount.
     - ./:/workspace:rw
     - models-gguf:/gguf-models:ro
-    - ${BASE_PATH:-.}/models/comfyui:/models/comfyui:ro
+    - comfyui-models:/models/comfyui:ro
     - ${DATA_PATH:-./data}/ops-controller:/data        # registry + audit log (staged, V2 data tree)

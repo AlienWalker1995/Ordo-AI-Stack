@@ -101,3 +101,25 @@ database / passphrase). On-tailnet clients can keep using `.../couchdb`.
 - **Reset a device** — LiveSync's "rebuild" fetches the whole vault fresh from CouchDB.
 - **Never** expose CouchDB's Fauxton admin UI publicly — the edge blocks `/couchdb/_utils`; the
   Funnel path proxies CouchDB directly, so rely on `require_valid_user` there.
+
+## Configuration policy: the database is the source of truth
+
+Adopted 2026-08-07 after a device's "overwrite remote" click deleted the vault DB
+(restored from the pre-migration copy; snapshot kept in `backups/`). All sync
+configuration lives in the database; devices conform to it.
+
+- **Sync behavior (tweak values — chunking, splitter, E2EE algorithm, …):** stored in
+  the remote milestone doc. On any "mismatched tweaks" dialog, always choose **"Use
+  remote configuration"**. Never push a single device's divergent settings to the DB.
+- **Plugins / themes / snippets:** use **Customization sync v2** (stores customizations
+  in the DB, device-aware). Enable on the primary device with automatic scan and mark
+  it the base; every other device enables Customization sync with auto-apply.
+- **Onboarding a device:** configure nothing by hand — open the **Setup URI** copied
+  from the primary device; it carries the full connection + behavior config.
+- **LiveSync's own `data.json` is deliberately NOT synced** (excluded via
+  `syncInternalFilesIgnorePatterns`) — it holds per-device identity; syncing it loops.
+- **Destructive buttons:** "Overwrite remote" / "Rebuild remote database" issues a
+  literal `DELETE /obsidian-notes/` against CouchDB. The correct recovery action on a
+  device is always **"Fetch from remote"**. Attribution for any future deletion:
+  `docker logs ordo-couchdb-1 | grep 'DELETE /obsidian-notes'` (logs method, source
+  IP, and user).
