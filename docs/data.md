@@ -17,18 +17,21 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 | `data/rag-input/` | Drop zone for RAG documents | `rag-ingestion` watch directory |
 | `models/gguf/` | llama.cpp GGUF download/staging dir (`ordo fetch` target) | Seeds the `models-gguf` named volume (not mounted by any service) |
 | `models-gguf` named volume | llama.cpp GGUF files at runtime (ext4 inside the Docker VM) | `llamacpp` / `llamacpp-cpu` / `llamacpp-embed` (`/models:ro`), dashboard (`/gguf-models` rw), ops-api (`/gguf-models:ro`) |
-| `models/comfyui/` | ComfyUI checkpoints, LoRAs, VAEs, encoders | `comfyui` bind mount |
+| `comfyui-models` named volume | ComfyUI checkpoints, LoRAs, VAEs, encoders | `comfyui` (RO), dashboard (RW — pull UI), ops-api (RO) |
 
 ### Sinks
 
 | Sink | Description | Format |
 |---|---|---|
 | `data/ops-controller/audit.log` | Privileged-action audit log | JSONL (append-only) |
-| `data/qdrant/` | Vector DB storage (RAG profile) | Qdrant native |
+| `qdrant-data` named volume | Vector DB storage (RAG profile) | Qdrant native |
 | `data/dashboard/` | Throughput samples, benchmarks, job tracking | JSON |
-| `data/hermes/` | Hermes agent state (sessions, allowlists) | JSON / SQLite |
-| `data/comfyui-storage/` | Generated media, custom nodes, runtime configs | mixed |
-| `data/n8n-data/` | n8n workflows and credentials | n8n native |
+| `hermes-home` named volume | Hermes agent brain (sessions, config, skills, cron) | JSON / SQLite / YAML |
+| `data/comfyui-output/` | Generated media (renders) | mixed |
+| `comfyui-app` named volume | ComfyUI app tree + custom nodes | mixed |
+| `n8n-data` named volume | n8n workflows and credentials | n8n native |
+| `couchdb-data` named volume | CouchDB (Obsidian LiveSync) | CouchDB native |
+| `open-webui-data` named volume | Open WebUI accounts + uploads | SQLite / files |
 
 ## Data Schemas
 
@@ -78,7 +81,7 @@ Size-bounded: `ops-controller` rotates to `audit.log.1` when `AUDIT_LOG_MAX_BYTE
 
 ### RAG Chunk (Qdrant Point)
 
-Stored in Qdrant under `data/qdrant/`. Collection name defaults to `documents` (`RAG_COLLECTION`).
+Stored in Qdrant on the `qdrant-data` named volume. Collection name defaults to `documents` (`RAG_COLLECTION`).
 
 ```json
 {
@@ -117,14 +120,14 @@ All directories created this way persist across restarts and rebuilds.
 
 On a fresh install the volume starts empty and `llamacpp` crash-loops with `failed to load model` until seeded. The host `models/gguf/` dir doubles as the recovery copy. The dashboard's GGUF-pull UI was not ported (its backing endpoint returns 501); use the two-step above.
 
-**ComfyUI:** the dashboard's ComfyUI model-pack UI (backed by `scripts/comfyui/pull_comfyui_models.py`) downloads packs into `models/comfyui/`. First run can be tens of GB. (The V1 `comfyui-model-puller` compose service was not ported — its old endpoints return 501.)
+**ComfyUI:** the dashboard's ComfyUI model-pack UI (backed by `scripts/comfyui/pull_comfyui_models.py`) downloads packs into the `comfyui-models` **named volume** (the dashboard's RW `/models` mount is the same volume ComfyUI reads RO), so downloads land where ComfyUI looks with no copy step. First run can be tens of GB. (The V1 `comfyui-model-puller` compose service was not ported — its old endpoints return 501.)
 
 ### RAG Ingestion (`--profile rag`)
 
 1. `rag-ingestion` watches `data/rag-input/` for new files.
 2. Each file is chunked per `RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP`.
 3. Chunks are embedded via `EMBED_MODEL` through the model gateway.
-4. Points are written to Qdrant (`data/qdrant/`).
+4. Points are written to Qdrant (`qdrant-data` named volume).
 
 Status: `GET /api/rag/status` on the dashboard returns current collection point count.
 
@@ -140,18 +143,22 @@ Hermes maintains its own state under `data/hermes/` — session records, Discord
 
 ### Persistent (bind-mounted)
 
-| Directory | Purpose | Survives restart | Survives rebuild |
+| Store | Purpose | Survives restart | Survives rebuild |
 |---|---|---|---|
-| `data/hermes/` | Hermes sessions + allowlists | yes | yes |
-| `data/qdrant/` | Vector DB | yes | yes |
+| `hermes-home` volume | Hermes brain (sessions, config, skills, cron) | yes | yes |
+| `qdrant-data` volume | Vector DB | yes | yes |
+| `couchdb-data` volume | CouchDB (LiveSync) | yes | yes |
+| `n8n-data` volume | n8n workflows | yes | yes |
+| `open-webui-data` volume | Open WebUI accounts | yes | yes |
+| `models-gguf` volume | llama.cpp GGUF weights | yes | yes |
+| `comfyui-models` volume | ComfyUI weights | yes | yes |
+| `comfyui-app` volume | ComfyUI app + custom nodes | yes | yes |
 | `data/rag-input/` | RAG drop zone | yes | yes |
+| `data/n8n-files/` | n8n file exchange | yes | yes |
 | `data/ops-controller/` | Audit log | yes | yes |
 | `data/mcp/` | MCP config | yes | yes |
 | `data/dashboard/` | Throughput / benchmarks | yes | yes |
-| `data/comfyui-storage/` | ComfyUI outputs + custom nodes | yes | yes |
-| `data/n8n-data/` | n8n workflows | yes | yes |
-| `models/gguf/` | llama.cpp GGUF files | yes | yes |
-| `models/comfyui/` | ComfyUI weights | yes | yes |
+| `data/comfyui-output/` | Render outputs | yes | yes |
 
 ### Ephemeral
 
@@ -164,23 +171,27 @@ Hermes maintains its own state under `data/hermes/` — session records, Discord
 
 ### What to back up
 
-1. `data/hermes/` — agent state
-2. `models/gguf/`, `models/comfyui/` — expensive to re-download
+1. `hermes-home` volume — agent brain (state, config, skills, cron)
+2. `qdrant-data`, `couchdb-data`, `n8n-data`, `open-webui-data` volumes — service state
 3. `data/ops-controller/audit.log*` — audit history
-4. `data/qdrant/` — RAG collection
-5. `ordo.yaml` and `out/secrets.env` — declarative source + operator secrets (**do not commit**)
+4. `ordo.yaml` and `out/secrets.env` — declarative source + operator secrets (**do not commit**)
+5. Model volumes (`models-gguf`, `comfyui-models`) are usually skipped — weights are
+   re-downloadable (`ordo fetch` / the model-pack UI), just expensive.
 
-### Full backup
+### Host-side dirs
 
 ```bash
-tar -czf ordo-ai-stack-backup-$(date +%Y%m%d).tar.gz data/ models/ ordo.yaml out/secrets.env
+tar -czf ordo-ai-stack-host-$(date +%Y%m%d).tar.gz \
+  data/ops-controller/ data/mcp/ data/dashboard/ ordo.yaml out/secrets.env
 ```
 
-### Selective backup (skip models, which are reproducible)
+### Named volumes (state lives on ext4 inside the Docker VM — back up via a helper container)
 
 ```bash
-tar -czf ordo-ai-stack-state-$(date +%Y%m%d).tar.gz \
-  data/hermes/ data/ops-controller/ data/qdrant/ data/mcp/ ordo.yaml out/secrets.env
+for v in hermes-home qdrant-data couchdb-data n8n-data open-webui-data; do
+  docker run --rm -v ordo_$v:/src:ro -v "$(pwd)/backups:/backup" alpine \
+    tar -czf /backup/$v-$(date +%Y%m%d).tar.gz -C /src .
+done
 ```
 
 ### Restore
@@ -216,13 +227,13 @@ cd out && docker compose -p ordo up -d
 | `data/ops-controller/audit.log` | Archive rotated files (`audit.log.1` etc.) | Monthly |
 | `data/rag-input/` | Remove processed files | As needed |
 | `data/comfyui-storage/output/` | Prune old outputs | As needed |
-| `models/gguf/` | Remove unused models | Quarterly |
+| `models-gguf` volume | Remove unused models | Quarterly |
 
 ```bash
 # Archive current audit log
 mv data/ops-controller/audit.log data/ops-controller/audit.log.$(date +%Y%m%d)
 
-# Prune GGUF models (delete unused GGUF files)
-ls models/gguf/
-rm models/gguf/<model-file>.gguf
+# Prune GGUF models (list, then delete unused files inside the volume)
+docker run --rm -v ordo_models-gguf:/models alpine ls -la /models
+docker run --rm -v ordo_models-gguf:/models alpine rm /models/<model-file>.gguf
 ```

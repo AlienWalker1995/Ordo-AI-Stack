@@ -452,3 +452,30 @@ def test_db_state_on_named_volumes_never_9p():
         assert vol_name in c["volumes"], f"{vol_name} not declared top-level"
         bad = [v for v in vols if "DATA_PATH" in v and mount.split(":", 1)[1].split(":")[0] in v]
         assert not bad, f"{name} still binds its state dir over 9p: {bad}"
+
+
+def test_comfyui_models_on_named_volume():
+    # Stage-2 of the 9p eviction: the ~390GB ComfyUI weights tree is the largest
+    # state mount; it wedged --enable-assets and rode the same doomed bridge.
+    # comfyui reads RO; dashboard RW (model-pack pull UI lands downloads where
+    # ComfyUI reads); ops-api RO listing.
+    from ordo.dashboards import DashboardRegistry
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto", "plugins": ["comfyui"],
+                            "dashboard": "v1-parity"})
+    c = render(src, CATALOG, REGISTRY,
+               dashboards=DashboardRegistry.load(ROOT / "services")).compose_dict()
+    assert "comfyui-models" in c["volumes"]
+    expected = {
+        "comfyui": "comfyui-models:/root/ComfyUI/models:ro",
+        "dashboard": "comfyui-models:/models",
+        "ops-api": "comfyui-models:/models/comfyui:ro",
+    }
+    for name, mount in expected.items():
+        vols = c["services"][name]["volumes"]
+        assert mount in vols, f"{name} missing {mount}"
+        # host-bind SOURCES referencing the tree (destination paths like
+        # /models/comfyui are fine — that's the volume's mountpoint)
+        bad = [v for v in vols if "${" in v and "models/comfyui" in v]
+        assert not bad, f"{name} still binds models/comfyui over 9p: {bad}"
+    assert "comfyui-models:/models:ro" not in c["services"]["dashboard"]["volumes"]

@@ -173,19 +173,35 @@ hardware:
 
 ## Data Persistence Rules
 
-All `data/` and `models/` directories are bind-mounted and persist across container restarts.
+Persistence is split by kind (the Stage-1 rule, 2026-08-07): **state lives on named
+volumes** (ext4 inside the Docker VM — Windows bind mounts ride the 9p bridge, which
+wedges under heavy or metadata-dense I/O), while **operator-facing drop zones and
+small config** stay host bind-mounted so they are reachable from Windows.
+
+Host bind mounts (reachable from Windows):
 
 | Directory | Purpose |
 |---|---|
-| `data/hermes/` | Hermes agent runtime state (sessions, per-user allowlists) |
-| `data/qdrant/` | Qdrant vector DB storage |
 | `data/rag-input/` | Drop files here for `rag-ingestion` |
+| `data/n8n-files/` | n8n file-exchange drop zone |
 | `data/ops-controller/` | Audit logs |
 | `data/mcp/` | `servers.txt`, `registry.json`, `registry-custom.yaml` |
 | `data/dashboard/` | Dashboard throughput / benchmark data |
-| `data/comfyui-storage/` | ComfyUI outputs, custom nodes, local configs |
-| `models/gguf/` | llama.cpp GGUF files |
-| `models/comfyui/` | ComfyUI checkpoints, LoRAs, VAEs, encoders |
+| `data/comfyui-output/` | ComfyUI render outputs |
+| `models/gguf/` | Download/staging dir (`ordo fetch` target) — seeds the volume, not mounted by services |
+
+Named volumes (state; back up via a helper container, see [data.md](data.md)):
+
+| Volume | Purpose |
+|---|---|
+| `hermes-home` | Hermes agent brain (sessions, config, skills, cron) |
+| `qdrant-data` | Qdrant vector DB storage |
+| `couchdb-data` | CouchDB (Obsidian LiveSync) |
+| `n8n-data` | n8n workflows and credentials |
+| `open-webui-data` | Open WebUI accounts + uploads |
+| `models-gguf` | llama.cpp GGUF weights (what the backends actually read) |
+| `comfyui-models` | ComfyUI checkpoints, LoRAs, VAEs, encoders |
+| `comfyui-app` | ComfyUI application tree + custom nodes |
 
 `/tmp` inside containers is tmpfs; nothing there survives a restart.
 
