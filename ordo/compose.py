@@ -400,7 +400,14 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
     # shared-by-path from the V1 tree via ${BASE_PATH} (already rendered into .env), so no copy.
     llamacpp["entrypoint"] = ["/bin/sh", "/llamacpp-scripts/run-llama-server.sh"]
     llamacpp["volumes"] = [
-        "${BASE_PATH:-.}/models/gguf:/models:ro",
+        # models-gguf NAMED VOLUME, not the old ${BASE_PATH}/models/gguf 9p bind: on
+        # 2026-08-07 the 9p mount began wedging GGUF reads deterministically
+        # (p9_client_rpc D-state at ~100MB into the file, fresh VM, first contact),
+        # eventually crashing the whole Docker VM. Third 9p casualty after the Hermes
+        # brain (#143) and comfyui-storage (#156). Adding a model now means copying it
+        # into the volume (docker cp via a helper container, or the dashboard pull UI
+        # which writes to the same volume) — the host dir models/gguf is retired.
+        "models-gguf:/models:ro",
         "${BASE_PATH:-.}/scripts/llamacpp:/llamacpp-scripts:ro",
     ]
     # model-gateway + mcp-gateway are V1 CUSTOM-BUILT config-wrapper images (LiteLLM + the
