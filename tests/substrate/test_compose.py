@@ -307,15 +307,22 @@ def test_edge_security_mounts_fail_loud_on_empty_base_path():
         assert "${BASE_PATH:-" not in v, f"Caddyfile mount still uses the clobber-prone :- form: {v}"
 
 
-def test_gpu_exporter_has_no_impossible_healthcheck():
-    """The nvidia_gpu_exporter image is distroless (no wget/shell), so any wget-based healthcheck
-    can never pass → permanently unhealthy (FailingStreak 300+). Prometheus scrapes :9835 directly
-    and nothing depends_on it as service_healthy, so the probe is pure false-red. It must be gone."""
+def test_gpu_exporter_healthcheck_overrides_baked_wget():
+    """The nvidia_gpu_exporter image BAKES a wget HEALTHCHECK but ships no wget, so the
+    inherited check can never pass → permanently unhealthy. (The earlier fix removed the
+    declared check believing the image distroless — wrong on both counts: it is debian-full
+    with bash, and omission INHERITS the baked check rather than disabling it.) The rendered
+    service must therefore declare an override the image can actually run: bash /dev/tcp,
+    never wget."""
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                             "model": "auto", "plugins": ["monitoring"]})
     c = render(src, CATALOG, REGISTRY).compose_dict()
-    assert "healthcheck" not in c["services"]["gpu-exporter"], (
-        "gpu-exporter still declares a healthcheck the distroless image can never pass")
+    hc = c["services"]["gpu-exporter"].get("healthcheck")
+    assert hc, "gpu-exporter must override the image's baked (broken) wget healthcheck"
+    test_cmd = " ".join(hc["test"])
+    assert "wget" not in test_cmd, "wget does not exist in the image — probe can never pass"
+    assert "/dev/tcp/" in test_cmd and "bash" in test_cmd, (
+        "probe must use bash /dev/tcp — the only connect tool the image ships")
 
 
 def test_ops_controller_serve_out_matches_deployed_layout():
