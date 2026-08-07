@@ -390,3 +390,31 @@ def test_hermes_dashboard_renders_in_caddy_netns_when_the_edge_is_on(tmp_path):
     assert "caddy" in c["services"]
     assert "127.0.0.1" in hd["command"]
     assert "networks" not in hd, "compose forbids networks: alongside network_mode:"
+
+
+def test_gguf_models_on_named_volume():
+    # GGUF weights are served from the models-gguf named volume (ext4 inside the
+    # Docker VM), never a ${BASE_PATH} 9p bind: heavy sequential reads wedge the
+    # 9p client in D-state (third casualty 2026-08-07 — after the Hermes brain
+    # and the ComfyUI app tree). dashboard mounts RW (pull target lands where the
+    # backends read); everything else RO.
+    from ordo.dashboards import DashboardRegistry
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto", "plugins": ["llamacpp-cpu", "rag"],
+                            "dashboard": "v1-parity"})
+    c = render(src, CATALOG, REGISTRY,
+               dashboards=DashboardRegistry.load(ROOT / "services")).compose_dict()
+    assert "models-gguf" in c["volumes"]
+    expected = {
+        "llamacpp": "models-gguf:/models:ro",
+        "llamacpp-cpu": "models-gguf:/models:ro",
+        "llamacpp-embed": "models-gguf:/models:ro",
+        "dashboard": "models-gguf:/gguf-models",
+        "ops-api": "models-gguf:/gguf-models:ro",
+    }
+    for name, mount in expected.items():
+        vols = c["services"][name]["volumes"]
+        assert mount in vols, f"{name} missing {mount}"
+        assert not any("models/gguf" in v for v in vols), f"{name} still binds models/gguf over 9p"
+    # dashboard must stay RW — an :ro flip would silently break the pull-UI landing path
+    assert "models-gguf:/gguf-models:ro" not in c["services"]["dashboard"]["volumes"]

@@ -91,7 +91,9 @@ environment:
 # The dashboard reads on-disk GGUFs directly for /api/llm/* (shared read-only from the V1 tree via
 # BASE_PATH) and lists comfyui models via MODELS_DIR; its own state lives in the staged V2 data tree.
 volumes:
-  - ${BASE_PATH:-.}/models/gguf:/gguf-models
+  # RW view of the SAME models-gguf volume the llama.cpp services read — the pull UI
+  # must land files where the backends look; 9p bind retired 2026-08-07 (see ordo/compose.py).
+  - models-gguf:/gguf-models
   - ${BASE_PATH:-.}/models/comfyui:/models
   - ${DATA_PATH:-./data}/dashboard:/data/dashboard
   # The rendered out/mcp dir — the EXACT same servers.txt the mcp-gateway mounts
@@ -178,6 +180,6 @@ backend:
     # upserts persist to the SAME .env the per-service recreate replays. `./` resolves to the compose
     # project-directory (out/) at runtime — mirrors ops-controller's `./:/config` mount.
     - ./:/workspace:rw
-    - ${BASE_PATH:-.}/models/gguf:/gguf-models:ro
+    - models-gguf:/gguf-models:ro
     - ${BASE_PATH:-.}/models/comfyui:/models/comfyui:ro
     - ${DATA_PATH:-./data}/ops-controller:/data        # registry + audit log (staged, V2 data tree)

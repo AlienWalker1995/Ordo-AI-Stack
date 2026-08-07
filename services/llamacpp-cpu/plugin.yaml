@@ -64,7 +64,8 @@ services:
       - --no-mmap
       - --metrics
     volumes:
-      - ${BASE_PATH:-.}/models/gguf:/models:ro
+      # models-gguf named volume — the 9p bind wedged GGUF reads (2026-08-07); see ordo/compose.py.
+      - models-gguf:/models:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       start_period: 240s            # loading ~20GB into RAM on CPU is slow; give it room

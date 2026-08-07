@@ -172,8 +172,9 @@ ENV_ALLOWED_KEYS = {
 
 BASE_PATH = os.environ.get("BASE_PATH", ".")
 COMPOSE_FILE_ENV = os.environ.get("COMPOSE_FILE", "docker-compose.yml")
-# On-disk GGUF directory (chat models + mmproj) shown in the model-config UI.
-MODELS_DIR = Path(os.environ.get("LLAMACPP_MODELS_DIR", "/workspace/models/gguf"))
+# GGUF directory (chat models + mmproj) shown in the model-config UI — the models-gguf
+# named volume, mounted RO at /gguf-models (compose sets LLAMACPP_MODELS_DIR to match).
+MODELS_DIR = Path(os.environ.get("LLAMACPP_MODELS_DIR", "/gguf-models"))
 # Services that template LLAMACPP_CTX_SIZE and must also recreate when ctx changes.
 MODEL_CONFIG_CTX_CONSUMERS = ["model-gateway"]
 
