@@ -104,9 +104,9 @@ database / passphrase). On-tailnet clients can keep using `.../couchdb`.
 
 ## Configuration policy: the database is the source of truth
 
-Adopted 2026-08-07 after a device's "overwrite remote" click deleted the vault DB
-(restored from the pre-migration copy; snapshot kept in `backups/`). All sync
-configuration lives in the database; devices conform to it.
+All sync configuration lives in the database; devices conform to it. (The
+destructive-button warning below exists because the failure mode is real and
+unrecoverable without a server-side backup.)
 
 - **Sync behavior (tweak values — chunking, splitter, E2EE algorithm, …):** stored in
   the remote milestone doc. On any "mismatched tweaks" dialog, always choose **"Use
