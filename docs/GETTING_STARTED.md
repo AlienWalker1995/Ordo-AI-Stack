@@ -37,7 +37,7 @@ Alternatively, from `out/`: `docker compose -p ordo up -d` — same services wit
 
 Use local files as context in **Open WebUI** via Qdrant + the `rag-ingestion` service.
 
-1. **Provide the embedding model** (once): place the embedding GGUF (**`nomic-embed-text`**, or your `EMBED_MODEL`) under `models/gguf/` so the `llamacpp-embed` service can serve it.
+1. **Provide the embedding model** (once): download the embedding GGUF (**`nomic-embed-text`**, or your `EMBED_MODEL`) to `models/gguf/` and copy it into the `models-gguf` named volume that `llamacpp-embed` serves from — see [data.md — Model Pull](data.md#model-pull) for the two-step.
 2. **Start the RAG profile** (adds Qdrant + `rag-ingestion`), from `out/`:
    ```bash
    docker compose -p ordo --profile rag up -d

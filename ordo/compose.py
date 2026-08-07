@@ -404,9 +404,10 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         # 2026-08-07 the 9p mount began wedging GGUF reads deterministically
         # (p9_client_rpc D-state at ~100MB into the file, fresh VM, first contact),
         # eventually crashing the whole Docker VM. Third 9p casualty after the Hermes
-        # brain (#143) and comfyui-storage (#156). Adding a model now means copying it
-        # into the volume (docker cp via a helper container, or the dashboard pull UI
-        # which writes to the same volume) — the host dir models/gguf is retired.
+        # brain (#143) and comfyui-storage (#156). Adding a model now means `ordo fetch`
+        # to the host staging dir then copying into the volume (docker cp via a helper
+        # container — the dashboard GGUF-pull endpoint is still a 501 stub, see
+        # docs/data.md "Model Pull") — models/gguf is retired from every hot path.
         "models-gguf:/models:ro",
         "${BASE_PATH:-.}/scripts/llamacpp:/llamacpp-scripts:ro",
     ]

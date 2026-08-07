@@ -15,7 +15,8 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 | `data/mcp/servers.txt` + `registry-custom.yaml` | enabled MCP servers + custom-server metadata | `mcp-gateway`, dashboard |
 | `data/mcp/registry-custom.yaml` | Custom catalog fragment (e.g. ComfyUI MCP) | `mcp-gateway` |
 | `data/rag-input/` | Drop zone for RAG documents | `rag-ingestion` watch directory |
-| `models/gguf/` | llama.cpp GGUF files | `llamacpp` / `llamacpp-embed` bind mount |
+| `models/gguf/` | llama.cpp GGUF download/staging dir (`ordo fetch` target) | Seeds the `models-gguf` named volume (not mounted by any service) |
+| `models-gguf` named volume | llama.cpp GGUF files at runtime (ext4 inside the Docker VM) | `llamacpp` / `llamacpp-cpu` / `llamacpp-embed` (`/models:ro`), dashboard (`/gguf-models` rw), ops-api (`/gguf-models:ro`) |
 | `models/comfyui/` | ComfyUI checkpoints, LoRAs, VAEs, encoders | `comfyui` bind mount |
 
 ### Sinks
@@ -109,7 +110,12 @@ All directories created this way persist across restarts and rebuilds.
 
 ### Model Pull
 
-**llama.cpp GGUF:** `ordo fetch --models-dir models/gguf` (checksum-mandatory) downloads catalog models into the dir llama.cpp bind-mounts. The default `--models-dir` is `./models`, which llama.cpp does NOT mount — pass `models/gguf` explicitly. The dashboard's GGUF-pull UI was not ported (its backing endpoint returns 501); use `ordo fetch`.
+**llama.cpp GGUF:** runtime models live in the `models-gguf` **named volume** (ext4 inside the Docker VM — Windows bind mounts ride the 9p bridge, which wedges under a 20GB+ sequential model load). Adding a model is a two-step:
+
+1. `ordo fetch --models-dir models/gguf` (checksum-mandatory) downloads catalog models to the host staging dir. The default `--models-dir` is `./models` — pass `models/gguf` explicitly.
+2. Copy into the volume: `docker run --rm -v ordo_models-gguf:/dst -v "$(pwd)/models/gguf:/src:ro" alpine cp /src/<file>.gguf /dst/` (or `docker cp` via any container mounting the volume).
+
+On a fresh install the volume starts empty and `llamacpp` crash-loops with `failed to load model` until seeded. The host `models/gguf/` dir doubles as the recovery copy. The dashboard's GGUF-pull UI was not ported (its backing endpoint returns 501); use the two-step above.
 
 **ComfyUI:** the dashboard's ComfyUI model-pack UI (backed by `scripts/comfyui/pull_comfyui_models.py`) downloads packs into `models/comfyui/`. First run can be tens of GB. (The V1 `comfyui-model-puller` compose service was not ported — its old endpoints return 501.)
 
