@@ -48,9 +48,13 @@ services:
       HF_TOKEN: ${HF_TOKEN:-}
       GITHUB_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}
     volumes:
-      # ComfyUI app code + custom nodes (git checkout) — the runtime image is just Python/CUDA.
-      # SHARED from the operator's V1 storage (contains the working ComfyUI checkout + nodes).
-      - ${COMFYUI_STORAGE_PATH:-${BASE_PATH:-.}/data/comfyui-storage}:/root
+      # ComfyUI app code + custom nodes: a NAMED VOLUME (ext4 in the WSL2 VM), not the old
+      # data/comfyui-storage Windows bind. ComfyUI v0.30's startup I/O deterministically
+      # wedged the 9p mount (main.py D-state in p9_client_rpc before binding HTTP, 3/3
+      # boots, 2026-08-06) — the same 9p pathology class that hit the Hermes brain (#143)
+      # and llamacpp (--no-mmap). Volume seeded from a fresh v0.30.2 clone + the operator's
+      # custom_nodes/user/input; the old bind is retained as rollback then retired.
+      - comfyui-app:/root
       # Model caches (~30GB) — SHARED read-only from the operator's models tree (immutable weights).
       - ${COMFYUI_MODELS_PATH:-${BASE_PATH:-.}/models/comfyui}:/root/ComfyUI/models:ro
       # Render outputs — staged under the V2 data root.
@@ -61,6 +65,15 @@ services:
       - bash
       - -c
       - |
+        # ComfyUI v0.30 runtime deps the pinned boot image predates (and, like all
+        # writable-layer installs, wiped on recreate — this block is why they survive):
+        #  * comfy-kitchen 0.2.26 — the fp8/nvfp4 quant runtime. The image ships 0.2.8 in
+        #    /usr/local/lib64, which SHADOWS pip's lib/ install; if the old copy stays,
+        #    comfy's quant_ops import-fails silently and every fp8/fp4 model load dies
+        #    with "'NoneType' object has no attribute 'Params'" (hit live 2026-08-07).
+        #  * comfy-angle — the GLSL shader nodes' renderer.
+        rm -rf /usr/local/lib64/python3.12/site-packages/comfy_kitchen*
+        pip install --no-cache-dir -q comfy-kitchen==0.2.26 comfy-angle || echo "[deps] WARN kitchen/angle install failed"
         for r in /root/ComfyUI/custom_nodes/*/requirements.txt; do
           [ -f "$$r" ] || continue
           echo "[deps] installing $$r"
