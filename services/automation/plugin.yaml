@@ -33,7 +33,12 @@ services:
       N8N_AUTH_EXCLUDE_ENDPOINTS: rest/oauth2-credential/callback,webhook
       N8N_SECURE_COOKIE: "false"
     volumes:
-      - ${DATA_PATH:-./data}/n8n-data:/home/node/.n8n
+      # NAMED VOLUME (ext4) for n8n's SQLite home — DB state never rides the
+      # wedge-prone 9p bridge (see the qdrant mount note in services/rag/plugin.yaml).
+      - n8n-data:/home/node/.n8n
+      # n8n-files STAYS a host bind BY DESIGN: it is the operator's Windows-side
+      # file-exchange drop zone (light, sequential I/O — the acceptable 9p profile,
+      # same exception as data/rag-input and the /c/dev mirror).
       - ${DATA_PATH:-./data}/n8n-files:/files
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:5678/"]

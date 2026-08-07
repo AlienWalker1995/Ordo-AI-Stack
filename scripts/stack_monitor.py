@@ -563,8 +563,17 @@ def audit():
     pinned = audit_pinned_sources()
     actionable += [p for p in pinned if p["tier"] in ("SECURITY", "UPDATE")]
 
+    # 9p-wedge sweep: containers can report "healthy" while a worker sits in
+    # unkillable D-state on the 9p bridge (live incident 2026-08-07). The cron
+    # runtime has no docker socket, so ask ops-api's diagnostics endpoint;
+    # unreachable/unauthd is reported as a failure, never silently skipped.
+    dstate = fetch_dstate()
+    if dstate.get("error"):
+        failures.append(f"dstate probe: {dstate['error']}")
+
     return {
         "date": datetime.now(UTC).strftime("%Y-%m-%d"),
+        "dstate": dstate,
         "compose": str(compose_path),
         "note": ("Audited the DEPLOYED compose. 'declared' = what compose ships; "
                  "compare against 'latest'. Tiers: SECURITY/UPDATE (act), "
@@ -581,12 +590,39 @@ def audit():
     }
 
 
+def fetch_dstate():
+    """Query ops-api for D-state (wedged) processes. Same Bearer token Hermes'
+    ops_client uses (OPS_CONTROLLER_TOKEN); OPS_API_URL overridable for tests."""
+    url = os.environ.get("OPS_API_URL", "http://ops-api:9000") + "/diagnostics/dstate"
+    token = os.environ.get("OPS_CONTROLLER_TOKEN", "")
+    if not token:
+        return {"error": "OPS_CONTROLLER_TOKEN not set in this runtime"}
+    try:
+        data = http_json(url, headers={"Authorization": f"Bearer {token}"})
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    if not isinstance(data, dict):
+        return {"error": "unexpected dstate payload"}
+    return data
+
+
 def render_pretty(data):
     if "error" in data:
         return f"ERROR: {data['error']}"
     lines = [f"# Ordo-AI-Stack image audit — {data['date']}",
              f"compose: {data['compose']}",
              f"actionable: {data['actionable_count']}  counts: {data['counts']}", ""]
+    ds = data.get("dstate") or {}
+    if ds.get("p9_wedged"):
+        lines.append("!! 9P WEDGE (D-state on the 9p bridge — healthchecks will NOT catch this;")
+        lines.append("   restart the named container, and if it will not die, the Docker VM):")
+        for w in ds["p9_wedged"]:
+            lines.append(f"   {w['container']}: pid {w['pid']} {w['comm']} wchan={w['wchan']}")
+        lines.append("")
+    elif ds.get("wedged"):
+        lines.append("D-state processes (non-9p — informational, re-check next run): "
+                     + ", ".join(f"{w['container']}:{w['comm']}" for w in ds["wedged"]))
+        lines.append("")
     for r in data["services"]:
         lines.append(f"[{r['tier']:8}] {r['service']:24} {(r['declared'] or r['kind']):>18}"
                      f" -> {str(r['latest'] or '-'):<14} {r['reason']}")

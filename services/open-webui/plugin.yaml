@@ -33,7 +33,9 @@ services:
       RAG_OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
       RAG_EMBEDDING_MODEL: ${EMBED_MODEL:-${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}}
     volumes:
-      - ${DATA_PATH:-./data}/open-webui:/app/backend/data
+      # NAMED VOLUME (ext4) — open-webui keeps its SQLite DB + uploads here; DB state
+      # never rides the wedge-prone 9p bridge (see services/rag/plugin.yaml note).
+      - open-webui-data:/app/backend/data
     depends_on: [llamacpp, model-gateway, qdrant]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/"]

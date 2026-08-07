@@ -18,7 +18,12 @@ services:
     # on the project network; V1's 127.0.0.1 publish was host-debug only).
     image: qdrant/qdrant:v1.19.0
     volumes:
-      - ${DATA_PATH:-./data}/qdrant:/qdrant/storage
+      # NAMED VOLUME, not a ${DATA_PATH} 9p bind: qdrant mmaps its segments, and on
+      # Docker Desktop every 9p metadata op (stat during path walk) can wedge in
+      # p9_client_rpc D-state — the 2026-08-07 architect review flagged the DB
+      # binds as the next casualties of the seam that took out the Hermes brain
+      # (#143), ComfyUI (#156) and the gguf models (#158). State never rides 9p.
+      - qdrant-data:/qdrant/storage
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
       interval: 30s

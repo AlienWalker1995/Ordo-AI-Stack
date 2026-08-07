@@ -425,3 +425,30 @@ def test_gguf_models_on_named_volume():
         assert not any("models/gguf" in v for v in vols), f"{name} still binds models/gguf over 9p"
     # dashboard must stay RW — an :ro flip would silently break the pull-UI landing path
     assert "models-gguf:/gguf-models:ro" not in c["services"]["dashboard"]["volumes"]
+
+
+def test_db_state_on_named_volumes_never_9p():
+    # Stage-1 rule (2026-08-07 architect review): mounts are either small read-once
+    # CONFIG binds or STATE — and state never rides the Docker Desktop 9p bridge,
+    # which wedges on metadata ops (p9_client_rpc D-state; casualties: hermes brain,
+    # comfyui app, gguf models, a live rag-ingestion worker). Databases fsync/mmap
+    # constantly, so their data dirs must be named volumes. Deliberate 9p exceptions:
+    # drop zones the operator reaches from Windows (data/rag-input, data/n8n-files,
+    # /c/dev mirror).
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto",
+                            "plugins": ["rag", "automation", "open-webui", "obsidian-livesync"]})
+    c = render(src, CATALOG, REGISTRY).compose_dict()
+    expected = {
+        "qdrant": "qdrant-data:/qdrant/storage",
+        "couchdb": "couchdb-data:/opt/couchdb/data",
+        "n8n": "n8n-data:/home/node/.n8n",
+        "open-webui": "open-webui-data:/app/backend/data",
+    }
+    for name, mount in expected.items():
+        vols = c["services"][name]["volumes"]
+        assert mount in vols, f"{name} missing {mount}"
+        vol_name = mount.split(":", 1)[0]
+        assert vol_name in c["volumes"], f"{vol_name} not declared top-level"
+        bad = [v for v in vols if "DATA_PATH" in v and mount.split(":", 1)[1].split(":")[0] in v]
+        assert not bad, f"{name} still binds its state dir over 9p: {bad}"

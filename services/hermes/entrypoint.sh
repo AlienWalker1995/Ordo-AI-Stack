@@ -119,5 +119,14 @@ if [ ! -f "$SEED_MARK" ]; then
   gosu hermes touch "$SEED_MARK"
 fi
 
+# config.yaml holds provider API keys. The writable-home repair above (chmod -R a+rwX)
+# and volume-migration copies can leave it world-readable (found live at 0777 on
+# 2026-08-07 despite save_config_value's own 0600 chmod), so tighten it explicitly on
+# every start — after all seeding writes, right before the gateway runs. Idempotent.
+if [ -f "$HERMES_HOME/config.yaml" ]; then
+    chown hermes:hermes "$HERMES_HOME/config.yaml" 2>/dev/null || true
+    chmod 600 "$HERMES_HOME/config.yaml" 2>/dev/null || true
+fi
+
 # Drop privileges and exec the compose-supplied command (hermes gateway / dashboard / etc).
 exec gosu hermes "$@"

@@ -39,7 +39,10 @@ services:
     image: couchdb:3.4.3@sha256:d603d4086836b1e20f1ec35d2d38e49359639c2eb56a54c8ba0ddbdff0f3dabe
     wants_secrets: true
     volumes:
-      - ${DATA_PATH:-./data}/couchdb:/opt/couchdb/data
+      # NAMED VOLUME (ext4), not a ${DATA_PATH} 9p bind — CouchDB fsyncs its .couch
+      # shards constantly; DB state never rides the wedge-prone 9p bridge (see the
+      # qdrant mount note in services/rag/plugin.yaml for the full rationale).
+      - couchdb-data:/opt/couchdb/data
     healthcheck:
       # /dev/tcp port-open probe (no curl dependency; matches qdrant). True readiness (+ DB
       # creation) is handled by the bridge's own wait-loop before it starts syncing.
