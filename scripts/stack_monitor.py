@@ -615,7 +615,8 @@ def render_pretty(data):
     ds = data.get("dstate") or {}
     if ds.get("p9_wedged"):
         lines.append("!! 9P WEDGE (D-state on the 9p bridge — healthchecks will NOT catch this;")
-        lines.append("   restart the named container, and if it will not die, the Docker VM):")
+        lines.append("   FIRST check the container's logs: active progress = busy 9p reader, leave it;")
+        lines.append("   no progress = wedged: restart the container, then the Docker VM if it won't die):")
         for w in ds["p9_wedged"]:
             lines.append(f"   {w['container']}: pid {w['pid']} {w['comm']} wchan={w['wchan']}")
         lines.append("")
