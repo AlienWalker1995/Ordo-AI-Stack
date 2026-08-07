@@ -23,11 +23,17 @@ services:
     # exporter crash-loops. Pinning the fields we chart avoids the bad one (verified on 5090+1070).
     command:
       - --query-field-names=utilization.gpu,utilization.memory,memory.used,memory.total,memory.free,temperature.gpu,power.draw,fan.speed,clocks.sm,clocks.mem,name
-    # No healthcheck: the nvidia_gpu_exporter image is distroless and ships no wget/shell, so the
-    # V1 wget-based probe could NEVER pass → the container reported permanently unhealthy
-    # (FailingStreak 300+). Prometheus scrapes :9835 directly and nothing depends_on it as
-    # service_healthy, so the probe added nothing but a false red. Removed rather than patched
-    # (the image has no tool to probe with — the right fix is to drop the impossible check).
+    # Healthcheck OVERRIDE (not omission): the image BAKES a wget-based HEALTHCHECK but ships
+    # no wget, so it can never pass — and omitting `healthcheck:` here does NOT disable a baked
+    # check, it inherits it. Result: permanently-unhealthy false red (the prior comment claiming
+    # the image is distroless was wrong — it is debian-full with bash, just no wget/curl).
+    # A bash /dev/tcp connect probe is a real check the image can actually run.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9835 && exec 3>&-"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
   - name: prometheus
     image: prom/prometheus@sha256:6559acbd5d770b15bb3c954629ce190ac3cbbdb2b7f1c30f0385c4e05104e218
     command:
