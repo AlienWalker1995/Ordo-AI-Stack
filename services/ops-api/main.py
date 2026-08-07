@@ -923,6 +923,60 @@ def container_restart(name: str, _: None = Depends(verify_token)):
     return {"name": name, "restarted": True}
 
 
+@app.get("/diagnostics/dstate")
+def diagnostics_dstate(_: None = Depends(verify_token)):
+    """Report uninterruptible-sleep (D-state) processes across running containers.
+
+    On Docker Desktop/WSL2 the 9p bridge wedges workers in D-state (wchan
+    ``p9_client_rpc``) while container healthchecks keep passing — a live
+    rag-ingestion worker sat wedged-but-"healthy" for an hour on 2026-08-07.
+    ``docker top`` reads the process table from the daemon (it does not exec
+    inside the container), so a wedged container cannot hang this probe.
+    Point-in-time: a transient D during normal disk I/O is expected noise;
+    consumers should alert on ``p9`` hits (always pathological here) and treat
+    bare D-state as informational unless it persists across samples.
+    """
+    client = _docker_client()
+    wedged: list[dict] = []
+    scanned = 0
+    errors: list[str] = []
+    for c in client.containers.list():
+        scanned += 1
+        try:
+            top = client.api.top(c.name, ps_args="-eo pid,stat,wchan:40,comm")
+        except Exception as exc:  # container exited mid-scan, etc.
+            errors.append(f"{c.name}: {exc}")
+            continue
+        titles = top.get("Titles") or []
+        try:
+            idx = {k: titles.index(k) for k in ("PID", "STAT", "WCHAN", "COMMAND")}
+        except ValueError:
+            errors.append(f"{c.name}: unexpected ps columns {titles}")
+            continue
+        for proc in top.get("Processes") or []:
+            stat = proc[idx["STAT"]]
+            if not stat.startswith("D"):
+                continue
+            wchan = proc[idx["WCHAN"]]
+            wedged.append({
+                "container": c.name,
+                "pid": proc[idx["PID"]],
+                "stat": stat,
+                "wchan": wchan,
+                "comm": proc[idx["COMMAND"]],
+                "p9": "p9" in wchan,
+            })
+    _audit_log.record(
+        action="diagnostics.dstate", target="*", result="ok", caller="hermes",
+    )
+    return {
+        "scanned": scanned,
+        "wedged": wedged,
+        "p9_wedged": [w for w in wedged if w["p9"]],
+        "errors": errors,
+    }
+
+
 # Whole-stack compose ops require ``confirm: true`` to prevent accidents
 # (or prompt-injection-driven restarts of the entire stack). Service names
 # are validated against a strict allowlist regex to prevent shell injection
