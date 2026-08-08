@@ -1,0 +1,32 @@
+{
+  "cards": [
+    {
+      "id": "qdrant",
+      "name": "Qdrant",
+      "order": 70,
+      "port": 6333,
+      "url": "http://localhost:6333",
+      "check": "http://qdrant:6333/readyz",
+      "has_gpu": false,
+      "plugin": "rag",
+      "category": "rag",
+      "background": true,
+      "ops_service": "qdrant",
+      "hint": "Vector DB for RAG. Drop files in data/rag-input/ (with --profile rag) or upload via Open WebUI Documents tab."
+    },
+    {
+      "id": "rag-ingestion",
+      "name": "RAG Ingestion",
+      "order": 120,
+      "port": null,
+      "check": null,
+      "has_gpu": false,
+      "plugin": "rag",
+      "category": "rag",
+      "background": true,
+      "ops_service": "rag-ingestion",
+      "hint": "Headless folder-watch embedder for Qdrant (no web UI). Health via container healthcheck. Logs: docker compose logs rag-ingestion",
+      "notes": "Portless headless worker: no HTTP check on purpose — the grid reads its true up/down from ops-api container health (routes_hub) instead of showing a neutral unknown."
+    }
+  ]
+}

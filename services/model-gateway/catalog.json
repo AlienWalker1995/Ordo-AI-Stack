@@ -1,0 +1,19 @@
+{
+  "cards": [
+    {
+      "id": "model-gateway",
+      "name": "Model Gateway",
+      "order": 20,
+      "port": 11435,
+      "url": "http://localhost:11435",
+      "check": "http://model-gateway:11435/health/liveliness",
+      "has_gpu": false,
+      "plugin": null,
+      "category": "inference",
+      "ops_service": "model-gateway",
+      "tailnet_label": "llm",
+      "hint": "OpenAI-compatible proxy (LiteLLM). Routes inference to llama.cpp.",
+      "notes": "User-facing Open link = the LiteLLM Swagger UI, which must be served from an origin ROOT (root-absolute asset paths) — hence the `llm` subdomain, not a /llm/ subpath. See services_catalog.model_gateway_open_url()."
+    }
+  ]
+}

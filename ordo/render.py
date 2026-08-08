@@ -22,8 +22,8 @@ from .dashboards import DashboardRegistry
 from .hardware import HardwareProfile, detect
 from .plugins import PluginRegistry
 
-# Render data now lives co-located under services/<id>/ (plugin.yaml / agent.yaml / dashboard.yaml);
-# each registry globs its own manifest kind out of the shared services/ root.
+# Render data now lives co-located under services/<id>/ (plugin.yaml / agent.yaml / dashboard.yaml
+# / catalog.json); each registry globs its own manifest kind out of the shared services/ root.
 DEFAULT_PLUGINS_DIR = Path(__file__).resolve().parent.parent / "services"
 DEFAULT_AGENTS_DIR = Path(__file__).resolve().parent.parent / "services"
 DEFAULT_DASHBOARDS_DIR = Path(__file__).resolve().parent.parent / "services"
@@ -165,6 +165,12 @@ class RenderedConfig:
         (out / ".env").write_text("\n".join(env_lines) + "\n", encoding="utf-8")
         (out / "hermes.context.json").write_text(json.dumps(self.hermes, indent=2), encoding="utf-8")
         (out / "manifest.json").write_text(json.dumps(self.manifest(), indent=2), encoding="utf-8")
+        # services-catalog.json — the dashboard's service-card catalog, aggregated from the
+        # per-service `services/<id>/catalog.json` fragments (each service declares its own
+        # card(s) next to its other manifests). Mounted read-only into the dashboard like the
+        # manifest; services_catalog.py loads it (SERVICES_CATALOG_PATH) and React renders it.
+        (out / "services-catalog.json").write_text(
+            json.dumps(aggregate_services_catalog(), indent=2) + "\n", encoding="utf-8")
         # secrets.env.example — the KEYS the enabled stack needs, values EMPTY. The operator copies
         # this to secrets.env and fills real values (SOPS-decrypted / hand-set). Derived config
         # (.env) and secrets stay in separate files; secrets.env is NOT rendered/overwritten.
@@ -201,6 +207,23 @@ class RenderedConfig:
         (out / "docker-compose.yml").write_text(
             yaml.safe_dump(self.compose_dict(), sort_keys=False),
             encoding="utf-8")
+
+
+def aggregate_services_catalog(services_dir: str | Path = DEFAULT_PLUGINS_DIR) -> dict[str, Any]:
+    """Aggregate the per-service dashboard-card fragments (services/<id>/catalog.json) into
+    the single catalog document the dashboard consumes (out/services-catalog.json).
+
+    Each fragment declares {"cards": [...]}; cards carry an explicit `order` so the curated
+    grid order is deterministic regardless of glob order (id is the tiebreak). The dashboard's
+    services_catalog._load_catalog_cards() applies the SAME ordering to raw fragments in its
+    in-repo dev/test path — tests/test_services_catalog_fragments locks the two together.
+    """
+    cards: list[dict[str, Any]] = []
+    for frag in sorted(Path(services_dir).glob("*/catalog.json")):
+        data = json.loads(frag.read_text(encoding="utf-8"))
+        cards.extend(dict(c) for c in (data.get("cards") or []))
+    cards.sort(key=lambda c: (int(c.get("order", 1000)), str(c.get("id", ""))))
+    return {"version": 1, "services": cards}
 
 
 def _resolve_hardware(source: Source) -> HardwareProfile:

@@ -1,8 +1,15 @@
 """Single source of truth for "what services exist + how to probe them".
 
-Feeds three surfaces, all derived from the one `SERVICES` catalog:
+The catalog is DATA, not code: every service declares its dashboard card(s) in a
+`services/<id>/catalog.json` fragment co-located with its other manifests (plugin.yaml /
+agent.yaml / dashboard.yaml). `ordo render` aggregates the fragments into
+out/services-catalog.json, which the dashboard container mounts read-only
+(SERVICES_CATALOG_PATH — same pattern as the manifest mount). In-repo (tests / dev) the
+fragments are read directly, so both paths serve the identical card list.
+
+Feeds three surfaces, all derived from the one loaded `SERVICES` catalog:
   * the service grid   — GET /api/services, /api/health (visible_services())
-  * ops lifecycle wiring — OPS_SERVICE_MAP
+  * ops lifecycle wiring — OPS_SERVICE_MAP (derived from each card's `ops_service`)
   * the dependency panel — GET /api/dependencies (dependency_services() + probe_all())
 
 The dependency panel used to be a second hardcoded catalog (dependency_registry.json);
@@ -16,28 +23,12 @@ import json
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx as _httpx
 
 logger = logging.getLogger(__name__)
-
-# Dashboard service id -> clean per-service tailnet subdomain label (the tailnet-names
-# sidecar plugin serves each UI as https://<label>.<domain>/). Only UI services have a
-# sidecar; backend-only services (llamacpp/model-gateway/mcp/qdrant) have no clean name
-# and keep their internal URLs. hermes/graph land on their port's root, which 302s to
-# the /hermes/ and /codebase-memory/ subpaths, so a bare https://<label>.<domain>/ works.
-TAILNET_LABELS = {
-    "webui": "chat",
-    "comfyui": "comfy",
-    "n8n": "n8n",
-    "hermes": "hermes",
-    "codebase-memory-ui": "graph",
-    # model-gateway was the one user-facing service with no subdomain, so its Open link
-    # had to be hand-built against the edge host. It has a sidecar now (tailnet-llm →
-    # caddy :8449), so it resolves through the same path as everything else.
-    "model-gateway": "llm",
-}
 
 
 def mcp_external_url() -> str | None:
@@ -88,121 +79,113 @@ def tailnet_open_url(service_id: str) -> str | None:
         return None
     return f"https://{label}.{domain}/"
 
-# Map dashboard service id -> ops-controller (compose) service id. Every value here
-# MUST be a real compose service name AND be present in ops-api's ALLOWED_SERVICES,
-# else the card's start/stop/restart buttons 400. (Locked by test_service_catalog_wiring.)
-OPS_SERVICE_MAP = {
-    "llamacpp": "llamacpp",
-    "model-gateway": "model-gateway",
-    "webui": "open-webui",
-    "mcp": "mcp-gateway",
-    "comfyui": "comfyui",
-    "n8n": "n8n",
-    "qdrant": "qdrant",
-    # Hermes lifecycle buttons target the UI service (hermes-dashboard), NOT the
-    # agent/gateway — its self-restart is delicate and it is not allowlisted.
-    "hermes": "hermes-dashboard",
-    # Voice + background workers (added with their manifest-gated cards below).
-    "stt": "stt",
-    "tts": "tts",
-    "rag-ingestion": "rag-ingestion",
-}
+# ── Catalog loading (the card list is JSON, declared per-service) ──────────────────────
+# Card schema = the grid fields (id/name/port/url/check/check_4xx_ok/has_gpu/plugin/
+# category/background/hint) plus the wiring keys `ops_service` (compose service targeted
+# by the card's lifecycle buttons -> OPS_SERVICE_MAP) and `tailnet_label` (clean
+# subdomain -> TAILNET_LABELS), plus `order` (curated grid order — aggregation sorts by
+# it so glob order never reshuffles the UI). `notes` is rationale for humans reading the
+# fragment; the API/frontend ignore it.
+SERVICES_CATALOG_ENV = "SERVICES_CATALOG_PATH"
+# In-repo location of the fragments: this file lives at services/v1-parity/dashboard/,
+# so parents[2] is the shared services/ root the render registries also glob.
+_REPO_SERVICES_DIR = Path(__file__).resolve().parents[2]
 
-# Each entry's `plugin` names the render plugin (manifest.plugins_enabled id) that gates
-# its card. Core services always present in every render carry plugin=None and are never
-# gated. visible_services() (below) hides a card only when its plugin is DISABLED, so the
-# grid reflects what the render actually enabled. NB: the plugin id is NOT the compose
-# profile (e.g. open-webui's profile is `webui` but its plugin id is `open-webui`).
-SERVICES = [
-    {"id": "llamacpp", "name": "llama.cpp", "port": 8080, "url": "http://localhost:8080", "check": "http://llamacpp:8080/health", "has_gpu": True, "plugin": None, "category": "inference", "background": True,
-     "hint": "Backend-only; use model-gateway :11435 from host. Run: docker compose up -d llamacpp"},
-    {"id": "model-gateway", "name": "Model Gateway", "port": 11435, "url": "http://localhost:11435", "check": "http://model-gateway:11435/health/liveliness", "has_gpu": False, "plugin": None, "category": "inference",
-     "hint": "OpenAI-compatible proxy (LiteLLM). Routes inference to llama.cpp."},
-    {"id": "webui", "name": "Open WebUI", "port": 3000, "url": "http://localhost:3000", "check": "http://open-webui:8080", "has_gpu": False, "plugin": "open-webui", "category": "interface",
-     "hint": "Uses model-gateway for chat. Check: docker compose logs open-webui"},
-    # The MCP gateway answers a bare GET to /mcp with a 4xx (it expects POST/SSE with an
-    # Mcp-Session-Id) — `check_4xx_ok` tells the strict dependency probe that a <500 there
-    # still means "up". The grid probe (_check_service) already treats <500 as reachable.
-    {"id": "mcp", "name": "MCP Gateway", "port": 8811, "url": "http://localhost:8811", "check": "http://mcp-gateway:8811/mcp", "has_gpu": False, "plugin": None, "category": "tools", "check_4xx_ok": True, "background": True,
-     "hint": "Add/remove tools from the dashboard. Connect at http://localhost:8811/mcp — see services/mcp-gateway/README.md"},
-    {"id": "comfyui", "name": "ComfyUI", "port": 8188, "url": "http://localhost:8188", "check": "http://comfyui:8188", "has_gpu": True, "plugin": "comfyui", "category": "media",
-     "hint": "ComfyUI uses auto-detected compute (NVIDIA/AMD/Intel/CPU). Run ./compose up -d. Pull LTX-2 via dashboard."},
-    {"id": "n8n", "name": "N8N", "port": 5678, "url": "http://localhost:5678", "check": "http://n8n:5678", "has_gpu": False, "plugin": "automation", "category": "automation",
-     "hint": "Check: docker compose logs n8n"},
-    {"id": "qdrant", "name": "Qdrant", "port": 6333, "url": "http://localhost:6333", "has_gpu": False, "plugin": "rag", "category": "rag", "background": True,
-     "check": "http://qdrant:6333/readyz",
-     "hint": "Vector DB for RAG. Drop files in data/rag-input/ (with --profile rag) or upload via Open WebUI Documents tab."},
-    # Hermes Agent runs as two compose services (agent + hermes-dashboard).
-    # NO HTTP `check` on purpose — it falls through to the container-state signal.
-    # hermes-dashboard runs in caddy's network namespace (network_mode: service:caddy) and binds
-    # 127.0.0.1:9119, so Hermes >= v0.20.0's non-loopback auth gate never engages and oauth2-proxy
-    # stays the one gate. The cost is that `hermes-dashboard` no longer resolves on ordo-net and
-    # 9119 is unreachable from any other container — the old `http://hermes-dashboard:9119/` probe
-    # could ONLY fail, rendering a healthy Hermes as down. Container state is also the truer signal
-    # here: that container's own healthcheck curls 127.0.0.1:9119 from inside the namespace, so it
-    # actually proves the dashboard serves. Do not re-add an HTTP check unless it stops being
-    # loopback-only.
-    {"id": "hermes", "name": "Hermes Agent", "port": 9119, "url": "http://localhost:9119",
-     "has_gpu": False, "plugin": "hermes-dashboard", "category": "agent",
-     "hint": "Managed by docker compose. Logs: docker compose logs hermes-dashboard"},
-    # Opt-in (--profile codebase-memory). 3D code knowledge-graph visualization, served at
-    # https://<host>/codebase-memory/ on its own SSO-gated port :8448 (the codebase-memory-ui
-    # container's nginx serves it under that subpath). The "Open" link comes from SSO_ROUTES
-    # in the frontend (-> /codebase-memory/), so no `url` is needed. The health check hits the
-    # nginx subpath, which proxies through to the UI.
-    {"id": "codebase-memory-ui", "name": "Codebase Memory", "port": 9750,
-     "check": "http://codebase-memory-ui:9750/codebase-memory/", "has_gpu": False, "plugin": "codebase-memory-ui", "category": "knowledge",
-     "hint": "3D code knowledge-graph. Open via its clean `graph` tailnet name (the Open button; Google SSO). "
-             "In-memory index — re-index after a restart. Opt-in: --profile codebase-memory"},
-    # ── Voice (--profile voice / plugin `voice`) ──────────────────────────────────────────
-    # STT + TTS both pin the 1070 (the 5090 lacks the kernels). Check URLs mirror each
-    # service's compose healthcheck (confirmed 200 endpoints), probed via internal DNS.
-    {"id": "stt", "name": "Speech-to-Text (Whisper)", "port": 8000, "check": "http://stt:8000/v1/models", "has_gpu": True, "plugin": "voice", "category": "voice", "background": True,
-     "hint": "faster-whisper-server (OpenAI-compatible). GPU-pinned to the 1070. Opt-in: --profile voice"},
-    {"id": "tts", "name": "Text-to-Speech (Kokoro)", "port": 8880, "check": "http://tts:8880/v1/audio/voices", "has_gpu": True, "plugin": "voice", "category": "voice", "background": True,
-     "hint": "kokoro-fastapi (OpenAI-compatible). GPU-pinned to the 1070. Opt-in: --profile voice"},
-    # ── Headless background workers ───────────────────────────────────────────────────────
-    # rag-ingestion (plugin `rag`) and livesync-bridge (plugin `obsidian-livesync`) expose NO
-    # HTTP port — their only liveness signal is a file-heartbeat container healthcheck. They
-    # carry NO `check`; the grid instead reads their true up/down from ops-api container health
-    # (see routes_hub) rather than showing a neutral "unknown". They ARE operator-controllable
-    # via the ops-api (start/stop/restart).
-    #
-    # (The former "Media Worker" — a headless render/publish job processor — was RETIRED: the
-    # live media pipeline runs via Hermes cron + the direct render_publish scripts, not a queue
-    # worker. Its card, ops-api entry, and the /api/orchestration job/schedule/publish endpoints
-    # are gone; see CHANGELOG.)
-    #
-    # `background: True` is the marker the frontend uses to move a service OUT of the main
-    # user-facing grid into the secondary "Background jobs" section (no "Open" link). Its
-    # meaning is "NOT a browsable user-facing UI" — not merely "headless worker". So besides
-    # the portless workers it ALSO tags the infra/backend services that have a port &
-    # health check but no browsable UI a person visits: llamacpp, mcp (MCP Gateway), qdrant,
-    # stt, tts (see their entries above). The main grid is ONLY the user-facing UIs
-    # (webui/comfyui/n8n/hermes/codebase-memory-ui) plus model-gateway (its Open link points
-    # at the LiteLLM Swagger UI through the edge; see model_gateway_open_url() below).
-    {"id": "rag-ingestion", "name": "RAG Ingestion", "port": None, "check": None, "has_gpu": False, "plugin": "rag", "category": "rag", "background": True,
-     "hint": "Headless folder-watch embedder for Qdrant (no web UI). Health via container healthcheck. Logs: docker compose logs rag-ingestion"},
-    # Obsidian cross-device notes sync — headless background services (no web UI). CouchDB is the
-    # sync server (reached via :443/couchdb); the bridge mirrors it to data/memory-vault/notes/ so
-    # the AI reads notes. The optional off-tailnet Funnel (obsidian-livesync-funnel) is a Tailscale
-    # config sidecar, NOT a service a person browses — it carries no card (managed via the ops-api).
-    {"id": "couchdb", "name": "CouchDB (notes sync)", "port": None, "check": "http://couchdb:5984/_up", "has_gpu": False, "plugin": "obsidian-livesync", "category": "notes", "background": True,
-     "hint": "Sync server for Obsidian Self-hosted LiveSync. Reached via :443/couchdb. Logs: docker compose logs couchdb"},
-    {"id": "livesync-bridge", "name": "LiveSync Bridge", "port": None, "check": None, "has_gpu": False, "plugin": "obsidian-livesync", "category": "notes", "background": True,
-     "hint": "Headless CouchDB <-> data/memory-vault/notes/ mirror so the AI reads Obsidian notes. Health via container healthcheck. Logs: docker compose logs livesync-bridge"},
-    # LTX-trainer (LoRA) is headless (CLI-only, no web UI) — it has no dashboard card. It's a
-    # compose service managed via the ops-api (restart), and GPU runs take an exclusive lease
-    # via ops-controller. Nothing to surface in the service health grid.
-]
+
+def _sorted_cards(cards: list[dict]) -> list[dict]:
+    """Deterministic curated order: explicit `order` first, id as the tiebreak."""
+    return sorted(cards, key=lambda c: (int(c.get("order", 1000)), str(c.get("id", ""))))
+
+
+def _load_catalog_cards() -> list[dict]:
+    """Load the card list: rendered aggregate first (runtime), repo fragments second (dev/tests).
+
+    There is deliberately NO hardcoded fallback list — the JSON fragments are the single
+    source of truth, and a baked-in shadow copy would be exactly the drift this refactor
+    removes. Both sources missing is a deploy error (check the services-catalog.json mount
+    `ordo render` emits): it logs loudly and the grid renders empty rather than stale.
+    """
+    path = os.environ.get(SERVICES_CATALOG_ENV, "").strip()
+    if path:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError) as e:
+            data = None
+            logger.error("[services] could not read catalog %s: %s; trying repo fragments", path, e)
+        if isinstance(data, dict) and isinstance(data.get("services"), list):
+            return _sorted_cards([dict(c) for c in data["services"]])
+        if data is not None:
+            logger.error("[services] %s has no `services` list; trying repo fragments", path)
+    cards: list[dict] = []
+    for frag in sorted(_REPO_SERVICES_DIR.glob("*/catalog.json")):
+        try:
+            frag_data = json.loads(frag.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            logger.error("[services] skipping malformed catalog fragment %s: %s", frag, e)
+            continue
+        cards.extend(dict(c) for c in (frag_data.get("cards") or []))
+    if not cards:
+        logger.error(
+            "[services] NO service catalog found (%s unset/unreadable and no services/*/catalog.json "
+            "fragments) — the grid will be empty. Deploy error: check the services-catalog.json "
+            "mount emitted by `ordo render`.", SERVICES_CATALOG_ENV)
+    return _sorted_cards(cards)
+
+
+SERVICES = _load_catalog_cards()
+
+# Dashboard service id -> ops-controller (compose) service id, derived from each card's
+# `ops_service`. Every value MUST be a real compose service name AND be present in
+# ops-api's ALLOWED_SERVICES, else the card's start/stop/restart buttons 400. (Locked by
+# test_service_catalog_wiring.) Cards without `ops_service` (e.g. couchdb) fall back to
+# their own id at the call sites (OPS_SERVICE_MAP.get(id, id)). NB: Hermes deliberately
+# maps to hermes-dashboard (the UI service), NOT the agent/gateway — its self-restart is
+# delicate and it is not allowlisted.
+OPS_SERVICE_MAP = {s["id"]: s["ops_service"] for s in SERVICES if s.get("ops_service")}
+
+# Dashboard service id -> clean per-service tailnet subdomain label (the tailnet-names
+# sidecar plugin serves each UI as https://<label>.<domain>/), derived from each card's
+# `tailnet_label`. Only UI services have a sidecar; backend-only services (llamacpp/mcp/
+# qdrant) have no clean name and keep their internal URLs. hermes/graph land on their
+# port's root, which 302s to the /hermes/ and /codebase-memory/ subpaths, so a bare
+# https://<label>.<domain>/ works. model-gateway's `llm` sidecar (caddy :8449) serves the
+# LiteLLM Swagger UI at an origin root.
+TAILNET_LABELS = {s["id"]: s["tailnet_label"] for s in SERVICES if s.get("tailnet_label")}
+
+# ── Card semantics (apply to every fragment) ───────────────────────────────────────────
+# `plugin` names the render plugin (manifest.plugins_enabled id) that gates the card.
+# Core services always present in every render carry plugin=null and are never gated.
+# visible_services() (below) hides a card only when its plugin is DISABLED, so the grid
+# reflects what the render actually enabled. NB: the plugin id is NOT the compose profile
+# (e.g. open-webui's profile is `webui` but its plugin id is `open-webui`).
+#
+# `background: true` is the marker the frontend uses to move a service OUT of the main
+# user-facing grid into the secondary "Background jobs" section (no "Open" link). Its
+# meaning is "NOT a browsable user-facing UI" — not merely "headless worker". Besides the
+# portless workers (rag-ingestion, livesync-bridge — no port, no check; the grid reads
+# their true up/down from ops-api container health, see routes_hub) it ALSO tags the
+# infra/backend services that have a port & health check but no browsable UI a person
+# visits: llamacpp, llamacpp-cpu, mcp, qdrant, stt, tts, couchdb. The main grid is ONLY
+# the user-facing UIs (webui/comfyui/n8n/hermes/codebase-memory-ui) plus model-gateway
+# (its Open link points at the LiteLLM Swagger UI through the edge; see
+# model_gateway_open_url() below).
+#
+# Deliberately card-LESS services: ltx-trainer (CLI-only LoRA trainer — ops-api-managed,
+# GPU runs take an ops-controller lease); the obsidian-livesync Funnel (a Tailscale
+# config sidecar, not a browsable service); and the retired Media Worker (the live media
+# pipeline runs via Hermes cron + direct render_publish scripts — see CHANGELOG).
 
 # Plugins that are expected to surface a service card. This is the drift tripwire:
-# visible_services() warns if the render enables one of these but no SERVICES entry
+# visible_services() warns if the render enables one of these but no catalog fragment
 # claims it — so an enabled service can never be silently omitted from the grid. Core
-# services (llamacpp/model-gateway/mcp) carry plugin=None and are intentionally NOT here.
+# services (llamacpp/model-gateway/mcp) carry plugin=null and are intentionally NOT here.
+# Kept EXPLICIT (not derived from the fragments) on purpose: deriving it from the same
+# fragments it guards would blind the tripwire to a deleted fragment.
 CARD_PLUGINS = frozenset({
     "open-webui", "comfyui", "automation", "rag",
     "hermes-dashboard", "codebase-memory-ui", "voice",
+    "llamacpp-cpu",
 })
 
 
@@ -249,7 +232,8 @@ def visible_services(services: list[dict] | None = None, enabled: set[str] | Non
     if missing:
         logger.warning(
             "[services] manifest enables %s but the catalog has no card for them — "
-            "service-grid drift; add a SERVICES entry so the enabled service isn't hidden",
+            "service-grid drift; add a services/<id>/catalog.json fragment so the enabled "
+            "service isn't hidden",
             sorted(missing),
         )
     return [s for s in services if s.get("plugin") is None or s["plugin"] in enabled]

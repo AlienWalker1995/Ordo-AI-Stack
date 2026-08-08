@@ -88,6 +88,12 @@ environment:
   # so it reflects what THIS render actually enabled and can't silently omit an enabled service.
   # Mounted read-only; the dashboard only reads it. Fails open (full catalog) if ever absent.
   MANIFEST_PATH: /ordo-manifest.json
+  # The rendered service-card catalog (out/services-catalog.json) — `ordo render` aggregates it
+  # from the per-service services/<id>/catalog.json fragments (each service declares its own
+  # dashboard card next to its other manifests). services_catalog.py loads it from this path;
+  # the React grid renders it. Missing/unreadable -> the loader falls back to reading the repo
+  # fragments directly (dev checkouts) and logs loudly if neither source exists.
+  SERVICES_CATALOG_PATH: /ordo-services-catalog.json
 # The dashboard reads on-disk GGUFs directly for /api/llm/* (shared read-only from the V1 tree via
 # BASE_PATH) and lists comfyui models via MODELS_DIR; its own state lives in the staged V2 data tree.
 volumes:
@@ -115,6 +121,9 @@ volumes:
   # (out/) at runtime — same convention as the mcp mount above. Read-only: the grid's
   # enabled-gate only reads plugins_enabled. See MANIFEST_PATH above.
   - ./manifest.json:/ordo-manifest.json:ro
+  # The rendered service-card catalog (out/services-catalog.json). Read-only: the grid's
+  # card list — see SERVICES_CATALOG_PATH above.
+  - ./services-catalog.json:/ordo-services-catalog.json:ro
 
 # ── The V1-parity BACKEND (service `ops-api`) ──────────────────────────────────────────────────
 # The feature-rich FastAPI control API. Built from a COPY of V1's ops-controller with ONE minimal

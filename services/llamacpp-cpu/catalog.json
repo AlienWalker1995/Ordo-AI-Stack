@@ -1,0 +1,18 @@
+{
+  "cards": [
+    {
+      "id": "llamacpp-cpu",
+      "name": "llama.cpp (CPU fallback)",
+      "order": 15,
+      "port": null,
+      "check": "http://llamacpp-cpu:8080/health",
+      "has_gpu": false,
+      "plugin": "llamacpp-cpu",
+      "category": "inference",
+      "background": true,
+      "ops_service": "llamacpp-cpu",
+      "hint": "Always-on CPU fallback (Qwen3.6-35B-A3B MoE) behind model-gateway's local-chat failover. Backend-only. Run: docker compose --profile cpu-fallback up -d llamacpp-cpu",
+      "notes": "Separate compose service from the GPU llamacpp — local-chat's failover target while the scheduler leases the 5090 to a render. Down = profile not running (expected on renders without the plugin)."
+    }
+  ]
+}

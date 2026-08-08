@@ -71,7 +71,7 @@ def test_every_ops_mapped_service_is_allowlisted():
 
 def test_added_cards_are_controllable():
     """The newly-added cards (plus Hermes) must each be operator-controllable."""
-    for display_id in ("hermes", "stt", "tts", "rag-ingestion"):
+    for display_id in ("hermes", "stt", "tts", "rag-ingestion", "llamacpp-cpu"):
         assert display_id in OPS_SERVICE_MAP, f"{display_id} not wired for lifecycle control"
 
 
@@ -94,7 +94,7 @@ def test_non_user_facing_services_carry_background_flag():
     webui/comfyui/n8n/hermes/codebase-memory-ui — and model-gateway (its Open link is the
     LiteLLM Swagger UI) must NOT carry it, so an openable service can't be quietly demoted."""
     bg = {s["id"] for s in SERVICES if s.get("background")}
-    assert bg == {"rag-ingestion", "llamacpp", "mcp", "qdrant", "stt", "tts",
+    assert bg == {"rag-ingestion", "llamacpp", "llamacpp-cpu", "mcp", "qdrant", "stt", "tts",
                   "couchdb", "livesync-bridge"}
     user_facing = {"webui", "comfyui", "n8n", "hermes", "codebase-memory-ui", "model-gateway"}
     for s in SERVICES:
@@ -139,8 +139,8 @@ def test_visible_services_shows_all_for_live_enabled_set():
     """Against the real rendered manifest's enabled set, nothing is hidden."""
     enabled = {
         "automation", "codebase-memory-ui", "comfyui", "edge", "hermes-dashboard",
-        "ltx-trainer", "monitoring", "open-webui", "rag", "searxng-web", "song-gen",
-        "tailnet-names", "voice", "obsidian-livesync", "obsidian-livesync-funnel",
+        "llamacpp-cpu", "ltx-trainer", "monitoring", "open-webui", "rag", "searxng-web",
+        "song-gen", "tailnet-names", "voice", "obsidian-livesync", "obsidian-livesync-funnel",
     }
     visible_ids = {s["id"] for s in visible_services(enabled=enabled)}
     assert visible_ids == {s["id"] for s in SERVICES}

@@ -2,6 +2,14 @@ model_list:
   # local-chat: the stable auto-routing alias every consumer (Hermes, reels, dashboard) uses.
   # Backed by the GPU model; falls over to the CPU A3B via router_settings below when the GPU
   # llamacpp is evicted for a media render. DO NOT rename — lots depends on this id.
+  #
+  # model_info blocks are the gateway's model documentation: everything /model/info and
+  # /v1/models consumers see. All deployment-variable values (__CTX_SIZE__, __N_PREDICT__,
+  # __CPU_CTX_SIZE__, __*_WEIGHTS__) are entrypoint-substituted from the SAME .env the
+  # backend llama-server containers read, so this metadata cannot drift from what's running.
+  # The supports_* flags describe the deployed Qwen3.6 family (vision mmproj loaded on the
+  # GPU server, --jinja tool templates, --reasoning-format deepseek) — revisit them if the
+  # active model swaps to a different family.
   - model_name: "local-chat"
     litellm_params:
       model: "openai/local-chat"
@@ -10,7 +18,25 @@ model_list:
       timeout: 1800
       stream_timeout: 1800
     model_info:
+      mode: chat
       max_input_tokens: __CTX_SIZE__
+      # llama-server --n-predict: hard per-request generation ceiling on the GPU backend.
+      max_output_tokens: __N_PREDICT__
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+      supports_system_messages: true
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_response_schema: true
+      supports_vision: true
+      supports_reasoning: true
+      description: >-
+        Stable auto-routing alias — the id every Ordo consumer should use. Backed by the
+        active GPU chat model on the RTX 5090 (see weights_file for the exact GGUF); fails
+        over to qwen3.6-35b-a3b-cpu when the scheduler leases the GPU to a media render, and
+        recovers automatically once the GPU model is healthy again.
+      weights_file: __GPU_WEIGHTS__
+      served_by: llamacpp (patched qwen36-swa llama.cpp build, RTX 5090)
 
   # Explicit, pickable REAL models so callers/UI see WHICH model they're using, not just the
   # opaque `local-chat`. qwen3.6-27b = the GPU chat model; qwen3.6-35b-a3b-cpu = the always-on
@@ -24,7 +50,23 @@ model_list:
       timeout: 1800
       stream_timeout: 1800
     model_info:
+      mode: chat
       max_input_tokens: __CTX_SIZE__
+      max_output_tokens: __N_PREDICT__
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+      supports_system_messages: true
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_response_schema: true
+      supports_vision: true
+      supports_reasoning: true
+      description: >-
+        Explicit pin of the GPU chat deployment (same backend as local-chat but with NO CPU
+        failover routing — errors when the GPU model is evicted for a render). Qwen3.6-27B
+        finetune, Q6_K, hybrid attention/SSM, vision via the shared Qwen3.6-27B mmproj.
+      weights_file: __GPU_WEIGHTS__
+      served_by: llamacpp (patched qwen36-swa llama.cpp build, RTX 5090)
 
   - model_name: "qwen3.6-35b-a3b-cpu"
     litellm_params:
@@ -33,12 +75,48 @@ model_list:
       api_key: "local"
       timeout: 1800
       stream_timeout: 1800
+    model_info:
+      mode: chat
+      max_input_tokens: __CPU_CTX_SIZE__
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+      supports_system_messages: true
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_response_schema: true
+      # CPU server loads no mmproj — text-only.
+      supports_vision: false
+      supports_reasoning: true
+      description: >-
+        Always-on CPU fallback and local-chat's failover target: Qwen3.6-35B-A3B MoE
+        (~3B active params) running CPU-only on stock llama.cpp. Context matches the GPU
+        window so failover never truncates a conversation. Only reachable while the opt-in
+        cpu-fallback profile (llamacpp-cpu) is running. Slow but survives GPU eviction.
+      weights_file: __CPU_WEIGHTS__
+      served_by: llamacpp-cpu (stock llama.cpp, CPU-only)
 
   - model_name: "local-embed"
     litellm_params:
       model: "openai/local-embed"
       api_base: "http://llamacpp-embed:8080/v1"
       api_key: "local"
+      # LiteLLM v1.82.3 serializes encoding_format as JSON null when the caller omits it,
+      # and llama.cpp's strict parser 500s on that ("type must be string, but is null").
+      # Pinning the OpenAI default here makes LiteLLM always send a real value.
+      encoding_format: "float"
+    model_info:
+      mode: embedding
+      # llamacpp-embed runs --ctx-size 8192 (fixed in compose, not env-tunable).
+      max_input_tokens: 8192
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+      output_vector_size: 768
+      description: >-
+        Stack-wide embedding alias: nomic-embed-text-v1.5 (768-dim, matryoshka-capable)
+        served by llamacpp-embed on the RTX 5090. Used by Open WebUI RAG and rag-ingestion
+        (Qdrant `documents` collection) — swapping this model invalidates existing vectors.
+      weights_file: __EMBED_WEIGHTS__
+      served_by: llamacpp-embed (stock llama.cpp, RTX 5090)
 
 general_settings:
   master_key: "__MASTER_KEY__"
