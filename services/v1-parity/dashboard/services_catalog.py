@@ -106,6 +106,7 @@ OPS_SERVICE_MAP = {
     "stt": "stt",
     "tts": "tts",
     "rag-ingestion": "rag-ingestion",
+    "llamacpp-cpu": "llamacpp-cpu",
 }
 
 # Each entry's `plugin` names the render plugin (manifest.plugins_enabled id) that gates
@@ -114,8 +115,14 @@ OPS_SERVICE_MAP = {
 # grid reflects what the render actually enabled. NB: the plugin id is NOT the compose
 # profile (e.g. open-webui's profile is `webui` but its plugin id is `open-webui`).
 SERVICES = [
-    {"id": "llamacpp", "name": "llama.cpp", "port": 8080, "url": "http://localhost:8080", "check": "http://llamacpp:8080/health", "has_gpu": True, "plugin": None, "category": "inference", "background": True,
+    {"id": "llamacpp", "name": "llama.cpp (GPU)", "port": 8080, "url": "http://localhost:8080", "check": "http://llamacpp:8080/health", "has_gpu": True, "plugin": None, "category": "inference", "background": True,
      "hint": "Backend-only; use model-gateway :11435 from host. Run: docker compose up -d llamacpp"},
+    # The CPU-fallback llama.cpp is a SEPARATE compose service (llamacpp-cpu, opt-in
+    # `llamacpp-cpu` plugin / cpu-fallback profile) — local-chat's failover target while the
+    # scheduler leases the 5090 to a render. Its own card so both instances are visible and
+    # controllable; down = profile not running (expected on renders without the plugin).
+    {"id": "llamacpp-cpu", "name": "llama.cpp (CPU fallback)", "port": None, "check": "http://llamacpp-cpu:8080/health", "has_gpu": False, "plugin": "llamacpp-cpu", "category": "inference", "background": True,
+     "hint": "Always-on CPU fallback (Qwen3.6-35B-A3B MoE) behind model-gateway's local-chat failover. Backend-only. Run: docker compose --profile cpu-fallback up -d llamacpp-cpu"},
     {"id": "model-gateway", "name": "Model Gateway", "port": 11435, "url": "http://localhost:11435", "check": "http://model-gateway:11435/health/liveliness", "has_gpu": False, "plugin": None, "category": "inference",
      "hint": "OpenAI-compatible proxy (LiteLLM). Routes inference to llama.cpp."},
     {"id": "webui", "name": "Open WebUI", "port": 3000, "url": "http://localhost:3000", "check": "http://open-webui:8080", "has_gpu": False, "plugin": "open-webui", "category": "interface",
@@ -203,6 +210,7 @@ SERVICES = [
 CARD_PLUGINS = frozenset({
     "open-webui", "comfyui", "automation", "rag",
     "hermes-dashboard", "codebase-memory-ui", "voice",
+    "llamacpp-cpu",
 })
 
 
