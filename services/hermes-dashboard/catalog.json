@@ -1,0 +1,18 @@
+{
+  "cards": [
+    {
+      "id": "hermes",
+      "name": "Hermes Agent",
+      "order": 80,
+      "port": 9119,
+      "url": "http://localhost:9119",
+      "has_gpu": false,
+      "plugin": "hermes-dashboard",
+      "category": "agent",
+      "ops_service": "hermes-dashboard",
+      "tailnet_label": "hermes",
+      "hint": "Managed by docker compose. Logs: docker compose logs hermes-dashboard",
+      "notes": "NO HTTP check on purpose — it falls through to the container-state signal. hermes-dashboard runs in caddy's network namespace (network_mode: service:caddy) and binds 127.0.0.1:9119, so it does not resolve on ordo-net and any HTTP probe could ONLY fail; the container's own healthcheck curls 127.0.0.1:9119 inside the namespace and is the truer signal. Do not re-add an HTTP check unless it stops being loopback-only. Lifecycle buttons target hermes-dashboard (the UI service), NOT the agent/gateway — its self-restart is delicate and it is not allowlisted."
+    }
+  ]
+}

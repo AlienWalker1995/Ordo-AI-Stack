@@ -1,0 +1,20 @@
+{
+  "cards": [
+    {
+      "id": "mcp",
+      "name": "MCP Gateway",
+      "order": 40,
+      "port": 8811,
+      "url": "http://localhost:8811",
+      "check": "http://mcp-gateway:8811/mcp",
+      "check_4xx_ok": true,
+      "has_gpu": false,
+      "plugin": null,
+      "category": "tools",
+      "background": true,
+      "ops_service": "mcp-gateway",
+      "hint": "Add/remove tools from the dashboard. Connect at http://localhost:8811/mcp — see services/mcp-gateway/README.md",
+      "notes": "The gateway answers a bare GET to /mcp with a 4xx (it expects POST/SSE with an Mcp-Session-Id) — check_4xx_ok tells the strict dependency probe that a <500 there still means up."
+    }
+  ]
+}

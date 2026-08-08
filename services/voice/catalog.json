@@ -1,0 +1,30 @@
+{
+  "cards": [
+    {
+      "id": "stt",
+      "name": "Speech-to-Text (Whisper)",
+      "order": 100,
+      "port": 8000,
+      "check": "http://stt:8000/v1/models",
+      "has_gpu": true,
+      "plugin": "voice",
+      "category": "voice",
+      "background": true,
+      "ops_service": "stt",
+      "hint": "faster-whisper-server (OpenAI-compatible). GPU-pinned to the 1070. Opt-in: --profile voice"
+    },
+    {
+      "id": "tts",
+      "name": "Text-to-Speech (Kokoro)",
+      "order": 110,
+      "port": 8880,
+      "check": "http://tts:8880/v1/audio/voices",
+      "has_gpu": true,
+      "plugin": "voice",
+      "category": "voice",
+      "background": true,
+      "ops_service": "tts",
+      "hint": "kokoro-fastapi (OpenAI-compatible). GPU-pinned to the 1070. Opt-in: --profile voice"
+    }
+  ]
+}

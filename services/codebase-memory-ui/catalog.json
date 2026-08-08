@@ -1,0 +1,17 @@
+{
+  "cards": [
+    {
+      "id": "codebase-memory-ui",
+      "name": "Codebase Memory",
+      "order": 90,
+      "port": 9750,
+      "check": "http://codebase-memory-ui:9750/codebase-memory/",
+      "has_gpu": false,
+      "plugin": "codebase-memory-ui",
+      "category": "knowledge",
+      "tailnet_label": "graph",
+      "hint": "3D code knowledge-graph. Open via its clean `graph` tailnet name (the Open button; Google SSO). In-memory index — re-index after a restart. Opt-in: --profile codebase-memory",
+      "notes": "The Open link comes from SSO_ROUTES in the frontend (-> /codebase-memory/), so no `url` is needed. The health check hits the nginx subpath, which proxies through to the UI."
+    }
+  ]
+}

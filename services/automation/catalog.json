@@ -1,0 +1,18 @@
+{
+  "cards": [
+    {
+      "id": "n8n",
+      "name": "N8N",
+      "order": 60,
+      "port": 5678,
+      "url": "http://localhost:5678",
+      "check": "http://n8n:5678",
+      "has_gpu": false,
+      "plugin": "automation",
+      "category": "automation",
+      "ops_service": "n8n",
+      "tailnet_label": "n8n",
+      "hint": "Check: docker compose logs n8n"
+    }
+  ]
+}

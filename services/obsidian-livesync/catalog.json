@@ -1,0 +1,29 @@
+{
+  "cards": [
+    {
+      "id": "couchdb",
+      "name": "CouchDB (notes sync)",
+      "order": 130,
+      "port": null,
+      "check": "http://couchdb:5984/_up",
+      "has_gpu": false,
+      "plugin": "obsidian-livesync",
+      "category": "notes",
+      "background": true,
+      "hint": "Sync server for Obsidian Self-hosted LiveSync. Reached via :443/couchdb. Logs: docker compose logs couchdb"
+    },
+    {
+      "id": "livesync-bridge",
+      "name": "LiveSync Bridge",
+      "order": 140,
+      "port": null,
+      "check": null,
+      "has_gpu": false,
+      "plugin": "obsidian-livesync",
+      "category": "notes",
+      "background": true,
+      "hint": "Headless CouchDB <-> data/memory-vault/notes/ mirror so the AI reads Obsidian notes. Health via container healthcheck. Logs: docker compose logs livesync-bridge",
+      "notes": "Portless headless worker: no HTTP check on purpose — grid reads container health via ops-api (routes_hub)."
+    }
+  ]
+}
