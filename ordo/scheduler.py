@@ -105,8 +105,20 @@ class Scheduler:
         return self.total_vram_gb - self.used_vram_gb
 
     # --- lifecycle ---
-    def submit(self, job: Job) -> None:
+    def submit(self, job: Job) -> bool:
+        """Queue a residency request. IDEMPOTENT on job id — returns False for a duplicate.
+
+        A residency request is identity-based: `gate-comfyui` means "ComfyUI holds the card",
+        and five copies of it are not five requests, they are one asked five times. Without this
+        guard a client that re-asks (a gate whose acquire timed out and is retried, a heartbeat
+        re-acquire after the controller restarted) silently stacks duplicates in the queue; each
+        one is later admitted in turn and evicts the resident LLM for work nobody is waiting on.
+        Observed live 2026-08-10: seven `gate-comfyui` entries queued behind one running job.
+        """
+        if job.id in self._running or any(j.id == job.id for j in self._queue):
+            return False
         self._queue.append(job)
+        return True
 
     def cache_idle(self, model_id: str, vram_gb: float) -> None:
         """A model loaded but not actively serving — reclaimable via LRU eviction.
@@ -210,6 +222,16 @@ class Scheduler:
         return out
 
     def complete(self, job_id: str) -> None:
+        """Give up residency — whether it was granted or still WAITING to be granted.
+
+        Withdrawing a queued request matters as much as releasing a running one. A client that
+        stops waiting (a gate whose submitter gave up after the acquire timeout, a cancelled
+        batch) previously left its request in the queue forever: it would be admitted later,
+        evict the resident LLM, and hold the card for work that no longer exists — with nothing
+        to heartbeat it and nothing to complete it, so only the TTL would ever clear it.
+        Draining the queue entry here makes "I no longer want the GPU" mean exactly that.
+        """
+        self._queue = [j for j in self._queue if j.id != job_id]
         self._running.pop(job_id, None)
         self._elapsed.pop(job_id, None)
         self._deadline.pop(job_id, None)

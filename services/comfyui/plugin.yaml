@@ -27,7 +27,43 @@ services:
     # Pin to the PRIMARY (compute) card by uuid — V1 pins comfyui to the 5090 in gpu-assignments.yml.
     # `gpu: true` alone renders `count: all`, which on a dual-GPU WSL2 box lets ComfyUI also see the
     # 1070; the uuid pin (CUDA_VISIBLE_DEVICES + device_ids) is the only thing WSL2 actually honors.
-    gpu_pin: primary      # shares the primary (compute) GPU with llama.cpp
+    gpu_pin: primary      # rides the primary (compute) GPU — the same card llama.cpp lives on
+    # --- GPU arbitration (ordo/gpu.py) ------------------------------------------------------
+    # ComfyUI is the canonical `burst` consumer: idle most of the time, and GPU-hungry the
+    # instant something is queued — by Hermes, by the MCP, or by a human pressing Queue Prompt
+    # in the node-graph web UI. It cannot take residency at start (it would hold the card
+    # forever) and it cannot be trusted to take it per job (the web UI has never heard of the
+    # scheduler). So its enforcement is a GATE: a companion proxy, rendered automatically from
+    # this block, that acquires residency BEFORE a submission is forwarded to the server. That
+    # ordering is the point — ComfyUI begins executing the moment /prompt lands, so anything
+    # that reacts afterwards has already allowed the dual-tenant window that bugchecked the
+    # host on 2026-08-08 (0x113, ~4h at ~98% VRAM beside the resident llama.cpp).
+    #
+    # `vram_gb: exclusive` = the whole card. A render must NOT share the 5090: the arbiter
+    # reclaims llama.cpp (which migrates to llamacpp-cpu, see its yield contract) and admits no
+    # co-runner. The sentinel resolves against real hardware, so this stays correct on a card
+    # that isn't 32GB instead of encoding one box's number.
+    gpu_arbitration:
+      mode: burst
+      enforcement: gate
+      device: primary
+      vram_gb: exclusive
+      est_seconds: 300      # reporting hint for the busy-ETA; the gate heartbeats for the truth
+      kind: media
+      gate:
+        upstream_port: 8188
+        # Every path that starts GPU work. `/api/prompt` is the same handler under the
+        # frontend's /api prefix — gating only `/prompt` would leave a live bypass.
+        submit_paths: [/prompt, /api/prompt]
+        submit_methods: [POST]
+        # A submit returns as soon as the prompt is accepted; the render runs afterwards. The
+        # queue is therefore the only honest signal for when the work has actually drained.
+        queue_path: /queue
+        queue_style: comfyui
+        drain_seconds: 60
+        # A human is watching a browser spinner. Wait this long for the card, then refuse
+        # honestly rather than hanging the UI — see services/gpu-gate.
+        acquire_timeout_seconds: 120
     wants_secrets: true   # HF_TOKEN / GITHUB_PERSONAL_ACCESS_TOKEN resolve from secrets.env
     # Docker defaults /dev/shm to 64MB, which starves torch DataLoader workers and the VAE
     # decode path on large frames. The DEPLOYED out/docker-compose.yml already carried

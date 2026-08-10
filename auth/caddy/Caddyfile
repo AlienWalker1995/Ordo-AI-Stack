@@ -134,8 +134,17 @@
 }
 
 # ---- :8446 — ComfyUI ----
+# Upstream is the ADMISSION GATE, not ComfyUI itself. comfyui declares
+# `gpu_arbitration.enforcement: gate` (services/comfyui/plugin.yaml), and the gate takes GPU
+# residency from ops-controller BEFORE forwarding a Queue Prompt. This is the route a human at
+# the node-graph UI takes, so pointing it at comfyui:8188 directly would leave exactly the
+# unarbitrated path that let a hand-queued render share the 5090 with the resident llama.cpp
+# until the host bugchecked (0x113, 2026-08-08). The gate listens on the upstream's own port, so
+# this is a hostname change and nothing else — it proxies the whole UI including the /ws
+# progress stream. Locked to the rendered gate service name by
+# tests/test_caddyfile_invariants.py::test_comfyui_is_routed_through_its_gpu_admission_gate.
 :8446 {
-    import sso_service comfyui:8188
+    import sso_service comfyui-gate:8188
 }
 
 # ---- :8447 — Hermes ----

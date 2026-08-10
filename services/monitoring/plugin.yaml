@@ -17,6 +17,11 @@ services:
     # does not work there). Sees ALL GPUs (no CUDA pin) so it can report on every card.
     image: utkuozdemir/nvidia_gpu_exporter@sha256:50e9be96ce3f67a75d7fd3834f2372d295c3dfcf044a36c9235e19ea7f008e58
     gpu: true
+    # nvidia-smi wrapper: it reads counters, it never allocates a compute context. Declared
+    # exempt so "this one needs no arbitration" is recorded rather than merely absent.
+    gpu_arbitration:
+      mode: exempt
+      enforcement: none
     # DRIVER-581.80 CRASH FIX (preserve): the exporter's default AUTO field discovery panics on
     # this host's driver — nvidia-smi emits `clocks_event_reasons_counters.sw_thermal_slowdown
     # [us]`, whose derived metric name has a space + brackets → invalid Prometheus name → the

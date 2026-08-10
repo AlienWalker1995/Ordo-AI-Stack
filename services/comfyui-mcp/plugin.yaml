@@ -26,7 +26,13 @@ mcp:
   # Needs network access to reach comfyui:8188 + ops-controller:9000 on ordo-net — NOT offline.
   disableNetwork: false
   env:
-    COMFYUI_URL: http://comfyui:8188
+    # Substituted by gateway-wrapper.sh from the GATEWAY's COMFYUI_URL, which render points at
+    # the admission gate when comfyui is gate-enforced (render.GATED_SERVICE_URL_ENV). NOT a
+    # ${VAR:-default} ref: this file is the mcp registry, not a compose file — nothing
+    # interpolates shell syntax here, so the literal string would reach the spawned server and
+    # break it. The PLACEHOLDER_* mechanism is how every other value crosses this seam.
+    # Agent-submitted prompts must take GPU residency by the same path a human's Queue Prompt does.
+    COMFYUI_URL: PLACEHOLDER_COMFYUI_URL
     OPS_CONTROLLER_URL: http://ops-controller:9000
     # Substituted from the gateway env by gateway-wrapper.sh at startup (secrets stay out of the
     # committed catalog; the gateway holds the real value from secrets.env).
