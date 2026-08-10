@@ -54,6 +54,38 @@ WORKDIR /build/hermes-agent/web
 RUN npm install && npm run build
 # Produces: /build/hermes-agent/hermes_cli/web_dist/
 
+# ── Stage 1b: sqlite-builder ──
+# hermes_state refuses to ENABLE WAL when the linked SQLite has the WAL-reset corruption
+# bug (3.7.0–3.51.2, sqlite.org/wal.html#walresetbug) and falls back to
+# journal_mode=DELETE for every brain DB (state.db ~1.3GB incl. trigram FTS, kanban.db,
+# cron/executions.db). DELETE mode does full-journal fsync per commit; under context-
+# compression write bursts that wedged the gateway event loop inside os.fsync long enough
+# to trip the shutdown watchdog (exit 75) — the near-daily unclean exits in
+# gateway-exit-diag.log (root-caused 2026-08-08). Debian trixie ships libsqlite3 3.46.1
+# and will never bump to 3.51.3+, and `hermes update` cannot replace an OS library, so we
+# build a fixed SQLite and let /usr/local/lib win soname resolution (the stdlib _sqlite3
+# extension links libsqlite3.so.0 dynamically; Debian's ld.so searches /usr/local/lib
+# before the multiarch dir). --all enables FTS5 (messages_fts + trigram) and the other
+# loadable features Debian's build carried; the runtime stage asserts both version and
+# trigram FTS5 at build time so a flag regression fails the build, not the gateway.
+FROM python:3.11-slim AS sqlite-builder
+ARG SQLITE_YEAR=2026
+ARG SQLITE_AUTOCONF=3530400
+# sha256 of sqlite-autoconf-3530400.tar.gz (3.53.4), computed 2026-08-08.
+ARG SQLITE_SHA256=0e9483900e92cd5de8fd48d16bf9200145a61f7fd5be542a5ac81d8a9516eb9c
+# libc6-dev is only a Recommends of gcc — without it there is "no working C compiler".
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc make libc6-dev curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL "https://sqlite.org/${SQLITE_YEAR}/sqlite-autoconf-${SQLITE_AUTOCONF}.tar.gz" \
+      -o /tmp/sqlite.tar.gz \
+    && echo "${SQLITE_SHA256}  /tmp/sqlite.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/sqlite.tar.gz -C /tmp \
+    && cd "/tmp/sqlite-autoconf-${SQLITE_AUTOCONF}" \
+    && CFLAGS="-O2 -DSQLITE_ENABLE_COLUMN_METADATA=1 -DSQLITE_ENABLE_UNLOCK_NOTIFY=1 -DSQLITE_ENABLE_DBSTAT_VTAB=1 -DSQLITE_MAX_VARIABLE_NUMBER=250000" \
+       ./configure --prefix=/usr/local --disable-static --all \
+    && make -j"$(nproc)" && make install
+
 # ── Stage 2: runtime ──
 FROM python:3.11-slim AS runtime
 ARG HERMES_REPO
@@ -67,6 +99,22 @@ ARG HERMES_PINNED_SHA
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git ca-certificates curl gosu libopus0 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
+
+# Fixed SQLite (see sqlite-builder stage). Copy the shared lib, refresh the loader
+# cache, and prove at BUILD time that (a) the stdlib picked it up, (b) it is past the
+# WAL-reset bug, and (c) FTS5+trigram — which state.db's messages_fts requires — work.
+COPY --from=sqlite-builder /usr/local/lib/libsqlite3.so* /usr/local/lib/
+RUN ldconfig \
+    && python3 - <<'SQLEOF'
+import sqlite3
+v = sqlite3.sqlite_version_info
+assert v >= (3, 51, 3), f"linked SQLite {sqlite3.sqlite_version} still WAL-reset vulnerable"
+conn = sqlite3.connect(":memory:")
+conn.execute("CREATE VIRTUAL TABLE t USING fts5(x, tokenize='trigram')")
+conn.execute("INSERT INTO t VALUES ('hello world')")
+assert conn.execute("SELECT count(*) FROM t WHERE t MATCH 'ello'").fetchone()[0] == 1
+print("sqlite", sqlite3.sqlite_version, "with fts5+trigram: OK")
+SQLEOF
 
 # uv — fast Python package manager.
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
