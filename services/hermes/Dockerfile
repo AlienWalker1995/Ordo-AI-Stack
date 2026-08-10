@@ -85,8 +85,14 @@ RUN curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-26
        -o /usr/local/bin/docker-compose \
     && chmod +x /usr/local/bin/docker /usr/local/bin/docker-compose
 
-# Non-root user (uid 1000 matches other stack services).
-RUN useradd -m -u 1000 -s /bin/bash hermes
+# Non-root user (uid 1000 matches other stack services). Add hermes to the root group (gid 0)
+# so the gosu-dropped gateway can read the root:root /var/run/docker.sock it mounts. Compose
+# `group_add: ["0"]` alone is NOT enough: the entrypoint drops privileges with `gosu hermes`,
+# which recomputes supplementary groups from /etc/group (where hermes must actually be a member)
+# and discards the compose group_add. This is the layer that makes docker work for the real
+# gateway process, not just `docker exec -u hermes`.
+RUN useradd -m -u 1000 -s /bin/bash hermes \
+    && usermod -aG root hermes
 
 # Clone hermes-agent source into /opt, owned by hermes user.
 RUN git clone --no-single-branch "$HERMES_REPO" /opt/hermes-agent \
