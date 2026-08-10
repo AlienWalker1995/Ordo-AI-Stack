@@ -86,6 +86,11 @@ environment:
 # flip is never rechecked, and nothing crashes, so `restart: unless-stopped` never fires.
 # A named volume lives on ext4 inside the WSL2 VM, where the container owns the metadata outright
 # and Windows has no path to it. That removes the failure mode instead of repairing it on a timer.
+# Root group so the unprivileged `hermes` user can reach the root:root docker.sock (mode 660)
+# mounted below — without it the mount is present but every docker call gets EACCES (the bug
+# that made Hermes report "no docker access" despite the socket being mounted). Mirrors ops-api.
+group_add: ["0"]
+
 volumes:
   - hermes-home:/home/hermes/.hermes                           # THE BRAIN (named volume — see above)
   - ${DATA_PATH:-./data}:/workspace/data                       # staged mutable data (skills' /workspace/data/*)
@@ -96,6 +101,11 @@ volumes:
   # above. Keep these two entries in sync — they are one store with two names.
   - hermes-home:/workspace/data/hermes                         # same volume, skills' absolute path
   - ${CODE_ROOT:-/c/dev}:/c/dev                                # mirror mount (load-bearing path name)
+  # Full Docker control of this host (operator-granted 2026-08-09). The docker CLI is already in the
+  # image; this mount is the only enabler. Guardrails are PROMPTING, not enforcement: SOUL.md mandates
+  # lease-before-GPU (a leaseless GPU job BSOD'd the box 2026-08-08) and no self/persistent-volume
+  # destruction. See docs/design/hermes-owns-docker.md.
+  - /var/run/docker.sock:/var/run/docker.sock
 
 # File-based secrets Hermes reads from /run/secrets/* (independent of secrets.env — these are the
 # same host files V1 mounts; the entrypoint bridges the *_FILE env above to the plain vars).

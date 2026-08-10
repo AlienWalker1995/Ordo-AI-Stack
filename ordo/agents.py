@@ -42,6 +42,10 @@ class Agent:
     command: tuple[str, ...]         # () -> compose omits it and the image's default CMD runs
     # ── runtime wiring (data-driven parity with the V1 agent container; phase-5.5 audit) ──
     user: str = ""                   # "" -> compose omits `user:` and the image default applies
+    # Supplementary groups (compose `group_add`). Hermes needs `["0"]` (root group) so the
+    # unprivileged `hermes` user can reach the root:root docker.sock (mode 660) it mounts — the
+    # same pattern ops-api uses. Empty -> compose omits it.
+    group_add: tuple[str, ...] = ()
     volumes: tuple[str, ...] = ()    # bind/volume specs (src:dst[:ro]); ${VAR} refs pass through
     environment: dict[str, str] = dataclasses.field(default_factory=dict)  # non-secret env
     # File-based Docker secrets the agent reads from /run/secrets/* — [{source, target}], the SAME
@@ -67,6 +71,7 @@ class Agent:
             env={str(k): str(v) for k, v in (d.get("env", {}) or {}).items()},
             command=tuple(str(c) for c in (d.get("command", []) or [])),
             user=str(d.get("user", "") or ""),
+            group_add=tuple(str(g) for g in (d.get("group_add", []) or [])),
             volumes=tuple(str(v) for v in (d.get("volumes", []) or [])),
             environment={str(k): str(v) for k, v in (d.get("environment", {}) or {}).items()},
             secret_files=tuple(

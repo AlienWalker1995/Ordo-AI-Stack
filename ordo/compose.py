@@ -281,7 +281,8 @@ def _mcp_gateway(project: str, net: str, env_file: str) -> dict[str, Any]:
     return s
 
 
-def _apply_agent_runtime(svc: dict[str, Any], *, user: str | None, volumes: list[str] | None,
+def _apply_agent_runtime(svc: dict[str, Any], *, user: str | None, group_add: list[str] | None,
+                         volumes: list[str] | None,
                          environment: dict[str, str] | None,
                          secret_files: list[dict[str, str]] | None,
                          depends_on: dict[str, str] | None,
@@ -292,6 +293,8 @@ def _apply_agent_runtime(svc: dict[str, Any], *, user: str | None, volumes: list
     plain start-order list so V1's service_healthy gates are mirrored."""
     if user:
         svc["user"] = user
+    if group_add:
+        svc["group_add"] = list(group_add)
     vols = list(volumes or [])
     for sf in (secret_files or []):
         vols.append(f"{sf['source']}:{sf['target']}:ro")
@@ -362,6 +365,7 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
                    agent_image: str | None = None,
                    agent_command: list[str] | None = None,
                    agent_user: str | None = None,
+                   agent_group_add: list[str] | None = None,
                    agent_volumes: list[str] | None = None,
                    agent_environment: dict[str, str] | None = None,
                    agent_secret_files: list[dict[str, str]] | None = None,
@@ -446,8 +450,9 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
     # depends, healthcheck. Each is emitted only when the manifest declares it (a self-contained
     # third-party agent that declares none renders exactly as before).
     _apply_agent_runtime(
-        svcs["agent"], user=agent_user, volumes=agent_volumes, environment=agent_environment,
-        secret_files=agent_secret_files, depends_on=agent_depends_on, healthcheck=agent_healthcheck)
+        svcs["agent"], user=agent_user, group_add=agent_group_add, volumes=agent_volumes,
+        environment=agent_environment, secret_files=agent_secret_files,
+        depends_on=agent_depends_on, healthcheck=agent_healthcheck)
     # optional plugin services, built from the resolved manifests (no hardcoded if-blocks).
     # render() only passes services whose plugin is enabled, so profile-gating already happened;
     # the per-service `profiles:` keeps them dormant until `--profile <p>` is used too.
