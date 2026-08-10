@@ -22,6 +22,16 @@ services:
     # Locally built from services/ltx-trainer/Dockerfile — tag pins the upstream repo SHA.
     image: ${LTX_TRAINER_IMAGE:-ordo/ltx-trainer:9377758131b1}
     gpu_pin: primary   # cu128 torch (Blackwell); training on the 1070 is a non-starter
+    # Burst consumer, enforced by the service itself: every run is launched through
+    # assets/lease-exec.py, which takes residency before the child initializes CUDA and releases
+    # on exit. `exclusive` matches what that wrapper is configured for below (ORDO_LEASE_VRAM_GB)
+    # and, unlike a hard-coded 30, stays correct on a card that isn't 32GB.
+    gpu_arbitration:
+      mode: burst
+      enforcement: client
+      device: primary
+      vram_gb: exclusive
+      kind: training
     # Torch shares offloaded/pinned tensors via /dev/shm; Docker's 64MB default dies as soon
     # as dataloader workers engage (hit live 2026-07-16).
     shm_size: 8g

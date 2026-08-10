@@ -13,6 +13,7 @@ from typing import Any
 import yaml
 
 from .buildspec import BuildSpec
+from .gpu import GpuArbitration
 from .hardware import HardwareProfile
 
 
@@ -24,6 +25,13 @@ class PluginService:
     image: str
     gpu: bool = False               # request a GPU reservation for this service
     gpu_pin: str = ""               # ""|"secondary": pin to a specific card via CUDA_VISIBLE_DEVICES
+    # How this service's GPU use is ARBITRATED (resident/lease/gated/exempt + its runtime VRAM
+    # footprint and which card it contends for). `gpu`/`gpu_pin` above are compose WIRING — they
+    # say the container gets a device; this says what the scheduler must do about it. REQUIRED
+    # for any service that renders a GPU reservation (enforced by
+    # tests/substrate/test_gpu_arbitration.py), so a new GPU service cannot ship unarbitrated.
+    # See ordo/gpu.py.
+    gpu_arbitration: GpuArbitration | None = None
     env: dict[str, str] = dataclasses.field(default_factory=dict)
     command: list[str] = dataclasses.field(default_factory=list)
     volumes: list[str] = dataclasses.field(default_factory=list)
@@ -48,9 +56,16 @@ class PluginService:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PluginService:
+        name = str(d["name"])
+        gpu_pin = str(d.get("gpu_pin", ""))
         return cls(
-            name=str(d["name"]), image=str(d["image"]),
-            gpu=bool(d.get("gpu", False)), gpu_pin=str(d.get("gpu_pin", "")),
+            name=name, image=str(d["image"]),
+            gpu=bool(d.get("gpu", False)), gpu_pin=gpu_pin,
+            # A pinned service defaults its contention device to the pin, so a manifest never
+            # has to state the same fact twice (and the two can't disagree).
+            gpu_arbitration=GpuArbitration.from_dict(
+                d.get("gpu_arbitration"), service=name,
+                default_device="secondary" if gpu_pin == "secondary" else "primary"),
             env={str(k): str(v) for k, v in (d.get("env", {}) or {}).items()},
             command=[str(c) for c in (d.get("command", []) or [])],
             volumes=[str(v) for v in (d.get("volumes", []) or [])],

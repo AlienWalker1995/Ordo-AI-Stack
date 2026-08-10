@@ -3,4 +3,11 @@
 pytest>=7.0.0
 httpx>=0.26.0
 respx>=0.21.0
+# gpu-gate runs on aiohttp; tests/test_gpu_gate.py exercises the REAL gate module (stub arbiter
+# + stub upstream over real HTTP), so the version here must match the one baked into
+# services/gpu-gate/Dockerfile or CI would be testing a different proxy than the stack runs.
+aiohttp==3.14.3
+# asyncio_mode = "auto" (pyproject) needs this. Present transitively today; declared explicitly
+# so the dependency can't silently drift away and quietly turn async tests into no-ops.
+pytest-asyncio>=0.24.0
 ruff==0.8.6  # pinned to match requirements-dev.txt — this is the job that actually runs the lint gate

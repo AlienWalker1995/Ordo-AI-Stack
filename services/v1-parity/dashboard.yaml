@@ -58,7 +58,7 @@ environment:
   # the edge SSO. The server_id→plugin_id map the toggle needs is emitted to /mcp-config alongside
   # servers.txt (out/mcp/server-plugin-map.json).
   ORDO_SOURCE_PATH: /ordo-source.yaml
-  COMFYUI_URL: http://comfyui:8188
+  COMFYUI_URL: ${COMFYUI_URL:-http://comfyui:8188}
   QDRANT_URL: http://qdrant:6333
   # On-disk model dirs (bind-mounted below): /api/llm/* scans GGUF_MODELS_DIR; MODELS_DIR is comfyui.
   GGUF_MODELS_DIR: /gguf-models
@@ -175,7 +175,7 @@ backend:
     # --no-deps --force-recreate (no re-render; the llamacpp 5090 uuid pin is baked into the
     # rendered compose so replaying it cannot drop the pin). See main.py "SAFE per-service recreate".
     OPS_SERVICE_RECREATE_ENABLED: "1"
-    COMFYUI_URL: http://comfyui:8188
+    COMFYUI_URL: ${COMFYUI_URL:-http://comfyui:8188}
     COMFYUI_CONTAINER_NAME: ordo-comfyui-1
     COMFYUI_MODELS_DIR: /models/comfyui
     # Model registry + audit log live in the V2 data tree (staged, not the V1 tree).

@@ -109,7 +109,11 @@ def test_comfyui_server_id_decoupled_from_plugin_id():
     ids = {s["id"] for s in rc.mcp_servers}
     assert "comfyui" in ids and "comfyui-mcp" not in ids
     cm = next(s for s in rc.mcp_servers if s["id"] == "comfyui")
-    assert cm["env"]["COMFYUI_URL"] == "http://comfyui:8188"
+    # ComfyUI's URL crosses this seam as a PLACEHOLDER, resolved by gateway-wrapper.sh from the
+    # gateway's own COMFYUI_URL — which render points at the admission gate when comfyui is
+    # gate-enforced. A literal here would pin the agent to the DIRECT service and let every
+    # agent-submitted prompt bypass GPU arbitration.
+    assert cm["env"]["COMFYUI_URL"] == "PLACEHOLDER_COMFYUI_URL"
     assert cm["env"]["OPS_CONTROLLER_TOKEN"] == "PLACEHOLDER_OPS_CONTROLLER_TOKEN"
     assert cm["env"]["COMFY_MCP_DEFAULT_MODEL"] == "PLACEHOLDER_COMFY_MCP_DEFAULT_MODEL"
 

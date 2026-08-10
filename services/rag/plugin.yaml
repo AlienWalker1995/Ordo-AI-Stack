@@ -38,6 +38,20 @@ services:
     # Pin to the PRIMARY (compute) card by uuid when present — V1 pins llamacpp-embed to the 5090 in
     # gpu-assignments.yml. On a CPU/no-GPU box the pin resolves to nothing → upstream CPU-fallback.
     gpu_pin: primary        # rides the primary card by uuid; CPU-fallback when no GPU is detected
+    # A small but REAL resident: ~0.3GB of nomic weights plus an 8192-token KV cache sit on the
+    # 5090 for as long as this container runs. Nothing declared it before, so the arbiter counted
+    # that VRAM as free and could admit a job into space that was already taken. Preemptible with
+    # a plain `stop` yield: unlike the chat LLM there is no degraded CPU deployment to migrate to,
+    # so retrieval is simply unavailable while a render holds the card, and the Broker restarts it
+    # when the work drains.
+    gpu_arbitration:
+      mode: resident
+      enforcement: broker
+      device: primary
+      vram_gb: 1.0
+      preemptible: true
+      yield:
+        strategy: stop
     command:
       - --host
       - 0.0.0.0

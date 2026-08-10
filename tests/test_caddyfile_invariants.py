@@ -90,7 +90,8 @@ SERVICE_PORTS = {
     "8443": "open-webui:8080",
     "8444": "dashboard:8080",
     "8445": "n8n:5678",
-    "8446": "comfyui:8188",
+    # NOT comfyui:8188 — the edge must enter through the GPU admission gate (see below).
+    "8446": "comfyui-gate:8188",
     "8447": "hermes-dashboard:9119",
     "8448": "codebase-memory-ui:9750",
 }
@@ -243,3 +244,21 @@ def test_couchdb_livesync_bypasses_sso_and_blocks_fauxton(caddyfile_text: str) -
     # on the :443 front door, not inside an :844x SSO-gated port block
     root_site = caddyfile_text.split("{$CADDY_TAILNET_HOSTNAME} {", 1)[1]
     assert "handle_path /couchdb/*" in root_site, "/couchdb must be on the :443 front door (SSO bypass)"
+
+
+def test_comfyui_is_routed_through_its_gpu_admission_gate(caddyfile_text: str) -> None:
+    """The web UI is the one caller that cannot arbitrate itself.
+
+    ComfyUI starts executing the moment Queue Prompt is pressed, so the edge must enter through
+    the admission gate that takes GPU residency BEFORE the submission lands. A direct
+    `comfyui:8188` upstream here re-opens the exact path that ran a render beside the resident
+    llama.cpp at ~98% VRAM until the host bugchecked (0x113, 2026-08-08).
+
+    The gate service name is derived from the declaration in services/comfyui/plugin.yaml, so
+    assert against the renderer rather than a copied string.
+    """
+    from ordo.gpu import gate_service_name
+
+    assert f"import sso_service {gate_service_name('comfyui')}:8188" in caddyfile_text
+    assert "import sso_service comfyui:8188" not in caddyfile_text, (
+        "the edge routes straight to ComfyUI, bypassing GPU admission")

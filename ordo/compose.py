@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from . import gpu
+
 if TYPE_CHECKING:
     from .plugins import Plugin, PluginService
 
@@ -37,6 +39,11 @@ SUBSTRATE_BUILD_CONTEXTS: dict[str, str] = {
     "mcp-gateway": "services/mcp-gateway",
     "ops-controller": "services/ops-controller",
     "llamacpp-patched": "services/llamacpp-patched",
+    # The generic GPU admission gate. Rendered as a companion service for any manifest service
+    # declaring `gpu_arbitration.enforcement: gate` (see _gpu_gate below) — derived from the
+    # declaration rather than declared per-plugin, so a second gated service needs no new image
+    # and no new build path.
+    "gpu-gate": "services/gpu-gate",
 }
 
 # --metrics turns on llama-server's native Prometheus endpoint at /metrics:8080 (token rates,
@@ -251,7 +258,11 @@ def _mcp_gateway(project: str, net: str, env_file: str) -> dict[str, Any]:
         "MCP_CONFIG_FILE": "/mcp-config/servers.txt",
         "MCP_GATEWAY_VERBOSE": "1",
         "OPS_CONTROLLER_URL": "http://ops-controller:9000",
-        "COMFYUI_URL": "http://comfyui:8188",
+        # ComfyUI's base URL for the spawned MCP servers. Render points this at the admission
+        # gate when comfyui declares `gpu_arbitration.enforcement: gate`, so agent-submitted
+        # prompts take residency like every other GPU consumer; the default is the direct
+        # service for a build where comfyui isn't gated. See render.GATED_SERVICE_URL_ENV.
+        "COMFYUI_URL": "${COMFYUI_URL:-http://comfyui:8188}",
         "N8N_API_URL": "http://n8n:5678",
         "CODE_ROOT": "${CODE_ROOT:-/c/dev}",
         # Bind-mount allowlist for the SPAWNED sibling MCP servers. The gateway's hardened bind logic
@@ -360,6 +371,58 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: st
     return s
 
 
+def _gpu_gate(ps: PluginService, plugin: Plugin, claim: Any, *, net: str, env_file: str,
+              project: str) -> tuple[str, dict[str, Any]]:
+    """Render the admission gate that fronts a `gpu_arbitration.enforcement: gate` service.
+
+    Derived entirely from the declaration — one generic image, no per-service code. The gate
+    listens on the upstream's port under the name `<service>-gate`, so pointing a consumer at it
+    is a hostname change and nothing else. It reserves NO GPU: it is an HTTP proxy that acquires
+    residency from ops-controller before letting a submission through, and it is a CLIENT of the
+    arbiter — it never starts or stops another container.
+    """
+    g = ps.gpu_arbitration.gate
+    name = gpu.gate_service_name(ps.name)
+    s: dict[str, Any] = {
+        "image": f"{project}/gpu-gate:latest",
+        "restart": "unless-stopped",
+        "networks": [net],
+        # secrets.env carries OPS_CONTROLLER_TOKEN; .env carries nothing the gate needs, but the
+        # layering matches every other service (and keeps ${...} refs resolvable).
+        "env_file": _env_files(env_file, True),
+        "depends_on": [ps.name],
+        "environment": {
+            "GATE_UPSTREAM": f"http://{ps.name}:{g.upstream_port}",
+            "GATE_LISTEN_PORT": str(g.listen_port),
+            "GATE_SUBMIT_PATHS": ",".join(g.submit_paths),
+            "GATE_SUBMIT_METHODS": ",".join(g.submit_methods),
+            "GATE_QUEUE_PATH": g.queue_path,
+            "GATE_QUEUE_STYLE": g.queue_style,
+            "GATE_DRAIN_SECONDS": str(g.drain_seconds),
+            "OPS_CONTROLLER_URL": "http://ops-controller:9000",
+            # The lease contract, shared verbatim with assets/lease-exec.py — one env vocabulary
+            # for every client of the arbiter, so there is no second way to ask for the GPU.
+            "ORDO_LEASE_VRAM_GB": str(claim.vram_gb),
+            "ORDO_LEASE_KIND": claim.kind,
+            "ORDO_LEASE_JOB_ID": f"gate-{ps.name}",
+            "ORDO_LEASE_EST_SECONDS": str(claim.est_seconds),
+            "ORDO_LEASE_ACQUIRE_TIMEOUT_S": str(g.acquire_timeout_seconds),
+        },
+        "healthcheck": {
+            "test": ["CMD", "python", "-c",
+                     "import urllib.request,sys;"
+                     f"sys.exit(0 if urllib.request.urlopen('http://localhost:{g.listen_port}"
+                     "/_gpu_gate/health', timeout=5).status == 200 else 1)"],
+            "interval": "30s", "timeout": "10s", "retries": 3, "start_period": "20s",
+        },
+    }
+    if plugin.compose_profile:
+        # The gate rides its upstream's profile: a dormant service must not get a live gate, and
+        # an enabled service must never come up without one.
+        s["profiles"] = [plugin.compose_profile]
+    return name, s
+
+
 def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "hermes",
                    project: str = "ordo", env_file: str = ".env",
                    agent_image: str | None = None,
@@ -375,7 +438,8 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
                    llamacpp_image: str | None = None,
                    plugin_services: list[tuple[Plugin, PluginService]] | None = None,
                    primary_gpu_uuid: str | None = None,
-                   secondary_gpu_uuid: str | None = None) -> dict[str, Any]:
+                   secondary_gpu_uuid: str | None = None,
+                   gpu_claims: dict[str, Any] | None = None) -> dict[str, Any]:
     net = f"{project}-net"
     # the agent is swappable (Hermes is the default); a registry manifest may pin any image,
     # else fall back to the <project>/agent-<id>:latest convention.
@@ -456,11 +520,20 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
     # optional plugin services, built from the resolved manifests (no hardcoded if-blocks).
     # render() only passes services whose plugin is enabled, so profile-gating already happened;
     # the per-service `profiles:` keeps them dormant until `--profile <p>` is used too.
+    claims = gpu_claims or {}
     for plugin, ps in (plugin_services or []):
         svcs[ps.name] = _plugin_service(ps, plugin, net=net, env_file=env_file,
                                         has_gpu=has_gpu, primary_uuid=primary_gpu_uuid,
                                         secondary_uuid=secondary_gpu_uuid,
                                         project=project)
+        # A service whose GPU use is gate-enforced gets its gate rendered WITH it, from the same
+        # declaration. Not opt-in and not a separate manifest entry: the two cannot disagree, and
+        # an enabled gated service can never come up without the thing that arbitrates it.
+        arb = ps.gpu_arbitration
+        if arb is not None and arb.enforcement == "gate" and ps.name in claims:
+            gate_name, gate_svc = _gpu_gate(ps, plugin, claims[ps.name], net=net,
+                                            env_file=env_file, project=project)
+            svcs[gate_name] = gate_svc
 
     out: dict[str, Any] = {"name": project, "services": svcs, "networks": {net: {"name": net}}}
     # Declare any named volumes the plugin services reference (a `src:dst` where src is a bare

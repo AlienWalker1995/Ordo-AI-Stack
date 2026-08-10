@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from . import compose
+from . import compose, gpu
 from .agents import AgentRegistry
 from .catalog import DEFAULT_VRAM_RESERVE_GB, Catalog, Model
 from .config import Source
@@ -27,6 +27,13 @@ from .plugins import PluginRegistry
 DEFAULT_PLUGINS_DIR = Path(__file__).resolve().parent.parent / "services"
 DEFAULT_AGENTS_DIR = Path(__file__).resolve().parent.parent / "services"
 DEFAULT_DASHBOARDS_DIR = Path(__file__).resolve().parent.parent / "services"
+
+# Gate-enforced service -> the .env key its in-stack consumers already use for its base URL.
+# When the service is gated, render points that key at the gate so mcp-gateway, comfyui-mcp, the
+# dashboard and ops-api all submit through arbitration instead of around it. Guarded by
+# tests/substrate/test_gpu_arbitration.py (every gated service must appear here, or its consumers
+# would silently keep the direct route).
+GATED_SERVICE_URL_ENV: dict[str, str] = {"comfyui": "COMFYUI_URL"}
 
 # Secret env KEYS the CORE services need at runtime (values operator-managed in secrets.env, never
 # rendered). model-gateway/mcp-gateway/ops-controller/dashboard/agent read these; plugins add more
@@ -116,6 +123,16 @@ class RenderedConfig:
         kv_gb = (self.ctx_size * kv_kb) / (1024.0 * 1024.0)  # ctx tokens * KB/token -> GB
         return round(weights + kv_gb, 2)
 
+    def gpu_inventory(self) -> list[gpu.GpuClaim]:
+        """Every DECLARED claim on a GPU: core services + the enabled plugins' services.
+
+        The single source the arbiter derives contention from. `ordo serve` registers the
+        preemptible primary-device residents from here instead of a `--resident-service`
+        default, and compose renders an admission gate for each `enforcement: gate` service.
+        """
+        return gpu.inventory(self.hardware, self.plugin_services,
+                             resident_vram_gb=self.resident_vram_gb())
+
     def manifest(self) -> dict[str, Any]:
         return {
             "hardware": self.hardware.summary(),
@@ -123,6 +140,10 @@ class RenderedConfig:
             "model": {"id": self.model.id, "file": self.model.file, "vram_gb": self.model.vram_gb,
                       "resident_vram_gb": self.resident_vram_gb()},
             "ctx_size": self.ctx_size,
+            # The declared GPU-contention map — what competes for which card and how it is
+            # arbitrated. Surfaced in the manifest (and via ops-controller /status) so the
+            # answer to "who can touch the GPU" is inspectable, not folklore.
+            "gpu_arbitration": [c.as_dict() for c in self.gpu_inventory()],
             "plugins_enabled": self.plugins_enabled,
             "compose_profiles": self.compose_profiles,
             "mcp_servers": [s["id"] for s in self.mcp_servers],
@@ -155,7 +176,8 @@ class RenderedConfig:
             llamacpp_image=self.env.get("LLAMACPP_IMAGE") or None,
             plugin_services=self.plugin_services,
             primary_gpu_uuid=(pri.uuid if pri else None),
-            secondary_gpu_uuid=(sec.uuid if sec else None))
+            secondary_gpu_uuid=(sec.uuid if sec else None),
+            gpu_claims={c.service: c for c in self.gpu_inventory()})
 
     def write(self, out_dir: str | Path) -> None:
         out = Path(out_dir)
@@ -367,6 +389,19 @@ def render(source: Source, catalog: Catalog,
         str(p.mcp.get("server_id") or p.id): p.id
         for p in plugins.plugins if p.kind == "mcp"
     }
+
+    # Internal base URLs for gate-enforced services. A gate is a drop-in on the upstream's port,
+    # so redirecting every in-stack consumer through it is a hostname change — but it must be ONE
+    # change, in one place, or half the callers keep bypassing arbitration. The derived value
+    # lands in .env and every consumer manifest reads `${<VAR>:-http://<service>:<port>}`, so the
+    # fallback is the direct URL if the service ever stops being gated. The var NAME is a fact
+    # about the existing consumers (they already read COMFYUI_URL), which is why it is a small
+    # explicit table rather than something derived.
+    for _p, _ps in plugin_services:
+        arb = _ps.gpu_arbitration
+        var = GATED_SERVICE_URL_ENV.get(_ps.name)
+        if arb is not None and arb.enforcement == "gate" and var:
+            env[var] = f"http://{gpu.gate_service_name(_ps.name)}:{arb.gate.listen_port}"
 
     # Host/site config (DATA_PATH/BASE_PATH/CODE_ROOT, edge hostnames, COMFYUI_IMAGE, …) flows
     # verbatim into .env so plugin `${VAR}` refs resolve deterministically. Derived keys WIN over

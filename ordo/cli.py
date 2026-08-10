@@ -14,7 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import doctor, fetch, native, parity, preflight, wizard
+from . import doctor, fetch, gpu, native, parity, preflight, wizard
 from .broker import Broker, DockerBackend
 from .catalog import Catalog
 from .config import Source
@@ -322,18 +322,31 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
     cp = ControlPlane(Path(args.source), cat, reg, args.out, scheduler=sched, broker=broker,
                       history=history)
 
-    # Resident registration (the missing wiring): the render tells us the LLM's true GPU footprint
-    # (weights + KV at the rendered ctx). Register it as an idle-cached resident so a media lease can
-    # actually EVICT it — without this the scheduler thinks the whole card is free and never frees
-    # the LLM's VRAM (that was the live defect: /status showed free == total). Read from the same
-    # render the stack runs, so it can't drift from what `.env` loads.
+    # Resident registration, DERIVED from the declared GPU inventory (ordo/gpu.py) rather than
+    # from a `--resident-service llamacpp` default. Every service that DECLARES it holds VRAM on
+    # the primary device and may be reclaimed is registered as idle-cached, so a burst request
+    # can actually evict it; an unregistered resident's VRAM looks free and the scheduler admits
+    # a job into space that is already taken (the live defect: /status showed free == total).
+    # Secondary-device residents (the 1070's voice models) are excluded on purpose, and a
+    # non-preemptible resident's VRAM is removed from the budget instead of being offered.
+    # Read from the same render the stack runs, so it can't drift from what `.env` loads.
     if hw.has_gpu:
         rc = render(src, cat, reg)
-        resident_gb = rc.resident_vram_gb()
-        sched.cache_idle(args.resident_service, resident_gb)
-        print(f"[scheduler] registered resident '{args.resident_service}' "
-              f"~{resident_gb:.1f}GB (model={rc.model.id}, ctx={rc.ctx_size}) as idle-cached",
-              flush=True)
+        claims = rc.gpu_inventory()
+        pinned = gpu.pinned_primary_vram_gb(claims)
+        if pinned:
+            sched.total_vram_gb = round(sched.total_vram_gb - pinned, 2)
+            print(f"[scheduler] {pinned:.1f}GB of the primary card is held by non-preemptible "
+                  f"residents — removed from the admission budget", flush=True)
+        for service, vram in gpu.primary_residents(claims).items():
+            sched.cache_idle(service, vram)
+            print(f"[scheduler] resident '{service}' ~{vram:.1f}GB registered as reclaimable",
+                  flush=True)
+        for c in claims:
+            degraded = f" -> {c.degraded_service}" if c.degraded_service else ""
+            print(f"[scheduler] gpu claim: {c.service:<16} mode={c.mode:<8} "
+                  f"enforcement={c.enforcement:<7} device={c.device:<9} "
+                  f"vram={c.vram_gb:>6.1f}GB yield={c.yield_strategy}{degraded}", flush=True)
 
     # Lease clock + self-heal sweep: advance the scheduler's clock by the poll interval and force-
     # complete any lease whose TTL has elapsed (a crashed client can never strand the resident down).
@@ -426,8 +439,6 @@ def main(argv: list[str] | None = None) -> int:
     pv.add_argument("--port", type=int, default=9000)
     pv.add_argument("--out", default="out")
     pv.add_argument("--project", default="ordo", help="container project prefix the broker may touch")
-    pv.add_argument("--resident-service", default="llamacpp",
-                    help="compose service of the resident LLM the scheduler may evict/restore for a lease")
     pv.add_argument("--lease-poll-seconds", type=float, default=10.0,
                     help="how often the scheduler advances its lease clock + sweeps expired leases")
     pv.set_defaults(func=cmd_serve)
