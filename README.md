@@ -6,12 +6,16 @@
  \___/|_|  \__,_|\___/
 
 ──────────────────────────────────────────────────
-Local-first AI stack: LLMs, chat UI, image/video (ComfyUI), automation (n8n) — one declarative source, one dashboard.
+Local-first AI homelab: stand up services from a one-line manifest, then let them intelligently share one GPU — one declarative source, one scheduler, one dashboard.
 ```
 
-**Ordo** is a local-first, single-operator AI stack. It runs llama.cpp-backed models behind an **OpenAI-compatible** LiteLLM gateway, **Open WebUI** for chat, **ComfyUI** for image/video diffusion, **n8n** for automation, and an **MCP gateway** for shared tools — all fronted by a unified **dashboard** and reached through a single **Caddy + oauth2-proxy + Tailscale + Google SSO** front door.
+**Ordo** is a local-first, single-operator AI homelab built around two ideas:
 
-Every choice about your stack is made in one place — an **interactive terminal wizard** — and captured in one declarative source (`ordo.yaml`) that is rendered into the running config. Derived files are regenerated, never hand-edited, so configuration drift is structurally impossible.
+**1 · Services are cheap to add.** Every service, MCP tool, and agent is a declarative **manifest**, not hand-written plumbing. Drop a `plugin.yaml` (or `agent.yaml` / `catalog.json`) in, and `ordo render` composes it into the running stack — network wiring, front-door route, dashboard card, health check, and dependencies included. Adding a capability is an edit to one source file, not a compose-surgery session.
+
+**2 · Services intelligently share one GPU.** A homelab has one expensive card and many things that want it — a resident chat model, image/video diffusion, 3D, voice. Ordo runs a real **scheduler** (`ordo serve`) that arbitrates GPU *residency*: the chat model stays resident and co-runs when a job fits, or is cleanly evicted and **restored** when a big render needs the whole card. Every GPU service *declares* how it competes (`gpu_arbitration:` — resident, burst, or exempt), and for work that can't ask politely — a render hand-queued in ComfyUI's own web UI — an admission **gate** forces the request through the scheduler before it can touch the card. Two tenants never silently saturate the GPU (the failure that hard-crashed the box before the gate existed).
+
+Everything else follows from those two. The stack runs llama.cpp models behind an **OpenAI-compatible** LiteLLM gateway, **Open WebUI** for chat, **ComfyUI** for image/video diffusion, **n8n** for automation, and an **MCP gateway** for shared tools — all fronted by one **dashboard** and reached through a single **Caddy + oauth2-proxy + Tailscale + Google SSO** front door. Every choice is made once — in an **interactive terminal wizard** — and captured in one declarative source (`ordo.yaml`) that renders into the running config. Derived files are regenerated, never hand-edited, so configuration drift is structurally impossible.
 
 ## Install
 
@@ -64,10 +68,10 @@ Re-run `ordo init` any time to reconfigure. **Prefer to drive the render engine 
 Ordo is driven by a render engine, not by hand-edited compose files:
 
 - **One source of truth** — `ordo.yaml` declares hardware, model, plugins, and overrides.
-- **`ordo render`** turns that source (+ detected hardware + model catalog + plugin manifests) into the complete runtime config under `out/` (gitignored): `.env`, `docker-compose.yml`, agent context, `mcp-registry.yaml`, `manifest.json`, `secrets.env.example`.
+- **`ordo render`** turns that source (+ detected hardware + model catalog + plugin/agent/service manifests) into the complete runtime config under `out/` (gitignored): `.env`, `docker-compose.yml`, agent context, `mcp-registry.yaml`, `manifest.json`, `services-catalog.json`, `secrets.env.example`.
 - **Services run from the rendered output.** To change anything, edit the source and re-render — edits to derived files never survive, so the LLM context size, model choice, and agent context can never fall out of sync (the drift class that motivated the design).
-- **GPU arbitration is a scheduler** (`ordo serve`, the `ops-controller` service): FIFO admission, co-run-when-it-fits, LRU idle-evict — a deterministic decision engine, not a reactive watchdog.
-- **Plugins and agents are data manifests.** A service, MCP server, or agent is a declarative manifest the renderer composes in when its hardware needs are met; **Hermes is the default agent**. See [`docs/agents.md`](docs/agents.md).
+- **Core #1 — a service is a manifest.** A service, MCP server, or agent is a declarative manifest the renderer composes in when its hardware needs are met — it brings its own compose block, front-door route, dashboard card (`catalog.json`), health check, and GPU declaration. Adding one is a file, not a code change; **Hermes is the default agent**. See [`docs/agents.md`](docs/agents.md).
+- **Core #2 — compute-sharing is a scheduler with teeth** (`ordo serve`, the `ops-controller` service): FIFO admission, co-run-when-it-fits, **evict-and-restore** the resident model for a big job, LRU idle-evict — a deterministic decision engine, not a reactive watchdog. Each GPU service *declares* its arbitration (`gpu_arbitration:` — mode `resident`/`burst`/`exempt` × enforcement `broker`/`client`/`gate`/`none`). Queue-driven services that can't self-arbitrate (e.g. ComfyUI's web UI) sit behind an admission **gate** that acquires a lease before forwarding a submission, so nothing bypasses the scheduler and co-saturates the card.
 
 Full engine reference, the plugin/agent registries, and the render-discipline runbook are in [`docs/operator-guide.md`](docs/operator-guide.md).
 

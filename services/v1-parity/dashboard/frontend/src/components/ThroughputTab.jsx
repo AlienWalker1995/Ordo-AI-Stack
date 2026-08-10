@@ -14,14 +14,26 @@ import { useToast } from './Toast.jsx'
 const EMBED_RE = /embed|bge|mxbai|arctic-embed|granite-embedding|paraphrase-multilingual/
 const isEmbeddingModel = (name) => EMBED_RE.test((name || '').toLowerCase())
 
-// Legacy tpsBarColor thresholds (kept as hex so the color ramp matches the old UI exactly).
+// Callers that reach the gateway with the stock OpenAI SDK send its class name as the "service".
+// Render those as an honest "unidentified caller" instead of dressing a raw SDK class up as a
+// curated service identity (the real fix is server-side attribution; this stops the UI lying).
+const RAW_SDK_RE = /^(async)?(openai|azureopenai|anthropic)$/i
+function serviceLabel(name) {
+  const n = (name || '').trim()
+  if (!n) return { text: 'unattributed', dim: true }
+  if (RAW_SDK_RE.test(n)) return { text: 'unidentified caller', dim: true, title: n }
+  return { text: n, dim: false }
+}
+
+// tok/s ramp — mirrors the semantic tokens (success/warning/danger in tailwind.config.js) so it
+// stays inside the app's single palette instead of forking a second neon color set. Inline styles
+// can't reference the Tailwind tokens directly, so the token hexes are duplicated here by intent.
+const TPS_MUTED = '#8a90a8', TPS_SUCCESS = '#2bb673', TPS_WARNING = '#e0a52e', TPS_DANGER = '#e5495f'
 function tpsColor(tps) {
-  if (!tps) return '#8a90a8'
-  if (tps >= 30) return '#00e676'
-  if (tps >= 15) return '#b2ff59'
-  if (tps >= 8) return '#ffd740'
-  if (tps >= 3) return '#ff9100'
-  return '#ff4444'
+  if (!tps) return TPS_MUTED
+  if (tps >= 15) return TPS_SUCCESS
+  if (tps >= 6) return TPS_WARNING
+  return TPS_DANGER
 }
 const fmt = (v) => (v == null || v === 0 || Number.isNaN(v)) ? '—' : (Math.round(v * 10) / 10).toString()
 const fmtInt = (v) => (v == null || v === 0 || Number.isNaN(v)) ? '—' : Math.round(v).toString()
@@ -67,11 +79,36 @@ export default function ThroughputTab() {
   const summary = data?.summary
   const llms = (data?.llm?.models || []).filter((m) => !isEmbeddingModel(m.name))
 
-  // Busiest / most-sampled model wins the hero (matches legacy entries.sort by sample_count).
   const models = stats?.ok && stats.models ? stats.models : {}
   const entries = Object.entries(models)
-  entries.sort((a, b) => (b[1].sample_count || 0) - (a[1].sample_count || 0))
-  const hero = entries[0]
+
+  // Service-usage rows carry REAL per-service timestamps (unlike /stats, which has no age
+  // eviction). Compute them first so the hero can be picked by recency, not raw sample count.
+  const byModel = data?.usage?.ok ? (data.usage.by_model || {}) : {}
+  const usageRows = []
+  Object.entries(byModel).forEach(([model, info]) => {
+    (info.services || []).forEach((svc) => usageRows.push({ model, svc }))
+  })
+  usageRows.sort((a, b) => (b.svc.last_ts || 0) - (a.svc.last_ts || 0))
+  const maxTps = Math.max(1, ...usageRows.map((r) => r.svc.last_tps || 0))
+
+  // Hero = the model that served most RECENTLY (real timestamps), NOT the most-sampled one:
+  // /stats never evicts, so a retired model keeps the top sample_count forever and would be
+  // mislabeled "Active". Fall back to sample_count only when there's no timestamped usage.
+  const recentTsByModel = {}
+  for (const { model, svc } of usageRows) {
+    if (svc.last_ts) recentTsByModel[model] = Math.max(recentTsByModel[model] || 0, svc.last_ts)
+  }
+  const mostRecent = Object.entries(recentTsByModel).sort((a, b) => b[1] - a[1])[0]
+  let hero = null
+  if (mostRecent && models[mostRecent[0]]) {
+    hero = [mostRecent[0], models[mostRecent[0]], mostRecent[1]]
+  } else {
+    const s = [...entries].sort((a, b) => (b[1].sample_count || 0) - (a[1].sample_count || 0))[0]
+    hero = s ? [s[0], s[1], 0] : null
+  }
+  const heroTs = hero ? hero[2] : 0
+
   const ctx = summary?.llamacpp_ctx_size || 0
   const ctxLabel = ctx ? (ctx >= 1000 ? `${Math.round(ctx / 1000)}K ctx` : `${ctx} ctx`) : 'no ctx'
 
@@ -82,8 +119,9 @@ export default function ThroughputTab() {
   const shownBench = result || lastBench
 
   const runBenchmark = useCallback(async () => {
-    // No model selector in the single-model UI — first non-embedding LLM, else hero, else default.
-    const model = llms[0]?.name || (hero && hero[0]) || 'local-chat'
+    // First non-embedding LLM, else the always-valid `local-chat` alias — never the hero, which
+    // can be a stale/retired model (see the recency note above); benchmarking the wrong model silently.
+    const model = llms[0]?.name || 'local-chat'
     if (!confirm(`Run a throughput benchmark on "${model}"?\n\nThis sends a short generation through the Model Gateway and reports tok/s.`)) return
     setRunning(true)
     try {
@@ -96,16 +134,7 @@ export default function ThroughputTab() {
     } finally {
       setRunning(false)
     }
-  }, [llms, hero, toast, refresh])
-
-  // ---- Service usage rows ----
-  const byModel = data?.usage?.ok ? (data.usage.by_model || {}) : {}
-  const usageRows = []
-  Object.entries(byModel).forEach(([model, info]) => {
-    (info.services || []).forEach((svc) => usageRows.push({ model, svc }))
-  })
-  usageRows.sort((a, b) => (b.svc.last_ts || 0) - (a.svc.last_ts || 0))
-  const maxTps = Math.max(1, ...usageRows.map((r) => r.svc.last_tps || 0))
+  }, [llms, toast, refresh])
 
   return (
     <section className="mb-5 rounded-lg border border-border bg-card p-6 shadow-card">
@@ -143,7 +172,7 @@ export default function ThroughputTab() {
               <span>{hero ? `${hero[1].sample_count || 0} samples` : '0 samples'}</span>
               <span>·</span>
               <span>{ctxLabel}</span>
-              {hero && <><span>·</span><span>{hero[1].sample_count ? 'within last 24h' : 'no traffic yet'}</span></>}
+              {hero && <><span>·</span><span>{heroTs ? `active ${fmtAgo(heroTs)}` : 'no recent traffic'}</span></>}
             </div>
 
             <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
@@ -162,7 +191,7 @@ export default function ThroughputTab() {
               <div>
                 <span className="text-heading text-fg">Benchmark</span>
                 <p className="mt-1 text-[0.8rem] text-fg-muted">
-                  Target: <code className="text-accent-soft">{llms[0]?.name || (hero && hero[0]) || 'local-chat'}</code>
+                  Target: <code className="text-accent-soft">{llms[0]?.name || 'local-chat'}</code>
                 </p>
               </div>
               <button type="button" className={BTN} disabled={running} onClick={runBenchmark}>
@@ -201,7 +230,9 @@ export default function ThroughputTab() {
                   <div key={model + (svc.name || '') + i} className="flex items-center gap-3 rounded-sm border border-border-subtle bg-bg-elevated px-4 py-2.5">
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-mono text-[0.78rem] text-fg" title={model}>{model}</div>
-                      <div className="truncate text-[0.7rem] text-muted">{svc.name || ''}</div>
+                      {(() => { const l = serviceLabel(svc.name); return (
+                        <div className={`truncate text-[0.7rem] ${l.dim ? 'italic text-muted/70' : 'text-muted'}`} title={l.title || undefined}>{l.text}</div>
+                      ) })()}
                     </div>
                     <div className="hidden h-1.5 w-32 shrink-0 overflow-hidden rounded-full bg-bg sm:block">
                       <div className="h-full rounded-full" style={{ width: `${Math.round((svc.last_tps || 0) / maxTps * 100)}%`, background: tpsColor(svc.last_tps) }} />

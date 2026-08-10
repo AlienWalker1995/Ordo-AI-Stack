@@ -32,22 +32,25 @@ export function ToastProvider({ children }) {
         aria-live="polite"
       >
         {toasts.map((t) => (
-          <div
+          // A real button so keyboard users can dismiss it (Enter/Space come free); aria-live is
+          // declared once on the container above, not here, to avoid double announcement.
+          <button
             key={t.id}
+            type="button"
+            title="Dismiss"
+            aria-label={`Dismiss notification: ${t.msg}`}
             className={
-              'min-w-[200px] max-w-[340px] cursor-pointer animate-toast-in rounded-sm border border-l-[3px] border-border bg-surface px-5 py-3 text-[0.8125rem] shadow-card-lg ' +
+              'min-w-[200px] max-w-[340px] cursor-pointer animate-toast-in rounded-sm border border-l-[3px] border-border bg-surface px-5 py-3 text-left text-[0.8125rem] shadow-card-lg ' +
               (t.type === 'success'
                 ? 'border-l-success bg-success/[0.08]'
                 : t.type === 'error'
                   ? 'border-l-danger bg-danger/10'
                   : 'border-l-accent')
             }
-            role="status"
-            aria-live="polite"
             onClick={() => remove(t.id)}
           >
             {t.msg}
-          </div>
+          </button>
         ))}
       </div>
     </ToastContext.Provider>

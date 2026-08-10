@@ -1,9 +1,28 @@
 // App shell: dark-theme header with the hardware stat bar, a tab nav, and one panel
 // per section. All eleven tabs are fully ported from the legacy vanilla-JS shell. Active
 // tab is synced to the URL hash (deep-linkable, matching the legacy hash routing).
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { Component, lazy, Suspense, useEffect, useRef, useState } from 'react'
 import HwStatBar from './components/HwStatBar.jsx'
 import { ToastProvider } from './components/Toast.jsx'
+
+// Suspense only catches a chunk failing to LOAD, not a render-time throw inside a tab. Without a
+// boundary, one panel's exception blanks the entire dashboard. This contains it to the panel and
+// resets when the operator switches tabs (via key={active} on the wrapper below).
+class TabErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { err: null } }
+  static getDerivedStateFromError(err) { return { err } }
+  render() {
+    if (this.state.err) {
+      return (
+        <div className="rounded-md border border-border border-l-[3px] border-l-danger bg-danger/[0.05] px-4 py-6" role="alert">
+          <div className="text-body font-semibold text-danger">This panel hit an error and stopped rendering.</div>
+          <div className="mt-1 text-caption text-muted">Switch tabs and back to retry. {String(this.state.err?.message || this.state.err)}</div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 // Tab panels are code-split: each becomes its own lazily-loaded chunk so the initial
 // bundle only ships the shell + the first visible tab. HwStatBar and ToastProvider stay
@@ -141,9 +160,11 @@ export default function App() {
           aria-labelledby={`tab-${active}`}
           tabIndex={0}
         >
-          <Suspense fallback={<TabFallback />}>
-            <ActivePanel />
-          </Suspense>
+          <TabErrorBoundary key={active}>
+            <Suspense fallback={<TabFallback />}>
+              <ActivePanel />
+            </Suspense>
+          </TabErrorBoundary>
         </main>
       </div>
     </ToastProvider>

@@ -177,6 +177,11 @@ function PacksPanel() {
   const [selected, setSelected] = useState(null) // Set once user interacts; null = use defaults
   const [pull, setPull] = useState(null) // {output, running} | null
   const pollingRef = useRef(false)
+  // This tab is unmounted on tab-switch (lazy single-active-panel), so a poll chain must stop on
+  // unmount — otherwise the old chain keeps hitting the API and firing the completion toast while
+  // the remounted instance starts a SECOND chain (duplicate toasts + doubled request rate).
+  const mountedRef = useRef(true)
+  useEffect(() => () => { mountedRef.current = false }, [])
 
   const isChecked = (name) => {
     if (selected) return selected.has(name)
@@ -199,7 +204,9 @@ function PacksPanel() {
     pollingRef.current = true
     let errs = 0
     const tick = () => {
+      if (!mountedRef.current) { pollingRef.current = false; return }
       api.get('/api/comfyui/pull/status').then((s) => {
+        if (!mountedRef.current) { pollingRef.current = false; return }
         errs = 0
         setPull({ output: s.output || 'Preparing…', running: !!s.running })
         if (s.running) { setTimeout(tick, 1500); return }
@@ -209,6 +216,7 @@ function PacksPanel() {
         setTimeout(() => setPull(null), 5000)
         refresh()
       }).catch(() => {
+        if (!mountedRef.current) { pollingRef.current = false; return }
         if (++errs >= 20) { pollingRef.current = false; toast('Lost connection to pull status', 'error'); setPull(null); return }
         setTimeout(tick, 3000)
       })
@@ -246,6 +254,14 @@ function PacksPanel() {
         <div className="rounded-md border border-border-subtle bg-bg-elevated px-4 py-4 text-[0.8125rem] text-muted">Failed to load packs.</div>
       ) : !data ? (
         <div className="space-y-2">{[0, 1].map((i) => <div key={i} className="skeleton h-12 w-full" />)}</div>
+      ) : !data.ok ? (
+        // The endpoint answered but the pack catalog isn't reachable (e.g. its config path isn't
+        // mounted on this deployment). Say so — don't render a calm "no packs" empty state that
+        // reads as "feature works, nothing to download" and masks a real misconfiguration.
+        <div className="rounded-md border border-border-subtle border-l-[3px] border-l-warning bg-warning/[0.04] px-4 py-4 text-[0.8125rem]">
+          <span className="font-medium">Model packs aren't available on this deployment.</span>
+          <span className="ml-1 text-muted">{data.error ? `(${data.error})` : 'The pack catalog isn’t configured.'}</span>
+        </div>
       ) : packNames.length === 0 ? (
         <div className="rounded-md border border-border-subtle bg-bg-elevated px-4 py-6 text-center text-[0.8125rem] text-muted">No packs available.</div>
       ) : (

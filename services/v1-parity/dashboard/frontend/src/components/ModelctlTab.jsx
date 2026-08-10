@@ -220,7 +220,9 @@ function ModelConfigCard() {
 function kindBadgeClass(kind) {
   const k = (kind || '').toLowerCase()
   if (k.includes('llm') || k.includes('gguf') || k.includes('chat')) return 'border-accent/30 bg-accent/[0.1] text-accent'
-  if (k.includes('diffusion') || k.includes('stable') || k.includes('comfy')) return 'border-fuchsia-400/30 bg-fuchsia-400/[0.1] text-fuchsia-300'
+  // Diffusion stays neutral rather than forking a fuchsia hue — the token system keeps cyan as
+  // the ONLY chromatic accent; the badge's label text carries the "diffusion" distinction.
+  if (k.includes('diffusion') || k.includes('stable') || k.includes('comfy')) return 'border-border bg-surface text-fg-muted'
   if (k.includes('embed')) return 'border-success/30 bg-success/[0.1] text-success'
   if (k.includes('tts')) return 'border-warning/30 bg-warning/[0.1] text-warning'
   if (k.includes('stt') || k.includes('whisper')) return 'border-warning/30 bg-warning/[0.1] text-warning'

@@ -159,6 +159,8 @@ export default function McpTab() {
                       title={s}
                     >
                       <span className={`status-dot ${serverDotClass(info)}`.trim()} aria-hidden="true" title={serverTitle(info)} />
+                      {/* Health as accessible text, not just a hover tooltip on an aria-hidden dot. */}
+                      <span className="sr-only">health: {serverTitle(info)}. </span>
                       <span className="max-w-[16rem] truncate">{s}</span>
                       <button
                         type="button"
