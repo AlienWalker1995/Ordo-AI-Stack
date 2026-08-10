@@ -59,6 +59,20 @@ services:
   - name: caddy
     image: caddy:2.11.4-alpine
     wants_secrets: true       # MCP_GATEWAY_TOKEN resolves from secrets.env
+    # --watch: reload the Caddyfile in-process whenever its content changes. The Caddyfile is a
+    # bind-mounted file (line 90), and `docker compose up` CANNOT detect a bind-mount's content
+    # changing — only its own service-definition changing. So a commit that edits the Caddyfile
+    # (e.g. #169, which repointed :8446 at the ComfyUI admission gate) leaves this container running
+    # its STARTUP-time config indefinitely: the render was applied to every service whose compose
+    # block changed, but caddy's block was unchanged, so it kept routing the ComfyUI canvas straight
+    # to comfyui:8188 — bypassing the GPU lease and OOM-crashing renders beside the resident LLM
+    # (2026-08-10). --watch closes that gap at the source: any Caddyfile change auto-applies here,
+    # regardless of how it arrived (git pull / edit / render). Caddy's "dev only" caveat is about
+    # (a) partial writes and (b) admin-API config being clobbered by the file — neither applies: the
+    # file is written atomically (git/editor) and this stack only ever `reload`s from it, never
+    # mutates config via the admin API. On an invalid Caddyfile, --watch logs the error and KEEPS
+    # the last-good running config, so a bad edit degrades to "not applied", never "edge down".
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile", "--watch"]
     # CADDY_BIND failsafe: the ${VAR:?} form only rejects an EMPTY/unset value — it makes
     # `docker compose config` exit non-zero if CADDY_BIND is unset, catching the V1 lesson where
     # an empty bind silently degraded to 0.0.0.0:443 with no operator intent behind it. It does
