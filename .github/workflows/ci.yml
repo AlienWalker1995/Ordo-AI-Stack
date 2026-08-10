@@ -19,7 +19,11 @@ jobs:
       - name: Secret scanning (TruffleHog)
         uses: trufflesecurity/trufflehog@v3.88.26
         with:
-          extra_args: --results=verified,unknown
+          # Lob detector excluded: it false-positives on `test_` + 35-word-char strings (its
+          # verifier returns a bogus "verified" result), and this stack has no Lob integration —
+          # so a long test function name in git history was failing the gate. Every other detector
+          # stays on; digest pins are NOT the FP source and remain. See tests/test_gpu_gate.py:373.
+          extra_args: --results=verified,unknown --exclude-detectors=lob
 
   pytest:
     name: Pytest
