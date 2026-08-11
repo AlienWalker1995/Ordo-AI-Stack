@@ -65,9 +65,48 @@ for db in _users _replicator _global_changes "${LIVESYNC_DATABASE}"; do
         "${COUCHDB_INTERNAL_URL}/${db}" >/dev/null 2>&1 || true
 done
 
+# Storage-mount readiness gate (data-loss guard). The storage peer materializes CouchDB into the
+# notes/ folder, which on Docker Desktop is a 9p bind that populates LAZILY: for the first seconds
+# after container start the folder enumerates incrementally, so any startup scan that runs against
+# it sees a PARTIAL tree and misreads the not-yet-visible files as deletions. Combined with the
+# bridge's from-scratch (in-memory) index, that manufactured a mass-delete storm that ate ~1.5k
+# vault files and re-uploaded the rest. Guard: when CouchDB is populated, do not start the sync
+# daemon until the on-disk file count has STABILIZED (unchanged across 3 consecutive 5s samples),
+# i.e. the 9p mount has finished enumerating. If it never stabilizes, exit rather than scan a
+# partial tree (under restart: unless-stopped this re-checks until the mount is fully ready).
+COUCH_DOCS=$(curl -fsS -u "${COUCHDB_USER}:${COUCHDB_PASSWORD}" \
+    "${COUCHDB_INTERNAL_URL}/${LIVESYNC_DATABASE}" 2>/dev/null \
+    | grep -oE '"doc_count":[0-9]+' | cut -d: -f2)
+if [ "${COUCH_DOCS:-0}" -gt 100 ]; then
+    prev=-1; stable=0; k=0
+    while [ "$stable" -lt 3 ]; do
+        n=$(find /app/data/notes -type f 2>/dev/null | wc -l)
+        if [ "$n" -gt 0 ] && [ "$n" -eq "$prev" ]; then
+            stable=$((stable + 1))
+        else
+            stable=0
+        fi
+        prev="$n"
+        k=$((k + 1))
+        if [ "$k" -gt 60 ]; then
+            echo "livesync-bridge: FATAL - notes/ file count not stabilizing (last=${n}, CouchDB has ${COUCH_DOCS} docs) after ~5m. 9p mount not fully ready; refusing to start to avoid a partial-scan delete storm." >&2
+            exit 1
+        fi
+        echo "livesync-bridge: waiting for notes/ 9p mount to finish populating (count=${n}, stable=${stable}/3)..."
+        sleep 5
+    done
+    echo "livesync-bridge: notes/ mount stabilized at ${prev} files; safe to start sync."
+fi
+
 # Render dat/config.json. The couchdb peer and the storage peer share group "notes", which is how
 # the bridge knows to mirror them. baseDir "" on the couchdb side = the whole LiveSync vault;
 # "data/notes/" on the storage side = /app/data/notes (the bind-mounted vault notes/ folder).
+# scanOfflineChanges is FALSE: the offline-changes reconciliation diffs a fresh in-memory index
+# against the disk and propagates the result as deletions — catastrophic against a lazily-mounted
+# 9p bind (it deleted ~1.5k files on a restart). Live sync does NOT need it: useChokidar (polling,
+# CHOKIDAR_USEPOLLING) carries host/AI edits -> CouchDB in ~3s, and device -> CouchDB -> file is
+# network-driven; only changes made while the bridge was DOWN are missed, and they re-sync on the
+# next touch — a benign staleness, never a deletion.
 # Generated secrets are base64url (JSON-safe: no " or \), so heredoc expansion can't break the JSON.
 mkdir -p /app/dat /app/data/notes
 cat > /app/dat/config.json <<JSON
@@ -89,7 +128,7 @@ cat > /app/dat/config.json <<JSON
       "name": "ordo-notes-storage",
       "group": "notes",
       "baseDir": "data/notes/",
-      "scanOfflineChanges": true,
+      "scanOfflineChanges": false,
       "useChokidar": true
     }
   ]
