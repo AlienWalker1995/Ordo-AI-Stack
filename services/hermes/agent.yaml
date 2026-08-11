@@ -46,6 +46,12 @@ environment:
   HERMES_MAX_TOKENS: ${HERMES_MAX_TOKENS:-65536}
   HERMES_MAX_TURNS: ${HERMES_MAX_TURNS:-90}
   HERMES_GATEWAY_TIMEOUT: ${HERMES_GATEWAY_TIMEOUT:-3600}
+  # Cron idle watchdog (seconds). scheduler.py reads THIS env var (os.getenv HERMES_CRON_TIMEOUT,
+  # else a hardcoded 600). config.yaml's `cron.idle_timeout_seconds` is NOT wired to the cron
+  # watchdog — do not rely on it. Raised to 3000 so long single-slot local-chat turns (reel,
+  # reel-metrics, job-monitor) aren't killed mid-generation. Real fix for the single-slot
+  # bottleneck is llamacpp parallelism / streaming; this stops the false-hang kills meanwhile.
+  HERMES_CRON_TIMEOUT: ${HERMES_CRON_TIMEOUT:-3000}
   HERMES_API_MAX_RETRIES: ${HERMES_API_MAX_RETRIES:-10}
   # 24h — keeps the streaming stale-detector from killing slow local-model turns mid-flight.
   HERMES_STREAM_STALE_TIMEOUT: ${HERMES_STREAM_STALE_TIMEOUT:-86400}
