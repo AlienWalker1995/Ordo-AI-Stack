@@ -1,6 +1,10 @@
 # Design: Hermes owns Docker on its device (guarded)
 
-**Status:** proposed (branch `feat/hermes-owns-docker`)
+**Status:** SUPERSEDED (2026-08-10) — the guarded socket-**proxy** design below was NOT built. The
+shipped implementation mounts the raw `/var/run/docker.sock` directly into `services/hermes/agent.yaml`
+with prompt-based guardrails in SOUL.md (the operator's "prompting, not tech" call), not the
+lease-enforcing proxy proposed here. Retained as the design record of the rejected alternative; do not
+read it as current architecture.
 **Mandate:** operator, 2026-08-09 — "Hermes should have entire control over Docker, its
 device; I want it to execute similar tasks without intervention" AND (prior message) "crashes
 can never happen, this must be a resilient box."

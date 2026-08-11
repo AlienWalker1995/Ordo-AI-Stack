@@ -1,6 +1,6 @@
 # Scripts
 
-> ⚠️ **Mixed lifecycle — read per-row.** Some of these scripts are LIVE (bind-mounted into containers, invoked by Hermes cron, or the documented secrets flow); only the V1 *bring-up* model is retired:  `ensure_dirs` + `detect_hardware.py` (→ `overrides/compute.yml`), the `./compose` / `.\compose.ps1` wrapper, and the model pullers. That V1 top-level tree (root `docker-compose.yml`, `compose`/`compose.ps1`, the root `Makefile`, `overrides/`, `scripts/detect_hardware.py`, the root `.env.example`) was **removed 2026-07-24** after the 2026-07-09 v2 cutover soak — it is no longer present in this repo, so several rows below are orphaned. In production, the stack is defined and operated entirely from the repo root (edit `ordo.yaml`, run `ordo render`, bring up the rendered compose from `out/`); directory/config generation is the render engine, hardware detection is `ordo detect` (`hardware: auto`), model provisioning is **`ordo fetch`** (checksum-mandatory, offline-capable — replaces `pull_gguf_models.py` / the pullers), and GPU scheduling is `ordo serve` (not a reactive guardian). See [`../docs/operator-guide.md`](../docs/operator-guide.md).
+> ⚠️ **Mixed lifecycle — read per-row.** Some of these scripts are LIVE (bind-mounted into containers, invoked by Hermes cron, or the documented secrets flow); only the V1 *bring-up* model is retired:  `ensure_dirs` + `detect_hardware.py` (→ `overrides/compute.yml`), the `./compose` / `.\compose.ps1` wrapper, and the model pullers. That V1 top-level tree (root `docker-compose.yml`, `compose`/`compose.ps1`, the root `Makefile`, `overrides/`, `scripts/detect_hardware.py`, the root `.env.example`) was **removed 2026-07-24** after the 2026-07-09 v2 cutover soak — it is no longer present in this repo — and its last remnant, the `ensure_dirs` scripts + the ComfyUI-Manager seed they bootstrapped, have now been removed too, so every script listed below is live. In production, the stack is defined and operated entirely from the repo root (edit `ordo.yaml`, run `ordo render`, bring up the rendered compose from `out/`); directory/config generation is the render engine, hardware detection is `ordo detect` (`hardware: auto`), model provisioning is **`ordo fetch`** (checksum-mandatory, offline-capable — replaces `pull_gguf_models.py` / the pullers), and GPU scheduling is `ordo serve` (not a reactive guardian). See [`../docs/operator-guide.md`](../docs/operator-guide.md).
 
 Setup, operations, and maintenance scripts for the Ordo AI Stack.
 
@@ -13,12 +13,6 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 | `storage_purge.py` | Weekly storage purge — invoked by Hermes cron (`cd /c/dev/ordo-ai-stack && python3 scripts/storage_purge.py`); tested by `tests/test_storage_purge.py`. |
 | `secrets/decrypt.sh`, `secrets/rotate-internal.sh`, `secrets/audit-git-history.sh` | The documented secrets flow (`docs/runbooks/secrets.md`); decrypt materializes the host files Docker secrets mount from. |
 | `comfyui/pull_comfyui_models.py` + `comfyui/models.json` | Spawned by the live dashboard (`app.py`) for ComfyUI model-pack downloads. |
-
-## Setup
-
-| Script | Purpose |
-|--------|---------|
-| `ensure_dirs.sh` / `.ps1` | Creates all data directories (`data/`, `models/`) for bind mounts, bootstraps configs. Written for the V1 bring-up model; its hardware-detection step called `detect_hardware.py`, which was removed along with the rest of the V1 tree. Hardware detection and config generation now happen at `ordo render` time (`hardware: auto` / `ordo detect`), rendered into `out/`. |
 
 ## Health and Diagnostics
 
@@ -66,11 +60,11 @@ From the repo root:
 **Windows (PowerShell):**
 ```powershell
 $env:BASE_PATH = "F:/ordo-ai-stack"
-.\scripts\ensure_dirs.ps1
+.\scripts\smoke_test.ps1
 ```
 
 **Linux/Mac:**
 ```bash
 export BASE_PATH="$HOME/ordo-ai-stack"
-./scripts/ensure_dirs.sh
+./scripts/smoke_test.sh
 ```
