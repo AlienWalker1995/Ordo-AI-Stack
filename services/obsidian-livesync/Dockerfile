@@ -25,6 +25,10 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=src /src /app
 COPY entrypoint.sh /usr/local/bin/livesync-bridge-entrypoint
+# Resilience patch for the vendored LiveSync core: guard the per-document getByMeta() inside the
+# watch try/catch so one corrupted/oversized doc can't stall the whole changes feed (see the script
+# header). Self-verifying — fails the build if the upstream pattern is gone.
+COPY patch-watch-resilience.ts /usr/local/lib/patch-watch-resilience.ts
 # Own /app + the Deno cache dir as uid 1000 so the runtime process (config write to /app/dat,
 # note writes to /app/data/notes) and the build-time cache all work as the vault-aligned uid.
 RUN chmod +x /usr/local/bin/livesync-bridge-entrypoint \
@@ -32,6 +36,9 @@ RUN chmod +x /usr/local/bin/livesync-bridge-entrypoint \
  && chown -R 1000:1000 /app /deno-dir
 ENV DENO_DIR=/deno-dir
 USER 1000:1000
+# Apply the vendored-core resilience patch before caching, so the compiled/cached module is the
+# patched one. Runs as uid 1000 (owns /app after the chown above); aborts the build on drift.
+RUN deno run --allow-read --allow-write /usr/local/lib/patch-watch-resilience.ts
 # `deno install` may partial-fail (optional deps) — tolerate. `deno cache` is STRICT: a missing
 # module (e.g. an un-cloned submodule) must fail the build here, not at container start.
 RUN deno install || true

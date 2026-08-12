@@ -74,10 +74,15 @@ done
 # daemon until the on-disk file count has STABILIZED (unchanged across 3 consecutive 5s samples),
 # i.e. the 9p mount has finished enumerating. If it never stabilizes, exit rather than scan a
 # partial tree (under restart: unless-stopped this re-checks until the mount is fully ready).
+# Escape hatch for a deliberate fresh-device re-materialization: when an operator has
+# intentionally emptied notes/ to re-download the whole vault from CouchDB, the empty mount is
+# expected, not a not-ready 9p bind. LSB_ALLOW_EMPTY_STORAGE=1 skips the gate for that one run.
 COUCH_DOCS=$(curl -fsS -u "${COUCHDB_USER}:${COUCHDB_PASSWORD}" \
     "${COUCHDB_INTERNAL_URL}/${LIVESYNC_DATABASE}" 2>/dev/null \
     | grep -oE '"doc_count":[0-9]+' | cut -d: -f2)
-if [ "${COUCH_DOCS:-0}" -gt 100 ]; then
+if [ "${LSB_ALLOW_EMPTY_STORAGE:-0}" = "1" ]; then
+    echo "livesync-bridge: LSB_ALLOW_EMPTY_STORAGE=1 - skipping the mount-readiness gate (deliberate re-materialization)."
+elif [ "${COUCH_DOCS:-0}" -gt 100 ]; then
     prev=-1; stable=0; k=0
     while [ "$stable" -lt 3 ]; do
         n=$(find /app/data/notes -type f 2>/dev/null | wc -l)
