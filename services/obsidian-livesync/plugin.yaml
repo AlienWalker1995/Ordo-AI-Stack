@@ -59,12 +59,18 @@ services:
     image: ordo/livesync-bridge:latest
     wants_secrets: true
     env:
-      # Docker Desktop bind mounts don't emit inotify events, so the bridge's file watcher can't see
-      # host/AI writes to notes/ live (same limitation rag-ingestion handles with a poll). Chokidar
-      # polling detects them — validated: an AI/host-written note reaches CouchDB in ~3s. The reverse
-      # direction (device -> CouchDB -> file) is network-driven and always live.
-      CHOKIDAR_USEPOLLING: "1"
-      CHOKIDAR_INTERVAL: "3000"
+      # ONE-WAY materializer. The bridge's job here is CouchDB -> notes/ files (network-driven,
+      # always live) so the AI stack (rag-ingestion + memory-vault MCP) can read the vault. The
+      # REVERSE direction (disk -> CouchDB) needs a file WATCHER, but 9p bind mounts emit no inotify
+      # events, so the only way to catch host/AI disk writes is chokidar POLLING every file every few
+      # seconds — on a multi-thousand-file vault that stats ~100k files/min and pegs a core forever
+      # (~128% CPU idle). The AI-RAG use case never needs disk -> CouchDB (humans edit on devices,
+      # which sync to CouchDB over the network), so polling is OFF: chokidar sits on inotify and gets
+      # no events on 9p → ~0 idle CPU, while CouchDB -> disk keeps working. Set USEPOLLING="1" ONLY
+      # if you edit notes directly on the host filesystem and need those pushed back up to CouchDB
+      # (INTERVAL is then the poll period; 15s balances CPU vs sync latency on a large vault).
+      CHOKIDAR_USEPOLLING: "0"
+      CHOKIDAR_INTERVAL: "15000"
     volumes:
       # The vault's notes/ subfolder <-> the bridge's storage root. Same MEMORY_VAULT_PATH the
       # memory-vault MCP (RW) and rag-ingestion (RO) mount, so notes land in the ONE shared vault
