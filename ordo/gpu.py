@@ -68,9 +68,9 @@ questions. `preemptible` says the arbiter MAY reclaim the card; `yield` says WHA
 CAPABILITY when it does. Not all preemptible services are alike:
 
   - A burst render has no degraded path — reclaiming it means the work stops. ``strategy: stop``.
-  - The resident LLM does: it MIGRATES rather than dies. ``llamacpp-cpu`` runs the same Qwen3.6
-    A3B on CPU at the same 131072 window, and the model-gateway (LiteLLM) already carries
-    ``fallbacks: [{local-chat: [qwen3.6-35b-a3b-cpu]}]`` with a 30s cooldown that routes back to
+  - The resident LLM does: it MIGRATES rather than dies. ``llamacpp-cpu`` runs its own CPU
+    chat model at the same context window, and the model-gateway (LiteLLM) already carries
+    ``fallbacks: [{local-chat: [<cpu pin alias>]}]`` with a 30s cooldown that routes back to
     the GPU model as soon as it is healthy again. So llama.cpp yielding the 5090 is a
     GPU→CPU migration: availability is preserved, only throughput degrades. That is declared as
     ``strategy: failover`` with the degraded target and the component that reroutes named as

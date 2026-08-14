@@ -16,6 +16,16 @@ CPU_CTX_SIZE="${LLAMACPP_CPU_CTX:-131072}"
 GPU_WEIGHTS="${LLAMACPP_MODEL:-model.gguf}"
 CPU_WEIGHTS="${LLAMACPP_CPU_MODEL:-Qwen3.6-35B-A3B-UD-Q4_K_M.gguf}"
 EMBED_WEIGHTS="${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}"
+GPU_IMAGE="${LLAMACPP_IMAGE:-llama.cpp}"
+
+# The pickable pin-alias NAMES derive from the deployed weights (basename, lowercased,
+# .gguf stripped) — a model swap renames them automatically, so the template never
+# hardcodes a model generation. `local-chat`/`local-embed` stay stable by contract.
+GPU_MODEL_NAME="$(basename "${GPU_WEIGHTS}" .gguf | tr '[:upper:]' '[:lower:]')"
+CPU_MODEL_NAME="$(basename "${CPU_WEIGHTS}" .gguf | tr '[:upper:]' '[:lower:]')-cpu"
+
+# Vision support is a fact about the deployment (is an mmproj loaded?), not the template.
+if [ -n "${LLAMACPP_MMPROJ:-}" ]; then GPU_SUPPORTS_VISION=true; else GPU_SUPPORTS_VISION=false; fi
 
 sed -e "s|__MASTER_KEY__|${MASTER_KEY}|g" \
     -e "s|__CTX_SIZE__|${CTX_SIZE}|g" \
@@ -23,7 +33,11 @@ sed -e "s|__MASTER_KEY__|${MASTER_KEY}|g" \
     -e "s|__CPU_CTX_SIZE__|${CPU_CTX_SIZE}|g" \
     -e "s|__GPU_WEIGHTS__|${GPU_WEIGHTS}|g" \
     -e "s|__CPU_WEIGHTS__|${CPU_WEIGHTS}|g" \
-    -e "s|__EMBED_WEIGHTS__|${EMBED_WEIGHTS}|g" /app/config.template.yaml > /tmp/config.yaml
+    -e "s|__EMBED_WEIGHTS__|${EMBED_WEIGHTS}|g" \
+    -e "s|__GPU_IMAGE__|${GPU_IMAGE}|g" \
+    -e "s|__GPU_MODEL_NAME__|${GPU_MODEL_NAME}|g" \
+    -e "s|__CPU_MODEL_NAME__|${CPU_MODEL_NAME}|g" \
+    -e "s|__GPU_SUPPORTS_VISION__|${GPU_SUPPORTS_VISION}|g" /app/config.template.yaml > /tmp/config.yaml
 
 # LiteLLM's proxy callback importer (get_instance_fn in
 # litellm/proxy/types_utils/utils.py) resolves "module.attr" relative to the

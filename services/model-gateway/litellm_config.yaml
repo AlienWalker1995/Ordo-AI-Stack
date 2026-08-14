@@ -5,11 +5,12 @@ model_list:
   #
   # model_info blocks are the gateway's model documentation: everything /model/info and
   # /v1/models consumers see. All deployment-variable values (__CTX_SIZE__, __N_PREDICT__,
-  # __CPU_CTX_SIZE__, __*_WEIGHTS__) are entrypoint-substituted from the SAME .env the
-  # backend llama-server containers read, so this metadata cannot drift from what's running.
-  # The supports_* flags describe the deployed Qwen3.6 family (vision mmproj loaded on the
-  # GPU server, --jinja tool templates, --reasoning-format deepseek) — revisit them if the
-  # active model swaps to a different family.
+  # __CPU_CTX_SIZE__, __*_WEIGHTS__, __GPU_IMAGE__, __*_MODEL_NAME__,
+  # __GPU_SUPPORTS_VISION__) are entrypoint-substituted from the SAME .env the backend
+  # llama-server containers read, so this metadata — including the pickable pin-alias
+  # NAMES and the vision flag — cannot drift from what's running. The remaining static
+  # supports_* flags describe the llama-server invocation itself (--jinja tool templates,
+  # --reasoning-format), not any particular model family.
   - model_name: "local-chat"
     litellm_params:
       model: "openai/local-chat"
@@ -28,21 +29,23 @@ model_list:
       supports_function_calling: true
       supports_tool_choice: true
       supports_response_schema: true
-      supports_vision: true
+      supports_vision: __GPU_SUPPORTS_VISION__
       supports_reasoning: true
       description: >-
         Stable auto-routing alias — the id every Ordo consumer should use. Backed by the
         active GPU chat model on the RTX 5090 (see weights_file for the exact GGUF); fails
-        over to qwen3.6-35b-a3b-cpu when the scheduler leases the GPU to a media render, and
-        recovers automatically once the GPU model is healthy again.
+        over to the CPU deployment (__CPU_MODEL_NAME__) when the scheduler leases the GPU
+        to a media render, and recovers automatically once the GPU model is healthy again.
       weights_file: __GPU_WEIGHTS__
-      served_by: llamacpp (patched qwen36-swa llama.cpp build, RTX 5090)
+      served_by: llamacpp (__GPU_IMAGE__, RTX 5090)
 
   # Explicit, pickable REAL models so callers/UI see WHICH model they're using, not just the
-  # opaque `local-chat`. qwen3.6-27b = the GPU chat model; qwen3.6-35b-a3b-cpu = the always-on
-  # CPU fallback (also local-chat's failover target). The CPU one is only reachable when the
+  # opaque `local-chat`. Their NAMES are derived from the deployed GGUFs by the entrypoint
+  # (never hardcode a model generation here — it goes stale on the next swap):
+  # __GPU_MODEL_NAME__ = the GPU chat model; __CPU_MODEL_NAME__ = the always-on CPU
+  # fallback (also local-chat's failover target). The CPU one is only reachable when the
   # opt-in `llamacpp-cpu` service is running; otherwise it just sits unavailable (harmless).
-  - model_name: "qwen3.6-27b"
+  - model_name: "__GPU_MODEL_NAME__"
     litellm_params:
       model: "openai/local-chat"
       api_base: "http://llamacpp:8080/v1"
@@ -59,16 +62,17 @@ model_list:
       supports_function_calling: true
       supports_tool_choice: true
       supports_response_schema: true
-      supports_vision: true
+      supports_vision: __GPU_SUPPORTS_VISION__
       supports_reasoning: true
       description: >-
         Explicit pin of the GPU chat deployment (same backend as local-chat but with NO CPU
-        failover routing — errors when the GPU model is evicted for a render). Qwen3.6-27B
-        finetune, Q6_K, hybrid attention/SSM, vision via the shared Qwen3.6-27B mmproj.
+        failover routing — errors when the GPU model is evicted for a render). See
+        weights_file for the exact GGUF; supports_vision reflects whether an mmproj is
+        loaded on the GPU server.
       weights_file: __GPU_WEIGHTS__
-      served_by: llamacpp (patched qwen36-swa llama.cpp build, RTX 5090)
+      served_by: llamacpp (__GPU_IMAGE__, RTX 5090)
 
-  - model_name: "qwen3.6-35b-a3b-cpu"
+  - model_name: "__CPU_MODEL_NAME__"
     litellm_params:
       model: "openai/local-chat"
       api_base: "http://llamacpp-cpu:8080/v1"
@@ -88,9 +92,9 @@ model_list:
       supports_vision: false
       supports_reasoning: true
       description: >-
-        Always-on CPU fallback and local-chat's failover target: Qwen3.6-35B-A3B MoE
-        (~3B active params) running CPU-only on stock llama.cpp. Context matches the GPU
-        window so failover never truncates a conversation. Only reachable while the opt-in
+        Always-on CPU fallback and local-chat's failover target (see weights_file for the
+        exact GGUF), running CPU-only on stock llama.cpp. Context matches the GPU window
+        so failover never truncates a conversation. Only reachable while the opt-in
         cpu-fallback profile (llamacpp-cpu) is running. Slow but survives GPU eviction.
       weights_file: __CPU_WEIGHTS__
       served_by: llamacpp-cpu (stock llama.cpp, CPU-only)
@@ -126,7 +130,7 @@ general_settings:
 # the always-on CPU A3B so chat/agents keep working instead of erroring — then recovers to the
 # GPU model as soon as it's healthy again (short cooldown). No effect until llamacpp-cpu runs.
 router_settings:
-  fallbacks: [{"local-chat": ["qwen3.6-35b-a3b-cpu"]}]
+  fallbacks: [{"local-chat": ["__CPU_MODEL_NAME__"]}]
   cooldown_time: 30
   num_retries: 1
 

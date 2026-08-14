@@ -9,10 +9,15 @@ entrypoint that templates the config placeholders at startup.
 
 | id | mode | backend | notes |
 |----|------|---------|-------|
-| `local-chat` | chat | `llamacpp` (GPU) | Canonical auto-routing alias; fails over to `qwen3.6-35b-a3b-cpu` on GPU eviction. |
-| `qwen3.6-27b` | chat | `llamacpp` (GPU) | Explicit pin of the GPU deployment — no failover. |
-| `qwen3.6-35b-a3b-cpu` | chat | `llamacpp-cpu` | Always-on CPU MoE fallback (opt-in `cpu-fallback` profile). |
+| `local-chat` | chat | `llamacpp` (GPU) | Canonical auto-routing alias; fails over to the CPU pin on GPU eviction. |
+| *\<gpu model\>* | chat | `llamacpp` (GPU) | Explicit pin of the GPU deployment — no failover. Name derived from `LLAMACPP_MODEL` (basename, lowercased; e.g. `qwen3.8-27b-q6_k`). |
+| *\<cpu model\>*`-cpu` | chat | `llamacpp-cpu` | Always-on CPU fallback (opt-in `cpu-fallback` profile). Name derived from `LLAMACPP_CPU_MODEL`. |
 | `local-embed` | embedding | `llamacpp-embed` | nomic-embed-text-v1.5, 768-dim, ctx 8192. |
+
+The two pin-alias names are **derived at startup from the deployed GGUF filenames** — a
+model swap renames them automatically, so nothing version-named is hardcoded in the config.
+Only `local-chat` and `local-embed` are stable ids; anything that must survive a model swap
+should use those.
 
 Every entry carries a fully populated `model_info` block (mode, context window, output cap,
 capability flags, description, backing GGUF) — that block IS the gateway's model
@@ -29,10 +34,14 @@ metadata tracks the running deployment instead of drifting:
 | `__GPU_WEIGHTS__` | `LLAMACPP_MODEL` (model.gguf) |
 | `__CPU_WEIGHTS__` | `LLAMACPP_CPU_MODEL` (Qwen3.6-35B-A3B-UD-Q4_K_M.gguf) |
 | `__EMBED_WEIGHTS__` | `LLAMACPP_EMBED_MODEL` (nomic-embed-text-v1.5.Q4_K_M.gguf) |
+| `__GPU_IMAGE__` | `LLAMACPP_IMAGE` (llama.cpp) |
+| `__GPU_MODEL_NAME__` | derived: `LLAMACPP_MODEL` basename, lowercased, `.gguf` stripped |
+| `__CPU_MODEL_NAME__` | derived: `LLAMACPP_CPU_MODEL` basename, lowercased, + `-cpu` |
+| `__GPU_SUPPORTS_VISION__` | derived: `true` iff `LLAMACPP_MMPROJ` is non-empty |
 
-The `supports_*` capability flags (tools, vision, reasoning) describe the deployed Qwen3.6
-family and are static in the config — revisit them if the active model swaps to a different
-model family.
+`supports_vision` is derived from whether the GPU server actually loads an mmproj. The
+remaining `supports_*` flags (tools, reasoning) describe the llama-server invocation
+(`--jinja`, `--reasoning-format`) rather than a model family, and are static in the config.
 
 The Ordo stack references it as a **project buildable image** (`ordo/model-gateway:latest`) — pinned by
 its build context, not pulled from a registry — so `ordo preflight` reports a missing one as
