@@ -26,3 +26,9 @@ assets/* text eol=lf
 *.yml text eol=lf
 *.md text eol=lf
 *.py text eol=lf
+
+# Patch files are COPYed into Linux image builds and fed to `git apply` — a CRLF
+# checkout on Windows (autocrlf=true) hands the builder a patch whose hunks no
+# longer byte-match the LF upstream sources. Keep them LF on both directions.
+*.diff text eol=lf
+*.patch text eol=lf
