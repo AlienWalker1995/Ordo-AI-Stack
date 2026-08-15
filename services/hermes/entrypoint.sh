@@ -94,6 +94,16 @@ gosu hermes "$HERMES_BIN" config set agent.api_max_retries  "${HERMES_API_MAX_RE
 # See agent/model_metadata.py get_model_context_length resolution order #0
 # and run_agent.py line ~1605 where auxiliary.compression.context_length is read.
 gosu hermes "$HERMES_BIN" config set auxiliary.compression.context_length "${LLAMACPP_CTX_SIZE:-262144}" >/dev/null
+# Compaction trigger as a fraction of the effective input budget (context_length - max_tokens).
+# Only seed when explicitly set so this stays a no-op (framework default) for deployments that
+# don't tune it. With a large max_tokens the default floors the trigger at MINIMUM_CONTEXT_LENGTH
+# (64K); raising this fraction compacts later. The consumed config key is `compression.threshold`
+# (agent_init.py reads _compression_cfg.get("threshold") and passes it as the compressor's
+# threshold_percent) — NOT `compression.threshold_percent`, which the app ignores. Env var keeps
+# the _PERCENT name because the VALUE is a 0-1 fraction. See agent/context_compressor.py.
+if [ -n "${HERMES_COMPRESSION_THRESHOLD_PERCENT:-}" ]; then
+  gosu hermes "$HERMES_BIN" config set compression.threshold "${HERMES_COMPRESSION_THRESHOLD_PERCENT}" >/dev/null
+fi
 gosu hermes "$HERMES_BIN" config set mcp_servers.gateway.url "http://mcp-gateway:8811/mcp" >/dev/null
 
 # Bump timeouts for local model. Hermes's default 180s stale-timeout aborts

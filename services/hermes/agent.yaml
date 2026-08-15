@@ -44,6 +44,11 @@ environment:
   # dashboard progress bar) — the entrypoint seeds it into $HERMES_HOME/config.yaml.
   LLAMACPP_CTX_SIZE: ${LLAMACPP_CTX_SIZE:-262144}
   HERMES_MAX_TOKENS: ${HERMES_MAX_TOKENS:-65536}
+  # Compaction trigger as a fraction (0-1) of the effective input budget (context_length − max_tokens);
+  # see agent/context_compressor.py::_compute_threshold_tokens. The entrypoint seeds it into the
+  # `compression.threshold` config key (the one agent_init.py actually reads). Empty → keep hermes's
+  # built-in default (no-op for deployments that don't tune it). Raising it compacts LATER.
+  HERMES_COMPRESSION_THRESHOLD_PERCENT: ${HERMES_COMPRESSION_THRESHOLD_PERCENT:-}
   HERMES_MAX_TURNS: ${HERMES_MAX_TURNS:-90}
   HERMES_GATEWAY_TIMEOUT: ${HERMES_GATEWAY_TIMEOUT:-3600}
   # Cron idle watchdog (seconds). scheduler.py reads THIS env var (os.getenv HERMES_CRON_TIMEOUT,

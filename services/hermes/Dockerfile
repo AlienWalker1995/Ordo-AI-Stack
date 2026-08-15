@@ -148,6 +148,24 @@ RUN git clone --no-single-branch "$HERMES_REPO" /opt/hermes-agent \
     && git checkout "$HERMES_PINNED_SHA" \
     && chown -R hermes:hermes /opt/hermes-agent
 
+# PATCH: pressure-pass condensation of oversized USER messages (pass 5).
+# A giant user paste (e.g. an exported transcript handed to Hermes as the task)
+# deadlocked compression on 2026-08-15: after compaction the whole transcript sat
+# inside the protected tail, every demotion pass spares user rows, so preflight
+# ended in no_progress forever while the request could only grow past the model
+# window (llamacpp rejected 131,147 > 131,072 tokens; 10 doomed 30-min retries).
+# The patch lets the #61932 pressure pass — as its FINAL escalation — condense a
+# non-active oversized user message to a head/tail excerpt with an explicit
+# marker (full original stays in the session store). Includes upstream-style
+# tests (tests/agent/test_context_compressor.py — 113 pass at this pin).
+# --check first: the build fails loudly if a future pin bump breaks the patch.
+COPY pressure-user-condense.diff /tmp/pressure-user-condense.diff
+RUN cd /opt/hermes-agent \
+    && git apply --recount --check /tmp/pressure-user-condense.diff \
+    && git apply --recount /tmp/pressure-user-condense.diff \
+    && chown hermes:hermes agent/context_compressor.py tests/agent/test_context_compressor.py \
+    && echo "pressure-user-condense patch applied"
+
 USER hermes
 WORKDIR /opt/hermes-agent
 
