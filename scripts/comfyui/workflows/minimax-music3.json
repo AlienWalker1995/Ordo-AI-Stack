@@ -1,0 +1,96 @@
+{
+  "_comment": [
+    "MiniMax Music3 text+lyrics -> song. ComfyUI API format (the shape POST /prompt accepts),",
+    "so this file is both the UI starting point and the thing automation submits.",
+    "Seeded to user/default/workflows/ordo/ by scripts/comfyui/boot.sh — repo-owned, replaced",
+    "on every boot. Edit it here, not in the UI.",
+    "",
+    "Requires ComfyUI >= v0.33.1 (services/comfyui pins COMFYUI_APP_REF) and the",
+    "'minimax-music3' model pack from scripts/comfyui/models.json.",
+    "",
+    "Submit THROUGH the gate (http://comfyui-gate:8188/prompt), never straight to comfyui:8188 —",
+    "the gate acquires GPU residency before the render starts. See services/gpu-gate/README.md."
+  ],
+  "1": {
+    "class_type": "UNETLoader",
+    "_meta": { "title": "Music3 DiT" },
+    "inputs": {
+      "unet_name": "minimax_music3_dit_fp16.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "_meta": { "title": "Music3 text encoder" },
+    "inputs": {
+      "clip_name": "minimax_music3_text_encoder_pruned_bf16.safetensors",
+      "type": "minimax",
+      "device": "default"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "_meta": { "title": "Music3 DAV VAE" },
+    "inputs": { "vae_name": "minimax_music3_dav.safetensors" }
+  },
+  "4": {
+    "class_type": "MiniMaxMusic3TextEncode",
+    "_meta": { "title": "Caption + lyrics" },
+    "inputs": {
+      "clip": ["2", 0],
+      "caption": "Global Metadata: Warm indie-folk, 96 BPM, G major, bright and unhurried. Sunday-morning mood, clean modern production with a little room ambience.\n\nVocal Details: Single relaxed female lead, close-mic'd and conversational, light double-tracking on the chorus, soft harmonies underneath.\n\nArrangement: Fingerpicked acoustic guitar as the spine, brushed kit entering on the first verse, round upright bass, occasional piano answers. Intro: guitar alone. Verses: guitar, bass, brushes. Chorus: full band, harmonies open up. Outro: back to solo guitar, one last held chord.",
+      "lyrics": "[Intro]\n\n[Verse]\nMorning light across the kitchen floor\nKettle humming like it has before\nNothing urgent waiting at the door\nJust the day and nothing more\n\n[Chorus]\nSo let it be slow\nLet the hours go\nNothing left to prove\nNothing left to move\n\n[Verse]\nCoffee cooling while the record turns\nSame four chords, and still I never learn\nEvery season takes its turn\nAnd the quiet ones return\n\n[Chorus]\nSo let it be slow\nLet the hours go\nNothing left to prove\nNothing left to move\n\n[Outro]\n",
+      "seed": 222,
+      "max_duration": 120.0,
+      "cfg_scale": 1.7,
+      "top_k": 50
+    }
+  },
+  "5": {
+    "class_type": "ConditioningZeroOut",
+    "_meta": { "title": "Negative (zeroed)" },
+    "inputs": { "conditioning": ["4", 0] }
+  },
+  "6": {
+    "class_type": "EmptyMiniMaxMusic3LatentAudio",
+    "_meta": { "title": "Empty audio latent" },
+    "_note": "seconds is driven by the encoder's second output — the model can end the song early, and the latent must match the length it actually chose.",
+    "inputs": {
+      "seconds": ["4", 1],
+      "batch_size": 1
+    }
+  },
+  "7": {
+    "class_type": "KSampler",
+    "_meta": { "title": "Sample" },
+    "inputs": {
+      "model": ["1", 0],
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "latent_image": ["6", 0],
+      "seed": 222,
+      "steps": 30,
+      "cfg": 1.7,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0
+    }
+  },
+  "8": {
+    "class_type": "VAEDecodeAudio",
+    "_meta": { "title": "Decode audio" },
+    "inputs": {
+      "samples": ["7", 0],
+      "vae": ["3", 0]
+    }
+  },
+  "9": {
+    "class_type": "SaveAudioMP3",
+    "_meta": { "title": "Save" },
+    "inputs": {
+      "audio": ["8", 0],
+      "filename_prefix": "audio/minimax-music3",
+      "quality": "V0"
+    }
+  }
+}

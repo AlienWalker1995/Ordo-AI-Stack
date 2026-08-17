@@ -28,7 +28,7 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 | `data/dashboard/` | Throughput samples, benchmarks, job tracking | JSON |
 | `hermes-home` named volume | Hermes agent brain (sessions, config, skills, cron) | JSON / SQLite / YAML |
 | `data/comfyui-output/` | Generated media (renders) | mixed |
-| `comfyui-app` named volume | ComfyUI app tree + custom nodes | mixed |
+| `comfyui-app` named volume | ComfyUI app tree + custom nodes — app version pinned by `COMFYUI_APP_REF`, reconciled on boot ([configuration.md](configuration.md#comfyui-application-version)) | mixed |
 | `n8n-data` named volume | n8n workflows and credentials | n8n native |
 | `couchdb-data` named volume | CouchDB (Obsidian LiveSync) | CouchDB native |
 | `open-webui-data` named volume | Open WebUI accounts + uploads | SQLite / files |

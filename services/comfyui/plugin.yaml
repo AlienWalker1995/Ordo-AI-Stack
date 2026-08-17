@@ -73,6 +73,22 @@ services:
     shm_size: 8g
     env:
       CLI_ARGS: ${COMFYUI_CLI_ARGS:---cpu --enable-manager}
+      # --- ComfyUI application version — PINNED -------------------------------------------
+      # The image digest above pins the RUNTIME (torch/CUDA/entrypoint). The ComfyUI
+      # application itself lives on the comfyui-app volume, so the image says nothing about
+      # which ComfyUI is running — before this pin existed the answer was "whatever was last
+      # checked out by hand", which is unpinned, undeclared and unreproducible.
+      #
+      # scripts/comfyui/boot.sh reconciles the checkout to this ref on every start (and
+      # refuses to boot a version that isn't this one), so declared == running is enforced.
+      # Bumping it here is the ONLY supported way to change ComfyUI versions; the ref's own
+      # requirements.txt then carries the matching Comfy-Org runtime pins.
+      #
+      # 72865f4f = tag v0.33.1. Chosen over 0.30.2 because it is the first release carrying
+      # the MiniMax Music3 nodes (comfy_extras/nodes_minimax_music.py, upstream efd4e951a0)
+      # that services/song-gen declares. Pin a full commit SHA, never a tag or branch — tags
+      # are movable refs, and "float" is how you get a different app on the next recreate.
+      COMFYUI_APP_REF: ${COMFYUI_APP_REF:-72865f4f27eaf5396f8f36370e0a2be3a9a090ee}
       # V1's proven allocator config (overrides/compute.yml). An EMPTY string here is worse than
       # omitting it: torch's allocator parser rejects "" with `ValueError: Unrecognized key ','` at
       # `torch._C._cuda_init()`, crash-looping ComfyUI on boot. Default to V1's value; operator-
@@ -102,27 +118,19 @@ services:
       - comfyui-models:/root/ComfyUI/models:ro
       # Render outputs — staged under the V2 data root.
       - ${DATA_PATH:-./data}/comfyui-output:/root/ComfyUI/output
+      # Boot reconciler + the repo-owned workflow templates it seeds. Read-only, and tiny —
+      # the 9p pathology that drove the app tree and the weights onto named volumes is an
+      # I/O-volume problem, not a "no binds ever" rule; llamacpp mounts its run script the
+      # same way. Keeping the logic in a tracked, reviewable script (rather than a 20-line
+      # YAML string) is what makes the version reconcile testable instead of folklore.
+      - ${BASE_PATH:-.}/scripts/comfyui:/comfyui-scripts:ro
     command:
-      # Install each custom node's pip deps (the image's writable layer is wiped on recreate), then
-      # exec the upstream entrypoint. HF_TOKEN / GITHUB_TOKEN come from the env above (secrets.env).
+      # Reconcile the app checkout to COMFYUI_APP_REF, install the Comfy-Org runtime pins
+      # that ref declares, seed repo-owned workflows, install custom-node deps, then exec the
+      # image entrypoint. See scripts/comfyui/boot.sh for the full rationale.
+      # HF_TOKEN / GITHUB_TOKEN come from the env above (secrets.env).
       - bash
-      - -c
-      - |
-        # ComfyUI v0.30 runtime deps the pinned boot image predates (and, like all
-        # writable-layer installs, wiped on recreate — this block is why they survive):
-        #  * comfy-kitchen 0.2.26 — the fp8/nvfp4 quant runtime. The image ships 0.2.8 in
-        #    /usr/local/lib64, which SHADOWS pip's lib/ install; if the old copy stays,
-        #    comfy's quant_ops import-fails silently and every fp8/fp4 model load dies
-        #    with "'NoneType' object has no attribute 'Params'" (hit live 2026-08-07).
-        #  * comfy-angle — the GLSL shader nodes' renderer.
-        rm -rf /usr/local/lib64/python3.12/site-packages/comfy_kitchen*
-        pip install --no-cache-dir -q comfy-kitchen==0.2.26 comfy-angle || echo "[deps] WARN kitchen/angle install failed"
-        for r in /root/ComfyUI/custom_nodes/*/requirements.txt; do
-          [ -f "$$r" ] || continue
-          echo "[deps] installing $$r"
-          pip install --no-cache-dir --no-warn-script-location -q -r "$$r" || echo "[deps] WARN failed $$r"
-        done
-        exec bash /runner-scripts/entrypoint.sh
+      - /comfyui-scripts/boot.sh
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8188/"]
       start_period: 420s

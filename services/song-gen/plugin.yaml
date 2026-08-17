@@ -1,9 +1,12 @@
 id: song-gen
-name: Song generation (ACE-Step 1.5 XL SFT)
+name: Song generation (MiniMax Music3 / ACE-Step 1.5 XL SFT)
 description: Text-to-song with sung vocals. Needs the ComfyUI backend + a large GPU.
 requires:
   nvidia: true
-  vram_gb: 20           # ACE-Step 1.5 XL SFT DiT + qwen encoders + VAE
+  # MiniMax Music3 is the larger of the two backends and therefore sets the floor:
+  # DiT fp16 (4.6 GiB) + pruned bf16 text encoder (15.6 GiB) + DAV VAE (0.2 GiB) resident,
+  # plus latents/activations. ACE-Step 1.5 XL SFT fits comfortably under the same ceiling.
+  vram_gb: 24
   ram_gb: 16
 depends_on: [comfyui]   # won't enable unless comfyui is also enabled
 provides: [song]
@@ -12,3 +15,30 @@ compose_profile: media
 # it contributes only the enable flag and rides comfyui's `media` profile. Hence no `services:`.
 env:
   SONG_GEN_ENABLED: "1"
+
+# --- backends -----------------------------------------------------------------------------
+# Data-only declaration of which song models this plugin can drive. Each entry names the
+# model-pack in scripts/comfyui/models.json that supplies its weights and the seeded workflow
+# that drives it, so "what is installed" and "what is declared" are the same list.
+backends:
+  - id: minimax-music3
+    name: MiniMax Music3
+    default: true
+    # Requires ComfyUI >= v0.33.1 — the Music3 nodes (MiniMaxMusic3TextEncode,
+    # EmptyMiniMaxMusic3LatentAudio) landed upstream in efd4e951a0. services/comfyui pins
+    # COMFYUI_APP_REF to v0.33.1 (72865f4f) precisely so this backend is usable; do not
+    # roll that pin back without dropping this backend.
+    min_comfyui_version: "0.33.1"
+    model_pack: minimax-music3
+    workflow: scripts/comfyui/workflows/minimax-music3.json
+    license: Apache-2.0
+    notes: >-
+      Caption + lyrics conditioning, up to ~4 min per generation. cfg_scale and top_k are
+      baked into the conditioning by MiniMaxMusic3TextEncode, so the sampler runs at cfg 1.0.
+  - id: ace-step-1.5-xl-sft
+    name: ACE-Step 1.5 XL SFT
+    default: false
+    min_comfyui_version: "0.30.0"
+    model_pack: null      # operator-supplied weights; not in the model-pack manifest
+    workflow: null        # driven from the operator's own user/default/workflows/audio graphs
+    license: Apache-2.0

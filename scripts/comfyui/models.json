@@ -313,6 +313,37 @@
         }
       ]
     },
+    "minimax-music3": {
+      "capability": "audio",
+      "description": "MiniMax Music3 — text+lyrics to full song with vocals (Apache-2.0). DiT fp16 (4.6 GB) + pruned bf16 text encoder (15.6 GB) + DAV VAE (0.2 GB). Needs ComfyUI >= v0.33.1 for the Music3 nodes.",
+      "_comment": "URLs are pinned to the Comfy-Org repack revision 6444666eb6edfb2c7fcab5f8b81da8b84b4b17b6 — /resolve/main/ is a moving ref and would silently hand a different tensor set to a later re-pull.",
+      "models": [
+        {
+          "repo": "Comfy-Org/MiniMax-Music-3",
+          "file": "diffusion_models/minimax_music3_dit_fp16.safetensors",
+          "dest": "diffusion_models",
+          "type": "diffusion_models",
+          "name": "minimax_music3_dit_fp16.safetensors",
+          "url": "https://huggingface.co/Comfy-Org/MiniMax-Music-3/resolve/6444666eb6edfb2c7fcab5f8b81da8b84b4b17b6/diffusion_models/minimax_music3_dit_fp16.safetensors"
+        },
+        {
+          "repo": "Comfy-Org/MiniMax-Music-3",
+          "file": "text_encoders/minimax_music3_text_encoder_pruned_bf16.safetensors",
+          "dest": "text_encoders",
+          "type": "text_encoders",
+          "name": "minimax_music3_text_encoder_pruned_bf16.safetensors",
+          "url": "https://huggingface.co/Comfy-Org/MiniMax-Music-3/resolve/6444666eb6edfb2c7fcab5f8b81da8b84b4b17b6/text_encoders/minimax_music3_text_encoder_pruned_bf16.safetensors"
+        },
+        {
+          "repo": "Comfy-Org/MiniMax-Music-3",
+          "file": "vae/minimax_music3_dav.safetensors",
+          "dest": "vae",
+          "type": "vae",
+          "name": "minimax_music3_dav.safetensors",
+          "url": "https://huggingface.co/Comfy-Org/MiniMax-Music-3/resolve/6444666eb6edfb2c7fcab5f8b81da8b84b4b17b6/vae/minimax_music3_dav.safetensors"
+        }
+      ]
+    },
     "supir-upscaler": {
       "capability": "upscale",
       "description": "SUPIR upscaler (Kijai pruned) — best quality upscaling, replaces 4x-UltraSharp. 2.7 GB each.",
