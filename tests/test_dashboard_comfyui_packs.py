@@ -39,7 +39,11 @@ def test_packs_endpoint_exposes_capability_field(client):
     data = r.json()
     assert data["ok"] is True, data
     assert data["packs"], "expected at least one pack from models.json"
-    allowed = {"video", "image", "encoder", "upscale", "style", "other"}
+    # This set IS the pack-capability vocabulary — the dashboard passes the field through
+    # verbatim, so nothing else constrains it. Growing it is deliberate: "audio" was added
+    # for the MiniMax Music3 song-generation pack, which is neither video nor image and
+    # would otherwise have to lie about itself as "other".
+    allowed = {"video", "image", "audio", "encoder", "upscale", "style", "other"}
     for name, pack in data["packs"].items():
         assert "capability" in pack, f"pack {name!r} missing capability"
         assert pack["capability"] in allowed, (

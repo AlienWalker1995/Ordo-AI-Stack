@@ -201,9 +201,38 @@ Named volumes (state; back up via a helper container, see [data.md](data.md)):
 | `open-webui-data` | Open WebUI accounts + uploads |
 | `models-gguf` | llama.cpp GGUF weights (what the backends actually read) |
 | `comfyui-models` | ComfyUI checkpoints, LoRAs, VAEs, encoders |
-| `comfyui-app` | ComfyUI application tree + custom nodes |
+| `comfyui-app` | ComfyUI application tree + custom nodes (version-pinned — see below) |
 
 `/tmp` inside containers is tmpfs; nothing there survives a restart.
+
+### ComfyUI application version
+
+The pinned `COMFYUI_IMAGE` digest pins the *runtime* (torch, CUDA, the boot entrypoint). The
+ComfyUI application itself lives on the `comfyui-app` volume, so the image says nothing about
+which ComfyUI is running. That version is declared separately, as **`COMFYUI_APP_REF` in
+`services/comfyui/plugin.yaml`** — a full upstream commit SHA, never a tag or branch.
+
+`scripts/comfyui/boot.sh` runs as the container command and reconciles the checkout to that ref
+on every start. If the volume has drifted it fetches and checks out the declared ref; if it
+cannot, it refuses to start rather than serve a version nobody declared. The Comfy-Org runtime
+pins (`comfyui-frontend-package`, `comfy-kitchen`, `comfy-aimdo`, …) are read out of that ref's
+own `requirements.txt`, so the app and its runtime deps cannot drift apart.
+
+To move ComfyUI versions:
+
+```bash
+# 1. edit COMFYUI_APP_REF in services/comfyui/plugin.yaml to the new commit SHA
+ordo --source out/ordo.yaml render --out out
+cd out && COMPOSE_PROFILES='*' docker compose -p ordo --env-file .env --env-file secrets.env up -d
+# 2. confirm declared == running
+docker compose -p ordo exec comfyui git -C /root/ComfyUI rev-parse HEAD
+```
+
+Rolling back is the same edit in reverse — the reconciler downgrades the checkout and re-pins the
+runtime deps to the older ref's `requirements.txt`.
+
+Current pin: **v0.33.1** (`72865f4f`), chosen as the first release carrying the MiniMax Music3
+nodes that `services/song-gen` declares.
 
 ## Network Ports
 

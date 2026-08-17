@@ -66,6 +66,16 @@ ordo preflight --ref out/.env                 # read-only GO/NO-GO readiness gat
 cd out && COMPOSE_PROFILES=edge,webui,… docker compose -p ordo --env-file .env --env-file secrets.env up -d
 ```
 
+To reconcile the **whole** deployment against a fresh render (every profile you have enabled,
+without having to remember the list), use Compose's wildcard:
+
+```bash
+cd out && COMPOSE_PROFILES='*' docker compose -p ordo --env-file .env --env-file secrets.env up -d
+```
+
+`COMPOSE_PROFILES=all` does **not** do this — there is no profile named `all`, so it silently
+selects only the profile-less services and leaves every optional service unreconciled.
+
 Everything below is the reference for *how* that render engine works and *why* it's built this way.
 
 ## Why this exists (from the architecture interrogation)
