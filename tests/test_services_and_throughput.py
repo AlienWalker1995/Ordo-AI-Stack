@@ -234,6 +234,38 @@ def test_throughput_stats_returns_models(client):
     assert m["first_ts"] <= m["last_ts"]
 
 
+def test_throughput_stats_includes_active_model(client, monkeypatch):
+    """The tab must never GUESS the active model — /stats carries the ops-controller's
+    answer (the same authority Model Control uses)."""
+    import dashboard.app as dashboard_app
+
+    async def _fake_ops(method, path, *a, **k):
+        assert (method, path) == ("GET", "/model-config")
+        return 200, {"active_model": "Qwen-Test-Q6_K.gguf", "running": {}}
+
+    monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
+    monkeypatch.setattr(dashboard_app, "_active_model_cache", {"checked": 0.0, "value": None})
+    r = client.get("/api/throughput/stats")
+    assert r.json()["active_model"] == "Qwen-Test-Q6_K.gguf"
+
+
+def test_throughput_stats_active_model_null_when_ops_down(client, monkeypatch):
+    """ops-controller unreachable -> active_model is null (honest unknown), the endpoint
+    still serves stats, and the failure is negatively cached (one upstream call)."""
+    import dashboard.app as dashboard_app
+    calls = {"n": 0}
+
+    async def _fake_ops(method, path, *a, **k):
+        calls["n"] += 1
+        return 503, {"detail": "down"}
+
+    monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
+    monkeypatch.setattr(dashboard_app, "_active_model_cache", {"checked": 0.0, "value": None})
+    assert client.get("/api/throughput/stats").json()["active_model"] is None
+    assert client.get("/api/throughput/stats").json()["active_model"] is None
+    assert calls["n"] == 1, "second read within TTL must hit the cache, not ops"
+
+
 def test_throughput_record_accepts_alias_and_backend(client):
     """v2 payload: the gateway callback attributes samples to the REAL served GGUF and
     passes the requested alias + backend service alongside. Old senders (no alias/backend)

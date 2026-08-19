@@ -1629,6 +1629,28 @@ async def throughput_service_usage():
     return {"by_model": result, "ok": True}
 
 
+# Authoritative active model, from the same ops-controller /model-config the Model
+# Control tab uses. Cached (positive AND negative) so a 10s-poll dashboard doesn't
+# hammer ops; null means "unknown" and the UI says so instead of guessing.
+_ACTIVE_MODEL_CACHE_TTL = 30.0
+_active_model_cache: dict = {"checked": 0.0, "value": None}
+
+
+async def _throughput_active_model() -> str | None:
+    now = time.monotonic()
+    if now - _active_model_cache["checked"] < _ACTIVE_MODEL_CACHE_TTL:
+        return _active_model_cache["value"]
+    code, data = await _ops_request("GET", "/model-config", timeout=10.0)
+    value = None
+    if code == 200 and isinstance(data, dict) and data.get("active_model"):
+        value = str(data["active_model"])
+    else:
+        logger.warning("throughput active-model fetch failed (HTTP %s)", code)
+    _active_model_cache["checked"] = now
+    _active_model_cache["value"] = value
+    return value
+
+
 @app.get("/api/throughput/stats")
 async def throughput_stats():
     """Per-model throughput stats over timestamped samples: peak, p50/p95/p99, latest,
@@ -1659,7 +1681,7 @@ async def throughput_stats():
             "first_ts": samples[0]["ts"],
             "last_ts": samples[-1]["ts"],
         }
-    out: dict = {"models": result, "ok": True}
+    out: dict = {"models": result, "ok": True, "active_model": await _throughput_active_model()}
     if benchmark:
         out["last_benchmark"] = benchmark
     return out
