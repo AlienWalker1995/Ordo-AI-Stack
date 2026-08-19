@@ -166,6 +166,27 @@ RUN cd /opt/hermes-agent \
     && chown hermes:hermes agent/context_compressor.py tests/agent/test_context_compressor.py \
     && echo "pressure-user-condense patch applied"
 
+# PATCH: bound the checkpoint manager's pre-snapshot tree walk.
+# With checkpoints enabled, any terminal command matching the destructive
+# heuristic (a bare `2>/dev/null` qualifies via the `>` redirect regex)
+# triggers _dir_file_count(): an unbounded rglob of the process cwd. Our
+# /workspace/data is a Docker Desktop 9p bind (~50-95 stats/s), so each walk
+# toward the 50k-file cap took ~9 min — and new_turn() clears the dedup set,
+# so it repeated EVERY turn (2026-08-17 session ed681a: ~20 stalls x ~530s,
+# confirmed by py-spy mid-stall in _dir_file_count; same pathology all of
+# 2026-08-16). The scan always ended in ">50k files, skip" logged at DEBUG,
+# so no checkpoint was ever produced. The patch (a) wall-clock-bounds the
+# walk (HERMES_CHECKPOINT_SCAN_SECONDS, default 10s), (b) remembers the
+# too-big verdict across turns, (c) logs the skip once at INFO. Upstream
+# v0.20.3 is still unbounded — re-check on pin bumps.
+# --check first: the build fails loudly if a future pin bump breaks the patch.
+COPY checkpoint-scan-bounds.diff /tmp/checkpoint-scan-bounds.diff
+RUN cd /opt/hermes-agent \
+    && git apply --recount --check /tmp/checkpoint-scan-bounds.diff \
+    && git apply --recount /tmp/checkpoint-scan-bounds.diff \
+    && chown hermes:hermes tools/checkpoint_manager.py \
+    && echo "checkpoint-scan-bounds patch applied"
+
 USER hermes
 WORKDIR /opt/hermes-agent
 

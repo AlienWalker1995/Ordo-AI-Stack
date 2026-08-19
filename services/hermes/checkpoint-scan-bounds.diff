@@ -1,0 +1,72 @@
+diff --git a/tools/checkpoint_manager.py b/tools/checkpoint_manager.py
+index df3666f..5efd444 100644
+--- a/tools/checkpoint_manager.py
++++ b/tools/checkpoint_manager.py
+@@ -147,6 +147,12 @@ _GIT_TIMEOUT: int = max(10, min(60, env_int("HERMES_CHECKPOINT_TIMEOUT", 30)))
+ # Max files to snapshot — skip huge directories to avoid slowdowns.
+ _MAX_FILES = 50_000
+ 
++# Hard wall-clock bound on the pre-checkpoint tree walk.  On slow filesystems
++# (network shares, Docker Desktop 9p/gRPC-FUSE binds) an unbounded rglob can
++# take many minutes per call; a tree we cannot even count quickly is a tree we
++# should not try to snapshot.
++_MAX_SCAN_SECONDS: int = max(1, min(120, env_int("HERMES_CHECKPOINT_SCAN_SECONDS", 10)))
++
+ # Valid git commit hash pattern: 4–40 hex chars (short or full SHA-1/SHA-256).
+ _COMMIT_HASH_RE = re.compile(r'^[0-9a-fA-F]{4,64}$')
+ 
+@@ -639,13 +645,18 @@ def _pre_v2_shadow_repos(base: Path) -> List[Dict]:
+ 
+ 
+ def _dir_file_count(path: str) -> int:
+-    """Quick file count estimate (stops early if over _MAX_FILES)."""
++    """Quick file count estimate (stops early if over _MAX_FILES or too slow)."""
+     count = 0
++    deadline = time.monotonic() + _MAX_SCAN_SECONDS
+     try:
+         for _ in Path(path).rglob("*"):
+             count += 1
+             if count > _MAX_FILES:
+                 return count
++            if count % 256 == 0 and time.monotonic() > deadline:
++                # A walk this slow means a filesystem where the snapshot itself
++                # would be even slower — treat it exactly like an oversized tree.
++                return _MAX_FILES + 1
+     except (PermissionError, OSError):
+         pass
+     return count
+@@ -732,6 +743,10 @@ class CheckpointManager:
+         self.max_total_size_mb = max(0, int(max_total_size_mb))
+         self.max_file_size_mb = max(0, int(max_file_size_mb))
+         self._checkpointed_dirs: Set[str] = set()
++        # Dirs whose size guard failed (too many files / unscannably slow).
++        # Deliberately NOT cleared by new_turn(): a huge tree stays huge, and
++        # re-walking it every turn cost minutes per tool call on slow mounts.
++        self._oversized_dirs: Set[str] = set()
+         self._git_available: Optional[bool] = None  # lazy probe
+ 
+     # ------------------------------------------------------------------
+@@ -772,6 +787,9 @@ class CheckpointManager:
+         if abs_dir in self._checkpointed_dirs:
+             return False
+ 
++        if abs_dir in self._oversized_dirs:
++            return False
++
+         self._checkpointed_dirs.add(abs_dir)
+ 
+         try:
+@@ -1008,7 +1026,12 @@ class CheckpointManager:
+ 
+         # Quick size guard — don't try to snapshot enormous directories
+         if _dir_file_count(working_dir) > _MAX_FILES:
+-            logger.debug("Checkpoint skipped: >%d files in %s", _MAX_FILES, working_dir)
++            self._oversized_dirs.add(working_dir)
++            logger.info(
++                "Checkpoints disabled for %s this session: >%d files or scan "
++                "slower than %ds (tree too large to snapshot)",
++                working_dir, _MAX_FILES, _MAX_SCAN_SECONDS,
++            )
+             return False
+ 
+         dir_hash = _project_hash(working_dir)
