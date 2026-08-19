@@ -217,7 +217,6 @@ def test_throughput_record_ignores_empty_model(client):
 # ── /api/throughput/stats ────────────────────────────────────────────────────
 
 def test_throughput_stats_returns_models(client):
-    # Seed a sample first
     client.post("/api/throughput/record", json={
         "model": "stats-test-model",
         "output_tokens_per_sec": 30.0,
@@ -227,16 +226,98 @@ def test_throughput_stats_returns_models(client):
     assert r.status_code == 200
     data = r.json()
     assert data["ok"] is True
-    assert "models" in data
-    # The seeded model should appear
-    if "stats-test-model" in data["models"]:
-        m = data["models"]["stats-test-model"]
-        assert "latest" in m
-        assert "peak" in m
-        assert "p50" in m
-        assert "p95" in m
-        assert "sample_count" in m
-        assert m["sample_count"] >= 1
+    m = data["models"]["stats-test-model"]
+    for key in ("latest", "peak", "p50", "p95", "sample_count", "last_ts", "first_ts"):
+        assert key in m
+    assert m["sample_count"] >= 1
+    assert m["last_ts"] > 0
+    assert m["first_ts"] <= m["last_ts"]
+
+
+def test_throughput_record_accepts_alias_and_backend(client):
+    """v2 payload: the gateway callback attributes samples to the REAL served GGUF and
+    passes the requested alias + backend service alongside. Old senders (no alias/backend)
+    must keep working — both fields optional."""
+    r = client.post("/api/throughput/record", json={
+        "model": "Attrib-Test-Q6_K.gguf",
+        "output_tokens_per_sec": 41.0,
+        "service": "hermes",
+        "alias": "local-chat",
+        "backend": "llamacpp",
+    })
+    assert r.status_code == 200 and r.json()["ok"] is True
+    stats = client.get("/api/throughput/stats").json()
+    assert "Attrib-Test-Q6_K.gguf" in stats["models"]
+
+
+def test_throughput_samples_evict_after_max_age(client):
+    """Models with no sample in _SAMPLE_MAX_AGE_SEC disappear from the store — a retired
+    model must not keep stats forever (the root of the old 'stale model labeled Active' lie)."""
+    import dashboard.app as dashboard_app
+    client.post("/api/throughput/record", json={
+        "model": "evict-me.gguf", "output_tokens_per_sec": 20.0,
+    })
+    with dashboard_app._state_lock:
+        for s in dashboard_app._throughput_samples["evict-me.gguf"]:
+            s["ts"] -= dashboard_app._SAMPLE_MAX_AGE_SEC + 60
+    stats = client.get("/api/throughput/stats").json()
+    assert "evict-me.gguf" not in stats["models"]
+
+
+def test_throughput_store_v1_file_triggers_clean_reset(tmp_path, monkeypatch):
+    """A version-less (v1) throughput.json is un-timestamped and alias-conflated —
+    loading must reset samples (keeping last_benchmark), not present legacy junk
+    as honest history."""
+    import json as _json
+
+    import dashboard.app as dashboard_app
+    legacy = {
+        "samples": {"local-chat": [40.1, 39.0], "test-model": [25.5]},
+        "ttft_samples": {},
+        "last_benchmark": {"ok": True, "model": "local-chat", "output_tokens_per_sec": 40.0},
+        "service_usage": [],
+    }
+    f = tmp_path / "throughput.json"
+    f.write_text(_json.dumps(legacy), encoding="utf-8")
+    monkeypatch.setattr(dashboard_app, "_THROUGHPUT_FILE", f)
+    monkeypatch.setattr(dashboard_app, "_throughput_samples", {})
+    monkeypatch.setattr(dashboard_app, "_ttft_samples", {})
+    monkeypatch.setattr(dashboard_app, "_service_usage", [])
+    monkeypatch.setattr(dashboard_app, "_last_benchmark", None)
+    dashboard_app._load_throughput_state()
+    assert dashboard_app._throughput_samples == {}
+    assert dashboard_app._last_benchmark["model"] == "local-chat"
+
+
+def test_throughput_store_v2_roundtrip(tmp_path, monkeypatch):
+    """v2 save/load round-trips timestamped samples."""
+    import dashboard.app as dashboard_app
+    f = tmp_path / "throughput.json"
+    monkeypatch.setattr(dashboard_app, "_THROUGHPUT_FILE", f)
+    sample = {"tps": 33.3, "ts": 1_700_000_000.0}
+    monkeypatch.setattr(dashboard_app, "_throughput_samples", {"M.gguf": [sample]})
+    dashboard_app._save_throughput_state()
+    monkeypatch.setattr(dashboard_app, "_throughput_samples", {})
+    dashboard_app._load_throughput_state()
+    assert dashboard_app._throughput_samples == {"M.gguf": [sample]}
+
+
+def test_performance_summary_sorts_by_recency(client):
+    """top_models orders by last_ts desc — a retired model with a huge lifetime
+    sample_count must not outrank the model serving right now."""
+    import dashboard.app as dashboard_app
+    for _ in range(5):
+        client.post("/api/throughput/record", json={
+            "model": "old-but-many.gguf", "output_tokens_per_sec": 10.0})
+    with dashboard_app._state_lock:
+        for s in dashboard_app._throughput_samples["old-but-many.gguf"]:
+            s["ts"] -= 3600
+    client.post("/api/throughput/record", json={
+        "model": "fresh.gguf", "output_tokens_per_sec": 50.0})
+    top = client.get("/api/performance/summary").json()["throughput"]["top_models"]
+    names = [t["model"] for t in top]
+    assert names.index("fresh.gguf") < names.index("old-but-many.gguf")
+    assert all("last_ts" in t for t in top)
 
 
 # ── /api/throughput/service-usage ────────────────────────────────────────────
