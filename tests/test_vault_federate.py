@@ -80,6 +80,26 @@ def test_vault_deletion_with_local_edits_still_quarantines_non_soul():
     assert vf.decide(pair, is_soul=False) == "quarantine"
 
 
+def test_blank_vault_note_restores_soul():
+    pair = make(volume="soul text", vault="", synced=_h("soul text"))
+    assert vf.decide(pair, is_soul=True) == "restore_soul"
+
+
+def test_blank_vault_note_quarantines_non_soul():
+    pair = make(volume="v1", vault="", synced=_h("v1"))
+    assert vf.decide(pair, is_soul=False) == "quarantine"
+
+
+def test_whitespace_only_vault_note_restores_soul():
+    pair = make(volume="soul text", vault="   \n\t  \n", synced=_h("soul text"))
+    assert vf.decide(pair, is_soul=True) == "restore_soul"
+
+
+def test_whitespace_only_vault_note_quarantines_non_soul():
+    pair = make(volume="v1", vault="  \n  ", synced=_h("v1"))
+    assert vf.decide(pair, is_soul=False) == "quarantine"
+
+
 def _mk_pair(tmp_path, name="mem", is_soul=False, volume=None, vault=None, lock_age=None):
     vol = tmp_path / "hermes" / f"{name}.md"
     note = tmp_path / "notes" / "Ordo" / "Context Files" / f"{name}.md"
@@ -138,19 +158,52 @@ def test_quarantine_moves_volume_file(tmp_path):
     pair = _mk_pair(tmp_path, volume="v1")
     manifest = {"mem": {"hash": vf.content_hash("v1")}}
     q, c = _dirs(tmp_path)
-    assert vf.sync_pair(pair, manifest, quarantine_dir=q, conflicts_dir=c, now_utc="x") == "quarantine"
+    assert vf.sync_pair(pair, manifest, quarantine_dir=q, conflicts_dir=c, now_utc="20260819T000000Z") == "quarantine"
     assert not pair.volume.exists()
-    assert (q / "mem.md").read_text(encoding="utf-8") == "v1"
+    dest = q / "vault-federation" / "mem.md-20260819T000000Z.md"
+    assert dest.read_text(encoding="utf-8") == "v1"
     assert "mem" not in manifest
+
+
+def test_quarantine_namespaces_repeated_runs(tmp_path):
+    # Two quarantine events for the same pair name at different times must not
+    # collide/overwrite in the shared _quarantine dir.
+    q, c = _dirs(tmp_path)
+    pair1 = _mk_pair(tmp_path, volume="v1")
+    manifest = {"mem": {"hash": vf.content_hash("v1")}}
+    vf.sync_pair(pair1, manifest, quarantine_dir=q, conflicts_dir=c, now_utc="20260819T000000Z")
+    pair2 = _mk_pair(tmp_path, volume="v2")
+    manifest2 = {"mem": {"hash": vf.content_hash("v2")}}
+    vf.sync_pair(pair2, manifest2, quarantine_dir=q, conflicts_dir=c, now_utc="20260819T010000Z")
+    preserved = sorted((q / "vault-federation").glob("mem.md-*.md"))
+    assert len(preserved) == 2
 
 
 def test_soul_restore_recreates_note(tmp_path):
     pair = _mk_pair(tmp_path, name="SOUL", is_soul=True, volume="soul text")
     manifest = {"SOUL": {"hash": vf.content_hash("soul text")}}
     q, c = _dirs(tmp_path)
-    assert vf.sync_pair(pair, manifest, quarantine_dir=q, conflicts_dir=c, now_utc="x") == "restore_soul"
+    assert vf.sync_pair(pair, manifest, quarantine_dir=q, conflicts_dir=c, now_utc="20260819T000000Z") == "restore_soul"
     assert pair.volume.read_text(encoding="utf-8") == "soul text"
     assert pair.vault.read_text(encoding="utf-8") == "soul text"
+
+
+def test_soul_restore_writes_warning_note(tmp_path):
+    pair = _mk_pair(tmp_path, name="SOUL", is_soul=True, volume="soul text")
+    manifest = {"SOUL": {"hash": vf.content_hash("soul text")}}
+    q, c = _dirs(tmp_path)
+    vf.sync_pair(pair, manifest, quarantine_dir=q, conflicts_dir=c, now_utc="20260819T000000Z")
+    warning = c / "SOUL-restored-20260819T000000Z.md"
+    assert warning.exists()
+    assert "restored" in warning.read_text(encoding="utf-8").lower()
+
+
+def test_both_missing_noop_pops_stale_manifest_entry(tmp_path):
+    pair = _mk_pair(tmp_path)  # neither volume nor vault file written
+    manifest = {"mem": {"hash": vf.content_hash("stale")}}
+    q, c = _dirs(tmp_path)
+    assert vf.sync_pair(pair, manifest, quarantine_dir=q, conflicts_dir=c, now_utc="x") == "noop"
+    assert "mem" not in manifest
 
 
 def test_fresh_lock_skips(tmp_path):
@@ -181,3 +234,56 @@ def test_default_pairs_names_and_soul_flag(tmp_path):
     assert by_name["SOUL"].is_soul is True
     assert by_name["MEMORY"].vault.name == "Agent Context.md"
     assert by_name["USER"].vault.name == "User Profile.md"
+
+
+def test_main_refuses_when_vault_tree_missing_but_manifest_populated(tmp_path, monkeypatch):
+    # vault_notes dir exists (so main() doesn't bail on the earlier "not a
+    # dir" check) but its "Ordo/Context Files" subtree does not — e.g. a
+    # partially-mounted bridge. A populated manifest from a prior run means
+    # this must NOT be treated as "the vault deleted everything": that would
+    # mass-quarantine every pair. main() should refuse and leave volume
+    # files untouched.
+    hermes_home = tmp_path / "hermes"
+    vault_notes = tmp_path / "notes"
+    (hermes_home / "memories").mkdir(parents=True)
+    vault_notes.mkdir(parents=True)  # exists, but no "Ordo/Context Files" inside
+
+    soul_path = hermes_home / "SOUL.md"
+    soul_path.write_text("soul text", encoding="utf-8")
+    mem_path = hermes_home / "memories" / "MEMORY.md"
+    mem_path.write_text("memory text", encoding="utf-8")
+
+    manifest_path = hermes_home / "state" / "vault-federation.json"
+    vf.save_manifest(manifest_path, {"SOUL": {"hash": vf.content_hash("soul text")}})
+
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setenv("VAULT_NOTES", str(vault_notes))
+
+    assert vf.main() == 0
+
+    # Untouched: no pull/push/quarantine happened.
+    assert soul_path.read_text(encoding="utf-8") == "soul text"
+    assert mem_path.read_text(encoding="utf-8") == "memory text"
+    assert vf.load_manifest(manifest_path) == {"SOUL": {"hash": vf.content_hash("soul text")}}
+
+
+def test_main_bootstrap_proceeds_when_manifest_empty(tmp_path, monkeypatch):
+    # First-run bootstrap: manifest is empty, so even though the vault tree
+    # subdir doesn't exist yet, main() should proceed (not refuse) and let
+    # sync_pair handle each pair normally.
+    hermes_home = tmp_path / "hermes"
+    vault_notes = tmp_path / "notes"
+    (hermes_home / "memories").mkdir(parents=True)
+    vault_notes.mkdir(parents=True)
+
+    soul_path = hermes_home / "SOUL.md"
+    soul_path.write_text("soul text", encoding="utf-8")
+
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setenv("VAULT_NOTES", str(vault_notes))
+
+    assert vf.main() == 0
+
+    # Bootstrap pushed the volume SOUL.md out to the vault note location.
+    vault_soul = vault_notes / "Ordo" / "Context Files" / "SOUL.md"
+    assert vault_soul.read_text(encoding="utf-8") == "soul text"

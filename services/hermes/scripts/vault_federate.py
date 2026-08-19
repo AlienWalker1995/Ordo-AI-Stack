@@ -19,6 +19,11 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+try:
+    import fcntl
+except ImportError:  # Windows test hosts / no fcntl support
+    fcntl = None
+
 LOCK_FRESH_SECONDS = 300
 
 
@@ -38,6 +43,11 @@ def decide(pair: PairState, *, is_soul: bool) -> str:
     if pair.volume_locked:
         return "skip_locked"
     vol, note, synced = pair.volume_text, pair.vault_text, pair.synced_hash
+    # A blank vault note (0 bytes or whitespace-only) is treated as absent so it
+    # routes into the quarantine/restore_soul paths instead of a destructive pull
+    # that would overwrite the agent's volume copy with nothing.
+    if note is not None and note.strip() == "":
+        note = None
     if vol is None and note is None:
         return "noop"
     if note is None:
@@ -75,13 +85,30 @@ def _read(path: pathlib.Path) -> str | None:
 
 def _write(path: pathlib.Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
+    # Dot-prefixed so half-written temps inside the synced vault tree are
+    # invisible to Obsidian / the bridge (both ignore dotfiles).
+    tmp = path.with_name(f".{path.name}.tmp")
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(path)
 
 
 def _is_locked(volume: pathlib.Path) -> bool:
     lock = volume.with_name(volume.name + ".lock")
+    if fcntl is not None:
+        if not lock.exists():
+            return False
+        try:
+            with open(lock, "rb") as fh:
+                try:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:
+                    return True  # held by another process
+                else:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                    return False
+        except OSError:
+            return True  # couldn't even open/probe it: fail toward skipping, safe
+    # Windows test hosts (no fcntl): fall back to the mtime heuristic.
     try:
         return (time.time() - lock.stat().st_mtime) < LOCK_FRESH_SECONDS
     except FileNotFoundError:
@@ -124,15 +151,29 @@ def sync_pair(pair: Pair, manifest: dict, *, quarantine_dir: pathlib.Path,
         _write(pair.volume, state.vault_text)
         manifest[pair.name] = {"hash": content_hash(state.vault_text)}
     elif action == "quarantine":
-        quarantine_dir.mkdir(parents=True, exist_ok=True)
-        _write(quarantine_dir / pair.volume.name, state.volume_text)
+        # Namespaced under a vault-federation subdir, timestamped per-file so
+        # repeated quarantines never overwrite each other in the shared
+        # _quarantine dir.
+        dest_dir = quarantine_dir / "vault-federation"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        _write(dest_dir / f"{pair.volume.name}-{now_utc}.md", state.volume_text)
         pair.volume.unlink(missing_ok=True)
         manifest.pop(pair.name, None)
     elif action == "restore_soul":
         _write(pair.vault, state.volume_text)
         manifest[pair.name] = {"hash": content_hash(state.volume_text)}
-    elif action == "noop" and state.volume_text is not None:
-        manifest[pair.name] = {"hash": content_hash(state.volume_text)}
+        conflicts_dir.mkdir(parents=True, exist_ok=True)
+        _write(
+            conflicts_dir / f"SOUL-restored-{now_utc}.md",
+            "The SOUL vault note vanished and was restored from the agent's volume copy.\n",
+        )
+    elif action == "noop":
+        if state.volume_text is not None:
+            manifest[pair.name] = {"hash": content_hash(state.volume_text)}
+        else:
+            # Both sides missing: drop any stale manifest entry so a later
+            # agent-recreated file isn't mistaken for a deletion and quarantined.
+            manifest.pop(pair.name, None)
     return action
 
 
@@ -150,9 +191,17 @@ def main() -> int:
         hermes_home = pathlib.Path(os.environ.get("HERMES_HOME", "/home/hermes/.hermes"))
         vault_notes = pathlib.Path(os.environ.get("VAULT_NOTES", "/workspace/data/memory-vault/notes"))
         if not vault_notes.is_dir():
+            print(f"vault-federate: vault notes dir missing: {vault_notes} - skipping federation")
             return 0  # bridge/profile not up: nothing to federate
         manifest_path = hermes_home / "state" / "vault-federation.json"
         manifest = load_manifest(manifest_path)
+        if not (vault_notes / "Ordo" / "Context Files").is_dir() and manifest:
+            # The vault tree isn't materialized (e.g. mid-mount, bridge not
+            # finished seeding) but we already have a populated manifest from a
+            # prior successful run. Treating this as "vault deleted everything"
+            # would mass-quarantine every pair. Refuse instead of syncing.
+            print("vault-federate: vault tree missing but manifest populated - refusing to run (would mass-quarantine)")
+            return 0
         now_utc = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         conflicts = vault_notes / "Ordo" / "Context Files" / "Conflicts"
         for pair in default_pairs(hermes_home, vault_notes):
