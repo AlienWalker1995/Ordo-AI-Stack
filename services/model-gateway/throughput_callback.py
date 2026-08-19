@@ -6,7 +6,7 @@ Wired in `litellm_config.yaml` as:
       callbacks: ["throughput_callback.throughput_recorder_instance"]
 
 The dashboard's `/api/throughput/record` endpoint accepts:
-    {model, output_tokens_per_sec, ttft_ms, service}
+    {model, output_tokens_per_sec, ttft_ms, service, alias?, backend?}
 
 This callback fires after every successful completion and POSTs a fire-and-
 forget sample. Never raises into the inference path — telemetry failures are
@@ -19,6 +19,7 @@ import logging
 import os
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from litellm.integrations.custom_logger import CustomLogger
@@ -90,13 +91,65 @@ def _detect_service(kwargs: dict[str, Any]) -> str:
     return "unknown"
 
 
-def _resolve_model(kwargs: dict[str, Any], response_obj: Any) -> str:
-    """Pick the most useful model identifier for telemetry.
+def _deployment_model_info(kwargs: dict[str, Any]) -> dict:
+    """The served deployment's model_info (including our custom `weights_file`).
 
-    Prefers the underlying provider model (e.g. the actual GGUF filename
-    llama.cpp reports) over the LiteLLM alias, falling back to the alias if
-    the response doesn't carry one. Strips any `:tag` suffix.
-    """
+    LiteLLM v1.82.3's Router._update_kwargs_with_deployment attaches it to the
+    request kwargs — top-level, and inside the router metadata (which the logger
+    later moves under litellm_params). Check every location; first hit wins."""
+    for candidate in (
+        kwargs.get("model_info"),
+        ((kwargs.get("litellm_params") or {}).get("metadata") or {}).get("model_info"),
+        (kwargs.get("metadata") or {}).get("model_info"),
+    ):
+        if isinstance(candidate, dict) and candidate.get("weights_file"):
+            return candidate
+    return {}
+
+
+def _served_api_base(kwargs: dict[str, Any]) -> str:
+    slo = kwargs.get("standard_logging_object") or {}
+    return str(
+        slo.get("api_base")
+        or ((kwargs.get("litellm_params") or {}).get("metadata") or {}).get("api_base")
+        or (kwargs.get("metadata") or {}).get("api_base")
+        or ""
+    )
+
+
+def _detect_backend(kwargs: dict[str, Any]) -> str:
+    """Backend service that served the request, from the deployment api_base host
+    (e.g. 'llamacpp' vs 'llamacpp-cpu' — the failover distinction). '' if unknown."""
+    try:
+        return (urlparse(_served_api_base(kwargs)).hostname or "")[:64]
+    except ValueError:
+        return ""
+
+
+def _detect_alias(kwargs: dict[str, Any]) -> str:
+    """The model id the CALLER requested (model_group), e.g. 'local-chat'."""
+    slo = kwargs.get("standard_logging_object") or {}
+    group = str(slo.get("model_group") or "").strip()
+    if group:
+        return group[:256]
+    kwarg_model = str(kwargs.get("model") or "").strip()
+    if "/" in kwarg_model:
+        kwarg_model = kwarg_model.split("/", 1)[1]
+    return kwarg_model[:256]
+
+
+def _resolve_model(kwargs: dict[str, Any], response_obj: Any) -> str:
+    """Identify the model that ACTUALLY served the completion.
+
+    Truth source: the served deployment's model_info.weights_file — the exact GGUF,
+    entrypoint-substituted from the same .env the llama-server reads — so samples
+    key by real model, never by a routing alias like `local-chat` (which conflates
+    every model ever active behind it, CPU failover included). Falls back to the
+    legacy response/kwargs naming when the router info is missing; telemetry is
+    never dropped over attribution."""
+    weights = str(_deployment_model_info(kwargs).get("weights_file") or "").strip()
+    if weights:
+        return weights.replace("\\", "/").rsplit("/", 1)[-1].split(":")[0][:256]
     resp_model = ""
     if isinstance(response_obj, dict):
         resp_model = str(response_obj.get("model") or "").strip()
@@ -154,12 +207,19 @@ def _build_payload(kwargs, response_obj, start_time, end_time) -> dict[str, Any]
     model = _resolve_model(kwargs, response_obj)
     if not model:
         return None
-    return {
+    payload = {
         "model": model,
         "output_tokens_per_sec": round(completion_tokens / duration, 2),
         "service": _detect_service(kwargs),
         "ttft_ms": round(_ttft_ms_from_kwargs(kwargs, start_time), 1),
     }
+    alias = _detect_alias(kwargs)
+    backend = _detect_backend(kwargs)
+    if alias:
+        payload["alias"] = alias
+    if backend:
+        payload["backend"] = backend
+    return payload
 
 
 def _headers() -> dict[str, str]:
