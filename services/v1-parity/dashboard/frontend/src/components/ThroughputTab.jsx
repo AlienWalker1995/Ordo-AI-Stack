@@ -1,18 +1,16 @@
-// Throughput tab — inference telemetry + an on-demand benchmark. Port of the legacy
-// loadPerfHero + loadThroughputServiceUsage + runThroughputBenchmark. Consumes:
-//   - GET  /api/throughput/stats         — per-model tok/s percentiles + last_benchmark
+// Throughput tab — inference telemetry + an on-demand benchmark. Consumes:
+//   - GET  /api/throughput/stats         — per-model tok/s percentiles (timestamped,
+//         7-day retention) + the AUTHORITATIVE active_model (ops /model-config) + last_benchmark
 //   - GET  /api/throughput/service-usage — which service drove which model, recent tok/s
 //   - GET  /api/performance/summary      — context size + fleet summary
-//   - GET  /api/llm/models               — to pick the benchmark target model
 //   - POST /api/throughput/benchmark     — run a quick tok/s benchmark (confirm + pending)
-// Telemetry polls every 10s (paused when hidden); the benchmark is a manual action that
-// disables the button while running and refreshes the telemetry when it lands.
+// The hero is the registry's active model — never inferred from sample recency or
+// counts. Sample keys are real GGUF basenames (the gateway callback attributes each
+// completion to the deployment that served it). Telemetry polls every 10s (paused when
+// hidden); the benchmark targets the active model's gateway pin-alias.
 import { useCallback, useState } from 'react'
 import { api, usePolling } from '../api.js'
 import { useToast } from './Toast.jsx'
-
-const EMBED_RE = /embed|bge|mxbai|arctic-embed|granite-embedding|paraphrase-multilingual/
-const isEmbeddingModel = (name) => EMBED_RE.test((name || '').toLowerCase())
 
 // Callers that reach the gateway with the stock OpenAI SDK send its class name as the "service".
 // Render those as an honest "unidentified caller" instead of dressing a raw SDK class up as a
@@ -66,24 +64,29 @@ export default function ThroughputTab() {
   const toast = useToast()
 
   const { data, error, refresh } = usePolling(async () => {
-    const [stats, usage, summary, llm] = await Promise.all([
+    const [stats, usage, summary] = await Promise.all([
       api.get('/api/throughput/stats').catch(() => ({ ok: false, models: {} })),
       api.get('/api/throughput/service-usage').catch(() => ({ ok: false, by_model: {} })),
       api.get('/api/performance/summary').catch(() => null),
-      api.get('/api/llm/models').catch(() => ({ models: [] })),
     ])
-    return { stats, usage, summary, llm }
+    return { stats, usage, summary }
   }, 10000)
 
   const stats = data?.stats
   const summary = data?.summary
-  const llms = (data?.llm?.models || []).filter((m) => !isEmbeddingModel(m.name))
 
   const models = stats?.ok && stats.models ? stats.models : {}
-  const entries = Object.entries(models)
 
-  // Service-usage rows carry REAL per-service timestamps (unlike /stats, which has no age
-  // eviction). Compute them first so the hero can be picked by recency, not raw sample count.
+  // Authoritative model state — ops-controller /model-config via /stats. Never guessed:
+  // null means the control plane is unreachable and the UI says so.
+  const activeModel = stats?.active_model ?? null
+  const activeStats = activeModel ? models[activeModel] : null
+
+  // Other models with recent samples (the store evicts after 7 days) — history, not "Active".
+  const historyRows = Object.entries(models)
+    .filter(([name]) => name !== activeModel)
+    .sort((a, b) => (b[1].last_ts || 0) - (a[1].last_ts || 0))
+
   const byModel = data?.usage?.ok ? (data.usage.by_model || {}) : {}
   const usageRows = []
   Object.entries(byModel).forEach(([model, info]) => {
@@ -91,23 +94,6 @@ export default function ThroughputTab() {
   })
   usageRows.sort((a, b) => (b.svc.last_ts || 0) - (a.svc.last_ts || 0))
   const maxTps = Math.max(1, ...usageRows.map((r) => r.svc.last_tps || 0))
-
-  // Hero = the model that served most RECENTLY (real timestamps), NOT the most-sampled one:
-  // /stats never evicts, so a retired model keeps the top sample_count forever and would be
-  // mislabeled "Active". Fall back to sample_count only when there's no timestamped usage.
-  const recentTsByModel = {}
-  for (const { model, svc } of usageRows) {
-    if (svc.last_ts) recentTsByModel[model] = Math.max(recentTsByModel[model] || 0, svc.last_ts)
-  }
-  const mostRecent = Object.entries(recentTsByModel).sort((a, b) => b[1] - a[1])[0]
-  let hero = null
-  if (mostRecent && models[mostRecent[0]]) {
-    hero = [mostRecent[0], models[mostRecent[0]], mostRecent[1]]
-  } else {
-    const s = [...entries].sort((a, b) => (b[1].sample_count || 0) - (a[1].sample_count || 0))[0]
-    hero = s ? [s[0], s[1], 0] : null
-  }
-  const heroTs = hero ? hero[2] : 0
 
   const ctx = summary?.llamacpp_ctx_size || 0
   const ctxLabel = ctx ? (ctx >= 1000 ? `${Math.round(ctx / 1000)}K ctx` : `${ctx} ctx`) : 'no ctx'
@@ -118,14 +104,19 @@ export default function ThroughputTab() {
   const lastBench = stats?.last_benchmark || null
   const shownBench = result || lastBench
 
+  // Gateway pin-alias for the active GGUF — same derivation as the gateway entrypoint
+  // (basename, .gguf stripped, lowercased). Pin (not local-chat) so the benchmark
+  // measures the GPU deployment and honestly errors if it's evicted, instead of
+  // silently measuring the CPU fallback.
+  const benchTarget = activeModel
+    ? activeModel.replace(/\.gguf$/i, '').toLowerCase()
+    : 'local-chat'
+
   const runBenchmark = useCallback(async () => {
-    // First non-embedding LLM, else the always-valid `local-chat` alias — never the hero, which
-    // can be a stale/retired model (see the recency note above); benchmarking the wrong model silently.
-    const model = llms[0]?.name || 'local-chat'
-    if (!confirm(`Run a throughput benchmark on "${model}"?\n\nThis sends a short generation through the Model Gateway and reports tok/s.`)) return
+    if (!confirm(`Run a throughput benchmark on "${benchTarget}"?\n\nThis sends a short generation through the Model Gateway and reports tok/s.`)) return
     setRunning(true)
     try {
-      const d = await api.post('/api/throughput/benchmark', { model })
+      const d = await api.post('/api/throughput/benchmark', { model: benchTarget })
       setResult(d)
       toast(`Benchmark: ${d.output_tokens_per_sec} tok/s (${d.model})`, 'success')
       refresh()
@@ -134,7 +125,7 @@ export default function ThroughputTab() {
     } finally {
       setRunning(false)
     }
-  }, [llms, toast, refresh])
+  }, [benchTarget, toast, refresh])
 
   return (
     <section className="mb-5 rounded-lg border border-border bg-card p-6 shadow-card">
@@ -154,35 +145,57 @@ export default function ThroughputTab() {
         <div className="space-y-3">{[0, 1].map((i) => <div key={i} className="skeleton h-28 w-full" />)}</div>
       ) : (
         <>
-          {/* Hero + percentile rail */}
+          {/* Active model (authoritative) + percentile rail */}
           <div className={`${PANEL} mb-6`}>
-            <div className="flex flex-wrap items-baseline justify-between gap-3">
-              <div className="min-w-0">
-                <span className="text-micro font-semibold text-muted">Active model</span>
-                <div className="mt-0.5 truncate font-mono text-[0.95rem] font-semibold text-fg" title={hero ? hero[0] : ''}>
-                  {hero ? hero[0] : 'No samples yet'}
+            {activeModel === null ? (
+              <div className="flex items-center gap-2 rounded-sm border border-border-subtle border-l-[3px] border-l-warning bg-warning/[0.04] px-4 py-3 text-[0.8125rem] font-medium" role="status">
+                Model control plane unreachable — cannot determine the active model.
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-baseline justify-between gap-3">
+                  <div className="min-w-0">
+                    <span className="text-micro font-semibold text-muted">Active model</span>
+                    <div className="mt-0.5 truncate font-mono text-[0.95rem] font-semibold text-fg" title={activeModel}>
+                      {activeModel}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-mono text-[1.6rem] font-bold leading-none text-accent">
+                      {activeStats ? fmt(activeStats.latest) : '—'}
+                    </div>
+                    <div className="text-micro font-semibold text-muted">tok/s latest</div>
+                  </div>
                 </div>
+                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.72rem] text-muted">
+                  <span>{activeStats ? `${activeStats.sample_count} samples` : 'no traffic yet — run a benchmark'}</span>
+                  <span>·</span>
+                  <span>{ctxLabel}</span>
+                  {activeStats?.last_ts && <><span>·</span><span>last sample {fmtAgo(activeStats.last_ts)}</span></>}
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
+                  <Metric label="p50 tok/s" value={activeStats ? fmt(activeStats.p50) : '—'} />
+                  <Metric label="p95 tok/s" value={activeStats ? fmt(activeStats.p95) : '—'} />
+                  <Metric label="p99 tok/s" value={activeStats ? fmt(activeStats.p99) : '—'} />
+                  <Metric label="peak tok/s" value={activeStats ? fmt(activeStats.peak) : '—'} />
+                  <Metric label="TTFT p50" value={activeStats ? fmtInt(activeStats.ttft_p50_ms) : '—'} />
+                  <Metric label="TTFT p95" value={activeStats ? fmtInt(activeStats.ttft_p95_ms) : '—'} />
+                </div>
+              </>
+            )}
+            {historyRows.length > 0 && (
+              <div className="mt-4 border-t border-border-subtle pt-3">
+                <div className="mb-1.5 text-micro font-semibold text-muted">Recent models (last 7 days)</div>
+                {historyRows.map(([name, m]) => (
+                  <div key={name} className="flex items-center justify-between gap-3 py-1 text-[0.75rem]">
+                    <span className="truncate font-mono text-fg-muted" title={name}>{name}</span>
+                    <span className="shrink-0 text-muted">
+                      p50 {fmt(m.p50)} tok/s · last seen {fmtAgo(m.last_ts)}
+                    </span>
+                  </div>
+                ))}
               </div>
-              <div className="text-right">
-                <div className="font-mono text-[1.6rem] font-bold leading-none text-accent">{hero ? fmt(hero[1].latest) : '—'}</div>
-                <div className="text-micro font-semibold text-muted">tok/s latest</div>
-              </div>
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.72rem] text-muted">
-              <span>{hero ? `${hero[1].sample_count || 0} samples` : '0 samples'}</span>
-              <span>·</span>
-              <span>{ctxLabel}</span>
-              {hero && <><span>·</span><span>{heroTs ? `active ${fmtAgo(heroTs)}` : 'no recent traffic'}</span></>}
-            </div>
-
-            <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
-              <Metric label="p50 tok/s" value={hero ? fmt(hero[1].p50) : '—'} />
-              <Metric label="p95 tok/s" value={hero ? fmt(hero[1].p95) : '—'} />
-              <Metric label="p99 tok/s" value={hero ? fmt(hero[1].p99) : '—'} />
-              <Metric label="peak tok/s" value={hero ? fmt(hero[1].peak) : '—'} />
-              <Metric label="TTFT p50" value={hero ? fmtInt(hero[1].ttft_p50_ms) : '—'} />
-              <Metric label="TTFT p95" value={hero ? fmtInt(hero[1].ttft_p95_ms) : '—'} />
-            </div>
+            )}
           </div>
 
           {/* Benchmark runner */}
@@ -191,7 +204,7 @@ export default function ThroughputTab() {
               <div>
                 <span className="text-heading text-fg">Benchmark</span>
                 <p className="mt-1 text-[0.8rem] text-fg-muted">
-                  Target: <code className="text-accent-soft">{llms[0]?.name || 'local-chat'}</code>
+                  Target: <code className="text-accent-soft">{benchTarget}</code>
                 </p>
               </div>
               <button type="button" className={BTN} disabled={running} onClick={runBenchmark}>
