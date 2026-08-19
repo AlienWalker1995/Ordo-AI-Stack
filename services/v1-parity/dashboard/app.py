@@ -1479,6 +1479,7 @@ def _load_throughput_state() -> None:
                 "Throughput store is v%s (want v%s) — resetting samples, keeping last_benchmark",
                 data.get("version", 1), _THROUGHPUT_STORE_VERSION,
             )
+            _save_throughput_state()
             return
         _throughput_samples = {
             k: [s for s in v if isinstance(s, dict) and "tps" in s and "ts" in s]
@@ -1631,13 +1632,27 @@ async def throughput_service_usage():
 
 # Authoritative active model, from the same ops-controller /model-config the Model
 # Control tab uses. Cached (positive AND negative) so a 10s-poll dashboard doesn't
-# hammer ops; null means "unknown" and the UI says so instead of guessing.
+# hammer ops; control_plane_ok=False means "unreachable" and the UI says so instead
+# of guessing. Reachable-but-unconfigured (file=None, ok=True) is NOT an error.
 _ACTIVE_MODEL_CACHE_TTL = 30.0
 _active_model_cache: dict = {"checked": 0.0, "value": None}
 _active_model_fetch_lock = asyncio.Lock()
 
 
-async def _throughput_active_model() -> str | None:
+def _gateway_pin_alias(gguf: str | None) -> str | None:
+    """Gateway pin-alias for a GGUF — same derivation as the model-gateway
+    entrypoint (basename, .gguf stripped, lowercased). Derived HERE, in one
+    place, so no UI re-implements it."""
+    if not gguf:
+        return None
+    name = gguf.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name.removesuffix(".gguf")
+
+
+async def _throughput_active_model() -> dict:
+    """Return {"ok": bool, "file": str | None} — ok reflects control-plane
+    reachability (HTTP 200 with a dict body), file is the active GGUF or None
+    when reachable but unconfigured. Cached (positive AND negative)."""
     now = time.monotonic()
     if now - _active_model_cache["checked"] < _ACTIVE_MODEL_CACHE_TTL:
         return _active_model_cache["value"]
@@ -1646,12 +1661,12 @@ async def _throughput_active_model() -> str | None:
         now = time.monotonic()
         if now - _active_model_cache["checked"] < _ACTIVE_MODEL_CACHE_TTL:
             return _active_model_cache["value"]
-        code, data = await _ops_request("GET", "/model-config", timeout=10.0)
-        value = None
-        if code == 200 and isinstance(data, dict) and data.get("active_model"):
-            value = str(data["active_model"])
+        code, data = await _ops_request("GET", "/model-config", timeout=3.0)
+        if code == 200 and isinstance(data, dict):
+            value = {"ok": True, "file": str(data["active_model"]) if data.get("active_model") else None}
         else:
             logger.warning("throughput active-model fetch failed (HTTP %s)", code)
+            value = {"ok": False, "file": None}
         _active_model_cache["checked"] = now
         _active_model_cache["value"] = value
         return value
@@ -1687,7 +1702,14 @@ async def throughput_stats():
             "first_ts": samples[0]["ts"],
             "last_ts": samples[-1]["ts"],
         }
-    out: dict = {"models": result, "ok": True, "active_model": await _throughput_active_model()}
+    active = await _throughput_active_model()
+    out: dict = {
+        "models": result,
+        "ok": True,
+        "active_model": active["file"],
+        "active_model_alias": _gateway_pin_alias(active["file"]),
+        "control_plane_ok": active["ok"],
+    }
     if benchmark:
         out["last_benchmark"] = benchmark
     return out

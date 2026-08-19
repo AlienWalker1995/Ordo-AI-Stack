@@ -246,7 +246,10 @@ def test_throughput_stats_includes_active_model(client, monkeypatch):
     monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
     monkeypatch.setattr(dashboard_app, "_active_model_cache", {"checked": 0.0, "value": None})
     r = client.get("/api/throughput/stats")
-    assert r.json()["active_model"] == "Qwen-Test-Q6_K.gguf"
+    body = r.json()
+    assert body["active_model"] == "Qwen-Test-Q6_K.gguf"
+    assert body["active_model_alias"] == "qwen-test-q6_k"
+    assert body["control_plane_ok"] is True
 
 
 def test_throughput_stats_active_model_null_when_ops_down(client, monkeypatch):
@@ -261,9 +264,30 @@ def test_throughput_stats_active_model_null_when_ops_down(client, monkeypatch):
 
     monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
     monkeypatch.setattr(dashboard_app, "_active_model_cache", {"checked": 0.0, "value": None})
-    assert client.get("/api/throughput/stats").json()["active_model"] is None
-    assert client.get("/api/throughput/stats").json()["active_model"] is None
+    first = client.get("/api/throughput/stats").json()
+    second = client.get("/api/throughput/stats").json()
+    assert first["active_model"] is None
+    assert second["active_model"] is None
+    assert first["control_plane_ok"] is False
+    assert second["control_plane_ok"] is False
+    assert first["active_model_alias"] is None
+    assert second["active_model_alias"] is None
     assert calls["n"] == 1, "second read within TTL must hit the cache, not ops"
+
+
+def test_throughput_stats_distinguishes_unconfigured_from_unreachable(client, monkeypatch):
+    """ops reachable but no model configured -> active_model null with control_plane_ok
+    True — the UI must not blame the control plane for an empty config."""
+    import dashboard.app as dashboard_app
+
+    async def _fake_ops(method, path, *a, **k):
+        return 200, {"active_model": "", "running": {}}
+
+    monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
+    monkeypatch.setattr(dashboard_app, "_active_model_cache", {"checked": 0.0, "value": None})
+    d = client.get("/api/throughput/stats").json()
+    assert d["active_model"] is None
+    assert d["control_plane_ok"] is True
 
 
 def test_throughput_record_accepts_alias_and_backend(client):
@@ -325,6 +349,9 @@ def test_throughput_store_v1_file_triggers_clean_reset(tmp_path, monkeypatch):
     dashboard_app._load_throughput_state()
     assert dashboard_app._throughput_samples == {}
     assert dashboard_app._last_benchmark["model"] == "local-chat"
+    persisted = _json.loads(f.read_text(encoding="utf-8"))
+    assert persisted["version"] == 2
+    assert persisted["samples"] == {}
 
 
 def test_throughput_store_v2_roundtrip(tmp_path, monkeypatch):

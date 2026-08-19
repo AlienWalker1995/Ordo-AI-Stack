@@ -1,13 +1,16 @@
 // Throughput tab — inference telemetry + an on-demand benchmark. Consumes:
 //   - GET  /api/throughput/stats         — per-model tok/s percentiles (timestamped,
-//         7-day retention) + the AUTHORITATIVE active_model (ops /model-config) + last_benchmark
+//         7-day retention) + the AUTHORITATIVE active_model (ops /model-config), its
+//         server-derived active_model_alias (gateway pin-alias), control_plane_ok
+//         (ops reachability, distinct from an empty/no-model config), + last_benchmark
 //   - GET  /api/throughput/service-usage — which service drove which model, recent tok/s
 //   - GET  /api/performance/summary      — context size + fleet summary
 //   - POST /api/throughput/benchmark     — run a quick tok/s benchmark (confirm + pending)
 // The hero is the registry's active model — never inferred from sample recency or
 // counts. Sample keys are real GGUF basenames (the gateway callback attributes each
 // completion to the deployment that served it). Telemetry polls every 10s (paused when
-// hidden); the benchmark targets the active model's gateway pin-alias.
+// hidden); the benchmark targets the active model's gateway pin-alias (from the server,
+// not re-derived client-side).
 import { useCallback, useState } from 'react'
 import { api, usePolling } from '../api.js'
 import { useToast } from './Toast.jsx'
@@ -75,11 +78,17 @@ export default function ThroughputTab() {
   const stats = data?.stats
   const summary = data?.summary
 
-  const models = stats?.ok && stats.models ? stats.models : {}
+  // statsOk: did OUR /api/throughput/stats call succeed. controlPlaneOk: given statsOk,
+  // did the ops-controller /model-config lookup behind it succeed. These are distinct
+  // failure modes — conflating them blames the control plane for a dashboard-API outage.
+  const statsOk = stats?.ok === true
+  const controlPlaneOk = statsOk ? (stats.control_plane_ok !== false) : true
+  const models = statsOk && stats.models ? stats.models : {}
 
   // Authoritative model state — ops-controller /model-config via /stats. Never guessed:
-  // null means the control plane is unreachable and the UI says so.
-  const activeModel = stats?.active_model ?? null
+  // null means either the control plane is unreachable or reachable-but-unconfigured;
+  // the hero panel below distinguishes those (see controlPlaneOk).
+  const activeModel = statsOk ? (stats.active_model ?? null) : null
   const activeStats = activeModel ? models[activeModel] : null
 
   // Other models with recent samples (the store evicts after 7 days) — history, not "Active".
@@ -104,13 +113,11 @@ export default function ThroughputTab() {
   const lastBench = stats?.last_benchmark || null
   const shownBench = result || lastBench
 
-  // Gateway pin-alias for the active GGUF — same derivation as the gateway entrypoint
-  // (basename, .gguf stripped, lowercased). Pin (not local-chat) so the benchmark
-  // measures the GPU deployment and honestly errors if it's evicted, instead of
-  // silently measuring the CPU fallback.
-  const benchTarget = activeModel
-    ? activeModel.replace(/\.gguf$/i, '').toLowerCase()
-    : 'local-chat'
+  // Gateway pin-alias for the active GGUF, derived server-side (single source of truth —
+  // see _gateway_pin_alias in app.py). Pin (not local-chat) so the benchmark measures the
+  // GPU deployment and honestly errors if it's evicted, instead of silently measuring the
+  // CPU fallback. Falls back to local-chat only when there's no server-derived alias.
+  const benchTarget = (statsOk && stats.active_model_alias) || 'local-chat'
 
   const runBenchmark = useCallback(async () => {
     if (!confirm(`Run a throughput benchmark on "${benchTarget}"?\n\nThis sends a short generation through the Model Gateway and reports tok/s.`)) return
@@ -147,9 +154,17 @@ export default function ThroughputTab() {
         <>
           {/* Active model (authoritative) + percentile rail */}
           <div className={`${PANEL} mb-6`}>
-            {activeModel === null ? (
+            {!statsOk ? (
+              <div className="flex items-center gap-2 rounded-sm border border-border-subtle border-l-[3px] border-l-warning bg-warning/[0.04] px-4 py-3 text-[0.8125rem] font-medium" role="status">
+                Could not load throughput telemetry — the dashboard API request failed.
+              </div>
+            ) : !controlPlaneOk ? (
               <div className="flex items-center gap-2 rounded-sm border border-border-subtle border-l-[3px] border-l-warning bg-warning/[0.04] px-4 py-3 text-[0.8125rem] font-medium" role="status">
                 Model control plane unreachable — cannot determine the active model.
+              </div>
+            ) : activeModel === null ? (
+              <div className="rounded-md border border-border-subtle bg-bg-elevated px-4 py-6 text-center text-[0.8125rem] text-muted">
+                No active model configured — set one in Model Control.
               </div>
             ) : (
               <>
