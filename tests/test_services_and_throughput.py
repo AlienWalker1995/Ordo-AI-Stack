@@ -248,6 +248,12 @@ def test_throughput_record_accepts_alias_and_backend(client):
     assert r.status_code == 200 and r.json()["ok"] is True
     stats = client.get("/api/throughput/stats").json()
     assert "Attrib-Test-Q6_K.gguf" in stats["models"]
+    import dashboard.app as dashboard_app
+    with dashboard_app._state_lock:
+        evt = next(u for u in reversed(dashboard_app._service_usage)
+                   if u["model"] == "Attrib-Test-Q6_K.gguf")
+    assert evt["alias"] == "local-chat"
+    assert evt["backend"] == "llamacpp"
 
 
 def test_throughput_samples_evict_after_max_age(client):
