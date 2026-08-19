@@ -207,10 +207,22 @@ def test_both_missing_noop_pops_stale_manifest_entry(tmp_path):
 
 
 def test_fresh_lock_skips(tmp_path):
+    # A lock only counts when genuinely held: on POSIX (fcntl available) the
+    # probe checks flock, so the test must actually hold one; on Windows the
+    # fallback is the fresh-mtime heuristic the fixture already satisfies.
     pair = _mk_pair(tmp_path, volume="a", vault="b", lock_age=10)
     manifest = {}
     q, c = _dirs(tmp_path)
-    assert vf.sync_pair(pair, manifest, quarantine_dir=q, conflicts_dir=c, now_utc="x") == "skip_locked"
+    if vf.fcntl is not None:
+        lock = pair.volume.with_name(pair.volume.name + ".lock")
+        fd = os.open(lock, os.O_RDWR)
+        vf.fcntl.flock(fd, vf.fcntl.LOCK_EX | vf.fcntl.LOCK_NB)
+        try:
+            assert vf.sync_pair(pair, manifest, quarantine_dir=q, conflicts_dir=c, now_utc="x") == "skip_locked"
+        finally:
+            os.close(fd)
+    else:
+        assert vf.sync_pair(pair, manifest, quarantine_dir=q, conflicts_dir=c, now_utc="x") == "skip_locked"
 
 
 def test_stale_lock_does_not_skip(tmp_path):
