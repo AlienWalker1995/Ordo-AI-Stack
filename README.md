@@ -13,9 +13,9 @@ Local-first AI homelab: stand up services from a one-line manifest, then let the
 
 **1 · Services are cheap to add.** Every service, MCP tool, and agent is a declarative **manifest**, not hand-written plumbing. Drop a `plugin.yaml` (or `agent.yaml` / `catalog.json`) in, and `ordo render` composes it into the running stack — network wiring, front-door route, dashboard card, health check, and dependencies included. Adding a capability is an edit to one source file, not a compose-surgery session.
 
-**2 · Services intelligently share one GPU.** A homelab has one expensive card and many things that want it — a resident chat model, image/video diffusion, 3D, voice. Ordo runs a real **scheduler** (`ordo serve`) that arbitrates GPU *residency*: the chat model stays resident and co-runs when a job fits, or is cleanly evicted and **restored** when a big render needs the whole card. Every GPU service *declares* how it competes (`gpu_arbitration:` — resident, burst, or exempt), and for work that can't ask politely — a render hand-queued in ComfyUI's own web UI — an admission **gate** forces the request through the scheduler before it can touch the card. Two tenants never silently saturate the GPU (the failure that hard-crashed the box before the gate existed).
+**2 · Services intelligently share one GPU.** A homelab has one expensive card and many things that want it — a resident chat model, image/video diffusion, 3D, voice. Ordo runs a real **scheduler** (`ordo serve`) that arbitrates GPU *residency*: the chat model stays resident and co-runs when a job fits, or is cleanly evicted and **restored** when a big render needs the whole card. Every GPU service *declares* how it competes (`gpu_arbitration:` — resident, burst, or exempt), and for work that can't ask politely — a render hand-queued in a web UI — an admission **gate** forces the request through the scheduler before it can touch the card. Two tenants never silently saturate the GPU (the failure that hard-crashed the box before the gate existed).
 
-Everything else follows from those two. The stack runs llama.cpp models behind an **OpenAI-compatible** LiteLLM gateway, **Open WebUI** for chat, **ComfyUI** for image/video diffusion, **n8n** for automation, and an **MCP gateway** for shared tools — all fronted by one **dashboard** and reached through a single **Caddy + oauth2-proxy + Tailscale + Google SSO** front door. Every choice is made once — in an **interactive terminal wizard** — and captured in one declarative source (`ordo.yaml`) that renders into the running config. Derived files are regenerated, never hand-edited, so configuration drift is structurally impossible.
+Everything else follows from those two. The stack runs llama.cpp models behind an **OpenAI-compatible** LiteLLM gateway, **Open WebUI** for chat, **ComfyUI** for image/video diffusion, **n8n** for automation, and an **MCP gateway** for shared tools — all fronted by one **dashboard** and reached through a single **SSO front door** (Caddy + oauth2-proxy). Every choice is made once — in an **interactive terminal wizard** — and captured in one declarative source (`ordo.yaml`) that renders into the running config. Derived files are regenerated, never hand-edited, so configuration drift is structurally impossible.
 
 ## Install
 
@@ -49,7 +49,7 @@ The wizard **is** the configuration experience: every decision about your stack 
 1. **Hardware** — confirms the auto-detected GPU / RAM / CPU (or pin it later for reproducibility).
 2. **Model** — accepts the best-fit pick from the catalog, or choose another by tier.
 3. **Capabilities** — which optional groups to turn on (chat is always on): image/video, RAG, voice, automation (n8n), web search, monitoring, **notes sync** (cross-device Obsidian). Default is hardware-gated auto.
-4. **Secure front door** — set up the Tailscale + Google SSO gate now, or skip it (with an explicit warning that the stack then runs unauthenticated). If you set it up, the tailnet hostname, OAuth client id/secret, and email allowlist are **required** — leave one blank and the wizard asks whether to defer it or re-enter, so you never ship a half-configured gate. It prints the exact Google console URL + callback and offers to provision a `tailscale cert`.
+4. **Secure front door** — set up the SSO gate now (bring your own Tailscale tailnet and Google OAuth client), or skip it (with an explicit warning that the stack then runs unauthenticated). If you set it up, the hostname, OAuth client id/secret, and email allowlist are **required** — leave one blank and the wizard asks whether to defer it or re-enter, so you never ship a half-configured gate. It prints the exact Google console URL + callback and offers to provision a TLS cert.
 5. **External tokens** — Hugging Face, Tailscale, and GitHub tokens; all optional (Enter to skip). Internal keys (LiteLLM, ops, MCP, cookie, SearXNG, n8n) are **auto-generated** for you.
 6. **Review & confirm** — a summary of every choice (hardware, model, capabilities, front door, secrets) with a final **Y/n**. Decline and nothing is written.
 
@@ -59,61 +59,77 @@ Re-run `ordo init` any time to reconfigure. **Prefer to drive the render engine 
 
 ## Overview
 
-**Deployment model:** a single homelab operator running on their own hardware. Every user-facing UI sits behind the front door — Caddy is the only service that publishes host ports. Each prebuilt SPA is served on its own port, at the root it was compiled for: `${CADDY_TAILNET_HOSTNAME}:8443` (Open WebUI), `:8444` (Dashboard), `:8445` (n8n), `:8446` (ComfyUI), `:8447` (Hermes), `:8448` (codebase-memory) — plus `:443` as the front door (landing page, the one Google OAuth callback, `/llm/*` and `/mcp` API access, and n8n webhook/OAuth passthroughs). The operator brings their own Tailscale tailnet and Google OAuth client; the stack stitches them together so one Google sign-in (domain-scoped cookie) covers every port, gated by an email allowlist. Old subpath bookmarks (`/chat`, `/dash`, `/n8n`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`) still work — Caddy 302s them to their port. See [docs/runbooks/auth.md](docs/runbooks/auth.md).
+**Deployment model:** a single operator running the stack on their own hardware, reached through one authenticated front door. Only the edge proxy publishes host ports — every UI sits behind SSO, and one sign-in (a domain-scoped cookie) covers the whole stack, gated by an email allowlist you control. Internal services (model gateway, MCP gateway, vector store) publish no host ports and are reachable only on the project network, or through the front door's authenticated API routes. The concrete port layout lives in the [operator guide](docs/operator-guide.md) and the [auth runbook](docs/runbooks/auth.md).
 
-**Who it is for:** a homelab operator running local AI models on their own machine, exposed over their tailnet to a small allowlist of personal Google accounts, with strong operator-deployment discipline.
+**Who it is for:** anyone who wants to run local AI models on their own machine and reach them securely from their own devices — with configuration discipline built in rather than bolted on.
 
 ## How it works
 
 Ordo is driven by a render engine, not by hand-edited compose files:
 
+```mermaid
+flowchart LR
+    subgraph source["Declarative source"]
+        Y["ordo.yaml<br/>(hardware · model · capabilities)"]
+        M["manifests<br/>(plugin.yaml · agent.yaml · catalog)"]
+    end
+    R{{"ordo render"}}
+    subgraph out["Rendered runtime (out/, regenerated — never hand-edited)"]
+        C[".env · docker-compose.yml<br/>agent context · MCP registry · service catalog"]
+    end
+    D[("docker compose up")]
+    Y --> R
+    M --> R
+    R --> C
+    C --> D
+```
+
 - **One source of truth** — `ordo.yaml` declares hardware, model, plugins, and overrides.
-- **`ordo render`** turns that source (+ detected hardware + model catalog + plugin/agent/service manifests) into the complete runtime config under `out/` (gitignored): `.env`, `docker-compose.yml`, agent context, `mcp-registry.yaml`, `manifest.json`, `services-catalog.json`, `secrets.env.example`.
-- **Services run from the rendered output.** To change anything, edit the source and re-render — edits to derived files never survive, so the LLM context size, model choice, and agent context can never fall out of sync (the drift class that motivated the design).
-- **Core #1 — a service is a manifest.** A service, MCP server, or agent is a declarative manifest the renderer composes in when its hardware needs are met — it brings its own compose block, front-door route, dashboard card (`catalog.json`), health check, and GPU declaration. Adding one is a file, not a code change; **Hermes is the default agent**. See [`docs/agents.md`](docs/agents.md).
-- **Core #2 — compute-sharing is a scheduler with teeth** (`ordo serve`, the `ops-controller` service): FIFO admission, co-run-when-it-fits, **evict-and-restore** the resident model for a big job, LRU idle-evict — a deterministic decision engine, not a reactive watchdog. Each GPU service *declares* its arbitration (`gpu_arbitration:` — mode `resident`/`burst`/`exempt` × enforcement `broker`/`client`/`gate`/`none`). Queue-driven services that can't self-arbitrate (e.g. ComfyUI's web UI) sit behind an admission **gate** that acquires a lease before forwarding a submission, so nothing bypasses the scheduler and co-saturates the card.
+- **`ordo render`** turns that source (+ detected hardware + model catalog + plugin/agent/service manifests) into the complete runtime config under `out/` (gitignored). Services run from the rendered output; to change anything, edit the source and re-render. Edits to derived files never survive, so model choice, context sizes, and agent config can never fall out of sync.
+- **Core #1 — a service is a manifest.** A service, MCP server, or agent is a declarative manifest the renderer composes in when its hardware needs are met — it brings its own compose block, front-door route, dashboard card, health check, and GPU declaration. Adding one is a file, not a code change. See [`docs/agents.md`](docs/agents.md).
+- **Core #2 — compute-sharing is a scheduler with teeth** (`ordo serve`, the `ops-controller` service): FIFO admission, co-run-when-it-fits, **evict-and-restore** the resident model for a big job, LRU idle-evict — a deterministic decision engine, not a reactive watchdog. Each GPU service *declares* its arbitration (`gpu_arbitration:` — mode `resident`/`burst`/`exempt` × enforcement `broker`/`client`/`gate`/`none`). Queue-driven services that can't self-arbitrate sit behind an admission **gate** that acquires a lease before forwarding a submission, so nothing bypasses the scheduler and co-saturates the card.
 
 Full engine reference, the plugin/agent registries, and the render-discipline runbook are in [`docs/operator-guide.md`](docs/operator-guide.md).
 
 ## Features
 
-Caddy is the **only** service that publishes host ports — seven SSO-gated ports on `${CADDY_TAILNET_HOSTNAME}`, one root port per prebuilt SPA plus the `:443` front door. `model-gateway`, `mcp-gateway`, and `qdrant` publish no host port and are reachable only on the project network (or via `:443` — `/llm/*` and `/mcp` respectively).
+Every UI is published only through the SSO front door; APIs are exposed on authenticated front-door routes (`/llm/*`, `/mcp`). What the stack gives you:
 
-- **Unified dashboard** (`:8444`, with a `/grafana/` embed for monitoring) — model lists, service links, dependency health, GPU/registry views, model pulls.
-- **Model gateway** — LiteLLM OpenAI-compatible API in front of llama.cpp backends, reachable at `:443/llm/*` (Bearer auth).
-- **Open WebUI** (`:8443`) — chat UI, served at its own port root.
-- **ComfyUI** (`:8446`) — image/video (LTX-2) workflows; large model downloads on demand.
-- **n8n** (`:8445`) — automation; the public webhook base (`N8N_WEBHOOK_URL=https://${CADDY_TAILNET_HOSTNAME}/n8n`) is unchanged and still passes through `:443`.
-- **MCP gateway** — shared MCP tools for host clients and in-stack services, reachable at `:443/mcp` (Bearer auth).
-- **Ops controller** — the render/scheduler control plane (no host port; token-auth).
-- **Hermes** (`:8447`, served at its own port root) — the default assistant agent (chat via the model gateway, tools via the MCP gateway, GPU via the scheduler).
-- **codebase-memory** (`:8448`, served at its own port root) — shared codebase-memory MCP UI.
-- **Voice / RAG / monitoring** — optional plugins (STT+TTS, Qdrant retrieval, Grafana+Prometheus+GPU exporter) that enable when the hardware supports them.
+- **Chat** — Open WebUI backed by an **OpenAI-compatible model gateway** (LiteLLM in front of llama.cpp), so any OpenAI-style client works against your local models.
+- **Image & video** — ComfyUI workflows with scheduler-gated GPU access; large models download on demand.
+- **Automation** — n8n, with webhook and OAuth passthrough at the front door.
+- **Agents** — a pluggable agent framework (`agent.yaml` manifests) with an included default assistant (Hermes): chat through the model gateway, tools through the MCP gateway, GPU through the scheduler.
+- **Shared tools** — an MCP gateway serving one tool registry to host clients (Claude Code, editors) and in-stack services alike.
+- **Code intelligence** — a codebase-memory service that indexes your repositories into a queryable knowledge graph, with its own UI.
+- **Unified dashboard** — model lists, service links, dependency health, GPU and registry views, model pulls, and an embedded monitoring view.
+- **Ops controller** — the render/scheduler control plane (internal, token-auth).
+- **Optional, hardware-gated plugins** — voice (STT + TTS), RAG (Qdrant retrieval), and monitoring (Grafana + Prometheus + GPU exporter) enable when your hardware supports them.
 
 ## Security
 
-- **Front door:** Caddy + oauth2-proxy + Google SSO gates every browser-reachable UI at the network edge, across all seven ports. Email allowlist in `auth/oauth2-proxy/emails.txt` (never commit a real email). One Google sign-in (domain-scoped cookie) covers every port — no per-port re-auth, no new Google OAuth redirect URIs. See [docs/runbooks/auth.md](docs/runbooks/auth.md).
-- **No host ports on services:** only Caddy publishes host ports — seven SSO-gated ports (tailnet-bound `:443`, `:8443`–`:8448`), one per prebuilt SPA plus the `:443` front door.
-- **Secret management:** SOPS + age. Only encrypted `secrets/*.sops` blobs and config are committed; plaintext is decrypted **on the host only**, outside every container's reach, and never enters the repo or a log. Derived `.env` and operator secrets stay in separate files (`secrets.env`, `required: false`). Never synthesize placeholder secret values to clear an error — decrypt on the host. Full notes: [SECURITY.md](SECURITY.md) · [docs/runbooks/secrets.md](docs/runbooks/secrets.md).
+- **Front door:** Caddy + oauth2-proxy gates every browser-reachable UI at the network edge. One sign-in covers the whole stack — no per-service re-auth. The email allowlist is operator-controlled (and never committed). See [docs/runbooks/auth.md](docs/runbooks/auth.md).
+- **No host ports on services:** only the edge proxy publishes host ports; everything else lives on the project network.
+- **Secret management:** SOPS + age. Only encrypted `secrets/*.sops` blobs and config are committed; plaintext is decrypted **on the host only**, outside every container's reach, and never enters the repo or a log. Never synthesize placeholder secret values to clear an error — decrypt on the host. Full notes: [SECURITY.md](SECURITY.md) · [docs/runbooks/secrets.md](docs/runbooks/secrets.md).
 
 ## Architecture
 
-```
-Tailnet device → Caddy (TLS, ${CADDY_TAILNET_HOSTNAME}) → oauth2-proxy (Google SSO + email allowlist, one cookie for all ports)
-                    │
-                    ├── :443  → landing page + /oauth2 (Google callback) + /llm/* (LiteLLM, Bearer)
-                    │           + /mcp (MCP gateway, Bearer) + n8n webhook/OAuth passthroughs
-                    │           + 302 redirects from every legacy subpath (/chat /dash /n8n /comfy /hermes /codebase-memory /grafana)
-                    ├── :8443 → Open WebUI (chat), served at its own root
-                    ├── :8444 → Dashboard (+ /grafana/ embed), served at its own root
-                    ├── :8445 → n8n UI, served at its own root
-                    ├── :8446 → ComfyUI, served at its own root
-                    ├── :8447 → Hermes (default agent), served at its own root
-                    └── :8448 → codebase-memory, served at its own root
-                                        │
-                                        ├── Model Gateway → LiteLLM → llama.cpp
-                                        ├── MCP Gateway → shared tools (SearXNG, n8n, ComfyUI, …)
-                                        └── Ops Controller → render + GPU scheduler (token-auth, no host port)
+```mermaid
+flowchart TB
+    U["Your device"] --> E["Edge proxy (Caddy, TLS)<br/>+ oauth2-proxy — SSO, one cookie, email allowlist"]
+    E --> UIs["SSO-gated UIs (one port per app)<br/>chat · dashboard · automation · image/video · agent · code intelligence"]
+    E --> API["Authenticated API routes<br/>/llm/* (OpenAI-compatible) · /mcp (MCP tools) · webhooks"]
+    subgraph internal["Project network — no host ports"]
+        MG["Model gateway<br/>LiteLLM → llama.cpp"]
+        MCP["MCP gateway<br/>shared tool registry"]
+        OPS["Ops controller<br/>render + GPU scheduler"]
+        GPU[("GPU")]
+    end
+    UIs --> MG
+    UIs --> MCP
+    API --> MG
+    API --> MCP
+    OPS -- "leases · evict/restore" --> GPU
+    MG -- "resident model" --> GPU
 ```
 
 Local-first AI; operator-deployed front door. The dashboard does not mount `docker.sock`; the scheduler's process broker is hard-scoped to the stack's own containers. Details: [PRD index](docs/product%20requirements%20docs/index.md).
@@ -134,8 +150,8 @@ CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): TruffleHog secret s
 ## Access & deployment models
 
 The stack's UIs are served through a **swappable edge layer** — the same rendered compose stack
-behind any of three front doors: a private **Tailscale tailnet** (the current default), a
-**self-hosted public domain**, or a **cloud VM**. All three keep the same Google SSO gate; the public
+behind any of three front doors: a private **Tailscale tailnet** (the default), a
+**self-hosted public domain**, or a **cloud VM**. All three keep the same SSO gate; the public
 ones add exposure and hardening requirements. See [docs/deployment-models.md](docs/deployment-models.md).
 
 ## Docs
