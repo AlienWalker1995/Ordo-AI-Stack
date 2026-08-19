@@ -344,6 +344,10 @@ RUN chmod +x /entrypoint.sh
 COPY --chown=hermes:hermes plugins/push-through/ /opt/hermes-agent/plugins/push-through/
 COPY --chown=hermes:hermes seed/SOUL.md /opt/ordo-seed/SOUL.md
 
+# Vault federation: two-way sync of SOUL/memories with the Obsidian vault
+# (spec: docs/superpowers/specs/2026-08-19-memory-stack-overhaul-design.md).
+COPY --chown=hermes:hermes scripts/vault_federate.py /opt/ordo/vault_federate.py
+
 # Ordo AI Stack: ship the ops-router plugin alongside push-through. Exposes
 # ops-controller verbs (list_containers / container_logs / restart_container)
 # as first-class tools so the model never tries `terminal: docker ...` (which

@@ -138,5 +138,12 @@ if [ -f "$HERMES_HOME/config.yaml" ]; then
     chmod 600 "$HERMES_HOME/config.yaml" 2>/dev/null || true
 fi
 
+# Federate memory files with the Obsidian vault before the gateway reads them.
+# Operator (vault) edits win; must never block boot (script always exits 0).
+# Run as hermes (gosu), not root: it writes under $HERMES_HOME (SOUL.md,
+# memories/, state/), and root-owned output there breaks later hermes writes
+# the same way root cron registration bricks jobs.json (see entrypoint header).
+gosu hermes python3 /opt/ordo/vault_federate.py || true
+
 # Drop privileges and exec the compose-supplied command (hermes gateway / dashboard / etc).
 exec gosu hermes "$@"
