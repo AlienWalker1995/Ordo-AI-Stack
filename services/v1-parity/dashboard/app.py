@@ -1432,11 +1432,25 @@ async def mcp_remove(req: McpRemoveRequest):
 
 # --- Token Throughput ---
 
-# In-memory store: model -> list of output_tokens_per_sec (rolling, max 500)
-_throughput_samples: dict[str, list[float]] = {}
-_ttft_samples: dict[str, list[float]] = {}
+_throughput_samples: dict[str, list[dict]] = {}   # {"tps": float, "ts": epoch}
+_ttft_samples: dict[str, list[dict]] = {}         # {"ms": float, "ts": epoch}
 _MAX_SAMPLES_PER_MODEL = 500
 _MAX_TRACKED_MODELS = 50
+# v2: samples are timestamped dicts. v1 stored bare floats keyed largely by routing
+# ALIAS (one `local-chat` bucket conflating every model ever active behind it, CPU
+# failover included) — unattributable, so version bumps trigger a clean reset.
+_THROUGHPUT_STORE_VERSION = 2
+_SAMPLE_MAX_AGE_SEC = 7 * 86400  # models with no sample in 7 days leave the store
+
+
+def _evict_stale_models(now: float) -> None:
+    """Drop models whose newest sample is older than _SAMPLE_MAX_AGE_SEC.
+    Call while holding _state_lock."""
+    cutoff = now - _SAMPLE_MAX_AGE_SEC
+    for store in (_throughput_samples, _ttft_samples):
+        stale = [m for m, s in store.items() if not s or s[-1]["ts"] < cutoff]
+        for m in stale:
+            del store[m]
 
 # Last benchmark result (persists across page refresh until dashboard restart)
 _last_benchmark: dict | None = None
@@ -1451,15 +1465,30 @@ _THROUGHPUT_FILE = DASHBOARD_DATA_PATH / "throughput.json"
 
 
 def _load_throughput_state() -> None:
-    """Load throughput samples and last benchmark from disk (R4)."""
+    """Load throughput samples and last benchmark from disk (R4). v1 files (no
+    version field) get a clean reset — their samples are un-timestamped and
+    alias-conflated; only last_benchmark carries over."""
     global _throughput_samples, _ttft_samples, _last_benchmark, _service_usage
     if not _THROUGHPUT_FILE.exists():
         return
     try:
         data = json.loads(_THROUGHPUT_FILE.read_text(encoding="utf-8"))
-        _throughput_samples = {k: v for k, v in (data.get("samples") or {}).items() if isinstance(v, list)}
-        _ttft_samples = {k: v for k, v in (data.get("ttft_samples") or {}).items() if isinstance(v, list)}
         _last_benchmark = data.get("last_benchmark") if isinstance(data.get("last_benchmark"), dict) else None
+        if data.get("version") != _THROUGHPUT_STORE_VERSION:
+            logger.warning(
+                "Throughput store is v%s (want v%s) — resetting samples, keeping last_benchmark",
+                data.get("version", 1), _THROUGHPUT_STORE_VERSION,
+            )
+            _save_throughput_state()
+            return
+        _throughput_samples = {
+            k: [s for s in v if isinstance(s, dict) and "tps" in s and "ts" in s]
+            for k, v in (data.get("samples") or {}).items() if isinstance(v, list)
+        }
+        _ttft_samples = {
+            k: [s for s in v if isinstance(s, dict) and "ms" in s and "ts" in s]
+            for k, v in (data.get("ttft_samples") or {}).items() if isinstance(v, list)
+        }
         _service_usage = [u for u in (data.get("service_usage") or []) if isinstance(u, dict)][-_MAX_SERVICE_USAGE:]
     except Exception as e:
         logger.warning("Throughput state load failed: %s", e)
@@ -1471,6 +1500,7 @@ def _save_throughput_state() -> None:
         _THROUGHPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = _THROUGHPUT_FILE.with_suffix(".json.tmp")
         tmp.write_text(json.dumps({
+            "version": _THROUGHPUT_STORE_VERSION,
             "samples": _throughput_samples,
             "ttft_samples": _ttft_samples,
             "last_benchmark": _last_benchmark,
@@ -1516,6 +1546,8 @@ class ThroughputRecordRequest(BaseModel):
     output_tokens_per_sec: float = Field(default=0.0, ge=0, le=1e6)
     service: str = Field(default="", max_length=64)
     ttft_ms: float = Field(default=0.0, ge=0, le=1e6)
+    alias: str = Field(default="", max_length=256)
+    backend: str = Field(default="", max_length=64)
 
 
 @app.post("/api/throughput/record")
@@ -1524,18 +1556,20 @@ async def throughput_record(req: ThroughputRecordRequest):
     model = req.model.strip()
     if not model or req.output_tokens_per_sec <= 0:
         return {"ok": True}
+    now = time.time()
     with _state_lock:
+        _evict_stale_models(now)
         if model not in _throughput_samples:
             if len(_throughput_samples) >= _MAX_TRACKED_MODELS:
                 return {"ok": True}
             _throughput_samples[model] = []
-        _throughput_samples[model].append(req.output_tokens_per_sec)
+        _throughput_samples[model].append({"tps": req.output_tokens_per_sec, "ts": now})
         if len(_throughput_samples[model]) > _MAX_SAMPLES_PER_MODEL:
             _throughput_samples[model] = _throughput_samples[model][-_MAX_SAMPLES_PER_MODEL:]
         if req.ttft_ms > 0 and (model in _ttft_samples or len(_ttft_samples) < _MAX_TRACKED_MODELS):
             if model not in _ttft_samples:
                 _ttft_samples[model] = []
-            _ttft_samples[model].append(req.ttft_ms)
+            _ttft_samples[model].append({"ms": req.ttft_ms, "ts": now})
             if len(_ttft_samples[model]) > _MAX_SAMPLES_PER_MODEL:
                 _ttft_samples[model] = _ttft_samples[model][-_MAX_SAMPLES_PER_MODEL:]
         # Service usage (which service is taxing which model)
@@ -1543,9 +1577,11 @@ async def throughput_record(req: ThroughputRecordRequest):
         _service_usage.append({
             "model": model,
             "service": service,
+            "alias": req.alias.strip()[:256],
+            "backend": req.backend.strip()[:64],
             "tps": round(req.output_tokens_per_sec, 1),
             "ttft_ms": round(req.ttft_ms, 1) if req.ttft_ms > 0 else 0.0,
-            "ts": time.time(),
+            "ts": now,
         })
         if len(_service_usage) > _MAX_SERVICE_USAGE:
             _service_usage[:] = _service_usage[-_MAX_SERVICE_USAGE:]
@@ -1594,31 +1630,86 @@ async def throughput_service_usage():
     return {"by_model": result, "ok": True}
 
 
+# Authoritative active model, from the same ops-controller /model-config the Model
+# Control tab uses. Cached (positive AND negative) so a 10s-poll dashboard doesn't
+# hammer ops; control_plane_ok=False means "unreachable" and the UI says so instead
+# of guessing. Reachable-but-unconfigured (file=None, ok=True) is NOT an error.
+_ACTIVE_MODEL_CACHE_TTL = 30.0
+_active_model_cache: dict = {"checked": 0.0, "value": None}
+_active_model_fetch_lock = asyncio.Lock()
+
+
+def _gateway_pin_alias(gguf: str | None) -> str | None:
+    """Gateway pin-alias for a GGUF — same derivation as the model-gateway
+    entrypoint (basename, .gguf stripped, lowercased). Derived HERE, in one
+    place, so no UI re-implements it."""
+    if not gguf:
+        return None
+    name = gguf.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name.removesuffix(".gguf")
+
+
+async def _throughput_active_model() -> dict:
+    """Return {"ok": bool, "file": str | None} — ok reflects control-plane
+    reachability (HTTP 200 with a dict body), file is the active GGUF or None
+    when reachable but unconfigured. Cached (positive AND negative)."""
+    now = time.monotonic()
+    if now - _active_model_cache["checked"] < _ACTIVE_MODEL_CACHE_TTL:
+        return _active_model_cache["value"]
+    async with _active_model_fetch_lock:
+        # Re-check: a concurrent caller may have refreshed while we waited.
+        now = time.monotonic()
+        if now - _active_model_cache["checked"] < _ACTIVE_MODEL_CACHE_TTL:
+            return _active_model_cache["value"]
+        code, data = await _ops_request("GET", "/model-config", timeout=3.0)
+        if code == 200 and isinstance(data, dict):
+            value = {"ok": True, "file": str(data["active_model"]) if data.get("active_model") else None}
+        else:
+            logger.warning("throughput active-model fetch failed (HTTP %s)", code)
+            value = {"ok": False, "file": None}
+        _active_model_cache["checked"] = now
+        _active_model_cache["value"] = value
+        return value
+
+
 @app.get("/api/throughput/stats")
 async def throughput_stats():
-    """Return per-model throughput stats: peak, p50, p95, p99, latest, sample_count. Includes last_benchmark if available."""
+    """Per-model throughput stats over timestamped samples: peak, p50/p95/p99, latest,
+    sample_count, first_ts/last_ts. Includes last_benchmark if available."""
     result: dict[str, dict] = {}
+    now = time.time()
     with _state_lock:
+        _evict_stale_models(now)
         snapshot = {m: list(s) for m, s in _throughput_samples.items()}
         ttft_snapshot = {m: list(s) for m, s in _ttft_samples.items()}
         benchmark = dict(_last_benchmark) if _last_benchmark else None
     for model, samples in snapshot.items():
         if not samples:
             continue
-        sorted_s = sorted(samples)
-        ttfts = ttft_snapshot.get(model, [])
+        tps_vals = [s["tps"] for s in samples]
+        sorted_s = sorted(tps_vals)
+        ttfts = [s["ms"] for s in ttft_snapshot.get(model, [])]
         sorted_ttfts = sorted(ttfts)
         result[model] = {
-            "latest": round(samples[-1], 1),
-            "peak": round(max(samples), 1),
+            "latest": round(tps_vals[-1], 1),
+            "peak": round(max(tps_vals), 1),
             "p50": round(_percentile(sorted_s, 50), 1),
             "p95": round(_percentile(sorted_s, 95), 1),
             "p99": round(_percentile(sorted_s, 99), 1),
             "ttft_p50_ms": round(_percentile(sorted_ttfts, 50), 1) if sorted_ttfts else 0.0,
             "ttft_p95_ms": round(_percentile(sorted_ttfts, 95), 1) if sorted_ttfts else 0.0,
             "sample_count": len(samples),
+            "first_ts": samples[0]["ts"],
+            "last_ts": samples[-1]["ts"],
         }
-    out: dict = {"models": result, "ok": True}
+    active = await _throughput_active_model()
+    out: dict = {
+        "models": result,
+        "ok": True,
+        "active_model": active["file"],
+        "active_model_alias": _gateway_pin_alias(active["file"]),
+        "control_plane_ok": active["ok"],
+    }
     if benchmark:
         out["last_benchmark"] = benchmark
     return out
@@ -1638,20 +1729,22 @@ async def performance_summary():
     for model, samples in snapshot.items():
         if not samples:
             continue
-        sorted_s = sorted(samples)
-        ttfts = ttft_snapshot.get(model, [])
+        tps_vals = [s["tps"] for s in samples]
+        sorted_s = sorted(tps_vals)
+        ttfts = [s["ms"] for s in ttft_snapshot.get(model, [])]
         sorted_ttfts = sorted(ttfts)
         top_models.append(
             {
                 "model": model,
-                "latest_tps": round(samples[-1], 1),
+                "latest_tps": round(tps_vals[-1], 1),
                 "p95_tps": round(_percentile(sorted_s, 95), 1),
                 "latest_ttft_ms": round(ttfts[-1], 1) if ttfts else 0.0,
                 "p95_ttft_ms": round(_percentile(sorted_ttfts, 95), 1) if sorted_ttfts else 0.0,
                 "sample_count": len(samples),
+                "last_ts": samples[-1]["ts"],
             }
         )
-    top_models.sort(key=lambda item: item["sample_count"], reverse=True)
+    top_models.sort(key=lambda item: item["last_ts"], reverse=True)
     try:
         rag = await asyncio.wait_for(rag_status(), timeout=2.0)
     except TimeoutError:
@@ -1755,19 +1848,6 @@ async def throughput_benchmark(req: ThroughputBenchmarkRequest):
     else:
         output_tokens_per_sec = eval_count / elapsed_sec if eval_count > 0 else 0
     input_tokens_per_sec = prompt_eval_count / elapsed_sec if prompt_eval_count > 0 else 0
-
-    # Store sample for stats (peak, percentiles)
-    with _state_lock:
-        if model not in _throughput_samples:
-            if len(_throughput_samples) >= _MAX_TRACKED_MODELS:
-                pass  # cap reached — skip storage but still return payload
-            else:
-                _throughput_samples[model] = []
-        if model in _throughput_samples:
-            _throughput_samples[model].append(output_tokens_per_sec)
-            if len(_throughput_samples[model]) > _MAX_SAMPLES_PER_MODEL:
-                _throughput_samples[model] = _throughput_samples[model][-_MAX_SAMPLES_PER_MODEL:]
-        _maybe_save_throughput()
 
     payload = {
         "ok": True,

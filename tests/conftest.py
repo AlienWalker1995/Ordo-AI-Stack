@@ -22,3 +22,14 @@ os.environ.setdefault(
     "AUDIT_LOG_PATH",
     str(Path(tempfile.gettempdir()) / "ordo-test-audit.jsonl"),
 )
+
+# ``dashboard/app.py`` resolves DASHBOARD_DATA_PATH (default ``./data/dashboard``)
+# at import time and loads/saves the throughput store there. Without an override, a
+# local pytest run reads AND WRITES the production data dir — the live store was
+# found carrying test_throughput_record_accepts_sample's literal payload
+# ("test-model" @ 25.5 tok/s). Point it at a per-run temp dir before any test
+# imports dashboard.app.
+os.environ.setdefault(
+    "DASHBOARD_DATA_PATH",
+    tempfile.mkdtemp(prefix="ordo-test-dashboard-"),
+)

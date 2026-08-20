@@ -318,3 +318,26 @@ def flag_view(effective):
     view["MTP_ENABLED"] = "1" if enabled else "0"
     view["MTP_N_MAX"] = str(n_max if n_max else 2)
     return view
+
+
+# ── model-gateway coupling ────────────────────────────────────────────────────
+# .env keys the model-gateway entrypoint templates into its LiteLLM config
+# (services/model-gateway/entrypoint.sh): the GGUF-derived pin-alias names +
+# weights_file (LLAMACPP_MODEL), context/generation limits (CTX_SIZE, N_PREDICT),
+# and the vision flag (MMPROJ). When any of these change, the gateway's advertised
+# metadata is stale until it is recreated — the apply path must recreate it too.
+GATEWAY_CONSUMED_KEYS = (
+    "LLAMACPP_MODEL",
+    "LLAMACPP_CTX_SIZE",
+    "LLAMACPP_N_PREDICT",
+    "LLAMACPP_MMPROJ",
+)
+
+
+def gateway_recreate_needed(prev_effective, new_effective):
+    """True when any gateway-templated key's EFFECTIVE value changes (a merely
+    'touched' key whose value is identical does not force a restart)."""
+    return any(
+        (prev_effective.get(k) or "") != (new_effective.get(k) or "")
+        for k in GATEWAY_CONSUMED_KEYS
+    )

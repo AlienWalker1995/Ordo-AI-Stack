@@ -175,8 +175,9 @@ COMPOSE_FILE_ENV = os.environ.get("COMPOSE_FILE", "docker-compose.yml")
 # GGUF directory (chat models + mmproj) shown in the model-config UI — the models-gguf
 # named volume, mounted RO at /gguf-models (compose sets LLAMACPP_MODELS_DIR to match).
 MODELS_DIR = Path(os.environ.get("LLAMACPP_MODELS_DIR", "/gguf-models"))
-# Services that template LLAMACPP_CTX_SIZE and must also recreate when ctx changes.
-MODEL_CONFIG_CTX_CONSUMERS = ["model-gateway"]
+# Services that template model-config .env keys (see llamacpp_flags.GATEWAY_CONSUMED_KEYS)
+# and must recreate when any of those keys' effective value changes.
+MODEL_CONFIG_GATEWAY_CONSUMERS = ["model-gateway"]
 
 # Services whose GPU pin the dashboard may change.
 GPU_ASSIGNABLE_SERVICES = {"llamacpp", "llamacpp-embed", "comfyui", "stt", "tts"}
@@ -1513,7 +1514,7 @@ async def model_config_get(_: None = Depends(verify_token)):
 async def model_config_post(body: ModelConfigBody, request: Request,
                             _: None = Depends(verify_token)):
     """Validate + apply model-config overrides via the ONE write path: persist to
-    the registry, render into .env, recreate llamacpp (+ ctx consumers)."""
+    the registry, render into .env, recreate llamacpp (+ gateway consumers)."""
     errs = lf.validate_all({k: v for k, v in body.overrides.items() if v is not None})
     if errs:
         raise HTTPException(status_code=400, detail={"validation": errs})
@@ -1528,15 +1529,13 @@ async def model_config_post(body: ModelConfigBody, request: Request,
 
     config = dict(rec.config)
     source_file = rec.source.get("file", "")
-    ctx_touched = False
+    prev_effective = lf.compute_effective(lf.defaults(), _read_env_values(lf.ENV_KEYS))
     for k, v in body.overrides.items():
         if k == "LLAMACPP_MODEL":
             if v:
                 source_file = str(v)
             config.pop("LLAMACPP_MODEL", None)
             continue
-        if k == "LLAMACPP_CTX_SIZE":
-            ctx_touched = True
         if v is None:
             config.pop(k, None)
         else:
@@ -1559,7 +1558,9 @@ async def model_config_post(body: ModelConfigBody, request: Request,
     rec.updated_by = "model-config"
     REGISTRY.upsert(rec)
 
-    services = ["llamacpp"] + (MODEL_CONFIG_CTX_CONSUMERS if ctx_touched else [])
+    services = ["llamacpp"]
+    if lf.gateway_recreate_needed(prev_effective, effective):
+        services += MODEL_CONFIG_GATEWAY_CONSUMERS
     for svc in services:
         _recreate_service(svc, request)
 
