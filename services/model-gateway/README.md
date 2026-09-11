@@ -63,6 +63,8 @@ docker build -t ordo/model-gateway:latest services/model-gateway
 - `merge_mcp_config.py` — folds the render-emitted `mcp_servers:` fragment into the rendered
   config; exits 2 when the fragment is missing or malformed (never boots an empty tool set).
 - `throughput_callback.py` — posts per-completion tok/s + TTFT samples to the dashboard.
+- `bootstrap_keys.py`: idempotent LiteLLM virtual-key provisioning from the rendered
+  `out/model-gateway/keys.json` (runs as the `model-gateway-keys` one-shot).
 
 `LITELLM_MASTER_KEY` and `THROUGHPUT_RECORD_TOKEN` are supplied at runtime from the
 operator-managed `secrets.env` (never baked).

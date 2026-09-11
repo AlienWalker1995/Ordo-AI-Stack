@@ -9,6 +9,12 @@ case "${LITELLM_MASTER_KEY}" in
   *) echo "LITELLM_MASTER_KEY must look like sk-<32+ chars> (run the wizard generator); refusing to start" >&2; exit 1 ;;
 esac
 
+# A compose `command:` (the model-gateway-keys one-shot) runs INSTEAD of the proxy, after the
+# key guard so a weak/missing master key fails there too. No command -> template + run LiteLLM.
+if [ "$#" -gt 0 ]; then
+  exec "$@"
+fi
+
 # model_info documentation values — sourced from the SAME env vars the backend llama-server
 # containers read (shared .env via env_file), so the gateway's advertised metadata cannot
 # drift from the running deployment. Defaults mirror the compose/run-script defaults exactly.
