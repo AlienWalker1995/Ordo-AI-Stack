@@ -5,33 +5,20 @@ FROM python@sha256:3d5ed973e45820f5ba5e46bd065bd88b3a504ff0724d85980dcd05eab361f
 
 WORKDIR /app
 
-# Clone and install from source (includes workflows, COMFYUI_URL support)
-# Pin to known-good commit for reproducible builds
+# Clone and install from source (includes workflows, COMFYUI_URL support).
+# Pinned to the FULL upstream commit + an EXACT mcp SDK: the unbounded `mcp>=0.9.0` in upstream's
+# requirements pulled mcp 2.0.0 on 2026-08 (mcp.server.fastmcp removed) and the server crashed at
+# import for four weeks while the Docker gateway reported it healthy.
+ARG COMFYUI_MCP_COMMIT=e0101b2312f30501664dabe4a74c1283c4268eb8
 RUN apt-get update -qq && apt-get install -y -qq git curl && rm -rf /var/lib/apt/lists/* \
   && git clone https://github.com/joenorton/comfyui-mcp-server.git . \
-  && git checkout e0101b2312f3 \
+  && git checkout "${COMFYUI_MCP_COMMIT}" \
+  && sed -i 's/^mcp.*$/mcp==1.30.0/' requirements.txt \
+  && grep -q '^mcp==1.30.0$' requirements.txt \
   && pip install --no-cache-dir -r requirements.txt \
-  && sed -i 's/port=9000,/port=9000, host="0.0.0.0",/' server.py
-
-# Ordo AI Stack: fix stdio transport — redirect print() to stderr so stdout
-# stays clean for JSON-RPC.  The upstream server.py uses print() for banners
-# which corrupts the MCP gateway's stdio channel ("invalid character '='" error).
-RUN python3 <<'PY'
-from pathlib import Path
-s = Path("server.py")
-t = s.read_text()
-# Insert a stderr redirect right after the imports, before any print() call.
-# When --stdio is on the command line, rebind print to write to stderr.
-anchor = 'logger = logging.getLogger("MCP_Server")'
-patch = """\nimport functools as _ft
-if "--stdio" in sys.argv:
-    import builtins as _bi
-    _bi.print = _ft.partial(_bi.print, file=sys.stderr)
-"""
-if "_bi.print" not in t:
-    t = t.replace(anchor, anchor + patch, 1)
-    s.write_text(t)
-PY
+  && sed -i 's/port=9000,/port=9000, host="0.0.0.0",/' server.py \
+  && grep -q 'host="0.0.0.0"' server.py \
+  && grep -q 'stateless_http=True' server.py
 
 # Ordo AI Stack: remove ALL upstream bundled workflows — nothing is baked here. Skills/agents
 # compose their own graph and submit it via queue_prompt(workflow_json=...). In particular the
@@ -77,9 +64,7 @@ t = t.replace(
 p.write_text(t, encoding="utf-8")
 PY
 
-# Server binds to 0.0.0.0:9000; ComfyUI at comfyui:8188
+# Streamable HTTP on 0.0.0.0:9000 (/mcp), stateless. ComfyUI at COMFYUI_URL (compose sets it).
 ENV COMFYUI_URL=http://comfyui:8188
 EXPOSE 9000
-
-# Use stdio so Docker MCP Gateway can communicate (it spawns containers and uses stdin/stdout)
-CMD ["python", "server.py", "--stdio"]
+CMD ["python", "server.py"]
