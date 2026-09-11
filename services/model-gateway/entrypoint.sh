@@ -1,11 +1,13 @@
 #!/bin/sh
 set -eu
 
-# Fail loud: LITELLM_MASTER_KEY is the ONLY auth on the SSO-bypassing /llm edge
-# route. Refuse to start on an empty secret rather than bake a guessable default.
-: "${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY must be set (SOPS/secrets.env) — refusing to start with a guessable default}"
-
-MASTER_KEY="${LITELLM_MASTER_KEY}"
+# Fail loud: LITELLM_MASTER_KEY is the ONLY auth on the SSO-bypassing /llm + /mcp edge routes.
+# Refuse a missing OR weak key (`local` ran for months). Shape: sk- followed by >= 32 chars.
+: "${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY must be set (SOPS/secrets.env) - refusing to start with a guessable default}"
+case "${LITELLM_MASTER_KEY}" in
+  sk-????????????????????????????????*) ;;
+  *) echo "LITELLM_MASTER_KEY must look like sk-<32+ chars> (run the wizard generator); refusing to start" >&2; exit 1 ;;
+esac
 
 # model_info documentation values — sourced from the SAME env vars the backend llama-server
 # containers read (shared .env via env_file), so the gateway's advertised metadata cannot
@@ -27,8 +29,7 @@ CPU_MODEL_NAME="$(basename "${CPU_WEIGHTS}" .gguf | tr '[:upper:]' '[:lower:]')-
 # Vision support is a fact about the deployment (is an mmproj loaded?), not the template.
 if [ -n "${LLAMACPP_MMPROJ:-}" ]; then GPU_SUPPORTS_VISION=true; else GPU_SUPPORTS_VISION=false; fi
 
-sed -e "s|__MASTER_KEY__|${MASTER_KEY}|g" \
-    -e "s|__CTX_SIZE__|${CTX_SIZE}|g" \
+sed -e "s|__CTX_SIZE__|${CTX_SIZE}|g" \
     -e "s|__N_PREDICT__|${N_PREDICT}|g" \
     -e "s|__CPU_CTX_SIZE__|${CPU_CTX_SIZE}|g" \
     -e "s|__GPU_WEIGHTS__|${GPU_WEIGHTS}|g" \
@@ -39,11 +40,13 @@ sed -e "s|__MASTER_KEY__|${MASTER_KEY}|g" \
     -e "s|__CPU_MODEL_NAME__|${CPU_MODEL_NAME}|g" \
     -e "s|__GPU_SUPPORTS_VISION__|${GPU_SUPPORTS_VISION}|g" /app/config.template.yaml > /tmp/config.yaml
 
-# LiteLLM's proxy callback importer (get_instance_fn in
-# litellm/proxy/types_utils/utils.py) resolves "module.attr" relative to the
-# CONFIG FILE's directory — not sys.path. Our config lives in /tmp (compose
-# mounts tmpfs there because the container is read_only:true), so the callback
-# module has to be co-located. Copy from the in-image canonical location.
-cp /usr/lib/python3.13/site-packages/throughput_callback.py /tmp/throughput_callback.py
+# LiteLLM resolves `callbacks:` module paths relative to the CONFIG FILE's directory, and the
+# config lives in /tmp (read_only container + tmpfs). Co-locate the callback with it.
+cp /app/throughput_callback.py /tmp/throughput_callback.py
+
+# Merge the render-emitted MCP server fragment (out/model-gateway/mcp_servers.yaml, mounted at
+# /config). Required: a missing fragment means the mount or the render is wrong; never boot with
+# a silently empty tool set. Exits 2 on a missing/invalid fragment.
+python3 /app/merge_mcp_config.py /tmp/config.yaml "${MCP_SERVERS_FILE:-/config/mcp_servers.yaml}"
 
 exec litellm --config /tmp/config.yaml --host 0.0.0.0 --port 11435

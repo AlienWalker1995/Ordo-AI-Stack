@@ -84,6 +84,7 @@ model_list:
       max_input_tokens: __CPU_CTX_SIZE__
       input_cost_per_token: 0
       output_cost_per_token: 0
+      health_check_timeout: 120
       supports_system_messages: true
       supports_function_calling: true
       supports_tool_choice: true
@@ -123,21 +124,38 @@ model_list:
       served_by: llamacpp-embed (stock llama.cpp, RTX 5090)
 
 general_settings:
-  master_key: "__MASTER_KEY__"
+  # Read from the environment, never templated into this file (it lands in /tmp/config.yaml).
+  master_key: os.environ/LITELLM_MASTER_KEY
+  # config.yaml is the single source of truth for models AND MCP servers (the DB holds keys/spend).
+  store_model_in_db: false
+  # Proactive health routing: an evicted llamacpp (GPU lease for a render) is pulled from the pool
+  # on the next probe instead of failing the first user request into the CPU fallback.
+  background_health_checks: true
+  health_check_interval: 60
+  enable_health_check_routing: true
+  health_check_ignore_transient_errors: true
+  background_health_check_model_groups: ["local-chat", "local-embed"]
+  # Postgres-backed keys/spend. Chat must not depend on the DB being up (private network).
+  disable_error_logs: true
+  proxy_batch_write_at: 60
+  allow_requests_on_db_unavailable: true
+  # A virtual key sees ONLY the MCP servers it is explicitly granted (bootstrap_keys.py grants them).
+  require_key_mcp_access_defined: true
 
-# Graceful degradation: local-chat runs on the GPU; if that deployment is unreachable (the
-# scheduler evicted llamacpp to give the 5090 to a render), LiteLLM fails the request over to
-# the always-on CPU A3B so chat/agents keep working instead of erroring — then recovers to the
-# GPU model as soon as it's healthy again (short cooldown). No effect until llamacpp-cpu runs.
 router_settings:
   fallbacks: [{"local-chat": ["__CPU_MODEL_NAME__"]}]
-  cooldown_time: 30
+  # Must exceed health_check_interval (the failure counter's TTL) so failures accumulate.
+  cooldown_time: 120
   num_retries: 1
+  # Without this, model_info.max_input_tokens is documentation only.
+  enable_pre_call_checks: true
 
 litellm_settings:
   request_timeout: 1800
   stream_timeout: 1800
-  # Ordo throughput recorder — posts each completion's tok/s + TTFT + service
-  # to the dashboard at /api/throughput/record. See throughput_callback.py;
-  # the Dockerfile COPYs it straight into site-packages, so it imports by name.
-  callbacks: ["throughput_callback.throughput_recorder_instance"]
+  drop_params: true
+  json_logs: true
+  # throughput_callback posts tok/s + TTFT to the dashboard; prometheus serves /metrics for the
+  # monitoring plugin (internal network only, so the metrics endpoint runs unauthenticated).
+  callbacks: ["throughput_callback.throughput_recorder_instance", "prometheus"]
+  require_auth_for_metrics_endpoint: false

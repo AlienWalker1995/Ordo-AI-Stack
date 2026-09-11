@@ -27,7 +27,6 @@ metadata tracks the running deployment instead of drifting:
 
 | placeholder | env var (default) |
 |-------------|-------------------|
-| `__MASTER_KEY__` | `LITELLM_MASTER_KEY` (required) |
 | `__CTX_SIZE__` | `LLAMACPP_CTX_SIZE` (262144) |
 | `__N_PREDICT__` | `LLAMACPP_N_PREDICT` (65536) |
 | `__CPU_CTX_SIZE__` | `LLAMACPP_CPU_CTX` (131072) |
@@ -54,10 +53,15 @@ docker build -t ordo/model-gateway:latest services/model-gateway
 ```
 
 ## Files
-- `Dockerfile` — pins `ghcr.io/berriai/litellm:v1.82.3@sha256:ac95e49049e0bb5f2c5a2b0f0452e5d968844b8196cf6efbd2e77d6ef862f7e5` (the running version; bump deliberately to a specific vX.Y.Z + digest), installs the config + callback.
+- `Dockerfile` — pins `ghcr.io/berriai/litellm:v1.100.1@sha256:a3715fa7ad8387941ab697259bd2881d68931657247a41984f90fae6d11c62bf` (bump deliberately to a specific vX.Y.Z + digest), installs the config + helpers.
 - `litellm_config.yaml` — the model list + per-model `model_info` documentation (no secrets;
-  all `__*__` placeholders are entrypoint-substituted at runtime).
-- `entrypoint.sh` — renders the template with the master key + deployment metadata from `.env`.
+  all `__*__` placeholders are entrypoint-substituted at runtime; the master key is read
+  straight from the environment via `os.environ/LITELLM_MASTER_KEY`).
+- `entrypoint.sh` — refuses a missing or weak `LITELLM_MASTER_KEY` (shape `sk-<32+ chars>`),
+  renders the template with the deployment metadata from `.env`, then merges the rendered
+  MCP server fragment (`/config/mcp_servers.yaml`) into the config.
+- `merge_mcp_config.py` — folds the render-emitted `mcp_servers:` fragment into the rendered
+  config; exits 2 when the fragment is missing or malformed (never boots an empty tool set).
 - `throughput_callback.py` — posts per-completion tok/s + TTFT samples to the dashboard.
 
 `LITELLM_MASTER_KEY` and `THROUGHPUT_RECORD_TOKEN` are supplied at runtime from the
