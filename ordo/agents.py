@@ -8,7 +8,8 @@ not code, so a third party ships an agent by dropping a `services/<id>/agent.yam
 The contract every agent image MUST honour (open standards, per the architecture decisions):
   - CHAT: talk to the model via the model-gateway's OpenAI-compatible endpoint (never bind the
     GPU itself) — reads `LLAMACPP_*`-derived config from the rendered `.env`, model id `local-chat`.
-  - TOOLS: reach tools through the mcp-gateway (MCP), not bespoke integrations.
+  - TOOLS: reach tools through the model-gateway's MCP endpoint (LiteLLM's MCP gateway at /mcp,
+    authenticated with the agent's own LiteLLM virtual key), not bespoke integrations.
   - GPU: request heavy GPU work through the ops-controller (`POST /jobs`) and read `GET /status`
     instead of evicting llama.cpp — so the scheduler, not the agent, arbitrates the card.
   - CONFIG: treat the rendered `.env` as read-only truth; never hand-edit derived config.
@@ -27,7 +28,7 @@ from .buildspec import BuildSpec
 
 # The core services an agent may declare it consumes — used to validate a manifest isn't asking
 # for something the core doesn't provide.
-KNOWN_SERVICES = frozenset({"model-gateway", "mcp-gateway", "ops-controller", "dashboard"})
+KNOWN_SERVICES = frozenset({"model-gateway", "model-gateway-keys", "ops-controller", "dashboard"})
 
 
 @dataclasses.dataclass(frozen=True)

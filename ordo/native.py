@@ -91,7 +91,8 @@ def plan(rc, models_dir: str = "./models") -> NativePlan:
     manual = [
         "model-gateway (LiteLLM): pip install 'litellm[proxy]' and point it at "
         "http://127.0.0.1:8080 as model 'local-chat'",
-        "mcp-gateway: run the MCP gateway pointed at out/mcp-registry.yaml",
+        "MCP tools: served by model-gateway (LiteLLM /mcp); run the mcp-* servers listed in "
+        "out/mcp/servers.json",
         "ops-controller: `ordo serve` (the control plane runs natively as-is)",
         f"agent ({rc.hermes.get('agent', 'hermes')}): start your agent against the gateways",
     ]

@@ -8,7 +8,7 @@
 #    endpoints and exec the compose-supplied command.
 #
 # Mirror of dashboard/entrypoint.sh's gosu pattern.
-# Idempotent: re-writes only the keys we manage (model.* + mcp_servers.gateway.url).
+# Idempotent: re-writes only the keys we manage (model.* + mcp_servers.gateway.*).
 # Preserves any other operator-set keys (skills, memory providers, Discord behavior).
 set -eu
 
@@ -56,16 +56,15 @@ fi
 
 HERMES_BIN=/opt/hermes-agent/.venv/bin/hermes
 
-# Fail loud: LITELLM_MASTER_KEY is the gateway bearer this agent authenticates with. It arrives
-# from secrets.env (SOPS) via the service's env_file. A guessable `local` default silently locks
-# the agent out once the gateway rejects it — refuse to start with no key rather than seed a bad one.
-: "${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY must be set (SOPS/secrets.env) — refusing to seed a guessable default}"
+# Fail loud: LITELLM_KEY_HERMES is Hermes' own LiteLLM virtual key (chat + embeddings + MCP tools),
+# provisioned by the model-gateway-keys one-shot from secrets.env. Refuse to start without it.
+: "${LITELLM_KEY_HERMES:?LITELLM_KEY_HERMES must be set (SOPS/secrets.env) - refusing to seed a guessable default}"
 
 # Seed model + MCP endpoints to Docker-network DNS. hermes config set is idempotent
 # and overwrites stale values (e.g. localhost: from a prior host-mode install).
 gosu hermes "$HERMES_BIN" config set model.provider        "custom"                        >/dev/null
 gosu hermes "$HERMES_BIN" config set model.base_url        "http://model-gateway:11435/v1" >/dev/null
-gosu hermes "$HERMES_BIN" config set model.api_key         "${LITELLM_MASTER_KEY}"         >/dev/null
+gosu hermes "$HERMES_BIN" config set model.api_key         "${LITELLM_KEY_HERMES}"         >/dev/null
 gosu hermes "$HERMES_BIN" config set model.default         "local-chat"                    >/dev/null
 # Context window: single source of truth is LLAMACPP_CTX_SIZE in .env. The
 # compose file plumbs it into this container's env; the seed below overwrites
@@ -104,7 +103,10 @@ gosu hermes "$HERMES_BIN" config set auxiliary.compression.context_length "${LLA
 if [ -n "${HERMES_COMPRESSION_THRESHOLD_PERCENT:-}" ]; then
   gosu hermes "$HERMES_BIN" config set compression.threshold "${HERMES_COMPRESSION_THRESHOLD_PERCENT}" >/dev/null
 fi
-gosu hermes "$HERMES_BIN" config set mcp_servers.gateway.url "http://mcp-gateway:8811/mcp" >/dev/null
+# MCP tools come from LiteLLM's MCP gateway on the model-gateway (aggregates every mcp-* service the
+# key is granted). Authenticated with the same virtual key; tools arrive as <server_id>-<tool>.
+gosu hermes "$HERMES_BIN" config set mcp_servers.gateway.url "http://model-gateway:11435/mcp" >/dev/null
+gosu hermes "$HERMES_BIN" config set mcp_servers.gateway.headers.Authorization "Bearer ${LITELLM_KEY_HERMES}" >/dev/null
 
 # Bump timeouts for local model. Hermes's default 180s stale-timeout aborts
 # prefill on long contexts (22k+ tokens on a dense local model = many minutes).

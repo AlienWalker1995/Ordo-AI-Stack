@@ -71,7 +71,7 @@ services:
       - hermes-home:/home/hermes/.hermes
     # caddy is REQUIRED here, not optional: network_mode: service:caddy cannot attach if
     # the target container does not exist yet.
-    depends_on: [caddy, model-gateway, mcp-gateway, dashboard, ops-controller]
+    depends_on: [caddy, model-gateway, dashboard, ops-controller]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9119/"]
       start_period: 30s
