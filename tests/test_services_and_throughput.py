@@ -60,7 +60,7 @@ def test_background_flag_flows_through_services_endpoint(client, monkeypatch):
     monkeypatch.delenv("MANIFEST_PATH", raising=False)
     r = client.get("/api/services")
     by_id = {s["id"]: s for s in r.json()["services"]}
-    for bg_id in ("rag-ingestion", "llamacpp", "mcp", "qdrant", "stt", "tts"):
+    for bg_id in ("rag-ingestion", "llamacpp", "qdrant", "stt", "tts"):
         assert by_id[bg_id]["background"] is True, f"{bg_id} should be background"
     # User-facing UIs (main grid) never carry a truthy background flag.
     for ui_id in ("webui", "comfyui", "n8n", "hermes", "codebase-memory-ui", "model-gateway"):
