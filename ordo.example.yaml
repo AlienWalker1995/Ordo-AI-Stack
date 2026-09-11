@@ -43,7 +43,10 @@ cloud_fallback:
 # filesystem roots + edge identity (kept here, so there is no hand-edit of a derived output).
 # A site key can NEVER shadow a derived one (a site LLAMACPP_CTX_SIZE is ignored) — the drift gate
 # always wins. Leave empty for a local floor install (defaults apply).
-site: {}
+site:
+  # Host path of the shared markdown vault the memory-vault MCP mounts read-write (required:
+  # its compose volume fails loud rather than mounting an empty dir over the vault).
+  MEMORY_VAULT_PATH: ./data/memory-vault
   # DATA_PATH: /srv/ordo/data           # where mutable data (agent brain, qdrant, …) is bind-mounted
   # BASE_PATH: /srv/ordo                 # models/ + comfyui storage roots (shared, often read-only)
   # CODE_ROOT: /home/me/dev              # what the codebase-memory UI indexes + the agent /c/dev mirror

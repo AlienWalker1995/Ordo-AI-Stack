@@ -78,6 +78,98 @@ class PluginService:
         )
 
 
+_MCP_ALLOWED_KEYS = frozenset({
+    "server_id", "image", "url", "transport", "port", "path", "network", "command", "env", "volumes",
+    "depends_on", "timeout", "auth", "allowed_tools", "tools", "healthcheck",
+})
+
+
+@dataclasses.dataclass(frozen=True)
+class McpSpec:
+    """The validated `mcp:` block of a kind=mcp plugin: ONE streamable-HTTP MCP server, either a
+    compose service built from `image` (needs `port` + `healthcheck`, joins the internal MCP network)
+    or a hosted `url` (no container). LiteLLM registers it by URL. stdio-only upstreams are bridged
+    INSIDE their image (see services/codebase-memory/Dockerfile), never spawned by the gateway."""
+    server_id: str
+    image: str = ""
+    url: str = ""
+    transport: str = "http"
+    port: int = 0
+    path: str = "/mcp"
+    network: str = "internal"        # internal: <project>-mcp-net only | stack: + <project>-net
+    command: tuple[str, ...] = ()
+    env: dict[str, str] = dataclasses.field(default_factory=dict)
+    volumes: tuple[str, ...] = ()
+    depends_on: tuple[str, ...] = ()
+    timeout: int = 60                # LiteLLM per-server tool timeout (seconds)
+    auth_type: str = ""              # "" | bearer_token | api_key (LiteLLM auth_type presented upstream)
+    auth_secret: str = ""            # env var NAME (secrets.env) whose value LiteLLM presents
+    allowed_tools: tuple[str, ...] = ()
+    tools: tuple[str, ...] = ()      # informational + parity-test expectation
+    healthcheck: dict[str, Any] = dataclasses.field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any], plugin_id: str) -> McpSpec:
+        prefix = f"mcp plugin '{plugin_id}'"
+        unknown = sorted(set(d) - _MCP_ALLOWED_KEYS)
+        if unknown:
+            raise ValueError(f"{prefix}: unknown mcp keys {unknown} (longLived/disableNetwork/PLACEHOLDER_* "
+                             "are gone: declare transport/port/network/healthcheck)")
+        transport = str(d.get("transport", "") or "")
+        if transport != "http":
+            raise ValueError(f"{prefix}: `transport: http` is required (got {transport!r}); stdio servers "
+                             "are bridged inside their image with mcp-proxy")
+        image = str(d.get("image", "") or "")
+        url = str(d.get("url", "") or "")
+        if bool(image) == bool(url):
+            raise ValueError(f"{prefix}: declare exactly one of `image` (compose service) or `url` (hosted)")
+        port = int(d.get("port", 0) or 0)
+        healthcheck = dict(d.get("healthcheck", {}) or {})
+        if image and port <= 0:
+            raise ValueError(f"{prefix}: `port` (the container port serving the MCP path) is required")
+        if image and not healthcheck:
+            raise ValueError(f"{prefix}: a compose `healthcheck:` is required for an image-backed server")
+        network = str(d.get("network", "internal") or "internal")
+        if network not in ("internal", "stack"):
+            raise ValueError(f"{prefix}: `network` must be internal or stack (got {network!r})")
+        auth = dict(d.get("auth", {}) or {})
+        auth_type = str(auth.get("type", "") or "")
+        auth_secret = str(auth.get("secret", "") or "")
+        if auth_type not in ("", "bearer_token", "api_key"):
+            raise ValueError(f"{prefix}: auth.type must be bearer_token or api_key (got {auth_type!r})")
+        if auth_type and not auth_secret:
+            raise ValueError(f"{prefix}: auth.secret (the secrets.env var NAME) is required with auth.type")
+        timeout = int(d.get("timeout", 60) or 60)
+        if timeout <= 0:
+            raise ValueError(f"{prefix}: timeout must be a positive number of seconds")
+        return cls(
+            server_id=str(d.get("server_id") or plugin_id),
+            image=image, url=url, transport=transport, port=port,
+            path=str(d.get("path", "/mcp") or "/mcp"), network=network,
+            command=tuple(str(c) for c in (d.get("command", []) or [])),
+            env={str(k): str(v) for k, v in (d.get("env", {}) or {}).items()},
+            volumes=tuple(str(v) for v in (d.get("volumes", []) or [])),
+            depends_on=tuple(str(x) for x in (d.get("depends_on", []) or [])),
+            timeout=timeout, auth_type=auth_type, auth_secret=auth_secret,
+            allowed_tools=tuple(str(t) for t in (d.get("allowed_tools", []) or [])),
+            tools=tuple(str(t) for t in (d.get("tools", []) or [])),
+            healthcheck=healthcheck,
+        )
+
+    @property
+    def hosted(self) -> bool:
+        return bool(self.url)
+
+    @property
+    def service_name(self) -> str:
+        """Compose service name (`mcp-<server_id>`); empty for a hosted server."""
+        return "" if self.hosted else f"mcp-{self.server_id}"
+
+    def internal_url(self) -> str:
+        """The URL LiteLLM dials: the hosted url, or the compose service on the internal network."""
+        return self.url if self.hosted else f"http://{self.service_name}:{self.port}{self.path}"
+
+
 @dataclasses.dataclass(frozen=True)
 class Plugin:
     id: str
@@ -92,7 +184,7 @@ class Plugin:
     compose_profile: str
     env: dict[str, str]
     kind: str = "service"          # "service" (compose service) | "mcp" (agent tool server)
-    mcp: dict[str, Any] = dataclasses.field(default_factory=dict)  # image/env/tools for kind=mcp
+    mcp: McpSpec | None = None     # the validated MCP server declaration for kind=mcp
     services: tuple[PluginService, ...] = ()  # compose services this plugin contributes (kind=service)
     # secret env KEYS this plugin's services need at runtime (names only, values operator-managed).
     # render emits these into secrets.env.example; the rendered compose reads them via a second
@@ -120,7 +212,8 @@ class Plugin:
             compose_profile=str(d.get("compose_profile", "")),
             env={str(k): str(v) for k, v in (d.get("env", {}) or {}).items()},
             kind=str(d.get("kind", "service")),
-            mcp=dict(d.get("mcp", {}) or {}),
+            mcp=(McpSpec.from_dict(dict(d.get("mcp", {}) or {}), plugin_id=str(d["id"]))
+                 if str(d.get("kind", "service")) == "mcp" else None),
             services=tuple(PluginService.from_dict(s) for s in (d.get("services", []) or [])),
             secrets=tuple(str(s) for s in (d.get("secrets", []) or [])),
             build=BuildSpec.from_dict(d.get("build")),

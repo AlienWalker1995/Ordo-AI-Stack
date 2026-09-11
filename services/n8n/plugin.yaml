@@ -1,45 +1,53 @@
-# Plugin manifest — data-only. Registers the n8n MCP server (agent tool), not a compose service.
-# The n8n compose SERVICE is provided by the separate `automation` (kind=service) plugin; THIS plugin
-# only bridges the local n8n instance + the czlonkowski/n8n-mcp node & template catalog to Hermes via
-# the gateway. Ports V1's registry-custom.yaml `n8n` entry (the source of truth for its wiring).
+# Plugin manifest - data-only. Declares the n8n MCP server: a compose service `mcp-n8n` on the
+# internal MCP network, registered with LiteLLM's MCP gateway (its tools reach Hermes as
+# `n8n-<tool>`). The n8n compose SERVICE itself is provided by the separate `automation`
+# (kind=service) plugin; THIS plugin only bridges the local n8n instance plus the
+# czlonkowski/n8n-mcp node & template catalog to Hermes.
 id: n8n
 name: n8n workflow automation (MCP tools)
 description: n8n workflow automation exposed to the agent via MCP — bridges the local n8n instance plus the full czlonkowski/n8n-mcp node and template catalog.
-kind: mcp                  # registers an MCP server (agent tool), not a compose service
+kind: mcp                  # an MCP server service (agent tools), not a plain stack service
 requires:
   nvidia: false
   ram_gb: 1
 provides: [tools]
 depends_on: [automation]   # queries the n8n service (automation kind=service plugin)
-# N8N_API_KEY is an operator secret (n8n personal API token). Declaring it here emits the key into
-# secrets.env.example; the rendered compose reads secrets.env as a second env_file, so the gateway
-# has $N8N_API_KEY in its env and gateway-wrapper.sh (1) substitutes PLACEHOLDER_N8N_API_KEY into this
-# catalog entry AND (2) writes n8n.api_key into the gateway's --secrets dotenv so the n8n_* instance
-# tools register (not just the docs-only subset).
+# N8N_API_KEY is an operator secret (the n8n personal API token); N8N_MCP_AUTH_TOKEN is the bearer
+# LiteLLM presents to this server. Declaring them here emits both keys into secrets.env.example;
+# the rendered MCP service reads secrets.env as a second env_file, so the ${...} refs below
+# interpolate to the real values at compose time.
 secrets:
   - N8N_API_KEY
+  - N8N_MCP_AUTH_TOKEN
 mcp:
-  # Upstream czlonkowski/n8n-mcp image (mcp/n8n). Digest-pinned so the gateway resolves it from THIS
-  # catalog, never Docker's unpinned online catalog (the orphan-container/drift source V1 suffered).
-  image: mcp/n8n@sha256:061cdb8fbaa78f5a09787338715b180a0759057759f402c473b5f6ee13a8709e
-  # Needs network access to reach n8n:5678 — NOT offline.
-  disableNetwork: false
+  # Upstream czlonkowski/n8n-mcp, pinned by tag + digest. NOT Docker Hub's `mcp/n8n`: that catalog
+  # image is a single `latest` tag frozen at v2.22.18 (2025-12-03) while upstream is v2.84.x.
+  image: ghcr.io/czlonkowski/n8n-mcp:2.84.1@sha256:f8c62d1c0485791dbbbd7329dccf902de5f279894c5180876176b8f086e48244
+  transport: http
+  port: 3000
+  network: stack           # reaches n8n:5678
+  # LiteLLM presents this bearer on every call; n8n-mcp's HTTP mode requires AUTH_TOKEN.
+  auth: {type: bearer_token, secret: N8N_MCP_AUTH_TOKEN}
   env:
+    MCP_MODE: http
+    HOST: 0.0.0.0
+    PORT: "3000"
+    AUTH_TOKEN: ${N8N_MCP_AUTH_TOKEN}
     N8N_API_URL: http://n8n:5678
-    # Substituted from the gateway's $N8N_API_KEY (sourced from secrets.env) by gateway-wrapper.sh.
-    N8N_API_KEY: PLACEHOLDER_N8N_API_KEY
-    # CRITICAL: silence the image's box-drawing startup banner + INFO logs. With stdio transport ANY
-    # non-JSON-RPC byte before the response makes the gateway crash ('invalid character') OR collapses
-    # the tool set to the docs-only ~23 instead of the full ~42. See project memory
-    # [project_ordo_n8n_mcp_image_docs_only].
+    N8N_API_KEY: ${N8N_API_KEY}
+    # Silences the image's box-drawing startup banner + INFO logs. Under HTTP transport a stray
+    # stdout byte is harmless (it is not the JSON-RPC channel any more), but the quiet logs stay:
+    # they are also what kept the tool set at the full ~42 rather than the docs-only subset.
+    # See project memory [project_ordo_n8n_mcp_image_docs_only].
     LOG_LEVEL: error
     N8N_DIAGNOSTICS_ENABLED: "false"
     DISABLE_TELEMETRY: "true"
-  # Representative tools (the image registers the full czlonkowski catalog + n8n_* instance verbs when
-  # the API key is present); the gateway advertises the full set at runtime.
-  tools:
-    - list_nodes
-    - get_node_info
-    - search_templates
-    - n8n_list_workflows
-    - n8n_create_workflow
+  healthcheck:
+    test: ["CMD", "node", "-e", "require('net').connect(3000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 20s
+  # Representative tools (the image registers the full czlonkowski catalog + n8n_* instance verbs
+  # when the API key is present); LiteLLM advertises the full set at runtime.
+  tools: [list_nodes, get_node_info, search_templates, n8n_list_workflows, n8n_create_workflow]

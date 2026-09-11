@@ -2,11 +2,12 @@
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from ordo.catalog import Catalog
 from ordo.config import Source
-from ordo.plugins import PluginRegistry
+from ordo.plugins import McpSpec, PluginRegistry
 from ordo.render import render
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -14,6 +15,10 @@ CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
 P_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128}
 P_CPU = {"gpus": [], "ram_gb": 16}
+# The streamable-HTTP healthcheck every image-backed MCP service declares (a TCP connect to its own
+# MCP port). Reused by the McpSpec validation tests below.
+_HC = {"test": ["CMD", "python3", "-c", "import socket;socket.create_connection(('127.0.0.1',9000),5).close()"],
+       "interval": "30s", "timeout": "5s", "retries": 3}
 
 
 def _src(**kw):
@@ -57,7 +62,8 @@ def test_placeholder_digest_still_detected():
     from ordo.plugins import Plugin
     from ordo.render import _render_mcp
     bad = Plugin.from_dict({"id": "bad", "kind": "mcp",
-                            "mcp": {"image": "mcp/x@sha256:" + "0" * 64}})
+                            "mcp": {"image": "mcp/x@sha256:" + "0" * 64, "transport": "http",
+                                    "port": 9000, "healthcheck": _HC}})
     _servers, notes = _render_mcp([bad])
     assert any("placeholder" in n for n in notes)
 
@@ -103,28 +109,32 @@ def test_restored_servers_in_rendered_registry():
 
 
 def test_comfyui_server_id_decoupled_from_plugin_id():
-    # the comfyui SERVICE plugin owns id `comfyui`; the MCP plugin is `comfyui-mcp` but its gateway
-    # registry key (Hermes tool namespace comfyui__*) must be `comfyui`, not `comfyui-mcp`.
+    # the comfyui SERVICE plugin owns id `comfyui`; the MCP plugin is `comfyui-mcp` but its SERVER
+    # id (compose service mcp-comfyui, Hermes tool prefix comfyui-) must be `comfyui`.
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     ids = {s["id"] for s in rc.mcp_servers}
     assert "comfyui" in ids and "comfyui-mcp" not in ids
     cm = next(s for s in rc.mcp_servers if s["id"] == "comfyui")
-    # ComfyUI's URL crosses this seam as a PLACEHOLDER, resolved by gateway-wrapper.sh from the
-    # gateway's own COMFYUI_URL — which render points at the admission gate when comfyui is
-    # gate-enforced. A literal here would pin the agent to the DIRECT service and let every
-    # agent-submitted prompt bypass GPU arbitration.
-    assert cm["env"]["COMFYUI_URL"] == "PLACEHOLDER_COMFYUI_URL"
-    assert cm["env"]["OPS_CONTROLLER_TOKEN"] == "PLACEHOLDER_OPS_CONTROLLER_TOKEN"
-    assert cm["env"]["COMFY_MCP_DEFAULT_MODEL"] == "PLACEHOLDER_COMFY_MCP_DEFAULT_MODEL"
+    assert cm["plugin_id"] == "comfyui-mcp" and cm["service"] == "mcp-comfyui"
+    # ComfyUI's URL crosses this seam as a compose ${VAR} ref, so render can point COMFYUI_URL at
+    # the admission gate when comfyui is gate-enforced. A literal here would pin the agent to the
+    # DIRECT service and let every agent-submitted prompt bypass GPU arbitration.
+    assert cm["env"]["COMFYUI_URL"] == "${COMFYUI_URL:-http://comfyui:8188}"
+    assert cm["env"]["OPS_CONTROLLER_TOKEN"] == "${OPS_CONTROLLER_TOKEN}"
+    assert cm["env"]["COMFY_MCP_DEFAULT_MODEL"] == "${COMFY_MCP_DEFAULT_MODEL:-flux1-schnell-fp8.safetensors}"
+    # renders can take many minutes: the per-server LiteLLM tool timeout must cover a queue+wait
+    assert cm["timeout"] == 1800
 
 
 def test_codebase_memory_wiring():
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     cb = next(s for s in rc.mcp_servers if s["id"] == "codebase-memory")
     assert cb["image"] == "ordo/codebase-memory-mcp:latest"
-    assert cb["longLived"] is True and cb["disableNetwork"] is True
-    # read-only host code-root bind (placeholder wrapper-substituted) + named cache volume
-    assert "PLACEHOLDER_CODE_ROOT:/c/dev:ro" in cb["volumes"]
+    # a 100% local indexer: internal MCP network only, so only LiteLLM can reach it
+    assert cb["network"] == "internal"
+    assert cb["url"] == "http://mcp-codebase-memory:9000/mcp" and cb["healthcheck"]
+    # read-only host code-root bind (a compose ${VAR} ref) + named cache volume
+    assert "${CODE_ROOT:-/c/dev}:/c/dev:ro" in cb["volumes"]
     assert "codebase-memory-cache:/cache" in cb["volumes"]
     assert cb["env"]["CBM_CACHE_DIR"] == "/cache"
     assert "index_repository" in cb["tools"] and "search_graph" in cb["tools"]
@@ -133,12 +143,16 @@ def test_codebase_memory_wiring():
 def test_n8n_digest_pinned_and_banner_suppressed():
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     n8 = next(s for s in rc.mcp_servers if s["id"] == "n8n")
-    assert n8["image"].startswith("mcp/n8n@sha256:")  # pinned, not the online-catalog roulette
-    # the stdout-banner suppression that keeps the FULL tool set (not docs-only ~23)
+    # upstream czlonkowski/n8n-mcp, pinned by tag AND digest (never a floating catalog `latest`)
+    assert n8["image"].startswith("ghcr.io/czlonkowski/n8n-mcp:2.84.1@sha256:")
+    # HTTP transport: it listens on 3000 and LiteLLM presents the bearer named in secrets.env
+    assert n8["port"] == 3000 and n8["env"]["MCP_MODE"] == "http"
+    assert n8["auth_type"] == "bearer_token" and n8["auth_secret"] == "N8N_MCP_AUTH_TOKEN"
+    # the banner/log suppression that keeps the FULL tool set (not docs-only ~23)
     assert n8["env"]["LOG_LEVEL"] == "error"
     assert n8["env"]["N8N_DIAGNOSTICS_ENABLED"] == "false"
     assert n8["env"]["DISABLE_TELEMETRY"] == "true"
-    assert n8["env"]["N8N_API_KEY"] == "PLACEHOLDER_N8N_API_KEY"
+    assert n8["env"]["N8N_API_KEY"] == "${N8N_API_KEY}"
 
 
 def test_n8n_api_key_is_a_required_secret():
@@ -152,7 +166,8 @@ def test_orchestration_wiring():
     assert orc["env"]["ORCHESTRATION_DASHBOARD_URL"] == "http://dashboard:8080"
     # No per-service dashboard auth (edge SSO is the only gate) — orchestration carries no Bearer.
     assert "DASHBOARD_AUTH_TOKEN" not in orc["env"]
-    assert orc["disableNetwork"] is False
+    # it must reach dashboard:8080, so it joins the stack network as well as the internal MCP one
+    assert orc["network"] == "stack"
 
 
 def test_restored_images_do_not_warn():
@@ -166,9 +181,11 @@ def test_server_id_collision_is_flagged():
     from ordo.plugins import Plugin
     from ordo.render import _render_mcp
     a = Plugin.from_dict({"id": "a", "kind": "mcp",
-                          "mcp": {"image": "ordo/x:latest", "server_id": "shared"}})
+                          "mcp": {"image": "ordo/x:latest", "server_id": "shared",
+                                  "transport": "http", "port": 9000, "healthcheck": _HC}})
     b = Plugin.from_dict({"id": "b", "kind": "mcp",
-                          "mcp": {"image": "ordo/y:latest", "server_id": "shared"}})
+                          "mcp": {"image": "ordo/y:latest", "server_id": "shared",
+                                  "transport": "http", "port": 9000, "healthcheck": _HC}})
     _servers, notes = _render_mcp([a, b])
     assert any("collides" in n for n in notes)
 
@@ -179,10 +196,9 @@ def test_restored_servers_in_written_servers_txt(tmp_path):
     assert RESTORED <= ids
     reg = yaml.safe_load((tmp_path / "mcp" / "registry-custom.yaml").read_text())
     assert RESTORED <= set(reg["registry"])
-    # codebase-memory catalog passthrough (volumes/longLived/disableNetwork) survives the write
+    # codebase-memory's declared volumes survive the write
     cb = reg["registry"]["codebase-memory"]
-    assert cb["longLived"] is True and cb["disableNetwork"] is True
-    assert "PLACEHOLDER_CODE_ROOT:/c/dev:ro" in cb["volumes"]
+    assert "${CODE_ROOT:-/c/dev}:/c/dev:ro" in cb["volumes"]
 
 
 # ── server_id → plugin_id map: emitted so the dashboard can persist a UI MCP toggle into ordo.yaml's
@@ -218,3 +234,43 @@ def test_write_emits_server_plugin_map_json(tmp_path):
             "codebase-memory", "memory-vault"} <= set(m)
     # lives alongside servers.txt in the dir the dashboard mounts at /mcp-config
     assert (tmp_path / "mcp" / "servers.txt").exists()
+
+
+# ── McpSpec: the validated `mcp:` manifest block. One streamable-HTTP server per plugin, either a
+#    compose service built from `image` or a hosted `url`. Invalid shapes fail at manifest load. ──
+def test_mcp_spec_image_server_requires_http_port_and_healthcheck():
+    spec = McpSpec.from_dict({"image": "ordo/x-mcp:latest", "transport": "http", "port": 9000,
+                              "healthcheck": _HC, "network": "stack"}, plugin_id="x")
+    assert spec.server_id == "x" and spec.service_name == "mcp-x"
+    assert spec.internal_url() == "http://mcp-x:9000/mcp" and not spec.hosted
+    for bad in (
+        {"image": "ordo/x:latest", "port": 9000, "healthcheck": _HC},                         # no transport
+        {"image": "ordo/x:latest", "transport": "stdio", "port": 9000, "healthcheck": _HC},   # stdio
+        {"image": "ordo/x:latest", "transport": "http", "healthcheck": _HC},                  # no port
+        {"image": "ordo/x:latest", "transport": "http", "port": 9000},                        # no healthcheck
+        {"image": "ordo/x:latest", "transport": "http", "port": 9000, "healthcheck": _HC, "network": "host"},
+        {"image": "ordo/x:latest", "transport": "http", "port": 9000, "healthcheck": _HC, "longLived": True},
+        {"image": "ordo/x:latest", "url": "https://h/mcp", "transport": "http", "port": 9000, "healthcheck": _HC},
+        {"image": "ordo/x:latest", "transport": "http", "port": 9000, "healthcheck": _HC, "auth": {"type": "bearer_token"}},
+    ):
+        with pytest.raises(ValueError):
+            McpSpec.from_dict(bad, plugin_id="x")
+
+
+def test_mcp_spec_hosted_server_has_no_container():
+    spec = McpSpec.from_dict({"url": "https://mcp.example.com/mcp", "transport": "http"}, plugin_id="ext")
+    assert spec.hosted and spec.service_name == "" and spec.internal_url() == "https://mcp.example.com/mcp"
+
+
+def test_mcp_spec_auth_and_timeout():
+    spec = McpSpec.from_dict({"image": "i:1@sha256:" + "a" * 64, "transport": "http", "port": 3000,
+                              "healthcheck": _HC, "timeout": 1800,
+                              "auth": {"type": "bearer_token", "secret": "N8N_MCP_AUTH_TOKEN"}}, plugin_id="n")
+    assert spec.timeout == 1800 and spec.auth_type == "bearer_token" and spec.auth_secret == "N8N_MCP_AUTH_TOKEN"
+
+
+def test_all_registered_mcp_manifests_validate_and_declare_http():
+    for p in REGISTRY.plugins:
+        if p.kind == "mcp":
+            assert p.mcp is not None and p.mcp.transport == "http", p.id
+            assert p.mcp.hosted or (p.mcp.port > 0 and p.mcp.healthcheck), p.id

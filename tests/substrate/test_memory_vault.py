@@ -2,9 +2,9 @@
 service-renderer shm_size passthrough it shares the render path with).
 
 Covers the manifests for a shared markdown memory vault:
-  - memory-vault (kind=mcp): renders into the gateway registry with a READ-WRITE vault volume,
-    longLived + disableNetwork, and its tool set — proving the render engine now passes the
-    file-based-MCP catalog fields through (they were previously dropped).
+  - memory-vault (kind=mcp): renders into an MCP server record with a READ-WRITE vault volume,
+    the internal-only network, and its tool set, proving the render engine passes the
+    file-based-MCP fields through (they were previously dropped).
   - shm_size: the generic service-renderer field (reusable), passed through when declared and
     omitted otherwise.
 """
@@ -23,6 +23,12 @@ CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
 P_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128}
 P_CPU = {"gpus": [], "ram_gb": 16}
+# The vault bind the memory-vault manifest declares: a fail-loud compose ref, so a render without
+# site.MEMORY_VAULT_PATH refuses at `docker compose config` instead of mounting an empty dir.
+_VAULT_VOLUME = "${MEMORY_VAULT_PATH:?MEMORY_VAULT_PATH must be set in ordo.yaml site}:/vault"
+_HC = {"test": ["CMD", "python3", "-c",
+                "import socket;socket.create_connection(('127.0.0.1',9000),5).close()"],
+       "interval": "30s", "timeout": "5s", "retries": 3}
 
 
 def _src(plugins, hardware=P_5090):
@@ -55,11 +61,11 @@ def test_memory_vault_mcp_render_passes_through_catalog_fields():
     rc = render(_src(["memory-vault"]), CATALOG, REGISTRY)
     mv = next(s for s in rc.mcp_servers if s["id"] == "memory-vault")
     assert mv["image"] == "ordo/mcpvault-mcp:latest"
-    # keep-warm + offline lockdown for a pure-fs tool
-    assert mv["longLived"] is True
-    assert mv["disableNetwork"] is True
-    # the vault volume is a HOST bind (placeholder token) and READ-WRITE (no :ro suffix)
-    assert mv["volumes"] == ["PLACEHOLDER_MEMORY_VAULT_PATH:/vault"]
+    # a pure-fs tool: internal MCP network only, so only LiteLLM can reach it
+    assert mv["network"] == "internal"
+    assert mv["url"] == "http://mcp-memory-vault:9000/mcp" and mv["healthcheck"]
+    # the vault volume is a HOST bind (a fail-loud compose ${VAR:?} ref) and READ-WRITE (no :ro)
+    assert mv["volumes"] == [_VAULT_VOLUME]
     assert not any(v.endswith(":ro") for v in mv["volumes"]), "vault must be writable by the MCP"
     # its tool surface
     assert {"read_note", "write_note", "patch_note", "search_notes"} <= set(mv["tools"])
@@ -77,14 +83,12 @@ def test_memory_vault_registry_custom_yaml_has_rw_vault(tmp_path):
     mv = reg["registry"]["memory-vault"]
     assert mv["type"] == "server"
     assert mv["image"] == "ordo/mcpvault-mcp:latest"
-    assert mv["volumes"] == ["PLACEHOLDER_MEMORY_VAULT_PATH:/vault"]
-    assert mv["longLived"] is True
-    assert mv["disableNetwork"] is True
+    assert mv["volumes"] == [_VAULT_VOLUME]
 
 
 def test_existing_mcp_entries_unchanged_by_passthrough(tmp_path):
-    # image+env-only MCP plugins must NOT sprout empty volumes/command/longLived/disableNetwork keys —
-    # the passthrough is opt-in so their rendered catalog entry stays byte-stable.
+    # image+env-only MCP plugins must NOT sprout empty volumes/command/longLived/disableNetwork
+    # keys: the passthrough is opt-in so their rendered catalog entry stays byte-stable.
     render(_src("auto"), CATALOG, REGISTRY).write(tmp_path)
     reg = yaml.safe_load((tmp_path / "mcp" / "registry-custom.yaml").read_text())
     for pid in ("qdrant-rag", "searxng"):
@@ -109,16 +113,17 @@ def test_render_mcp_passthrough_unit():
             "kind": "mcp",
             "mcp": {
                 "image": "ordo/vault-x:latest",
-                "longLived": True,
-                "disableNetwork": True,
-                "volumes": ["PLACEHOLDER_MEMORY_VAULT_PATH:/vault"],
+                "transport": "http",
+                "port": 9000,
+                "healthcheck": _HC,
+                "volumes": [_VAULT_VOLUME],
                 "tools": ["read_note"],
             },
         }
     )
     servers, notes = _render_mcp([p])
     s = servers[0]
-    assert s["volumes"] == ["PLACEHOLDER_MEMORY_VAULT_PATH:/vault"]
-    assert s["longLived"] is True and s["disableNetwork"] is True
+    assert s["volumes"] == [_VAULT_VOLUME]
+    assert s["network"] == "internal" and s["service"] == "mcp-vault-x"
     # ordo/* project image → no pinning warning
     assert not notes

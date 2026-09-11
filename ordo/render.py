@@ -426,10 +426,7 @@ def render(source: Source, catalog: Catalog,
     # server_id defaults to the plugin id (mirrors _render_mcp), decoupled only when a plugin sets
     # mcp.server_id (e.g. plugin `comfyui-mcp` → server `comfyui`). Lets the dashboard re-enable a
     # currently-disabled MCP by mapping its server id to the plugin to add back to ordo.yaml.
-    mcp_server_plugin_map = {
-        str(p.mcp.get("server_id") or p.id): p.id
-        for p in plugins.plugins if p.kind == "mcp"
-    }
+    mcp_server_plugin_map = {p.mcp.server_id: p.id for p in plugins.plugins if p.kind == "mcp" and p.mcp}
 
     # Per-consumer LiteLLM keys: the agent first, then every enabled plugin that declares one.
     key_consumers: list[tuple[str, dict[str, Any]]] = []
@@ -531,40 +528,37 @@ def _render_registry_custom(mcp_servers: list[dict[str, Any]]) -> str:
 
 
 def _render_mcp(mcps: list, project: str = "ordo") -> tuple[list[dict[str, Any]], list[str]]:
-    """Build the mcp-gateway registry from kind=mcp plugins. Public images MUST be digest-pinned
-    (no Docker online-catalog roulette — the leak/drift source V1 suffered). Locally-built
-    project images (ordo/*) are exempt: they're pinned by build context, not registry digest."""
+    """Build the MCP server records (one per enabled kind=mcp plugin) that compose and the LiteLLM
+    fragment render from. Public images MUST be digest-pinned (no Docker online-catalog roulette,
+    the leak/drift source V1 suffered). Locally-built project images (ordo/*) are exempt: they are
+    pinned by build context, not a registry digest. A hosted server declares a `url:` and no image,
+    so there is nothing to pin and nothing to build."""
     servers: list[dict[str, Any]] = []
     notes: list[str] = []
     seen_ids: dict[str, str] = {}
     for p in mcps:
-        image = str(p.mcp.get("image", ""))
+        spec = p.mcp
+        if spec is None:
+            continue
+        image = spec.image
         digest = image.split("@sha256:")[-1] if "@sha256:" in image else ""
-        if _is_project_image(image, project):
-            pass  # locally built — pinned by its build context, not a registry digest
+        if spec.hosted or _is_project_image(image, project):
+            pass  # hosted (no image) or locally built (pinned by build context)
         elif not digest:
-            notes.append(f"mcp '{p.id}': image is not digest-pinned — refuse in production")
+            notes.append(f"mcp '{p.id}': image is not digest-pinned - refuse in production")
         elif len(set(digest)) <= 1:  # placeholder like 000.../111...
-            notes.append(f"mcp '{p.id}': image digest is a placeholder — set the real sha256")
-        # The gateway registry key (servers.txt id + tool-namespace prefix Hermes sees, e.g.
-        # `comfyui__system_stats`) defaults to the plugin id. A plugin may set mcp.server_id to
-        # DECOUPLE that key from its plugin id — needed when a kind=service plugin already owns the
-        # bare name (the comfyui SERVICE plugin owns `comfyui`, so its MCP plugin is id `comfyui-mcp`
-        # but keeps server_id `comfyui` to preserve V1's `comfyui__*` tool namespace).
-        server_id = str(p.mcp.get("server_id") or p.id)
-        if server_id in seen_ids:
-            notes.append(f"mcp '{p.id}': server_id '{server_id}' collides with plugin '{seen_ids[server_id]}'")
-        seen_ids[server_id] = p.id
+            notes.append(f"mcp '{p.id}': image digest is a placeholder - set the real sha256")
+        if spec.server_id in seen_ids:
+            notes.append(f"mcp '{p.id}': server_id '{spec.server_id}' collides with plugin '{seen_ids[spec.server_id]}'")
+        seen_ids[spec.server_id] = p.id
         servers.append({
-            "id": server_id, "name": p.name, "image": image,
-            "env": dict(p.mcp.get("env", {}) or {}),
-            "tools": list(p.mcp.get("tools", []) or []),
-            # Optional gateway-catalog passthrough (file-based MCP servers): a host bind for the data
-            # dir (RW when no `:ro`), an explicit container command, keep-warm, and offline lockdown.
-            # Absent on the existing image+env MCP plugins, so their rendered entry is unchanged.
-            "volumes": list(p.mcp.get("volumes", []) or []),
-            "command": list(p.mcp.get("command", []) or []),
-            "longLived": bool(p.mcp.get("longLived", False)),
-            "disableNetwork": bool(p.mcp.get("disableNetwork", False)),
+            "id": spec.server_id, "plugin_id": p.id, "name": p.name, "description": p.description,
+            "image": image, "hosted": spec.hosted, "url": spec.internal_url(),
+            "service": spec.service_name, "port": spec.port, "path": spec.path, "network": spec.network,
+            "command": list(spec.command), "env": dict(spec.env), "volumes": list(spec.volumes),
+            "depends_on": list(spec.depends_on), "timeout": spec.timeout,
+            "auth_type": spec.auth_type, "auth_secret": spec.auth_secret,
+            "allowed_tools": list(spec.allowed_tools), "tools": list(spec.tools),
+            "healthcheck": dict(spec.healthcheck),
         })
     return servers, notes
