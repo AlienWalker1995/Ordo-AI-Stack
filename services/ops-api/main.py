@@ -139,9 +139,11 @@ AUDIT_LOG_MAX_BYTES = int(os.environ.get("AUDIT_LOG_MAX_BYTES", "10485760"))  # 
 # Services we allow operations on (allowlist).
 # caddy/oauth2-proxy/searxng are secret-dependent; they are safe to recreate here
 # now that the compose paths inject the decrypted runtime env (see _compose_env).
+# MCP services (mcp-<server_id>) are allowed dynamically via _service_allowed() below,
+# driven by the ordo.mcp compose label, so a new kind=mcp plugin needs no edit here.
 ALLOWED_SERVICES = {
     "caddy", "oauth2-proxy", "searxng",
-    "llamacpp", "llamacpp-embed", "dashboard", "open-webui", "model-gateway", "mcp-gateway",
+    "llamacpp", "llamacpp-embed", "dashboard", "open-webui", "model-gateway",
     "comfyui", "n8n", "qdrant", "stt", "tts", "codebase-memory-ui", "ltx-trainer",
     # hermes-dashboard is the Hermes UI service (safe to cycle); the `agent`/gateway is
     # deliberately NOT allowlisted — its self-restart is delicate. rag-ingestion is the rag
@@ -154,6 +156,23 @@ ALLOWED_SERVICES = {
     # the monitoring stack and the always-on CPU-fallback LLM. (song-gen rides comfyui — no own svc.)
     "grafana", "prometheus", "gpu-exporter", "llamacpp-cpu",
 }
+
+
+def _service_allowed(name: str) -> bool:
+    """The static allowlist plus every rendered MCP service (`mcp-<server_id>`, label ordo.mcp=true).
+    MCP services are discovered from the rendered compose so a new kind=mcp plugin needs no edit here."""
+    if name in ALLOWED_SERVICES:
+        return True
+    if not name.startswith("mcp-"):
+        return False
+    try:
+        import yaml  # local import: keeps module import cheap for the tests that stub compose
+
+        compose = yaml.safe_load(Path(COMPOSE_PROJECT_DIR, "docker-compose.yml").read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return False
+    svc = (compose.get("services") or {}).get(name) or {}
+    return str((svc.get("labels") or {}).get("ordo.mcp", "")).lower() == "true"
 
 # .env keys we allow updating via the API
 ENV_ALLOWED_KEYS = {
@@ -1205,7 +1224,7 @@ async def service_start(
     service_id: str, body: ConfirmBody, request: Request,
     _: None = Depends(verify_token),
 ):
-    if service_id not in ALLOWED_SERVICES:
+    if not _service_allowed(service_id):
         raise HTTPException(status_code=400, detail=f"Service {service_id} not in allowlist")
     if body.dry_run:
         return {"would": "start", "service": service_id}
@@ -1234,7 +1253,7 @@ async def service_stop(
     service_id: str, body: ConfirmBody, request: Request,
     _: None = Depends(verify_token),
 ):
-    if service_id not in ALLOWED_SERVICES:
+    if not _service_allowed(service_id):
         raise HTTPException(status_code=400, detail=f"Service {service_id} not in allowlist")
     if body.dry_run:
         return {"would": "stop", "service": service_id}
@@ -1272,7 +1291,7 @@ async def service_restart(
     service_id: str, body: ConfirmBody, request: Request,
     _: None = Depends(verify_token),
 ):
-    if service_id not in ALLOWED_SERVICES:
+    if not _service_allowed(service_id):
         raise HTTPException(status_code=400, detail=f"Service {service_id} not in allowlist")
     if body.dry_run:
         return {"would": "restart", "service": service_id}
@@ -1323,7 +1342,7 @@ async def service_logs(
     _: None = Depends(verify_token),
 ):
     """Tail service logs. Auth required."""
-    if service_id not in ALLOWED_SERVICES:
+    if not _service_allowed(service_id):
         raise HTTPException(status_code=400, detail=f"Service {service_id} not in allowlist")
     containers = _containers_for_service(service_id)
     if not containers:
@@ -1350,7 +1369,7 @@ class PullBody(BaseModel):
 
 @app.post("/images/pull")
 async def images_pull(body: PullBody, request: Request, _: None = Depends(verify_token)):
-    svcs = [s for s in body.services if s in ALLOWED_SERVICES]
+    svcs = [s for s in body.services if _service_allowed(s)]
     if not svcs:
         raise HTTPException(status_code=400, detail="No allowed services specified")
     errs = []
@@ -1401,24 +1420,22 @@ async def gpu_assign(body: GpuAssignBody, request: Request, _: None = Depends(ve
 
 @app.get("/mcp/containers")
 def mcp_containers(_: None = Depends(verify_token)):
-    """List MCP server containers (spawned by mcp-gateway). Auth required."""
+    """List the MCP server containers (compose services labelled ordo.mcp=true). Auth required."""
     try:
         client = _docker_client()
-        all_containers = client.containers.list(all=True)
-        mcp_containers = []
-        for c in all_containers:
+        rows = []
+        for c in client.containers.list(all=True, filters={"label": "ordo.mcp=true"}):
+            labels = c.labels or {}
             image = (c.image.tags[0] if c.image.tags else str(c.image)) if hasattr(c, "image") else ""
-            # MCP gateway spawns containers with mcp/* images
-            if "mcp/" in image or (hasattr(c, "name") and "mcp" in (c.name or "").lower()):
-                server_id = image.split("/")[-1].split(":")[0] if "/" in image else (c.name or "unknown")
-                mcp_containers.append({
-                    "id": server_id,
-                    "name": c.name,
-                    "status": c.status if hasattr(c, "status") else "unknown",
-                    "image": image,
-                })
-        return {"containers": mcp_containers}
-    except Exception as e:
+            rows.append({
+                "id": labels.get("ordo.mcp.server_id") or c.name,
+                "name": c.name,
+                "service": labels.get("com.docker.compose.service", ""),
+                "status": c.status if hasattr(c, "status") else "unknown",
+                "image": image,
+            })
+        return {"containers": rows}
+    except Exception as e:  # noqa: BLE001
         return {"containers": [], "error": str(e)}
 
 
@@ -1585,7 +1602,7 @@ async def service_recreate(
     """
     if not (OPS_SERVICE_RECREATE_ENABLED or OPS_COMPOSE_MUTATIONS_ENABLED):
         raise HTTPException(status_code=501, detail=_SERVICE_RECREATE_DISABLED_DETAIL)
-    if service_id not in ALLOWED_SERVICES:
+    if not _service_allowed(service_id):
         raise HTTPException(status_code=400, detail=f"Service {service_id} not in allowlist")
     if body.dry_run:
         return {"would": "recreate", "service": service_id}
