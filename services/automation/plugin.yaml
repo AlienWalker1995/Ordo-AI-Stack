@@ -11,6 +11,11 @@ provides: [automation]
 compose_profile: automation
 env:
   AUTOMATION_ENABLED: "1"
+secrets:
+  - LITELLM_KEY_AUTOMATION   # n8n's own virtual key for the model-gateway (chat only)
+litellm_key:
+  models: [local-chat]
+  mcp_servers: []
 services:
   - name: n8n
     # Pinned to the exact version V1 runs (V1 uses ${N8N_IMAGE:-...2.28.3}). Pin, don't float.
@@ -27,7 +32,7 @@ services:
       OPENAI_API_BASE_URL: ${OPENAI_API_BASE:-http://model-gateway:11435/v1}
       # Interpolated from secrets.env at compose-up (both --env-file passed); no guessable
       # default — an unset key fails loud (gateway rejects) rather than silently sending `local`.
-      OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
+      OPENAI_API_KEY: ${LITELLM_KEY_AUTOMATION}
       WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
       N8N_EDITOR_BASE_URL: ${N8N_WEBHOOK_URL:-}
       N8N_AUTH_EXCLUDE_ENDPOINTS: rest/oauth2-credential/callback,webhook

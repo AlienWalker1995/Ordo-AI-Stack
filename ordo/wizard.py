@@ -37,7 +37,7 @@ class SetupCancelled(Exception):
     cancel and exits non-zero."""
 
 # ── Capabilities → plugin ids ────────────────────────────────────────────────
-# Chat (llama.cpp + model-gateway + Open WebUI + Hermes + the MCP gateway) is ALWAYS on — it is
+# Chat (llama.cpp + model-gateway incl. its MCP gateway + Open WebUI + Hermes) is ALWAYS on - it is
 # the core stack, not a toggle. The optional capability groups below each map to the plugin ids
 # that provide them. The wizard builds an explicit `plugins:` list as "everything auto would
 # enable, MINUS the plugin ids of the capabilities the operator turned off" — robust because it
@@ -93,19 +93,46 @@ def _cookie_secret() -> str:
     return base64.urlsafe_b64encode(_secrets.token_bytes(32)).decode("ascii")
 
 
+def _sk_key(nbytes: int = 24) -> str:
+    # LiteLLM requires its master key and every virtual key to start with `sk-`.
+    return "sk-" + _secrets.token_hex(nbytes)
+
+
 SECRET_GENERATORS: dict[str, Any] = {
-    "LITELLM_MASTER_KEY": lambda: "sk-" + _secrets.token_hex(24),
+    "LITELLM_MASTER_KEY": _sk_key,
+    # DB credential-encryption salt. Generated ONCE per install and never rotated: changing it makes
+    # every credential LiteLLM stored in Postgres unreadable. rotate-internal.sh skips it on purpose.
+    "LITELLM_SALT_KEY": lambda: _sk_key(32),
+    "LITELLM_DB_PASSWORD": lambda: _secrets.token_urlsafe(32),
     "OPS_CONTROLLER_TOKEN": lambda: _secrets.token_urlsafe(32),
-    "MCP_GATEWAY_TOKEN": lambda: _secrets.token_urlsafe(32),
+    "N8N_MCP_AUTH_TOKEN": lambda: _secrets.token_urlsafe(32),   # LiteLLM -> mcp-n8n bearer
     "OAUTH2_PROXY_COOKIE_SECRET": _cookie_secret,
     "SEARXNG_SECRET": lambda: _secrets.token_hex(32),
     "N8N_API_KEY": lambda: _secrets.token_urlsafe(32),
-    # Obsidian notes sync (CouchDB LiveSync). token_urlsafe is base64url — JSON-safe for the
+    # Obsidian notes sync (CouchDB LiveSync). token_urlsafe is base64url - JSON-safe for the
     # bridge's generated config, and shell-safe. The E2EE passphrase encrypts note content at rest
     # in CouchDB; the operator enters the SAME value in every Obsidian LiveSync client.
     "COUCHDB_PASSWORD": lambda: _secrets.token_urlsafe(24),
     "LIVESYNC_E2EE_PASSPHRASE": lambda: _secrets.token_urlsafe(32),
 }
+
+# Prefix-matched generators: every `LITELLM_KEY_<CONSUMER>` a render requires (one per manifest
+# that declares `litellm_key:`) is an internal secret minted here, so adding a consumer needs no
+# wizard edit.
+SECRET_PREFIX_GENERATORS: dict[str, Any] = {
+    "LITELLM_KEY_": _sk_key,
+}
+
+
+def generator_for(key: str) -> Any | None:
+    gen = SECRET_GENERATORS.get(key)
+    if gen is not None:
+        return gen
+    for prefix, pgen in SECRET_PREFIX_GENERATORS.items():
+        if key.startswith(prefix):
+            return pgen
+    return None
+
 
 # External secrets — human-readable prompt text (order = display order). A key that is required
 # by the render but absent here AND not in SECRET_GENERATORS is still emitted (blank) so nothing
@@ -115,7 +142,7 @@ EXTERNAL_SECRETS: dict[str, str] = {
     "OAUTH2_PROXY_CLIENT_SECRET": "Google OAuth client secret",
     "HF_TOKEN": "Hugging Face token (gated model pulls) — optional, Enter to skip",
     "TS_AUTHKEY": "Tailscale auth key (clean tailnet service URLs) — optional, Enter to skip",
-    "GITHUB_PERSONAL_ACCESS_TOKEN": "GitHub PAT (GitHub MCP + ComfyUI-Manager) — optional, Enter to skip",
+    "GITHUB_PERSONAL_ACCESS_TOKEN": "GitHub PAT (ComfyUI-Manager) - optional, Enter to skip",
 }
 
 
@@ -235,8 +262,8 @@ def resolve_secrets(required_keys: list[str],
         if supplied:
             values[key] = supplied
             given.append(key)
-        elif key in SECRET_GENERATORS:
-            values[key] = SECRET_GENERATORS[key]()
+        elif (gen := generator_for(key)) is not None:
+            values[key] = gen()
             generated.append(key)
         else:
             values[key] = ""

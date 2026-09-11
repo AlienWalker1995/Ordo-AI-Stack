@@ -19,6 +19,12 @@ consumes:
   - mcp-gateway
   - ops-controller
 
+# Hermes' own LiteLLM virtual key (LITELLM_KEY_HERMES in secrets.env; provisioned by
+# model-gateway-keys from the rendered keys.json). Chat + embeddings + EVERY enabled MCP server.
+litellm_key:
+  models: [local-chat, local-embed]
+  mcp_servers: all
+
 # ── Runtime wiring (data, mirroring V1's hermes-gateway — see the phase-5.5 parity audit) ──
 # Peers Hermes needs HEALTHY before it starts, else it spams 5xx while they warm (V1 uses
 # service_healthy on the gateways/dashboard; ops-controller only needs to be started). The compose

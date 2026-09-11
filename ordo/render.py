@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -39,8 +40,10 @@ GATED_SERVICE_URL_ENV: dict[str, str] = {"comfyui": "COMFYUI_URL"}
 # rendered). model-gateway/mcp-gateway/ops-controller/dashboard/agent read these; plugins add more
 # via their manifest `secrets:` list. Mirrors the V1 SOPS-decrypted runtime/.env surface.
 CORE_SECRET_KEYS: tuple[str, ...] = (
-    "LITELLM_MASTER_KEY",         # model-gateway master key (LiteLLM)
-    "OPS_CONTROLLER_TOKEN",       # bearer between agent/dashboard/mcp ↔ ops-controller
+    "LITELLM_MASTER_KEY",         # model-gateway master key (LiteLLM admin + UI login)
+    "LITELLM_SALT_KEY",           # LiteLLM DB credential-encryption salt. NEVER rotate (stored creds unreadable)
+    "LITELLM_DB_PASSWORD",        # litellm-db postgres password (compose-interpolated into DATABASE_URL)
+    "OPS_CONTROLLER_TOKEN",       # bearer between agent/dashboard/mcp <-> ops-controller
     # NB: no DASHBOARD_AUTH_TOKEN — the dashboard has NO per-service auth. The Caddy edge
     # (oauth2-proxy + Google SSO) is the ONLY gate; internal callers reach it over ordo-net.
     # (operator mandate: auth is the edge's job, not baked into every service — 2026-07-15.)
@@ -51,7 +54,7 @@ CORE_SECRET_KEYS: tuple[str, ...] = (
     # unfulfillable key. It stays an OPTIONAL var: set it to harden the internal route, or leave
     # it unset. (2026-07-24 hardening audit.)
     "HF_TOKEN",                   # Hugging Face (gated model pulls)
-    "GITHUB_PERSONAL_ACCESS_TOKEN",  # mcp-gateway GitHub MCP + ComfyUI-Manager
+    "GITHUB_PERSONAL_ACCESS_TOKEN",  # ComfyUI-Manager (git-based node installs)
 )
 
 # Deep-merge an override dict onto a derived dict (overrides win, survive regeneration).
@@ -63,6 +66,35 @@ def _apply_overrides(derived: dict[str, Any], overrides: dict[str, Any]) -> dict
         else:
             out[k] = v
     return out
+
+
+def key_env_name(consumer_id: str) -> str:
+    """`open-webui` -> `LITELLM_KEY_OPEN_WEBUI` (the secrets.env var carrying that consumer's key)."""
+    return "LITELLM_KEY_" + re.sub(r"[^A-Za-z0-9]", "_", consumer_id).upper()
+
+
+def render_litellm_keys(consumers: list[tuple[str, dict[str, Any]]],
+                        server_ids: list[str]) -> list[dict[str, Any]]:
+    """Turn each consumer's `litellm_key:` declaration into a key grant for bootstrap_keys.py.
+    `mcp_servers: all` expands to every ENABLED server id (sorted); a list may name only enabled
+    ids, else the render fails (a typo must not silently grant nothing)."""
+    keys: list[dict[str, Any]] = []
+    known = sorted(server_ids)
+    for consumer_id, spec in consumers:
+        if not spec:
+            continue
+        models = [str(m) for m in (spec.get("models") or [])]
+        raw = spec.get("mcp_servers", [])
+        if raw == "all":
+            granted = list(known)
+        else:
+            granted = sorted(str(s) for s in (raw or []))
+            unknown = [s for s in granted if s not in known]
+            if unknown:
+                raise ValueError(f"litellm_key for '{consumer_id}' grants unknown/disabled MCP servers: {unknown}")
+        keys.append({"env": key_env_name(consumer_id), "alias": consumer_id,
+                     "models": models, "mcp_servers": granted})
+    return keys
 
 
 def _max_ctx_for_vram(model: Model, hw: HardwareProfile, reserve_gb: float) -> int:
@@ -109,6 +141,10 @@ class RenderedConfig:
     # secret env KEYS the enabled services need (core + plugins). Values are NEVER rendered — they
     # live in an operator-managed secrets.env; write() emits secrets.env.example (keys only).
     required_secrets: list[str] = dataclasses.field(default_factory=list)
+    # Per-consumer LiteLLM virtual-key grants declared by the agent/plugin manifests
+    # (`litellm_key:`). Rendered to out/model-gateway/keys.json, which the model-gateway-keys
+    # one-shot reads to provision the keys against the running LiteLLM proxy.
+    litellm_keys: list[dict[str, Any]] = dataclasses.field(default_factory=list)
 
     def resident_vram_gb(self) -> float:
         """The GPU footprint the resident LLM actually holds while cached: weights + KV at the
@@ -226,6 +262,11 @@ class RenderedConfig:
         (mcp_dir / "server-plugin-map.json").write_text(
             json.dumps(self.mcp_server_plugin_map, indent=2, sort_keys=True) + "\n",
             encoding="utf-8")
+        # model-gateway/ - mounted read-only into model-gateway + model-gateway-keys at /config.
+        mg_dir = out / "model-gateway"
+        mg_dir.mkdir(parents=True, exist_ok=True)
+        (mg_dir / "keys.json").write_text(
+            json.dumps({"keys": self.litellm_keys}, indent=2) + "\n", encoding="utf-8")
         # an isolated, runnable compose for the stack (own project/network, no port clashes)
         (out / "docker-compose.yml").write_text(
             yaml.safe_dump(self.compose_dict(), sort_keys=False),
@@ -390,6 +431,13 @@ def render(source: Source, catalog: Catalog,
         for p in plugins.plugins if p.kind == "mcp"
     }
 
+    # Per-consumer LiteLLM keys: the agent first, then every enabled plugin that declares one.
+    key_consumers: list[tuple[str, dict[str, Any]]] = []
+    if agent is not None and agent.litellm_key:
+        key_consumers.append((agent.id, dict(agent.litellm_key)))
+    key_consumers += [(p.id, dict(p.litellm_key)) for p in enabled if p.litellm_key]
+    litellm_keys = render_litellm_keys(key_consumers, [s["id"] for s in mcp_servers])
+
     # Internal base URLs for gate-enforced services. A gate is a drop-in on the upstream's port,
     # so redirecting every in-stack consumer through it is a hostname change — but it must be ONE
     # change, in one place, or half the callers keep bypassing arbitration. The derived value
@@ -416,6 +464,9 @@ def render(source: Source, catalog: Catalog,
         for key in p.secrets:
             if key not in required_secrets:
                 required_secrets.append(key)
+    for k in litellm_keys:
+        if k["env"] not in required_secrets:
+            required_secrets.append(k["env"])
 
     return RenderedConfig(
         hardware=hw, model=model, ctx_size=ctx, tier=(model.tier),
@@ -425,6 +476,7 @@ def render(source: Source, catalog: Catalog,
         mcp_servers=mcp_servers, mcp_server_plugin_map=mcp_server_plugin_map,
         plugin_services=plugin_services,
         required_secrets=required_secrets,
+        litellm_keys=litellm_keys,
     )
 
 

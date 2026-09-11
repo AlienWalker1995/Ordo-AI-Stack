@@ -102,6 +102,10 @@ class Plugin:
     # the plugin's own `services/<id>/` + `Dockerfile`. Declared only when the context isn't the
     # plugin's own dir. See ordo.buildspec.
     build: BuildSpec = dataclasses.field(default_factory=BuildSpec)
+    # Optional per-consumer LiteLLM virtual key: {models: [group,...], mcp_servers: all|[server_id,...]}.
+    # render derives the env var LITELLM_KEY_<ID>, adds it to required secrets, and emits the grant
+    # into out/model-gateway/keys.json for bootstrap_keys.py. Empty -> this plugin gets no key.
+    litellm_key: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Plugin:
@@ -120,6 +124,7 @@ class Plugin:
             services=tuple(PluginService.from_dict(s) for s in (d.get("services", []) or [])),
             secrets=tuple(str(s) for s in (d.get("secrets", []) or [])),
             build=BuildSpec.from_dict(d.get("build")),
+            litellm_key=dict(d.get("litellm_key", {}) or {}),
         )
 
     @property

@@ -113,7 +113,8 @@ def test_secrets_env_example_generated_keys_only(tmp_path):
             assert v == "", f"secrets.env.example leaked a value for {k}"
     # core keys + the plugin-declared secrets both appear
     assert set(CORE_SECRET_KEYS) <= set(rc.required_secrets)
-    assert {"SEARXNG_SECRET", "OAUTH2_PROXY_CLIENT_ID", "MCP_GATEWAY_TOKEN"} <= set(rc.required_secrets)
+    assert {"SEARXNG_SECRET", "OAUTH2_PROXY_CLIENT_ID", "LITELLM_KEY_HERMES"} <= set(rc.required_secrets)
+    assert {"LITELLM_SALT_KEY", "LITELLM_DB_PASSWORD"} <= set(CORE_SECRET_KEYS)
 
 
 def test_throughput_record_token_is_not_a_required_secret():

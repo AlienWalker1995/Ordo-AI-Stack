@@ -59,6 +59,10 @@ class Agent:
     # pluggable: an operator/third-party often ships a PREBUILT image (no in-repo Dockerfile) — those
     # declare `build: {external: true}`. Absent -> the agent's own `services/<id>/`. See ordo.buildspec.
     build: BuildSpec = dataclasses.field(default_factory=BuildSpec)
+    # Optional per-consumer LiteLLM virtual key: {models: [group,...], mcp_servers: all|[server_id,...]}.
+    # render derives the env var LITELLM_KEY_<ID>, adds it to required secrets, and emits the grant
+    # into out/model-gateway/keys.json for bootstrap_keys.py. Empty -> this agent gets no key.
+    litellm_key: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Agent:
@@ -81,6 +85,7 @@ class Agent:
             depends_on={str(k): str(v) for k, v in (d.get("depends_on", {}) or {}).items()},
             healthcheck=dict(d.get("healthcheck", {}) or {}),
             build=BuildSpec.from_dict(d.get("build")),
+            litellm_key=dict(d.get("litellm_key", {}) or {}),
         )
 
     def image_for(self, project: str) -> str:
