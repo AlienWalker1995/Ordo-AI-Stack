@@ -27,7 +27,7 @@ def test_soft_4xx_counts_as_reachable():
 
     client = _make_mock_client(400)
     ok, _lat, err = asyncio.run(
-        _probe_one("http://mcp-gateway:8811/mcp", client, soft_4xx=True)
+        _probe_one("http://model-gateway:11435/mcp", client, soft_4xx=True)
     )
     assert ok is True
     assert err is None

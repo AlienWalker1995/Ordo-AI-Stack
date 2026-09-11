@@ -126,7 +126,7 @@ Re-render, then from `out/`: `docker compose -p ordo up -d llamacpp`. This drops
 The model registry is the single source of truth for which model runs on which GPU. It is backed by `data/ops-controller/model-registry.json` (mounted at `/data/model-registry.json` in ops-api) and managed via:
 
 - **Dashboard** — Models view (swap active model, set VRAM estimate) and GPU view (reassign GPU pin per model).
-- **Hermes verbs** — `list_models`, `gpu_status`, `set_active_model`, `assign_model_gpu`, `register_model` (see [services/mcp-gateway/README.md](../services/mcp-gateway/README.md)).
+- **Hermes verbs** — `list_models`, `gpu_status`, `set_active_model`, `assign_model_gpu`, `register_model` (see [services/model-gateway/README.md](../services/model-gateway/README.md)).
 - **ops-controller REST API** — `/registry/*` endpoints (auth required):
 
 | Endpoint | Method | Purpose |
@@ -145,7 +145,7 @@ The registry path can be overridden with `MODEL_REGISTRY_PATH` (default `/data/m
 
 ## MCP Server Configuration
 
-Repo templates live under `services/mcp-gateway/`; runtime files are in `data/mcp/` (bind-mounted into the gateway). See [services/mcp-gateway/README.md](../services/mcp-gateway/README.md).
+Repo templates live under `services/mcp-gateway/`; runtime files are in `data/mcp/` (bind-mounted into the gateway). See [services/model-gateway/README.md](../services/model-gateway/README.md).
 
 Enabled servers are listed in `data/mcp/servers.txt` (one per line). Custom-server metadata lives in `data/mcp/registry-custom.yaml`.
 

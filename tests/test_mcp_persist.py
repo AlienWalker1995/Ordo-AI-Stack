@@ -1,6 +1,7 @@
 """Dashboard MCP persistence: a UI enable/disable must ALSO edit ordo.yaml's `plugins:` list, because
-servers.txt is render-owned and a re-render would otherwise reseed the toggle away. The surgical edit
-MUST preserve every other line + comment, and refuse (fall back) rather than corrupt the source."""
+the enabled set is render-owned (out/mcp/servers.json) and a re-render would otherwise reseed the
+toggle away. The surgical edit MUST preserve every other line + comment, and refuse (fall back)
+rather than corrupt the source."""
 import pytest
 
 pytest.importorskip("fastapi", reason="dashboard runtime deps (fastapi) not present")
@@ -86,7 +87,7 @@ def test_crlf_line_endings_preserved_on_add():
 
 
 # ── _persist_mcp_toggle: the endpoint-facing orchestrator. Server not in the map => flagged, NOT
-#    faked into ordo.yaml; ordo.yaml unmounted => graceful servers.txt-only fallback. ──
+#    faked into ordo.yaml; ordo.yaml unmounted => a graceful non-persistent fallback. ──
 def test_persist_rejects_server_not_in_map(monkeypatch, tmp_path):
     src = tmp_path / "ordo.yaml"
     src.write_text(SAMPLE, encoding="utf-8")
@@ -115,4 +116,4 @@ def test_persist_writes_plugin_for_mapped_server(monkeypatch, tmp_path):
 def test_persist_falls_back_when_source_unset(monkeypatch):
     monkeypatch.setattr("dashboard.app.ORDO_SOURCE_PATH", None)
     res = _persist_mcp_toggle("comfyui", "remove")
-    assert res["persistent"] is False and "not survive a re-render" in res["note"]
+    assert res["persistent"] is False and "not persisted" in res["note"]
