@@ -1,0 +1,306 @@
+{
+ "gateway": "http://mcp-gateway:8811/mcp",
+ "count": 75,
+ "tools": [
+  {
+   "name": "delete_note",
+   "description": "Delete a note from the Obsidian vault (requires confirmation). Supports permanent delete, vault trash, or system trash."
+  },
+  {
+   "name": "delete_project",
+   "description": "Delete a project from the index"
+  },
+  {
+   "name": "detect_changes",
+   "description": "Detect code changes and their impact"
+  },
+  {
+   "name": "get_architecture",
+   "description": "Get high-level architecture overview \u2014 packages, services, dependencies, and project structure at a glance. Includes 'cl"
+  },
+  {
+   "name": "get_code_snippet",
+   "description": "Read source code for a function/class/symbol. IMPORTANT: First call search_graph to find the exact qualified_name, then "
+  },
+  {
+   "name": "get_database_statistics",
+   "description": "Node stats: 525 total, 263 AI tools, 104 triggers, 87% docs coverage. Verifies MCP working."
+  },
+  {
+   "name": "get_frontmatter",
+   "description": "Extract frontmatter from a note without reading the content"
+  },
+  {
+   "name": "get_graph_schema",
+   "description": "Get the schema of the knowledge graph (node labels, edge types)"
+  },
+  {
+   "name": "get_node_as_tool_info",
+   "description": "How to use ANY node as AI tool. Shows requirements, use cases, examples. Works for all nodes, not just AI-marked ones."
+  },
+  {
+   "name": "get_node_documentation",
+   "description": "Get readable docs with examples/auth/patterns. Better than raw schema! 87% coverage. Format: \"nodes-base.slack\""
+  },
+  {
+   "name": "get_node_essentials",
+   "description": "Get node essential info with optional real-world examples from templates. Pass nodeType as string with prefix. Example: "
+  },
+  {
+   "name": "get_node_info",
+   "description": "Get full node documentation. Pass nodeType as string with prefix. Example: nodeType=\"nodes-base.webhook\""
+  },
+  {
+   "name": "get_notes_info",
+   "description": "Get metadata for notes without reading full content"
+  },
+  {
+   "name": "get_property_dependencies",
+   "description": "Shows property dependencies and visibility rules. Example: sendBody=true reveals body fields. Test visibility with optio"
+  },
+  {
+   "name": "get_template",
+   "description": "Get template by ID. Use mode to control response size: nodes_only (minimal), structure (nodes+connections), full (comple"
+  },
+  {
+   "name": "get_templates_for_task",
+   "description": "Curated templates by task. Returns paginated results sorted by popularity."
+  },
+  {
+   "name": "get_vault_stats",
+   "description": "Get vault statistics including total notes, folders, size, and recently modified files. Useful for understanding vault s"
+  },
+  {
+   "name": "index_repository",
+   "description": "Index a repository into the knowledge graph. Special mode 'cross-repo-intelligence': skip extraction, only match Routes/"
+  },
+  {
+   "name": "index_status",
+   "description": "Get the indexing status of a project"
+  },
+  {
+   "name": "ingest_traces",
+   "description": "Ingest runtime traces to enhance the knowledge graph"
+  },
+  {
+   "name": "list_ai_tools",
+   "description": "List 263 AI-optimized nodes. Note: ANY node can be AI tool! Connect any node to AI Agent's tool port. Community nodes ne"
+  },
+  {
+   "name": "list_all_tags",
+   "description": "List all tags across the vault with occurrence counts. Returns both frontmatter tags and inline #hashtags, deduplicated "
+  },
+  {
+   "name": "list_directory",
+   "description": "List files and directories in the vault (includes non-note filenames, while read/write tools remain note-only)"
+  },
+  {
+   "name": "list_node_templates",
+   "description": "Find templates using specific nodes. Returns paginated results. Use FULL types: \"n8n-nodes-base.httpRequest\"."
+  },
+  {
+   "name": "list_nodes",
+   "description": "List n8n nodes. Common: list_nodes({limit:200}) for all, list_nodes({category:'trigger'}) for triggers. Package: \"n8n-no"
+  },
+  {
+   "name": "list_projects",
+   "description": "List all indexed projects"
+  },
+  {
+   "name": "list_tasks",
+   "description": "List task templates by category: HTTP/API, Webhooks, Database, AI, Data Processing, Communication."
+  },
+  {
+   "name": "list_templates",
+   "description": "List all templates with minimal data (id, name, description, views, node count). Optionally include AI-generated metadat"
+  },
+  {
+   "name": "manage_adr",
+   "description": "Create or update Architecture Decision Records"
+  },
+  {
+   "name": "manage_tags",
+   "description": "Add, remove, or list tags in a note"
+  },
+  {
+   "name": "move_file",
+   "description": "Move or rename any file in the vault (binary-safe, file-only, requires confirmation)"
+  },
+  {
+   "name": "move_note",
+   "description": "Move or rename a note in the vault"
+  },
+  {
+   "name": "n8n_autofix_workflow",
+   "description": "Automatically fix common workflow validation errors. Preview fixes or apply them. Fixes expression format, typeVersion, "
+  },
+  {
+   "name": "n8n_create_workflow",
+   "description": "Create workflow. Requires: name, nodes[], connections{}. Created inactive. Returns workflow with ID."
+  },
+  {
+   "name": "n8n_delete_execution",
+   "description": "Delete an execution record. This only removes the execution history, not any data processed."
+  },
+  {
+   "name": "n8n_delete_workflow",
+   "description": "Permanently delete a workflow. This action cannot be undone."
+  },
+  {
+   "name": "n8n_diagnostic",
+   "description": "Diagnose n8n API config. Shows tool status, API connectivity, env vars. Helps troubleshoot missing tools."
+  },
+  {
+   "name": "n8n_get_execution",
+   "description": "Get execution details with smart filtering. RECOMMENDED: Use mode='preview' first to assess data size.\nExamples:\n- {id, "
+  },
+  {
+   "name": "n8n_get_workflow",
+   "description": "Get a workflow by ID. Returns the complete workflow including nodes, connections, and settings."
+  },
+  {
+   "name": "n8n_get_workflow_details",
+   "description": "Get workflow details with metadata, version, execution stats. More info than get_workflow."
+  },
+  {
+   "name": "n8n_get_workflow_minimal",
+   "description": "Get minimal info: ID, name, active status, tags. Fast for listings."
+  },
+  {
+   "name": "n8n_get_workflow_structure",
+   "description": "Get workflow structure: nodes and connections only. No parameter details."
+  },
+  {
+   "name": "n8n_health_check",
+   "description": "Check n8n instance health and API connectivity. Returns status and available features."
+  },
+  {
+   "name": "n8n_list_available_tools",
+   "description": "List available n8n tools and capabilities."
+  },
+  {
+   "name": "n8n_list_executions",
+   "description": "List workflow executions (returns up to limit). Check hasMore/nextCursor for pagination."
+  },
+  {
+   "name": "n8n_list_workflows",
+   "description": "List workflows (minimal metadata only). Returns id/name/active/dates/tags. Check hasMore/nextCursor for pagination."
+  },
+  {
+   "name": "n8n_trigger_webhook_workflow",
+   "description": "Trigger workflow via webhook. Must be ACTIVE with Webhook node. Method must match config."
+  },
+  {
+   "name": "n8n_update_full_workflow",
+   "description": "Full workflow update. Requires complete nodes[] and connections{}. For incremental use n8n_update_partial_workflow."
+  },
+  {
+   "name": "n8n_update_partial_workflow",
+   "description": "Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, moveNode, enable/disableNode"
+  },
+  {
+   "name": "n8n_validate_workflow",
+   "description": "Validate workflow by ID. Checks nodes, connections, expressions. Returns errors/warnings/suggestions."
+  },
+  {
+   "name": "n8n_workflow_versions",
+   "description": "Manage workflow version history, rollback, and cleanup. Six modes:\n- list: Show version history for a workflow\n- get: Ge"
+  },
+  {
+   "name": "patch_note",
+   "description": "Efficiently update part of a note by replacing a specific string. This is more efficient than rewriting the entire note "
+  },
+  {
+   "name": "query_graph",
+   "description": "Execute a Cypher query against the knowledge graph for complex multi-hop patterns, aggregations, and cross-service analy"
+  },
+  {
+   "name": "read_multiple_notes",
+   "description": "Read multiple notes in a batch (max 10 files)"
+  },
+  {
+   "name": "read_note",
+   "description": "Read a note from the Obsidian vault"
+  },
+  {
+   "name": "search_code",
+   "description": "Graph-augmented code search. Finds text patterns via grep, then enriches results with the knowledge graph: deduplicates "
+  },
+  {
+   "name": "search_graph",
+   "description": "Search the code knowledge graph for functions, classes, routes, and variables. Use INSTEAD OF grep/glob when finding cod"
+  },
+  {
+   "name": "search_node_properties",
+   "description": "Find specific properties in a node (auth, headers, body, etc). Returns paths and descriptions."
+  },
+  {
+   "name": "search_nodes",
+   "description": "Search n8n nodes by keyword with optional real-world examples. Pass query as string. Example: query=\"webhook\" or query=\""
+  },
+  {
+   "name": "search_notes",
+   "description": "Search for notes in the vault by content or frontmatter"
+  },
+  {
+   "name": "search_templates",
+   "description": "Search templates by name/description keywords. Returns paginated results. NOT for node types! For nodes use list_node_te"
+  },
+  {
+   "name": "search_templates_by_metadata",
+   "description": "Search templates by AI-generated metadata. Filter by category, complexity, setup time, services, or audience. Returns ri"
+  },
+  {
+   "name": "searxng_instance_info",
+   "description": "Discovers capabilities from all reachable configured SearXNG instances via /config, including categories.common/availabl"
+  },
+  {
+   "name": "searxng_search_suggestions",
+   "description": "Returns autocomplete suggestions from the configured SearXNG instance. Use this to refine vague or partial queries befor"
+  },
+  {
+   "name": "searxng_web_search",
+   "description": "Searches the web using SearXNG and returns a list of results, each with a title, URL, and content snippet. CRITICAL: The"
+  },
+  {
+   "name": "tools_documentation",
+   "description": "Get documentation for n8n MCP tools. Call without parameters for quick start guide. Use topic parameter to get documenta"
+  },
+  {
+   "name": "trace_path",
+   "description": "Trace paths through the code graph. Modes: calls (callers/callees), data_flow (value propagation with args at each hop),"
+  },
+  {
+   "name": "update_frontmatter",
+   "description": "Update frontmatter of a note without changing content"
+  },
+  {
+   "name": "validate_node_minimal",
+   "description": "Check n8n node required fields. Pass nodeType as string and config as empty object {}. Example: nodeType=\"nodes-base.web"
+  },
+  {
+   "name": "validate_node_operation",
+   "description": "Validate n8n node configuration. Pass nodeType as string and config as object. Example: nodeType=\"nodes-base.slack\", con"
+  },
+  {
+   "name": "validate_workflow",
+   "description": "Full workflow validation: structure, connections, expressions, AI tools. Returns errors/warnings/fixes. Essential before"
+  },
+  {
+   "name": "validate_workflow_connections",
+   "description": "Check workflow connections only: valid nodes, no cycles, proper triggers, AI tool links. Fast structure validation."
+  },
+  {
+   "name": "validate_workflow_expressions",
+   "description": "Validate n8n expressions: syntax {{}}, variables ($json/$node), references. Returns errors with locations."
+  },
+  {
+   "name": "web_url_read",
+   "description": "Fetches a URL and returns readable content as markdown. Content-type aware: HTML is converted to markdown; JSON is prett"
+  },
+  {
+   "name": "write_note",
+   "description": "Write a note to the Obsidian vault"
+  }
+ ]
+}
