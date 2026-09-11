@@ -6,4 +6,5 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY server.py .
 USER appuser
+EXPOSE 9000
 CMD ["python", "server.py"]
