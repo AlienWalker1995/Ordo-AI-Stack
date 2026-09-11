@@ -24,7 +24,8 @@ if TYPE_CHECKING:
 # The mandatory 5-service core (from the architecture decisions), plus the agent (added
 # separately below) makes 6 mandatory services total. Caddy/oauth2-proxy is an OPTIONAL
 # remote-access plugin, so it's not here — a local floor install is localhost-only.
-_CORE = ["llamacpp", "model-gateway", "mcp-gateway", "ops-controller", "dashboard"]
+_CORE = ["llamacpp", "litellm-db", "model-gateway", "model-gateway-keys", "mcp-gateway",
+         "ops-controller", "dashboard"]
 
 # Build contexts for the SUBSTRATE services — the project images hardcoded below that have NO
 # manifest (`_model_gateway`/`_mcp_gateway`/`_ops_controller`, and the patched llama.cpp build
@@ -49,6 +50,16 @@ SUBSTRATE_BUILD_CONTEXTS: dict[str, str] = {
 # --metrics turns on llama-server's native Prometheus endpoint at /metrics:8080 (token rates,
 # queue depth). Always-on — it's cheap, and the monitoring plugin's prometheus scrapes it.
 LLAMACPP_METRICS_ARG = "--metrics"
+
+# LiteLLM's Postgres (virtual keys + spend; models/MCP stay in config.yaml). Pinned by digest.
+POSTGRES_IMAGE = "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
+
+
+def _mcp_net(project: str) -> str:
+    """The INTERNAL network shared by model-gateway and the MCP servers only (no other container
+    can reach an MCP server directly; the servers reach the stack only if they also join
+    `<project>-net`). `internal: true` at the top level = no default gateway, no egress."""
+    return f"{project}-mcp-net"
 
 _GPU_RESERVATION = {
     "deploy": {"resources": {"reservations": {"devices": [
@@ -153,13 +164,48 @@ def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
     return s
 
 
+def _litellm_db(net: str) -> dict[str, Any]:
+    """Postgres for LiteLLM's virtual keys, teams and spend. Models and MCP servers stay in the
+    rendered config (STORE_MODEL_IN_DB=False), so this holds only what the admin UI/keys need.
+    No env_file: its single secret is interpolated by compose from secrets.env (--env-file), and
+    an EMPTY password makes postgres refuse to start, which is the fail-loud we want."""
+    return {
+        "image": POSTGRES_IMAGE,
+        "restart": "unless-stopped",
+        "networks": [net],
+        "environment": {
+            "POSTGRES_USER": "litellm",
+            "POSTGRES_DB": "litellm",
+            "POSTGRES_PASSWORD": "${LITELLM_DB_PASSWORD}",
+        },
+        # named volume: DB state never rides the 9p bind (see the rag/qdrant notes)
+        "volumes": ["litellm-db-data:/var/lib/postgresql/data"],
+        "healthcheck": {
+            "test": ["CMD-SHELL", "pg_isready -U litellm -d litellm"],
+            "interval": "10s", "timeout": "5s", "retries": 5, "start_period": "20s",
+        },
+    }
+
+
 def _model_gateway(project: str, net: str, env_file: str) -> dict[str, Any]:
-    """LiteLLM behind the `local-chat` alias. The agent gates on `model-gateway: service_healthy`
-    (audit G5), so this service MUST render a healthcheck or that gate is unsatisfiable and the
-    agent never starts. Mirror V1's exact probe: GET /v1/models with the LITELLM_MASTER_KEY bearer.
-    The image ships python3 (not curl), so use V1's python3 urllib form verbatim."""
-    s = _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file,
-             depends=["llamacpp"], secrets=True)
+    """LiteLLM behind the `local-chat` alias AND the MCP gateway (`/mcp`). The agent gates on
+    `model-gateway: service_healthy` (audit G5), so this service MUST render a healthcheck or that
+    gate is unsatisfiable and the agent never starts. Probe: GET /v1/models with the master key.
+
+    Mounts the rendered out/model-gateway dir read-only: mcp_servers.yaml (the entrypoint merges it
+    into the LiteLLM config) and keys.json (read by model-gateway-keys). Joins the internal MCP
+    network so it can reach the mcp-* services. Secrets (LITELLM_MASTER_KEY, LITELLM_SALT_KEY,
+    THROUGHPUT_RECORD_TOKEN) come from the secrets.env env_file and are NOT re-declared here."""
+    s = _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file, secrets=True)
+    s["networks"] = [net, _mcp_net(project)]
+    s["depends_on"] = _depends_on({"llamacpp": "service_started", "litellm-db": "service_healthy"})
+    s["volumes"] = ["./model-gateway:/config:ro"]
+    s["environment"] = {
+        "LITELLM_MODE": "PRODUCTION",   # no load_dotenv(): a stray .env cannot inject credentials
+        "LITELLM_LOG": "ERROR",
+        "DATABASE_URL": "postgresql://litellm:${LITELLM_DB_PASSWORD}@litellm-db:5432/litellm",
+        "STORE_MODEL_IN_DB": "False",   # config.yaml is the single source of truth for models + MCP
+    }
     s["healthcheck"] = {
         "test": ["CMD-SHELL", (
             "python3 -c \"import os, urllib.request; "
@@ -169,6 +215,23 @@ def _model_gateway(project: str, net: str, env_file: str) -> dict[str, Any]:
         )],
         "interval": "30s", "timeout": "10s", "retries": 3, "start_period": "60s",
     }
+    return s
+
+
+def _model_gateway_keys(project: str, net: str, env_file: str) -> dict[str, Any]:
+    """One-shot: provision the per-consumer LiteLLM virtual keys from the rendered keys.json
+    (bootstrap_keys.py, idempotent). Same image as the gateway (no second build), runs after the
+    gateway is healthy, exits 0 when the desired state holds; `on-failure` retries transient API
+    errors. The agent depends on `service_completed_successfully` so Hermes never starts keyless."""
+    s = _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file, secrets=True)
+    s["restart"] = "on-failure"
+    s["command"] = ["python3", "/app/bootstrap_keys.py"]
+    s["volumes"] = ["./model-gateway:/config:ro"]
+    s["environment"] = {
+        "MODEL_GATEWAY_URL": "http://model-gateway:11435",
+        "LITELLM_KEYS_SPEC": "/config/keys.json",
+    }
+    s["depends_on"] = _depends_on({"model-gateway": "service_healthy"})
     return s
 
 
@@ -486,8 +549,10 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
     # precedent. The V2-native ops-controller + dashboard remain the new control plane.
     svcs: dict[str, Any] = {
         "llamacpp": llamacpp,
-        # LITELLM_MASTER_KEY + THROUGHPUT_RECORD_TOKEN are secrets (from secrets.env).
+        "litellm-db": _litellm_db(net),
+        # LITELLM_MASTER_KEY + LITELLM_SALT_KEY + THROUGHPUT_RECORD_TOKEN are secrets (secrets.env).
         "model-gateway": _model_gateway(project, net, env_file),
+        "model-gateway-keys": _model_gateway_keys(project, net, env_file),
         "mcp-gateway": _mcp_gateway(project, net, env_file),
         "ops-controller": _ops_controller(project, net, env_file),
         # The dashboard is pluggable (data-driven): the selected manifest supplies image/env/
@@ -535,7 +600,11 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
                                             env_file=env_file, project=project)
             svcs[gate_name] = gate_svc
 
-    out: dict[str, Any] = {"name": project, "services": svcs, "networks": {net: {"name": net}}}
+    out: dict[str, Any] = {
+        "name": project,
+        "services": svcs,
+        "networks": {net: {"name": net}, _mcp_net(project): {"name": _mcp_net(project), "internal": True}},
+    }
     # Declare any named volumes the plugin services reference (a `src:dst` where src is a bare
     # name, not a ./bind or absolute path) — compose requires them in the top-level `volumes:`.
     named = _named_volumes(svcs)

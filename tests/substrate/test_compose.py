@@ -27,7 +27,9 @@ def test_isolated_no_port_clashes():
     for name, svc in c["services"].items():
         assert "ports" not in svc, f"{name} publishes a host port (would clash)"
         assert "container_name" not in svc, f"{name} pins a name (would clash)"
-        assert svc["networks"] == ["ordo-net"]
+        nets = svc["networks"]
+        assert set(nets) <= {"ordo-net", "ordo-mcp-net"}, f"{name} joins an unknown network {nets}"
+        assert nets[0] == "ordo-net" or name.startswith("mcp-"), f"{name} must sit on ordo-net first"
 
 
 def test_gpu_reservation_gated_by_hardware():
@@ -479,3 +481,48 @@ def test_comfyui_models_on_named_volume():
         bad = [v for v in vols if "${" in v and "models/comfyui" in v]
         assert not bad, f"{name} still binds models/comfyui over 9p: {bad}"
     assert "comfyui-models:/models:ro" not in c["services"]["dashboard"]["volumes"]
+
+
+# ── LiteLLM Postgres + key bootstrap + the internal MCP network (spec §3) ─────────────────────
+def test_litellm_db_is_core_pinned_and_healthchecked():
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
+    db = c["services"]["litellm-db"]
+    assert db["image"].startswith("postgres:16-alpine@sha256:")
+    assert db["volumes"] == ["litellm-db-data:/var/lib/postgresql/data"]
+    assert "litellm-db-data" in c["volumes"]
+    assert "pg_isready" in " ".join(db["healthcheck"]["test"])
+    assert "ports" not in db and "env_file" not in db
+    # the only secret is interpolated at compose time; empty -> postgres refuses to start (fail loud)
+    assert db["environment"]["POSTGRES_PASSWORD"] == "${LITELLM_DB_PASSWORD}"
+    assert "litellm-db" in compose.core_services()
+
+
+def test_model_gateway_wired_to_db_config_mount_and_mcp_net():
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
+    mg = c["services"]["model-gateway"]
+    assert mg["depends_on"]["litellm-db"] == {"condition": "service_healthy"}
+    assert mg["depends_on"]["llamacpp"] == {"condition": "service_started"}
+    assert "./model-gateway:/config:ro" in mg["volumes"]
+    assert mg["networks"] == ["ordo-net", "ordo-mcp-net"]
+    env = mg["environment"]
+    assert env["DATABASE_URL"] == "postgresql://litellm:${LITELLM_DB_PASSWORD}@litellm-db:5432/litellm"
+    assert env["STORE_MODEL_IN_DB"] == "False"
+    assert env["LITELLM_MODE"] == "PRODUCTION" and env["LITELLM_LOG"] == "ERROR"
+    # secrets arrive via the secrets.env env_file; re-declaring them here would shadow to empty
+    for k in ("LITELLM_SALT_KEY", "LITELLM_MASTER_KEY", "LITELLM_DB_PASSWORD"):
+        assert k not in env
+    assert c["networks"]["ordo-mcp-net"] == {"name": "ordo-mcp-net", "internal": True}
+
+
+def test_model_gateway_keys_is_a_one_shot_after_gateway_health():
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
+    k = c["services"]["model-gateway-keys"]
+    assert k["image"] == "ordo/model-gateway:latest"
+    assert k["command"] == ["python3", "/app/bootstrap_keys.py"]
+    assert k["restart"] == "on-failure"
+    assert k["depends_on"]["model-gateway"] == {"condition": "service_healthy"}
+    assert "./model-gateway:/config:ro" in k["volumes"]
+    assert k["environment"]["LITELLM_KEYS_SPEC"] == "/config/keys.json"
+    assert k["environment"]["MODEL_GATEWAY_URL"] == "http://model-gateway:11435"
+    assert any(isinstance(f, dict) and f.get("path") == "secrets.env" for f in k["env_file"])
+    assert "model-gateway-keys" in compose.core_services()
