@@ -1,15 +1,15 @@
-// MCP tab — full port of the legacy "MCP Gateway" panel. Consumes /api/mcp/servers
-// (enabled + catalog + dynamic flag) and /api/mcp/health (gateway + per-server status),
-// and drives /api/mcp/add + /api/mcp/remove. Behaviour preserved from the vanilla shell:
+// MCP tab for the LiteLLM model-gateway. Consumes /api/mcp/servers
+// (enabled + configured + dynamic flag) and /api/mcp/health (gateway + per-server status),
+// and drives /api/mcp/add + /api/mcp/remove against the registered server list:
 //   - a gateway status badge (ok / unreachable / unknown),
 //   - enabled servers as chips, each with a live per-server health dot
 //     (green ok / yellow degraded / red fail) and a remove (×) button,
-//   - add from catalog (servers not already enabled) OR by free-text name/URL,
+//   - enable a registered, not-yet-enabled server from the dropdown,
 //   - poll health every 15s (paused when hidden).
-// Add/remove surface the backend's persist result as a toast: "persisted to ordo.yaml"
-// when {persistent:true}, otherwise the live-only {note} explaining it won't survive a
-// re-render. When {dynamic:false} the add/remove controls are disabled with a hint that
-// the config isn't mounted read-write (matching the legacy static-mode fallback).
+// Add/remove surface the backend's persist result as a toast: success with the "applies
+// after render + recreate" hint when {persistent:true}, otherwise an error toast with the
+// {note} explaining why the change wasn't saved. When {dynamic:false} the add/remove
+// controls are disabled with a hint that ordo.yaml isn't mounted read-write.
 import { useState } from 'react'
 import { api, usePolling } from '../api.js'
 import { useToast } from './Toast.jsx'
@@ -26,12 +26,14 @@ function serverDotClass(info) {
 
 function serverTitle(info) {
   if (!info) return 'no health data'
-  return info.status || (info.ok ? 'running' : info.error || 'unknown')
+  if (info.status) {
+    return `${info.status}${typeof info.tool_count === 'number' ? ` · ${info.tool_count} tools` : ''}`
+  }
+  return info.ok ? 'running' : info.error || 'unknown'
 }
 
 export default function McpTab() {
   const toast = useToast()
-  const [customInput, setCustomInput] = useState('')
   const [selectValue, setSelectValue] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -45,7 +47,7 @@ export default function McpTab() {
   }, 15000)
 
   const enabled = data?.servers?.enabled || []
-  const catalog = data?.servers?.catalog || []
+  const configured = data?.servers?.configured || []
   const dynamic = data?.servers?.dynamic === true
   const health = data?.health || null
   const healthById = {}
@@ -54,22 +56,22 @@ export default function McpTab() {
     const tail = s.id.split('/').pop()
     if (!(tail in healthById)) healthById[tail] = s
   })
-  const addable = catalog.filter((s) => !enabled.includes(s))
+  const addable = configured.filter((s) => !enabled.includes(s))
 
   // Toast helper: turn the backend's {status, persistent, note} into the right message.
   const surfaceToggle = (verb, server, res) => {
     if (res.status === 'already_enabled') { toast(`${server} already enabled`); return }
     if (res.status === 'already_removed') { toast(`${server} already removed`); return }
     if (res.persistent) {
-      toast(`${server} ${verb} — persisted to ordo.yaml`, 'success')
+      toast(`${server} ${verb} - ${res.next || 'saved to ordo.yaml'}`, 'success')
     } else {
-      toast(res.note || `${server} ${verb} — live only (will not survive a re-render)`, 'success')
+      toast(res.note || `${server} ${verb} - not saved (config is read-only)`, 'error')
     }
   }
 
   const addServer = async (server) => {
     const v = (server || '').trim()
-    if (!v) { toast('Enter a server name (e.g. hugging-face) or paste a Docker Hub URL', 'error'); return false }
+    if (!v) { toast('Choose a server to enable', 'error'); return false }
     setBusy(true)
     try {
       const res = await api.post('/api/mcp/add', { server: v })
@@ -98,11 +100,8 @@ export default function McpTab() {
   }
 
   const onAddFromCatalog = async () => {
-    if (!selectValue) { toast('Choose a tool from the dropdown or add by name below', 'error'); return }
+    if (!selectValue) { toast('Choose a server from the dropdown', 'error'); return }
     if (await addServer(selectValue)) setSelectValue('')
-  }
-  const onAddCustom = async () => {
-    if (await addServer(customInput)) setCustomInput('')
   }
 
   const gatewayBadge = (() => {
@@ -120,11 +119,12 @@ export default function McpTab() {
   return (
     <section className="mb-5 rounded-lg border border-border bg-card p-6 shadow-card">
       <h2 className="section-rule mb-4 flex items-center gap-3 text-[0.62rem] font-bold uppercase tracking-[0.18em] text-muted">
-        MCP Gateway
+        MCP Tools (LiteLLM gateway)
       </h2>
       <p className="mb-4 text-[0.8125rem] leading-[1.5] text-muted">
-        Shared tools for Open WebUI, N8N, and Cursor. Add or remove servers below —
-        changes hot-reload on the gateway in ~10s (no container restart).
+        Tools every agent and MCP client gets through the model-gateway at /mcp. Enable or
+        disable a registered server below: the change is saved to ordo.yaml and applies on
+        the next render + model-gateway recreate.
       </p>
 
       {error && !data ? (
@@ -148,7 +148,7 @@ export default function McpTab() {
               {enabled.length === 0 && !data ? (
                 <span className="skeleton h-6 w-40" />
               ) : enabled.length === 0 ? (
-                <span className="text-[0.8125rem] italic text-muted">None — add from catalog or paste a URL below</span>
+                <span className="text-[0.8125rem] italic text-muted">None enabled - pick a registered server below</span>
               ) : (
                 enabled.map((s) => {
                   const info = healthById[s] || healthById[s.split('/').pop()]
@@ -183,7 +183,7 @@ export default function McpTab() {
           {dynamic ? (
             <div className="space-y-5 border-t border-border-subtle pt-5">
               <div>
-                <label className={LABEL} htmlFor="mcp-add-select">Add from catalog</label>
+                <label className={LABEL} htmlFor="mcp-add-select">Enable a registered server</label>
                 <div className="flex flex-wrap items-center gap-2">
                   <select
                     id="mcp-add-select"
@@ -192,7 +192,7 @@ export default function McpTab() {
                     disabled={busy}
                     onChange={(e) => setSelectValue(e.target.value)}
                   >
-                    <option value="">Choose a tool…</option>
+                    <option value="">Choose a server…</option>
                     {addable.map((s) => (
                       <option key={s} value={s}>{s}</option>
                     ))}
@@ -200,41 +200,21 @@ export default function McpTab() {
                   <button type="button" className={BTN} disabled={busy || !selectValue} onClick={onAddFromCatalog}>Add</button>
                 </div>
               </div>
-
-              <div>
-                <label className={LABEL} htmlFor="mcp-custom-input">Or add by name or URL</label>
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    id="mcp-custom-input"
-                    type="text"
-                    className={INPUT + ' min-w-[14rem] flex-1'}
-                    placeholder="e.g. hugging-face, mcp/firecrawl, or a Docker Hub URL"
-                    aria-label="Custom MCP server name or Docker Hub URL"
-                    value={customInput}
-                    disabled={busy}
-                    onChange={(e) => setCustomInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onAddCustom() } }}
-                  />
-                  <button type="button" className={BTN} disabled={busy || !customInput.trim()} onClick={onAddCustom}>Add</button>
-                </div>
-              </div>
             </div>
           ) : (
             <div className="border-t border-border-subtle pt-5">
               <div className="rounded-sm border border-border-subtle border-l-[3px] border-l-warning bg-warning/[0.04] px-4 py-3 text-[0.8125rem] leading-[1.5] text-fg-muted">
-                MCP config isn't mounted read-write (static mode) — add/remove is disabled here.
-                Manage servers from the repo root:{' '}
-                <code className="rounded-sm border border-border-subtle bg-bg px-1.5 py-0.5 text-[0.75rem] text-accent-soft">./scripts/mcp_add.sh &lt;server&gt;</code>
-                {' / '}
-                <code className="rounded-sm border border-border-subtle bg-bg px-1.5 py-0.5 text-[0.75rem] text-accent-soft">./scripts/mcp_remove.sh &lt;server&gt;</code>
+                ordo.yaml isn't mounted read-write, so enable/disable is disabled here. Edit the
+                plugins: list in ordo.yaml, then ordo render + recreate model-gateway.
               </div>
             </div>
           )}
 
           <div className="mt-6 border-t border-border-subtle pt-4 text-[0.8125rem] leading-[1.6] text-muted">
             <p>
-              Connect: Open WebUI → Admin Settings → External Tools → MCP (Streamable HTTP).{' '}
-              <a href="https://hub.docker.com/mcp" target="_blank" rel="noopener">Browse 200+ tools in the Docker MCP Catalog ↗</a>
+              Connect an external MCP client at https://&lt;your tailnet host&gt;/mcp with an{' '}
+              Authorization: Bearer &lt;LiteLLM key&gt; header (LITELLM_KEY_EDGE in secrets.env).
+              New servers are added as services/&lt;id&gt;/plugin.yaml (kind: mcp).
             </p>
           </div>
         </>
