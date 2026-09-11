@@ -32,9 +32,9 @@ logger = logging.getLogger(__name__)
 
 
 def mcp_external_url() -> str | None:
-    """The MCP gateway's real external endpoint: the Bearer-gated /mcp route on the
-    :443 front door (https://<host>/mcp) — NOT a :8811 port, which isn't published.
-    Returns None when the edge host is unknown so the frontend keeps its fallback."""
+    """The MCP gateway's external endpoint: LiteLLM's Bearer-authenticated /mcp on the
+    :443 front door (https://<host>/mcp). Returns None when the edge host is unknown so
+    the frontend keeps its fallback."""
     host = os.environ.get("CADDY_TAILNET_HOSTNAME", "").strip()
     return f"https://{host}/mcp" if host else None
 
