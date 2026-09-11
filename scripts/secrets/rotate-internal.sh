@@ -35,7 +35,7 @@ NEW_OPS=$(openssl rand -hex 32)
 NEW_N8N_MCP=$(openssl rand -hex 32)
 NEW_THROUGHPUT=$(openssl rand -hex 32)
 # oauth2-proxy needs exactly 16/24/32 raw bytes; generate 32 alphanumeric.
-NEW_COOKIE=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 32)
+NEW_COOKIE=$(head -c 4096 </dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9' | head -c 32)
 
 TMP=$(mktemp)
 trap 'rm -f "$TMP" "$TMP.new"' EXIT

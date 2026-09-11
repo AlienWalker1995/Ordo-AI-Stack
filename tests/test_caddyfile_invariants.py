@@ -262,3 +262,16 @@ def test_comfyui_is_routed_through_its_gpu_admission_gate(caddyfile_text: str) -
     assert f"import sso_service {gate_service_name('comfyui')}:8188" in caddyfile_text
     assert "import sso_service comfyui:8188" not in caddyfile_text, (
         "the edge routes straight to ComfyUI, bypassing GPU admission")
+
+
+def test_mcp_route_proxies_litellm_and_has_no_static_token(caddyfile_text: str) -> None:
+    """/mcp is LiteLLM's MCP gateway on model-gateway. Auth is LiteLLM's own Bearer (virtual/master
+    key), enforced upstream: a missing key is a 401 from LiteLLM, so the route can never degrade to
+    open. The old static MCP_GATEWAY_TOKEN gate and the mcp-gateway:8811 upstream must be gone."""
+    root_site = caddyfile_text.split("{$CADDY_TAILNET_HOSTNAME} {", 1)[1]
+    assert "@mcp path /mcp /mcp/*" in root_site
+    assert "reverse_proxy model-gateway:11435 {" in root_site
+    assert "flush_interval -1" in root_site
+    assert "mcp-gateway:8811" not in caddyfile_text
+    assert "MCP_GATEWAY_TOKEN" not in caddyfile_text
+    assert "handle_path /mcp" not in caddyfile_text, "/mcp must NOT be stripped: LiteLLM serves at /mcp"

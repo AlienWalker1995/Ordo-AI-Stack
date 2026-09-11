@@ -148,7 +148,7 @@ def test_services_needing_secrets_get_secrets_env_file():
                    for f in c["services"][svc].get("env_file", []))
     # core services that use secrets, plus a ported one, all layer the secrets.env (required:false)
     for svc in ("model-gateway", "ops-controller", "dashboard", "agent",
-                "open-webui", "searxng", "caddy", "oauth2-proxy"):
+                "open-webui", "searxng", "oauth2-proxy"):
         assert _has_secrets(svc), f"{svc} missing secrets.env env_file"
     # a service with no secrets does NOT get it (qdrant is plain)
     assert not _has_secrets("qdrant")

@@ -223,38 +223,21 @@
 
     # ---- LiteLLM model gateway (OpenAI-compatible API) for tailnet API clients ----
     # Bypasses SSO: programmatic clients (Cline, Cursor, scripts) can't do an
-    # interactive Google login. Auth is LiteLLM's own Bearer key
-    # (LITELLM_MASTER_KEY), which model-gateway enforces.
+    # interactive Google login. Auth is LiteLLM's own Bearer (a virtual key or
+    # LITELLM_MASTER_KEY), which model-gateway enforces.
     handle_path /llm/* {
         reverse_proxy model-gateway:11435
     }
 
-    # ---- MCP gateway (aggregated tools) for tailnet MCP clients ----
-    # Bypasses Google SSO but requires a static Bearer (MCP_GATEWAY_TOKEN)
-    # because the gateway has NO auth of its own. Unstripped — the gateway
-    # serves at /mcp. flush_interval -1 keeps SSE unbuffered.
-    # Fail loud: an empty MCP_GATEWAY_TOKEN would collapse the required bearer
-    # to "Bearer " and degrade this SSO-bypass route to an open endpoint. Reject
-    # the whole route (503) when the secret renders empty so it fails closed
-    # instead of open. No-op while the secret is set; the valid-token path below
-    # is untouched.
-    @mcp_no_token {
-        path /mcp /mcp/*
-        expression `{env.MCP_GATEWAY_TOKEN} == ""`
-    }
-    handle @mcp_no_token {
-        respond "MCP gateway auth misconfigured: MCP_GATEWAY_TOKEN is empty" 503
-    }
-    @mcp_unauthed {
-        path /mcp /mcp/*
-        not header Authorization "Bearer {$MCP_GATEWAY_TOKEN}"
-    }
+    # ---- MCP gateway (LiteLLM aggregated tools on model-gateway) for tailnet MCP clients ----
+    # Bypasses Google SSO: MCP clients (Claude Code, Cline, Cursor, scripts) cannot do an
+    # interactive login. Auth is LiteLLM's own Bearer (a virtual key from secrets.env
+    # LITELLM_KEY_EDGE, or the master key), enforced by model-gateway itself: no key -> 401
+    # upstream, so this route cannot fail open. Unstripped: LiteLLM serves at /mcp.
+    # flush_interval -1 keeps SSE frames unbuffered.
     @mcp path /mcp /mcp/*
-    handle @mcp_unauthed {
-        respond "Unauthorized" 401
-    }
     handle @mcp {
-        reverse_proxy mcp-gateway:8811 {
+        reverse_proxy model-gateway:11435 {
             flush_interval -1
         }
     }
