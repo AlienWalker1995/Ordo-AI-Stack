@@ -7,7 +7,9 @@ colliding with anything else on the host:
     model) so nothing fights other services' ports,
   - GPU reservations only when a GPU is present,
   - core services read the rendered .env (single source → no drift),
-  - plugin services appear only behind their compose profile (media/voice).
+  - plugin services appear only behind their compose profile (media/voice),
+  - each enabled MCP server is its own `mcp-<id>` service on an INTERNAL network that only
+    model-gateway joins (no Docker socket, no env_file, capped CPU/memory).
 
 The images/build contexts are the substrate's own; this renders the SHAPE and wiring. The
 process broker starts/stops these against the scheduler.
@@ -21,14 +23,15 @@ from . import gpu
 if TYPE_CHECKING:
     from .plugins import Plugin, PluginService
 
-# The mandatory 5-service core (from the architecture decisions), plus the agent (added
-# separately below) makes 6 mandatory services total. Caddy/oauth2-proxy is an OPTIONAL
-# remote-access plugin, so it's not here — a local floor install is localhost-only.
-_CORE = ["llamacpp", "litellm-db", "model-gateway", "model-gateway-keys", "mcp-gateway",
+# The mandatory 6-service core (from the architecture decisions), plus the agent (added
+# separately below) makes 7 mandatory services total. Caddy/oauth2-proxy is an OPTIONAL
+# remote-access plugin, so it's not here — a local floor install is localhost-only. The
+# enabled MCP servers render as `mcp-<id>` services alongside these, from the manifests.
+_CORE = ["llamacpp", "litellm-db", "model-gateway", "model-gateway-keys",
          "ops-controller", "dashboard"]
 
 # Build contexts for the SUBSTRATE services — the project images hardcoded below that have NO
-# manifest (`_model_gateway`/`_mcp_gateway`/`_ops_controller`, and the patched llama.cpp build
+# manifest (`_model_gateway`/`_ops_controller`, and the patched llama.cpp build
 # pinned via a model's catalog `backend_image`). Manifest services (plugins/agents/dashboards,
 # incl. the v1-parity dashboard's `ops-api` backend) declare their own context via `build:` in
 # the manifest; only these hardcoded ones need to be declared here. `ordo.buildspec` reads this
@@ -37,7 +40,6 @@ _CORE = ["llamacpp", "litellm-db", "model-gateway", "model-gateway-keys", "mcp-g
 # `ordo-ai-stack-llamacpp-patched` build tag). This is build METADATA — never rendered into compose.
 SUBSTRATE_BUILD_CONTEXTS: dict[str, str] = {
     "model-gateway": "services/model-gateway",
-    "mcp-gateway": "services/mcp-gateway",
     "ops-controller": "services/ops-controller",
     "llamacpp-patched": "services/llamacpp-patched",
     # The generic GPU admission gate. Rendered as a companion service for any manifest service
@@ -302,56 +304,34 @@ def _dashboard_backend(net: str, env_file: str, backend: dict[str, Any]) -> dict
     return s
 
 
-def _mcp_gateway(project: str, net: str, env_file: str) -> dict[str, Any]:
-    """The MCP tool gateway. Like V1 it SPAWNS MCP servers as sibling containers, so it needs the
-    Docker socket; and its wrapper reads the rendered catalog (mcp-registry.yaml) from a mounted
-    config dir at runtime — not baked. Without the socket + the config mount + these env keys the
-    gateway boots with an empty/UNKNOWN catalog and the agent has no tools (a live-only failure).
-    GitHub/n8n API tokens for spawned servers come from secrets.env (env-var form)."""
-    s = _svc(f"{project}/mcp-gateway:latest", net=net, env_file=env_file, secrets=True)
-    s["volumes"] = [
-        "/var/run/docker.sock:/var/run/docker.sock",  # gateway spawns MCP servers as containers
-        # the rendered mcp config dir (servers.txt + registry-custom.yaml, wrapper-native schema). RW
-        # because the wrapper writes registry-custom.docker.yaml (placeholder substitution) alongside.
-        "./mcp:/mcp-config",
-    ]
-    s["environment"] = {
-        "MCP_GATEWAY_PORT": "8811",
-        # the wrapper reads the enabled server list from servers.txt and merges registry-custom.yaml.
-        "MCP_CONFIG_FILE": "/mcp-config/servers.txt",
-        "MCP_GATEWAY_VERBOSE": "1",
-        "OPS_CONTROLLER_URL": "http://ops-controller:9000",
-        # ComfyUI's base URL for the spawned MCP servers. Render points this at the admission
-        # gate when comfyui declares `gpu_arbitration.enforcement: gate`, so agent-submitted
-        # prompts take residency like every other GPU consumer; the default is the direct
-        # service for a build where comfyui isn't gated. See render.GATED_SERVICE_URL_ENV.
-        "COMFYUI_URL": "${COMFYUI_URL:-http://comfyui:8188}",
-        "N8N_API_URL": "http://n8n:5678",
-        "CODE_ROOT": "${CODE_ROOT:-/c/dev}",
-        # Bind-mount allowlist for the SPAWNED sibling MCP servers. The gateway's hardened bind logic
-        # only accepts host binds whose source is on this list (and read-only). codebase-memory mounts
-        # $CODE_ROOT read-only at /c/dev, so the allowlist must contain CODE_ROOT — else the gateway
-        # rejects the mount and the codebase-memory server fails to spawn. Mirrors V1's gateway env.
-        "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS": "${CODE_ROOT:-/c/dev}",
-        # ComfyUI MCP's default checkpoint (a non-secret default, safe to interpolate from .env-space).
-        # The other secrets the spawned MCP servers need — OPS_CONTROLLER_TOKEN (comfyui),
-        # N8N_API_KEY (n8n) — are NOT declared here on purpose:
-        # they arrive via the `secrets.env` env_file (already layered on this service). Re-declaring
-        # them in `environment:` with `${VAR:-}` would interpolate from .env/host (where they're
-        # absent → empty) and SHADOW the env_file value to empty. gateway-wrapper.sh reads them from
-        # the process env (env_file) to substitute the PLACEHOLDER_* tokens + build the --secrets
-        # dotenv, so env_file delivery is sufficient and correct.
-        "COMFY_MCP_DEFAULT_MODEL": "${COMFY_MCP_DEFAULT_MODEL:-flux1-schnell-fp8.safetensors}",
-        # HOST path of the shared markdown memory vault. The wrapper substitutes it into the
-        # memory-vault MCP's catalog volume (PLACEHOLDER_MEMORY_VAULT_PATH) so the SPAWNED sibling
-        # container binds the same host dir native Obsidian (opened at this path) + host seeding
-        # write to. Empty-safe: if the memory-vault plugin isn't enabled, nothing references it.
-        "MEMORY_VAULT_PATH": "${MEMORY_VAULT_PATH:-}",
+def _mcp_service(server: dict[str, Any], *, net: str, mcp_net: str) -> dict[str, Any]:
+    """ONE MCP server as a long-lived compose service, from its render record (ordo/render._render_mcp).
+    Isolation parity with what the retired Docker gateway spawned (no-new-privileges, 1 CPU / 2 GB,
+    init) plus: NO env_file (only the manifest's declared env reaches it), the internal MCP network
+    (only model-gateway can call it), `stack` network only when it must reach another service, and
+    labels ops-api uses to list MCP services. LiteLLM dials http://mcp-<id>:<port><path>."""
+    s: dict[str, Any] = {
+        "image": server["image"],
+        "restart": "unless-stopped",
+        "init": True,
+        "networks": [mcp_net] if server["network"] == "internal" else [mcp_net, net],
+        "security_opt": ["no-new-privileges:true"],
+        "deploy": {"resources": {"limits": {"cpus": "1", "memory": "2g"}}},
+        "labels": {
+            "ordo.mcp": "true",
+            "ordo.mcp.server_id": server["id"],
+            "ordo.mcp.plugin": server["plugin_id"],
+        },
+        "healthcheck": dict(server["healthcheck"]),
     }
-    s["healthcheck"] = {
-        "test": ["CMD-SHELL", "sh /mcp-scripts/healthcheck.sh"],
-        "interval": "15s", "timeout": "10s", "retries": 5, "start_period": "60s",
-    }
+    if server["env"]:
+        s["environment"] = dict(server["env"])
+    if server["command"]:
+        s["command"] = list(server["command"])
+    if server["volumes"]:
+        s["volumes"] = list(server["volumes"])
+    if server["depends_on"]:
+        s["depends_on"] = list(server["depends_on"])
     return s
 
 
@@ -502,7 +482,8 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
                    plugin_services: list[tuple[Plugin, PluginService]] | None = None,
                    primary_gpu_uuid: str | None = None,
                    secondary_gpu_uuid: str | None = None,
-                   gpu_claims: dict[str, Any] | None = None) -> dict[str, Any]:
+                   gpu_claims: dict[str, Any] | None = None,
+                   mcp_servers: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     net = f"{project}-net"
     # the agent is swappable (Hermes is the default); a registry manifest may pin any image,
     # else fall back to the <project>/agent-<id>:latest convention.
@@ -542,10 +523,9 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         "models-gguf:/models:ro",
         "${BASE_PATH:-.}/scripts/llamacpp:/llamacpp-scripts:ro",
     ]
-    # model-gateway + mcp-gateway are V1 CUSTOM-BUILT config-wrapper images (LiteLLM + the
-    # `local-chat` alias config; docker/mcp-gateway + the reload wrapper). V2 pins them as its own
-    # project-namespaced BUILDABLE images (build contexts under services/{model-gateway,mcp-gateway})
-    # so preflight reports 'build first' not 'Docker will pull' — matching the llamacpp-patched
+    # model-gateway is the V1 custom-built LiteLLM config wrapper (+ the MCP gateway since 2026-09);
+    # pinned as a project-namespaced BUILDABLE image (build context services/model-gateway) so
+    # preflight reports 'build first' not 'Docker will pull' — matching the llamacpp-patched
     # precedent. The V2-native ops-controller + dashboard remain the new control plane.
     svcs: dict[str, Any] = {
         "llamacpp": llamacpp,
@@ -553,7 +533,6 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         # LITELLM_MASTER_KEY + LITELLM_SALT_KEY + THROUGHPUT_RECORD_TOKEN are secrets (secrets.env).
         "model-gateway": _model_gateway(project, net, env_file),
         "model-gateway-keys": _model_gateway_keys(project, net, env_file),
-        "mcp-gateway": _mcp_gateway(project, net, env_file),
         "ops-controller": _ops_controller(project, net, env_file),
         # The dashboard is pluggable (data-driven): the selected manifest supplies image/env/
         # depends/healthcheck. A manifest may also declare a companion backend (e.g. the V1-parity
@@ -562,7 +541,7 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         "dashboard": _dashboard(project, net, env_file, dashboard),
         # OPS_CONTROLLER_TOKEN + Discord/backup tokens are secrets (from secrets.env).
         "agent": _svc(agent_img, net=net, env_file=env_file,
-                      depends=["model-gateway", "mcp-gateway", "ops-controller"], secrets=True),
+                      depends=["model-gateway", "model-gateway-keys", "ops-controller"], secrets=True),
     }
     # Optional dashboard backend (e.g. ops-api for the V1-parity dashboard) — rendered verbatim.
     if dashboard and dashboard.get("backend"):
@@ -599,6 +578,12 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
             gate_name, gate_svc = _gpu_gate(ps, plugin, claims[ps.name], net=net,
                                             env_file=env_file, project=project)
             svcs[gate_name] = gate_svc
+
+    # MCP servers: one compose service per image-backed record; hosted (url-only) servers render
+    # nothing here (LiteLLM dials them directly).
+    for server in (mcp_servers or []):
+        if not server["hosted"]:
+            svcs[server["service"]] = _mcp_service(server, net=net, mcp_net=_mcp_net(project))
 
     out: dict[str, Any] = {
         "name": project,

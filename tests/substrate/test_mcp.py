@@ -1,10 +1,11 @@
-"""kind=mcp plugins: rendered into a pinned mcp-gateway registry, drift-free."""
+"""kind=mcp plugins: rendered into pinned mcp-<id> compose services + the LiteLLM fragment, drift-free."""
 import json
 from pathlib import Path
 
 import pytest
 import yaml
 
+from ordo import compose
 from ordo.catalog import Catalog
 from ordo.config import Source
 from ordo.plugins import McpSpec, PluginRegistry
@@ -68,29 +69,59 @@ def test_placeholder_digest_still_detected():
     assert any("placeholder" in n for n in notes)
 
 
-def test_write_emits_mcp_registry_yaml(tmp_path):
-    render(_src(hardware=P_5090), CATALOG, REGISTRY).write(tmp_path)
-    reg = yaml.safe_load((tmp_path / "mcp-registry.yaml").read_text())
-    assert {s["id"] for s in reg["servers"]} >= {"qdrant-rag", "searxng"}
-
-
-# ── Defect class: the mcp-gateway wrapper reads servers.txt + registry-custom.yaml (its native
-#    schema) from the mounted config dir. render must emit those, or the gateway boots empty. ──
-def test_write_emits_wrapper_native_mcp_config(tmp_path):
-    render(_src(hardware=P_5090), CATALOG, REGISTRY).write(tmp_path)
-    servers = (tmp_path / "mcp" / "servers.txt").read_text().strip()
-    ids = set(servers.split(","))
+# ── Defect class: LiteLLM reads its MCP servers from the rendered `mcp_servers` fragment, and the
+#    dashboard reads the enabled roster from servers.json. render must emit both, or the gateway
+#    exposes no tools and the UI shows nothing. ──
+def test_write_emits_litellm_fragment_and_servers_json(tmp_path):
+    rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
+    rc.write(tmp_path)
+    frag = yaml.safe_load((tmp_path / "model-gateway" / "mcp_servers.yaml").read_text())
+    servers = frag["mcp_servers"]
+    assert {"qdrant-rag", "searxng"} <= set(servers)
+    q = servers["qdrant-rag"]
+    assert q == {"server_id": "qdrant-rag", "url": "http://mcp-qdrant-rag:9000/mcp", "transport": "http",
+                 "description": q["description"], "timeout": 60, "available_on_public_internet": False,
+                 "mcp_info": {"server_name": "qdrant-rag"}}
+    assert servers["searxng"]["url"] == "http://mcp-searxng:8080/mcp"
+    # the dashboard's view: enabled servers + the full server_id -> plugin_id map
+    sj = json.loads((tmp_path / "mcp" / "servers.json").read_text())
+    ids = {s["id"] for s in sj["servers"]}
     assert {"qdrant-rag", "searxng"} <= ids
-    # registry-custom.yaml uses the wrapper's `registry:` map schema keyed by server id, env as list
-    reg = yaml.safe_load((tmp_path / "mcp" / "registry-custom.yaml").read_text())
-    assert "registry" in reg and {"qdrant-rag", "searxng"} <= set(reg["registry"])
-    q = reg["registry"]["qdrant-rag"]
-    assert q["type"] == "server" and q["image"] and isinstance(q["env"], list)
-    assert any(e["name"] == "QDRANT_URL" for e in q["env"])
+    assert sj["plugin_map"]["comfyui"] == "comfyui-mcp"
+    # the Docker-gateway artefacts are gone
+    for gone in ("mcp/servers.txt", "mcp/registry-custom.yaml", "mcp/server-plugin-map.json", "mcp-registry.yaml"):
+        assert not (tmp_path / gone).exists(), gone
+
+
+def test_fragment_carries_auth_timeout_and_explicit_defaults():
+    from ordo.render import render_litellm_mcp_fragment
+    servers, _ = _render_mcp_for(["n8n", "comfyui-mcp"])
+    frag = yaml.safe_load(render_litellm_mcp_fragment(servers))["mcp_servers"]
+    assert frag["n8n"]["auth_type"] == "bearer_token"
+    assert frag["n8n"]["auth_value"] == "os.environ/N8N_MCP_AUTH_TOKEN"
+    assert frag["comfyui"]["timeout"] == 1800
+    for s in frag.values():          # both documented defaults disagree with LiteLLM's code: always explicit
+        assert s["transport"] == "http" and s["available_on_public_internet"] is False
+
+
+def test_hosted_server_renders_no_compose_service():
+    from ordo.plugins import Plugin
+    from ordo.render import _render_mcp, render_litellm_mcp_fragment
+    hosted = Plugin.from_dict({"id": "ext", "kind": "mcp", "mcp": {"url": "https://h.example/mcp", "transport": "http"}})
+    servers, notes = _render_mcp([hosted])
+    assert notes == [] and servers[0]["hosted"] and servers[0]["service"] == ""
+    c = compose.render_compose(has_gpu=False, compose_profiles=[], mcp_servers=servers)
+    assert not any(n.startswith("mcp-") for n in c["services"])
+    assert yaml.safe_load(render_litellm_mcp_fragment(servers))["mcp_servers"]["ext"]["url"] == "https://h.example/mcp"
+
+
+def _render_mcp_for(plugin_ids):
+    from ordo.render import _render_mcp
+    return _render_mcp([p for p in REGISTRY.plugins if p.id in plugin_ids])
 
 
 # ── Restored roster (V1→V2 migration dropped these): codebase-memory, comfyui, n8n, orchestration
-#    must reappear in the rendered servers.txt + registry-custom.yaml with correct wiring. ──
+#    must reappear in the rendered servers.json + compose services with correct wiring. ──
 RESTORED = {"codebase-memory", "comfyui", "n8n", "orchestration"}
 
 
@@ -190,19 +221,19 @@ def test_server_id_collision_is_flagged():
     assert any("collides" in n for n in notes)
 
 
-def test_restored_servers_in_written_servers_txt(tmp_path):
+def test_restored_servers_in_written_servers_json(tmp_path):
     render(_src(hardware=P_5090), CATALOG, REGISTRY).write(tmp_path)
-    ids = set((tmp_path / "mcp" / "servers.txt").read_text().strip().split(","))
+    ids = {s["id"] for s in json.loads((tmp_path / "mcp" / "servers.json").read_text())["servers"]}
     assert RESTORED <= ids
-    reg = yaml.safe_load((tmp_path / "mcp" / "registry-custom.yaml").read_text())
-    assert RESTORED <= set(reg["registry"])
-    # codebase-memory's declared volumes survive the write
-    cb = reg["registry"]["codebase-memory"]
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    assert {f"mcp-{i}" for i in RESTORED} <= set(c["services"])
+    # codebase-memory's declared volumes survive the write, onto its own compose service
+    cb = c["services"]["mcp-codebase-memory"]
     assert "${CODE_ROOT:-/c/dev}:/c/dev:ro" in cb["volumes"]
 
 
 # ── server_id → plugin_id map: emitted so the dashboard can persist a UI MCP toggle into ordo.yaml's
-#    plugins list (servers.txt is render-owned and would otherwise reseed the toggle away). ──
+#    plugins list (the enabled roster is render-owned and would otherwise reseed the toggle away). ──
 def test_render_builds_server_plugin_map():
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     m = rc.mcp_server_plugin_map
@@ -226,14 +257,14 @@ def test_map_covers_all_registered_mcp_plugins_even_when_disabled():
     assert rc_cpu.mcp_server_plugin_map["comfyui"] == "comfyui-mcp"  # disabled here, still mapped
 
 
-def test_write_emits_server_plugin_map_json(tmp_path):
+def test_write_emits_server_plugin_map_in_servers_json(tmp_path):
     render(_src(hardware=P_5090), CATALOG, REGISTRY).write(tmp_path)
-    m = json.loads((tmp_path / "mcp" / "server-plugin-map.json").read_text())
+    m = json.loads((tmp_path / "mcp" / "servers.json").read_text())["plugin_map"]
     assert m["comfyui"] == "comfyui-mcp"
     assert {"qdrant-rag", "searxng", "n8n", "orchestration",
             "codebase-memory", "memory-vault"} <= set(m)
-    # lives alongside servers.txt in the dir the dashboard mounts at /mcp-config
-    assert (tmp_path / "mcp" / "servers.txt").exists()
+    # servers.json is the ONLY file in the dir the dashboard mounts at /mcp-config
+    assert [p.name for p in (tmp_path / "mcp").iterdir()] == ["servers.json"]
 
 
 # ── McpSpec: the validated `mcp:` manifest block. One streamable-HTTP server per plugin, either a

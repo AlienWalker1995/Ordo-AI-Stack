@@ -131,10 +131,10 @@ class RenderedConfig:
     compose_profiles: list[str] = dataclasses.field(default_factory=list)
     mcp_servers: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     # server_id → plugin_id for EVERY registered kind=mcp plugin (enabled AND available-but-disabled).
-    # Emitted to out/mcp/server-plugin-map.json (the dir the dashboard mounts). The dashboard reads it
-    # to translate a UI MCP toggle back to the ordo.yaml plugin it must add/remove — so a toggle that
-    # today only writes servers.txt (ephemeral, reseeded on re-render) ALSO updates the source of
-    # truth and PERSISTS. Covers disabled plugins too, so the UI can re-enable an available one.
+    # Emitted into out/mcp/servers.json (the dir the dashboard mounts). The dashboard reads it to
+    # translate a UI MCP toggle back to the ordo.yaml plugin it must add/remove, so the toggle updates
+    # the source of truth and PERSISTS across a re-render (which regenerates the enabled roster from
+    # that same list). Covers disabled plugins too, so the UI can re-enable an available one.
     mcp_server_plugin_map: dict[str, str] = dataclasses.field(default_factory=dict)
     # (plugin, service) pairs for every enabled kind=service plugin — compose builds from these
     plugin_services: list[Any] = dataclasses.field(default_factory=list)
@@ -213,7 +213,8 @@ class RenderedConfig:
             plugin_services=self.plugin_services,
             primary_gpu_uuid=(pri.uuid if pri else None),
             secondary_gpu_uuid=(sec.uuid if sec else None),
-            gpu_claims={c.service: c for c in self.gpu_inventory()})
+            gpu_claims={c.service: c for c in self.gpu_inventory()},
+            mcp_servers=self.mcp_servers)
 
     def write(self, out_dir: str | Path) -> None:
         out = Path(out_dir)
@@ -240,33 +241,22 @@ class RenderedConfig:
         ]
         sec_lines += [f"{k}=" for k in self.required_secrets]
         (out / "secrets.env.example").write_text("\n".join(sec_lines) + "\n", encoding="utf-8")
-        # the mcp-gateway registry, regenerated from kind=mcp plugins (no hand-edit, no drift). Kept
-        # as a human-readable summary; the LOAD-BEARING config the gateway wrapper actually reads is
-        # the wrapper-native pair below (servers.txt + registry-custom.yaml) under out/mcp/.
-        (out / "mcp-registry.yaml").write_text(
-            yaml.safe_dump({"servers": self.mcp_servers}, sort_keys=False), encoding="utf-8")
-        # mcp/ — the config dir mounted into mcp-gateway at /mcp-config. The wrapper
-        # (gateway-wrapper.sh) reads servers.txt (the enabled MCP ids) and merges registry-custom.yaml
-        # as an --additional-catalog. Emitted in EXACTLY the schema V1's wrapper consumes, so the same
-        # wrapper works unmodified — the rendered artifact matches its reader (no drift).
-        mcp_dir = out / "mcp"
-        mcp_dir.mkdir(parents=True, exist_ok=True)
-        (mcp_dir / "servers.txt").write_text(
-            ",".join(s["id"] for s in self.mcp_servers) + "\n", encoding="utf-8")
-        (mcp_dir / "registry-custom.yaml").write_text(
-            _render_registry_custom(self.mcp_servers), encoding="utf-8")
-        # server_id → plugin_id for ALL registered kind=mcp plugins (enabled + available-but-disabled).
-        # JSON (stdlib-readable, no extra dep) alongside servers.txt in the dir the dashboard mounts at
-        # /mcp-config. The dashboard uses it to persist a UI MCP toggle into ordo.yaml's plugins list,
-        # so the toggle survives the next re-render (which regenerates servers.txt from that same list).
-        (mcp_dir / "server-plugin-map.json").write_text(
-            json.dumps(self.mcp_server_plugin_map, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8")
         # model-gateway/ - mounted read-only into model-gateway + model-gateway-keys at /config.
         mg_dir = out / "model-gateway"
         mg_dir.mkdir(parents=True, exist_ok=True)
         (mg_dir / "keys.json").write_text(
             json.dumps({"keys": self.litellm_keys}, indent=2) + "\n", encoding="utf-8")
+        (mg_dir / "mcp_servers.yaml").write_text(
+            render_litellm_mcp_fragment(self.mcp_servers), encoding="utf-8")
+        # mcp/servers.json: the dashboard's read-only view (enabled servers + server_id->plugin_id map
+        # for the enable/disable toggle that edits ordo.yaml). Mounted at /mcp-config.
+        mcp_dir = out / "mcp"
+        mcp_dir.mkdir(parents=True, exist_ok=True)
+        (mcp_dir / "servers.json").write_text(json.dumps({
+            "servers": [{k: s[k] for k in ("id", "plugin_id", "name", "service", "url", "network", "tools", "hosted")}
+                        for s in self.mcp_servers],
+            "plugin_map": self.mcp_server_plugin_map,
+        }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         # an isolated, runnable compose for the stack (own project/network, no port clashes)
         (out / "docker-compose.yml").write_text(
             yaml.safe_dump(self.compose_dict(), sort_keys=False),
@@ -464,6 +454,11 @@ def render(source: Source, catalog: Catalog,
     for k in litellm_keys:
         if k["env"] not in required_secrets:
             required_secrets.append(k["env"])
+    # Each MCP server's bearer token: LiteLLM presents it as `os.environ/<auth_secret>`, so the key
+    # must be in secrets.env.example or the gateway dials that server with an empty credential.
+    for s in mcp_servers:
+        if s["auth_secret"] and s["auth_secret"] not in required_secrets:
+            required_secrets.append(s["auth_secret"])
 
     return RenderedConfig(
         hardware=hw, model=model, ctx_size=ctx, tier=(model.tier),
@@ -484,47 +479,32 @@ def _is_project_image(image: str, project: str = "ordo") -> bool:
     return image.startswith(f"{project}/")
 
 
-def _render_registry_custom(mcp_servers: list[dict[str, Any]]) -> str:
-    """Emit the gateway wrapper's `--additional-catalog` fragment (registry-custom.yaml) from the
-    rendered kind=mcp servers. Schema mirrors V1's data/mcp/registry-custom.yaml EXACTLY: a top-level
-    `registry:` map keyed by server id, each with type/title/description/image + env as a list of
-    {name, value}. The wrapper substitutes any PLACEHOLDER_* tokens at startup; we emit concrete
-    values from the manifest so there are none to substitute (secrets stay in secrets.env env-vars).
-
-    File-based MCP servers (e.g. a markdown-vault reader/writer) additionally need a host bind for
-    their data dir, must stay warm across calls, and — being pure-fs — can run offline. The upstream
-    docker/mcp-gateway catalog schema (verified in the docker-mcp binary: yaml keys `volumes`,
-    `command`, `longLived`, `disableNetwork`) carries these, so we PASS THEM THROUGH when a manifest
-    declares them. `volumes` are host mount specs applied to the SPAWNED sibling container: the source
-    is a HOST path (the gateway spawns via the host docker.sock, so a gateway-container path would be
-    wrong), typically a `PLACEHOLDER_*` token the wrapper substitutes from the gateway's env. A host
-    bind without a `:ro` suffix is READ-WRITE — that is how a vault-writing MCP gets write access
-    (named-volume-only would hide the vault from the host + native Obsidian browsing the same dir)."""
-    registry: dict[str, Any] = {}
-    for s in mcp_servers:
+def render_litellm_mcp_fragment(servers: list[dict[str, Any]]) -> str:
+    """The `mcp_servers:` map LiteLLM loads (merged into the proxy config by the model-gateway
+    entrypoint). `transport` and `available_on_public_internet` are ALWAYS explicit: LiteLLM's
+    documented defaults (sse / false) disagree with its code (http / true)."""
+    entries: dict[str, Any] = {}
+    for s in servers:
         entry: dict[str, Any] = {
-            "type": "server",
-            "title": s.get("name", s["id"]),
-            "description": s.get("name", s["id"]),
-            "image": s.get("image", ""),
-            "env": [{"name": k, "value": v} for k, v in (s.get("env", {}) or {}).items()],
+            "server_id": s["id"],
+            "url": s["url"],
+            "transport": "http",
+            "description": s["description"] or s["name"],
+            "timeout": s["timeout"],
+            "available_on_public_internet": False,
+            "mcp_info": {"server_name": s["id"]},
         }
-        # Optional catalog fields — only emitted when the manifest declares them, so existing MCP
-        # plugins (image+env only) render byte-identically. Order after env for stable diffs.
-        if s.get("volumes"):
-            entry["volumes"] = list(s["volumes"])
-        if s.get("command"):
-            entry["command"] = list(s["command"])
-        if s.get("longLived"):
-            entry["longLived"] = True
-        if s.get("disableNetwork"):
-            entry["disableNetwork"] = True
-        registry[s["id"]] = entry
+        if s["auth_type"]:
+            entry["auth_type"] = s["auth_type"]
+            entry["auth_value"] = f"os.environ/{s['auth_secret']}"
+        if s["allowed_tools"]:
+            entry["allowed_tools"] = list(s["allowed_tools"])
+        entries[s["id"]] = entry
     header = (
-        "# GENERATED by ordo render — the mcp-gateway --additional-catalog fragment.\n"
-        "# Rebuilt from the enabled kind=mcp plugins; do not hand-edit (change services/*/plugin.yaml).\n"
+        "# GENERATED by ordo render: the LiteLLM `mcp_servers` fragment, merged into the proxy config by\n"
+        "# services/model-gateway/entrypoint.sh. Do not hand-edit (change services/*/plugin.yaml).\n"
     )
-    return header + yaml.safe_dump({"registry": registry}, sort_keys=False)
+    return header + yaml.safe_dump({"mcp_servers": entries}, sort_keys=False)
 
 
 def _render_mcp(mcps: list, project: str = "ordo") -> tuple[list[dict[str, Any]], list[str]]:

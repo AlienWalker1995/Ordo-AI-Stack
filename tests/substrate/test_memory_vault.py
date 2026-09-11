@@ -8,6 +8,7 @@ Covers the manifests for a shared markdown memory vault:
   - shm_size: the generic service-renderer field (reusable), passed through when declared and
     omitted otherwise.
 """
+import json
 from pathlib import Path
 
 import yaml
@@ -73,30 +74,27 @@ def test_memory_vault_mcp_render_passes_through_catalog_fields():
     assert not any("memory-vault" in w and "pinned" in w for w in rc.warnings)
 
 
-def test_memory_vault_registry_custom_yaml_has_rw_vault(tmp_path):
+def test_memory_vault_compose_service_has_rw_vault(tmp_path):
     render(_src(["memory-vault"]), CATALOG, REGISTRY).write(tmp_path)
-    # servers.txt lists it
-    ids = set((tmp_path / "mcp" / "servers.txt").read_text().strip().split(","))
-    assert "memory-vault" in ids
-    # registry-custom.yaml carries the vault volume + hygiene flags through to the gateway catalog
-    reg = yaml.safe_load((tmp_path / "mcp" / "registry-custom.yaml").read_text())
-    mv = reg["registry"]["memory-vault"]
-    assert mv["type"] == "server"
+    # servers.json lists it (the dashboard's read-only view of the enabled roster)
+    sj = json.loads((tmp_path / "mcp" / "servers.json").read_text())
+    assert "memory-vault" in {s["id"] for s in sj["servers"]}
+    # its compose service carries the vault volume through, READ-WRITE (no :ro)
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    mv = c["services"]["mcp-memory-vault"]
     assert mv["image"] == "ordo/mcpvault-mcp:latest"
     assert mv["volumes"] == [_VAULT_VOLUME]
 
 
 def test_existing_mcp_entries_unchanged_by_passthrough(tmp_path):
-    # image+env-only MCP plugins must NOT sprout empty volumes/command/longLived/disableNetwork
-    # keys: the passthrough is opt-in so their rendered catalog entry stays byte-stable.
+    # image+env-only MCP plugins must NOT sprout empty volumes/command keys: the passthrough is
+    # opt-in, so their rendered compose service stays byte-stable.
     render(_src("auto"), CATALOG, REGISTRY).write(tmp_path)
-    reg = yaml.safe_load((tmp_path / "mcp" / "registry-custom.yaml").read_text())
-    for pid in ("qdrant-rag", "searxng"):
-        entry = reg["registry"][pid]
-        assert "volumes" not in entry
-        assert "command" not in entry
-        assert "longLived" not in entry
-        assert "disableNetwork" not in entry
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    for sid in ("qdrant-rag", "searxng"):
+        svc = c["services"][f"mcp-{sid}"]
+        assert "volumes" not in svc
+        assert "command" not in svc
 
 
 def test_memory_vault_tools_available_even_on_cpu():

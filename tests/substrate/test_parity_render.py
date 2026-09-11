@@ -91,11 +91,14 @@ def test_edge_publishes_the_only_host_port():
     assert any("443:443" in p for p in c["services"]["caddy"]["ports"])
 
 
-def test_core_and_gateways_are_project_buildable_images():
-    # model-gateway + mcp-gateway are now V2 project images (buildable-not-pullable), not upstream
+def test_core_gateway_and_mcp_services_are_project_or_pinned_images():
     c = _dual().compose_dict()
     assert c["services"]["model-gateway"]["image"] == "ordo/model-gateway:latest"
-    assert c["services"]["mcp-gateway"]["image"] == "ordo/mcp-gateway:latest"
+    assert "mcp-gateway" not in c["services"]
+    for n in ("mcp-orchestration", "mcp-qdrant-rag", "mcp-comfyui", "mcp-codebase-memory", "mcp-memory-vault"):
+        assert c["services"][n]["image"].startswith("ordo/")
+    for n in ("mcp-n8n", "mcp-searxng"):
+        assert "@sha256:" in c["services"][n]["image"]
 
 
 # --- secrets ---
@@ -144,7 +147,7 @@ def test_services_needing_secrets_get_secrets_env_file():
         return any(isinstance(f, dict) and f.get("path") == "secrets.env"
                    for f in c["services"][svc].get("env_file", []))
     # core services that use secrets, plus a ported one, all layer the secrets.env (required:false)
-    for svc in ("model-gateway", "mcp-gateway", "ops-controller", "dashboard", "agent",
+    for svc in ("model-gateway", "ops-controller", "dashboard", "agent",
                 "open-webui", "searxng", "caddy", "oauth2-proxy"):
         assert _has_secrets(svc), f"{svc} missing secrets.env env_file"
     # a service with no secrets does NOT get it (qdrant is plain)
