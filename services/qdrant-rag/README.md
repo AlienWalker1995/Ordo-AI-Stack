@@ -14,5 +14,6 @@ docker build -t ordo/qdrant-rag-mcp:latest services/qdrant-rag
 This directory (`server.py`, `requirements.txt`, `Dockerfile`) is the single source of truth for
 the service.
 
-This image is gateway-spawned (stdio), so it appears in the rendered `mcp-registry.yaml`, not as a
-long-lived compose service.
+This image runs as the long-lived compose service `mcp-qdrant-rag` (rendered into
+`out/model-gateway/mcp_servers.yaml` and `out/mcp/servers.json`), serving streamable HTTP on
+port 9000. Its manifest sets `network: stack` because it must reach `qdrant` and `llamacpp-embed`.

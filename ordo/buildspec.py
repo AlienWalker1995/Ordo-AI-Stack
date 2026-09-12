@@ -102,9 +102,8 @@ def _is_project(image: str, project: str) -> bool:
 def _plugin_images(p: Plugin) -> list[str]:
     """Every image a plugin declares (kind=mcp `mcp.image` + each kind=service `services[].image`)."""
     imgs: list[str] = []
-    mcp_img = str((p.mcp or {}).get("image", "") or "")
-    if mcp_img:
-        imgs.append(mcp_img)
+    if p.mcp is not None and p.mcp.image:
+        imgs.append(p.mcp.image)
     imgs.extend(str(s.image) for s in p.services if s.image)
     return imgs
 

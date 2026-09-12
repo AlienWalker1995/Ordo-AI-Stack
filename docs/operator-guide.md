@@ -6,8 +6,8 @@ rendered output — edits to *derived* config never survive a re-render, so drif
 impossible.
 
 The stack runs entirely from `C:\dev\ordo-ai-stack` (`main` is the production branch) as compose
-project **`ordo`** (25 services, verified by a fresh `ordo render` with this operator's full plugin
-set — see `out/docker-compose.yml`) — containers `ordo-*`, images `ordo/*`, network `ordo-net`. The
+project **`ordo`** (43 services in the current render, 36 plus the seven `tailnet-names` sidecars,
+verified by a fresh `ordo render` with this operator's full plugin set on 2026-09-12 — see `out/docker-compose.yml`) — containers `ordo-*`, images `ordo/*`, network `ordo-net`. The
 render substrate lives at the repo root (there is no `v2/` directory — there is one Ordo).
 
 ## Install & first run
@@ -121,7 +121,7 @@ current split: today there is only Ordo.
 5. **Full-stack parity render + `ordo parity`** — the renderer now reproduces the complete llama.cpp surface (model/ctx/mmproj/MTP args/…), and `ordo parity --ref <.env>` diffs it. ✅
    **Merge-gate (a) demonstrated live:** `ordo parity` vs the real running `.env` → **PARITY OK** (15 keys, 0 mismatches), read-only — proving the engine regenerates today's hand-tuned config from one source with no drift.
 6. **Scheduler status API + `ordo doctor` support bundle** — `Scheduler.status()` emits the busy/idle + free-VRAM + running/queued + ETA JSON the dashboard/agents poll; `ordo doctor [--bundle]` exports a secret-redacted diagnostics bundle. ✅ Demonstrated: a 17GB render job + a 4GB chat **co-run** (chat slips beside the render) — the exact eviction-deadlock that broke the agent, gone.
-7. **MCP as `kind=mcp` plugins** — an MCP server is a manifest (pinned image + env + tools); the renderer composes enabled ones into `out/mcp-registry.yaml` (drift-free) and flags un-pinned images. Runs on CPU. ✅
+7. **MCP as `kind=mcp` plugins** — an MCP server is a manifest (pinned image + env + tools); the renderer composes enabled ones into a compose service `mcp-<server_id>` plus `out/model-gateway/mcp_servers.yaml` and `out/mcp/servers.json` (drift-free) and flags un-pinned images. Runs on CPU. ✅
 8. **Compose rendering** — `ordo render` emits an **isolated, runnable** `docker-compose.yml` (own project/network, no host-port clashes, GPU-gated, profile-gated plugins). ✅ The rendered compose is validated by the **real `docker compose config`** engine (both CPU-core and GPU+media shapes), and that check is a CI gate — not just a well-shaped Python dict.
 9. **Process broker** — turns scheduler decisions into real container start/stop; the Docker backend is **hard-scoped to the `ordo-` prefix so it can never touch the live stack**. ✅
 10. **Control-plane service (`ordo serve` = the `ops-controller` image)** — the substrate over HTTP: `GET /status` (live GPU/scheduler + manifest), `GET/POST /model-config` (drift-safe model switch), `POST /jobs[/complete]` (drive the broker). A real `services/ops-controller/Dockerfile` (built + smoke-tested) makes the compose ref concrete. ✅
@@ -132,7 +132,7 @@ current split: today there is only Ordo.
 
 13. **One-command packaging + mocked-profile CI** — `pyproject.toml` installs the substrate as a real `ordo` command (`pip install .`; runtime dep = just PyYAML, so the core runs anywhere); `python -m ordo` also works. A dedicated **`substrate` CI job** (in `.github/workflows/ci.yml`, path-gated on `ordo/**`, `services/**`, etc., pinned deps) runs ruff + the full mocked-profile suite + a fresh-install render smoke — the merge-gate "mocked-profile CI" + "clean fresh-install" requirements. ✅
     **Validated:** simulated the CI on a `python:3.12` runner-equivalent — ruff clean, 67 tests, `python -m ordo render` from a clean checkout, and `pip install` → a working `ordo detect`.
-14. **Multi-agent adapter contract (Hermes default, pluggable)** — an agent is a data manifest (`services/<id>/agent.yaml`) declaring its image + the core services it consumes; `ordo/agents.py` resolves the chosen agent, and `render` wires its image into the compose `agent` service. Hermes is `default: true`; a pinned `openai-agent` reference adapter proves the core is genuinely agent-agnostic; an unknown agent is warned at render/preflight (convention fallback) not silently broken at `compose up`. The contract (chat via model-gateway, tools via mcp-gateway, GPU via ops-controller `/jobs`, `.env` read-only) is documented in [`agents.md`](agents.md). ✅
+14. **Multi-agent adapter contract (Hermes default, pluggable)** — an agent is a data manifest (`services/<id>/agent.yaml`) declaring its image + the core services it consumes; `ordo/agents.py` resolves the chosen agent, and `render` wires its image into the compose `agent` service. Hermes is `default: true`; a pinned `openai-agent` reference adapter proves the core is genuinely agent-agnostic; an unknown agent is warned at render/preflight (convention fallback) not silently broken at `compose up`. The contract (chat via model-gateway, tools via the model-gateway `/mcp` endpoint, GPU via ops-controller `/jobs`, `.env` read-only) is documented in [`agents.md`](agents.md). ✅
 15. **Native (non-Docker) path** — `ordo native` builds the exact `llama-server` argv from the *same* rendered `LLAMACPP_*` env the container uses (model/ctx/gpu-layers/kv-type/rope/mmproj/MTP extra-args), proving the source is deployment-mode-agnostic — Docker or bare process, one source, no divergence. Best-effort by design: it's honest about the pieces native mode doesn't orchestrate (gateways/agent = manual steps; media/voice = Docker-only). ✅
 16. **Cloud fallback + a starvation-bug fix** — building this surfaced a real latent bug: `pump()` used to `break` on a job too big for the GPU, permanently stalling every smaller job queued behind it. Fixed: a can-never-fit job is removed from the queue — **routed to cloud** when `cloud_fallback.enabled`, else **rejected** — and pumping continues, so small jobs never starve. `status()` surfaces `cloud_routed`/`rejected`; routed jobs are queryable-and-drained via `GET /jobs/cloud-routed` (each job is handed out exactly once, to whichever agent polls it) rather than auto-dispatched; the broker never starts a routed job locally. ✅
 17. **`ordo fetch` — offline model provisioning with mandatory checksum** — downloads catalog models and **refuses to trust unpinned or corrupt weights**: a null-sha256 entry is refused for download unless `--allow-unverified`, a post-download hash mismatch deletes the file and errors (never leave corrupt weights to load into noise), and an already-verified file short-circuits with no network call — so once fetched, installs are **offline-capable**. Hashing/planning/verify-reject logic is pure + fully tested (download injected); only the network shells out. ✅ Demonstrated: `fetch --all --plan-only` refuses the 4 unpinned Qwen entries and cleanly plans the pinned 27b.
@@ -151,9 +151,9 @@ current split: today there is only Ordo.
     ported service preserves V1's **exact image pins** (qdrant `v1.18.2`, n8n `2.28.3`, open-webui
     `v0.10.1`), floating `:latest` tags are **digest-pinned** (searxng), and env keys / volumes
     (bind + named) / healthchecks / profiles / depends_on carry over verbatim.
-    **Image parity fixed:** `model-gateway` + `mcp-gateway` now reference V1's custom config-wrapper
-    builds as **project buildable images** (`ordo/model-gateway:latest`, `ordo/mcp-gateway:latest`
-    — contexts under `services/`) instead of the unconfigured upstream `litellm:main` / `mcp-gateway`,
+    **Image parity fixed:** `model-gateway` now references V1's custom config-wrapper build as a
+    **project buildable image** (`ordo/model-gateway:latest`,
+    context under `services/`) instead of the unconfigured upstream `litellm:main`,
     so the `local-chat` alias + reload wrapper survive and `preflight` reports "build first". The two
     MCP **placeholder digests** are replaced with real refs (qdrant-rag = a project buildable image,
     searxng = the live registry digest). **Secrets model:** derived `.env` and operator secrets stay
@@ -174,20 +174,20 @@ current split: today there is only Ordo.
     `services/memory-vault`, 15 tools: read/write/patch/search/frontmatter/tags/…). The vault is browsed
     with **native Obsidian on the operator's machine**, opened at `data/memory-vault` — the SAME host
     dir the MCP mounts, so agent writes appear in the desktop app and vice-versa. To let a
-    file-based MCP **write** its data dir, the render engine now passes the upstream gateway-catalog
-    fields through — `volumes` (a **read-write** host bind, substituted from `MEMORY_VAULT_PATH` by
-    the gateway wrapper), `command`, `longLived`, `disableNetwork` — which the previous image+env-only
+    file-based MCP **write** its data dir, the render engine passes the manifest's own `mcp:` fields
+    through, `volumes` (a **read-write** host bind, compose-interpolated from `${MEMORY_VAULT_PATH}`),
+    `command`, `env` and `healthcheck`, which the previous image+env-only
     MCP render dropped; existing MCP entries render byte-identically (passthrough is opt-in). ✅
     Validated live: `write_note` through the gateway persists a real file on disk that native Obsidian
     sees; `read_note`/`search_notes` round-trip; llamacpp/agent untouched.
 
 `ordo render` writes the complete stack (`.env` + `docker-compose.yml` + `hermes.context.json` +
-`manifest.json` + `mcp-registry.yaml` + `secrets.env.example`); `ordo serve` runs the control plane
+`manifest.json` + `mcp/servers.json` + `model-gateway/mcp_servers.yaml` + `model-gateway/keys.json` + `secrets.env.example`); `ordo serve` runs the control plane
 (service `ops-controller`) that regenerates it drift-safely at runtime; `ordo preflight` gated the
 cutover. **Test suite: 181 passed, 2 skipped** (verified 2026-07-09).
 
 ## Operating this stack (it IS production now)
-The 24 services run under compose project `ordo` from `C:\dev\ordo-ai-stack`, all reached through
+The rendered services (43 as of 2026-09-12) run under compose project `ordo` from `C:\dev\ordo-ai-stack`, all reached through
 the edge — Caddy is still the **only** service that publishes host ports, but since 2026-07-24 it
 listens on **seven** SSO-gated ports on `${CADDY_TAILNET_HOSTNAME}`, one per UI surface, instead of
 mounting every app under a subpath of a single `:443`:

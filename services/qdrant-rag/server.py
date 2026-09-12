@@ -4,7 +4,7 @@
 Embeds the query with the SAME local nomic embedder used by rag-ingestion
 (llamacpp-embed, 768-dim, no task prefix) so query vectors live in the same
 space as the stored chunks, then runs a Qdrant similarity search. Exposed to
-Hermes via the mcp-gateway as gateway/qdrant_search.
+Hermes through the LiteLLM MCP gateway as qdrant-rag-qdrant_search.
 
 Why embed via llamacpp-embed directly (not model-gateway/litellm): litellm's
 /v1/embeddings route currently 500s for the local embed model; the raw
@@ -22,7 +22,7 @@ QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333").rstrip("/")
 EMBED_URL = os.environ.get("EMBED_URL", "http://llamacpp-embed:8080").rstrip("/")
 COLLECTION = os.environ.get("RAG_COLLECTION", "documents").strip()
 
-mcp = FastMCP("qdrant-rag")
+mcp = FastMCP("qdrant-rag", host="0.0.0.0", port=9000, stateless_http=True)
 
 
 def _embed(text: str) -> list[float]:
@@ -102,4 +102,4 @@ def qdrant_status() -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    mcp.run()
+    mcp.run(transport="streamable-http")

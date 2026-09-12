@@ -1,12 +1,10 @@
 {
   "mcpServers": {
-    "ordo-mcp-gateway": {
-      "type": "stdio",
-      "command": "cmd",
-      "args": ["/c", "npx", "-y", "@pyroprompts/mcp-stdio-to-streamable-http-adapter@0.1.0"],
-      "env": {
-        "URI": "http://localhost:8811/mcp",
-        "MCP_NAME": "ordo-mcp-gateway"
+    "ordo-mcp": {
+      "type": "http",
+      "url": "https://${CADDY_TAILNET_HOSTNAME}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${LITELLM_KEY_EDGE}"
       }
     }
   }

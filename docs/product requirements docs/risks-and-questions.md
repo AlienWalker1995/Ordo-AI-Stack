@@ -10,8 +10,8 @@
 | Model gateway cache serves stale model list | Users see deleted models | Cache TTL is 60s; `DELETE /v1/cache` to invalidate | Set `MODEL_CACHE_TTL_SEC=0` to disable cache |
 | WEBUI_AUTH=True breaks existing setups | Users locked out of Open WebUI | Document the change in `CHANGELOG.md` / the operator guide; `WEBUI_AUTH=False` to opt out | `WEBUI_AUTH=False` in `ordo.yaml` (renders to `out/.env`) |
 | docker.sock in two services | Two attack surfaces for container escape | Accept: both required. Mitigate with allowlists, auth, no host ports | Remove one; document trade-off |
-| MCP filesystem SSRF | Tool access to host filesystem | Removed from default; `allow_clients: []` in `registry-custom.yaml` | Clear from servers.txt |
-| Prompt injection via MCP tool output | Model manipulated by tool results | Allowlists; structured output in tool_result tags; monitor | Remove suspicious tool from servers.txt |
+| MCP filesystem access | Tool access to host filesystem | Each server declares its own `volumes:` (code root read-only, vault read-write); no server gets the gateway's env | Remove the plugin from `ordo.yaml`, `ordo render`, recreate `model-gateway` |
+| Prompt injection via MCP tool output | Model manipulated by tool results | Per-key MCP grants; structured output in tool_result tags; monitor | Remove the suspicious server from `ordo.yaml`'s `plugins:`, `ordo render`, recreate `model-gateway` |
 | Performance regression from gateway proxy | >10ms added latency | Thin async proxy; benchmarked acceptable. Cache helps | Point services directly at llama.cpp (`http://llamacpp:8080/v1`) escape hatch |
 
 ## Open Questions
@@ -20,7 +20,7 @@
 |---|----------|--------|
 | 1 | **Ops-controller docker GID:** `user: "1000:<gid>"` value depends on host docker GID | Resolved — ops-controller runs without explicit user |
 | 2 | **Open WebUI `OPENAI_API_BASE`:** Does `open-webui` (running `v0.10.1`) support this env? | Resolved — uses `OPENAI_API_BASE_URL`; working |
-| 3 | **MCP gateway policy:** Does Docker MCP Gateway support `X-Client-ID` for per-client allowlist? | Open — not yet; deferred to M6 |
+| 3 | **MCP policy scoping:** How is per-consumer tool access enforced? | Resolved (2026-09): LiteLLM virtual-key `object_permission.mcp_servers` grants with `require_key_mcp_access_defined: true` |
 | 5 | **llama.cpp host port:** Remove to reduce attack surface? | Resolved — backend-only; no host port |
 | 6 | **Audit log rotation** | Resolved — size-based rotation (`AUDIT_LOG_MAX_BYTES`) |
 | 8 | **ComfyUI non-root** | Open — `yanwk/comfyui-boot` runs as root; image limitation |

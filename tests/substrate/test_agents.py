@@ -170,3 +170,15 @@ def test_render_agent_without_wiring_stays_minimal(tmp_path):
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
     agent = c["services"]["agent"]
     assert "volumes" not in agent and "user" not in agent
+
+
+def test_hermes_manifest_consumes_only_live_core_services_and_gates_on_keys():
+    from pathlib import Path
+
+    from ordo.agents import KNOWN_SERVICES, AgentRegistry
+    reg = AgentRegistry.load(Path(__file__).resolve().parents[2] / "services")
+    hermes = reg.get("hermes")
+    assert "mcp-gateway" not in KNOWN_SERVICES and "mcp-gateway" not in hermes.consumes
+    assert hermes.depends_on["model-gateway-keys"] == "service_completed_successfully"
+    assert "mcp-gateway" not in hermes.depends_on
+    assert hermes.unknown_services() == []

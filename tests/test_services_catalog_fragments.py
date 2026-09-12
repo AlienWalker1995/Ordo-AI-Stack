@@ -72,7 +72,6 @@ def test_derived_ops_service_map_is_exactly_the_pre_refactor_wiring():
         "llamacpp-cpu": "llamacpp-cpu",
         "model-gateway": "model-gateway",
         "webui": "open-webui",
-        "mcp": "mcp-gateway",
         "comfyui": "comfyui",
         "n8n": "n8n",
         "qdrant": "qdrant",

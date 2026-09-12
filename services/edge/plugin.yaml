@@ -15,11 +15,15 @@ compose_profile: edge
 env:
   EDGE_ENABLED: "1"
 secrets:
-  # Google OAuth client + cookie secret, and the bearer gating the /mcp/* remote route.
+  # Google OAuth client + cookie secret.
   - OAUTH2_PROXY_CLIENT_ID
   - OAUTH2_PROXY_CLIENT_SECRET
   - OAUTH2_PROXY_COOKIE_SECRET
-  - MCP_GATEWAY_TOKEN
+# The LiteLLM virtual key the operator hands to EXTERNAL clients (Claude Code, Cline, scripts)
+# for the SSO-bypassing /llm/* and /mcp routes. Caddy does not inject it; clients present it.
+litellm_key:
+  models: [local-chat, local-embed]
+  mcp_servers: all
 services:
   - name: oauth2-proxy
     # alpine variant ships wget for the healthcheck (the distroless :latest has no shell).
@@ -58,7 +62,7 @@ services:
       retries: 3
   - name: caddy
     image: caddy:2.11.4-alpine
-    wants_secrets: true       # MCP_GATEWAY_TOKEN resolves from secrets.env
+    wants_secrets: false      # no secrets: the /mcp and /llm routes delegate auth to LiteLLM
     # --watch: reload the Caddyfile in-process whenever its content changes. The Caddyfile is a
     # bind-mounted file (line 90), and `docker compose up` CANNOT detect a bind-mount's content
     # changing — only its own service-definition changing. So a commit that edits the Caddyfile
@@ -91,7 +95,7 @@ services:
       - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8446:8446"   # ComfyUI
       - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8447:8447"   # Hermes
       - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8448:8448"   # codebase-memory
-      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8449:8449"   # LiteLLM swagger (model-gateway)
+      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8449:8449"   # LiteLLM admin UI (model-gateway)
     env:
       CADDY_TAILNET_HOSTNAME: ${CADDY_TAILNET_HOSTNAME}
       CADDY_TAILNET_DOMAIN: ${CADDY_TAILNET_DOMAIN}

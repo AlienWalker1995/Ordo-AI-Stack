@@ -41,7 +41,7 @@ Only Caddy publishes host ports — **seven** in the port-per-service model (202
 - **Never commit** `out/.env` or `out/secrets.env`. They are gitignored, along with the operator-real `ordo.yaml`.
 - Use `ordo.example.yaml` and `out/secrets.env.example` as templates; copy to `ordo.yaml` / `out/secrets.env`, fill in values locally, then run `ordo render` to produce `out/.env` and `out/docker-compose.yml`.
 - API keys (OpenAI, Anthropic, etc.) and tokens should only live in `out/secrets.env`, never in the repository.
-- **Never commit** `data/` — it is gitignored and contains user-specific runtime state (Hermes session data, Discord guild/user IDs, MCP config, etc.). All secrets and setup-specific values belong in `data/` or `out/secrets.env`, not in shared code.
+- **Never commit** `data/` — it is gitignored and contains user-specific runtime state (Hermes session data, Discord guild/user IDs, etc.). All secrets and setup-specific values belong in `data/` or `out/secrets.env`, not in shared code.
 
 ### Data
 
@@ -58,9 +58,9 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 
 | Threat | Check |
 |--------|-------|
-| docker.sock exposure | Only ops-controller and mcp-gateway mount it; dashboard does not |
+| docker.sock exposure | Only the control plane mounts it (ops-controller and the dashboard's ops-api backend, both guard-scoped to this project); MCP servers and the dashboard UI do not |
 | Controller compromise | Token in env; no default; never expose port |
-| MCP SSRF (browser worker) | Egress blocks for 100.64/10, RFC1918, 169.254.169.254 — `./scripts/ssrf-egress-block.sh --target all` |
+| MCP SSRF (egress-capable servers, e.g. `searxng`) | Egress blocks for 100.64/10, RFC1918, 169.254.169.254: `./scripts/ssrf-egress-block.sh` (auto-detects the `ordo-net` subnet) |
 | Secret exfiltration (general) | Controller-only API keys; dashboard `/api/services` strips tokens from returned URLs |
 | Unauthenticated admin | Dashboard reached only via the Caddy edge (oauth2-proxy + Google SSO); no host port |
 
@@ -72,5 +72,5 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 
 1. **Reset OPS_CONTROLLER_TOKEN:** Generate new token, update `out/secrets.env`, then re-run `docker compose -p ordo … up` from `out/` to restart dashboard + ops-controller
 2. **Restore data:** Restore `data/` from a local backup
-3. **Disable MCP tools:** Clear `data/mcp/servers.txt` or set to a single safe server
-4. **Safe mode:** Stop `mcp-gateway` and `hermes-gateway`; use `llamacpp` + `open-webui` only
+3. **Disable MCP tools:** Remove the `kind: mcp` plugins from `ordo.yaml`'s `plugins:` list (or use the dashboard MCP tab), then `ordo render` and recreate `model-gateway`
+4. **Safe mode:** Stop the `mcp-*` services and `agent`; use `llamacpp` + `open-webui` only

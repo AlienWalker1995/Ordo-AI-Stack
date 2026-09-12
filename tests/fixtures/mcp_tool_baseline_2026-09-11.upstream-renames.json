@@ -1,0 +1,31 @@
+{
+ "n8n": {
+  "get_database_statistics": null,
+  "get_node_as_tool_info": "get_node",
+  "get_node_documentation": "get_node",
+  "get_node_essentials": "get_node",
+  "get_node_info": "get_node",
+  "get_property_dependencies": null,
+  "get_templates_for_task": "search_templates",
+  "list_ai_tools": null,
+  "list_node_templates": "search_templates",
+  "list_nodes": "search_nodes",
+  "list_tasks": "search_templates",
+  "n8n_delete_execution": "n8n_executions",
+  "n8n_diagnostic": "n8n_health_check",
+  "n8n_get_execution": "n8n_executions",
+  "n8n_get_workflow_details": "n8n_get_workflow",
+  "n8n_get_workflow_minimal": "n8n_get_workflow",
+  "n8n_get_workflow_structure": "n8n_get_workflow",
+  "n8n_list_available_tools": "n8n_health_check",
+  "n8n_list_executions": "n8n_executions",
+  "n8n_trigger_webhook_workflow": "n8n_test_workflow",
+  "search_node_properties": "get_node",
+  "search_templates_by_metadata": "search_templates",
+  "validate_node_minimal": "validate_node",
+  "validate_node_operation": "validate_node",
+  "validate_workflow_connections": "validate_workflow",
+  "validate_workflow_expressions": "validate_workflow"
+ },
+ "_note": "upstream mcp/n8n 2.22.18 -> n8n-mcp 2.84.1 renames/consolidations, verified 2026-09-12 against the live tools/list. Consolidations read off the installed image (ordo/n8n-mcp:mcp-test, /app/package.json version 2.84.1): get_node carries detail=minimal|standard|full plus mode=info|docs|search_properties|versions|compare|breaking|migrations (tools.js get_node schema; server.js dispatches mode=docs to getNodeDocumentation, mode=search_properties to searchNodeProperties, detail=standard to getNodeEssentials, detail=full to getNodeInfo, whose payload carries the aiToolCapabilities block that get_node_as_tool_info used to return). search_templates carries searchMode=keyword|by_nodes|by_task|by_metadata|patterns and an inline task enum (the list list_tasks used to return). n8n_executions carries action=get|list|delete. n8n_get_workflow carries mode=full|details|structure|minimal|active|filtered. validate_node carries mode=minimal|full; validate_workflow validates structure, connections and expressions in one call. n8n_health_check mode=diagnostic returns the env/tool debug block (handlers-n8n-manager.js handleDiagnostic, incl. toolsAvailability) that n8n_diagnostic and n8n_list_available_tools used to return. n8n_test_workflow method=auto fires a workflow over HTTP through its webhook/form/chat trigger, replacing n8n_trigger_webhook_workflow. THREE verbs were removed outright (mapped to null): get_database_statistics (server.js still has a private getDatabaseStatistics() but no tools/call case dispatches it), get_property_dependencies (the PropertyDependencies service survives and is used internally, but no tool exposes it), and list_ai_tools (server.js still has listAITools() with no dispatcher case; search_nodes has no AI-tool filter). Verified by grepping the tools/call switch in /app/dist/mcp/server.js: none of those three names appear as a case."
+}

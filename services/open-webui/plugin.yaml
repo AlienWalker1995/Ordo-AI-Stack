@@ -13,16 +13,19 @@ compose_profile: webui
 env:
   OPEN_WEBUI_ENABLED: "1"
 secrets:
-  - LITELLM_MASTER_KEY    # OPENAI_API_KEY into the gateway (master key)
+  - LITELLM_KEY_OPEN_WEBUI    # its own virtual key (chat + embeddings, no MCP)
+litellm_key:
+  models: [local-chat, local-embed]
+  mcp_servers: []
 services:
   - name: open-webui
     # Pinned to the exact version V1 runs (V1 uses ${OPEN_WEBUI_IMAGE:-...v0.10.1}). Pin, don't float.
     image: ghcr.io/open-webui/open-webui:v0.11.0
-    wants_secrets: true     # LITELLM_MASTER_KEY resolves from secrets.env
+    wants_secrets: true     # LITELLM_KEY_OPEN_WEBUI resolves from secrets.env
     env:
       ENABLE_OLLAMA_API: "false"
       OPENAI_API_BASE_URL: ${OPENAI_API_BASE:-http://model-gateway:11435/v1}
-      OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
+      OPENAI_API_KEY: ${LITELLM_KEY_OPEN_WEBUI}
       WEBUI_AUTH: ${WEBUI_AUTH:-False}
       DEFAULT_MODELS: ${OPEN_WEBUI_DEFAULT_MODEL:-local-chat}
       VECTOR_DB: qdrant
@@ -30,7 +33,7 @@ services:
       QDRANT_URL: http://qdrant:6333
       RAG_EMBEDDING_ENGINE: openai
       RAG_OPENAI_API_BASE_URL: http://model-gateway:11435/v1
-      RAG_OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
+      RAG_OPENAI_API_KEY: ${LITELLM_KEY_OPEN_WEBUI}
       RAG_EMBEDDING_MODEL: ${EMBED_MODEL:-${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}}
     volumes:
       # NAMED VOLUME (ext4) — open-webui keeps its SQLite DB + uploads here; DB state

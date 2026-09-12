@@ -89,12 +89,12 @@ def test_catalog_ids_are_unique():
 def test_non_user_facing_services_carry_background_flag():
     """`background: True` marks NON-user-facing services — the ones the frontend moves out
     of the main grid (which is only browsable UIs) into the secondary 'Background jobs'
-    section (no 'Open' link). That is the backend infra (llamacpp, mcp, qdrant, stt, tts)
+    section (no 'Open' link). That is the backend infra (llamacpp, qdrant, stt, tts)
     plus the two portless headless workers (rag-ingestion, livesync-bridge). The user-facing UIs —
     webui/comfyui/n8n/hermes/codebase-memory-ui — and model-gateway (its Open link is the
-    LiteLLM Swagger UI) must NOT carry it, so an openable service can't be quietly demoted."""
+    LiteLLM admin UI) must NOT carry it, so an openable service can't be quietly demoted."""
     bg = {s["id"] for s in SERVICES if s.get("background")}
-    assert bg == {"rag-ingestion", "llamacpp", "llamacpp-cpu", "mcp", "qdrant", "stt", "tts",
+    assert bg == {"rag-ingestion", "llamacpp", "llamacpp-cpu", "qdrant", "stt", "tts",
                   "couchdb", "livesync-bridge"}
     user_facing = {"webui", "comfyui", "n8n", "hermes", "codebase-memory-ui", "model-gateway"}
     for s in SERVICES:
@@ -106,7 +106,7 @@ def test_non_user_facing_services_carry_background_flag():
 def test_headless_workers_have_no_ui_open_target():
     """The two pure headless workers expose no port and no health check, so the frontend has
     nothing to build a link from (and shows a neutral 'unknown' state, not a false-red). The
-    other background services (llamacpp/mcp/qdrant/stt/tts) ARE probeable — they keep their
+    other background services (llamacpp/qdrant/stt/tts) ARE probeable — they keep their
     check — they're just not user-facing, so the frontend omits their 'Open' link via the flag."""
     for wid in ("rag-ingestion", "livesync-bridge"):
         s = next(x for x in SERVICES if x["id"] == wid)
@@ -127,7 +127,7 @@ def test_visible_services_hides_disabled_plugins():
     enabled = {"open-webui", "comfyui"}  # rag / voice / automation / hermes disabled
     visible_ids = {s["id"] for s in visible_services(enabled=enabled)}
     # Core services (plugin=None) always show.
-    assert {"llamacpp", "model-gateway", "mcp"} <= visible_ids
+    assert {"llamacpp", "model-gateway"} <= visible_ids
     # Enabled plugins show.
     assert {"webui", "comfyui"} <= visible_ids
     # Disabled plugins are hidden.

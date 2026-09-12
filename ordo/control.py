@@ -30,9 +30,10 @@ from .scheduler import Job, Scheduler
 from .source_edit import edit_plugins_list
 
 # Service plugins Hermes may install/enable on request (kind=service, profile-gated). The core
-# substrate (llamacpp, model-gateway, mcp-gateway, ops-controller, dashboard, agent), the edge /
-# front-door (edge, tailnet-names — secret-dependent, host `make up` only), and the agent itself are
-# NOT here, so they can never be created/removed via this path — the allowlist is the security gate.
+# substrate (llamacpp, litellm-db, model-gateway, model-gateway-keys, ops-controller, dashboard,
+# agent), the edge / front-door (edge, tailnet-names — secret-dependent, host `make up` only), and
+# the agent itself are NOT here, so they can never be created/removed via this path — the
+# allowlist is the security gate.
 INSTALLABLE_PLUGINS = frozenset({
     "comfyui", "song-gen", "voice", "rag", "open-webui", "monitoring",
     "automation", "searxng-web", "codebase-memory-ui", "obsidian-livesync", "llamacpp-cpu",
