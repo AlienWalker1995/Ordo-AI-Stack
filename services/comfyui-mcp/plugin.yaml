@@ -41,12 +41,6 @@ mcp:
     OPS_CONTROLLER_URL: http://ops-controller:9000
     OPS_CONTROLLER_TOKEN: ${OPS_CONTROLLER_TOKEN}
     COMFY_MCP_DEFAULT_MODEL: ${COMFY_MCP_DEFAULT_MODEL:-flux1-schnell-fp8.safetensors}
-  healthcheck:
-    test: ["CMD", "python3", "-c", "import socket;socket.create_connection(('127.0.0.1',9000),5).close()"]
-    interval: 30s
-    timeout: 5s
-    retries: 3
-    start_period: 20s
   # Representative subset of the 34 tools the image registers (verified against the built image);
   # LiteLLM advertises the full set at runtime.
   tools: [get_comfyui_system_stats, get_comfyui_queue, get_comfyui_models, list_workflows, run_workflow]

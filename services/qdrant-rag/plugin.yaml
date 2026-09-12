@@ -22,10 +22,4 @@ mcp:
     QDRANT_URL: http://qdrant:6333
     EMBED_URL: http://llamacpp-embed:8080
     RAG_COLLECTION: documents
-  healthcheck:
-    test: ["CMD", "python3", "-c", "import socket;socket.create_connection(('127.0.0.1',9000),5).close()"]
-    interval: 30s
-    timeout: 5s
-    retries: 3
-    start_period: 15s
   tools: [qdrant_search, qdrant_status]

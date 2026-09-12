@@ -309,12 +309,40 @@ def _dashboard_backend(net: str, env_file: str, backend: dict[str, Any]) -> dict
     return s
 
 
+# The default MCP container probe. A streamable-HTTP MCP endpoint answers a bare GET with an HTTP
+# ERROR status (406/405: the protocol wants POST or an SSE Accept header), so ANY HTTP response
+# proves the listener is up and serving - that is exactly what urllib raises HTTPError for. A
+# URLError or socket error means nothing is listening, and that is the only failure.
+MCP_DEFAULT_PROBE = (
+    "import urllib.error, urllib.request\n"
+    "try: urllib.request.urlopen('http://localhost:{port}{path}', timeout=5)\n"
+    "except urllib.error.HTTPError: pass"
+)
+
+
+def default_mcp_healthcheck(port: int, path: str) -> dict[str, Any]:
+    """The healthcheck every image-backed MCP service gets unless its manifest overrides it.
+
+    It lives here, not in six copies of a plugin manifest, so the probe is one decision: a manifest
+    declares `port` and `path` and the renderer derives the rest. start_period covers a bridged
+    image's interpreter + upstream boot (mcp-proxy spawns an npx/uvx server behind it)."""
+    return {
+        "test": ["CMD", "python3", "-c", MCP_DEFAULT_PROBE.format(port=port, path=path)],
+        "interval": "30s",
+        "timeout": "10s",
+        "retries": 3,
+        "start_period": "30s",
+    }
+
+
 def _mcp_service(server: dict[str, Any], *, net: str, mcp_net: str) -> dict[str, Any]:
     """ONE MCP server as a long-lived compose service, from its render record (ordo/render._render_mcp).
     Isolation parity with what the retired Docker gateway spawned (no-new-privileges, 1 CPU / 2 GB,
     init) plus: NO env_file (only the manifest's declared env reaches it), the internal MCP network
     (only model-gateway can call it), `stack` network only when it must reach another service, and
-    labels ops-api uses to list MCP services. LiteLLM dials http://mcp-<id>:<port><path>."""
+    labels ops-api uses to list MCP services. LiteLLM dials http://mcp-<id>:<port><path>.
+    The healthcheck defaults to default_mcp_healthcheck(port, path); a manifest `healthcheck:` is an
+    override for the images that cannot run it (searxng-mcp ships node, not python3)."""
     s: dict[str, Any] = {
         "image": server["image"],
         "restart": "unless-stopped",
@@ -327,7 +355,8 @@ def _mcp_service(server: dict[str, Any], *, net: str, mcp_net: str) -> dict[str,
             "ordo.mcp.server_id": server["id"],
             "ordo.mcp.plugin": server["plugin_id"],
         },
-        "healthcheck": dict(server["healthcheck"]),
+        "healthcheck": (dict(server["healthcheck"])
+                        or default_mcp_healthcheck(server["port"], server["path"])),
     }
     if server["env"]:
         s["environment"] = dict(server["env"])

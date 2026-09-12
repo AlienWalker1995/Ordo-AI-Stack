@@ -31,7 +31,7 @@ LiteLLM registration and the dashboard's server list from it.
 | `secrets` | Required secret keys, same semantics as service plugins |
 | `volumes` | Compose volume list (host binds and named volumes) |
 | `depends_on` | Compose dependencies on stack services |
-| `healthcheck` | Optional override of the default probe |
+| `healthcheck` | Optional; overrides the renderer's default HTTP probe (only searxng needs it: that image has no `python3`) |
 | `timeout` | Per-server LiteLLM tool timeout in seconds (default 60) |
 | `auth` | Optional upstream auth LiteLLM presents (hosted servers) |
 | `allowed_tools` | Optional; narrows what LiteLLM exposes from this server |
@@ -62,12 +62,6 @@ mcp:
     QDRANT_URL: http://qdrant:6333
     EMBED_URL: http://llamacpp-embed:8080
     RAG_COLLECTION: documents
-  healthcheck:
-    test: ["CMD", "python3", "-c", "import socket;socket.create_connection(('127.0.0.1',9000),5).close()"]
-    interval: 30s
-    timeout: 5s
-    retries: 3
-    start_period: 15s
   tools: [qdrant_search, qdrant_status]
 ```
 
@@ -83,9 +77,14 @@ mcp:
   `network: internal` renders `[ordo-mcp-net]`; `network: stack` renders
   `[ordo-mcp-net, ordo-net]`. `model-gateway` is the only other member, so nothing else in the
   stack can call an MCP server directly.
-- A default healthcheck (`GET http://localhost:<port><path>`, any HTTP status counts: the MCP
-  endpoint answers 4xx to a bare GET, and a response proves the process is up), unless the manifest
-  supplies its own.
+- A default healthcheck from `ordo.compose.default_mcp_healthcheck(port, path)`, unless the
+  manifest supplies its own: `["CMD", "python3", "-c", ...]` running
+  `urllib.request.urlopen('http://localhost:<port><path>', timeout=5)` where an `HTTPError` (any
+  HTTP status) counts as healthy, because the MCP endpoint answers a bare GET with an error status
+  and a response proves the listener is up; a `URLError` or socket error fails. `interval: 30s`,
+  `timeout: 10s`, `retries: 3`, `start_period: 30s`. It lives in the renderer so the probe is one
+  decision rather than a copy per manifest. The container probe proves the HTTP listener; the
+  dashboard's LiteLLM outcome rows prove the MCP layer above it.
 - `out/model-gateway/mcp_servers.yaml`: the LiteLLM `mcp_servers` fragment, mounted read-only at
   `/config` and merged into the proxy config by the entrypoint. The file is **required**: a render
   with no MCP plugins emits `mcp_servers: {}`, and a missing file is a fail-loud start error.

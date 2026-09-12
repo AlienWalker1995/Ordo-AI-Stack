@@ -87,7 +87,8 @@ _MCP_ALLOWED_KEYS = frozenset({
 @dataclasses.dataclass(frozen=True)
 class McpSpec:
     """The validated `mcp:` block of a kind=mcp plugin: ONE streamable-HTTP MCP server, either a
-    compose service built from `image` (needs `port` + `healthcheck`, joins the internal MCP network)
+    compose service built from `image` (needs `port`, joins the internal MCP network; `healthcheck`
+    is an OPTIONAL override of the renderer's default HTTP probe)
     or a hosted `url` (no container). LiteLLM registers it by URL. stdio-only upstreams are bridged
     INSIDE their image (see services/codebase-memory/Dockerfile), never spawned by the gateway."""
     server_id: str
@@ -127,8 +128,9 @@ class McpSpec:
         healthcheck = dict(d.get("healthcheck", {}) or {})
         if image and port <= 0:
             raise ValueError(f"{prefix}: `port` (the container port serving the MCP path) is required")
-        if image and not healthcheck:
-            raise ValueError(f"{prefix}: a compose `healthcheck:` is required for an image-backed server")
+        # No `healthcheck:` required: the renderer emits compose.default_mcp_healthcheck(port, path)
+        # for an image-backed server. A manifest healthcheck stays available as an OVERRIDE, for an
+        # image that cannot run the default probe (searxng-mcp ships node, not python3).
         network = str(d.get("network", "internal") or "internal")
         if network not in ("internal", "stack"):
             raise ValueError(f"{prefix}: `network` must be internal or stack (got {network!r})")

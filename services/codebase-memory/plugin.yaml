@@ -33,10 +33,4 @@ mcp:
     CBM_CACHE_DIR: /cache
     # Keep logs off stdout so they can't corrupt the bridged stdio JSON-RPC channel.
     CBM_LOG_LEVEL: error
-  healthcheck:
-    test: ["CMD", "python3", "-c", "import socket;socket.create_connection(('127.0.0.1',9000),5).close()"]
-    interval: 30s
-    timeout: 5s
-    retries: 3
-    start_period: 20s
   tools: [index_repository, list_projects, index_status, search_graph, trace_path, query_graph, get_graph_schema, get_code_snippet, get_architecture, search_code, detect_changes, manage_adr, ingest_traces, delete_project]

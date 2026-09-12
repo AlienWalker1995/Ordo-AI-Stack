@@ -25,10 +25,4 @@ mcp:
     # The shared Obsidian vault (host path from site.MEMORY_VAULT_PATH), READ-WRITE so
     # write_note/patch_note/delete_note persist. Target matches the image CMD `mcpvault /vault`.
     - ${MEMORY_VAULT_PATH:?MEMORY_VAULT_PATH must be set in ordo.yaml site}:/vault
-  healthcheck:
-    test: ["CMD", "python3", "-c", "import socket;socket.create_connection(('127.0.0.1',9000),5).close()"]
-    interval: 30s
-    timeout: 5s
-    retries: 3
-    start_period: 20s
   tools: [read_note, write_note, patch_note, list_directory, delete_note, search_notes, move_note, move_file, read_multiple_notes, update_frontmatter, get_notes_info, get_frontmatter, manage_tags, get_vault_stats, list_all_tags]

@@ -64,7 +64,9 @@ def test_memory_vault_mcp_render_passes_through_catalog_fields():
     assert mv["image"] == "ordo/mcpvault-mcp:latest"
     # a pure-fs tool: internal MCP network only, so only LiteLLM can reach it
     assert mv["network"] == "internal"
-    assert mv["url"] == "http://mcp-memory-vault:9000/mcp" and mv["healthcheck"]
+    assert mv["url"] == "http://mcp-memory-vault:9000/mcp"
+    # no manifest healthcheck: the renderer supplies the default probe (test_compose.py)
+    assert mv["healthcheck"] == {}
     # the vault volume is a HOST bind (a fail-loud compose ${VAR:?} ref) and READ-WRITE (no :ro)
     assert mv["volumes"] == [_VAULT_VOLUME]
     assert not any(v.endswith(":ro") for v in mv["volumes"]), "vault must be writable by the MCP"

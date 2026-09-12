@@ -45,12 +45,6 @@ mcp:
     # returns valid for a private address. The cloud-metadata and IPv6-tunnel gates run before the
     # mode branch, so they stay in force, and this server reaches the internal stack network only.
     WEBHOOK_SECURITY_MODE: permissive
-  healthcheck:
-    test: ["CMD", "python3", "-c", "import socket;socket.create_connection(('127.0.0.1',9000),5).close()"]
-    interval: 30s
-    timeout: 5s
-    retries: 3
-    start_period: 20s
   # Representative tools (the image registers the full czlonkowski catalog + n8n_* instance verbs
   # when the API key is present); LiteLLM advertises the full set at runtime.
   tools: [search_nodes, get_node, search_templates, n8n_list_workflows, n8n_create_workflow]

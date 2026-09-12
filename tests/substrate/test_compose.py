@@ -257,6 +257,31 @@ def test_mcp_services_rendered_with_isolation_limits_and_labels():
     assert "mcp-gateway" not in c["services"]
 
 
+def test_mcp_healthcheck_defaults_to_the_renderer_probe_unless_overridden():
+    """The probe is ONE decision in compose.default_mcp_healthcheck, not six copies in manifests.
+
+    Any HTTP status counts as healthy (an MCP endpoint answers a bare GET with 4xx/405), so the
+    probe catches HTTPError and lets URLError/socket errors fail the container.
+    """
+    from ordo.compose import default_mcp_healthcheck
+
+    c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
+    expected = default_mcp_healthcheck(9000, "/mcp")
+    assert expected["interval"] == "30s" and expected["timeout"] == "10s"
+    assert expected["retries"] == 3 and expected["start_period"] == "30s"
+    probe = expected["test"]
+    assert probe[:3] == ["CMD", "python3", "-c"]
+    assert "urllib.request.urlopen('http://localhost:9000/mcp', timeout=5)" in probe[3]
+    assert "except urllib.error.HTTPError: pass" in probe[3]
+
+    for name in ("mcp-codebase-memory", "mcp-comfyui", "mcp-memory-vault", "mcp-n8n",
+                 "mcp-orchestration", "mcp-qdrant-rag"):
+        assert c["services"][name]["healthcheck"] == expected, name
+    # searxng-mcp overrides it: that image ships node, not python3.
+    searxng = c["services"]["mcp-searxng"]["healthcheck"]
+    assert searxng != expected and searxng["test"][1] == "node"
+
+
 def test_only_ops_controller_and_agent_mount_the_docker_socket():
     c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
     with_sock = sorted(n for n, s in c["services"].items()

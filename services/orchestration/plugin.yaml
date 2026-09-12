@@ -28,10 +28,4 @@ mcp:
     ORCHESTRATION_DASHBOARD_URL: http://dashboard:8080
     # No DASHBOARD_AUTH_TOKEN: the dashboard has no per-service auth (edge SSO is the only gate),
     # so this internal caller reaches dashboard:8080 over ordo-net without a Bearer.
-  healthcheck:
-    test: ["CMD", "python3", "-c", "import socket;socket.create_connection(('127.0.0.1',9000),5).close()"]
-    interval: 30s
-    timeout: 5s
-    retries: 3
-    start_period: 15s
   tools: [orchestration_readiness, list_templates, comfyui_status, list_models, gpu_status]

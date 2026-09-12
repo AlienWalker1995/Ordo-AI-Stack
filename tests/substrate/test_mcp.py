@@ -16,9 +16,10 @@ CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
 P_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128}
 P_CPU = {"gpus": [], "ram_gb": 16}
-# The streamable-HTTP healthcheck every image-backed MCP service declares (a TCP connect to its own
-# MCP port). Reused by the McpSpec validation tests below.
-_HC = {"test": ["CMD", "python3", "-c", "import socket;socket.create_connection(('127.0.0.1',9000),5).close()"],
+# A manifest healthcheck OVERRIDE (the renderer supplies the default probe; searxng-mcp is the one
+# real manifest that overrides it, because that image ships node and not python3). Reused by the
+# McpSpec validation tests below.
+_HC = {"test": ["CMD", "node", "-e", "require('net').connect(9000,'127.0.0.1')"],
        "interval": "30s", "timeout": "5s", "retries": 3}
 
 
@@ -201,7 +202,9 @@ def test_codebase_memory_wiring():
     assert cb["image"] == "ordo/codebase-memory-mcp:latest"
     # a 100% local indexer: internal MCP network only, so only LiteLLM can reach it
     assert cb["network"] == "internal"
-    assert cb["url"] == "http://mcp-codebase-memory:9000/mcp" and cb["healthcheck"]
+    assert cb["url"] == "http://mcp-codebase-memory:9000/mcp"
+    # no manifest healthcheck: the renderer supplies the default probe (test_compose.py)
+    assert cb["healthcheck"] == {}
     # read-only host code-root bind (a compose ${VAR} ref) + named cache volume
     assert "${CODE_ROOT:-/c/dev}:/c/dev:ro" in cb["volumes"]
     assert "codebase-memory-cache:/cache" in cb["volumes"]
@@ -261,6 +264,7 @@ def test_server_id_collision_is_flagged():
     assert any("collides" in n for n in notes)
 
 
+
 def test_restored_servers_in_written_servers_json(tmp_path):
     render(_src(hardware=P_5090), CATALOG, REGISTRY).write(tmp_path)
     ids = {s["id"] for s in json.loads((tmp_path / "mcp" / "servers.json").read_text())["servers"]}
@@ -309,7 +313,7 @@ def test_write_emits_server_plugin_map_in_servers_json(tmp_path):
 
 # ── McpSpec: the validated `mcp:` manifest block. One streamable-HTTP server per plugin, either a
 #    compose service built from `image` or a hosted `url`. Invalid shapes fail at manifest load. ──
-def test_mcp_spec_image_server_requires_http_port_and_healthcheck():
+def test_mcp_spec_image_server_requires_http_and_a_port():
     spec = McpSpec.from_dict({"image": "ordo/x-mcp:latest", "transport": "http", "port": 9000,
                               "healthcheck": _HC, "network": "stack"}, plugin_id="x")
     assert spec.server_id == "x" and spec.service_name == "mcp-x"
@@ -318,7 +322,6 @@ def test_mcp_spec_image_server_requires_http_port_and_healthcheck():
         {"image": "ordo/x:latest", "port": 9000, "healthcheck": _HC},                         # no transport
         {"image": "ordo/x:latest", "transport": "stdio", "port": 9000, "healthcheck": _HC},   # stdio
         {"image": "ordo/x:latest", "transport": "http", "healthcheck": _HC},                  # no port
-        {"image": "ordo/x:latest", "transport": "http", "port": 9000},                        # no healthcheck
         {"image": "ordo/x:latest", "transport": "http", "port": 9000, "healthcheck": _HC, "network": "host"},
         {"image": "ordo/x:latest", "transport": "http", "port": 9000, "healthcheck": _HC, "longLived": True},
         {"image": "ordo/x:latest", "url": "https://h/mcp", "transport": "http", "port": 9000, "healthcheck": _HC},
@@ -344,4 +347,4 @@ def test_all_registered_mcp_manifests_validate_and_declare_http():
     for p in REGISTRY.plugins:
         if p.kind == "mcp":
             assert p.mcp is not None and p.mcp.transport == "http", p.id
-            assert p.mcp.hosted or (p.mcp.port > 0 and p.mcp.healthcheck), p.id
+            assert p.mcp.hosted or p.mcp.port > 0, p.id
