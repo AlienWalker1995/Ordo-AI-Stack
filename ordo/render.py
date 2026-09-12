@@ -74,12 +74,18 @@ def key_env_name(consumer_id: str) -> str:
 
 
 def render_litellm_keys(consumers: list[tuple[str, dict[str, Any]]],
-                        server_ids: list[str]) -> list[dict[str, Any]]:
+                        server_names: list[str]) -> list[dict[str, Any]]:
     """Turn each consumer's `litellm_key:` declaration into a key grant for bootstrap_keys.py.
-    `mcp_servers: all` expands to every ENABLED server id (sorted); a list may name only enabled
-    ids, else the render fails (a typo must not silently grant nothing)."""
+
+    The grant names servers by their LITELLM name (McpSpec.litellm_name: hyphen-free), because
+    LiteLLM expands an `object_permission.mcp_servers` entry by an exact server_id/alias/
+    server_name match and passes an unmatched entry straight through to a deny. A hyphenated
+    entry would therefore revoke that server from the key in silence.
+
+    `mcp_servers: all` expands to every ENABLED server name (sorted); a list may name only enabled
+    servers, else the render fails (a typo must not silently grant nothing)."""
     keys: list[dict[str, Any]] = []
-    known = sorted(server_ids)
+    known = sorted(server_names)
     for consumer_id, spec in consumers:
         if not spec:
             continue
@@ -424,7 +430,7 @@ def render(source: Source, catalog: Catalog,
     if agent is not None and agent.litellm_key:
         key_consumers.append((agent.id, dict(agent.litellm_key)))
     key_consumers += [(p.id, dict(p.litellm_key)) for p in enabled if p.litellm_key]
-    litellm_keys = render_litellm_keys(key_consumers, [s["id"] for s in mcp_servers])
+    litellm_keys = render_litellm_keys(key_consumers, [s["litellm_name"] for s in mcp_servers])
 
     # Internal base URLs for gate-enforced services. A gate is a drop-in on the upstream's port,
     # so redirecting every in-stack consumer through it is a hostname change — but it must be ONE

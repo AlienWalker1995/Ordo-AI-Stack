@@ -40,8 +40,13 @@ def test_granting_an_unknown_server_fails_the_render():
 def test_full_render_declares_hermes_open_webui_automation_keys(tmp_path):
     rc = _full()
     by_env = {k["env"]: k for k in rc.litellm_keys}
-    server_ids = sorted(s["id"] for s in rc.mcp_servers)
-    assert by_env["LITELLM_KEY_HERMES"]["mcp_servers"] == server_ids
+    # The grant names servers the way LiteLLM knows them (hyphen-free), NOT by hyphenated server_id:
+    # LiteLLM expands an object_permission entry by exact server_id/alias/server_name match, so a
+    # hyphenated entry resolves to nothing and the key silently loses that server.
+    litellm_names = sorted(s["litellm_name"] for s in rc.mcp_servers)
+    assert by_env["LITELLM_KEY_HERMES"]["mcp_servers"] == litellm_names
+    assert not any("-" in s for s in by_env["LITELLM_KEY_HERMES"]["mcp_servers"])
+    assert "memory_vault" in litellm_names
     assert by_env["LITELLM_KEY_HERMES"]["models"] == ["local-chat", "local-embed"]
     assert by_env["LITELLM_KEY_OPEN_WEBUI"]["mcp_servers"] == []
     assert by_env["LITELLM_KEY_AUTOMATION"]["models"] == ["local-chat"]
