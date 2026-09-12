@@ -486,7 +486,7 @@ def _run_gguf_pull(model: str):
 @app.post("/api/llm/pull")
 async def llm_pull(req: PullRequest):
     """Request a GGUF pull via ops-controller in the background (501 until the puller is ported; see
-    llm_pull_worker). Poll /api/llm/pull/status."""
+    _run_gguf_pull). Poll /api/llm/pull/status."""
     global _gguf_pull_status
     with _state_lock:
         if _gguf_pull_status.get("running"):
