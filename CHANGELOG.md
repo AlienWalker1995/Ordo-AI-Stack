@@ -51,6 +51,35 @@ All notable changes to this project are documented here. The format is loosely b
   recreate: LiteLLM reads config-file MCP servers at startup, so there is no hot reload.
 - model-gateway trusts the edge's forwarded headers (FORWARDED_ALLOW_IPS=*) so the admin UI
   login works through SSO; the dashboard Open link now targets /ui/.
+- **Virtual-key bootstrap reconciles by ALIAS against LiteLLM's real shapes (2026-09-12).**
+  `bootstrap_keys.py` compared LiteLLM's stored MCP grants (opaque HASHED server ids) against the
+  declared server NAMES, so every key looked drifted and was deleted and regenerated on every boot,
+  stranding any consumer still holding the previous value. The reconcile now maps stored ids back
+  through `GET /v1/mcp/server` (fetched once per run) and looks a consumer up by `key_alias` via
+  `/key/list?return_full_object=true`: an up-to-date key is `unchanged`, a changed secret is
+  `rotated` (the old key is DELETED by its token hash, so rotation actually revokes it instead of
+  leaving both live), drifted grants are `regenerated`, and a value already registered under a
+  different alias raises instead of deleting another consumer's key.
+- **The edge no longer exposes LiteLLM `/metrics` (2026-09-12).** `/llm/*` bypasses SSO for
+  programmatic clients and LiteLLM's Prometheus endpoint needs no key
+  (`require_auth_for_metrics_endpoint: false`), so `https://<host>/llm/metrics` served key aliases,
+  user emails and client IPs to anyone on the tailnet. The `/llm/*` handler now answers 404 for
+  `/metrics` and `/metrics/*` before the proxy; the in-network Prometheus scrape is unaffected.
+- **`litellm_key.models` is fail-closed.** LiteLLM reads an empty `models` list as access to EVERY
+  model, so `ordo render` now rejects an absent or empty list and validates every name against the
+  `model_list` in `services/model-gateway/litellm_config.yaml`; `bootstrap_keys.desired_payload`
+  refuses an empty list too.
+- **`ordo/comfyui-mcp` pins every requirement.** `requests==2.34.2` and `Pillow==12.3.0` join the
+  existing `mcp==1.30.0` pin, upstream's dev-only `pytest` is dropped from the image, and the build
+  fails if any floating `>=` requirement survives.
+- **The default MCP healthcheck lives in the renderer.** `ordo.compose.default_mcp_healthcheck`
+  emits one HTTP probe (`urllib.request.urlopen`; any HTTP status is healthy, a connection error is
+  not) for every image-backed MCP service, replacing six hand-copied `socket.create_connection`
+  probes in the manifests. A manifest `healthcheck:` stays available as an override, which only
+  searxng-mcp needs (that image ships node, not python3).
+- **A `litellm_name` collision fails the render.** Two server_ids collapsing to one LiteLLM name
+  (`a-b` and `a_b`) silently dropped a server from the name-keyed fragment; it is now a `ValueError`
+  naming both ids, as the component doc already promised.
 
 ### Removed
 - **Media worker service retired (2026-07-28).** The headless dashboard "media worker"
