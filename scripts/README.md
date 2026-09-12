@@ -20,12 +20,17 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 |--------|---------|
 | `smoke_test.sh` / `.ps1` | Quick smoke test against the rendered `out/docker-compose.yml` (project `ordo`): optionally starts services, then checks health in-network via `docker compose exec` (only Caddy publishes a host port). |
 
-## MCP Gateway
+## MCP
+
+There is no MCP-server-editing script any more. An MCP server is a `kind: mcp` plugin manifest,
+enabled or disabled by editing `ordo.yaml`'s `plugins:` list (or the dashboard's MCP tab, which
+edits the same file). LiteLLM reads its MCP server list from the rendered config at startup, so
+there is no hot reload: apply a change with `ordo --source out/ordo.yaml render --out out` and
+then recreate `model-gateway`.
 
 | Script | Purpose |
 |--------|---------|
-| `mcp_add.sh` / `.ps1` | Add an MCP server (e.g. `./scripts/mcp_add.sh fetch`). Edits `out/mcp/servers.txt` (mounted into `ordo-mcp-gateway-1`); gateway reloads in ~10s without container restart. |
-| `mcp_remove.sh` / `.ps1` | Remove an MCP server. Edits `out/mcp/servers.txt`; gateway reloads in ~10s. |
+| `mcp_parity_check.py` | Compares the LiteLLM `/mcp` tool list against the pre-migration baseline (`tests/fixtures/mcp_tool_baseline_2026-09-11.json`); exits 0 when the current tool set is a superset of the baseline plus any declared `required_extra` tools, 1 otherwise. |
 
 ## Security
 

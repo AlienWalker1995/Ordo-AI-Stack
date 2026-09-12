@@ -2,7 +2,7 @@
 # Codebase-Memory MCP server (compose service; stdio upstream bridged to streamable HTTP by mcp-proxy).
 #
 # Wraps the upstream DeusData/codebase-memory-mcp release binary so the stack's
-# mcp-gateway can spawn it as a sibling container and expose its code knowledge
+# LiteLLM MCP gateway on model-gateway can dial it over streamable HTTP and expose its code knowledge
 # graph tools (search_graph, trace_path, get_architecture, get_code_snippet, ...)
 # to Hermes. The binary bundles its embedding model (nomic-embed-code) and runs
 # 100% offline — no API keys, no network at runtime (compose keeps it on the

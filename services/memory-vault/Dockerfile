@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Memory-Vault MCP server (compose service; stdio upstream bridged to streamable HTTP by mcp-proxy).
 #
-# Wraps @bitbonsai/mcpvault so the stack's mcp-gateway can spawn it as a sibling container and expose
+# Wraps @bitbonsai/mcpvault so LiteLLM's MCP gateway on model-gateway can dial it over streamable HTTP and expose
 # its markdown-vault tools (read_note, write_note, patch_note, search_notes, get_frontmatter,
 # manage_tags, get_vault_stats, ...) to Hermes. mcpvault is pure-filesystem: it reads/writes the
 # mounted Obsidian vault only, no network, no API keys.
@@ -11,7 +11,7 @@
 #
 # stdio hygiene: mcpvault emits JSON-RPC on stdout and only ever writes to stdout on `--version` /
 # `--help` (early-exit paths we never hit) — normal operation keeps stdout clean, so nothing pollutes
-# the gateway's stdio channel. No banner suppression needed.
+# the stdio JSON-RPC channel mcp-proxy reads. No banner suppression needed.
 FROM node@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf
 
 ARG MCPVAULT_VERSION=0.12.1

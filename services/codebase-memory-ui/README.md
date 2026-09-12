@@ -36,7 +36,7 @@ in-memory graph. It mounts the code root **read-only** at `/c/dev` (`${CODE_ROOT
 this, plus the `codebase-memory-cache` volume at `/cache` for config.
 
 > The upstream binary does **not** reliably flush its graph index to `CBM_CACHE_DIR`
-> across container exits, so the cache volume is **not** a shared index — the gateway
+> across container exits, so the cache volume is **not** a shared index: the `mcp-codebase-memory`
 > MCP and the UI each index independently. Practical consequence: **the UI's graph is
 > in-memory, so after a container restart you must re-index** (browse the UI's index
 > action, or `POST /rpc` `index_repository`). Indexing honors `.gitignore` + `.cbmignore`
