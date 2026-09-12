@@ -131,12 +131,13 @@ def test_hermes_card_reports_down_when_its_container_is_down(client, monkeypatch
 
 def test_model_gateway_open_url_prefers_its_subdomain(client, monkeypatch):
     """model-gateway stays in the main grid (user-facing) and its Open link is the
-    llm.<domain> subdomain — the same shape as every other service.
+    llm.<domain> subdomain's admin UI at /ui/ - the same shape as every other service.
 
-    It must NOT be the edge's `/llm/` route. That route strips its prefix, and LiteLLM's
-    swagger HTML then requests root-absolute `/swagger/*` assets, which escape the handler
-    and 404: the document returns 200 and the page renders blank. `/llm/*` stays the
-    SSO-bypassing API base for programmatic bearer clients, not a browser entry."""
+    It must NOT be the edge's `/llm/` route. That route strips its prefix, and the admin UI
+    (and swagger) HTML then requests root-absolute `/ui/_next/*` (or `/swagger/*`) assets,
+    which escape the handler and 404: the document returns 200 and the page renders blank.
+    `/llm/*` stays the SSO-bypassing API base for programmatic bearer clients, not a browser
+    entry."""
     monkeypatch.delenv("MANIFEST_PATH", raising=False)
     monkeypatch.setenv("CADDY_TAILNET_HOSTNAME", "ordo.example.ts.net")
     monkeypatch.setenv("CADDY_TAILNET_DOMAIN", "example.ts.net")
@@ -144,19 +145,20 @@ def test_model_gateway_open_url_prefers_its_subdomain(client, monkeypatch):
     r = client.get("/api/services")
     mg = {s["id"]: s for s in r.json()["services"]}["model-gateway"]
     assert not mg.get("background")
-    assert mg["open_url"] == "https://llm.example.ts.net/"
+    assert mg["open_url"] == "https://llm.example.ts.net/ui/"
     assert "/llm/" not in mg["open_url"]
 
 
 def test_model_gateway_open_url_falls_back_to_port_without_sidecars(client, monkeypatch):
     """With the sidecar layer disabled there is no subdomain, so the Open link falls back to
-    the SSO'd port ROOT (:8449) — still a root, never the prefix-stripped /llm/ route."""
+    the SSO'd port ROOT's admin UI (:8449/ui/) - still a root, never the prefix-stripped
+    /llm/ route."""
     monkeypatch.delenv("MANIFEST_PATH", raising=False)
     monkeypatch.delenv("TAILNET_NAMES_ENABLED", raising=False)
     monkeypatch.setenv("CADDY_TAILNET_HOSTNAME", "ordo.example.ts.net")
     r = client.get("/api/services")
     mg = {s["id"]: s for s in r.json()["services"]}["model-gateway"]
-    assert mg["open_url"] == "https://ordo.example.ts.net:8449/"
+    assert mg["open_url"] == "https://ordo.example.ts.net:8449/ui/"
 
 
 def test_model_gateway_open_url_falls_back_when_host_unset(client, monkeypatch):

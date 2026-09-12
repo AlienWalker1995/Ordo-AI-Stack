@@ -1308,7 +1308,6 @@ async def mcp_servers():
     return {
         "enabled": enabled,
         "configured": sorted(data["plugin_map"]),
-        "catalog": [],
         "dynamic": _ordo_source_path() is not None,
         "registry": {"servers": {str(s["id"]): s for s in data["servers"] if s.get("id")}},
         "ok": True,

@@ -197,9 +197,9 @@ def test_formerly_divergent_ports_serve_at_root(caddyfile_text: str) -> None:
     The invariant this test actually protects — served at origin root with no PATH
     adapter (handle_path / redir bounce / X-Forwarded-Prefix) — is unchanged.
 
-    :8449 is the LiteLLM swagger UI. It needs a port root because the :443 `/llm/*`
-    route strips its prefix and the swagger HTML then requests root-absolute
-    `/swagger/*` assets, which escape the handler and 404.
+    :8449 is the LiteLLM admin UI (at /ui/; swagger at /). It needs a port root because
+    the :443 `/llm/*` route strips its prefix and the admin UI / swagger HTML then request
+    root-absolute `/ui/_next/*` / `/swagger/*` assets, which escape the handler and 404.
     """
     for port, snippet, upstream in (("8445", "sso_service", "n8n:5678"),
                                     ("8447", "sso_service_loopback", "127.0.0.1:9119"),

@@ -52,6 +52,15 @@ upstream `ghcr.io/berriai/litellm:main` directly: that image has no `local-chat`
 docker build -t ordo/model-gateway:latest services/model-gateway
 ```
 
+## Admin UI
+LiteLLM's admin UI (keys, teams, spend, MCP servers, models) is at `https://llm.<tailnet>/ui/`
+(or `https://<host>:8449/ui/` when the tailnet-names sidecars are disabled), behind the Google
+SSO gate like every other UI in the stack. Once past SSO, log in to LiteLLM itself with
+username `admin` and password = `LITELLM_MASTER_KEY` (from `out/secrets.env`; never write the
+key value anywhere). The gateway sets `FORWARDED_ALLOW_IPS=*` so uvicorn trusts the
+`X-Forwarded-Proto`/`X-Forwarded-Host` headers Caddy adds from its project-network address;
+without it, the post-SSO redirects come back `http://` on a TLS-only port and the login fails.
+
 ## Files
 - `Dockerfile` — pins `ghcr.io/berriai/litellm:v1.100.1@sha256:a3715fa7ad8387941ab697259bd2881d68931657247a41984f90fae6d11c62bf` (bump deliberately to a specific vX.Y.Z + digest), installs the config + helpers.
 - `litellm_config.yaml` — the model list + per-model `model_info` documentation (no secrets;

@@ -500,6 +500,7 @@ def test_model_gateway_wired_to_db_config_mount_and_mcp_net():
     env = mg["environment"]
     assert env["DATABASE_URL"] == "postgresql://litellm:${LITELLM_DB_PASSWORD}@litellm-db:5432/litellm"
     assert env["STORE_MODEL_IN_DB"] == "False"
+    assert env["FORWARDED_ALLOW_IPS"] == "*"
     assert env["LITELLM_MODE"] == "PRODUCTION" and env["LITELLM_LOG"] == "ERROR"
     # secrets arrive via the secrets.env env_file; re-declaring them here would shadow to empty
     for k in ("LITELLM_SALT_KEY", "LITELLM_MASTER_KEY", "LITELLM_DB_PASSWORD"):

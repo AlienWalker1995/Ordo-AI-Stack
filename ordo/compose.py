@@ -207,6 +207,11 @@ def _model_gateway(project: str, net: str, env_file: str) -> dict[str, Any]:
         "LITELLM_LOG": "ERROR",
         "DATABASE_URL": "postgresql://litellm:${LITELLM_DB_PASSWORD}@litellm-db:5432/litellm",
         "STORE_MODEL_IN_DB": "False",   # config.yaml is the single source of truth for models + MCP
+        # uvicorn only trusts X-Forwarded-Proto/Host from loopback by default; caddy connects from
+        # a 172.x address on the project network, so without this the /ui slash redirect and the
+        # post-login 303 come back http:// on a TLS-only port (reproduced 2026-09-12). No host
+        # port is published, so the only peers that can reach this service are project services.
+        "FORWARDED_ALLOW_IPS": "*",
     }
     s["healthcheck"] = {
         "test": ["CMD-SHELL", (

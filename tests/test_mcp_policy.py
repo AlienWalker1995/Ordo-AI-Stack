@@ -77,7 +77,6 @@ def test_mcp_servers_lists_enabled_and_configured_from_servers_json():
     d = r.json()
     assert d["enabled"] == ["searxng", "comfyui", "memory-vault"]
     assert d["configured"] == ["comfyui", "n8n", "searxng"]      # every registered kind=mcp plugin's server id
-    assert d["catalog"] == []                                    # the Docker online catalog is gone
     assert d["dynamic"] is True and d["ok"] is True
     assert d["registry"]["servers"]["searxng"]["url"] == "http://mcp-searxng:8080/mcp"
 

@@ -49,6 +49,8 @@ All notable changes to this project are documented here. The format is loosely b
   renderer). Enabling or disabling a server is an edit to `ordo.yaml`'s `plugins:` list (the
   dashboard MCP tab writes the same file), applied by `ordo render` plus a `model-gateway`
   recreate: LiteLLM reads config-file MCP servers at startup, so there is no hot reload.
+- model-gateway trusts the edge's forwarded headers (FORWARDED_ALLOW_IPS=*) so the admin UI
+  login works through SSO; the dashboard Open link now targets /ui/.
 
 ### Removed
 - **Media worker service retired (2026-07-28).** The headless dashboard "media worker"

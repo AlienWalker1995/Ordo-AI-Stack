@@ -61,9 +61,10 @@ async def services():
             ok, err = _container_health(svc["id"])
         # Server-owned Open link, one source of truth (no hostname guess in the browser):
         #  * model-gateway resolves to its own llm.<domain> sidecar like everything else, and
-        #    falls back to the SSO'd port ROOT (:8449) when the sidecar layer is off. Never
-        #    the edge's /llm/ route: that strips the prefix and LiteLLM's root-absolute
-        #    /swagger/* assets then escape the handler and 404 into a blank page.
+        #    falls back to the SSO'd port ROOT (:8449) when the sidecar layer is off, at the
+        #    LiteLLM admin UI (/ui/, swagger at /). Never the edge's /llm/ route: that strips
+        #    the prefix and LiteLLM's root-absolute /ui/_next/* and /swagger/* assets then
+        #    escape the handler and 404 into a blank page.
         #  * the sidecar UIs get their clean per-service tailnet name (https://chat.<domain>/ …)
         #    when the tailnet-names layer is enabled.
         # Either is None when the edge host is unknown, so the frontend falls back to its

@@ -176,14 +176,15 @@
     import sso_service codebase-memory-ui:9750
 }
 
-# ---- :8449 — LiteLLM Swagger UI (model-gateway) ----
-# The BROWSABLE face of model-gateway, behind SSO like every other UI here.
+# ---- :8449 - LiteLLM admin UI (model-gateway) ----
+# The BROWSABLE face of model-gateway, behind SSO like every other UI here: the admin
+# UI lives at /ui/ (keys, teams, spend, MCP servers, models); swagger stays at /.
 #
 # It needs an origin ROOT. The :443 `/llm/*` route (further down) strips its prefix
-# and LiteLLM then emits ROOT-ABSOLUTE asset paths — `/swagger/swagger-ui.css`,
-# `/swagger/…js`. Through `/llm/` the HTML returns 200 but every asset resolves to
-# `https://<host>/swagger/…`, escapes the `/llm/*` handler, falls through to the
-# front door and 404s: a blank page that looks like the service is down. Same class
+# and LiteLLM then emits ROOT-ABSOLUTE asset paths - `/ui/_next/...`, `/swagger/swagger-ui.css`,
+# `/swagger/...js`. Through `/llm/` the HTML returns 200 but every asset resolves to
+# `https://<host>/ui/_next/...` (or `/swagger/...`), escapes the `/llm/*` handler, falls through
+# to the front door and 404s: a blank page that looks like the service is down. Same class
 # of bug as the Hermes SPA base-path issue and the n8n prefix strip.
 #
 # Keep BOTH: `/llm/*` on :443 stays the SSO-BYPASSING programmatic API base for

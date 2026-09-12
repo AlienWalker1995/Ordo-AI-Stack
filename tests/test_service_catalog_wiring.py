@@ -92,7 +92,7 @@ def test_non_user_facing_services_carry_background_flag():
     section (no 'Open' link). That is the backend infra (llamacpp, qdrant, stt, tts)
     plus the two portless headless workers (rag-ingestion, livesync-bridge). The user-facing UIs —
     webui/comfyui/n8n/hermes/codebase-memory-ui — and model-gateway (its Open link is the
-    LiteLLM Swagger UI) must NOT carry it, so an openable service can't be quietly demoted."""
+    LiteLLM admin UI) must NOT carry it, so an openable service can't be quietly demoted."""
     bg = {s["id"] for s in SERVICES if s.get("background")}
     assert bg == {"rag-ingestion", "llamacpp", "llamacpp-cpu", "qdrant", "stt", "tts",
                   "couchdb", "livesync-bridge"}
