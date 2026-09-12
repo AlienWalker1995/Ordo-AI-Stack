@@ -38,7 +38,14 @@ def main(argv: list[str]) -> int:
             f"merge_mcp_config: fragment not found at {fragment_path} "
             "(is out/model-gateway mounted at /config? re-run `ordo render`)\n")
         return 2
-    merged = merge(config_path.read_text(encoding="utf-8"), fragment_path.read_text(encoding="utf-8"))
+    try:
+        merged = merge(config_path.read_text(encoding="utf-8"), fragment_path.read_text(encoding="utf-8"))
+    except ValueError as e:
+        # A malformed fragment is the same class of failure as a missing one: the gateway would
+        # start with no tools. Exit 2 as the docstring promises, never write a half-merged config.
+        sys.stderr.write(f"merge_mcp_config: invalid fragment at {fragment_path}: {e} "
+                         "(re-run `ordo render`)\n")
+        return 2
     config_path.write_text(merged, encoding="utf-8")
     return 0
 

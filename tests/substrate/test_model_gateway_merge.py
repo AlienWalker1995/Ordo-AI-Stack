@@ -63,3 +63,14 @@ def test_cli_writes_merged_config_in_place(tmp_path):
     frag.write_text(FRAGMENT)
     assert main([str(cfg), str(frag)]) == 0
     assert "mcp-searxng" in cfg.read_text()
+
+
+def test_cli_invalid_fragment_exits_2_and_leaves_the_config_untouched(tmp_path):
+    """A malformed fragment is the same failure as a missing one: the gateway would start with no
+    tools. The docstring promises exit 2, so the ValueError must not escape as a traceback."""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(CONFIG)
+    frag = tmp_path / "mcp_servers.yaml"
+    frag.write_text("servers: []\n")          # no `mcp_servers` key
+    assert main([str(cfg), str(frag)]) == 2
+    assert cfg.read_text() == CONFIG
