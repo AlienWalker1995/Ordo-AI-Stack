@@ -47,7 +47,7 @@ A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`
 
 | Risk | Severity | Status |
 |------|----------|--------|
-| `docker.sock` in `ops-controller` only | High | Accepted, mitigated by allowlist + auth + no host port; the MCP tool path no longer touches the socket |
+| `docker.sock` only in the control plane (`ops-controller` and the dashboard's `ops-api` backend) | High | Accepted, mitigated by allowlist + auth + no host port; the MCP tool path no longer touches the socket |
 | `WEBUI_AUTH` still defaults to `False` | Medium | Tracked — change to `True` in M6 |
 | Per-tool `allowed_tools` narrowing unused | Low | Schema supports it; per-consumer scoping is already enforced by LiteLLM virtual-key MCP grants |
 | Rendered compose validated in CI | Low | Done — `.github/workflows/ci.yml` has `secret-scan`, `pytest` (incl. ruff), and `substrate` jobs on push/PR; `substrate` runs `docker compose config` against the rendered output (path-filtered, no separate `compose-smoke` job) |
