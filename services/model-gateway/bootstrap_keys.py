@@ -3,12 +3,27 @@
 
 Runs as the one-shot `model-gateway-keys` compose service after model-gateway is healthy.
 For every entry in /config/keys.json ({"env", "alias", "models", "mcp_servers"}) the key VALUE
-comes from the environment variable named by `env` (secrets.env). Desired-state loop:
-  absent           -> POST /key/generate with the explicit key value + grants
-  present, equal   -> nothing
-  present, differs -> POST /key/delete then /key/generate (LiteLLM #35662: MCP grants applied via
-                      /key/update are not visible to tools/list; regenerating is the reliable path;
-                      that key's spend history resets)
+comes from the environment variable named by `env` (secrets.env).
+
+The reconcile is keyed on the ALIAS, not on the key value, because the alias is the stable
+identity of a consumer and the value is what rotates. Per entry we look the alias up with
+/key/list and the value up with /key/info, then:
+
+  by_value present, same alias, grants equal   -> `unchanged` (nothing is touched)
+  by_value present, grants drifted             -> delete + regenerate -> `regenerated`
+  by_value absent, alias already has key(s)    -> delete those + generate -> `rotated`
+                                                  (the OLD key is revoked; that is the point)
+  neither present                              -> generate -> `generated`
+  by_value present under a DIFFERENT alias     -> RuntimeError (a value collision between two
+                                                  consumers; never delete another consumer's key)
+
+Grants are compared after mapping LiteLLM's stored `object_permission.mcp_servers` (HASHED
+server ids) back to server NAMES via /v1/mcp/server, which is fetched once per run. Without that
+mapping every run saw "hashed id != declared name", deleted the key and generated a new one, so
+every consumer's key churned on every boot (and any consumer still holding the previous value was
+stranded). Regeneration rather than /key/update is deliberate: MCP grants applied via /key/update
+are not visible to tools/list (BerriAI/litellm #35662). A regenerated key's spend history resets.
+
 Exit 0 when the desired state holds for every key, 1 otherwise (the agent depends on this).
 Stdlib only (urllib) so the substrate tests import it without LiteLLM/httpx.
 """
@@ -27,9 +42,15 @@ from typing import Any, Protocol
 # if a team/org grant would otherwise apply. Used for keys that declare `mcp_servers: []`.
 NO_MCP_SENTINEL = "no-mcp-servers"
 
+# /key/list page size. An exact-alias listing returns at most a handful of rows; we still follow
+# total_pages so a delete can never miss a key that carries the alias.
+KEY_LIST_PAGE_SIZE = 100
+
 
 class KeyApi(Protocol):
     def key_info(self, key: str) -> dict[str, Any] | None: ...
+    def keys_by_alias(self, alias: str) -> list[dict[str, Any]]: ...
+    def mcp_server_names(self) -> dict[str, str]: ...
     def generate(self, payload: dict[str, Any]) -> None: ...
     def delete(self, key: str) -> None: ...
 
@@ -60,12 +81,45 @@ class HttpKeyApi:
                 return e.code, {"detail": raw}
 
     def key_info(self, key: str) -> dict[str, Any] | None:
+        # The key VALUE travels in the query string because LiteLLM offers no POST form of
+        # /key/info. Consequence: never raise LITELLM_LOG above ERROR in production, since DEBUG
+        # logs the request line and the request line here carries a live key.
         status, data = self._request("GET", "/key/info?key=" + urllib.parse.quote(key, safe=""))
         if status == 200:
             return dict(data.get("info") or {})
         if status in (400, 404):
             return None
         raise RuntimeError(f"/key/info returned HTTP {status}: {data}")
+
+    def keys_by_alias(self, alias: str) -> list[dict[str, Any]]:
+        """Every key carrying `alias`, as full objects (they carry `token`, the delete handle)."""
+        rows: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            query = urllib.parse.urlencode({
+                "key_alias": alias, "return_full_object": "true",
+                "size": KEY_LIST_PAGE_SIZE, "page": page,
+            })
+            status, data = self._request("GET", "/key/list?" + query)
+            if status != 200:
+                raise RuntimeError(f"/key/list for alias {alias!r} returned HTTP {status}: {data}")
+            batch = [dict(k) for k in (data.get("keys") or []) if isinstance(k, dict)]
+            # LiteLLM matches key_alias exactly; re-filtering here is belt and braces so a future
+            # prefix/contains match could never make us delete a different consumer's key.
+            rows += [k for k in batch if k.get("key_alias") == alias]
+            total_pages = int(data.get("total_pages") or 1)
+            if page >= total_pages or not batch:
+                return rows
+            page += 1
+
+    def mcp_server_names(self) -> dict[str, str]:
+        """{server_id (hashed) -> server_name}, the map that makes stored grants comparable."""
+        status, data = self._request("GET", "/v1/mcp/server")
+        if status != 200:
+            raise RuntimeError(f"/v1/mcp/server returned HTTP {status}: {data}")
+        rows = data if isinstance(data, list) else (data.get("data") or [])
+        return {str(r["server_id"]): str(r.get("server_name") or "")
+                for r in rows if isinstance(r, dict) and r.get("server_id")}
 
     def generate(self, payload: dict[str, Any]) -> None:
         status, data = self._request("POST", "/key/generate", payload)
@@ -82,39 +136,84 @@ def desired_payload(entry: dict[str, Any], env: Mapping[str, str]) -> dict[str, 
     value = str(env.get(entry["env"], "") or "").strip()
     if not value:
         raise ValueError(f"{entry['env']} is empty or unset (fill it in secrets.env; the wizard generates it)")
+    models = [str(m) for m in (entry.get("models") or [])]
+    # Belt and braces with ordo.render.render_litellm_keys: LiteLLM reads `models: []` as ALL
+    # models, so an empty list is a silent privilege escalation, never an empty grant.
+    if not models:
+        raise ValueError(f"litellm key '{entry['alias']}' declares no models (LiteLLM reads an empty "
+                         "list as access to EVERY model; name the models explicitly)")
     granted = [str(s) for s in (entry.get("mcp_servers") or [])] or [NO_MCP_SENTINEL]
     return {
         "key": value,
         "key_alias": str(entry["alias"]),
-        "models": [str(m) for m in (entry.get("models") or [])],
+        "models": models,
         "object_permission": {"mcp_servers": granted},
     }
 
 
-def grants_match(current: dict[str, Any], desired: dict[str, Any]) -> bool:
-    cur_models = sorted(str(m) for m in (current.get("models") or []))
-    cur_mcp = sorted(str(s) for s in ((current.get("object_permission") or {}).get("mcp_servers") or []))
-    return (
-        current.get("key_alias") == desired["key_alias"]
-        and cur_models == sorted(desired["models"])
-        and cur_mcp == sorted(desired["object_permission"]["mcp_servers"])
-    )
+def grants_match(current: dict[str, Any], desired: dict[str, Any], id_to_name: Mapping[str, str]) -> bool:
+    """True when the LIVE key already carries exactly the desired alias, models and MCP grants.
+
+    `current` is a /key/info (or /key/list) row, so its mcp_servers are HASHED server ids; they are
+    mapped through `id_to_name` before the comparison. An id absent from the map is a mismatch (the
+    grant points at a server LiteLLM no longer serves). The `no-mcp-servers` sentinel is not a
+    server id and maps to itself. Pure function: no I/O, so the tests can pin the semantics.
+    """
+    if current.get("key_alias") != desired["key_alias"]:
+        return False
+    if sorted(str(m) for m in (current.get("models") or [])) != sorted(desired["models"]):
+        return False
+    current_names: list[str] = []
+    for raw_id in ((current.get("object_permission") or {}).get("mcp_servers") or []):
+        server_id = str(raw_id)
+        if server_id == NO_MCP_SENTINEL:
+            current_names.append(server_id)
+            continue
+        name = id_to_name.get(server_id)
+        if not name:
+            return False
+        current_names.append(name)
+    return sorted(current_names) == sorted(desired["object_permission"]["mcp_servers"])
+
+
+def _covered_by_alias_rows(info: dict[str, Any], rows: list[dict[str, Any]]) -> bool:
+    """True when the /key/info row is one of the /key/list rows for the same alias.
+
+    /key/info omits `token`, so the masked `key_name` is the only identifier both endpoints
+    return. Deleting the same key twice is a hard 404 from /key/delete, so the delete-by-value is
+    skipped whenever the alias listing already covers that key.
+    """
+    key_name = info.get("key_name")
+    return bool(key_name) and any(r.get("key_name") == key_name for r in rows)
 
 
 def reconcile(spec: list[dict[str, Any]], env: Mapping[str, str], api: KeyApi) -> list[str]:
     actions: list[str] = []
+    id_to_name = api.mcp_server_names()   # once per run: the map is stack-wide, not per key
     for entry in spec:
         desired = desired_payload(entry, env)
-        current = api.key_info(desired["key"])
-        if current is None:
-            api.generate(desired)
-            actions.append(f"generated {desired['key_alias']}")
-        elif grants_match(current, desired):
-            actions.append(f"unchanged {desired['key_alias']}")
-        else:
+        alias = desired["key_alias"]
+        by_alias = api.keys_by_alias(alias)
+        by_value = api.key_info(desired["key"])
+        if by_value is not None and by_value.get("key_alias") != alias:
+            raise RuntimeError(
+                f"the key value for alias '{alias}' is already registered under alias "
+                f"'{by_value.get('key_alias')}': two consumers share one secret. Give '{alias}' its "
+                "own value in secrets.env (refusing to delete another consumer's key)")
+        if by_value is not None and grants_match(by_value, desired, id_to_name):
+            actions.append(f"unchanged {alias}")
+            continue
+        for token in [str(row["token"]) for row in by_alias if row.get("token")]:
+            api.delete(token)
+        if by_value is not None and not _covered_by_alias_rows(by_value, by_alias):
             api.delete(desired["key"])
-            api.generate(desired)
-            actions.append(f"regenerated {desired['key_alias']}")
+        api.generate(desired)
+        if by_value is not None:
+            actions.append(f"regenerated {alias}")     # same value, grants had drifted
+        elif by_alias:
+            actions.append(f"rotated {alias}")         # new value: the old key is now revoked
+        else:
+            actions.append(f"generated {alias}")
     return actions
 
 
