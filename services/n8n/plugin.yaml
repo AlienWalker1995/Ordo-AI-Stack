@@ -1,6 +1,6 @@
 # Plugin manifest - data-only. Declares the n8n MCP server: a compose service `mcp-n8n` on the
 # internal MCP network, registered with LiteLLM's MCP gateway (its tools reach Hermes as
-# `n8n-<tool>`). The n8n compose SERVICE itself is provided by the separate `automation`
+# `gateway__n8n-<tool>`). The n8n compose SERVICE itself is provided by the separate `automation`
 # (kind=service) plugin; THIS plugin only bridges the local n8n instance plus the
 # czlonkowski/n8n-mcp node & template catalog to Hermes.
 id: n8n

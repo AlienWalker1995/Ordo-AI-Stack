@@ -13,12 +13,12 @@ with the age private key at `~/.config/sops/age/keys.txt`.
   `OPS_CONTROLLER_TOKEN`, `OAUTH2_PROXY_CLIENT_ID`,
   `OAUTH2_PROXY_CLIENT_SECRET`, `OAUTH2_PROXY_COOKIE_SECRET`).
 - `discord_token.sops` — Discord bot token. Mounted as
-  `/run/secrets/discord_token` on `hermes-gateway`.
+  `/run/secrets/discord_token` on `agent`.
 - `github_pat.sops` — GitHub fine-grained PAT. Mounted on
   `mcp-gateway` and `comfyui` (the latter as `GITHUB_TOKEN_FILE` for
   ComfyUI-Manager).
 - `github_backup_pat.sops` — classic GitHub PAT for `git push` to the
-  `ordo-hermes-backup` private repo. Mounted on `hermes-gateway`; the
+  `ordo-hermes-backup` private repo. Mounted on `agent`; the
   entrypoint bridges it to the `GITHUB_BACKUP_PAT` env var, and the backup
   repo's credential helper reads it. Not used by the stack services themselves.
 - `hf_token.sops` — HuggingFace token (gated model downloads). Mounted

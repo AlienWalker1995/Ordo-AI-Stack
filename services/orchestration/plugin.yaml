@@ -1,6 +1,6 @@
 # Plugin manifest - data-only. Declares the orchestration MCP server: a compose service
 # `mcp-orchestration` on the internal MCP network, registered with LiteLLM's MCP gateway (its tools
-# reach Hermes as `orchestration-<tool>`). A STABLE adapter: exposes fixed verb names
+# reach Hermes as `gateway__orchestration-<tool>`). A STABLE adapter: exposes fixed verb names
 # (list_templates / create_from_template / save_workflow / promote_workflow / rollback_workflow /
 # registry parity verbs / comfyui ops ...) that delegate over HTTP to the dashboard
 # control plane, insulating Hermes from shifting upstream tool names. Backing verified in V2:

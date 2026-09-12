@@ -23,7 +23,7 @@ Set `site.BASE_PATH` in `ordo.yaml` (template: `ordo.example.yaml`) and re-rende
 | `GGUF_MODELS` | *(see `ordo.example.yaml`)* | Hugging Face repo(s) of GGUF files to pull for llama.cpp (pulled via `ordo fetch --models-dir models/gguf`; the dashboard GGUF-pull UI and the V1 `gguf-puller` service were not ported — the endpoint returns 501) |
 | `OPS_CONTROLLER_TOKEN` | *(empty)* | Required for dashboard-driven service lifecycle (`openssl rand -hex 32`); set as a secret in `out/secrets.env` (rendered from `secrets.env.example`) |
 | `HF_TOKEN` | *(empty)* | Hugging Face token for gated model downloads; set as a secret in `out/secrets.env` |
-| `GITHUB_PERSONAL_ACCESS_TOKEN` | *(empty)* | GitHub MCP server token; also passed to `comfyui` as `GITHUB_TOKEN` for Manager API; set as a secret in `out/secrets.env` |
+| `GITHUB_PERSONAL_ACCESS_TOKEN` | *(empty)* | GitHub token passed to `comfyui` as `GITHUB_TOKEN` for ComfyUI-Manager custom-node fetches; optional; set as a secret in `out/secrets.env` |
 | `COMPUTE_MODE` | *(V1 only — removed)* | Superseded by the `hardware:` block in `ordo.yaml` (see [Compute Configuration](#compute-configuration) below) — GPU type is decided by the render engine, not this env var |
 
 > The dashboard has no per-service auth token in this deployment — the Caddy edge (oauth2-proxy + Google SSO + email allowlist) is the sole authentication gate for the dashboard, same as every other UI, no matter which of Caddy's seven ports it's served on (see [Network Ports](#network-ports)). The dashboard app code retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer fallback, but it is not set here and is not a recommended secret — don't generate or configure it.
@@ -82,7 +82,7 @@ docker compose -p ordo --profile voice up -d
 
 - **STT (voice memo → text): fully local.** Hermes' STT openai provider takes its
   base URL from the `STT_OPENAI_BASE_URL` env, which the rendered `out/docker-compose.yml` sets on
-  `hermes-gateway` to `http://stt:8000/v1`. Set in the brain volume's `config.yaml` (`docker exec ordo-agent-1 sh -c 'vi /home/hermes/.hermes/config.yaml'` — the `data/hermes` bind was retired for the `ordo_hermes-home` volume, #143):
+  `agent` to `http://stt:8000/v1`. Set in the brain volume's `config.yaml` (`docker exec ordo-agent-1 sh -c 'vi /home/hermes/.hermes/config.yaml'` — the `data/hermes` bind was retired for the `ordo_hermes-home` volume, #143):
   `stt.provider: openai`, `stt.openai.model: Systran/faster-whisper-small`,
   `stt.openai.api_key: local`, `stt.enabled: true`. Inbound Discord voice messages
   are then auto-transcribed on the secondary GPU.

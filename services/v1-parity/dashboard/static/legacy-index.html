@@ -1808,24 +1808,10 @@
             <div class="mcp-section">
               <div class="mcp-section-label">Enabled tools <span id="mcp-gateway-status" class="badge badge-muted" title="Gateway status">—</span></div>
               <div class="mcp-enabled-chips" id="mcp-enabled-chips">
-                <span class="mcp-empty-hint" id="mcp-empty-hint">None — add from catalog or paste a URL below</span>
+                <span class="mcp-empty-hint" id="mcp-empty-hint">None — add a registered server id to ordo.yaml's plugins: list, then render + recreate model-gateway</span>
               </div>
             </div>
-            <div id="mcp-dynamic-row" class="mcp-section" style="display:none;">
-              <div class="mcp-section-label">Add from catalog</div>
-              <div class="mcp-add-row">
-                <select id="mcp-add-select">
-                  <option value="">Choose a tool...</option>
-                </select>
-                <button type="button" id="mcp-add-btn" class="secondary">Add</button>
-              </div>
-              <div class="mcp-section-label" style="margin-top:var(--space-4);">Or add by URL or name</div>
-              <div class="mcp-add-row">
-                <input type="text" id="mcp-custom-input" placeholder="Paste Docker Hub URL or server name (e.g. hugging-face)" aria-label="Custom MCP server name or Docker Hub URL" style="flex:1;min-width:200px;">
-                <button type="button" id="mcp-add-custom-btn" class="secondary">Add</button>
-              </div>
-            </div>
-            <div id="mcp-static-row" class="mcp-section" style="display:none;">
+            <div id="mcp-static-row" class="mcp-section">
               <p><strong>Enable tool:</strong> add <code id="mcp-add-cmd">fetch</code> to <code>ordo.yaml</code>'s <code>plugins:</code> list, then render + recreate <code>model-gateway</code> <button type="button" class="btn-copy" id="mcp-add-copy" title="Copy server id" aria-label="Copy server id">Copy</button></p>
               <p><strong>Disable:</strong> remove <code id="mcp-remove-cmd">fetch</code> from the <code>plugins:</code> list, then render + recreate <button type="button" class="btn-copy" id="mcp-remove-copy" title="Copy server id" aria-label="Copy server id">Copy</button></p>
               <div class="mcp-add-row">
@@ -1839,7 +1825,7 @@
             <div class="mcp-section" style="margin-top:var(--space-6);padding-top:var(--space-4);border-top:1px solid var(--border-subtle);">
               <div class="mcp-section-label">Connect</div>
               <p>Internal clients (containers on the stack network): <code class="mcp-ext-url">http://model-gateway:11435/mcp</code> with header <code>Authorization: Bearer &lt;LiteLLM key&gt;</code>. External clients (over the tailnet): <code>https://&lt;your tailnet host&gt;/mcp</code> with the <code>LITELLM_KEY_EDGE</code> key. Open WebUI → Admin Settings → External Tools → MCP (Streamable HTTP) → <code class="mcp-ext-url">http://model-gateway:11435/mcp</code> + the key. N8N: MCP Client Tool node → the same URL + key.</p>
-              <p><a href="https://hub.docker.com/mcp" target="_blank" rel="noopener">Browse 200+ tools in Docker MCP Catalog ↗</a></p>
+              <p>New servers are added as a <code>kind: mcp</code> plugin manifest under <code>services/&lt;id&gt;/plugin.yaml</code> (see docs/product requirements docs/component-mcp-gateway.md).</p>
             </div>
           </div>
         </details>
@@ -2094,8 +2080,6 @@
     }
 
     let mcpEnabled = [];
-    let mcpCatalog = [];
-    let mcpDynamic = false;
 
     function escapeHtml(s) {
       const div = document.createElement('div');
@@ -2125,8 +2109,7 @@
         if (!r.ok) return;
         const d = await r.json();
         mcpEnabled = d.enabled || [];
-        mcpCatalog = d.catalog || [];
-        mcpDynamic = d.dynamic === true;
+        const configured = d.configured || [];
         const chipsEl = document.getElementById('mcp-enabled-chips');
         const emptyHint = document.getElementById('mcp-empty-hint');
         if (chipsEl) {
@@ -2135,19 +2118,15 @@
             `<span class="mcp-chip" title="${escapeHtml(s)}" data-server="${escapeHtml(s)}"><span class="mcp-chip-label">${escapeHtml(s)}</span><button type="button" class="mcp-chip-remove mcp-remove-btn" data-server="${escapeHtml(s)}" aria-label="Remove ${escapeHtml(s)}">×</button></span>`
           ).join('') : '';
         }
-        const sel = document.getElementById('mcp-add-select');
         const selStatic = document.getElementById('mcp-add-select-static');
-        const opts = '<option value="">Choose a tool...</option>' + mcpCatalog
+        const opts = '<option value="">Choose a tool...</option>' + configured
           .filter(s => !mcpEnabled.includes(s))
           .map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`)
           .join('');
-        if (sel) sel.innerHTML = opts;
         if (selStatic) selStatic.innerHTML = opts;
-        const firstNotEnabled = mcpCatalog.find(s => !mcpEnabled.includes(s));
+        const firstNotEnabled = configured.find(s => !mcpEnabled.includes(s));
         document.getElementById('mcp-add-cmd').textContent = firstNotEnabled || 'fetch';
         document.getElementById('mcp-remove-cmd').textContent = mcpEnabled[0] || 'fetch';
-        document.getElementById('mcp-dynamic-row').style.display = mcpDynamic ? 'block' : 'none';
-        document.getElementById('mcp-static-row').style.display = mcpDynamic ? 'none' : 'block';
         loadMcpHealth();
       } catch (_) {
         const chipsEl = document.getElementById('mcp-enabled-chips');
@@ -3624,51 +3603,6 @@
       }
     }
 
-    document.getElementById('mcp-add-select')?.addEventListener('change', function() {
-      document.getElementById('mcp-add-cmd').textContent = this.value || 'fetch';
-    });
-    document.getElementById('mcp-add-btn')?.addEventListener('click', async () => {
-      const v = document.getElementById('mcp-add-select')?.value;
-      if (!v) { toast('Select a tool from the dropdown or use "Add custom"', 'error'); return; }
-      try {
-        const r = await api('/api/mcp/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ server: v }) });
-        const d = await r.json();
-        if (!r.ok) { toast(d.detail || 'Failed to add', 'error'); return; }
-        toast(d.status === 'already_enabled' ? `${v} already enabled` : `Added ${v}. ${d.next || 'Apply with ordo render + a model-gateway recreate.'}`, 'success');
-        await loadMcpServers();
-      } catch (e) {
-        toast('Failed to add', 'error');
-      }
-    });
-    async function addMcpServer(server) {
-      const v = server?.trim();
-      if (!v) return false;
-      try {
-        const r = await api('/api/mcp/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ server: v }) });
-        const d = await r.json();
-        if (!r.ok) { toast(d.detail || 'Failed to add', 'error'); return false; }
-        toast(d.status === 'already_enabled' ? `${v} already enabled` : `Added ${v}. ${d.next || 'Apply with ordo render + a model-gateway recreate.'}`, 'success');
-        await loadMcpServers();
-        return true;
-      } catch (e) {
-        toast('Failed to add', 'error');
-        return false;
-      }
-    }
-    document.getElementById('mcp-add-custom-btn')?.addEventListener('click', async () => {
-      const input = document.getElementById('mcp-custom-input');
-      const v = input?.value?.trim();
-      if (!v) { toast('Enter a server name (e.g. mcp/firecrawl or fetch)', 'error'); return; }
-      if (await addMcpServer(v)) input.value = '';
-    });
-    document.getElementById('mcp-custom-input')?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        const input = document.getElementById('mcp-custom-input');
-        const v = input?.value?.trim();
-        if (v) addMcpServer(v).then(ok => { if (ok) input.value = ''; });
-      }
-    });
     document.getElementById('mcp-add-select-static')?.addEventListener('change', function() {
       if (this.value) document.getElementById('mcp-add-cmd').textContent = this.value;
     });

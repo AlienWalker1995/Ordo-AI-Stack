@@ -73,4 +73,4 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 1. **Reset OPS_CONTROLLER_TOKEN:** Generate new token, update `out/secrets.env`, then re-run `docker compose -p ordo … up` from `out/` to restart dashboard + ops-controller
 2. **Restore data:** Restore `data/` from a local backup
 3. **Disable MCP tools:** Remove the `kind: mcp` plugins from `ordo.yaml`'s `plugins:` list (or use the dashboard MCP tab), then `ordo render` and recreate `model-gateway`
-4. **Safe mode:** Stop the `mcp-*` services and `hermes-gateway`; use `llamacpp` + `open-webui` only
+4. **Safe mode:** Stop the `mcp-*` services and `agent`; use `llamacpp` + `open-webui` only

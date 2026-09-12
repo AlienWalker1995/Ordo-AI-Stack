@@ -1,6 +1,6 @@
 # Plugin manifest - data-only. Declares the SearXNG MCP server: a compose service `mcp-searxng` on
 # the internal MCP network, registered with LiteLLM's MCP gateway (its tools reach Hermes as
-# `searxng-<tool>`).
+# `gateway__searxng-<tool>`).
 id: searxng
 name: SearXNG web search (MCP tools)
 description: Private aggregated web search exposed to the agent via MCP.

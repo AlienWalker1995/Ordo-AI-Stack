@@ -49,7 +49,7 @@
 | `LITELLM_DB_PASSWORD` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Postgres password for `litellm-db` |
 | `LITELLM_KEY_HERMES` / `_OPEN_WEBUI` / `_AUTOMATION` / `_EDGE` | `out/secrets.env` | Compose `env_file:` / per-service `environment:` | Per-consumer virtual keys, provisioned by `model-gateway-keys` |
 | `OPS_CONTROLLER_TOKEN` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Required for the ops-api privileged (Bearer) API |
-| `DISCORD_BOT_TOKEN` | `secrets/discord_token.sops` | Docker secret → hermes-gateway (`/run/secrets/discord_token`) | Optional, only when Discord channel is used |
+| `DISCORD_BOT_TOKEN` | `secrets/discord_token.sops` | Docker secret → agent (`/run/secrets/discord_token`) | Optional, only when Discord channel is used |
 | `HF_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Optional, for gated HF model pulls and ComfyUI-Manager custom-node fetches |
 
 ## SSRF Defenses (MCP)
@@ -90,7 +90,7 @@ Blocked ranges: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` (RFC1918), `100.
 
 ## Container Hardening
 
-Custom services (model-gateway, model-gateway-keys, dashboard, ops-controller, hermes-gateway, hermes-dashboard, the `mcp-*` servers, rag-ingestion) run with:
+Custom services (model-gateway, model-gateway-keys, dashboard, ops-controller, agent, hermes-dashboard, the `mcp-*` servers, rag-ingestion) run with:
 
 ```yaml
 cap_drop: [ALL]
