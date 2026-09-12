@@ -1,7 +1,7 @@
 # Prometheus scrape config for the Ordo stack (monitoring profile).
 # Scrapes llama.cpp's native /metrics (enabled by --metrics in
-# scripts/llamacpp/run-llama-server.sh) and the nvidia GPU exporter.
-# All targets are on the internal `ordo-net` network — no host exposure.
+# scripts/llamacpp/run-llama-server.sh), LiteLLM's /metrics (model-gateway),
+# and the nvidia GPU exporter. All targets are on the internal `ordo-net` network, no host exposure.
 global:
   scrape_interval: 15s
   scrape_timeout: 10s
@@ -29,3 +29,12 @@ scrape_configs:
       - targets: ['gpu-exporter:9835']
         labels:
           service: gpu
+
+  # LiteLLM (model-gateway): request/latency/fallback + litellm_mcp_tool_calls_total per server/tool.
+  # /metrics runs unauthenticated on the internal network (require_auth_for_metrics_endpoint: false).
+  - job_name: model-gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['model-gateway:11435']
+        labels:
+          service: model-gateway
