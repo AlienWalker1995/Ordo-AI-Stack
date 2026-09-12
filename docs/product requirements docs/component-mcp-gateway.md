@@ -1,76 +1,206 @@
-# Component: MCP Gateway (Tool Aggregation)
+# Component: MCP Tool Aggregation (LiteLLM MCP gateway)
 
 ## Purpose
 
-The **MCP gateway** service exposes one **MCP HTTP endpoint** (backend port **8811** in the default compose) that aggregates multiple logical servers—web search, n8n, ComfyUI workflows, orchestration helpers, etc.—so clients (Hermes, n8n, other agents) use **one URL** and one authentication pattern. Under the port-per-service edge model (2026-07-24), the gateway is not one of the ported UI services — it stays an API route on the shared **:443** front door (`https://${CADDY_TAILNET_HOSTNAME}/mcp`, unstripped), gated by a static Bearer token rather than Google SSO. Internal clients on `ordo-net` still reach it directly at `http://mcp-gateway:8811/mcp`.
+`model-gateway` (LiteLLM v1.100.1) serves **`/mcp`** alongside `/v1/*`. It is the stack's only MCP
+entrypoint: one URL, one authentication pattern, aggregating every `mcp-<server_id>` service the
+caller's virtual key is granted. Internal clients on `ordo-net` call
+`http://model-gateway:11435/mcp`; external and tailnet clients go through the Caddy `:443` front
+door at `https://${CADDY_TAILNET_HOSTNAME}/mcp` (unstripped path), gated by a LiteLLM key instead of
+Google SSO because a CLI or IDE client cannot do an interactive login.
 
-## Key Responsibilities
+There is no separate gateway container, no Docker socket in the tool path, and no static tool
+token: LiteLLM answers 401 to a missing or invalid key, so the route cannot degrade to open.
 
-- **Catalog merge** – Upstream Docker MCP gateway plus repo **`registry-custom.yaml`** (e.g. ComfyUI, orchestration) via `gateway-wrapper.sh`.
-- **Dynamic ComfyUI MCP** – Spawns or connects to the **ComfyUI** service using `COMFYUI_URL` (Docker DNS name `comfyui` on the stack network).
-- **Secrets injection** – API keys (GitHub PAT, `N8N_API_KEY`) arrive via Docker secrets / compose environment, not committed config. SOPS-managed at rest under `secrets/*.sops`. Orchestration calls to the dashboard cross the internal `ordo-net` network; the dashboard has no per-service auth token in the Ordo deployment (`DASHBOARD_AUTH_TOKEN` is unset/not required — the Caddy edge with oauth2-proxy SSO is the auth gate for the dashboard UI, not this token).
-- **Operational boundary** – Default compose keeps **8811** on the internal `ordo-net` network only (no published host port); the gateway is not directly Docker-published. The standard path for external/tailnet clients is Caddy's **:443** front door at `/mcp` (Bearer-gated via `MCP_GATEWAY_TOKEN`), which reverse-proxies to `mcp-gateway:8811` — Caddy is the only service that publishes host ports.
+## How a server is declared
 
-## Registry Format
+An MCP server is a plugin manifest at `services/<id>/plugin.yaml` with `kind: mcp` and an `mcp:`
+block. The manifest is the single source of truth: the renderer derives the compose service, the
+LiteLLM registration and the dashboard's server list from it.
 
-**Tool registry** (`data/mcp/registry-custom.yaml`, rendered to `out/mcp/registry-custom.yaml`):
-a catalog fragment merged via `--additional-catalog` with Docker's online MCP catalog. Each entry
-is keyed by server id under a top-level `registry:` map:
+| Key | Meaning |
+|-----|---------|
+| `server_id` | Optional; defaults to the plugin id |
+| `image` **or** `url` | Exactly one. `image` runs a container in the stack; `url` points at a hosted server and renders no service |
+| `transport` | Required; `http` is the only accepted value in this release |
+| `port` | Required with `image`; the container port serving `path` |
+| `path` | Default `/mcp` |
+| `network` | `internal` (default) or `stack` |
+| `command` | Optional compose command override |
+| `env` | Compose environment; `${VAR}` interpolates from `.env` / `secrets.env` |
+| `secrets` | Required secret keys, same semantics as service plugins |
+| `volumes` | Compose volume list (host binds and named volumes) |
+| `depends_on` | Compose dependencies on stack services |
+| `healthcheck` | Optional override of the default probe |
+| `timeout` | Per-server LiteLLM tool timeout in seconds (default 60) |
+| `auth` | Optional upstream auth LiteLLM presents (hosted servers) |
+| `allowed_tools` | Optional; narrows what LiteLLM exposes from this server |
+| `tools` | Informational, and the parity test's expectation |
+
+Keys carried over from the retired Docker-gateway schema (`longLived`, `disableNetwork`, and
+`PLACEHOLDER_*` values) are rejected by the renderer, as is an unknown key, a non-`http`
+transport, a missing `port` alongside `image`, a bad `network` value and a duplicate `server_id`.
+
+Full example (`services/qdrant-rag/plugin.yaml`):
 
 ```yaml
-registry:
-  qdrant-rag:
-    description: "Semantic RAG search over the stack's Qdrant `documents` collection…"
-    title: Qdrant RAG
-    type: server
-    image: ordo-ai-stack-qdrant-rag-mcp:latest
-    env:
-      - name: QDRANT_URL
-        value: http://qdrant:6333
-      - name: EMBED_URL
-        value: http://llamacpp-embed:8080
+id: qdrant-rag
+name: Qdrant RAG (MCP tools)
+description: Semantic RAG search over the stack's Qdrant `documents` collection, via MCP.
+kind: mcp
+requires:
+  nvidia: false
+  ram_gb: 1
+provides: [tools]
+depends_on: [rag]
+mcp:
+  image: ordo/qdrant-rag-mcp:latest
+  transport: http
+  port: 9000
+  network: stack          # qdrant:6333 + llamacpp-embed:8080
+  env:
+    QDRANT_URL: http://qdrant:6333
+    EMBED_URL: http://llamacpp-embed:8080
+    RAG_COLLECTION: documents
+  healthcheck:
+    test: ["CMD", "python3", "-c", "import socket;socket.create_connection(('127.0.0.1',9000),5).close()"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 15s
+  tools: [qdrant_search, qdrant_status]
 ```
 
-There is no `scopes` / `allow_clients` / `rate_limit_rpm` / `env_schema` field — that per-client
-policy schema below was a **design proposal that was never implemented**; see "Current Policy
-Model" for what actually exists today (`data/mcp/servers.txt`-driven enable/disable, no per-client
-enforcement).
+## How it renders
 
+`ordo render` turns each enabled `kind: mcp` plugin into:
 
-## Policy API (Dashboard `/api/mcp`)
+- A compose service **`mcp-<server_id>`**: `restart: unless-stopped`, `init: true`,
+  `security_opt: [no-new-privileges:true]`, `cpus: "1"`, `mem_limit: 2g`, labels `ordo.mcp=true`,
+  `ordo.mcp.server_id=<id>`, `ordo.mcp.plugin=<plugin id>`. **No `env_file`**: a server sees only
+  the variables and secrets its own manifest declares, never the gateway's full env surface.
+- Network placement on the top-level **`ordo-mcp-net`**, declared `internal: true`.
+  `network: internal` renders `[ordo-mcp-net]`; `network: stack` renders
+  `[ordo-mcp-net, ordo-net]`. `model-gateway` is the only other member, so nothing else in the
+  stack can call an MCP server directly.
+- A default healthcheck (`GET http://localhost:<port><path>`, any HTTP status counts: the MCP
+  endpoint answers 4xx to a bare GET, and a response proves the process is up), unless the manifest
+  supplies its own.
+- `out/model-gateway/mcp_servers.yaml`: the LiteLLM `mcp_servers` fragment, mounted read-only at
+  `/config` and merged into the proxy config by the entrypoint. The file is **required**: a render
+  with no MCP plugins emits `mcp_servers: {}`, and a missing file is a fail-loud start error.
+- `out/mcp/servers.json`: `{server_id, litellm_name, plugin_id, service, url, tools, network}` per
+  server plus the registered-plugin map, read by the dashboard at
+  `MCP_SERVERS_PATH=/mcp-config/servers.json`.
 
-- `GET /api/mcp/servers` — enabled list merged with registry metadata + catalog
-- `POST /api/mcp/add` — add tool (updates `servers.txt`)
-- `POST /api/mcp/remove` — remove tool (updates `servers.txt`)
-- `GET /api/mcp/health` — per-server health status: `{server: {ok: bool, checked_at: ts}}`
+A hosted server (`url:` instead of `image:`) renders into both files but has no compose service.
 
-## Current Policy Model
+## Naming
 
-- `allow_clients: ["*"]` = all clients get the tool (default for enabled tools)
-- `allow_clients: []` = tool disabled in registry (requires explicit opt-in to enable)
-- Per-client enforcement: **not yet implemented** — requires Docker MCP Gateway `X-Client-ID` support (M6)
+LiteLLM rejects a server name containing its tool-prefix separator (`-`), so each server gets a
+derived **`litellm_name` = `server_id` with hyphens replaced by underscores**. That name is the
+LiteLLM mapping key, the `server_id` field and `mcp_info.server_name`; compose service names, labels
+and the plugin map keep the hyphenated `server_id`.
 
-## Client Integration
+LiteLLM namespaces tools **`<litellm_name>-<tool>`**, and Hermes prefixes its own `gateway__`:
 
-Agent clients on the internal `ordo-net` network (Hermes today, others later) connect to the gateway via the single MCP URL `http://mcp-gateway:8811/mcp`. External/tailnet MCP clients instead go through the Caddy edge at `https://${CADDY_TAILNET_HOSTNAME}/mcp` (:443, Bearer `MCP_GATEWAY_TOKEN`, no Google SSO). Tools surface under names like `gateway__duckduckgo_search`. Per-client policy enforcement is planned for M6 via `X-Client-ID` + `allow_clients`, along with auto-disable after 3 consecutive health failures.
+| Server | Compose service | LiteLLM name | Tool as Hermes sees it |
+|--------|-----------------|--------------|------------------------|
+| `memory-vault` | `mcp-memory-vault` | `memory_vault` | `gateway__memory_vault-read_note` |
+| `codebase-memory` | `mcp-codebase-memory` | `codebase_memory` | `gateway__codebase_memory-list_projects` |
+| `qdrant-rag` | `mcp-qdrant-rag` | `qdrant_rag` | `gateway__qdrant_rag-qdrant_search` |
+| `searxng` | `mcp-searxng` | `searxng` | `gateway__searxng-searxng_web_search` |
 
-## Non-Goals
+## Auth and policy
 
-- **End-user identity for every MCP call** – Per-client MCP auth is largely deferred to upstream / product choices.
-- **Replacing n8n or ComfyUI** – The gateway invokes them; it does not own workflow authoring UIs.
+- Every consumer holds its own **virtual key** `LITELLM_KEY_<ID>`, declared by a `litellm_key:`
+  block in its manifest (`models:` and `mcp_servers:` grants) and provisioned by the
+  `model-gateway-keys` one-shot from `out/model-gateway/keys.json`.
+- `require_key_mcp_access_defined: true` means a key sees **only** the servers its
+  `object_permission.mcp_servers` grant lists. No grant, no tools; no key, 401.
+- The edge hands external clients `LITELLM_KEY_EDGE` for both `/llm/*` and `/mcp`. The dashboard
+  keeps `LITELLM_MASTER_KEY`: it is the control plane (`/model/info`, `/v1/mcp/server/health`).
+- Per-tool narrowing (`allowed_tools`) is supported by the schema and set by no manifest today.
 
-## Dependencies
+## Health and observability
 
-- **docker-compose** service **mcp-gateway** (build context `services/mcp-gateway`).
-- **Docker socket** (for gateway features that spawn tool containers, per upstream behavior).
-- **data/mcp/servers.txt** – Comma-separated server list (default: `duckduckgo,n8n,searxng,comfyui,orchestration`). The `gateway-wrapper.sh` watches this file and **restarts the gateway process** when it changes, so edits cause a brief tool-discovery interruption.
+- `GET /v1/mcp/server/health` on the gateway reports every registered server.
+- A `tools/list` call on `/mcp` carries `_meta["litellm.ai/server_outcomes"]`, giving per-server
+  `status` and `tool_count`.
+- The dashboard's `GET /api/mcp/health` combines both: a server is `ok` only when the health probe
+  says `healthy` **and** its outcome is `ok` with `tool_count > 0`. There is no fallback to
+  gateway-level status, which is what previously let three dead servers report green for weeks.
+- Prometheus scrapes `model-gateway:11435/metrics`; `litellm_mcp_tool_calls_total{mcp_server_name,
+  mcp_tool_name}` increments per tool call.
+- `ops-api`'s `GET /mcp/containers` lists containers by the compose label `ordo.mcp=true`. That is
+  inventory, not health.
 
-## MCP Gateway Healthcheck
+## Adding a new server
 
-The healthcheck performs a full MCP session handshake:
-1. `initialize` — establishes session, gets `Mcp-Session-Id`
-2. `notifications/initialized` — completes handshake
-3. `tools/list` — verifies tool catalog is populated (>0 tools)
-4. Session termination (best-effort)
+1. **HTTP-native server:** manifest only. Point `image:` at a digest-pinned upstream (or a repo
+   build context for a project image), set `transport: http`, `port`, `path`, `network`, and any
+   `env` / `secrets` it needs. `mcp-searxng` is the worked example; prefer a stateless HTTP mode
+   where the upstream offers one, because LiteLLM's outbound client re-initialises the upstream
+   session per operation (BerriAI/litellm #25128) and cannot hold a session id.
+2. **Hosted server:** manifest with `url:` and, if the upstream needs a token,
+   `auth: {type: bearer_token, secret: <SECRET_KEY>}`. No container is rendered.
+3. **stdio-only upstream:** manifest plus a ten-line Dockerfile block, one fixed recipe, that
+   bridges stdio to stateless streamable HTTP:
 
-The gateway is not considered healthy until tools are actually loaded and discoverable.
+```dockerfile
+ARG MCP_PROXY_VERSION=0.12.0
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv \
+ && rm -rf /var/lib/apt/lists/* \
+ && python3 -m venv /opt/mcp-proxy \
+ && /opt/mcp-proxy/bin/pip install --no-cache-dir "mcp-proxy==${MCP_PROXY_VERSION}" "mcp==1.30.0" \
+ && ln -s /opt/mcp-proxy/bin/mcp-proxy /usr/local/bin/mcp-proxy
+# --pass-environment: mcp-proxy 0.12.0 otherwise starts the child with an EMPTY env (only HOME/PATH).
+CMD ["mcp-proxy", "--host", "0.0.0.0", "--port", "9000", "--stateless", "--pass-environment", "--", "<upstream command>"]
+```
+
+   `mcp-proxy` (sparfenyuk) holds **one persistent stdio child for the process lifetime** and serves
+   stateless streamable HTTP on `/mcp`. `mcp` is pinned alongside it because mcp-proxy 0.12.0
+   declares `mcp>=1.17.0` unbounded and `mcp` 2.x breaks its imports. `supergateway` was rejected:
+   its stateless mode spawns the child per request.
+
+   Three servers use the recipe: [`services/codebase-memory/Dockerfile`](../../services/codebase-memory/Dockerfile),
+   [`services/memory-vault/Dockerfile`](../../services/memory-vault/Dockerfile) and
+   [`services/n8n/Dockerfile`](../../services/n8n/Dockerfile) (the Alpine variant, `apk` instead of
+   `apt-get`, since its base image is Alpine).
+
+In all three cases, finish by adding the plugin id to `ordo.yaml`'s `plugins:` list, then
+`ordo render` and recreate `model-gateway`.
+
+## Operations
+
+- **Enable or disable a server:** edit `ordo.yaml`'s `plugins:` list, directly or through the
+  dashboard MCP tab (which performs the same comment-preserving edit). The dashboard response
+  carries `{"applied": false, "next": "ordo render + recreate model-gateway"}`.
+- **No hot reload.** LiteLLM reads config-file MCP servers at startup, so a change takes effect
+  only after `ordo render` plus a `model-gateway` recreate.
+- **Long-running tools** get a per-server `timeout:` in the manifest (`comfyui` renders 1800s); the
+  default is 60s.
+- **A down server** degrades to a shorter tool list with an explicit `unreachable` outcome and a red
+  badge in the dashboard. `/mcp` itself stays up, and `restart: unless-stopped` plus the healthcheck
+  handle a crash-loop without operator intervention.
+- **Images are pinned:** public images by digest, project images by build context. The rendered
+  compose is image-only, so rebuilds use `docker build`, not `docker compose build`.
+
+## Non-goals
+
+- **End-user identity per MCP call.** Scoping is per consumer key, not per human.
+- **Replacing n8n or ComfyUI.** The gateway invokes them; it does not own their authoring UIs.
+
+## History
+
+Until 2026-09 this component was a separate `docker/mcp-gateway` container on port 8811 that held
+the host Docker socket, spawned each MCP server as a throwaway sibling over stdio, and read its
+enabled set from a plain-text server list plus a rewritten Docker-catalog fragment. External access
+was gated by a static bearer token. All of that was retired in the LiteLLM MCP migration: the
+socket left the tool path, the servers became long-lived compose services, the catalog files became
+`out/model-gateway/mcp_servers.yaml` and `out/mcp/servers.json`, and the static token became
+LiteLLM virtual keys. The helper scripts that appended to the old server list were removed with it.
+
+---
+
+**See also:** [Model Gateway](component-model-gateway.md), [Security & Trust Model](security-and-trust-model.md), [Index](index.md).

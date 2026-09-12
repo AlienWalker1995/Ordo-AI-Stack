@@ -7,11 +7,11 @@
 | **M0** | Done | Audit schema, Docker healthchecks, log rotation, SECURITY.md, runbooks |
 | **M1** | Done | Model Gateway: OpenAI-compat, llama.cpp, streaming, embeddings, throughput |
 | **M2** | Done | Ops Controller: start/stop/restart/logs/pull/audit; dashboard calls controller; bearer auth |
-| **M3** | Done | MCP registry-custom.yaml + health API; cap_drop/read_only hardening; model list cache; Open WebUI → gateway default |
+| **M3** | Done | MCP server registry + health API; cap_drop/read_only hardening; model list cache; Open WebUI → gateway default |
 | **M4** | Done | Single `ordo-net` Docker network (edge-only host-port publish); correlation IDs (X-Request-ID → audit); smoke tests |
 | **M5** | Done | Dashboard MCP health dots (green/yellow/red); SSRF egress scripts; hardware stats; throughput benchmark; default-model management |
 | **M5-ext** | Done | RAG pipeline (Qdrant + rag-ingestion); Open WebUI → Qdrant; RAG status endpoint; Responses API + completions compat; cache-bust endpoint |
-| **M6** | Partial | **Done:** mcp-gateway backend-only; CI; audit log rotation. **Deferred:** MCP per-client / `X-Client-ID` (upstream). **Skipped:** `WEBUI_AUTH` default → True |
+| **M6** | Partial | **Done:** MCP servers backend-only on `ordo-mcp-net`; per-consumer MCP scoping via LiteLLM virtual keys; CI; audit log rotation. **Skipped:** `WEBUI_AUTH` default → True |
 | **M7** | Core done | **Done:** dependency registry + `GET /api/dependencies`; model-gateway `/health` + `/ready`; dashboard probes UI; `doctor`; CI fixture validation. **Remaining:** L3 semantics, retry/circuit policies, MCP hardening, golden traces, browser session lifecycle |
 
 ---
@@ -25,7 +25,7 @@
 - Open WebUI defaults to gateway endpoint
 
 **Acceptance criteria:**
-- **Given** `duckduckgo` in `servers.txt`, **When** `GET /api/mcp/health`, **Then** response contains `{"health": {"duckduckgo": {"ok": bool, "checked_at": "..."}}}`
+- **Given** `searxng` enabled in `ordo.yaml`'s `plugins:`, **When** `GET /api/mcp/health`, **Then** the response contains a `searxng` entry with `status: healthy` and `tool_count > 0`, sourced from `/v1/mcp/server/health` + `tools/list` `server_outcomes`
 - **Given** `docker compose up -d`, **When** `docker inspect model-gateway`, **Then** `HostConfig.CapDrop` contains `ALL`, `ReadonlyRootfs` is `true`
 
 ---
@@ -62,7 +62,8 @@
 
 | Item | Notes |
 |------|--------|
-| mcp-gateway → backend only | Single `ordo-net`; no host port published (edge-only publish model) |
+| MCP servers → backend only | `ordo-mcp-net` (`internal: true`), reachable only by `model-gateway`; no host port published (edge-only publish model) |
+| Per-consumer MCP scoping | LiteLLM virtual-key `object_permission.mcp_servers` grants with `require_key_mcp_access_defined: true` |
 | CI pipeline | `.github/workflows/ci.yml` |
 | Audit log rotation | `ops-api`: `AUDIT_LOG_MAX_BYTES` (default 10MB) |
 
@@ -71,13 +72,13 @@
 | Item | Rationale | Effort |
 |------|-----------|--------|
 | `WEBUI_AUTH` default → `True` | Security: Open WebUI ships open by default | XS |
-| MCP per-client policy enforcement | `allow_clients` metadata; needs upstream `X-Client-ID` | L (external dep) |
+| Per-tool `allowed_tools` narrowing | Schema supports it; no manifest sets it yet (server-level scoping already ships) | S |
 | RBAC (read-only role) | View logs/health without start/stop access | L |
 
 ### M6 Acceptance Criteria
 
 - **Given** `docker compose up -d`, **When** env does not set `WEBUI_AUTH`, **Then** Open WebUI requires login
-- **Given** `docker inspect mcp-gateway`, **Then** `NetworkSettings.Networks` contains only `ordo-net`
+- **Given** `docker inspect ordo-mcp-searxng-1`, **Then** `NetworkSettings.Networks` contains `ordo-mcp-net` (and `ordo-net` only when the manifest declares `network: stack`)
 - **Given** audit log exceeds 10MB, **When** next privileged action occurs, **Then** old log renamed to `audit.log.1`
 - **Given** push to main branch, **When** CI runs, **Then** all contract + smoke tests pass
 
@@ -87,7 +88,7 @@
 
 **Outcome:** When an agent or other client fails, operators can tell **which hop** failed and whether the failure is **retryable** or **operator-action-required**.
 
-**Phase 1 (failures visible):** Typed `/health` and `/ready` for model gateway, MCP gateway, and browser bridge; dependency registry in config + dashboard surface; `X-Request-ID` / correlation end-to-end; failure taxonomy; dashboard dependency status; agent startup validation; smoke tests.
+**Phase 1 (failures visible):** Typed `/health` and `/ready` for model gateway (including `/v1/mcp/server/health` for the MCP servers) and browser bridge; dependency registry in config + dashboard surface; `X-Request-ID` / correlation end-to-end; failure taxonomy; dashboard dependency status; agent startup validation; smoke tests.
 
 **Phase 2 (degradation & recovery):** Provider fallback chains; per-tool / per-server circuit breakers; cold/warm model state; standardized timeout & retry budgets; auto-disable/quarantine unhealthy tools; ops-controller restart hooks; browser bridge session health / recycle.
 

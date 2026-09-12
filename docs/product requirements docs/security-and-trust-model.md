@@ -5,14 +5,14 @@
 | Asset | Threat | Current State | Mitigation |
 |-------|--------|---------------|------------|
 | `docker.sock` (ops-api) | Container escape → host RCE | Mounted; allowlisted actions only | Bearer-token auth; no host port; allowlist in code; every privileged call audited. (The `ordo serve` scheduler on ops-controller mounts a *separate* `<project>-*`-scoped docker.sock for render/broker lifecycle only — auth-free by design, exposes no start/stop/logs/pull API.) |
-| `docker.sock` (mcp-gateway) | MCP server escapes → host pivot | Mounted; Docker MCP Gateway owns it | Accept: required for spawning server containers; mcp-gateway sits on the single `ordo-net` and publishes no host port (reached only via Caddy `:443/mcp`, bearer token) |
+| MCP server containers | MCP server compromise → lateral movement | No Docker socket anywhere in the tool path; each server is a long-lived service on `ordo-mcp-net` (`internal: true`) | `no-new-privileges`, 1 CPU / 2 GB, no `env_file` (only its own declared env and secrets), reachable only by `model-gateway`, no host port |
 | Ops controller token | Token theft → privileged ops | Token in `out/secrets.env`; no default | Generate with `openssl rand -hex 32`; never expose controller port to host |
-| MCP tools (filesystem) | Data exfiltration via tool | Enabled in servers.txt; broken without root-dir | Remove from default servers.txt; require explicit opt-in |
-| MCP tools (browser/playwright) | SSRF → RFC1918/metadata | No egress blocks yet | Add `DOCKER-USER` iptables egress block; document in runbooks |
+| MCP tools (filesystem) | Data exfiltration via tool | Enabled as a `kind: mcp` plugin in `ordo.yaml`; each declares its own mounts (code root read-only) | Drop the plugin from `plugins:`, `ordo render`, recreate `model-gateway`; grant it to no key otherwise |
+| MCP tools with egress (`searxng`) | SSRF → RFC1918/metadata | Only servers declaring `network: stack` reach anything beyond `ordo-mcp-net` | Add `DOCKER-USER` iptables egress block; document in runbooks |
 | Tool output → model | Prompt injection via tool output | No sandbox; tool output passed to model | Allowlists; structured tool calls (`<tool_result>` tags); validate tool schemas |
 | Dashboard auth | Unauthenticated admin | Gated by the Caddy edge (oauth2-proxy + Google SSO + email allowlist) on its dedicated SSO-gated port under the port-per-service model (`:8444`, plus `/grafana/` embed); the dashboard container itself publishes no host port and is reached only via that Caddy port or the internal `ordo-net` for service-to-service calls. App code retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer fallback, unused in this deployment | Edge SSO is the auth boundary for the dashboard; no per-service token to manage |
 | WEBUI_AUTH=False | Open WebUI accessible without auth | Explicit in compose env | Change default to `WEBUI_AUTH=${WEBUI_AUTH:-True}`; opt-out, not opt-in |
-| Model gateway | No auth on `/v1/` endpoints | None; local-first intentional | Acceptable for localhost; add API key support if exposed to LAN |
+| Model gateway | Unauthorized model or tool access | Master key enforced at startup (`^sk-[A-Za-z0-9_-]{32,}$`, `local` can never run again); per-consumer virtual keys with model and MCP grants | Keys in `out/secrets.env`; missing or invalid key → 401 on `/v1/*` and `/mcp` |
 
 ## AuthN / AuthZ Tiers
 
@@ -35,7 +35,7 @@
 ### End-to-End
 
 - `out/secrets.env` — gitignored, host-only, rendered from `out/secrets.env.example`; not committed
-- MCP tool secrets (e.g. `GITHUB_PERSONAL_ACCESS_TOKEN`, `N8N_API_KEY`, `MCP_GATEWAY_TOKEN`) — same `out/secrets.env`, consumed by `mcp-gateway` via the rendered compose `env_file:`
+- MCP tool secrets (e.g. `N8N_API_KEY`) — same `out/secrets.env`, but an `mcp-*` service has **no** `env_file`: only the keys its manifest declares in `env:` / `secrets:` are interpolated into its compose environment
 - Agent runtime state under `data/hermes/` — gitignored; Discord bot token is supplied via Docker secrets (file at `/run/secrets/discord_token`, SOPS-encrypted at rest under `secrets/discord_token.sops`); per-user allowlists are runtime state inside `data/hermes/`.
 - Gateway tokens — in `out/secrets.env`, set via compose `env_file:`
 - **Secret rotation:** Update `out/secrets.env` (or re-render via `ordo render`), then `docker compose -p ordo up -d --force-recreate <service>` from `out/`.
@@ -44,26 +44,32 @@
 
 | Secret | Location | Injected by | Notes |
 |--------|----------|-------------|-------|
+| `LITELLM_MASTER_KEY` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | `sk-` + 32+ chars, enforced by the entrypoint; LiteLLM admin UI login |
+| `LITELLM_SALT_KEY` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Encrypts provider credentials in `litellm-db`. **Never rotate** (excluded from `rotate-internal.sh`) |
+| `LITELLM_DB_PASSWORD` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Postgres password for `litellm-db` |
+| `LITELLM_KEY_HERMES` / `_OPEN_WEBUI` / `_AUTOMATION` / `_EDGE` | `out/secrets.env` | Compose `env_file:` / per-service `environment:` | Per-consumer virtual keys, provisioned by `model-gateway-keys` |
 | `OPS_CONTROLLER_TOKEN` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Required for the ops-api privileged (Bearer) API |
 | `DISCORD_BOT_TOKEN` | `secrets/discord_token.sops` | Docker secret → hermes-gateway (`/run/secrets/discord_token`) | Optional, only when Discord channel is used |
-| `HF_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Optional, for gated HF model pulls and GitHub MCP |
+| `HF_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Optional, for gated HF model pulls and ComfyUI-Manager custom-node fetches |
 
 ## SSRF Defenses (MCP)
 
 ```bash
 # Block MCP containers from reaching RFC1918 + metadata endpoints
-iptables -I DOCKER-USER -s <mcp_gateway_subnet> -d 10.0.0.0/8 -j DROP
-iptables -I DOCKER-USER -s <mcp_gateway_subnet> -d 172.16.0.0/12 -j DROP
-iptables -I DOCKER-USER -s <mcp_gateway_subnet> -d 192.168.0.0/16 -j DROP
-iptables -I DOCKER-USER -s <mcp_gateway_subnet> -d 100.64.0.0/10 -j DROP
-iptables -I DOCKER-USER -s <mcp_gateway_subnet> -d 169.254.169.254/32 -j DROP
+iptables -I DOCKER-USER -s <ordo_mcp_net_subnet> -d 10.0.0.0/8 -j DROP
+iptables -I DOCKER-USER -s <ordo_mcp_net_subnet> -d 172.16.0.0/12 -j DROP
+iptables -I DOCKER-USER -s <ordo_mcp_net_subnet> -d 192.168.0.0/16 -j DROP
+iptables -I DOCKER-USER -s <ordo_mcp_net_subnet> -d 100.64.0.0/10 -j DROP
+iptables -I DOCKER-USER -s <ordo_mcp_net_subnet> -d 169.254.169.254/32 -j DROP
 ```
+
+A server declaring `network: internal` has no route off `ordo-mcp-net` at all, so these rules only matter for servers declaring `network: stack`.
 
 SSRF scripts live at `scripts/ssrf-egress-block.sh` (Linux/WSL2) and `scripts/ssrf-egress-block.ps1` (Windows guidance).
 
 ### Browser-Tier Egress Control
 
-When browser/playwright is active, worker containers can make arbitrary outbound HTTP requests. Apply RFC1918 + metadata blocks:
+When an MCP server declares `network: stack` (today only `searxng`), it can make outbound HTTP requests. Apply RFC1918 + metadata blocks:
 
 ```bash
 ./scripts/ssrf-egress-block.sh
@@ -77,14 +83,14 @@ Blocked ranges: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` (RFC1918), `100.
 
 ## Prompt Injection Defense at Tool-Output Boundary
 
-- Tool results returned in structured boundaries by the MCP gateway and agent
+- Tool results returned in structured boundaries by the gateway's MCP endpoint and the agent
 - Agents treat tool output as **data**, not **instructions**
-- Validate tool output schemas where possible (MCP `registry-custom.yaml` `outputSchema` field)
+- Validate tool output schemas where possible (the schemas each MCP server returns from `tools/list`)
 - Structured boundaries help the model distinguish injected text from genuine prompts
 
 ## Container Hardening
 
-Custom services (model-gateway, dashboard, ops-controller, hermes-gateway, hermes-dashboard, mcp-gateway, orchestration-mcp, comfyui-mcp, rag-ingestion) run with:
+Custom services (model-gateway, model-gateway-keys, dashboard, ops-controller, hermes-gateway, hermes-dashboard, the `mcp-*` servers, rag-ingestion) run with:
 
 ```yaml
 cap_drop: [ALL]
@@ -97,6 +103,6 @@ Resource limits, healthchecks, and `restart: unless-stopped` are applied per-ser
 
 Items that are both security and reliability problems:
 - Open WebUI auth default
-- MCP per-client enforcement gaps
+- Per-tool `allowed_tools` narrowing not yet used (per-consumer server scoping is enforced)
 
-**Improvements:** auth on by default for remotely reachable UIs; env-based secret resolution where possible; explicit per-client policy at MCP gateway; tool registration workflow; immutable audit trail for config changes.
+**Improvements:** auth on by default for remotely reachable UIs; env-based secret resolution where possible; per-tool `allowed_tools` narrowing (per-consumer server scoping already ships via LiteLLM virtual keys); tool registration workflow; immutable audit trail for config changes.

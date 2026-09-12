@@ -1,6 +1,6 @@
 # Plugin manifest - data-only. Declares the codebase-memory MCP server: a compose service
 # `mcp-codebase-memory` on the internal MCP network, registered with LiteLLM's MCP gateway (its
-# tools reach Hermes as `codebase-memory-<tool>`). Gives Hermes a code KNOWLEDGE GRAPH over the
+# tools reach Hermes as `gateway__codebase_memory-<tool>`). Gives Hermes a code KNOWLEDGE GRAPH over the
 # repos under the code root (mounted read-only at /c/dev): structural queries grep can't do cheaply
 # - call graphs, trace paths between symbols, architecture overviews, symbol/snippet lookup.
 # Companion to the codebase-memory-UI (3D graph) service, but a SEPARATE process: this server

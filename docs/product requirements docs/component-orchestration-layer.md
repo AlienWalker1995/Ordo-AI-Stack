@@ -8,7 +8,7 @@ A lightweight, plug‑in‑driven orchestrator that stitches together all AI ser
 The orchestration layer today is an **MCP server** (`services/orchestration/server.py`) with hardcoded tool definitions. The dashboard exposes orchestration functionality via HTTP routes (`routes_orchestration.py`) and includes readiness checks (`orchestration_readiness.py`) and job tracking (`orchestration_db.py`).
 
 ### What exists now
-- MCP-based orchestration tools registered in the MCP gateway via `registry-custom.yaml`.
+- MCP-based orchestration tools served by the `mcp-orchestration` service, declared in `services/orchestration/plugin.yaml` and registered with LiteLLM's MCP gateway at render time.
 - Dashboard HTTP routes that wrap orchestration operations for the UI.
 - Job tracking in the dashboard data directory.
 
@@ -60,14 +60,14 @@ Response:
 
 ## Integration with Existing Stack
 - **Model Gateway** – Calls to the orchestrator can chain model calls (e.g., call `model-a`, then `model-b`). The orchestrator forwards the request to the gateway with the appropriate provider name.
-- **Agent clients** (Hermes, etc.) – Invoke the orchestrator via the MCP `gateway__call` RPC or the dashboard HTTP routes.
+- **Agent clients** (Hermes, etc.) – Invoke the orchestrator through the gateway's namespaced MCP tools (`gateway__orchestration-<tool>`) or the dashboard HTTP routes.
 - **Dashboard** – The dashboard shows orchestration status, active jobs, and recent logs via `routes_orchestration.py`.
 - **n8n** – Existing n8n workflows can be composed with the orchestrator for multi‑model orchestration, without rewriting node logic.
 - **Ops Controller** – Handles lifecycle of the orchestrator container; restarts it automatically on failures.
 
 ## Example Workflow: "Create a multi‑modal response"
 1. **Input** – User asks a question.
-2. **Step 1** – Orchestrator calls `gateway__call` with `provider=llamacpp`, `tool=search` to fetch context.
+2. **Step 1** – Orchestrator calls `gateway__searxng-searxng_web_search` to fetch context.
 3. **Step 2** – Orchestrator invokes the `comfyui` plugin to render an image.
 4. **Step 3** – Orchestrator compiles a markdown summary using the LLM.
 5. **Step 4** – Returns the full response to the caller (agent client or dashboard).

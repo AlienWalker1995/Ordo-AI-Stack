@@ -7,14 +7,14 @@ This section captures the developer/operator view of what Ordo AI Stack needs to
 Any given agent (today: Hermes) is **not** the center of the architecture; it is **one consumer** of:
 
 - **Model Gateway** (`:11435`) — single OpenAI-compatible surface to llama.cpp.
-- **MCP Gateway** (`:8811`) — shared tools, used by agents and other clients alike.
+- **MCP endpoint** (`model-gateway:11435/mcp`) - shared tools, used by agents and other clients alike.
 - **Browser / CDP bridges** — optional capability; easy to misconfigure.
 
 **Effective paths (simplified):**
 
 ```
 User → Agent → Model Gateway → llama.cpp
-User → Agent → MCP Gateway → tool servers
+User → Agent → Model Gateway /mcp → mcp-* servers
 ```
 
 Reliability is constrained by **every hop**. Weak contracts anywhere surface as "the assistant is flaky."

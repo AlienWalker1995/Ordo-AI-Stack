@@ -14,7 +14,7 @@ cd out
 docker compose -p ordo up -d
 ```
 
-That's it. Hermes starts automatically, waits for model-gateway / mcp-gateway / dashboard to be healthy, then registers messaging platforms (if configured) and serves the web UI.
+That's it. Hermes starts automatically, waits for model-gateway / model-gateway-keys / dashboard to be healthy, then registers messaging platforms (if configured) and serves the web UI.
 
 Web UI: `https://${CADDY_TAILNET_HOSTNAME}:8447/` (Google SSO, its own dedicated Caddy port, served at the origin root — see [docs/runbooks/auth.md](runbooks/auth.md)). The old `https://${CADDY_TAILNET_HOSTNAME}/hermes*` URL still works — Caddy's `:443` front door 302s it to `:8447/`.
 Logs: `docker compose -p ordo logs -f agent hermes-dashboard`
@@ -92,14 +92,16 @@ The container's entrypoint seeds `config.yaml` inside the `ordo_hermes-home` vol
 model:
   provider: custom
   base_url: http://model-gateway:11435/v1
-  api_key: <LITELLM_MASTER_KEY>
+  api_key: <LITELLM_KEY_HERMES>
   default: local-chat
 mcp_servers:
   gateway:
-    url: http://mcp-gateway:8811/mcp
+    url: http://model-gateway:11435/mcp
+    headers:
+      Authorization: Bearer <LITELLM_KEY_HERMES>
 ```
 
-Any other keys you add manually (skills, memory providers, display preferences) are preserved across restarts — the entrypoint only touches the five keys above.
+Any other keys you add manually (skills, memory providers, display preferences) are preserved across restarts — the entrypoint only touches the six keys above.
 
 ## Execute-don't-propose behavior (push-through)
 

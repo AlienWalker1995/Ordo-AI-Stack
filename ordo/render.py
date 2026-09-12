@@ -30,14 +30,14 @@ DEFAULT_AGENTS_DIR = Path(__file__).resolve().parent.parent / "services"
 DEFAULT_DASHBOARDS_DIR = Path(__file__).resolve().parent.parent / "services"
 
 # Gate-enforced service -> the .env key its in-stack consumers already use for its base URL.
-# When the service is gated, render points that key at the gate so mcp-gateway, comfyui-mcp, the
+# When the service is gated, render points that key at the gate so mcp-comfyui, the
 # dashboard and ops-api all submit through arbitration instead of around it. Guarded by
 # tests/substrate/test_gpu_arbitration.py (every gated service must appear here, or its consumers
 # would silently keep the direct route).
 GATED_SERVICE_URL_ENV: dict[str, str] = {"comfyui": "COMFYUI_URL"}
 
 # Secret env KEYS the CORE services need at runtime (values operator-managed in secrets.env, never
-# rendered). model-gateway/mcp-gateway/ops-controller/dashboard/agent read these; plugins add more
+# rendered). model-gateway/model-gateway-keys/ops-controller/dashboard/agent read these; plugins add more
 # via their manifest `secrets:` list. Mirrors the V1 SOPS-decrypted runtime/.env surface.
 CORE_SECRET_KEYS: tuple[str, ...] = (
     "LITELLM_MASTER_KEY",         # model-gateway master key (LiteLLM admin + UI login)

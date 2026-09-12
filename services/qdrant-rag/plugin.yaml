@@ -1,6 +1,6 @@
 # Plugin manifest - data-only. Declares the qdrant-rag MCP server: a compose service `mcp-qdrant-rag`
 # on the internal MCP network, registered with LiteLLM's MCP gateway (its tools reach Hermes as
-# `qdrant-rag-<tool>`).
+# `gateway__qdrant_rag-<tool>`).
 id: qdrant-rag
 name: Qdrant RAG (MCP tools)
 description: Semantic RAG search over the stack's Qdrant `documents` collection, via MCP.

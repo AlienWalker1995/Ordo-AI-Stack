@@ -34,7 +34,7 @@ CI (`.github/workflows/ci.yml`): `secret-scan` (TruffleHog), `pytest` (`tests/`,
 - [ ] No secrets introduced in code or compose (check `git diff` for tokens)
 - [ ] New services: non-root user, `cap_drop`, `security_opt`, log rotation, resource limits
 - [ ] New endpoints: auth required for mutating operations
-- [ ] New MCP tools: `allow_clients` explicitly set in registry
+- [ ] New MCP servers: `kind: mcp` manifest with an explicit `network:` and only the `env:` / `secrets:` the server needs; granted to the keys that should see it
 - [ ] No new host port exposures without justification
 - [ ] Audit events emitted for all privileged actions
 - [ ] New env vars documented in [Environment Variables Reference](appendix-env-vars.md), `ordo.example.yaml`, and `out/secrets.env.example`
@@ -43,7 +43,7 @@ CI (`.github/workflows/ci.yml`): `secret-scan` (TruffleHog), `pytest` (`tests/`,
 
 1. Reset admin token: see [Rollback Procedures](appendix-rollback.md) #5
 2. Restore data: `rsync -a <backup>/data/ data/`; `docker compose up -d`
-3. Disable all tools: `echo "" > data/mcp/servers.txt`
+3. Disable all tools: remove the `kind: mcp` plugins from `ordo.yaml`'s `plugins:` list, then `ordo render` and recreate `model-gateway`
 4. Invalidate model cache (model-gateway has no host port — go in-network or via the Caddy `/llm` edge): `docker compose -p ordo exec dashboard curl -X DELETE http://model-gateway:11435/v1/cache` (or `curl -X DELETE -H "Authorization: Bearer $LITELLM_MASTER_KEY" https://<host>/llm/v1/cache`)
-5. Disable unsafe services (from `out/`): `docker compose -p ordo stop mcp-gateway agent comfyui rag-ingestion`
+5. Disable unsafe services (from `out/`): `docker compose -p ordo stop $(docker compose -p ordo config --services | grep '^mcp-') agent comfyui rag-ingestion`
 6. Safe mode: `docker compose up -d llamacpp model-gateway dashboard open-webui qdrant`

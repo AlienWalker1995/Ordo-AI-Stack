@@ -1,6 +1,6 @@
 # Agents — the pluggable orchestrator layer
 
-The Ordo core (llama.cpp + model-gateway + mcp-gateway + ops-controller + dashboard) is
+The Ordo core (llama.cpp + litellm-db + model-gateway + model-gateway-keys + ops-controller + dashboard) is
 **agent-agnostic**. The *agent* is the orchestrator container that drives it, and it's swappable —
 **Hermes is the default**, but any container honouring the contract can take its place.
 
@@ -10,7 +10,7 @@ An Ordo agent image MUST:
 
 1. **Chat** via the model-gateway's **OpenAI-compatible** endpoint (model id `local-chat`). It never
    binds the GPU directly — reads the rendered `.env` for connection config.
-2. **Use tools** through the **mcp-gateway** (MCP), not bespoke integrations.
+2. **Use tools** through the model-gateway's **MCP endpoint** (`http://model-gateway:11435/mcp`, `Authorization: Bearer ${LITELLM_KEY_<ID>}`), not bespoke integrations.
 3. **Request GPU work** through the ops-controller: `POST /jobs` to reserve VRAM and `GET /status`
    to see scheduler state — so the *scheduler* arbitrates the card, not the agent. (This is what
    ends the eviction deadlock: an agent can't evict llama.cpp by starting a render; it asks, and
@@ -30,7 +30,7 @@ default: false                 # exactly one agent should be default: true
 image: ghcr.io/me/my-agent:latest   # omit -> <project>/agent-<id>:latest (operator builds it)
 consumes:                      # validated against the core services
   - model-gateway
-  - mcp-gateway
+  - model-gateway-keys
   - ops-controller
 ```
 

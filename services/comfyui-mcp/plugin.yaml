@@ -1,6 +1,6 @@
 # Plugin manifest - data-only. Declares the ComfyUI MCP server: a compose service `mcp-comfyui` on
 # the internal MCP network, registered with LiteLLM's MCP gateway (its tools reach Hermes as
-# `comfyui-<tool>`). The comfyui compose SERVICE itself is provided by the separate `comfyui`
+# `gateway__comfyui-<tool>`). The comfyui compose SERVICE itself is provided by the separate `comfyui`
 # (kind=service) plugin; THIS plugin only exposes ComfyUI's media tools (workflows, images, video,
 # model pull, system stats, queue, history, installed models/nodes/extensions) to Hermes.
 #

@@ -7,14 +7,14 @@
 3. **Least privilege:** Dashboard never mounts docker.sock. Controller has minimal allowlisted actions. Non-root containers everywhere feasible. `cap_drop: [ALL]` as default; add back only what's required.
 4. **One model endpoint:** OpenAI-compatible API (`/v1/chat/completions`, `/v1/embeddings`) as canonical surface, fronting llama.cpp. Services should prefer the gateway over direct llama.cpp.
 5. **Pluggable providers:** LiteLLM gateway fronts llama.cpp and can add future OpenAI-compatible endpoints.
-6. **Shared tools, guarded:** Central MCP registry (`registry-custom.yaml`) with metadata. Per-client allowlists. Health checks; auto-disable failing tools. Secrets outside plaintext.
+6. **Shared tools, guarded:** One MCP endpoint on the model gateway, fed by `kind: mcp` plugin manifests. Per-consumer scoping via LiteLLM virtual-key MCP grants (`require_key_mcp_access_defined`). Health checks per server; secrets outside plaintext.
 7. **Safe-by-default ops:** Controller token required (no default). Destructive actions require `confirm: true`. Dry-run mode. Audit log for every privileged action.
 8. **Auditable by design:** Every privileged call → audit event with `ts`, `action`, `resource`, `actor`, `result`, `correlation_id`. Append-only. Exportable.
-9. **Deny-by-default:** Unknown services blocked at MCP (`allow_clients: ["*"]` is explicit opt-in, not omission-default). Auth enabled where supported.
-10. **Minimize breaking changes:** The OpenAI-compatible gateway surface is the preferred path for model access. `servers.txt` still works; registry adds metadata on top.
+9. **Deny-by-default:** A virtual key sees only the MCP servers its grant lists (`require_key_mcp_access_defined: true`); no grant means no tools, and no key means 401. Auth enabled where supported.
+10. **Minimize breaking changes:** The OpenAI-compatible gateway surface is the preferred path for model access. MCP servers are declared once in `ordo.yaml`'s `plugins:` list and rendered into both the LiteLLM fragment and the dashboard's server list.
 11. **Observable:** Structured JSON logs from all custom services. Request IDs (`X-Request-ID`) propagated across model→ops→tool calls. Audit log as primary observability artifact for privileged actions.
 12. **Explicit trade-offs:** Model gateway adds ~2–5ms proxy latency for interoperability. Controller-via-docker.sock is a high-value target but isolated behind auth and no host port. We accept the complexity for safe ops.
-13. **Reliability is a first-class contract:** Agent and tool clients depend on machine-readable readiness, consistent timeouts/retries, and traceable failures across model gateway, MCP gateway, and optional bridges—without making the dashboard or ops-controller part of the normal request path.
+13. **Reliability is a first-class contract:** Agent and tool clients depend on machine-readable readiness, consistent timeouts/retries, and traceable failures across model gateway, its MCP endpoint, the individual MCP servers, and optional bridges—without making the dashboard or ops-controller part of the normal request path.
 
 ---
 
@@ -41,24 +41,32 @@ codebase-memory nginx rewrites).
 └────────────────────────────────────────┬─────────────────────────────────────┘
                                           │
 ┌────────────────────────────────────────▼─────────────────────────────────────┐
-│  network: ordo-net  (single Docker network — every service below, no host   │
-│  port of its own)                                                            │
+│  network: ordo-net  (every service below, no host port of its own)          │
 │                                                                                │
 │  ┌─────────────┐  ┌──────────┐  ┌──────────────────────────────────────────┐  │
 │  │ Open WebUI  │  │   N8N    │  │  Hermes  gateway + dashboard             │  │
-│  │ :8080       │  │ :5678    │  │  model → gateway                         │  │
-│  │ → gateway   │  │ → gw     │  │  MCP tools → mcp-gateway                 │  │
+│  │ :8080       │  │ :5678    │  │  model → gateway  (LITELLM_KEY_HERMES)   │  │
+│  │ → gateway   │  │ → gw     │  │  tools → gateway /mcp (same key)         │  │
 │  └──────┬──────┘  └────┬─────┘  └────────────────┬─────────────────────────┘  │
 │         │              │                           │                            │
 │  ┌──────▼──────────────▼───────────────────────────▼──────────────────────┐   │
-│  │  Model Gateway :11435  (Caddy `:443/llm/*` → bearer key, no SSO)        │   │
+│  │  Model Gateway :11435  (Caddy `:443/llm/*` + `:443/mcp` → LiteLLM key, │   │
+│  │                         no SSO)                                        │   │
 │  │  GET  /v1/models           — llama.cpp, TTL-cached 60s                 │   │
 │  │  POST /v1/chat/completions — streaming, tools, X-Request-ID            │   │
 │  │  POST /v1/responses        — OpenAI Responses API compat               │   │
 │  │  POST /v1/completions      — legacy completions compat                 │   │
 │  │  POST /v1/embeddings       — llama.cpp embeddings                      │   │
 │  │  DELETE /v1/cache          — invalidate model list cache               │   │
-│  └──────────────────────────────────────────────────────────────────────┘    │
+│  │  /mcp                      - MCP aggregation, scoped per virtual key   │   │
+│  │  GET /v1/mcp/server/health - per-server MCP health                     │   │
+│  └────────┬──────────────────────────────────────────────┬───────────────┘    │
+│           │                                               │                     │
+│  ┌────────▼─────────────────┐              ┌──────────────▼───────────────┐    │
+│  │ litellm-db :5432         │              │ model-gateway-keys (one-shot)│    │
+│  │ Postgres: virtual keys,  │              │ provisions LITELLM_KEY_* from│    │
+│  │ teams, spend             │              │ out/model-gateway/keys.json  │    │
+│  └──────────────────────────┘              └──────────────────────────────┘    │
 │                                                                                │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐                  │
 │  │ llama.cpp :8080 │  │ ops-api :9000   │  │ Qdrant :6333 │                  │
@@ -72,31 +80,43 @@ codebase-memory nginx rewrites).
 │  │                 │  │  docker verbs)  │                                     │
 │  └─────────────────┘  └─────────────────┘                                     │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐                  │
-│  │ MCP Gateway     │  │ Dashboard :8080  │  │ RAG Ingest   │                  │
-│  │ :8811           │  │ no docker.sock   │  │ --profile rag│                  │
-│  │ docker.sock     │  │ auth: edge SSO   │  │ watches      │                  │
-│  │ servers.txt     │  │ → ops ctrl API   │  │ data/rag-    │                  │
-│  │ registry-custom │  │ registry.json    │  │ input/       │                  │
-│  │ Caddy `:443/mcp`│  │                  │  │              │                  │
-│  │ → bearer token  │  │                  │  │              │                  │
+│  │ Dashboard :8080 │  │ RAG Ingest      │  │ ComfyUI :8188│                  │
+│  │ no docker.sock  │  │ --profile rag   │  │              │                  │
+│  │ auth: edge SSO  │  │ watches         │  │              │                  │
+│  │ → ops ctrl API  │  │ data/rag-input/ │  │              │                  │
+│  │ MCP tab reads   │  │                 │  │              │                  │
+│  │ out/mcp/        │  │                 │  │              │                  │
+│  │ servers.json    │  │                 │  │              │                  │
 │  └─────────────────┘  └─────────────────┘  └──────────────┘                  │
-│  ┌─────────────────┐                                                          │
-│  │ ComfyUI :8188   │                                                          │
-│  └─────────────────┘                                                          │
+│                                                                                │
+│  ┌──────────────────────────────────────────────────────────────────────┐    │
+│  │  network: ordo-mcp-net  (`internal: true`; model-gateway is the only  │    │
+│  │  member that also sits on ordo-net, so nothing else can call a       │    │
+│  │  server directly)                                                     │    │
+│  │                                                                        │    │
+│  │  mcp-comfyui   mcp-orchestration   mcp-qdrant-rag   mcp-n8n           │    │
+│  │  mcp-searxng                     → these also join ordo-net          │    │
+│  │  mcp-codebase-memory   mcp-memory-vault  (internal only)             │    │
+│  │                                                                        │    │
+│  │  each: long-lived service, transport http on <port>/mcp, no env_file, │    │
+│  │  no-new-privileges, 1 CPU / 2 GB, label ordo.mcp=true                 │    │
+│  └──────────────────────────────────────────────────────────────────────┘    │
 └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Components
 
-- **Model Gateway** `:11435` — OpenAI-compatible LiteLLM proxy in front of llama.cpp; streaming, Responses API, completions compat, embeddings; TTL model cache; cache-bust endpoint; `X-Request-ID` propagation; throughput recording.
-- **MCP Gateway** `:8811` — Docker MCP Gateway with 10s hot-reload; `registry-custom.yaml` metadata reader; per-server health; docker.sock for spawning server containers.
+- **Model Gateway** `:11435` — OpenAI-compatible LiteLLM proxy in front of llama.cpp; streaming, Responses API, completions compat, embeddings; TTL model cache; cache-bust endpoint; `X-Request-ID` propagation; throughput recording. It also serves `/mcp`, aggregating every MCP server the caller's virtual key is granted, and `/v1/mcp/server/health`.
+- **litellm-db** `:5432` (internal): Postgres holding LiteLLM's virtual keys, teams and spend. Models and MCP servers stay in the rendered config (`STORE_MODEL_IN_DB=False`); chat keeps working when the DB is down (`allow_requests_on_db_unavailable`).
+- **model-gateway-keys** (one-shot): Bootstraps the per-consumer virtual keys and their model/MCP grants from `out/model-gateway/keys.json`; idempotent, and the agent waits on it (`service_completed_successfully`).
+- **MCP servers** (`mcp-<server_id>`): One long-lived compose service per enabled `kind: mcp` plugin, `transport: http`, on the internal `ordo-mcp-net`. Images are digest-pinned or built from a repo build context; no `env_file` (only the manifest's own `env:` / `secrets:`), `no-new-privileges`, 1 CPU / 2 GB, healthchecked, labelled `ordo.mcp=true` / `ordo.mcp.server_id`. No container in the tool path mounts `docker.sock`.
 - **Ops API** `:9000` (internal) — Authenticated REST (Bearer); start/stop/restart/logs/pull; append-only JSONL audit log; docker.sock access with allowlisted operations only. This is the audited, bearer-gated control plane the dashboard calls for lifecycle actions.
 - **Ops Controller** `:9000` (internal) — The `ordo serve` GPU-lease scheduler; no host port and deliberately **no auth and no container-lifecycle verbs**. It holds a `<project>-*`-scoped docker.sock only to start/stop the render/broker containers it schedules — it does not expose the start/stop/restart/logs/pull API (that is Ops API).
 - **Dashboard** internal `:8080` (no host port of its own; published to the tailnet by Caddy on its own dedicated port, `${CADDY_TAILNET_HOSTNAME}:8444`, behind oauth2-proxy / Google SSO; Grafana rides the same port at `/grafana/`) — No docker.sock; calls controller for ops; model inventory + default-model management; MCP tool management + health badges; throughput stats + benchmark; hardware stats; RAG status. Auth: the Caddy edge (oauth2-proxy / Google SSO) is the sole auth gate; no per-service dashboard token is set in this deployment. The dashboard app code retains an optional, dormant Bearer capability (`DASHBOARD_AUTH_TOKEN` + trusted-proxy header trust) that is unused here — edge SSO is the auth model, not a fallback to rely on.
 - **llama.cpp** `:8080` — LLM inference; backend-only (no host port); GPU pinning resolved by the render engine (`hardware: auto` / `ordo detect`) into `out/`.
 - **Qdrant** `:6333` — Vector database; backend-only; used by Open WebUI for RAG and by `rag-ingestion` service.
 - **RAG Ingestion** — Watch-mode document ingester (`--profile rag`); reads `data/rag-input/`; chunks and embeds via model gateway; stores in Qdrant.
-- **Hermes** (`agent` + `hermes-dashboard`) — Agent runtime; routes model calls through model-gateway and tool calls through mcp-gateway. State under `data/hermes/`. Published to the tailnet by Caddy on its own dedicated port, `${CADDY_TAILNET_HOSTNAME}:8447/` (served at its origin root behind a plain SSO reverse_proxy — no forwarded-prefix base injection). See [docs/hermes-agent.md](../hermes-agent.md) for setup.
+- **Hermes** (`agent` + `hermes-dashboard`) — Agent runtime; routes both model calls and tool calls through `model-gateway` (`/v1/*` and `/mcp`) with its own virtual key `LITELLM_KEY_HERMES`. State under `data/hermes/`. Published to the tailnet by Caddy on its own dedicated port, `${CADDY_TAILNET_HOSTNAME}:8447/` (served at its origin root behind a plain SSO reverse_proxy — no forwarded-prefix base injection). See [docs/hermes-agent.md](../hermes-agent.md) for setup.
 - **Supporting services** — Open WebUI (internal `:8080`, connected to Qdrant, published at `${CADDY_TAILNET_HOSTNAME}:8443`), N8N (internal `:5678`, published at `${CADDY_TAILNET_HOSTNAME}:8445`; public webhook/OAuth-callback base stays `:443/n8n/*`), ComfyUI (internal `:8188`, published at `${CADDY_TAILNET_HOSTNAME}:8446`).
 
 ## Data Flows
@@ -106,7 +126,7 @@ Model request:    Client → Caddy :443/llm/* (bearer key) → Model Gateway (X-
                                       ↓ throughput
                                   Dashboard /api/throughput/record
 
-Tool call:        Client → Caddy :443/mcp (bearer token) → MCP Gateway (registry policy check) → MCP server container
+Tool call:        Client → Caddy :443/mcp (LiteLLM key) → Model Gateway /mcp (key MCP grant check) → mcp-<server> on ordo-mcp-net
 
 Ops action:       Dashboard → Ops API (Bearer auth) → Docker socket
                                       ↓ audit event
@@ -123,7 +143,7 @@ UI request:       Browser → Caddy :<service-port> (Google SSO, domain-scoped
 | Goal | Status | Evidence |
 |------|--------|----------|
 | **G1: Any service → any model** | Done | Gateway `:11435` fronting llama.cpp; streaming, embeddings, tool-calling, Responses API. Open WebUI uses `OPENAI_API_BASE_URL` → gateway. Hermes and other clients route via the same `/v1` surface. |
-| **G2: Shared tools with health** | Done | MCP Gateway + `registry-custom.yaml` metadata; `GET /api/mcp/health` per-server; dashboard health badges. |
+| **G2: Shared tools with health** | Done | LiteLLM MCP gateway on `model-gateway` aggregating the `mcp-*` services; `GET /api/mcp/health` reads `/v1/mcp/server/health` + `tools/list` `server_outcomes`; dashboard health badges. |
 | **G3: Dashboard as control center** | Done | Ops API: start/stop/restart/logs/pull; no host port; bearer auth. Hardware stats, throughput benchmark, default-model management, RAG status. |
 | **G4: Security + auditing** | Done | Audit JSONL. Dashboard auth is the Caddy edge (oauth2-proxy / Google SSO); no per-service dashboard token in this deployment (app code retains a dormant, unused optional Bearer capability). `SECURITY.md` + threat table. SSRF scripts. |
 | **G5: Docker best practices** | Done | `cap_drop: [ALL]`, `security_opt`, `read_only`, `tmpfs`, log rotation, resource limits, healthchecks, explicit named networks on all custom services. |
@@ -134,8 +154,8 @@ UI request:       Browser → Caddy :<service-port> (Google SSO, domain-scoped
 | Gap | Goal | Description | Severity |
 |-----|------|-------------|----------|
 | `WEBUI_AUTH` defaults to `False` | G4 | Open WebUI ships open; target default is `True` | Medium |
-| MCP per-client policy unenforced | G2 | `allow_clients` in registry-custom.yaml not enforced at gateway level — requires Docker MCP Gateway `X-Client-ID` support | Medium |
-| mcp-gateway network isolation | G5 | Single `ordo-net` (the frontend/backend split was retired); mcp-gateway publishes no host port at all — reached only via Caddy `:443/mcp` (bearer token), not `127.0.0.1:8811` (that localhost-only exposure is stale) | Low |
+| Per-tool restrictions unused | G2 | Per-consumer MCP scoping is enforced by LiteLLM virtual-key grants (`require_key_mcp_access_defined: true`); the manifest's `allowed_tools` (per-tool narrowing) is supported by the schema but set by no manifest yet | Low |
+| MCP server network isolation | G5 | Closed: the `mcp-*` services sit on `ordo-mcp-net` (`internal: true`), joined only by `model-gateway`, and publish no host port. External clients reach `/mcp` through Caddy `:443` with a LiteLLM key | Low |
 | Reliability / readiness contracts | G1–G2 | Health today is partly architectural; see [Reliability & Contracts](reliability-and-contracts.md) | High |
 
 ## Network Assignment
@@ -177,10 +197,10 @@ once (the old per-port whitelist is retired). The Google OAuth client itself
 needs no new redirect URIs. Two programmatic surfaces
 bypass interactive SSO (a CLI/IDE client can't do a Google login) but still
 go through Caddy `:443`, gated by their own bearer token instead:
-model-gateway at `/llm/*` (LiteLLM's `LITELLM_MASTER_KEY`) and mcp-gateway
-at `/mcp` (`MCP_GATEWAY_TOKEN`). Nothing binds `127.0.0.1` or any other host
-address directly — model-gateway, mcp-gateway, and qdrant publish no host
-port at all.
+model-gateway at `/llm/*` and at `/mcp` (a LiteLLM key: `LITELLM_KEY_EDGE`
+for external clients, or the master key). Nothing binds `127.0.0.1` or any
+other host address directly: model-gateway, litellm-db, the `mcp-*` servers
+and qdrant publish no host port at all.
 
 **Uniform serving contract.** Every UI serves at its origin root behind a
 plain SSO reverse_proxy; no edge- or sidecar-side path rewriting
@@ -196,12 +216,13 @@ dashboard iframe expects that prefix), and n8n's external
 | caddy | `${CADDY_BIND}:443`, `:8443`–`:8448` | The only host-published ports in the stack (seven total: the `:443` front door plus one per UI service). Bound to `0.0.0.0` (operator-approved 2026-07-17 for LAN reachability on an internet-dark network — see `docs/runbooks/auth.md`); the `${CADDY_BIND:?...}` failsafe only rejects an empty/unset value, it does not distinguish a tailnet IP from `0.0.0.0`. Reverse-proxies everything else with forward_auth → oauth2-proxy |
 | oauth2-proxy | — | Internal; sits behind Caddy; Google SSO with email allowlist (`auth/oauth2-proxy/emails.txt`); one domain-scoped session covers all seven Caddy ports |
 | open-webui | — | Reached at `https://<tailnet>:8443/` (its own port, served at its compiled root); needs model-gateway, qdrant |
-| dashboard | — | Reached at `https://<tailnet>:8444/` (Grafana embed at `.../grafana/` on the same port); needs llamacpp, ops-controller, mcp-gateway |
+| dashboard | — | Reached at `https://<tailnet>:8444/` (Grafana embed at `.../grafana/` on the same port); needs llamacpp, ops-controller, model-gateway |
 | n8n | — | UI reached at `https://<tailnet>:8445/`; public webhook base and OAuth-callback URL stay on `:443` (`https://<tailnet>/n8n/webhook/*`, `.../n8n/rest/oauth2-credential/callback*`, unchanged so nothing external needs re-registration) |
-| agent (Hermes) | — | No UI; needs model-gateway, mcp-gateway |
+| agent (Hermes) | — | No UI; needs model-gateway, model-gateway-keys |
 | hermes-dashboard | — | Reached at `https://<tailnet>:8447/` (served at its origin root behind a plain SSO proxy) |
 | model-gateway | — | No host port; reached internally at `http://model-gateway:11435` on `ordo-net`, and externally via Caddy `:443/llm/*` (bearer key, no SSO) |
-| mcp-gateway | — | No host port; reached internally at `http://mcp-gateway:8811` on `ordo-net`, and externally via Caddy `:443/mcp` (bearer token, no SSO) |
+| litellm-db | — | Internal only; Postgres for LiteLLM virtual keys, teams and spend; reached at `litellm-db:5432` on `ordo-net` |
+| `mcp-*` (seven MCP servers) | — | No host port; on `ordo-mcp-net` (`internal: true`), reachable only by model-gateway, which serves them at `:443/mcp` (LiteLLM key, no SSO) |
 | ops-controller | — | Internal only; no host port |
 | llamacpp | — | Backend-only; no host port; GPU pinning resolved by the render engine (`hardware: auto` / `ordo detect`) into `out/` |
 | qdrant | — | Internal only; reached at `http://qdrant:6333` on `ordo-net` |
@@ -242,7 +263,7 @@ ordo-ai-stack/
 │   ├── codebase-memory/ # Headless codebase-memory MCP
 │   ├── codebase-memory-ui/  # Codebase-memory 3D graph UI service
 │   ├── hermes/          # Hermes agent build context (Dockerfile, entrypoint.sh, plugins/, seed/) + its agent.yaml manifest
-│   └── …                # edge, model-gateway, mcp-gateway, monitoring, voice, native, …
+│   └── …                # edge, model-gateway, memory-vault, n8n, searxng, monitoring, voice, native, …
 ├── ordo/                # Render substrate (Python package): `ordo render`, `ordo detect`, etc.
 ├── catalog/             # Curated model catalog (models.yaml)
 ├── auth/                # Edge auth: auth/caddy (Caddyfile), auth/oauth2-proxy (SSO allowlist)
@@ -254,7 +275,7 @@ ordo-ai-stack/
 ├── product requirements docs/  # This documentation
 ├── docs/                # Getting started, runbooks; docs/operator-guide.md is the authoritative operating guide
 ├── data/                # gitignored, runtime data
-│   ├── mcp/             # servers.txt, registry-custom.yaml
+│   │                    # (no data/mcp/: MCP config renders into out/mcp/servers.json)
 │   ├── ops-controller/  # audit.log
 │   ├── qdrant/          # Vector DB storage
 │   ├── rag-input/       # Drop documents here

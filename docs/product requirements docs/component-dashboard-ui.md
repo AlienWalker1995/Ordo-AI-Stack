@@ -5,7 +5,7 @@ A web-based control plane that provides a single pane of glass for:
 - Managing Docker-Compose services (start/stop/restart, logs)
 - Pulling and configuring AI models (GGUF/llama.cpp LLMs, ComfyUI diffusion models)
 - Viewing dependency health and throughput stats
-- Executing MCP tool calls from any browser (via the MCP Gateway)
+- Executing MCP tool calls from any browser (via the model gateway's `/mcp` endpoint)
 
 ## API Reference
 
@@ -28,7 +28,7 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/comfyui/models` | GET | Y | Installed ComfyUI models |
 | `/api/comfyui/pull` | POST | Y | Pull ComfyUI models |
 | `/api/comfyui/models/{cat}/{file}` | DELETE | Y | Delete ComfyUI model |
-| `/api/mcp/servers` | GET | Y | Enabled servers + registry metadata + catalog |
+| `/api/mcp/servers` | GET | Y | Enabled servers + registered `kind: mcp` plugins, from `out/mcp/servers.json` |
 | `/api/mcp/add` | POST | Y | Enable MCP server |
 | `/api/mcp/remove` | POST | Y | Disable MCP server |
 | `/api/mcp/health` | GET | Y | Per-server health status |
@@ -51,7 +51,7 @@ A web-based control plane that provides a single pane of glass for:
 
 - **Docker Lifecycle** – Calls the Ops Controller API (`/services/{id}/start|stop|restart`) using the `OPS_CONTROLLER_TOKEN` from the rendered `out/.env`. The UI never mounts `docker.sock`; it uses the controller as a secure proxy.
 - **Model Management** – Lists available models, triggers `model-puller` containers, and shows pull progress. Stores model choices in the dashboard data directory (`data/dashboard/`, bind-mounted as `/data/dashboard` in the container).
-- **MCP Gateway Explorer** – Provides a tab to list registered MCP servers, invoke tools, and view tool output (via `gateway__call`). Uses the unified model-gateway for AI calls.
+- **MCP tab** – Lists the registered MCP servers with per-server health and tool counts from LiteLLM. Tools are namespaced `<litellm_name>-<tool>` (Hermes adds its own prefix, e.g. `gateway__memory_vault-read_note`). Uses the unified model-gateway for AI calls.
 
 ## Security Model
 - All mutating UI actions are gated by the Caddy edge (oauth2-proxy + Google SSO with an email allowlist); the dashboard publishes no host port and is unreachable except through the edge or over the internal `ordo-net` docker network. Calls to the Ops Controller are authenticated separately with the `OPS_CONTROLLER_TOKEN` (read from the rendered `out/.env`), sent as an `Authorization: Bearer …` header.
@@ -73,7 +73,7 @@ A web-based control plane that provides a single pane of glass for:
 2. The SSO front door (Caddy + oauth2-proxy) is the dashboard's sole auth gate — there is no per-service dashboard auth token in this deployment. The dashboard app code retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer fallback for host scripts / non-browser API access, but it is not set here.
 3. Use the "Services" tab to stop or restart a service if an issue is suspected.
 4. Pull a new LLM (GGUF) or ComfyUI model from the relevant tab.
-5. In the "MCP" tab, add a new tool server (e.g., a custom web search provider) by clicking "Add" and filling the JSON manifest.
+5. In the "MCP" tab, enable a registered server from the dropdown and click "Add". The change is saved to `ordo.yaml`'s `plugins:` list and applies on the next `ordo render` + `model-gateway` recreate.
 
 ---
 

@@ -91,4 +91,4 @@ Traffic between tailnet devices is WireGuard-encrypted; Caddy adds app-layer TLS
 - [Data](data.md) — data schemas, lifecycle, and persistence rules
 - [Hermes Agent](hermes-agent.md) — agent setup, Discord wiring, upgrade notes
 - [PRD index](product%20requirements%20docs/index.md) — platform design and components
-- [MCP Gateway](../services/model-gateway/README.md) — web search, GitHub, etc.
+- [MCP tools](../services/model-gateway/README.md): LiteLLM's `/mcp` endpoint aggregating the registered MCP servers (web search, n8n, ComfyUI, code and memory tools)

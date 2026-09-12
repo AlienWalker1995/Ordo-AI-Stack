@@ -80,19 +80,28 @@ propagate. Then restart the dependent service from `out/`, e.g.
 
 ## Rotate internal tokens
 
-Internal tokens (`LITELLM_MASTER_KEY`, `OPS_CONTROLLER_TOKEN`,
-`OAUTH2_PROXY_COOKIE_SECRET`) live in `secrets/.env.sops`. Rotate them at
+Internal tokens (`LITELLM_MASTER_KEY`, `LITELLM_DB_PASSWORD`, every
+`LITELLM_KEY_*`, `OPS_CONTROLLER_TOKEN`, `OAUTH2_PROXY_COOKIE_SECRET`) live in
+`secrets/.env.sops`. `LITELLM_SALT_KEY` is deliberately excluded: rotating it
+makes every credential LiteLLM stored in Postgres unreadable. Rotate the rest at
 once:
 ```
 scripts/secrets/rotate-internal.sh          # re-encrypts secrets/.env.sops
 # copy the rotated values into out/secrets.env
 cd out
 docker compose -p ordo restart model-gateway dashboard ops-controller \
-    agent hermes-dashboard mcp-gateway oauth2-proxy
+    agent hermes-dashboard model-gateway-keys oauth2-proxy
 cd ../..
 git add secrets/.env.sops && git commit -m "chore(secrets): rotate internal tokens" && git push
 ```
 The cookie-secret rotation invalidates every oauth2-proxy session.
+
+`LITELLM_DB_PASSWORD` needs one extra step before the restart above: the new
+password only works once Postgres itself has it, so run
+`ALTER USER litellm PASSWORD '<new value>';` inside the `litellm-db` container
+(`docker compose -p ordo exec litellm-db psql -U litellm -d litellm`) before
+copying the rotated value into `out/secrets.env` and restarting
+`model-gateway`.
 
 ## Rotate high-value tokens (issuer-side)
 

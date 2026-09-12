@@ -1,6 +1,6 @@
 # Plugin manifest (data-only) — n8n workflow automation. Served under /n8n/ behind the edge
 # (Caddy prefix-strip) in V1; here it's a backend service reached at n8n:5678. Routes model traffic
-# through the model-gateway and is driven by the n8n MCP server on the mcp-gateway.
+# through the model-gateway and is driven by the `mcp-n8n` server behind LiteLLM's MCP gateway.
 id: automation
 name: n8n workflow automation
 description: Low-code workflow automation (publish/relay flows, OAuth callbacks, webhooks).

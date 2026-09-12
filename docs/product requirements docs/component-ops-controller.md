@@ -35,7 +35,7 @@ baked into every internal service.
 ## Design Principle
 
 **Recovery, not hot path.** Normal model and tool traffic flows agent clients → model
-gateway and agent clients → MCP gateway directly. Ops controller only arbitrates GPU
+gateway and agent clients → the same gateway's `/mcp` endpoint directly. Ops controller only arbitrates GPU
 capacity (the broker/scheduler) and performs model switches; no user request should
 require ops-controller success to complete a chat or tool call.
 
@@ -71,7 +71,7 @@ V1; the token gates `ops-api`, not `ops-controller`)
 | `/services/{id}/restart` | POST | Bearer | Restart (confirm: true required) |
 | `/services/{id}/logs` | GET | Bearer | Tail logs (tail=100 max 500) |
 | `/images/pull` | POST | Bearer | Pull images for services |
-| `/mcp/containers` | GET | Bearer | List MCP server containers |
+| `/mcp/containers` | GET | Bearer | List MCP server containers by compose label `ordo.mcp=true` (inventory only, not the health source: MCP health comes from LiteLLM `/v1/mcp/server/health`) |
 | `/audit` | GET | Bearer | Audit log (limit=50) |
 
 **Safety:** All mutating endpoints require `{"confirm": true}`. Optional `{"dry_run": true}` returns planned action without executing. Service targets are restricted to an `ALLOWED_SERVICES` allowlist in `services/ops-api/main.py`. Whole-stack `/compose/*` mutations stay disabled by default (`OPS_COMPOSE_MUTATIONS_ENABLED=0`) — V2's `ordo serve` (ops-controller) owns stack lifecycle.

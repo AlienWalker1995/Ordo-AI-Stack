@@ -93,8 +93,8 @@ Every one of these is deliberate, and each has a test in `tests/test_gpu_gate.py
 
 The backstop (acquire late if the upstream is busy while the gate holds nothing) **narrows** the
 bypass window; it cannot close it, because by then the work has started. Only routing every
-caller through the gate closes it. The render pins `COMFYUI_URL` at the gate for mcp-gateway,
-comfyui-mcp, the dashboard and ops-api, and the Caddy edge enters through the gate — those are
+caller through the gate closes it. The render pins `COMFYUI_URL` at the gate for mcp-comfyui,
+the dashboard and ops-api, and the Caddy edge enters through the gate — those are
 the known callers, and `tests/substrate/test_gpu_arbitration.py` asserts they stay pointed at it.
 A caller that reaches the container directly on the project network is still a bypass, and shows
 up as `bypass_detected` in `/_gpu_gate/status`.

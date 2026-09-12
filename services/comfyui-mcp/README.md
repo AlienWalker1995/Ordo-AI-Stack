@@ -16,7 +16,9 @@ docker build -t ordo/comfyui-mcp:latest services/comfyui-mcp
 
 This directory (`Dockerfile`, `managers/`, `tools/`) is the single source of truth for the service.
 
-This image is gateway-spawned (stdio), so it appears in the rendered `mcp-registry.yaml`, not as a
-long-lived compose service. It needs network access to reach `comfyui:8188` (`disableNetwork`
-unset). `COMFY_MCP_DEFAULT_MODEL` + `OPS_CONTROLLER_TOKEN` are substituted from the gateway env
-into its catalog entry at gateway startup.
+This image runs as the long-lived compose service `mcp-comfyui` (rendered into
+`out/model-gateway/mcp_servers.yaml` and `out/mcp/servers.json`), serving streamable HTTP on
+port 9000. Its manifest sets `network: stack` because it must reach `comfyui:8188` and
+`ops-controller` for the GPU lease. `COMFYUI_URL`, `COMFY_MCP_DEFAULT_MODEL` and
+`OPS_CONTROLLER_TOKEN` come from the manifest's `env:` block, compose-interpolated from the
+rendered `.env` and `secrets.env`.
