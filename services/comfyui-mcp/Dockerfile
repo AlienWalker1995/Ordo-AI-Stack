@@ -25,7 +25,7 @@ RUN apt-get update -qq && apt-get install -y -qq git curl && rm -rf /var/lib/apt
   && grep -q '^requests==2.34.2$' requirements.txt \
   && grep -q '^Pillow==12.3.0$' requirements.txt \
   && ! grep -q '^pytest' requirements.txt \
-  && ! grep -qE '^[^#]*>=' requirements.txt \
+  && ! (grep -vE '^[[:space:]]*(#|$)' requirements.txt | grep -qvE '^[A-Za-z0-9._-]+==[A-Za-z0-9._]+$') \
   && pip install --no-cache-dir -r requirements.txt \
   && sed -i 's/port=9000,/port=9000, host="0.0.0.0",/' server.py \
   && grep -q 'host="0.0.0.0"' server.py \

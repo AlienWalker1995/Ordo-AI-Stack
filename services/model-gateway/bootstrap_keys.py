@@ -35,7 +35,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol
 
 # LiteLLM's sentinel: a key whose mcp_servers is exactly this list can reach NO MCP server, even
@@ -87,7 +87,7 @@ class HttpKeyApi:
         status, data = self._request("GET", "/key/info?key=" + urllib.parse.quote(key, safe=""))
         if status == 200:
             return dict(data.get("info") or {})
-        if status in (400, 404):
+        if status == 404:   # the only "absent" signal; a 400 is a contract change and must be loud
             return None
         raise RuntimeError(f"/key/info returned HTTP {status}: {data}")
 
@@ -187,8 +187,21 @@ def _covered_by_alias_rows(info: dict[str, Any], rows: list[dict[str, Any]]) -> 
     return bool(key_name) and any(r.get("key_name") == key_name for r in rows)
 
 
-def reconcile(spec: list[dict[str, Any]], env: Mapping[str, str], api: KeyApi) -> list[str]:
+def reconcile(
+    spec: list[dict[str, Any]],
+    env: Mapping[str, str],
+    api: KeyApi,
+    on_action: Callable[[str], None] | None = None,
+) -> list[str]:
+    """Drive every consumer to its desired key. `on_action` (when given) is called with each action
+    the moment it is complete, so a failure later in the run still leaves a trail of what changed."""
     actions: list[str] = []
+
+    def record(action: str) -> None:
+        actions.append(action)
+        if on_action is not None:
+            on_action(action)
+
     id_to_name = api.mcp_server_names()   # once per run: the map is stack-wide, not per key
     for entry in spec:
         desired = desired_payload(entry, env)
@@ -201,7 +214,13 @@ def reconcile(spec: list[dict[str, Any]], env: Mapping[str, str], api: KeyApi) -
                 f"'{by_value.get('key_alias')}': two consumers share one secret. Give '{alias}' its "
                 "own value in secrets.env (refusing to delete another consumer's key)")
         if by_value is not None and grants_match(by_value, desired, id_to_name):
-            actions.append(f"unchanged {alias}")
+            # The alias is the identity: any OTHER key carrying it (created by hand in the LiteLLM UI
+            # or by a manual /key/generate) is a stale credential and is revoked here.
+            for row in by_alias:
+                if row.get("token") and row.get("key_name") != by_value.get("key_name"):
+                    api.delete(str(row["token"]))
+                    record(f"revoked a stale duplicate of {alias}")
+            record(f"unchanged {alias}")
             continue
         for token in [str(row["token"]) for row in by_alias if row.get("token")]:
             api.delete(token)
@@ -209,11 +228,11 @@ def reconcile(spec: list[dict[str, Any]], env: Mapping[str, str], api: KeyApi) -
             api.delete(desired["key"])
         api.generate(desired)
         if by_value is not None:
-            actions.append(f"regenerated {alias}")     # same value, grants had drifted
+            record(f"regenerated {alias}")     # same value, grants had drifted
         elif by_alias:
-            actions.append(f"rotated {alias}")         # new value: the old key is now revoked
+            record(f"rotated {alias}")         # new value: the old key is now revoked
         else:
-            actions.append(f"generated {alias}")
+            record(f"generated {alias}")
     return actions
 
 
@@ -231,12 +250,11 @@ def main() -> int:
         print(f"bootstrap_keys: cannot read {spec_path}: {e} (re-run `ordo render`)", file=sys.stderr)
         return 1
     try:
-        actions = reconcile(spec, os.environ, HttpKeyApi(base_url, master))
+        reconcile(spec, os.environ, HttpKeyApi(base_url, master),
+                  on_action=lambda action: print(f"bootstrap_keys: {action}", flush=True))
     except Exception as e:  # noqa: BLE001 - any failure is a non-zero exit for the depends_on gate
         print(f"bootstrap_keys: FAILED: {e}", file=sys.stderr)
         return 1
-    for action in actions:
-        print(f"bootstrap_keys: {action}")
     return 0
 
 

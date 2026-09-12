@@ -40,9 +40,10 @@ def main(argv: list[str]) -> int:
         return 2
     try:
         merged = merge(config_path.read_text(encoding="utf-8"), fragment_path.read_text(encoding="utf-8"))
-    except ValueError as e:
-        # A malformed fragment is the same class of failure as a missing one: the gateway would
-        # start with no tools. Exit 2 as the docstring promises, never write a half-merged config.
+    except (ValueError, yaml.YAMLError) as e:
+        # A malformed fragment (bad shape OR unparseable YAML) is the same class of failure as a
+        # missing one: the gateway would start with no tools. Exit 2 as the docstring promises,
+        # never write a half-merged config.
         sys.stderr.write(f"merge_mcp_config: invalid fragment at {fragment_path}: {e} "
                          "(re-run `ordo render`)\n")
         return 2

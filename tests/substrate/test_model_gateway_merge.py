@@ -74,3 +74,13 @@ def test_cli_invalid_fragment_exits_2_and_leaves_the_config_untouched(tmp_path):
     frag.write_text("servers: []\n")          # no `mcp_servers` key
     assert main([str(cfg), str(frag)]) == 2
     assert cfg.read_text() == CONFIG
+
+
+def test_cli_unparseable_yaml_fragment_exits_2_and_leaves_the_config_untouched(tmp_path):
+    """yaml.YAMLError is not a ValueError; it must map to the same exit 2, not a traceback."""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(CONFIG)
+    frag = tmp_path / "mcp_servers.yaml"
+    frag.write_text("mcp_servers: {unclosed: [\n")
+    assert main([str(cfg), str(frag)]) == 2
+    assert cfg.read_text() == CONFIG

@@ -209,3 +209,60 @@ def test_mcp_server_names_is_fetched_once_per_reconcile():
     api = FakeApi()
     reconcile(SPEC, ENV, api)
     assert _kinds(api).count("mcp_server_names") == 1
+
+
+def test_unchanged_branch_revokes_a_stale_duplicate_of_the_alias():
+    """A second key carrying our alias (made by hand in the LiteLLM UI) is a stale credential:
+    the alias is the identity, so the unchanged branch revokes it and keeps our key."""
+    api = FakeApi()
+    reconcile(SPEC, ENV, api)
+    ours = api.rows[ENV["LITELLM_KEY_HERMES"]]
+    api.rows["sk-byhand0000000000000000000000000000000"] = dict(
+        ours, token="tok-stale", key_name="sk-...hand")
+    api.calls.clear()
+
+    actions = reconcile(SPEC, ENV, api)
+
+    assert "revoked a stale duplicate of hermes" in actions and "unchanged hermes" in actions
+    assert ("delete", "tok-stale") in api.calls
+    assert ENV["LITELLM_KEY_HERMES"] in api.rows, "our own key must survive"
+    assert "sk-byhand0000000000000000000000000000000" not in api.rows
+    assert "generate" not in _kinds(api)
+
+
+def test_value_row_missing_from_the_alias_listing_is_deleted_by_value():
+    """The /key/info row can exist while /key/list does not return it (listing lag or a page
+    boundary): the delete-by-value branch must then revoke it before generate, or generate
+    would fail on the alias."""
+    class LaggingList(FakeApi):
+        def keys_by_alias(self, alias):
+            self.calls.append(("list", alias))
+            return []
+
+    api = LaggingList()
+    reconcile(SPEC, ENV, api)
+    drifted = [dict(SPEC[0], models=["local-chat"]), *SPEC[1:]]
+    api.calls.clear()
+
+    actions = reconcile(drifted, ENV, api)
+
+    assert actions[0] == "regenerated hermes"
+    assert ("delete", ENV["LITELLM_KEY_HERMES"]) in api.calls
+    assert api.rows[ENV["LITELLM_KEY_HERMES"]]["models"] == ["local-chat"]
+
+
+def test_on_action_reports_each_action_as_it_completes():
+    api = FakeApi()
+    seen = []
+    reconcile(SPEC, ENV, api, on_action=seen.append)
+    assert seen == [f"generated {e['alias']}" for e in SPEC]
+
+
+def test_key_info_treats_only_404_as_absent(monkeypatch):
+    from bootstrap_keys import HttpKeyApi
+    api = HttpKeyApi("http://gateway", "sk-master")
+    monkeypatch.setattr(api, "_request", lambda *a, **k: (404, {"error": "not found"}))
+    assert api.key_info("sk-x") is None
+    monkeypatch.setattr(api, "_request", lambda *a, **k: (400, {"error": "bad request"}))
+    with pytest.raises(RuntimeError):
+        api.key_info("sk-x")
