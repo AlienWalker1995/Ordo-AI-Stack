@@ -31,7 +31,9 @@ scrape_configs:
           service: gpu
 
   # LiteLLM (model-gateway): request/latency/fallback + litellm_mcp_tool_calls_total per server/tool.
-  # /metrics runs unauthenticated on the internal network (require_auth_for_metrics_endpoint: false).
+  # /metrics runs unauthenticated (require_auth_for_metrics_endpoint: false). It stays internal
+  # ONLY because the edge's SSO-bypassing /llm/* route answers 404 for /metrics and /metrics/*
+  # (auth/caddy/Caddyfile); the labels carry key aliases, user emails and client IPs.
   - job_name: model-gateway
     metrics_path: /metrics
     static_configs:

@@ -156,6 +156,9 @@ litellm_settings:
   drop_params: true
   json_logs: true
   # throughput_callback posts tok/s + TTFT to the dashboard; prometheus serves /metrics for the
-  # monitoring plugin (internal network only, so the metrics endpoint runs unauthenticated).
+  # monitoring plugin. The endpoint runs unauthenticated (require_auth_for_metrics_endpoint
+  # defaults to false) and is internal-network-only ONLY because the edge's SSO-bypassing
+  # /llm/* route answers 404 for /metrics and /metrics/* (auth/caddy/Caddyfile). Its labels
+  # carry key aliases, user emails and client IPs: keep that 404 or this endpoint is public.
   callbacks: ["throughput_callback.throughput_recorder_instance", "prometheus"]
   require_auth_for_metrics_endpoint: false

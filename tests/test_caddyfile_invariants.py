@@ -275,3 +275,15 @@ def test_mcp_route_proxies_litellm_and_has_no_static_token(caddyfile_text: str) 
     assert "mcp-gateway:8811" not in caddyfile_text
     assert "MCP_GATEWAY_TOKEN" not in caddyfile_text
     assert "handle_path /mcp" not in caddyfile_text, "/mcp must NOT be stripped: LiteLLM serves at /mcp"
+
+
+def test_llm_route_blocks_litellm_metrics(caddyfile_text: str) -> None:
+    """/llm/* bypasses SSO for programmatic clients, and LiteLLM's /metrics needs no key
+    (require_auth_for_metrics_endpoint: false, so the in-network Prometheus can scrape it). Its
+    labels carry key aliases, user emails and client IPs, so the edge must answer 404 for the
+    stripped /metrics paths BEFORE the reverse_proxy, or the tailnet reads them unauthenticated."""
+    handler = caddyfile_text.split("handle_path /llm/* {", 1)[1].split("}", 1)[0]
+    assert "@metrics path /metrics /metrics/*" in handler
+    assert "respond @metrics 404" in handler
+    assert handler.index("respond @metrics 404") < handler.index("reverse_proxy model-gateway:11435"), (
+        "the metrics 404 must come before the proxy, or Caddy forwards the request first")

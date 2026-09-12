@@ -227,6 +227,11 @@
     # interactive Google login. Auth is LiteLLM's own Bearer (a virtual key or
     # LITELLM_MASTER_KEY), which model-gateway enforces.
     handle_path /llm/* {
+        # LiteLLM's Prometheus endpoint runs UNAUTHENTICATED for the in-network scraper
+        # (require_auth_for_metrics_endpoint: false), and its labels carry key aliases, user
+        # emails and client IPs, so this SSO-bypassing route must never expose it (found 2026-09-12).
+        @metrics path /metrics /metrics/*
+        respond @metrics 404
         reverse_proxy model-gateway:11435
     }
 
