@@ -380,7 +380,8 @@ async def _do_set_active_model(req: PullRequest, request: Request):
 
 
 def _run_gguf_pull(model: str):
-    """Download GGUFs via ops-controller gguf-puller (docker compose --profile models)."""
+    """Ask ops-controller to pull GGUFs (POST /models/gguf-pull). The V1 puller was not ported: ops-api
+    answers 501 and points at its in-process /models/download; pull on the host with `ordo fetch`."""
     global _gguf_pull_status
     with _state_lock:
         _gguf_pull_status = {"running": True, "model": model, "output": "", "pct": 0, "done": False, "success": None}
@@ -407,7 +408,7 @@ def _run_gguf_pull(model: str):
     token = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
     if not token:
         with _state_lock:
-            _gguf_pull_status["output"] = "OPS_CONTROLLER_TOKEN is not set; cannot run gguf-puller from the dashboard."
+            _gguf_pull_status["output"] = "OPS_CONTROLLER_TOKEN is not set; cannot request a GGUF pull from the dashboard."
             _gguf_pull_status["success"] = False
             _gguf_pull_status["running"] = False
             _gguf_pull_status["done"] = True
@@ -434,7 +435,7 @@ def _run_gguf_pull(model: str):
                 except (ValueError, UnicodeDecodeError):
                     det = r.text
                 with _state_lock:
-                    _gguf_pull_status["output"] = f"Failed to start gguf-puller: {det}"
+                    _gguf_pull_status["output"] = f"GGUF pull request failed: {det}"
                     _gguf_pull_status["success"] = False
                     _gguf_pull_status["running"] = False
                     _gguf_pull_status["done"] = True
@@ -484,7 +485,8 @@ def _run_gguf_pull(model: str):
 
 @app.post("/api/llm/pull")
 async def llm_pull(req: PullRequest):
-    """Start GGUF download (gguf-puller via ops-controller) in background. Poll /api/llm/pull/status."""
+    """Request a GGUF pull via ops-controller in the background (501 until the puller is ported; see
+    llm_pull_worker). Poll /api/llm/pull/status."""
     global _gguf_pull_status
     with _state_lock:
         if _gguf_pull_status.get("running"):
@@ -882,7 +884,7 @@ class ModelPullRequest(BaseModel):
 
 
 def _normalize_gguf_pull_repos(model: str) -> str | None:
-    """Return comma-separated Hugging Face repo ids for gguf-puller, or '' to use .env GGUF_MODELS.
+    """Return comma-separated Hugging Face repo ids for the ops-controller GGUF pull, or '' to use GGUF_MODELS.
 
     None means the string is not suitable (e.g. a bare tag like ``llama3.2:8b``).
     """
@@ -902,7 +904,7 @@ def _normalize_gguf_pull_repos(model: str) -> str | None:
         if ":" in candidate:
             repo, quant = candidate.rsplit(":", 1)
             if re.fullmatch(r"[\w.-]+/[\w.-]+", repo) and re.fullmatch(r"[\w.-]+", quant):
-                return f"{repo}:{quant}"  # preserve quant filter for gguf-puller
+                return f"{repo}:{quant}"  # preserve quant filter for the GGUF pull
             return None
 
         if re.fullmatch(r"[\w.-]+/[\w.-]+", candidate):
@@ -927,7 +929,7 @@ def _normalize_gguf_pull_repos(model: str) -> str | None:
 
 
 def _hf_url_to_repo(raw: str) -> str:
-    """Convert a HuggingFace GGUF URL to hf.co/owner/repo form for the gguf-puller.
+    """Convert a HuggingFace GGUF URL to hf.co/owner/repo form for the ops-controller GGUF pull.
     Non-HF strings (model names, hf.co/ refs) are returned as-is.
     """
     if "huggingface.co/" in raw:
@@ -943,7 +945,7 @@ def _hf_url_to_repo(raw: str) -> str:
 @app.post("/api/models/download")
 async def models_download(req: ModelDownloadRequest, request: Request):
     """Unified model download.
-    - GGUF / HF repo → background gguf-puller via ops (same as ``/api/llm/pull``); poll ``/api/llm/pull/status``.
+    - GGUF / HF repo → background GGUF pull request via ops (same as ``/api/llm/pull``); poll ``/api/llm/pull/status``.
     - safetensors / ckpt / pt / bin → proxied to ops-controller for file download.
     """
     raw = req.url.strip()

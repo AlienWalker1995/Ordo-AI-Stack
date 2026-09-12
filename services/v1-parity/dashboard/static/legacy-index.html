@@ -1881,7 +1881,7 @@
           <div class="pull-area">
             <div class="pull-row">
               <input type="text" id="llm-model-input" class="llm-model-input" placeholder="HF repo (org/name), .env, or huggingface.co URL" aria-label="Hugging Face repo or URL to pull" autocomplete="off">
-              <button id="llm-starter-pack" class="secondary" title="Runs gguf-puller with GGUF_MODELS from .env">Pull .env Models</button>
+              <button id="llm-starter-pack" class="secondary" title="Asks ops-controller to pull GGUF_MODELS. The V1 puller was not ported (the call answers 501); pull on the host with ordo fetch instead">Pull .env Models</button>
               <button id="llm-pull">Pull</button>
             </div>
             <div class="last-updated" id="llm-last-updated"></div>
@@ -3405,7 +3405,7 @@
       btn.disabled = true;
       pullBtn.disabled = true;
       prog.style.display = 'block';
-      logEl.textContent = 'Starting gguf-puller with GGUF_MODELS from .env...';
+      logEl.textContent = 'Requesting a GGUF_MODELS pull from ops-controller (not ported: expect 501; use ordo fetch on the host)...';
       try {
         await pullModel('.env', btn, prog, logEl, barEl);
         toast('GGUF pull from .env finished', 'success');
