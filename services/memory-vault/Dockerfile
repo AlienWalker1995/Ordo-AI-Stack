@@ -44,4 +44,5 @@ USER node
 
 # The vault is bind-mounted RW at /vault by compose (services/memory-vault/plugin.yaml).
 EXPOSE 9000
-CMD ["mcp-proxy", "--host", "0.0.0.0", "--port", "9000", "--stateless", "--", "mcpvault", "/vault"]
+# --pass-environment: mcp-proxy 0.12.0 otherwise starts the child with an EMPTY env (only HOME/PATH), so image/compose env would never reach it.
+CMD ["mcp-proxy", "--host", "0.0.0.0", "--port", "9000", "--stateless", "--pass-environment", "--", "mcpvault", "/vault"]

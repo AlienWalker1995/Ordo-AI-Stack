@@ -56,4 +56,5 @@ RUN apt-get update \
  && /opt/mcp-proxy/bin/pip install --no-cache-dir "mcp-proxy==${MCP_PROXY_VERSION}" "mcp==1.30.0" \
  && ln -s /opt/mcp-proxy/bin/mcp-proxy /usr/local/bin/mcp-proxy
 EXPOSE 9000
-CMD ["mcp-proxy", "--host", "0.0.0.0", "--port", "9000", "--stateless", "--", "codebase-memory-mcp"]
+# --pass-environment: mcp-proxy 0.12.0 otherwise starts the child with an EMPTY env (only HOME/PATH), so CBM_*/vault settings would never reach it.
+CMD ["mcp-proxy", "--host", "0.0.0.0", "--port", "9000", "--stateless", "--pass-environment", "--", "codebase-memory-mcp"]
