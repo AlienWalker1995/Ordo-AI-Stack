@@ -161,6 +161,16 @@ class McpSpec:
         return bool(self.url)
 
     @property
+    def litellm_name(self) -> str:
+        """The name LiteLLM knows this server by: `server_id` with hyphens turned into underscores.
+
+        LiteLLM rejects any MCP server name containing MCP_TOOL_PREFIX_SEPARATOR (default `-`,
+        validate_mcp_server_name), because it namespaces tools to clients as `<litellm_name>-<tool>`.
+        The hyphenated `server_id` stays the stack-side identity (compose service `mcp-<server_id>`,
+        compose labels, the dashboard's plugin map); this derived name is LiteLLM's only."""
+        return self.server_id.replace("-", "_")
+
+    @property
     def service_name(self) -> str:
         """Compose service name (`mcp-<server_id>`); empty for a hosted server."""
         return "" if self.hosted else f"mcp-{self.server_id}"

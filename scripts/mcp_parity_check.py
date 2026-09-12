@@ -3,10 +3,14 @@
 
 Usage (from the worktree root, with the gateway reachable):
     python scripts/mcp_parity_check.py --url http://localhost:11435/mcp --key "$LITELLM_MASTER_KEY" \
-        --baseline tests/fixtures/mcp_tool_baseline_2026-09-11.json --servers codebase-memory,comfyui,... \
+        --baseline tests/fixtures/mcp_tool_baseline_2026-09-11.json --servers codebase_memory,comfyui,... \
         --require get_system_stats,get_queue,...
 
-LiteLLM namespaces tools as `<server_id>-<tool>`; the baseline (Docker gateway) had bare tool
+`--servers` is the comma-separated LiteLLM server names (hyphens become underscores: the hyphenated
+server_id `codebase-memory` reaches LiteLLM as `codebase_memory`), because those names are what
+prefix the tools.
+
+LiteLLM namespaces tools as `<server_name>-<tool>`; the baseline (Docker gateway) had bare tool
 names. `compare` strips the prefix and asserts the current set is a SUPERSET of the baseline
 plus every `required_extra` tool (the tools of the servers that were down when the baseline
 was captured). Exit 0 when ok, 1 otherwise.
@@ -64,7 +68,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--url", required=True)
     ap.add_argument("--key", required=True)
     ap.add_argument("--baseline", required=True)
-    ap.add_argument("--servers", required=True, help="comma-separated server ids")
+    ap.add_argument("--servers", required=True,
+                    help="comma-separated LiteLLM server names (hyphens become underscores)")
     ap.add_argument("--require", default="", help="comma-separated bare tool names that must also be present")
     args = ap.parse_args(argv)
     baseline = json.load(open(args.baseline, encoding="utf-8"))

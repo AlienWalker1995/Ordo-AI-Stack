@@ -77,20 +77,51 @@ def test_write_emits_litellm_fragment_and_servers_json(tmp_path):
     rc.write(tmp_path)
     frag = yaml.safe_load((tmp_path / "model-gateway" / "mcp_servers.yaml").read_text())
     servers = frag["mcp_servers"]
-    assert {"qdrant-rag", "searxng"} <= set(servers)
-    q = servers["qdrant-rag"]
-    assert q == {"server_id": "qdrant-rag", "url": "http://mcp-qdrant-rag:9000/mcp", "transport": "http",
+    # LiteLLM keys/names are hyphen-free (the hyphen is its tool-prefix separator); the URL keeps
+    # the hyphenated compose service name.
+    assert {"qdrant_rag", "searxng"} <= set(servers)
+    q = servers["qdrant_rag"]
+    assert q == {"server_id": "qdrant_rag", "url": "http://mcp-qdrant-rag:9000/mcp", "transport": "http",
                  "description": q["description"], "timeout": 60, "available_on_public_internet": False,
-                 "mcp_info": {"server_name": "qdrant-rag"}}
+                 "mcp_info": {"server_name": "qdrant_rag"}}
     assert servers["searxng"]["url"] == "http://mcp-searxng:8080/mcp"
     # the dashboard's view: enabled servers + the full server_id -> plugin_id map
     sj = json.loads((tmp_path / "mcp" / "servers.json").read_text())
     ids = {s["id"] for s in sj["servers"]}
-    assert {"qdrant-rag", "searxng"} <= ids
+    assert {"qdrant-rag", "searxng"} <= ids          # servers.json ids stay the hyphenated server_id
+    assert all(s.get("litellm_name") for s in sj["servers"])
+    assert {s["id"]: s["litellm_name"] for s in sj["servers"]}["qdrant-rag"] == "qdrant_rag"
     assert sj["plugin_map"]["comfyui"] == "comfyui-mcp"
     # the Docker-gateway artefacts are gone
     for gone in ("mcp/servers.txt", "mcp/registry-custom.yaml", "mcp/server-plugin-map.json", "mcp-registry.yaml"):
         assert not (tmp_path / gone).exists(), gone
+
+
+def test_litellm_names_never_contain_the_tool_separator(tmp_path):
+    """LiteLLM 1.100.1 rejects a server name containing MCP_TOOL_PREFIX_SEPARATOR (`-`), and tools
+    reach clients as `<server_name>-<tool>`. Every rendered name must therefore be hyphen-free."""
+    rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
+    rc.write(tmp_path)
+    frag = yaml.safe_load((tmp_path / "model-gateway" / "mcp_servers.yaml").read_text())["mcp_servers"]
+    assert frag, "the render emitted no MCP servers"
+    for key, entry in frag.items():
+        assert "-" not in key, key
+        assert "-" not in entry["server_id"], entry["server_id"]
+        assert "-" not in entry["mcp_info"]["server_name"], entry["mcp_info"]["server_name"]
+
+
+def test_litellm_name_collision_is_flagged():
+    from ordo.plugins import Plugin
+    from ordo.render import _render_mcp
+    digest = "0123456789abcdef" * 4          # varied, so the placeholder-digest note stays silent
+    hyphen = Plugin.from_dict({"id": "a-b", "kind": "mcp",
+                               "mcp": {"image": f"i:1@sha256:{digest}", "transport": "http",
+                                       "port": 9000, "healthcheck": _HC}})
+    under = Plugin.from_dict({"id": "a_b", "kind": "mcp",
+                              "mcp": {"image": f"i:2@sha256:{digest}", "transport": "http",
+                                      "port": 9000, "healthcheck": _HC}})
+    _, notes = _render_mcp([hyphen, under])
+    assert notes == ["mcp 'a_b': litellm name 'a_b' collides with plugin 'a-b'"]
 
 
 def test_fragment_carries_auth_timeout_and_explicit_defaults():

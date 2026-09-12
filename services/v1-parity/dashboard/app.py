@@ -1050,6 +1050,22 @@ def _read_mcp_servers() -> list[str]:
     return [str(s["id"]) for s in _read_servers_json()["servers"] if s.get("id")]
 
 
+def _read_mcp_server_names() -> list[tuple[str, str]]:
+    """(server_id, litellm_name) for each enabled server, in render order.
+
+    LiteLLM cannot hold a `-` in a server name (it prefixes tools as `<name>-<tool>`), so render
+    derives a hyphen-free `litellm_name` and every LiteLLM-side lookup keys on that, while the UI
+    row keeps the hyphenated server id. An older render has no `litellm_name` key: derive the same
+    way render does rather than silently reporting the server unknown."""
+    names = []
+    for s in _read_servers_json()["servers"]:
+        sid = str(s.get("id") or "")
+        if not sid:
+            continue
+        names.append((sid, str(s.get("litellm_name") or sid.replace("-", "_"))))
+    return names
+
+
 def _read_server_plugin_map() -> dict[str, str]:
     """server_id -> plugin_id for EVERY registered kind=mcp plugin (enabled + available-but-disabled)."""
     return _read_servers_json()["plugin_map"]
@@ -1073,7 +1089,8 @@ def _parse_sse_json(text: str) -> list[dict]:
 
 
 async def _litellm_mcp_health() -> dict[str, str]:
-    """{server_id: healthy|unhealthy|unknown} from LiteLLM's GET /v1/mcp/server/health."""
+    """{litellm server name: healthy|unhealthy|unknown} from LiteLLM's GET /v1/mcp/server/health.
+    Keyed by whatever LiteLLM reports, i.e. the hyphen-free names, NOT our hyphenated server ids."""
     try:
         r = await _get_http_client().get(f"{MODEL_GATEWAY_URL}/v1/mcp/server/health",
                                          headers={"Authorization": f"Bearer {MODEL_GATEWAY_API_KEY}"}, timeout=20.0)
@@ -1090,7 +1107,8 @@ async def _litellm_mcp_health() -> dict[str, str]:
 
 
 async def _litellm_mcp_outcomes() -> tuple[bool, dict[str, dict], str | None]:
-    """(gateway_ok, {server_id: {status, tool_count}}, error) via tools/list on /mcp. LiteLLM puts
+    """(gateway_ok, {litellm server name: {status, tool_count}}, error) via tools/list on /mcp. The
+    keys are LiteLLM's own (hyphen-free) server names. LiteLLM puts
     per-server outcomes in result._meta['litellm.ai/server_outcomes']; a down upstream is
     `unreachable` there while the endpoint itself stays 200 (alert on outcomes, not status codes)."""
     body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
@@ -1269,13 +1287,14 @@ async def mcp_servers():
 async def mcp_health():
     """Gateway + per-server health from LiteLLM. A server is ok ONLY when its health probe is
     `healthy` AND tools/list reports it `ok` with tools; nothing falls back to gateway-level status."""
-    enabled = _read_mcp_servers()
+    enabled = _read_mcp_server_names()
     health, (gateway_ok, outcomes, gateway_error) = await asyncio.gather(_litellm_mcp_health(),
                                                                         _litellm_mcp_outcomes())
     servers = []
-    for sid in enabled:
-        status = health.get(sid, "unknown")
-        outcome = outcomes.get(sid, {})
+    for sid, litellm_name in enabled:
+        # LiteLLM reports under its hyphen-free name; the row we return keeps the hyphenated id
+        status = health.get(litellm_name, "unknown")
+        outcome = outcomes.get(litellm_name, {})
         tool_count = int(outcome.get("tool_count") or 0)
         ok = gateway_ok and status == "healthy" and outcome.get("status") == "ok" and tool_count > 0
         if ok:

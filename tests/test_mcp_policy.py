@@ -16,10 +16,16 @@ client = TestClient(app)
 
 SERVERS_JSON = {
     "servers": [
-        {"id": "searxng", "plugin_id": "searxng", "service": "mcp-searxng", "url": "http://mcp-searxng:8080/mcp",
+        {"id": "searxng", "litellm_name": "searxng", "plugin_id": "searxng", "service": "mcp-searxng",
+         "url": "http://mcp-searxng:8080/mcp",
          "network": "stack", "tools": ["searxng_web_search"], "hosted": False, "name": "SearXNG"},
-        {"id": "comfyui", "plugin_id": "comfyui-mcp", "service": "mcp-comfyui", "url": "http://mcp-comfyui:9000/mcp",
+        {"id": "comfyui", "litellm_name": "comfyui", "plugin_id": "comfyui-mcp", "service": "mcp-comfyui",
+         "url": "http://mcp-comfyui:9000/mcp",
          "network": "stack", "tools": ["get_queue"], "hosted": False, "name": "ComfyUI"},
+        # a hyphenated server id: LiteLLM knows it by its underscore name, the API row keeps the id
+        {"id": "memory-vault", "litellm_name": "memory_vault", "plugin_id": "memory-vault",
+         "service": "mcp-memory-vault", "url": "http://mcp-memory-vault:9000/mcp",
+         "network": "internal", "tools": ["read_note"], "hosted": False, "name": "Memory Vault"},
     ],
     "plugin_map": {"searxng": "searxng", "comfyui": "comfyui-mcp", "n8n": "n8n"},
 }
@@ -36,7 +42,7 @@ def test_mcp_servers_lists_enabled_and_configured_from_servers_json():
         r = client.get("/api/mcp/servers")
     assert r.status_code == 200
     d = r.json()
-    assert d["enabled"] == ["searxng", "comfyui"]
+    assert d["enabled"] == ["searxng", "comfyui", "memory-vault"]
     assert d["configured"] == ["comfyui", "n8n", "searxng"]      # every registered kind=mcp plugin's server id
     assert d["catalog"] == []                                    # the Docker online catalog is gone
     assert d["dynamic"] is True and d["ok"] is True
@@ -46,9 +52,11 @@ def test_mcp_servers_lists_enabled_and_configured_from_servers_json():
 def test_mcp_health_marks_a_server_ok_only_when_healthy_and_serving_tools():
     with patch("dashboard.app._read_servers_json", return_value=SERVERS_JSON), \
          patch("dashboard.app._litellm_mcp_health",
-               new=AsyncMock(return_value={"searxng": "healthy", "comfyui": "unhealthy"})), \
+               new=AsyncMock(return_value={"searxng": "healthy", "comfyui": "unhealthy",
+                                           "memory_vault": "healthy"})), \
          patch("dashboard.app._litellm_mcp_outcomes", new=AsyncMock(return_value=(True, {
-             "searxng": {"status": "ok", "tool_count": 4}, "comfyui": {"status": "unreachable"}}, None))):
+             "searxng": {"status": "ok", "tool_count": 4}, "comfyui": {"status": "unreachable"},
+             "memory_vault": {"status": "ok", "tool_count": 7}}, None))):
         r = client.get("/api/mcp/health")
     d = r.json()
     assert d["ok"] is True and d["gateway"] == "reachable"
@@ -56,6 +64,9 @@ def test_mcp_health_marks_a_server_ok_only_when_healthy_and_serving_tools():
     assert by_id["searxng"] == {"id": "searxng", "ok": True, "status": "healthy", "error": None, "tool_count": 4}
     assert by_id["comfyui"]["ok"] is False and by_id["comfyui"]["status"] == "unhealthy"
     assert "unreachable" in by_id["comfyui"]["error"]
+    # LiteLLM reports the hyphen-free name; the response row keeps the hyphenated server id
+    assert by_id["memory-vault"] == {"id": "memory-vault", "ok": True, "status": "healthy", "error": None,
+                                     "tool_count": 7}
 
 
 def test_mcp_health_gateway_down_marks_everything_down():
@@ -75,7 +86,7 @@ def test_mcp_add_persists_to_ordo_yaml_and_reports_render_needed():
     d = r.json()
     p.assert_called_once_with("n8n", "add")
     assert d["status"] == "added" and d["applied"] is False and "ordo render" in d["next"]
-    assert d["servers"] == ["searxng", "comfyui", "n8n"]
+    assert d["servers"] == ["searxng", "comfyui", "memory-vault", "n8n"]
 
 
 def test_mcp_add_rejects_a_server_that_is_not_a_registered_plugin():
@@ -89,4 +100,4 @@ def test_mcp_remove_persists_and_reports_render_needed():
          patch("dashboard.app._persist_mcp_toggle",
                return_value={"persistent": True, "plugin": "searxng", "note": None}):
         d = client.post("/api/mcp/remove", json={"server": "searxng"}).json()
-    assert d["status"] == "removed" and d["applied"] is False and d["servers"] == ["comfyui"]
+    assert d["status"] == "removed" and d["applied"] is False and d["servers"] == ["comfyui", "memory-vault"]
