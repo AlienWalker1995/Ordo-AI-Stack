@@ -29,6 +29,10 @@ DEFAULT_PLUGINS_DIR = Path(__file__).resolve().parent.parent / "services"
 DEFAULT_AGENTS_DIR = Path(__file__).resolve().parent.parent / "services"
 DEFAULT_DASHBOARDS_DIR = Path(__file__).resolve().parent.parent / "services"
 
+# The LiteLLM proxy config the model-gateway image bakes in. Its `model_list` is the ONE place
+# model names exist, so a `litellm_key.models` grant is validated against it rather than a copy.
+LITELLM_CONFIG_TEMPLATE = Path(__file__).resolve().parent.parent / "services" / "model-gateway" / "litellm_config.yaml"
+
 # Gate-enforced service -> the .env key its in-stack consumers already use for its base URL.
 # When the service is gated, render points that key at the gate so mcp-comfyui, the
 # dashboard and ops-api all submit through arbitration instead of around it. Guarded by
@@ -73,8 +77,23 @@ def key_env_name(consumer_id: str) -> str:
     return "LITELLM_KEY_" + re.sub(r"[^A-Za-z0-9]", "_", consumer_id).upper()
 
 
+def litellm_model_names(config_path: Path | None = None) -> list[str]:
+    """The model names `services/model-gateway/litellm_config.yaml` puts in LiteLLM's `model_list`.
+
+    Only the STABLE names are grantable. `__GPU_MODEL_NAME__` / `__CPU_MODEL_NAME__` are entrypoint
+    placeholders substituted from the deployed GGUF filenames at container start, so their value is
+    a deployment fact the render cannot know; a key may not be pinned to one (it would break on the
+    next model swap). Parsed from the config rather than copied, so the list cannot drift from it.
+    """
+    path = config_path or LITELLM_CONFIG_TEMPLATE
+    config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    names = [str(m.get("model_name", "")) for m in (config.get("model_list") or [])]
+    return sorted(n for n in names if n and not n.startswith("__"))
+
+
 def render_litellm_keys(consumers: list[tuple[str, dict[str, Any]]],
-                        server_names: list[str]) -> list[dict[str, Any]]:
+                        server_names: list[str],
+                        model_names: list[str] | None = None) -> list[dict[str, Any]]:
     """Turn each consumer's `litellm_key:` declaration into a key grant for bootstrap_keys.py.
 
     The grant names servers by their LITELLM name (McpSpec.litellm_name: hyphen-free), because
@@ -83,13 +102,26 @@ def render_litellm_keys(consumers: list[tuple[str, dict[str, Any]]],
     entry would therefore revoke that server from the key in silence.
 
     `mcp_servers: all` expands to every ENABLED server name (sorted); a list may name only enabled
-    servers, else the render fails (a typo must not silently grant nothing)."""
+    servers, else the render fails (a typo must not silently grant nothing).
+
+    `models:` is validated the same way and is fail-closed: LiteLLM reads an EMPTY `models` list as
+    access to every model, so an absent or empty list is a privilege escalation, not an empty
+    grant, and every name must be one the gateway actually serves (litellm_model_names)."""
     keys: list[dict[str, Any]] = []
     known = sorted(server_names)
+    known_models = sorted(model_names if model_names is not None else litellm_model_names())
     for consumer_id, spec in consumers:
         if not spec:
             continue
         models = [str(m) for m in (spec.get("models") or [])]
+        if not models:
+            raise ValueError(f"litellm_key for '{consumer_id}' declares no models; LiteLLM reads an "
+                             f"empty list as access to EVERY model, so name them explicitly "
+                             f"(available: {known_models})")
+        unknown_models = [m for m in models if m not in known_models]
+        if unknown_models:
+            raise ValueError(f"litellm_key for '{consumer_id}' grants unknown models: {unknown_models} "
+                             f"(the gateway serves {known_models})")
         raw = spec.get("mcp_servers", [])
         if raw == "all":
             granted = list(known)
@@ -527,7 +559,7 @@ def _render_mcp(mcps: list, project: str = "ordo") -> tuple[list[dict[str, Any]]
     servers: list[dict[str, Any]] = []
     notes: list[str] = []
     seen_ids: dict[str, str] = {}
-    seen_litellm_names: dict[str, str] = {}
+    seen_litellm_names: dict[str, tuple[str, str]] = {}   # litellm_name -> (plugin id, server_id)
     for p in mcps:
         spec = p.mcp
         if spec is None:
@@ -543,12 +575,19 @@ def _render_mcp(mcps: list, project: str = "ordo") -> tuple[list[dict[str, Any]]
         if spec.server_id in seen_ids:
             notes.append(f"mcp '{p.id}': server_id '{spec.server_id}' collides with plugin '{seen_ids[spec.server_id]}'")
         seen_ids[spec.server_id] = p.id
-        # Two distinct server_ids can still map to ONE LiteLLM name (`a-b` and `a_b`), which would
-        # silently drop a server from the fragment map. Flag it rather than render the collision.
-        if spec.litellm_name in seen_litellm_names:
-            notes.append(f"mcp '{p.id}': litellm name '{spec.litellm_name}' collides with plugin "
-                         f"'{seen_litellm_names[spec.litellm_name]}'")
-        seen_litellm_names[spec.litellm_name] = p.id
+        # Two distinct server_ids can still map to ONE LiteLLM name (`a-b` and `a_b`). The fragment
+        # is a name-keyed map, so the second one would overwrite the first and a server would vanish
+        # from the gateway with nothing to show for it. Refuse the render (the component doc
+        # promises rejection), rather than emit a config that quietly serves fewer servers.
+        # Two plugins sharing ONE server_id is the separate seen_ids case noted just above.
+        other_plugin, other_id = seen_litellm_names.get(spec.litellm_name, ("", ""))
+        if other_id and other_id != spec.server_id:
+            raise ValueError(
+                f"mcp server_id '{spec.server_id}' (plugin '{p.id}') and server_id '{other_id}' "
+                f"(plugin '{other_plugin}') both render to the LiteLLM name '{spec.litellm_name}'; "
+                "the fragment is keyed by that name, so one of the two servers would be dropped "
+                "silently. Give one of them a distinct mcp.server_id.")
+        seen_litellm_names[spec.litellm_name] = (p.id, spec.server_id)
         servers.append({
             "id": spec.server_id, "litellm_name": spec.litellm_name,
             "plugin_id": p.id, "name": p.name, "description": p.description,

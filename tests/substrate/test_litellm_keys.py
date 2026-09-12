@@ -8,7 +8,7 @@ import pytest
 from ordo.catalog import Catalog
 from ordo.config import Source
 from ordo.plugins import Plugin, PluginRegistry
-from ordo.render import render, render_litellm_keys
+from ordo.render import litellm_model_names, render, render_litellm_keys
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
@@ -34,7 +34,34 @@ def test_mcp_servers_all_expands_to_the_enabled_server_ids():
 
 def test_granting_an_unknown_server_fails_the_render():
     with pytest.raises(ValueError, match="nope"):
-        render_litellm_keys([("x", {"models": [], "mcp_servers": ["nope"]})], ["searxng"])
+        render_litellm_keys([("x", {"models": ["local-chat"], "mcp_servers": ["nope"]})], ["searxng"])
+
+
+# ── `models:` is fail-closed. LiteLLM reads an EMPTY models list as access to EVERY model, so an
+#    omitted or empty list is a privilege escalation and a typo must not become a wildcard. ──
+def test_model_names_come_from_the_litellm_config_model_list():
+    names = litellm_model_names()
+    assert "local-chat" in names and "local-embed" in names
+    # __GPU_MODEL_NAME__ / __CPU_MODEL_NAME__ are entrypoint placeholders resolved from the deployed
+    # GGUF filenames, so they are not render-known and must not be grantable.
+    assert not any(n.startswith("__") for n in names)
+
+
+def test_an_empty_or_absent_models_list_fails_the_render():
+    for spec in ({"models": [], "mcp_servers": []}, {"mcp_servers": []}):
+        with pytest.raises(ValueError, match="no models"):
+            render_litellm_keys([("x", spec)], ["searxng"])
+
+
+def test_granting_an_unknown_model_fails_the_render():
+    with pytest.raises(ValueError, match="gpt-4o"):
+        render_litellm_keys([("x", {"models": ["gpt-4o"], "mcp_servers": []})], ["searxng"])
+
+
+def test_the_real_model_names_are_accepted():
+    keys = render_litellm_keys([("x", {"models": ["local-chat", "local-embed"], "mcp_servers": []})],
+                               ["searxng"])
+    assert keys[0]["models"] == ["local-chat", "local-embed"]
 
 
 def test_full_render_declares_hermes_open_webui_automation_keys(tmp_path):

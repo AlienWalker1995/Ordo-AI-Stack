@@ -111,7 +111,10 @@ def test_litellm_names_never_contain_the_tool_separator(tmp_path):
         assert "-" not in entry["mcp_info"]["server_name"], entry["mcp_info"]["server_name"]
 
 
-def test_litellm_name_collision_is_flagged():
+def test_litellm_name_collision_is_a_hard_error():
+    """`a-b` and `a_b` are distinct server_ids that render to ONE LiteLLM name. The fragment is a
+    name-keyed map, so the second would overwrite the first and that server would vanish from the
+    gateway: refuse the render (as the component doc promises) instead of noting it."""
     from ordo.plugins import Plugin
     from ordo.render import _render_mcp
     digest = "0123456789abcdef" * 4          # varied, so the placeholder-digest note stays silent
@@ -121,8 +124,8 @@ def test_litellm_name_collision_is_flagged():
     under = Plugin.from_dict({"id": "a_b", "kind": "mcp",
                               "mcp": {"image": f"i:2@sha256:{digest}", "transport": "http",
                                       "port": 9000, "healthcheck": _HC}})
-    _, notes = _render_mcp([hyphen, under])
-    assert notes == ["mcp 'a_b': litellm name 'a_b' collides with plugin 'a-b'"]
+    with pytest.raises(ValueError, match="a_b"):
+        _render_mcp([hyphen, under])
 
 
 def test_fragment_carries_auth_timeout_and_explicit_defaults():
