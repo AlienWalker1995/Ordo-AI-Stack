@@ -1088,19 +1088,51 @@ def _parse_sse_json(text: str) -> list[dict]:
     return msgs
 
 
+def _mcp_rows(payload: object) -> list[dict]:
+    """LiteLLM returns a bare list here, but tolerate the {"servers"|"data": [...]} envelope."""
+    if isinstance(payload, dict):
+        payload = payload.get("servers") or payload.get("data") or []
+    if not isinstance(payload, list):
+        return []
+    return [row for row in payload if isinstance(row, dict)]
+
+
+def _join_mcp_health(servers_rows: list[dict], health_rows: list[dict]) -> dict[str, str]:
+    """{litellm server name: healthy|unhealthy|unknown}, joining the two LiteLLM MCP endpoints.
+
+    GET /v1/mcp/server/health (LiteLLM 1.100.1) reports only a HASHED `server_id` and a status; the
+    human-readable name lives on GET /v1/mcp/server as `server_name` (or `alias` when one is set).
+    So the health rows are joined onto the server rows by `server_id`. A health row whose id has no
+    server row is dropped: callers look the status up by name, never by hash.
+    """
+    names = {}
+    for row in servers_rows:
+        server_id = row.get("server_id")
+        name = row.get("server_name") or row.get("alias")
+        if server_id and name:
+            names[str(server_id)] = str(name)
+    health = {}
+    for row in health_rows:
+        name = names.get(str(row.get("server_id")))
+        if name:
+            health[name] = str(row.get("status", "unknown"))
+    return health
+
+
 async def _litellm_mcp_health() -> dict[str, str]:
-    """{litellm server name: healthy|unhealthy|unknown} from LiteLLM's GET /v1/mcp/server/health.
-    Keyed by whatever LiteLLM reports, i.e. the hyphen-free names, NOT our hyphenated server ids."""
+    """{litellm server name: healthy|unhealthy|unknown} from LiteLLM's MCP endpoints.
+    Keyed by the hyphen-free LiteLLM names, NOT our hyphenated server ids."""
     try:
-        r = await _get_http_client().get(f"{MODEL_GATEWAY_URL}/v1/mcp/server/health",
-                                         headers={"Authorization": f"Bearer {MODEL_GATEWAY_API_KEY}"}, timeout=20.0)
-        if r.status_code != 200:
-            logger.debug("mcp server health HTTP %s", r.status_code)
+        client = _get_http_client()
+        headers = {"Authorization": f"Bearer {MODEL_GATEWAY_API_KEY}"}
+        servers_r, health_r = await asyncio.gather(
+            client.get(f"{MODEL_GATEWAY_URL}/v1/mcp/server", headers=headers, timeout=20.0),
+            client.get(f"{MODEL_GATEWAY_URL}/v1/mcp/server/health", headers=headers, timeout=20.0))
+        if servers_r.status_code != 200 or health_r.status_code != 200:
+            logger.debug("mcp server health HTTP %s (servers) / %s (health)",
+                         servers_r.status_code, health_r.status_code)
             return {}
-        rows = r.json()
-        if isinstance(rows, dict):
-            rows = rows.get("servers") or rows.get("data") or []
-        return {str(x.get("server_id") or x.get("server_name")): str(x.get("status", "unknown")) for x in rows}
+        return _join_mcp_health(_mcp_rows(servers_r.json()), _mcp_rows(health_r.json()))
     except Exception as e:  # noqa: BLE001 - degrade to unknown, never 500 the tab
         logger.debug("mcp server health failed: %s", e)
         return {}

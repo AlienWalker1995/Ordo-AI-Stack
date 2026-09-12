@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from fastapi.testclient import TestClient  # noqa: E402
 
-from dashboard.app import _parse_sse_json, app  # noqa: E402
+from dashboard.app import _join_mcp_health, _mcp_rows, _parse_sse_json, app  # noqa: E402
 
 client = TestClient(app)
 
@@ -34,6 +34,39 @@ SERVERS_JSON = {
 def test_parse_sse_json_reads_data_frames_and_plain_json():
     assert _parse_sse_json('event: message\ndata: {"a": 1}\n\ndata: {"b": 2}\n') == [{"a": 1}, {"b": 2}]
     assert _parse_sse_json('{"a": 1}') == [{"a": 1}]
+
+
+def test_join_mcp_health_keys_status_by_server_name_not_the_hashed_id():
+    """LiteLLM 1.100.1: /v1/mcp/server/health carries only the hashed server_id, /v1/mcp/server the
+    name. The join is what makes the health map look-uppable by litellm_name."""
+    servers_rows = [
+        {"server_id": "f71782dd2538b57e2044da9f9c7ade76", "server_name": "qdrant_rag", "alias": None},
+        {"server_id": "aa11", "server_name": "memory_vault", "alias": None},
+        {"server_id": "bb22", "server_name": None, "alias": "comfyui"},   # alias wins when unnamed
+        {"server_id": "cc33", "server_name": "n8n", "alias": None},       # no health row -> absent
+    ]
+    health_rows = [
+        {"server_id": "f71782dd2538b57e2044da9f9c7ade76", "status": "healthy"},
+        {"server_id": "aa11", "status": "unhealthy"},
+        {"server_id": "bb22"},                                            # no status -> unknown
+        {"server_id": "dd44", "status": "healthy"},                       # unknown id -> dropped
+    ]
+    assert _join_mcp_health(servers_rows, health_rows) == {
+        "qdrant_rag": "healthy", "memory_vault": "unhealthy", "comfyui": "unknown"}
+
+
+def test_join_mcp_health_is_empty_when_either_side_is_empty():
+    assert _join_mcp_health([], [{"server_id": "aa11", "status": "healthy"}]) == {}
+    assert _join_mcp_health([{"server_id": "aa11", "server_name": "n8n"}], []) == {}
+
+
+def test_mcp_rows_accepts_a_bare_list_or_an_envelope_and_drops_junk():
+    rows = [{"server_id": "aa11"}]
+    assert _mcp_rows(rows) == rows
+    assert _mcp_rows({"servers": rows}) == rows
+    assert _mcp_rows({"data": rows}) == rows
+    assert _mcp_rows({"unexpected": 1}) == [] and _mcp_rows(None) == []
+    assert _mcp_rows(["not-a-dict", {"server_id": "aa11"}]) == rows
 
 
 def test_mcp_servers_lists_enabled_and_configured_from_servers_json():

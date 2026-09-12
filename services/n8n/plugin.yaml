@@ -37,6 +37,14 @@ mcp:
     LOG_LEVEL: error
     N8N_DIAGNOSTICS_ENABLED: "false"
     DISABLE_TELEMETRY: "true"
+    # Without this every n8n_* instance verb fails with "SSRF protection: Private IP addresses not
+    # allowed": n8n:5678 resolves to the docker-network address 172.25.0.6, and
+    # /app/dist/utils/ssrf-protection.js defaults WEBHOOK_SECURITY_MODE to 'strict' (line 166/354).
+    # `moderate` is NOT enough - validateResolvedAddress only exempts loopback under moderate and
+    # still rejects PRIVATE_IP_RANGES (which include 172.16/12); `permissive` is the sole mode that
+    # returns valid for a private address. The cloud-metadata and IPv6-tunnel gates run before the
+    # mode branch, so they stay in force, and this server reaches the internal stack network only.
+    WEBHOOK_SECURITY_MODE: permissive
   healthcheck:
     test: ["CMD", "python3", "-c", "import socket;socket.create_connection(('127.0.0.1',9000),5).close()"]
     interval: 30s
