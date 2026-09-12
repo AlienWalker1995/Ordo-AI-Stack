@@ -6,15 +6,26 @@ FROM python@sha256:3d5ed973e45820f5ba5e46bd065bd88b3a504ff0724d85980dcd05eab361f
 WORKDIR /app
 
 # Clone and install from source (includes workflows, COMFYUI_URL support).
-# Pinned to the FULL upstream commit + an EXACT mcp SDK: the unbounded `mcp>=0.9.0` in upstream's
-# requirements pulled mcp 2.0.0 on 2026-08 (mcp.server.fastmcp removed) and the server crashed at
-# import for four weeks while the Docker gateway reported it healthy.
+# Pinned to the FULL upstream commit + EXACT versions for EVERY requirement: the unbounded
+# `mcp>=0.9.0` in upstream's requirements pulled mcp 2.0.0 on 2026-08 (mcp.server.fastmcp removed)
+# and the server crashed at import for four weeks while the Docker gateway reported it healthy.
+# `requests>=` and `Pillow>=` are the same trap one release away, so they are pinned to the versions
+# this image was validated on (verified by pip freeze in the running container, 2026-09-12), and
+# upstream's dev-only pytest is dropped rather than shipped into a production image. The `>=` guard
+# below fails the build if a future upstream commit adds another floating requirement.
 ARG COMFYUI_MCP_COMMIT=e0101b2312f30501664dabe4a74c1283c4268eb8
 RUN apt-get update -qq && apt-get install -y -qq git curl && rm -rf /var/lib/apt/lists/* \
   && git clone https://github.com/joenorton/comfyui-mcp-server.git . \
   && git checkout "${COMFYUI_MCP_COMMIT}" \
   && sed -i 's/^mcp.*$/mcp==1.30.0/' requirements.txt \
+  && sed -i 's/^requests.*$/requests==2.34.2/' requirements.txt \
+  && sed -i 's/^Pillow.*$/Pillow==12.3.0/' requirements.txt \
+  && sed -i '/^pytest/d' requirements.txt \
   && grep -q '^mcp==1.30.0$' requirements.txt \
+  && grep -q '^requests==2.34.2$' requirements.txt \
+  && grep -q '^Pillow==12.3.0$' requirements.txt \
+  && ! grep -q '^pytest' requirements.txt \
+  && ! grep -qE '^[^#]*>=' requirements.txt \
   && pip install --no-cache-dir -r requirements.txt \
   && sed -i 's/port=9000,/port=9000, host="0.0.0.0",/' server.py \
   && grep -q 'host="0.0.0.0"' server.py \
