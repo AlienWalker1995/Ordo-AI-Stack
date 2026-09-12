@@ -210,6 +210,7 @@ Named volumes (state; back up via a helper container, see [data.md](data.md)):
 | `couchdb-data` | CouchDB (Obsidian LiveSync) |
 | `n8n-data` | n8n workflows and credentials |
 | `open-webui-data` | Open WebUI accounts + uploads |
+| `litellm-db-data` | LiteLLM Postgres (virtual keys, teams, spend; models and MCP servers stay in the rendered config) |
 | `models-gguf` | llama.cpp GGUF weights (what the backends actually read) |
 | `comfyui-models` | ComfyUI checkpoints, LoRAs, VAEs, encoders |
 | `comfyui-app` | ComfyUI application tree + custom nodes (version-pinned — see below) |

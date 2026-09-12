@@ -19,7 +19,7 @@
 | `MODEL_GATEWAY_PORT` | model-gateway | Not wired to anything — `services/model-gateway/entrypoint.sh` hardcodes `--port 11435`; documented here for reference only | `11435` |
 | `WEBUI_AUTH` | open-webui | Enable Open WebUI auth | `False` (target `True` in M6) |
 | `OPENAI_API_BASE` | open-webui, n8n | OpenAI-compat base URL | `http://model-gateway:11435/v1` |
-| `GGUF_MODELS` | gguf-puller | Hugging Face repo(s) of GGUF files to pull | *(empty)* |
+| `GGUF_MODELS` | `ordo fetch` (host CLI); ops-api / comfyui-mcp GGUF pull helpers | Hugging Face repo(s) of GGUF files to pull | *(empty)* |
 | `COMPUTE_MODE` | compose | CPU/nvidia/amd | auto-detected |
 | `QDRANT_PORT` | qdrant | Not wired to anything — consumers hardcode `http://qdrant:6333` (e.g. `services/qdrant-rag/plugin.yaml`); no host publish (`ordo-net` only) | `6333` |
 | `EMBED_MODEL` | rag-ingestion | Embedding model for RAG | `nomic-embed-text` |

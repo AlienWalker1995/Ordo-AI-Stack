@@ -6,8 +6,8 @@ rendered output — edits to *derived* config never survive a re-render, so drif
 impossible.
 
 The stack runs entirely from `C:\dev\ordo-ai-stack` (`main` is the production branch) as compose
-project **`ordo`** (25 services, verified by a fresh `ordo render` with this operator's full plugin
-set — see `out/docker-compose.yml`) — containers `ordo-*`, images `ordo/*`, network `ordo-net`. The
+project **`ordo`** (43 services in the current render, 36 plus the seven `tailnet-names` sidecars,
+verified by a fresh `ordo render` with this operator's full plugin set on 2026-09-12 — see `out/docker-compose.yml`) — containers `ordo-*`, images `ordo/*`, network `ordo-net`. The
 render substrate lives at the repo root (there is no `v2/` directory — there is one Ordo).
 
 ## Install & first run
@@ -187,7 +187,7 @@ current split: today there is only Ordo.
 cutover. **Test suite: 181 passed, 2 skipped** (verified 2026-07-09).
 
 ## Operating this stack (it IS production now)
-The 24 services run under compose project `ordo` from `C:\dev\ordo-ai-stack`, all reached through
+The rendered services (43 as of 2026-09-12) run under compose project `ordo` from `C:\dev\ordo-ai-stack`, all reached through
 the edge — Caddy is still the **only** service that publishes host ports, but since 2026-07-24 it
 listens on **seven** SSO-gated ports on `${CADDY_TAILNET_HOSTNAME}`, one per UI surface, instead of
 mounting every app under a subpath of a single `:443`:
