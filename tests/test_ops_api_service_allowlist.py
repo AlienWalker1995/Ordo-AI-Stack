@@ -53,3 +53,10 @@ def test_mcp_services_are_allowed_when_labelled_in_the_rendered_compose(tmp_path
     assert ops_main._service_allowed("mcp-searxng")
     assert not ops_main._service_allowed("mcp-evil")
     assert not ops_main._service_allowed("mcp-gateway")
+
+
+def test_service_allowed_fails_closed_on_an_invalid_rendered_compose_file(tmp_path, monkeypatch):
+    (tmp_path / "docker-compose.yml").write_text("a: [")
+    monkeypatch.setattr(ops_main, "COMPOSE_PROJECT_DIR", str(tmp_path))
+    assert ops_main._service_allowed("mcp-searxng") is False
+    assert ops_main._service_allowed("llamacpp") is True

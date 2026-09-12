@@ -165,11 +165,11 @@ def _service_allowed(name: str) -> bool:
         return True
     if not name.startswith("mcp-"):
         return False
-    try:
-        import yaml  # local import: keeps module import cheap for the tests that stub compose
+    import yaml  # local import: keeps module import cheap for the tests that stub compose
 
+    try:
         compose = yaml.safe_load(Path(COMPOSE_PROJECT_DIR, "docker-compose.yml").read_text(encoding="utf-8")) or {}
-    except (OSError, ValueError):
+    except (OSError, ValueError, yaml.YAMLError):
         return False
     svc = (compose.get("services") or {}).get(name) or {}
     return str((svc.get("labels") or {}).get("ordo.mcp", "")).lower() == "true"
