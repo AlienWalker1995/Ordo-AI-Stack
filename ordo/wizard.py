@@ -105,7 +105,6 @@ SECRET_GENERATORS: dict[str, Any] = {
     "LITELLM_SALT_KEY": lambda: _sk_key(32),
     "LITELLM_DB_PASSWORD": lambda: _secrets.token_urlsafe(32),
     "OPS_CONTROLLER_TOKEN": lambda: _secrets.token_urlsafe(32),
-    "N8N_MCP_AUTH_TOKEN": lambda: _secrets.token_urlsafe(32),   # LiteLLM -> mcp-n8n bearer
     "OAUTH2_PROXY_COOKIE_SECRET": _cookie_secret,
     "SEARXNG_SECRET": lambda: _secrets.token_hex(32),
     "N8N_API_KEY": lambda: _secrets.token_urlsafe(32),

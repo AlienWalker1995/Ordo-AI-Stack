@@ -94,11 +94,18 @@ def test_write_emits_litellm_fragment_and_servers_json(tmp_path):
 
 
 def test_fragment_carries_auth_timeout_and_explicit_defaults():
-    from ordo.render import render_litellm_mcp_fragment
-    servers, _ = _render_mcp_for(["n8n", "comfyui-mcp"])
+    from ordo.plugins import Plugin
+    from ordo.render import _render_mcp, render_litellm_mcp_fragment
+    # No registered server currently declares upstream auth (the bridged servers listen on the
+    # internal MCP network only), so drive the auth path from a synthetic manifest.
+    authed = Plugin.from_dict({"id": "authed", "kind": "mcp",
+                               "mcp": {"image": "i:1@sha256:" + "a" * 64, "transport": "http",
+                                       "port": 9000, "healthcheck": _HC,
+                                       "auth": {"type": "bearer_token", "secret": "SOME_TOKEN"}}})
+    servers, _ = _render_mcp([p for p in REGISTRY.plugins if p.id == "comfyui-mcp"] + [authed])
     frag = yaml.safe_load(render_litellm_mcp_fragment(servers))["mcp_servers"]
-    assert frag["n8n"]["auth_type"] == "bearer_token"
-    assert frag["n8n"]["auth_value"] == "os.environ/N8N_MCP_AUTH_TOKEN"
+    assert frag["authed"]["auth_type"] == "bearer_token"
+    assert frag["authed"]["auth_value"] == "os.environ/SOME_TOKEN"
     assert frag["comfyui"]["timeout"] == 1800
     for s in frag.values():          # both documented defaults disagree with LiteLLM's code: always explicit
         assert s["transport"] == "http" and s["available_on_public_internet"] is False
@@ -171,15 +178,17 @@ def test_codebase_memory_wiring():
     assert "index_repository" in cb["tools"] and "search_graph" in cb["tools"]
 
 
-def test_n8n_digest_pinned_and_banner_suppressed():
+def test_n8n_bridged_and_banner_suppressed():
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     n8 = next(s for s in rc.mcp_servers if s["id"] == "n8n")
-    # upstream czlonkowski/n8n-mcp, pinned by tag AND digest (never a floating catalog `latest`)
-    assert n8["image"].startswith("ghcr.io/czlonkowski/n8n-mcp:2.84.1@sha256:")
-    # HTTP transport: it listens on 3000 and LiteLLM presents the bearer named in secrets.env
-    assert n8["port"] == 3000 and n8["env"]["MCP_MODE"] == "http"
-    assert n8["auth_type"] == "bearer_token" and n8["auth_secret"] == "N8N_MCP_AUTH_TOKEN"
-    # the banner/log suppression that keeps the FULL tool set (not docs-only ~23)
+    # Project-built stdio bridge (services/n8n/Dockerfile) over the pinned upstream image: the
+    # upstream's own HTTP mode is session-ful and LiteLLM cannot hold a session across operations.
+    assert n8["image"] == "ordo/n8n-mcp:latest"
+    assert n8["port"] == 9000
+    # No upstream bearer: the bridge listens on the internal MCP network only.
+    assert n8["auth_type"] == "" and n8["auth_secret"] == ""
+    # the banner/log suppression: under the stdio bridge a stray stdout byte corrupts JSON-RPC,
+    # and these also keep the FULL tool set (not the docs-only subset)
     assert n8["env"]["LOG_LEVEL"] == "error"
     assert n8["env"]["N8N_DIAGNOSTICS_ENABLED"] == "false"
     assert n8["env"]["DISABLE_TELEMETRY"] == "true"
@@ -296,8 +305,8 @@ def test_mcp_spec_hosted_server_has_no_container():
 def test_mcp_spec_auth_and_timeout():
     spec = McpSpec.from_dict({"image": "i:1@sha256:" + "a" * 64, "transport": "http", "port": 3000,
                               "healthcheck": _HC, "timeout": 1800,
-                              "auth": {"type": "bearer_token", "secret": "N8N_MCP_AUTH_TOKEN"}}, plugin_id="n")
-    assert spec.timeout == 1800 and spec.auth_type == "bearer_token" and spec.auth_secret == "N8N_MCP_AUTH_TOKEN"
+                              "auth": {"type": "bearer_token", "secret": "SOME_TOKEN"}}, plugin_id="n")
+    assert spec.timeout == 1800 and spec.auth_type == "bearer_token" and spec.auth_secret == "SOME_TOKEN"
 
 
 def test_all_registered_mcp_manifests_validate_and_declare_http():

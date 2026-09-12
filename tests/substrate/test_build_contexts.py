@@ -72,9 +72,10 @@ def test_substrate_map_contexts_all_exist():
 
 
 def test_folder_id_differs_from_image_name_resolves_to_folder():
-    """The 5 services where folder-id ≠ image-name (audit §2.1) must resolve to their real folder,
+    """The services where folder-id ≠ image-name (audit §2.1) must resolve to their real folder,
     not the (nonexistent) image-named one — the exact bug the resolver cures."""
     expected = {
+        "ordo/n8n-mcp:latest": "services/n8n",
         "ordo/mcpvault-mcp:latest": "services/memory-vault",
         "ordo/rag-ingestion:latest": "services/rag",
         "ordo/codebase-memory-mcp:latest": "services/codebase-memory",

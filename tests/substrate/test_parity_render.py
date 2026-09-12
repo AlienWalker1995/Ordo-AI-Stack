@@ -95,9 +95,10 @@ def test_core_gateway_and_mcp_services_are_project_or_pinned_images():
     c = _dual().compose_dict()
     assert c["services"]["model-gateway"]["image"] == "ordo/model-gateway:latest"
     assert "mcp-gateway" not in c["services"]
-    for n in ("mcp-orchestration", "mcp-qdrant-rag", "mcp-comfyui", "mcp-codebase-memory", "mcp-memory-vault"):
+    for n in ("mcp-orchestration", "mcp-qdrant-rag", "mcp-comfyui", "mcp-codebase-memory",
+              "mcp-memory-vault", "mcp-n8n"):
         assert c["services"][n]["image"].startswith("ordo/")
-    for n in ("mcp-n8n", "mcp-searxng"):
+    for n in ("mcp-searxng",):
         assert "@sha256:" in c["services"][n]["image"]
 
 

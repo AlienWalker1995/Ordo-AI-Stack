@@ -10,7 +10,7 @@ set -euo pipefail
 #
 # Tokens rotated:
 #   LITELLM_MASTER_KEY, LITELLM_DB_PASSWORD, OPS_CONTROLLER_TOKEN,
-#   N8N_MCP_AUTH_TOKEN, THROUGHPUT_RECORD_TOKEN (if present),
+#   THROUGHPUT_RECORD_TOKEN (if present),
 #   OAUTH2_PROXY_COOKIE_SECRET, every LITELLM_KEY_*.
 #   NEVER LITELLM_SALT_KEY (rotating it makes DB-stored credentials unreadable).
 #
@@ -32,7 +32,6 @@ export SOPS_AGE_KEY_FILE="$KEY_PATH"
 NEW_LITELLM="sk-$(openssl rand -hex 24)"
 NEW_DBPASS=$(openssl rand -hex 24)
 NEW_OPS=$(openssl rand -hex 32)
-NEW_N8N_MCP=$(openssl rand -hex 32)
 NEW_THROUGHPUT=$(openssl rand -hex 32)
 # oauth2-proxy needs exactly 16/24/32 raw bytes; generate 32 alphanumeric.
 NEW_COOKIE=$(head -c 4096 </dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9' | head -c 32)
@@ -46,13 +45,12 @@ sops --decrypt --input-type=dotenv --output-type=dotenv \
 
 # In-place line-by-line substitution. Only rotate keys that ALREADY exist
 # in the file — don't introduce new keys.
-awk -v lit="$NEW_LITELLM" -v dbp="$NEW_DBPASS" -v ops="$NEW_OPS" -v n8nmcp="$NEW_N8N_MCP" \
+awk -v lit="$NEW_LITELLM" -v dbp="$NEW_DBPASS" -v ops="$NEW_OPS" \
     -v thr="$NEW_THROUGHPUT" -v cookie="$NEW_COOKIE" '
 BEGIN { OFS="=" }
 /^LITELLM_MASTER_KEY=/        { print "LITELLM_MASTER_KEY", lit; next }
 /^LITELLM_DB_PASSWORD=/       { print "LITELLM_DB_PASSWORD", dbp; next }
 /^OPS_CONTROLLER_TOKEN=/      { print "OPS_CONTROLLER_TOKEN", ops; next }
-/^N8N_MCP_AUTH_TOKEN=/        { print "N8N_MCP_AUTH_TOKEN", n8nmcp; next }
 /^THROUGHPUT_RECORD_TOKEN=/   { print "THROUGHPUT_RECORD_TOKEN", thr; next }
 /^OAUTH2_PROXY_COOKIE_SECRET=/ { print "OAUTH2_PROXY_COOKIE_SECRET", cookie; next }
 /^LITELLM_KEY_[A-Z0-9_]+=/    { split($0, kv, "="); cmd = "openssl rand -hex 24"; cmd | getline hex; close(cmd); print kv[1], "sk-" hex; next }

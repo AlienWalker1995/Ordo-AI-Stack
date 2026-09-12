@@ -252,7 +252,7 @@ def test_mcp_services_rendered_with_isolation_limits_and_labels():
         assert "healthcheck" in s
     assert c["services"]["mcp-memory-vault"]["networks"] == ["ordo-mcp-net"]          # internal
     assert c["services"]["mcp-searxng"]["networks"] == ["ordo-mcp-net", "ordo-net"]    # stack
-    assert c["services"]["mcp-n8n"]["environment"]["AUTH_TOKEN"] == "${N8N_MCP_AUTH_TOKEN}"
+    assert c["services"]["mcp-n8n"]["environment"]["N8N_API_KEY"] == "${N8N_API_KEY}"
     assert "codebase-memory-cache" in c["volumes"]
     assert "mcp-gateway" not in c["services"]
 

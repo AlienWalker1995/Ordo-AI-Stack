@@ -12,42 +12,37 @@ requires:
   ram_gb: 1
 provides: [tools]
 depends_on: [automation]   # queries the n8n service (automation kind=service plugin)
-# N8N_API_KEY is an operator secret (the n8n personal API token); N8N_MCP_AUTH_TOKEN is the bearer
-# LiteLLM presents to this server. Declaring them here emits both keys into secrets.env.example;
-# the rendered MCP service reads secrets.env as a second env_file, so the ${...} refs below
-# interpolate to the real values at compose time.
+# N8N_API_KEY is the operator secret (the n8n personal API token). Declaring it here emits the key
+# into secrets.env.example; the rendered MCP service reads secrets.env as a second env_file, so the
+# ${...} ref below interpolates to the real value at compose time. No bearer between LiteLLM and
+# this server: the bridge listens on the internal MCP network only.
 secrets:
   - N8N_API_KEY
-  - N8N_MCP_AUTH_TOKEN
 mcp:
-  # Upstream czlonkowski/n8n-mcp, pinned by tag + digest. NOT Docker Hub's `mcp/n8n`: that catalog
-  # image is a single `latest` tag frozen at v2.22.18 (2025-12-03) while upstream is v2.84.x.
-  image: ghcr.io/czlonkowski/n8n-mcp:2.84.1@sha256:f8c62d1c0485791dbbbd7329dccf902de5f279894c5180876176b8f086e48244
+  # Project-built bridge over the pinned upstream czlonkowski/n8n-mcp image (build context
+  # services/n8n; see services/n8n/Dockerfile). The image's own MCP_MODE=http transport is
+  # session-ful and LiteLLM cannot hold a session across operations, so we serve the upstream's
+  # stdio server through a stateless mcp-proxy instead.
+  image: ordo/n8n-mcp:latest
   transport: http
-  port: 3000
+  port: 9000
   network: stack           # reaches n8n:5678
-  # LiteLLM presents this bearer on every call; n8n-mcp's HTTP mode requires AUTH_TOKEN.
-  auth: {type: bearer_token, secret: N8N_MCP_AUTH_TOKEN}
   env:
-    MCP_MODE: http
-    HOST: 0.0.0.0
-    PORT: "3000"
-    AUTH_TOKEN: ${N8N_MCP_AUTH_TOKEN}
     N8N_API_URL: http://n8n:5678
     N8N_API_KEY: ${N8N_API_KEY}
-    # Silences the image's box-drawing startup banner + INFO logs. Under HTTP transport a stray
-    # stdout byte is harmless (it is not the JSON-RPC channel any more), but the quiet logs stay:
-    # they are also what kept the tool set at the full ~42 rather than the docs-only subset.
+    # Load-bearing again under the stdio bridge: the upstream server speaks JSON-RPC on stdout, so
+    # a stray banner or INFO byte corrupts the channel mcp-proxy is reading. These also keep the
+    # tool set at the full 28 rather than the docs-only subset.
     # See project memory [project_ordo_n8n_mcp_image_docs_only].
     LOG_LEVEL: error
     N8N_DIAGNOSTICS_ENABLED: "false"
     DISABLE_TELEMETRY: "true"
   healthcheck:
-    test: ["CMD", "node", "-e", "require('net').connect(3000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+    test: ["CMD", "python3", "-c", "import socket;socket.create_connection(('127.0.0.1',9000),5).close()"]
     interval: 30s
     timeout: 5s
     retries: 3
     start_period: 20s
   # Representative tools (the image registers the full czlonkowski catalog + n8n_* instance verbs
   # when the API key is present); LiteLLM advertises the full set at runtime.
-  tools: [list_nodes, get_node_info, search_templates, n8n_list_workflows, n8n_create_workflow]
+  tools: [search_nodes, get_node, search_templates, n8n_list_workflows, n8n_create_workflow]

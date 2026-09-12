@@ -66,14 +66,14 @@ def test_plugins_from_capabilities():
 
 
 def test_resolve_secrets_generates_internal_and_blanks_external():
-    required = ["LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "LITELLM_DB_PASSWORD", "N8N_MCP_AUTH_TOKEN",
+    required = ["LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "LITELLM_DB_PASSWORD",
                 "LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN",
                 "OAUTH2_PROXY_COOKIE_SECRET", "SEARXNG_SECRET", "N8N_API_KEY",
                 "OAUTH2_PROXY_CLIENT_ID", "OAUTH2_PROXY_CLIENT_SECRET",
                 "HF_TOKEN", "TS_AUTHKEY", "GITHUB_PERSONAL_ACCESS_TOKEN"]
     values, generated, provided, blank = wizard.resolve_secrets(required)
     assert set(values) == set(required)
-    for k in ("LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "LITELLM_DB_PASSWORD", "N8N_MCP_AUTH_TOKEN",
+    for k in ("LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "LITELLM_DB_PASSWORD",
               "LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN",
               "OAUTH2_PROXY_COOKIE_SECRET", "SEARXNG_SECRET", "N8N_API_KEY"):
         assert k in generated and values[k]

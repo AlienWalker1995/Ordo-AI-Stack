@@ -1,8 +1,8 @@
 # Plugin manifest - data-only. Declares the orchestration MCP server: a compose service
 # `mcp-orchestration` on the internal MCP network, registered with LiteLLM's MCP gateway (its tools
 # reach Hermes as `orchestration-<tool>`). A STABLE adapter: exposes fixed verb names
-# (list_templates / create_from_template / run_workflow / await_run / list_jobs / publish_enqueue /
-# schedules / registry parity verbs / comfyui ops ...) that delegate over HTTP to the dashboard
+# (list_templates / create_from_template / save_workflow / promote_workflow / rollback_workflow /
+# registry parity verbs / comfyui ops ...) that delegate over HTTP to the dashboard
 # control plane, insulating Hermes from shifting upstream tool names. Backing verified in V2:
 # ordo/dashboard-v1 serves /api/orchestration/*.
 id: orchestration
@@ -34,4 +34,4 @@ mcp:
     timeout: 5s
     retries: 3
     start_period: 15s
-  tools: [orchestration_readiness, list_templates, run_workflow, await_run, list_jobs, comfyui_status, list_models, gpu_status]
+  tools: [orchestration_readiness, list_templates, comfyui_status, list_models, gpu_status]
