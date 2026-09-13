@@ -57,7 +57,7 @@ def test_bundle_structure():
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                             "model": "auto", "plugins": "auto"})
     b = doctor.collect_bundle(src, CATALOG, REGISTRY)
-    assert b["sizing"]["model"] == "huihui-qwen3.6-27b-q6"
+    assert b["sizing"]["model"] == "qwen3.8-27b-q6"   # the catalog's top-ranked ultra model
     assert "song-gen" in b["plugins_enabled"]
     assert "unpinned_sha256" in b["catalog"]
     # rendered env is present and carries no raw secret values
