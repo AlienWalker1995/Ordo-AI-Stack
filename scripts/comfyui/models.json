@@ -392,10 +392,48 @@
           "url": "https://huggingface.co/lokCX/4x-Ultrasharp/resolve/main/4x-UltraSharp.pth"
         }
       ]
+    },
+    "krea2-turbo": {
+      "capability": "image",
+      "description": "Krea 2 Turbo (krea/Krea-2-Turbo, Comfy-Org repack) - 12B distilled DiT, 8 steps, cfg 1, text-to-image only. fp8 DiT (12.2 GB) + Qwen3-VL 4B fp8 text encoder (4.9 GB) + Qwen-Image VAE (0.2 GB). Needs ComfyUI >= v0.33 (native krea2 support).",
+      "_comment": "URLs are pinned to the Comfy-Org repack revision e5ea8b4dd7f38f348b138eb0fe29f92c0e367e96 - /resolve/main/ is a moving ref. sha256 values are the HF LFS digests for verification after pull.",
+      "models": [
+        {
+          "repo": "Comfy-Org/Krea-2",
+          "file": "diffusion_models/krea2_turbo_fp8_scaled.safetensors",
+          "dest": "diffusion_models",
+          "type": "diffusion_models",
+          "name": "krea2_turbo_fp8_scaled.safetensors",
+          "sha256": "eb4dd8c612cfd10f64f25b057e6e6bbcb5737c94a7372177e456dbf7579502f1",
+          "url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/e5ea8b4dd7f38f348b138eb0fe29f92c0e367e96/diffusion_models/krea2_turbo_fp8_scaled.safetensors"
+        },
+        {
+          "repo": "Comfy-Org/Krea-2",
+          "file": "text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
+          "dest": "text_encoders",
+          "type": "text_encoders",
+          "name": "qwen3vl_4b_fp8_scaled.safetensors",
+          "sha256": "54bd5144df0bbc25dd6ccadfcb826b521445a1b06ae5a42570bdd2974ca87094",
+          "url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/e5ea8b4dd7f38f348b138eb0fe29f92c0e367e96/text_encoders/qwen3vl_4b_fp8_scaled.safetensors"
+        },
+        {
+          "repo": "Comfy-Org/Krea-2",
+          "file": "vae/qwen_image_vae.safetensors",
+          "dest": "vae",
+          "type": "vae",
+          "name": "qwen_image_vae.safetensors",
+          "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f",
+          "url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/e5ea8b4dd7f38f348b138eb0fe29f92c0e367e96/vae/qwen_image_vae.safetensors"
+        }
+      ]
     }
   },
   "defaults": {
-    "packs": ["ltx-2.3-fp8", "ltx-2.3-t2v-basic", "ltx-2.3-extras"],
+    "packs": [
+      "ltx-2.3-fp8",
+      "ltx-2.3-t2v-basic",
+      "ltx-2.3-extras"
+    ],
     "quant": "Q4_K_M"
   }
 }
