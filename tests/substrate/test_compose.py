@@ -545,3 +545,20 @@ def test_model_gateway_keys_is_a_one_shot_after_gateway_health():
     assert k["environment"]["MODEL_GATEWAY_URL"] == "http://model-gateway:11435"
     assert any(isinstance(f, dict) and f.get("path") == "secrets.env" for f in k["env_file"])
     assert "model-gateway-keys" in compose.core_services()
+
+
+def test_monitoring_config_mounts_come_from_the_tracked_tree(tmp_path):
+    """prometheus.yml and the grafana provisioning tree are TRACKED repo files. A ./-relative
+    bind resolves against the compose project dir (out/), which nothing re-renders, so it served
+    a stale copy (2026-09-13: no model-gateway scrape job). They must mount via ${BASE_PATH}."""
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto", "plugins": ["monitoring"]})
+    rc = render(src, CATALOG, REGISTRY)
+    rc.write(tmp_path)
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    for svc in ("prometheus", "grafana"):
+        binds = [v for v in c["services"][svc]["volumes"] if "/monitoring/" in v]
+        assert binds, f"{svc} should bind its monitoring config"
+        for v in binds:
+            assert v.startswith("${BASE_PATH:?"), f"{svc} mounts a ./-relative copy: {v}"
+            assert not v.startswith("./monitoring")

@@ -47,7 +47,11 @@ services:
       - --storage.tsdb.retention.time=15d
       - --web.enable-lifecycle
     volumes:
-      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # ${BASE_PATH} (not ./): the scrape config is a TRACKED repo file. A ./-relative mount
+      # resolves against the compose project dir (out/), and nothing re-renders out/monitoring,
+      # so it served a stale July copy without the model-gateway job (found 2026-09-13). Same
+      # rule as the edge plugin's emails.txt / Caddyfile mounts.
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9090/-/healthy || exit 1"]
@@ -73,8 +77,10 @@ services:
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
     volumes:
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      # ${BASE_PATH} for the same reason as prometheus.yml above: tracked repo files, never a
+      # ./-relative copy under out/.
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3000/api/health || exit 1"]
