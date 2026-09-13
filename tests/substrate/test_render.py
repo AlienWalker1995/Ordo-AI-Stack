@@ -28,7 +28,7 @@ def _src(**kw):
 def test_5090_profile_picks_ultra():
     rc = render(_src(hardware=PROFILE_5090), CATALOG)
     # the catalog's top-ranked ultra model (largest VRAM that fits); tracks catalog/models.yaml
-    assert rc.model.id == "qwen3.8-27b-q6"
+    assert rc.model.id == "qwen3.8-27b-uncensored-q6"
     assert rc.tier == "ultra"
     assert rc.env["LLAMACPP_GPU_LAYERS"] == "-1"
     assert "comfyui" in rc.plugins_enabled           # media enabled on NVIDIA

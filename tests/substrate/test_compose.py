@@ -168,7 +168,7 @@ def test_render_writes_runnable_compose(tmp_path):
 
 
 def test_backend_image_flows_from_catalog_to_compose_and_env(tmp_path):
-    # the 5090 best-fits qwen3.8-27b-q6, whose catalog entry pins the patched build
+    # the 5090 best-fits qwen3.8-27b-uncensored-q6, whose catalog entry pins the patched build
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                             "model": "auto", "plugins": "auto"})
     rc = render(src, CATALOG, REGISTRY)
