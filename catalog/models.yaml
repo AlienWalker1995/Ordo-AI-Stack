@@ -122,7 +122,7 @@ models:
     # The Qwen3.6 projectors are NOT compatible with this model.
     mmproj: /models/mmproj-Qwen3.8-27B-F16.gguf
     # GGUF carries an MTP head (nextn_predict_layers=1) but no --spec/--draft flags
-    # are passed, so it is inert — same as the fable sibling.
+    # are passed, so it is inert.
     extra_args: "--reasoning-format deepseek"
     # `qwen35` arch needs the SWA/hybrid-cache patched build — verified present at
     # commit 86b9470 (LLM_ARCH_QWEN35 in src/llama-arch.cpp); same image as the 3.6s.
