@@ -40,6 +40,14 @@ LITELLM_CONFIG_TEMPLATE = Path(__file__).resolve().parent.parent / "services" / 
 # would silently keep the direct route).
 GATED_SERVICE_URL_ENV: dict[str, str] = {"comfyui": "COMFYUI_URL"}
 
+# Langfuse's edge port (auth/caddy/Caddyfile's `:8450` site, published by the edge plugin) and the
+# clean tailnet label its sidecar registers. Both are facts about the edge wiring, kept here so the
+# derived LANGFUSE_PUBLIC_URL below cannot disagree with the Caddyfile / sidecar that serve it.
+LANGFUSE_EDGE_PORT = 8450
+LANGFUSE_TAILNET_LABEL = "langfuse"
+# Fallback login identity for the headless Langfuse init. A site `LANGFUSE_ADMIN_EMAIL` overrides it.
+LANGFUSE_DEFAULT_ADMIN_EMAIL = "admin@ordo.local"
+
 # Secret env KEYS the CORE services need at runtime (values operator-managed in secrets.env, never
 # rendered). model-gateway/model-gateway-keys/ops-controller/dashboard/agent read these; plugins add more
 # via their manifest `secrets:` list. Mirrors the V1 SOPS-decrypted runtime/.env surface.
@@ -369,6 +377,36 @@ def aggregate_services_catalog(services_dir: str | Path = DEFAULT_PLUGINS_DIR) -
     return {"version": 1, "services": cards}
 
 
+def langfuse_public_url(env: dict[str, str], plugins_enabled: list[str]) -> str:
+    """The browser-facing origin Langfuse must be told about (it becomes NEXTAUTH_URL).
+
+    Langfuse builds its sign-in redirect and every emitted link from this value, so it has to be
+    the URL the browser actually used - a mismatch lands the user on an unreachable host after
+    Google SSO. That URL is entirely determined by the edge layer already rendered here, so it is
+    derived rather than hand-set, exactly like the rest of the edge wiring:
+
+      tailnet-names enabled -> the clean sidecar name   https://langfuse.<CADDY_TAILNET_DOMAIN>
+      edge enabled          -> the SSO-gated port root  https://<CADDY_TAILNET_HOSTNAME>:8450
+      neither               -> "" (a local install)
+
+    BOTH branches are gated on the plugin that actually serves the URL, not merely on the
+    hostname being set. `:8450` exists only because the edge plugin publishes it and the
+    Caddyfile has a site for it; a stack that sets CADDY_TAILNET_HOSTNAME with the edge
+    disabled would otherwise be handed a port nothing listens on. Same reason the sidecar
+    branch checks `tailnet-names` rather than just the domain.
+
+    Empty is a valid answer, not a failure: Langfuse boots and serves the API with an empty
+    NEXTAUTH_URL; only the interactive browser sign-in needs the origin to match.
+    """
+    domain = str(env.get("CADDY_TAILNET_DOMAIN", "") or "").strip()
+    hostname = str(env.get("CADDY_TAILNET_HOSTNAME", "") or "").strip()
+    if "tailnet-names" in plugins_enabled and domain:
+        return f"https://{LANGFUSE_TAILNET_LABEL}.{domain}"
+    if "edge" in plugins_enabled and hostname:
+        return f"https://{hostname}:{LANGFUSE_EDGE_PORT}"
+    return ""
+
+
 def _resolve_hardware(source: Source) -> HardwareProfile:
     if source.hardware == "auto" or source.hardware is None:
         return detect()
@@ -537,6 +575,14 @@ def render(source: Source, catalog: Catalog,
     # site (a site DATA_PATH can't shadow a computed LLAMACPP_CTX_SIZE) — protects the drift gate.
     for k, v in (source.site or {}).items():
         env.setdefault(str(k), str(v))
+
+    # Langfuse's two non-secret settings. Emitted only when the plugin is enabled (a stack without
+    # it gets no dead keys), and with setdefault AFTER the site merge - unlike the derived keys
+    # above, these are DEFAULTS an operator may deliberately override from `site:` (a Langfuse
+    # reached through a different front door, or a real admin address for the seeded login).
+    if "langfuse" in [p.id for p in services]:
+        env.setdefault("LANGFUSE_PUBLIC_URL", langfuse_public_url(env, [p.id for p in services]))
+        env.setdefault("LANGFUSE_ADMIN_EMAIL", LANGFUSE_DEFAULT_ADMIN_EMAIL)
 
     # Secret KEYS the enabled stack needs: the always-present core set + each enabled plugin's
     # declared `secrets:`. Deduped, core-first order preserved. Values never rendered.

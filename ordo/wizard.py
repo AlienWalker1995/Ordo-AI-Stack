@@ -113,6 +113,28 @@ SECRET_GENERATORS: dict[str, Any] = {
     # in CouchDB; the operator enters the SAME value in every Obsidian LiveSync client.
     "COUCHDB_PASSWORD": lambda: _secrets.token_urlsafe(24),
     "LIVESYNC_E2EE_PASSPHRASE": lambda: _secrets.token_urlsafe(32),
+    # ── Langfuse (self-hosted tracing) ──
+    # Infra credentials for the four backing stores. token_urlsafe is base64url, so these stay
+    # safe inside the DATABASE_URL / requirepass / S3-credential shapes that carry them.
+    "LANGFUSE_DB_PASSWORD": lambda: _secrets.token_urlsafe(32),
+    "LANGFUSE_CLICKHOUSE_PASSWORD": lambda: _secrets.token_urlsafe(32),
+    "LANGFUSE_REDIS_AUTH": lambda: _secrets.token_urlsafe(32),
+    "LANGFUSE_MINIO_SECRET": lambda: _secrets.token_urlsafe(32),
+    "LANGFUSE_NEXTAUTH_SECRET": lambda: _secrets.token_urlsafe(32),
+    # SALT hashes the API keys Langfuse stores; ENCRYPTION_KEY encrypts the secrets in its DB, and
+    # Langfuse REQUIRES exactly 64 hex characters for it (`openssl rand -hex 32` upstream) - it
+    # refuses to boot otherwise. Both are generated ONCE and never rotated, for the same reason as
+    # LITELLM_SALT_KEY: rotating makes the stored keys unmatchable and the stored data unreadable.
+    "LANGFUSE_SALT": lambda: _secrets.token_hex(32),
+    "LANGFUSE_ENCRYPTION_KEY": lambda: _secrets.token_hex(32),
+    # Seeded first-login password for the headless-init admin user (LANGFUSE_ADMIN_EMAIL).
+    "LANGFUSE_ADMIN_PASSWORD": lambda: _secrets.token_urlsafe(24),
+    # The project API keys the headless init CREATES and Hermes then presents. The `pk-lf-` /
+    # `sk-lf-` prefixes are not cosmetic: Langfuse issues keys with them, and the Hermes plugin
+    # rejects anything else as a leftover placeholder (it would otherwise construct a client that
+    # silently drops every trace at flush time).
+    "LANGFUSE_PUBLIC_KEY": lambda: "pk-lf-" + _secrets.token_hex(16),
+    "LANGFUSE_SECRET_KEY": lambda: "sk-lf-" + _secrets.token_hex(16),
 }
 
 # Prefix-matched generators: every `LITELLM_KEY_<CONSUMER>` a render requires (one per manifest
@@ -438,7 +460,9 @@ def _collect_answers(catalog: Catalog, registry: PluginRegistry, pl: WizardPlan,
                      out_dir: Path) -> tuple[dict[str, Any], dict[str, str], list[str]]:
     # pragma: no cover below (interactive)  — every branch here is TTY-driven.
     a: dict[str, Any] = {}
-    all_ids = [p.id for p in registry.plugins]
+    # Opt-in plugins (`default: false`) are excluded here for the same reason `plugins: auto`
+    # excludes them: the capability screen never offers them, so it must not enable them either.
+    all_ids = [p.id for p in registry.plugins if p.default]
     _welcome()
 
     # Step 1 - Hardware

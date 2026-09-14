@@ -139,8 +139,9 @@ def test_visible_services_shows_all_for_live_enabled_set():
     """Against the real rendered manifest's enabled set, nothing is hidden."""
     enabled = {
         "automation", "codebase-memory-ui", "comfyui", "edge", "hermes-dashboard",
-        "llamacpp-cpu", "ltx-trainer", "monitoring", "open-webui", "rag", "searxng-web",
-        "song-gen", "tailnet-names", "voice", "obsidian-livesync", "obsidian-livesync-funnel",
+        "langfuse", "llamacpp-cpu", "ltx-trainer", "monitoring", "open-webui", "rag",
+        "searxng-web", "song-gen", "tailnet-names", "voice", "obsidian-livesync",
+        "obsidian-livesync-funnel",
     }
     visible_ids = {s["id"] for s in visible_services(enabled=enabled)}
     assert visible_ids == {s["id"] for s in SERVICES}

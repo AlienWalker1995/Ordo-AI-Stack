@@ -452,7 +452,10 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: st
         # the compose commands.) depends_on must be all-or-nothing long form, so peers keep the
         # default service_started condition and only the owner carries restart.
         owner = ps.network_mode.split("service:", 1)[1]
-        dep_map: dict[str, Any] = {peer: {"condition": "service_started"} for peer in ps.depends_on}
+        # dict(dep) keeps any declared `service_healthy` conditions; a plain list becomes the
+        # default service_started, because depends_on must be all-or-nothing long form here.
+        dep_map: dict[str, Any] = (dict(dep) if isinstance(dep, dict)
+                                   else {peer: {"condition": "service_started"} for peer in (dep or [])})
         dep_map[owner] = {"condition": "service_started", "restart": True}
         s["depends_on"] = dep_map
     elif dep:
@@ -461,6 +464,17 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: st
         s["ports"] = list(ps.ports)
     if ps.shm_size:  # bump /dev/shm past docker's 64MB default (Electron/Selkies streaming needs it)
         s["shm_size"] = ps.shm_size
+    if ps.entrypoint:  # REPLACES the image's baked ENTRYPOINT (exec form - no shell splitting)
+        s["entrypoint"] = list(ps.entrypoint)
+    if ps.security_opt:
+        s["security_opt"] = list(ps.security_opt)
+    if ps.ulimits:
+        s["ulimits"] = dict(ps.ulimits)
+    if ps.resources:
+        # MERGE, never replace: a GPU service already carries deploy.resources.reservations from
+        # the pin above, and overwriting `deploy` here would silently drop its device reservation.
+        resources = s.setdefault("deploy", {}).setdefault("resources", {})
+        resources["limits"] = dict(ps.resources)
     return s
 
 

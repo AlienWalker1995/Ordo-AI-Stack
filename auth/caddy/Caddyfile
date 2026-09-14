@@ -195,6 +195,23 @@
     import sso_service model-gateway:11435
 }
 
+# ---- :8450 - Langfuse (agent traces, datasets, evals) ----
+# Self-hosted Langfuse v4's web app (services/langfuse), served at its origin root behind
+# the same plain SSO proxy as every other UI. A Next.js app with root-absolute asset paths,
+# so a subpath would 404 the bundle exactly like the LiteLLM admin UI above - it gets a port.
+#
+# Langfuse has a sign-in of its own (the headless-init admin user), but oauth2-proxy stays
+# the gate that matters: the container publishes no host port, so the ONLY way in is through
+# this listener. Its `NEXTAUTH_URL` is derived by the renderer from the SAME edge identity
+# this block serves (LANGFUSE_PUBLIC_URL -> https://langfuse.<domain>, or this port root when
+# the sidecar layer is off), so the post-login redirect always returns to a reachable origin.
+#
+# The INGEST path is not here: Hermes posts traces to http://langfuse-web:3000 over the
+# project network, never through the edge - so this port carries browser traffic only.
+:8450 {
+    import sso_service langfuse-web:3000
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # :443 — the front door. OAuth callback, API routes, external passthroughs,
 # the landing page, and legacy-path redirects. No UI app lives here anymore.

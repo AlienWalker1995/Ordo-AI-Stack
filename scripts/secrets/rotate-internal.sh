@@ -11,8 +11,21 @@ set -euo pipefail
 # Tokens rotated:
 #   LITELLM_MASTER_KEY, LITELLM_DB_PASSWORD, OPS_CONTROLLER_TOKEN,
 #   THROUGHPUT_RECORD_TOKEN (if present),
-#   OAUTH2_PROXY_COOKIE_SECRET, every LITELLM_KEY_*.
+#   OAUTH2_PROXY_COOKIE_SECRET, every LITELLM_KEY_*,
+#   LANGFUSE_DB_PASSWORD, LANGFUSE_CLICKHOUSE_PASSWORD, LANGFUSE_REDIS_AUTH,
+#   LANGFUSE_MINIO_SECRET, LANGFUSE_NEXTAUTH_SECRET.
 #   NEVER LITELLM_SALT_KEY (rotating it makes DB-stored credentials unreadable).
+#   NEVER LANGFUSE_SALT or LANGFUSE_ENCRYPTION_KEY, for the same reason: SALT hashes
+#     the API keys Langfuse stores (rotating it means no presented key ever matches
+#     again) and ENCRYPTION_KEY encrypts its at-rest secrets (rotating it makes the
+#     stored ciphertext undecryptable). Both are generate-once-per-install values.
+#   NOT LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY: those are the project key pair
+#     Langfuse ISSUED and stores server-side. Changing the file does not change the
+#     server's copy - it just stops Hermes authenticating. Rotate them in the Langfuse
+#     UI (project settings -> API keys) and copy the new pair into secrets.env.
+#   NOT LANGFUSE_ADMIN_PASSWORD: it seeds the login only on the FIRST boot against an
+#     empty database (LANGFUSE_INIT_*); afterwards the password lives hashed in
+#     Postgres and a new value here is inert. Change it in the Langfuse UI.
 #
 # OAUTH2_PROXY_CLIENT_ID and CLIENT_SECRET are NOT rotated here —
 # those require interactive Google Cloud Console action.
@@ -35,6 +48,12 @@ NEW_OPS=$(openssl rand -hex 32)
 NEW_THROUGHPUT=$(openssl rand -hex 32)
 # oauth2-proxy needs exactly 16/24/32 raw bytes; generate 32 alphanumeric.
 NEW_COOKIE=$(head -c 4096 </dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9' | head -c 32)
+# Langfuse infra credentials (hex: safe inside DATABASE_URL, --requirepass and S3 creds alike).
+NEW_LF_DBPASS=$(openssl rand -hex 24)
+NEW_LF_CLICKHOUSE=$(openssl rand -hex 24)
+NEW_LF_REDIS=$(openssl rand -hex 24)
+NEW_LF_MINIO=$(openssl rand -hex 24)
+NEW_LF_NEXTAUTH=$(openssl rand -hex 32)
 
 TMP=$(mktemp)
 trap 'rm -f "$TMP" "$TMP.new"' EXIT
@@ -46,7 +65,9 @@ sops --decrypt --input-type=dotenv --output-type=dotenv \
 # In-place line-by-line substitution. Only rotate keys that ALREADY exist
 # in the file — don't introduce new keys.
 awk -v lit="$NEW_LITELLM" -v dbp="$NEW_DBPASS" -v ops="$NEW_OPS" \
-    -v thr="$NEW_THROUGHPUT" -v cookie="$NEW_COOKIE" '
+    -v thr="$NEW_THROUGHPUT" -v cookie="$NEW_COOKIE" \
+    -v lfdb="$NEW_LF_DBPASS" -v lfch="$NEW_LF_CLICKHOUSE" -v lfrd="$NEW_LF_REDIS" \
+    -v lfmi="$NEW_LF_MINIO" -v lfna="$NEW_LF_NEXTAUTH" '
 BEGIN { OFS="=" }
 /^LITELLM_MASTER_KEY=/        { print "LITELLM_MASTER_KEY", lit; next }
 /^LITELLM_DB_PASSWORD=/       { print "LITELLM_DB_PASSWORD", dbp; next }
@@ -55,6 +76,13 @@ BEGIN { OFS="=" }
 /^OAUTH2_PROXY_COOKIE_SECRET=/ { print "OAUTH2_PROXY_COOKIE_SECRET", cookie; next }
 /^LITELLM_KEY_[A-Z0-9_]+=/    { split($0, kv, "="); cmd = "openssl rand -hex 24"; cmd | getline hex; close(cmd); print kv[1], "sk-" hex; next }
 /^LITELLM_SALT_KEY=/          { print; next }
+/^LANGFUSE_DB_PASSWORD=/         { print "LANGFUSE_DB_PASSWORD", lfdb; next }
+/^LANGFUSE_CLICKHOUSE_PASSWORD=/ { print "LANGFUSE_CLICKHOUSE_PASSWORD", lfch; next }
+/^LANGFUSE_REDIS_AUTH=/          { print "LANGFUSE_REDIS_AUTH", lfrd; next }
+/^LANGFUSE_MINIO_SECRET=/        { print "LANGFUSE_MINIO_SECRET", lfmi; next }
+/^LANGFUSE_NEXTAUTH_SECRET=/     { print "LANGFUSE_NEXTAUTH_SECRET", lfna; next }
+/^LANGFUSE_SALT=/                { print; next }
+/^LANGFUSE_ENCRYPTION_KEY=/      { print; next }
 { print }
 ' "$TMP" > "$TMP.new"
 
@@ -76,6 +104,16 @@ Next steps:
 
 LITELLM_DB_PASSWORD rotation also requires ALTER USER litellm PASSWORD inside
 litellm-db BEFORE the restart (see docs/runbooks/secrets.md).
+
+If the langfuse plugin is enabled, its rotated credentials need the same
+before-restart step on the two stores that persist their own copy:
+  ALTER USER langfuse PASSWORD '<new>'                    inside langfuse-db
+  ALTER USER clickhouse IDENTIFIED BY '<new>'             inside langfuse-clickhouse
+then recreate the profile so redis/minio pick up their new env:
+  docker compose -p ordo --profile langfuse up -d --force-recreate \\
+      langfuse-db langfuse-clickhouse langfuse-redis langfuse-minio \\
+      langfuse-worker langfuse-web
+Rotating LANGFUSE_NEXTAUTH_SECRET invalidates open Langfuse sessions (sign in again).
 
 All existing oauth2-proxy sessions invalidate (cookie secret rotated).
 You'll need to sign in via Google again.

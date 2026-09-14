@@ -31,6 +31,11 @@ dashboard: native
 
 # Optional plugins (media/song/voice). "auto" = enable what the hardware can run;
 # a list forces specific ones. Media plugins are NVIDIA-only and self-declare that.
+#
+# OPT-IN plugins (`default: false` in their manifest) are the exception: "auto" NEVER enables
+# them, because the hardware gate says nothing useful about whether you want them. Today that is
+# `langfuse`: self-hosted agent tracing (see services/langfuse/README.md), six containers behind
+# the `langfuse` compose profile. To run it, replace `auto` with an explicit list that includes it.
 plugins: auto
 
 # Cloud tier-fallback: off by default (fully local, offline-capable). Opt-in only.

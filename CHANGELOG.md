@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Added
+- **Self-hosted Langfuse tracing (`langfuse` plugin, opt-in).** Six digest-pinned services
+  (web, worker, Postgres, ClickHouse, Redis, MinIO) run Langfuse v4 behind the `langfuse`
+  compose profile with unattended headless init: the org, project, admin user and project
+  API key pair are created on first boot, so there is no click-through setup and the key pair
+  is known to the render before the server exists. Reached like every other UI: SSO-gated on
+  Caddy `:8450` and `https://langfuse.<tailnet>.ts.net/`, with no host port of its own. Hermes
+  sends turns, LLM calls and tool calls through its bundled `observability/langfuse` plugin
+  (the SDK is now in the image and the plugin is enabled once a key is present); tracing is
+  fail-open, with no `depends_on`, so Langfuse being off or down never affects the agent.
+  The plugin is the first `default: false` one, so `plugins: auto` will not enable it. LiteLLM's
+  own Langfuse callback is deliberately not enabled: it would double-count every generation
+  Hermes already reports. See `services/langfuse/README.md`.
 - **Electricity-derived per-token cost for local models.** `ordo.yaml`'s new optional `cost:`
   block (`usd_per_kwh`, `inference_watts`, `prompt_tokens_per_second`,
   `output_tokens_per_second`) derives a real `input_cost_per_token` / `output_cost_per_token`

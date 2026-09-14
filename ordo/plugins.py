@@ -36,7 +36,11 @@ class PluginService:
     command: list[str] = dataclasses.field(default_factory=list)
     volumes: list[str] = dataclasses.field(default_factory=list)
     healthcheck: dict[str, Any] = dataclasses.field(default_factory=dict)
-    depends_on: list[str] = dataclasses.field(default_factory=list)
+    # Start-order peers. A LIST is plain ordering (compose's short form). A MAPPING
+    # {peer: condition} renders the long form, so a service can wait for a peer to be READY
+    # (`service_healthy`) rather than merely created - the shape agent.yaml already uses, and what
+    # an application service needs when its datastores must finish migrating/starting first.
+    depends_on: list[str] | dict[str, str] = dataclasses.field(default_factory=list)
     # True → this service reads the operator-managed `secrets.env` as a second env_file (so its
     # ${SECRET} refs resolve). Secret VALUES never live in the rendered config, only the reference.
     wants_secrets: bool = False
@@ -53,11 +57,33 @@ class PluginService:
     # they join Caddy's netns and hit its port listeners on loopback. Mutually exclusive with
     # `networks:` — the renderer omits the network attachment when this is set.
     network_mode: str = ""
+    # compose `entrypoint` - REPLACES the image's baked ENTRYPOINT (`command` only replaces CMD).
+    # Exec form (a list) so there is no shell word-splitting ambiguity; a shell one-liner is
+    # written explicitly as ["sh", "-c", "…"]. Needed by images that must run a setup step before
+    # their server (langfuse-minio pre-creates its bucket). Empty -> the image's own entrypoint.
+    entrypoint: list[str] = dataclasses.field(default_factory=list)
+    # compose `security_opt` (e.g. ["no-new-privileges:true"]). The MCP services get this from the
+    # renderer; a plugin service declares it here so an ordinary service can opt into the same
+    # hardening without a per-plugin if-block in compose.py.
+    security_opt: list[str] = dataclasses.field(default_factory=list)
+    # compose `ulimits` - passed through verbatim (e.g. {"nofile": {"soft": 262144, "hard": 262144}}).
+    # ClickHouse needs a raised file-descriptor ceiling; docker's default (1024) makes it log
+    # "Too many open files" under load.
+    ulimits: dict[str, Any] = dataclasses.field(default_factory=dict)
+    # CPU / memory CEILINGS -> compose `deploy.resources.limits` (e.g. {"cpus": "2", "memory": "4g"}).
+    # Same shape the renderer already gives every MCP service. Merged with (never replacing) a GPU
+    # `reservations` block, so a limited GPU service keeps its device reservation.
+    resources: dict[str, str] = dataclasses.field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PluginService:
         name = str(d["name"])
         gpu_pin = str(d.get("gpu_pin", ""))
+        raw_depends = d.get("depends_on", []) or []
+        depends_on: list[str] | dict[str, str] = (
+            {str(k): str(v) for k, v in raw_depends.items()} if isinstance(raw_depends, dict)
+            else [str(x) for x in raw_depends]
+        )
         return cls(
             name=name, image=str(d["image"]),
             gpu=bool(d.get("gpu", False)), gpu_pin=gpu_pin,
@@ -70,11 +96,15 @@ class PluginService:
             command=[str(c) for c in (d.get("command", []) or [])],
             volumes=[str(v) for v in (d.get("volumes", []) or [])],
             healthcheck=dict(d.get("healthcheck", {}) or {}),
-            depends_on=[str(x) for x in (d.get("depends_on", []) or [])],
+            depends_on=depends_on,
             wants_secrets=bool(d.get("wants_secrets", False)),
             ports=[str(p) for p in (d.get("ports", []) or [])],
             shm_size=str(d.get("shm_size", "")),
             network_mode=str(d.get("network_mode", "")),
+            entrypoint=[str(e) for e in (d.get("entrypoint", []) or [])],
+            security_opt=[str(o) for o in (d.get("security_opt", []) or [])],
+            ulimits=dict(d.get("ulimits", {}) or {}),
+            resources={str(k): str(v) for k, v in (d.get("resources", {}) or {}).items()},
         )
 
 
@@ -195,6 +225,12 @@ class Plugin:
                                 # no capability-based resolution consumes this (audit P2-37)
     compose_profile: str
     env: dict[str, str]
+    # Does `plugins: auto` enable this one? `default: false` makes the plugin OPT-IN: it runs only
+    # when the source lists it by id. The hardware gate (`requires:`) is the wrong instrument for a
+    # plugin whose real cost is a standing multi-container footprint rather than a GPU or RAM floor
+    # - langfuse runs six containers on any hardware, so "the box can run it" must not mean "every
+    # box should". Defaults to True, so every existing manifest keeps its current behaviour.
+    default: bool = True
     kind: str = "service"          # "service" (compose service) | "mcp" (agent tool server)
     mcp: McpSpec | None = None     # the validated MCP server declaration for kind=mcp
     services: tuple[PluginService, ...] = ()  # compose services this plugin contributes (kind=service)
@@ -223,6 +259,7 @@ class Plugin:
             provides=tuple(d.get("provides", []) or []),
             compose_profile=str(d.get("compose_profile", "")),
             env={str(k): str(v) for k, v in (d.get("env", {}) or {}).items()},
+            default=bool(d.get("default", True)),
             kind=str(d.get("kind", "service")),
             mcp=(McpSpec.from_dict(dict(d.get("mcp", {}) or {}), plugin_id=str(d["id"]))
                  if str(d.get("kind", "service")) == "mcp" else None),
@@ -275,10 +312,11 @@ class PluginRegistry:
     def resolve(
         self, requested: Any, hw: HardwareProfile,
     ) -> tuple[list[Plugin], list[str]]:
-        """Return (enabled plugins, notes). 'auto' = everything the hardware can run."""
+        """Return (enabled plugins, notes). 'auto' = everything the hardware can run, MINUS the
+        opt-in plugins (`default: false`), which only an explicit `plugins:` list can enable."""
         notes: list[str] = []
         if requested == "auto" or requested is None:
-            wanted = {p.id for p in self.plugins}
+            wanted = {p.id for p in self.plugins if p.default}
         else:
             wanted = set(requested)
             for pid in wanted - set(self._by_id):
