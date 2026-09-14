@@ -51,14 +51,18 @@ def test_dual_gpu_enables_the_full_parity_set():
 
 
 def test_parity_matrix_counts():
-    # 16 kind=service plugins (11 parity set + ltx-trainer + tailnet-names + obsidian-livesync +
-    # obsidian-livesync-funnel + llamacpp-cpu) + 7 kind=mcp plugins (qdrant-rag, searxng,
-    # memory-vault + the restored codebase-memory / comfyui-mcp / n8n / orchestration) all enable
-    # on the full host. (The media "worker" plugin was retired, dropping the parity set from 12 to
-    # 11; llamacpp-cpu — the CPU LLM fallback — was added post-parity, bringing service plugins to 16.)
+    # 17 kind=service plugins are REGISTERED (11 parity set + ltx-trainer + tailnet-names +
+    # obsidian-livesync + obsidian-livesync-funnel + llamacpp-cpu + langfuse) and 7 kind=mcp
+    # (qdrant-rag, searxng, memory-vault + the restored codebase-memory / comfyui-mcp / n8n /
+    # orchestration). 16 of the service plugins ENABLE on the full host: langfuse is opt-in
+    # (`default: false`), so `plugins: auto` deliberately leaves it out. (The media "worker"
+    # plugin was retired, dropping the parity set from 12 to 11; llamacpp-cpu — the CPU LLM
+    # fallback — was added post-parity.)
     svc = [p for p in REGISTRY.plugins if p.kind == "service"]
     mcp = [p for p in REGISTRY.plugins if p.kind == "mcp"]
-    assert len(svc) == 16 and len(mcp) == 7
+    opt_in = [p.id for p in svc if not p.default]
+    assert len(svc) == 17 and len(mcp) == 7
+    assert opt_in == ["langfuse"]
     rc = _dual()
     assert len(rc.plugins_enabled) == 16
     assert len(rc.mcp_servers) == 7
