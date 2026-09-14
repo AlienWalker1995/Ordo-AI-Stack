@@ -8,8 +8,8 @@ model_list:
   # __CPU_CTX_SIZE__, __*_WEIGHTS__, __GPU_IMAGE__, __*_MODEL_NAME__,
   # __GPU_SUPPORTS_VISION__, __LOCAL_INPUT_COST_PER_TOKEN__, __LOCAL_OUTPUT_COST_PER_TOKEN__)
   # are entrypoint-substituted from the SAME .env the backend llama-server containers read, so
-  # this metadata — including the pickable pin-alias NAMES, the vision flag and the
-  # electricity-derived per-token cost (ordo.yaml `cost:`, $0 when unset) — cannot drift from
+  # this metadata: including the pickable pin-alias NAMES, the vision flag and the
+  # electricity-derived per-token cost (ordo.yaml `cost:`, $0 when unset): cannot drift from
   # what's running. The cost placeholders are set in BOTH litellm_params (what LiteLLM actually
   # bills against) and model_info (what /model/info and the UI display) so the two can't
   # disagree. The remaining static supports_* flags describe the llama-server invocation itself

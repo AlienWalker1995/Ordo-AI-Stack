@@ -72,7 +72,7 @@ def _apply_overrides(derived: dict[str, Any], overrides: dict[str, Any]) -> dict
     return out
 
 
-# Required keys for `cost:` (ordo.yaml) — all four or none. Missing/non-positive/unknown ->
+# Required keys for `cost:` (ordo.yaml): all four or none. Missing/non-positive/unknown ->
 # ValueError naming the offending key, caught at render time rather than silently defaulting.
 _COST_KEYS = ("usd_per_kwh", "inference_watts", "prompt_tokens_per_second", "output_tokens_per_second")
 
@@ -81,7 +81,7 @@ def _format_cost(value: float) -> str:
     """Plain decimal string (never scientific notation, never a trailing bare dot).
 
     LiteLLM/YAML both parse `1.51e-08` fine, but a plain decimal is unambiguous everywhere
-    it's read (the .env file, `docker inspect`, a human diffing the render) — so always emit
+    it's read (the .env file, `docker inspect`, a human diffing the render): so always emit
     fixed-point, trimmed of the trailing zeros a fixed precision leaves behind.
     """
     text = format(value, ".18f").rstrip("0")
@@ -438,7 +438,7 @@ def render(source: Source, catalog: Catalog,
     if lc["image"]:
         env["LLAMACPP_IMAGE"] = str(lc["image"])
     # Electricity-derived per-token cost for every local model (local-chat, the GPU/CPU pins,
-    # local-embed) — see local_token_costs. Empty `cost:` -> "0"/"0" (unchanged $0 default).
+    # local-embed): see local_token_costs. Empty `cost:` -> "0"/"0" (unchanged $0 default).
     input_cost_per_token, output_cost_per_token = local_token_costs(source.cost)
     env["LOCAL_INPUT_COST_PER_TOKEN"] = input_cost_per_token
     env["LOCAL_OUTPUT_COST_PER_TOKEN"] = output_cost_per_token

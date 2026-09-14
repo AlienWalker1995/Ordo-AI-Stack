@@ -25,7 +25,7 @@ Set `site.BASE_PATH` in `ordo.yaml` (template: `ordo.example.yaml`) and re-rende
 | `HF_TOKEN` | *(empty)* | Hugging Face token for gated model downloads; set as a secret in `out/secrets.env` |
 | `GITHUB_PERSONAL_ACCESS_TOKEN` | *(empty)* | GitHub token passed to `comfyui` as `GITHUB_TOKEN` for ComfyUI-Manager custom-node fetches; optional; set as a secret in `out/secrets.env` |
 | `COMPUTE_MODE` | *(V1 only — removed)* | Superseded by the `hardware:` block in `ordo.yaml` (see [Compute Configuration](#compute-configuration) below) — GPU type is decided by the render engine, not this env var |
-| `LOCAL_INPUT_COST_PER_TOKEN` | `0` | Electricity-derived $/token for local model prompt input, computed by the render engine from `ordo.yaml`'s `cost:` block (see [Local Model Cost](#local-model-cost) below) — never hand-set |
+| `LOCAL_INPUT_COST_PER_TOKEN` | `0` | Electricity-derived $/token for local model prompt input, computed by the render engine from `ordo.yaml`'s `cost:` block (see [Local Model Cost](#local-model-cost) below): never hand-set |
 | `LOCAL_OUTPUT_COST_PER_TOKEN` | `0` | Electricity-derived $/token for local model output, same source as above |
 
 > The dashboard has no per-service auth token in this deployment — the Caddy edge (oauth2-proxy + Google SSO + email allowlist) is the sole authentication gate for the dashboard, same as every other UI, no matter which of Caddy's seven ports it's served on (see [Network Ports](#network-ports)). The dashboard app code retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer fallback, but it is not set here and is not a recommended secret — don't generate or configure it.
