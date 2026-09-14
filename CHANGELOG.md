@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is loosely b
 
 ## [Unreleased]
 
+### Added
+- **Electricity-derived per-token cost for local models.** `ordo.yaml`'s new optional `cost:`
+  block (`usd_per_kwh`, `inference_watts`, `prompt_tokens_per_second`,
+  `output_tokens_per_second`) derives a real `input_cost_per_token` / `output_cost_per_token`
+  for `local-chat`, the GPU pin, the CPU pin, and `local-embed`, so LiteLLM's spend-per-key and
+  the `x-litellm-response-cost` header are meaningful instead of always $0. Computed once by
+  `ordo/render.py::local_token_costs`, flows through `.env` (`LOCAL_INPUT_COST_PER_TOKEN` /
+  `LOCAL_OUTPUT_COST_PER_TOKEN`) into `litellm_config.yaml` via the model-gateway entrypoint's
+  existing placeholder-substitution mechanism. Leave `cost:` unset for the unchanged $0/token
+  default.
+
 ### Changed
 - **LiteLLM MCP gateway migration (2026-09-12).** The Docker `mcp-gateway` service is gone; its
   job is now done by **LiteLLM's own MCP gateway**, served by `model-gateway` at `/mcp` alongside

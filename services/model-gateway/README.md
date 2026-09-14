@@ -14,6 +14,13 @@ entrypoint that templates the config placeholders at startup.
 | *\<cpu model\>*`-cpu` | chat | `llamacpp-cpu` | Always-on CPU fallback (opt-in `cpu-fallback` profile). Name derived from `LLAMACPP_CPU_MODEL`. |
 | `local-embed` | embedding | `llamacpp-embed` | nomic-embed-text-v1.5, 768-dim, ctx 8192. |
 
+Every local model's `input_cost_per_token` / `output_cost_per_token` (in both `litellm_params`,
+what LiteLLM actually bills against, and `model_info`, what `/model/info` and the UI display) is
+electricity-derived from `ordo.yaml`'s `cost:` block (rig power draw, the operator's $/kWh rate
+and measured tokens/sec) rather than hardcoded. `local-embed` only carries an input cost
+(embedding has no output tokens). Leave `cost:` unset and every model prices at $0/token, same
+as before this existed.
+
 The two pin-alias names are **derived at startup from the deployed GGUF filenames** — a
 model swap renames them automatically, so nothing version-named is hardcoded in the config.
 Only `local-chat` and `local-embed` are stable ids; anything that must survive a model swap
@@ -37,6 +44,8 @@ metadata tracks the running deployment instead of drifting:
 | `__GPU_MODEL_NAME__` | derived: `LLAMACPP_MODEL` basename, lowercased, `.gguf` stripped |
 | `__CPU_MODEL_NAME__` | derived: `LLAMACPP_CPU_MODEL` basename, lowercased, + `-cpu` |
 | `__GPU_SUPPORTS_VISION__` | derived: `true` iff `LLAMACPP_MMPROJ` is non-empty |
+| `__LOCAL_INPUT_COST_PER_TOKEN__` | `LOCAL_INPUT_COST_PER_TOKEN` (0) |
+| `__LOCAL_OUTPUT_COST_PER_TOKEN__` | `LOCAL_OUTPUT_COST_PER_TOKEN` (0) |
 
 `supports_vision` is derived from whether the GPU server actually loads an mmproj. The
 remaining `supports_*` flags (tools, reasoning) describe the llama-server invocation
