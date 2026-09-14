@@ -269,3 +269,36 @@ def test_dashboard_card_probes_the_internal_health_endpoint():
     assert card["check"] == "http://langfuse-web:3000/api/public/health"
     assert "ops_service" not in card, (
         "a single lifecycle button cannot restart six coupled containers correctly")
+
+
+# ── Hermes wiring (fail-open when the plugin is off) ───────────────────────────
+
+def test_hermes_reads_the_project_keys_with_an_empty_fallback():
+    """The agent must render identically whether or not langfuse is enabled: empty keys leave the
+    bundled Hermes plugin inert, so there is no depends_on and no failure mode when it is off."""
+    agent_yaml = yaml.safe_load(
+        (ROOT / "services" / "hermes" / "agent.yaml").read_text(encoding="utf-8"))
+    env = agent_yaml["environment"]
+    assert env["HERMES_LANGFUSE_PUBLIC_KEY"] == "${LANGFUSE_PUBLIC_KEY:-}"
+    assert env["HERMES_LANGFUSE_SECRET_KEY"] == "${LANGFUSE_SECRET_KEY:-}"
+    assert env["HERMES_LANGFUSE_BASE_URL"] == "${HERMES_LANGFUSE_BASE_URL:-http://langfuse-web:3000}"
+    assert env["HERMES_LANGFUSE_ENV"] == "ordo"
+    assert "langfuse" not in agent_yaml.get("depends_on", {})
+
+
+def test_hermes_entrypoint_enables_the_plugin_only_with_a_key():
+    """Enabling the bundled plugin without credentials leaves hooks permanently inert while the
+    CLI reports "enabled" — tracing that looks configured and records nothing."""
+    entrypoint = (ROOT / "services" / "hermes" / "entrypoint.sh").read_text(encoding="utf-8")
+    assert 'plugins enable observability/langfuse' in entrypoint
+    assert '[ -n "${HERMES_LANGFUSE_PUBLIC_KEY:-}" ]' in entrypoint
+    # its OWN sentinel: sharing push-through's would never fire on a stack that adds langfuse later
+    assert ".ordo-langfuse-seeded" in entrypoint
+    assert ".ordo-push-through-seeded" in entrypoint
+
+
+def test_hermes_image_pins_the_langfuse_sdk():
+    """The bundled plugin fails open when the SDK is missing, so an unpinned or absent install
+    is silent. Pin it, and pin it to the major that matches the self-hosted server."""
+    dockerfile = (ROOT / "services" / "hermes" / "Dockerfile").read_text(encoding="utf-8")
+    assert 'uv pip install "langfuse==4.15.2"' in dockerfile

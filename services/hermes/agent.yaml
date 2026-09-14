@@ -68,6 +68,23 @@ environment:
   HERMES_API_MAX_RETRIES: ${HERMES_API_MAX_RETRIES:-10}
   # 24h — keeps the streaming stale-detector from killing slow local-model turns mid-flight.
   HERMES_STREAM_STALE_TIMEOUT: ${HERMES_STREAM_STALE_TIMEOUT:-86400}
+  # ── Langfuse tracing (the bundled `observability/langfuse` plugin) ──
+  # FAIL-OPEN BY DESIGN, and that is why there is no `depends_on: langfuse-web` below: with the
+  # langfuse plugin disabled both keys interpolate to "", the plugin's _get_langfuse() returns
+  # None once, and every hook short-circuits. Hermes must never depend on its own telemetry
+  # being up — a trace store outage would otherwise take the agent down with it.
+  # The keys arrive from secrets.env (already an env_file on this service) under their LANGFUSE_*
+  # names, because they are the SAME project key pair the langfuse plugin's headless init
+  # creates; this maps them onto the HERMES_LANGFUSE_* names the plugin reads. One pair, one
+  # source of truth, no second place to update after a rotation.
+  HERMES_LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+  HERMES_LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+  # Traces go DIRECTLY to the web service over the project network, never through the edge:
+  # the SSO gate would 302 a non-browser client, and the ingest path needs no front door.
+  HERMES_LANGFUSE_BASE_URL: ${HERMES_LANGFUSE_BASE_URL:-http://langfuse-web:3000}
+  # Environment tag on every trace, so a future second writer (or a staging stack pointed at the
+  # same project) is separable in the UI rather than mixed in.
+  HERMES_LANGFUSE_ENV: ordo
   # Docker-secret _FILE pointers the entrypoint bridges to the plain env vars the app expects.
   DISCORD_BOT_TOKEN_FILE: /run/secrets/discord_token
   GITHUB_BACKUP_PAT_FILE: /run/secrets/github_backup_pat

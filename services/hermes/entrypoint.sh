@@ -131,6 +131,25 @@ if [ ! -f "$SEED_MARK" ]; then
   gosu hermes touch "$SEED_MARK"
 fi
 
+# Langfuse tracing: enable the BUNDLED observability/langfuse plugin once, and only when the
+# langfuse stack actually issued us keys. Its OWN sentinel (not the push-through one) because
+# the two are enabled under different conditions and at different times: a stack that adds
+# langfuse later has long since passed the push-through sentinel, and sharing it would mean the
+# plugin never gets enabled at all.
+#
+# The HERMES_LANGFUSE_PUBLIC_KEY guard is what keeps this fail-open. With the langfuse plugin
+# disabled the compose ref interpolates to "", so we skip entirely and no sentinel is written —
+# the next start after the operator enables langfuse picks it up. Enabling it keyless would
+# leave an "enabled" plugin whose hooks are permanently inert, which reads as working tracing.
+#
+# Idempotent + operator-respecting, exactly like the block above: once the sentinel exists a
+# later `hermes plugins disable observability/langfuse` is never undone on restart.
+LANGFUSE_MARK="$HERMES_HOME/.ordo-langfuse-seeded"
+if [ -n "${HERMES_LANGFUSE_PUBLIC_KEY:-}" ] && [ ! -f "$LANGFUSE_MARK" ]; then
+  gosu hermes "$HERMES_BIN" plugins enable observability/langfuse >/dev/null 2>&1 || true
+  gosu hermes touch "$LANGFUSE_MARK"
+fi
+
 # config.yaml holds provider API keys. The writable-home repair above (chmod -R a+rwX)
 # and volume-migration copies can leave it world-readable (found live at 0777 on
 # 2026-08-07 despite save_config_value's own 0600 chmod), so tighten it explicitly on
