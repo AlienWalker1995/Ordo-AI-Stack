@@ -142,8 +142,18 @@ def test_every_declared_secret_reaches_the_containers_only_as_a_reference():
     values = {key: wizard.SECRET_GENERATORS[key]() for key in plugin.secrets}
     for key, value in values.items():
         assert value not in text, f"the VALUE of {key} was inlined into the rendered compose"
-    # and the check above is capable of failing: a planted value IS found
-    assert values["LANGFUSE_DB_PASSWORD"] in text + values["LANGFUSE_DB_PASSWORD"]
+
+    # (4) the structural rule that catches an ARBITRARY literal (`POSTGRES_PASSWORD: hunter2`
+    # passes 1-3: it names no secret and matches no freshly generated value): every env key
+    # that carries a credential by name must be fed by a ${...} interpolation, never a literal.
+    # Anchored on the credential NOUN at the end of the key: AUTH_DISABLE_SIGNUP is a flag and
+    # LANGFUSE_S3_*_ACCESS_KEY_ID is a username, neither holds a secret.
+    credential_key = re.compile(r"(PASSWORD|SECRET|_KEY|TOKEN|_AUTH|SALT)$")
+    for name in LANGFUSE_SERVICES:
+        for key, raw in (services[name].get("environment") or {}).items():
+            if credential_key.search(key):
+                assert "${" in str(raw), (
+                    f"{name}.{key} is credential-shaped but holds a literal: {str(raw)[:8]!r}...")
 
 
 def test_langfuse_db_reuses_the_substrate_postgres_pin():
