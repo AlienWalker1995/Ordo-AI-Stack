@@ -381,13 +381,19 @@ def langfuse_public_url(env: dict[str, str], plugins_enabled: list[str]) -> str:
     """The browser-facing origin Langfuse must be told about (it becomes NEXTAUTH_URL).
 
     Langfuse builds its sign-in redirect and every emitted link from this value, so it has to be
-    the URL the browser actually used — a mismatch lands the user on an unreachable host after
+    the URL the browser actually used - a mismatch lands the user on an unreachable host after
     Google SSO. That URL is entirely determined by the edge layer already rendered here, so it is
     derived rather than hand-set, exactly like the rest of the edge wiring:
 
       tailnet-names enabled -> the clean sidecar name   https://langfuse.<CADDY_TAILNET_DOMAIN>
-      edge only             -> the SSO-gated port root  https://<CADDY_TAILNET_HOSTNAME>:8450
-      no edge hostname      -> "" (a local install)
+      edge enabled          -> the SSO-gated port root  https://<CADDY_TAILNET_HOSTNAME>:8450
+      neither               -> "" (a local install)
+
+    BOTH branches are gated on the plugin that actually serves the URL, not merely on the
+    hostname being set. `:8450` exists only because the edge plugin publishes it and the
+    Caddyfile has a site for it; a stack that sets CADDY_TAILNET_HOSTNAME with the edge
+    disabled would otherwise be handed a port nothing listens on. Same reason the sidecar
+    branch checks `tailnet-names` rather than just the domain.
 
     Empty is a valid answer, not a failure: Langfuse boots and serves the API with an empty
     NEXTAUTH_URL; only the interactive browser sign-in needs the origin to match.
@@ -396,7 +402,7 @@ def langfuse_public_url(env: dict[str, str], plugins_enabled: list[str]) -> str:
     hostname = str(env.get("CADDY_TAILNET_HOSTNAME", "") or "").strip()
     if "tailnet-names" in plugins_enabled and domain:
         return f"https://{LANGFUSE_TAILNET_LABEL}.{domain}"
-    if hostname:
+    if "edge" in plugins_enabled and hostname:
         return f"https://{hostname}:{LANGFUSE_EDGE_PORT}"
     return ""
 
@@ -571,7 +577,7 @@ def render(source: Source, catalog: Catalog,
         env.setdefault(str(k), str(v))
 
     # Langfuse's two non-secret settings. Emitted only when the plugin is enabled (a stack without
-    # it gets no dead keys), and with setdefault AFTER the site merge — unlike the derived keys
+    # it gets no dead keys), and with setdefault AFTER the site merge - unlike the derived keys
     # above, these are DEFAULTS an operator may deliberately override from `site:` (a Langfuse
     # reached through a different front door, or a real admin address for the seeded login).
     if "langfuse" in [p.id for p in services]:

@@ -1,4 +1,4 @@
-# Plugin manifest (data-only) — LANGFUSE, self-hosted LLM observability. OPTIONAL, profile
+# Plugin manifest (data-only) - LANGFUSE, self-hosted LLM observability. OPTIONAL, profile
 # 'langfuse'. Six containers (web + worker + postgres + clickhouse + redis + minio) implement one
 # product; that is upstream's supported topology, not accidental sprawl, so they ride one profile
 # and one plugin id. Reached like every other UI: behind the Caddy SSO edge on :8450 and the
@@ -9,10 +9,10 @@
 # callback and it is deliberately NOT enabled: Hermes already emits a generation span per LLM call,
 # so turning it on would double-count every generation in the same project. The follow-up, if the
 # non-Hermes traffic (Open WebUI, n8n, external clients) is ever worth tracing, is a SECOND Langfuse
-# project with its own key pair — not a second writer into `hermes`. See README.md in this dir.
+# project with its own key pair - not a second writer into `hermes`. See README.md in this dir.
 #
-# OPT-IN (`default: false`): the hardware gate says nothing useful here — six containers run fine on
-# any box — so the gate is the operator's explicit request. `plugins: auto` will NOT enable it.
+# OPT-IN (`default: false`): the hardware gate says nothing useful here - six containers run fine on
+# any box - so the gate is the operator's explicit request. `plugins: auto` will NOT enable it.
 id: langfuse
 name: Langfuse (self-hosted tracing)
 description: Agent traces, datasets and evals. Self-hosted Langfuse v4 with unattended init; Hermes sends turns/LLM calls/tool calls.
@@ -39,7 +39,7 @@ secrets:
   - LANGFUSE_NEXTAUTH_SECRET
   # NEVER rotated (see scripts/secrets/rotate-internal.sh): SALT hashes the API keys Langfuse
   # stores and ENCRYPTION_KEY encrypts its at-rest secrets. Changing either makes stored keys
-  # unmatchable and stored data unreadable — the same rule as LITELLM_SALT_KEY.
+  # unmatchable and stored data unreadable - the same rule as LITELLM_SALT_KEY.
   - LANGFUSE_SALT
   - LANGFUSE_ENCRYPTION_KEY
   # Seeded first-login password for the headless-init admin user.
@@ -48,23 +48,28 @@ secrets:
   - LANGFUSE_PUBLIC_KEY
   - LANGFUSE_SECRET_KEY
 #
-# IMAGE PINS — every image is `tag@sha256:`, resolved from what this host actually pulled
+# IMAGE PINS - every image is `tag@sha256:`, resolved from what this host actually pulled
 # (`docker inspect -f '{{index .RepoDigests 0}}' <image>`, 2026-09-14). Resolved versions:
 #   langfuse / langfuse-worker  4.36.0
 #   clickhouse-server           25.12.11.4
 #   redis                       7.4.11
 #   minio                       RELEASE.2025-09-07T16-13-09Z
-#   postgres                    16-alpine (the SAME pin as ordo.compose.POSTGRES_IMAGE — one
-#                               Postgres version across the stack; keep the two in step)
+#   postgres                    16-alpine (the SAME pin as ordo.compose.POSTGRES_IMAGE, enforced
+#                               by a substrate test - see the langfuse-db comment below)
 # MinIO is pulled from quay.io, NOT docker.io: `docker.io/minio/minio` now answers "pull access
 # denied … repository does not exist" (MinIO moved off Docker Hub), and the tag is the dated
 # RELEASE.* one rather than `latest`, per the stack's pin-don't-float rule.
 #
-# NO SECRET VALUES ANYWHERE BELOW — only `${VAR}` references. They resolve from secrets.env at
+# NO SECRET VALUES ANYWHERE BELOW - only `${VAR}` references. They resolve from secrets.env at
 # compose time (`--env-file secrets.env`), and an unset/empty one makes the service fail loudly at
 # start rather than come up with a guessable default. Same reasoning as litellm-db.
 services:
   - name: langfuse-db
+    # This MUST stay byte-identical to ordo.compose.POSTGRES_IMAGE (litellm-db's pin): one Postgres
+    # version across the stack, one digest to audit and bump. The manifest schema has no image-alias
+    # mechanism, so the copy is enforced rather than avoided -
+    # tests/substrate/test_langfuse.py::test_langfuse_db_reuses_the_substrate_postgres_pin fails if
+    # the two ever drift, which makes a one-sided bump impossible to merge.
     image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     env:
       POSTGRES_USER: langfuse
@@ -97,9 +102,13 @@ services:
         soft: 262144
         hard: 262144
     resources: {cpus: "4", memory: "6g"}
-    # no-new-privileges is deliberately ABSENT here: the image's entrypoint starts as root to chown
-    # the (initially root-owned) named volumes before dropping to the clickhouse user, and the flag
-    # blocks that drop via gosu/setpriv. Every other service in this plugin carries it.
+    # no-new-privileges applies here too. An earlier revision of this manifest left it off, claiming
+    # it would block the entrypoint's root-to-clickhouse drop - that was wrong twice over: the flag
+    # blocks GAINING privileges through setuid/setcap, never DROPPING them, and the running
+    # container shows PID 1 already at uid 101 with an empty capability set. Verified on a FRESH,
+    # root-owned volume with the flag set: the entrypoint still chowns /var/lib/clickhouse to
+    # 101:101, drops to 101, and answers /ping, with no permission errors in the boot log.
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
       interval: 10s
@@ -208,7 +217,7 @@ services:
   - name: langfuse-web
     image: docker.langfuse.com/langfuse/langfuse:4@sha256:b0556ab389af97d861185323e6dbd410464bb2b1669bd819251cb3635c291c07
     # No host port: reached through the Caddy edge (:8450) like every other UI. `worker: started`
-    # (not healthy) — the two share one ClickHouse and race the same migrations; making web wait on
+    # (not healthy) - the two share one ClickHouse and race the same migrations; making web wait on
     # worker START orders the migration runner first without turning a slow worker into a web outage.
     depends_on:
       langfuse-db: service_healthy
@@ -257,7 +266,7 @@ services:
       LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
       # HEADLESS INIT (web only). Langfuse applies these on every boot and is idempotent: it
       # creates the org/project/user/API key on a fresh DB and logs "already exists" afterwards.
-      # This is what makes the plugin unattended — no click-through setup, and the project key pair
+      # This is what makes the plugin unattended - no click-through setup, and the project key pair
       # is known to the render BEFORE the server exists, so Hermes can be wired in the same pass.
       LANGFUSE_INIT_ORG_ID: ordo
       LANGFUSE_INIT_ORG_NAME: Ordo

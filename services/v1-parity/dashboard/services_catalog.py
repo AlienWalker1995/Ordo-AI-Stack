@@ -39,31 +39,36 @@ def mcp_external_url() -> str | None:
     return f"https://{host}/mcp" if host else None
 
 
-# LiteLLM's admin UI (keys, teams, spend, MCP servers, models) lives at /ui/; swagger stays
-# at its ROOT path (`GET model-gateway:11435/` returns the swagger HTML; `/docs` 404s -
-# confirmed by probe), but the admin UI is the human-facing surface once litellm-db exists.
-#
-# Both must be opened at an origin ROOT, which is why this is a subdomain (llm.<tailnet> ->
-# caddy :8449) and not `/llm/`. The :443 `/llm/*` route strips its prefix, and the admin UI /
-# swagger HTML then reference ROOT-ABSOLUTE assets (`/ui/_next/...`, `/swagger/swagger-ui.css`).
-# Through `/llm/` the document returns 200 but every asset resolves to
-# `https://<host>/ui/_next/...` (or `/swagger/...`), escapes the `/llm/*` handler, hits the front
-# door and 404s - a blank page that reads as an outage. `/llm/*` remains the SSO-BYPASSING API
-# base for programmatic clients (LITELLM_MASTER_KEY bearer); it is not a browser entry.
-MODEL_GATEWAY_UI_PORT = 8449
+def service_open_url(card: dict) -> str | None:
+    """The browsable Open link for one card, resolved SERVER-side so the browser never guesses.
 
+    Three shapes, in order:
+      1. the clean per-service tailnet name (`https://<label>.<domain>/`) when the sidecar
+         layer is enabled - the same answer every service gets;
+      2. the service's own SSO-gated Caddy PORT ROOT (`https://<host>:<sso_port>/`) when the
+         card declares `sso_port` and the sidecars are off;
+      3. None when no edge hostname is configured, so the frontend falls back to its own route
+         rather than rendering a link to a host that does not exist.
 
-def model_gateway_open_url() -> str | None:
-    """Browsable Open link for the model-gateway card: the LiteLLM admin UI at /ui/.
+    A card may add `sso_path` (default `/`) when the human-facing surface is not the origin
+    root - e.g. model-gateway, whose LiteLLM admin UI lives at `/ui/` (swagger stays at `/`).
 
-    Prefers the subdomain (`https://llm.<domain>/ui/`) like every other service; falls back
-    to the SSO'd port root (`https://<host>:8449/ui/`) when the sidecar layer is disabled, and
-    to None when the edge host is unknown so the frontend emits no broken link."""
-    subdomain = tailnet_open_url("model-gateway")
+    Both fallbacks are a port ROOT on purpose. A prefix-stripping subpath route breaks any app
+    that emits root-absolute assets: through the edge's `/llm/*` route LiteLLM's admin UI HTML
+    returns 200 but every `/ui/_next/*` asset escapes the handler and 404s, rendering a blank
+    page that reads as an outage. `/llm/*` stays the SSO-BYPASSING API base for programmatic
+    bearer clients; it is not a browser entry. The same reasoning applies to Langfuse (:8450),
+    which is why this is one generic resolver and not a per-service special case.
+    """
+    path = str(card.get("sso_path") or "/")
+    subdomain = tailnet_open_url(card.get("id", ""))
     if subdomain:
-        return f"{subdomain}ui/"
+        return subdomain.rstrip("/") + path
+    port = card.get("sso_port")
     host = os.environ.get("CADDY_TAILNET_HOSTNAME", "").strip()
-    return f"https://{host}:{MODEL_GATEWAY_UI_PORT}/ui/" if host else None
+    if port and host:
+        return f"https://{host}:{int(port)}{path}"
+    return None
 
 
 def tailnet_open_url(service_id: str) -> str | None:
@@ -83,10 +88,18 @@ def tailnet_open_url(service_id: str) -> str | None:
 # ── Catalog loading (the card list is JSON, declared per-service) ──────────────────────
 # Card schema = the grid fields (id/name/port/url/check/check_4xx_ok/has_gpu/plugin/
 # category/background/hint) plus the wiring keys `ops_service` (compose service targeted
-# by the card's lifecycle buttons -> OPS_SERVICE_MAP) and `tailnet_label` (clean
-# subdomain -> TAILNET_LABELS), plus `order` (curated grid order — aggregation sorts by
-# it so glob order never reshuffles the UI). `notes` is rationale for humans reading the
-# fragment; the API/frontend ignore it.
+# by the card's lifecycle buttons -> OPS_SERVICE_MAP), `tailnet_label` (clean
+# subdomain -> TAILNET_LABELS) and `sso_port` / `sso_path` (the service's own SSO-gated
+# Caddy port root, used by service_open_url() as the Open link when the sidecar layer is
+# off), plus `order` (curated grid order - aggregation sorts by it so glob order never
+# reshuffles the UI). `notes` is rationale for humans reading the fragment; the
+# API/frontend ignore it.
+#
+# `port`/`url` are the FRONTEND's last-resort direct-link fallback and only make sense for a
+# service that actually publishes a host port. A service reached solely through the edge
+# (langfuse) declares `sso_port` and omits them: a host:port link would point at nothing, and
+# a container port copied in "for completeness" can collide with another card's (3000 is
+# open-webui's) and render a confidently wrong link.
 SERVICES_CATALOG_ENV = "SERVICES_CATALOG_PATH"
 # In-repo location of the fragments: this file lives at services/v1-parity/dashboard/,
 # so parents[2] is the shared services/ root the render registries also glob.
@@ -168,9 +181,9 @@ TAILNET_LABELS = {s["id"]: s["tailnet_label"] for s in SERVICES if s.get("tailne
 # their true up/down from ops-api container health, see routes_hub) it ALSO tags the
 # infra/backend services that have a port & health check but no browsable UI a person
 # visits: llamacpp, llamacpp-cpu, mcp, qdrant, stt, tts, couchdb. The main grid is ONLY
-# the user-facing UIs (webui/comfyui/n8n/hermes/codebase-memory-ui) plus model-gateway
-# (its Open link points at the LiteLLM admin UI at /ui/ through the edge; see
-# model_gateway_open_url() below).
+# the user-facing UIs (webui/comfyui/n8n/hermes/codebase-memory-ui/langfuse) plus
+# model-gateway (its Open link points at the LiteLLM admin UI at /ui/ through the edge; see
+# service_open_url() above).
 #
 # Deliberately card-LESS services: ltx-trainer (CLI-only LoRA trainer — ops-api-managed,
 # GPU runs take an ops-controller lease); the obsidian-livesync Funnel (a Tailscale

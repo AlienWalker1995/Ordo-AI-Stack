@@ -9,9 +9,8 @@ from dashboard.services_catalog import (
     OPS_SERVICE_MAP,
     _check_service,
     mcp_external_url,
-    model_gateway_open_url,
     probe_all,
-    tailnet_open_url,
+    service_open_url,
     visible_services,
 )
 from dashboard.settings import AUTH_REQUIRED
@@ -59,21 +58,13 @@ async def services():
             ok, err = await _check_service(svc["check"], client)
         else:
             ok, err = _container_health(svc["id"])
-        # Server-owned Open link, one source of truth (no hostname guess in the browser):
-        #  * model-gateway resolves to its own llm.<domain> sidecar like everything else, and
-        #    falls back to the SSO'd port ROOT (:8449) when the sidecar layer is off, at the
-        #    LiteLLM admin UI (/ui/, swagger at /). Never the edge's /llm/ route: that strips
-        #    the prefix and LiteLLM's root-absolute /ui/_next/* and /swagger/* assets then
-        #    escape the handler and 404 into a blank page.
-        #  * the sidecar UIs get their clean per-service tailnet name (https://chat.<domain>/ …)
-        #    when the tailnet-names layer is enabled.
-        # Either is None when the edge host is unknown, so the frontend falls back to its
-        # port/SSO route rather than rendering a broken link.
-        open_url = (
-            model_gateway_open_url()
-            if svc["id"] == "model-gateway"
-            else tailnet_open_url(svc["id"])
-        )
+        # Server-owned Open link, one source of truth (no hostname guess in the browser), and
+        # ONE resolver for every card rather than a per-service branch here: a card gets its
+        # clean per-service tailnet name (https://chat.<domain>/ …) when the sidecar layer is
+        # enabled, else its own SSO-gated Caddy port root when it declares `sso_port`
+        # (model-gateway :8449/ui/, langfuse :8450/), else None so the frontend falls back to
+        # its own route rather than rendering a link to a host that does not exist.
+        open_url = service_open_url(svc)
         return {
             **{k: v for k, v in svc.items() if k != "check"},
             "ok": ok,

@@ -11,16 +11,17 @@ time, so they are locked here:
   * all ten secrets must reach `required_secrets` (a dropped one renders a service that starts
     with an empty password instead of failing),
   * LANGFUSE_PUBLIC_URL must equal the URL the browser will actually use, for each of the three
-    edge shapes — a mismatch breaks sign-in only at runtime, on the box, after a deploy.
+    edge shapes - a mismatch breaks sign-in only at runtime, on the box, after a deploy.
 """
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import yaml
 
-from ordo import wizard
+from ordo import compose, wizard
 from ordo.catalog import Catalog
 from ordo.config import Source
 from ordo.plugins import PluginRegistry
@@ -58,7 +59,7 @@ def _compose(rc):
 # ── opt-in gate ────────────────────────────────────────────────────────────────
 
 def test_langfuse_is_not_enabled_by_auto():
-    """`default: false` — six containers must never appear because the box happens to fit them."""
+    """`default: false` - six containers must never appear because the box happens to fit them."""
     rc = render(Source.from_dict({"hardware": P_5090, "plugins": "auto"}), CATALOG, REGISTRY)
     assert "langfuse" not in rc.plugins_enabled
     assert "LANGFUSE_ENABLED" not in rc.env
@@ -103,15 +104,54 @@ def test_no_langfuse_service_publishes_a_host_port():
         assert "ports" not in svcs[name], f"{name} publishes a host port"
 
 
-def test_no_secret_value_is_inlined_in_the_rendered_compose():
+def test_every_declared_secret_reaches_the_containers_only_as_a_reference():
     """Secrets reach the containers as `${VAR}` refs resolved from secrets.env at compose time
-    (the litellm-db pattern): an empty value fails the service loudly instead of defaulting."""
-    svcs = _compose(render(_src(), CATALOG, REGISTRY))
+    (the litellm-db pattern): an empty value fails the service loudly instead of defaulting.
+
+    Three halves, because each alone passes trivially:
+      1. every secret the plugin DECLARES is actually consumed by some service (a declared but
+         unused key is a lie in secrets.env.example);
+      2. inside an env value, a secret name only ever appears inside a `${...}` interpolation -
+         never as a literal;
+      3. rendering while the generated VALUES are known puts none of them in the compose text.
+    """
+    plugin = REGISTRY.get("langfuse")
+    rendered = render(_src(), CATALOG, REGISTRY)
+    services = rendered.compose_dict()["services"]
+    text = yaml.safe_dump(rendered.compose_dict(), sort_keys=False)
+
+    # Compose interpolation: ${NAME}, ${NAME:-default}, ${NAME:?message}.
+    interpolation = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?:[:?][^}]*)?\}")
+
+    referenced: set[str] = set()
     for name in LANGFUSE_SERVICES:
-        for key, value in (svcs[name].get("environment") or {}).items():
-            if any(s in str(value) for s in LANGFUSE_SECRETS):
-                assert str(value).startswith("${") or "${" in str(value), (
-                    f"{name}.{key} must reference a secret, not inline it")
+        for key, raw in (services[name].get("environment") or {}).items():
+            value = str(raw)
+            referenced |= {m.group(1) for m in interpolation.finditer(value)}
+            # strip every valid interpolation; any secret NAME left over is a literal
+            literal = interpolation.sub("", value)
+            for secret in plugin.secrets:
+                assert secret not in literal, (
+                    f"{name}.{key} carries {secret} outside a ${{...}} reference: {value!r}")
+
+    # (1) nothing declared is dead weight
+    unused = [s for s in plugin.secrets if s not in referenced]
+    assert not unused, f"declared in `secrets:` but consumed by no service: {unused}"
+
+    # (3) with real values in hand, none may be baked into the rendered compose
+    values = {key: wizard.SECRET_GENERATORS[key]() for key in plugin.secrets}
+    for key, value in values.items():
+        assert value not in text, f"the VALUE of {key} was inlined into the rendered compose"
+    # and the check above is capable of failing: a planted value IS found
+    assert values["LANGFUSE_DB_PASSWORD"] in text + values["LANGFUSE_DB_PASSWORD"]
+
+
+def test_langfuse_db_reuses_the_substrate_postgres_pin():
+    """One Postgres version across the stack. The manifest schema has no image-alias mechanism,
+    so langfuse-db copies ordo.compose.POSTGRES_IMAGE - and this test is what stops the copy
+    drifting: bumping litellm-db's pin without bumping this one fails here, not in production."""
+    svcs = _compose(render(_src(), CATALOG, REGISTRY))
+    assert svcs["langfuse-db"]["image"] == compose.POSTGRES_IMAGE
 
 
 def test_datastores_are_gated_service_healthy_before_the_app_starts():
@@ -204,7 +244,7 @@ def test_every_langfuse_secret_has_a_generator():
 
 
 def test_encryption_key_is_exactly_64_hex_chars():
-    """Langfuse REFUSES TO BOOT on anything else — the one generator shape that is a hard
+    """Langfuse REFUSES TO BOOT on anything else - the one generator shape that is a hard
     server-side requirement rather than a strength preference."""
     value = wizard.SECRET_GENERATORS["LANGFUSE_ENCRYPTION_KEY"]()
     assert len(value) == 64
@@ -251,7 +291,7 @@ def test_sidecar_serve_asset_targets_the_same_port_the_edge_publishes():
 def test_sidecar_hostname_matches_the_derived_public_url_label():
     """`tailscale serve` registers TS_HOSTNAME as the node name; LANGFUSE_PUBLIC_URL is built
     from the same label. If they drift, Langfuse redirects post-login to a host that does not
-    resolve — and only an interactive sign-in would ever notice."""
+    resolve - and only an interactive sign-in would ever notice."""
     manifest = yaml.safe_load(
         (ROOT / "services" / "tailnet-names" / "plugin.yaml").read_text(encoding="utf-8"))
     sidecar = next(s for s in manifest["services"] if s["name"] == "tailnet-langfuse")
@@ -288,7 +328,7 @@ def test_hermes_reads_the_project_keys_with_an_empty_fallback():
 
 def test_hermes_entrypoint_enables_the_plugin_only_with_a_key():
     """Enabling the bundled plugin without credentials leaves hooks permanently inert while the
-    CLI reports "enabled" — tracing that looks configured and records nothing."""
+    CLI reports "enabled" - tracing that looks configured and records nothing."""
     entrypoint = (ROOT / "services" / "hermes" / "entrypoint.sh").read_text(encoding="utf-8")
     assert 'plugins enable observability/langfuse' in entrypoint
     assert '[ -n "${HERMES_LANGFUSE_PUBLIC_KEY:-}" ]' in entrypoint

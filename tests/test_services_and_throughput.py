@@ -181,7 +181,12 @@ def test_services_do_not_leak_auth_token(client, monkeypatch):
     importlib.reload(dashboard.services_catalog)
     try:
         for svc in dashboard.services_catalog.SERVICES:
-            assert "secret-test-token-1234" not in svc.get("url", ""), \
+            # `.get("url") or ""`, not `.get("url", "")`: a card may declare `"url": null`
+            # (the portless-card convention, e.g. langfuse), where the key EXISTS with a
+            # None value and the two-arg default never applies - the old form raised
+            # TypeError instead of checking, turning this guard off for exactly the cards
+            # most likely to be misconfigured.
+            assert "secret-test-token-1234" not in (svc.get("url") or ""), \
                 f"Token leaked in service {svc['id']} URL: {svc['url']}"
     finally:
         importlib.reload(dashboard.services_catalog)
@@ -449,3 +454,38 @@ def test_index_html_sends_no_cache(client):
     assert r.headers.get("cache-control") == "no-cache"
     # Still a validated cache — the ETag is what the browser revalidates against.
     assert r.headers.get("etag")
+
+
+def test_langfuse_open_url_prefers_its_subdomain(client, monkeypatch):
+    """The langfuse card's Open link is the clean sidecar name, like every other service."""
+    monkeypatch.delenv("MANIFEST_PATH", raising=False)
+    monkeypatch.setenv("CADDY_TAILNET_HOSTNAME", "ordo.example.ts.net")
+    monkeypatch.setenv("CADDY_TAILNET_DOMAIN", "example.ts.net")
+    monkeypatch.setenv("TAILNET_NAMES_ENABLED", "1")
+    lf = {s["id"]: s for s in client.get("/api/services").json()["services"]}["langfuse"]
+    assert lf["open_url"] == "https://langfuse.example.ts.net/"
+
+
+def test_langfuse_open_url_falls_back_to_its_sso_port_without_sidecars(client, monkeypatch):
+    """With the sidecar layer off the link must be the SSO-gated port ROOT (:8450).
+
+    Regression guard: this card originally carried `port: 3000` / `url: http://localhost:3000`,
+    which is open-webui's pair verbatim. The frontend's host:port fallback then resolved to
+    https://<host>:3000 - a port langfuse-web does not publish and open-webui's card already
+    claims. `sso_port` is the only browser-reachable address this service has."""
+    monkeypatch.delenv("MANIFEST_PATH", raising=False)
+    monkeypatch.delenv("TAILNET_NAMES_ENABLED", raising=False)
+    monkeypatch.setenv("CADDY_TAILNET_HOSTNAME", "ordo.example.ts.net")
+    lf = {s["id"]: s for s in client.get("/api/services").json()["services"]}["langfuse"]
+    assert lf["open_url"] == "https://ordo.example.ts.net:8450/"
+    assert lf.get("port") is None and lf.get("url") is None, (
+        "langfuse publishes no host port; a port/url pair would give the frontend a dead "
+        "fallback that also collides with open-webui's identical 3000 / localhost:3000")
+
+
+def test_langfuse_open_url_is_none_without_an_edge_host(client, monkeypatch):
+    monkeypatch.delenv("MANIFEST_PATH", raising=False)
+    monkeypatch.delenv("CADDY_TAILNET_HOSTNAME", raising=False)
+    monkeypatch.delenv("TAILNET_NAMES_ENABLED", raising=False)
+    lf = {s["id"]: s for s in client.get("/api/services").json()["services"]}["langfuse"]
+    assert lf["open_url"] is None
