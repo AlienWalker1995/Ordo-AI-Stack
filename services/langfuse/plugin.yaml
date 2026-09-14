@@ -192,8 +192,15 @@ services:
       LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
     security_opt: ["no-new-privileges:true"]
     resources: {cpus: "4", memory: "4g"}
+    # PROBE THE BOUND ADDRESS, NOT localhost. Both Langfuse app services listen ONLY on the
+    # container's eth0 address (verified live: `172.25.0.39:3000 LISTEN`, and
+    # `wget http://localhost:3000` -> connection refused inside the container) - Next.js binds
+    # the HOSTNAME docker sets to the container id, and the worker does the same. A localhost
+    # probe can therefore never pass, and the service would sit permanently unhealthy while
+    # serving traffic perfectly to every peer on the project network. `$(hostname)` is the one
+    # address that is correct whether the app binds that interface or 0.0.0.0.
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3030/api/health"]
+      test: ["CMD-SHELL", "wget -q --spider \"http://$(hostname):3030/api/health\" || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -266,8 +273,15 @@ services:
     # 120s start_period: the first boot runs the Postgres AND ClickHouse migrations before the
     # server listens. A shorter grace marks it unhealthy mid-migration and restarts it into the
     # same work.
+    # PROBE THE BOUND ADDRESS, NOT localhost. Both Langfuse app services listen ONLY on the
+    # container's eth0 address (verified live: `172.25.0.39:3000 LISTEN`, and
+    # `wget http://localhost:3000` -> connection refused inside the container) - Next.js binds
+    # the HOSTNAME docker sets to the container id, and the worker does the same. A localhost
+    # probe can therefore never pass, and the service would sit permanently unhealthy while
+    # serving traffic perfectly to every peer on the project network. `$(hostname)` is the one
+    # address that is correct whether the app binds that interface or 0.0.0.0.
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/public/health"]
+      test: ["CMD-SHELL", "wget -q --spider \"http://$(hostname):3000/api/public/health\" || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5

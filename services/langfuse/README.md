@@ -97,10 +97,32 @@ All ten keys live in `out/secrets.env` and are minted by `ordo init` / the wizar
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | Not from the file. Langfuse stores its own copy, so editing `secrets.env` only stops Hermes authenticating. Rotate in the UI (project settings, API keys), then copy the new pair in and restart the agent. |
 | `LANGFUSE_ADMIN_PASSWORD` | Not from the file. It seeds the login only on the first boot against an empty database; afterwards the password lives hashed in Postgres. Change it in the UI. |
 
+## Reading traces programmatically
+
+A new v4 deployment runs the default `events_only` write mode, where the v3 read endpoints are
+**gone** — `GET /api/public/traces`, `/observations`, `/sessions`, `/scores` and `/metrics` all
+return 404 with a "not available … in Langfuse v4 events_only mode" body. That is the documented v4
+behaviour, not a misconfiguration: only a deployment still migrating from v3 (`legacy` / `dual` write
+mode) keeps them. The replacements:
+
+| Want | Endpoint |
+|---|---|
+| Spans / generations / tool calls | `GET /api/public/v2/observations` |
+| Scores | `GET /api/public/v3/scores` |
+| Aggregates | `GET /api/public/v2/metrics?query=<json>` |
+| Health | `GET /api/public/health` |
+
+Authenticate with HTTP Basic, `LANGFUSE_PUBLIC_KEY` as the user and `LANGFUSE_SECRET_KEY` as the
+password. Underneath, every span is a row in ClickHouse's `events_full`.
+
 ## Operating notes
 
 - **First boot takes a couple of minutes.** `langfuse-web` runs the Postgres and ClickHouse
   migrations before it listens, which is why its healthcheck has a 120s `start_period`.
+- **The app services do not listen on loopback.** Both bind only the container's own eth0 address,
+  so `wget http://localhost:3000` inside the container is refused while every peer on the project
+  network is served normally. The healthchecks probe `$(hostname)` for that reason — do not
+  "simplify" them back to `localhost` or the services go permanently unhealthy.
 - **Media in the UI.** Both MinIO endpoints are internal, because this stack publishes no MinIO
   port. Media attachments therefore resolve only from inside the project network. Hermes sends none
   (it redacts `data:` URIs), so nothing here depends on it.

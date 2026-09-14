@@ -302,3 +302,14 @@ def test_hermes_image_pins_the_langfuse_sdk():
     is silent. Pin it, and pin it to the major that matches the self-hosted server."""
     dockerfile = (ROOT / "services" / "hermes" / "Dockerfile").read_text(encoding="utf-8")
     assert 'uv pip install "langfuse==4.15.1"' in dockerfile
+
+
+def test_app_healthchecks_probe_the_bound_address_not_localhost():
+    """Both Langfuse app services bind ONLY their container's eth0 address, so a localhost probe
+    can never connect and the service sits permanently unhealthy while serving every peer fine
+    (observed live 2026-09-14: `172.25.0.39:3000 LISTEN`, localhost refused)."""
+    svcs = _compose(render(_src(), CATALOG, REGISTRY))
+    for name in ("langfuse-web", "langfuse-worker"):
+        probe = " ".join(svcs[name]["healthcheck"]["test"])
+        assert "$(hostname)" in probe, f"{name} healthcheck must probe the address it binds"
+        assert "localhost" not in probe, f"{name} healthcheck probes localhost, which is not bound"
