@@ -16,7 +16,7 @@
 # repo is public). Each sidecar consumes ~1 of the plan's 50 free tagged resources.
 id: tailnet-names
 name: Tailnet service names (clean URLs)
-description: Per-service Tailscale sidecar nodes — chat/dash/n8n/comfy/hermes/graph/llm/langfuse.<tailnet>.ts.net, TLS auto-managed, proxying to the SSO-gated Caddy ports.
+description: Per-service Tailscale sidecar nodes - chat/dash/n8n/comfy/hermes/graph/llm/langfuse.<tailnet>.ts.net, TLS auto-managed, proxying to the SSO-gated Caddy ports.
 requires:
   nvidia: false
   ram_gb: 1

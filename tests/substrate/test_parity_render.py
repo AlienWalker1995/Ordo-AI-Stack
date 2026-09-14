@@ -56,8 +56,8 @@ def test_parity_matrix_counts():
     # (qdrant-rag, searxng, memory-vault + the restored codebase-memory / comfyui-mcp / n8n /
     # orchestration). 16 of the service plugins ENABLE on the full host: langfuse is opt-in
     # (`default: false`), so `plugins: auto` deliberately leaves it out. (The media "worker"
-    # plugin was retired, dropping the parity set from 12 to 11; llamacpp-cpu — the CPU LLM
-    # fallback — was added post-parity.)
+    # plugin was retired, dropping the parity set from 12 to 11; llamacpp-cpu - the CPU LLM
+    # fallback - was added post-parity.)
     svc = [p for p in REGISTRY.plugins if p.kind == "service"]
     mcp = [p for p in REGISTRY.plugins if p.kind == "mcp"]
     opt_in = [p.id for p in svc if not p.default]

@@ -103,7 +103,7 @@ Every UI is published only through the SSO front door; APIs are exposed on authe
 - **Code intelligence** — a codebase-memory service that indexes your repositories into a queryable knowledge graph, with its own UI.
 - **Unified dashboard** — model lists, service links, dependency health, GPU and registry views, model pulls, and an embedded monitoring view.
 - **Ops controller** — the render/scheduler control plane (internal, token-auth).
-- **Agent tracing** — optional self-hosted [Langfuse](services/langfuse/README.md): every agent turn, LLM call and tool call as a searchable trace, plus datasets and evals, with unattended first-boot setup. Opt-in; the agent fails open when it is off or down.
+- **Agent tracing**: optional self-hosted [Langfuse](services/langfuse/README.md): every agent turn, LLM call and tool call as a searchable trace, plus datasets and evals, with unattended first-boot setup. Opt-in; the agent fails open when it is off or down.
 - **Optional, hardware-gated plugins** — voice (STT + TTS), RAG (Qdrant retrieval), and monitoring (Grafana + Prometheus + GPU exporter) enable when your hardware supports them.
 
 ## Security

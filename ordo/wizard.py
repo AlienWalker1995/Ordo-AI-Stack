@@ -122,7 +122,7 @@ SECRET_GENERATORS: dict[str, Any] = {
     "LANGFUSE_MINIO_SECRET": lambda: _secrets.token_urlsafe(32),
     "LANGFUSE_NEXTAUTH_SECRET": lambda: _secrets.token_urlsafe(32),
     # SALT hashes the API keys Langfuse stores; ENCRYPTION_KEY encrypts the secrets in its DB, and
-    # Langfuse REQUIRES exactly 64 hex characters for it (`openssl rand -hex 32` upstream) — it
+    # Langfuse REQUIRES exactly 64 hex characters for it (`openssl rand -hex 32` upstream) - it
     # refuses to boot otherwise. Both are generated ONCE and never rotated, for the same reason as
     # LITELLM_SALT_KEY: rotating makes the stored keys unmatchable and the stored data unreadable.
     "LANGFUSE_SALT": lambda: _secrets.token_hex(32),

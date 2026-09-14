@@ -138,7 +138,7 @@ fi
 # plugin never gets enabled at all.
 #
 # The HERMES_LANGFUSE_PUBLIC_KEY guard is what keeps this fail-open. With the langfuse plugin
-# disabled the compose ref interpolates to "", so we skip entirely and no sentinel is written —
+# disabled the compose ref interpolates to "", so we skip entirely and no sentinel is written -
 # the next start after the operator enables langfuse picks it up. Enabling it keyless would
 # leave an "enabled" plugin whose hooks are permanently inert, which reads as working tracing.
 #

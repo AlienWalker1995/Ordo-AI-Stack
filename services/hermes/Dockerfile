@@ -194,11 +194,11 @@ WORKDIR /opt/hermes-agent
 RUN uv venv --python 3.11 \
     && uv pip install -e ".[all]"
 
-# Langfuse SDK — the optional runtime dependency of the BUNDLED `observability/langfuse`
+# Langfuse SDK - the optional runtime dependency of the BUNDLED `observability/langfuse`
 # plugin (plugins/observability/langfuse/, shipped by upstream, enabled by entrypoint.sh
 # when the langfuse plugin provides project keys). The plugin does
 # `try: from langfuse import Langfuse, propagate_attributes / except: hooks are inert`,
-# so without this line the plugin can be "enabled" and still trace nothing, silently —
+# so without this line the plugin can be "enabled" and still trace nothing, silently -
 # which is precisely the failure mode worth removing from an observability tool.
 #
 # Installed into the SAME venv hermes-agent itself runs from: WORKDIR is still
@@ -206,14 +206,14 @@ RUN uv venv --python 3.11 \
 # discovery the `uv pip install -e` line relies on). It must not land in a second
 # interpreter, or the gateway process would not see it.
 #
-# Pinned to 4.15.1 — the SDK major that matches the self-hosted server major (Langfuse v4,
+# Pinned to 4.15.1 - the SDK major that matches the self-hosted server major (Langfuse v4,
 # services/langfuse/plugin.yaml). It carries every symbol the plugin touches (Langfuse,
 # propagate_attributes, create_trace_id, start_as_current_observation, start_observation,
-# flush) and, unlike the 3.x line, exposes `langfuse.__version__` — which is how the
+# flush) and, unlike the 3.x line, exposes `langfuse.__version__` - which is how the
 # deployment check verifies the install inside the container. Bump tag and server together.
 #
 # NOT the newest release, on purpose. Upstream's pyproject sets `[tool.uv] exclude-newer =
-# "14 days"` — a ROLLING cutoff relative to BUILD time — so uv refuses any distribution
+# "14 days"` - a ROLLING cutoff relative to BUILD time - so uv refuses any distribution
 # published in the last fortnight and a just-released pin fails the build outright
 # ("filtered by exclude-newer", seen with 4.15.2 on 2026-09-14). Versions only ever age INTO
 # the window, never out of it, so a pin older than the cutoff is stable forever. When bumping,

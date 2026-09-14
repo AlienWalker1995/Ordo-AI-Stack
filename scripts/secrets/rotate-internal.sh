@@ -21,7 +21,7 @@ set -euo pipefail
 #     stored ciphertext undecryptable). Both are generate-once-per-install values.
 #   NOT LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY: those are the project key pair
 #     Langfuse ISSUED and stores server-side. Changing the file does not change the
-#     server's copy — it just stops Hermes authenticating. Rotate them in the Langfuse
+#     server's copy - it just stops Hermes authenticating. Rotate them in the Langfuse
 #     UI (project settings -> API keys) and copy the new pair into secrets.env.
 #   NOT LANGFUSE_ADMIN_PASSWORD: it seeds the login only on the FIRST boot against an
 #     empty database (LANGFUSE_INIT_*); afterwards the password lives hashed in

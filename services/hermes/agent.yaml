@@ -72,7 +72,7 @@ environment:
   # FAIL-OPEN BY DESIGN, and that is why there is no `depends_on: langfuse-web` below: with the
   # langfuse plugin disabled both keys interpolate to "", the plugin's _get_langfuse() returns
   # None once, and every hook short-circuits. Hermes must never depend on its own telemetry
-  # being up — a trace store outage would otherwise take the agent down with it.
+  # being up - a trace store outage would otherwise take the agent down with it.
   # The keys arrive from secrets.env (already an env_file on this service) under their LANGFUSE_*
   # names, because they are the SAME project key pair the langfuse plugin's headless init
   # creates; this maps them onto the HERMES_LANGFUSE_* names the plugin reads. One pair, one

@@ -201,7 +201,7 @@ def test_formerly_divergent_ports_serve_at_root(caddyfile_text: str) -> None:
     the :443 `/llm/*` route strips its prefix and the admin UI / swagger HTML then request
     root-absolute `/ui/_next/*` / `/swagger/*` assets, which escape the handler and 404.
 
-    :8450 is Langfuse's web app — a Next.js SPA with the same root-absolute asset paths, so
+    :8450 is Langfuse's web app - a Next.js SPA with the same root-absolute asset paths, so
     it gets a port root for the same reason. It is the ONLY route into langfuse-web (the
     service publishes no host port), so losing the SSO gate here exposes the trace store.
     """

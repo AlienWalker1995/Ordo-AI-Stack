@@ -464,7 +464,7 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: st
         s["ports"] = list(ps.ports)
     if ps.shm_size:  # bump /dev/shm past docker's 64MB default (Electron/Selkies streaming needs it)
         s["shm_size"] = ps.shm_size
-    if ps.entrypoint:  # REPLACES the image's baked ENTRYPOINT (exec form — no shell splitting)
+    if ps.entrypoint:  # REPLACES the image's baked ENTRYPOINT (exec form - no shell splitting)
         s["entrypoint"] = list(ps.entrypoint)
     if ps.security_opt:
         s["security_opt"] = list(ps.security_opt)

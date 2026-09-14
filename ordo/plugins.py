@@ -38,7 +38,7 @@ class PluginService:
     healthcheck: dict[str, Any] = dataclasses.field(default_factory=dict)
     # Start-order peers. A LIST is plain ordering (compose's short form). A MAPPING
     # {peer: condition} renders the long form, so a service can wait for a peer to be READY
-    # (`service_healthy`) rather than merely created — the shape agent.yaml already uses, and what
+    # (`service_healthy`) rather than merely created - the shape agent.yaml already uses, and what
     # an application service needs when its datastores must finish migrating/starting first.
     depends_on: list[str] | dict[str, str] = dataclasses.field(default_factory=list)
     # True → this service reads the operator-managed `secrets.env` as a second env_file (so its
@@ -57,7 +57,7 @@ class PluginService:
     # they join Caddy's netns and hit its port listeners on loopback. Mutually exclusive with
     # `networks:` — the renderer omits the network attachment when this is set.
     network_mode: str = ""
-    # compose `entrypoint` — REPLACES the image's baked ENTRYPOINT (`command` only replaces CMD).
+    # compose `entrypoint` - REPLACES the image's baked ENTRYPOINT (`command` only replaces CMD).
     # Exec form (a list) so there is no shell word-splitting ambiguity; a shell one-liner is
     # written explicitly as ["sh", "-c", "…"]. Needed by images that must run a setup step before
     # their server (langfuse-minio pre-creates its bucket). Empty -> the image's own entrypoint.
@@ -66,7 +66,7 @@ class PluginService:
     # renderer; a plugin service declares it here so an ordinary service can opt into the same
     # hardening without a per-plugin if-block in compose.py.
     security_opt: list[str] = dataclasses.field(default_factory=list)
-    # compose `ulimits` — passed through verbatim (e.g. {"nofile": {"soft": 262144, "hard": 262144}}).
+    # compose `ulimits` - passed through verbatim (e.g. {"nofile": {"soft": 262144, "hard": 262144}}).
     # ClickHouse needs a raised file-descriptor ceiling; docker's default (1024) makes it log
     # "Too many open files" under load.
     ulimits: dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -228,7 +228,7 @@ class Plugin:
     # Does `plugins: auto` enable this one? `default: false` makes the plugin OPT-IN: it runs only
     # when the source lists it by id. The hardware gate (`requires:`) is the wrong instrument for a
     # plugin whose real cost is a standing multi-container footprint rather than a GPU or RAM floor
-    # — langfuse runs six containers on any hardware, so "the box can run it" must not mean "every
+    # - langfuse runs six containers on any hardware, so "the box can run it" must not mean "every
     # box should". Defaults to True, so every existing manifest keeps its current behaviour.
     default: bool = True
     kind: str = "service"          # "service" (compose service) | "mcp" (agent tool server)

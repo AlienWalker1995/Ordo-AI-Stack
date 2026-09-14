@@ -55,7 +55,7 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 ### Langfuse tracing (`--profile langfuse`, opt-in)
 
 Self-hosted [Langfuse](../services/langfuse/README.md) v4: agent traces, datasets and evals.
-**Opt-in** — add `langfuse` to `plugins:` in `ordo.yaml`; `plugins: auto` never enables it.
+**Opt-in**: add `langfuse` to `plugins:` in `ordo.yaml`; `plugins: auto` never enables it.
 Six services (`langfuse-web`, `langfuse-worker`, `langfuse-db`, `langfuse-clickhouse`,
 `langfuse-redis`, `langfuse-minio`), no host ports, reached through Caddy `:8450` /
 `https://langfuse.<tailnet>.ts.net/`.
