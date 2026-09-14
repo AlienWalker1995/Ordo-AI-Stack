@@ -419,6 +419,40 @@ def test_hermes_dashboard_renders_in_caddy_netns_when_the_edge_is_on(tmp_path):
     assert "networks" not in hd, "compose forbids networks: alongside network_mode:"
 
 
+# ── netns members are lifecycle-coupled to the namespace owner ───────────────────
+# Recreating/restarting caddy destroys the shared network sandbox and orphans every
+# service that joined it via `network_mode: service:caddy` (tailscale node offline,
+# loopback upstream unreachable) while the container stays up. The manual remedy was
+# `docker restart ordo-tailnet-*` after every caddy recreate. The renderer now emits
+# `depends_on.caddy.restart: true` on every netns member so `docker compose up -d` /
+# `docker compose restart caddy` bring the members with caddy atomically.
+
+def test_netns_members_restart_couple_to_the_owner(tmp_path):
+    """Every service that joins another service's netns declares its owner as a
+    restart-coupled dependency (long-form depends_on with restart: true), so a compose
+    recreate/restart of the owner cascades to the member. This covers the tailnet-name
+    sidecars and hermes-dashboard in one renderer rule."""
+    c = _render_with_plugins(["edge", "tailnet-names", "hermes-dashboard"], tmp_path)
+    members = [
+        (name, svc) for name, svc in c["services"].items()
+        if str(svc.get("network_mode", "")).startswith("service:")
+    ]
+    # the sidecars + hermes-dashboard must actually be present, or the assertion below is vacuous
+    assert any(n.startswith("tailnet-") for n, _ in members)
+    assert any(n == "hermes-dashboard" for n, _ in members)
+    for name, svc in members:
+        owner = svc["network_mode"].split("service:", 1)[1]
+        dep = svc["depends_on"]
+        assert isinstance(dep, dict), f"{name}: depends_on must be long form to carry restart"
+        assert dep[owner] == {"condition": "service_started", "restart": True}, (
+            f"{name} joins {owner}'s netns but is not restart-coupled to it — a caddy "
+            f"recreate would orphan it")
+        # peers that are not the netns owner stay plain start-ordering (no needless restart churn)
+        for peer, cond in dep.items():
+            if peer != owner:
+                assert cond == {"condition": "service_started"}, f"{name}: peer {peer} over-coupled"
+
+
 def test_gguf_models_on_named_volume():
     # GGUF weights are served from the models-gguf named volume (ext4 inside the
     # Docker VM), never a ${BASE_PATH} 9p bind: heavy sequential reads wedge the

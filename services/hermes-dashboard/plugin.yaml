@@ -52,9 +52,12 @@ services:
     #
     # TRADE-OFF, know this before touching the edge: this service now shares caddy's
     # network namespace like the tailnet sidecars do. Recreating caddy DESTROYS that
-    # namespace and orphans every member. Never `--no-deps` a caddy recreate; recreate
-    # caddy and its netns members together or they silently lose networking while still
-    # reporting healthy.
+    # namespace and orphans every member (they silently lose networking while still
+    # reporting healthy). The renderer couples the lifecycle automatically: because this
+    # service sets `network_mode: service:caddy`, compose.py emits
+    # `depends_on.caddy.restart: true`, so `docker compose up -d` / `docker compose restart
+    # caddy` restart this member with caddy. Still never `--no-deps` a caddy recreate (it
+    # bypasses depends_on), and a BARE `docker restart caddy` won't cascade — use compose.
     command: ["hermes", "dashboard", "--port", "9119", "--host", "127.0.0.1", "--no-open", "--insecure"]
     network_mode: service:caddy
     env:

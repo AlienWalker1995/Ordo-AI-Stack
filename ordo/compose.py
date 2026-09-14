@@ -439,7 +439,23 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: st
     if ps.healthcheck:
         s["healthcheck"] = dict(ps.healthcheck)
     dep = _depends_on(ps.depends_on)
-    if dep:
+    if ps.network_mode.startswith("service:"):
+        # This service shares another service's network namespace (the tailnet-name sidecars and
+        # hermes-dashboard join caddy's netns; `tailscale serve`/loopback binds can only target
+        # 127.0.0.1). Recreating or restarting the OWNER destroys that shared sandbox and orphans
+        # every member: its tailscale node goes offline / its loopback upstream is unreachable, yet
+        # the container stays up and can still report healthy. So the member's lifecycle MUST be
+        # coupled to the owner's — `depends_on.<owner>.restart: true` (compose spec, Compose v2.17+)
+        # makes `docker compose up -d` and `docker compose restart <owner>` bring the member with the
+        # owner atomically, replacing the manual `docker restart ordo-tailnet-*` after every caddy
+        # recreate. (A BARE `docker restart <owner>` bypasses compose and still won't cascade — use
+        # the compose commands.) depends_on must be all-or-nothing long form, so peers keep the
+        # default service_started condition and only the owner carries restart.
+        owner = ps.network_mode.split("service:", 1)[1]
+        dep_map: dict[str, Any] = {peer: {"condition": "service_started"} for peer in ps.depends_on}
+        dep_map[owner] = {"condition": "service_started", "restart": True}
+        s["depends_on"] = dep_map
+    elif dep:
         s["depends_on"] = dep
     if ps.ports:  # edge/front-door only (Caddy :443); gated behind the plugin's opt-in profile
         s["ports"] = list(ps.ports)
