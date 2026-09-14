@@ -27,7 +27,7 @@ litellm_key:
 services:
   - name: oauth2-proxy
     # alpine variant ships wget for the healthcheck (the distroless :latest has no shell).
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.3-alpine
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.4-alpine
     wants_secrets: true       # OAUTH2_PROXY_* resolve from secrets.env
     command:
       - --provider=google
