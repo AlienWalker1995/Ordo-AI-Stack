@@ -72,6 +72,56 @@ def _apply_overrides(derived: dict[str, Any], overrides: dict[str, Any]) -> dict
     return out
 
 
+# Required keys for `cost:` (ordo.yaml): all four or none. Missing/non-positive/unknown ->
+# ValueError naming the offending key, caught at render time rather than silently defaulting.
+_COST_KEYS = ("usd_per_kwh", "inference_watts", "prompt_tokens_per_second", "output_tokens_per_second")
+
+
+def _format_cost(value: float) -> str:
+    """Plain decimal string (never scientific notation, never a trailing bare dot).
+
+    LiteLLM/YAML both parse `1.51e-08` fine, but a plain decimal is unambiguous everywhere
+    it's read (the .env file, `docker inspect`, a human diffing the render): so always emit
+    fixed-point, trimmed of the trailing zeros a fixed precision leaves behind.
+    """
+    text = format(value, ".18f").rstrip("0")
+    if text.endswith("."):
+        text += "0"
+    return text
+
+
+def local_token_costs(cost: dict[str, Any]) -> tuple[str, str]:
+    """Electricity-derived (input_cost_per_token, output_cost_per_token) as decimal strings.
+
+    Empty `cost` -> ("0", "0") (the historical $0/token default). Otherwise all four keys in
+    `_COST_KEYS` are required and must be positive numbers:
+
+        usd_per_second = inference_watts / 1000 * usd_per_kwh / 3600
+        input_cost_per_token  = usd_per_second / prompt_tokens_per_second
+        output_cost_per_token = usd_per_second / output_tokens_per_second
+
+    i.e. the rig's running cost in dollars-per-second, divided by however many tokens/sec it
+    produces at that draw. A missing/non-positive/unrecognized key raises ValueError naming it.
+    """
+    if not cost:
+        return ("0", "0")
+    unknown = sorted(set(cost) - set(_COST_KEYS))
+    if unknown:
+        raise ValueError(f"cost: unknown key(s) {unknown!r}, expected only {list(_COST_KEYS)!r}")
+    values: dict[str, float] = {}
+    for key in _COST_KEYS:
+        if key not in cost:
+            raise ValueError(f"cost.{key} is required when cost: is set")
+        raw = cost[key]
+        if isinstance(raw, bool) or not isinstance(raw, int | float) or raw <= 0:
+            raise ValueError(f"cost.{key} must be a positive number, got {raw!r}")
+        values[key] = float(raw)
+    usd_per_second = values["inference_watts"] / 1000 * values["usd_per_kwh"] / 3600
+    input_cost = usd_per_second / values["prompt_tokens_per_second"]
+    output_cost = usd_per_second / values["output_tokens_per_second"]
+    return (_format_cost(input_cost), _format_cost(output_cost))
+
+
 def key_env_name(consumer_id: str) -> str:
     """`open-webui` -> `LITELLM_KEY_OPEN_WEBUI` (the secrets.env var carrying that consumer's key)."""
     return "LITELLM_KEY_" + re.sub(r"[^A-Za-z0-9]", "_", consumer_id).upper()
@@ -387,6 +437,11 @@ def render(source: Source, catalog: Catalog,
     # lives in compose.render_compose, so an empty var here would just be noise/drift.
     if lc["image"]:
         env["LLAMACPP_IMAGE"] = str(lc["image"])
+    # Electricity-derived per-token cost for every local model (local-chat, the GPU/CPU pins,
+    # local-embed): see local_token_costs. Empty `cost:` -> "0"/"0" (unchanged $0 default).
+    input_cost_per_token, output_cost_per_token = local_token_costs(source.cost)
+    env["LOCAL_INPUT_COST_PER_TOKEN"] = input_cost_per_token
+    env["LOCAL_OUTPUT_COST_PER_TOKEN"] = output_cost_per_token
     # Resolve the chosen agent from the registry (Hermes is the default). Unknown id -> a warning
     # + the naming convention, so a typo surfaces at render/preflight not at compose-up.
     agent, agent_notes = agents.resolve(source.agent)

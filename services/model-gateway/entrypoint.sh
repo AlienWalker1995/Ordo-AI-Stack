@@ -26,6 +26,12 @@ CPU_WEIGHTS="${LLAMACPP_CPU_MODEL:-Qwen3.6-35B-A3B-UD-Q4_K_M.gguf}"
 EMBED_WEIGHTS="${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}"
 GPU_IMAGE="${LLAMACPP_IMAGE:-llama.cpp}"
 
+# Electricity-derived per-token cost for the local models (ordo.yaml `cost:`; see
+# ordo/render.py local_token_costs). Defaults to "0" so a pre-cost .env still boots with the
+# historical $0/token pricing instead of failing to start.
+LOCAL_INPUT_COST_PER_TOKEN="${LOCAL_INPUT_COST_PER_TOKEN:-0}"
+LOCAL_OUTPUT_COST_PER_TOKEN="${LOCAL_OUTPUT_COST_PER_TOKEN:-0}"
+
 # The pickable pin-alias NAMES derive from the deployed weights (basename, lowercased,
 # .gguf stripped) — a model swap renames them automatically, so the template never
 # hardcodes a model generation. `local-chat`/`local-embed` stay stable by contract.
@@ -44,7 +50,9 @@ sed -e "s|__CTX_SIZE__|${CTX_SIZE}|g" \
     -e "s|__GPU_IMAGE__|${GPU_IMAGE}|g" \
     -e "s|__GPU_MODEL_NAME__|${GPU_MODEL_NAME}|g" \
     -e "s|__CPU_MODEL_NAME__|${CPU_MODEL_NAME}|g" \
-    -e "s|__GPU_SUPPORTS_VISION__|${GPU_SUPPORTS_VISION}|g" /app/config.template.yaml > /tmp/config.yaml
+    -e "s|__GPU_SUPPORTS_VISION__|${GPU_SUPPORTS_VISION}|g" \
+    -e "s|__LOCAL_INPUT_COST_PER_TOKEN__|${LOCAL_INPUT_COST_PER_TOKEN}|g" \
+    -e "s|__LOCAL_OUTPUT_COST_PER_TOKEN__|${LOCAL_OUTPUT_COST_PER_TOKEN}|g" /app/config.template.yaml > /tmp/config.yaml
 
 # LiteLLM resolves `callbacks:` module paths relative to the CONFIG FILE's directory, and the
 # config lives in /tmp (read_only container + tmpfs). Co-locate the callback with it.

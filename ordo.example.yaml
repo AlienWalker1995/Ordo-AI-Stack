@@ -61,6 +61,19 @@ site:
   #                                       # internet boundary) — this is how the live stack is
   #                                       # currently configured (operator-approved 2026-07-17).
 
+# Electricity-derived per-token cost for the local models (local-chat, the GPU/CPU pins,
+# local-embed), so LiteLLM's spend-per-key and the x-litellm-response-cost header mean
+# something. Formula: usd_per_second = inference_watts / 1000 * usd_per_kwh / 3600, then
+# input/output cost per token = usd_per_second / (prompt|output)_tokens_per_second. Leave
+# unset for $0/token (the historical default). Example below: FPL residential Miami-Dade rate,
+# the 5090's 400 W power cap plus host draw, and 7-day Prometheus averages of
+# llamacpp:prompt_tokens_seconds / llamacpp:predicted_tokens_seconds.
+# cost:
+#   usd_per_kwh: 0.145
+#   inference_watts: 450
+#   prompt_tokens_per_second: 1200
+#   output_tokens_per_second: 43
+
 # Escape hatch: values here SURVIVE regeneration and override derived config. Use sparingly —
 # this is the one place a human/agent pins something the sizer would otherwise compute.
 overrides: {}

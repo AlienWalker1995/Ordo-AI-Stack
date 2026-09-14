@@ -25,6 +25,8 @@ Set `site.BASE_PATH` in `ordo.yaml` (template: `ordo.example.yaml`) and re-rende
 | `HF_TOKEN` | *(empty)* | Hugging Face token for gated model downloads; set as a secret in `out/secrets.env` |
 | `GITHUB_PERSONAL_ACCESS_TOKEN` | *(empty)* | GitHub token passed to `comfyui` as `GITHUB_TOKEN` for ComfyUI-Manager custom-node fetches; optional; set as a secret in `out/secrets.env` |
 | `COMPUTE_MODE` | *(V1 only — removed)* | Superseded by the `hardware:` block in `ordo.yaml` (see [Compute Configuration](#compute-configuration) below) — GPU type is decided by the render engine, not this env var |
+| `LOCAL_INPUT_COST_PER_TOKEN` | `0` | Electricity-derived $/token for local model prompt input, computed by the render engine from `ordo.yaml`'s `cost:` block (see [Local Model Cost](#local-model-cost) below): never hand-set |
+| `LOCAL_OUTPUT_COST_PER_TOKEN` | `0` | Electricity-derived $/token for local model output, same source as above |
 
 > The dashboard has no per-service auth token in this deployment — the Caddy edge (oauth2-proxy + Google SSO + email allowlist) is the sole authentication gate for the dashboard, same as every other UI, no matter which of Caddy's seven ports it's served on (see [Network Ports](#network-ports)). The dashboard app code retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer fallback, but it is not set here and is not a recommended secret — don't generate or configure it.
 
@@ -142,6 +144,36 @@ The model registry is the single source of truth for which model runs on which G
 On startup the ops-controller reconciles the registry from the rendered `out/.env` (LLAMACPP_MODEL, LLAMACPP_EMBED_MODEL, etc.) and the GPU pins the render engine baked into `out/docker-compose.yml`. Reconcile is **seed-only**: records that already exist are never overwritten. Operators change models via the registry verbs, or by editing `ordo.yaml` and re-rendering; `out/.env` and `out/docker-compose.yml` are derived artifacts.
 
 The registry path can be overridden with `MODEL_REGISTRY_PATH` (default `/data/model-registry.json`).
+
+## Local Model Cost
+
+`ordo.yaml`'s optional `cost:` block derives a real per-token price for every local model
+(`local-chat`, the GPU pin, the CPU pin, `local-embed`) from the operator's electricity rate and
+measured throughput, so the LiteLLM UI's spend-per-key and the `x-litellm-response-cost`
+response header mean something instead of always reading $0.
+
+| `ordo.yaml` key (under `cost:`) | Required | Purpose |
+|---|---|---|
+| `usd_per_kwh` | yes, if `cost:` is set | Operator's electricity rate in $/kWh |
+| `inference_watts` | yes, if `cost:` is set | Rig power draw while inferencing (GPU power cap plus host) |
+| `prompt_tokens_per_second` | yes, if `cost:` is set | Measured prompt-processing throughput |
+| `output_tokens_per_second` | yes, if `cost:` is set | Measured generation throughput |
+
+Leaving `cost:` unset (or `{}`) keeps every local model at $0/token, same as before this existed.
+When set, all four keys are required and must be positive numbers; a missing, zero, negative, or
+unrecognized key fails the render with a `ValueError` naming it (see
+`ordo/render.py::local_token_costs`). The render engine computes:
+
+```
+usd_per_second = inference_watts / 1000 * usd_per_kwh / 3600
+input_cost_per_token  = usd_per_second / prompt_tokens_per_second
+output_cost_per_token = usd_per_second / output_tokens_per_second
+```
+
+and emits the results into `.env` as `LOCAL_INPUT_COST_PER_TOKEN` / `LOCAL_OUTPUT_COST_PER_TOKEN`
+(see the table above), which the model-gateway entrypoint substitutes into
+`__LOCAL_INPUT_COST_PER_TOKEN__` / `__LOCAL_OUTPUT_COST_PER_TOKEN__` placeholders in
+`litellm_config.yaml` (see [services/model-gateway/README.md](../services/model-gateway/README.md)).
 
 ## MCP Server Configuration
 

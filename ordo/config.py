@@ -28,6 +28,10 @@ class Source:
     # relative to out/. Kept in the source (single source of truth) so there is no
     # hand-edit of a derived output and no drift.
     site: dict[str, Any] = dataclasses.field(default_factory=dict)
+    # Electricity-derived per-token cost for the local models (usd_per_kwh, inference_watts,
+    # prompt_tokens_per_second, output_tokens_per_second). Optional: empty means $0/token
+    # (the historical default). See render.local_token_costs for the formula.
+    cost: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     @classmethod
     def load(cls, path: str | Path) -> Source:
@@ -46,6 +50,7 @@ class Source:
             cloud_fallback=data.get("cloud_fallback") or {"enabled": False},
             overrides=data.get("overrides") or {},
             site=data.get("site") or {},
+            cost=data.get("cost") or {},
         )
         s.validate()
         return s
@@ -58,5 +63,7 @@ class Source:
             raise ValueError("overrides must be a mapping")
         if not isinstance(self.site, dict):
             raise ValueError("site must be a mapping of env KEY -> value")
+        if not isinstance(self.cost, dict):
+            raise ValueError("cost must be a mapping")
         if self.plugins != "auto" and not isinstance(self.plugins, list):
             raise ValueError("plugins must be 'auto' or a list")
