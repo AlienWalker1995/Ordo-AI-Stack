@@ -18,7 +18,7 @@ HW_CPU = HardwareProfile.from_spec({"gpus": [], "ram_gb": 16})
 def test_plan_reflects_hardware():
     p = wizard.plan(CATALOG, REGISTRY, HW_5090)
     assert p.tier == "ultra"
-    assert p.model_id == "huihui-qwen3.6-27b-q6"
+    assert p.model_id == "qwen3.8-27b-uncensored-q6"   # the catalog's top-ranked ultra model
     assert "song-gen" in p.plugins_available
 
     p_cpu = wizard.plan(CATALOG, REGISTRY, HW_CPU)
@@ -66,21 +66,23 @@ def test_plugins_from_capabilities():
 
 
 def test_resolve_secrets_generates_internal_and_blanks_external():
-    required = ["LITELLM_MASTER_KEY", "OPS_CONTROLLER_TOKEN", "MCP_GATEWAY_TOKEN",
+    required = ["LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "LITELLM_DB_PASSWORD",
+                "LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN",
                 "OAUTH2_PROXY_COOKIE_SECRET", "SEARXNG_SECRET", "N8N_API_KEY",
                 "OAUTH2_PROXY_CLIENT_ID", "OAUTH2_PROXY_CLIENT_SECRET",
                 "HF_TOKEN", "TS_AUTHKEY", "GITHUB_PERSONAL_ACCESS_TOKEN"]
     values, generated, provided, blank = wizard.resolve_secrets(required)
-    # every required key is present exactly once
     assert set(values) == set(required)
-    # the six internal secrets are generated and non-empty
-    for k in ("LITELLM_MASTER_KEY", "OPS_CONTROLLER_TOKEN", "MCP_GATEWAY_TOKEN",
+    for k in ("LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "LITELLM_DB_PASSWORD",
+              "LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN",
               "OAUTH2_PROXY_COOKIE_SECRET", "SEARXNG_SECRET", "N8N_API_KEY"):
         assert k in generated and values[k]
-    # unprovided external secrets are blank placeholders
+    # LiteLLM keys (master, salt, every LITELLM_KEY_*) must carry the sk- prefix LiteLLM requires
+    for k in ("LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "LITELLM_KEY_HERMES"):
+        assert values[k].startswith("sk-") and len(values[k]) >= 35
+    assert "MCP_GATEWAY_TOKEN" not in wizard.SECRET_GENERATORS
     assert "HF_TOKEN" in blank and values["HF_TOKEN"] == ""
     assert not provided
-    # oauth2-proxy cookie secret must decode to exactly 16/24/32 bytes
     import base64
     assert len(base64.urlsafe_b64decode(values["OAUTH2_PROXY_COOKIE_SECRET"])) in (16, 24, 32)
 

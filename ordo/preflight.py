@@ -105,9 +105,11 @@ def run(
                         blocking=False))
 
     # 3. MCP images digest-pinned (drift/leak gate) — warn per unpinned PUBLIC server. Locally-built
-    # project images (ordo/*) are pinned by build context, not a registry digest, so exempt.
+    # project images (ordo/*) are pinned by build context, not a registry digest, so exempt. A hosted
+    # server (a `url:` with no container) has no image to pin, so it is skipped too.
     unpinned_mcp = [s["id"] for s in rc.mcp_servers
-                    if not str(s.get("image", "")).startswith(f"{project}/")
+                    if not s.get("hosted")
+                    and not str(s.get("image", "")).startswith(f"{project}/")
                     and ("@sha256:" not in str(s.get("image", ""))
                          or len(set(str(s["image"]).split("@sha256:")[-1])) <= 1)]
     checks.append(Check("all enabled MCP images digest-pinned", not unpinned_mcp,

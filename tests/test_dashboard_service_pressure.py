@@ -31,7 +31,7 @@ def test_service_pressure_no_auth_required(monkeypatch):
     assert r.status_code == 200
     d = r.json()
     ids = {s["id"] for s in d["services"]}
-    assert {"llamacpp", "comfyui", "webui", "qdrant", "n8n", "mcp", "model-gateway"} <= ids
+    assert {"llamacpp", "comfyui", "webui", "qdrant", "n8n", "model-gateway"} <= ids
     assert d["services"][0]["id"] == "comfyui"
     assert d["services"][0]["has_gpu"] is True
     assert d["services"][0]["vram_gb"] == 6.0

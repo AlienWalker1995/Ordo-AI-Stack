@@ -11,9 +11,9 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 | Source | Description | Consumer |
 |---|---|---|
 | `out/.env` (rendered from `ordo.yaml`) | Environment configuration | All services at startup |
-| `data/mcp/servers.txt` | Enabled MCP server list (comma-separated or one-per-line) | `mcp-gateway` |
-| `data/mcp/servers.txt` + `registry-custom.yaml` | enabled MCP servers + custom-server metadata | `mcp-gateway`, dashboard |
-| `data/mcp/registry-custom.yaml` | Custom catalog fragment (e.g. ComfyUI MCP) | `mcp-gateway` |
+| `out/model-gateway/mcp_servers.yaml` (rendered from `ordo.yaml`) | Enabled MCP servers, as the LiteLLM `mcp_servers` fragment | `model-gateway` (merged into its config at startup) |
+| `out/mcp/servers.json` (rendered from `ordo.yaml`) | Enabled MCP servers plus the registered-plugin map | dashboard (`MCP_SERVERS_PATH=/mcp-config/servers.json`) |
+| `out/model-gateway/keys.json` (rendered from the manifests' `litellm_key:` blocks) | Per-consumer virtual keys plus their model and MCP grants | `model-gateway-keys` (one-shot bootstrap) |
 | `data/rag-input/` | Drop zone for RAG documents | `rag-ingestion` watch directory |
 | `models/gguf/` | llama.cpp GGUF download/staging dir (`ordo fetch` target) | Seeds the `models-gguf` named volume (not mounted by any service) |
 | `models-gguf` named volume | llama.cpp GGUF files at runtime (ext4 inside the Docker VM) | `llamacpp` / `llamacpp-cpu` / `llamacpp-embed` (`/models:ro`), dashboard (`/gguf-models` rw), ops-api (`/gguf-models:ro`) |
@@ -55,29 +55,43 @@ Size-bounded: `ops-controller` rotates to `audit.log.1` when `AUDIT_LOG_MAX_BYTE
 
 ### MCP Registry
 
-**Location:** `data/mcp/servers.txt` (one enabled server per line) plus `data/mcp/registry-custom.yaml` (custom-server metadata). There is no `registry.json` — that was the V1 layout.
+**Location:** `out/mcp/servers.json` (dashboard view) and `out/model-gateway/mcp_servers.yaml`
+(the LiteLLM fragment), both emitted by `ordo render` from the `kind: mcp` plugin manifests.
+Nothing lives under `data/mcp/` any more.
+
+A `servers.json` entry, for the `qdrant-rag` server (service `mcp-qdrant-rag`):
 
 ```json
 {
-  "version": 1,
-  "servers": {
-    "duckduckgo": {
-      "image": "mcp/duckduckgo",
-      "scopes": ["search"],
-      "allow_clients": ["*"],
-      "rate_limit_rpm": 60,
-      "timeout_sec": 30,
-      "env_schema": {}
-    }
-  }
+  "server_id": "qdrant-rag",
+  "litellm_name": "qdrant_rag",
+  "plugin_id": "qdrant-rag",
+  "service": "mcp-qdrant-rag",
+  "url": "http://mcp-qdrant-rag:9000/mcp",
+  "tools": ["qdrant_status", "..."],
+  "network": "stack"
 }
 ```
 
-| Field | Type | Description |
-|---|---|---|
-| `allow_clients` | string[] | `["*"]` = all clients; `[]` = disabled by policy |
-| `rate_limit_rpm` | int | Per-client rate limit (informational today) |
-| `env_schema` | object | Required secrets (surfaced in dashboard as "needs key") |
+The matching `mcp_servers.yaml` entry, keyed by `litellm_name` (hyphens replaced by underscores):
+
+```yaml
+mcp_servers:
+  qdrant_rag:
+    server_id: qdrant-rag
+    url: http://mcp-qdrant-rag:9000/mcp
+    transport: http
+    available_on_public_internet: false
+    timeout: 60
+    mcp_info: {server_name: qdrant-rag}
+```
+
+Per-key scoping replaces the old per-client policy fields: a virtual key's
+`object_permission.mcp_servers` grant decides which servers it sees, enforced by
+`require_key_mcp_access_defined: true`.
+
+LiteLLM namespaces tools `<litellm_name>-<tool>`, so Hermes sees
+`gateway__memory_vault-read_note`.
 
 ### RAG Chunk (Qdrant Point)
 
@@ -106,7 +120,7 @@ Configuration: `EMBED_MODEL`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP` in `out/.env
 Triggered by `ordo render` + first `docker compose -p ordo … up` from `out/`.
 
 - Creates `data/` and `models/` subdirectories.
-- Copies the MCP registry template into `data/mcp/` if missing.
+- Emits the MCP artifacts into `out/` (`out/mcp/servers.json`, `out/model-gateway/mcp_servers.yaml`); nothing is written under `data/mcp/`.
 - Hardware detection (`hardware: auto` / `ordo detect`) and GPU pinning happen at render time, not via a separate script — `ordo render` inspects the host and writes the resolved config directly into `out/` (`.env`, `docker-compose.yml`); there is no `overrides/compute.yml` step to run.
 
 All directories created this way persist across restarts and rebuilds.
@@ -156,7 +170,7 @@ Hermes maintains its own state under `data/hermes/` — session records, Discord
 | `data/rag-input/` | RAG drop zone | yes | yes |
 | `data/n8n-files/` | n8n file exchange | yes | yes |
 | `data/ops-controller/` | Audit log | yes | yes |
-| `data/mcp/` | MCP config | yes | yes |
+| `litellm-db-data` volume | LiteLLM Postgres (virtual keys, teams, spend) | yes | yes |
 | `data/dashboard/` | Throughput / benchmarks | yes | yes |
 | `data/comfyui-output/` | Render outputs | yes | yes |
 
@@ -182,13 +196,13 @@ Hermes maintains its own state under `data/hermes/` — session records, Discord
 
 ```bash
 tar -czf ordo-ai-stack-host-$(date +%Y%m%d).tar.gz \
-  data/ops-controller/ data/mcp/ data/dashboard/ ordo.yaml out/secrets.env
+  data/ops-controller/ data/dashboard/ ordo.yaml out/secrets.env
 ```
 
 ### Named volumes (state lives on ext4 inside the Docker VM — back up via a helper container)
 
 ```bash
-for v in hermes-home qdrant-data couchdb-data n8n-data open-webui-data; do
+for v in hermes-home qdrant-data couchdb-data n8n-data open-webui-data litellm-db-data; do
   docker run --rm -v ordo_$v:/src:ro -v "$(pwd)/backups:/backup" alpine \
     tar -czf /backup/$v-$(date +%Y%m%d).tar.gz -C /src .
 done

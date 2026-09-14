@@ -25,7 +25,7 @@ def test_full_llamacpp_surface_rendered():
     # spec-decode flags were dropped as inert (audit P2-15 — non-MTP GGUF) and must not return.
     assert "--reasoning-format deepseek" in env["LLAMACPP_EXTRA_ARGS"]
     assert "draft-mtp" not in env["LLAMACPP_EXTRA_ARGS"]
-    assert env["LLAMACPP_MMPROJ"].endswith("mmproj-Huihui-Q6_K.gguf")
+    assert env["LLAMACPP_MMPROJ"].endswith("Qwen3.8-27B-Uncensored-vision-f16.gguf")   # the auto-picked model's projector
 
 
 def test_parity_roundtrip(tmp_path):

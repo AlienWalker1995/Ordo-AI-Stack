@@ -6,7 +6,7 @@ between deployments is only **the front door in front of them**. Two facts make 
 
 - **Caddy is the only service that publishes host ports.** Every UI (`open-webui`, `dashboard`,
   `n8n`, `comfyui`, `hermes-dashboard`, `codebase-memory-ui`) and every gateway (`model-gateway`,
-  `mcp-gateway`, `qdrant`, …) publishes **no** host port — each is reachable only on the internal
+  the `mcp-*` servers, `litellm-db`, `qdrant`, …) publishes **no** host port, each is reachable only on the internal
   `ordo-net` network, or *through* Caddy. So changing how the world reaches the stack means changing
   exactly one thing: Caddy's listeners and their TLS/DNS.
 - **The edge is a plugin.** Caddy + oauth2-proxy ship as the opt-in [`edge`](../services/edge/plugin.yaml)
@@ -81,7 +81,7 @@ tailnet; there is no public DNS record and no port open to the internet.
   `(sso_forward_auth)` note in the [Caddyfile](../auth/caddy/Caddyfile).)
 - Env identity in `ordo.yaml`'s `site:` block: `CADDY_TAILNET_HOSTNAME`, `CADDY_TAILNET_DOMAIN`,
   `CADDY_BIND` (see the commented keys in [`ordo.example.yaml`](../ordo.example.yaml)); secrets
-  `OAUTH2_PROXY_CLIENT_ID` / `_SECRET` / `_COOKIE_SECRET`, `MCP_GATEWAY_TOKEN`, `TS_AUTHKEY`.
+  `OAUTH2_PROXY_CLIENT_ID` / `_SECRET` / `_COOKIE_SECRET`, `LITELLM_KEY_EDGE`, `TS_AUTHKEY`.
 
 Full one-time setup: [docs/runbooks/auth.md](runbooks/auth.md) and
 [docs/runbooks/secrets.md](runbooks/secrets.md).

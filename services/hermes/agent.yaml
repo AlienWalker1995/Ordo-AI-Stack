@@ -1,8 +1,9 @@
 id: hermes
 name: Hermes
 description: >
-  The default Ordo agent — a persistent, skill-driven orchestrator. Chats via the model-gateway,
-  runs tools through the mcp-gateway, and requests GPU work through the ops-controller scheduler.
+  The default Ordo agent — a persistent, skill-driven orchestrator. Chats and uses tools via the
+  model-gateway (LiteLLM chat + MCP gateway), and requests GPU work through the ops-controller
+  scheduler.
 default: true
 # image omitted -> resolves to <project>/agent-hermes:latest, built from this co-located build
 # context (services/hermes/ + its Dockerfile — the default, so no explicit `build:` is needed);
@@ -16,16 +17,23 @@ command: [hermes, gateway]
 user: root
 consumes:
   - model-gateway
-  - mcp-gateway
+  - model-gateway-keys
   - ops-controller
+
+# Hermes' own LiteLLM virtual key (LITELLM_KEY_HERMES in secrets.env; provisioned by
+# model-gateway-keys from the rendered keys.json). Chat + embeddings + EVERY enabled MCP server.
+litellm_key:
+  models: [local-chat, local-embed]
+  mcp_servers: all
 
 # ── Runtime wiring (data, mirroring V1's hermes-gateway — see the phase-5.5 parity audit) ──
 # Peers Hermes needs HEALTHY before it starts, else it spams 5xx while they warm (V1 uses
-# service_healthy on the gateways/dashboard; ops-controller only needs to be started). The compose
-# renderer emits `condition:` when a peer maps `name: <cond>` instead of a bare string.
+# service_healthy on the model-gateway/dashboard; ops-controller only needs to be started). The
+# compose renderer emits `condition:` when a peer maps `name: <cond>` instead of a bare string.
 depends_on:
   model-gateway: service_healthy
-  mcp-gateway: service_healthy
+  # the one-shot that provisions LITELLM_KEY_HERMES; Hermes must never start keyless
+  model-gateway-keys: service_completed_successfully
   dashboard: service_healthy
   ops-controller: service_started
 

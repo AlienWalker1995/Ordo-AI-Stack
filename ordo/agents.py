@@ -8,7 +8,8 @@ not code, so a third party ships an agent by dropping a `services/<id>/agent.yam
 The contract every agent image MUST honour (open standards, per the architecture decisions):
   - CHAT: talk to the model via the model-gateway's OpenAI-compatible endpoint (never bind the
     GPU itself) — reads `LLAMACPP_*`-derived config from the rendered `.env`, model id `local-chat`.
-  - TOOLS: reach tools through the mcp-gateway (MCP), not bespoke integrations.
+  - TOOLS: reach tools through the model-gateway's MCP endpoint (LiteLLM's MCP gateway at /mcp,
+    authenticated with the agent's own LiteLLM virtual key), not bespoke integrations.
   - GPU: request heavy GPU work through the ops-controller (`POST /jobs`) and read `GET /status`
     instead of evicting llama.cpp — so the scheduler, not the agent, arbitrates the card.
   - CONFIG: treat the rendered `.env` as read-only truth; never hand-edit derived config.
@@ -27,7 +28,7 @@ from .buildspec import BuildSpec
 
 # The core services an agent may declare it consumes — used to validate a manifest isn't asking
 # for something the core doesn't provide.
-KNOWN_SERVICES = frozenset({"model-gateway", "mcp-gateway", "ops-controller", "dashboard"})
+KNOWN_SERVICES = frozenset({"model-gateway", "model-gateway-keys", "ops-controller", "dashboard"})
 
 
 @dataclasses.dataclass(frozen=True)
@@ -59,6 +60,10 @@ class Agent:
     # pluggable: an operator/third-party often ships a PREBUILT image (no in-repo Dockerfile) — those
     # declare `build: {external: true}`. Absent -> the agent's own `services/<id>/`. See ordo.buildspec.
     build: BuildSpec = dataclasses.field(default_factory=BuildSpec)
+    # Optional per-consumer LiteLLM virtual key: {models: [group,...], mcp_servers: all|[server_id,...]}.
+    # render derives the env var LITELLM_KEY_<ID>, adds it to required secrets, and emits the grant
+    # into out/model-gateway/keys.json for bootstrap_keys.py. Empty -> this agent gets no key.
+    litellm_key: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Agent:
@@ -81,6 +86,7 @@ class Agent:
             depends_on={str(k): str(v) for k, v in (d.get("depends_on", {}) or {}).items()},
             healthcheck=dict(d.get("healthcheck", {}) or {}),
             build=BuildSpec.from_dict(d.get("build")),
+            litellm_key=dict(d.get("litellm_key", {}) or {}),
         )
 
     def image_for(self, project: str) -> str:

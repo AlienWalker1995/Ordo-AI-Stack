@@ -68,7 +68,9 @@ def _post(path: str, body: dict[str, Any]) -> dict[str, Any]:
         return r.json()
 
 
-mcp = FastMCP("orchestration")
+# Stateless streamable HTTP on 0.0.0.0:9000 (/mcp). LiteLLM's outbound MCP client opens a fresh
+# session per operation (BerriAI/litellm #25128), so the server must not depend on session state.
+mcp = FastMCP("orchestration", host="0.0.0.0", port=9000, stateless_http=True)
 
 
 # ── Readiness ──────────────────────────────────────────────────────────────────
@@ -239,4 +241,4 @@ def register_model(record_json: str) -> dict:
 
 
 if __name__ == "__main__":
-    mcp.run()
+    mcp.run(transport="streamable-http")

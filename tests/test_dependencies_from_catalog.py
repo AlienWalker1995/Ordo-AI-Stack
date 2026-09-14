@@ -63,7 +63,7 @@ def test_dependency_services_manifest_gated_and_appends_infra(tmp_path, monkeypa
 
     ids = [e["id"] for e in dependency_services()]
     # Core services (plugin=None) with a check always present.
-    assert {"llamacpp", "model-gateway", "mcp"} <= set(ids)
+    assert {"llamacpp", "model-gateway"} <= set(ids)
     # Enabled-plugin services present.
     assert {"webui", "comfyui"} <= set(ids)
     # Disabled-plugin services absent.

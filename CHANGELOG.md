@@ -4,6 +4,83 @@ All notable changes to this project are documented here. The format is loosely b
 
 ## [Unreleased]
 
+### Changed
+- **LiteLLM MCP gateway migration (2026-09-12).** The Docker `mcp-gateway` service is gone; its
+  job is now done by **LiteLLM's own MCP gateway**, served by `model-gateway` at `/mcp` alongside
+  `/v1/*`. `model-gateway` runs **LiteLLM v1.100.1 pinned by digest** with hardened proxy settings
+  (`LITELLM_MODE=PRODUCTION`, `STORE_MODEL_IN_DB=False` so models and MCP servers stay in the
+  rendered config, `require_key_mcp_access_defined: true`), backed by a new Postgres service
+  **`litellm-db`** (volume `litellm-db-data`) holding virtual keys, teams and spend. Auth moved
+  from one shared master key to **per-consumer virtual keys** (`LITELLM_KEY_HERMES`,
+  `_OPEN_WEBUI`, `_AUTOMATION`, `_EDGE`), each carrying its own model and MCP grants and
+  provisioned by the **`model-gateway-keys`** one-shot from the rendered
+  `out/model-gateway/keys.json`. `LITELLM_SALT_KEY` is deliberately excluded from rotation: it
+  encrypts credentials stored in the DB.
+  **MCP servers are now first-class services.** The seven registered servers (comfyui,
+  orchestration, qdrant-rag, n8n, searxng, codebase-memory, memory-vault) render as long-lived
+  compose services **`mcp-<server_id>`** on a second network **`ordo-mcp-net`** (`internal: true`),
+  joined only by `model-gateway`, from a new **`kind: mcp`** manifest schema (`transport`, `port`,
+  `path`, `network: internal|stack`, `env`, `secrets`, `volumes`, `healthcheck`, `timeout`,
+  `allowed_tools`, `tools`). No container in the tool path mounts the Docker socket any more.
+  `ordo render` emits `out/model-gateway/mcp_servers.yaml` (merged into the LiteLLM config by the
+  entrypoint) and `out/mcp/servers.json` (the dashboard's server list).
+  **Stdio-only upstreams are bridged, not spawned.** `codebase-memory`, `memory-vault` and the new
+  `n8n-mcp` image (`ordo/n8n-mcp`, built over `ghcr.io/czlonkowski/n8n-mcp:2.84.1`) each run
+  `mcp-proxy --stateless --pass-environment` in front of the upstream stdio server on port 9000:
+  LiteLLM's outbound MCP client re-initialises per operation and holds no session, so a
+  session-ful HTTP upstream (n8n-mcp's own `MCP_MODE=http`) cannot be used and no bearer secret
+  (`N8N_MCP_AUTH_TOKEN`) is needed.
+  **Tool names.** LiteLLM namespaces tools `<litellm_name>-<tool>`, where `litellm_name` is the
+  server id with hyphens replaced by underscores, so Hermes sees `gateway__memory_vault-read_note`
+  rather than the old aggregated `gateway__call`.
+  **Outage root cause.** Three MCP images (orchestration, qdrant-rag, comfyui) crash-looped on
+  first bring-up because their unbounded `mcp>=` requirement pulled **mcp 2.0**, whose import
+  surface the pinned servers and `mcp-proxy` do not support. Fixed by pinning **`mcp==1.30.0`**
+  (with `httpx==0.28.1` and `mcp-proxy==0.12.0`) in every MCP image; "pin, don't float" now
+  applies to the Python deps inside the images, not just the images themselves.
+  **Dashboard + edge.** The dashboard's MCP tab reads MCP health from LiteLLM
+  (`/v1/mcp/server/health` plus the `tools/list` `server_outcomes`), not from container status,
+  and lists servers from `out/mcp/servers.json`; `ops-api` inventories MCP containers by the
+  compose label `ordo.mcp=true`. The Caddy edge's `/mcp` route now proxies `model-gateway` and
+  authenticates with a LiteLLM key (`LITELLM_KEY_EDGE`).
+  **Retired with the old gateway:** `MCP_GATEWAY_TOKEN`, `data/mcp/servers.txt`,
+  `registry-custom.yaml`, `out/mcp-registry.yaml`, `scripts/mcp_add.sh` / `scripts/mcp_add.ps1`,
+  and the `longLived` / `disableNetwork` / `PLACEHOLDER_*` catalog keys (now rejected by the
+  renderer). Enabling or disabling a server is an edit to `ordo.yaml`'s `plugins:` list (the
+  dashboard MCP tab writes the same file), applied by `ordo render` plus a `model-gateway`
+  recreate: LiteLLM reads config-file MCP servers at startup, so there is no hot reload.
+- model-gateway trusts the edge's forwarded headers (FORWARDED_ALLOW_IPS=*) so the admin UI
+  login works through SSO; the dashboard Open link now targets /ui/.
+- **Virtual-key bootstrap reconciles by ALIAS against LiteLLM's real shapes (2026-09-12).**
+  `bootstrap_keys.py` compared LiteLLM's stored MCP grants (opaque HASHED server ids) against the
+  declared server NAMES, so every key looked drifted and was deleted and regenerated on every boot,
+  stranding any consumer still holding the previous value. The reconcile now maps stored ids back
+  through `GET /v1/mcp/server` (fetched once per run) and looks a consumer up by `key_alias` via
+  `/key/list?return_full_object=true`: an up-to-date key is `unchanged`, a changed secret is
+  `rotated` (the old key is DELETED by its token hash, so rotation actually revokes it instead of
+  leaving both live), drifted grants are `regenerated`, and a value already registered under a
+  different alias raises instead of deleting another consumer's key.
+- **The edge no longer exposes LiteLLM `/metrics` (2026-09-12).** `/llm/*` bypasses SSO for
+  programmatic clients and LiteLLM's Prometheus endpoint needs no key
+  (`require_auth_for_metrics_endpoint: false`), so `https://<host>/llm/metrics` served key aliases,
+  user emails and client IPs to anyone on the tailnet. The `/llm/*` handler now answers 404 for
+  `/metrics` and `/metrics/*` before the proxy; the in-network Prometheus scrape is unaffected.
+- **`litellm_key.models` is fail-closed.** LiteLLM reads an empty `models` list as access to EVERY
+  model, so `ordo render` now rejects an absent or empty list and validates every name against the
+  `model_list` in `services/model-gateway/litellm_config.yaml`; `bootstrap_keys.desired_payload`
+  refuses an empty list too.
+- **`ordo/comfyui-mcp` pins every requirement.** `requests==2.34.2` and `Pillow==12.3.0` join the
+  existing `mcp==1.30.0` pin, upstream's dev-only `pytest` is dropped from the image, and the build
+  fails if any floating `>=` requirement survives.
+- **The default MCP healthcheck lives in the renderer.** `ordo.compose.default_mcp_healthcheck`
+  emits one HTTP probe (`urllib.request.urlopen`; any HTTP status is healthy, a connection error is
+  not) for every image-backed MCP service, replacing six hand-copied `socket.create_connection`
+  probes in the manifests. A manifest `healthcheck:` stays available as an override, which only
+  searxng-mcp needs (that image ships node, not python3).
+- **A `litellm_name` collision fails the render.** Two server_ids collapsing to one LiteLLM name
+  (`a-b` and `a_b`) silently dropped a server from the name-keyed fragment; it is now a `ValueError`
+  naming both ids, as the component doc already promised.
+
 ### Removed
 - **Media worker service retired (2026-07-28).** The headless dashboard "media worker"
   (`services/worker/` plugin, container `worker`, image `ordo/worker`) — a durable SQLite-queue

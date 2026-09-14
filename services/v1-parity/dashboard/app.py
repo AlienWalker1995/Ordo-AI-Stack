@@ -380,7 +380,8 @@ async def _do_set_active_model(req: PullRequest, request: Request):
 
 
 def _run_gguf_pull(model: str):
-    """Download GGUFs via ops-controller gguf-puller (docker compose --profile models)."""
+    """Ask ops-controller to pull GGUFs (POST /models/gguf-pull). The V1 puller was not ported: ops-api
+    answers 501 and points at its in-process /models/download; pull on the host with `ordo fetch`."""
     global _gguf_pull_status
     with _state_lock:
         _gguf_pull_status = {"running": True, "model": model, "output": "", "pct": 0, "done": False, "success": None}
@@ -407,7 +408,7 @@ def _run_gguf_pull(model: str):
     token = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
     if not token:
         with _state_lock:
-            _gguf_pull_status["output"] = "OPS_CONTROLLER_TOKEN is not set; cannot run gguf-puller from the dashboard."
+            _gguf_pull_status["output"] = "OPS_CONTROLLER_TOKEN is not set; cannot request a GGUF pull from the dashboard."
             _gguf_pull_status["success"] = False
             _gguf_pull_status["running"] = False
             _gguf_pull_status["done"] = True
@@ -434,7 +435,7 @@ def _run_gguf_pull(model: str):
                 except (ValueError, UnicodeDecodeError):
                     det = r.text
                 with _state_lock:
-                    _gguf_pull_status["output"] = f"Failed to start gguf-puller: {det}"
+                    _gguf_pull_status["output"] = f"GGUF pull request failed: {det}"
                     _gguf_pull_status["success"] = False
                     _gguf_pull_status["running"] = False
                     _gguf_pull_status["done"] = True
@@ -484,7 +485,8 @@ def _run_gguf_pull(model: str):
 
 @app.post("/api/llm/pull")
 async def llm_pull(req: PullRequest):
-    """Start GGUF download (gguf-puller via ops-controller) in background. Poll /api/llm/pull/status."""
+    """Request a GGUF pull via ops-controller in the background (501 until the puller is ported; see
+    _run_gguf_pull). Poll /api/llm/pull/status."""
     global _gguf_pull_status
     with _state_lock:
         if _gguf_pull_status.get("running"):
@@ -882,7 +884,7 @@ class ModelPullRequest(BaseModel):
 
 
 def _normalize_gguf_pull_repos(model: str) -> str | None:
-    """Return comma-separated Hugging Face repo ids for gguf-puller, or '' to use .env GGUF_MODELS.
+    """Return comma-separated Hugging Face repo ids for the ops-controller GGUF pull, or '' to use GGUF_MODELS.
 
     None means the string is not suitable (e.g. a bare tag like ``llama3.2:8b``).
     """
@@ -902,7 +904,7 @@ def _normalize_gguf_pull_repos(model: str) -> str | None:
         if ":" in candidate:
             repo, quant = candidate.rsplit(":", 1)
             if re.fullmatch(r"[\w.-]+/[\w.-]+", repo) and re.fullmatch(r"[\w.-]+", quant):
-                return f"{repo}:{quant}"  # preserve quant filter for gguf-puller
+                return f"{repo}:{quant}"  # preserve quant filter for the GGUF pull
             return None
 
         if re.fullmatch(r"[\w.-]+/[\w.-]+", candidate):
@@ -927,7 +929,7 @@ def _normalize_gguf_pull_repos(model: str) -> str | None:
 
 
 def _hf_url_to_repo(raw: str) -> str:
-    """Convert a HuggingFace GGUF URL to hf.co/owner/repo form for the gguf-puller.
+    """Convert a HuggingFace GGUF URL to hf.co/owner/repo form for the ops-controller GGUF pull.
     Non-HF strings (model names, hf.co/ refs) are returned as-is.
     """
     if "huggingface.co/" in raw:
@@ -943,7 +945,7 @@ def _hf_url_to_repo(raw: str) -> str:
 @app.post("/api/models/download")
 async def models_download(req: ModelDownloadRequest, request: Request):
     """Unified model download.
-    - GGUF / HF repo → background gguf-puller via ops (same as ``/api/llm/pull``); poll ``/api/llm/pull/status``.
+    - GGUF / HF repo → background GGUF pull request via ops (same as ``/api/llm/pull``); poll ``/api/llm/pull/status``.
     - safetensors / ckpt / pt / bin → proxied to ops-controller for file download.
     """
     raw = req.url.strip()
@@ -1008,105 +1010,163 @@ async def models_pull_status(request: Request):
     return data
 
 
-MCP_GATEWAY_SERVERS = os.environ.get("MCP_GATEWAY_SERVERS", "duckduckgo,n8n,searxng,comfyui,orchestration")
-MCP_CONFIG_PATH = os.environ.get("MCP_CONFIG_PATH")
-# out/ordo.yaml, mounted RW (see dashboards/v1-parity/dashboard.yaml). servers.txt is render-owned, so
-# persisting an MCP toggle means ALSO editing this source's `plugins:` list. Unset → servers.txt-only
-# fallback (change is live but not persistent across a re-render).
+# ── MCP (LiteLLM's MCP gateway on model-gateway) ──────────────────────────────────────────────────
+# The enabled server set is RENDER-OWNED: `ordo render` emits out/mcp/servers.json (mounted read-only
+# at /mcp-config) from the enabled kind=mcp plugins in out/ordo.yaml. Health comes from LiteLLM
+# (/v1/mcp/server/health + the per-server outcomes tools/list returns), never inferred. A UI toggle
+# edits ordo.yaml's `plugins:` list (the single source of truth) and tells the operator to re-render
+# and recreate model-gateway: config-file MCP servers reload only on restart (no hot reload).
+# MODEL_GATEWAY_URL / MODEL_GATEWAY_API_KEY are the module-level constants defined near the top.
+MCP_SERVERS_PATH = os.environ.get("MCP_SERVERS_PATH")
 ORDO_SOURCE_PATH = os.environ.get("ORDO_SOURCE_PATH")
-# Suggested servers (dropdown). Users can also add any valid server name via custom input.
-# `searxng` replaced `tavily` 2026-05-12 — search is now self-hosted via services.searxng.
-MCP_CATALOG = [
-    "duckduckgo", "n8n", "searxng", "comfyui", "orchestration", "fetch", "dockerhub", "github-official",
-    "mongodb", "postgres", "stripe", "notion", "grafana", "elasticsearch",
-    "documentation", "perplexity", "excalidraw", "miro", "neo4j",
-    "time", "slack", "filesystem", "puppeteer", "context7", "memory",
-    "firecrawl", "github", "git", "atlassian",
-    "hugging-face",
-]
+_MCP_HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream",
+    "x-litellm-api-key": f"Bearer {MODEL_GATEWAY_API_KEY}",
+}
+MCP_APPLY_HINT = ("saved to ordo.yaml; apply with an `ordo render` "
+                  "(`ordo --source out/ordo.yaml render --out out`) and a model-gateway recreate "
+                  "(LiteLLM reads config-file MCP servers at startup only)")
 
 
-def _mcp_config_path() -> Path | None:
-    """Path to MCP servers config file (when dashboard has volume mounted)."""
-    if not MCP_CONFIG_PATH:
-        return None
-    p = Path(MCP_CONFIG_PATH)
-    return p if p.parent.exists() else None
-
-
-def _normalize_server(s: str) -> str:
-    """Parse URL to server ID, or return as-is if already valid."""
-    parsed = _parse_mcp_server_input(s)
-    return parsed if parsed else s
+def _read_servers_json() -> dict:
+    """The rendered out/mcp/servers.json: {servers: [...], plugin_map: {server_id: plugin_id}}.
+    Empty structure when the mount is absent (an older render) so callers degrade, not crash."""
+    if not MCP_SERVERS_PATH:
+        return {"servers": [], "plugin_map": {}}
+    p = Path(MCP_SERVERS_PATH)
+    if not p.exists():
+        return {"servers": [], "plugin_map": {}}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("servers.json read failed: %s", e)
+        return {"servers": [], "plugin_map": {}}
+    servers = data.get("servers") if isinstance(data.get("servers"), list) else []
+    plugin_map = data.get("plugin_map") if isinstance(data.get("plugin_map"), dict) else {}
+    return {"servers": servers, "plugin_map": {str(k): str(v) for k, v in plugin_map.items()}}
 
 
 def _read_mcp_servers() -> list[str]:
-    """Read enabled servers from config file or env. Normalizes URLs to server IDs and deduplicates."""
-    path = _mcp_config_path()
-    if path:
-        if path.exists():
-            raw = path.read_text().strip().replace("\r", "").replace("\n", ",")
-            raw_list = [s.strip() for s in raw.split(",") if s.strip()]
-            normalized = []
-            seen = set()
-            for s in raw_list:
-                n = _normalize_server(s)
-                if n and n not in seen:
-                    normalized.append(n)
-                    seen.add(n)
-            # Persist cleanup if we changed anything (URLs → IDs)
-            if normalized != raw_list:
-                _write_mcp_servers(normalized)
-            return normalized
-        # Migrate: init file from .env on first run
-        path.parent.mkdir(parents=True, exist_ok=True)
-        initial = ",".join(s.strip() for s in MCP_GATEWAY_SERVERS.split(",") if s.strip()) or "duckduckgo,n8n,searxng,comfyui,orchestration"
-        path.write_text(initial)
-        return [s.strip() for s in initial.split(",") if s.strip()]
-    return [s.strip() for s in MCP_GATEWAY_SERVERS.split(",") if s.strip()]
+    """Enabled server ids, in render order."""
+    return [str(s["id"]) for s in _read_servers_json()["servers"] if s.get("id")]
 
 
-def _write_mcp_servers(servers: list[str]) -> Path:
-    """Write servers to config file. Raises if not in dynamic mode."""
-    path = _mcp_config_path()
-    if not path:
-        raise HTTPException(status_code=409, detail="MCP config not in dynamic mode (no volume)")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Atomic write-then-rename: survives file ownership mismatches on bind mounts
-    # (the target file may be root-owned from an earlier write, but a world-writable
-    # parent dir lets us create a new file and replace it regardless).
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(",".join(servers))
-    tmp.replace(path)
-    return path
+def _read_mcp_server_names() -> list[tuple[str, str]]:
+    """(server_id, litellm_name) for each enabled server, in render order.
+
+    LiteLLM cannot hold a `-` in a server name (it prefixes tools as `<name>-<tool>`), so render
+    derives a hyphen-free `litellm_name` and every LiteLLM-side lookup keys on that, while the UI
+    row keeps the hyphenated server id. An older render has no `litellm_name` key: derive the same
+    way render does rather than silently reporting the server unknown."""
+    names = []
+    for s in _read_servers_json()["servers"]:
+        sid = str(s.get("id") or "")
+        if not sid:
+            continue
+        names.append((sid, str(s.get("litellm_name") or sid.replace("-", "_"))))
+    return names
 
 
-def _mcp_registry_path() -> Path | None:
-    """Path to MCP registry.json (optional metadata)."""
-    if not MCP_CONFIG_PATH:
-        return None
-    p = Path(MCP_CONFIG_PATH).parent / "registry.json"
-    return p if p.parent.exists() else None
+def _read_server_plugin_map() -> dict[str, str]:
+    """server_id -> plugin_id for EVERY registered kind=mcp plugin (enabled + available-but-disabled)."""
+    return _read_servers_json()["plugin_map"]
 
 
-def _read_mcp_registry() -> dict:
-    """Read registry.json if present. Falls back to empty dict."""
-    path = _mcp_registry_path()
-    if path and path.exists():
+def _parse_sse_json(text: str) -> list[dict]:
+    """LiteLLM answers /mcp with text/event-stream frames even for one JSON-RPC call; accept both."""
+    msgs: list[dict] = []
+    for line in text.splitlines():
+        if line.startswith("data:"):
+            try:
+                msgs.append(json.loads(line[5:].strip()))
+            except json.JSONDecodeError:
+                continue
+    if not msgs and text.strip():
         try:
-            return json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning("MCP registry read failed: %s", e)
-    return {"servers": {}}
+            msgs.append(json.loads(text))
+        except json.JSONDecodeError:
+            pass
+    return msgs
 
 
-# ── Persistence: an MCP toggle must ALSO update ordo.yaml's `plugins:` list ────────────────────────
-# servers.txt (what add/remove writes for the live gateway) is RENDER-OWNED — a re-render reseeds it
-# from the enabled kind=mcp plugins in out/ordo.yaml. So a toggle that only touches servers.txt is
-# ephemeral. To persist, we translate the toggled server_id → its plugin_id (via the render-emitted
-# out/mcp/server-plugin-map.json) and surgically add/remove that `  - <plugin>` line in ordo.yaml,
-# preserving every other line + comment. ordo.yaml stays the single source of truth: the next
-# `ordo render` regenerates the SAME servers.txt → no drift.
+def _mcp_rows(payload: object) -> list[dict]:
+    """LiteLLM returns a bare list here, but tolerate the {"servers"|"data": [...]} envelope."""
+    if isinstance(payload, dict):
+        payload = payload.get("servers") or payload.get("data") or []
+    if not isinstance(payload, list):
+        return []
+    return [row for row in payload if isinstance(row, dict)]
+
+
+def _join_mcp_health(servers_rows: list[dict], health_rows: list[dict]) -> dict[str, str]:
+    """{litellm server name: healthy|unhealthy|unknown}, joining the two LiteLLM MCP endpoints.
+
+    GET /v1/mcp/server/health (LiteLLM 1.100.1) reports only a HASHED `server_id` and a status; the
+    human-readable name lives on GET /v1/mcp/server as `server_name` (or `alias` when one is set).
+    So the health rows are joined onto the server rows by `server_id`. A health row whose id has no
+    server row is dropped: callers look the status up by name, never by hash.
+    """
+    names = {}
+    for row in servers_rows:
+        server_id = row.get("server_id")
+        name = row.get("server_name") or row.get("alias")
+        if server_id and name:
+            names[str(server_id)] = str(name)
+    health = {}
+    for row in health_rows:
+        name = names.get(str(row.get("server_id")))
+        if name:
+            health[name] = str(row.get("status", "unknown"))
+    return health
+
+
+async def _litellm_mcp_health() -> dict[str, str]:
+    """{litellm server name: healthy|unhealthy|unknown} from LiteLLM's MCP endpoints.
+    Keyed by the hyphen-free LiteLLM names, NOT our hyphenated server ids."""
+    try:
+        client = _get_http_client()
+        headers = {"Authorization": f"Bearer {MODEL_GATEWAY_API_KEY}"}
+        servers_r, health_r = await asyncio.gather(
+            client.get(f"{MODEL_GATEWAY_URL}/v1/mcp/server", headers=headers, timeout=20.0),
+            client.get(f"{MODEL_GATEWAY_URL}/v1/mcp/server/health", headers=headers, timeout=20.0))
+        if servers_r.status_code != 200 or health_r.status_code != 200:
+            logger.debug("mcp server health HTTP %s (servers) / %s (health)",
+                         servers_r.status_code, health_r.status_code)
+            return {}
+        return _join_mcp_health(_mcp_rows(servers_r.json()), _mcp_rows(health_r.json()))
+    except Exception as e:  # noqa: BLE001 - degrade to unknown, never 500 the tab
+        logger.debug("mcp server health failed: %s", e)
+        return {}
+
+
+async def _litellm_mcp_outcomes() -> tuple[bool, dict[str, dict], str | None]:
+    """(gateway_ok, {litellm server name: {status, tool_count}}, error) via tools/list on /mcp. The
+    keys are LiteLLM's own (hyphen-free) server names. LiteLLM puts
+    per-server outcomes in result._meta['litellm.ai/server_outcomes']; a down upstream is
+    `unreachable` there while the endpoint itself stays 200 (alert on outcomes, not status codes)."""
+    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+    try:
+        r = await _get_http_client().post(f"{MODEL_GATEWAY_URL}/mcp", json=body, headers=_MCP_HEADERS, timeout=60.0)
+    except Exception as e:  # noqa: BLE001
+        return False, {}, str(e)
+    if r.status_code >= 400:
+        return False, {}, f"HTTP {r.status_code}"
+    for m in _parse_sse_json(r.text):
+        if "result" in m:
+            result = m["result"] or {}
+            outcomes = (result.get("_meta") or {}).get("litellm.ai/server_outcomes") or {}
+            return True, {str(k): dict(v) for k, v in outcomes.items()}, None
+    return False, {}, "tools/list returned no result"
+
+
+# ── Persistence: an MCP toggle must update ordo.yaml's `plugins:` list ────────────────────────────
+# The enabled server set is RENDER-OWNED: a re-render reseeds out/mcp/servers.json from the enabled
+# kind=mcp plugins in out/ordo.yaml, and LiteLLM reads its MCP servers from the rendered fragment at
+# startup. So the ONLY durable place a toggle can land is that source. We translate the toggled
+# server_id -> its plugin_id (via servers.json's plugin_map) and surgically add/remove that
+# `  - <plugin>` line in ordo.yaml, preserving every other line + comment. ordo.yaml stays the single
+# source of truth: the next `ordo render` regenerates the SAME servers.json, so there is no drift.
 
 # A `- <plugin-id>` item in a block-style YAML list (optional indent, dash, id, optional trailing
 # comment). Zero-indent items are what `yaml.safe_dump` emits (a wizard-written source), so accept
@@ -1115,32 +1175,8 @@ def _read_mcp_registry() -> dict:
 _PLUGIN_ITEM_RE = re.compile(r"^(?P<indent>[ \t]*)-\s+(?P<id>[A-Za-z0-9._-]+)\s*(?:#.*)?$")
 
 
-def _server_plugin_map_path() -> Path | None:
-    """Path to the render-emitted server_id→plugin_id map (out/mcp/server-plugin-map.json), which
-    sits alongside servers.txt in the mounted /mcp-config dir."""
-    if not MCP_CONFIG_PATH:
-        return None
-    p = Path(MCP_CONFIG_PATH).parent / "server-plugin-map.json"
-    return p if p.parent.exists() else None
-
-
-def _read_server_plugin_map() -> dict[str, str]:
-    """server_id → plugin_id for ALL registered kind=mcp plugins (enabled + available-but-disabled).
-    Empty dict if the map isn't emitted/mounted (older render) — callers then treat every server as
-    'not a known plugin' and fall back to servers.txt-only."""
-    path = _server_plugin_map_path()
-    if path and path.exists():
-        try:
-            data = json.loads(path.read_text())
-            if isinstance(data, dict):
-                return {str(k): str(v) for k, v in data.items()}
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning("MCP server-plugin-map read failed: %s", e)
-    return {}
-
-
 def _ordo_source_path() -> Path | None:
-    """Path to the mounted, writable ordo.yaml source, or None (→ servers.txt-only fallback)."""
+    """Path to the mounted, writable ordo.yaml source, or None (a toggle then cannot be persisted)."""
     if not ORDO_SOURCE_PATH:
         return None
     p = Path(ORDO_SOURCE_PATH)
@@ -1158,8 +1194,8 @@ def _edit_plugins_list(text: str, plugin_id: str, action: str) -> str:
 
     Raises ValueError if a safe edit can't be GUARANTEED — no block `plugins:` key, inline/flow list,
     empty list, or the result fails to round-trip through the YAML parser with exactly the intended
-    change. The caller catches this, keeps the live servers.txt write, and surfaces a 'not persistent'
-    note rather than risking the operator's hand-authored source.
+    change. The caller catches this and surfaces a 'not persistent' note rather than risking the
+    operator's hand-authored source.
     """
     if action not in ("add", "remove"):
         raise ValueError(f"unknown action {action!r}")
@@ -1227,27 +1263,26 @@ def _edit_plugins_list(text: str, plugin_id: str, action: str) -> str:
 
 def _persist_mcp_toggle(server: str, action: str) -> dict:
     """Persist an enable(action='add')/disable(action='remove') of MCP `server` into ordo.yaml's
-    plugins list, in addition to the (already-done) live servers.txt write. Never raises — returns a
-    status the endpoint attaches to its response:
+    plugins list. Never raises, it returns a status the endpoint attaches to its response:
 
       {persistent: bool, plugin: str|None, note: str|None}
 
-    Not persistent (live-only) when: ordo.yaml isn't mounted/writable; the server isn't a registered
-    mcp plugin (adding a brand-new non-plugin MCP to ordo.yaml is OUT OF SCOPE — flagged, not faked);
-    or a safe surgical edit can't be guaranteed. In every such case servers.txt (the live path) still
-    changed, so the toggle works now — it just won't survive a re-render, which the note states.
+    Not persistent when: ordo.yaml isn't mounted/writable; the server isn't a registered mcp plugin
+    (adding a brand-new non-plugin MCP to ordo.yaml is OUT OF SCOPE, flagged rather than faked); or a
+    safe surgical edit can't be guaranteed. There is no live path any more, so in every such case
+    nothing changed at all, which the note states.
     """
     path = _ordo_source_path()
     if not path:
         return {"persistent": False, "plugin": None,
-                "note": "ordo.yaml not mounted (ORDO_SOURCE_PATH unset) — change is live but will "
-                        "not survive a re-render."}
+                "note": "ordo.yaml not mounted (ORDO_SOURCE_PATH unset) - change not persisted; "
+                        "ordo.yaml left untouched."}
     plugin = _read_server_plugin_map().get(server)
     if not plugin:
         return {"persistent": False, "plugin": None,
-                "note": f"'{server}' is not a registered mcp plugin — updated the live servers.txt "
-                        "only; it will not survive a re-render. Adding a brand-new non-plugin MCP to "
-                        "ordo.yaml is out of scope."}
+                "note": f"'{server}' is not a registered mcp plugin - change not persisted; ordo.yaml "
+                        "left untouched. Adding a brand-new non-plugin MCP to ordo.yaml is out of "
+                        "scope."}
     try:
         original = path.read_text(encoding="utf-8")
         edited = _edit_plugins_list(original, plugin, action)
@@ -1256,94 +1291,56 @@ def _persist_mcp_toggle(server: str, action: str) -> dict:
             # so the app user can neither create a sibling `.tmp` (its dir is the read-only container
             # root) nor rename over the mount. `edited` is already validated inside _edit_plugins_list
             # (round-trips through yaml.safe_load + asserts the exact plugins-set change), so writing
-            # the known-good content directly is safe. (servers.txt keeps temp+rename because it lives
-            # in a directory mount where a sibling tmp is writable.)
+            # the known-good content directly is safe.
             path.write_text(edited, encoding="utf-8")
         return {"persistent": True, "plugin": plugin, "note": None}
     except (ValueError, OSError) as e:
         logger.warning("ordo.yaml persist failed for server=%s plugin=%s action=%s: %s",
                        server, plugin, action, e)
         return {"persistent": False, "plugin": plugin,
-                "note": f"could not safely edit ordo.yaml ({e}) — change is live via servers.txt but "
-                        "not persisted; ordo.yaml left untouched."}
-
-
-MCP_GATEWAY_URL = os.environ.get("MCP_GATEWAY_URL", "http://mcp-gateway:8811")
-
-
-def _get_active_mcp_servers() -> list[str]:
-    """Get enabled MCP servers from configuration file."""
-    try:
-        return _read_mcp_servers()
-    except OSError:
-        return []
-
-
-def _mcp_catalog_from_registry() -> list[str]:
-    """Build catalog from registry.json when present; otherwise use MCP_CATALOG."""
-    reg = _read_mcp_registry()
-    keys = list(reg.get("servers", {}).keys())
-    if keys:
-        return sorted(keys)
-    return MCP_CATALOG.copy()
+                "note": f"could not safely edit ordo.yaml ({e}) - change not persisted; ordo.yaml "
+                        "left untouched."}
 
 
 @app.get("/api/mcp/servers")
 async def mcp_servers():
-    """List enabled MCP servers (discovered from gateway) and catalog for adding."""
-    active_servers = _get_active_mcp_servers()
-    configured_servers = _read_mcp_servers()
-    dynamic = _mcp_config_path() is not None
-    registry = _read_mcp_registry()
-    catalog = _mcp_catalog_from_registry()
+    """Enabled MCP servers (rendered set) + every registered server id the toggle can enable."""
+    data = _read_servers_json()
+    enabled = [str(s["id"]) for s in data["servers"] if s.get("id")]
     return {
-        "enabled": active_servers,
-        "configured": configured_servers,
-        "catalog": catalog,
-        "dynamic": dynamic,
-        "registry": registry,
+        "enabled": enabled,
+        "configured": sorted(data["plugin_map"]),
+        "dynamic": _ordo_source_path() is not None,
+        "registry": {"servers": {str(s["id"]): s for s in data["servers"] if s.get("id")}},
         "ok": True,
     }
 
 
 @app.get("/api/mcp/health")
 async def mcp_health():
-    """MCP gateway health. Probes gateway; per-server status from ops-controller when available."""
-    enabled = _read_mcp_servers()
-    gateway_ok = False
-    gateway_error = ""
-    try:
-        r = await _get_http_client().get(
-            f"{MCP_GATEWAY_URL.rstrip('/')}/mcp",
-            headers={"X-Client-ID": "dashboard"},
-            timeout=5.0,
-        )
-        gateway_ok = r.status_code < 500
-        if not gateway_ok:
-            gateway_error = f"HTTP {r.status_code}"
-    except Exception as e:
-        gateway_error = str(e)
-
-    # Per-server status: get from ops-controller (Docker) when token set
-    container_status: dict[str, str] = {}
-    if OPS_CONTROLLER_TOKEN:
-        code, data = await _ops_request("GET", "/mcp/containers")
-        if code == 200 and data.get("containers"):
-            for c in data["containers"]:
-                sid = c.get("id", "").split("/")[-1].split(":")[0] or c.get("name", "unknown")
-                container_status[sid] = c.get("status", "unknown")
-
+    """Gateway + per-server health from LiteLLM. A server is ok ONLY when its health probe is
+    `healthy` AND tools/list reports it `ok` with tools; nothing falls back to gateway-level status."""
+    enabled = _read_mcp_server_names()
+    health, (gateway_ok, outcomes, gateway_error) = await asyncio.gather(_litellm_mcp_health(),
+                                                                        _litellm_mcp_outcomes())
     servers = []
-    for s in enabled:
-        status = container_status.get(s, container_status.get(s.split("/")[-1]))
-        ok = status == "running" if status else gateway_ok
-        err = None if ok else (f"container: {status}" if status else gateway_error)
-        servers.append({"id": s, "ok": ok, "error": err, "status": status or ("ok" if gateway_ok else "unreachable")})
-
+    for sid, litellm_name in enabled:
+        # LiteLLM reports under its hyphen-free name; the row we return keeps the hyphenated id
+        status = health.get(litellm_name, "unknown")
+        outcome = outcomes.get(litellm_name, {})
+        tool_count = int(outcome.get("tool_count") or 0)
+        ok = gateway_ok and status == "healthy" and outcome.get("status") == "ok" and tool_count > 0
+        if ok:
+            err = None
+        elif not gateway_ok:
+            err = gateway_error or "gateway unreachable"
+        else:
+            err = f"health={status}, tools/list={outcome.get('status', 'no outcome')}, tools={tool_count}"
+        servers.append({"id": sid, "ok": ok, "status": status, "error": err, "tool_count": tool_count})
     return {
         "ok": gateway_ok,
         "gateway": "reachable" if gateway_ok else "unreachable",
-        "gateway_error": gateway_error if not gateway_ok else None,
+        "gateway_error": None if gateway_ok else gateway_error,
         "servers": servers,
     }
 
@@ -1357,77 +1354,43 @@ class McpRemoveRequest(BaseModel):
 
 
 def _valid_mcp_server_name(name: str) -> bool:
-    """Allow alphanumeric, hyphens, underscores, slashes, colons (Docker refs)."""
-    if not name or len(name) > 200:
+    if not name or len(name) > 100:
         return False
-    return all(c.isalnum() or c in "-_/:." for c in name)
-
-
-def _parse_mcp_server_input(raw: str) -> str | None:
-    """Extract server ID from input. Accepts:
-    - Docker Hub MCP URL: https://hub.docker.com/mcp/server/hugging-face/overview -> hugging-face
-    - Docker Hub image URL: https://hub.docker.com/r/searxng/searxng -> searxng/searxng
-    - Raw server name: hugging-face, fetch, mcp/firecrawl
-    """
-    s = raw.strip()
-    if not s:
-        return None
-    if "hub.docker.com" in s:
-        # /mcp/server/<server-id>/...  (official MCP catalog page)
-        idx = s.find("/mcp/server/")
-        if idx >= 0:
-            rest = s[idx + len("/mcp/server/"):].split("?", 1)[0].split("#", 1)[0]
-            server_id = rest.split("/", 1)[0]
-            if server_id and _valid_mcp_server_name(server_id):
-                return server_id
-        # /r/<org>/<image>/...  (generic Docker Hub image page)
-        idx = s.find("/r/")
-        if idx >= 0:
-            rest = s[idx + len("/r/"):].split("?", 1)[0].split("#", 1)[0].rstrip("/")
-            parts = rest.split("/")
-            if len(parts) >= 2 and parts[0] and parts[1]:
-                image_ref = f"{parts[0]}/{parts[1]}"
-                if _valid_mcp_server_name(image_ref):
-                    return image_ref
-    return s if _valid_mcp_server_name(s) else None
+    return all(c.isalnum() or c in "-_." for c in name)
 
 
 @app.post("/api/mcp/add")
 async def mcp_add(req: McpAddRequest):
-    """Add an MCP server. Takes effect in ~10s without container restart.
-    Accepts: server name (fetch, hugging-face), Docker ref (mcp/firecrawl),
-    or Docker Hub URL (https://hub.docker.com/mcp/server/hugging-face/overview)."""
-    server = _parse_mcp_server_input(req.server)
-    if not server:
-        raise HTTPException(status_code=400, detail="Invalid server name or URL. Use a name (e.g. hugging-face) or paste a Docker Hub MCP URL.")
-    servers = _read_mcp_servers()
-    if server in servers:
-        return {"status": "already_enabled", "servers": servers}
-    servers.append(server)
-    _write_mcp_servers(servers)                       # live: gateway hot-reloads on its poll
-    persist = _persist_mcp_toggle(server, "add")      # persist: add the plugin to ordo.yaml's list
-    logger.info("MCP_SERVER_ADDED server=%s persistent=%s plugin=%s",
-                server, persist["persistent"], persist["plugin"])
-    return {"status": "added", "servers": servers, **persist}
+    """Enable a REGISTERED MCP plugin: persists to ordo.yaml; applied on the next render + recreate."""
+    server = req.server.strip()
+    if not _valid_mcp_server_name(server):
+        raise HTTPException(status_code=400, detail="Invalid server id.")
+    data = _read_servers_json()
+    if server not in data["plugin_map"]:
+        raise HTTPException(status_code=400, detail=(
+            f"'{server}' is not a registered MCP plugin. New servers are added as services/<id>/plugin.yaml "
+            "(kind: mcp), not from a catalog."))
+    enabled = [str(s["id"]) for s in data["servers"] if s.get("id")]
+    if server in enabled:
+        return {"status": "already_enabled", "servers": enabled, "applied": False, "next": None}
+    persist = _persist_mcp_toggle(server, "add")
+    logger.info("MCP_SERVER_ADDED server=%s persistent=%s plugin=%s", server, persist["persistent"], persist["plugin"])
+    return {"status": "added", "servers": enabled + [server], "applied": False, "next": MCP_APPLY_HINT, **persist}
 
 
 @app.post("/api/mcp/remove")
 async def mcp_remove(req: McpRemoveRequest):
-    """Remove an MCP server. Takes effect in ~10s without container restart."""
-    server = _parse_mcp_server_input(req.server) or req.server.strip()
-    if not server:
-        raise HTTPException(status_code=400, detail="Server name required")
-    servers = _read_mcp_servers()
-    if server not in servers:
-        return {"status": "already_removed", "servers": servers}
-    servers = [s for s in servers if s != server]
-    if not servers:
-        raise HTTPException(status_code=400, detail="Cannot remove last server. Add another first.")
-    _write_mcp_servers(servers)                        # live: gateway hot-reloads on its poll
-    persist = _persist_mcp_toggle(server, "remove")    # persist: drop the plugin from ordo.yaml's list
-    logger.info("MCP_SERVER_REMOVED server=%s persistent=%s plugin=%s",
-                server, persist["persistent"], persist["plugin"])
-    return {"status": "removed", "servers": servers, **persist}
+    """Disable an enabled MCP plugin: persists to ordo.yaml; applied on the next render + recreate."""
+    server = req.server.strip()
+    if not _valid_mcp_server_name(server):
+        raise HTTPException(status_code=400, detail="Invalid server id.")
+    enabled = _read_mcp_servers()
+    if server not in enabled:
+        return {"status": "already_removed", "servers": enabled, "applied": False, "next": None}
+    persist = _persist_mcp_toggle(server, "remove")
+    logger.info("MCP_SERVER_REMOVED server=%s persistent=%s plugin=%s", server, persist["persistent"], persist["plugin"])
+    return {"status": "removed", "servers": [s for s in enabled if s != server], "applied": False,
+            "next": MCP_APPLY_HINT, **persist}
 
 
 # --- Token Throughput ---

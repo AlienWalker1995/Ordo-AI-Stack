@@ -21,8 +21,9 @@ docker build -t ordo/orchestration-mcp:latest services/orchestration
 This directory (`server.py`, `requirements.txt`, `Dockerfile`) is the single source of truth for
 the service.
 
-This image is gateway-spawned (stdio), so it appears in the rendered `mcp-registry.yaml`, not as a
-long-lived compose service. It needs network access to reach `dashboard:8080` (`disableNetwork`
-unset). No auth token is substituted into its catalog entry — the dashboard has no per-service auth
+This image runs as the long-lived compose service `mcp-orchestration` (rendered into
+`out/model-gateway/mcp_servers.yaml` and `out/mcp/servers.json`), serving streamable HTTP on
+port 9000. Its manifest sets `network: stack` because it must reach `dashboard:8080`.
+No auth token is set in its `env:` block — the dashboard has no per-service auth
 token in the Ordo deployment, so calls over `ordo-net` go unauthenticated by design (the Caddy edge
 is the sole authentication gate, and it isn't in this internal service-to-service path).

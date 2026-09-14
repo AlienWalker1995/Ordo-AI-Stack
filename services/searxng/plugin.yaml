@@ -1,4 +1,6 @@
-# Plugin manifest — data-only. Registers the SearXNG MCP server (agent tool).
+# Plugin manifest - data-only. Declares the SearXNG MCP server: a compose service `mcp-searxng` on
+# the internal MCP network, registered with LiteLLM's MCP gateway (its tools reach Hermes as
+# `gateway__searxng-<tool>`).
 id: searxng
 name: SearXNG web search (MCP tools)
 description: Private aggregated web search exposed to the agent via MCP.
@@ -9,10 +11,22 @@ requires:
 provides: [tools]
 depends_on: [searxng-web]   # the MCP queries the self-hosted SearXNG service (searxng-web plugin)
 mcp:
-  # Real image V1 runs: isokoliuk/mcp-searxng (V1 registry-custom.yaml). Digest-pinned here to the
-  # live registry manifest digest (multi-arch index) so the gateway never falls back to Docker's
-  # unpinned online catalog — the orphan-container/drift source in V1. Bump deliberately.
-  image: isokoliuk/mcp-searxng@sha256:ec0ca986ea9dde137607c44335b2e96a8e6a4d7876dee36198f406c34b35cbe0
+  # Upstream isokoliuk/mcp-searxng, pinned by tag + digest (the live multi-arch index digest).
+  # Bump deliberately.
+  image: isokoliuk/mcp-searxng:2.2.0@sha256:b63f934ec0541e41ff8cf4756f6c4d75ab5f1ad2089996669c6b7aaff79ba1c9
+  transport: http
+  port: 8080
+  network: stack           # reaches searxng:8080 (the searxng-web plugin)
   env:
     SEARXNG_URL: http://searxng:8080
-  tools: [searxng_web_search, searxng_web_url_read]
+    MCP_HTTP_PORT: "8080"
+    MCP_HTTP_HOST: 0.0.0.0
+    # LiteLLM re-initialises per operation (BerriAI/litellm #25128); stateless mode ignores session ids.
+    MCP_HTTP_STATELESS: "true"
+  healthcheck:
+    test: ["CMD", "node", "-e", "require('net').connect(8080,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 15s
+  tools: [searxng_web_search, web_url_read, searxng_instance_info, searxng_search_suggestions]

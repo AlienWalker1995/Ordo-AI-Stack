@@ -32,37 +32,38 @@ logger = logging.getLogger(__name__)
 
 
 def mcp_external_url() -> str | None:
-    """The MCP gateway's real external endpoint: the Bearer-gated /mcp route on the
-    :443 front door (https://<host>/mcp) — NOT a :8811 port, which isn't published.
-    Returns None when the edge host is unknown so the frontend keeps its fallback."""
+    """The MCP gateway's external endpoint: LiteLLM's Bearer-authenticated /mcp on the
+    :443 front door (https://<host>/mcp). Returns None when the edge host is unknown so
+    the frontend keeps its fallback."""
     host = os.environ.get("CADDY_TAILNET_HOSTNAME", "").strip()
     return f"https://{host}/mcp" if host else None
 
 
-# LiteLLM auto-generates its OpenAPI docs and serves the Swagger UI at its ROOT path
-# (`GET model-gateway:11435/` returns the swagger HTML; `/docs` 404s — confirmed by probe).
+# LiteLLM's admin UI (keys, teams, spend, MCP servers, models) lives at /ui/; swagger stays
+# at its ROOT path (`GET model-gateway:11435/` returns the swagger HTML; `/docs` 404s -
+# confirmed by probe), but the admin UI is the human-facing surface once litellm-db exists.
 #
-# It MUST be opened at an origin ROOT, which is why this is a subdomain (llm.<tailnet> →
-# caddy :8449) and not `/llm/`. The :443 `/llm/*` route strips its prefix, and the swagger
-# HTML then references ROOT-ABSOLUTE assets (`/swagger/swagger-ui.css`, `/swagger/…js`).
+# Both must be opened at an origin ROOT, which is why this is a subdomain (llm.<tailnet> ->
+# caddy :8449) and not `/llm/`. The :443 `/llm/*` route strips its prefix, and the admin UI /
+# swagger HTML then reference ROOT-ABSOLUTE assets (`/ui/_next/...`, `/swagger/swagger-ui.css`).
 # Through `/llm/` the document returns 200 but every asset resolves to
-# `https://<host>/swagger/…`, escapes the `/llm/*` handler, hits the front door and 404s —
-# a blank page that reads as an outage. `/llm/*` remains the SSO-BYPASSING API base for
-# programmatic clients (LITELLM_MASTER_KEY bearer); it is not a browser entry.
-MODEL_GATEWAY_SWAGGER_PORT = 8449
+# `https://<host>/ui/_next/...` (or `/swagger/...`), escapes the `/llm/*` handler, hits the front
+# door and 404s - a blank page that reads as an outage. `/llm/*` remains the SSO-BYPASSING API
+# base for programmatic clients (LITELLM_MASTER_KEY bearer); it is not a browser entry.
+MODEL_GATEWAY_UI_PORT = 8449
 
 
 def model_gateway_open_url() -> str | None:
-    """Browsable Open link for the model-gateway card.
+    """Browsable Open link for the model-gateway card: the LiteLLM admin UI at /ui/.
 
-    Prefers the subdomain (`https://llm.<domain>/`) like every other service; falls back to
-    the SSO'd port root (`https://<host>:8449/`) when the sidecar layer is disabled, and to
-    None when the edge host is unknown so the frontend emits no broken link."""
+    Prefers the subdomain (`https://llm.<domain>/ui/`) like every other service; falls back
+    to the SSO'd port root (`https://<host>:8449/ui/`) when the sidecar layer is disabled, and
+    to None when the edge host is unknown so the frontend emits no broken link."""
     subdomain = tailnet_open_url("model-gateway")
     if subdomain:
-        return subdomain
+        return f"{subdomain}ui/"
     host = os.environ.get("CADDY_TAILNET_HOSTNAME", "").strip()
-    return f"https://{host}:{MODEL_GATEWAY_SWAGGER_PORT}/" if host else None
+    return f"https://{host}:{MODEL_GATEWAY_UI_PORT}/ui/" if host else None
 
 
 def tailnet_open_url(service_id: str) -> str | None:
@@ -150,7 +151,7 @@ OPS_SERVICE_MAP = {s["id"]: s["ops_service"] for s in SERVICES if s.get("ops_ser
 # qdrant) have no clean name and keep their internal URLs. hermes/graph land on their
 # port's root, which 302s to the /hermes/ and /codebase-memory/ subpaths, so a bare
 # https://<label>.<domain>/ works. model-gateway's `llm` sidecar (caddy :8449) serves the
-# LiteLLM Swagger UI at an origin root.
+# LiteLLM admin UI at /ui/ (swagger at /) at an origin root.
 TAILNET_LABELS = {s["id"]: s["tailnet_label"] for s in SERVICES if s.get("tailnet_label")}
 
 # ── Card semantics (apply to every fragment) ───────────────────────────────────────────
@@ -168,7 +169,7 @@ TAILNET_LABELS = {s["id"]: s["tailnet_label"] for s in SERVICES if s.get("tailne
 # infra/backend services that have a port & health check but no browsable UI a person
 # visits: llamacpp, llamacpp-cpu, mcp, qdrant, stt, tts, couchdb. The main grid is ONLY
 # the user-facing UIs (webui/comfyui/n8n/hermes/codebase-memory-ui) plus model-gateway
-# (its Open link points at the LiteLLM Swagger UI through the edge; see
+# (its Open link points at the LiteLLM admin UI at /ui/ through the edge; see
 # model_gateway_open_url() below).
 #
 # Deliberately card-LESS services: ltx-trainer (CLI-only LoRA trainer — ops-api-managed,

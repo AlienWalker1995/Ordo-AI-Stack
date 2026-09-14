@@ -1,7 +1,8 @@
-"""Capability-based readiness: MCP gateway, model-gateway, optional ComfyUI + workflow dir."""
+"""Capability-based readiness: model-gateway (chat + MCP gateway), optional ComfyUI + workflow dir."""
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://comfyui:8188").rstrip("/")
 MODEL_GATEWAY_URL = os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435").rstrip("/")
-MCP_GATEWAY_URL = os.environ.get("MCP_GATEWAY_URL", "http://mcp-gateway:8811").rstrip("/")
+MODEL_GATEWAY_API_KEY = os.environ.get("MODEL_GATEWAY_API_KEY", "")
 WORKFLOWS_DIR = Path(os.environ.get("COMFYUI_WORKFLOWS_DIR", "/comfyui-workflows")).resolve()
 ORCHESTRATION_MEDIA_REQUIRED = os.environ.get("ORCHESTRATION_MEDIA_REQUIRED", "0").strip().lower() in (
     "1",
@@ -33,94 +34,41 @@ def _probe_get(url: str, timeout: float = 3.0) -> tuple[bool, str | None]:
         return False, str(e)
 
 
-def _probe_mcp_tools(url: str, timeout: float = 5.0) -> tuple[bool, int, str | None]:
-    """Open an MCP session (initialize → tools/list) and return (ok, tool_count, error).
-
-    The MCP Streamable HTTP transport requires a session handshake before
-    accepting method calls like tools/list.
-    """
-    init_body = {
-        "jsonrpc": "2.0",
-        "method": "initialize",
-        "params": {
-            "protocolVersion": "2025-03-26",
-            "capabilities": {},
-            "clientInfo": {"name": "readiness-probe", "version": "1.0.0"},
-        },
-        "id": 1,
-    }
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-    }
-    session_id: str | None = None
+def _probe_litellm_mcp_tools(url: str, api_key: str, timeout: float = 30.0) -> tuple[bool, int, str | None]:
+    """tools/list against LiteLLM's aggregate /mcp (no initialize needed). ok when every server
+    outcome is `ok` and at least one tool is listed; the per-server outcomes name the culprit."""
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+               "x-litellm-api-key": f"Bearer {api_key}"}
+    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
     try:
-        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-            # Step 1: initialize session
-            init_r = client.post(url, json=init_body, headers=headers)
-            if init_r.status_code >= 400:
-                return False, 0, f"initialize HTTP {init_r.status_code}"
-            session_id = init_r.headers.get("mcp-session-id")
-            sess_headers = {**headers}
-            if session_id:
-                sess_headers["Mcp-Session-Id"] = session_id
-
-            # Step 2: send initialized notification
-            client.post(
-                url,
-                json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-                headers=sess_headers,
-            )
-
-            # Step 3: tools/list
-            tools_r = client.post(
-                url,
-                json={"jsonrpc": "2.0", "method": "tools/list", "id": 2},
-                headers=sess_headers,
-            )
-            if tools_r.status_code >= 400:
-                return False, 0, f"tools/list HTTP {tools_r.status_code}"
-
-            # Parse SSE if the response is event-stream
-            body_text = tools_r.text
-            if body_text.startswith("event:") or body_text.startswith("data:"):
-                data_parts = []
-                for line in body_text.splitlines():
-                    if line.startswith("data: "):
-                        data_parts.append(line[6:])
-                if data_parts:
-                    body_text = "\n".join(data_parts)
-
-            import json as _json
-            data = _json.loads(body_text)
-            tools = data.get("result", {}).get("tools", [])
-            count = len(tools)
-
-            # Step 4: terminate session (best-effort)
-            if session_id:
-                try:
-                    client.request("DELETE", url, headers={"Mcp-Session-Id": session_id})
-                except (httpx.RequestError, httpx.HTTPStatusError):
-                    pass
-
-            if count == 0:
-                return False, 0, "tools/list returned 0 tools"
-            return True, count, None
-    except Exception as e:
+        with httpx.Client(timeout=timeout) as client:
+            r = client.post(url, json=body, headers=headers)
+        if r.status_code >= 400:
+            return False, 0, f"tools/list HTTP {r.status_code}"
+        result: dict = {}
+        for line in r.text.splitlines():
+            if line.startswith("data:"):
+                msg = json.loads(line[5:].strip())
+                if "result" in msg:
+                    result = msg["result"]
+        if not result and r.text.strip().startswith("{"):
+            result = json.loads(r.text).get("result", {})
+        tools = result.get("tools", [])
+        outcomes = (result.get("_meta") or {}).get("litellm.ai/server_outcomes") or {}
+        bad = sorted(k for k, v in outcomes.items() if v.get("status") != "ok")
+        if bad:
+            return False, len(tools), f"servers not ok: {', '.join(bad)}"
+        if not tools:
+            return False, 0, "tools/list returned 0 tools"
+        return True, len(tools), None
+    except Exception as e:  # noqa: BLE001
         return False, 0, str(e)
 
 
 def compute_readiness() -> dict:
     """Return structured readiness; use ok_all for a single gate."""
     model_ok, model_err = _probe_get(f"{MODEL_GATEWAY_URL}/ready")
-    mcp_ok, mcp_err = _probe_get(f"{MCP_GATEWAY_URL}/mcp")
-
-    # Verify the MCP gateway has actually loaded tools (not just responding).
-    mcp_tools_ok, mcp_tool_count, mcp_tools_err = _probe_mcp_tools(f"{MCP_GATEWAY_URL}/mcp")
-    if mcp_ok and not mcp_tools_ok:
-        # Gateway reachable but tools not loaded yet — not ready.
-        mcp_ok = False
-        mcp_err = mcp_tools_err
+    mcp_ok, mcp_tool_count, mcp_err = _probe_litellm_mcp_tools(f"{MODEL_GATEWAY_URL}/mcp", MODEL_GATEWAY_API_KEY)
 
     media_ok = True
     media_err: str | None = None

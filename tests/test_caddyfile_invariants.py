@@ -197,9 +197,9 @@ def test_formerly_divergent_ports_serve_at_root(caddyfile_text: str) -> None:
     The invariant this test actually protects — served at origin root with no PATH
     adapter (handle_path / redir bounce / X-Forwarded-Prefix) — is unchanged.
 
-    :8449 is the LiteLLM swagger UI. It needs a port root because the :443 `/llm/*`
-    route strips its prefix and the swagger HTML then requests root-absolute
-    `/swagger/*` assets, which escape the handler and 404.
+    :8449 is the LiteLLM admin UI (at /ui/; swagger at /). It needs a port root because
+    the :443 `/llm/*` route strips its prefix and the admin UI / swagger HTML then request
+    root-absolute `/ui/_next/*` / `/swagger/*` assets, which escape the handler and 404.
     """
     for port, snippet, upstream in (("8445", "sso_service", "n8n:5678"),
                                     ("8447", "sso_service_loopback", "127.0.0.1:9119"),
@@ -262,3 +262,28 @@ def test_comfyui_is_routed_through_its_gpu_admission_gate(caddyfile_text: str) -
     assert f"import sso_service {gate_service_name('comfyui')}:8188" in caddyfile_text
     assert "import sso_service comfyui:8188" not in caddyfile_text, (
         "the edge routes straight to ComfyUI, bypassing GPU admission")
+
+
+def test_mcp_route_proxies_litellm_and_has_no_static_token(caddyfile_text: str) -> None:
+    """/mcp is LiteLLM's MCP gateway on model-gateway. Auth is LiteLLM's own Bearer (virtual/master
+    key), enforced upstream: a missing key is a 401 from LiteLLM, so the route can never degrade to
+    open. The old static MCP_GATEWAY_TOKEN gate and the mcp-gateway:8811 upstream must be gone."""
+    root_site = caddyfile_text.split("{$CADDY_TAILNET_HOSTNAME} {", 1)[1]
+    assert "@mcp path /mcp /mcp/*" in root_site
+    assert "reverse_proxy model-gateway:11435 {" in root_site
+    assert "flush_interval -1" in root_site
+    assert "mcp-gateway:8811" not in caddyfile_text
+    assert "MCP_GATEWAY_TOKEN" not in caddyfile_text
+    assert "handle_path /mcp" not in caddyfile_text, "/mcp must NOT be stripped: LiteLLM serves at /mcp"
+
+
+def test_llm_route_blocks_litellm_metrics(caddyfile_text: str) -> None:
+    """/llm/* bypasses SSO for programmatic clients, and LiteLLM's /metrics needs no key
+    (require_auth_for_metrics_endpoint: false, so the in-network Prometheus can scrape it). Its
+    labels carry key aliases, user emails and client IPs, so the edge must answer 404 for the
+    stripped /metrics paths BEFORE the reverse_proxy, or the tailnet reads them unauthenticated."""
+    handler = caddyfile_text.split("handle_path /llm/* {", 1)[1].split("}", 1)[0]
+    assert "@metrics path /metrics /metrics/*" in handler
+    assert "respond @metrics 404" in handler
+    assert handler.index("respond @metrics 404") < handler.index("reverse_proxy model-gateway:11435"), (
+        "the metrics 404 must come before the proxy, or Caddy forwards the request first")

@@ -23,7 +23,7 @@ Set `site.BASE_PATH` in `ordo.yaml` (template: `ordo.example.yaml`) and re-rende
 | `GGUF_MODELS` | *(see `ordo.example.yaml`)* | Hugging Face repo(s) of GGUF files to pull for llama.cpp (pulled via `ordo fetch --models-dir models/gguf`; the dashboard GGUF-pull UI and the V1 `gguf-puller` service were not ported — the endpoint returns 501) |
 | `OPS_CONTROLLER_TOKEN` | *(empty)* | Required for dashboard-driven service lifecycle (`openssl rand -hex 32`); set as a secret in `out/secrets.env` (rendered from `secrets.env.example`) |
 | `HF_TOKEN` | *(empty)* | Hugging Face token for gated model downloads; set as a secret in `out/secrets.env` |
-| `GITHUB_PERSONAL_ACCESS_TOKEN` | *(empty)* | GitHub MCP server token; also passed to `comfyui` as `GITHUB_TOKEN` for Manager API; set as a secret in `out/secrets.env` |
+| `GITHUB_PERSONAL_ACCESS_TOKEN` | *(empty)* | GitHub token passed to `comfyui` as `GITHUB_TOKEN` for ComfyUI-Manager custom-node fetches; optional; set as a secret in `out/secrets.env` |
 | `COMPUTE_MODE` | *(V1 only — removed)* | Superseded by the `hardware:` block in `ordo.yaml` (see [Compute Configuration](#compute-configuration) below) — GPU type is decided by the render engine, not this env var |
 
 > The dashboard has no per-service auth token in this deployment — the Caddy edge (oauth2-proxy + Google SSO + email allowlist) is the sole authentication gate for the dashboard, same as every other UI, no matter which of Caddy's seven ports it's served on (see [Network Ports](#network-ports)). The dashboard app code retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer fallback, but it is not set here and is not a recommended secret — don't generate or configure it.
@@ -82,7 +82,7 @@ docker compose -p ordo --profile voice up -d
 
 - **STT (voice memo → text): fully local.** Hermes' STT openai provider takes its
   base URL from the `STT_OPENAI_BASE_URL` env, which the rendered `out/docker-compose.yml` sets on
-  `hermes-gateway` to `http://stt:8000/v1`. Set in the brain volume's `config.yaml` (`docker exec ordo-agent-1 sh -c 'vi /home/hermes/.hermes/config.yaml'` — the `data/hermes` bind was retired for the `ordo_hermes-home` volume, #143):
+  `agent` to `http://stt:8000/v1`. Set in the brain volume's `config.yaml` (`docker exec ordo-agent-1 sh -c 'vi /home/hermes/.hermes/config.yaml'` — the `data/hermes` bind was retired for the `ordo_hermes-home` volume, #143):
   `stt.provider: openai`, `stt.openai.model: Systran/faster-whisper-small`,
   `stt.openai.api_key: local`, `stt.enabled: true`. Inbound Discord voice messages
   are then auto-transcribed on the secondary GPU.
@@ -126,7 +126,7 @@ Re-render, then from `out/`: `docker compose -p ordo up -d llamacpp`. This drops
 The model registry is the single source of truth for which model runs on which GPU. It is backed by `data/ops-controller/model-registry.json` (mounted at `/data/model-registry.json` in ops-api) and managed via:
 
 - **Dashboard** — Models view (swap active model, set VRAM estimate) and GPU view (reassign GPU pin per model).
-- **Hermes verbs** — `list_models`, `gpu_status`, `set_active_model`, `assign_model_gpu`, `register_model` (see [services/mcp-gateway/README.md](../services/mcp-gateway/README.md)).
+- **Hermes verbs** — `list_models`, `gpu_status`, `set_active_model`, `assign_model_gpu`, `register_model` (see [services/model-gateway/README.md](../services/model-gateway/README.md)).
 - **ops-controller REST API** — `/registry/*` endpoints (auth required):
 
 | Endpoint | Method | Purpose |
@@ -145,13 +145,24 @@ The registry path can be overridden with `MODEL_REGISTRY_PATH` (default `/data/m
 
 ## MCP Server Configuration
 
-Repo templates live under `services/mcp-gateway/`; runtime files are in `data/mcp/` (bind-mounted into the gateway). See [services/mcp-gateway/README.md](../services/mcp-gateway/README.md).
+An MCP server is declared as a `kind: mcp` plugin manifest at `services/<id>/plugin.yaml`, with an
+`mcp:` block: `transport: http`, `image` or `url`, `port`, `path`, `network: internal|stack`, `env`,
+`secrets`, `volumes`, `timeout`, `auth`, `allowed_tools`, `tools`. See
+[services/model-gateway/README.md](../services/model-gateway/README.md).
 
-Enabled servers are listed in `data/mcp/servers.txt` (one per line). Custom-server metadata lives in `data/mcp/registry-custom.yaml`.
+Enabled servers render as compose services `mcp-<server_id>` on the internal `ordo-mcp-net`
+network: only `model-gateway` can reach them.
 
-Default servers: `duckduckgo`, `n8n`, `searxng`, `comfyui`, `orchestration`, `playwright` (the `searxng` server proxies the self-hosted SearXNG instance — no external API key; `playwright` is stack-pinned headless-Chromium browser automation). V1's `MCP_GATEWAY_SERVERS` env-var override in the root `.env` no longer applies (that file was removed) — edit `data/mcp/servers.txt` directly instead.
+`ordo render` emits `out/model-gateway/mcp_servers.yaml` (merged into LiteLLM's config by the
+entrypoint) and `out/mcp/servers.json` (the dashboard's server list plus the registered-plugin
+map).
 
-Edits to `servers.txt` trigger a gateway reload within ~10 seconds — no container restart needed.
+The registered servers are `comfyui`, `orchestration`, `qdrant-rag`, `n8n`, `searxng`,
+`codebase-memory`, and `memory-vault`: there are no `duckduckgo` or `playwright` defaults.
+
+Enable or disable a server by editing `ordo.yaml`'s `plugins:` list (or via the dashboard MCP
+tab, which edits the same file). Changes apply after `ordo render` plus a `model-gateway`
+recreate: LiteLLM reads config-file MCP servers at startup, so there is no hot reload.
 
 ## Compute Configuration
 
@@ -185,7 +196,7 @@ Host bind mounts (reachable from Windows):
 | `data/rag-input/` | Drop files here for `rag-ingestion` |
 | `data/n8n-files/` | n8n file-exchange drop zone |
 | `data/ops-controller/` | Audit logs |
-| `data/mcp/` | `servers.txt`, `registry.json`, `registry-custom.yaml` |
+| *(none)* | MCP config is no longer host-bind state: `ordo render` writes `out/mcp/servers.json` and `out/model-gateway/mcp_servers.yaml` |
 | `data/dashboard/` | Dashboard throughput / benchmark data |
 | `data/comfyui-output/` | ComfyUI render outputs |
 | `models/gguf/` | Download/staging dir (`ordo fetch` target) — seeds the volume, not mounted by services |
@@ -199,6 +210,7 @@ Named volumes (state; back up via a helper container, see [data.md](data.md)):
 | `couchdb-data` | CouchDB (Obsidian LiveSync) |
 | `n8n-data` | n8n workflows and credentials |
 | `open-webui-data` | Open WebUI accounts + uploads |
+| `litellm-db-data` | LiteLLM Postgres (virtual keys, teams, spend; models and MCP servers stay in the rendered config) |
 | `models-gguf` | llama.cpp GGUF weights (what the backends actually read) |
 | `comfyui-models` | ComfyUI checkpoints, LoRAs, VAEs, encoders |
 | `comfyui-app` | ComfyUI application tree + custom nodes (version-pinned — see below) |
@@ -236,13 +248,13 @@ nodes that `services/song-gen` declares.
 
 ## Network Ports
 
-Caddy is still the **only** service with published host ports — every other service (dashboard, open-webui, model-gateway, comfyui, n8n, hermes-dashboard, mcp-gateway, qdrant, ops-api, ops-controller, etc.) has no `ports:` entry and is reachable only from other containers on the internal `ordo-net` network. But since 2026-07-24 Caddy itself is **port-per-service**: it publishes seven SSO-gated host ports on `${CADDY_TAILNET_HOSTNAME}` (all bound to `CADDY_BIND`) instead of routing every UI under subpaths of a single `:443`. Each prebuilt SPA is served at the root it was compiled for, ending the subpath-rewrite workarounds (Open WebUI root-catchall 404s, Hermes header-based base injection, n8n `strip_prefix`, codebase-memory nginx rewrites).
+Caddy is still the **only** service with published host ports — every other service (dashboard, open-webui, model-gateway, litellm-db, comfyui, n8n, hermes-dashboard, the `mcp-*` servers, qdrant, ops-api, ops-controller, etc.) has no `ports:` entry and is reachable only from other containers on the internal `ordo-net` network. But since 2026-07-24 Caddy itself is **port-per-service**: it publishes seven SSO-gated host ports on `${CADDY_TAILNET_HOSTNAME}` (all bound to `CADDY_BIND`) instead of routing every UI under subpaths of a single `:443`. Each prebuilt SPA is served at the root it was compiled for, ending the subpath-rewrite workarounds (Open WebUI root-catchall 404s, Hermes header-based base injection, n8n `strip_prefix`, codebase-memory nginx rewrites).
 
 One Google sign-in covers all seven ports **and the clean per-service tailnet names** — the oauth2-proxy session cookie is domain-scoped, the one OAuth callback stays on `:443`, and the SSO gate's `rd=` redirect carries `{host}` (portless), so a single wildcard `--whitelist-domain=.<domain>` in the edge plugin covers every port and every sidecar name. A first sign-in through a bare `:844x` port lands on the `:443` hub and the domain-scoped cookie then covers everything (one extra click); the clean tailnet names (`chat`/`dash`/… `.<tailnet>.ts.net`) return you straight to the service. No new Google OAuth redirect URIs are needed. See [deployment-models.md](deployment-models.md) for the clean-URL sidecar layer.
 
 | Port | Service | Notes |
 |---|---|---|
-| `443` | Front door | Landing page; `/oauth2/*` (the one Google callback); `/llm/*` → LiteLLM API (Bearer, SSO-bypassed); `/mcp` → MCP gateway (Bearer, SSO-bypassed); `/n8n/webhook/*` and `/n8n/rest/oauth2-credential/callback*` passthroughs (external URLs unchanged); 302s from every legacy subpath (`/chat`, `/dash`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`, `/n8n`) to its new port |
+| `443` | Front door | Landing page; `/oauth2/*` (the one Google callback); `/llm/*` → LiteLLM API (Bearer, SSO-bypassed); `/mcp` → model-gateway's MCP endpoint (Bearer LiteLLM key, SSO-bypassed); `/n8n/webhook/*` and `/n8n/rest/oauth2-credential/callback*` passthroughs (external URLs unchanged); 302s from every legacy subpath (`/chat`, `/dash`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`, `/n8n`) to its new port |
 | `8443` | Open WebUI (chat) | Served at root |
 | `8444` | Dashboard | Served at root; Grafana rides along at `/grafana/` on this port |
 | `8445` | n8n UI | Served at root; the public webhook base (`N8N_WEBHOOK_URL=https://host/n8n`) stays on `:443`, unchanged |

@@ -1,6 +1,6 @@
 # Hermes Agent (Docker-mode)
 
-> ⚠️ **Naming note — v2 is the only stack (V1 top-level tree retired 2026-07-24, commit `62540bf`). The repo was later flattened (2026-07-24, commit `2d4bd9c`): the `v2/` directory no longer exists — its contents live at the repo root; there is no v2, there is only Ordo.** Hermes is the stack's assistant-agent layer and **is the default agent**. The stack models an agent as a **data manifest** ([`../services/hermes/agent.yaml`](../services/hermes/agent.yaml)) that the renderer wires into a single `agent` compose service (the hermes web UI ships as the separate `hermes-dashboard` service-plugin, profile `hermes-ui`). The agent contract (chat via model-gateway, tools via mcp-gateway, GPU via the ops-controller `/jobs` scheduler, `.env` read-only) is documented in [`agents.md`](agents.md). Hermes' persistent brain lives in the **`hermes-home` named volume** (moved off the `data/hermes/` bind 2026-08-05, #143) and the Discord/`SOUL.md`/state notes below remain accurate. The agent image is built from its co-located build context **`services/hermes/`** (`Dockerfile` alongside the `agent.yaml` manifest) via `docker build -t ordo/agent-hermes:latest ./services/hermes` and selected via `agent: hermes` in `ordo.yaml`. The stack is brought up entirely from the repo root: edit `ordo.yaml` (template `ordo.example.yaml`), render with `ordo render` (`python -m ordo.cli render --out out`), then `docker compose -p ordo … up` from `out/` — see [`operator-guide.md`](operator-guide.md).
+> ⚠️ **Naming note — v2 is the only stack (V1 top-level tree retired 2026-07-24, commit `62540bf`). The repo was later flattened (2026-07-24, commit `2d4bd9c`): the `v2/` directory no longer exists — its contents live at the repo root; there is no v2, there is only Ordo.** Hermes is the stack's assistant-agent layer and **is the default agent**. The stack models an agent as a **data manifest** ([`../services/hermes/agent.yaml`](../services/hermes/agent.yaml)) that the renderer wires into a single `agent` compose service (the hermes web UI ships as the separate `hermes-dashboard` service-plugin, profile `hermes-ui`). The agent contract (chat via model-gateway, tools via the model-gateway `/mcp` endpoint, GPU via the ops-controller `/jobs` scheduler, `.env` read-only) is documented in [`agents.md`](agents.md). Hermes' persistent brain lives in the **`hermes-home` named volume** (moved off the `data/hermes/` bind 2026-08-05, #143) and the Discord/`SOUL.md`/state notes below remain accurate. The agent image is built from its co-located build context **`services/hermes/`** (`Dockerfile` alongside the `agent.yaml` manifest) via `docker build -t ordo/agent-hermes:latest ./services/hermes` and selected via `agent: hermes` in `ordo.yaml`. The stack is brought up entirely from the repo root: edit `ordo.yaml` (template `ordo.example.yaml`), render with `ordo render` (`python -m ordo.cli render --out out`), then `docker compose -p ordo … up` from `out/` — see [`operator-guide.md`](operator-guide.md).
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) is the stack's assistant-agent layer. It runs as two compose services — `agent` (Discord / Telegram messaging) and `hermes-dashboard` (web UI, container port 9119, published by Caddy at `https://${CADDY_TAILNET_HOSTNAME}:8447/` — served at its origin root behind a plain SSO proxy, no forwarded-prefix base injection) — that come up with the rest of the stack.
 
@@ -14,7 +14,7 @@ cd out
 docker compose -p ordo up -d
 ```
 
-That's it. Hermes starts automatically, waits for model-gateway / mcp-gateway / dashboard to be healthy, then registers messaging platforms (if configured) and serves the web UI.
+That's it. Hermes starts automatically, waits for model-gateway / model-gateway-keys / dashboard to be healthy, then registers messaging platforms (if configured) and serves the web UI.
 
 Web UI: `https://${CADDY_TAILNET_HOSTNAME}:8447/` (Google SSO, its own dedicated Caddy port, served at the origin root — see [docs/runbooks/auth.md](runbooks/auth.md)). The old `https://${CADDY_TAILNET_HOSTNAME}/hermes*` URL still works — Caddy's `:443` front door 302s it to `:8447/`.
 Logs: `docker compose -p ordo logs -f agent hermes-dashboard`
@@ -92,14 +92,16 @@ The container's entrypoint seeds `config.yaml` inside the `ordo_hermes-home` vol
 model:
   provider: custom
   base_url: http://model-gateway:11435/v1
-  api_key: <LITELLM_MASTER_KEY>
+  api_key: <LITELLM_KEY_HERMES>
   default: local-chat
 mcp_servers:
   gateway:
-    url: http://mcp-gateway:8811/mcp
+    url: http://model-gateway:11435/mcp
+    headers:
+      Authorization: Bearer <LITELLM_KEY_HERMES>
 ```
 
-Any other keys you add manually (skills, memory providers, display preferences) are preserved across restarts — the entrypoint only touches the five keys above.
+Any other keys you add manually (skills, memory providers, display preferences) are preserved across restarts — the entrypoint only touches the six keys above.
 
 ## Execute-don't-propose behavior (push-through)
 

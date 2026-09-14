@@ -10,7 +10,7 @@
 A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`ordo render`) and bringing it up with `docker compose -p ordo … up -d` from `out/`. Core guarantees:
 
 1. **One model endpoint** — Every service reaches every model served by llama.cpp via a single OpenAI-compatible gateway. No per-service provider config.
-2. **Shared tools with health** — MCP tools served from a central gateway with registry metadata, per-server health badges, and policy controls.
+2. **Shared tools with health** — MCP tools served from one `/mcp` endpoint on the model gateway, with per-server health badges and per-consumer key scoping.
 3. **Authenticated ops** — Dashboard manages the full service lifecycle through a secure, audited control plane. No docker.sock in the UI layer.
 4. **RAG out of the box** — Vector search (Qdrant) is wired into Open WebUI and exposed to the gateway; document ingestion is one compose profile away.
 5. **Hardened by default** — Non-root containers, `cap_drop: [ALL]`, read-only filesystems, explicit networks, log rotation, resource limits across all custom services.
@@ -24,8 +24,8 @@ A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`
 | `X-Request-ID` correlation end-to-end | Live | `services/model-gateway/`, `services/v1-parity/dashboard/app.py`, `ordo/` (`ordo serve`) |
 | Responses API (`/v1/responses`) | Live | `services/model-gateway/` |
 | Completions compat (`/v1/completions`) | Live | `services/model-gateway/` |
-| MCP Gateway with hot-reload | Live | `services/mcp-gateway/`, `out/docker-compose.yml` |
-| MCP registry metadata layer (`registry-custom.yaml`) | Live | `services/mcp-gateway/`, `data/mcp/registry-custom.yaml` |
+| MCP tool aggregation on the model gateway | Live | `services/model-gateway/`, `ordo/compose.py::_mcp_service`, `out/docker-compose.yml` |
+| MCP server manifests (`kind: mcp`) rendered to LiteLLM + dashboard | Live | `services/*/plugin.yaml`, `out/model-gateway/mcp_servers.yaml`, `out/mcp/servers.json` |
 | MCP health endpoint + UI badges | Live | `services/v1-parity/dashboard/app.py` |
 | Ops API — container lifecycle (start/stop/restart/logs/pull) | Live | `services/ops-api/main.py` |
 | Append-only JSONL audit log | Live | `services/ops-api/main.py`, `services/ops-api/audit.py` |
@@ -47,15 +47,15 @@ A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`
 
 | Risk | Severity | Status |
 |------|----------|--------|
-| `docker.sock` in both `mcp-gateway` and `ops-controller` | High | Accepted — mitigated by allowlist + auth + no host port |
+| `docker.sock` only in the control plane (`ops-controller` and the dashboard's `ops-api` backend) | High | Accepted, mitigated by allowlist + auth + no host port; the MCP tool path no longer touches the socket |
 | `WEBUI_AUTH` still defaults to `False` | Medium | Tracked — change to `True` in M6 |
-| MCP per-client policy (`allow_clients`) not enforced at gateway level | Medium | Planned — requires Docker MCP Gateway `X-Client-ID` support |
+| Per-tool `allowed_tools` narrowing unused | Low | Schema supports it; per-consumer scoping is already enforced by LiteLLM virtual-key MCP grants |
 | Rendered compose validated in CI | Low | Done — `.github/workflows/ci.yml` has `secret-scan`, `pytest` (incl. ruff), and `substrate` jobs on push/PR; `substrate` runs `docker compose config` against the rendered output (path-filtered, no separate `compose-smoke` job) |
 | Reliability / readiness contracts | High | Strategic — see [reliability-and-contracts.md](reliability-and-contracts.md) |
 
 ## Strategic Priority: Reliability Layer
 
-The platform's next major quality bar is a **reliability spine**: guarantees that agent and tool clients can **reach, authenticate to, and recover from failures** across the shared stack—especially **Model Gateway `:11435`**, **MCP Gateway `:8811`**, and **browser/tool bridges** behind them.
+The platform's next major quality bar is a **reliability spine**: guarantees that agent and tool clients can **reach, authenticate to, and recover from failures** across the shared stack—especially **Model Gateway `:11435`** (both `/v1/*` and `/mcp`), the **MCP servers** behind it, and **browser/tool bridges**.
 
 **Design stance:** Any given agent (today: Hermes) is **one client** on a **shared service mesh**, not the architectural center. Service-to-service reliability and dependency management are the dominant failure mode when weak.
 
@@ -68,7 +68,7 @@ See [Reliability & Service Contracts](reliability-and-contracts.md) for full det
 - [Architecture & Principles](architecture-and-principles.md) – System architecture, product principles, data flows, network assignments.
 - [Model Gateway](component-model-gateway.md) – Unified model routing and provider-facing API keys (llama.cpp / OpenAI-compatible surface).
 - [Ops Controller](component-ops-controller.md) – Secure Docker Compose control plane (token-auth lifecycle API, internal port 9000).
-- [MCP & Tool Aggregation](component-mcp-gateway.md) – Single MCP entrypoint; ComfyUI / n8n / web tools via gateway.
+- [MCP & Tool Aggregation](component-mcp-gateway.md) – One `/mcp` endpoint on the model gateway; the `mcp-*` servers behind it, scoped per LiteLLM key.
 - [RAG Pipeline](component-rag-pipeline.md) – Qdrant vector search + document ingestion.
 - [Orchestration Layer](component-orchestration-layer.md) – Multi-service workflow coordination (target architecture; implementation evolves with the repo).
 - [Dashboard UI](component-dashboard-ui.md) – Ops dashboard (Compose, models, workspace, MCP explorer).

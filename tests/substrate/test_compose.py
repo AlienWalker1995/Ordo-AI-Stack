@@ -27,7 +27,9 @@ def test_isolated_no_port_clashes():
     for name, svc in c["services"].items():
         assert "ports" not in svc, f"{name} publishes a host port (would clash)"
         assert "container_name" not in svc, f"{name} pins a name (would clash)"
-        assert svc["networks"] == ["ordo-net"]
+        nets = svc["networks"]
+        assert set(nets) <= {"ordo-net", "ordo-mcp-net"}, f"{name} joins an unknown network {nets}"
+        assert nets[0] == "ordo-net" or name.startswith("mcp-"), f"{name} must sit on ordo-net first"
 
 
 def test_gpu_reservation_gated_by_hardware():
@@ -166,7 +168,7 @@ def test_render_writes_runnable_compose(tmp_path):
 
 
 def test_backend_image_flows_from_catalog_to_compose_and_env(tmp_path):
-    # the 5090 best-fits huihui-qwen3.6-27b-q6, whose catalog entry pins the patched build
+    # the 5090 best-fits qwen3.8-27b-uncensored-q6, whose catalog entry pins the patched build
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                             "model": "auto", "plugins": "auto"})
     rc = render(src, CATALOG, REGISTRY)
@@ -228,45 +230,63 @@ def test_agent_depends_on_health_conditions():
     c = render(_dual_gpu_src(plugins=[]), CATALOG, REGISTRY).compose_dict()
     dep = c["services"]["agent"]["depends_on"]
     assert dep["model-gateway"] == {"condition": "service_healthy"}
-    assert dep["mcp-gateway"] == {"condition": "service_healthy"}
+    assert "mcp-gateway" not in dep
+    assert dep["model-gateway-keys"] == {"condition": "service_completed_successfully"}
     assert dep["dashboard"] == {"condition": "service_healthy"}
     assert dep["ops-controller"] == {"condition": "service_started"}
 
 
-# ── Defect class: mcp-gateway runtime wiring (spawns MCP servers as containers → needs docker.sock;
-#    reads the rendered catalog from a mounted config dir; empty catalog = agent has no tools). ──
-def test_mcp_gateway_has_socket_config_and_healthcheck():
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
-    mg = c["services"]["mcp-gateway"]
-    assert "/var/run/docker.sock:/var/run/docker.sock" in mg["volumes"]
-    assert "./mcp:/mcp-config" in mg["volumes"]
-    assert mg["environment"]["MCP_CONFIG_FILE"] == "/mcp-config/servers.txt"
-    assert "healthcheck" in mg
+# ── MCP servers are first-class compose services on the internal MCP network (spec §4) ─────────
+def test_mcp_services_rendered_with_isolation_limits_and_labels():
+    c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
+    names = {n for n in c["services"] if n.startswith("mcp-")}
+    assert names == {"mcp-codebase-memory", "mcp-comfyui", "mcp-memory-vault", "mcp-n8n",
+                     "mcp-orchestration", "mcp-qdrant-rag", "mcp-searxng"}
+    for n in names:
+        s = c["services"][n]
+        assert "env_file" not in s, f"{n}: an MCP server must see only its declared env"
+        assert "ports" not in s
+        assert s["security_opt"] == ["no-new-privileges:true"] and s["init"] is True
+        assert s["deploy"]["resources"]["limits"] == {"cpus": "1", "memory": "2g"}
+        assert s["labels"]["ordo.mcp"] == "true" and s["labels"]["ordo.mcp.server_id"] == n[len("mcp-"):]
+        assert "healthcheck" in s
+    assert c["services"]["mcp-memory-vault"]["networks"] == ["ordo-mcp-net"]          # internal
+    assert c["services"]["mcp-searxng"]["networks"] == ["ordo-mcp-net", "ordo-net"]    # stack
+    assert c["services"]["mcp-n8n"]["environment"]["N8N_API_KEY"] == "${N8N_API_KEY}"
+    assert "codebase-memory-cache" in c["volumes"]
+    assert "mcp-gateway" not in c["services"]
 
 
-# ── Defect class: restored MCP servers spawn as siblings and read the bind-allowlist + non-secret
-#    defaults from the gateway env (the wrapper substitutes PLACEHOLDER_* from the process env).
-#    codebase-memory's read-only /c/dev bind is REJECTED unless CODE_ROOT is on the allowlist. ──
-def test_mcp_gateway_env_wires_restored_server_placeholders():
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
-    env = c["services"]["mcp-gateway"]["environment"]
-    # codebase-memory: read-only /c/dev bind is only accepted if CODE_ROOT is on the allowlist.
-    assert env["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"] == "${CODE_ROOT:-/c/dev}"
-    assert env["CODE_ROOT"] == "${CODE_ROOT:-/c/dev}"
-    # comfyui MCP's non-secret default checkpoint (safe to interpolate from .env-space).
-    assert env["COMFY_MCP_DEFAULT_MODEL"] == "${COMFY_MCP_DEFAULT_MODEL:-flux1-schnell-fp8.safetensors}"
-    # memory-vault must remain wired (no regression).
-    assert env["MEMORY_VAULT_PATH"] == "${MEMORY_VAULT_PATH:-}"
+def test_mcp_healthcheck_defaults_to_the_renderer_probe_unless_overridden():
+    """The probe is ONE decision in compose.default_mcp_healthcheck, not six copies in manifests.
+
+    Any HTTP status counts as healthy (an MCP endpoint answers a bare GET with 4xx/405), so the
+    probe catches HTTPError and lets URLError/socket errors fail the container.
+    """
+    from ordo.compose import default_mcp_healthcheck
+
+    c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
+    expected = default_mcp_healthcheck(9000, "/mcp")
+    assert expected["interval"] == "30s" and expected["timeout"] == "10s"
+    assert expected["retries"] == 3 and expected["start_period"] == "30s"
+    probe = expected["test"]
+    assert probe[:3] == ["CMD", "python3", "-c"]
+    assert "urllib.request.urlopen('http://localhost:9000/mcp', timeout=5)" in probe[3]
+    assert "except urllib.error.HTTPError: pass" in probe[3]
+
+    for name in ("mcp-codebase-memory", "mcp-comfyui", "mcp-memory-vault", "mcp-n8n",
+                 "mcp-orchestration", "mcp-qdrant-rag"):
+        assert c["services"][name]["healthcheck"] == expected, name
+    # searxng-mcp overrides it: that image ships node, not python3.
+    searxng = c["services"]["mcp-searxng"]["healthcheck"]
+    assert searxng != expected and searxng["test"][1] == "node"
 
 
-def test_mcp_gateway_does_not_shadow_env_file_secrets():
-    # OPS_CONTROLLER_TOKEN / N8N_API_KEY arrive via the secrets.env env_file. They must NOT be
-    # re-declared in `environment:` — a `${VAR:-}` there interpolates from .env/host (empty) and
-    # shadows the env_file value to empty, breaking the spawned MCP servers' auth.
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
-    env = c["services"]["mcp-gateway"]["environment"]
-    for k in ("OPS_CONTROLLER_TOKEN", "N8N_API_KEY"):
-        assert k not in env, f"{k} must come from secrets.env env_file, not the environment block"
+def test_only_ops_controller_and_agent_mount_the_docker_socket():
+    c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
+    with_sock = sorted(n for n, s in c["services"].items()
+                       if any("/var/run/docker.sock" in v for v in s.get("volumes", []) or []))
+    assert with_sock == ["agent", "ops-controller"]
 
 
 def test_model_without_backend_image_keeps_default(tmp_path):
@@ -479,3 +499,66 @@ def test_comfyui_models_on_named_volume():
         bad = [v for v in vols if "${" in v and "models/comfyui" in v]
         assert not bad, f"{name} still binds models/comfyui over 9p: {bad}"
     assert "comfyui-models:/models:ro" not in c["services"]["dashboard"]["volumes"]
+
+
+# ── LiteLLM Postgres + key bootstrap + the internal MCP network (spec §3) ─────────────────────
+def test_litellm_db_is_core_pinned_and_healthchecked():
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
+    db = c["services"]["litellm-db"]
+    assert db["image"].startswith("postgres:16-alpine@sha256:")
+    assert db["volumes"] == ["litellm-db-data:/var/lib/postgresql/data"]
+    assert "litellm-db-data" in c["volumes"]
+    assert "pg_isready" in " ".join(db["healthcheck"]["test"])
+    assert "ports" not in db and "env_file" not in db
+    # the only secret is interpolated at compose time; empty -> postgres refuses to start (fail loud)
+    assert db["environment"]["POSTGRES_PASSWORD"] == "${LITELLM_DB_PASSWORD}"
+    assert "litellm-db" in compose.core_services()
+
+
+def test_model_gateway_wired_to_db_config_mount_and_mcp_net():
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
+    mg = c["services"]["model-gateway"]
+    assert mg["depends_on"]["litellm-db"] == {"condition": "service_healthy"}
+    assert mg["depends_on"]["llamacpp"] == {"condition": "service_started"}
+    assert "./model-gateway:/config:ro" in mg["volumes"]
+    assert mg["networks"] == ["ordo-net", "ordo-mcp-net"]
+    env = mg["environment"]
+    assert env["DATABASE_URL"] == "postgresql://litellm:${LITELLM_DB_PASSWORD}@litellm-db:5432/litellm"
+    assert env["STORE_MODEL_IN_DB"] == "False"
+    assert env["FORWARDED_ALLOW_IPS"] == "*"
+    assert env["LITELLM_MODE"] == "PRODUCTION" and env["LITELLM_LOG"] == "ERROR"
+    # secrets arrive via the secrets.env env_file; re-declaring them here would shadow to empty
+    for k in ("LITELLM_SALT_KEY", "LITELLM_MASTER_KEY", "LITELLM_DB_PASSWORD"):
+        assert k not in env
+    assert c["networks"]["ordo-mcp-net"] == {"name": "ordo-mcp-net", "internal": True}
+
+
+def test_model_gateway_keys_is_a_one_shot_after_gateway_health():
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
+    k = c["services"]["model-gateway-keys"]
+    assert k["image"] == "ordo/model-gateway:latest"
+    assert k["command"] == ["python3", "/app/bootstrap_keys.py"]
+    assert k["restart"] == "on-failure"
+    assert k["depends_on"]["model-gateway"] == {"condition": "service_healthy"}
+    assert "./model-gateway:/config:ro" in k["volumes"]
+    assert k["environment"]["LITELLM_KEYS_SPEC"] == "/config/keys.json"
+    assert k["environment"]["MODEL_GATEWAY_URL"] == "http://model-gateway:11435"
+    assert any(isinstance(f, dict) and f.get("path") == "secrets.env" for f in k["env_file"])
+    assert "model-gateway-keys" in compose.core_services()
+
+
+def test_monitoring_config_mounts_come_from_the_tracked_tree(tmp_path):
+    """prometheus.yml and the grafana provisioning tree are TRACKED repo files. A ./-relative
+    bind resolves against the compose project dir (out/), which nothing re-renders, so it served
+    a stale copy (2026-09-13: no model-gateway scrape job). They must mount via ${BASE_PATH}."""
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto", "plugins": ["monitoring"]})
+    rc = render(src, CATALOG, REGISTRY)
+    rc.write(tmp_path)
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    for svc in ("prometheus", "grafana"):
+        binds = [v for v in c["services"][svc]["volumes"] if "/monitoring/" in v]
+        assert binds, f"{svc} should bind its monitoring config"
+        for v in binds:
+            assert v.startswith("${BASE_PATH:?"), f"{svc} mounts a ./-relative copy: {v}"
+            assert not v.startswith("./monitoring")
