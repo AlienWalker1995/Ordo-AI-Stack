@@ -301,4 +301,4 @@ def test_hermes_image_pins_the_langfuse_sdk():
     """The bundled plugin fails open when the SDK is missing, so an unpinned or absent install
     is silent. Pin it, and pin it to the major that matches the self-hosted server."""
     dockerfile = (ROOT / "services" / "hermes" / "Dockerfile").read_text(encoding="utf-8")
-    assert 'uv pip install "langfuse==4.15.2"' in dockerfile
+    assert 'uv pip install "langfuse==4.15.1"' in dockerfile
