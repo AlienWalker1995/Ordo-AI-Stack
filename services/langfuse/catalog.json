@@ -1,0 +1,18 @@
+{
+  "cards": [
+    {
+      "id": "langfuse",
+      "name": "Langfuse",
+      "order": 150,
+      "port": 3000,
+      "url": "http://localhost:3000",
+      "check": "http://langfuse-web:3000/api/public/health",
+      "has_gpu": false,
+      "plugin": "langfuse",
+      "category": "observability",
+      "tailnet_label": "langfuse",
+      "hint": "Agent traces, datasets and evals (self-hosted)",
+      "notes": "No `ops_service`: the card is a link + health probe, not a lifecycle control. Restarting Langfuse means recreating six coupled containers (the app services gate on service_healthy datastores), which a single ops-api start/stop button cannot express - a half-applied restart would leave web up against a stopped ClickHouse. Use the compose profile instead. `check` is the public health endpoint langfuse-web serves without auth; it is the same probe the container healthcheck runs."
+    }
+  ]
+}

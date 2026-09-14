@@ -16,7 +16,7 @@
 # repo is public). Each sidecar consumes ~1 of the plan's 50 free tagged resources.
 id: tailnet-names
 name: Tailnet service names (clean URLs)
-description: Per-service Tailscale sidecar nodes — chat/dash/n8n/comfy/hermes/graph.<tailnet>.ts.net, TLS auto-managed, proxying to the SSO-gated Caddy ports.
+description: Per-service Tailscale sidecar nodes — chat/dash/n8n/comfy/hermes/graph/llm/langfuse.<tailnet>.ts.net, TLS auto-managed, proxying to the SSO-gated Caddy ports.
 requires:
   nvidia: false
   ram_gb: 1
@@ -173,6 +173,34 @@ services:
     volumes:
       - ts-state-llm:/var/lib/tailscale
       - ${BASE_PATH:-.}/assets/tailscale-serve/llm.json:/config/serve.json:ro
+    healthcheck:
+      test: ["CMD", "tailscale", "status", "--peers=false"]
+      start_period: 30s
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  # langfuse.<tailnet> - the self-hosted Langfuse web app (agent traces/datasets/evals),
+  # fronting caddy :8450. This sidecar is what makes LANGFUSE_PUBLIC_URL the clean subdomain
+  # rather than the :8450 port root (ordo/render.py::langfuse_public_url reads the same
+  # TAILNET_NAMES_ENABLED signal), and Langfuse's own post-login redirect is built from that
+  # value - so the name here and the derived URL must stay the same word: `langfuse`.
+  # Harmless when the langfuse plugin is disabled: the sidecar rides the edge profile and
+  # proxies a Caddy port that simply has no upstream, exactly like any other sidecar whose
+  # service is off.
+  - name: tailnet-langfuse
+    image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
+    network_mode: service:caddy
+    wants_secrets: true
+    depends_on: [caddy]
+    env:
+      TS_HOSTNAME: langfuse
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_AUTH_ONCE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - ts-state-langfuse:/var/lib/tailscale
+      - ${BASE_PATH:-.}/assets/tailscale-serve/langfuse.json:/config/serve.json:ro
     healthcheck:
       test: ["CMD", "tailscale", "status", "--peers=false"]
       start_period: 30s

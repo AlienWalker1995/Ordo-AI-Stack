@@ -200,11 +200,16 @@ def test_formerly_divergent_ports_serve_at_root(caddyfile_text: str) -> None:
     :8449 is the LiteLLM admin UI (at /ui/; swagger at /). It needs a port root because
     the :443 `/llm/*` route strips its prefix and the admin UI / swagger HTML then request
     root-absolute `/ui/_next/*` / `/swagger/*` assets, which escape the handler and 404.
+
+    :8450 is Langfuse's web app — a Next.js SPA with the same root-absolute asset paths, so
+    it gets a port root for the same reason. It is the ONLY route into langfuse-web (the
+    service publishes no host port), so losing the SSO gate here exposes the trace store.
     """
     for port, snippet, upstream in (("8445", "sso_service", "n8n:5678"),
                                     ("8447", "sso_service_loopback", "127.0.0.1:9119"),
                                     ("8448", "sso_service", "codebase-memory-ui:9750"),
-                                    ("8449", "sso_service", "model-gateway:11435")):
+                                    ("8449", "sso_service", "model-gateway:11435"),
+                                    ("8450", "sso_service", "langfuse-web:3000")):
         block = _site_block(caddyfile_text, port)
         assert f"import {snippet} {upstream}" in block, (
             f":{port} must serve {upstream} via `import {snippet}` at root")

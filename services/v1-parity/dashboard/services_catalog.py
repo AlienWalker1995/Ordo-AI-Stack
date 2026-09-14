@@ -186,7 +186,7 @@ TAILNET_LABELS = {s["id"]: s["tailnet_label"] for s in SERVICES if s.get("tailne
 CARD_PLUGINS = frozenset({
     "open-webui", "comfyui", "automation", "rag",
     "hermes-dashboard", "codebase-memory-ui", "voice",
-    "llamacpp-cpu",
+    "llamacpp-cpu", "langfuse",
 })
 
 

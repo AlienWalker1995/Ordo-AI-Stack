@@ -90,4 +90,8 @@ def test_derived_tailnet_labels_are_exactly_the_pre_refactor_labels():
         "hermes": "hermes",
         "codebase-memory-ui": "graph",
         "model-gateway": "llm",
+        # Post-refactor addition. Each label here must have a matching sidecar in
+        # services/tailnet-names/plugin.yaml, or the card's Open link points at a name
+        # nothing serves.
+        "langfuse": "langfuse",
     }

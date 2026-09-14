@@ -15,7 +15,10 @@ time, so they are locked here:
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+import yaml
 
 from ordo import wizard
 from ordo.catalog import Catalog
@@ -224,3 +227,45 @@ def test_salt_and_encryption_key_are_never_rotated():
     for key in ("LANGFUSE_DB_PASSWORD", "LANGFUSE_CLICKHOUSE_PASSWORD", "LANGFUSE_REDIS_AUTH",
                 "LANGFUSE_MINIO_SECRET", "LANGFUSE_NEXTAUTH_SECRET"):
         assert f'print "{key}"' in script, f"{key} should be rotatable"
+
+
+# ── edge + sidecar + dashboard card (the three must agree on one name/port) ────
+
+def test_edge_publishes_the_langfuse_port():
+    rc = render(_src(plugins=["edge", "langfuse"], site=EDGE_SITE), CATALOG, REGISTRY)
+    caddy = rc.compose_dict()["services"]["caddy"]
+    assert any(p.endswith(":8450:8450") for p in caddy["ports"]), (
+        "the edge must publish :8450 or the Caddyfile's langfuse site is unreachable")
+
+
+def test_sidecar_serve_asset_targets_the_same_port_the_edge_publishes():
+    """Three files have to agree on one number; a mismatch is a 502 only a browser finds."""
+    serve = json.loads((ROOT / "assets" / "tailscale-serve" / "langfuse.json")
+                       .read_text(encoding="utf-8"))
+    handler = serve["Web"]["${TS_CERT_DOMAIN}:443"]["Handlers"]["/"]["Proxy"]
+    assert handler.endswith(":8450")
+    caddyfile = (ROOT / "auth" / "caddy" / "Caddyfile").read_text(encoding="utf-8")
+    assert "import sso_service langfuse-web:3000" in caddyfile
+
+
+def test_sidecar_hostname_matches_the_derived_public_url_label():
+    """`tailscale serve` registers TS_HOSTNAME as the node name; LANGFUSE_PUBLIC_URL is built
+    from the same label. If they drift, Langfuse redirects post-login to a host that does not
+    resolve — and only an interactive sign-in would ever notice."""
+    manifest = yaml.safe_load(
+        (ROOT / "services" / "tailnet-names" / "plugin.yaml").read_text(encoding="utf-8"))
+    sidecar = next(s for s in manifest["services"] if s["name"] == "tailnet-langfuse")
+    rc = render(_src(plugins=["edge", "tailnet-names", "langfuse"], site=EDGE_SITE),
+                CATALOG, REGISTRY)
+    host = rc.env["LANGFUSE_PUBLIC_URL"].removeprefix("https://").split(".", 1)[0]
+    assert sidecar["env"]["TS_HOSTNAME"] == host == "langfuse"
+
+
+def test_dashboard_card_probes_the_internal_health_endpoint():
+    card = json.loads((ROOT / "services" / "langfuse" / "catalog.json")
+                      .read_text(encoding="utf-8"))["cards"][0]
+    assert card["plugin"] == "langfuse"           # gated off the render's enabled set
+    assert card["tailnet_label"] == "langfuse"
+    assert card["check"] == "http://langfuse-web:3000/api/public/health"
+    assert "ops_service" not in card, (
+        "a single lifecycle button cannot restart six coupled containers correctly")
