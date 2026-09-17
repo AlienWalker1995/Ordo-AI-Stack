@@ -48,6 +48,18 @@ LANGFUSE_TAILNET_LABEL = "langfuse"
 # Fallback login identity for the headless Langfuse init. A site `LANGFUSE_ADMIN_EMAIL` overrides it.
 LANGFUSE_DEFAULT_ADMIN_EMAIL = "admin@ordo.local"
 
+# model-gateway's edge port (Caddyfile's `:8449` site) and tailnet sidecar label - the same two
+# facts LANGFUSE_EDGE_PORT/LANGFUSE_TAILNET_LABEL record for Langfuse, sourced from
+# services/model-gateway/catalog.json's `sso_port`/`tailnet_label` (the dashboard Open link uses
+# the same two values via services_catalog.service_open_url()).
+LITELLM_EDGE_PORT = 8449
+LITELLM_TAILNET_LABEL = "llm"
+# The callback route LiteLLM's Google SSO redirects to (litellm/proxy/management_endpoints/
+# ui_sso.py: auth_callback is mounted at "/sso/callback"; get_redirect_url_for_sso() appends this
+# route to PROXY_BASE_URL to build both the redirect it sends Google and the URI Google must be
+# told to allow). Verified against the installed litellm==1.100.1 source in ordo-model-gateway-1.
+LITELLM_SSO_CALLBACK_ROUTE = "sso/callback"
+
 # Secret env KEYS the CORE services need at runtime (values operator-managed in secrets.env, never
 # rendered). model-gateway/model-gateway-keys/ops-controller/dashboard/agent read these; plugins add more
 # via their manifest `secrets:` list. Mirrors the V1 SOPS-decrypted runtime/.env surface.
@@ -312,7 +324,9 @@ class RenderedConfig:
             gpu_claims={c.service: c for c in self.gpu_inventory()},
             mcp_servers=self.mcp_servers,
             # Gateway-wide Langfuse tracing follows the plugin: on with it, absent without it.
-            langfuse_tracing="langfuse" in self.plugins_enabled)
+            langfuse_tracing="langfuse" in self.plugins_enabled,
+            # {} when the edge wiring can't produce a PROXY_BASE_URL (see litellm_google_sso_env).
+            litellm_google_sso_env=self.model_gateway.get("google_sso_env") or {})
 
     def write(self, out_dir: str | Path) -> None:
         out = Path(out_dir)
@@ -407,6 +421,55 @@ def langfuse_public_url(env: dict[str, str], plugins_enabled: list[str]) -> str:
     if "edge" in plugins_enabled and hostname:
         return f"https://{hostname}:{LANGFUSE_EDGE_PORT}"
     return ""
+
+
+def litellm_google_sso_env(env: dict[str, str], plugins_enabled: list[str], admin_identity: str) -> dict[str, str]:
+    """model-gateway's LiteLLM admin UI Google SSO wiring, or {} when it can't be derived.
+
+    Lets the operator sign into the LiteLLM admin UI with the SAME Google identity the edge
+    already gates, instead of a second admin/LITELLM_MASTER_KEY login. Reuses the stack's
+    existing Google OAuth client - GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET are compose-level
+    `${...}` references to the edge's own OAUTH2_PROXY_CLIENT_ID/OAUTH2_PROXY_CLIENT_SECRET
+    (resolved from secrets.env at `docker compose` time, same as CADDY_TAILNET_HOSTNAME below),
+    so this introduces no new secret and this function never handles a secret value.
+
+    PROXY_BASE_URL must be the ORIGIN the browser actually used: LiteLLM appends
+    "/sso/callback" to it verbatim, both to build the redirect it sends Google and as the value
+    the operator must register as an authorized redirect URI in Google Cloud Console
+    (litellm/proxy/management_endpoints/ui_sso.py: get_redirect_url_for_sso() ->
+    proxy/utils.py:get_custom_url(), which prefers PROXY_BASE_URL over the request's own host).
+    Derived exactly like LANGFUSE_PUBLIC_URL above, from the same edge wiring already rendered
+    here, and gated the same way - BOTH branches require the edge plugin (tailnet-names
+    `depends_on: [edge]`, so it can't be enabled without edge):
+
+      tailnet-names enabled -> the clean sidecar name   https://llm.<CADDY_TAILNET_DOMAIN>
+      edge enabled          -> the SSO-gated port root  https://<CADDY_TAILNET_HOSTNAME>:8449
+      neither               -> {} (no SSO vars at all; the admin/master-key login is unaffected)
+
+    PROXY_ADMIN_ID is included only when `admin_identity` (the site `LITELLM_ADMIN_IDENTITY`
+    key) is set: LiteLLM promotes the SSO user whose id equals PROXY_ADMIN_ID to proxy_admin
+    (check_and_update_if_proxy_admin_id). For Google SSO that id is the Google account's OpenID
+    `sub` (fastapi_sso.sso.google.GoogleSSO), NOT the email address - see
+    services/model-gateway/README.md for how an operator finds it. Left unset, every Google
+    sign-in lands as a view-only internal user and nobody is auto-promoted.
+    """
+    domain = str(env.get("CADDY_TAILNET_DOMAIN", "") or "").strip()
+    hostname = str(env.get("CADDY_TAILNET_HOSTNAME", "") or "").strip()
+    base_url = ""
+    if "tailnet-names" in plugins_enabled and domain:
+        base_url = f"https://{LITELLM_TAILNET_LABEL}.{domain}"
+    elif "edge" in plugins_enabled and hostname:
+        base_url = f"https://{hostname}:{LITELLM_EDGE_PORT}"
+    if not base_url:
+        return {}
+    sso_env = {
+        "PROXY_BASE_URL": base_url,
+        "GOOGLE_CLIENT_ID": "${OAUTH2_PROXY_CLIENT_ID}",
+        "GOOGLE_CLIENT_SECRET": "${OAUTH2_PROXY_CLIENT_SECRET}",
+    }
+    if admin_identity:
+        sso_env["PROXY_ADMIN_ID"] = admin_identity
+    return sso_env
 
 
 def _resolve_hardware(source: Source) -> HardwareProfile:
@@ -585,6 +648,13 @@ def render(source: Source, catalog: Catalog,
     if "langfuse" in [p.id for p in services]:
         env.setdefault("LANGFUSE_PUBLIC_URL", langfuse_public_url(env, [p.id for p in services]))
         env.setdefault("LANGFUSE_ADMIN_EMAIL", LANGFUSE_DEFAULT_ADMIN_EMAIL)
+
+    # LiteLLM admin UI Google SSO: model-gateway is core (always rendered), so - unlike Langfuse -
+    # this is gated on the edge wiring alone, not on a plugin of its own. `LITELLM_ADMIN_IDENTITY`
+    # is a plain `site:` key (already copied into `env` by the loop above); read here under its
+    # own name because the compose var it feeds, PROXY_ADMIN_ID, is not.
+    admin_identity = str(env.get("LITELLM_ADMIN_IDENTITY", "") or "").strip()
+    model_gateway["google_sso_env"] = litellm_google_sso_env(env, [p.id for p in services], admin_identity)
 
     # Secret KEYS the enabled stack needs: the always-present core set + each enabled plugin's
     # declared `secrets:`. Deduped, core-first order preserved. Values never rendered.

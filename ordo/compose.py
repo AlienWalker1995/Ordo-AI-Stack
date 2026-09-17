@@ -215,7 +215,8 @@ GATEWAY_LANGFUSE_ENV: dict[str, str] = {
 }
 
 
-def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool = False) -> dict[str, Any]:
+def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool = False,
+                    google_sso_env: dict[str, str] | None = None) -> dict[str, Any]:
     """LiteLLM behind the `local-chat` alias AND the MCP gateway (`/mcp`). The agent gates on
     `model-gateway: service_healthy` (audit G5), so this service MUST render a healthcheck or that
     gate is unsatisfiable and the agent never starts. Probe: GET /v1/models with the master key.
@@ -226,7 +227,15 @@ def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool
     THROUGHPUT_RECORD_TOKEN) come from the secrets.env env_file and are NOT re-declared here.
 
     `langfuse_tracing` (the langfuse plugin is enabled) adds GATEWAY_LANGFUSE_ENV; without it the
-    service renders exactly as before and the gateway boots on the template's callbacks alone."""
+    service renders exactly as before and the gateway boots on the template's callbacks alone.
+
+    `google_sso_env` (from ordo.render.litellm_google_sso_env) lets the admin UI's own login be
+    the same Google identity as the edge: PROXY_BASE_URL/PROXY_ADMIN_ID are plain values, while
+    GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET are `${OAUTH2_PROXY_CLIENT_ID}`/`${OAUTH2_PROXY_CLIENT_
+    SECRET}` - compose-level references resolved from secrets.env at `docker compose` time, the
+    same mechanism CADDY_TAILNET_HOSTNAME below uses, so no secret VALUE is ever set here. Empty
+    when the edge wiring can't produce a PROXY_BASE_URL; the admin/master-key login is unaffected
+    either way (see services/model-gateway/README.md)."""
     s = _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file, secrets=True)
     s["networks"] = [net, _mcp_net(project)]
     s["depends_on"] = _depends_on({"llamacpp": "service_started", "litellm-db": "service_healthy"})
@@ -244,6 +253,8 @@ def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool
     }
     if langfuse_tracing:
         s["environment"].update(GATEWAY_LANGFUSE_ENV)
+    if google_sso_env:
+        s["environment"].update(google_sso_env)
     s["healthcheck"] = {
         "test": ["CMD-SHELL", (
             "python3 -c \"import os, urllib.request; "
@@ -579,7 +590,8 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
                    secondary_gpu_uuid: str | None = None,
                    gpu_claims: dict[str, Any] | None = None,
                    mcp_servers: list[dict[str, Any]] | None = None,
-                   langfuse_tracing: bool = False) -> dict[str, Any]:
+                   langfuse_tracing: bool = False,
+                   litellm_google_sso_env: dict[str, str] | None = None) -> dict[str, Any]:
     net = f"{project}-net"
     # the agent is swappable (Hermes is the default); a registry manifest may pin any image,
     # else fall back to the <project>/agent-<id>:latest convention.
@@ -627,7 +639,8 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         "llamacpp": llamacpp,
         "litellm-db": _litellm_db(net),
         # LITELLM_MASTER_KEY + LITELLM_SALT_KEY + THROUGHPUT_RECORD_TOKEN are secrets (secrets.env).
-        "model-gateway": _model_gateway(project, net, env_file, langfuse_tracing=langfuse_tracing),
+        "model-gateway": _model_gateway(project, net, env_file, langfuse_tracing=langfuse_tracing,
+                                         google_sso_env=litellm_google_sso_env),
         "model-gateway-keys": _model_gateway_keys(project, net, env_file),
         "ops-controller": _ops_controller(project, net, env_file),
         # The dashboard is pluggable (data-driven): the selected manifest supplies image/env/

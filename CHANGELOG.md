@@ -48,6 +48,17 @@ All notable changes to this project are documented here. The format is loosely b
   self-hosted retention is an Enterprise feature; and `langfuse-minio-lifecycle`, a one-shot
   that sets a matching expiry rule on the `langfuse` MinIO bucket. Plugin services can now
   declare a compose `restart:` policy (`no`, `on-failure`, `unless-stopped`).
+- **LiteLLM admin UI Google SSO.** The operator can now sign into the LiteLLM admin UI with the
+  same Google identity the edge already gates, instead of a second `admin` + `LITELLM_MASTER_KEY`
+  login. No new secret: the renderer maps the edge's existing Google OAuth client onto
+  `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (`ordo/render.py::litellm_google_sso_env`), and
+  derives `PROXY_BASE_URL` from the same edge wiring `LANGFUSE_PUBLIC_URL` uses. A new optional
+  `site.LITELLM_ADMIN_IDENTITY` key (rendered as `PROXY_ADMIN_ID`) names the Google identity
+  LiteLLM promotes to `proxy_admin`. Rendered only while `edge` is enabled and an operator-facing
+  URL is known; with `edge` disabled, none of it renders and the master-key login (kept as the
+  break-glass path) is unchanged. Requires one manual step in Google Cloud Console: add
+  `<PROXY_BASE_URL>/sso/callback` as an authorized redirect URI on the existing OAuth client. See
+  `services/model-gateway/README.md#signing-in`.
 - **Electricity-derived per-token cost for local models.** `ordo.yaml`'s new optional `cost:`
   block (`usd_per_kwh`, `inference_watts`, `prompt_tokens_per_second`,
   `output_tokens_per_second`) derives a real `input_cost_per_token` / `output_cost_per_token`
