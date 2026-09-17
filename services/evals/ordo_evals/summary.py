@@ -9,6 +9,8 @@ model_toolcall    accuracy (+ accuracy.<category>)  calls exactly right (toolcal
 model_reasoning   accuracy (+ accuracy.<category>)  exact-match answers; format_rate  replies that
                   carried an ANSWER line
 model_domain      judge.<criterion>  mean 0..1 judge score; judge.overall_pass_rate  (n = graded)
+harness_domain    same as model_domain, plus judge.used_tools_pass_rate  (n = graded) - did Hermes
+                  actually use a tool rather than answer from memory (E2b)
 harness_ops       artifact_ok_rate  the out-of-band check passed; claimed_done_rate  the final
                   message claimed success; false_claim_rate  claimed success while the check failed
                   (hallucinated completion); plus trajectory means
@@ -109,20 +111,30 @@ def _reasoning(items, grades) -> dict[str, Any]:
     return metrics
 
 
-def _domain(items, grades) -> dict[str, Any]:
-    scored_ids = {i["item_id"] for i in _scored(items)}
-    metrics: dict[str, Any] = {}
-    for criterion, scale in judge.DOMAIN_CRITERIA.items():
-        relevant = [g for g in grades if g["criterion"] == criterion and g["item_id"] in scored_ids]
-        if not relevant:
-            continue
-        if scale == judge.LIKERT5:
-            # Likert grades are written on the 0..1 scale (README: "1 -> 0.0, ... 5 -> 1.0"); clamp
-            # both ends so the interval never claims a mean outside what the scale can produce.
-            metrics[f"judge.{criterion}"] = _mean([float(g["score"]) for g in relevant], lower=0.0, upper=1.0)
-        elif scale == judge.PASS_FAIL:
-            metrics[f"judge.{criterion}_pass_rate"] = _rate([g["score"] == "pass" for g in relevant])
-    return metrics
+def _judged(criteria: dict[str, str]) -> Callable[[list[dict[str, Any]], list[dict[str, Any]]], dict[str, Any]]:
+    """A judge-only suite's metrics: one `judge.<criterion>` row per criterion the judge graded, once
+    any grades exist. Shared by model_domain and harness_domain (E2b) - the two differ only in which
+    criteria they queue (judge.DOMAIN_CRITERIA vs judge.AGENT_DOMAIN_CRITERIA, harness_domain's extra
+    `used_tools` pass_fail criterion included)."""
+    def compute(items, grades) -> dict[str, Any]:
+        scored_ids = {i["item_id"] for i in _scored(items)}
+        metrics: dict[str, Any] = {}
+        for criterion, scale in criteria.items():
+            relevant = [g for g in grades if g["criterion"] == criterion and g["item_id"] in scored_ids]
+            if not relevant:
+                continue
+            if scale == judge.LIKERT5:
+                # Likert grades are written on the 0..1 scale (README: "1 -> 0.0, ... 5 -> 1.0"); clamp
+                # both ends so the interval never claims a mean outside what the scale can produce.
+                metrics[f"judge.{criterion}"] = _mean([float(g["score"]) for g in relevant], lower=0.0, upper=1.0)
+            elif scale == judge.PASS_FAIL:
+                metrics[f"judge.{criterion}_pass_rate"] = _rate([g["score"] == "pass" for g in relevant])
+        return metrics
+    return compute
+
+
+_domain = _judged(judge.DOMAIN_CRITERIA)
+_agent_domain = _judged(judge.AGENT_DOMAIN_CRITERIA)
 
 
 def _ops(items, grades) -> dict[str, Any]:
@@ -164,6 +176,7 @@ SUITE_METRICS: dict[str, Callable[[list[dict[str, Any]], list[dict[str, Any]]], 
     "model_reasoning": _reasoning,
     "model_domain": _domain,
     "harness_ops": _ops,
+    "harness_domain": _agent_domain,
     "harness_honesty": _honesty,
 }
 

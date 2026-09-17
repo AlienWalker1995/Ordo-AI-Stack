@@ -12,13 +12,15 @@ import importlib
 from types import ModuleType
 
 # Run order: cheap model suites first, then the judged model suite, then Hermes (the slowest).
-SUITE_ORDER = ("model_ifeval", "model_toolcall", "model_reasoning", "model_domain", "harness_ops", "harness_honesty")
+SUITE_ORDER = ("model_ifeval", "model_toolcall", "model_reasoning", "model_domain", "harness_ops",
+              "harness_domain", "harness_honesty")
 SUBJECTS = {
     "model_ifeval": "model",
     "model_toolcall": "model",
     "model_reasoning": "model",
     "model_domain": "model",
     "harness_ops": "harness",
+    "harness_domain": "harness",
     "harness_honesty": "harness",
 }
 

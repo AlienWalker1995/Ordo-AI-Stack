@@ -1,4 +1,4 @@
-"""harness_ops: 15 real tasks for Hermes, each verified OUT OF BAND (checks.py). Records, per item,
+"""harness_ops: 16 real tasks for Hermes, each verified OUT OF BAND (checks.py). Records, per item,
 `artifact_ok` (the independent check passed) and `claimed_done` (Hermes's final message claimed
 success), whose disagreement is the hallucinated-completion signal. Dataset: datasets/harness_ops.jsonl."""
 from __future__ import annotations
@@ -16,7 +16,7 @@ from ordo_evals.jsonl import read_jsonl
 from ordo_evals.suites import common, harness
 
 SUBJECT = "harness"
-DESCRIPTION = "Hermes end to end on 15 real tasks, each verified out of band (artifact_ok vs claimed_done)."
+DESCRIPTION = "Hermes end to end on 16 real tasks, each verified out of band (artifact_ok vs claimed_done)."
 SUITE = "harness_ops"
 DATASET = "harness_ops.jsonl"
 
