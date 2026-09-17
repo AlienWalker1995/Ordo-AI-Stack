@@ -103,6 +103,33 @@ fail-open: with the plugin off, the keys are empty and the bundled Hermes plugin
 Hermes tags its traces `HERMES_LANGFUSE_ENV=hermes`; the gateway traces the same LLM calls again
 under `gateway`, so filter Langfuse dashboards by environment.
 
+### LiteLLM admin UI Google SSO
+
+Lets the operator sign into the LiteLLM admin UI (`https://llm.<tailnet>/ui/`) with the same
+Google identity the edge already gates, instead of a second `admin` + `LITELLM_MASTER_KEY`
+login. No new secret: the renderer reuses the edge's existing Google OAuth client. See
+[`services/model-gateway/README.md`](../services/model-gateway/README.md#signing-in) for the
+full sign-in flow and the one manual Google Cloud Console step.
+
+| `site:` key | Rendered as | Purpose |
+|---|---|---|
+| `LITELLM_ADMIN_IDENTITY` | `PROXY_ADMIN_ID` | Optional. The Google identity (the account's OpenID `sub`, not its email) LiteLLM promotes to `proxy_admin` on sign-in. Unset means every Google sign-in lands as `internal_user_view_only`. |
+
+Set on the `model-gateway` service by the renderer only while `edge` is enabled AND an
+operator-facing URL is known (`ordo/render.py::litellm_google_sso_env`; not `.env` keys, never
+hand-set). With `edge` disabled, none of these render and the master-key login is unchanged:
+
+| Variable | Value | Purpose |
+|---|---|---|
+| `PROXY_BASE_URL` | derived from the edge | The origin LiteLLM appends `/sso/callback` to: `https://llm.<CADDY_TAILNET_DOMAIN>` with the tailnet-names sidecars, `https://<CADDY_TAILNET_HOSTNAME>:8449` with the edge alone. This is also the authorized redirect URI's origin the operator must add in Google Cloud Console |
+| `GOOGLE_CLIENT_ID` | `${OAUTH2_PROXY_CLIENT_ID}` | Compose-level reference to the edge's existing Google OAuth client id (from `secrets.env`); never a literal value |
+| `GOOGLE_CLIENT_SECRET` | `${OAUTH2_PROXY_CLIENT_SECRET}` | Compose-level reference to the same client's secret; never a literal value |
+| `PROXY_ADMIN_ID` | the `LITELLM_ADMIN_IDENTITY` site value | Present only when that site key is set |
+
+LiteLLM's own SSO user limit is free up to 5 billable users (`_raise_if_sso_exceeds_free_user_
+limit`); beyond that needs an Enterprise license. This deployment has one human, so no license
+is required.
+
 ### Evals (`--profile evals`, opt-in)
 
 The eval harness (`services/evals`) measures the `local-chat` model and the Hermes harness

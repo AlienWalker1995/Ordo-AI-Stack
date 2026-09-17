@@ -98,14 +98,48 @@ day survives the purge; only the per-request log rows expire.
 docker build -t ordo/model-gateway:latest services/model-gateway
 ```
 
-## Admin UI
+## Signing in
 LiteLLM's admin UI (keys, teams, spend, MCP servers, models) is at `https://llm.<tailnet>/ui/`
-(or `https://<host>:8449/ui/` when the tailnet-names sidecars are disabled), behind the Google
-SSO gate like every other UI in the stack. Once past SSO, log in to LiteLLM itself with
-username `admin` and password = `LITELLM_MASTER_KEY` (from `out/secrets.env`; never write the
-key value anywhere). The gateway sets `FORWARDED_ALLOW_IPS=*` so uvicorn trusts the
-`X-Forwarded-Proto`/`X-Forwarded-Host` headers Caddy adds from its project-network address;
-without it, the post-SSO redirects come back `http://` on a TLS-only port and the login fails.
+(or `https://<host>:8449/ui/` when the tailnet-names sidecars are disabled), behind the edge's
+own Google SSO gate like every other UI in the stack. Once past that gate, LiteLLM asks for its
+OWN login, which is one of two paths:
+
+1. **Google SSO** (the "Sign in with Google" button on LiteLLM's login page) - the same Google
+   identity as the edge, not a second password. Works whenever `edge` is enabled and
+   `PROXY_BASE_URL` can be derived (see below); the renderer maps the stack's EXISTING Google
+   OAuth client onto `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (`ordo/render.py::
+   litellm_google_sso_env`), so no new secret or Google app registration is needed.
+   - LiteLLM promotes exactly one identity to `proxy_admin`: the one matching the optional
+     `site.LITELLM_ADMIN_IDENTITY` key, rendered as `PROXY_ADMIN_ID`
+     (`check_and_update_if_proxy_admin_id`). **That value is the Google account's OpenID `sub`,
+     not its email** - sign in with Google once first (you land as a view-only internal user),
+     then read the `user_id` LiteLLM created for you from the `litellm-db` Postgres database
+     (`LiteLLM_UserTable`, matched by `user_email`), and put that `user_id` in
+     `site.LITELLM_ADMIN_IDENTITY`. Leave it unset and every Google sign-in stays view-only.
+   - Free for up to 5 billable users (LiteLLM's own SSO limit, `_raise_if_sso_exceeds_free_user_
+     limit`); more needs an Enterprise license. This deployment has one human, so no license is
+     needed.
+2. **Master key** (username `admin`, password = `LITELLM_MASTER_KEY` from `out/secrets.env`;
+   never write the key value anywhere) - LiteLLM's `/login` route builds this form
+   unconditionally, so it keeps working exactly as before whether or not Google SSO is
+   configured. **Keep this as the break-glass path**: if Google is ever unreachable, it is the
+   only way into the admin UI.
+
+The gateway sets `FORWARDED_ALLOW_IPS=*` so uvicorn trusts the `X-Forwarded-Proto`/
+`X-Forwarded-Host` headers Caddy adds from its project-network address; without it, the
+post-login redirect (either path) comes back `http://` on a TLS-only port and sign-in fails.
+
+### One manual step: Google Cloud Console
+Add this authorized redirect URI to the SAME OAuth client already used for the edge's
+oauth2-proxy (Google Cloud Console -> APIs & Services -> Credentials -> that OAuth 2.0 Client ID
+-> Authorized redirect URIs):
+```
+https://llm.tail63bdfc.ts.net/sso/callback
+```
+General form: `<PROXY_BASE_URL>/sso/callback` (see `ordo/render.py::litellm_google_sso_env` for
+how `PROXY_BASE_URL` is derived on a different edge shape). The edge's oauth2-proxy gate still
+runs first - a request passes Google once for the front door, then again for LiteLLM's own SSO
+handshake; these are two separate OAuth round-trips against the same client.
 
 ## Files
 - `Dockerfile` — pins `ghcr.io/berriai/litellm:v1.100.1@sha256:a3715fa7ad8387941ab697259bd2881d68931657247a41984f90fae6d11c62bf` (bump deliberately to a specific vX.Y.Z + digest), installs the config + helpers.
