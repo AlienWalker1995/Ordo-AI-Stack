@@ -56,6 +56,43 @@ its build context, not pulled from a registry — so `ordo preflight` reports a 
 "build first", never "Docker will pull". This is why the Ordo stack does NOT reference the unconfigured
 upstream `ghcr.io/berriai/litellm:main` directly: that image has no `local-chat` alias.
 
+## Tracing (Langfuse)
+
+When the `langfuse` plugin is enabled, the gateway traces every LLM call it serves (every consumer,
+tagged with the virtual key alias as `litellm.key_alias`) to Langfuse under the environment
+`gateway`, using LiteLLM's `langfuse_otel` callback. The callback is **not** in
+`litellm_config.yaml`: the renderer sets `LITELLM_EXTRA_CALLBACKS=langfuse_otel` plus
+`LANGFUSE_OTEL_HOST`, `LANGFUSE_TRACING_ENVIRONMENT` and
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=no_content` on this service only while the plugin
+is enabled (`ordo/compose.py::GATEWAY_LANGFUSE_ENV`), and the entrypoint's `add_callbacks.py` step
+appends the callback at start. The project key pair comes from `secrets.env`. Without the plugin
+the variable is unset and the gateway boots on the template's callbacks alone; with the plugin but
+without keys the callback is skipped with a warning, never fatal. `no_content` only drops LiteLLM's
+duplicate `raw_gen_ai_request` child span: the generation still carries its input and output.
+`LITELLM_OTEL_V2` stays off (on 1.100.1 it loses the environment and exports every Postgres call
+as a span). What gets sent, and why Hermes's calls also appear under `hermes`, is in
+`services/langfuse/README.md`.
+
+Health probes are not traced: every local deployment's `model_info.health_check_params` is
+`{"no-log": true}`, which LiteLLM merges into the background (and `/health`) probe request only, so
+the probes skip the logging callbacks while spend tracking and health-based routing keep working.
+Never move `no-log` into `litellm_params`: there it would silence tracing for real traffic too.
+
+`litellm_settings.redact_user_api_key_info: true` is set. It strips `user_api_key_*` metadata for
+the integrations that honour it (Langfuse SDK, LangSmith, Logfire); `langfuse_otel` does not consult
+it in 1.100.1.
+
+## Spend-log retention
+
+`general_settings.maximum_spend_logs_retention_period: "90d"` with
+`maximum_spend_logs_cleanup_cron: "30 4 * * *"` makes LiteLLM's in-process scheduler delete
+`LiteLLM_SpendLogs` rows (and the tool-index rows derived from them) older than 90 days, every day
+at 04:30 UTC, in bounded batches under a statement timeout (LiteLLM's defaults for batch size,
+batch count and run budget). This is open-source LiteLLM, no license needed. The **daily aggregate
+tables** (`LiteLLM_DailyUserSpend`, `LiteLLM_DailyTeamSpend`, `LiteLLM_DailyTagSpend` and friends)
+and the per-key `spend` totals are **not** touched, so long-term cost history per key, model and
+day survives the purge; only the per-request log rows expire.
+
 ## Build
 ```
 docker build -t ordo/model-gateway:latest services/model-gateway
@@ -77,9 +114,13 @@ without it, the post-SSO redirects come back `http://` on a TLS-only port and th
   straight from the environment via `os.environ/LITELLM_MASTER_KEY`).
 - `entrypoint.sh` — refuses a missing or weak `LITELLM_MASTER_KEY` (shape `sk-<32+ chars>`),
   renders the template with the deployment metadata from `.env`, then merges the rendered
-  MCP server fragment (`/config/mcp_servers.yaml`) into the config.
+  MCP server fragment (`/config/mcp_servers.yaml`) into the config, then appends any
+  render-selected callbacks (`LITELLM_EXTRA_CALLBACKS`).
 - `merge_mcp_config.py` — folds the render-emitted `mcp_servers:` fragment into the rendered
   config; exits 2 when the fragment is missing or malformed (never boots an empty tool set).
+- `add_callbacks.py`: appends the plugin-dependent logging callbacks named in
+  `LITELLM_EXTRA_CALLBACKS` (today `langfuse_otel`) to `litellm_settings.callbacks`; a callback
+  whose credentials are unset is skipped with a warning.
 - `throughput_callback.py` — posts per-completion tok/s + TTFT samples to the dashboard.
 - `bootstrap_keys.py`: idempotent LiteLLM virtual-key provisioning from the rendered
   `out/model-gateway/keys.json` (runs as the `model-gateway-keys` one-shot).
