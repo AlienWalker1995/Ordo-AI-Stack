@@ -72,6 +72,14 @@ def test_template_redacts_user_api_key_info():
     assert _template()["litellm_settings"]["redact_user_api_key_info"] is True
 
 
+def test_template_sets_the_spend_log_retention_policy():
+    """Keys verified against LiteLLM 1.100.1 (proxy_server.py schedules spend_log_cleanup_job from
+    exactly these two general_settings)."""
+    general = _template()["general_settings"]
+    assert general["maximum_spend_logs_retention_period"] == "90d"
+    assert general["maximum_spend_logs_cleanup_cron"] == "30 4 * * *"
+
+
 def test_entrypoint_and_image_run_the_callback_step():
     assert 'python3 /app/add_callbacks.py /tmp/config.yaml "${LITELLM_EXTRA_CALLBACKS:-}"' in (
         ENTRYPOINT.read_text(encoding="utf-8"))

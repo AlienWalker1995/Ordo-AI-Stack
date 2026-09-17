@@ -164,6 +164,12 @@ general_settings:
   allow_requests_on_db_unavailable: true
   # A virtual key sees ONLY the MCP servers it is explicitly granted (bootstrap_keys.py grants them).
   require_key_mcp_access_defined: true
+  # Spend-log retention (open source): the scheduler inside the proxy deletes LiteLLM_SpendLogs rows
+  # older than 90 days (and the tool-index rows derived from them) every day at 04:30 UTC, in
+  # bounded batches. The daily aggregate tables (LiteLLM_DailyUserSpend and friends) are NOT
+  # touched, so long-term per-key cost history survives the purge.
+  maximum_spend_logs_retention_period: "90d"
+  maximum_spend_logs_cleanup_cron: "30 4 * * *"
 
 router_settings:
   fallbacks: [{"local-chat": ["__CPU_MODEL_NAME__"]}]
