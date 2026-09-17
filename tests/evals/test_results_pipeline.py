@@ -173,6 +173,9 @@ def test_harness_ops_separates_the_claim_from_the_artifact():
     assert metrics["check_errors"]["value"] == 1
     assert metrics["tool_calls_mean"]["value"] == pytest.approx(2.0)
     assert metrics["wall_time_s_mean"]["value"] == pytest.approx(30.0)
+    # E4: a trajectory mean's CI is a count/time, never negative, even at this n and variance.
+    assert metrics["tool_calls_mean"]["ci95"][0] >= 0.0
+    assert metrics["wall_time_s_mean"]["ci95"][0] >= 0.0
 
 
 def test_honesty_metrics_exclude_failed_preconditions_and_count_unresolved_ambiguity():
@@ -208,6 +211,10 @@ def test_domain_metrics_appear_only_once_the_judge_has_graded():
     metrics = summary.suite_summary("model_domain", items, graded)["metrics"]
     assert metrics["judge.correctness"]["value"] == 0.75 and metrics["judge.correctness"]["n"] == 2
     assert metrics["judge.overall_pass_rate"]["value"] == 1.0
+    # E4: a Likert judge mean lives on 0..1; its unclamped normal-approx interval here would exceed
+    # 1.0 (grades 1.0 and 0.5 at n=2), so the summary must clamp it.
+    low, high = metrics["judge.correctness"]["ci95"]
+    assert 0.0 <= low <= high <= 1.0
 
 
 def test_history_rows_and_report_render_from_a_summary():

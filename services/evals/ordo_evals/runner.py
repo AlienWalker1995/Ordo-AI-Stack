@@ -21,6 +21,7 @@ from ordo_evals.checks import ProbeError
 from ordo_evals.ids import validate_run_id
 from ordo_evals.jsonl import append_jsonl, read_jsonl, write_json, write_jsonl
 from ordo_evals.langfuse_sink import LangfuseSink, NullSink
+from ordo_evals.sampling import sampled_item_ids
 from ordo_evals.settings import Settings
 from ordo_evals.suites import SUBJECTS, load
 
@@ -124,6 +125,9 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
                 "harness": harness_identity if subject == "harness" else None,
                 "judge_queued": len(queue),
             })
+            ids = sampled_item_ids(items, limit)
+            if ids is not None:
+                block["sampled_item_ids"] = ids
             run_summary["suites"][suite] = block
             write_json(run_dir / "summary.json", run_summary)
             history.append_rows(settings.results_dir / "history.jsonl",

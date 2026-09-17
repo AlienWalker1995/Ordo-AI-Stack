@@ -7,7 +7,7 @@ Two subjects, measured separately so a result is attributable:
 Module map (the pure modules import only the standard library, so tests/evals runs without the
 eval framework installed; everything that needs inspect_ai / langfuse / httpx imports it lazily):
   pure:    jsonl, stats, history, normalize, toolcall_match, honesty, checks, trajectory,
-           private_dataset, judge, summary, report, ids
+           private_dataset, judge, summary, report, ids, sampling
   runtime: settings, hermes_client, probes, langfuse_sink, runner, suites/*
 """
 from __future__ import annotations

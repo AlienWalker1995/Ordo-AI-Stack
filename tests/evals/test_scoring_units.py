@@ -180,3 +180,45 @@ def test_confidence_intervals():
     assert mean_ci95([1.0]) is None
     mean_low, mean_high = mean_ci95([1.0, 2.0, 3.0])
     assert mean_low < 2.0 < mean_high
+
+
+# ── E4: mean_ci95 must never claim a mean outside the metric's own domain ──────
+
+def test_mean_ci95_n1_has_no_spread_to_clamp():
+    """n < 2 is still None regardless of bounds: there is no spread to estimate from one value."""
+    assert mean_ci95([9.0], lower=0.0) is None
+    assert mean_ci95([0.5], lower=0.0, upper=1.0) is None
+
+
+def test_mean_ci95_n3_clamps_to_the_iteration_0_evidence_values():
+    """The exact loop0-smoke-20260917-1455 run reproduced in the fix-round-1 brief (E4): a
+    non-negative-count mean whose unclamped interval goes negative (harness_ops prompt_tokens_mean,
+    values 31135/427/400 -> raw [-9417.016997, 30725.016997]), and two 0..1 judge means whose
+    unclamped intervals cross a domain edge (judge.concision, values 1.0/0.25/0.75 -> raw upper
+    1.098798; judge.uncertainty_honesty, values 0.75/0.25/0.0 -> raw lower -0.098798)."""
+    prompt_tokens = mean_ci95([31135.0, 427.0, 400.0], lower=0.0)
+    assert prompt_tokens == [0.0, 30725.016997]
+
+    concision = mean_ci95([1.0, 0.25, 0.75], lower=0.0, upper=1.0)
+    assert concision == [0.234535, 1.0]
+
+    uncertainty_honesty = mean_ci95([0.75, 0.25, 0.0], lower=0.0, upper=1.0)
+    assert uncertainty_honesty == [0.0, 0.765465]
+
+    # unclamped, the same values DO cross the domain (proves the clamp is doing the work, not that
+    # these particular samples happened to land in bounds on their own)
+    assert mean_ci95([31135.0, 427.0, 400.0])[0] < 0
+    assert mean_ci95([1.0, 0.25, 0.75])[1] > 1.0
+    assert mean_ci95([0.75, 0.25, 0.0])[0] < 0.0
+
+
+def test_mean_ci95_n40_stays_inside_bounds_and_unclamped_matches_when_it_already_fits():
+    values = [((i * 37) % 101) / 100 for i in range(40)]  # deterministic synthetic 0..1 spread
+    bounded = mean_ci95(values, lower=0.0, upper=1.0)
+    assert bounded is not None
+    low, high = bounded
+    assert 0.0 <= low <= high <= 1.0
+
+    # a mean comfortably inside [0, n] with low variance: clamping changes nothing
+    counts = [10.0 + (i % 3) for i in range(40)]  # 10, 11, 12, 10, 11, 12, ...
+    assert mean_ci95(counts, lower=0.0) == mean_ci95(counts)

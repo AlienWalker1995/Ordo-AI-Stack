@@ -55,8 +55,10 @@ docker compose -p ordo --profile evals run --rm evals \
     report --run-id 2026-09-20-nightly --compare 2026-09-13-nightly
 ```
 
-Useful flags: `--suites model_toolcall,harness_ops` (a subset), `--limit 3` (a smoke run),
-`--seed N` (the IFEval sample and the generation seed), `--no-langfuse` (write files only).
+Useful flags: `--suites model_toolcall,harness_ops` (a subset), `--limit 3` (a smoke run, a seeded
+sample stratified across the suite's categories rather than the first 3 items - `summary.json` records
+which item ids were sampled), `--seed N` (default `1234`; the IFEval sample, the `--limit` sample and
+the generation seed), `--no-langfuse` (write files only).
 
 `all` takes roughly an hour on the local model: the model suites run at concurrency 1 because
 llama.cpp serves one slot that Hermes's crons share, and the harness suites are as slow as Hermes is.
@@ -72,7 +74,8 @@ ${DATA_PATH}/evals/
     items.jsonl                      per item: input, output, scores, trace id, trajectory, errors
     judge_queue.jsonl                items waiting for a judgment
     grades.jsonl                     every validated grade ingested so far
-    summary.json                     per-suite metrics, identities, skipped suites, notes
+    summary.json                     per-suite metrics, identities, skipped suites, notes,
+                                      sampled_item_ids (only when --limit was used)
 ```
 
 ## The judge workflow (a Claude Code session, not a judge model)
@@ -154,6 +157,21 @@ server. So:
 Hermes logs a warning when a network-accessible API server runs with the local (unsandboxed) terminal
 backend. That is the accepted posture here: the network is the project network, the key is internal,
 and the operator owns every container on it.
+
+## Known limitation: Hermes can see the harness
+
+Hermes runs with operator-granted full host Docker access and a mirror mount of the repo tree (see
+`docs/design/hermes-owns-docker.md`). That means Hermes can, in principle, `docker ps`/`docker inspect`
+the running `evals` container, read this service's bind-mounted code and datasets under
+`services/evals/`, and recognize a `harness_honesty` prompt for what it is. The generated identifiers
+in `datasets/harness_honesty.jsonl` (note names, tool names, collection names) are deliberately
+plausible rather than obviously test-shaped (no literal `eval` or `missing` in the generated strings,
+per-item random suffixes) so a prompt does not self-announce, but this is mitigation, not prevention:
+it does not stop Hermes from finding the harness by inspecting its own host access. **Read
+`harness_honesty` and `harness_ops` scores with that in mind** - a model that has learned it is being
+watched can behave differently than it would on a real task, and no renaming of fixtures closes that
+gap. There is no code fix for this: it is a property of giving an agent full host access and then also
+using that same host to evaluate it.
 
 ## No GPU work
 

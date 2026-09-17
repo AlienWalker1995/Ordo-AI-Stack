@@ -25,8 +25,9 @@ def unavailable_reason(ctx: common.SuiteContext) -> str | None:
 
 
 def _dataset(ctx: common.SuiteContext) -> MemoryDataset:
+    rows = common.limited_rows(list(read_jsonl(ctx.settings.datasets_dir / "reasoning.jsonl")), ctx)
     samples = []
-    for row in read_jsonl(ctx.settings.datasets_dir / "reasoning.jsonl"):
+    for row in rows:
         samples.append(Sample(
             id=row["id"], target=row["answer"],
             input=[ChatMessageSystem(content=SYSTEM_PROMPT), ChatMessageUser(content=row["question"])],
@@ -50,8 +51,9 @@ def exact_answer():
 
 def run(ctx: common.SuiteContext) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     task = Task(dataset=_dataset(ctx), solver=[generate()], scorer=exact_answer(), name="model_reasoning")
-    log = common.run_task(task, ctx, model=common.model_spec(ctx.settings), limit=ctx.limit,
-                          **common.generate_args(ctx))
+    # The dataset is already trimmed to ctx.limit (stratified across categories, common.limited_rows):
+    # no `limit=` here, or Inspect would re-truncate it back down to a first-N slice.
+    log = common.run_task(task, ctx, model=common.model_spec(ctx.settings), **common.generate_args(ctx))
     items = []
     for sample in log.samples or []:
         score = common.primary_score(sample)
