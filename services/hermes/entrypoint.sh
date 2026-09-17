@@ -56,6 +56,24 @@ fi
 
 HERMES_BIN=/opt/hermes-agent/.venv/bin/hermes
 
+# Hermes API server gate (the endpoint the `evals` runner drives at http://agent:8642/v1).
+# Hermes enables the api_server platform from ENV alone (API_SERVER_KEY/HOST/PORT, see
+# gateway/config.py::_apply_env_overrides), so this is an env gate rather than a `config set`
+# seed: seeding platforms.api_server into config.yaml would put the key on disk in the brain
+# volume. Enabled ONLY with a non-empty key of at least 16 characters (Hermes's own startup guard;
+# the wizard mints token_urlsafe(32)). Anything else unsets all three so the gateway never
+# enrolls the platform: an empty key means the evals plugin is off, and a short key would only
+# make the adapter log a fatal "api_server_key_invalid" and leave the platform dead. A bad key must
+# never take the agent down, so it is a loud warning, not an exit.
+if [ -n "${API_SERVER_KEY:-}" ] && [ "${#API_SERVER_KEY}" -ge 16 ]; then
+    echo "entrypoint: Hermes API server enabled on ${API_SERVER_HOST:-127.0.0.1}:${API_SERVER_PORT:-8642} (internal network only)" >&2
+else
+    if [ -n "${API_SERVER_KEY:-}" ]; then
+        echo "entrypoint: WARNING HERMES_API_SERVER_KEY is shorter than 16 characters; Hermes API server left DISABLED" >&2
+    fi
+    unset API_SERVER_KEY API_SERVER_HOST API_SERVER_PORT
+fi
+
 # Fail loud: LITELLM_KEY_HERMES is Hermes' own LiteLLM virtual key (chat + embeddings + MCP tools),
 # provisioned by the model-gateway-keys one-shot from secrets.env. Refuse to start without it.
 : "${LITELLM_KEY_HERMES:?LITELLM_KEY_HERMES must be set (SOPS/secrets.env) - refusing to seed a guessable default}"

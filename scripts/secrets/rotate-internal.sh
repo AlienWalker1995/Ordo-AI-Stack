@@ -11,7 +11,7 @@ set -euo pipefail
 # Tokens rotated:
 #   LITELLM_MASTER_KEY, LITELLM_DB_PASSWORD, OPS_CONTROLLER_TOKEN,
 #   THROUGHPUT_RECORD_TOKEN (if present),
-#   OAUTH2_PROXY_COOKIE_SECRET, every LITELLM_KEY_*,
+#   OAUTH2_PROXY_COOKIE_SECRET, every LITELLM_KEY_*, HERMES_API_SERVER_KEY,
 #   LANGFUSE_DB_PASSWORD, LANGFUSE_CLICKHOUSE_PASSWORD, LANGFUSE_REDIS_AUTH,
 #   LANGFUSE_MINIO_SECRET, LANGFUSE_NEXTAUTH_SECRET.
 #   NEVER LITELLM_SALT_KEY (rotating it makes DB-stored credentials unreadable).
@@ -54,6 +54,8 @@ NEW_LF_CLICKHOUSE=$(openssl rand -hex 24)
 NEW_LF_REDIS=$(openssl rand -hex 24)
 NEW_LF_MINIO=$(openssl rand -hex 24)
 NEW_LF_NEXTAUTH=$(openssl rand -hex 32)
+# Hermes API server bearer (the evals runner's credential). Hermes rejects anything under 16 chars.
+NEW_HERMES_API=$(openssl rand -hex 32)
 
 TMP=$(mktemp)
 trap 'rm -f "$TMP" "$TMP.new"' EXIT
@@ -67,7 +69,7 @@ sops --decrypt --input-type=dotenv --output-type=dotenv \
 awk -v lit="$NEW_LITELLM" -v dbp="$NEW_DBPASS" -v ops="$NEW_OPS" \
     -v thr="$NEW_THROUGHPUT" -v cookie="$NEW_COOKIE" \
     -v lfdb="$NEW_LF_DBPASS" -v lfch="$NEW_LF_CLICKHOUSE" -v lfrd="$NEW_LF_REDIS" \
-    -v lfmi="$NEW_LF_MINIO" -v lfna="$NEW_LF_NEXTAUTH" '
+    -v lfmi="$NEW_LF_MINIO" -v lfna="$NEW_LF_NEXTAUTH" -v hapi="$NEW_HERMES_API" '
 BEGIN { OFS="=" }
 /^LITELLM_MASTER_KEY=/        { print "LITELLM_MASTER_KEY", lit; next }
 /^LITELLM_DB_PASSWORD=/       { print "LITELLM_DB_PASSWORD", dbp; next }
@@ -81,6 +83,7 @@ BEGIN { OFS="=" }
 /^LANGFUSE_REDIS_AUTH=/          { print "LANGFUSE_REDIS_AUTH", lfrd; next }
 /^LANGFUSE_MINIO_SECRET=/        { print "LANGFUSE_MINIO_SECRET", lfmi; next }
 /^LANGFUSE_NEXTAUTH_SECRET=/     { print "LANGFUSE_NEXTAUTH_SECRET", lfna; next }
+/^HERMES_API_SERVER_KEY=/        { print "HERMES_API_SERVER_KEY", hapi; next }
 /^LANGFUSE_SALT=/                { print; next }
 /^LANGFUSE_ENCRYPTION_KEY=/      { print; next }
 { print }
@@ -114,6 +117,9 @@ then recreate the profile so redis/minio pick up their new env:
       langfuse-db langfuse-clickhouse langfuse-redis langfuse-minio \\
       langfuse-worker langfuse-web
 Rotating LANGFUSE_NEXTAUTH_SECRET invalidates open Langfuse sessions (sign in again).
+
+Rotating HERMES_API_SERVER_KEY requires recreating the agent so Hermes picks up the new
+bearer (docker compose -p ordo up -d --force-recreate agent); eval runs must use the new value.
 
 All existing oauth2-proxy sessions invalidate (cookie secret rotated).
 You'll need to sign in via Google again.

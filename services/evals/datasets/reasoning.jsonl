@@ -1,0 +1,40 @@
+{"id": "arithmetic-01", "category": "arithmetic", "question": "A bakery sells muffins for $3 each and cookies for $2 each. Ana buys 7 muffins and 11 cookies. How many dollars does she spend? Give the final answer as a number only.", "answer": "43"}
+{"id": "arithmetic-02", "category": "arithmetic", "question": "A train travels at 84 km per hour for 2.5 hours, then at 60 km per hour for 1.5 hours. How many kilometers does it travel in total? Give the final answer as a number only.", "answer": "300"}
+{"id": "arithmetic-03", "category": "arithmetic", "question": "A 1,200 liter tank is 35% full. Then 180 liters are added. What percentage of the tank is full now? Give the final answer as a number only.", "answer": "50"}
+{"id": "arithmetic-04", "category": "arithmetic", "question": "Sam buys 3 notebooks at $4.75 each and pays with a $20 bill. How many dollars of change does he get? Give the final answer as a number only.", "answer": "5.75"}
+{"id": "arithmetic-05", "category": "arithmetic", "question": "A class has 28 students and the ratio of girls to boys is 4:3. How many boys are in the class? Give the final answer as a number only.", "answer": "12"}
+{"id": "arithmetic-06", "category": "arithmetic", "question": "A jacket costs $80. It is discounted by 25%, and then 10% sales tax is added to the discounted price. What is the final price in dollars? Give the final answer as a number only.", "answer": "66.0"}
+{"id": "arithmetic-07", "category": "arithmetic", "question": "6 workers can finish a job in 10 days. Working at the same rate, how many days would 4 workers need? Give the final answer as a number only.", "answer": "15"}
+{"id": "arithmetic-08", "category": "arithmetic", "question": "What is the sum of all integers from 1 to 150 inclusive? Give the final answer as a number only.", "answer": "11325"}
+{"id": "arithmetic-09", "category": "arithmetic", "question": "A rectangle has a perimeter of 46 cm and a length of 15 cm. What is its area in square centimeters? Give the final answer as a number only.", "answer": "120"}
+{"id": "arithmetic-10", "category": "arithmetic", "question": "Mia has $140 saved and saves $35 more every week. After how many weeks will she have exactly $700? Give the final answer as a number only.", "answer": "16"}
+{"id": "units-01", "category": "units", "question": "Convert 5 miles to kilometers, using 1 mile = 1.609344 km. Round to 3 decimal places. Give the final answer as a number only.", "answer": "8.047"}
+{"id": "units-02", "category": "units", "question": "Convert 72 degrees Fahrenheit to degrees Celsius. Round to 1 decimal place. Give the final answer as a number only.", "answer": "22.2"}
+{"id": "units-03", "category": "units", "question": "How many seconds are in 3.5 hours? Give the final answer as a number only.", "answer": "12600"}
+{"id": "units-04", "category": "units", "question": "How many grams are in 2.5 kilograms? Give the final answer as a number only.", "answer": "2500"}
+{"id": "units-05", "category": "units", "question": "How many mebibytes (MiB) are in 3 gibibytes (GiB)? Give the final answer as a number only.", "answer": "3072"}
+{"id": "units-06", "category": "units", "question": "Convert 250 milliliters to liters. Give the final answer as a number only.", "answer": "0.25"}
+{"id": "units-07", "category": "units", "question": "Convert 100 km/h to meters per second. Round to 2 decimal places. Give the final answer as a number only.", "answer": "27.78"}
+{"id": "units-08", "category": "units", "question": "Convert 6 feet to centimeters, using 1 foot = 30.48 cm. Give the final answer as a number only.", "answer": "182.88"}
+{"id": "units-09", "category": "units", "question": "Convert 45 degrees to radians. Round to 4 decimal places. Give the final answer as a number only.", "answer": "0.7854"}
+{"id": "units-10", "category": "units", "question": "One nautical mile is exactly 1852 meters. How many kilometers are 12 nautical miles? Give the final answer as a number only.", "answer": "22.224"}
+{"id": "dates-01", "category": "dates", "question": "What day of the week was 2024-02-29? Answer with the English weekday name only.", "answer": "Thursday"}
+{"id": "dates-02", "category": "dates", "question": "How many days are there from 2023-12-25 to 2024-03-01 (the difference between the two dates)? Give the final answer as a number only.", "answer": "67"}
+{"id": "dates-03", "category": "dates", "question": "What date is 90 days after 2025-01-15? Answer with the date in YYYY-MM-DD format only.", "answer": "2025-04-15"}
+{"id": "dates-04", "category": "dates", "question": "Is the year 2100 a leap year in the Gregorian calendar? Answer yes or no only.", "answer": "no"}
+{"id": "dates-05", "category": "dates", "question": "How many days does February 2028 have? Give the final answer as a number only.", "answer": "29"}
+{"id": "dates-06", "category": "dates", "question": "A meeting happens every 14 days. The first meeting is on 2026-01-05. On what date is the 5th meeting? Answer with the date in YYYY-MM-DD format only.", "answer": "2026-03-02"}
+{"id": "dates-07", "category": "dates", "question": "What date is exactly 3 weeks before 2026-03-10? Answer with the date in YYYY-MM-DD format only.", "answer": "2026-02-17"}
+{"id": "dates-08", "category": "dates", "question": "What is the ISO 8601 week number of 2026-01-01? Give the final answer as a number only.", "answer": "1"}
+{"id": "dates-09", "category": "dates", "question": "What day of the week was 2000-01-01? Answer with the English weekday name only.", "answer": "Saturday"}
+{"id": "dates-10", "category": "dates", "question": "Someone was born on 1990-07-20. How old are they, in whole years, on 2026-07-19? Give the final answer as a number only.", "answer": "35"}
+{"id": "logic-01", "category": "logic", "question": "All bloops are razzies and all razzies are lazzies. Are all bloops definitely lazzies? Answer yes or no only.", "answer": "yes"}
+{"id": "logic-02", "category": "logic", "question": "Alice is taller than Bob. Bob is taller than Carol. Who is the shortest? Answer with the name only.", "answer": "Carol"}
+{"id": "logic-03", "category": "logic", "question": "If it rains, the ground gets wet. The ground is not wet. Did it rain? Answer yes or no only.", "answer": "no"}
+{"id": "logic-04", "category": "logic", "question": "Five people stand in a line. E is first and D is last. A is somewhere before B, and C stands directly after B. Write the order from first to last as five letters with no spaces or separators.", "answer": "EABCD"}
+{"id": "logic-05", "category": "logic", "question": "A red, a blue and a green ball are placed one per box in boxes 1, 2 and 3. The red ball is not in box 1 and the blue ball is in box 3. Which box holds the green ball? Answer with the box number only.", "answer": "1"}
+{"id": "logic-06", "category": "logic", "question": "On an island, knights always tell the truth and knaves always lie. A says: 'We are both knaves', speaking about himself and B. Is A a knight or a knave? Answer with one word only.", "answer": "knave"}
+{"id": "logic-07", "category": "logic", "question": "What is the next number in the sequence 2, 6, 12, 20, 30, ...? Give the final answer as a number only.", "answer": "42"}
+{"id": "logic-08", "category": "logic", "question": "How many integers from 1 to 100 inclusive are divisible by 3 or by 5? Give the final answer as a number only.", "answer": "47"}
+{"id": "logic-09", "category": "logic", "question": "Some cats are black. Everything black absorbs heat. Must at least one cat absorb heat? Answer yes or no only.", "answer": "yes"}
+{"id": "logic-10", "category": "logic", "question": "An analog clock shows exactly 3:15. What is the smaller angle between the hour and minute hands, in degrees? Give the final answer as a number only.", "answer": "7.5"}

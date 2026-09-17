@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Added
+- **Eval harness for the model and for Hermes (`evals` plugin, opt-in).** Six suites measure the
+  `local-chat` model (IFEval at 60 prompts, 40 function-calling cases, 40 exact-answer reasoning
+  items, and a private set of real operator asks) and the Hermes harness (15 tasks with an
+  OUT-OF-BAND check of what actually happened, and 8 impossible tasks that measure hallucinated
+  completion), with trajectory metrics from Hermes's `state.db` for every harness item. Hermes is
+  driven over its built-in OpenAI-compatible API server, enabled only when `HERMES_API_SERVER_KEY`
+  is set (internal network, no host port, no Caddy route). Rubric items are graded by a
+  human-in-the-loop Claude Code session through files: the runner writes `judge_queue.jsonl` and
+  `ingest-grades` validates the grades back in - the harness never calls a judge model. Results land
+  as Langfuse datasets, dataset runs and scores, and as one row per metric in `history.jsonl` for a
+  future leaderboard. The runner is a one-shot container (`restart: "no"`), holds no Docker socket,
+  requests no GPU and asks for no ComfyUI work. See `services/evals/README.md`.
 - **Self-hosted Langfuse tracing (`langfuse` plugin, opt-in).** Six digest-pinned services
   (web, worker, Postgres, ClickHouse, Redis, MinIO) run Langfuse v4 behind the `langfuse`
   compose profile with unattended headless init: the org, project, admin user and project

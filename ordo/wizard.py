@@ -135,6 +135,12 @@ SECRET_GENERATORS: dict[str, Any] = {
     # silently drops every trace at flush time).
     "LANGFUSE_PUBLIC_KEY": lambda: "pk-lf-" + _secrets.token_hex(16),
     "LANGFUSE_SECRET_KEY": lambda: "sk-lf-" + _secrets.token_hex(16),
+    # ── Evals ──
+    # The bearer for Hermes's OpenAI-compatible API server, which the evals runner drives. Hermes
+    # refuses to start that listener on a key under 16 characters (its own startup guard), and a
+    # holder of this key can run Hermes with its full toolset - so it is minted strong here and
+    # stays internal to the project network. Rotatable (scripts/secrets/rotate-internal.sh).
+    "HERMES_API_SERVER_KEY": lambda: _secrets.token_urlsafe(32),
 }
 
 # Prefix-matched generators: every `LITELLM_KEY_<CONSUMER>` a render requires (one per manifest

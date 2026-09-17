@@ -87,6 +87,20 @@ environment:
   # so this tag is what separates Hermes's richer turn/tool traces from the gateway's copy of the
   # same generations. Filter dashboards by environment. See services/langfuse/README.md.
   HERMES_LANGFUSE_ENV: hermes
+  # ── Hermes API server (the OpenAI-compatible endpoint the `evals` runner drives) ──
+  # OFF unless HERMES_API_SERVER_KEY is set. The key is declared by the evals plugin's `secrets:`,
+  # so it exists in secrets.env only when that plugin is enabled; everywhere else the ref
+  # interpolates to "" and entrypoint.sh unsets all three vars before the gateway starts. Hermes
+  # itself reads these three env vars (gateway/config.py::_apply_env_overrides) and refuses a key
+  # shorter than 16 characters. Mapped straight onto API_SERVER_KEY (not passed under its own name)
+  # because Hermes strips API_SERVER_KEY from every terminal-tool subprocess environment; a second
+  # copy under another name would be readable by any command the agent runs.
+  # Bound on 0.0.0.0 INSIDE the container so peers on the project network can reach
+  # http://agent:8642/v1; the agent service publishes no host port and no Caddy route points at it.
+  # Anyone holding the key can run Hermes with its full toolset: the key is internal-only.
+  API_SERVER_KEY: ${HERMES_API_SERVER_KEY:-}
+  API_SERVER_HOST: 0.0.0.0
+  API_SERVER_PORT: "8642"
   # Docker-secret _FILE pointers the entrypoint bridges to the plain env vars the app expects.
   DISCORD_BOT_TOKEN_FILE: /run/secrets/discord_token
   GITHUB_BACKUP_PAT_FILE: /run/secrets/github_backup_pat
