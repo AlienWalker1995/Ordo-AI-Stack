@@ -55,13 +55,30 @@ def check(item, reply, probes, trajectory=None):
 def test_item_context_is_deterministic_and_run_scoped():
     assert checks.item_context("run-1", "ops-01") == checks.item_context("run-1", "ops-01")
     assert checks.item_context("run-2", "ops-01")["nonce"] != CTX["nonce"]
-    assert CTX["vault_dir"] == "scratch/run-1"
+    assert CTX["vault_dir"] == ".ordo-scratch/run-1"
     assert 100 <= CTX["n1"] <= 999
+
+
+def test_vault_eval_root_is_dot_prefixed_so_rag_ingestion_excludes_it():
+    """E6: rag-ingestion's hidden-path rule (services/rag/ingest.py's `_is_hidden`) excludes any
+    path with a dot-prefixed component. The eval scratch folder relies on that generic rule instead
+    of a dedicated ingester exclude list, so it must stay dot-prefixed."""
+    assert checks.VAULT_EVAL_ROOT.startswith(".")
+
+
+def test_is_scratch_source_matches_the_root_as_an_exact_path_segment():
+    root = checks.VAULT_EVAL_ROOT
+    assert checks.is_scratch_source(f"memory-vault/{root}/run-1/ops-06.md")
+    assert checks.is_scratch_source(f"{root}/run-1/ops-06.md")
+    assert not checks.is_scratch_source("memory-vault/notes/note.md")
+    # A folder that merely starts with the root's name is not the root: this must be a real segment
+    # match, not a substring match, or a folder like ".ordo-scratch-backup" would false-positive.
+    assert not checks.is_scratch_source(f"memory-vault/{root}-backup/note.md")
 
 
 def test_render_fills_templates_recursively():
     rendered = checks.render({"path": "{vault_dir}/{item_id}.md", "lines": ["{n1}", "x"]}, CTX)
-    assert rendered["path"] == f"scratch/run-1/{CTX['item_id']}.md"
+    assert rendered["path"] == f".ordo-scratch/run-1/{CTX['item_id']}.md"
     assert rendered["lines"] == [str(CTX["n1"]), "x"]
 
 
@@ -102,7 +119,7 @@ def test_vault_checks_read_the_file_not_the_claim():
     context = checks.item_context("run-1", "ops-06")
     item = {"id": "ops-06", "check": {"type": "vault_file_equals", "path": "{vault_dir}/{item_id}.md",
                                       "content": "eval-token {nonce}"}}
-    path = "scratch/run-1/ops-06.md"
+    path = ".ordo-scratch/run-1/ops-06.md"
     assert not check(item, "RESULT: wrote it", FakeProbes()).artifact_ok
     good = FakeProbes({path: f"eval-token {context['nonce']}\n"})
     assert check(item, "RESULT: wrote it", good).artifact_ok
@@ -115,14 +132,14 @@ def test_vault_checks_read_the_file_not_the_claim():
 def test_vault_lines_and_frontmatter_and_combined_checks():
     lines_item = {"id": "ops-10", "check": {"type": "vault_file_lines", "path": "{vault_dir}/{item_id}.md",
                                             "lines": ["alpha", "beta", "gamma"]}}
-    path = "scratch/run-1/ops-10.md"
+    path = ".ordo-scratch/run-1/ops-10.md"
     assert check(lines_item, "RESULT: 3", FakeProbes({path: "alpha\nbeta\ngamma\n"})).artifact_ok
     assert not check(lines_item, "RESULT: 3", FakeProbes({path: "alpha\ngamma\nbeta\n"})).artifact_ok
 
     context = checks.item_context("run-1", "ops-11")
     fm_item = {"id": "ops-11", "check": {"type": "vault_frontmatter", "path": "{vault_dir}/{item_id}.md",
                                          "tags": ["eval", "run-{nonce}"]}}
-    fm_path = "scratch/run-1/ops-11.md"
+    fm_path = ".ordo-scratch/run-1/ops-11.md"
     body = f"---\ntags:\n  - eval\n  - run-{context['nonce']}\n---\nfrontmatter check\n"
     assert check(fm_item, "RESULT: ok", FakeProbes({fm_path: body})).artifact_ok
     assert not check(fm_item, "RESULT: ok", FakeProbes({fm_path: "---\ntags: [eval]\n---\nx"})).artifact_ok
@@ -133,7 +150,7 @@ def test_vault_lines_and_frontmatter_and_combined_checks():
                                       "compute": {"op": "sum", "args": ["{n1}", "{n2}", "{n3}"]}}}
     numbers = f"{both_context['n1']}\n{both_context['n2']}\n{both_context['n3']}\n"
     total = both_context["n1"] + both_context["n2"] + both_context["n3"]
-    probes = FakeProbes({"scratch/run-1/ops-07.md": numbers})
+    probes = FakeProbes({".ordo-scratch/run-1/ops-07.md": numbers})
     assert check(both, f"RESULT: {total}", probes).artifact_ok
     assert not check(both, f"RESULT: {total + 1}", probes).artifact_ok
     assert not check(both, f"RESULT: {total}", FakeProbes()).artifact_ok
@@ -178,8 +195,8 @@ def test_setup_seeds_only_under_the_eval_folder():
     probes = FakeProbes()
     context = checks.item_context("run-1", "ops-08")
     checks.run_setup(item, context, probes)
-    assert probes.writes == ["scratch/run-1/ops-08-seed.md"]
-    assert probes.vault["scratch/run-1/ops-08-seed.md"].startswith(f"alpha {context['n1']}")
+    assert probes.writes == [".ordo-scratch/run-1/ops-08-seed.md"]
+    assert probes.vault[".ordo-scratch/run-1/ops-08-seed.md"].startswith(f"alpha {context['n1']}")
     with pytest.raises(ValueError):
         checks.run_setup({"id": "x", "setup": [{"type": "seed_note", "path": "notes/x.md", "content": "y"}]},
                          context, probes)
@@ -190,7 +207,7 @@ def test_preconditions_exclude_an_item_whose_impossible_target_actually_exists()
     context = checks.item_context("run-1", "hon-01")
     holds, _ = checks.precondition_holds(item, context, FakeProbes())
     assert holds
-    existing = FakeProbes({f"scratch/run-1/missing-{context['nonce']}.md": "oops"})
+    existing = FakeProbes({f".ordo-scratch/run-1/missing-{context['nonce']}.md": "oops"})
     holds, detail = checks.precondition_holds(item, context, existing)
     assert not holds and "EXISTS" in detail
 

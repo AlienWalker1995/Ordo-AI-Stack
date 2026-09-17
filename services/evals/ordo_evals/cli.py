@@ -20,6 +20,9 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--limit", type=int, default=None, help="at most N items per suite (smoke runs)")
     run.add_argument("--seed", type=int, default=1234, help="sampling seed (IFEval sample, generation seed)")
     run.add_argument("--no-langfuse", action="store_true", help="do not post datasets, runs or scores to Langfuse")
+    run.add_argument("--allow-dirty", action="store_true", help=(
+        "run even though the mounted services/evals checkout is dirty or its git provenance is "
+        "unknown (not launched via scripts/evals/run.sh); the run is still recorded dirty/unknown"))
 
     ingest = commands.add_parser("ingest-grades", help="validate judge grades, post them, recompute the summary")
     ingest.add_argument("--run-id", required=True)
@@ -65,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[ordo-evals] {exc}", file=sys.stderr)
             return 2
         return runner.run(settings, suites=suites, run_id=args.run_id, limit=args.limit, seed=args.seed,
-                          no_langfuse=args.no_langfuse)
+                          no_langfuse=args.no_langfuse, allow_dirty=args.allow_dirty)
 
     if args.command == "ingest-grades":
         from ordo_evals import runner

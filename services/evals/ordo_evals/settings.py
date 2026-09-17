@@ -28,6 +28,9 @@ class Settings:
     ops_controller_url: str
     n8n_url: str
     qdrant_url: str
+    qdrant_collection: str
+    git_commit: str | None
+    git_dirty: bool | None
     results_dir: Path
     vault_dir: Path
     hermes_state_db: Path
@@ -50,6 +53,16 @@ class Settings:
             ops_controller_url=_env("OPS_CONTROLLER_URL", "http://ops-controller:9000"),
             n8n_url=_env("N8N_URL", "http://n8n:5678"),
             qdrant_url=_env("QDRANT_URL", "http://qdrant:6333"),
+            # Same var rag-ingestion reads (services/rag/plugin.yaml: QDRANT_COLLECTION from
+            # ${RAG_COLLECTION:-documents}), so the RAG-leak safety check scans the collection the
+            # ingester actually writes to, not a hardcoded default that could drift from it.
+            qdrant_collection=_env("QDRANT_COLLECTION", "documents"),
+            # E7: git provenance of the mounted services/evals code, set by scripts/evals/run.sh
+            # (the container has no git binary - the host wrapper computes these with the real git
+            # and passes them through). Unset (both "") means the run was not launched through the
+            # wrapper: provenance is unknown, not "clean". See runner._provenance_gate.
+            git_commit=_env("GIT_COMMIT") or None,
+            git_dirty={"1": True, "0": False}.get(_env("GIT_DIRTY")),
             results_dir=Path(_env("EVALS_RESULTS_DIR", "/results")),
             vault_dir=Path(_env("EVALS_VAULT_DIR", "/vault")),
             hermes_state_db=Path(_env("EVALS_HERMES_STATE_DB", "/hermes-home/state.db")),

@@ -13,6 +13,7 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 | `storage_purge.py` | Weekly storage purge — invoked by Hermes cron (`cd /c/dev/ordo-ai-stack && python3 scripts/storage_purge.py`); tested by `tests/test_storage_purge.py`. |
 | `secrets/decrypt.sh`, `secrets/rotate-internal.sh`, `secrets/audit-git-history.sh` | The documented secrets flow (`docs/runbooks/secrets.md`); decrypt materializes the host files Docker secrets mount from. |
 | `comfyui/pull_comfyui_models.py` + `comfyui/models.json` | Spawned by the live dashboard (`app.py`) for ComfyUI model-pack downloads. |
+| `evals/run.sh` | Canonical way to invoke `python -m ordo_evals` (the `evals` plugin, `services/evals`): computes git provenance (`GIT_COMMIT`/`GIT_DIRTY`, real host git, the image has none) and runs `docker compose -p ordo --profile evals run --rm evals "$@"` from `out/`. See `services/evals/README.md`'s "Git provenance and the dirty-tree gate (E7)". |
 
 ## Health and Diagnostics
 

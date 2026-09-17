@@ -117,9 +117,12 @@ workflow and the privacy rules.
 | `MODEL_NAME` | `local-chat` | The model alias under test |
 | `HERMES_API_URL` | `http://agent:8642/v1` | Hermes's OpenAI-compatible API server, project network only (no host port, no Caddy route) |
 | `EVALS_RESULTS_DIR` | `/results` | Container path of `${DATA_PATH}/evals`: private datasets, run outputs, `history.jsonl` |
-| `EVALS_VAULT_DIR` | `/vault` | The memory vault, read-only except the `eval/` scratch folder the runner seeds and cleans up |
+| `EVALS_VAULT_DIR` | `/vault` | The memory vault, read-only except the `.ordo-scratch/` folder the runner seeds and cleans up (dot-prefixed so rag-ingestion's hidden-path rule excludes it from RAG, see `services/rag/README.md`) |
 | `EVALS_HERMES_STATE_DB` | `/hermes-home/state.db` | Hermes's session database (read-only) for trajectory metrics and the private dataset |
 | `EVALS_HERMES_TIMEOUT_S` | `3600` | Per-turn ceiling for a Hermes item, matching the gateway's own turn cap |
+| `QDRANT_URL` | `http://qdrant:6333` | Where `ops_mcp_count`/`qdrant_collection_count` checks and the RAG-leak safety check read ground truth |
+| `QDRANT_COLLECTION` | `${RAG_COLLECTION:-documents}` | The collection the RAG-leak safety check scans for stray points from `.ordo-scratch/`; same var and default as rag-ingestion's own `QDRANT_COLLECTION` |
+| `GIT_COMMIT` / `GIT_DIRTY` | *(unset)* | Git provenance of the mounted `services/evals` code, set by `scripts/evals/run.sh` from the real host git (the image has none); unset means a run was launched without the wrapper and `run` refuses to start without `--allow-dirty` (see `services/evals/README.md`) |
 | `EVALS_MODEL_MAX_TOKENS` | *(unset)* | Output cap for the model suites; unset means the deployment's own cap (`LLAMACPP_N_PREDICT`) |
 
 Secrets (`out/secrets.env`):

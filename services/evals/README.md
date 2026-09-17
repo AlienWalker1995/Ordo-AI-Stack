@@ -45,20 +45,21 @@ Every metric row carries `n` and a 95% confidence interval (Wilson for rates, no
 
 ## Running it
 
+Always through `scripts/evals/run.sh` (from anywhere in the repo, after `ordo render --out out`
+with `evals` in ordo.yaml's plugins list), never a bare `docker compose run` - it computes the git
+provenance (E7, below) that a run's summary and history rows carry and that raw invocation cannot:
+
 ```bash
-# from out/ (the rendered stack), after `ordo render` with `evals` in ordo.yaml's plugins list
-docker compose -p ordo --profile evals run --rm evals \
-    build-private --source hermes-state --n 30 --seed 1234      # once, and after new history accrues
-docker compose -p ordo --profile evals run --rm evals \
-    run --suites all --run-id 2026-09-20-nightly
-docker compose -p ordo --profile evals run --rm evals \
-    report --run-id 2026-09-20-nightly --compare 2026-09-13-nightly
+scripts/evals/run.sh build-private --source hermes-state --n 30 --seed 1234   # once, and after new history accrues
+scripts/evals/run.sh run --suites all --run-id 2026-09-20-nightly
+scripts/evals/run.sh report --run-id 2026-09-20-nightly --compare 2026-09-13-nightly
 ```
 
 Useful flags: `--suites model_toolcall,harness_ops` (a subset), `--limit 3` (a smoke run, a seeded
 sample stratified across the suite's categories rather than the first 3 items - `summary.json` records
 which item ids were sampled), `--seed N` (default `1234`; the IFEval sample, the `--limit` sample and
-the generation seed), `--no-langfuse` (write files only).
+the generation seed), `--no-langfuse` (write files only), `--allow-dirty` (run despite a dirty or
+unprovenanced `services/evals` checkout; see E7 below).
 
 `all` takes roughly an hour on the local model: the model suites run at concurrency 1 because
 llama.cpp serves one slot that Hermes's crons share, and the harness suites are as slow as Hermes is.
@@ -75,7 +76,8 @@ ${DATA_PATH}/evals/
     judge_queue.jsonl                items waiting for a judgment
     grades.jsonl                     every validated grade ingested so far
     summary.json                     per-suite metrics, identities, skipped suites, notes,
-                                      sampled_item_ids (only when --limit was used)
+                                      sampled_item_ids (only when --limit was used),
+                                      commit / dirty (E7 git provenance, below)
 ```
 
 ## The judge workflow (a Claude Code session, not a judge model)
@@ -157,6 +159,60 @@ server. So:
 Hermes logs a warning when a network-accessible API server runs with the local (unsandboxed) terminal
 backend. That is the accepted posture here: the network is the project network, the key is internal,
 and the operator owns every container on it.
+
+## RAG-leak safety check (E6)
+
+`rag-ingestion` (`services/rag`) watches the whole memory vault recursively, so the harness's own
+vault scratch folder (`ordo_evals.checks.VAULT_EVAL_ROOT`, `.ordo-scratch/`) sits inside that watch
+tree. It stays out of the operator's Qdrant `documents` collection because the folder is
+dot-prefixed and rag-ingestion's existing hidden-path rule excludes any such path (see
+`services/rag/README.md`) - not because of any special-cased exclude list. Because that same
+ingester has no code path that removes a Qdrant point when its source file is deleted (also
+documented there), a run cannot rely on its own scratch-note cleanup to have scrubbed anything a
+leak would have left behind. So every harness run ends with an out-of-band check
+(`ordo_evals.runner._check_rag_leak`): it scrolls the RAG collection for any point whose `source` is
+still rooted under `.ordo-scratch/` and, if it finds one, fails the run with exit code `3` and
+records the offending source(s) under `summary.json`'s `rag_leak_sources`. A Qdrant/rag-collection
+that cannot be reached is recorded as a note, never as a failure - only a confirmed leak fails a run.
+
+## Git provenance and the dirty-tree gate (E7)
+
+`services/evals` is bind-mounted LIVE from the checkout
+(`${BASE_PATH}/services/evals:/app:ro`), not baked into the image, so a code change and a running
+eval can race: editing this directory while a run is in flight can change what that run actually
+executes (suites `load()` lazily, suite by suite), and nothing previously recorded which commit
+produced a given score.
+
+**Runs must start from a clean checkout of `services/evals`, and must always be launched through
+`scripts/evals/run.sh`, never a bare `docker compose run`.** The evals image deliberately carries no
+git binary (keeping the image dependencies-only, per its own header comment), so the wrapper
+computes provenance on the HOST with the real `git` before the container starts:
+
+- `GIT_COMMIT` = `git rev-parse HEAD` at the repo root.
+- `GIT_DIRTY` = whether `git status --porcelain -- services/evals` produced any output (uncommitted
+  changes OR untracked files under that one directory; unrelated changes elsewhere in the repo do
+  not count, since they cannot affect what the container runs).
+
+Both are passed through as environment variables the compose service already declares
+(`services/evals/plugin.yaml`). `ordo_evals.runner._provenance_gate` checks them **before any suite
+runs and before the run directory is even created**:
+
+| `GIT_DIRTY` (as seen by the container) | Without `--allow-dirty` | With `--allow-dirty` |
+|---|---|---|
+| `"0"` (clean) | proceeds normally | proceeds normally |
+| `"1"` (dirty) | refuses, exit code `4` | proceeds; `dirty: true` recorded |
+| unset (not launched via the wrapper) | refuses, exit code `4` | proceeds; `commit`/`dirty` recorded `null` |
+
+A refused run writes nothing: no `run_dir`, no `summary.json`, no history rows - there is nothing to
+mistake for a real result. An allowed dirty/unprovenanced run IS recorded (never silently upgraded
+to "clean"): `summary.json`'s `commit` and `dirty` fields, and the same two fields on every row this
+run appends to `history.jsonl`, so a later query can exclude non-reproducible runs from a baseline.
+
+**This is a start-of-run snapshot, not continuous monitoring.** It cannot catch an edit made to
+`services/evals` *after* a run has already started (a long `all` run takes about an hour, and suites
+load lazily) - don't edit this directory while a run you care about is in flight. `--limit` smoke
+runs during active development are expected to need `--allow-dirty` regularly; that is exactly what
+the flag and the recorded flag are for.
 
 ## Known limitation: Hermes can see the harness
 

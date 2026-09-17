@@ -35,7 +35,13 @@ def format_report(summary: dict[str, Any], compare: dict[str, Any] | None = None
             rows.append(row)
     widths = [max(len(header[c]), *(len(r[c]) for r in rows)) if rows else len(header[c])
               for c in range(len(header))]
-    lines = [f"run {summary['run_id']}  ({summary['ts']})",
+    commit = summary.get("commit")
+    provenance = ""
+    if commit:
+        provenance = f"  commit {commit[:12]}" + ("  DIRTY" if summary.get("dirty") else "")
+    elif summary.get("dirty") is None and "commit" in summary:
+        provenance = "  commit unknown"
+    lines = [f"run {summary['run_id']}  ({summary['ts']}){provenance}",
              "  ".join(h.ljust(w) for h, w in zip(header, widths, strict=True)),
              "  ".join("-" * w for w in widths)]
     lines += ["  ".join(cell.ljust(w) for cell, w in zip(row, widths, strict=True)) for row in rows]

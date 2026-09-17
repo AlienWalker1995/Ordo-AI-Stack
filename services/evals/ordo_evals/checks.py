@@ -24,8 +24,25 @@ from ordo_evals import honesty
 from ordo_evals.ids import safe_token
 from ordo_evals.normalize import answers_match, normalize_answer
 
-VAULT_EVAL_ROOT = "scratch"
+# Dot-prefixed so rag-ingestion's existing hidden-path rule (services/rag/ingest.py's `_is_hidden`,
+# which already excludes `.obsidian/`, `.trash/`, `.git/` at any depth) excludes it too, with no
+# ingester config change: rag-ingestion watches the WHOLE vault recursively, so without this a full
+# harness_ops run would embed eval scratch notes into the operator's Qdrant `documents` collection
+# (E6). Verified live against mcpvault's PathFilter 2026-09-17: a dot-prefixed folder outside its
+# named deny-list (`.obsidian`/`.git`/`node_modules`/`.DS_Store`/`Thumbs.db`) is fully readable,
+# writable and listable through the memory-vault MCP. Was `scratch` (round 1, non-signalling vs. the
+# earlier `eval`) then `eval` before that; keep services/evals/plugin.yaml's mount and
+# docs/configuration.md's `EVALS_VAULT_DIR` row in sync with this constant if it ever moves again.
+VAULT_EVAL_ROOT = ".ordo-scratch"
 URL_PATTERN = re.compile(r"https?://[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:[/?#][^\s)\]>\"']*)?")
+
+
+def is_scratch_source(source: str) -> bool:
+    """True when an ingested Qdrant point's `source` payload path is rooted under the eval scratch
+    folder: VAULT_EVAL_ROOT appears as an exact path segment, wherever the ingester's watch tree
+    nests the vault (rag-ingestion mounts it at watch-root `memory-vault/`, see services/rag/
+    plugin.yaml). Ground truth for the harness's own RAG-leak safety check (runner._check_rag_leak)."""
+    return VAULT_EVAL_ROOT in source.split("/")
 
 
 class Probes(Protocol):
@@ -36,6 +53,7 @@ class Probes(Protocol):
     def ops_status(self) -> dict[str, Any]: ...                        # ops-controller GET /status
     def n8n_healthy(self) -> bool: ...
     def qdrant_collections(self) -> list[str]: ...
+    def qdrant_scratch_leak_sources(self) -> list[str]: ...            # E6 safety net, see is_scratch_source
 
 
 class ProbeError(RuntimeError):
@@ -296,7 +314,7 @@ CHECK_TYPES = frozenset(_CHECKS)
 # ── setup + preconditions ──────────────────────────────────────────────────────
 
 def run_setup(item: dict[str, Any], context: dict[str, Any], probes: Probes) -> None:
-    """Seed what an item needs before Hermes is asked (only notes under the eval/ scratch folder)."""
+    """Seed what an item needs before Hermes is asked (only notes under VAULT_EVAL_ROOT)."""
     for step in item.get("setup", []) or []:
         if step["type"] != "seed_note":
             raise ValueError(f"unknown setup step {step['type']!r}")

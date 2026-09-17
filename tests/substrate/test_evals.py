@@ -76,6 +76,8 @@ def test_the_runner_requests_no_gpu():
 # ── mounts ─────────────────────────────────────────────────────────────────────
 
 def test_code_results_vault_and_hermes_home_are_mounted_the_documented_way():
+    from ordo_evals.checks import VAULT_EVAL_ROOT
+
     service = _evals_service(render(_src(), CATALOG, REGISTRY))
     volumes = service["volumes"]
     code = next(v for v in volumes if v.endswith("/services/evals:/app:ro"))
@@ -83,9 +85,38 @@ def test_code_results_vault_and_hermes_home_are_mounted_the_documented_way():
     results = next(v for v in volumes if v.endswith(":/results"))
     assert results.startswith("${DATA_PATH:?"), "run outputs belong under DATA_PATH, outside git"
     assert any(v.startswith("${MEMORY_VAULT_PATH:?") and v.endswith(":/vault:ro") for v in volumes)
-    assert any(v.startswith("${MEMORY_VAULT_PATH:?") and v.endswith("/scratch:/vault/scratch") for v in volumes), (
-        "the runner seeds and cleans up scratch/ notes, so that ONE subfolder is writable")
+    assert any(v.startswith("${MEMORY_VAULT_PATH:?") and v.endswith(f"/{VAULT_EVAL_ROOT}:/vault/{VAULT_EVAL_ROOT}")
+               for v in volumes), (
+        f"the runner seeds and cleans up {VAULT_EVAL_ROOT}/ notes, so that ONE subfolder is writable")
     assert "hermes-home:/hermes-home:ro" in volumes
+
+
+def test_evals_scratch_mount_overlaps_the_rag_watch_tree_only_because_it_is_hidden():
+    """E6: rag-ingestion (services/rag/plugin.yaml) watches the WHOLE memory vault recursively, with
+    no path-based exclusion in its mount - so the evals scratch folder, which lives inside that same
+    vault, can only safely overlap the ingester's watch tree because its name is dot-prefixed and
+    ingest.py's `_is_hidden` rule excludes any such path (tests/rag/test_ingest.py exercises that
+    rule directly). This test locks the two configs to the SAME root name (VAULT_EVAL_ROOT) and
+    checks the name is still hidden, so a future rename on either side cannot silently reopen the
+    leak this whole fix closes."""
+    from ordo_evals.checks import VAULT_EVAL_ROOT
+
+    assert VAULT_EVAL_ROOT.startswith("."), "the eval scratch root must be a dot-prefixed hidden path"
+
+    rc = render(_src(plugins=["evals", "rag"]), CATALOG, REGISTRY)
+    compose = rc.compose_dict()
+
+    evals_volumes = compose["services"]["evals"]["volumes"]
+    scratch_mount = next(v for v in evals_volumes if v.endswith(f":/vault/{VAULT_EVAL_ROOT}"))
+    assert scratch_mount == (
+        "${MEMORY_VAULT_PATH:?MEMORY_VAULT_PATH must be set in ordo.yaml site}"
+        f"/{VAULT_EVAL_ROOT}:/vault/{VAULT_EVAL_ROOT}")
+
+    ingestion_volumes = compose["services"]["rag-ingestion"]["volumes"]
+    vault_watch_mount = next(v for v in ingestion_volumes if v.endswith(":/watch/memory-vault:ro"))
+    assert not vault_watch_mount.endswith(f"/{VAULT_EVAL_ROOT}:/watch/memory-vault:ro"), (
+        "the ingester mount must not itself carve out the scratch folder: the whole point of the "
+        "fix is that the GENERIC hidden-path rule excludes it, not a path-scoped mount")
 
 
 def test_the_hermes_brain_volume_is_shared_read_only_with_the_agent():
@@ -171,3 +202,27 @@ def test_the_runner_dials_hermes_and_the_gateway_on_the_project_network():
     assert environment["MODEL_BASE_URL"] == "http://model-gateway:11435/v1"
     assert environment["LANGFUSE_HOST"] == "http://langfuse-web:3000"
     assert environment["MODEL_NAME"] == "local-chat"
+
+
+# ── E7: git provenance passthrough ──────────────────────────────────────────────
+
+def test_git_provenance_env_vars_pass_through_from_the_invoking_shell():
+    """GIT_COMMIT/GIT_DIRTY have no baked-in value: the image can't compute them (no git binary),
+    so they must interpolate from whatever the invoking shell exported (scripts/evals/run.sh),
+    empty when it did not (a bare `docker compose run`) - ordo_evals.settings reads empty as
+    provenance-unknown and runner._provenance_gate refuses to start without --allow-dirty."""
+    environment = _evals_service(render(_src(), CATALOG, REGISTRY))["environment"]
+    assert environment["GIT_COMMIT"] == "${GIT_COMMIT:-}"
+    assert environment["GIT_DIRTY"] == "${GIT_DIRTY:-}"
+
+
+def test_run_sh_computes_provenance_with_the_real_host_git_and_forwards_args():
+    """scripts/evals/run.sh is the canonical invocation (services/evals/README.md's E7 section):
+    it must compute GIT_COMMIT/GIT_DIRTY with the real git (the container has none), scope the
+    dirty check to services/evals (unrelated repo changes must not block a run), export both before
+    docker compose starts, and forward every CLI argument through untouched."""
+    script = (ROOT / "scripts" / "evals" / "run.sh").read_text(encoding="utf-8")
+    assert 'git -C "$REPO_ROOT" rev-parse HEAD' in script
+    assert 'git -C "$REPO_ROOT" status --porcelain -- services/evals' in script
+    assert "export GIT_COMMIT GIT_DIRTY" in script
+    assert 'run --rm evals "$@"' in script

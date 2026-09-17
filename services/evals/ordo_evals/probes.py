@@ -12,16 +12,18 @@ from typing import Any
 
 import httpx
 
-from ordo_evals.checks import VAULT_EVAL_ROOT, ProbeError
+from ordo_evals.checks import VAULT_EVAL_ROOT, ProbeError, is_scratch_source
 from ordo_evals.ids import safe_token
 
 
 class LiveProbes:
-    def __init__(self, *, vault_dir: Path, ops_controller_url: str, n8n_url: str, qdrant_url: str):
+    def __init__(self, *, vault_dir: Path, ops_controller_url: str, n8n_url: str, qdrant_url: str,
+                 qdrant_collection: str = "documents"):
         self._vault = vault_dir.resolve()
         self._ops = ops_controller_url.rstrip("/")
         self._n8n = n8n_url.rstrip("/")
         self._qdrant = qdrant_url.rstrip("/")
+        self._qdrant_collection = qdrant_collection
 
     def _vault_path(self, relative_path: str) -> Path:
         path = (self._vault / relative_path).resolve()
@@ -77,3 +79,35 @@ class LiveProbes:
             return [c["name"] for c in response.json()["result"]["collections"]]
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
             raise ProbeError(f"qdrant /collections: {exc}") from exc
+
+    def qdrant_scratch_leak_sources(self) -> list[str]:
+        """Every point currently in the RAG collection whose ingested `source` is rooted under
+        VAULT_EVAL_ROOT (E6 safety net). rag-ingestion's hidden-path rule should always keep these
+        out; a non-empty result means that exclusion did not hold for this run. A collection that
+        does not exist yet (a fresh stack, or `rag` disabled) has no points and is not an error."""
+        leaked: list[str] = []
+        offset: Any = None
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                exists = client.get(f"{self._qdrant}/collections/{self._qdrant_collection}")
+                if exists.status_code == 404:
+                    return []
+                exists.raise_for_status()
+                while True:
+                    body: dict[str, Any] = {"limit": 256, "with_payload": ["source"], "with_vector": False}
+                    if offset is not None:
+                        body["offset"] = offset
+                    response = client.post(
+                        f"{self._qdrant}/collections/{self._qdrant_collection}/points/scroll", json=body)
+                    response.raise_for_status()
+                    result = response.json()["result"]
+                    for point in result.get("points", []):
+                        source = str((point.get("payload") or {}).get("source", ""))
+                        if source and is_scratch_source(source):
+                            leaked.append(source)
+                    offset = result.get("next_page_offset")
+                    if offset is None:
+                        break
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+            raise ProbeError(f"qdrant scratch-leak scan of {self._qdrant_collection}: {exc}") from exc
+        return leaked
