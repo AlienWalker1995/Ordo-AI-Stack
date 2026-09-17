@@ -87,8 +87,9 @@ def exact_tool_calls():
 
 
 def _dataset(ctx: common.SuiteContext) -> MemoryDataset:
+    rows = common.limited_rows(list(read_jsonl(ctx.settings.datasets_dir / "toolcall.jsonl")), ctx)
     samples = []
-    for row in read_jsonl(ctx.settings.datasets_dir / "toolcall.jsonl"):
+    for row in rows:
         samples.append(Sample(id=row["id"], input=to_chat_messages(row["messages"]),
                               target=json.dumps(row["expected"], sort_keys=True),
                               metadata={"category": row["category"], "tools": row["tools"], "expected": row["expected"]}))
@@ -97,8 +98,9 @@ def _dataset(ctx: common.SuiteContext) -> MemoryDataset:
 
 def run(ctx: common.SuiteContext) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     task = Task(dataset=_dataset(ctx), solver=[offer_tools_once()], scorer=exact_tool_calls(), name="model_toolcall")
-    log = common.run_task(task, ctx, model=common.model_spec(ctx.settings), limit=ctx.limit,
-                          **common.generate_args(ctx))
+    # The dataset is already trimmed to ctx.limit (stratified across categories, common.limited_rows):
+    # no `limit=` here, or Inspect would re-truncate it back down to a first-N slice.
+    log = common.run_task(task, ctx, model=common.model_spec(ctx.settings), **common.generate_args(ctx))
     items = []
     for sample in log.samples or []:
         score = common.primary_score(sample)

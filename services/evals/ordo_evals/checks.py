@@ -24,7 +24,7 @@ from ordo_evals import honesty
 from ordo_evals.ids import safe_token
 from ordo_evals.normalize import answers_match, normalize_answer
 
-VAULT_EVAL_ROOT = "eval"
+VAULT_EVAL_ROOT = "scratch"
 URL_PATTERN = re.compile(r"https?://[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:[/?#][^\s)\]>\"']*)?")
 
 

@@ -45,9 +45,10 @@ def _ratio(successes: int, n: int) -> dict[str, Any]:
     return {"value": round(successes / n, 6) if n else 0.0, "n": n, "ci95": wilson_ci95(successes, n)}
 
 
-def _mean(values: list[float]) -> dict[str, Any]:
+def _mean(values: list[float], *, lower: float | None = None, upper: float | None = None) -> dict[str, Any]:
     n = len(values)
-    return {"value": round(sum(values) / n, 6) if n else 0.0, "n": n, "ci95": mean_ci95(values)}
+    return {"value": round(sum(values) / n, 6) if n else 0.0, "n": n,
+            "ci95": mean_ci95(values, lower=lower, upper=upper)}
 
 
 def _count(value: int, n: int) -> dict[str, Any]:
@@ -69,12 +70,14 @@ def _by_category(items: list[dict[str, Any]], key: str, metrics: dict[str, Any],
 
 
 def _trajectory_means(items: list[dict[str, Any]], metrics: dict[str, Any]) -> None:
+    # Every trajectory field is a non-negative count or a non-negative duration: clamp the lower bound
+    # at 0 (no upper bound - there is no ceiling on tool calls or wall time).
     for field in TRAJECTORY_FIELDS:
         values = [float(v) for i in items
                   if isinstance(v := ((i.get("metadata") or {}).get("trajectory") or {}).get(field), int | float)
                   and not isinstance(v, bool)]
         if values:
-            metrics[f"{field}_mean"] = _mean(values)
+            metrics[f"{field}_mean"] = _mean(values, lower=0.0)
 
 
 def _ifeval(items, grades) -> dict[str, Any]:
@@ -114,7 +117,9 @@ def _domain(items, grades) -> dict[str, Any]:
         if not relevant:
             continue
         if scale == judge.LIKERT5:
-            metrics[f"judge.{criterion}"] = _mean([float(g["score"]) for g in relevant])
+            # Likert grades are written on the 0..1 scale (README: "1 -> 0.0, ... 5 -> 1.0"); clamp
+            # both ends so the interval never claims a mean outside what the scale can produce.
+            metrics[f"judge.{criterion}"] = _mean([float(g["score"]) for g in relevant], lower=0.0, upper=1.0)
         elif scale == judge.PASS_FAIL:
             metrics[f"judge.{criterion}_pass_rate"] = _rate([g["score"] == "pass" for g in relevant])
     return metrics

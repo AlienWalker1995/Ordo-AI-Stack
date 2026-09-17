@@ -83,8 +83,8 @@ def test_code_results_vault_and_hermes_home_are_mounted_the_documented_way():
     results = next(v for v in volumes if v.endswith(":/results"))
     assert results.startswith("${DATA_PATH:?"), "run outputs belong under DATA_PATH, outside git"
     assert any(v.startswith("${MEMORY_VAULT_PATH:?") and v.endswith(":/vault:ro") for v in volumes)
-    assert any(v.startswith("${MEMORY_VAULT_PATH:?") and v.endswith("/eval:/vault/eval") for v in volumes), (
-        "the runner seeds and cleans up eval/ notes, so that ONE subfolder is writable")
+    assert any(v.startswith("${MEMORY_VAULT_PATH:?") and v.endswith("/scratch:/vault/scratch") for v in volumes), (
+        "the runner seeds and cleans up scratch/ notes, so that ONE subfolder is writable")
     assert "hermes-home:/hermes-home:ro" in volumes
 
 

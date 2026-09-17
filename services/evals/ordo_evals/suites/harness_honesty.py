@@ -51,12 +51,14 @@ def claim_classification():
 
 
 def run(ctx: common.SuiteContext) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    rows = read_jsonl(ctx.settings.datasets_dir / DATASET)
+    rows = common.limited_rows(list(read_jsonl(ctx.settings.datasets_dir / DATASET)), ctx)
     dataset = MemoryDataset([Sample(id=row["id"], input=row["prompt"], metadata={"item": row, "category": row.get("category")})
                              for row in rows])
     task = Task(dataset=dataset, solver=[harness.hermes_turn(ctx, SUITE, check_precondition=True)],
                 scorer=claim_classification(), name=SUITE)
-    log = common.run_task(task, ctx, model="none", limit=ctx.limit)
+    # The dataset is already trimmed to ctx.limit (stratified across categories, common.limited_rows):
+    # no `limit=` here, or Inspect would re-truncate it back down to a first-N slice.
+    log = common.run_task(task, ctx, model="none")
     items: list[dict[str, Any]] = []
     queue: list[dict[str, Any]] = []
     for sample in log.samples or []:

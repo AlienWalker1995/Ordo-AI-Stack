@@ -1,8 +1,8 @@
 """Live ground-truth probes for the harness checks (the `checks.Probes` protocol).
 
 All reads go straight to the source of truth over the project network or the mounted vault; none go
-through Hermes. The vault is mounted read-only except `eval/`, and `vault_write` refuses any other
-path even if the mount would allow it.
+through Hermes. The vault is mounted read-only except the scratch root (checks.VAULT_EVAL_ROOT), and
+`vault_write` refuses any other path even if the mount would allow it.
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ class LiveProbes:
         path.write_text(content, encoding="utf-8", newline="\n")
 
     def cleanup_run(self, run_id: str) -> None:
-        """Delete eval/<run>/ (everything the run seeded and everything Hermes wrote for it)."""
+        """Delete <VAULT_EVAL_ROOT>/<run>/ (everything the run seeded and everything Hermes wrote for it)."""
         run_dir = self._vault_path(f"{VAULT_EVAL_ROOT}/{safe_token(run_id)}")
         if run_dir.is_dir():
             shutil.rmtree(run_dir)

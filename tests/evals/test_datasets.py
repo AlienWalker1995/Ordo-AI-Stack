@@ -69,6 +69,25 @@ def test_reasoning_dataset_shape():
         assert isinstance(entry.get("aliases", []), list)
 
 
+_FINAL_ANSWER_INSTRUCTION = re.compile(r"(?i)(give|answer|write)\b")
+
+
+def test_reasoning_final_answer_instructions_do_not_compete_with_the_answer_protocol():
+    """model_reasoning.SYSTEM_PROMPT requires a final `ANSWER: <answer>` line; a question that also
+    tells the model to answer with "only" the value (no other words) competes with that protocol and
+    produces bare replies with no ANSWER line (see the fix-round-1 brief, E1). Every question must
+    still end with SOME final-answer instruction (a sentence starting with give/answer/write), just
+    not one that says "only"."""
+    items = rows(DATASETS / "reasoning.jsonl")
+    for entry in items:
+        question = entry["question"]
+        assert "only" not in question.casefold(), f"{entry['id']} final-answer instruction says 'only'"
+        sentences = [s.strip() for s in re.split(r"(?<=[.?!])\s+", question) if s.strip()]
+        assert sentences, f"{entry['id']} has no question text"
+        assert _FINAL_ANSWER_INSTRUCTION.match(sentences[-1]), (
+            f"{entry['id']} does not end with a final-answer instruction: {sentences[-1]!r}")
+
+
 def test_toolcall_dataset_shape_and_expectations_reference_offered_tools():
     items = rows(DATASETS / "toolcall.jsonl")
     assert len(items) == 40

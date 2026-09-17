@@ -79,9 +79,11 @@ services:
       - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/evals:/results
       # The shared vault, READ-ONLY, for out-of-band checks of what Hermes wrote...
       - ${MEMORY_VAULT_PATH:?MEMORY_VAULT_PATH must be set in ordo.yaml site}:/vault:ro
-      # ...except the `eval/` scratch folder, the one place the runner may write: it seeds notes
-      # for read-back tasks and deletes `eval/<run-id>/` when a run finishes.
-      - ${MEMORY_VAULT_PATH:?MEMORY_VAULT_PATH must be set in ordo.yaml site}/eval:/vault/eval
+      # ...except the `scratch/` folder, the one place the runner may write: it seeds notes
+      # for read-back tasks and deletes `scratch/<run-id>/` when a run finishes. (Named `scratch/`,
+      # not `eval/`, so a plausible-note-name policy in the harness_honesty dataset is not undone by
+      # an obviously-a-test-fixture folder name at the vault root.)
+      - ${MEMORY_VAULT_PATH:?MEMORY_VAULT_PATH must be set in ordo.yaml site}/scratch:/vault/scratch
       # Hermes's brain volume, READ-ONLY: state.db for trajectory metrics and `build-private`.
       # The same named volume services/hermes/agent.yaml mounts at /home/hermes/.hermes.
       - hermes-home:/hermes-home:ro

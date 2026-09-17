@@ -13,6 +13,7 @@ from inspect_ai.log import EvalLog, EvalSample
 from inspect_ai.model import ChatMessage
 
 from ordo_evals.ids import trace_id_for
+from ordo_evals.sampling import filter_rows_to_ids, stratified_limit_ids
 from ordo_evals.settings import Settings
 
 # Inspect's generic OpenAI-compatible provider: `openai-api/<service>/<model>` reads
@@ -51,6 +52,15 @@ def generate_args(ctx: SuiteContext) -> dict[str, Any]:
     if ctx.settings.model_max_tokens:
         args["max_tokens"] = ctx.settings.model_max_tokens
     return args
+
+
+def limited_rows(rows: list[dict[str, Any]], ctx: SuiteContext,
+                 category_key: str = "category") -> list[dict[str, Any]]:
+    """`rows` restricted to `ctx.limit`, spread across `category_key` (ordo_evals.sampling), so a
+    smoke run exercises more than one category (fix-round-1 brief, E5). Unchanged when `ctx.limit` is
+    None or not smaller than `len(rows)`."""
+    ids = stratified_limit_ids(rows, ctx.limit, ctx.seed, category_key=category_key)
+    return filter_rows_to_ids(rows, ids)
 
 
 def run_task(task: Task, ctx: SuiteContext, *, model: str, limit: int | None = None,

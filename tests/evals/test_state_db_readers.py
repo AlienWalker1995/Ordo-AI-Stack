@@ -11,6 +11,7 @@ from ordo_evals.private_dataset import (
     candidate_asks,
     clean_message,
     is_self_contained_question,
+    is_tool_directed,
 )
 from ordo_evals.trajectory import session_metrics, tool_result_is_error
 
@@ -133,9 +134,38 @@ def test_clean_message_strips_the_speaker_tag_and_drops_annotations():
     ("Is the above still true?", False),
     ("Hi", False),
     ("Check <@123456789012345678> please, what changed?", False),
+    # E2: tool/service-directed asks a bare, tool-less model cannot fairly answer (synthetic strings)
+    ("Can you search qdrant for the onboarding doc?", False),
+    ("What's in my vault about the Q3 roadmap?", False),
+    ("Please check the n8n workflow status for me.", False),
+    ("Can you check our collection of meeting notes?", False),
+    ("Is the docker container for the app healthy?", False),
+    ("What does this cron job actually run?", False),
+    # E2: follow-ups that depend on prior turns (synthetic strings, not real operator asks)
+    ("What about the other roadmap document?", False),
+    ("And how long would that normally take?", False),
+    ("Also, does it support video uploads?", False),
+    ("Is the same one still broken today?", False),
+    # E2: below the minimum word count even though it clears the character minimum
+    ("Fix the printer?", False),
 ])
 def test_is_self_contained_question(text, keep):
     assert is_self_contained_question(text) is keep
+
+
+@pytest.mark.parametrize(("text", "tool_directed"), [
+    ("Can you search qdrant for the onboarding doc?", True),
+    ("What's in my vault about the Q3 roadmap?", True),
+    ("Please check the n8n workflow status for me.", True),
+    ("Can you check our collection of meeting notes?", True),
+    ("Is the docker container for the app healthy?", True),
+    ("What does this cron job actually run?", True),
+    ("How do I rotate a key?", False),
+    ("Explain the GPU lease rules.", False),
+    ("What is the capital of France?", False),
+])
+def test_is_tool_directed(text, tool_directed):
+    assert is_tool_directed(text) is tool_directed
 
 
 def test_candidates_are_discord_user_asks_only_and_deduplicated(discord_db):
