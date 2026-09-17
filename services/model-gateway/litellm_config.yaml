@@ -24,6 +24,12 @@ model_list:
       input_cost_per_token: __LOCAL_INPUT_COST_PER_TOKEN__
       output_cost_per_token: __LOCAL_OUTPUT_COST_PER_TOKEN__
     model_info:
+      # Health probes are not traffic: keep them out of the logging callbacks (Langfuse). Only the
+      # health-check path merges health_check_params into the probe request
+      # (proxy/health_check.py::_update_litellm_params_for_health_check, on a deepcopy of the model
+      # list), and `no-log` makes Logging.should_run_callback skip every non-_PROXY_ callback
+      # (litellm_logging.py), so spend tracking still runs. Set on every local deployment.
+      health_check_params: {"no-log": true}
       mode: chat
       max_input_tokens: __CTX_SIZE__
       # llama-server --n-predict: hard per-request generation ceiling on the GPU backend.
@@ -60,6 +66,8 @@ model_list:
       input_cost_per_token: __LOCAL_INPUT_COST_PER_TOKEN__
       output_cost_per_token: __LOCAL_OUTPUT_COST_PER_TOKEN__
     model_info:
+      # Probes skip the logging callbacks; see the local-chat entry.
+      health_check_params: {"no-log": true}
       mode: chat
       max_input_tokens: __CTX_SIZE__
       max_output_tokens: __N_PREDICT__
@@ -89,6 +97,8 @@ model_list:
       input_cost_per_token: __LOCAL_INPUT_COST_PER_TOKEN__
       output_cost_per_token: __LOCAL_OUTPUT_COST_PER_TOKEN__
     model_info:
+      # Probes skip the logging callbacks; see the local-chat entry.
+      health_check_params: {"no-log": true}
       mode: chat
       max_input_tokens: __CPU_CTX_SIZE__
       input_cost_per_token: __LOCAL_INPUT_COST_PER_TOKEN__
@@ -121,6 +131,8 @@ model_list:
       input_cost_per_token: __LOCAL_INPUT_COST_PER_TOKEN__
       output_cost_per_token: 0
     model_info:
+      # Probes skip the logging callbacks; see the local-chat entry.
+      health_check_params: {"no-log": true}
       mode: embedding
       # llamacpp-embed runs --ctx-size 8192 (fixed in compose, not env-tunable).
       max_input_tokens: 8192
@@ -171,5 +183,15 @@ litellm_settings:
   # defaults to false) and is internal-network-only ONLY because the edge's SSO-bypassing
   # /llm/* route answers 404 for /metrics and /metrics/* (auth/caddy/Caddyfile). Its labels
   # carry key aliases, user emails and client IPs: keep that 404 or this endpoint is public.
+  #
+  # Plugin-dependent callbacks are NOT listed here: the renderer appends them at container start
+  # through LITELLM_EXTRA_CALLBACKS (add_callbacks.py), e.g. `langfuse_otel` only when the langfuse
+  # plugin is enabled, so this template never requires an optional plugin.
   callbacks: ["throughput_callback.throughput_recorder_instance", "prometheus"]
   require_auth_for_metrics_endpoint: false
+  # Strip user_api_key_* fields from the metadata the integrations that honour this flag forward
+  # (langfuse SDK, langsmith, logfire). In LiteLLM 1.100.1 the langfuse_otel callback does not
+  # consult it: the key alias still reaches Langfuse as `litellm.key_alias`, which is what lets a
+  # trace be filtered by consumer. Kept on so a future switch of integration does not widen what
+  # leaves the gateway.
+  redact_user_api_key_info: true

@@ -189,7 +189,33 @@ def _litellm_db(net: str) -> dict[str, Any]:
     }
 
 
-def _model_gateway(project: str, net: str, env_file: str) -> dict[str, Any]:
+# Gateway-wide Langfuse tracing: the env model-gateway gets ONLY when the langfuse plugin is enabled
+# (render_compose's `langfuse_tracing`). Every value was checked against the installed LiteLLM
+# 1.100.1 source and a live probe (2026-09-15):
+#   LITELLM_EXTRA_CALLBACKS  appended to litellm_settings.callbacks by services/model-gateway/
+#                            add_callbacks.py; the template itself never names an optional plugin.
+#   LANGFUSE_OTEL_HOST       read by integrations/langfuse/langfuse_otel.py (`<host>/api/public/otel`);
+#                            the internal service URL, never the SSO edge (it would 302 the exporter).
+#   LANGFUSE_TRACING_ENVIRONMENT  stamped as `langfuse.environment` on every span, so gateway traces
+#                            are separable from Hermes's own (`hermes`).
+#   OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=no_content  suppresses ONLY the extra
+#                            `raw_gen_ai_request` child span, which repeats the whole prompt and
+#                            response as provider attributes. The Langfuse generation's input/output
+#                            are written unconditionally by the langfuse_otel attribute setter, so
+#                            they stay populated (verified: one observation per call, input non-null).
+# LITELLM_OTEL_V2 is deliberately NOT set: on 1.100.1 the V2 path ignores LANGFUSE_TRACING_ENVIRONMENT
+# (traces land in `default`), makes the root observation a proxy span with a NULL input, and exports
+# every Postgres auth/spend call as its own observation. The project key pair (LANGFUSE_PUBLIC_KEY /
+# LANGFUSE_SECRET_KEY) arrives through the secrets.env env_file, like every other secret here.
+GATEWAY_LANGFUSE_ENV: dict[str, str] = {
+    "LITELLM_EXTRA_CALLBACKS": "langfuse_otel",
+    "LANGFUSE_OTEL_HOST": "http://langfuse-web:3000",
+    "LANGFUSE_TRACING_ENVIRONMENT": "gateway",
+    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "no_content",
+}
+
+
+def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool = False) -> dict[str, Any]:
     """LiteLLM behind the `local-chat` alias AND the MCP gateway (`/mcp`). The agent gates on
     `model-gateway: service_healthy` (audit G5), so this service MUST render a healthcheck or that
     gate is unsatisfiable and the agent never starts. Probe: GET /v1/models with the master key.
@@ -197,7 +223,10 @@ def _model_gateway(project: str, net: str, env_file: str) -> dict[str, Any]:
     Mounts the rendered out/model-gateway dir read-only: mcp_servers.yaml (the entrypoint merges it
     into the LiteLLM config) and keys.json (read by model-gateway-keys). Joins the internal MCP
     network so it can reach the mcp-* services. Secrets (LITELLM_MASTER_KEY, LITELLM_SALT_KEY,
-    THROUGHPUT_RECORD_TOKEN) come from the secrets.env env_file and are NOT re-declared here."""
+    THROUGHPUT_RECORD_TOKEN) come from the secrets.env env_file and are NOT re-declared here.
+
+    `langfuse_tracing` (the langfuse plugin is enabled) adds GATEWAY_LANGFUSE_ENV; without it the
+    service renders exactly as before and the gateway boots on the template's callbacks alone."""
     s = _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file, secrets=True)
     s["networks"] = [net, _mcp_net(project)]
     s["depends_on"] = _depends_on({"llamacpp": "service_started", "litellm-db": "service_healthy"})
@@ -213,6 +242,8 @@ def _model_gateway(project: str, net: str, env_file: str) -> dict[str, Any]:
         # port is published, so the only peers that can reach this service are project services.
         "FORWARDED_ALLOW_IPS": "*",
     }
+    if langfuse_tracing:
+        s["environment"].update(GATEWAY_LANGFUSE_ENV)
     s["healthcheck"] = {
         "test": ["CMD-SHELL", (
             "python3 -c \"import os, urllib.request; "
@@ -547,7 +578,8 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
                    primary_gpu_uuid: str | None = None,
                    secondary_gpu_uuid: str | None = None,
                    gpu_claims: dict[str, Any] | None = None,
-                   mcp_servers: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+                   mcp_servers: list[dict[str, Any]] | None = None,
+                   langfuse_tracing: bool = False) -> dict[str, Any]:
     net = f"{project}-net"
     # the agent is swappable (Hermes is the default); a registry manifest may pin any image,
     # else fall back to the <project>/agent-<id>:latest convention.
@@ -595,7 +627,7 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         "llamacpp": llamacpp,
         "litellm-db": _litellm_db(net),
         # LITELLM_MASTER_KEY + LITELLM_SALT_KEY + THROUGHPUT_RECORD_TOKEN are secrets (secrets.env).
-        "model-gateway": _model_gateway(project, net, env_file),
+        "model-gateway": _model_gateway(project, net, env_file, langfuse_tracing=langfuse_tracing),
         "model-gateway-keys": _model_gateway_keys(project, net, env_file),
         "ops-controller": _ops_controller(project, net, env_file),
         # The dashboard is pluggable (data-driven): the selected manifest supplies image/env/

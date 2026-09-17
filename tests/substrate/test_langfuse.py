@@ -332,7 +332,9 @@ def test_hermes_reads_the_project_keys_with_an_empty_fallback():
     assert env["HERMES_LANGFUSE_PUBLIC_KEY"] == "${LANGFUSE_PUBLIC_KEY:-}"
     assert env["HERMES_LANGFUSE_SECRET_KEY"] == "${LANGFUSE_SECRET_KEY:-}"
     assert env["HERMES_LANGFUSE_BASE_URL"] == "${HERMES_LANGFUSE_BASE_URL:-http://langfuse-web:3000}"
-    assert env["HERMES_LANGFUSE_ENV"] == "ordo"
+    # `hermes`, not the gateway's `gateway`: the two writers trace the same LLM calls and are
+    # told apart only by environment.
+    assert env["HERMES_LANGFUSE_ENV"] == "hermes"
     assert "langfuse" not in agent_yaml.get("depends_on", {})
 
 
