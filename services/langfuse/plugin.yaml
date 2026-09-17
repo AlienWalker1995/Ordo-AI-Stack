@@ -4,12 +4,20 @@
 # and one plugin id. Reached like every other UI: behind the Caddy SSO edge on :8450 and the
 # `langfuse.<tailnet>` sidecar name (see services/edge + services/tailnet-names).
 #
-# WHAT SENDS TRACES: the Hermes agent, through the `observability/langfuse` plugin bundled in its
-# image (services/hermes/{Dockerfile,agent.yaml,entrypoint.sh}). LiteLLM ALSO has a Langfuse
-# callback and it is deliberately NOT enabled: Hermes already emits a generation span per LLM call,
-# so turning it on would double-count every generation in the same project. The follow-up, if the
-# non-Hermes traffic (Open WebUI, n8n, external clients) is ever worth tracing, is a SECOND Langfuse
-# project with its own key pair - not a second writer into `hermes`. See README.md in this dir.
+# WHAT SENDS TRACES: two writers, told apart by Langfuse `environment`.
+#   * `gateway`: model-gateway's LiteLLM `langfuse_otel` callback, one generation per LLM call for
+#     EVERY consumer (Hermes, Open WebUI, n8n, edge clients, health probes), tagged with the virtual
+#     key alias. Wired by the renderer only while this plugin is enabled (ordo/compose.py
+#     GATEWAY_LANGFUSE_ENV).
+#   * `hermes`: the Hermes agent's bundled `observability/langfuse` plugin (turn, LLM-call and tool
+#     spans; services/hermes/{Dockerfile,agent.yaml,entrypoint.sh}).
+# Hermes's LLM calls therefore appear once in EACH environment: LiteLLM 1.100.1 has no open-source
+# way to exclude one virtual key from a callback (the per-key `litellm_disabled_callbacks` switch is
+# enforced only for premium users). Filter dashboards by environment. See README.md in this dir.
+#
+# RETENTION (self-hosted Langfuse retention is an Enterprise feature): `langfuse-retention` deletes
+# traces older than LANGFUSE_RETENTION_DAYS through the public API, and `langfuse-minio-lifecycle`
+# expires the blob store's objects after the same number of days.
 #
 # OPT-IN (`default: false`): the hardware gate says nothing useful here - six containers run fine on
 # any box - so the gate is the operator's explicit request. `plugins: auto` will NOT enable it.
@@ -56,6 +64,8 @@ secrets:
 #   minio                       RELEASE.2025-09-07T16-13-09Z
 #   postgres                    16-alpine (the SAME pin as ordo.compose.POSTGRES_IMAGE, enforced
 #                               by a substrate test - see the langfuse-db comment below)
+#   python (langfuse-retention) 3.11.15-slim-trixie, the same index digest ops-controller and rag
+#                               build FROM (one Python base to audit)
 # MinIO is pulled from quay.io, NOT docker.io: `docker.io/minio/minio` now answers "pull access
 # denied … repository does not exist" (MinIO moved off Docker Hub), and the tag is the dated
 # RELEASE.* one rather than `latest`, per the stack's pin-don't-float rule.
@@ -295,3 +305,79 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+  # TRACE RETENTION. Deletes traces older than LANGFUSE_RETENTION_DAYS using ONLY the public API: v2/observations to enumerate, DELETE
+  # /api/public/traces to delete. The logic is a tracked stdlib module (langfuse_retention.py in this
+  # dir, unit-tested in tests/substrate/test_langfuse_retention.py) mounted into a digest-pinned
+  # python image, so there is no image to build.
+  #
+  # WHY A SELF-SCHEDULING SERVICE: Ordo has no general-purpose job scheduler. ops-controller only
+  # arbitrates GPU leases, the existing periodic jobs (stack_monitor, storage_purge) run from Hermes
+  # cron (an LLM in the loop for an irreversible delete, rejected here), n8n cannot start a
+  # container and would be a second implementation, and a host Task Scheduler entry is untracked
+  # per-machine config. So the job schedules itself inside its own always-on container, the same
+  # shape as LiteLLM's in-process spend-log cleanup: a run five minutes after start, then daily at
+  # LANGFUSE_RETENTION_RUN_AT UTC. The unit of work is the idempotent one-shot `--once`, which an
+  # operator can also run by hand:
+  #   docker compose -p ordo --env-file .env --env-file secrets.env run --rm langfuse-retention   #     python /app/langfuse_retention.py --once
+  # A failed run is retried at the next slot and turns the container unhealthy until one succeeds.
+  - name: langfuse-retention
+    image: python:3.11.15-slim-trixie@sha256:6d85378d88a19cd4d76079817532d62232be95757cb45945a99fec8e8084b9c2
+    depends_on:
+      langfuse-web: service_healthy
+    command: ["python", "/app/langfuse_retention.py", "--daemon"]
+    env:
+      LANGFUSE_BASE_URL: http://langfuse-web:3000
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      # RETENTION POLICY: 90 days unless `site: {LANGFUSE_RETENTION_DAYS: <n>}` in ordo.yaml puts a
+      # value in .env. The default lives HERE, as a compose default, and not as a derived .env key on
+      # purpose: every service reads .env as an env_file, so adding a key there changes the
+      # environment of every container and a full `up` recreates the whole stack, GPU services
+      # included (measured 2026-09-15 with `up --dry-run`). Scoped to its two consumers it recreates
+      # nothing else. langfuse-minio-lifecycle below carries the SAME default; a substrate test keeps
+      # the two equal.
+      LANGFUSE_RETENTION_DAYS: ${LANGFUSE_RETENTION_DAYS:-90}
+      # 15 minutes after LiteLLM's spend-log cleanup (04:30 UTC, litellm_config.yaml), off the hour.
+      LANGFUSE_RETENTION_RUN_AT: "04:45"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      # ${BASE_PATH} (not ./): a TRACKED repo file, same rule as the monitoring plugin's scrape config.
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/services/langfuse/langfuse_retention.py:/app/langfuse_retention.py:ro
+    security_opt: ["no-new-privileges:true"]
+    resources: {cpus: "0.5", memory: "256m"}
+    healthcheck:
+      test: ["CMD", "python", "/app/langfuse_retention.py", "--healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 1
+      start_period: 30s
+  # BLOB RETENTION. Langfuse writes every raw ingestion event (events/) and every media attachment
+  # (media/) to the `langfuse` bucket and never deletes them, so trace deletion alone would leave the
+  # bucket growing forever. This one-shot installs a lifecycle rule expiring objects after the same
+  # LANGFUSE_RETENTION_DAYS. `mc ilm import` REPLACES the bucket's whole lifecycle configuration with
+  # one fixed-ID rule, which is what makes it idempotent (`mc ilm rule add` would append a duplicate
+  # rule on every start); the bucket belongs to Langfuse alone, so there is no other rule to keep.
+  # The minio image ships `mc`, so this reuses the langfuse-minio pin. `on-failure`: retried while
+  # MinIO is not ready, left exited after it succeeds.
+  - name: langfuse-minio-lifecycle
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    restart: on-failure
+    depends_on:
+      langfuse-minio: service_healthy
+    env:
+      LANGFUSE_MINIO_SECRET: ${LANGFUSE_MINIO_SECRET}
+      # Same default as langfuse-retention (see the comment there).
+      LANGFUSE_RETENTION_DAYS: ${LANGFUSE_RETENTION_DAYS:-90}
+    # `$$` is a literal `$` for the shell (compose would otherwise interpolate it). The alias is
+    # built from the environment inside the container, so the secret never appears on a command line.
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        set -eu;
+        case "$$LANGFUSE_RETENTION_DAYS" in ''|*[!0-9]*|0*) echo "LANGFUSE_RETENTION_DAYS must be a positive whole number of days without leading zeros" >&2; exit 2;; esac;
+        export MC_HOST_langfuse="http://langfuse:$$LANGFUSE_MINIO_SECRET@langfuse-minio:9000";
+        printf '{"Rules":[{"ID":"ordo-langfuse-retention","Status":"Enabled","Filter":{"Prefix":""},"Expiration":{"Days":%s}}]}' "$$LANGFUSE_RETENTION_DAYS" | mc ilm import langfuse/langfuse;
+        mc ilm rule ls langfuse/langfuse
+    security_opt: ["no-new-privileges:true"]
+    resources: {cpus: "0.5", memory: "256m"}

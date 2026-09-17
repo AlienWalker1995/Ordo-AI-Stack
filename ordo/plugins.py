@@ -74,6 +74,10 @@ class PluginService:
     # Same shape the renderer already gives every MCP service. Merged with (never replacing) a GPU
     # `reservations` block, so a limited GPU service keeps its device reservation.
     resources: dict[str, str] = dataclasses.field(default_factory=dict)
+    # compose `restart` policy. Empty -> the renderer's default `unless-stopped` (a long-lived
+    # service). A one-shot init step declares `on-failure`, so a transient error is retried but a
+    # clean exit stays exited instead of being restarted forever (model-gateway-keys' policy).
+    restart: str = ""
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PluginService:
@@ -105,7 +109,22 @@ class PluginService:
             security_opt=[str(o) for o in (d.get("security_opt", []) or [])],
             ulimits=dict(d.get("ulimits", {}) or {}),
             resources={str(k): str(v) for k, v in (d.get("resources", {}) or {}).items()},
+            restart=_restart_policy(name, d.get("restart", "")),
         )
+
+
+# The compose restart policies a plugin service may declare. `always` is left out on purpose: it
+# restarts a one-shot that exited cleanly, which is exactly the loop `on-failure` exists to avoid.
+_RESTART_POLICIES = frozenset({"no", "on-failure", "unless-stopped"})
+
+
+def _restart_policy(service: str, raw: Any) -> str:
+    """Validate a manifest `restart:` value ("" keeps the renderer default)."""
+    # YAML reads a bare `no` as False; accept it as the policy it was meant to be.
+    value = "no" if raw is False else str(raw or "")
+    if value and value not in _RESTART_POLICIES:
+        raise ValueError(f"service '{service}': restart must be one of {sorted(_RESTART_POLICIES)} (got {value!r})")
+    return value
 
 
 _MCP_ALLOWED_KEYS = frozenset({

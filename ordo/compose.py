@@ -434,7 +434,7 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: st
     """Render ONE compose service from a plugin's declared PluginService — data-driven, so
     adding a service is a manifest edit, not a code change here. `${...}` / `./...` refs and
     named volumes pass straight through to compose (project-scoped, no live-stack collision)."""
-    s: dict[str, Any] = {"image": ps.image, "restart": "unless-stopped", "networks": [net]}
+    s: dict[str, Any] = {"image": ps.image, "restart": ps.restart or "unless-stopped", "networks": [net]}
     if ps.network_mode:
         # compose forbids networks: alongside network_mode: — the service lives in the
         # target's namespace (e.g. the tailnet-name sidecars inside Caddy's netns).
