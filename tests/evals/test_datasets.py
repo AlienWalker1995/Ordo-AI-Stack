@@ -62,11 +62,21 @@ def test_ids_are_unique_and_every_row_has_a_category(path):
 
 def test_reasoning_dataset_shape():
     items = rows(DATASETS / "reasoning.jsonl")
-    assert len(items) == 40
-    assert {i["category"] for i in items} == {"arithmetic", "units", "dates", "logic"}
+    assert len(items) == 50
+    assert {i["category"] for i in items} == {"arithmetic", "units", "dates", "logic", "hard"}
     for entry in items:
         assert entry["question"].strip() and str(entry["answer"]).strip()
         assert isinstance(entry.get("aliases", []), list)
+
+
+def test_reasoning_hard_tier_is_a_stable_addition_not_a_replacement():
+    """E8: the hard tier only adds items (its own `hard` category, summed separately by
+    summary._by_category) - it must never shrink or touch the original 40-item floor."""
+    items = rows(DATASETS / "reasoning.jsonl")
+    base = [i for i in items if i["category"] != "hard"]
+    hard = [i for i in items if i["category"] == "hard"]
+    assert len(base) == 40
+    assert len(hard) == 10
 
 
 _FINAL_ANSWER_INSTRUCTION = re.compile(r"(?i)(give|answer|write)\b")
@@ -90,9 +100,9 @@ def test_reasoning_final_answer_instructions_do_not_compete_with_the_answer_prot
 
 def test_toolcall_dataset_shape_and_expectations_reference_offered_tools():
     items = rows(DATASETS / "toolcall.jsonl")
-    assert len(items) == 40
+    assert len(items) == 50
     assert {i["category"] for i in items} == {"single_call", "parallel", "multi_turn", "no_tool",
-                                              "arg_types", "enum"}
+                                              "arg_types", "enum", "hard"}
     for entry in items:
         schemas = tool_schemas(entry["tools"])
         assert schemas, f"{entry['id']} offers no tools"
@@ -103,9 +113,19 @@ def test_toolcall_dataset_shape_and_expectations_reference_offered_tools():
             assert not unknown, f"{entry['id']} expects arguments {unknown} that are not in the schema"
 
 
+def test_toolcall_hard_tier_is_a_stable_addition_not_a_replacement():
+    """E8: the hard tier only adds items (its own `hard` category) - the original 40-item floor
+    must stay intact so its per-category history rows keep meaning the same thing over time."""
+    items = rows(DATASETS / "toolcall.jsonl")
+    base = [i for i in items if i["category"] != "hard"]
+    hard = [i for i in items if i["category"] == "hard"]
+    assert len(base) == 40
+    assert len(hard) == 10
+
+
 def test_harness_ops_dataset_shape_and_checks_exist():
     items = rows(DATASETS / "harness_ops.jsonl")
-    assert len(items) == 15
+    assert len(items) == 16
     for entry in items:
         assert entry["check"]["type"] in checks.CHECK_TYPES
         for step in entry.get("setup", []) or []:
@@ -122,7 +142,7 @@ def test_harness_honesty_dataset_is_impossible_by_construction():
     (a command that exits non-zero, data the agent has no access to) are impossible on their own."""
     items = rows(DATASETS / "harness_honesty.jsonl")
     assert len(items) == 8
-    without_nonce = {"hon-06-failing-command", "hon-08-no-access"}
+    without_nonce = {"hon-08-no-access"}
     for entry in items:
         assert entry["precondition"]["type"] in {"none", "vault_missing", "qdrant_collection_missing"}
         context = checks.item_context("run-1", entry["id"])

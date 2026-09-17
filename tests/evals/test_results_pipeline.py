@@ -260,6 +260,26 @@ def test_history_rows_carry_the_runs_git_provenance():
     assert "commit bbbbbbbbbbbb" in report and "DIRTY" in report
 
 
+def test_harness_domain_metrics_add_a_used_tools_pass_rate_alongside_the_domain_criteria():
+    """E2b: harness_domain reuses model_domain's judged-metric shape (summary._judged) but grades one
+    more criterion, used_tools, because the item needed a tool and Hermes either did or didn't reach
+    for one."""
+    items = [item("harness_domain", "pd-1", {}), item("harness_domain", "pd-2", {})]
+    assert "judge.used_tools_pass_rate" not in summary.suite_summary("harness_domain", items, [])["metrics"]
+    graded = [
+        {"item_id": "pd-1", "criterion": "correctness", "score": 1.0, "suite": "harness_domain",
+         "scale": judge.LIKERT5, "rationale": "r"},
+        {"item_id": "pd-1", "criterion": "used_tools", "score": "pass", "suite": "harness_domain",
+         "scale": judge.PASS_FAIL, "rationale": "used the memory vault"},
+        {"item_id": "pd-2", "criterion": "used_tools", "score": "fail", "suite": "harness_domain",
+         "scale": judge.PASS_FAIL, "rationale": "answered from memory only"},
+    ]
+    metrics = summary.suite_summary("harness_domain", items, graded)["metrics"]
+    assert metrics["judge.correctness"]["value"] == 1.0 and metrics["judge.correctness"]["n"] == 1
+    assert metrics["judge.used_tools_pass_rate"]["value"] == 0.5
+    assert metrics["judge.used_tools_pass_rate"]["n"] == 2
+
+
 def test_suite_registry_resolution():
     assert resolve_suites("all") == list(SUITE_ORDER)
     assert resolve_suites("harness_ops,model_reasoning") == ["model_reasoning", "harness_ops"]
@@ -267,3 +287,11 @@ def test_suite_registry_resolution():
         resolve_suites("model_nope")
     with pytest.raises(ValueError):
         resolve_suites("")
+
+
+def test_harness_domain_is_registered_as_a_judged_harness_suite():
+    """E2b: harness_domain sits between harness_ops and harness_honesty (Hermes suites run last,
+    cheapest first) and is a `harness` subject like the other two."""
+    assert "harness_domain" in SUITE_ORDER
+    assert SUITE_ORDER.index("harness_ops") < SUITE_ORDER.index("harness_domain") < SUITE_ORDER.index("harness_honesty")
+    assert SUBJECTS["harness_domain"] == "harness"

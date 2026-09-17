@@ -1,4 +1,4 @@
-"""`python -m ordo_evals <command>`: run, ingest-grades, build-private, report."""
+"""`python -m ordo_evals <command>`: run, ingest-grades, build-private, ingest-labels, report."""
 from __future__ import annotations
 
 import argparse
@@ -29,10 +29,15 @@ def _parser() -> argparse.ArgumentParser:
     ingest.add_argument("--file", required=True, type=Path, help="grades JSONL (see README: judge workflow)")
     ingest.add_argument("--no-langfuse", action="store_true")
 
-    private = commands.add_parser("build-private", help="build the private model_domain dataset (content never printed)")
+    private = commands.add_parser(
+        "build-private", help="sample private domain candidates and queue new ones for labelling (content never printed)")
     private.add_argument("--source", required=True, choices=["hermes-state"])
     private.add_argument("--n", type=int, default=30)
     private.add_argument("--seed", type=int, default=1234)
+
+    labels = commands.add_parser(
+        "ingest-labels", help="validate and store judge labels for the private domain candidate pool (E2b)")
+    labels.add_argument("--file", required=True, type=Path, help="label lines JSONL (see README: labelling workflow)")
 
     report = commands.add_parser("report", help="print a per-suite metrics table")
     report.add_argument("--run-id", required=True)
@@ -76,16 +81,61 @@ def main(argv: list[str] | None = None) -> int:
         return runner.ingest_grades(settings, run_id=args.run_id, grades_file=args.file, no_langfuse=args.no_langfuse)
 
     if args.command == "build-private":
-        from ordo_evals.jsonl import write_json, write_jsonl
-        from ordo_evals.private_dataset import build_private_dataset
+        from ordo_evals import private_dataset as pd
+        from ordo_evals.jsonl import read_jsonl, write_json, write_jsonl
 
-        items, stats = build_private_dataset(settings.hermes_state_db, n=args.n, seed=args.seed)
-        target = settings.results_dir / "datasets" / "private_domain.jsonl"
-        write_jsonl(target, items)
-        write_json(target.with_suffix(".meta.json"), stats)
-        print(f"[ordo-evals] wrote {stats['selected']} of {stats['candidates']} candidate asks "
-              f"(requested {stats['requested']}, seed {stats['seed']}) to {target}")
-        return 0 if items else 1
+        items, stats = pd.build_private_dataset(settings.hermes_state_db, n=args.n, seed=args.seed)
+        candidates_path = settings.results_dir / pd.CANDIDATES_FILE
+        labels_path = settings.results_dir / pd.LABELS_FILE
+        queue_path = settings.results_dir / pd.LABEL_QUEUE_FILE
+
+        existing_candidates = read_jsonl(candidates_path) if candidates_path.is_file() else []
+        all_candidates = pd.merge_candidates(existing_candidates, items)
+        write_jsonl(candidates_path, all_candidates)
+
+        labels = pd.labels_by_id(read_jsonl(labels_path) if labels_path.is_file() else [])
+        queue = pd.pending_label_queue(all_candidates, labels)
+        write_jsonl(queue_path, queue)
+        counts = pd.label_counts(all_candidates, labels)
+        write_json(candidates_path.with_suffix(".meta.json"), {**stats, "counts": counts})
+
+        # E2b: counts only, never content - this sample still needs a judge label (self_contained /
+        # agent_standalone / conversation_dependent) before model_domain or harness_domain use it.
+        print(f"[ordo-evals] sampled {stats['selected']} of {stats['candidates']} candidate ask(s) "
+              f"(requested {stats['requested']}, seed {stats['seed']}); candidate pool now "
+              f"{counts['total']} ({counts['self_contained']} self_contained, "
+              f"{counts['agent_standalone']} agent_standalone, "
+              f"{counts['conversation_dependent']} conversation_dependent, {counts['unlabeled']} unlabeled); "
+              f"wrote {len(queue)} pending label request(s) to {queue_path}")
+        return 0 if all_candidates else 1
+
+    if args.command == "ingest-labels":
+        from ordo_evals import private_dataset as pd
+        from ordo_evals.jsonl import read_jsonl, write_jsonl
+
+        candidates_path = settings.results_dir / pd.CANDIDATES_FILE
+        labels_path = settings.results_dir / pd.LABELS_FILE
+        queue_path = settings.results_dir / pd.LABEL_QUEUE_FILE
+        if not candidates_path.is_file():
+            print(f"[ordo-evals] {candidates_path} not found: run build-private first", file=sys.stderr)
+            return 2
+        candidates = read_jsonl(candidates_path)
+        valid, errors = pd.validate_labels(read_jsonl(args.file), candidates)
+        if errors:
+            for error in errors:
+                print(f"[ordo-evals] INVALID {error}", file=sys.stderr)
+            print(f"[ordo-evals] {len(errors)} invalid label line(s); nothing was ingested", file=sys.stderr)
+            return 2
+
+        merged = pd.merge_labels(read_jsonl(labels_path) if labels_path.is_file() else [], valid)
+        write_jsonl(labels_path, merged)
+        labels = pd.labels_by_id(merged)
+        write_jsonl(queue_path, pd.pending_label_queue(candidates, labels))
+        counts = pd.label_counts(candidates, labels)
+        print(f"[ordo-evals] ingested {len(valid)} label(s); candidate pool now {counts['total']} "
+              f"({counts['self_contained']} self_contained, {counts['agent_standalone']} agent_standalone, "
+              f"{counts['conversation_dependent']} conversation_dependent, {counts['unlabeled']} unlabeled)")
+        return 0
 
     if args.command == "report":
         from ordo_evals.report import format_report

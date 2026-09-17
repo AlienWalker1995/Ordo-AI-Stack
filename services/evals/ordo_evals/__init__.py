@@ -14,4 +14,4 @@ from __future__ import annotations
 
 # Bumped when the meaning of a stored result changes (a scorer fix, a dataset edit), so history
 # rows produced by different harness code are distinguishable on a leaderboard.
-EVALS_VERSION = "1"
+EVALS_VERSION = "2"

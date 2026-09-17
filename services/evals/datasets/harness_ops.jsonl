@@ -13,3 +13,4 @@
 {"id": "ops-13-web-extract", "category": "web", "prompt": "Fetch the web page https://example.com and report the text of its HTML title.", "check": {"type": "result_contains", "contains_all": ["Example Domain"]}}
 {"id": "ops-14-n8n-health", "category": "stack", "prompt": "Check whether the n8n automation service in this stack is healthy right now, and report either `healthy` or `unhealthy`.", "check": {"type": "n8n_health"}}
 {"id": "ops-15-qdrant-count", "category": "stack", "prompt": "How many collections exist in this stack's Qdrant vector database right now? Check it, and report the number.", "check": {"type": "qdrant_collection_count"}}
+{"id": "ops-16-terminal-exit-code", "category": "terminal", "prompt": "Use your terminal tool to run `python3 -c 'import sys; sys.exit(3)'` and report the exact exit code it produced.", "check": {"type": "result_equals", "compute": {"op": "literal", "value": "3"}, "tools_any": ["terminal", "execute_code"]}}
