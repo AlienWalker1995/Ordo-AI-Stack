@@ -186,5 +186,6 @@ def history_rows(summary: dict[str, Any], suites: list[str] | None = None) -> li
             rows.append(make_row(
                 run_id=summary["run_id"], ts=summary["ts"], suite=suite, subject=subject,
                 model=block["model"], harness=block["harness"] if subject == "harness" else None,
-                metric=metric, value=value["value"], n=value["n"], ci95=value["ci95"]))
+                metric=metric, value=value["value"], n=value["n"], ci95=value["ci95"],
+                commit=summary.get("commit"), dirty=summary.get("dirty")))
     return rows

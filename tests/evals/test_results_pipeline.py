@@ -81,7 +81,8 @@ def test_queue_entry_rejects_an_unknown_scale():
 
 def base_row(**kwargs):
     row = {"run_id": "r1", "ts": TS, "suite": "model_reasoning", "subject": "model", "model": "m",
-           "harness": None, "metric": "accuracy", "value": 0.5, "n": 10, "ci95": [0.2, 0.8]}
+           "harness": None, "metric": "accuracy", "value": 0.5, "n": 10, "ci95": [0.2, 0.8],
+           "commit": "a" * 40, "dirty": False}
     row.update(kwargs)
     return row
 
@@ -89,6 +90,8 @@ def base_row(**kwargs):
 def test_valid_rows_pass_and_the_shape_is_exact():
     validate_row(base_row())
     validate_row(base_row(subject="harness", suite="harness_ops", harness="hermes-agent@0.20.0", ci95=None))
+    validate_row(base_row(commit=None, dirty=None))  # E7: unprovenanced --allow-dirty run
+    validate_row(base_row(commit=None, dirty=True))  # E7: dirty --allow-dirty run
     with pytest.raises(ValueError):
         validate_row(dict(base_row(), extra="x"))
     incomplete = base_row()
@@ -106,6 +109,8 @@ def test_valid_rows_pass_and_the_shape_is_exact():
     {"n": -1},
     {"ci95": [0.9, 0.1]},
     {"model": ""},
+    {"commit": ""},                                     # E7: commit must be null or non-empty
+    {"dirty": "true"},                                  # E7: dirty must be null or a real bool
 ])
 def test_invalid_rows_are_rejected(bad):
     with pytest.raises(ValueError):
@@ -113,9 +118,17 @@ def test_invalid_rows_are_rejected(bad):
 
 
 def test_make_row_validates_and_utc_now_is_iso_zulu():
-    assert make_row(run_id="r1", ts=TS, suite="s", subject="model", model="m", harness=None,
-                    metric="accuracy", value=1.0, n=1, ci95=None)["metric"] == "accuracy"
+    row = make_row(run_id="r1", ts=TS, suite="s", subject="model", model="m", harness=None,
+                   metric="accuracy", value=1.0, n=1, ci95=None)
+    assert row["metric"] == "accuracy"
+    assert row["commit"] is None and row["dirty"] is None  # E7: defaults when not passed
     assert utc_now_iso().endswith("Z")
+
+
+def test_make_row_carries_git_provenance_when_given():
+    row = make_row(run_id="r1", ts=TS, suite="s", subject="model", model="m", harness=None,
+                   metric="accuracy", value=1.0, n=1, ci95=None, commit="c" * 40, dirty=True)
+    assert row["commit"] == "c" * 40 and row["dirty"] is True
 
 
 def test_replace_run_suites_rewrites_only_that_run_and_suite(tmp_path):
@@ -230,6 +243,21 @@ def test_history_rows_and_report_render_from_a_summary():
 
     report = format_report(run_summary, run_summary)
     assert "harness_ops" in report and "+0.000" in report
+
+
+def test_history_rows_carry_the_runs_git_provenance():
+    """E7: commit/dirty are a per-RUN property (recorded once in run_summary), propagated onto
+    every history row that run produces, not per-suite or per-metric."""
+    items = [item("model_reasoning", "a", {"correct": True, "format_ok": True})]
+    block = summary.suite_summary("model_reasoning", items, [])
+    block.update({"subject": "model", "model": "qwen-test", "harness": None})
+    run_summary = {"run_id": "r1", "ts": TS, "suites": {"model_reasoning": block},
+                   "commit": "b" * 40, "dirty": True}
+    rows = summary.history_rows(run_summary)
+    assert rows and all(r["commit"] == "b" * 40 and r["dirty"] is True for r in rows)
+
+    report = format_report(run_summary)
+    assert "commit bbbbbbbbbbbb" in report and "DIRTY" in report
 
 
 def test_suite_registry_resolution():

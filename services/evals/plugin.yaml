@@ -1,7 +1,8 @@
 # Plugin manifest (data-only) - EVALS, the repeatable eval harness for the model behind `local-chat`
 # and for the Hermes harness. OPTIONAL, opt-in (`default: false`), profile `evals`.
 #
-# ONE-SHOT JOB, NOT A DAEMON. The container runs a CLI command and exits:
+# ONE-SHOT JOB, NOT A DAEMON. Launch a `run` through scripts/evals/run.sh (not `docker compose run`
+# directly - see GIT_COMMIT/GIT_DIRTY below and E7 in services/evals/README.md), which wraps:
 #   docker compose -p ordo --profile evals run --rm evals run --suites all --run-id <id>
 # so it declares `restart: "no"` (a finished run must never be restarted into the same run) and its
 # image CMD is `--help` (an accidental `up` prints usage and exits 0 instead of starting a run).
@@ -61,6 +62,18 @@ services:
       OPS_CONTROLLER_URL: http://ops-controller:9000
       N8N_URL: http://n8n:5678
       QDRANT_URL: http://qdrant:6333
+      # Same var rag-ingestion reads (services/rag/plugin.yaml) for the collection it upserts into,
+      # so the harness's RAG-leak safety check (runner._check_rag_leak) scans the collection the
+      # ingester actually writes, not a hardcoded default that could drift from it.
+      QDRANT_COLLECTION: ${RAG_COLLECTION:-documents}
+      # E7: git provenance of the mounted services/evals code. The image has no git binary by
+      # design, so these are computed host-side by scripts/evals/run.sh (real `git rev-parse HEAD` /
+      # `git status --porcelain -- services/evals`) and passed through from the invoking shell's
+      # environment, the same way compose already interpolates ${VAR} from outside a container.
+      # Empty when a caller bypasses the wrapper (e.g. a bare `docker compose run`): the runner then
+      # treats provenance as unknown and refuses to start without --allow-dirty (runner.py).
+      GIT_COMMIT: ${GIT_COMMIT:-}
+      GIT_DIRTY: ${GIT_DIRTY:-}
       EVALS_RESULTS_DIR: /results
       EVALS_VAULT_DIR: /vault
       EVALS_HERMES_STATE_DB: /hermes-home/state.db
@@ -79,11 +92,19 @@ services:
       - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/evals:/results
       # The shared vault, READ-ONLY, for out-of-band checks of what Hermes wrote...
       - ${MEMORY_VAULT_PATH:?MEMORY_VAULT_PATH must be set in ordo.yaml site}:/vault:ro
-      # ...except the `scratch/` folder, the one place the runner may write: it seeds notes
-      # for read-back tasks and deletes `scratch/<run-id>/` when a run finishes. (Named `scratch/`,
-      # not `eval/`, so a plausible-note-name policy in the harness_honesty dataset is not undone by
-      # an obviously-a-test-fixture folder name at the vault root.)
-      - ${MEMORY_VAULT_PATH:?MEMORY_VAULT_PATH must be set in ordo.yaml site}/scratch:/vault/scratch
+      # ...except the eval scratch folder (ordo_evals.checks.VAULT_EVAL_ROOT, currently
+      # `.ordo-scratch/`), the one place the runner may write: it seeds notes for read-back tasks and
+      # deletes `<root>/<run-id>/` when a run finishes. Dot-prefixed (not the round-1 `scratch/`, and
+      # not `eval/` before that) so it is excluded by rag-ingestion's existing hidden-path rule
+      # (services/rag/ingest.py's `_is_hidden`, which already skips `.obsidian/`/`.trash/`/`.git/` at
+      # any depth) with no ingester config change: rag-ingestion watches the WHOLE vault recursively,
+      # and without this a full harness_ops run would embed eval fixtures into the operator's Qdrant
+      # `documents` collection (E6). Verified live 2026-09-17: mcpvault's PathFilter only denies
+      # `.obsidian`/`.git`/`node_modules`/`.DS_Store`/`Thumbs.db` by name, so a `.ordo-scratch/` tree
+      # is not blocked from read/write/list through the memory-vault MCP either. Still non-signalling
+      # for the harness_honesty precondition: a dot-prefixed folder reads as tool/plugin-internal
+      # (like `.obsidian/`), not as an obviously-a-test-fixture name.
+      - ${MEMORY_VAULT_PATH:?MEMORY_VAULT_PATH must be set in ordo.yaml site}/.ordo-scratch:/vault/.ordo-scratch
       # Hermes's brain volume, READ-ONLY: state.db for trajectory metrics and `build-private`.
       # The same named volume services/hermes/agent.yaml mounts at /home/hermes/.hermes.
       - hermes-home:/hermes-home:ro

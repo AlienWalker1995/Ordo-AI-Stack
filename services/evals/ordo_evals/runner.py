@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ordo_evals import EVALS_VERSION, history, judge, summary
-from ordo_evals.checks import ProbeError
+from ordo_evals.checks import VAULT_EVAL_ROOT, ProbeError
 from ordo_evals.ids import validate_run_id
 from ordo_evals.jsonl import append_jsonl, read_jsonl, write_json, write_jsonl
 from ordo_evals.langfuse_sink import LangfuseSink, NullSink
@@ -66,8 +66,51 @@ def _post_item_scores(sink: Any, run_id: str, item: dict[str, Any]) -> None:
         sink.post_score(run_id, item["suite"], item["item_id"], item["trace_id"], name, value)
 
 
+def _check_rag_leak(probes: Any, notes: list[str]) -> list[str]:
+    """E6 safety net: even with rag-ingestion's hidden-path exclusion of VAULT_EVAL_ROOT, confirm no
+    Qdrant point's `source` is actually rooted under it. Ground truth being unreadable (rag/qdrant
+    not deployed, network hiccup) is recorded as a note, never as a run failure - only a CONFIRMED
+    leak fails the run, so this can never turn "we could not check" into a false failure."""
+    try:
+        leaked = probes.qdrant_scratch_leak_sources()
+    except ProbeError as exc:
+        notes.append(f"could not verify no RAG leak under {VAULT_EVAL_ROOT}/ ({exc})")
+        return []
+    if leaked:
+        notes.append(f"RAG LEAK: {len(leaked)} Qdrant point(s) ingested from under {VAULT_EVAL_ROOT}/, "
+                     f"e.g. {leaked[0]!r}")
+    return leaked
+
+
+def _provenance_gate(git_dirty: bool | None, allow_dirty: bool) -> str | None:
+    """E7: a refusal reason, or None if the run may proceed. Checked before ANY suite runs (and
+    before run_dir even exists) so a dirty or unprovenanced checkout can never produce a summary or
+    history row that looks clean. `git_dirty` (settings.git_dirty) is False only when
+    scripts/evals/run.sh confirmed a clean `services/evals` tree with the real host git; True means
+    it found uncommitted changes there; None means the run was not launched through that wrapper at
+    all (GIT_COMMIT/GIT_DIRTY unset) and provenance cannot be trusted either way."""
+    if git_dirty is False:
+        return None
+    if allow_dirty:
+        return None
+    if git_dirty is True:
+        return ("the mounted services/evals tree has uncommitted changes (dirty); pass --allow-dirty "
+                "to run anyway (recorded dirty: true in summary.json and every history row)")
+    return ("git provenance is unknown (GIT_COMMIT/GIT_DIRTY not set - invoke via "
+            "scripts/evals/run.sh, not `docker compose run` directly); pass --allow-dirty to run "
+            "anyway (recorded with a null commit/dirty)")
+
+
 def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None, seed: int,
-        no_langfuse: bool) -> int:
+        no_langfuse: bool, allow_dirty: bool = False) -> int:
+    # Checked first, before even the lazy imports below (some pull in the heavy optional Inspect-AI
+    # dependency): a refused run must never need to load a suite to be refused, and must leave no
+    # trace on disk (no run_dir).
+    refusal = _provenance_gate(settings.git_dirty, allow_dirty)
+    if refusal:
+        _log(f"refusing to start run {run_id}: {refusal}")
+        return 4
+
     from ordo_evals.hermes_client import HermesClient
     from ordo_evals.probes import LiveProbes
     from ordo_evals.suites.common import SuiteContext
@@ -79,7 +122,8 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
     run_dir.mkdir(parents=True, exist_ok=True)
     sink = make_sink(settings, no_langfuse)
     probes = LiveProbes(vault_dir=settings.vault_dir, ops_controller_url=settings.ops_controller_url,
-                        n8n_url=settings.n8n_url, qdrant_url=settings.qdrant_url)
+                        n8n_url=settings.n8n_url, qdrant_url=settings.qdrant_url,
+                        qdrant_collection=settings.qdrant_collection)
     ctx = SuiteContext(run_id=run_id, seed=seed, limit=limit, settings=settings, run_dir=run_dir, probes=probes)
     served_model = _served_model(probes, settings, ctx.notes)
     harness_identity = None
@@ -96,7 +140,9 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
         "run_id": run_id, "ts": history.utc_now_iso(), "evals_version": EVALS_VERSION, "seed": seed,
         "limit": limit, "model_alias": settings.model_name, "served_model": served_model,
         "langfuse": sink.enabled, "suites": {}, "skipped": {}, "notes": ctx.notes,
+        "commit": settings.git_commit, "dirty": settings.git_dirty,
     }
+    rag_leak: list[str] = []
     try:
         for suite in suites:
             module = load(suite)
@@ -135,11 +181,22 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
             _log(f"{suite}: {len(items)} items, {len(queue)} queued for the judge")
     finally:
         if any(SUBJECTS[s] == "harness" for s in suites):
+            rag_leak = _check_rag_leak(probes, ctx.notes)
+            if rag_leak:
+                run_summary["rag_leak_sources"] = rag_leak
             try:
                 probes.cleanup_run(run_id)
             except Exception as exc:  # never mask the run's own outcome
-                print(f"[ordo-evals] WARNING vault cleanup of eval/{run_id} failed: {exc}", file=sys.stderr)
+                print(f"[ordo-evals] WARNING vault cleanup of {VAULT_EVAL_ROOT}/{run_id} failed: {exc}",
+                      file=sys.stderr)
+            # ctx.notes / rag_leak_sources are only known after the last per-suite write_json call
+            # above, so persist the final summary once more here.
+            write_json(run_dir / "summary.json", run_summary)
         sink.flush()
+    if rag_leak:
+        _log(f"run {run_id} FAILED: RAG-leak safety check found {len(rag_leak)} Qdrant point(s) rooted "
+             f"under {VAULT_EVAL_ROOT}/ (see summary.json notes); this is an infra error, not a suite result")
+        return 3
     _log(f"run {run_id} complete: {run_dir}")
     return 0
 

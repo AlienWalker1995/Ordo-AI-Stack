@@ -54,4 +54,7 @@ norecursedirs = ["data", "models", "out", "secrets", "tmp*", ".git", "*.egg-info
 # retired media worker was removed with it, 2026-07-31 #133.)
 # services/evals is the eval harness package root (tests/evals imports `ordo_evals`); in the
 # container the same directory is bind-mounted at /app with PYTHONPATH=/app.
-pythonpath = ["services/v1-parity", "services/evals"]
+# services/rag lets tests/rag import `ingest` directly (services/rag/ingest.py), so the hidden-path
+# exclusion rule the E6 fix relies on (see tests/rag/test_ingest.py) is exercised against the real
+# module, not a copy.
+pythonpath = ["services/v1-parity", "services/evals", "services/rag"]
