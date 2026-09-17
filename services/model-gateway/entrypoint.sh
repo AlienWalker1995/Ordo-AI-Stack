@@ -63,4 +63,9 @@ cp /app/throughput_callback.py /tmp/throughput_callback.py
 # a silently empty tool set. Exits 2 on a missing/invalid fragment.
 python3 /app/merge_mcp_config.py /tmp/config.yaml "${MCP_SERVERS_FILE:-/config/mcp_servers.yaml}"
 
+# Plugin-dependent logging callbacks (e.g. `langfuse_otel` when the langfuse plugin is enabled).
+# The renderer sets LITELLM_EXTRA_CALLBACKS only when the plugin is on; unset/empty is a no-op.
+# Fail-open: a callback whose credentials are missing is skipped with a warning, never fatal.
+python3 /app/add_callbacks.py /tmp/config.yaml "${LITELLM_EXTRA_CALLBACKS:-}"
+
 exec litellm --config /tmp/config.yaml --host 0.0.0.0 --port 11435

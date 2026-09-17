@@ -82,9 +82,11 @@ environment:
   # Traces go DIRECTLY to the web service over the project network, never through the edge:
   # the SSO gate would 302 a non-browser client, and the ingest path needs no front door.
   HERMES_LANGFUSE_BASE_URL: ${HERMES_LANGFUSE_BASE_URL:-http://langfuse-web:3000}
-  # Environment tag on every trace, so a future second writer (or a staging stack pointed at the
-  # same project) is separable in the UI rather than mixed in.
-  HERMES_LANGFUSE_ENV: ordo
+  # Environment tag on every trace. The gateway ALSO traces every LLM call it serves, Hermes's
+  # included, under `gateway` (LiteLLM 1.100.1 has no OSS way to exclude one key from a callback),
+  # so this tag is what separates Hermes's richer turn/tool traces from the gateway's copy of the
+  # same generations. Filter dashboards by environment. See services/langfuse/README.md.
+  HERMES_LANGFUSE_ENV: hermes
   # Docker-secret _FILE pointers the entrypoint bridges to the plain env vars the app expects.
   DISCORD_BOT_TOKEN_FILE: /run/secrets/discord_token
   GITHUB_BACKUP_PAT_FILE: /run/secrets/github_backup_pat

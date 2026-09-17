@@ -14,9 +14,28 @@ All notable changes to this project are documented here. The format is loosely b
   sends turns, LLM calls and tool calls through its bundled `observability/langfuse` plugin
   (the SDK is now in the image and the plugin is enabled once a key is present); tracing is
   fail-open, with no `depends_on`, so Langfuse being off or down never affects the agent.
-  The plugin is the first `default: false` one, so `plugins: auto` will not enable it. LiteLLM's
-  own Langfuse callback is deliberately not enabled: it would double-count every generation
-  Hermes already reports. See `services/langfuse/README.md`.
+  The plugin is the first `default: false` one, so `plugins: auto` will not enable it. See
+  `services/langfuse/README.md`.
+- **Gateway-wide Langfuse tracing.** With the `langfuse` plugin enabled, `model-gateway` now sends
+  every LLM call it serves (Hermes, Open WebUI, n8n, edge clients) to Langfuse through LiteLLM's
+  `langfuse_otel` callback, one generation per call with input, output, usage, cost and the
+  virtual key alias (`litellm.key_alias`), under the environment `gateway`. The renderer adds the
+  callback and its env only while the plugin is enabled (`ordo/compose.py::GATEWAY_LANGFUSE_ENV`,
+  appended by the new `services/model-gateway/add_callbacks.py` entrypoint step), so the gateway
+  template never requires the plugin. Hermes's own traces move to the environment `hermes`
+  (was `ordo`). LiteLLM 1.100.1 has no open-source way to exclude one key from a callback, so
+  Hermes's LLM calls appear once in each environment: filter dashboards by environment.
+  LiteLLM's background health probes are kept out of the logging callbacks
+  (`model_info.health_check_params: {"no-log": true}` on every local deployment); they were
+  57 percent of all observations and still run for health-based routing.
+- **90-day retention for tracing data.** LiteLLM deletes spend-log rows older than 90 days daily
+  at 04:30 UTC (`maximum_spend_logs_retention_period` / `maximum_spend_logs_cleanup_cron`; the
+  daily aggregate spend tables are kept). The langfuse plugin gains `langfuse-retention`, a
+  digest-pinned, self-scheduling job (daily 04:45 UTC) that deletes Langfuse traces older than
+  `LANGFUSE_RETENTION_DAYS` (default 90, override from `site:`) through the public API, since
+  self-hosted retention is an Enterprise feature; and `langfuse-minio-lifecycle`, a one-shot
+  that sets a matching expiry rule on the `langfuse` MinIO bucket. Plugin services can now
+  declare a compose `restart:` policy (`no`, `on-failure`, `unless-stopped`).
 - **Electricity-derived per-token cost for local models.** `ordo.yaml`'s new optional `cost:`
   block (`usd_per_kwh`, `inference_watts`, `prompt_tokens_per_second`,
   `output_tokens_per_second`) derives a real `input_cost_per_token` / `output_cost_per_token`

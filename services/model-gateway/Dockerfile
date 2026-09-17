@@ -11,6 +11,7 @@ COPY litellm_config.yaml /app/config.template.yaml
 # config because LiteLLM resolves `callbacks:` module paths relative to the config file's dir.
 COPY throughput_callback.py /app/throughput_callback.py
 COPY merge_mcp_config.py /app/merge_mcp_config.py
+COPY add_callbacks.py /app/add_callbacks.py
 COPY bootstrap_keys.py /app/bootstrap_keys.py
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh

@@ -19,12 +19,13 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 from ordo import compose, wizard
 from ordo.catalog import Catalog
 from ordo.config import Source
-from ordo.plugins import PluginRegistry
+from ordo.plugins import PluginRegistry, PluginService
 from ordo.render import render
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -332,7 +333,9 @@ def test_hermes_reads_the_project_keys_with_an_empty_fallback():
     assert env["HERMES_LANGFUSE_PUBLIC_KEY"] == "${LANGFUSE_PUBLIC_KEY:-}"
     assert env["HERMES_LANGFUSE_SECRET_KEY"] == "${LANGFUSE_SECRET_KEY:-}"
     assert env["HERMES_LANGFUSE_BASE_URL"] == "${HERMES_LANGFUSE_BASE_URL:-http://langfuse-web:3000}"
-    assert env["HERMES_LANGFUSE_ENV"] == "ordo"
+    # `hermes`, not the gateway's `gateway`: the two writers trace the same LLM calls and are
+    # told apart only by environment.
+    assert env["HERMES_LANGFUSE_ENV"] == "hermes"
     assert "langfuse" not in agent_yaml.get("depends_on", {})
 
 
@@ -363,3 +366,78 @@ def test_app_healthchecks_probe_the_bound_address_not_localhost():
         probe = " ".join(svcs[name]["healthcheck"]["test"])
         assert "$(hostname)" in probe, f"{name} healthcheck must probe the address it binds"
         assert "localhost" not in probe, f"{name} healthcheck probes localhost, which is not bound"
+
+
+# ── retention (langfuse-retention + langfuse-minio-lifecycle) ──────────────────
+
+RETENTION_SERVICES = ("langfuse-retention", "langfuse-minio-lifecycle")
+
+
+def test_retention_days_default_is_scoped_to_its_two_consumers():
+    """90 days, as ONE compose default on both consumers, and NOT a derived .env key: every service
+    reads .env as an env_file, so a new .env key recreates the whole stack (GPU services included)."""
+    rc = render(_src(), CATALOG, REGISTRY)
+    assert "LANGFUSE_RETENTION_DAYS" not in rc.env
+    svcs = _compose(rc)
+    for name in RETENTION_SERVICES:
+        assert svcs[name]["environment"]["LANGFUSE_RETENTION_DAYS"] == "${LANGFUSE_RETENTION_DAYS:-90}"
+
+
+def test_site_can_override_the_retention_days():
+    rc = render(_src(site={"LANGFUSE_RETENTION_DAYS": "30"}), CATALOG, REGISTRY)
+    assert rc.env["LANGFUSE_RETENTION_DAYS"] == "30"
+
+
+def test_retention_services_render_pinned_behind_the_profile_with_no_ports():
+    svcs = _compose(render(_src(), CATALOG, REGISTRY))
+    for name in RETENTION_SERVICES:
+        assert svcs[name]["profiles"] == ["langfuse"]
+        assert "@sha256:" in svcs[name]["image"], f"{name} image is not digest-pinned"
+        assert "ports" not in svcs[name]
+        assert svcs[name]["security_opt"] == ["no-new-privileges:true"]
+
+
+def test_retention_job_runs_the_tracked_module_on_a_daily_schedule():
+    svc = _compose(render(_src(), CATALOG, REGISTRY))["langfuse-retention"]
+    assert svc["command"] == ["python", "/app/langfuse_retention.py", "--daemon"]
+    assert svc["restart"] == "unless-stopped"
+    assert svc["depends_on"]["langfuse-web"] == {"condition": "service_healthy"}
+    assert svc["environment"]["LANGFUSE_BASE_URL"] == "http://langfuse-web:3000"
+    assert svc["environment"]["LANGFUSE_PUBLIC_KEY"] == "${LANGFUSE_PUBLIC_KEY}"
+    assert svc["environment"]["LANGFUSE_SECRET_KEY"] == "${LANGFUSE_SECRET_KEY}"
+    assert svc["healthcheck"]["test"] == ["CMD", "python", "/app/langfuse_retention.py", "--healthcheck"]
+    mount = svc["volumes"][0]
+    assert mount.endswith("/services/langfuse/langfuse_retention.py:/app/langfuse_retention.py:ro")
+    assert (ROOT / "services" / "langfuse" / "langfuse_retention.py").is_file()
+
+
+def test_retention_job_reuses_the_stack_python_base_pin():
+    """One Python base digest to audit: the one ops-controller builds FROM."""
+    svc = _compose(render(_src(), CATALOG, REGISTRY))["langfuse-retention"]
+    digest = svc["image"].split("@", 1)[1]
+    dockerfile = (ROOT / "services" / "ops-controller" / "Dockerfile").read_text(encoding="utf-8")
+    assert f"FROM python@{digest}" in dockerfile
+
+
+def test_minio_lifecycle_is_an_idempotent_one_shot_on_the_minio_pin():
+    svcs = _compose(render(_src(), CATALOG, REGISTRY))
+    svc = svcs["langfuse-minio-lifecycle"]
+    assert svc["image"] == svcs["langfuse-minio"]["image"]
+    assert svc["restart"] == "on-failure"
+    assert svc["depends_on"]["langfuse-minio"] == {"condition": "service_healthy"}
+    script = svc["entrypoint"][-1]
+    # import REPLACES the lifecycle config (idempotent); `rule add` would append a duplicate each run
+    assert "mc ilm import langfuse/langfuse" in script and "rule add" not in script
+    assert '"ID":"ordo-langfuse-retention"' in script and '"Days":%s' in script
+    assert "mc ilm rule ls langfuse/langfuse" in script
+    # the secret reaches mc through the environment, never a command-line argument
+    assert svc["environment"]["LANGFUSE_MINIO_SECRET"] == "${LANGFUSE_MINIO_SECRET}"
+    assert "$$LANGFUSE_MINIO_SECRET" in script
+
+
+def test_plugin_service_restart_policy_is_validated():
+    assert PluginService.from_dict({"name": "x", "image": "i", "restart": "on-failure"}).restart == "on-failure"
+    assert PluginService.from_dict({"name": "x", "image": "i", "restart": False}).restart == "no"
+    assert PluginService.from_dict({"name": "x", "image": "i"}).restart == ""
+    with pytest.raises(ValueError, match="restart"):
+        PluginService.from_dict({"name": "x", "image": "i", "restart": "always"})

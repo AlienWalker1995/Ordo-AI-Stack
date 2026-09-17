@@ -310,7 +310,9 @@ class RenderedConfig:
             primary_gpu_uuid=(pri.uuid if pri else None),
             secondary_gpu_uuid=(sec.uuid if sec else None),
             gpu_claims={c.service: c for c in self.gpu_inventory()},
-            mcp_servers=self.mcp_servers)
+            mcp_servers=self.mcp_servers,
+            # Gateway-wide Langfuse tracing follows the plugin: on with it, absent without it.
+            langfuse_tracing="langfuse" in self.plugins_enabled)
 
     def write(self, out_dir: str | Path) -> None:
         out = Path(out_dir)
