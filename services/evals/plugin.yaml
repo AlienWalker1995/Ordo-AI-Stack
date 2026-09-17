@@ -1,0 +1,89 @@
+# Plugin manifest (data-only) - EVALS, the repeatable eval harness for the model behind `local-chat`
+# and for the Hermes harness. OPTIONAL, opt-in (`default: false`), profile `evals`.
+#
+# ONE-SHOT JOB, NOT A DAEMON. The container runs a CLI command and exits:
+#   docker compose -p ordo --profile evals run --rm evals run --suites all --run-id <id>
+# so it declares `restart: "no"` (a finished run must never be restarted into the same run) and its
+# image CMD is `--help` (an accidental `up` prints usage and exits 0 instead of starting a run).
+#
+# WHAT IT TALKS TO, all over the project network, none through the edge:
+#   - model-gateway:11435   the model suites call `local-chat` directly with the evals virtual key
+#   - agent:8642            the harness suites drive Hermes through its OpenAI-compatible API
+#                           server (enabled in services/hermes by HERMES_API_SERVER_KEY)
+#   - langfuse-web:3000     datasets, dataset runs and scores (the `hermes` project key pair)
+#   - ops-controller / n8n / qdrant   OUT-OF-BAND ground truth for harness checks: the runner
+#                           verifies what Hermes did itself and never trusts Hermes's claim
+# No Docker socket, no host port, no GPU. GPU renders are out of scope by construction: no suite
+# asks for image/video generation, and llamacpp-bound work runs at concurrency 1.
+#
+# PRIVACY: the repo is public. This dir holds code, generic datasets and schemas only. Anything
+# derived from the operator's data (the private domain set built from Hermes's state.db, run
+# outputs, the results history) lives under ${DATA_PATH}/evals, outside git. See README.md.
+id: evals
+name: Eval harness (model + Hermes)
+description: Repeatable evals of the local-chat model and the Hermes harness; judge queue files, Langfuse results, local history.
+default: false
+requires:
+  nvidia: false
+  ram_gb: 2
+provides: [evals]
+compose_profile: evals
+env:
+  EVALS_ENABLED: "1"
+secrets:
+  # The Hermes API server key. Declared HERE (not on the agent) so it exists in secrets.env only when
+  # this plugin is enabled; services/hermes/agent.yaml maps it onto API_SERVER_KEY with an empty
+  # fallback, which keeps the API server OFF on every stack that does not run evals.
+  - HERMES_API_SERVER_KEY
+  # The Langfuse project key pair (the langfuse plugin generates and declares the same two names;
+  # required_secrets dedupes). Listed here too so an evals-only render still asks for them.
+  - LANGFUSE_PUBLIC_KEY
+  - LANGFUSE_SECRET_KEY
+# The runner's own LiteLLM virtual key: chat (the model suites) + embeddings, and NO MCP servers.
+# The model suites measure the bare model; tools reach the model only through Hermes.
+litellm_key:
+  models: [local-chat, local-embed]
+  mcp_servers: []
+services:
+  - name: evals
+    # Project-built image (build context services/evals, pinned by its Dockerfile's base digest and
+    # its fully `==`-pinned requirements.txt). The image carries DEPENDENCIES ONLY: the tracked code
+    # and generic datasets are bind-mounted from the repo at /app, so a code change never runs a
+    # stale copy baked into an old image.
+    image: ordo/evals:latest
+    restart: "no"
+    env:
+      PYTHONUNBUFFERED: "1"
+      MODEL_BASE_URL: http://model-gateway:11435/v1
+      MODEL_NAME: local-chat
+      HERMES_API_URL: http://agent:8642/v1
+      LANGFUSE_HOST: http://langfuse-web:3000
+      OPS_CONTROLLER_URL: http://ops-controller:9000
+      N8N_URL: http://n8n:5678
+      QDRANT_URL: http://qdrant:6333
+      EVALS_RESULTS_DIR: /results
+      EVALS_VAULT_DIR: /vault
+      EVALS_HERMES_STATE_DB: /hermes-home/state.db
+      # Secrets: `${VAR}` references only, resolved from secrets.env at compose time. The two
+      # credentials the runner cannot work without have no fallback (an unset key fails loudly);
+      # the Langfuse pair falls back to "" so `--no-langfuse` runs work on a stack without langfuse,
+      # and the runner refuses to post with an empty pair.
+      LITELLM_KEY_EVALS: ${LITELLM_KEY_EVALS}
+      HERMES_API_SERVER_KEY: ${HERMES_API_SERVER_KEY}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+    volumes:
+      # ${VAR:?} (not :-.): tracked repo code must never resolve against a wrong/empty root.
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/services/evals:/app:ro
+      # Private datasets, run outputs and history.jsonl. Outside git by construction.
+      - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/evals:/results
+      # The shared vault, READ-ONLY, for out-of-band checks of what Hermes wrote...
+      - ${MEMORY_VAULT_PATH:?MEMORY_VAULT_PATH must be set in ordo.yaml site}:/vault:ro
+      # ...except the `eval/` scratch folder, the one place the runner may write: it seeds notes
+      # for read-back tasks and deletes `eval/<run-id>/` when a run finishes.
+      - ${MEMORY_VAULT_PATH:?MEMORY_VAULT_PATH must be set in ordo.yaml site}/eval:/vault/eval
+      # Hermes's brain volume, READ-ONLY: state.db for trajectory metrics and `build-private`.
+      # The same named volume services/hermes/agent.yaml mounts at /home/hermes/.hermes.
+      - hermes-home:/hermes-home:ro
+    security_opt: ["no-new-privileges:true"]
+    resources: {cpus: "2", memory: "4g"}

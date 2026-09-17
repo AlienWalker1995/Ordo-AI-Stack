@@ -52,4 +52,6 @@ norecursedirs = ["data", "models", "out", "secrets", "tmp*", ".git", "*.egg-info
 # services/ reorg import root: tests import the v1-parity dashboard package as
 # `from dashboard.X import Y` without editing any import statement. (A second entry for the
 # retired media worker was removed with it, 2026-07-31 #133.)
-pythonpath = ["services/v1-parity"]
+# services/evals is the eval harness package root (tests/evals imports `ordo_evals`); in the
+# container the same directory is bind-mounted at /app with PYTHONPATH=/app.
+pythonpath = ["services/v1-parity", "services/evals"]
