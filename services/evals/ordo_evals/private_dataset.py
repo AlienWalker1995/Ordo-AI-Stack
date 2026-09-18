@@ -164,9 +164,10 @@ def build_private_dataset(db_path: str | Path, n: int, seed: int) -> tuple[list[
 #   private_labels.jsonl        validated labels, one grade line per id (judge.validate_grades shape)
 #   private_label_queue.jsonl   candidates that have no label yet, in judge_queue.jsonl shape
 #
-# The labels themselves are stored as ordinary judge grade lines on the single "label" criterion
-# (judge.PRIVATE_LABEL_CRITERIA / judge.PRIVATE_LABEL_RUBRIC), so labelling reuses
-# judge.validate_grades / judge.merge_grades wholesale instead of a second validation path.
+# The labels themselves are stored as ordinary judge grade lines, two criteria per candidate
+# (judge.PRIVATE_LABEL_CRITERIA / judge.PRIVATE_LABEL_RUBRIC: "label" plus, since E11, "mutation" -
+# read_only or mutating), so labelling reuses judge.validate_grades / judge.merge_grades wholesale
+# instead of a second validation path. Each criterion is graded and re-graded independently.
 
 CANDIDATES_FILE = "datasets/private_candidates.jsonl"
 LABELS_FILE = "datasets/private_labels.jsonl"
@@ -176,6 +177,14 @@ LABEL_SELF_CONTAINED = "self_contained"
 LABEL_AGENT_STANDALONE = "agent_standalone"
 LABEL_CONVERSATION_DEPENDENT = "conversation_dependent"
 LABELS = (LABEL_SELF_CONTAINED, LABEL_AGENT_STANDALONE, LABEL_CONVERSATION_DEPENDENT)
+
+# E11: the second, independent labelling dimension (judge.PRIVATE_MUTATION) - would acting on this
+# candidate only read/inspect state, or would it change something. harness_domain sends Hermes only
+# agent_standalone-AND-read_only items; a mutating item never reaches it, no matter how it is
+# labelled on the "label" criterion.
+MUTATION_READ_ONLY = "read_only"
+MUTATION_MUTATING = "mutating"
+MUTATIONS = (MUTATION_READ_ONLY, MUTATION_MUTATING)
 
 
 def merge_candidates(existing: list[dict[str, Any]], new: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -193,8 +202,24 @@ def labels_by_id(label_rows: list[dict[str, Any]]) -> dict[str, str]:
     return {row["item_id"]: row["score"] for row in label_rows if row.get("criterion") == "label"}
 
 
+def mutations_by_id(label_rows: list[dict[str, Any]]) -> dict[str, str]:
+    """E11: the current mutation label for every id that has one (a grade line's `score` on the
+    `mutation` criterion). Same shape as labels_by_id, reading the other criterion out of the same
+    private_labels.jsonl rows."""
+    return {row["item_id"]: row["score"] for row in label_rows if row.get("criterion") == "mutation"}
+
+
 def items_with_label(candidates: list[dict[str, Any]], labels: dict[str, str], label: str) -> list[dict[str, Any]]:
     return [c for c in candidates if labels.get(c["id"]) == label]
+
+
+def items_with_label_and_mutation(candidates: list[dict[str, Any]], labels: dict[str, str],
+                                  mutations: dict[str, str], *, label: str, mutation: str) -> list[dict[str, Any]]:
+    """E11: candidates that carry BOTH a given "label" value and a given "mutation" value. Used by
+    harness_domain to select agent_standalone AND read_only items only - a candidate labelled
+    agent_standalone but mutating (or not yet mutation-labelled at all) is excluded, same as an
+    unlabeled or conversation_dependent one."""
+    return [c for c in candidates if labels.get(c["id"]) == label and mutations.get(c["id"]) == mutation]
 
 
 def label_counts(candidates: list[dict[str, Any]], labels: dict[str, str]) -> dict[str, int]:
@@ -210,18 +235,38 @@ def label_counts(candidates: list[dict[str, Any]], labels: dict[str, str]) -> di
     return counts
 
 
+def mutation_counts(candidates: list[dict[str, Any]], labels: dict[str, str], mutations: dict[str, str],
+                    label: str) -> dict[str, int]:
+    """E11: counts only, never content - among candidates carrying `label` (e.g. agent_standalone),
+    how many are read_only, mutating, or still unlabeled on the mutation criterion. What
+    harness_domain reports in its run notes so the mutating exclusion stays visible, exactly like
+    label_counts makes the conversation_dependent exclusion visible."""
+    relevant = [c for c in candidates if labels.get(c["id"]) == label]
+    counts = {m: 0 for m in MUTATIONS}
+    counts["unlabeled"] = 0
+    for c in relevant:
+        mutation = mutations.get(c["id"])
+        counts[mutation if mutation in counts else "unlabeled"] += 1
+    counts["total"] = len(relevant)
+    return counts
+
+
 def _label_queue_source(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [judge.queue_entry(run_id="private-dataset", suite="private_domain", item_id=c["id"],
                               criteria=judge.PRIVATE_LABEL_CRITERIA, rubric=judge.PRIVATE_LABEL_RUBRIC,
                               input_text=c["input"], output_text="") for c in candidates]
 
 
-def pending_label_queue(candidates: list[dict[str, Any]], labels: dict[str, str]) -> list[dict[str, Any]]:
-    """judge_queue.jsonl-shaped entries for every candidate that has no label yet. Regenerated fresh
-    (never appended) each time `build-private` or `ingest-labels` runs, so a candidate that already
-    has a label never reappears here - the idempotence `build-private --source hermes-state` needs to
-    be safely re-run as new operator asks accrue."""
-    return _label_queue_source([c for c in candidates if c["id"] not in labels])
+def pending_label_queue(candidates: list[dict[str, Any]], labels: dict[str, str],
+                        mutations: dict[str, str]) -> list[dict[str, Any]]:
+    """judge_queue.jsonl-shaped entries for every candidate missing EITHER label (E11: a candidate
+    graded on "label" but not yet on "mutation", or vice versa, stays in the queue - both criteria
+    are queued together, so the judge is asked to fill in whatever this candidate is still missing).
+    Regenerated fresh (never appended) each time `build-private` or `ingest-labels` runs, so a fully
+    labelled candidate never reappears here - the idempotence `build-private --source hermes-state`
+    needs to be safely re-run as new operator asks accrue, and a later re-label of either dimension
+    on an already-labelled candidate is a normal ingest-labels call, not a queue re-add."""
+    return _label_queue_source([c for c in candidates if c["id"] not in labels or c["id"] not in mutations])
 
 
 def validate_labels(lines: list[dict[str, Any]],

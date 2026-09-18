@@ -66,10 +66,33 @@ def test_session_metrics_cover_the_compaction_child(state_db):
     assert metrics["tool_errors"] == 1
     assert metrics["prompt_tokens"] == 1290 and metrics["completion_tokens"] == 350
     assert metrics["db_span_s"] == 12.0
+    # E10 (round-4 fix): the most recent assistant message that actually carries text - the two
+    # tool-call-only assistant turns in eval-1 have empty content and are skipped.
+    assert metrics["last_assistant_message"] == "RESULT: done"
 
 
 def test_missing_session_is_reported_not_invented(state_db):
     assert session_metrics(state_db, "no-such-session") == {"found": False, "session_id": "no-such-session"}
+
+
+def test_last_assistant_message_is_none_when_every_assistant_turn_is_tool_calls_only(tmp_path):
+    """E10: a session that timed out mid-tool-loop, before ever producing a text reply, must not be
+    mistaken for one that has something to recover - last_assistant_message stays None."""
+    path = tmp_path / "state.db"
+    connection = sqlite3.connect(path)
+    connection.executescript(SCHEMA)
+    connection.execute("INSERT INTO sessions (id, source, model, started_at, input_tokens, output_tokens) "
+                       "VALUES ('eval-2', 'api_server', 'local-chat', 2000.0, 500, 50)")
+    connection.executemany(
+        "INSERT INTO messages (session_id, role, content, tool_calls, timestamp) VALUES (?, ?, ?, ?, ?)",
+        [("eval-2", "user", "do the thing", None, 2000.0),
+         ("eval-2", "assistant", "", json.dumps([tool_call("terminal", command="ls")]), 2001.0),
+         ("eval-2", "tool", json.dumps({"exit_code": 0, "output": "ok"}), None, 2002.0)])
+    connection.commit()
+    connection.close()
+    metrics = session_metrics(path, "eval-2")
+    assert metrics["found"] is True
+    assert metrics["last_assistant_message"] is None
 
 
 @pytest.mark.parametrize(("content", "is_error"), [

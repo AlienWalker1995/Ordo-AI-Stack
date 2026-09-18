@@ -44,6 +44,11 @@ def label_row(item_id, label, rationale="r"):
             "rationale": rationale, "suite": "private_domain"}
 
 
+def mutation_row(item_id, mutation, rationale="r"):
+    return {"item_id": item_id, "criterion": "mutation", "score": mutation, "scale": judge.PRIVATE_MUTATION,
+            "rationale": rationale, "suite": "private_domain"}
+
+
 def test_labels_by_id_reads_only_the_label_criterion():
     rows = [label_row("pd-aaa", "self_contained"), {"item_id": "pd-bbb", "criterion": "other", "score": "x"}]
     assert pd.labels_by_id(rows) == {"pd-aaa": "self_contained"}
@@ -63,19 +68,65 @@ def test_label_counts_reports_every_label_plus_unlabeled_and_total():
                       "unlabeled": 1, "total": 3}
 
 
+# ── E11: the second, independent "mutation" labelling dimension (read_only / mutating) ───────
+
+def test_mutations_by_id_reads_only_the_mutation_criterion():
+    rows = [mutation_row("pd-aaa", "read_only"), {"item_id": "pd-bbb", "criterion": "label", "score": "x"}]
+    assert pd.mutations_by_id(rows) == {"pd-aaa": "read_only"}
+
+
+def test_items_with_label_and_mutation_requires_both_dimensions_to_match():
+    """This is the exact filter harness_domain.run() builds its Inspect dataset from - it is what
+    keeps a mutating-labelled item from ever reaching the suite (E11 safety fix)."""
+    labels = {"pd-aaa": "agent_standalone", "pd-bbb": "agent_standalone", "pd-ccc": "agent_standalone"}
+    mutations = {"pd-aaa": "read_only", "pd-bbb": "mutating"}  # pd-ccc has no mutation label at all
+    selected = pd.items_with_label_and_mutation(CANDIDATES, labels, mutations,
+                                                label=pd.LABEL_AGENT_STANDALONE, mutation=pd.MUTATION_READ_ONLY)
+    assert [c["id"] for c in selected] == ["pd-aaa"]
+
+
+def test_mutation_counts_reports_read_only_mutating_unlabeled_and_total_among_one_label():
+    labels = {"pd-aaa": "agent_standalone", "pd-bbb": "agent_standalone", "pd-ccc": "self_contained"}
+    mutations = {"pd-aaa": "read_only"}  # pd-bbb unlabeled; pd-ccc is not agent_standalone at all
+    counts = pd.mutation_counts(CANDIDATES, labels, mutations, pd.LABEL_AGENT_STANDALONE)
+    assert counts == {"read_only": 1, "mutating": 0, "unlabeled": 1, "total": 2}
+
+
 # ── the pending-label queue: judge_queue.jsonl-shaped, regenerated fresh each time ──
 
-def test_pending_label_queue_only_lists_unlabelled_candidates_in_queue_entry_shape():
-    queue = pd.pending_label_queue(CANDIDATES, {"pd-aaa": "self_contained"})
-    assert {entry["item_id"] for entry in queue} == {"pd-bbb", "pd-ccc"}
+def test_pending_label_queue_only_lists_candidates_missing_either_dimension_in_queue_entry_shape():
+    """E11: a candidate needs BOTH the label and the mutation criterion filled before it drops out of
+    the queue - pd-aaa here has a label but no mutation grade yet, so it must stay queued."""
+    queue = pd.pending_label_queue(CANDIDATES, {"pd-aaa": "self_contained"}, {})
+    assert {entry["item_id"] for entry in queue} == {"pd-aaa", "pd-bbb", "pd-ccc"}
     entry = queue[0]
     assert set(entry) == {"run_id", "suite", "item_id", "criteria", "rubric", "input", "output", "context"}
     assert entry["criteria"] == judge.PRIVATE_LABEL_CRITERIA
 
 
-def test_pending_label_queue_is_idempotent_once_everything_is_labelled():
+def test_pending_label_queue_is_idempotent_once_everything_is_labelled_on_both_dimensions():
     labels = {c["id"]: pd.LABEL_SELF_CONTAINED for c in CANDIDATES}
-    assert pd.pending_label_queue(CANDIDATES, labels) == []
+    mutations = {c["id"]: pd.MUTATION_READ_ONLY for c in CANDIDATES}
+    assert pd.pending_label_queue(CANDIDATES, labels, mutations) == []
+
+
+def test_relabelling_an_existing_candidate_on_either_dimension_works_independently():
+    """E11: re-labelling "mutation" for a candidate that already has a "label" grade must not disturb
+    that label, and vice versa - each criterion is validated and merged independently."""
+    first = pd.validate_labels(
+        [{"item_id": "pd-aaa", "criterion": "label", "score": "agent_standalone", "rationale": "r"}], CANDIDATES)[0]
+    stored = pd.merge_labels([], first)
+    mutation_grade = pd.validate_labels(
+        [{"item_id": "pd-aaa", "criterion": "mutation", "score": "mutating", "rationale": "r"}], CANDIDATES)[0]
+    stored = pd.merge_labels(stored, mutation_grade)
+    assert pd.labels_by_id(stored) == {"pd-aaa": "agent_standalone"}
+    assert pd.mutations_by_id(stored) == {"pd-aaa": "mutating"}
+
+    relabel_mutation = pd.validate_labels(
+        [{"item_id": "pd-aaa", "criterion": "mutation", "score": "read_only", "rationale": "r"}], CANDIDATES)[0]
+    stored = pd.merge_labels(stored, relabel_mutation)
+    assert pd.labels_by_id(stored) == {"pd-aaa": "agent_standalone"}  # unchanged
+    assert pd.mutations_by_id(stored) == {"pd-aaa": "read_only"}      # replaced
 
 
 # ── validation and merge (reused wholesale from judge.py) ───────────────────────
@@ -136,4 +187,10 @@ def test_agent_domain_criteria_extends_domain_criteria_with_used_tools():
 def test_private_label_is_a_registered_scale_with_exactly_three_values():
     assert judge.SCALE_VALUES[judge.PRIVATE_LABEL] == {
         "self_contained", "agent_standalone", "conversation_dependent"}
-    assert judge.PRIVATE_LABEL_CRITERIA == {"label": judge.PRIVATE_LABEL}
+
+
+def test_private_mutation_is_a_registered_scale_with_exactly_two_values():
+    """E11: the two labelling criteria are queued together on every private domain candidate."""
+    assert judge.SCALE_VALUES[judge.PRIVATE_MUTATION] == {"read_only", "mutating"}
+    assert judge.PRIVATE_LABEL_CRITERIA == {"label": judge.PRIVATE_LABEL, "mutation": judge.PRIVATE_MUTATION}
+    assert "mutation" in judge.PRIVATE_LABEL_RUBRIC and "read_only" in judge.PRIVATE_LABEL_RUBRIC

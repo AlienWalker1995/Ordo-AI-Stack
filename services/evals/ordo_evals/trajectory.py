@@ -97,9 +97,16 @@ def session_metrics(db_path: str | Path, session_id: str) -> dict[str, Any]:
     repeated = 0
     turns = 0
     tool_errors = 0
+    last_assistant_message: str | None = None
     for message in messages:
         if message["role"] == "assistant":
             turns += 1
+            if message["content"]:
+                # E10: the assistant's own text, kept even when the turn also made tool calls, so a
+                # timed-out item still has SOMETHING to score/judge - see suites/harness.py's
+                # call_hermes, which backfills HermesTurn.text from this when the HTTP response never
+                # came back but the session was alive.
+                last_assistant_message = message["content"]
             try:
                 calls = json.loads(message["tool_calls"]) if message["tool_calls"] else []
             except json.JSONDecodeError:
@@ -128,4 +135,5 @@ def session_metrics(db_path: str | Path, session_id: str) -> dict[str, Any]:
         "prompt_tokens": sum(int(s["input_tokens"] or 0) for s in sessions),
         "completion_tokens": sum(int(s["output_tokens"] or 0) for s in sessions),
         "db_span_s": round(max(timestamps) - started, 3) if timestamps else None,
+        "last_assistant_message": last_assistant_message,
     }

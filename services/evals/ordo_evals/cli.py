@@ -93,19 +93,26 @@ def main(argv: list[str] | None = None) -> int:
         all_candidates = pd.merge_candidates(existing_candidates, items)
         write_jsonl(candidates_path, all_candidates)
 
-        labels = pd.labels_by_id(read_jsonl(labels_path) if labels_path.is_file() else [])
-        queue = pd.pending_label_queue(all_candidates, labels)
+        existing_labels = read_jsonl(labels_path) if labels_path.is_file() else []
+        labels = pd.labels_by_id(existing_labels)
+        mutations = pd.mutations_by_id(existing_labels)  # E11
+        queue = pd.pending_label_queue(all_candidates, labels, mutations)
         write_jsonl(queue_path, queue)
         counts = pd.label_counts(all_candidates, labels)
-        write_json(candidates_path.with_suffix(".meta.json"), {**stats, "counts": counts})
+        mutation_counts = pd.mutation_counts(all_candidates, labels, mutations, pd.LABEL_AGENT_STANDALONE)
+        write_json(candidates_path.with_suffix(".meta.json"), {**stats, "counts": counts,
+                                                                "agent_standalone_mutation_counts": mutation_counts})
 
-        # E2b: counts only, never content - this sample still needs a judge label (self_contained /
-        # agent_standalone / conversation_dependent) before model_domain or harness_domain use it.
+        # E2b/E11: counts only, never content - this sample still needs a judge label (self_contained /
+        # agent_standalone / conversation_dependent, and for agent_standalone items, read_only /
+        # mutating) before model_domain or harness_domain use it.
         print(f"[ordo-evals] sampled {stats['selected']} of {stats['candidates']} candidate ask(s) "
               f"(requested {stats['requested']}, seed {stats['seed']}); candidate pool now "
               f"{counts['total']} ({counts['self_contained']} self_contained, "
               f"{counts['agent_standalone']} agent_standalone, "
               f"{counts['conversation_dependent']} conversation_dependent, {counts['unlabeled']} unlabeled); "
+              f"of the agent_standalone items, {mutation_counts['read_only']} read_only, "
+              f"{mutation_counts['mutating']} mutating, {mutation_counts['unlabeled']} not yet mutation-labelled; "
               f"wrote {len(queue)} pending label request(s) to {queue_path}")
         return 0 if all_candidates else 1
 
@@ -130,11 +137,15 @@ def main(argv: list[str] | None = None) -> int:
         merged = pd.merge_labels(read_jsonl(labels_path) if labels_path.is_file() else [], valid)
         write_jsonl(labels_path, merged)
         labels = pd.labels_by_id(merged)
-        write_jsonl(queue_path, pd.pending_label_queue(candidates, labels))
+        mutations = pd.mutations_by_id(merged)  # E11
+        write_jsonl(queue_path, pd.pending_label_queue(candidates, labels, mutations))
         counts = pd.label_counts(candidates, labels)
+        mutation_counts = pd.mutation_counts(candidates, labels, mutations, pd.LABEL_AGENT_STANDALONE)
         print(f"[ordo-evals] ingested {len(valid)} label(s); candidate pool now {counts['total']} "
               f"({counts['self_contained']} self_contained, {counts['agent_standalone']} agent_standalone, "
-              f"{counts['conversation_dependent']} conversation_dependent, {counts['unlabeled']} unlabeled)")
+              f"{counts['conversation_dependent']} conversation_dependent, {counts['unlabeled']} unlabeled); "
+              f"of the agent_standalone items, {mutation_counts['read_only']} read_only, "
+              f"{mutation_counts['mutating']} mutating, {mutation_counts['unlabeled']} not yet mutation-labelled")
         return 0
 
     if args.command == "report":
