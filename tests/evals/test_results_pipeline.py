@@ -191,6 +191,23 @@ def test_harness_ops_separates_the_claim_from_the_artifact():
     assert metrics["wall_time_s_mean"]["ci95"][0] >= 0.0
 
 
+def test_harness_ops_reports_did_not_converge_rate_and_never_treats_it_as_infra_error():
+    """E10 (round-4 fix): a did_not_converge item (the per-item budget or a client-level timeout
+    fired, but the session was recovered from state.db) is a real, scored result - it must count
+    toward n and toward did_not_converge_rate, never toward infra_errors."""
+    items = [
+        item("harness_ops", "ok", {"artifact_ok": True, "claimed_done": True, "check_error": False,
+                                   "did_not_converge": False}),
+        item("harness_ops", "recovered", {"artifact_ok": True, "claimed_done": True, "check_error": False,
+                                          "did_not_converge": True}),
+        item("harness_ops", "lost", {}, infra_error=True, error="ReadTimeout"),
+    ]
+    metrics = summary.suite_summary("harness_ops", items, [])["metrics"]
+    assert metrics["did_not_converge_rate"]["value"] == pytest.approx(0.5) and metrics["did_not_converge_rate"]["n"] == 2
+    assert metrics["infra_errors"]["value"] == 1
+    assert metrics["artifact_ok_rate"]["value"] == 1.0  # the recovered item still scores normally
+
+
 def test_honesty_metrics_exclude_failed_preconditions_and_count_unresolved_ambiguity():
     items = [
         item("harness_honesty", "h1", {"claim": honesty.REPORTED_FAILURE, "precondition_ok": True}),
@@ -208,6 +225,18 @@ def test_honesty_metrics_exclude_failed_preconditions_and_count_unresolved_ambig
     with_judge = summary.suite_summary("harness_honesty", items, graded)["metrics"]
     assert with_judge["honesty_rate"]["value"] == pytest.approx(2 / 3)
     assert with_judge["ambiguous_unresolved"]["value"] == 0
+
+
+def test_harness_honesty_reports_did_not_converge_rate_too():
+    """E10: every harness suite reports did_not_converge_rate, not just harness_ops."""
+    items = [
+        item("harness_honesty", "h1", {"claim": honesty.REPORTED_FAILURE, "precondition_ok": True,
+                                       "did_not_converge": False}),
+        item("harness_honesty", "h2", {"claim": honesty.REPORTED_FAILURE, "precondition_ok": True,
+                                       "did_not_converge": True}),
+    ]
+    metrics = summary.suite_summary("harness_honesty", items, [])["metrics"]
+    assert metrics["did_not_converge_rate"]["value"] == pytest.approx(0.5)
 
 
 def test_domain_metrics_appear_only_once_the_judge_has_graded():
@@ -278,6 +307,20 @@ def test_harness_domain_metrics_add_a_used_tools_pass_rate_alongside_the_domain_
     assert metrics["judge.correctness"]["value"] == 1.0 and metrics["judge.correctness"]["n"] == 1
     assert metrics["judge.used_tools_pass_rate"]["value"] == 0.5
     assert metrics["judge.used_tools_pass_rate"]["n"] == 2
+
+
+def test_harness_domain_reports_did_not_converge_rate_but_model_domain_never_does():
+    """E10: did_not_converge_rate is a HARNESS-only metric - model_domain shares harness_domain's
+    _judged machinery but has no Hermes turn that could ever time out, so it must never carry it."""
+    items = [
+        item("harness_domain", "pd-1", {"did_not_converge": False}),
+        item("harness_domain", "pd-2", {"did_not_converge": True}),
+    ]
+    metrics = summary.suite_summary("harness_domain", items, [])["metrics"]
+    assert metrics["did_not_converge_rate"]["value"] == pytest.approx(0.5)
+
+    model_items = [item("model_domain", "pd-1", {}), item("model_domain", "pd-2", {})]
+    assert "did_not_converge_rate" not in summary.suite_summary("model_domain", model_items, [])["metrics"]
 
 
 def test_suite_registry_resolution():

@@ -36,6 +36,7 @@ class Settings:
     hermes_state_db: Path
     datasets_dir: Path
     hermes_timeout_s: float
+    hermes_item_budget_s: float
     model_max_tokens: int | None
 
     @classmethod
@@ -68,8 +69,16 @@ class Settings:
             hermes_state_db=Path(_env("EVALS_HERMES_STATE_DB", "/hermes-home/state.db")),
             datasets_dir=Path(_env("EVALS_DATASETS_DIR", str(PACKAGE_ROOT / "datasets"))),
             # A Hermes turn on the local model can legitimately take many minutes (tool loops,
-            # long prefill); the Hermes gateway's own turn cap is 3600s.
+            # long prefill); the Hermes gateway's own turn cap is 3600s. This is the client's own
+            # (httpx-level) outer ceiling - see hermes_item_budget_s below for the budget that
+            # actually governs a normal run.
             hermes_timeout_s=float(_env("EVALS_HERMES_TIMEOUT_S", "3600")),
+            # E10 (round-4 fix): a per-item wall-clock budget applied around the Hermes call itself
+            # (suites/harness.py's call_hermes), well inside hermes_timeout_s above. On a real agent
+            # this is expected to bind before the httpx-level timeout does; when it fires the item is
+            # recovered from state.db and scored `did_not_converge` (a real result), not thrown away
+            # as an infra error - see hermes_client.HermesTurn's error_kind docstring.
+            hermes_item_budget_s=float(_env("EVALS_HERMES_ITEM_BUDGET_S", "900")),
             # Unset = the deployment's own output cap (llama.cpp n_predict), i.e. the model as deployed.
             model_max_tokens=int(max_tokens) if max_tokens else None,
         )

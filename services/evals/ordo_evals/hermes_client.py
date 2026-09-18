@@ -12,7 +12,10 @@ Contract used, verified against that source:
   * `X-Hermes-Session-Key: <key>` scopes long-term memory; the runner sends one key per run so eval
     turns never share a memory scope with the operator's channels.
   * failure shapes: 502 `{"error": {..., "code": "agent_incomplete"}}` when the agent produced no
-    text; 200 with a `hermes` block when a run was partial/failed but produced some text.
+    text; 200 with a `hermes` block when a run was partial/failed but produced some text; a client
+    timeout (E10 round-4 fix: `HermesTurn.error_kind == "timeout"`) when the client gave up waiting -
+    the session may still be alive in Hermes's state.db, so callers recover it there rather than
+    discarding the item as an infra error (see suites/harness.py's call_hermes).
 """
 from __future__ import annotations
 
@@ -32,10 +35,19 @@ class HermesTurn:
     usage: dict[str, Any] = dataclasses.field(default_factory=dict)
     hermes: dict[str, Any] = dataclasses.field(default_factory=dict)
     error: str | None = None
-    # "transport": the runner never got an answer from Hermes (connection refused, timeout, 401);
+    # "transport": the runner never got an answer from Hermes (connection refused, 401, 5xx);
     #              excluded from harness quality metrics and counted as an infra error.
+    # "timeout":   the client gave up waiting (a per-item wall-clock budget, or the transport's own
+    #              timeout - see suites/harness.py's call_hermes, E10 round-4 fix). NOT an infra
+    #              error: the caller recovers the session from Hermes's state.db by session_id and
+    #              scores it a real result (did_not_converge), because the agent was often still
+    #              alive and had reached an answer.
     # "agent":     Hermes answered with a failure; that IS a harness result.
     error_kind: str | None = None
+    # E10: True when error_kind == "timeout" - the client stopped waiting rather than Hermes ever
+    # reporting back. Carried through to the item's metadata for visibility, alongside wall_time_s
+    # (the elapsed time at which the client gave up).
+    budget_exceeded: bool = False
 
 
 class HermesClient:
@@ -71,6 +83,12 @@ class HermesClient:
             async with httpx.AsyncClient(timeout=self._timeout, headers=headers) as client:
                 response = await client.post(f"{self._base_url}/chat/completions",
                                              json={"model": model, "messages": messages, "stream": False})
+        except httpx.TimeoutException as exc:
+            # E10: a timeout is not "transport unreachable" - Hermes may well still be working the
+            # turn. Kept distinct so the caller (suites/harness.py's call_hermes) always attempts a
+            # state.db recovery for it, unlike a genuine transport failure below.
+            return HermesTurn(None, None, session_id, round(time.monotonic() - started, 3),
+                              error=f"{type(exc).__name__}: {exc}", error_kind="timeout", budget_exceeded=True)
         except httpx.HTTPError as exc:
             return HermesTurn(None, None, session_id, round(time.monotonic() - started, 3),
                               error=f"{type(exc).__name__}: {exc}", error_kind="transport")

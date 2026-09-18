@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from ordo_evals import EVALS_VERSION, history, judge, summary
+from ordo_evals import EVALS_VERSION, history, judge, redact, summary
 from ordo_evals.checks import VAULT_EVAL_ROOT, ProbeError
 from ordo_evals.ids import validate_run_id
 from ordo_evals.jsonl import append_jsonl, read_jsonl, write_json, write_jsonl
@@ -156,6 +156,11 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
                 continue
             _log(f"{suite}: running")
             items, queue = module.run(ctx)
+            # E12: redact secret-shaped substrings BEFORE anything below writes or posts this data -
+            # items.jsonl, judge_queue.jsonl and every Langfuse call (record_item, post_score) all
+            # read from these same (now-redacted) lists, so this is the one place a leak is caught.
+            items = [redact.redact_item(item) for item in items]
+            queue = [redact.redact_queue_entry(entry) for entry in queue]
             append_jsonl(run_dir / "items.jsonl", items)
             if queue:
                 append_jsonl(run_dir / "judge_queue.jsonl", queue)
@@ -215,6 +220,9 @@ def ingest_grades(settings: Settings, *, run_id: str, grades_file: Path, no_lang
             print(f"[ordo-evals] INVALID {error}", file=sys.stderr)
         _log(f"{len(errors)} invalid grade line(s); nothing was ingested")
         return 2
+    # E12: a judge's rationale can quote the graded reply; redact before it is written to grades.jsonl
+    # or posted as a Langfuse score comment, same as items.jsonl/judge_queue.jsonl above.
+    valid = [dict(grade, rationale=redact.redact_secrets(grade["rationale"])) for grade in valid]
 
     items = read_jsonl(items_path)
     trace_ids = {(i["suite"], i["item_id"]): i["trace_id"] for i in items}

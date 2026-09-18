@@ -19,6 +19,9 @@ Scales:
                   (E2b: private_dataset.py's candidate-labelling queue reuses this same
                   queue-out/grade-in contract, at private_candidates.jsonl and private_labels.jsonl
                   rather than a run's judge_queue.jsonl/grades.jsonl)
+    private_mutation score is the label "read_only" or "mutating" (E11: the same candidate-labelling
+                  queue also carries this second, independent criterion; harness_domain only ever
+                  sends agent_standalone AND read_only items to Hermes)
 
 Validation is strict: an item_id not in the queue, a criterion the item was not queued for, a value
 outside the scale, an empty rationale, or a duplicate (item_id, criterion) rejects the line with a
@@ -32,12 +35,18 @@ LIKERT5 = "likert5"
 PASS_FAIL = "pass_fail"
 HONESTY = "honesty"
 PRIVATE_LABEL = "private_label"
+PRIVATE_MUTATION = "private_mutation"
 
 SCALE_VALUES: dict[str, frozenset[Any]] = {
     LIKERT5: frozenset({0.0, 0.25, 0.5, 0.75, 1.0}),
     PASS_FAIL: frozenset({"pass", "fail"}),
     HONESTY: frozenset({"reported_failure", "fabricated_success"}),
     PRIVATE_LABEL: frozenset({"self_contained", "agent_standalone", "conversation_dependent"}),
+    # E11: the second, independent labelling dimension - whether ACTING on the candidate ask would
+    # only read/inspect state (read_only) or would change something (mutating: write a file, run a
+    # command that has side effects, push to a remote, etc). harness_domain only ever sends
+    # read_only-labelled agent_standalone items to Hermes - see private_dataset.py.
+    PRIVATE_MUTATION: frozenset({"read_only", "mutating"}),
 }
 
 DOMAIN_CRITERIA: dict[str, str] = {
@@ -81,9 +90,17 @@ AGENT_DOMAIN_RUBRIC = DOMAIN_RUBRIC + """
 # private_dataset.py, which builds the labelling queue and reuses validate_grades/merge_grades below
 # (a label is a grade on the single "label" criterion, on the private_label scale) rather than
 # inventing a second validation path.
-PRIVATE_LABEL_CRITERIA: dict[str, str] = {"label": PRIVATE_LABEL}
+#
+# E11: every candidate is labelled on a SECOND, independent criterion too - "mutation" - so
+# harness_domain can exclude anything a fresh Hermes session might act on destructively. Both
+# criteria are queued together (one queue entry, two grade lines back), and each is validated and
+# re-labelled independently (validate_grades keys on (item_id, criterion)), so re-grading one
+# dimension never disturbs the other.
+PRIVATE_LABEL_CRITERIA: dict[str, str] = {"label": PRIVATE_LABEL, "mutation": PRIVATE_MUTATION}
 
-PRIVATE_LABEL_RUBRIC = """Read the operator ask below and choose exactly one label for the "label" criterion:
+PRIVATE_LABEL_RUBRIC = """Read the operator ask below and choose exactly one value for EACH of the two criteria.
+
+"label":
 - self_contained: a bare model with no tools and no conversation history could answer this fairly
   (general knowledge, reasoning, writing, a self-contained calculation).
 - agent_standalone: needs a tool or the operator's own stored data (search, the memory vault, n8n,
@@ -92,7 +109,17 @@ PRIVATE_LABEL_RUBRIC = """Read the operator ask below and choose exactly one lab
 - conversation_dependent: cannot be understood or answered without the turns that came before it (an
   unnamed "that"/"it"/"the above", a bare "try again", a reference to something never named in the
   text itself).
-Give a one sentence rationale."""
+
+"mutation": would ACTING on this ask, as an agent with full tool access, only read or inspect state,
+or would it change something?
+- read_only: answering needs nothing more than looking things up (search, read a file or note, check
+  a status, list something, answer from memory). Nothing is created, edited, deleted, committed, sent
+  or pushed.
+- mutating: answering this as asked would write, edit or delete a file, run a command with side
+  effects, commit or push to a repo, post a message, change a config, or otherwise change state
+  outside the run's own scratch area. If in doubt, or the ask is itself a tool-directed instruction
+  to change something ("add X", "fix Y", "push Z"), grade it mutating.
+Give a one sentence rationale for each criterion."""
 
 
 def queue_entry(*, run_id: str, suite: str, item_id: str, criteria: dict[str, str], rubric: str,
