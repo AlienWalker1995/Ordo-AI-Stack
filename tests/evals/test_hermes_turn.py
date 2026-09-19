@@ -10,7 +10,7 @@ import sqlite3
 import pytest
 from ordo_evals import hermes_turn as hermes_turn_module
 from ordo_evals.hermes_client import HermesTurn
-from ordo_evals.hermes_turn import call_hermes
+from ordo_evals.hermes_turn import call_hermes, has_usable_output, partial_answer
 
 SCHEMA = """
 CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, model TEXT, parent_session_id TEXT,
@@ -109,6 +109,39 @@ async def test_a_timed_out_session_state_db_has_no_record_of_is_never_backfilled
     assert traj["found"] is False
 
 
+async def test_a_timed_out_session_alive_with_no_content_yet_recovers_nothing_but_is_still_found(tmp_path):
+    """E14 (round-5 fix): the actual loop3-20260918-1644 shape for six items - the session row exists
+    and Hermes was still mid-turn (every assistant message so far was a content-less tool call), so
+    the budget firing recovers `found: True` but `last_assistant_message: None`. This is NOT the
+    no-record-at-all case above: the caller must be able to tell "genuinely still working, nothing
+    written yet" (did_not_converge, no usable output - see hermes_turn.has_usable_output) apart from
+    "no session at all" (infra_error)."""
+    path = tmp_path / "mid-turn.db"
+    connection = sqlite3.connect(path)
+    connection.executescript(SCHEMA)
+    connection.execute("INSERT INTO sessions (id, source, model, started_at, input_tokens, output_tokens) "
+                       "VALUES ('eval-mid-turn', 'api_server', 'local-chat', 1000.0, 300, 0)")
+    connection.executemany(
+        "INSERT INTO messages (session_id, role, content, tool_calls, timestamp) VALUES (?, ?, ?, ?, ?)",
+        [("eval-mid-turn", "user", "do the thing", None, 1000.0),
+         ("eval-mid-turn", "assistant", "", json.dumps([{"id": "c1", "type": "function",
+                                                          "function": {"name": "terminal", "arguments": "{}"}}]),
+          1001.0),
+         ("eval-mid-turn", "tool", json.dumps({"exit_code": 0, "output": "still working"}), None, 1002.0)])
+    connection.commit()
+    connection.close()
+    timeout_turn = HermesTurn(None, None, "eval-mid-turn", 900.0, error="budget exceeded", error_kind="timeout",
+                              budget_exceeded=True)
+    client = FakeHermesClient(turn=timeout_turn)
+    turn, traj = await call_hermes(client, prompt="p", system=None, session_id="eval-mid-turn",
+                                   session_key="k", model="local-chat", state_db=path, budget_s=30.0)
+    assert turn.error_kind == "timeout"
+    assert traj["found"] is True
+    assert traj["last_assistant_message"] is None
+    assert turn.text is None
+    assert has_usable_output(turn.text) is False
+
+
 async def test_a_transport_failure_never_touches_state_db(tmp_path):
     """Connection refused / 401 / 5xx stay infra errors and skip state.db entirely - the trajectory
     dict must be exactly {} (the caller distinguishes this from `traj={"found": False, ...}` above)."""
@@ -130,3 +163,35 @@ async def test_a_normal_reply_is_not_touched_by_the_backfill(state_db):
     assert turn.error_kind is None
     assert turn.text == "the model's own answer"
     assert traj["found"] is True
+
+
+# ── has_usable_output / partial_answer (E14, round-5 fix): the judge queue-exclusion rule ──────────
+
+@pytest.mark.parametrize(("text", "usable"), [
+    ("RESULT: 42", True), ("some fragment of an in-progress answer", True),
+    (None, False), ("", False), ("   \n\t  ", False),
+])
+def test_has_usable_output(text, usable):
+    assert has_usable_output(text) is usable
+
+
+def test_a_did_not_converge_item_with_no_recovered_text_has_nothing_to_queue():
+    """The loop3-20260918-1644 evidence: a did_not_converge item whose state.db recovery found no
+    assistant text at all (the budget fired well before Hermes wrote anything with content) must
+    never be treated as a partial answer - there is nothing for a human to grade."""
+    assert has_usable_output(None) is False
+    assert partial_answer(did_not_converge=True, text=None) is False
+    assert partial_answer(did_not_converge=True, text="") is False
+
+
+def test_a_did_not_converge_item_with_a_recovered_fragment_is_partial():
+    """The loop3-20260918-1644 evidence: two harness_domain items recovered a short mid-task remark
+    (a message written before the budget fired, not the agent's real final answer, which the session
+    went on to produce much later) - still worth a judge's grade, but marked partial."""
+    assert partial_answer(did_not_converge=True, text="a mid-task remark, not the real final answer") is True
+
+
+def test_a_converged_items_answer_is_never_partial_even_with_text():
+    """partial_answer is specifically about a did_not_converge turn cut short - a normal completed
+    turn's answer is never marked partial no matter its content."""
+    assert partial_answer(did_not_converge=False, text="a completed, ordinary answer") is False

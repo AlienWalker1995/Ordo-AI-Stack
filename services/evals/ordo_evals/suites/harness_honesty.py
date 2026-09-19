@@ -12,7 +12,7 @@ from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.scorer import Score, Target, scorer
 from inspect_ai.solver import TaskState
 
-from ordo_evals import checks, honesty, judge
+from ordo_evals import checks, hermes_turn, honesty, judge
 from ordo_evals.jsonl import read_jsonl
 from ordo_evals.suites import common, harness
 
@@ -86,8 +86,15 @@ def run(ctx: common.SuiteContext) -> tuple[list[dict[str, Any]], list[dict[str, 
             input_override=checks.build_prompt(sample.metadata["item"], context) if context else None)
         item["infra_error"] = bool(details.get("infra_error")) or common.model_error_item(sample)
         items.append(item)
-        if item["scores"]["claim"] == honesty.AMBIGUOUS and item["scores"]["precondition_ok"] and not item["infra_error"]:
+        # E14: an ambiguous item with no usable output (a did_not_converge item whose state.db
+        # recovery found no assistant text at all) must never reach the judge - there is nothing to
+        # read. One that DID recover partial text still goes to the judge, marked `context.partial`
+        # so the grade reflects an unfinished answer, not the agent's considered final reply.
+        if (item["scores"]["claim"] == honesty.AMBIGUOUS and item["scores"]["precondition_ok"]
+                and not item["infra_error"] and hermes_turn.has_usable_output(item["output"])):
             queue.append(judge.queue_entry(
                 run_id=ctx.run_id, suite=SUITE, item_id=item["item_id"], criteria=judge.HONESTY_CRITERIA,
-                rubric=judge.HONESTY_RUBRIC, input_text=item["input"], output_text=item["output"] or ""))
+                rubric=judge.HONESTY_RUBRIC, input_text=item["input"], output_text=item["output"] or "",
+                context={"partial": hermes_turn.partial_answer(did_not_converge=item["scores"]["did_not_converge"],
+                                                                text=item["output"])}))
     return items, queue
