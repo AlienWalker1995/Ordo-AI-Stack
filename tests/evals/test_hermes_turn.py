@@ -12,7 +12,7 @@ from ordo_evals import gpu_guard
 from ordo_evals import hermes_turn as hermes_turn_module
 from ordo_evals.checks import ProbeError
 from ordo_evals.hermes_client import HermesTurn
-from ordo_evals.hermes_turn import call_hermes, has_usable_output, partial_answer
+from ordo_evals.hermes_turn import call_hermes, has_usable_output, judgeable
 
 SCHEMA = """
 CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, model TEXT, parent_session_id TEXT,
@@ -64,7 +64,7 @@ async def test_the_per_item_budget_firing_recovers_the_session_and_scores_a_real
     (a ReadTimeout with no trajectory, even though Hermes was still working the turn)."""
     client = FakeHermesClient(hang_s=5.0)  # would only return after the budget below has expired
     turn, traj = await call_hermes(client, prompt="p", system=None, session_id="eval-alive",
-                                   session_key="k", model="local-chat", state_db=state_db, budget_s=0.05)
+                                   session_key="k", model="local-chat", state_db=state_db, run_id="r1", budget_s=0.05)
     assert turn.error_kind == "timeout"
     assert turn.budget_exceeded is True
     assert traj["found"] is True
@@ -82,7 +82,7 @@ async def test_a_transport_level_timeout_from_the_client_also_recovers_the_sessi
                               budget_exceeded=True)
     client = FakeHermesClient(turn=timeout_turn)
     turn, traj = await call_hermes(client, prompt="p", system=None, session_id="eval-alive",
-                                   session_key="k", model="local-chat", state_db=state_db, budget_s=30.0)
+                                   session_key="k", model="local-chat", state_db=state_db, run_id="r1", budget_s=30.0)
     assert turn.error_kind == "timeout"
     assert traj["found"] is True
     assert turn.text == "RESULT: it worked"
@@ -105,7 +105,7 @@ async def test_a_timed_out_session_state_db_has_no_record_of_is_never_backfilled
                               budget_exceeded=True)
     client = FakeHermesClient(turn=timeout_turn)
     turn, traj = await call_hermes(client, prompt="p", system=None, session_id="eval-ghost",
-                                   session_key="k", model="local-chat", state_db=empty_db, budget_s=30.0)
+                                   session_key="k", model="local-chat", state_db=empty_db, run_id="r1", budget_s=30.0)
     assert turn.error_kind == "timeout"
     assert turn.text is None
     assert traj["found"] is False
@@ -136,7 +136,7 @@ async def test_a_timed_out_session_alive_with_no_content_yet_recovers_nothing_bu
                               budget_exceeded=True)
     client = FakeHermesClient(turn=timeout_turn)
     turn, traj = await call_hermes(client, prompt="p", system=None, session_id="eval-mid-turn",
-                                   session_key="k", model="local-chat", state_db=path, budget_s=30.0)
+                                   session_key="k", model="local-chat", state_db=path, run_id="r1", budget_s=30.0)
     assert turn.error_kind == "timeout"
     assert traj["found"] is True
     assert traj["last_assistant_message"] is None
@@ -150,7 +150,7 @@ async def test_a_transport_failure_never_touches_state_db(tmp_path):
     transport_turn = HermesTurn(None, None, "s1", 0.1, error="ConnectError", error_kind="transport")
     client = FakeHermesClient(turn=transport_turn)
     turn, traj = await call_hermes(client, prompt="p", system=None, session_id="s1", session_key="k",
-                                   model="local-chat", state_db=tmp_path / "does-not-exist.db", budget_s=30.0)
+                                   model="local-chat", state_db=tmp_path / "does-not-exist.db", run_id="r1", budget_s=30.0)
     assert turn.error_kind == "transport"
     assert traj == {}
 
@@ -161,13 +161,13 @@ async def test_a_normal_reply_is_not_touched_by_the_backfill(state_db):
     ok_turn = HermesTurn(200, "the model's own answer", "eval-alive", 4.2)
     client = FakeHermesClient(turn=ok_turn)
     turn, traj = await call_hermes(client, prompt="p", system=None, session_id="eval-alive", session_key="k",
-                                   model="local-chat", state_db=state_db, budget_s=30.0)
+                                   model="local-chat", state_db=state_db, run_id="r1", budget_s=30.0)
     assert turn.error_kind is None
     assert turn.text == "the model's own answer"
     assert traj["found"] is True
 
 
-# ── has_usable_output / partial_answer (E14, round-5 fix): the judge queue-exclusion rule ──────────
+# ── has_usable_output / judgeable (E14, round 5; E18, round 7): the judge queue-exclusion rule ─────
 
 @pytest.mark.parametrize(("text", "usable"), [
     ("RESULT: 42", True), ("some fragment of an in-progress answer", True),
@@ -177,26 +177,33 @@ def test_has_usable_output(text, usable):
     assert has_usable_output(text) is usable
 
 
+def test_a_converged_item_with_a_real_answer_is_judgeable():
+    assert judgeable(infra_error=False, did_not_converge=False, text="RESULT: 42") is True
+
+
 def test_a_did_not_converge_item_with_no_recovered_text_has_nothing_to_queue():
     """The loop3-20260918-1644 evidence: a did_not_converge item whose state.db recovery found no
-    assistant text at all (the budget fired well before Hermes wrote anything with content) must
-    never be treated as a partial answer - there is nothing for a human to grade."""
+    assistant text at all (the budget fired well before Hermes wrote anything with content) has
+    nothing for a human to grade."""
     assert has_usable_output(None) is False
-    assert partial_answer(did_not_converge=True, text=None) is False
-    assert partial_answer(did_not_converge=True, text="") is False
+    assert judgeable(infra_error=False, did_not_converge=True, text=None) is False
 
 
-def test_a_did_not_converge_item_with_a_recovered_fragment_is_partial():
-    """The loop3-20260918-1644 evidence: two harness_domain items recovered a short mid-task remark
-    (a message written before the budget fired, not the agent's real final answer, which the session
-    went on to produce much later) - still worth a judge's grade, but marked partial."""
-    assert partial_answer(did_not_converge=True, text="a mid-task remark, not the real final answer") is True
+def test_a_did_not_converge_item_with_a_recovered_fragment_is_still_not_judgeable():
+    """E18 (round-7 fix): the round-5 gate queued exactly this - loop4b-20260919-1048's
+    pd-a50af3dca757 and hon-07-missing-workflow both hit the 900s budget, and because the recovery
+    caught a mid-thought sentence a human judge was asked to grade the agent's PLAN. Whether the
+    recovery window happened to catch text is harness timing, not an answer: a non-convergence is a
+    non-convergence, never a judged failure."""
+    assert has_usable_output("I will start by searching the vault for the note") is True
+    assert judgeable(infra_error=False, did_not_converge=True,
+                     text="I will start by searching the vault for the note") is False
 
 
-def test_a_converged_items_answer_is_never_partial_even_with_text():
-    """partial_answer is specifically about a did_not_converge turn cut short - a normal completed
-    turn's answer is never marked partial no matter its content."""
-    assert partial_answer(did_not_converge=False, text="a completed, ordinary answer") is False
+def test_an_infra_error_is_never_judgeable():
+    """The runner could not reach Hermes at all: there is no reply, and the item is excluded from
+    every metric - it must not reach the judge either."""
+    assert judgeable(infra_error=True, did_not_converge=False, text="a reply of some kind") is False
 
 
 # ── E15 (round-6 fix): per-item served_model via gpu_guard ──────────────────────────────────────
@@ -223,7 +230,7 @@ async def test_no_probes_means_no_served_model_is_recorded(state_db):
     ok_turn = HermesTurn(200, "an answer", "eval-alive", 4.2)
     client = FakeHermesClient(turn=ok_turn)
     _, traj = await call_hermes(client, prompt="p", system=None, session_id="eval-alive", session_key="k",
-                                model="local-chat", state_db=state_db, budget_s=30.0)
+                                model="local-chat", state_db=state_db, run_id="r1", budget_s=30.0)
     assert "served_model" not in traj
 
 
@@ -231,7 +238,7 @@ async def test_served_model_is_the_gpu_model_when_the_scheduler_is_clear(state_d
     ok_turn = HermesTurn(200, "an answer", "eval-alive", 4.2)
     client = FakeHermesClient(turn=ok_turn)
     _, traj = await call_hermes(client, prompt="p", system=None, session_id="eval-alive", session_key="k",
-                                model="local-chat", state_db=state_db, budget_s=30.0,
+                                model="local-chat", state_db=state_db, run_id="r1", budget_s=30.0,
                                 probes=_FakeProbes(IDLE_STATUS), gpu_served_model="qwen-gpu")
     assert traj["served_model"] == "qwen-gpu"
 
@@ -242,7 +249,7 @@ async def test_served_model_is_the_cpu_fallback_sentinel_when_the_gpu_is_leased(
     ok_turn = HermesTurn(200, "an answer served slowly by the CPU fallback", "eval-alive", 250.0)
     client = FakeHermesClient(turn=ok_turn)
     _, traj = await call_hermes(client, prompt="p", system=None, session_id="eval-alive", session_key="k",
-                                model="local-chat", state_db=state_db, budget_s=300.0,
+                                model="local-chat", state_db=state_db, run_id="r1", budget_s=300.0,
                                 probes=_FakeProbes(LEASED_STATUS), gpu_served_model="qwen-gpu")
     assert traj["served_model"] == gpu_guard.CPU_FALLBACK_BACKEND
 
@@ -255,7 +262,7 @@ async def test_served_model_is_still_checked_for_a_recovered_timeout(state_db):
                               budget_exceeded=True)
     client = FakeHermesClient(turn=timeout_turn)
     _, traj = await call_hermes(client, prompt="p", system=None, session_id="eval-alive", session_key="k",
-                                model="local-chat", state_db=state_db, budget_s=30.0,
+                                model="local-chat", state_db=state_db, run_id="r1", budget_s=30.0,
                                 probes=_FakeProbes(LEASED_STATUS), gpu_served_model="qwen-gpu")
     assert traj["found"] is True
     assert traj["served_model"] == gpu_guard.CPU_FALLBACK_BACKEND
@@ -267,7 +274,7 @@ async def test_served_model_is_never_checked_for_a_transport_failure(tmp_path):
     transport_turn = HermesTurn(None, None, "s1", 0.1, error="ConnectError", error_kind="transport")
     client = FakeHermesClient(turn=transport_turn)
     _, traj = await call_hermes(client, prompt="p", system=None, session_id="s1", session_key="k",
-                                model="local-chat", state_db=tmp_path / "does-not-exist.db", budget_s=30.0,
+                                model="local-chat", state_db=tmp_path / "does-not-exist.db", run_id="r1", budget_s=30.0,
                                 probes=_FakeProbes(IDLE_STATUS), gpu_served_model="qwen-gpu")
     assert traj == {}
 
@@ -276,7 +283,7 @@ async def test_served_model_is_unknown_with_a_note_when_ops_controller_is_unreac
     ok_turn = HermesTurn(200, "an answer", "eval-alive", 4.2)
     client = FakeHermesClient(turn=ok_turn)
     _, traj = await call_hermes(client, prompt="p", system=None, session_id="eval-alive", session_key="k",
-                                model="local-chat", state_db=state_db, budget_s=30.0,
+                                model="local-chat", state_db=state_db, run_id="r1", budget_s=30.0,
                                 probes=_FakeProbes(fail=True), gpu_served_model="qwen-gpu")
     assert traj["served_model"] == gpu_guard.UNKNOWN_BACKEND
     assert "could not check" in traj["served_model_note"]

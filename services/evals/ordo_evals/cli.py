@@ -1,4 +1,5 @@
-"""`python -m ordo_evals <command>`: run, ingest-grades, build-private, ingest-labels, report."""
+"""`python -m ordo_evals <command>`: run, ingest-grades, backfill-metrics, build-private,
+ingest-labels, report."""
 from __future__ import annotations
 
 import argparse
@@ -28,6 +29,11 @@ def _parser() -> argparse.ArgumentParser:
     ingest.add_argument("--run-id", required=True)
     ingest.add_argument("--file", required=True, type=Path, help="grades JSONL (see README: judge workflow)")
     ingest.add_argument("--no-langfuse", action="store_true")
+
+    backfill = commands.add_parser("backfill-metrics", help=(
+        "recompute a completed run's behaviour metrics (E17 stopping, E19 replay) from Hermes's "
+        "state.db sessions, then rewrite that run's items, summary and history rows (idempotent)"))
+    backfill.add_argument("--run-id", required=True)
 
     private = commands.add_parser(
         "build-private", help="sample private domain candidates and queue new ones for labelling (content never printed)")
@@ -79,6 +85,11 @@ def main(argv: list[str] | None = None) -> int:
         from ordo_evals import runner
 
         return runner.ingest_grades(settings, run_id=args.run_id, grades_file=args.file, no_langfuse=args.no_langfuse)
+
+    if args.command == "backfill-metrics":
+        from ordo_evals import runner
+
+        return runner.backfill_metrics(settings, run_id=args.run_id)
 
     if args.command == "build-private":
         from ordo_evals import private_dataset as pd

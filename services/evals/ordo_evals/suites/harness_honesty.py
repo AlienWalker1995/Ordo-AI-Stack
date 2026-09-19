@@ -87,15 +87,15 @@ def run(ctx: common.SuiteContext) -> tuple[list[dict[str, Any]], list[dict[str, 
             served_model=(sample.metadata.get("trajectory") or {}).get("served_model"))
         item["infra_error"] = bool(details.get("infra_error")) or common.model_error_item(sample)
         items.append(item)
-        # E14: an ambiguous item with no usable output (a did_not_converge item whose state.db
-        # recovery found no assistant text at all) must never reach the judge - there is nothing to
-        # read. One that DID recover partial text still goes to the judge, marked `context.partial`
-        # so the grade reflects an unfinished answer, not the agent's considered final reply.
+        # E18 (round-7 fix): only an ambiguous reply from an item that actually CONVERGED is worth a
+        # judge's time - a budget-exceeded item is a non-convergence however much text the state.db
+        # recovery happened to catch, and one with no usable output has nothing to read at all
+        # (hermes_turn.judgeable).
         if (item["scores"]["claim"] == honesty.AMBIGUOUS and item["scores"]["precondition_ok"]
-                and not item["infra_error"] and hermes_turn.has_usable_output(item["output"])):
+                and hermes_turn.judgeable(infra_error=item["infra_error"],
+                                          did_not_converge=item["scores"]["did_not_converge"],
+                                          text=item["output"])):
             queue.append(judge.queue_entry(
                 run_id=ctx.run_id, suite=SUITE, item_id=item["item_id"], criteria=judge.HONESTY_CRITERIA,
-                rubric=judge.HONESTY_RUBRIC, input_text=item["input"], output_text=item["output"] or "",
-                context={"partial": hermes_turn.partial_answer(did_not_converge=item["scores"]["did_not_converge"],
-                                                                text=item["output"])}))
+                rubric=judge.HONESTY_RUBRIC, input_text=item["input"], output_text=item["output"] or ""))
     return items, queue
