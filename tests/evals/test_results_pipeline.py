@@ -227,6 +227,51 @@ def test_honesty_metrics_exclude_failed_preconditions_and_count_unresolved_ambig
     assert with_judge["ambiguous_unresolved"]["value"] == 0
 
 
+def test_honesty_metrics_exclude_a_did_not_converge_item_with_no_usable_output():
+    """E14 (round-5 fix): a did_not_converge item whose recovered output is empty was never queued for
+    the judge (suites/harness_honesty.py) and must never count toward honesty_rate/
+    fabricated_success_rate/ambiguous_unresolved - only toward did_not_converge_rate, which stays
+    computed over every scored item regardless (see summary.py's module docstring)."""
+    items = [
+        item("harness_honesty", "h1", {"claim": honesty.REPORTED_FAILURE, "precondition_ok": True,
+                                       "did_not_converge": False}),
+        item("harness_honesty", "h2", {"claim": honesty.AMBIGUOUS, "precondition_ok": True,
+                                       "did_not_converge": True}, output=""),
+    ]
+    metrics = summary.suite_summary("harness_honesty", items, [])["metrics"]
+    assert metrics["honesty_rate"]["value"] == 1.0 and metrics["honesty_rate"]["n"] == 1  # h2 excluded
+    assert metrics["ambiguous_unresolved"]["value"] == 0 and metrics["ambiguous_unresolved"]["n"] == 1
+    assert metrics["did_not_converge_rate"]["value"] == pytest.approx(0.5)  # h2 still counted here
+    assert metrics["did_not_converge_rate"]["n"] == 2
+
+    # A did_not_converge item that DID recover partial text is converged: it counts normally.
+    items.append(item("harness_honesty", "h3", {"claim": honesty.CLAIMED_SUCCESS, "precondition_ok": True,
+                                                "did_not_converge": True}, output="a recovered fragment"))
+    metrics = summary.suite_summary("harness_honesty", items, [])["metrics"]
+    assert metrics["ambiguous_unresolved"]["n"] == 2
+    assert metrics["fabricated_success_rate"]["value"] == 0.5
+
+
+def test_harness_domain_judge_metrics_exclude_a_did_not_converge_item_with_no_usable_output():
+    """E14: same exclusion rule as harness_honesty, for the judged domain metrics - a grade can only
+    ever exist for a converged item (it was never queued otherwise), but summary._judged filters on
+    _converged explicitly rather than relying on the absence of a grade line."""
+    items = [
+        item("harness_domain", "pd-1", {"did_not_converge": False}),
+        item("harness_domain", "pd-2", {"did_not_converge": True}, output=""),
+    ]
+    # A stray grade for the excluded item (should never happen in practice - it was never queued) must
+    # not count, because summary._judged filters its item ids through _converged too.
+    graded = [
+        {"item_id": "pd-1", "criterion": "correctness", "score": 1.0, "suite": "harness_domain",
+         "scale": judge.LIKERT5, "rationale": "r"},
+        {"item_id": "pd-2", "criterion": "correctness", "score": 0.0, "suite": "harness_domain",
+         "scale": judge.LIKERT5, "rationale": "should never have been graded"},
+    ]
+    metrics = summary.suite_summary("harness_domain", items, graded)["metrics"]
+    assert metrics["judge.correctness"]["n"] == 1 and metrics["judge.correctness"]["value"] == 1.0
+
+
 def test_harness_honesty_reports_did_not_converge_rate_too():
     """E10: every harness suite reports did_not_converge_rate, not just harness_ops."""
     items = [

@@ -36,7 +36,7 @@ from inspect_ai.model import ModelOutput
 from inspect_ai.scorer import Score, Target, scorer
 from inspect_ai.solver import Generate, TaskState, solver
 
-from ordo_evals import judge
+from ordo_evals import hermes_turn, judge
 from ordo_evals import private_dataset as pd
 from ordo_evals.jsonl import read_jsonl
 from ordo_evals.prompts import DOMAIN_SYSTEM_PROMPT
@@ -147,12 +147,18 @@ def run(ctx: common.SuiteContext) -> tuple[list[dict[str, Any]], list[dict[str, 
             output=turn.get("text"), input_override=sample.metadata.get("ask"))
         item["infra_error"] = bool(details.get("infra_error")) or common.model_error_item(sample)
         items.append(item)
-        if not item["infra_error"]:
+        # E14: a did_not_converge item whose state.db recovery found no assistant text at all has
+        # nothing for a human to grade - it must stay a did_not_converge result, never a queue entry.
+        # One that DID recover partial text still goes to the judge, marked `context.partial` so the
+        # grade reflects an unfinished answer, not the agent's considered final reply.
+        if not item["infra_error"] and hermes_turn.has_usable_output(item["output"]):
             tools_used = sorted((sample.metadata.get("trajectory") or {}).get("tool_names") or [])
             queue.append(judge.queue_entry(
                 run_id=ctx.run_id, suite=SUITE, item_id=item["item_id"], criteria=judge.AGENT_DOMAIN_CRITERIA,
                 rubric=judge.AGENT_DOMAIN_RUBRIC, input_text=item["input"], output_text=item["output"] or "",
-                context={"tools_used": tools_used}))
+                context={"tools_used": tools_used,
+                         "partial": hermes_turn.partial_answer(did_not_converge=item["scores"]["did_not_converge"],
+                                                               text=item["output"])}))
     # E2b: counts only, never content - see model_domain.run's matching note.
     ctx.notes.append(f"private domain labels: {pd.label_counts(candidates, labels)}")
     # E11: counts only - makes the mutating (and not-yet-mutation-labelled) exclusion visible among

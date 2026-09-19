@@ -77,3 +77,30 @@ async def call_hermes(hermes: HermesClient, *, prompt: str, system: str | None, 
     if turn.error_kind == "timeout" and not turn.text and traj.get("last_assistant_message"):
         turn = dataclasses.replace(turn, text=traj["last_assistant_message"])
     return turn, traj
+
+
+def has_usable_output(text: str | None) -> bool:
+    """True when `text` is a real reply worth showing a human judge - not None, empty or whitespace.
+
+    E14 (round-5 fix): a budget-exceeded item can recover nothing at all - state.db had a session but
+    no assistant message had any content yet at read time (the loop3-20260918-1644 evidence: six
+    items where the wall-clock budget fired 17s to over 1900s before Hermes's next real content-
+    bearing message landed, well outside read_trajectory's few-second retry window). Before this fix,
+    every harness_honesty/harness_domain suite queued such an item for the judge anyway (empty
+    `output`, nothing to read) instead of treating it as the did_not_converge result it is - see this
+    function's call sites in suites/harness_honesty.py and suites/harness_domain.py.
+    """
+    return bool(text and text.strip())
+
+
+def partial_answer(*, did_not_converge: bool, text: str | None) -> bool:
+    """True when a queued item's answer is a recovered-but-unfinished fragment (E14, round-5 fix): the
+    per-item budget fired before Hermes's HTTP response came back, yet state.db had SOME assistant
+    text to recover - not necessarily the agent's real final answer, just whatever content-bearing
+    message it had most recently written (the loop3-20260918-1644 evidence: two domain items recovered
+    a 141- and 98-character mid-task remark this way, both later superseded by a much longer real
+    answer the agent went on to write after the budget had already fired). Still worth a judge's
+    grade, but the queue entry must say so (`context["partial"]`) so the grade reflects an unfinished
+    answer rather than being read as the agent's considered final reply.
+    """
+    return did_not_converge and has_usable_output(text)

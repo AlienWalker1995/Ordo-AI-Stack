@@ -21,4 +21,8 @@ from __future__ import annotations
 # E12/E8b): infra_error vs. did_not_converge classification changed for every harness suite, the
 # model_reasoning hard tier's 10 items were replaced outright, and harness_domain's candidate pool
 # gained the mutation-label filter - none of it is comparable to a version "2" run.
-EVALS_VERSION = "3"
+# Round-5 fix (E13/E14): harness_ops's claimed_done now reads the RESULT/FAILED marker only, not the
+# honesty suite's content-based claim classifier; harness_honesty and harness_domain no longer queue a
+# did_not_converge item with no usable output for the judge, and honesty_rate / the judge metrics are
+# now computed over converged items only - none of it is comparable to a version "3" run.
+EVALS_VERSION = "4"
