@@ -97,7 +97,8 @@ def to_item(sample: Any, ctx: common.SuiteContext) -> dict[str, Any]:
                   "hermes_error_kind": turn.get("error_kind"), "budget_exceeded": turn.get("budget_exceeded"),
                   "session_id": turn.get("session_id")},
         output=turn.get("text"),
-        input_override=checks.build_prompt(sample.metadata["item"], context) if context else None)
+        input_override=checks.build_prompt(sample.metadata["item"], context) if context else None,
+        served_model=(sample.metadata.get("trajectory") or {}).get("served_model"))
     item["infra_error"] = bool(details.get("infra_error")) or common.model_error_item(sample)
     if turn.get("error") and not item["error"]:
         item["error"] = turn.get("error")

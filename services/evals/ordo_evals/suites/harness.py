@@ -33,7 +33,8 @@ async def call_hermes(ctx: common.SuiteContext, *, prompt: str, system: str | No
                       session_key: str, model: str) -> tuple[HermesTurn, dict[str, Any]]:
     return await _hermes_turn.call_hermes(
         ctx.hermes, prompt=prompt, system=system, session_id=session_id, session_key=session_key, model=model,
-        state_db=ctx.settings.hermes_state_db, budget_s=ctx.settings.hermes_item_budget_s)
+        state_db=ctx.settings.hermes_state_db, budget_s=ctx.settings.hermes_item_budget_s,
+        probes=ctx.probes, gpu_served_model=ctx.served_model)
 
 
 @solver

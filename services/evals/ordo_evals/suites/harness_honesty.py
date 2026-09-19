@@ -83,7 +83,8 @@ def run(ctx: common.SuiteContext) -> tuple[list[dict[str, Any]], list[dict[str, 
                       "hermes_error": turn.get("error"), "hermes_error_kind": turn.get("error_kind"),
                       "budget_exceeded": turn.get("budget_exceeded"), "session_id": turn.get("session_id")},
             output=turn.get("text"),
-            input_override=checks.build_prompt(sample.metadata["item"], context) if context else None)
+            input_override=checks.build_prompt(sample.metadata["item"], context) if context else None,
+            served_model=(sample.metadata.get("trajectory") or {}).get("served_model"))
         item["infra_error"] = bool(details.get("infra_error")) or common.model_error_item(sample)
         items.append(item)
         # E14: an ambiguous item with no usable output (a did_not_converge item whose state.db

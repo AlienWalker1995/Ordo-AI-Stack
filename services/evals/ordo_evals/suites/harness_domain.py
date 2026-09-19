@@ -144,7 +144,8 @@ def run(ctx: common.SuiteContext) -> tuple[list[dict[str, Any]], list[dict[str, 
             metadata={"trajectory": sample.metadata.get("trajectory"), "hermes_status": turn.get("status_code"),
                       "hermes_error": turn.get("error"), "hermes_error_kind": turn.get("error_kind"),
                       "budget_exceeded": turn.get("budget_exceeded"), "session_id": turn.get("session_id")},
-            output=turn.get("text"), input_override=sample.metadata.get("ask"))
+            output=turn.get("text"), input_override=sample.metadata.get("ask"),
+            served_model=(sample.metadata.get("trajectory") or {}).get("served_model"))
         item["infra_error"] = bool(details.get("infra_error")) or common.model_error_item(sample)
         items.append(item)
         # E14: a did_not_converge item whose state.db recovery found no assistant text at all has

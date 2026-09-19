@@ -82,7 +82,7 @@ def test_queue_entry_rejects_an_unknown_scale():
 def base_row(**kwargs):
     row = {"run_id": "r1", "ts": TS, "suite": "model_reasoning", "subject": "model", "model": "m",
            "harness": None, "metric": "accuracy", "value": 0.5, "n": 10, "ci95": [0.2, 0.8],
-           "commit": "a" * 40, "dirty": False}
+           "commit": "a" * 40, "dirty": False, "integrity": None}
     row.update(kwargs)
     return row
 
@@ -111,6 +111,7 @@ def test_valid_rows_pass_and_the_shape_is_exact():
     {"model": ""},
     {"commit": ""},                                     # E7: commit must be null or non-empty
     {"dirty": "true"},                                  # E7: dirty must be null or a real bool
+    {"integrity": ""},                                  # E15: integrity must be null or non-empty
 ])
 def test_invalid_rows_are_rejected(bad):
     with pytest.raises(ValueError):
@@ -284,6 +285,21 @@ def test_harness_honesty_reports_did_not_converge_rate_too():
     assert metrics["did_not_converge_rate"]["value"] == pytest.approx(0.5)
 
 
+def test_slow_items_metric_counts_flagged_items_over_items_with_a_computable_rate():
+    """E15 (round-6 fix): slow_items.n is every item with a tokens_per_second (not every item in the
+    suite - some suites have none at all), and slow_items.value counts only those metadata.slow_item
+    flagged (timing.annotate_tokens_per_second, applied before items.jsonl is written)."""
+    items = [
+        item("model_reasoning", "a", {"correct": True, "format_ok": True},
+             metadata={"tokens_per_second": 40.0}),
+        item("model_reasoning", "b", {"correct": True, "format_ok": True},
+             metadata={"tokens_per_second": 2.0, "slow_item": True}),
+        item("model_reasoning", "c", {"correct": True, "format_ok": True}, metadata={}),
+    ]
+    metrics = summary.suite_summary("model_reasoning", items, [])["metrics"]
+    assert metrics["slow_items"]["value"] == 1 and metrics["slow_items"]["n"] == 2
+
+
 def test_domain_metrics_appear_only_once_the_judge_has_graded():
     items = [item("model_domain", "pd-1", {}), item("model_domain", "pd-2", {})]
     assert "judge.correctness" not in summary.suite_summary("model_domain", items, [])["metrics"]
@@ -375,6 +391,22 @@ def test_suite_registry_resolution():
         resolve_suites("model_nope")
     with pytest.raises(ValueError):
         resolve_suites("")
+
+
+def test_history_rows_carry_the_runs_integrity_marker():
+    """E15 (round-6 fix): integrity, like commit/dirty, is a per-RUN property that must propagate
+    onto every history row that run produces, so a query over history.jsonl can exclude an invalid
+    (backend_changed) run from a baseline the same way it excludes a dirty one."""
+    items = [item("model_reasoning", "a", {"correct": True, "format_ok": True})]
+    block = summary.suite_summary("model_reasoning", items, [])
+    block.update({"subject": "model", "model": "qwen-test", "harness": None})
+    run_summary = {"run_id": "r1", "ts": TS, "suites": {"model_reasoning": block},
+                   "commit": "c" * 40, "dirty": False, "integrity": "backend_changed"}
+    rows = summary.history_rows(run_summary)
+    assert rows and all(r["integrity"] == "backend_changed" for r in rows)
+
+    clean_summary = {"run_id": "r2", "ts": TS, "suites": {"model_reasoning": block}}
+    assert all(r["integrity"] is None for r in summary.history_rows(clean_summary))
 
 
 def test_harness_domain_is_registered_as_a_judged_harness_suite():

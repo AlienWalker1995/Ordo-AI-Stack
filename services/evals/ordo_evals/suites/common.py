@@ -32,6 +32,10 @@ class SuiteContext:
     probes: Any = None          # probes.LiveProbes (harness suites)
     hermes: Any = None          # hermes_client.HermesClient (harness suites)
     hermes_model_name: str = ""  # the model id Hermes's API server advertises
+    # E15: the run's declared active GPU model (runner._served_model), threaded through so the
+    # harness suites can classify their own per-item served backend against it
+    # (gpu_guard.served_model_for_item, called from hermes_turn.call_hermes).
+    served_model: str = ""
     notes: list[str] = dataclasses.field(default_factory=list)
 
     @property
@@ -98,9 +102,18 @@ def input_text(sample: EvalSample) -> str:
 
 def sample_item(sample: EvalSample, *, ctx: SuiteContext, suite: str, subject: str,
                 scores: dict[str, Any], metadata: dict[str, Any], output: str | None = None,
-                input_override: str | None = None, target: Any = None) -> dict[str, Any]:
+                input_override: str | None = None, target: Any = None,
+                served_model: str | None = None) -> dict[str, Any]:
+    """`served_model` (E15): which deployment served THIS item. Model suites need no override - the
+    default below reads `sample.output.model`, the raw completion response's own `model` field
+    (verified authoritative for the local backend, see gpu_guard.py's module docstring), which
+    Inspect already carries with no extra call. Harness suites have no such field on their synthetic
+    `ModelOutput.from_content(model="hermes", ...)` (see suites/harness.py), so they pass the value
+    `hermes_turn.call_hermes` already computed via `gpu_guard.served_model_for_item`."""
     item_id = str(sample.id)
     error = sample.error.message if sample.error else None
+    if served_model is None and sample.output is not None:
+        served_model = sample.output.model
     return {
         "run_id": ctx.run_id,
         "suite": suite,
@@ -109,6 +122,7 @@ def sample_item(sample: EvalSample, *, ctx: SuiteContext, suite: str, subject: s
         "input": input_override if input_override is not None else input_text(sample),
         "output": output if output is not None else (sample.output.completion if sample.output else None),
         "target": target,
+        "served_model": served_model,
         "scores": scores,
         "metadata": metadata,
         "trace_id": trace_id_for(ctx.run_id, suite, item_id),

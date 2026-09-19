@@ -4,7 +4,8 @@ This file is the future leaderboard's input, so its row shape is a contract:
 
     {"run_id": str, "ts": ISO-8601 UTC str, "suite": str, "subject": "model" | "harness",
      "model": str, "harness": str | null, "metric": str, "value": float, "n": int,
-     "ci95": [low, high] | null, "commit": str | null, "dirty": bool | null}
+     "ci95": [low, high] | null, "commit": str | null, "dirty": bool | null,
+     "integrity": str | null}
 
   * subject says WHAT was measured. A model row measures the bare model (harness is null); a harness
     row measures Hermes end to end, and `model` records which model Hermes ran on, so a later run of
@@ -16,6 +17,12 @@ This file is the future leaderboard's input, so its row shape is a contract:
     `dirty` is true when that checkout had uncommitted changes under services/evals at run start,
     false when it was clean, null when unknown. A run only reaches here with dirty=true or
     commit=null at all if it was started with `--allow-dirty` - see runner.run().
+  * integrity (E15, round-6 fix) is null for a trustworthy run, or `"backend_changed"` when the run
+    was aborted (or finished having already seen it) because more than one distinct backend served
+    its model-suite items, its harness-suite items, or the GPU was found leased on a between-suite
+    recheck (runner._backend_integrity_reason / _gpu_preflight_reason, gpu_guard.py) - a query over
+    this file should exclude rows with a non-null integrity from a baseline, the same way it would
+    exclude dirty=true rows.
 
 Appends are the normal path. `replace_run_suites` exists for ingest-grades, which recomputes the
 rows of a run it has already written (judge metrics arrive after the run).
@@ -30,7 +37,7 @@ from typing import Any
 from ordo_evals.jsonl import append_jsonl, read_jsonl, write_jsonl
 
 HISTORY_FIELDS = ("run_id", "ts", "suite", "subject", "model", "harness", "metric", "value", "n", "ci95",
-                  "commit", "dirty")
+                  "commit", "dirty", "integrity")
 SUBJECTS = ("model", "harness")
 
 
@@ -40,10 +47,11 @@ def utc_now_iso() -> str:
 
 def make_row(*, run_id: str, ts: str, suite: str, subject: str, model: str, harness: str | None,
              metric: str, value: float, n: int, ci95: list[float] | None,
-             commit: str | None = None, dirty: bool | None = None) -> dict[str, Any]:
+             commit: str | None = None, dirty: bool | None = None,
+             integrity: str | None = None) -> dict[str, Any]:
     row = {"run_id": run_id, "ts": ts, "suite": suite, "subject": subject, "model": model,
            "harness": harness, "metric": metric, "value": value, "n": n, "ci95": ci95,
-           "commit": commit, "dirty": dirty}
+           "commit": commit, "dirty": dirty, "integrity": integrity}
     validate_row(row)
     return row
 
@@ -80,6 +88,8 @@ def validate_row(row: dict[str, Any]) -> None:
         raise ValueError("history row commit must be null or a non-empty string")
     if row["dirty"] is not None and not isinstance(row["dirty"], bool):
         raise ValueError("history row dirty must be null or a bool")
+    if row["integrity"] is not None and not (isinstance(row["integrity"], str) and row["integrity"]):
+        raise ValueError("history row integrity must be null or a non-empty string")
 
 
 def append_rows(path: str | Path, rows: Iterable[dict[str, Any]]) -> None:

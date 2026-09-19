@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from ordo_evals import EVALS_VERSION, history, judge, redact, summary
+from ordo_evals import EVALS_VERSION, gpu_guard, history, judge, redact, summary, timing
 from ordo_evals.checks import VAULT_EVAL_ROOT, ProbeError
 from ordo_evals.ids import validate_run_id
 from ordo_evals.jsonl import append_jsonl, read_jsonl, write_json, write_jsonl
@@ -101,8 +101,40 @@ def _provenance_gate(git_dirty: bool | None, allow_dirty: bool) -> str | None:
             "anyway (recorded with a null commit/dirty)")
 
 
+def _gpu_preflight_reason(probes: Any) -> str | None:
+    """E15 (round-6 fix): a refusal reason, or None if the GPU is clear. Used both before any suite
+    runs (same "leaves no trace on disk" guarantee as _provenance_gate above) and cheaply between
+    suites, so a run started while the GPU was leased - or one that becomes leased mid-run - never
+    finishes producing numbers that silently mix the GPU and CPU deployments (gpu_guard.py). An
+    ops-controller that cannot be read is treated the same as leased: refusing on a status this
+    package cannot verify is the same conservative default `_provenance_gate` uses for unknown git
+    provenance, not a guess that everything is fine."""
+    try:
+        status = probes.ops_status()
+    except ProbeError as exc:
+        return f"could not check GPU lease state ({exc}); ops-controller must be reachable"
+    leased, detail = gpu_guard.gpu_lease_state(status)
+    if not leased:
+        return None
+    return (f"GPU is currently leased ({detail}); a leased GPU can silently serve local-chat from "
+            "the slow CPU fallback deployment (see services/evals/README.md's run-validity section)")
+
+
+def _backend_integrity_reason(served_models_by_subject: dict[str, set[str]]) -> str | None:
+    """E15: a run whose model-suite items (or whose harness-suite items) show more than one distinct
+    served backend cannot be trusted - part of it measured a different deployment than the rest.
+    Checked per SUBJECT bucket, never by comparing a raw model-suite served_model (a llama.cpp
+    completion response's own `model` field, e.g. a gguf path) against a harness-suite one
+    (gpu_guard's coarser gpu/cpu-fallback sentinel - the best signal available for a Hermes turn, see
+    gpu_guard.py's module docstring): the two vocabularies are only meaningful within themselves."""
+    for subject, models in sorted(served_models_by_subject.items()):
+        if len(models) > 1:
+            return f"{subject} suites saw more than one served backend this run: {sorted(models)}"
+    return None
+
+
 def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None, seed: int,
-        no_langfuse: bool, allow_dirty: bool = False) -> int:
+        no_langfuse: bool, allow_dirty: bool = False, probes: Any = None) -> int:
     # Checked first, before even the lazy imports below (some pull in the heavy optional Inspect-AI
     # dependency): a refused run must never need to load a suite to be refused, and must leave no
     # trace on disk (no run_dir).
@@ -111,8 +143,26 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
         _log(f"refusing to start run {run_id}: {refusal}")
         return 4
 
-    from ordo_evals.hermes_client import HermesClient
     from ordo_evals.probes import LiveProbes
+
+    # `probes` is injectable (tests only; production always constructs the real LiveProbes) so the
+    # E15 GPU-lease checks below can be exercised against a fake ops-controller response.
+    probes = probes if probes is not None else LiveProbes(
+        vault_dir=settings.vault_dir, ops_controller_url=settings.ops_controller_url,
+        n8n_url=settings.n8n_url, qdrant_url=settings.qdrant_url, qdrant_collection=settings.qdrant_collection)
+
+    # E15 (round-6 fix): refused before run_dir exists, same guarantee as the provenance gate above -
+    # a run that starts while the GPU is already leased can spend its whole duration silently served
+    # by the CPU fallback deployment with nothing in the results to show it (the iteration-4 failure).
+    # Checked before the suites.common import below (which pulls in the heavy optional Inspect-AI
+    # dependency, same reasoning as the provenance gate's own import ordering) so a refusal here is
+    # exactly as cheap as one from the provenance gate.
+    gpu_refusal = _gpu_preflight_reason(probes)
+    if gpu_refusal:
+        _log(f"refusing to start run {run_id}: {gpu_refusal}")
+        return 5
+
+    from ordo_evals.hermes_client import HermesClient
     from ordo_evals.suites.common import SuiteContext
 
     run_dir = run_dir_for(settings, run_id)
@@ -121,11 +171,9 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
         return 2
     run_dir.mkdir(parents=True, exist_ok=True)
     sink = make_sink(settings, no_langfuse)
-    probes = LiveProbes(vault_dir=settings.vault_dir, ops_controller_url=settings.ops_controller_url,
-                        n8n_url=settings.n8n_url, qdrant_url=settings.qdrant_url,
-                        qdrant_collection=settings.qdrant_collection)
     ctx = SuiteContext(run_id=run_id, seed=seed, limit=limit, settings=settings, run_dir=run_dir, probes=probes)
     served_model = _served_model(probes, settings, ctx.notes)
+    ctx.served_model = served_model  # E15: threaded to the harness suites via suites/harness.py's call_hermes
     harness_identity = None
     if any(SUBJECTS[s] == "harness" for s in suites) and settings.hermes_api_key:
         ctx.hermes = HermesClient(settings.hermes_api_url, settings.hermes_api_key, settings.hermes_timeout_s)
@@ -141,7 +189,13 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
         "limit": limit, "model_alias": settings.model_name, "served_model": served_model,
         "langfuse": sink.enabled, "suites": {}, "skipped": {}, "notes": ctx.notes,
         "commit": settings.git_commit, "dirty": settings.git_dirty,
+        "integrity": None,  # E15: set to "backend_changed" below if the run turns out untrustworthy
     }
+    # E15: distinct served_model values seen so far, kept separately per SUBJECT (see
+    # _backend_integrity_reason for why model-suite and harness-suite values are never compared to
+    # each other) - accumulated across the whole run, not reset per suite, so a change first visible
+    # in a LATER suite is still caught.
+    served_models_by_subject: dict[str, set[str]] = {"model": set(), "harness": set()}
     rag_leak: list[str] = []
     try:
         for suite in suites:
@@ -161,6 +215,9 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
             # read from these same (now-redacted) lists, so this is the one place a leak is caught.
             items = [redact.redact_item(item) for item in items]
             queue = [redact.redact_queue_entry(entry) for entry in queue]
+            # E15: per-item tokens/second + the suite-local slow-item flag, computed before the items
+            # are written so the flag is part of the persisted record, not a report-time afterthought.
+            timing.annotate_tokens_per_second(items)
             append_jsonl(run_dir / "items.jsonl", items)
             if queue:
                 append_jsonl(run_dir / "judge_queue.jsonl", queue)
@@ -169,12 +226,15 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
                 sink.record_item(run_id, item)
                 _post_item_scores(sink, run_id, item)
             subject = SUBJECTS[suite]
+            served_models = sorted({i["served_model"] for i in items if i.get("served_model")})
+            served_models_by_subject[subject].update(served_models)
             block = summary.suite_summary(suite, items, [])
             block.update({
                 "subject": subject,
                 "model": _harness_model(items, served_model, settings) if subject == "harness" else served_model,
                 "harness": harness_identity if subject == "harness" else None,
                 "judge_queued": len(queue),
+                "served_models": served_models,  # E15: the distinct set this suite actually saw
             })
             ids = sampled_item_ids(items, limit)
             if ids is not None:
@@ -184,6 +244,25 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
             history.append_rows(settings.results_dir / "history.jsonl",
                                 summary.history_rows(run_summary, suites=[suite]))
             _log(f"{suite}: {len(items)} items, {len(queue)} queued for the judge")
+
+            # E15: never finish a run whose numbers cannot be trusted. Checked after EVERY suite, not
+            # only harness ones - the model suites are exactly as exposed to LiteLLM's fallback - so a
+            # mid-run backend change is caught as soon as its evidence exists, and the GPU is
+            # re-checked live (cheaply - one ops-controller GET) so a suite that hasn't shown the
+            # drift YET is still stopped before it starts one that would.
+            integrity_reason = _backend_integrity_reason(served_models_by_subject) or _gpu_preflight_reason(probes)
+            if integrity_reason:
+                run_summary["integrity"] = "backend_changed"
+                run_summary["integrity_detail"] = integrity_reason
+                write_json(run_dir / "summary.json", run_summary)
+                # Retroactively stamp every row this run has ALREADY appended to history.jsonl
+                # (including this suite's own, written moments ago with integrity still null) - a
+                # partially-marked run would let a later query see some of its rows as trustworthy,
+                # exactly the drift this whole fix exists to close.
+                history.replace_run_suites(settings.results_dir / "history.jsonl", run_id,
+                                           list(run_summary["suites"]), summary.history_rows(run_summary))
+                _log(f"run {run_id} ABORTED after {suite}: {integrity_reason}")
+                break
     finally:
         if any(SUBJECTS[s] == "harness" for s in suites):
             rag_leak = _check_rag_leak(probes, ctx.notes)
@@ -198,6 +277,9 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
             # above, so persist the final summary once more here.
             write_json(run_dir / "summary.json", run_summary)
         sink.flush()
+    if run_summary.get("integrity"):
+        _log(f"run {run_id} INVALID: {run_summary.get('integrity_detail')}")
+        return 6
     if rag_leak:
         _log(f"run {run_id} FAILED: RAG-leak safety check found {len(rag_leak)} Qdrant point(s) rooted "
              f"under {VAULT_EVAL_ROOT}/ (see summary.json notes); this is an infra error, not a suite result")
