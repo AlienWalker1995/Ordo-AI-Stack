@@ -8,7 +8,9 @@ import json
 import sqlite3
 
 import pytest
+from ordo_evals import gpu_guard
 from ordo_evals import hermes_turn as hermes_turn_module
+from ordo_evals.checks import ProbeError
 from ordo_evals.hermes_client import HermesTurn
 from ordo_evals.hermes_turn import call_hermes, has_usable_output, partial_answer
 
@@ -195,3 +197,86 @@ def test_a_converged_items_answer_is_never_partial_even_with_text():
     """partial_answer is specifically about a did_not_converge turn cut short - a normal completed
     turn's answer is never marked partial no matter its content."""
     assert partial_answer(did_not_converge=False, text="a completed, ordinary answer") is False
+
+
+# ── E15 (round-6 fix): per-item served_model via gpu_guard ──────────────────────────────────────
+
+IDLE_STATUS = {"manifest": {}, "gpu": {"state": "idle", "running": [], "queued": [], "evicted_residents": {}}}
+LEASED_STATUS = {"manifest": {}, "gpu": {"state": "busy", "running": [{"id": "gate-comfyui"}], "queued": [],
+                                        "evicted_residents": {}}}
+
+
+class _FakeProbes:
+    def __init__(self, status=None, fail=False):
+        self._status = status
+        self._fail = fail
+
+    def ops_status(self):
+        if self._fail:
+            raise ProbeError("ops-controller unreachable")
+        return self._status
+
+
+async def test_no_probes_means_no_served_model_is_recorded(state_db):
+    """Backward compatible default: a caller that passes no `probes` (every existing call site
+    before this fix, and every test above) gets exactly the trajectory shape it always did."""
+    ok_turn = HermesTurn(200, "an answer", "eval-alive", 4.2)
+    client = FakeHermesClient(turn=ok_turn)
+    _, traj = await call_hermes(client, prompt="p", system=None, session_id="eval-alive", session_key="k",
+                                model="local-chat", state_db=state_db, budget_s=30.0)
+    assert "served_model" not in traj
+
+
+async def test_served_model_is_the_gpu_model_when_the_scheduler_is_clear(state_db):
+    ok_turn = HermesTurn(200, "an answer", "eval-alive", 4.2)
+    client = FakeHermesClient(turn=ok_turn)
+    _, traj = await call_hermes(client, prompt="p", system=None, session_id="eval-alive", session_key="k",
+                                model="local-chat", state_db=state_db, budget_s=30.0,
+                                probes=_FakeProbes(IDLE_STATUS), gpu_served_model="qwen-gpu")
+    assert traj["served_model"] == "qwen-gpu"
+
+
+async def test_served_model_is_the_cpu_fallback_sentinel_when_the_gpu_is_leased(state_db):
+    """The iteration-4 shape: a normal-looking 200 reply, but the scheduler shows the GPU leased at
+    the moment the turn finished - this is exactly the case items.jsonl needs to carry visibly."""
+    ok_turn = HermesTurn(200, "an answer served slowly by the CPU fallback", "eval-alive", 250.0)
+    client = FakeHermesClient(turn=ok_turn)
+    _, traj = await call_hermes(client, prompt="p", system=None, session_id="eval-alive", session_key="k",
+                                model="local-chat", state_db=state_db, budget_s=300.0,
+                                probes=_FakeProbes(LEASED_STATUS), gpu_served_model="qwen-gpu")
+    assert traj["served_model"] == gpu_guard.CPU_FALLBACK_BACKEND
+
+
+async def test_served_model_is_still_checked_for_a_recovered_timeout(state_db):
+    """E10's timeout-recovery path and E15's served_model check are independent - a did_not_converge
+    item (recovered from state.db) still gets a served_model, since that is exactly the shape
+    (slow CPU fallback -> item hits the per-item budget) this check exists to surface."""
+    timeout_turn = HermesTurn(None, None, "eval-alive", 12.3, error="ReadTimeout", error_kind="timeout",
+                              budget_exceeded=True)
+    client = FakeHermesClient(turn=timeout_turn)
+    _, traj = await call_hermes(client, prompt="p", system=None, session_id="eval-alive", session_key="k",
+                                model="local-chat", state_db=state_db, budget_s=30.0,
+                                probes=_FakeProbes(LEASED_STATUS), gpu_served_model="qwen-gpu")
+    assert traj["found"] is True
+    assert traj["served_model"] == gpu_guard.CPU_FALLBACK_BACKEND
+
+
+async def test_served_model_is_never_checked_for_a_transport_failure(tmp_path):
+    """A transport failure means no turn happened at all - there is nothing to attribute to a
+    backend, and traj must stay exactly {} (the existing infra_error contract, unchanged by E15)."""
+    transport_turn = HermesTurn(None, None, "s1", 0.1, error="ConnectError", error_kind="transport")
+    client = FakeHermesClient(turn=transport_turn)
+    _, traj = await call_hermes(client, prompt="p", system=None, session_id="s1", session_key="k",
+                                model="local-chat", state_db=tmp_path / "does-not-exist.db", budget_s=30.0,
+                                probes=_FakeProbes(IDLE_STATUS), gpu_served_model="qwen-gpu")
+    assert traj == {}
+
+
+async def test_served_model_is_unknown_with_a_note_when_ops_controller_is_unreachable(state_db):
+    ok_turn = HermesTurn(200, "an answer", "eval-alive", 4.2)
+    client = FakeHermesClient(turn=ok_turn)
+    _, traj = await call_hermes(client, prompt="p", system=None, session_id="eval-alive", session_key="k",
+                                model="local-chat", state_db=state_db, budget_s=30.0,
+                                probes=_FakeProbes(fail=True), gpu_served_model="qwen-gpu")
+    assert traj["served_model"] == gpu_guard.UNKNOWN_BACKEND
+    assert "could not check" in traj["served_model_note"]

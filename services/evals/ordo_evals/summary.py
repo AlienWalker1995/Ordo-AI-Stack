@@ -233,6 +233,14 @@ def suite_summary(suite: str, items: list[dict[str, Any]], grades: list[dict[str
     metrics = SUITE_METRICS[suite](items, [g for g in grades if g.get("suite") == suite])
     metrics["infra_errors"] = _count(sum(1 for i in items if i.get("infra_error")), len(items))
     metrics["check_errors"] = _count(sum(1 for i in items if i.get("scores", {}).get("check_error")), len(items))
+    # E15 (round-6 fix): how many items ran at less than 1/10th this suite's own median tokens/second
+    # (timing.annotate_tokens_per_second, applied before items.jsonl is written) - a slow-backend
+    # signal that stays visible even when served_model never changes (a saturated GPU, not a CPU
+    # fallback). n is every item with a computable rate, not every item (a suite where the rate
+    # cannot be computed at all - e.g. no tokens - reports n=0, not a false 0%).
+    metrics["slow_items"] = _count(
+        sum(1 for i in items if (i.get("metadata") or {}).get("slow_item")),
+        sum(1 for i in items if (i.get("metadata") or {}).get("tokens_per_second") is not None))
     return {"n_items": len(items), "metrics": metrics}
 
 
@@ -248,5 +256,6 @@ def history_rows(summary: dict[str, Any], suites: list[str] | None = None) -> li
                 run_id=summary["run_id"], ts=summary["ts"], suite=suite, subject=subject,
                 model=block["model"], harness=block["harness"] if subject == "harness" else None,
                 metric=metric, value=value["value"], n=value["n"], ci95=value["ci95"],
-                commit=summary.get("commit"), dirty=summary.get("dirty")))
+                commit=summary.get("commit"), dirty=summary.get("dirty"),
+                integrity=summary.get("integrity")))
     return rows

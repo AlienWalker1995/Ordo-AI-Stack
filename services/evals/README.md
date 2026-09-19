@@ -274,12 +274,14 @@ ${DATA_PATH}/evals/
   history.jsonl                      one row per (run, suite, metric) - the leaderboard input
   runs/<run-id>/
     inspect/                         Inspect .eval logs
-    items.jsonl                      per item: input, output, scores, trace id, trajectory, errors
+    items.jsonl                      per item: input, output, served_model (E15, below), scores,
+                                      trace id, trajectory, errors
     judge_queue.jsonl                items waiting for a judgment
     grades.jsonl                     every validated grade ingested so far
-    summary.json                     per-suite metrics, identities, skipped suites, notes,
-                                      sampled_item_ids (only when --limit was used),
-                                      commit / dirty (E7 git provenance, below)
+    summary.json                     per-suite metrics, served_models, identities, skipped suites,
+                                      notes, sampled_item_ids (only when --limit was used),
+                                      commit / dirty (E7 git provenance, below),
+                                      integrity (E15, below; null for a trustworthy run)
 ```
 
 ## Labelling the private domain pool (E2b, round-3 fix; second dimension added E11, round-4 fix)
@@ -473,6 +475,63 @@ run appends to `history.jsonl`, so a later query can exclude non-reproducible ru
 load lazily) - don't edit this directory while a run you care about is in flight. `--limit` smoke
 runs during active development are expected to need `--allow-dirty` regularly; that is exactly what
 the flag and the recorded flag are for.
+
+## Run validity: served backend, GPU-lease guard, and timing (E15, round-6 fix)
+
+Iteration 4 (2026-09-19, `docs/superpowers/plans/2026-09-15-eval-loop-protocol.md`'s ledger) ran while
+ComfyUI took GPU residency repeatedly, evicting llama.cpp; LiteLLM's configured fallback
+(`services/model-gateway/litellm_config.yaml`'s `router_settings.fallbacks`) correctly failed
+`local-chat` over to the slow CPU deployment for part of the run - and nothing in the results showed
+it, because every item recorded only the alias `local-chat`, never which deployment actually
+answered. `did_not_converge` on `harness_domain` jumped from 0.238 to 0.714 and the run was voided by
+hand. A scientific instrument that cannot tell you the specimen changed is broken; this fix makes that
+failure visible and, where possible, unreachable.
+
+**What makes a run comparable to another one:** the same commit (E7's provenance gate), the same
+datasets, exactly one backend throughout (this fix), and no GPU lease held at any point during it.
+Run evals in a window with no render crons scheduled - a run does not know the future, only what it
+has measured so far, so a render that starts moments after the last GPU-lease check still ruins a
+run's numbers even though nothing here caught it.
+
+- **Per-item served backend.** Every item, model and harness suites alike, carries `served_model`.
+  For the model suites (which call LiteLLM directly) this is free and exact: `sample.output.model`,
+  Inspect's own copy of the raw completion response's `model` field, which llama.cpp sets to the path
+  of the model it has loaded and does not rewrite to match the request - confirmed distinct between
+  the GPU and CPU deployments by querying each server's own `/v1/models` directly. Hermes, which the
+  harness suites drive, has no equivalent per-turn signal (its own response's `model` field is a pure
+  echo of the request, and `state.db`'s `sessions.model` records the same constant value - verified
+  against real run evidence, `data/evals/runs/loop3-20260918-1644` and `loop4-20260919-0025` both show
+  `trajectory.model == "local-chat"` for every item despite loop4's known CPU-fallback period), so a
+  harness item's `served_model` instead comes from `ordo_evals.gpu_guard.served_model_for_item`: the
+  run's declared GPU model when the scheduler was clear right after the item's Hermes turn finished,
+  a `cpu-fallback (gpu leased)` sentinel when it was leased. See `gpu_guard.py`'s module docstring for
+  the full trail. Each suite's distinct `served_models` set is recorded in `summary.json`.
+- **Run-level integrity check.** If a run's model-suite items (or its harness-suite items) show more
+  than one distinct served backend, or the GPU is found leased on a between-suite recheck, the run is
+  marked `integrity: "backend_changed"` in `summary.json` and on every row it has written (and will
+  write) to `history.jsonl` - even rows appended before the marker was detected are retroactively
+  restamped, so a later query over `history.jsonl` never sees a partially-marked run as trustworthy.
+  `python -m ordo_evals run` exits `6` in this case. Model-suite and harness-suite served_model values
+  are never compared to each other (different vocabularies - a gguf path vs. a coarser sentinel, see
+  above); each subject is checked against its own distinct set only.
+- **Preflight and mid-run guard.** Before any suite runs (and before `run_dir` even exists, the same
+  "a refused run writes nothing" guarantee E7's provenance gate makes), the run refuses to start
+  (exit `5`) when ops-controller's `/status` shows the GPU scheduler busy, a job queued, or a resident
+  evicted to free VRAM (`ordo_evals.gpu_guard.gpu_lease_state`) - the same signal `services/gpu-gate`
+  uses to hold residency for the whole time a render is actually working, so this is ground truth, not
+  a guess. The same check runs again after every suite (cheap: one GET already used for the served-
+  model attribution above) and aborts with the `backend_changed` marker if the GPU has become leased
+  mid-run, rather than finishing a run whose remaining suites would be meaningless. ops-controller
+  being unreachable is treated the same as leased - refusing on an unverifiable status, not assuming
+  it is fine. No new secret: `OPS_CONTROLLER_URL` (already in the evals service env) points at
+  `ordo/control.py`'s `ControlPlane`, which by design takes no auth at all (the dashboard's
+  `OPS_CONTROLLER_TOKEN` is for the separate `ops-api` service and does not apply here).
+- **Timing sanity signal.** Every item's generated-tokens-per-second is recorded on
+  `metadata.tokens_per_second` where the data allows (`ordo_evals.timing`), and an item running at
+  under 1/10th its own suite's median is flagged `metadata.slow_item` - visible even when
+  `served_model` never changes (a saturated or thermal-throttled GPU is still slow without a backend
+  switch to show it). `summary.json`'s `slow_items` metric counts flagged items over items with a
+  computable rate.
 
 ## Known limitation: Hermes can see the harness
 

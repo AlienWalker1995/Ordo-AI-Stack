@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ordo_evals import trajectory
+from ordo_evals import gpu_guard, trajectory
 from ordo_evals.hermes_client import HermesClient, HermesTurn
 from ordo_evals.ids import safe_token
 
@@ -45,7 +45,8 @@ async def read_trajectory(state_db: str | Path, session_id: str) -> dict[str, An
 
 async def call_hermes(hermes: HermesClient, *, prompt: str, system: str | None, session_id: str,
                       session_key: str, model: str, state_db: str | Path,
-                      budget_s: float) -> tuple[HermesTurn, dict[str, Any]]:
+                      budget_s: float, probes: Any = None,
+                      gpu_served_model: str = "") -> tuple[HermesTurn, dict[str, Any]]:
     """One Hermes turn, bounded by `budget_s` (settings.Settings.hermes_item_budget_s -
     EVALS_HERMES_ITEM_BUDGET_S, default 900s), well inside the client's own transport-level timeout.
 
@@ -58,6 +59,13 @@ async def call_hermes(hermes: HermesClient, *, prompt: str, system: str | None, 
     though the Hermes session was often still alive and had reached an answer. A genuine transport
     failure (connection refused, 401, 5xx - error_kind == "transport") is the only case that stays an
     infra error; that path never touches state.db.
+
+    E15 (round-6 fix): when `probes` is given, `traj["served_model"]` is set from
+    `gpu_guard.served_model_for_item` right after the turn (or its timeout) resolves - the same
+    ops-controller GPU-lease check the preflight/mid-run guard uses, checked here per item because
+    Hermes's own response carries no genuine per-turn served-backend signal (see gpu_guard.py's
+    module docstring for why). Skipped for a transport failure (no turn happened at all - nothing to
+    attribute to a backend) and when `probes` is None (a caller that doesn't have one, e.g. a test).
 
     Returns (turn, trajectory): trajectory is {} when error_kind == "transport".
     """
@@ -76,6 +84,11 @@ async def call_hermes(hermes: HermesClient, *, prompt: str, system: str | None, 
     traj["wall_time_s"] = turn.wall_time_s
     if turn.error_kind == "timeout" and not turn.text and traj.get("last_assistant_message"):
         turn = dataclasses.replace(turn, text=traj["last_assistant_message"])
+    if probes is not None:
+        served_model, note = gpu_guard.served_model_for_item(probes, gpu_served_model=gpu_served_model)
+        traj["served_model"] = served_model
+        if note:
+            traj["served_model_note"] = note
     return turn, traj
 
 
