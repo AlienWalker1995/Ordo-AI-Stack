@@ -329,8 +329,12 @@ def _seed_completed_run(settings, run_id, session_id):
                       {"artifact_ok": True, "claimed_done": True, "check_error": False,
                        "did_not_converge": False})
     item["run_id"] = run_id
+    # `wall_time_s` is the window every backfilled reading is bounded to (E22, round-10 fix), so it
+    # has to cover the synthetic session `_write_backfill_state_db` writes (timestamps 100.0 to
+    # 999.0) for the tests below to see the whole trajectory. The window bound itself is exercised in
+    # its own tests further down.
     item["metadata"] = {"session_id": session_id,
-                        "trajectory": {"found": True, "tool_calls": 4, "wall_time_s": 137.0,
+                        "trajectory": {"found": True, "tool_calls": 4, "wall_time_s": 1000.0,
                                        "completion_tokens": 165, "served_model": "gpu-a"}}
     write_jsonl(run_dir / "items.jsonl", [item])
     block = summary.suite_summary("harness_ops", [item], [])
@@ -361,7 +365,7 @@ def test_backfill_writes_the_behaviour_metrics_into_the_items_summary_and_histor
     assert backfilled["explored_after_negative"] is True
     assert backfilled["replay_prior_run_ids"] == ["loop3-20260918-1644"]
     # the run-time measurements recorded during the run are left exactly as they were
-    assert backfilled["wall_time_s"] == 137.0 and backfilled["served_model"] == "gpu-a"
+    assert backfilled["wall_time_s"] == 1000.0 and backfilled["served_model"] == "gpu-a"
 
     run_summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
     metrics = run_summary["suites"]["harness_ops"]["metrics"]
@@ -417,3 +421,90 @@ def test_backfill_records_a_missing_session_as_unknown_never_as_no_negative(tmp_
 def test_backfill_refuses_a_run_that_does_not_exist(tmp_path, monkeypatch):
     settings = _clean_settings(tmp_path, monkeypatch)
     assert runner.backfill_metrics(settings, run_id="never-ran") == 2
+
+
+# ── E22 (round-10 fix): the backfill reads each item's own window ────────────────
+
+def _write_abandoned_state_db(path, session_id, *, in_window, after_window):
+    """One eval session whose tool calls straddle the harness's cutoff: `in_window` results land in
+    the first 100 seconds, `after_window` results land long after the harness stopped waiting.
+
+    This is the recorded shape of `eval-loop5-20260919-1600-harness_honesty-hon-07-missing-workflow`:
+    the run recorded 41 tool calls against its 900s budget, and the session now holds 61 over 1773s.
+    """
+    connection = sqlite3.connect(path)
+    connection.executescript(BACKFILL_SCHEMA)
+    connection.execute("INSERT INTO sessions (id, source, model, started_at) VALUES (?, 'api_server', "
+                       "'local-chat', 100.0)", (session_id,))
+    rows = [(session_id, "user", "do the thing", None, 100.0)]
+    for index, result in enumerate(in_window):
+        rows.append((session_id, "assistant", "", json.dumps(
+            [{"id": f"c{index}", "type": "function",
+              "function": {"name": "terminal", "arguments": json.dumps({"step": index})}}]), 101.0 + index))
+        rows.append((session_id, "tool", result, None, 101.5 + index))
+    for index, result in enumerate(after_window):
+        rows.append((session_id, "assistant", "", json.dumps(
+            [{"id": f"late{index}", "type": "function",
+              "function": {"name": "terminal", "arguments": json.dumps({"late": index})}}]), 1000.0 + index))
+        rows.append((session_id, "tool", result, None, 1000.5 + index))
+    connection.executemany("INSERT INTO messages (session_id, role, content, tool_calls, timestamp) "
+                           "VALUES (?, ?, ?, ?, ?)", rows)
+    connection.commit()
+    connection.close()
+
+
+def test_backfill_ignores_the_work_hermes_did_after_the_harness_gave_up(tmp_path, monkeypatch):
+    """The defect: `backfill-metrics` re-read the whole session, so a budget-exceeded item was
+    credited with tool calls made after nobody was waiting for it any more - and the numbers moved
+    depending on when the backfill happened to run. Bounded to the item's own window, the backfilled
+    reading is the one the run recorded."""
+    settings = _clean_settings(tmp_path, monkeypatch)
+    session_id = "eval-r10-harness_ops-ops-01-terminal-product"
+    state_db = tmp_path / "state.db"
+    _write_abandoned_state_db(state_db, session_id, in_window=[OK_RESULT, NEGATIVE_RESULT, OK_RESULT],
+                              after_window=[OK_RESULT] * 5)
+    settings = dataclasses.replace(settings, hermes_state_db=state_db)
+    run_dir = _seed_completed_run(settings, "r10", session_id)
+    item = read_jsonl(run_dir / "items.jsonl")[0]
+    item["metadata"]["trajectory"].update({"tool_calls": 3, "wall_time_s": 100.0})
+    write_jsonl(run_dir / "items.jsonl", [item])
+
+    assert runner.backfill_metrics(settings, run_id="r10") == 0
+
+    backfilled = read_jsonl(run_dir / "items.jsonl")[0]["metadata"]["trajectory"]
+    assert backfilled["window_s"] == 100.0
+    assert backfilled["tool_calls_seen"] == 3           # not the 8 the session holds now
+    assert backfilled["first_negative_index"] == 2 and backfilled["calls_after_first_negative"] == 1
+
+
+def test_backfilled_calls_after_a_negative_can_never_exceed_the_items_own_calls(tmp_path, monkeypatch):
+    """The sanity property the recorded evidence violated: loop5's hon-07-missing-workflow carried
+    `calls_after_first_negative: 60` against `tool_calls: 41`, which cannot describe one trajectory.
+    Whatever the session holds now, a backfilled item must satisfy
+    calls_after_first_negative <= tool_calls - first_negative_index."""
+    settings = _clean_settings(tmp_path, monkeypatch)
+    session_id = "eval-r10-harness_ops-ops-01-terminal-product"
+    state_db = tmp_path / "state.db"
+    _write_abandoned_state_db(state_db, session_id, in_window=[NEGATIVE_RESULT] + [OK_RESULT] * 3,
+                              after_window=[OK_RESULT] * 20)
+    settings = dataclasses.replace(settings, hermes_state_db=state_db)
+    run_dir = _seed_completed_run(settings, "r10", session_id)
+    item = read_jsonl(run_dir / "items.jsonl")[0]
+    item["metadata"]["trajectory"].update({"tool_calls": 4, "wall_time_s": 100.0})
+    write_jsonl(run_dir / "items.jsonl", [item])
+
+    assert runner.backfill_metrics(settings, run_id="r10") == 0
+
+    traj = read_jsonl(run_dir / "items.jsonl")[0]["metadata"]["trajectory"]
+    assert traj["calls_after_first_negative"] <= traj["tool_calls"] - traj["first_negative_index"]
+    assert traj["tool_calls_seen"] == traj["tool_calls"] == 4
+
+
+def test_the_window_falls_back_to_the_samples_own_time_and_is_recorded_when_there_is_none():
+    """An older run may have no `wall_time_s` on its trajectory; Inspect's `time_s` for the sample is
+    the same window one layer out. An item with neither is read unbounded and says so, rather than
+    being silently mixed in with the bounded ones."""
+    assert runner._item_window_s({"metadata": {"trajectory": {"wall_time_s": 137.0}}, "time_s": 140.0}) == 137.0
+    assert runner._item_window_s({"metadata": {"trajectory": {}}, "time_s": 140.0}) == 140.0
+    assert runner._item_window_s({"metadata": {}, "time_s": None}) is None
+    assert runner._item_window_s({"metadata": {"trajectory": {"wall_time_s": 0}}, "time_s": 0}) is None

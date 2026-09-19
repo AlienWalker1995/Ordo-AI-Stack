@@ -295,6 +295,19 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
     return 0
 
 
+def _item_window_s(item: dict[str, Any]) -> float | None:
+    """The seconds the harness waited for this item (E22), or None when neither duration was recorded.
+
+    `trajectory.wall_time_s` is the Hermes call's own wall clock (hermes_turn.call_hermes) and is the
+    window the run itself read. `time_s` is Inspect's total for the sample - very slightly wider (it
+    includes the item's setup and scoring) - and is used only when an older run has no wall_time_s.
+    """
+    for value in ((item.get("metadata") or {}).get("trajectory") or {}).get("wall_time_s"), item.get("time_s"):
+        if isinstance(value, int | float) and not isinstance(value, bool) and value > 0:
+            return float(value)
+    return None
+
+
 def backfill_metrics(settings: Settings, *, run_id: str) -> int:
     """Recompute a COMPLETED run's behaviour metrics (E17 stopping, E19 replay) from state.db.
 
@@ -307,11 +320,18 @@ def backfill_metrics(settings: Settings, *, run_id: str) -> int:
 
     Only the BEHAVIOUR fields are written onto an item's trajectory (trajectory.BEHAVIOUR_FIELDS);
     every run-time measurement recorded during the run (wall_time_s, served_model, token counts) is
-    left exactly as it was. Note that a session is read as it stands NOW: for a did_not_converge item,
-    Hermes often kept working after the harness's budget fired, so the backfilled behaviour covers
-    tool calls the run itself never saw - which is the agent's stopping behaviour, precisely what
-    these metrics are about. A session that is no longer in state.db is recorded as
+    left exactly as it was. A session that is no longer in state.db is recorded as
     `behaviour_known: false` (nulls), never guessed.
+
+    E22 (round-10 fix): every session is read bounded to the ITEM'S OWN WINDOW - the seconds the
+    harness waited for it (`trajectory.wall_time_s`, falling back to the sample's `time_s`). Before
+    this, the session was read as it stood at backfill time, so a did_not_converge item picked up
+    every tool call Hermes made after the harness gave up: `hon-07-missing-workflow` in
+    loop5-20260919-1600 recorded 41 tool calls and was backfilled with
+    `calls_after_first_negative: 60`, a number larger than the item's own call count and one that
+    changed with WHEN the backfill happened to run. Bounded, a backfilled reading is the one the run
+    would have recorded. An item with neither duration recorded is read unbounded and says so
+    (`window_s: null` on its trajectory), rather than being silently mixed in.
     """
     from ordo_evals import hermes_turn, trajectory
 
@@ -332,8 +352,10 @@ def backfill_metrics(settings: Settings, *, run_id: str) -> int:
         metadata = item.get("metadata") or {}
         item["metadata"] = metadata
         session_id = metadata.get("session_id") or hermes_turn.session_id_for(run_id, item["suite"], item["item_id"])
+        window_s = _item_window_s(item)
         try:
-            session = trajectory.session_metrics(settings.hermes_state_db, session_id, run_id=run_id)
+            session = trajectory.session_metrics(settings.hermes_state_db, session_id, run_id=run_id,
+                                                 window_s=window_s)
         except Exception as exc:  # an unreadable state.db is recorded as unknown, never as "no negative"
             _log(f"WARNING could not read session {session_id}: {type(exc).__name__}: {exc}")
             session = {"found": False}

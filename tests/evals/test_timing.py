@@ -80,14 +80,16 @@ def test_contention_reports_the_runs_median_and_minimum_rate_and_the_slow_count(
     timing.annotate_tokens_per_second(items)
     block = timing.contention(items)
     assert block == {"n": 4, "slow_items": 1, "tokens_per_second_median": 10.0,
-                     "tokens_per_second_min": 0.2}
+                     "tokens_per_second_min": 0.2, "abandoned_items": 0, "abandoned_overrun_s": 0.0,
+                     "abandoned_wait_timeouts": 0}
 
 
 def test_contention_over_items_with_no_computable_rate_is_null_not_zero():
     items = [model_item(0, 10.0, "no-tokens")]
     timing.annotate_tokens_per_second(items)
     assert timing.contention(items) == {"n": 0, "slow_items": 0, "tokens_per_second_median": None,
-                                        "tokens_per_second_min": None}
+                                        "tokens_per_second_min": None, "abandoned_items": 0,
+                                        "abandoned_overrun_s": 0.0, "abandoned_wait_timeouts": 0}
 
 
 def test_items_within_an_order_of_magnitude_of_the_median_are_not_flagged():
@@ -96,3 +98,40 @@ def test_items_within_an_order_of_magnitude_of_the_median_are_not_flagged():
     items = [model_item(100, 10.0, "a"), model_item(100, 12.0, "b"), model_item(100, 8.0, "c")]
     timing.annotate_tokens_per_second(items)
     assert all(not i["metadata"].get("slow_item", False) for i in items)
+
+
+# ── E23 (round-10 fix): the run's abandoned work ─────────────────────────────────
+
+def abandoned_item(overrun_s, item_id="h", timed_out=False):
+    """A harness item whose budget fired: `hermes_turn.call_hermes` waited `overrun_s` for Hermes to
+    release the model slot before the next item started."""
+    item = harness_item(100, 900.0, item_id)
+    item["metadata"]["trajectory"].update({"overrun_s": overrun_s, "overrun_timed_out": timed_out})
+    return item
+
+
+def test_contention_totals_the_seconds_the_run_spent_on_abandoned_items():
+    """The loop5-20260919-1600 shape: an item exceeds its 900s budget and Hermes keeps working it for
+    another ~14 minutes on the single model slot. The run-level total is what tells a reader how much
+    of the run was spent that way."""
+    items = [harness_item(100, 10.0, "converged"), abandoned_item(873.4, "hon-07"),
+             abandoned_item(852.6, "pd-1")]
+    timing.annotate_tokens_per_second(items)
+    block = timing.contention(items)
+    assert block["abandoned_items"] == 2
+    assert block["abandoned_overrun_s"] == 1726.0
+    assert block["abandoned_wait_timeouts"] == 0
+
+
+def test_contention_counts_a_wait_that_timed_out_separately():
+    """A wait that hit its own bound means the next item DID start while the abandoned one was still
+    generating - the one case where the harness could not remove the contention it created."""
+    block = timing.contention([abandoned_item(900.0, "hon-07", timed_out=True)])
+    assert block["abandoned_items"] == 1 and block["abandoned_wait_timeouts"] == 1
+
+
+def test_items_from_a_run_that_predates_the_overrun_measurement_total_zero():
+    """A recorded run with no `overrun_s` anywhere reports 0.0, not a fabricated number - the same
+    rule the token rates follow."""
+    block = timing.contention([harness_item(100, 10.0, "old")])
+    assert block["abandoned_items"] == 0 and block["abandoned_overrun_s"] == 0.0
