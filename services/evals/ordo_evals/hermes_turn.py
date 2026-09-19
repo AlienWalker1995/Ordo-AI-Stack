@@ -31,10 +31,11 @@ def session_key_for(run_id: str) -> str:
     return f"ordo-evals-{safe_token(run_id, 48)}"
 
 
-async def read_trajectory(state_db: str | Path, session_id: str) -> dict[str, Any]:
+async def read_trajectory(state_db: str | Path, session_id: str, *, run_id: str) -> dict[str, Any]:
+    """`run_id` is this item's own run, needed by the E19 replay reading - see trajectory.py."""
     for attempt in range(TRAJECTORY_ATTEMPTS):
         try:
-            metrics = await asyncio.to_thread(trajectory.session_metrics, state_db, session_id)
+            metrics = await asyncio.to_thread(trajectory.session_metrics, state_db, session_id, run_id=run_id)
         except Exception as exc:  # an unreadable state.db must not lose the item; record why
             return {"found": False, "session_id": session_id, "error": f"{type(exc).__name__}: {exc}"}
         if metrics.get("found") or attempt == TRAJECTORY_ATTEMPTS - 1:
@@ -44,7 +45,7 @@ async def read_trajectory(state_db: str | Path, session_id: str) -> dict[str, An
 
 
 async def call_hermes(hermes: HermesClient, *, prompt: str, system: str | None, session_id: str,
-                      session_key: str, model: str, state_db: str | Path,
+                      session_key: str, model: str, state_db: str | Path, run_id: str,
                       budget_s: float, probes: Any = None,
                       gpu_served_model: str = "") -> tuple[HermesTurn, dict[str, Any]]:
     """One Hermes turn, bounded by `budget_s` (settings.Settings.hermes_item_budget_s -
@@ -80,7 +81,7 @@ async def call_hermes(hermes: HermesClient, *, prompt: str, system: str | None, 
                           error_kind="timeout", budget_exceeded=True)
     if turn.error_kind == "transport":
         return turn, {}
-    traj = await read_trajectory(state_db, turn.session_id)
+    traj = await read_trajectory(state_db, turn.session_id, run_id=run_id)
     traj["wall_time_s"] = turn.wall_time_s
     if turn.error_kind == "timeout" and not turn.text and traj.get("last_assistant_message"):
         turn = dataclasses.replace(turn, text=traj["last_assistant_message"])
@@ -95,25 +96,32 @@ async def call_hermes(hermes: HermesClient, *, prompt: str, system: str | None, 
 def has_usable_output(text: str | None) -> bool:
     """True when `text` is a real reply worth showing a human judge - not None, empty or whitespace.
 
+    Used through `judgeable` below (E18, round-7 fix), which adds the non-convergence rule the
+    round-5 gate was missing.
+
     E14 (round-5 fix): a budget-exceeded item can recover nothing at all - state.db had a session but
     no assistant message had any content yet at read time (the loop3-20260918-1644 evidence: six
     items where the wall-clock budget fired 17s to over 1900s before Hermes's next real content-
     bearing message landed, well outside read_trajectory's few-second retry window). Before this fix,
     every harness_honesty/harness_domain suite queued such an item for the judge anyway (empty
-    `output`, nothing to read) instead of treating it as the did_not_converge result it is - see this
-    function's call sites in suites/harness_honesty.py and suites/harness_domain.py.
+    `output`, nothing to read) instead of treating it as the did_not_converge result it is.
     """
     return bool(text and text.strip())
 
 
-def partial_answer(*, did_not_converge: bool, text: str | None) -> bool:
-    """True when a queued item's answer is a recovered-but-unfinished fragment (E14, round-5 fix): the
-    per-item budget fired before Hermes's HTTP response came back, yet state.db had SOME assistant
-    text to recover - not necessarily the agent's real final answer, just whatever content-bearing
-    message it had most recently written (the loop3-20260918-1644 evidence: two domain items recovered
-    a 141- and 98-character mid-task remark this way, both later superseded by a much longer real
-    answer the agent went on to write after the budget had already fired). Still worth a judge's
-    grade, but the queue entry must say so (`context["partial"]`) so the grade reflects an unfinished
-    answer rather than being read as the agent's considered final reply.
+def judgeable(*, infra_error: bool, did_not_converge: bool, text: str | None) -> bool:
+    """Whether an item may go to the judge queue at all (E18, round-7 fix).
+
+    A NON-CONVERGED item never may. Round 5 gated the queue on whether the recovered text happened to
+    be empty (`has_usable_output` alone), which let through any budget-exceeded item whose state.db
+    recovery caught a mid-thought sentence: in loop4b-20260919-1048, `pd-a50af3dca757`
+    (harness_domain) and `hon-07-missing-workflow` (harness_honesty) both hit the 900s budget and both
+    reached a human judge, who spent time grading a sentence in which the agent was still describing
+    what it planned to do. Whether the recovery window happened to catch a fragment is a property of
+    the harness's timing, not of the answer - and a non-convergence is a non-convergence, counted by
+    `did_not_converge_rate`, never a judged failure that drags the judge metrics down with it.
+
+    `summary._converged` applies exactly this rule to the denominators, so what is graded and what is
+    counted stay the same set of items.
     """
-    return did_not_converge and has_usable_output(text)
+    return not infra_error and not did_not_converge and has_usable_output(text)

@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import sqlite3
 import sys
 import types
 
-from ordo_evals import runner
+import pytest
+from ordo_evals import runner, summary
 from ordo_evals.checks import VAULT_EVAL_ROOT, ProbeError
-from ordo_evals.jsonl import read_jsonl
+from ordo_evals.jsonl import read_jsonl, write_json, write_jsonl
 from ordo_evals.settings import Settings
 
 
@@ -278,3 +280,140 @@ def test_run_with_mixed_backends_marks_integrity_and_returns_a_nonzero_exit(tmp_
     assert "model suites" in run_summary["integrity_detail"]
     rows = read_jsonl(settings.results_dir / "history.jsonl")
     assert rows and all(r["integrity"] == "backend_changed" for r in rows)
+
+
+# ── round 7: backfill-metrics (E17 stopping, E19 replay) ────────────────────────
+
+BACKFILL_SCHEMA = """
+CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, model TEXT, parent_session_id TEXT,
+                       started_at REAL NOT NULL, ended_at REAL, input_tokens INTEGER DEFAULT 0,
+                       output_tokens INTEGER DEFAULT 0, tool_call_count INTEGER DEFAULT 0);
+CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, role TEXT NOT NULL,
+                       content TEXT, tool_calls TEXT, tool_name TEXT, timestamp REAL NOT NULL);
+"""
+
+NEGATIVE_RESULT = json.dumps({"exit_code": 1, "output": "cat: note.md: No such file or directory"})
+OK_RESULT = json.dumps({"exit_code": 0, "output": "ok"})
+
+
+def _write_backfill_state_db(path, session_id, results, run_id_of_prior_session=None):
+    """A synthetic state.db holding one eval session whose tool calls returned `results` in order."""
+    connection = sqlite3.connect(path)
+    connection.executescript(BACKFILL_SCHEMA)
+    connection.execute("INSERT INTO sessions (id, source, model, started_at) VALUES (?, 'api_server', "
+                       "'local-chat', 100.0)", (session_id,))
+    rows = [(session_id, "user", "do the thing", None, 100.0)]
+    for index, result in enumerate(results):
+        call = [{"id": f"c{index}", "type": "function",
+                 "function": {"name": "terminal", "arguments": json.dumps({"step": index})}}]
+        rows.append((session_id, "assistant", "", json.dumps(call), 101.0 + index * 2))
+        rows.append((session_id, "tool", result, None, 102.0 + index * 2))
+    if run_id_of_prior_session:
+        prior = f"eval-{run_id_of_prior_session}-harness_ops-ops-01"
+        rows.append((session_id, "assistant", "", json.dumps(
+            [{"id": "cs", "type": "function",
+              "function": {"name": "session_search", "arguments": "{}"}}]), 900.0))
+        rows.append((session_id, "tool", json.dumps({"results": [{"session_id": prior}]}), None, 901.0))
+    rows.append((session_id, "assistant", "RESULT: done", None, 999.0))
+    connection.executemany("INSERT INTO messages (session_id, role, content, tool_calls, timestamp) "
+                           "VALUES (?, ?, ?, ?, ?)", rows)
+    connection.commit()
+    connection.close()
+
+
+def _seed_completed_run(settings, run_id, session_id):
+    """One finished harness_ops run on disk: the items and summary a completed run leaves behind."""
+    run_dir = runner.run_dir_for(settings, run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    item = _fake_item("harness_ops", "harness", "ops-01-terminal-product", "gpu-a",
+                      {"artifact_ok": True, "claimed_done": True, "check_error": False,
+                       "did_not_converge": False})
+    item["run_id"] = run_id
+    item["metadata"] = {"session_id": session_id,
+                        "trajectory": {"found": True, "tool_calls": 4, "wall_time_s": 137.0,
+                                       "completion_tokens": 165, "served_model": "gpu-a"}}
+    write_jsonl(run_dir / "items.jsonl", [item])
+    block = summary.suite_summary("harness_ops", [item], [])
+    block.update({"subject": "harness", "model": "gpu-a", "harness": "hermes-agent@0.20.0"})
+    write_json(run_dir / "summary.json", {"run_id": run_id, "ts": "2026-09-19T10:49:02Z",
+                                          "suites": {"harness_ops": block}, "commit": "a" * 40,
+                                          "dirty": False, "integrity": None})
+    return run_dir
+
+
+def test_backfill_writes_the_behaviour_metrics_into_the_items_summary_and_history(tmp_path, monkeypatch):
+    """The point of the command: give a completed run the round-7 behaviour metrics from state.db,
+    with no new GPU time. Here the agent hit "no such file" on call 2 and made 8 more calls, and its
+    trajectory also read a PRIOR eval run's session."""
+    settings = _clean_settings(tmp_path, monkeypatch)
+    session_id = "eval-r7-harness_ops-ops-01-terminal-product"
+    state_db = tmp_path / "state.db"
+    _write_backfill_state_db(state_db, session_id, [OK_RESULT, NEGATIVE_RESULT] + [OK_RESULT] * 7,
+                             run_id_of_prior_session="loop3-20260918-1644")
+    settings = dataclasses.replace(settings, hermes_state_db=state_db)
+    run_dir = _seed_completed_run(settings, "r7", session_id)
+
+    assert runner.backfill_metrics(settings, run_id="r7") == 0
+
+    backfilled = read_jsonl(run_dir / "items.jsonl")[0]["metadata"]["trajectory"]
+    assert backfilled["behaviour_known"] is True
+    assert backfilled["first_negative_index"] == 2 and backfilled["calls_after_first_negative"] == 8
+    assert backfilled["explored_after_negative"] is True
+    assert backfilled["replay_prior_run_ids"] == ["loop3-20260918-1644"]
+    # the run-time measurements recorded during the run are left exactly as they were
+    assert backfilled["wall_time_s"] == 137.0 and backfilled["served_model"] == "gpu-a"
+
+    run_summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    metrics = run_summary["suites"]["harness_ops"]["metrics"]
+    assert metrics["calls_after_first_negative_mean"]["value"] == 8.0
+    assert metrics["explored_after_negative_rate"]["value"] == 1.0
+    assert metrics["replay_aware_rate"]["value"] == 1.0
+    # the contention block is recomputed from the stored items too (no new collection), including the
+    # per-item token rate for a run that predates E15's timing annotation
+    assert run_summary["contention"]["n"] == 1
+    assert run_summary["contention"]["tokens_per_second_median"] == pytest.approx(165 / 1.0)
+    rows = read_jsonl(settings.results_dir / "history.jsonl")
+    assert {r["metric"] for r in rows} >= {"explored_after_negative_rate", "replay_aware_rate"}
+
+
+def test_backfill_is_idempotent(tmp_path, monkeypatch):
+    settings = _clean_settings(tmp_path, monkeypatch)
+    session_id = "eval-r7-harness_ops-ops-01-terminal-product"
+    state_db = tmp_path / "state.db"
+    _write_backfill_state_db(state_db, session_id, [NEGATIVE_RESULT, OK_RESULT])
+    settings = dataclasses.replace(settings, hermes_state_db=state_db)
+    run_dir = _seed_completed_run(settings, "r7", session_id)
+
+    assert runner.backfill_metrics(settings, run_id="r7") == 0
+    first_items = (run_dir / "items.jsonl").read_text(encoding="utf-8")
+    first_summary = (run_dir / "summary.json").read_text(encoding="utf-8")
+    first_history = read_jsonl(settings.results_dir / "history.jsonl")
+
+    assert runner.backfill_metrics(settings, run_id="r7") == 0
+    assert (run_dir / "items.jsonl").read_text(encoding="utf-8") == first_items
+    assert (run_dir / "summary.json").read_text(encoding="utf-8") == first_summary
+    assert read_jsonl(settings.results_dir / "history.jsonl") == first_history
+
+
+def test_backfill_records_a_missing_session_as_unknown_never_as_no_negative(tmp_path, monkeypatch):
+    """A session state.db no longer holds must not be read as "this agent met no definitive negative
+    and read no prior run" - it is recorded unknown and excluded from every behaviour denominator."""
+    settings = _clean_settings(tmp_path, monkeypatch)
+    state_db = tmp_path / "state.db"
+    _write_backfill_state_db(state_db, "eval-someone-else", [OK_RESULT])
+    settings = dataclasses.replace(settings, hermes_state_db=state_db)
+    run_dir = _seed_completed_run(settings, "r7", "eval-r7-harness_ops-gone")
+
+    assert runner.backfill_metrics(settings, run_id="r7") == 0
+
+    backfilled = read_jsonl(run_dir / "items.jsonl")[0]["metadata"]["trajectory"]
+    assert backfilled["behaviour_known"] is False
+    assert backfilled["first_negative_index"] is None and backfilled["replay_aware"] is None
+    metrics = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))["suites"]["harness_ops"]["metrics"]
+    assert metrics["replay_aware_rate"]["n"] == 0
+    assert metrics["behaviour_unknown"]["value"] == 1
+
+
+def test_backfill_refuses_a_run_that_does_not_exist(tmp_path, monkeypatch):
+    settings = _clean_settings(tmp_path, monkeypatch)
+    assert runner.backfill_metrics(settings, run_id="never-ran") == 2

@@ -1,11 +1,12 @@
-"""Orchestration for `run` and `ingest-grades`.
+"""Orchestration for `run`, `ingest-grades` and `backfill-metrics`.
 
 Layout of one run (all under /results, outside git):
     runs/<run-id>/inspect/           Inspect .eval logs (one per suite)
     runs/<run-id>/items.jsonl        one record per item: input, output, scores, trace_id, errors
     runs/<run-id>/judge_queue.jsonl  items awaiting the judge (see judge.py for the format)
     runs/<run-id>/grades.jsonl       every validated grade ingested so far
-    runs/<run-id>/summary.json       per-suite metrics {value, n, ci95} + identities + skipped suites
+    runs/<run-id>/summary.json       per-suite metrics {value, n, ci95, denominator} + identities +
+                                     the run-level contention block + skipped suites
     history.jsonl                    one row per (run, suite, metric) across all runs (history.py)
 """
 from __future__ import annotations
@@ -196,6 +197,9 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
     # each other) - accumulated across the whole run, not reset per suite, so a change first visible
     # in a LATER suite is still caught.
     served_models_by_subject: dict[str, set[str]] = {"model": set(), "harness": set()}
+    # Every item this run has collected so far, kept only to recompute the run-level `contention`
+    # block (round-7 fix) after each suite - the same items already written to items.jsonl.
+    run_items: list[dict[str, Any]] = []
     rag_leak: list[str] = []
     try:
         for suite in suites:
@@ -218,6 +222,9 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
             # E15: per-item tokens/second + the suite-local slow-item flag, computed before the items
             # are written so the flag is part of the persisted record, not a report-time afterthought.
             timing.annotate_tokens_per_second(items)
+            run_items.extend(items)
+            # Round-7 fix: how loaded the box was, run-wide, from the per-item rates just computed.
+            run_summary["contention"] = timing.contention(run_items)
             append_jsonl(run_dir / "items.jsonl", items)
             if queue:
                 append_jsonl(run_dir / "judge_queue.jsonl", queue)
@@ -285,6 +292,77 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
              f"under {VAULT_EVAL_ROOT}/ (see summary.json notes); this is an infra error, not a suite result")
         return 3
     _log(f"run {run_id} complete: {run_dir}")
+    return 0
+
+
+def backfill_metrics(settings: Settings, *, run_id: str) -> int:
+    """Recompute a COMPLETED run's behaviour metrics (E17 stopping, E19 replay) from state.db.
+
+    The round-7 metrics are read from the ordered tool calls and results of a Hermes session, which
+    state.db still holds for runs that have already happened: this gives the stopping-rule experiment
+    its baselines without spending GPU time re-running them. It rewrites that run's items.jsonl,
+    summary.json (every suite's metrics recomputed from the stored items and grades, plus the
+    run-level `contention` block) and its rows in history.jsonl, and it is idempotent - the same
+    state.db and the same items produce the same numbers.
+
+    Only the BEHAVIOUR fields are written onto an item's trajectory (trajectory.BEHAVIOUR_FIELDS);
+    every run-time measurement recorded during the run (wall_time_s, served_model, token counts) is
+    left exactly as it was. Note that a session is read as it stands NOW: for a did_not_converge item,
+    Hermes often kept working after the harness's budget fired, so the backfilled behaviour covers
+    tool calls the run itself never saw - which is the agent's stopping behaviour, precisely what
+    these metrics are about. A session that is no longer in state.db is recorded as
+    `behaviour_known: false` (nulls), never guessed.
+    """
+    from ordo_evals import hermes_turn, trajectory
+
+    run_dir = run_dir_for(settings, run_id)
+    items_path, summary_path = run_dir / "items.jsonl", run_dir / "summary.json"
+    for path in (items_path, summary_path):
+        if not path.is_file():
+            _log(f"{path} not found: nothing to backfill")
+            return 2
+
+    items = read_jsonl(items_path)
+    grades_path = run_dir / "grades.jsonl"
+    grades = read_jsonl(grades_path) if grades_path.is_file() else []
+    read_count = missing_count = 0
+    for item in items:
+        if SUBJECTS.get(item["suite"]) != "harness":
+            continue  # a model suite has no Hermes session to read
+        metadata = item.get("metadata") or {}
+        item["metadata"] = metadata
+        session_id = metadata.get("session_id") or hermes_turn.session_id_for(run_id, item["suite"], item["item_id"])
+        try:
+            session = trajectory.session_metrics(settings.hermes_state_db, session_id, run_id=run_id)
+        except Exception as exc:  # an unreadable state.db is recorded as unknown, never as "no negative"
+            _log(f"WARNING could not read session {session_id}: {type(exc).__name__}: {exc}")
+            session = {"found": False}
+        traj = metadata.get("trajectory") or {}
+        metadata["trajectory"] = traj
+        if session.get("found"):
+            traj.update({field: session[field] for field in trajectory.BEHAVIOUR_FIELDS})
+            read_count += 1
+        else:
+            traj.update(trajectory.behaviour_unknown())
+            missing_count += 1
+    # The per-item token rates the contention block aggregates are themselves derived from stored
+    # data (E15, round 6), so a run that predates that fix can have them computed here too - per
+    # SUITE, exactly as runner.run does it, because the slow-item flag is relative to the suite's own
+    # median and a run-wide median would mean something different.
+    for suite in sorted({i["suite"] for i in items}):
+        timing.annotate_tokens_per_second([i for i in items if i["suite"] == suite])
+    write_jsonl(items_path, items)
+
+    run_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    for suite, block in run_summary["suites"].items():
+        block["metrics"] = summary.suite_summary(suite, [i for i in items if i["suite"] == suite],
+                                                 grades)["metrics"]
+    run_summary["contention"] = timing.contention(items)
+    write_json(summary_path, run_summary)
+    history.replace_run_suites(settings.results_dir / "history.jsonl", run_id, list(run_summary["suites"]),
+                               summary.history_rows(run_summary))
+    _log(f"backfilled {run_id}: {read_count} harness session(s) read, {missing_count} missing from state.db; "
+         f"summary and history recomputed")
     return 0
 
 

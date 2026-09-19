@@ -70,6 +70,26 @@ def test_an_item_an_order_of_magnitude_below_the_median_is_flagged_slow():
     assert slow == {"a": False, "b": False, "c": False, "cpu-fallback": True}
 
 
+# ── contention (round-7 fix) ──────────────────────────────────────────────────────
+
+def test_contention_reports_the_runs_median_and_minimum_rate_and_the_slow_count():
+    """The run-level block summary.json carries so a reader can see how loaded the box was without
+    opening items.jsonl. Nothing new is collected: it aggregates the rates already on the items."""
+    items = [model_item(100, 10.0, "a"), model_item(100, 10.0, "b"), model_item(100, 10.0, "c"),
+            model_item(20, 100.0, "cpu-fallback")]
+    timing.annotate_tokens_per_second(items)
+    block = timing.contention(items)
+    assert block == {"n": 4, "slow_items": 1, "tokens_per_second_median": 10.0,
+                     "tokens_per_second_min": 0.2}
+
+
+def test_contention_over_items_with_no_computable_rate_is_null_not_zero():
+    items = [model_item(0, 10.0, "no-tokens")]
+    timing.annotate_tokens_per_second(items)
+    assert timing.contention(items) == {"n": 0, "slow_items": 0, "tokens_per_second_median": None,
+                                        "tokens_per_second_min": None}
+
+
 def test_items_within_an_order_of_magnitude_of_the_median_are_not_flagged():
     """Normal run-to-run variance (a longer prompt, a bit of thermal noise) must not trip the flag -
     only a change closer to the fallback's actual order-of-magnitude slowdown should."""

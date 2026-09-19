@@ -22,6 +22,7 @@ set -euo pipefail
 #   scripts/evals/run.sh run --suites harness_ops --run-id smoke --limit 3 --allow-dirty
 #   scripts/evals/run.sh build-private --source hermes-state --n 30 --seed 1234
 #   scripts/evals/run.sh report --run-id 2026-09-20-nightly --compare 2026-09-13-nightly
+#   scripts/evals/run.sh backfill-metrics --run-id 2026-09-13-nightly
 #
 # Requires: `ordo render --out out` already done (out/docker-compose.yml, out/.env and
 # out/secrets.env current) and the `evals` plugin enabled in ordo.yaml's plugins list.

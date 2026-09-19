@@ -12,6 +12,12 @@ facts this relies on (Hermes v0.20.0, verified against the live database):
   assistant `tool_calls` is a JSON list of {"id", "type", "function": {"name", "arguments"}}; a
   tool message's `content` is usually a JSON object whose `error` / `exit_code` / `success` fields
   carry failure.
+
+Round 7 adds the two BEHAVIOUR readings taken from the same ordered messages, each defined in its own
+module: `stopping` (E17 - where the first definitive negative tool result arrived and how much the
+agent kept exploring after it) and `replay` (E19 - whether the trajectory read a PRIOR eval run's
+sessions). Both are keyed to the tool results paired with the calls that produced them, so
+`session_metrics` pairs them up once, here, and neither module ever touches sqlite.
 """
 from __future__ import annotations
 
@@ -19,6 +25,8 @@ import json
 import sqlite3
 from pathlib import Path
 from typing import Any
+
+from ordo_evals import replay, stopping
 
 
 def connect_readonly(db_path: str | Path) -> sqlite3.Connection:
@@ -77,8 +85,25 @@ def _canonical_call(call: dict[str, Any]) -> tuple[str, str]:
     return str(function.get("name", "")), json.dumps(arguments, sort_keys=True, ensure_ascii=False)
 
 
-def session_metrics(db_path: str | Path, session_id: str) -> dict[str, Any]:
-    """Metrics for `session_id` (and its compaction children). `found: False` when absent."""
+def behaviour_unknown() -> dict[str, Any]:
+    """The behaviour fields for an item whose session could not be read at all (the backfill command
+    meeting a session that is no longer in state.db). `behaviour_known: False` is the flag summary.py
+    reads to keep such an item out of every behaviour denominator, instead of mistaking its nulls for
+    "this agent met no definitive negative and read no prior run"."""
+    return {"behaviour_known": False, **stopping.null_metrics(), **replay.null_fields()}
+
+
+# Exactly the keys `session_metrics` computes from the ordered tool results - the set the
+# `backfill-metrics` command copies onto an already-recorded trajectory, leaving every run-time
+# measurement (wall_time_s, served_model, the token counts) untouched.
+BEHAVIOUR_FIELDS = tuple(behaviour_unknown())
+
+
+def session_metrics(db_path: str | Path, session_id: str, *, run_id: str) -> dict[str, Any]:
+    """Metrics for `session_id` (and its compaction children). `found: False` when absent.
+
+    `run_id` is this item's own run: `replay` (E19) counts only references to OTHER runs' eval
+    sessions, so it has to know which run id is this item's own."""
     connection = connect_readonly(db_path)
     try:
         sessions = _session_family(connection, session_id)
@@ -98,6 +123,12 @@ def session_metrics(db_path: str | Path, session_id: str) -> dict[str, Any]:
     turns = 0
     tool_errors = 0
     last_assistant_message: str | None = None
+    # One slot per tool call, in call order, filled by the tool message that answers it (None for a
+    # call the turn ended before answering). `awaiting` holds the slots still unanswered, oldest
+    # first: Hermes writes one tool message per call, in the order the calls were made, so a queue
+    # pairs them without needing the tool_call_id (which the messages table does not carry).
+    tool_results: list[str | None] = []
+    awaiting: list[int] = []
     for message in messages:
         if message["role"] == "assistant":
             turns += 1
@@ -117,8 +148,13 @@ def session_metrics(db_path: str | Path, session_id: str) -> dict[str, Any]:
                 if key in seen_calls:
                     repeated += 1
                 seen_calls.add(key)
-        elif message["role"] == "tool" and tool_result_is_error(message["content"]):
-            tool_errors += 1
+                tool_results.append(None)
+                awaiting.append(len(tool_results) - 1)
+        elif message["role"] == "tool":
+            if awaiting:
+                tool_results[awaiting.pop(0)] = message["content"]
+            if tool_result_is_error(message["content"]):
+                tool_errors += 1
 
     timestamps = [m["timestamp"] for m in messages if m["timestamp"] is not None]
     started = min(s["started_at"] for s in sessions)
@@ -136,4 +172,7 @@ def session_metrics(db_path: str | Path, session_id: str) -> dict[str, Any]:
         "completion_tokens": sum(int(s["output_tokens"] or 0) for s in sessions),
         "db_span_s": round(max(timestamps) - started, 3) if timestamps else None,
         "last_assistant_message": last_assistant_message,
+        "behaviour_known": True,
+        **stopping.item_metrics(tool_results),          # E17
+        **replay.item_fields(tool_results, run_id),      # E19
     }

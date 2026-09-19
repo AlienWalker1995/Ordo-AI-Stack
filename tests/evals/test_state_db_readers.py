@@ -13,7 +13,7 @@ from ordo_evals.private_dataset import (
     is_self_contained_question,
     is_tool_directed,
 )
-from ordo_evals.trajectory import session_metrics, tool_result_is_error
+from ordo_evals.trajectory import BEHAVIOUR_FIELDS, behaviour_unknown, session_metrics, tool_result_is_error
 
 SCHEMA = """
 CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, model TEXT, parent_session_id TEXT,
@@ -55,7 +55,7 @@ def state_db(tmp_path):
 
 
 def test_session_metrics_cover_the_compaction_child(state_db):
-    metrics = session_metrics(state_db, "eval-1")
+    metrics = session_metrics(state_db, "eval-1", run_id="r1")
     assert metrics["found"] is True
     assert metrics["session_ids"] == ["eval-1", "eval-1-c"]
     assert metrics["model"] == "local-chat"
@@ -72,7 +72,7 @@ def test_session_metrics_cover_the_compaction_child(state_db):
 
 
 def test_missing_session_is_reported_not_invented(state_db):
-    assert session_metrics(state_db, "no-such-session") == {"found": False, "session_id": "no-such-session"}
+    assert session_metrics(state_db, "no-such-session", run_id="r1") == {"found": False, "session_id": "no-such-session"}
 
 
 def test_last_assistant_message_is_none_when_every_assistant_turn_is_tool_calls_only(tmp_path):
@@ -90,9 +90,60 @@ def test_last_assistant_message_is_none_when_every_assistant_turn_is_tool_calls_
          ("eval-2", "tool", json.dumps({"exit_code": 0, "output": "ok"}), None, 2002.0)])
     connection.commit()
     connection.close()
-    metrics = session_metrics(path, "eval-2")
+    metrics = session_metrics(path, "eval-2", run_id="r1")
     assert metrics["found"] is True
     assert metrics["last_assistant_message"] is None
+
+
+def test_behaviour_fields_pair_each_tool_result_with_the_call_that_made_it(tmp_path):
+    """Round 7: `session_metrics` is where the ordered (call -> result) pairing happens, so
+    `stopping` (E17) and `replay` (E19) can read behaviour without touching sqlite. Here the second
+    of five calls comes back "no such note", and the agent keeps going for three more calls."""
+    path = tmp_path / "state.db"
+    connection = sqlite3.connect(path)
+    connection.executescript(SCHEMA)
+    connection.execute("INSERT INTO sessions (id, source, model, started_at) "
+                       "VALUES ('eval-r7-harness_ops-ops-01', 'api_server', 'local-chat', 3000.0)")
+    prior_session = "eval-earlier-run-harness_ops-ops-01"
+    rows = [("eval-r7-harness_ops-ops-01", "user", "find the note", None, 3000.0)]
+    results = [json.dumps({"exit_code": 0, "output": "ok"}),
+               json.dumps({"exit_code": 1, "output": "cat: note.md: No such file or directory"}),
+               json.dumps({"results": [{"session_id": prior_session}]}),
+               json.dumps({"exit_code": 0, "output": "ok"}),
+               json.dumps({"exit_code": 0, "output": "ok"})]
+    for index, result in enumerate(results):
+        rows.append(("eval-r7-harness_ops-ops-01", "assistant", "",
+                     json.dumps([tool_call("terminal", step=index)]), 3001.0 + index * 2))
+        rows.append(("eval-r7-harness_ops-ops-01", "tool", result, None, 3002.0 + index * 2))
+    connection.executemany("INSERT INTO messages (session_id, role, content, tool_calls, timestamp) "
+                           "VALUES (?, ?, ?, ?, ?)", rows)
+    connection.commit()
+    connection.close()
+
+    metrics = session_metrics(path, "eval-r7-harness_ops-ops-01", run_id="r7")
+    assert metrics["behaviour_known"] is True
+    assert metrics["first_negative_index"] == 2                 # E17
+    assert metrics["first_negative_kind"] == "does_not_exist"
+    assert metrics["calls_after_first_negative"] == 3
+    assert metrics["explored_after_negative"] is False          # 3 is within the threshold
+    assert metrics["replay_aware"] is True                      # E19
+    assert metrics["replay_prior_run_ids"] == ["earlier-run"]
+
+
+def test_a_session_with_no_negative_and_no_prior_run_reports_so(state_db):
+    metrics = session_metrics(state_db, "eval-1", run_id="r1")
+    assert metrics["behaviour_known"] is True
+    assert metrics["first_negative_index"] is None and metrics["calls_after_first_negative"] is None
+    assert metrics["replay_aware"] is False and metrics["replay_prior_run_ids"] == []
+
+
+def test_behaviour_unknown_is_the_shape_for_a_session_that_cannot_be_read():
+    """The backfill command's record for a session state.db no longer holds: nulls plus the flag that
+    keeps the item out of every behaviour denominator (summary._behaviour_metrics)."""
+    unknown = behaviour_unknown()
+    assert unknown["behaviour_known"] is False
+    assert set(BEHAVIOUR_FIELDS) == set(unknown)
+    assert all(unknown[field] is None for field in BEHAVIOUR_FIELDS if field != "behaviour_known")
 
 
 @pytest.mark.parametrize(("content", "is_error"), [

@@ -26,14 +26,14 @@ session_key_for = _hermes_turn.session_key_for
 
 
 async def read_trajectory(ctx: common.SuiteContext, session_id: str) -> dict[str, Any]:
-    return await _hermes_turn.read_trajectory(ctx.settings.hermes_state_db, session_id)
+    return await _hermes_turn.read_trajectory(ctx.settings.hermes_state_db, session_id, run_id=ctx.run_id)
 
 
 async def call_hermes(ctx: common.SuiteContext, *, prompt: str, system: str | None, session_id: str,
                       session_key: str, model: str) -> tuple[HermesTurn, dict[str, Any]]:
     return await _hermes_turn.call_hermes(
         ctx.hermes, prompt=prompt, system=system, session_id=session_id, session_key=session_key, model=model,
-        state_db=ctx.settings.hermes_state_db, budget_s=ctx.settings.hermes_item_budget_s,
+        state_db=ctx.settings.hermes_state_db, run_id=ctx.run_id, budget_s=ctx.settings.hermes_item_budget_s,
         probes=ctx.probes, gpu_served_model=ctx.served_model)
 
 
