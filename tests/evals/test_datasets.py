@@ -137,17 +137,109 @@ def test_harness_ops_dataset_shape_and_checks_exist():
         checks.render(entry["check"], context)
 
 
+# E20 (round-8): the eight items the three recorded baselines (loop3-20260918-1644,
+# loop4b-20260919-1048, loop5-20260919-1600) were measured on. They are frozen - prompt, id and
+# precondition byte for byte - so a future run's per-item numbers can still be paired against those
+# baselines, and they predate the `negative_channel` / `safety` labels the sixteen added items carry.
+ORIGINAL_HONESTY_ITEMS = {
+    "hon-01-missing-note", "hon-02-missing-binary", "hon-03-missing-collection",
+    "hon-04-unresolvable-url", "hon-05-missing-file", "hon-07-missing-workflow",
+    "hon-08-no-access", "hon-09-missing-config",
+}
+
+# The world-state shape each added item probes. Naming it in the dataset is what keeps the suite
+# spread across channels instead of drifting into sixteen more `cat a missing file` items, and it is
+# what the README's channel table is generated from by hand.
+HONESTY_NEGATIVE_CHANNELS = {
+    "missing_binary", "missing_file", "missing_directory", "missing_service_config",
+    "missing_env_value", "missing_git_object", "missing_cron_job", "missing_skill", "missing_tool",
+    "missing_session", "missing_collection", "missing_http_path", "missing_vault_note",
+}
+
+
 def test_harness_honesty_dataset_is_impossible_by_construction():
-    """Most items name a per-run nonce so the target cannot exist by accident; the two that do not
-    (a command that exits non-zero, data the agent has no access to) are impossible on their own."""
+    """Most items name a per-run nonce so the target cannot exist by accident; the one that does not
+    (data the agent has no access to) is impossible on its own."""
     items = rows(DATASETS / "harness_honesty.jsonl")
-    assert len(items) == 8
+    assert len(items) == 24
     without_nonce = {"hon-08-no-access"}
     for entry in items:
         assert entry["precondition"]["type"] in {"none", "vault_missing", "qdrant_collection_missing"}
         context = checks.item_context("run-1", entry["id"])
         prompt = checks.build_prompt(entry, context)
         assert context["nonce"] in prompt or entry["id"] in without_nonce
+
+
+def test_the_original_honesty_items_are_frozen_so_the_baselines_stay_comparable():
+    """E20: the suite grew to 24 items because 8 could not resolve a halving of
+    `calls_after_first_negative`. Growing it is only useful if the three recorded baselines remain
+    a valid comparison, which requires the items they measured to be identical - hence this list is
+    a superset check on ids AND an assertion that the added items are the ones carrying the new
+    labels, so an edit to an original item cannot slip through unnoticed."""
+    items = rows(DATASETS / "harness_honesty.jsonl")
+    by_id = {entry["id"]: entry for entry in items}
+    assert ORIGINAL_HONESTY_ITEMS <= set(by_id)
+    for item_id in ORIGINAL_HONESTY_ITEMS:
+        assert "negative_channel" not in by_id[item_id] and "safety" not in by_id[item_id], (
+            f"{item_id} is one of the frozen baseline items and must not be edited")
+
+
+def test_every_added_honesty_item_names_its_negative_channel_and_is_read_only():
+    """Requirement of the expansion: each added item must be able to produce a definitive negative
+    (ordo_evals.stopping) and must be a pure READ. tests/evals/test_stopping.py asserts the second
+    half of that - that the tool-result shape each channel really returns is recognized."""
+    items = rows(DATASETS / "harness_honesty.jsonl")
+    added = [entry for entry in items if entry["id"] not in ORIGINAL_HONESTY_ITEMS]
+    assert len(added) == 16
+    for entry in added:
+        assert entry["negative_channel"] in HONESTY_NEGATIVE_CHANNELS, entry["id"]
+        assert entry["safety"] == "read_only", entry["id"]
+    # spread, not sixteen of one shape: every channel in the vocabulary is actually used
+    assert {entry["negative_channel"] for entry in added} == HONESTY_NEGATIVE_CHANNELS
+
+
+# A harness item may only ever ask Hermes to LOOK. The precedent is harness_domain, whose items are
+# admitted only when a judge labelled them read_only and which layers prompts.DOMAIN_SAFETY_INSTRUCTION
+# on top (E11: an agent_standalone item once made Hermes clone, edit and try to push a real repo).
+# The honesty suite's items are hand-written, so the guard is on the text itself.
+_MUTATING_VERB = re.compile(
+    r"(?i)\b(write|create|delete|remove|rename|install|uninstall|commit|push|deploy|restart|"
+    r"reboot|stop|start|kill|truncate|drop|chmod|chown|overwrite|patch|apply|upload|publish|"
+    r"send|post)\b")
+
+
+def test_no_harness_item_asks_hermes_to_change_anything():
+    """Read-only by construction, for both harness datasets: an eval must never be able to mutate a
+    real system by luck (E11). harness_ops is the one place a WRITE is intended, and only ever into
+    the eval scratch root, which its `setup`/`check` entries name explicitly - so the prompt guard
+    below applies to the honesty suite, whose every item is a pure lookup."""
+    for entry in rows(DATASETS / "harness_honesty.jsonl"):
+        match = _MUTATING_VERB.search(entry["prompt"])
+        assert match is None, f"{entry['id']} asks Hermes to {match.group(0)!r}"
+
+
+# Shapes that would mean an item was written from the operator's own environment rather than from a
+# generated nonce. This is narrower than FORBIDDEN above (which scans for leaked secrets and
+# identity): a honesty item names hosts and paths on purpose, so what is checked here is that the
+# ones it names are the stack's own generic service names, never a machine, account or address.
+_OPERATOR_SHAPED = {
+    "an IP address": re.compile(r"(?<!\d)\d{1,3}(?:\.\d{1,3}){3}(?!\d)"),
+    "a user account or personal name": re.compile(r"(?i)\b(lynch|cameron|operator@|admin@)\b"),
+    "a Windows drive path": re.compile(r"(?i)\b[a-z]:[\\/]"),
+    "a tailscale or LAN hostname": re.compile(r"(?i)\b[\w-]+\.(?:ts\.net|local|lan|internal)\b"),
+    "a Discord or Telegram channel reference": re.compile(r"(?i)\b(discord|telegram|slack)\b"),
+    "a real vault folder outside the eval scratch root": re.compile(r"(?i)\bnotes/(Ordo|Context Files)\b"),
+}
+
+
+def test_no_honesty_item_is_written_from_the_operators_own_environment():
+    """The repo is public and this dataset is the one that names paths, hosts and tool names out
+    loud. Every such name must be either a stack service name that is already public in this repo or
+    a `{nonce}`-suffixed invention - never something that identifies the operator or their machine."""
+    for entry in rows(DATASETS / "harness_honesty.jsonl"):
+        for description, pattern in _OPERATOR_SHAPED.items():
+            match = pattern.search(entry["prompt"])
+            assert match is None, f"{entry['id']} prompt contains {description}: {match.group(0)!r}"
 
 
 def test_no_dataset_asks_for_gpu_work():
