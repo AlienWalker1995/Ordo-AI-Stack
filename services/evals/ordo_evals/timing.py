@@ -24,6 +24,19 @@ def _median(values: list[float]) -> float:
     return ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2
 
 
+def _trajectory(item: dict[str, Any]) -> dict[str, Any]:
+    return ((item.get("metadata") or {}).get("trajectory") or {})
+
+
+def _overrun_s(item: dict[str, Any]) -> float:
+    """Seconds this item's ABANDONED work held the model slot after its budget fired (E23), 0.0 when
+    it never exceeded its budget or predates the measurement."""
+    value = _trajectory(item).get("overrun_s")
+    if isinstance(value, int | float) and not isinstance(value, bool) and value > 0:
+        return float(value)
+    return 0.0
+
+
 def contention(items: list[dict[str, Any]]) -> dict[str, Any]:
     """Run-level contention block for summary.json (round-7 fix): the median and minimum per-item
     token rate across the WHOLE run and how many items were flagged `slow_item`, so a reader can see
@@ -31,14 +44,25 @@ def contention(items: list[dict[str, Any]]) -> dict[str, Any]:
     above already recorded every rate; this only aggregates what is on the items.
 
     `n` is the number of items with a computable rate (never every item): a run whose suites produce no
-    token counts at all reports n = 0 and null rates, not a fabricated 0.0 tokens/second."""
+    token counts at all reports n = 0 and null rates, not a fabricated 0.0 tokens/second.
+
+    E23 (round-10 fix) adds the run's ABANDONED WORK, from the per-item `overrun_s` that
+    `hermes_turn.call_hermes` records: `abandoned_overrun_s` (the total the harness spent waiting for
+    budget-exceeded items to let go of the single model slot), `abandoned_items` (how many items
+    overran) and `abandoned_wait_timeouts` (how many of those waits hit their own bound and so DID
+    leave the next item running under contention). This is contention the harness itself creates, and
+    the point of the block is that a reader can see it without reconstructing it from items.jsonl."""
     rates = [rate for item in items
              if isinstance(rate := (item.get("metadata") or {}).get("tokens_per_second"), int | float)
              and not isinstance(rate, bool)]
     slow = sum(1 for item in items if (item.get("metadata") or {}).get("slow_item"))
+    overruns = [seconds for item in items if (seconds := _overrun_s(item)) > 0]
     return {"n": len(rates), "slow_items": slow,
             "tokens_per_second_median": round(_median(rates), 2) if rates else None,
-            "tokens_per_second_min": round(min(rates), 2) if rates else None}
+            "tokens_per_second_min": round(min(rates), 2) if rates else None,
+            "abandoned_items": len(overruns),
+            "abandoned_overrun_s": round(sum(overruns), 2),
+            "abandoned_wait_timeouts": sum(1 for item in items if _trajectory(item).get("overrun_timed_out"))}
 
 
 def tokens_per_second(completion_tokens: Any, wall_time_s: Any) -> float | None:

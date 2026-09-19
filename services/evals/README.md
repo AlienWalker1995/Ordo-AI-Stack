@@ -155,6 +155,9 @@ evidence and mislabelled a stopping-rule problem as a harness-plumbing fault.
   session at all (nothing to recover) still counts as `infra_error`.
 - Every harness suite (`harness_ops`, `harness_honesty`, `harness_domain`) now reports
   `did_not_converge_rate`, so the stopping-rule weakness is a measured number, not a hidden one.
+- The recovered trajectory covers only the seconds the harness waited (E22), and the harness then
+  waits for the abandoned turn to release the model slot before starting the next item (E23) - see
+  "How loaded the box was" below for both.
 
 ### Redacting secret-shaped output (E12, round-4 fix)
 
@@ -271,11 +274,18 @@ state.db sessions that run created, and rewrites that run's `items.jsonl`, `summ
 suite's metrics, from the stored items and grades, plus the `contention` block) and its rows in
 `history.jsonl`. It is idempotent, it runs no suite and needs no GPU, and it is how an older run
 earns a metric added after it ran. A session state.db no longer holds is recorded
-`behaviour_known: false` (nulls), never guessed. Note that it reads each session AS IT STANDS NOW: for
-a `did_not_converge` item, Hermes often kept working after the harness's budget fired, so the
-behaviour it reports can cover tool calls the run itself never saw - which is the agent's stopping
-behaviour, exactly what these metrics are about. `trajectory.tool_calls_seen` records how many calls
-each reading was computed from.
+`behaviour_known: false` (nulls), never guessed.
+
+Every session is read bounded to the ITEM'S OWN WINDOW (E22, round-10 fix): the seconds the harness
+actually waited for that item, `trajectory.wall_time_s`, falling back to the sample's `time_s`, and
+recorded as `trajectory.window_s`. Before this, a session was read as it stood at backfill time, so a
+`did_not_converge` item collected every tool call Hermes made after the harness gave up on it:
+`hon-07-missing-workflow` in `loop5-20260919-1600` recorded 41 tool calls and was backfilled with
+`calls_after_first_negative: 60` - a number larger than the item's own call count, and one that
+changed with WHEN the backfill ran. Bounded, a backfilled reading equals what the run recorded, and
+`calls_after_first_negative` can never exceed `tool_calls - first_negative_index`.
+`trajectory.tool_calls_seen` records how many calls each reading was computed from, and an item with
+no recorded duration at all is read unbounded and says so (`window_s: null`).
 
 Useful flags: `--suites model_toolcall,harness_ops` (a subset), `--limit 3` (a smoke run, a seeded
 sample stratified across the suite's categories rather than the first 3 items - `summary.json` records
@@ -755,6 +765,27 @@ tokens/second across the whole run, the number of `slow_item`-flagged items, and
 items with a computable rate. It aggregates the per-item rates E15 already records (no new
 collection) so a reader can see contention without opening `items.jsonl`: loop3 and loop4b both show
 a median near 39.7 tokens/second with minima of 0.10 and 0.82 respectively.
+
+It also carries the run's ABANDONED WORK (E23, round-10 fix): `abandoned_overrun_s`,
+`abandoned_items` and `abandoned_wait_timeouts`, plus a line in `report`. When an item exceeds its
+budget the harness stops waiting, but Hermes does not stop working - the two recorded
+`hon-07-missing-workflow` sessions ran 1773s and 1753s against a 900s budget, roughly 14 minutes each
+past the cutoff. Concurrency is 1 precisely because every turn shares one llama.cpp slot, so that
+abandoned item was still generating while the NEXT items were measured: contention the harness
+created itself, which is exactly the confound the timing instrumentation exists to detect. So a
+budget-exceeded item now waits for Hermes to report no in-flight agent work (`GET /health/detailed`,
+`active_agents`) before the next item starts, bounded by `EVALS_HERMES_OVERRUN_WAIT_S` (default 900s,
+the item budget itself), with the seconds spent recorded per item as `trajectory.overrun_s`.
+`overrun_timed_out: true` means the wait hit its own bound and the next item DID start under
+contention - the one case the harness cannot remove, so it is recorded rather than hidden.
+
+There is no server-side cancel to use instead. Hermes's only interrupt route,
+`POST /v1/runs/{run_id}/stop`, resolves its run id out of the API server's `_active_run_agents`,
+which only `POST /v1/runs` populates; a `/v1/chat/completions` turn has no run id, and only the SSE
+(streaming) paths interrupt the agent on client disconnect. Moving the harness to a streaming request
+(so closing the connection would hard-interrupt the turn) or to the `/v1/runs` + `stop` API would buy
+a real cancel, at the cost of changing the transport every recorded run was measured on; the wait
+above removes the contention without changing what is measured.
 
 ## Known limitation: Hermes can see the harness
 

@@ -37,6 +37,7 @@ class Settings:
     datasets_dir: Path
     hermes_timeout_s: float
     hermes_item_budget_s: float
+    hermes_overrun_wait_s: float
     model_max_tokens: int | None
 
     @classmethod
@@ -79,6 +80,14 @@ class Settings:
             # recovered from state.db and scored `did_not_converge` (a real result), not thrown away
             # as an infra error - see hermes_client.HermesTurn's error_kind docstring.
             hermes_item_budget_s=float(_env("EVALS_HERMES_ITEM_BUDGET_S", "900")),
+            # E23 (round-10 fix): after the budget above fires, how long to wait for Hermes to stop
+            # working the abandoned item before starting the next one (hermes_turn.wait_for_agent_idle).
+            # The harness has no way to cancel a chat-completions turn (see hermes_client.py), and the
+            # single llama.cpp slot is shared, so an item that is still generating is measured as the
+            # next item's contention. 900s matches the item budget itself: the recorded overruns were
+            # 873s and 853s, so a bound at the budget covers the observed worst case while still
+            # ending a run that would otherwise wait on a stuck turn forever.
+            hermes_overrun_wait_s=float(_env("EVALS_HERMES_OVERRUN_WAIT_S", "900")),
             # Unset = the deployment's own output cap (llama.cpp n_predict), i.e. the model as deployed.
             model_max_tokens=int(max_tokens) if max_tokens else None,
         )

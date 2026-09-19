@@ -1,7 +1,8 @@
 """Client for the Hermes API server (Hermes v0.20.0 gateway/platforms/api_server.py).
 
 Contract used, verified against that source:
-  * auth: `Authorization: Bearer <API_SERVER_KEY>` on every /v1 route (GET /health is open)
+  * auth: `Authorization: Bearer <API_SERVER_KEY>` on every /v1 route and on /health/detailed
+    (GET /health is open)
   * POST /v1/chat/completions, non-streaming. A `system` message becomes an ephemeral system prompt
     layered on Hermes's own; the LAST user message is the turn's input.
   * `X-Hermes-Session-Id: <id>` pins the session. Without it Hermes derives the id from a hash of
@@ -16,6 +17,12 @@ Contract used, verified against that source:
     timeout (E10 round-4 fix: `HermesTurn.error_kind == "timeout"`) when the client gave up waiting -
     the session may still be alive in Hermes's state.db, so callers recover it there rather than
     discarding the item as an infra error (see suites/harness.py's call_hermes).
+  * there is NO server-side cancel for a non-streaming chat-completions turn. The one interrupt
+    route, POST /v1/runs/{run_id}/stop, resolves its run id out of `_active_run_agents`, which only
+    POST /v1/runs populates; the SSE paths (streaming chat completions, streaming responses)
+    interrupt the agent on client disconnect, the non-streaming path does not. A client that stops
+    waiting therefore leaves the turn running, which is what `active_agent_work` below and
+    `hermes_turn.wait_for_agent_idle` exist to make visible and bounded (E23).
 """
 from __future__ import annotations
 
@@ -64,6 +71,32 @@ class HermesClient:
             response = await client.get(f"{self._root_url}/health")
             response.raise_for_status()
             return str(response.json().get("version", "unknown"))
+
+    async def active_agent_work(self) -> int | None:
+        """How much agent work Hermes reports in flight right now, or None when that cannot be read.
+
+        E23 (round-10 fix): `GET /health/detailed` (same Bearer auth as /v1) answers with
+        `active_agents`, the gateway's own `_active_work_count()` - running agents + in-flight cron
+        jobs + API-server work, where the API server counts a non-streaming /v1/chat/completions turn
+        for exactly as long as its executor call runs (`_inflight_agent_runs`, incremented before the
+        executor call and decremented in its `finally`; verified read-only against
+        /opt/hermes-agent/gateway/platforms/api_server.py and gateway/run.py in ordo-agent-1). The
+        gateway persists it at every turn boundary, so the release edge - the moment the abandoned
+        turn finally lets go of the single llama.cpp slot - is exactly what this reads.
+
+        None (never 0) when the endpoint is unreachable or answers a shape this cannot read: the
+        caller must not mistake "could not tell" for "the slot is free", nor block on it.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=15.0, headers=self._headers) as client:
+                response = await client.get(f"{self._root_url}/health/detailed")
+                response.raise_for_status()
+                active = response.json().get("active_agents")
+        except (httpx.HTTPError, ValueError, AttributeError):
+            return None
+        if isinstance(active, bool) or not isinstance(active, int | float):
+            return None
+        return int(active)
 
     async def model_id(self) -> str:
         async with httpx.AsyncClient(timeout=15.0, headers=self._headers) as client:

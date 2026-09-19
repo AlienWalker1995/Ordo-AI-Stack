@@ -516,3 +516,40 @@ def test_harness_domain_is_registered_as_a_judged_harness_suite():
     assert "harness_domain" in SUITE_ORDER
     assert SUITE_ORDER.index("harness_ops") < SUITE_ORDER.index("harness_domain") < SUITE_ORDER.index("harness_honesty")
     assert SUBJECTS["harness_domain"] == "harness"
+
+
+def test_the_report_surfaces_the_runs_abandoned_work():
+    """E23 (round-10 fix): a run whose harness gave up on an item and then waited for Hermes to let
+    go of the model slot must show that in the report, not only in items.jsonl - how much of a run
+    went on work nobody was waiting for is exactly what a reader comparing two runs needs."""
+    block = summary.suite_summary("harness_ops", [item("harness_ops", "ok", {"artifact_ok": True,
+                                                                             "claimed_done": True,
+                                                                             "check_error": False})], [])
+    block.update({"subject": "harness", "model": "qwen-test", "harness": "hermes-agent@0.20.0"})
+    run_summary = {"run_id": "r1", "ts": TS, "suites": {"harness_ops": block},
+                   "contention": {"n": 3, "slow_items": 1, "tokens_per_second_median": 39.7,
+                                  "tokens_per_second_min": 0.8, "abandoned_items": 2,
+                                  "abandoned_overrun_s": 1726.0, "abandoned_wait_timeouts": 1}}
+    report = format_report(run_summary)
+    assert "abandoned work 1726.000s over 2 item(s)" in report
+    assert "1 wait(s) TIMED OUT" in report
+
+
+def test_a_run_with_no_abandoned_work_says_nothing_about_it():
+    block = summary.suite_summary("model_reasoning", [item("model_reasoning", "a", {"correct": True,
+                                                                                    "format_ok": True})], [])
+    block.update({"subject": "model", "model": "qwen-test", "harness": None})
+    run_summary = {"run_id": "r1", "ts": TS, "suites": {"model_reasoning": block},
+                   "contention": {"n": 1, "slow_items": 0, "tokens_per_second_median": 39.7,
+                                  "tokens_per_second_min": 39.7, "abandoned_items": 0,
+                                  "abandoned_overrun_s": 0.0, "abandoned_wait_timeouts": 0}}
+    report = format_report(run_summary)
+    assert "contention:" in report and "abandoned" not in report
+
+
+def test_a_run_summary_with_no_contention_block_still_renders():
+    """Every run recorded before the contention block existed must still print."""
+    block = summary.suite_summary("model_reasoning", [item("model_reasoning", "a", {"correct": True,
+                                                                                    "format_ok": True})], [])
+    block.update({"subject": "model", "model": "qwen-test", "harness": None})
+    assert "contention" not in format_report({"run_id": "r1", "ts": TS, "suites": {"model_reasoning": block}})
