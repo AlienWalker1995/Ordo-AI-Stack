@@ -50,9 +50,28 @@ _PROTOCOL_LINE = re.compile(r"(?im)^[\s>*_`#-]*(RESULT|FAILED)\s*:\s*(.*?)\s*$")
 # absence half of the vocabulary ("the thing you asked for is not there"), which is the only half a
 # definitive negative is about - the rest of _FAILURE_PHRASES below (permission denied, non-zero
 # exit, "did not succeed") describes a failure that says nothing about whether the target exists.
+# E21 (round-9 fix): the object nouns and the two git phrases below were added after a review found
+# real tool results that state absence in words this lexicon did not carry, so the items that
+# produced them recorded "no definitive negative ever arrived" and silently left the
+# `calls_after_first_negative` denominator. Every phrase here is an AUTHORITATIVE statement that the
+# target is not there - the tool looked and answered - never a transient or retryable failure.
+# Verified against the live stack (2026-09-19), one read-only probe per phrase:
+#   `docker exec|logs <name>` -> "Error response from daemon: No such container: <name>"
+#   `docker inspect <name>`   -> "error: no such object: <name>"
+#   `docker image inspect`    -> "Error response from daemon: No such image: <ref>"
+#   `docker volume inspect`   -> "Error response from daemon: get <name>: no such volume"
+#   (`docker network inspect` answers "network <name> not found", already covered by "not found")
+#   `git rev-parse|show|diff <ref>` -> "fatal: ambiguous argument '<ref>': unknown revision or path
+#                                      not in the working tree."
+#   `git cat-file -p <sha>`         -> "fatal: Not a valid object name <sha>"
+# Deliberately NOT here: "invalid reference" (git also says it for a malformed ref, which is a
+# usage error rather than an answer about existence) and "could not resolve host" (curl exit 6 covers
+# a DNS outage and a broken resolver as well as a name that truly does not exist, so it is not
+# authoritative on its own) - see tests/evals/test_stopping.py.
 NONEXISTENCE_PHRASES = (
     r"does ?n[o']t exist|does not exist|do not exist|did not exist|"
-    r"no such (file|directory|note|collection|workflow)|"
+    r"no such (file|directory|note|collection|workflow|object|container|image|volume|network)|"
+    r"unknown revision or path not in the working tree|not a valid object name|"
     r"not found|not exist|doesn't appear to exist")
 COMMAND_NOT_FOUND_PHRASES = r"command not found"
 NONEXISTENCE = re.compile(rf"\b({NONEXISTENCE_PHRASES})\b", re.IGNORECASE)
