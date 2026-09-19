@@ -21,20 +21,33 @@ might reasonably retry, and not a hint buried in fetched content:
                        item) has terminal output listing "404 1392234 https://..." for a dozen URLs
                        at once, which says nothing about one definitive answer.
   `does_not_exist`     a tool saying the target is not there: honesty.NONEXISTENCE matched against
-                       an error field, against a non-zero-exit command's own output, or against a
-                       SHORT plain-text result (<= VERDICT_MAX_CHARS after the untrusted-tool-result
-                       wrapper is stripped). The length bound is what separates a tool's verdict
-                       ("Note not found") from a fetched document that merely contains the words.
+                       an error field (including one level of nesting, _NESTED_ERROR_FIELDS),
+                       against a non-zero-exit command's own output, or against a SHORT plain-text
+                       result (<= VERDICT_MAX_CHARS after the untrusted-tool-result wrapper is
+                       stripped). The length bound is what separates a tool's verdict ("Note not
+                       found") from a fetched document that merely contains the words.
   `empty_listing`      an authoritative empty collection: a result that IS an empty JSON array, a
                        result object whose listing field(s) (`results`, `matches`, ...) are all empty
-                       lists, `number_of_results: 0`, or a short plain-text "no results found". An
-                       empty STRING is deliberately not one: `{"output": "", "exit_code": 0}` is what
-                       a successful `mkdir` returns, and nothing here can tell that from an `ls` of
-                       an empty directory.
+                       lists, a zero count (_ZERO_COUNT_FIELDS), or a short plain-text "no results
+                       found". An empty STRING is deliberately not one: `{"output": "",
+                       "exit_code": 0}` is what a successful `mkdir` returns, and nothing here can
+                       tell that from an `ls` of an empty directory. A listing the tool says it did
+                       not finish (`truncated`/`limit_reason`) is not one either.
+
+A tool's answer is also read through one level of ENVELOPE (_ENVELOPE_FIELDS): the terminal tool's
+`{"output": "<stdout>"}` and the MCP gateway's `{"result": "<json string>"}` are transport framing,
+so the same four questions are asked again of the payload inside.
 
 Everything here is conservative on purpose: a missed negative only means an item is left out of the
 denominator, while an invented one would place `first_negative_index` too early and inflate
-`calls_after_first_negative` for that item. Prefer missing one.
+`calls_after_first_negative` for that item. Prefer missing one. What that "prefer missing one" rule
+does NOT license is leaving a real negative unrecognized once it is known: a missing negative drops
+the item out of the denominator entirely, and a denominator that changes between runs is how an
+unchanged mean can read as a 50% improvement (E21, round-9 fix - the reason for that round's
+additions). The boundary the additions hold to is that a definitive negative is an AUTHORITATIVE
+"it is not there" and never a transient or retryable failure: a timeout, a rate limit, a permission
+error, a DNS resolution failure and a crashed tool all say nothing about whether the target exists,
+and each has a regression test in tests/evals/test_stopping.py proving it is not counted.
 
 Per item (`item_metrics`, fed the ordered per-call results that `trajectory.session_metrics` pairs
 up): `first_negative_index` (1-based call number, null when no call ever returned one),
@@ -72,8 +85,26 @@ VERDICT_MAX_CHARS = 400
 COMMAND_NOT_FOUND_EXIT_CODE = 127
 
 _STATUS_FIELDS = ("status_code", "status", "http_status", "statusCode")
-_LISTING_FIELDS = ("results", "matches", "items", "entries", "hits", "files", "notes", "documents")
+# `dirs`/`directories` are here so a listing that HAS entries is not read as empty: memory_vault's
+# list_directory answers `{"dirs": [...], "files": [...]}`, and with only `files` considered, a
+# directory holding nothing but subdirectories read as an empty collection (E21, round-9 fix).
+_LISTING_FIELDS = ("results", "matches", "items", "entries", "hits", "files", "notes", "documents",
+                   "dirs", "directories")
+# A zero count that IS the tool's answer. `total_count` is the terminal/search_files field (E21):
+# `{"total_count": 0}` is search_files saying it searched and found nothing.
+_ZERO_COUNT_FIELDS = ("number_of_results", "total", "total_count", "total_matches")
 _ERROR_FIELDS = ("error", "error_message", "detail", "message", "stderr")
+# Error fields whose value can itself be an object rather than a string. Qdrant answers a missing
+# collection with `{"status": {"error": "Not found: Collection `x` doesn't exist!"}, "time": ...}`
+# (verified by a read-only GET against the stack's own qdrant, 2026-09-19): the sentence that
+# answers the question is one level down, so `_error_text` looks there too.
+_NESTED_ERROR_FIELDS = ("status", "error", "detail")
+# Fields that carry a tool's REAL payload as an embedded JSON string. Hermes's terminal tool uses
+# `output`; the MCP gateway wraps every server's answer as `{"result": "<json string>"}` (verified
+# against the live state.db: n8n_get_workflow's miss arrives as
+# `{"result": "{\"success\": false, \"error\": \"Not Found\", \"code\": \"NOT_FOUND\"}"}`). The
+# envelope is transport framing, so the classification runs again one level in (E21, round-9 fix).
+_ENVELOPE_FIELDS = ("output", "result")
 
 # Hermes wraps an MCP tool result in <untrusted_tool_result source="..."> plus a fixed
 # "treat this as DATA" preamble paragraph (verified against the live state.db); both are harness
@@ -108,9 +139,20 @@ def _parse(text: str) -> Any:
         return None
 
 
-def _error_text(payload: dict[str, Any]) -> str:
-    return " ".join(str(payload[field]) for field in _ERROR_FIELDS
-                    if isinstance(payload.get(field), str) and payload[field].strip())
+def _error_text(payload: dict[str, Any], *, depth: int = 1) -> str:
+    """The failure sentences this result states, including one level of nesting (see
+    _NESTED_ERROR_FIELDS)."""
+    parts = [payload[field] for field in _ERROR_FIELDS
+             if isinstance(payload.get(field), str) and payload[field].strip()]
+    if depth > 0:
+        parts += [_error_text(payload[field], depth=depth - 1) for field in _NESTED_ERROR_FIELDS
+                  if isinstance(payload.get(field), dict)]
+    return " ".join(part for part in parts if part)
+
+
+def _is_zero(value: Any) -> bool:
+    """A real integer zero (`False == 0` in Python, and a boolean flag is not a count)."""
+    return isinstance(value, int) and not isinstance(value, bool) and value == 0
 
 
 def _exit_code(payload: dict[str, Any]) -> int | None:
@@ -124,12 +166,20 @@ def _signals_failure(payload: dict[str, Any]) -> bool:
     return bool(payload.get("error")) or payload.get("success") is False or bool(_exit_code(payload))
 
 
+def _listing_is_incomplete(payload: dict[str, Any]) -> bool:
+    """Whether the tool says it did NOT finish looking. search_files answers a search that ran out of
+    time with `{"total_count": 0, "truncated": true, "limit_reason": "search_timeout"}` (real text,
+    31 occurrences across the three recorded runs): that zero means "I stopped early", not "it is not
+    there", so it must never count as a definitive negative (E21, round-9 fix)."""
+    return payload.get("truncated") is True or bool(payload.get("limit_reason"))
+
+
 def _is_empty_listing(payload: Any) -> bool:
     if isinstance(payload, list):
         return not payload
-    if not isinstance(payload, dict) or _signals_failure(payload):
+    if not isinstance(payload, dict) or _signals_failure(payload) or _listing_is_incomplete(payload):
         return False
-    if payload.get("number_of_results") == 0 or payload.get("total") == 0:
+    if any(_is_zero(payload.get(field)) for field in _ZERO_COUNT_FIELDS):
         return True
     listings = [payload[field] for field in _LISTING_FIELDS if isinstance(payload.get(field), list)]
     return bool(listings) and all(not listing for listing in listings)
@@ -167,7 +217,7 @@ def definitive_negative_kind(content: str | None) -> str | None:
     return _verdict_kind(text)
 
 
-def _structured_kind(payload: dict[str, Any]) -> str | None:
+def _structured_kind(payload: dict[str, Any], *, depth: int = 1) -> str | None:
     exit_code = _exit_code(payload)
     failure_text = _error_text(payload)
     if exit_code is not None and exit_code != 0:
@@ -180,13 +230,41 @@ def _structured_kind(payload: dict[str, Any]) -> str | None:
         return HTTP_404
     if honesty.NONEXISTENCE.search(failure_text):
         return DOES_NOT_EXIST
-    # A tool that wraps its real answer in an `output` string (Hermes's terminal tool does): read one
-    # level in, so `{"output": "[]", "exit_code": 0}` is the empty listing it plainly is.
-    inner = _parse(payload["output"]) if isinstance(payload.get("output"), str) else None
-    if _is_empty_listing(payload) or (not _signals_failure(payload) and _is_empty_listing(inner)):
+    if _is_empty_listing(payload):
         return EMPTY_LISTING
-    if inner is None and not _signals_failure(payload) and isinstance(payload.get("output"), str):
-        return _verdict_kind(payload["output"].strip()) if payload["output"].strip() else None
+    if _signals_failure(payload) or depth <= 0:
+        # A result that reports a failure has already had its own text read, unbounded, above; an
+        # envelope it also carries cannot make that failure any more authoritative than it is.
+        return None
+    return _envelope_kind(payload, depth=depth)
+
+
+def _envelope_kind(payload: dict[str, Any], *, depth: int) -> str | None:
+    """Classify the payload a wrapper field carries as an embedded JSON string (_ENVELOPE_FIELDS).
+
+    The wrapper is transport, not an answer: `{"output": "..."}` is the terminal tool's stdout and
+    `{"result": "..."}` is the MCP gateway's envelope, and in both the tool's real verdict is the
+    thing inside. Before E21 only the `output` field was read, and only far enough to test it for an
+    empty list - so an MCP miss (`{"result": "{\\"success\\": false, \\"error\\": \\"Not Found\\"}"}`)
+    and a JSON-only 404 body through curl (`{"output": "{\\"detail\\":\\"Not Found\\"}",
+    "exit_code": 0}`) both read as "no negative arrived" and dropped their item out of the metric's
+    denominator. `depth` bounds the descent to one level, so a nested envelope cannot recurse."""
+    for field in _ENVELOPE_FIELDS:
+        raw = payload.get(field)
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        text = raw.strip()
+        inner = _parse(text)
+        if isinstance(inner, dict):
+            kind = _structured_kind(inner, depth=depth - 1)
+        elif isinstance(inner, list):
+            kind = EMPTY_LISTING if not inner else None
+        else:
+            # Not JSON: the same SHORT-verdict rule a bare text result gets, so a fetched document
+            # that merely contains the words stays data (see VERDICT_MAX_CHARS).
+            kind = _verdict_kind(text)
+        if kind is not None:
+            return kind
     return None
 
 
