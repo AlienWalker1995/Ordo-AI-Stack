@@ -81,6 +81,44 @@ models:
     tier: ultra
 
 
+  - id: qwen3.8-27b-turbo-fable-q6
+    name: Qwen3.8 27B TURBO Fable Cold-Fusion Heretic Uncensored (Q6_K, NEO MAX)
+    backend: llama.cpp
+    file: Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-Q6_K.gguf
+    # DavidAU merge of the same Qwen3.8-27B base: Cold-Fusion/GAIN fine tune, Heretic ARA
+    # de-censoring, NEO imatrix quant with 16-bit output tensors ("MAX"), and a TURBO pass the
+    # card claims cuts thinking tokens by 2x to 10x. Under trial against qwen3.8-27b-uncensored-q6.
+    source: https://huggingface.co/DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF/resolve/main/Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-Q6_K.gguf
+    # sha256 of the 23,582,382,688-byte Q6_K file, read from the repo's own LFS oid before download.
+    sha256: f814af8d2ce6e636962aec38a30c11a84568d208de4d60f4fc45ed8a77ad0160
+    # 23.6GiB weights, 1.2GiB more than the incumbent, so the same ultra tier with no headroom to spare.
+    requires: { vram_gb: 24, ram_gb: 16, cpu_ok: false }
+    # Card claims 256k native, but the stack-wide window is 131072 and the CPU fallback must match it.
+    ctx_default: 131072
+    # Same `qwen35` hybrid arch as the incumbent.
+    kv_kb_per_token: 34.8
+    # The repo's own F16 projector, renamed on copy-in to match the file: convention above.
+    mmproj: /models/Qwen3.8-27B-TurboFable-vision-f16.gguf
+    # SAMPLER DEFAULTS ARE PART OF THE CONFIG, not left to whatever a client happens to send.
+    # Serving this model on llama.cpp's defaults makes it run away: "Say the single word: ready"
+    # generated 32,735 reasoning tokens straight into the 32768 reasoning cap, about 11 minutes a
+    # request, which is what stalled the first eval attempt. With these values the same prompt
+    # answers in 7.4s using 22 tokens. top_k is the knob that actually stops the loop; the card
+    # recommends 20 for both its thinking and instruct profiles. Temperature is the operator's
+    # choice of 0.5, below the card's 0.7, for more determinism in agent work. A client that sends
+    # its own values still overrides these; they are the floor, not a cage.
+    # presence_penalty is deliberately NOT set: the card asks for 1.5 in instruct mode but also
+    # says to turn repetition penalties OFF for tool calling, and this model serves a tool-heavy
+    # agent. Revisit only with a measured tool-calling comparison.
+    extra_args: "--reasoning-format deepseek --temp 0.5 --top-k 20 --top-p 0.8 --min-p 0.0"
+    # The DELIBERATE choice of the non-MTP build. The MTP file exists and is 0.4GiB larger, but
+    # draft-mtp speculative decoding already collapsed to ~7 tok/s on this box at 65-85% acceptance
+    # under VRAM pressure (2026-08-19), and this card itself says to drop to the plain quant below
+    # 50% acceptance. Nothing here would use the MTP tensors, so they would only cost VRAM.
+    # `qwen35` arch needs the SWA/hybrid-cache patched build, same image as the incumbent.
+    backend_image: ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470
+    tier: ultra
+
   - id: qwen3.8-27b-uncensored-q6
     name: Qwen3.8 27B Uncensored (Q6_K)
     backend: llama.cpp
