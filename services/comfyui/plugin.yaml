@@ -23,7 +23,15 @@ services:
     # to a digest-pinned yanwk/comfyui-boot (public, pullable; cu128-slim line — bump deliberately). The ComfyUI application code + custom
     # nodes live in the bind-mounted data/comfyui-storage checkout, and the models in models/comfyui
     # — NOT baked into the image — so pointing at the same image + the same binds gives full parity.
-    image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot@sha256:4172d960fe57c630d33f6bd8891aa7ecf55e7768559565c6b74e8d57e44512a9}
+    # Bumped 2026-09-20 from cu128-slim (sha256:4172d960, built 2026-05-16, torch 2.11.0+cu128,
+    # python 3.12). That tag line is RETIRED upstream: the maintainer now ships cu126 and cu130
+    # only, so there is no same-CUDA successor and staying put means an unmaintained runtime.
+    # This is cu130-slim-20260914: torch 2.14.0+cu130, python 3.13, arch list includes sm_120
+    # (the 5090). CUDA 13 drops Pascal (sm_61), which is fine ONLY because this container is
+    # pinned to the 5090 by uuid; the 1070 is driven by the voice services' own images.
+    # NOT cu130-slim-v2: that variant ships no torch at all and would install it at first boot.
+    # Rollback: sha256:4172d960fe57c630d33f6bd8891aa7ecf55e7768559565c6b74e8d57e44512a9
+    image: ${COMFYUI_IMAGE:-yanwk/comfyui-boot@sha256:b0243e214a740527ff4e481070a34f83a448298757ec2da3295bbfbd79cb3901}
     # Pin to the PRIMARY (compute) card by uuid — V1 pins comfyui to the 5090 in gpu-assignments.yml.
     # `gpu: true` alone renders `count: all`, which on a dual-GPU WSL2 box lets ComfyUI also see the
     # 1070; the uuid pin (CUDA_VISIBLE_DEVICES + device_ids) is the only thing WSL2 actually honors.
@@ -84,11 +92,17 @@ services:
       # Bumping it here is the ONLY supported way to change ComfyUI versions; the ref's own
       # requirements.txt then carries the matching Comfy-Org runtime pins.
       #
-      # 72865f4f = tag v0.33.1. Chosen over 0.30.2 because it is the first release carrying
-      # the MiniMax Music3 nodes (comfy_extras/nodes_minimax_music.py, upstream efd4e951a0)
-      # that services/song-gen declares. Pin a full commit SHA, never a tag or branch — tags
-      # are movable refs, and "float" is how you get a different app on the next recreate.
-      COMFYUI_APP_REF: ${COMFYUI_APP_REF:-72865f4f27eaf5396f8f36370e0a2be3a9a090ee}
+      # 73c9bad4 = tag v0.37.0 (2026-09-20), the FIRST release carrying Qwen-Image 2.1
+      # support (upstream 6bfaacc6, CORE-423). The previous pin 72865f4f = v0.33.1 could not
+      # load the 2.1 VAE at all: it builds a 12-channel decoder head against the release's
+      # 4-channel checkpoint and dies on a shape mismatch. v0.33.1 remains the rollback, and
+      # it still carries the MiniMax Music3 nodes (upstream efd4e951a0) that services/song-gen
+      # declares, as does this one. Pin a full commit SHA, never a tag or branch — tags are
+      # movable refs, and "float" is how you get a different app on the next recreate.
+      # KNOWN REGRESSION at this pin: ComfyUI-LTXVideo fails to import against 0.37.0
+      # (comfy.ldm.lightricks.model no longer exports interleaved_freqs_cis). The LTX nodes
+      # are unavailable until that custom node is updated to a 0.37-compatible revision.
+      COMFYUI_APP_REF: ${COMFYUI_APP_REF:-73c9bad4d21e7addbe1d13bc92eee0f1431b017d}
       # V1's proven allocator config (overrides/compute.yml). An EMPTY string here is worse than
       # omitting it: torch's allocator parser rejects "" with `ValueError: Unrecognized key ','` at
       # `torch._C._cuda_init()`, crash-looping ComfyUI on boot. Default to V1's value; operator-

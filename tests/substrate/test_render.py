@@ -27,8 +27,9 @@ def _src(**kw):
 # --- gate (3): renders both a big-GPU profile and a mocked CPU-only profile into valid configs
 def test_5090_profile_picks_ultra():
     rc = render(_src(hardware=PROFILE_5090), CATALOG)
-    # the catalog's top-ranked ultra model (largest VRAM that fits); tracks catalog/models.yaml
-    assert rc.model.id == "qwen3.8-27b-uncensored-q6"
+    # the catalog's top-ranked ultra model (largest VRAM that fits); tracks catalog/models.yaml.
+    # TURBO Fable is that model, and the operator's default as of 2026-09-20.
+    assert rc.model.id == "qwen3.8-27b-turbo-fable-q6"
     assert rc.tier == "ultra"
     assert rc.env["LLAMACPP_GPU_LAYERS"] == "-1"
     assert "comfyui" in rc.plugins_enabled           # media enabled on NVIDIA
@@ -57,7 +58,7 @@ def test_ctx_consistency(profile):
     rc = render(_src(hardware=profile), CATALOG)
     d = rc.manifest()["derived"]
     assert (str(d["env.LLAMACPP_CTX_SIZE"]) == str(d["hermes.context_length"])
-            == str(d["model_gateway.ctx"]))
+            == str(d["model_gateway.ctx"]) == str(d["env.LLAMACPP_CPU_CTX"]))
 
 
 # --- gate (1) + (2): render from one source, and drift is corrected on re-render
@@ -84,8 +85,9 @@ def test_override_survives_regeneration_and_stays_consistent():
     rc = render(src, CATALOG)
     assert rc.ctx_size == 65536
     d = rc.manifest()["derived"]
-    # override flows to ALL consumers, not just one (no new drift)
-    assert str(d["env.LLAMACPP_CTX_SIZE"]) == str(d["hermes.context_length"]) == "65536"
+    # override flows to ALL consumers, not just one (no new drift) — the CPU failover included
+    assert (str(d["env.LLAMACPP_CTX_SIZE"]) == str(d["hermes.context_length"])
+            == str(d["env.LLAMACPP_CPU_CTX"]) == "65536")
 
 
 def test_forced_model_too_big_warns_but_allows():

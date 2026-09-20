@@ -18,7 +18,8 @@ HW_CPU = HardwareProfile.from_spec({"gpus": [], "ram_gb": 16})
 def test_plan_reflects_hardware():
     p = wizard.plan(CATALOG, REGISTRY, HW_5090)
     assert p.tier == "ultra"
-    assert p.model_id == "qwen3.8-27b-uncensored-q6"   # the catalog's top-ranked ultra model
+    # the catalog's top-ranked ultra model, and the operator's default as of 2026-09-20
+    assert p.model_id == "qwen3.8-27b-turbo-fable-q6"
     assert "song-gen" in p.plugins_available
 
     p_cpu = wizard.plan(CATALOG, REGISTRY, HW_CPU)
