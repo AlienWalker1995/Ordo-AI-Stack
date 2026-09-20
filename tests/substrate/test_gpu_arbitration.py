@@ -272,18 +272,54 @@ def test_llamacpp_yields_by_migrating_to_a_real_cpu_service(registry, rendered):
         "the CPU failover target must reserve no GPU — it exists to survive GPU eviction")
 
 
-def test_cpu_failover_serves_the_same_context_window_as_the_gpu_model(rendered):
-    """A failover that accepts less than the primary rejects requests exactly when it is needed:
-    a long conversation would break the moment the card is handed over."""
+def _cpu_failover_ctx_arg() -> str:
+    """The llamacpp-cpu manifest's `--ctx-size` value, unexpanded."""
     manifest = yaml.safe_load(
         (Path(DEFAULT_PLUGINS_DIR) / "llamacpp-cpu" / "plugin.yaml").read_text(encoding="utf-8"))
     cmd = [str(c) for c in manifest["services"][0]["command"]]
-    ctx_arg = cmd[cmd.index("--ctx-size") + 1]
-    # `${LLAMACPP_CPU_CTX:-131072}` — the DEFAULT is what runs unless the operator overrides it.
-    default_ctx = int(ctx_arg.split(":-")[1].rstrip("}")) if ":-" in ctx_arg else int(ctx_arg)
+    return cmd[cmd.index("--ctx-size") + 1]
+
+
+def _expand_compose_var(value: str, env: dict[str, str]) -> str:
+    """Resolve a `${VAR:-fallback}` compose value against a rendered .env, as compose would."""
+    if not (value.startswith("${") and value.endswith("}")):
+        return value
+    name, _, fallback = value[2:-1].partition(":-")
+    return env.get(name) or fallback
+
+
+def test_cpu_failover_serves_the_same_context_window_as_the_gpu_model(rendered):
+    """A failover that accepts less than the primary rejects requests exactly when it is needed:
+    a long conversation would break the moment the card is handed over."""
+    ctx_arg = _cpu_failover_ctx_arg()
+    # `${LLAMACPP_CPU_CTX:-131072}` — the DEFAULT is what runs unless the operator overrides it,
+    # so resolve it the way the container will rather than reading the literal. LLAMACPP_CPU_CTX
+    # is DERIVED: the renderer emits it from the same resolved window it gives the GPU backend,
+    # so the two agree by construction even when a heavier model sizes that window down. The
+    # literal after `:-` is only the fallback for an .env this renderer never wrote.
+    default_ctx = int(_expand_compose_var(ctx_arg, rendered.env))
     assert default_ctx == rendered.ctx_size, (
         f"CPU failover window {default_ctx} != GPU window {rendered.ctx_size}; a swap would "
         f"break long conversations")
+
+
+@pytest.mark.parametrize(
+    "model_id,sizes_down",
+    [("qwen3.8-27b-turbo-fable-q6", True),     # 24GB weights: window lands below its ctx_default
+     ("qwen3.8-27b-uncensored-q6", False)],    # 23GB weights: the full ctx_default still fits
+)
+def test_cpu_failover_window_tracks_the_gpu_window_per_model(registry, model_id, sizes_down):
+    """The regression this guards: a heavier model sizes the GPU window down (KV has less room
+    left), and the CPU failover has to follow it rather than sit on the manifest fallback."""
+    rc = render(_src(model=model_id), CATALOG, registry)
+    assert (rc.ctx_size < rc.model.ctx_default) is sizes_down, (
+        "catalog sizing changed; this case no longer exercises what it claims to")
+    assert rc.env["LLAMACPP_CPU_CTX"] == rc.env["LLAMACPP_CTX_SIZE"] == str(rc.ctx_size)
+    assert int(_expand_compose_var(_cpu_failover_ctx_arg(), rc.env)) == rc.ctx_size
+    if sizes_down:
+        # ...and the manifest fallback is NOT the answer here, so a regression to it would show
+        fallback = int(_cpu_failover_ctx_arg().split(":-")[1].rstrip("}"))
+        assert fallback > rc.ctx_size
 
 
 def test_the_failover_router_is_configured_to_route_there():

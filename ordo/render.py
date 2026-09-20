@@ -294,6 +294,7 @@ class RenderedConfig:
             "warnings": self.warnings,
             "derived": {
                 "env.LLAMACPP_CTX_SIZE": self.env["LLAMACPP_CTX_SIZE"],
+                "env.LLAMACPP_CPU_CTX": self.env["LLAMACPP_CPU_CTX"],
                 "hermes.context_length": self.hermes["context_length"],
                 "model_gateway.ctx": self.model_gateway["ctx"],
             },
@@ -522,6 +523,13 @@ def render(source: Source, catalog: Catalog,
     env = {
         "LLAMACPP_MODEL": str(lc["model"]),
         "LLAMACPP_CTX_SIZE": str(ctx),
+        # The CPU failover window is the SAME resolved window, by construction. LiteLLM fails
+        # `local-chat` over to llamacpp-cpu whenever the GPU is evicted, so a failover that
+        # accepts less than the primary rejects requests exactly when it is needed. Sizing the
+        # GPU window down for a heavier model used to leave the CPU side on its compose default,
+        # and the two silently diverged. That default (`${LLAMACPP_CPU_CTX:-...}` in
+        # services/llamacpp-cpu) now only applies to an .env this renderer never wrote.
+        "LLAMACPP_CPU_CTX": str(ctx),
         "LLAMACPP_GPU_LAYERS": str(lc["gpu_layers"]),
         "LLAMACPP_PARALLEL": str(lc["parallel"]),
         "LLAMACPP_FLASH_ATTN": str(lc["flash_attn"]),

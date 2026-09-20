@@ -87,15 +87,20 @@ models:
     file: Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-Q6_K.gguf
     # DavidAU merge of the same Qwen3.8-27B base: Cold-Fusion/GAIN fine tune, Heretic ARA
     # de-censoring, NEO imatrix quant with 16-bit output tensors ("MAX"), and a TURBO pass the
-    # card claims cuts thinking tokens by 2x to 10x. Under trial against qwen3.8-27b-uncensored-q6.
+    # card claims cuts thinking tokens by 2x to 10x. THE DEFAULT PICK since 2026-09-20: it is the
+    # catalog's top-ranked ultra model, so this is what every `model: auto` deployment renders.
+    # qwen3.8-27b-uncensored-q6 stays in the catalog below as a pinnable fallback.
     source: https://huggingface.co/DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF/resolve/main/Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-Q6_K.gguf
     # sha256 of the 23,582,382,688-byte Q6_K file, read from the repo's own LFS oid before download.
     sha256: f814af8d2ce6e636962aec38a30c11a84568d208de4d60f4fc45ed8a77ad0160
-    # 23.6GiB weights, 1.2GiB more than the incumbent, so the same ultra tier with no headroom to spare.
+    # 23.6GiB weights, 1.2GiB more than qwen3.8-27b-uncensored-q6, so the same ultra tier with no
+    # headroom to spare.
     requires: { vram_gb: 24, ram_gb: 16, cpu_ok: false }
-    # Card claims 256k native, but the stack-wide window is 131072 and the CPU fallback must match it.
+    # Card claims 256k native; 131072 is the stack-wide CAP. The renderer sizes the actual window
+    # down from it to whatever KV fits after these weights (114688 on a 32GB card) and emits the
+    # CPU failover's window from that same value, so the failover can never accept less.
     ctx_default: 131072
-    # Same `qwen35` hybrid arch as the incumbent.
+    # Same `qwen35` hybrid arch as the rest of the Qwen3.8-27B family.
     kv_kb_per_token: 34.8
     # The repo's own F16 projector, renamed on copy-in to match the file: convention above.
     mmproj: /models/Qwen3.8-27B-TurboFable-vision-f16.gguf
@@ -115,7 +120,7 @@ models:
     # draft-mtp speculative decoding already collapsed to ~7 tok/s on this box at 65-85% acceptance
     # under VRAM pressure (2026-08-19), and this card itself says to drop to the plain quant below
     # 50% acceptance. Nothing here would use the MTP tensors, so they would only cost VRAM.
-    # `qwen35` arch needs the SWA/hybrid-cache patched build, same image as the incumbent.
+    # `qwen35` arch needs the SWA/hybrid-cache patched build, same image as the other Qwen3.8s.
     backend_image: ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470
     tier: ultra
 
