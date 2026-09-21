@@ -9,7 +9,7 @@ Design constraints (from the architecture decisions + the drift lessons):
     it writes the *declarative source* (`ordo.yaml`) and re-renders. `.env` is always a pure
     function of the source, so a runtime model switch can never drift the three ctx values apart.
   - The handlers are pure (method, path, body) -> (status, dict) so they're testable with no
-    server/socket. `serve()` is a thin stdlib http.server binding around `route()` (no-cover).
+    server/socket. `serve()` is a thin FastAPI binding around `route()` (no-cover).
   - No auth here: the dashboard is localhost-only and this is the full control plane behind it
     (the agreed model — auth is Caddy's job at the edge, not baked into every service).
 """
@@ -329,36 +329,34 @@ class ControlPlane:
         status = int(payload.pop("_status", 200)) if isinstance(payload, dict) else 200
         return status, payload
 
-    def serve(self, host: str = "0.0.0.0", port: int = 9000) -> None:  # pragma: no cover - needs a socket
-        """Thin stdlib http.server binding around route(). No third-party dep by design."""
-        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    def app(self):
+        """Build the FastAPI application that delegates every request to route()."""
+        from fastapi import FastAPI, Request
+        from fastapi.responses import JSONResponse
 
         cp = self
+        app = FastAPI(title="ops-controller")
 
-        class Handler(BaseHTTPRequestHandler):
-            def _dispatch(self, method: str) -> None:
-                length = int(self.headers.get("Content-Length") or 0)
-                raw = self.rfile.read(length) if length else b""
+        @app.middleware("http")
+        async def dispatch(request: Request, call_next):
+            method = request.method
+            path = request.url.path
+            body = None
+            if method in ("POST", "PUT", "PATCH"):
                 try:
-                    body = json.loads(raw) if raw else {}
+                    raw = await request.body()
+                    if raw:
+                        body = json.loads(raw)
                 except json.JSONDecodeError:
-                    status, payload = 400, {"error": "invalid JSON body"}
-                else:
-                    status, payload = cp.route(method, self.path.split("?")[0], body)
-                data = json.dumps(payload).encode("utf-8")
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
+                    return JSONResponse(content={"error": "invalid JSON body"}, status_code=400)
+            status, payload = cp.route(method, path, body)
+            return JSONResponse(content=payload, status_code=status)
 
-            def do_GET(self) -> None:
-                self._dispatch("GET")
+        return app
 
-            def do_POST(self) -> None:
-                self._dispatch("POST")
+    def serve(self, host: str = "0.0.0.0", port: int = 9000) -> None:  # pragma: no cover - needs a socket
+        """Thin FastAPI binding around route(). No third-party dep by design."""
+        import uvicorn
 
-            def log_message(self, *_a: Any) -> None:
-                pass  # quiet; the agent/dashboard poll frequently
-
-        ThreadingHTTPServer((host, port), Handler).serve_forever()
+        app = self.app()
+        uvicorn.run(app, host=host, port=port, log_level="warning")
