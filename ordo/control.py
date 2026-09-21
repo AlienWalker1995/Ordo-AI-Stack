@@ -355,7 +355,18 @@ class ControlPlane:
         return app
 
     def serve(self, host: str = "0.0.0.0", port: int = 9000) -> None:  # pragma: no cover - needs a socket
-        """Thin FastAPI binding around route(). No third-party dep by design."""
+        """Thin FastAPI binding around route().
+
+        The binding is deliberately thin: every request is dispatched through route(), which stays a pure
+        function with no framework types in or under it, so control-plane logic remains testable without a
+        socket. FastAPI is reached through a function-local import, so importing ordo.control (which the CLI
+        does for render and fetch) does not require FastAPI to be installed.
+
+        Dispatch is an http middleware rather than a catch-all route on purpose: this module uses postponed
+        annotations, and FastAPI resolves a route handler's annotations against MODULE globals, where a
+        function-local `Request` does not exist. That combination silently turns `request` into a required
+        query parameter and answers every call with 422. Middleware is not resolved that way.
+        """
         import uvicorn
 
         app = self.app()
