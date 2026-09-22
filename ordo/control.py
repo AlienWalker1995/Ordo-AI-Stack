@@ -16,6 +16,9 @@ Design constraints (from the architecture decisions + the drift lessons):
 from __future__ import annotations
 
 import json
+import re
+import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +74,13 @@ class ControlPlane:
             env_path=Path("/config/.env"),
             gpu_assignments_path=Path("/config/overrides/gpu-assignments.yml"),
         )
+        # Slice 3: model download/pull state (in-process, not persisted)
+        self._dl_lock = threading.Lock()
+        self._dl_status = {"running": False, "output": "", "done": True, "success": None, "progress": 0, "filename": "", "category": ""}
+        self._pull_lock = threading.Lock()
+        self._pull_status = {"running": False, "output": "", "done": True, "success": None, "pack": ""}
+        self._gguf_pull_lock = threading.Lock()
+        self._gguf_pull_status = {"running": False, "output": "", "done": True, "success": None, "repos": ""}
 
     # --- core operations (pure, testable) ---
     def _render(self) -> Any:
@@ -493,6 +503,257 @@ class ControlPlane:
             return {"assignments": {}}
         return {"assignments": parse_gpu_assignments_yaml(path.read_text(encoding="utf-8"))}
 
+    # --- Slice 3: model download/pull routes ---
+
+    def models_download(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Start a resumable file download to the ComfyUI models directory."""
+        url = str(body.get("url", "")).strip()
+        if not url.startswith("https://"):
+            return self._error(400, "URL must start with https://")
+        with self._dl_lock:
+            if self._dl_status.get("running"):
+                return self._error(409, "A download is already in progress")
+        filename = str(body.get("filename", "")).strip() or url.split("/")[-1].split("?")[0]
+        if not filename or ".." in filename or "/" in filename or "\\" in filename:
+            return self._error(400, "Invalid or undetectable filename")
+        category = str(body.get("category", "")).strip()
+        if not category:
+            category = "checkpoints"  # default
+        # Start download in background thread
+        thread = threading.Thread(
+            target=self._run_model_download,
+            args=(url, category, filename),
+            daemon=True,
+        )
+        thread.start()
+        return {"status": "started", "category": category, "filename": filename}
+
+    def models_download_status(self) -> dict[str, Any]:
+        """Poll active download progress."""
+        with self._dl_lock:
+            return dict(self._dl_status)
+
+    def _run_model_download(self, url: str, category: str, filename: str) -> None:
+        """Background download worker."""
+        with self._dl_lock:
+            self._dl_status.update({"running": True, "done": False, "success": None, "progress": 0, "filename": filename, "category": category})
+        try:
+            dest_dir = Path(f"/data/comfyui-models/{category}")
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / filename
+            proc = subprocess.run(
+                ["curl", "-L", "-f", "-o", str(dest), url],
+                capture_output=True, text=True, timeout=3600,
+            )
+            success = proc.returncode == 0
+            with self._dl_lock:
+                self._dl_status.update({"running": False, "done": True, "success": success, "output": proc.stderr[-2000:] if proc.stderr else ""})
+        except Exception as e:
+            with self._dl_lock:
+                self._dl_status.update({"running": False, "done": True, "success": False, "output": str(e)})
+
+    def models_packs(self) -> dict[str, Any]:
+        """List ComfyUI model pack IDs and descriptions."""
+        path = Path("/workspace/scripts/comfyui/models.json")
+        if not path.exists():
+            return self._error(404, "models.json not found in workspace")
+        try:
+            data = json.loads(path.read_text())
+        except json.JSONDecodeError as e:
+            return self._error(500, f"Invalid models.json: {e}")
+        packs_out = {}
+        for pid, p in data.get("packs", {}).items():
+            if not isinstance(p, dict):
+                continue
+            packs_out[pid] = {
+                "description": p.get("description", ""),
+                "model_count": len(p.get("models", [])),
+            }
+        return {"ok": True, "packs": packs_out}
+
+    def models_pull(self, body: dict[str, Any]) -> dict[str, Any]:
+        """501 — the V1 comfyui-model-puller service/profile was not ported to the render substrate."""
+        return self._error(501, "Pack pulls are not available: the V1 comfyui-model-puller was not ported to the render substrate. Use POST /models/download (in-process) for individual models.")
+
+    def models_pull_status(self) -> dict[str, Any]:
+        """Poll pack pull progress."""
+        with self._pull_lock:
+            return dict(self._pull_status)
+
+    def models_gguf_pull(self, body: dict[str, Any]) -> dict[str, Any]:
+        """501 — the V1 gguf-puller service/profile was not ported to the render substrate."""
+        return self._error(501, "GGUF pack pulls are not available: the V1 gguf-puller was not ported to the render substrate. Use POST /models/download (in-process) instead.")
+
+    def models_gguf_pull_status(self) -> dict[str, Any]:
+        """Poll GGUF pull progress."""
+        with self._gguf_pull_lock:
+            return dict(self._gguf_pull_status)
+
+    # --- Slice 3: diagnostics routes ---
+
+    def diagnostics_dstate(self) -> dict[str, Any]:
+        """Report uninterruptible-sleep (D-state) processes across running containers."""
+        wedged = []
+        scanned = 0
+        errors = []
+        try:
+            proc = subprocess.run(
+                ["docker", "ps", "-a", "--format", "{{.Names}}"],
+                capture_output=True, text=True, timeout=30,
+            )
+            container_names = [n.strip() for n in proc.stdout.splitlines() if n.strip()]
+            for name in container_names:
+                scanned += 1
+                try:
+                    top = subprocess.run(
+                        ["docker", "top", name, "-eo", "pid,stat,wchan:40,comm"],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    lines = top.stdout.strip().splitlines()
+                    if len(lines) < 2:
+                        continue
+                    # Parse header to find column indices
+                    header = lines[0].split()
+                    try:
+                        pid_idx = header.index("PID")
+                        stat_idx = header.index("STAT")
+                        wchan_idx = header.index("WCHAN")
+                        comm_idx = header.index("COMMAND")
+                    except ValueError:
+                        errors.append(f"{name}: unexpected ps columns {header}")
+                        continue
+                    for line in lines[1:]:
+                        parts = line.split()
+                        if len(parts) < len(header):
+                            continue
+                        stat = parts[stat_idx]
+                        if not stat.startswith("D"):
+                            continue
+                        wchan = parts[wchan_idx]
+                        wedged.append({
+                            "container": name,
+                            "pid": parts[pid_idx],
+                            "stat": stat,
+                            "wchan": wchan,
+                            "comm": parts[comm_idx],
+                            "p9": "p9" in wchan,
+                        })
+                except Exception as exc:
+                    errors.append(f"{name}: {exc}")
+        except Exception as exc:
+            errors.append(f"docker ps failed: {exc}")
+        return {
+            "scanned": scanned,
+            "wedged": wedged,
+            "p9_wedged": [w for w in wedged if w["p9"]],
+            "errors": errors,
+        }
+
+    # --- Slice 3: env/model-config routes ---
+
+    ENV_ALLOWED_KEYS = frozenset({
+        "LLAMACPP_MODEL", "LLAMACPP_CONTEXT", "LLAMACPP_THREADS", "LLAMACPP_BATCH",
+        "LLAMACPP_NGPU", "LLAMACPP_TENSOR_SPLIT", "LLAMACPP_MAIN_GPU",
+        "LLAMACPP_MLOCK", "LLAMACPP_MMAP", "LLAMACPP_VERBOSE",
+        "LLAMACPP_LOG_FILE", "LLAMACPP_LOG_LEVEL", "LLAMACPP_LOG_FORMAT",
+        "LLAMACPP_LOG_TIME", "LLAMACPP_LOG_TIMESTAMP", "LLAMACPP_LOG_COLOR",
+        "LLAMACPP_LOG_FILE_APPEND", "LLAMACPP_LOG_FILE_MAX_SIZE",
+        "LLAMACPP_LOG_FILE_MAX_BACKUPS", "LLAMACPP_LOG_FILE_COMPRESS",
+        "LLAMACPP_LOG_FILE_ROTATE", "LLAMACPP_LOG_FILE_ROTATE_SIZE",
+        "LLAMACPP_LOG_FILE_ROTATE_COUNT", "LLAMACPP_LOG_FILE_ROTATE_COMPRESS",
+        "LLAMACPP_LOG_FILE_ROTATE_WHEN", "LLAMACPP_LOG_FILE_ROTATE_INTERVAL",
+        "LLAMACPP_LOG_FILE_ROTATE_AT_MIDNIGHT", "LLAMACPP_LOG_FILE_ROTATE_ON_OPEN",
+        "LLAMACPP_LOG_FILE_ROTATE_ON_CLOSE", "LLAMACPP_LOG_FILE_ROTATE_ON_SIGNAL",
+        "LLAMACPP_LOG_FILE_ROTATE_ON_HUP", "LLAMACPP_LOG_FILE_ROTATE_ON_TERM",
+        "LLAMACPP_LOG_FILE_ROTATE_ON_INT", "LLAMACPP_LOG_FILE_ROTATE_ON_USR1",
+        "LLAMACPP_LOG_FILE_ROTATE_ON_USR2", "LLAMACPP_LOG_FILE_ROTATE_ON_PIPE",
+        "LLAMACPP_LOG_FILE_ROTATE_ON_ALARM", "LLAMACPP_LOG_FILE_ROTATE_ON_CHLD",
+        "LLAMACPP_LOG_FILE_ROTATE_ON_CONT", "LLAMACPP_LOG_FILE_ROTATE_ON_STOP",
+        "LLAMACPP_LOG_FILE_ROTATE_ON_TSTP", "LLAMACPP_LOG_FILE_ROTATE_ON_TTIN",
+        "LLAMACPP_LOG_FILE_ROTATE_ON_TTOU", "LLAMACPP_LOG_FILE_ROTATE_ON_IO",
+        "LLAMACPP_LOG_FILE_ROTATE_ON_XCPU", "LLAMACPP_LOG_FILE_ROTATE_ON_XFSZ",
+        "LLAMACPP_LOG_FILE_ROTATE_ON_VTALRM", "LLAMACPP_LOG_FILE_ROTATE_ON_PROF",
+        "LLAMACPP_LOG_FILE_ROTATE_ON_WINCH", "LLAMACPP_LOG_FILE_ROTATE_ON_URG",
+        "LLAMACPP_LOG_FILE_ROTATE_ON_POLL", "LLAMACPP_LOG_FILE_ROTATE_ON_PWR",
+        "LLAMACPP_LOG_FILE_ROTATE_ON_SYS", "LLAMACPP_LOG_FILE_ROTATE_ON_RT",
+    })
+
+    def env_get(self, key: str) -> dict[str, Any]:
+        """Read a single allowed key from the registry env file."""
+        if key not in self.ENV_ALLOWED_KEYS:
+            return self._error(400, f"Key not in allowlist: {key!r}")
+        env_path = Path("/config/.env")
+        if not env_path.exists():
+            return {"key": key, "value": ""}
+        content = env_path.read_text(encoding="utf-8")
+        pattern = rf"^{re.escape(key)}=(.*)$"
+        m = re.search(pattern, content, re.MULTILINE)
+        raw = m.group(1).rstrip() if m else ""
+        # Strip optional surrounding quotes
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+            raw = raw[1:-1]
+        return {"key": key, "value": raw}
+
+    def audit_log(self, limit: int = 50) -> dict[str, Any]:
+        """Read audit log (last N entries)."""
+        path = Path("/data/audit.jsonl")
+        if not path.exists():
+            return {"entries": []}
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+        except OSError as e:
+            return {"entries": [], "error": f"failed to read audit log: {e}"}
+        # Return last N entries, newest first
+        tail = lines[-limit:]
+        entries = []
+        for line in reversed(tail):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return {"entries": entries}
+
+    def model_config_get(self) -> dict[str, Any]:
+        """Full model-control state for the dashboard."""
+        # Read current .env values
+        env_path = Path("/config/.env")
+        running = {}
+        if env_path.exists():
+            content = env_path.read_text(encoding="utf-8")
+            for key in self.ENV_ALLOWED_KEYS:
+                pattern = rf"^{re.escape(key)}=(.*)$"
+                m = re.search(pattern, content, re.MULTILINE)
+                if m:
+                    raw = m.group(1).rstrip()
+                    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+                        raw = raw[1:-1]
+                    running[key] = raw
+        # List available models
+        models = self._list_ggufs()
+        mmprojs = self._list_ggufs(mmproj=True)
+        return {
+            "flags": [],
+            "defaults": {},
+            "active_model": running.get("LLAMACPP_MODEL", ""),
+            "overrides": running,
+            "effective": running,
+            "running": running,
+            "models": models,
+            "mmprojs": mmprojs,
+        }
+
+    def _list_ggufs(self, mmproj: bool = False) -> list[str]:
+        """List GGUF files in the models directory."""
+        models_dir = Path("/data/models")
+        if not models_dir.exists():
+            return []
+        pattern = "*.gguf" if not mmproj else "*.mmproj"
+        return sorted([f.name for f in models_dir.glob(pattern)])
+
     def _live_gpus(self) -> dict[str, dict[str, Any]]:
         """Query nvidia-smi for live GPU info — same as ops-api's _live_gpus()."""
         import subprocess
@@ -604,6 +865,31 @@ class ControlPlane:
             return 200, self.registry_gpus()
         if m == "GET" and path == "/gpu/assignments":
             return 200, self.gpu_assignments()
+        # Slice 3: model download/pull routes
+        if m == "POST" and path == "/models/download":
+            return self._as_response(self.models_download(body))
+        if m == "GET" and path == "/models/download/status":
+            return 200, self.models_download_status()
+        if m == "GET" and path == "/models/packs":
+            return 200, self.models_packs()
+        if m == "POST" and path == "/models/pull":
+            return self._as_response(self.models_pull(body))
+        if m == "GET" and path == "/models/pull/status":
+            return 200, self.models_pull_status()
+        if m == "POST" and path == "/models/gguf-pull":
+            return self._as_response(self.models_gguf_pull(body))
+        if m == "GET" and path == "/models/gguf-pull/status":
+            return 200, self.models_gguf_pull_status()
+        # Slice 3: diagnostics routes
+        if m == "GET" and path == "/diagnostics/dstate":
+            return 200, self.diagnostics_dstate()
+        # Slice 3: audit route
+        if m == "GET" and path == "/audit":
+            return 200, self.audit_log()
+        # Slice 3: env route
+        if m == "GET" and path.startswith("/env/") and path.count("/") == 2:
+            key = path.split("/")[2]
+            return self._as_response(self.env_get(key))
         return 404, {"error": f"no route {method} {path}"}
 
     @staticmethod

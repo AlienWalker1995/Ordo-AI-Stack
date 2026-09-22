@@ -189,6 +189,10 @@ export default function HardwareTab() {
               <div className="space-y-2">
                 {[0, 1, 2].map((i) => <div key={i} className="skeleton h-9 w-full" />)}
               </div>
+            ) : pressure.unavailable ? (
+              <div className="rounded-md border border-border-subtle bg-bg-elevated px-4 py-6 text-center text-[0.8125rem] text-muted">
+                Service pressure data unavailable — ops-controller probe timed out or failed.
+              </div>
             ) : services.length === 0 ? (
               <div className="rounded-md border border-border-subtle bg-bg-elevated px-4 py-6 text-center text-[0.8125rem] text-muted">
                 No service pressure data — ops-controller may be unreachable.
