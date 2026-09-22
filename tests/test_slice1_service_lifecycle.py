@@ -252,6 +252,10 @@ class TestContainerList:
     def test_returns_container_list(self, control_plane, mock_backend):
         status, body = control_plane.route("GET", "/containers")
         assert status == 200
+        # A BARE LIST, because that is what ops-api /containers returns and the dashboard is
+        # written against it. Its sibling /mcp/containers returns {"containers": [...]} instead.
+        # The asymmetry is ops-api's, verified against the live service; it is reproduced rather
+        # than tidied so this port changes nothing the dashboard can see.
         assert len(body) == 2
         assert mock_backend.list_containers_calls
 

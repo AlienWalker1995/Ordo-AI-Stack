@@ -18,6 +18,7 @@ so the resident can never be stranded down, V1's fatal flaw).
 """
 from __future__ import annotations
 
+import re
 import subprocess
 from typing import Protocol
 
@@ -25,20 +26,32 @@ from .scheduler import Job, Scheduler
 
 
 class ContainerBackend(Protocol):
-    def start(self, job_id: str) -> None: ...
-    def stop(self, name: str) -> None: ...
-    def restart(self, name: str) -> None: ...
-    def logs(self, name: str, tail: int = 100) -> str: ...
-    def list_services(self) -> list[dict]: ...
-    def recreate_service(self, name: str) -> None: ...
-    def list_containers(self) -> list[dict]: ...
+    # Two kinds of argument, and the distinction is load-bearing. `service` is a COMPOSE SERVICE
+    # name (`llamacpp`), resolved to a container by compose labels so the `-1` replica suffix is
+    # handled. `name` is a RAW CONTAINER name (`ordo-llamacpp-1`). Mixing them up is the defect
+    # that made `docker stop ordo-llamacpp` fail against a container actually called
+    # `ordo-llamacpp-1`, so the parameter names say which one a method takes.
+    def start(self, service: str) -> None: ...
+    def stop(self, service: str) -> None: ...
+    def restart(self, service: str) -> None: ...
+    def logs(self, service: str, tail: int = 100) -> str: ...
+    def recreate_service(self, service: str) -> None: ...
     def container_logs(self, name: str, tail: int = 100) -> str: ...
     def container_restart(self, name: str) -> None: ...
+
+    # The read methods return the ops-api PAYLOAD, not a bare list, because the dashboard consumes
+    # these shapes directly: {"services": [...]}, {"containers": [...]}. Returning a list here and
+    # wrapping it at the route would put the shape in two places and let them drift.
+    def list_services(self) -> dict: ...
+    def list_containers(self) -> list[dict]: ...  # bare list: ops-api's shape, see DockerBackend
+    def mcp_containers(self) -> dict: ...
     def service_stats(self) -> dict: ...
-    def mcp_containers(self) -> list[dict]: ...
-    def compose_up(self) -> None: ...
-    def compose_down(self) -> None: ...
-    def compose_restart(self) -> None: ...
+
+    # Compose verbs take an OPTIONAL service: no argument means the whole project, which for
+    # compose_down means the entire stack including the agent and the GPU scheduler.
+    def compose_up(self, service: str | None = None) -> None: ...
+    def compose_down(self, service: str | None = None) -> None: ...
+    def compose_restart(self, service: str | None = None) -> None: ...
 
 
 class MockBackend:
@@ -59,28 +72,28 @@ class MockBackend:
         self.compose_down_calls: list = []
         self.compose_restart_calls: list = []
 
-    def start(self, job_id: str) -> None:
-        self.started.append(job_id)
+    def start(self, service: str) -> None:
+        self.started.append(service)
 
-    def stop(self, name: str) -> None:
-        self.stopped.append(name)
+    def stop(self, service: str) -> None:
+        self.stopped.append(service)
 
-    def restart(self, name: str) -> None:
-        self.restarted.append(name)
+    def restart(self, service: str) -> None:
+        self.restarted.append(service)
 
-    def logs(self, name: str, tail: int = 100) -> str:
-        self.log_requests.append((name, tail))
-        return f"[mock logs for {name}, tail={tail}]"
+    def logs(self, service: str, tail: int = 100) -> str:
+        self.log_requests.append((service, tail))
+        return f"[mock logs for {service}, tail={tail}]"
 
-    def list_services(self) -> list[dict]:
+    def list_services(self) -> dict:
         self.list_services_calls.append(None)
-        return [
+        return {"services": [
             {"id": "llamacpp", "name": "llamacpp", "state": "running", "health": "healthy"},
             {"id": "dashboard", "name": "dashboard", "state": "running", "health": None},
-        ]
+        ]}
 
-    def recreate_service(self, name: str) -> None:
-        self.recreate_calls.append(name)
+    def recreate_service(self, service: str) -> None:
+        self.recreate_calls.append(service)
 
     def list_containers(self) -> list[dict]:
         self.list_containers_calls.append(None)
@@ -107,19 +120,20 @@ class MockBackend:
             "vram_aggregate_unavailable": False,
         }
 
-    def mcp_containers(self) -> list[dict]:
+    def mcp_containers(self) -> dict:
         self.mcp_containers_calls.append(None)
-        return [
-            {"name": "ordo-mcp-gateway-1", "status": "running", "image": "mcp-gateway:latest"},
-        ]
+        return {"containers": [
+            {"id": "gateway", "name": "ordo-mcp-gateway-1", "service": "mcp-gateway",
+             "status": "running", "image": "mcp-gateway:latest"},
+        ]}
 
-    def compose_up(self) -> None:
+    def compose_up(self, service: str | None = None) -> None:
         self.compose_up_calls.append(None)
 
-    def compose_down(self) -> None:
+    def compose_down(self, service: str | None = None) -> None:
         self.compose_down_calls.append(None)
 
-    def compose_restart(self) -> None:
+    def compose_restart(self, service: str | None = None) -> None:
         self.compose_restart_calls.append(None)
 
 
@@ -199,6 +213,219 @@ class DockerBackend:
         )
         return proc.stdout
 
+    # --- compose-project queries and lifecycle (ported from ops-api, slice 1) ---
+    #
+    # Everything below stays in this class's existing style: the docker CLI over subprocess,
+    # scoped to THIS compose project by label, no third-party SDK. `_compose()` builds the
+    # invocation the operator uses by hand, including BOTH env files, because a compose call
+    # missing secrets.env renders a different file than the one the stack was brought up with.
+
+    COMPOSE_DIR = "/config"
+
+    def _compose(self, *args: str) -> list[str]:
+        return [
+            "docker", "compose", "-p", self.project,
+            "-f", f"{self.COMPOSE_DIR}/docker-compose.yml",
+            "--env-file", f"{self.COMPOSE_DIR}/.env",
+            "--env-file", f"{self.COMPOSE_DIR}/secrets.env",
+            *args,
+        ]
+
+    def _project_ps(self) -> list[dict]:  # pragma: no cover - needs real docker
+        """Every container in this project as {service, name, state, status}."""
+        proc = subprocess.run(
+            ["docker", "ps", "-a",
+             "--filter", f"label=com.docker.compose.project={self.project}",
+             "--format", "{{.Label \"com.docker.compose.service\"}}\t{{.Names}}\t{{.State}}\t{{.Status}}"],
+            capture_output=True, text=True, timeout=30,
+        )
+        rows = []
+        for line in proc.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) == 4 and parts[0]:
+                rows.append({"service": parts[0], "name": parts[1], "state": parts[2], "status": parts[3]})
+        return rows
+
+    @staticmethod
+    def _health_from_status(status: str) -> str | None:
+        """docker's Status string carries the healthcheck verdict in parentheses, or nothing at
+        all when the container declares no healthcheck. None means "no healthcheck", which is not
+        the same as unhealthy: the dashboard needs that distinction to avoid calling a headless
+        worker down."""
+        m = re.search(r"\((healthy|unhealthy|health: starting|starting)\)", status)
+        if not m:
+            return None
+        return "starting" if "starting" in m.group(1) else m.group(1)
+
+    def list_services(self) -> dict:  # pragma: no cover - needs real docker
+        services = [
+            {"id": r["service"], "name": r["name"], "state": r["state"],
+             "health": self._health_from_status(r["status"])}
+            for r in self._project_ps()
+        ]
+        services.sort(key=lambda s: s["id"])
+        return {"services": services}
+
+    def list_containers(self) -> list[dict]:  # pragma: no cover - needs real docker
+        """EVERY container on the host as a BARE LIST of {name, status, image}.
+
+        Two things here are deliberately not what they look like they should be, and both are
+        matched against the live ops-api rather than guessed:
+
+        1. A bare list, while its sibling mcp_containers returns {"containers": [...]}. ops-api is
+           inconsistent between those two routes and the dashboard is written against both as they
+           are.
+        2. NOT scoped to this compose project. ops-api returns all 86 containers on the host, where
+           the project holds 53. This is the one method on this backend that deliberately looks
+           outside the project, because the dashboard's container view shows the whole host. Every
+           MUTATING method stays project-scoped: reading widely is safe, acting widely is not.
+
+        Harmonising either of these is a dashboard-facing change and belongs in its own slice, not
+        smuggled into a port whose whole promise is that nothing user-facing moves.
+        """
+        proc = subprocess.run(
+            ["docker", "ps", "-a", "--format", "{{.Names}}\t{{.State}}\t{{.Image}}"],
+            capture_output=True, text=True, timeout=30,
+        )
+        rows = []
+        for line in proc.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) == 3:
+                rows.append({"name": parts[0], "status": parts[1], "image": parts[2]})
+        return rows
+
+    def mcp_containers(self) -> dict:  # pragma: no cover - needs real docker
+        """Containers labelled ordo.mcp=true, scoped to this project.
+
+        Fields match ops-api exactly (id, name, service, status, image) because the dashboard's MCP
+        cards read them by name. Note that ops-api is not internally consistent between its two
+        container routes: this one returns {"containers": [...]} while /containers returns a bare
+        list. Both shapes are reproduced as they are; harmonising them is a dashboard-facing change
+        and belongs in its own slice rather than hidden inside a port.
+        """
+        proc = subprocess.run(
+            ["docker", "ps", "-a",
+             "--filter", f"label=com.docker.compose.project={self.project}",
+             "--filter", "label=ordo.mcp=true",
+             "--format", '{{.Names}}\t{{.Label "com.docker.compose.service"}}\t{{.State}}\t{{.Image}}'],
+            capture_output=True, text=True, timeout=30,
+        )
+        rows = []
+        for line in proc.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) == 4:
+                service = parts[1]
+                rows.append({
+                    # `id` is the service name minus the mcp- prefix, which is what the dashboard
+                    # keys its MCP cards on; ops-api derives it the same way.
+                    "id": service[len("mcp-"):] if service.startswith("mcp-") else service,
+                    "name": parts[0], "service": service,
+                    "status": parts[2], "image": parts[3],
+                })
+        return {"containers": rows}
+
+    def _container_guard(self, name: str) -> str:
+        """Container routes take a RAW container name, not a service name, so `_guard` does not
+        apply. Refuse anything outside this project rather than trusting the caller: the whole
+        point of this backend is that it structurally cannot touch another project's containers."""
+        if "/" in name or name.strip() != name or not name:
+            raise ValueError(f"not a valid container name: {name!r}")
+        known = {r["name"] for r in self._project_ps()}
+        if name not in known:
+            raise ValueError(f"container {name!r} is not in project '{self.project}'")
+        return name
+
+    def container_logs(self, name: str, tail: int = 100) -> str:  # pragma: no cover - needs real docker
+        container = self._container_guard(name)
+        proc = subprocess.run(
+            ["docker", "logs", "--tail", str(tail), container],
+            capture_output=True, text=True, timeout=30,
+        )
+        return proc.stdout
+
+    def container_restart(self, name: str) -> None:  # pragma: no cover - needs real docker
+        subprocess.run(["docker", "restart", self._container_guard(name)], check=True, timeout=120)
+
+    def recreate_service(self, service: str) -> None:  # pragma: no cover - needs real docker
+        """Recreate, which is NOT restart: an env change only takes effect on recreate. Goes
+        through compose so the declared config is applied. A `docker run` recreate silently drops
+        device reservations and compose labels (observed 2026-09-21: it produced a controller that
+        reported 0GB GPU and could no longer be managed by compose)."""
+        subprocess.run(self._compose("up", "-d", "--force-recreate", self._guard(service)),
+                       check=True, timeout=600)
+
+    def compose_up(self, service: str | None = None) -> None:  # pragma: no cover - needs real docker
+        args = ["up", "-d"] + ([self._guard(service)] if service else [])
+        subprocess.run(self._compose(*args), check=True, timeout=900)
+
+    def compose_restart(self, service: str | None = None) -> None:  # pragma: no cover - needs real docker
+        args = ["restart"] + ([self._guard(service)] if service else [])
+        subprocess.run(self._compose(*args), check=True, timeout=600)
+
+    def compose_down(self, service: str | None = None) -> None:  # pragma: no cover - needs real docker
+        """Whole-project down when called with no service. This is the highest-blast-radius verb
+        the backend exposes: it stops the entire stack, the agent and the GPU scheduler included.
+        It is implemented because the protocol declares it, not because anything should call it
+        casually."""
+        args = ["down"] + ([self._guard(service)] if service else [])
+        subprocess.run(self._compose(*args), check=True, timeout=600)
+
+    def service_stats(self) -> dict:  # pragma: no cover - needs real docker
+        """Per-service CPU and memory.
+
+        One `docker stats --no-stream` call samples every container at once. ops-api reaches the
+        same place differently: it samples containers individually, which cost ~2s each and made
+        the endpoint scale at N x 2s, about 48s for this stack, so it fans them out across a
+        thread pool. A single CLI call is the same idea with less machinery, and it is why this
+        route is inherently slow: the daemon samples cgroup counters twice to compute a CPU delta.
+        Callers must NOT paper over that with a short timeout and a zero-filled fallback.
+        """
+        by_name = {r["name"]: r for r in self._project_ps()}
+        proc = subprocess.run(
+            ["docker", "stats", "--no-stream", "--format",
+             "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}"],
+            capture_output=True, text=True, timeout=120,
+        )
+        services: dict[str, dict] = {}
+        for line in proc.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) != 4 or parts[0] not in by_name:
+                continue
+            name, cpu, mem_usage, mem_pct = parts
+            row = by_name[name]
+            used = mem_usage.split("/")[0].strip()
+            services[row["service"]] = {
+                "cpu_pct": _pct(cpu),
+                "mem_gb": _to_gb(used),
+                "mem_pct": _pct(mem_pct),
+                "vram_gb": 0.0,
+                "vram_pct": 0.0,
+                "running": row["state"] == "running",
+            }
+        for row in by_name.values():
+            services.setdefault(row["service"], {
+                "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
+                "vram_gb": 0.0, "vram_pct": 0.0, "running": row["state"] == "running",
+            })
+        return {"gpu": None, "services": services, "vram_aggregate_unavailable": True}
+
+
+
+def _pct(value: str) -> float:
+    """'12.34%' -> 12.34, and anything unparseable -> 0.0."""
+    try:
+        return float(value.strip().rstrip("%"))
+    except (ValueError, AttributeError):
+        return 0.0
+
+
+def _to_gb(value: str) -> float:
+    """docker's human sizes ('1.5GiB', '860MiB', '12kB') -> float gigabytes."""
+    m = re.match(r"([\d.]+)\s*([KMGT]?i?B)", (value or "").strip(), re.IGNORECASE)
+    if not m:
+        return 0.0
+    n, unit = float(m.group(1)), m.group(2).upper().replace("I", "")
+    return round(n * {"B": 1e-9, "KB": 1e-6, "MB": 1e-3, "GB": 1.0, "TB": 1000.0}.get(unit, 0.0), 3)
 
 class Broker:
     def __init__(self, scheduler: Scheduler, backend: ContainerBackend, history=None):

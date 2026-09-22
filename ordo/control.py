@@ -343,7 +343,10 @@ class ControlPlane:
             services = self.broker.backend.list_services()
         except Exception as e:
             return self._error(500, str(e))
-        return {"services": services}
+        # The backend returns the ops-api payload already ({"services": [...]}), the same as
+        # list_containers and mcp_containers below. Wrapping it again here produced
+        # {"services": {"services": [...]}}, which the dashboard would read as an empty grid.
+        return services
 
     def service_recreate(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
