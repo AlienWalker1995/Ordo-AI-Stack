@@ -206,5 +206,193 @@ class TestRouteParityWithOpsApi:
         assert body["service"] == "complex-service-name_123"
 
 
+class TestServiceList:
+    """GET /services — ported from ops-api."""
+
+    def test_returns_service_list(self, control_plane, mock_backend):
+        status, body = control_plane.route("GET", "/services")
+        assert status == 200
+        assert "services" in body
+        assert len(body["services"]) == 2
+        assert mock_backend.list_services_calls
+
+
+class TestServiceRecreate:
+    """POST /services/{id}/recreate — ported from ops-api."""
+
+    def test_dry_run_returns_would_recreate(self, control_plane):
+        status, body = control_plane.route("POST", "/services/test-svc/recreate", {"dry_run": True})
+        assert status == 200
+        assert body["would"] == "recreate"
+        assert body["service"] == "test-svc"
+
+    def test_requires_confirm(self, control_plane):
+        status, body = control_plane.route("POST", "/services/test-svc/recreate", {})
+        assert status == 400
+        assert "confirm" in body["error"]
+
+    def test_recreates_service(self, control_plane, mock_backend):
+        status, body = control_plane.route("POST", "/services/test-svc/recreate", {"confirm": True})
+        assert status == 200
+        assert body["ok"] is True
+        assert body["service"] == "test-svc"
+        assert body["action"] == "recreated"
+        assert "test-svc" in mock_backend.recreate_calls
+
+    def test_error_on_recreate_failure(self, control_plane, mock_backend):
+        mock_backend.recreate_service = MagicMock(side_effect=Exception("docker failed"))
+        status, body = control_plane.route("POST", "/services/test-svc/recreate", {"confirm": True})
+        assert status == 500
+        assert "docker failed" in body["error"]
+
+
+class TestContainerList:
+    """GET /containers — ported from ops-api."""
+
+    def test_returns_container_list(self, control_plane, mock_backend):
+        status, body = control_plane.route("GET", "/containers")
+        assert status == 200
+        assert len(body) == 2
+        assert mock_backend.list_containers_calls
+
+
+class TestContainerLogs:
+    """GET /containers/{name}/logs — ported from ops-api."""
+
+    def test_returns_container_logs(self, control_plane, mock_backend):
+        status, body = control_plane.route("GET", "/containers/test-container/logs")
+        assert status == 200
+        assert "logs" in body
+        assert ("test-container", 100) in mock_backend.container_log_requests
+
+    def test_error_on_logs_failure(self, control_plane, mock_backend):
+        mock_backend.container_logs = MagicMock(side_effect=Exception("docker failed"))
+        status, body = control_plane.route("GET", "/containers/test-container/logs")
+        assert status == 500
+        assert "docker failed" in body["error"]
+
+
+class TestContainerRestart:
+    """POST /containers/{name}/restart — ported from ops-api."""
+
+    def test_requires_confirm(self, control_plane):
+        status, body = control_plane.route("POST", "/containers/test-container/restart", {})
+        assert status == 400
+        assert "confirm" in body["error"]
+
+    def test_restarts_container(self, control_plane, mock_backend):
+        status, body = control_plane.route("POST", "/containers/test-container/restart", {"confirm": True})
+        assert status == 200
+        assert body["ok"] is True
+        assert body["container"] == "test-container"
+        assert body["action"] == "restarted"
+        assert "test-container" in mock_backend.container_restart_calls
+
+    def test_error_on_restart_failure(self, control_plane, mock_backend):
+        mock_backend.container_restart = MagicMock(side_effect=Exception("docker failed"))
+        status, body = control_plane.route("POST", "/containers/test-container/restart", {"confirm": True})
+        assert status == 500
+        assert "docker failed" in body["error"]
+
+
+class TestServiceStats:
+    """GET /stats/services — ported from ops-api."""
+
+    def test_returns_stats(self, control_plane, mock_backend):
+        status, body = control_plane.route("GET", "/stats/services")
+        assert status == 200
+        assert "gpu" in body
+        assert "services" in body
+        assert mock_backend.service_stats_calls
+
+    def test_error_on_stats_failure(self, control_plane, mock_backend):
+        mock_backend.service_stats = MagicMock(side_effect=Exception("docker failed"))
+        status, body = control_plane.route("GET", "/stats/services")
+        assert status == 500
+        assert "docker failed" in body["error"]
+
+
+class TestMcpContainers:
+    """GET /mcp/containers — ported from ops-api."""
+
+    def test_returns_mcp_containers(self, control_plane, mock_backend):
+        status, body = control_plane.route("GET", "/mcp/containers")
+        assert status == 200
+        assert len(body) == 1
+        assert mock_backend.mcp_containers_calls
+
+    def test_error_on_failure(self, control_plane, mock_backend):
+        mock_backend.mcp_containers = MagicMock(side_effect=Exception("docker failed"))
+        status, body = control_plane.route("GET", "/mcp/containers")
+        assert status == 500
+        assert "docker failed" in body["error"]
+
+
+class TestComposeUp:
+    """POST /compose/up — ported from ops-api."""
+
+    def test_requires_confirm(self, control_plane):
+        status, body = control_plane.route("POST", "/compose/up", {})
+        assert status == 400
+        assert "confirm" in body["error"]
+
+    def test_compose_up(self, control_plane, mock_backend):
+        status, body = control_plane.route("POST", "/compose/up", {"confirm": True})
+        assert status == 200
+        assert body["ok"] is True
+        assert body["action"] == "compose-up"
+        assert mock_backend.compose_up_calls
+
+    def test_error_on_failure(self, control_plane, mock_backend):
+        mock_backend.compose_up = MagicMock(side_effect=Exception("docker failed"))
+        status, body = control_plane.route("POST", "/compose/up", {"confirm": True})
+        assert status == 500
+        assert "docker failed" in body["error"]
+
+
+class TestComposeDown:
+    """POST /compose/down — ported from ops-api."""
+
+    def test_requires_confirm(self, control_plane):
+        status, body = control_plane.route("POST", "/compose/down", {})
+        assert status == 400
+        assert "confirm" in body["error"]
+
+    def test_compose_down(self, control_plane, mock_backend):
+        status, body = control_plane.route("POST", "/compose/down", {"confirm": True})
+        assert status == 200
+        assert body["ok"] is True
+        assert body["action"] == "compose-down"
+        assert mock_backend.compose_down_calls
+
+    def test_error_on_failure(self, control_plane, mock_backend):
+        mock_backend.compose_down = MagicMock(side_effect=Exception("docker failed"))
+        status, body = control_plane.route("POST", "/compose/down", {"confirm": True})
+        assert status == 500
+        assert "docker failed" in body["error"]
+
+
+class TestComposeRestart:
+    """POST /compose/restart — ported from ops-api."""
+
+    def test_requires_confirm(self, control_plane):
+        status, body = control_plane.route("POST", "/compose/restart", {})
+        assert status == 400
+        assert "confirm" in body["error"]
+
+    def test_compose_restart(self, control_plane, mock_backend):
+        status, body = control_plane.route("POST", "/compose/restart", {"confirm": True})
+        assert status == 200
+        assert body["ok"] is True
+        assert body["action"] == "compose-restart"
+        assert mock_backend.compose_restart_calls
+
+    def test_error_on_failure(self, control_plane, mock_backend):
+        mock_backend.compose_restart = MagicMock(side_effect=Exception("docker failed"))
+        status, body = control_plane.route("POST", "/compose/restart", {"confirm": True})
+        assert status == 500
+        assert "docker failed" in body["error"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

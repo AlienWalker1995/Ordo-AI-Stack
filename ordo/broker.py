@@ -29,6 +29,16 @@ class ContainerBackend(Protocol):
     def stop(self, name: str) -> None: ...
     def restart(self, name: str) -> None: ...
     def logs(self, name: str, tail: int = 100) -> str: ...
+    def list_services(self) -> list[dict]: ...
+    def recreate_service(self, name: str) -> None: ...
+    def list_containers(self) -> list[dict]: ...
+    def container_logs(self, name: str, tail: int = 100) -> str: ...
+    def container_restart(self, name: str) -> None: ...
+    def service_stats(self) -> dict: ...
+    def mcp_containers(self) -> list[dict]: ...
+    def compose_up(self) -> None: ...
+    def compose_down(self) -> None: ...
+    def compose_restart(self) -> None: ...
 
 
 class MockBackend:
@@ -38,6 +48,16 @@ class MockBackend:
         self.stopped: list[str] = []
         self.restarted: list[str] = []
         self.log_requests: list[tuple[str, int]] = []
+        self.list_services_calls: list = []
+        self.recreate_calls: list[str] = []
+        self.list_containers_calls: list = []
+        self.container_log_requests: list[tuple[str, int]] = []
+        self.container_restart_calls: list[str] = []
+        self.service_stats_calls: list = []
+        self.mcp_containers_calls: list = []
+        self.compose_up_calls: list = []
+        self.compose_down_calls: list = []
+        self.compose_restart_calls: list = []
 
     def start(self, job_id: str) -> None:
         self.started.append(job_id)
@@ -51,6 +71,56 @@ class MockBackend:
     def logs(self, name: str, tail: int = 100) -> str:
         self.log_requests.append((name, tail))
         return f"[mock logs for {name}, tail={tail}]"
+
+    def list_services(self) -> list[dict]:
+        self.list_services_calls.append(None)
+        return [
+            {"id": "llamacpp", "name": "llamacpp", "state": "running", "health": "healthy"},
+            {"id": "dashboard", "name": "dashboard", "state": "running", "health": None},
+        ]
+
+    def recreate_service(self, name: str) -> None:
+        self.recreate_calls.append(name)
+
+    def list_containers(self) -> list[dict]:
+        self.list_containers_calls.append(None)
+        return [
+            {"name": "ordo-llamacpp-1", "status": "running", "image": "llamacpp:latest"},
+            {"name": "ordo-dashboard-1", "status": "running", "image": "dashboard:latest"},
+        ]
+
+    def container_logs(self, name: str, tail: int = 100) -> str:
+        self.container_log_requests.append((name, tail))
+        return f"[mock container logs for {name}, tail={tail}]"
+
+    def container_restart(self, name: str) -> None:
+        self.container_restart_calls.append(name)
+
+    def service_stats(self) -> dict:
+        self.service_stats_calls.append(None)
+        return {
+            "gpu": {"total_gb": 24.0, "used_gb": 12.0, "util": 50},
+            "services": {
+                "llamacpp": {"cpu_pct": 10.0, "mem_gb": 2.0, "mem_pct": 5.0, "vram_gb": 8.0, "vram_pct": 33.0, "running": True},
+                "dashboard": {"cpu_pct": 1.0, "mem_gb": 0.5, "mem_pct": 1.0, "vram_gb": 0.0, "vram_pct": 0.0, "running": True},
+            },
+            "vram_aggregate_unavailable": False,
+        }
+
+    def mcp_containers(self) -> list[dict]:
+        self.mcp_containers_calls.append(None)
+        return [
+            {"name": "ordo-mcp-gateway-1", "status": "running", "image": "mcp-gateway:latest"},
+        ]
+
+    def compose_up(self) -> None:
+        self.compose_up_calls.append(None)
+
+    def compose_down(self) -> None:
+        self.compose_down_calls.append(None)
+
+    def compose_restart(self) -> None:
+        self.compose_restart_calls.append(None)
 
 
 class DockerBackend:
