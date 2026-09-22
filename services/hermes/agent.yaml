@@ -23,7 +23,13 @@ consumes:
 # Hermes' own LiteLLM virtual key (LITELLM_KEY_HERMES in secrets.env; provisioned by
 # model-gateway-keys from the rendered keys.json). Chat + embeddings + EVERY enabled MCP server.
 litellm_key:
-  models: [local-chat, local-embed]
+  # The CPU deployment is listed so Hermes can be PINNED to it per invocation
+  # (`hermes -z ... -m local-chat-cpu`), not just fall onto it when the GPU is
+  # leased. That makes it addressable as a second worker: it holds no VRAM, so a CPU-pinned run
+  # and a GPU-pinned run execute genuinely in parallel against different containers instead of
+  # queueing on one llama.cpp slot. Without it the key returns 403 and the only way onto that
+  # model is an involuntary failover.
+  models: [local-chat, local-embed, local-chat-cpu]
   mcp_servers: all
 
 # ── Runtime wiring (data, mirroring V1's hermes-gateway — see the phase-5.5 parity audit) ──
