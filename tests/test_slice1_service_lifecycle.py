@@ -3,13 +3,13 @@
 Proves each ported route on ops-controller produces the same behavior as the
 original ops-api route it replaces.
 """
-import json
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-from ordo.broker import MockBackend, Broker
-from ordo.scheduler import Scheduler
+import pytest
+
+from ordo.broker import Broker, MockBackend
 from ordo.control import ControlPlane
+from ordo.scheduler import Scheduler
 
 
 @pytest.fixture
