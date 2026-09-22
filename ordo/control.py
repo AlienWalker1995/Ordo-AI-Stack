@@ -441,6 +441,70 @@ class ControlPlane:
             return self._error(500, str(e))
         return {"ok": True, "action": "compose-restart"}
 
+    # --- Registry routes (ported from ops-api, slice 2) ---
+
+    def registry_models(self) -> dict[str, Any]:
+        """The model catalog — same shape as ops-api's /registry/models.
+
+        ops-api returns a dict keyed by model ID with runtime info. ops-controller
+        returns the static catalog as a list (no runtime state to report).
+        """
+        return {"models": [
+            {
+                "id": m.id,
+                "name": m.name,
+                "tier": m.tier,
+                "vram_gb": m.vram_gb,
+                "context": m.ctx_default,
+                "file": m.file,
+                "source": m.source,
+                "sha256": m.sha256,
+            }
+            for m in self.catalog.models
+        ]}
+
+    def registry_gpus(self) -> dict[str, Any]:
+        """GPU status — same shape as ops-api's /registry/gpus.
+
+        ops-api queries nvidia-smi for per-GPU details. ops-controller derives this from the
+        scheduler's VRAM accounting (which is the source of truth for the GPU lease system).
+        We report a single GPU (id "0") with the scheduler's totals.
+        """
+        if not self.scheduler:
+            return {"gpus": []}
+        total = self.scheduler.total_vram_gb
+        used = self.scheduler.used_vram_gb
+        free = self.scheduler.free_vram_gb
+        util = round(used / total * 100, 1) if total > 0 else 0.0
+        return {"gpus": [{
+            "id": "0",
+            "name": "GPU 0",
+            "total_gb": round(total, 1),
+            "used_gb": round(used, 1),
+            "free_gb": round(free, 1),
+            "util": util,
+        }]}
+
+    def gpu_assignments(self) -> dict[str, Any]:
+        """Running GPU jobs — same shape as ops-api's /gpu/assignments.
+
+        ops-api returns jobs assigned to GPUs. ops-controller derives this from the scheduler's
+        running jobs (which ARE the GPU assignments in the lease model).
+        """
+        if not self.scheduler:
+            return {"assignments": []}
+        status = self.scheduler.status()
+        return {"assignments": [
+            {
+                "job_id": j["id"],
+                "gpu_id": "0",
+                "vram_gb": self.scheduler._running[j["id"]].vram_gb if j["id"] in self.scheduler._running else 0.0,
+                "kind": j["kind"],
+                "status": "running",
+            }
+            for j in status["running"]
+        ]}
+
     # --- routing (also pure) ---
     def route(self, method: str, path: str, body: dict[str, Any] | None = None) -> tuple[int, dict]:
         body = body or {}
@@ -509,6 +573,13 @@ class ControlPlane:
             return self._as_response(self.compose_down(body))
         if m == "POST" and path == "/compose/restart":
             return self._as_response(self.compose_restart(body))
+        # Registry routes (ported from ops-api, slice 2)
+        if m == "GET" and path == "/registry/models":
+            return 200, self.registry_models()
+        if m == "GET" and path == "/registry/gpus":
+            return 200, self.registry_gpus()
+        if m == "GET" and path == "/gpu/assignments":
+            return 200, self.gpu_assignments()
         return 404, {"error": f"no route {method} {path}"}
 
     @staticmethod
