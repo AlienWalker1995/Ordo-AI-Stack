@@ -286,6 +286,56 @@ class ControlPlane:
             return self._error(404, f"no running job '{job_id}'")
         return self.scheduler.status()
 
+    # --- Service lifecycle routes (ported from ops-api) ---
+
+    def service_start(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        if body.get("dry_run"):
+            return {"would": "start", "service": service_id}
+        if not body.get("confirm"):
+            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        try:
+            self.broker.backend.start(service_id)
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"ok": True, "service": service_id, "action": "started"}
+
+    def service_stop(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        if body.get("dry_run"):
+            return {"would": "stop", "service": service_id}
+        if not body.get("confirm"):
+            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        try:
+            self.broker.backend.stop(service_id)
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"ok": True, "service": service_id, "action": "stopped"}
+
+    def service_restart(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        if body.get("dry_run"):
+            return {"would": "restart", "service": service_id}
+        if not body.get("confirm"):
+            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        try:
+            self.broker.backend.restart(service_id)
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"ok": True, "service": service_id, "action": "restarted"}
+
+    def service_logs(self, service_id: str, tail: int = 100) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        try:
+            logs = self.broker.backend.logs(service_id, tail=tail)
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"logs": logs, "service": service_id}
+
     # --- routing (also pure) ---
     def route(self, method: str, path: str, body: dict[str, Any] | None = None) -> tuple[int, dict]:
         body = body or {}
@@ -318,6 +368,19 @@ class ControlPlane:
             return 200, {"cloud_routed": self.scheduler.drain_cloud_routed()}
         if m == "GET" and path in ("/health", "/healthz"):
             return 200, {"ok": True}
+        # Service lifecycle routes (ported from ops-api)
+        if m == "POST" and path.startswith("/services/") and path.endswith("/start"):
+            service_id = path[len("/services/"):-len("/start")]
+            return self._as_response(self.service_start(service_id, body))
+        if m == "POST" and path.startswith("/services/") and path.endswith("/stop"):
+            service_id = path[len("/services/"):-len("/stop")]
+            return self._as_response(self.service_stop(service_id, body))
+        if m == "POST" and path.startswith("/services/") and path.endswith("/restart"):
+            service_id = path[len("/services/"):-len("/restart")]
+            return self._as_response(self.service_restart(service_id, body))
+        if m == "GET" and path.startswith("/services/") and path.endswith("/logs"):
+            service_id = path[len("/services/"):-len("/logs")]
+            return self._as_response(self.service_logs(service_id))
         return 404, {"error": f"no route {method} {path}"}
 
     @staticmethod

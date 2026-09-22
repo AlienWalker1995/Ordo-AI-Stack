@@ -27,6 +27,8 @@ from .scheduler import Job, Scheduler
 class ContainerBackend(Protocol):
     def start(self, job_id: str) -> None: ...
     def stop(self, name: str) -> None: ...
+    def restart(self, name: str) -> None: ...
+    def logs(self, name: str, tail: int = 100) -> str: ...
 
 
 class MockBackend:
@@ -34,12 +36,21 @@ class MockBackend:
     def __init__(self) -> None:
         self.started: list[str] = []
         self.stopped: list[str] = []
+        self.restarted: list[str] = []
+        self.log_requests: list[tuple[str, int]] = []
 
     def start(self, job_id: str) -> None:
         self.started.append(job_id)
 
     def stop(self, name: str) -> None:
         self.stopped.append(name)
+
+    def restart(self, name: str) -> None:
+        self.restarted.append(name)
+
+    def logs(self, name: str, tail: int = 100) -> str:
+        self.log_requests.append((name, tail))
+        return f"[mock logs for {name}, tail={tail}]"
 
 
 class DockerBackend:
@@ -101,6 +112,22 @@ class DockerBackend:
         if container is None:
             return  # abstract lease job — no container to stop
         subprocess.run(["docker", "stop", container], check=True, timeout=60)
+
+    def restart(self, service: str) -> None:  # pragma: no cover - needs real docker
+        container = self._resolve(service)
+        if container is None:
+            return  # abstract lease job — no container to restart
+        subprocess.run(["docker", "restart", container], check=True, timeout=60)
+
+    def logs(self, service: str, tail: int = 100) -> str:  # pragma: no cover - needs real docker
+        container = self._resolve(service)
+        if container is None:
+            return f"[no container found for service {service}]"
+        proc = subprocess.run(
+            ["docker", "logs", "--tail", str(tail), container],
+            capture_output=True, text=True, timeout=30,
+        )
+        return proc.stdout
 
 
 class Broker:
