@@ -74,7 +74,11 @@ def test_full_render_declares_hermes_open_webui_automation_keys(tmp_path):
     assert by_env["LITELLM_KEY_HERMES"]["mcp_servers"] == litellm_names
     assert not any("-" in s for s in by_env["LITELLM_KEY_HERMES"]["mcp_servers"])
     assert "memory_vault" in litellm_names
-    assert by_env["LITELLM_KEY_HERMES"]["models"] == ["local-chat", "local-embed"]
+    # local-chat-cpu is granted so Hermes can be PINNED to the CPU deployment per invocation
+    # rather than only reaching it through an involuntary failover. That deployment holds no
+    # VRAM, so a CPU-pinned run executes in parallel with a GPU-pinned one instead of queueing
+    # on the single llama.cpp slot. Operator decision 2026-09-22: use both as workers.
+    assert by_env["LITELLM_KEY_HERMES"]["models"] == ["local-chat", "local-embed", "local-chat-cpu"]
     assert by_env["LITELLM_KEY_OPEN_WEBUI"]["mcp_servers"] == []
     assert by_env["LITELLM_KEY_AUTOMATION"]["models"] == ["local-chat"]
     for env in by_env:

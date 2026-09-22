@@ -119,6 +119,46 @@ model_list:
       weights_file: __CPU_WEIGHTS__
       served_by: llamacpp-cpu (stock llama.cpp, CPU-only)
 
+  # A STABLE alias for the same CPU deployment. `__CPU_MODEL_NAME__` above is substituted from the
+  # deployed GGUF filename at container start, so it changes on every model swap and the renderer
+  # deliberately refuses to grant a key access to it (render.py:150). That left the CPU server
+  # reachable only by an involuntary failover from local-chat.
+  #
+  # This alias makes it addressable ON PURPOSE. It matters because the CPU server holds no VRAM:
+  # a request pinned here and a request on local-chat run genuinely in parallel against different
+  # containers, instead of queueing on the one llama.cpp slot. That is the difference between a
+  # fallback and a second worker.
+  #
+  # Same upstream, same settings as the block above; only the name is stable.
+  - model_name: "local-chat-cpu"
+    litellm_params:
+      model: "openai/local-chat"
+      api_base: "http://llamacpp-cpu:8080/v1"
+      api_key: "local"
+      timeout: 1800
+      stream_timeout: 1800
+      input_cost_per_token: __LOCAL_INPUT_COST_PER_TOKEN__
+      output_cost_per_token: __LOCAL_OUTPUT_COST_PER_TOKEN__
+    model_info:
+      health_check_params: {"no-log": true}
+      mode: chat
+      max_input_tokens: __CPU_CTX_SIZE__
+      input_cost_per_token: __LOCAL_INPUT_COST_PER_TOKEN__
+      output_cost_per_token: __LOCAL_OUTPUT_COST_PER_TOKEN__
+      health_check_timeout: 120
+      supports_system_messages: true
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_response_schema: true
+      supports_vision: false
+      supports_reasoning: true
+      description: >-
+        Stable alias for the CPU deployment, for work deliberately routed off the GPU: batch
+        summarisation, classification, overnight crons. Holds no VRAM, so it runs alongside GPU
+        work rather than competing with it. Slow by design, about 17 tok/s.
+      weights_file: __CPU_WEIGHTS__
+      served_by: llamacpp-cpu (stock llama.cpp, CPU-only)
+
   - model_name: "local-embed"
     litellm_params:
       model: "openai/local-embed"
