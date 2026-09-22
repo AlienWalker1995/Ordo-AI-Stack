@@ -57,6 +57,28 @@ services:
       - --jinja                     # use the GGUF's chat template (Qwen3.6)
       - --reasoning-format
       - deepseek                    # match the GPU backend's reasoning handling
+      # Sampler parity with the GPU backend, for the same reason the ctx above must match: a
+      # failover has to BEHAVE like the primary, not merely accept its requests. Served on
+      # llama.cpp's defaults, a reasoning model runs away: on the GPU backend "Say the single word:
+      # ready" generated 32,735 reasoning tokens straight into the reasoning cap before this was
+      # pinned there (2026-09-21). This deployment had no sampler flags at all, so the failover
+      # target was the one that loops, and it only shows up when the GPU is leased, which is
+      # exactly when nobody is watching. top-k is the knob that stops it.
+      #
+      # These mirror the GPU model's catalog extra_args. If those change, change these: the two
+      # are a pair, and the drift is silent because the CPU path is rarely exercised by hand.
+      - --temp
+      - "0.5"
+      - --top-k
+      - "20"
+      - --top-p
+      - "0.8"
+      - --min-p
+      - "0.0"
+      # A hard ceiling on thinking, matching the GPU backend. Without it a loop has no bound at
+      # all: at ~11 tok/s on CPU, an unbounded reasoning run ties up the failover for many minutes.
+      - --reasoning-budget
+      - "32768"
       - --cache-type-k
       - q8_0
       - --cache-type-v
