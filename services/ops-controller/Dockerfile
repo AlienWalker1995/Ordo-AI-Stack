@@ -11,7 +11,8 @@ FROM python@sha256:6d85378d88a19cd4d76079817532d62232be95757cb45945a99fec8e8084b
 COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
 
 WORKDIR /app
-RUN pip install --no-cache-dir pyyaml
+COPY services/ops-controller/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 # The substrate package + the co-located render data (the source ordo.yaml is mounted at /config,
 # so a runtime model switch re-renders in place — one write path). services/ holds EVERY render
