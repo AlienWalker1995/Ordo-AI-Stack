@@ -286,6 +286,158 @@ class ControlPlane:
             return self._error(404, f"no running job '{job_id}'")
         return self.scheduler.status()
 
+    # --- Service lifecycle routes (ported from ops-api) ---
+
+    def service_start(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        if body.get("dry_run"):
+            return {"would": "start", "service": service_id}
+        if not body.get("confirm"):
+            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        try:
+            self.broker.backend.start(service_id)
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"ok": True, "service": service_id, "action": "started"}
+
+    def service_stop(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        if body.get("dry_run"):
+            return {"would": "stop", "service": service_id}
+        if not body.get("confirm"):
+            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        try:
+            self.broker.backend.stop(service_id)
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"ok": True, "service": service_id, "action": "stopped"}
+
+    def service_restart(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        if body.get("dry_run"):
+            return {"would": "restart", "service": service_id}
+        if not body.get("confirm"):
+            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        try:
+            self.broker.backend.restart(service_id)
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"ok": True, "service": service_id, "action": "restarted"}
+
+    def service_logs(self, service_id: str, tail: int = 100) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        try:
+            logs = self.broker.backend.logs(service_id, tail=tail)
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"logs": logs, "service": service_id}
+
+    def list_services(self) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        try:
+            services = self.broker.backend.list_services()
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"services": services}
+
+    def service_recreate(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        if body.get("dry_run"):
+            return {"would": "recreate", "service": service_id}
+        if not body.get("confirm"):
+            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        try:
+            self.broker.backend.recreate_service(service_id)
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"ok": True, "service": service_id, "action": "recreated"}
+
+    def list_containers(self) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        try:
+            containers = self.broker.backend.list_containers()
+        except Exception as e:
+            return self._error(500, str(e))
+        return containers
+
+    def container_logs(self, name: str, tail: int = 100) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        try:
+            logs = self.broker.backend.container_logs(name, tail=tail)
+        except Exception as e:
+            return self._error(500, str(e))
+        return logs
+
+    def container_restart(self, name: str, body: dict[str, Any]) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        if not body.get("confirm"):
+            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        try:
+            self.broker.backend.container_restart(name)
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"ok": True, "container": name, "action": "restarted"}
+
+    def service_stats(self) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        try:
+            stats = self.broker.backend.service_stats()
+        except Exception as e:
+            return self._error(500, str(e))
+        return stats
+
+    def mcp_containers(self) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        try:
+            containers = self.broker.backend.mcp_containers()
+        except Exception as e:
+            return self._error(500, str(e))
+        return containers
+
+    def compose_up(self, body: dict[str, Any]) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        if not body.get("confirm"):
+            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        try:
+            self.broker.backend.compose_up()
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"ok": True, "action": "compose-up"}
+
+    def compose_down(self, body: dict[str, Any]) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        if not body.get("confirm"):
+            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        try:
+            self.broker.backend.compose_down()
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"ok": True, "action": "compose-down"}
+
+    def compose_restart(self, body: dict[str, Any]) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        if not body.get("confirm"):
+            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        try:
+            self.broker.backend.compose_restart()
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"ok": True, "action": "compose-restart"}
+
     # --- routing (also pure) ---
     def route(self, method: str, path: str, body: dict[str, Any] | None = None) -> tuple[int, dict]:
         body = body or {}
@@ -318,6 +470,42 @@ class ControlPlane:
             return 200, {"cloud_routed": self.scheduler.drain_cloud_routed()}
         if m == "GET" and path in ("/health", "/healthz"):
             return 200, {"ok": True}
+        # Service lifecycle routes (ported from ops-api)
+        if m == "POST" and path.startswith("/services/") and path.endswith("/start"):
+            service_id = path[len("/services/"):-len("/start")]
+            return self._as_response(self.service_start(service_id, body))
+        if m == "POST" and path.startswith("/services/") and path.endswith("/stop"):
+            service_id = path[len("/services/"):-len("/stop")]
+            return self._as_response(self.service_stop(service_id, body))
+        if m == "POST" and path.startswith("/services/") and path.endswith("/restart"):
+            service_id = path[len("/services/"):-len("/restart")]
+            return self._as_response(self.service_restart(service_id, body))
+        if m == "GET" and path.startswith("/services/") and path.endswith("/logs"):
+            service_id = path[len("/services/"):-len("/logs")]
+            return self._as_response(self.service_logs(service_id))
+        if m == "GET" and path == "/services":
+            return self._as_response(self.list_services())
+        if m == "POST" and path.startswith("/services/") and path.endswith("/recreate"):
+            service_id = path[len("/services/"):-len("/recreate")]
+            return self._as_response(self.service_recreate(service_id, body))
+        if m == "GET" and path == "/containers":
+            return self._as_response(self.list_containers())
+        if m == "GET" and path.startswith("/containers/") and path.endswith("/logs"):
+            name = path[len("/containers/"):-len("/logs")]
+            return self._as_response(self.container_logs(name))
+        if m == "POST" and path.startswith("/containers/") and path.endswith("/restart"):
+            name = path[len("/containers/"):-len("/restart")]
+            return self._as_response(self.container_restart(name, body))
+        if m == "GET" and path == "/stats/services":
+            return self._as_response(self.service_stats())
+        if m == "GET" and path == "/mcp/containers":
+            return self._as_response(self.mcp_containers())
+        if m == "POST" and path == "/compose/up":
+            return self._as_response(self.compose_up(body))
+        if m == "POST" and path == "/compose/down":
+            return self._as_response(self.compose_down(body))
+        if m == "POST" and path == "/compose/restart":
+            return self._as_response(self.compose_restart(body))
         return 404, {"error": f"no route {method} {path}"}
 
     @staticmethod
