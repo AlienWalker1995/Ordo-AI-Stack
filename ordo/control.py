@@ -24,6 +24,8 @@ import yaml
 from .broker import Broker
 from .catalog import Catalog
 from .config import Source
+from .gpu_assignments_fmt import parse_gpu_assignments_yaml
+from .model_registry import ModelRegistry
 from .plugins import PluginRegistry
 from .render import render
 from .scheduler import Job, Scheduler
@@ -50,6 +52,7 @@ class ControlPlane:
         scheduler: Scheduler | None = None,
         broker: Broker | None = None,
         history=None,
+        registry_path: str | Path | None = None,
     ):
         self.source_path = Path(source_path)
         self.catalog = catalog
@@ -58,6 +61,16 @@ class ControlPlane:
         self.scheduler = scheduler
         self.broker = broker
         self.history = history  # LeaseHistory sink (shared with the broker) — /jobs/history
+        # Model registry (runtime state) — same store as ops-api reads.
+        # registry_path defaults to /data/model-registry.json (mounted in compose).
+        if registry_path is None:
+            import os
+            registry_path = os.environ.get("MODEL_REGISTRY_PATH", "/data/model-registry.json")
+        self.model_registry = ModelRegistry(
+            registry_path=Path(registry_path),
+            env_path=Path("/config/.env"),
+            gpu_assignments_path=Path("/config/overrides/gpu-assignments.yml"),
+        )
 
     # --- core operations (pure, testable) ---
     def _render(self) -> Any:
@@ -442,68 +455,73 @@ class ControlPlane:
         return {"ok": True, "action": "compose-restart"}
 
     # --- Registry routes (ported from ops-api, slice 2) ---
+    # These read the RUNTIME model registry (model-registry.json), not the static
+    # catalog. The registry is the source of truth for which models are enabled,
+    # on which GPU, with what config — exactly what ops-api serves.
 
     def registry_models(self) -> dict[str, Any]:
-        """The model catalog — same shape as ops-api's /registry/models.
+        """List all models in the runtime registry — same shape as ops-api's /registry/models."""
+        models = self.model_registry.list_models()
+        return {"models": {mid: rec.model_dump() for mid, rec in models.items()}}
 
-        ops-api returns a dict keyed by model ID with runtime info. ops-controller
-        returns the static catalog as a list (no runtime state to report).
-        """
-        return {"models": [
-            {
-                "id": m.id,
-                "name": m.name,
-                "tier": m.tier,
-                "vram_gb": m.vram_gb,
-                "context": m.ctx_default,
-                "file": m.file,
-                "source": m.source,
-                "sha256": m.sha256,
-            }
-            for m in self.catalog.models
-        ]}
+    def registry_get_model(self, model_id: str) -> tuple[int, dict[str, Any]]:
+        """Get a single model record by ID — same shape as ops-api's /registry/models/{id}."""
+        rec = self.model_registry.get(model_id)
+        if rec is None:
+            return 404, {"error": f"Model {model_id!r} not found"}
+        return 200, rec.model_dump()
 
     def registry_gpus(self) -> dict[str, Any]:
-        """GPU status — same shape as ops-api's /registry/gpus.
-
-        ops-api queries nvidia-smi for per-GPU details. ops-controller derives this from the
-        scheduler's VRAM accounting (which is the source of truth for the GPU lease system).
-        We report a single GPU (id "0") with the scheduler's totals.
-        """
-        if not self.scheduler:
-            return {"gpus": []}
-        total = self.scheduler.total_vram_gb
-        used = self.scheduler.used_vram_gb
-        free = self.scheduler.free_vram_gb
-        util = round(used / total * 100, 1) if total > 0 else 0.0
-        return {"gpus": [{
-            "id": "0",
-            "name": "GPU 0",
-            "total_gb": round(total, 1),
-            "used_gb": round(used, 1),
-            "free_gb": round(free, 1),
-            "util": util,
-        }]}
+        """Live GPU info merged with registry model assignments — same shape as ops-api's /registry/gpus."""
+        # Get live GPU info from nvidia-smi (same as ops-api's _live_gpus())
+        live = self._live_gpus()
+        models = self.model_registry.list_models()
+        # Build uuid -> list of model ids
+        uuid_to_models: dict[str, list[str]] = {}
+        for mid, m in models.items():
+            if m.gpu_uuid:
+                uuid_to_models.setdefault(m.gpu_uuid, []).append(mid)
+        result: dict[str, Any] = {}
+        for uuid, info in live.items():
+            result[uuid] = {**info, "models": uuid_to_models.get(uuid, [])}
+        return {"gpus": result}
 
     def gpu_assignments(self) -> dict[str, Any]:
-        """Running GPU jobs — same shape as ops-api's /gpu/assignments.
+        """Current service->GPU-uuid pins — same shape as ops-api's /gpu/assignments (dict, not list)."""
+        path = Path("/config/overrides/gpu-assignments.yml")
+        if not path.exists():
+            return {"assignments": {}}
+        return {"assignments": parse_gpu_assignments_yaml(path.read_text(encoding="utf-8"))}
 
-        ops-api returns jobs assigned to GPUs. ops-controller derives this from the scheduler's
-        running jobs (which ARE the GPU assignments in the lease model).
-        """
-        if not self.scheduler:
-            return {"assignments": []}
-        status = self.scheduler.status()
-        return {"assignments": [
-            {
-                "job_id": j["id"],
-                "gpu_id": "0",
-                "vram_gb": self.scheduler._running[j["id"]].vram_gb if j["id"] in self.scheduler._running else 0.0,
-                "kind": j["kind"],
-                "status": "running",
-            }
-            for j in status["running"]
-        ]}
+    def _live_gpus(self) -> dict[str, dict[str, Any]]:
+        """Query nvidia-smi for live GPU info — same as ops-api's _live_gpus()."""
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=gpu_uuid,name,memory.total,memory.used,utilization.gpu",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                return {}
+            out: dict[str, dict[str, Any]] = {}
+            for line in result.stdout.strip().splitlines():
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) < 5:
+                    continue
+                uuid, name, total_mib, used_mib, util = parts[:5]
+                try:
+                    out[uuid] = {
+                        "name": name,
+                        "total_gb": round(float(total_mib) / 1024.0, 1),
+                        "used_gb": round(float(used_mib) / 1024.0, 1),
+                        "util": int(float(util)),
+                    }
+                except (ValueError, TypeError):
+                    continue
+            return out
+        except Exception:
+            return {}
 
     # --- routing (also pure) ---
     def route(self, method: str, path: str, body: dict[str, Any] | None = None) -> tuple[int, dict]:
@@ -576,6 +594,12 @@ class ControlPlane:
         # Registry routes (ported from ops-api, slice 2)
         if m == "GET" and path == "/registry/models":
             return 200, self.registry_models()
+        if m == "GET" and path.startswith("/registry/models/") and path.count("/") == 3:
+            model_id = path.split("/")[3]
+            return self.registry_get_model(model_id)
+        if m == "POST" and path.startswith("/registry/models/") and path.endswith("/enable"):
+            model_id = path[len("/registry/models/"):-len("/enable")]
+            return self._as_response(self.registry_enable_model(model_id, body))
         if m == "GET" and path == "/registry/gpus":
             return 200, self.registry_gpus()
         if m == "GET" and path == "/gpu/assignments":
