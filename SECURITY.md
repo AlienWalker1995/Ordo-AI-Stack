@@ -58,7 +58,7 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 
 | Threat | Check |
 |--------|-------|
-| docker.sock exposure | Only the control plane mounts it (ops-controller and the dashboard's ops-api backend, both guard-scoped to this project); MCP servers and the dashboard UI do not |
+| docker.sock exposure | Only the control plane mounts it (`ops-controller`, guard-scoped to this project, and refusing to cycle the services running the request); MCP servers and the dashboard UI do not |
 | Controller compromise | Token in env; no default; never expose port |
 | MCP SSRF (egress-capable servers, e.g. `searxng`) | Egress blocks for 100.64/10, RFC1918, 169.254.169.254: `./scripts/ssrf-egress-block.sh` (auto-detects the `ordo-net` subnet) |
 | Secret exfiltration (general) | Controller-only API keys; dashboard `/api/services` strips tokens from returned URLs |
