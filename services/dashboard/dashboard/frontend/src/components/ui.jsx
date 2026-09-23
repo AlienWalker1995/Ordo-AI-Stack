@@ -14,7 +14,7 @@ export const INPUT =
 // A titled block. `level` separates page sections (panel) from cards inside them.
 export function Panel({ title, action, children, className = '' }) {
   return (
-    <section className={'rounded-md border border-border-subtle bg-bg-elevated p-4 ' + className}>
+    <section className={'min-w-0 rounded-md border border-border-subtle bg-bg-elevated p-4 ' + className}>
       {(title || action) && (
         <header className="mb-3 flex items-center justify-between gap-3">
           {title && <h2 className="text-micro font-bold uppercase tracking-[0.14em] text-muted">{title}</h2>}

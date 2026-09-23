@@ -26,9 +26,9 @@ function OutputTile({ render, output }) {
     body = <video src={url} preload="metadata" muted controls className="aspect-square w-full rounded-sm bg-bg object-cover" aria-label={output.filename} />
   } else if (output.media === 'audio') {
     body = (
-      <div className="grid aspect-square w-full content-center gap-2 rounded-sm bg-bg p-2">
+      <div className="grid aspect-square w-full min-w-0 content-center gap-2 rounded-sm bg-bg p-2">
         <span className="text-center text-caption text-muted">Audio</span>
-        <audio src={url} preload="none" controls className="w-full" aria-label={output.filename} />
+        <audio src={url} preload="none" controls className="w-full min-w-0 max-w-full" aria-label={output.filename} />
       </div>
     )
   } else {
@@ -62,7 +62,7 @@ function Recent({ renders }) {
       {tiles.length === 0
         ? <p className="text-body text-muted">No outputs yet.</p>
         : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6 [&>*]:min-w-0">
             {tiles.slice(0, 18).map(({ r, o }) => <OutputTile key={`${r.prompt_id}-${o.filename}`} render={r} output={o} />)}
           </div>
         )}
@@ -171,7 +171,7 @@ export default function MediaPage() {
 
   const m = media.data
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-4 [&>*]:min-w-0">
       <Panel title="ComfyUI" action={<button type="button" className={BTN} disabled={restarting} onClick={restart}>Restart</button>}>
         {!m
           ? (media.error ? <Unavailable>ComfyUI is not answering. After a restart it takes one to five minutes to come back.</Unavailable> : <Skeleton className="h-6 w-64" />)
@@ -187,7 +187,7 @@ export default function MediaPage() {
       <Panel title="Recent outputs">
         {m ? <Recent renders={m.recent} /> : <Skeleton className="h-40 w-full" />}
       </Panel>
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         <Panel title="GPU leases">
           {history.data ? <Leases history={history.data.history || []} />
             : history.error ? <Unavailable>The scheduler is not answering.</Unavailable> : <Skeleton className="h-24 w-full" />}

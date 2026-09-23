@@ -53,7 +53,11 @@ export default function App() {
   const tabRefs = useRef([])
 
   useEffect(() => {
-    const onHash = () => setActive(pageFromHash())
+    const onHash = () => {
+      const page = pageFromHash()
+      setActive(page)
+      if ((location.hash || '').replace(/^#/, '') !== page) history.replaceState(null, '', '#' + page)
+    }
     window.addEventListener('hashchange', onHash)
     // A retired tab's hash is rewritten to its new page so the address bar stays truthful.
     if ((location.hash || '').replace(/^#/, '') !== pageFromHash()) history.replaceState(null, '', '#' + pageFromHash())

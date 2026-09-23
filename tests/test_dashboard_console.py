@@ -385,3 +385,40 @@ def test_the_gpu_slot_falls_back_to_the_registry_while_the_server_is_evicted():
     m = console.model_slots(MODEL_CONFIG, {"gpu": None, "cpu": CPU_FILE, "embed": EMBED_FILE},
                             DISK, REGISTRY, THROUGHPUT)
     assert m["gpu"]["file"] == GPU_FILE and m["gpu"]["p50"] == 22.2 and m["gpu"]["loaded"] is False
+
+
+def test_a_probe_only_card_takes_its_state_from_the_probe_and_offers_no_controls():
+    """Some cards are a link and a health probe, not one container (Langfuse is six coupled
+    ones). Treating the card id as a container name called a healthy service 'stopped' and
+    offered a Start button that could only fail."""
+    cards = [{"id": "langfuse", "name": "Langfuse", "category": "observability", "ops_service": None,
+              "open_url": "https://langfuse.example/", "ok": True, "error": None, "background": False}]
+    row = console.build_service_table(cards, {})[0]["services"][0]
+    assert row["verdict"] == "up"
+    assert row["compose"] is None and row["card_id"] == "langfuse"
+    assert row["controllable"] is False and row["actions"] == []
+
+
+def test_a_failing_probe_only_card_is_unhealthy():
+    cards = [{"id": "langfuse", "name": "Langfuse", "category": "observability", "ops_service": None,
+              "open_url": None, "ok": False, "error": "HTTP 502", "background": False}]
+    row = console.build_service_table(cards, {})[0]["services"][0]
+    assert row["verdict"] == "unhealthy" and row["error"] == "HTTP 502"
+
+
+def test_rows_carry_the_card_id_so_usage_keyed_by_card_can_be_matched():
+    cards = [{"id": "webui", "name": "Open WebUI", "category": "interface", "ops_service": "open-webui",
+              "open_url": None, "ok": True, "error": None, "background": False}]
+    rows = {"open-webui": {"id": "open-webui", "state": "running", "health": None, "status": "Up 1 hour"}}
+    row = console.build_service_table(cards, rows)[0]["services"][0]
+    assert row["card_id"] == "webui" and row["compose"] == "open-webui"
+
+
+def test_a_card_without_ops_service_uses_a_container_of_the_same_name_when_there_is_one():
+    cards = [{"id": "couchdb", "name": "CouchDB (notes sync)", "category": "notes", "ops_service": None,
+              "open_url": None, "ok": True, "error": None, "background": True}]
+    rows = {"couchdb": {"id": "couchdb", "state": "running", "health": "healthy", "status": "Up 9 hours (healthy)"}}
+    groups = console.build_service_table(cards, rows)
+    all_rows = [r for g in groups for r in g["services"]]
+    assert len(all_rows) == 1  # not listed twice, once as the card and once as a bare container
+    assert all_rows[0]["compose"] == "couchdb" and all_rows[0]["controllable"] is True

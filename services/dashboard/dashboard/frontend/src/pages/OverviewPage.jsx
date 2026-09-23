@@ -63,7 +63,7 @@ function ChatEngine({ chat, series }) {
         <span className="text-heading text-fg">{headline}</span>
         {chat.reason && <span className="text-caption text-muted">{chat.reason}</span>}
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-4 [&>*]:min-w-0">
         {[
           { key: 'gpu', label: 'GPU', p50: chat.gpu_p50, tone: 'accent', points: series?.gpu },
           { key: 'cpu', label: 'CPU fallback', p50: chat.cpu_p50, tone: 'warning', points: series?.cpu },
@@ -153,9 +153,9 @@ export default function OverviewPage() {
   }
 
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-4 [&>*]:min-w-0">
       <StatusLine overview={o} lastUpdated={overview.lastUpdated} />
-      <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr]">
+      <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr] [&>*]:min-w-0">
         <Panel title="GPUs right now">
           <div className="grid gap-4">
             <div className="grid gap-3">

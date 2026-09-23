@@ -72,12 +72,15 @@ function ActionMenu({ row, onAction, busy }) {
     detailsRef.current?.removeAttribute('open')
     onAction(row, action)
   }
+  if (!row.compose) {
+    return <span className="text-caption text-muted" title="This is a link and a health check, not one container">Link only</span>
+  }
   if (!row.controllable) {
-    return <span className="text-caption text-muted" title="The control plane will not restart the service that is serving it">Managed from the host</span>
+    return <span className="text-caption text-muted" title="The control plane will not restart the service that is serving it">Host only</span>
   }
   const startable = row.actions.includes('start')
   return (
-    <div className="flex items-center justify-end gap-1.5">
+    <div className="flex w-[4.5rem] items-center justify-end">
       {startable && <button type="button" className={BTN} disabled={busy} onClick={() => run('start')}>Start</button>}
       {!startable && (
         <details ref={detailsRef} className="relative">
@@ -108,9 +111,9 @@ function ServiceRow({ row, usage, onLogs, onAction, busy }) {
               ? <a href={row.open_url} target="_blank" rel="noreferrer" className="text-fg no-underline hover:text-accent">{row.name}<span aria-hidden="true" className="ml-1 text-muted">↗</span></a>
               : row.name}
           </span>
-          {(row.name !== row.compose || row.error) && (
+          {((row.compose && row.name !== row.compose) || row.error) && (
             <span className="truncate font-mono text-micro text-muted">
-              {row.name !== row.compose ? row.compose : ''}{row.error ? `${row.name !== row.compose ? ' · ' : ''}${row.error}` : ''}
+              {[row.compose && row.name !== row.compose ? row.compose : null, row.error].filter(Boolean).join(' · ')}
             </span>
           )}
         </div>
@@ -120,7 +123,7 @@ function ServiceRow({ row, usage, onLogs, onAction, busy }) {
       <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted">{usage?.mem_gb != null ? `${usage.mem_gb.toFixed(1)} GB` : '—'}</td>
       <td className="whitespace-nowrap py-2 pl-2 pr-3">
         <div className="flex items-center justify-end gap-1.5">
-          <button type="button" className={BTN} onClick={() => onLogs(row)}>Logs</button>
+          {row.compose && <button type="button" className={BTN} onClick={() => onLogs(row)}>Logs</button>}
           <ActionMenu row={row} onAction={onAction} busy={busy} />
         </div>
       </td>
@@ -130,12 +133,12 @@ function ServiceRow({ row, usage, onLogs, onAction, busy }) {
 
 function Group({ group, usageById, filter, onLogs, onAction, busyId }) {
   const rows = group.services.filter((s) => !filter
-    || s.name.toLowerCase().includes(filter) || s.compose.toLowerCase().includes(filter))
+    || s.name.toLowerCase().includes(filter) || (s.compose || '').toLowerCase().includes(filter))
   if (!rows.length) return null
   const problems = rows.filter((r) => ['unhealthy', 'failed'].includes(r.verdict)).length
   return (
     <details open={filter ? true : !COLLAPSED_BY_DEFAULT.has(group.group) || problems > 0}
-             className="rounded-md border border-border-subtle bg-bg-elevated">
+             className="min-w-0 rounded-md border border-border-subtle bg-bg-elevated">
       <summary className="flex cursor-pointer items-center gap-2 px-3 py-2.5 text-heading text-fg">
         {group.group}
         <span className="text-caption font-normal text-muted">{rows.length}</span>
@@ -155,7 +158,7 @@ function Group({ group, usageById, filter, onLogs, onAction, busyId }) {
           </thead>
           <tbody>
             {rows.map((row) => (
-              <ServiceRow key={row.compose} row={row} usage={usageById[row.compose]}
+              <ServiceRow key={row.compose || row.card_id} row={row} usage={usageById[row.compose] || usageById[row.card_id]}
                           onLogs={onLogs} onAction={onAction} busy={busyId === row.compose} />
             ))}
           </tbody>
@@ -202,7 +205,7 @@ export default function ServicesPage() {
   }
 
   return (
-    <div className="grid gap-3">
+    <div className="grid gap-3 [&>*]:min-w-0">
       <div className="flex flex-wrap items-center gap-3">
         <label htmlFor="service-filter" className="sr-only">Filter services</label>
         <input id="service-filter" className={INPUT + ' w-72 max-w-full'} placeholder="Filter by name"

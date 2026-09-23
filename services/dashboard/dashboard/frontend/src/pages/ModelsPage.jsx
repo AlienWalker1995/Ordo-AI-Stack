@@ -58,7 +58,7 @@ function SwitchModel({ data, onSwitched }) {
     <div className="grid gap-2">
       <label htmlFor="model-switch" className="text-label text-muted">Switch the GPU model</label>
       <div className="flex flex-wrap gap-2">
-        <select id="model-switch" className={INPUT + ' min-w-[16rem] flex-1'} value={choice} disabled={busy}
+        <select id="model-switch" className={INPUT + ' min-w-0 flex-1 basis-64'} value={choice} disabled={busy}
                 onChange={(e) => setChoice(e.target.value)}>
           <option value="">Choose a model from the catalog…</option>
           {data.catalog.map((c) => (
@@ -171,9 +171,9 @@ export default function ModelsPage() {
   }
 
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-4 [&>*]:min-w-0">
       <Panel title="Running now">
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-3 [&>*]:min-w-0">
           <Slot title="GPU chat" file={d.gpu.file}>
             <div className="flex flex-wrap items-center gap-1.5">
               {d.gpu.catalog_id && <Chip>{d.gpu.catalog_id}</Chip>}

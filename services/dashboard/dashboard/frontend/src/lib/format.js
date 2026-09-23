@@ -38,7 +38,7 @@ export function timeAgo(epochSeconds, now = Date.now()) {
 // "13:45" from an epoch in SECONDS, local time.
 export function clock(epochSeconds) {
   if (!epochSeconds) return ''
-  return new Date(epochSeconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return new Date(epochSeconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 export function pct(used, total) {

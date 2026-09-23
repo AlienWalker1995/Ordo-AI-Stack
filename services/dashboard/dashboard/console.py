@@ -414,17 +414,34 @@ def _group_for_container(sid: str, verdict: str) -> str:
     return "Platform"
 
 
-def _row(compose: str, name: str, group: str, container: dict | None, open_url=None, error=None) -> dict:
-    verdict = _verdict(container)
-    if verdict == "up" and error:
-        verdict = "unhealthy"  # the container runs but its HTTP probe fails
-    controllable = compose not in NOT_CONTROLLABLE
+def _row(compose: str | None, name: str, group: str, container: dict | None, open_url=None,
+         error=None, card_id: str | None = None, probe_ok: bool | None = None) -> dict:
+    if compose is None:
+        # A probe-only card: a link and a health check, not one container, so its state is the
+        # probe's and it offers no lifecycle controls.
+        verdict = {True: "up", False: "unhealthy"}.get(probe_ok, "unknown")
+        controllable = False
+    else:
+        verdict = _verdict(container)
+        if verdict == "up" and error:
+            verdict = "unhealthy"  # the container runs but its HTTP probe fails
+        controllable = compose not in NOT_CONTROLLABLE
     return {
-        "compose": compose, "name": name, "group": group, "verdict": verdict,
+        "compose": compose, "card_id": card_id, "name": name, "group": group, "verdict": verdict,
         "uptime": uptime_from_status((container or {}).get("status")),
         "status": (container or {}).get("status"), "open_url": open_url, "error": error,
         "controllable": controllable, "actions": actions_for(verdict) if controllable else [],
     }
+
+
+def _card_container(card: dict, containers_by_id: dict) -> str | None:
+    """The compose service a card controls: its declared ops_service; else a container with the
+    card's own id, which is unambiguous; else none, and the card is probe-only."""
+    if card.get("ops_service"):
+        return card["ops_service"]
+    if card.get("id") in containers_by_id:
+        return card["id"]
+    return None
 
 
 def build_service_table(cards: list[dict], containers_by_id: dict) -> list[dict]:
@@ -432,11 +449,13 @@ def build_service_table(cards: list[dict], containers_by_id: dict) -> list[dict]
     rows: list[dict] = []
     claimed: set[str] = set()
     for card in cards or []:
-        compose = card.get("ops_service") or card.get("id")
-        claimed.add(compose)
-        rows.append(_row(compose, card.get("name") or compose, _group_for_card(card),
-                         containers_by_id.get(compose), card.get("open_url"),
-                         card.get("error") if card.get("ok") is False else None))
+        compose = _card_container(card, containers_by_id or {})
+        if compose:
+            claimed.add(compose)
+        rows.append(_row(compose, card.get("name") or card.get("id"), _group_for_card(card),
+                         (containers_by_id or {}).get(compose) if compose else None, card.get("open_url"),
+                         card.get("error") if card.get("ok") is False else None,
+                         card_id=card.get("id"), probe_ok=card.get("ok")))
     for sid, container in sorted((containers_by_id or {}).items()):
         if sid in claimed:
             continue
