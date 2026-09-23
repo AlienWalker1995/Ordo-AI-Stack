@@ -142,13 +142,13 @@ class MockBackend:
         return self.exec_result
 
     def compose_up(self, service: str | None = None) -> None:
-        self.compose_up_calls.append(None)
+        self.compose_up_calls.append(service)
 
     def compose_down(self, service: str | None = None) -> None:
-        self.compose_down_calls.append(None)
+        self.compose_down_calls.append(service)
 
     def compose_restart(self, service: str | None = None) -> None:
-        self.compose_restart_calls.append(None)
+        self.compose_restart_calls.append(service)
 
 
 class DockerBackend:

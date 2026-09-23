@@ -290,6 +290,9 @@ class Scheduler:
         eta = round(min(rem), 1) if (waiting and rem) else (0.0 if head_fits else None)
         return {
             "state": "busy" if self._running else "idle",
+            # The one definition of "the card is leased": work running or waiting for it, or a
+            # resident stopped to make room. Clients read this instead of re-deriving it.
+            "leased": bool(self._running or self._queue or self._evicted),
             "total_vram_gb": self.total_vram_gb,
             "free_vram_gb": round(self.free_vram_gb, 1),
             "running": [
