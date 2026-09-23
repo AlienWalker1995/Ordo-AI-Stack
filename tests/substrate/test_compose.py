@@ -1,4 +1,5 @@
 """Rendered compose is isolated + correct so it can run without colliding with other projects."""
+import re
 from pathlib import Path
 
 import yaml
@@ -593,15 +594,37 @@ def test_monitoring_config_mounts_come_from_the_tracked_tree(tmp_path):
             assert not v.startswith("./monitoring")
 
 
+def _host_source(volume: str) -> str:
+    """The host side of a bind string: everything before the container path (`:/...`)."""
+    return volume.split(":/", 1)[0]
+
+
 def test_services_the_control_plane_recreates_have_no_project_relative_binds():
     # ops-controller runs compose with the project directory at its own /config mount, so a
     # "./x" bind it recreates resolves to /config/x on the HOST: a path that does not exist.
-    # A dashboard model switch recreated model-gateway that way and it crash-looped.
+    # A dashboard model switch recreated model-gateway that way and it crash-looped. A
+    # `${VAR:-./x}` default is the same bug waiting for an unset VAR, and a relative VALUE
+    # rendered into .env is the same bug today; host binds are `${VAR:?...}` (fail loud).
+    # Rendered with EVERY plugin, the real dashboard and agent, so no manifest escapes the check.
+    from ordo.agents import AgentRegistry
     from ordo.broker import DockerBackend
+    from ordo.dashboards import DashboardRegistry
 
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
-    offenders = {
-        name: [v for v in svc.get("volumes", []) if isinstance(v, str) and v.startswith("./")]
-        for name, svc in c["services"].items() if name not in DockerBackend.SELF_REFERENTIAL
-    }
-    assert {k: v for k, v in offenders.items() if v} == {}
+    every_plugin = [p.id for p in REGISTRY.plugins]
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}, {"vram_gb": 8}], "ram_gb": 128},
+                            "model": "auto", "plugins": every_plugin,
+                            "site": {"BASE_PATH": "/srv/ordo", "DATA_PATH": "/srv/ordo/data"}})
+    rc = render(src, CATALOG, REGISTRY, agents=AgentRegistry.load(ROOT / "services"),
+                dashboards=DashboardRegistry.load(ROOT / "services"))
+    offenders = []
+    for name, svc in rc.compose_dict(project="ordo")["services"].items():
+        for volume in svc.get("volumes", []):
+            if not isinstance(volume, str):
+                continue
+            source = _host_source(volume)
+            literal_relative = source.startswith("./") and name not in DockerBackend.SELF_REFERENTIAL
+            if literal_relative or re.search(r":-.(/|})", source):
+                offenders.append(f"{name}: {volume}")
+    relative_env = [f"{k}={v}" for k, v in rc.env.items() if isinstance(v, str) and v.startswith("./")]
+    assert offenders == []
+    assert relative_env == []

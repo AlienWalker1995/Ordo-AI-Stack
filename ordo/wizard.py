@@ -587,12 +587,17 @@ def _collect_answers(catalog: Catalog, registry: PluginRegistry, pl: WizardPlan,
 
 def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
         interactive: bool = True, answers: dict[str, Any] | None = None,
-        emails_path: str | Path | None = None) -> WizardResult:
+        emails_path: str | Path | None = None, host_root: str | Path | None = None) -> WizardResult:
     """Run the wizard. Non-interactive (`interactive=False`) is the headless/CI path: it consumes
     `answers` (and `answers['secrets']` / `answers['emails']`) and writes config only.
 
     Writes ``<out_dir>/ordo.yaml`` and ``<out_dir>/secrets.env``; optionally the oauth2-proxy
     allowlist at ``emails_path``. Returns a WizardResult describing what was written.
+
+    ``host_root`` is the repo checkout on the host. Every host bind is ``${BASE_PATH:?}`` /
+    ``${DATA_PATH:?}`` (fail loud: a relative path resolves to a host path that does not exist
+    when ops-controller recreates a service), so the source records both unless the operator
+    already chose them.
     """
     out = Path(out_dir)
     pl = plan(catalog, registry)
@@ -603,6 +608,13 @@ def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
         a = dict(answers or {})
         provided = dict(a.pop("secrets", {}) or {})
         emails = list(a.pop("emails", []) or [])
+
+    if host_root is not None:
+        site = dict(a.get("site") or {})
+        base = Path(host_root).resolve().as_posix()
+        site.setdefault("BASE_PATH", base)
+        site.setdefault("DATA_PATH", f"{site['BASE_PATH']}/data")
+        a["site"] = site
 
     source = build_source(a)
     source_path = write_source(source, out / "ordo.yaml")

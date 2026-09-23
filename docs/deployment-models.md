@@ -63,7 +63,7 @@ tailnet; there is no public DNS record and no port open to the internet.
   `https://chat.<tailnet>.ts.net/` and `https://host.tailnet.ts.net:8443/` are the same Open WebUI
   behind the same gate.
 - **Auto-issued, auto-renewed TLS.** The front-door cert comes from `tailscale cert` (mounted at
-  `auth/caddy/certs/tailnet.{crt,key}` via `TAILSCALE_CERT_DIR`; renew every ~90 days — see
+  `auth/caddy/certs/tailnet.{crt,key}` in the repo root; renew every ~90 days — see
   [auth runbook](runbooks/auth.md#tailscale-cert-renewal)). Each sidecar node terminates TLS with its
   own MagicDNS cert, issued and renewed automatically by `tailscale serve` — no operator action.
 

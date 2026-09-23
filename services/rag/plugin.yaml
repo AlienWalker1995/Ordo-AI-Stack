@@ -94,17 +94,17 @@ services:
       CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-50}
       SCAN_INTERVAL_SEC: ${RAG_SCAN_INTERVAL_SEC:-15}
     volumes:
-      - ${DATA_PATH:-./data}/rag-input:/watch
+      - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/rag-input:/watch
       # Obsidian memory vault as a second (read-only) input root, nested inside the watch tree so
       # the recursive watcher/scanner picks it up with zero ingester config. Vault internals
       # (.obsidian/, .trash/) are excluded by the ingester's hidden-path rule. Same var the
       # memory-vault MCP mounts, so both views are the one vault.
-      - ${MEMORY_VAULT_PATH:-${DATA_PATH:-./data}/memory-vault}:/watch/memory-vault:ro
+      - ${MEMORY_VAULT_PATH:-${DATA_PATH:?DATA_PATH must be set (non-empty)}/memory-vault}:/watch/memory-vault:ro
       # Stack documentation (operator guide, runbooks, PRDs, agent docs) as a THIRD read-only input
       # root, nested in the watch tree like the vault so the recursive scanner auto-indexes it with
       # zero ingester config — making the stack's own docs semantically searchable by Hermes and any
       # other qdrant_search client. ${BASE_PATH} is the host repo root (must be a host path).
-      - ${BASE_PATH:-.}/docs:/watch/stack-docs:ro
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/docs:/watch/stack-docs:ro
     depends_on: [llamacpp-embed, qdrant]
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/rag-ingestion.heartbeat"]

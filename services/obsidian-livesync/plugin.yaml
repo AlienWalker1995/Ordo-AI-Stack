@@ -75,7 +75,7 @@ services:
       # The vault's notes/ subfolder <-> the bridge's storage root. Same MEMORY_VAULT_PATH the
       # memory-vault MCP (RW) and rag-ingestion (RO) mount, so notes land in the ONE shared vault
       # (kept separate from the AI-managed memories/). Pre-create it uid-1000-owned (ensure_dirs).
-      - ${MEMORY_VAULT_PATH:-${DATA_PATH:-./data}/memory-vault}/notes:/app/data/notes
+      - ${MEMORY_VAULT_PATH:-${DATA_PATH:?DATA_PATH must be set (non-empty)}/memory-vault}/notes:/app/data/notes
     # Start-order only (plugin-manifest services don't carry compose health conditions). The
     # bridge's own `until curl _up` loop is the real readiness gate — it waits for CouchDB and
     # re-checks on every restart, which is stronger than a one-shot service_healthy anyway.

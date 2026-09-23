@@ -165,7 +165,7 @@ def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
     s["volumes"] = [
         "/var/run/docker.sock:/var/run/docker.sock",  # broker start/stop (guard-scoped)
         "./:/config",                                 # ordo.yaml + rendered out/ (single write path)
-        "${DATA_PATH:-./data}/ops-controller:/data",  # model registry + audit log (same as ops-api)
+        "${DATA_PATH:?DATA_PATH must be set (non-empty)}/ops-controller:/data",  # model registry + audit log (same as ops-api)
         "comfyui-models:/models/comfyui",             # shared ComfyUI model store (same as ops-api)
         # ComfyUI's app tree, read-only: /comfyui/install-node-requirements has to see whether a
         # custom-node pack ships a requirements.txt before it runs pip inside the comfyui
@@ -651,7 +651,7 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         # container — the dashboard GGUF-pull endpoint is still a 501 stub, see
         # docs/data.md "Model Pull") — models/gguf is retired from every hot path.
         "models-gguf:/models:ro",
-        "${BASE_PATH:-.}/scripts/llamacpp:/llamacpp-scripts:ro",
+        "${BASE_PATH:?BASE_PATH must be set (non-empty)}/scripts/llamacpp:/llamacpp-scripts:ro",
     ]
     # model-gateway is the V1 custom-built LiteLLM config wrapper (+ the MCP gateway since 2026-09);
     # pinned as a project-namespaced BUILDABLE image (build context services/model-gateway) so

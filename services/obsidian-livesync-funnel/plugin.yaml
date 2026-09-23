@@ -39,7 +39,7 @@ services:
       TS_SERVE_CONFIG: /config/serve.json
     volumes:
       - ts-state-notes:/var/lib/tailscale
-      - ${BASE_PATH:-.}/assets/tailscale-serve/notes-funnel.json:/config/serve.json:ro
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/assets/tailscale-serve/notes-funnel.json:/config/serve.json:ro
     healthcheck:
       test: ["CMD", "tailscale", "status", "--peers=false"]
       start_period: 30s

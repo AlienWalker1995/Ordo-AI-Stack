@@ -150,3 +150,22 @@ def test_parse_emails_splits_dedupes_and_preserves_order():
 def test_invalid_emails_flags_only_malformed():
     assert wizard.invalid_emails(["a@x.io", "b@y.co.uk"]) == []
     assert wizard.invalid_emails(["nope", "a@x.io", "also@bad"]) == ["nope", "also@bad"]
+
+
+def test_run_records_the_host_paths_every_bind_needs(tmp_path):
+    # Every host bind is ${BASE_PATH:?} / ${DATA_PATH:?} (fail loud), so the source `ordo init`
+    # writes must carry both, as absolute host paths, or the first `up` refuses to start.
+    repo = tmp_path / "repo"
+    result = wizard.run(CATALOG, REGISTRY, tmp_path / "out", interactive=False, answers={},
+                        host_root=repo)
+    site = Source.load(result.source_path).site
+    assert site["BASE_PATH"] == repo.as_posix()
+    assert site["DATA_PATH"] == f"{repo.as_posix()}/data"
+
+
+def test_run_keeps_host_paths_the_operator_chose(tmp_path):
+    result = wizard.run(CATALOG, REGISTRY, tmp_path / "out", interactive=False,
+                        answers={"site": {"DATA_PATH": "/srv/ordo-data"}}, host_root=tmp_path / "repo")
+    site = Source.load(result.source_path).site
+    assert site["DATA_PATH"] == "/srv/ordo-data"
+    assert site["BASE_PATH"] == (tmp_path / "repo").as_posix()
