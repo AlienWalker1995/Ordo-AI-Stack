@@ -26,6 +26,7 @@ class Settings:
     langfuse_public_key: str
     langfuse_secret_key: str
     ops_controller_url: str
+    ops_controller_token: str
     n8n_url: str
     qdrant_url: str
     qdrant_collection: str
@@ -53,6 +54,8 @@ class Settings:
             langfuse_public_key=_env("LANGFUSE_PUBLIC_KEY"),
             langfuse_secret_key=_env("LANGFUSE_SECRET_KEY"),
             ops_controller_url=_env("OPS_CONTROLLER_URL", "http://ops-controller:9000"),
+            # ops-controller authenticates every call except its health probe.
+            ops_controller_token=_env("OPS_CONTROLLER_TOKEN"),
             n8n_url=_env("N8N_URL", "http://n8n:5678"),
             qdrant_url=_env("QDRANT_URL", "http://qdrant:6333"),
             # Same var rag-ingestion reads (services/rag/plugin.yaml: QDRANT_COLLECTION from

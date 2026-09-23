@@ -1,13 +1,10 @@
 """GPU-lease guard (E15, round-6 fix): a preflight refusal, a cheap between-suite re-check, and a
 per-item served-backend classification, all built on the SAME ground truth - ops-controller's
 `/status` scheduler block (`checks.Probes.ops_status()`, already used by `runner._served_model` and
-by `checks._check_ops_model`). No new secret and no new endpoint: `services/evals/plugin.yaml`
-already points `OPS_CONTROLLER_URL` at the scheduler service (`ordo/control.py`'s `ControlPlane`,
-compose service `ops-controller`), which - by design, per its own module docstring ("No auth here:
-the dashboard is localhost-only and this is the full control plane behind it") - takes no auth at
-all. (The dashboard's `OPS_CONTROLLER_TOKEN` env var is for the control plane's own API -
-`services/dashboard/dashboard.yaml` points the dashboard's own `OPS_CONTROLLER_URL` at
-`http://ops-controller:9000`, not at this one - so there is nothing to wire here.)
+by `checks._check_ops_model`). `services/evals/plugin.yaml` points `OPS_CONTROLLER_URL` at the
+control plane (`ordo/control.py`'s `ControlPlane`, compose service `ops-controller`) and passes
+`OPS_CONTROLLER_TOKEN`, which `probes.LiveProbes` sends as a Bearer token: the control plane
+authenticates every call except its health probe.
 
 Why this is the right ground truth for "is llama.cpp about to be (or already) starved of the GPU":
 `services/gpu-gate/gate.py` sits in front of every GPU-work submission API (ComfyUI's the canonical

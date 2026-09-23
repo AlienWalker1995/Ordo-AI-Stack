@@ -8,7 +8,7 @@ run as `.venv/bin/python /ordo/lease-exec.py <script> …`, so each training run
 
 Contract (env):
   OPS_CONTROLLER_URL            scheduler base URL (required), e.g. http://ops-controller:9000
-  OPS_CONTROLLER_TOKEN          optional bearer token (sent when set)
+  OPS_CONTROLLER_TOKEN          bearer token (required: ops-controller refuses unauthenticated calls)
   ORDO_LEASE_VRAM_GB            VRAM to lease (required); ~full card => exclusive lease
   ORDO_LEASE_KIND               job kind label (default "generic")
   ORDO_LEASE_JOB_ID             explicit job id (default: lease-<random>)
@@ -53,9 +53,7 @@ def _req(method: str, path: str, body: dict | None = None) -> dict:
         method=method,
         headers={"Content-Type": "application/json"},
     )
-    token = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
-    if token:
-        req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Authorization", f"Bearer {os.environ['OPS_CONTROLLER_TOKEN'].strip()}")
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read() or b"{}")
 
@@ -161,6 +159,10 @@ def main() -> int:
     vram_env = os.environ.get("ORDO_LEASE_VRAM_GB", "").strip()
     if not os.environ.get("OPS_CONTROLLER_URL", "").strip() or not vram_env:
         _log("OPS_CONTROLLER_URL and ORDO_LEASE_VRAM_GB are required — refusing to run unleased")
+        return 2
+    if not os.environ.get("OPS_CONTROLLER_TOKEN", "").strip():
+        _log("OPS_CONTROLLER_TOKEN is required (ops-controller refuses unauthenticated calls) — "
+             "refusing to run unleased")
         return 2
     vram_gb = float(vram_env)
     kind = os.environ.get("ORDO_LEASE_KIND", "generic")

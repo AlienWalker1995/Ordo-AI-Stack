@@ -82,6 +82,8 @@ services:
       # the Langfuse pair falls back to "" so `--no-langfuse` runs work on a stack without langfuse,
       # and the runner refuses to post with an empty pair.
       LITELLM_KEY_EVALS: ${LITELLM_KEY_EVALS}
+      # ops-controller authenticates every call but its health probe (the GPU-lease guards read /status).
+      OPS_CONTROLLER_TOKEN: ${OPS_CONTROLLER_TOKEN}
       HERMES_API_SERVER_KEY: ${HERMES_API_SERVER_KEY}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}

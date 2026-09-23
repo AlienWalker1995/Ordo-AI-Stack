@@ -11,6 +11,7 @@ hard-scoped to the ordo project prefix so it only ever touches its own project's
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -365,9 +366,14 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
 
     threading.Thread(target=_lease_loop, daemon=True, name="lease-sweep").start()
 
+    token = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
+    if not token:
+        print("ops-controller: OPS_CONTROLLER_TOKEN is not set; refusing to serve an unauthenticated "
+              "control plane (it is provisioned in secrets.env)", file=sys.stderr, flush=True)
+        return 2
     print(f"ops-controller on {args.host}:{args.port} (project={args.project}, "
           f"{sched.total_vram_gb:.0f}GB GPU) — Ctrl-C to stop")
-    cp.serve(host=args.host, port=args.port)
+    cp.serve(token, host=args.host, port=args.port)
     return 0
 
 

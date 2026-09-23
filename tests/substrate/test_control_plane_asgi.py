@@ -30,8 +30,12 @@ def _cp(tmp_path, model="auto", with_broker=True):
     return ControlPlane(src, CATALOG, REGISTRY, tmp_path / "out", scheduler=sched, broker=broker), src
 
 
+TOKEN = "asgi-test-token"
+
+
 def _client(cp):
-    return TestClient(cp.app())
+    # Every call authenticates; the auth rules themselves are pinned in test_control_plane_auth.py.
+    return TestClient(cp.app(auth_token=TOKEN), headers={"Authorization": f"Bearer {TOKEN}"})
 
 
 # --- GET /status ---

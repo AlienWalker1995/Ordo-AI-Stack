@@ -41,6 +41,9 @@ gate = _load_gate()
 
 # --- stubs -----------------------------------------------------------------------------------
 
+OPS_TOKEN = "gate-test-token"
+
+
 class StubOps:
     """Minimal ops-controller: admits after `admit_after` /status polls, or rejects/hangs."""
 
@@ -60,7 +63,14 @@ class StubOps:
                 "eta_seconds": 42}
 
     def app(self):
-        app = web.Application()
+        @web.middleware
+        async def require_token(request, handler):
+            # Same rule as ops-controller: every call carries the bearer token.
+            if request.headers.get("Authorization") != f"Bearer {OPS_TOKEN}":
+                return web.json_response({"error": "missing or invalid bearer token"}, status=401)
+            return await handler(request)
+
+        app = web.Application(middlewares=[require_token])
 
         async def jobs(request):
             body = await request.json()
@@ -144,7 +154,7 @@ async def harness(monkeypatch):
             "GATE_SUBMIT_PATHS": "/prompt,/api/prompt", "GATE_SUBMIT_METHODS": "POST",
             "GATE_QUEUE_PATH": "/queue", "GATE_QUEUE_STYLE": "comfyui",
             "GATE_DRAIN_SECONDS": "0.2", "GATE_POLL_SECONDS": "0.05",
-            "OPS_CONTROLLER_URL": ops_url, "ORDO_LEASE_VRAM_GB": "30",
+            "OPS_CONTROLLER_URL": ops_url, "OPS_CONTROLLER_TOKEN": OPS_TOKEN, "ORDO_LEASE_VRAM_GB": "30",
             "ORDO_LEASE_KIND": "media", "ORDO_LEASE_JOB_ID": "gate-comfyui",
             "ORDO_LEASE_ACQUIRE_TIMEOUT_S": "2", "ORDO_LEASE_POLL_S": "0.05",
             "ORDO_LEASE_HEARTBEAT_S": "0.1",
@@ -364,6 +374,7 @@ async def test_backstop_acquires_when_work_bypasses_the_gate_and_records_it(harn
 @pytest.mark.parametrize("drop,expect", [
     ("GATE_UPSTREAM", "GATE_UPSTREAM"),
     ("OPS_CONTROLLER_URL", "OPS_CONTROLLER_URL"),
+    ("OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN"),
     ("ORDO_LEASE_VRAM_GB", "ORDO_LEASE_VRAM_GB"),
     ("ORDO_LEASE_JOB_ID", "ORDO_LEASE_JOB_ID"),
     ("GATE_SUBMIT_PATHS", "nothing would be gated"),
@@ -375,7 +386,7 @@ def test_gate_refuses_to_start_half_armed(monkeypatch, drop, expect):
     # such a match — which fails the repo's secret-scanning gate on a test function name.
     """A gate that boots without the facts it needs would proxy happily and arbitrate nothing —
     worse than being absent, because the topology would claim the traffic is gated."""
-    env = {"GATE_UPSTREAM": "http://u:1", "OPS_CONTROLLER_URL": "http://o:2",
+    env = {"GATE_UPSTREAM": "http://u:1", "OPS_CONTROLLER_URL": "http://o:2", "OPS_CONTROLLER_TOKEN": "t",
            "ORDO_LEASE_VRAM_GB": "30", "ORDO_LEASE_JOB_ID": "gate-x",
            "GATE_SUBMIT_PATHS": "/prompt", "GATE_QUEUE_PATH": "/queue"}
     for k, v in env.items():
