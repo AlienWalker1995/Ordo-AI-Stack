@@ -93,17 +93,16 @@ def test_whole_stack_mutations_are_not_reachable_from_a_dashboard_button(tmp_pat
     assert DockerBackend.SELF_REFERENTIAL == frozenset({"agent", "ops-controller"})
 
 
-def test_control_plane_mounts_the_rendered_tree_so_env_set_and_recreate_share_one_env(tmp_path):
+def test_control_plane_mounts_the_rendered_tree_so_render_and_recreate_share_one_env(tmp_path):
     """A recreate REPLAYS the rendered tree (compose + .env + secrets.env). The control plane must
-    mount that tree RW so /env/set writes and the recreate replay share one .env."""
+    mount that tree RW so a model switch's re-render and the recreate replay share one .env."""
     c = _compose("dashboard", tmp_path)
     ctrl = c["services"]["ops-controller"]
     assert "./:/config" in ctrl["volumes"]
-    assert ctrl["environment"]["OPS_ENV_PATH"] == "/config/.env"
 
 
 def test_the_control_plane_does_not_mount_the_gguf_weights(tmp_path):
-    """It has no route that reads them. The on-disk GGUF list is the DASHBOARD's /api/llm/models,
+    """It has no route that reads them. The on-disk GGUF list is the DASHBOARD's (routes_console._disk_files),
     served from its own mount; the control plane's /model-config lists CATALOG entries. A mount
     here would exist only to feed code nothing calls."""
     c = _compose("dashboard", tmp_path)
@@ -134,7 +133,7 @@ def test_dashboard_has_a_healthcheck(tmp_path):
 
 
 def test_dashboard_reserves_a_utility_gpu(tmp_path):
-    """`/api/hardware`'s GPU widgets shell to nvidia-smi + gpu_stats.list_gpus, which the NVIDIA
+    """`hardware_stats()`'s GPU widgets shell to nvidia-smi + gpu_stats.list_gpus, which the NVIDIA
     runtime only injects with a `utility` reservation on the dashboard SERVICE itself. Without it
     the hw-stat bar goes blank (gpu:null + gpus:[])."""
     c = _compose("dashboard", tmp_path)
@@ -143,7 +142,7 @@ def test_dashboard_reserves_a_utility_gpu(tmp_path):
 
 
 def test_dashboard_pins_the_in_container_disk_probe_path(tmp_path):
-    """`/api/hardware` calls psutil.disk_usage(BASE_PATH) for the DISK widget. The shared .env
+    """`hardware_stats()` calls psutil.disk_usage(BASE_PATH) for the DISK widget. The shared .env
     carries BASE_PATH=<Windows host path> (needed for compose ${BASE_PATH} interpolation) and
     env_file leaks it into the Linux container, where disk_usage("C:/...") raises. A per-service
     `environment:` value beats env_file."""

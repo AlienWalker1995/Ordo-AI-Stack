@@ -25,10 +25,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # app.py imports dashboard.* — copy package tree and expose it on PYTHONPATH
 COPY *.py ./dashboard/
-# static/ still carries the preserved legacy shell (legacy-index.html) + favicon.svg,
-# reachable at /legacy-index.html as a fallback while the React port is validated.
-COPY static ./dashboard/static/
-
 # The built React SPA — FastAPI serves this at root (app.py prefers frontend/dist).
 COPY --from=frontend /build/dist ./dashboard/frontend/dist/
 

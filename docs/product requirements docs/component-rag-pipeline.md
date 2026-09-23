@@ -25,7 +25,7 @@ Open WebUI → Qdrant (`VECTOR_DB=qdrant`, `QDRANT_URI=http://qdrant:6333`) — 
 
 ## Status API
 
-`GET /api/rag/status` → `{ok, collection, points_count, status}` — auth-exempt so dashboard can always display it.
+The dashboard's `GET /api/overview` reports the collection point count as `knowledge.documents` (`null` when Qdrant is unreachable).
 
 ## User Flow
 

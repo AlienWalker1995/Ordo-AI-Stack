@@ -253,9 +253,8 @@ class TestContainerList:
         status, body = control_plane.route("GET", "/containers")
         assert status == 200
         # A BARE LIST, because that is what ops-api /containers returns and the dashboard is
-        # written against it. Its sibling /mcp/containers returns {"containers": [...]} instead.
-        # The asymmetry is ops-api's, verified against the live service; it is reproduced rather
-        # than tidied so this port changes nothing the dashboard can see.
+        # written against it. The shape is ops-api's, verified against the live service; it is
+        # reproduced rather than tidied so this port changes nothing the dashboard can see.
         assert len(body) == 2
         assert mock_backend.list_containers_calls
 
@@ -312,22 +311,6 @@ class TestServiceStats:
     def test_error_on_stats_failure(self, control_plane, mock_backend):
         mock_backend.service_stats = MagicMock(side_effect=Exception("docker failed"))
         status, body = control_plane.route("GET", "/stats/services")
-        assert status == 500
-        assert "docker failed" in body["error"]
-
-
-class TestMcpContainers:
-    """GET /mcp/containers — ported from ops-api."""
-
-    def test_returns_mcp_containers(self, control_plane, mock_backend):
-        status, body = control_plane.route("GET", "/mcp/containers")
-        assert status == 200
-        assert len(body) == 1
-        assert mock_backend.mcp_containers_calls
-
-    def test_error_on_failure(self, control_plane, mock_backend):
-        mock_backend.mcp_containers = MagicMock(side_effect=Exception("docker failed"))
-        status, body = control_plane.route("GET", "/mcp/containers")
         assert status == 500
         assert "docker failed" in body["error"]
 

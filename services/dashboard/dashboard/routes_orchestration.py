@@ -33,7 +33,6 @@ router = APIRouter(prefix="/api/orchestration", tags=["orchestration"])
 
 DATA_DIR = Path(os.environ.get("DASHBOARD_DATA_PATH", "./data/dashboard")).resolve()
 WORKFLOWS_DIR = Path(os.environ.get("COMFYUI_WORKFLOWS_DIR", "/comfyui-workflows")).resolve()
-N8N_PUBLISH_WEBHOOK_URL = os.environ.get("N8N_PUBLISH_WEBHOOK_URL", "").strip()
 OPS_CONTROLLER_URL = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000").rstrip("/")
 OPS_CONTROLLER_TOKEN = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://comfyui:8188").rstrip("/")
@@ -180,14 +179,6 @@ async def save_workflow(body: SaveWorkflowBody):
 @router.get("/workflows/{workflow_id}/versions")
 async def workflow_versions(workflow_id: str):
     return {"workflow_id": workflow_id, "versions": list_workflow_versions(DATA_DIR, workflow_id)}
-
-
-@router.get("/workflows/{workflow_id}/versions/{version}")
-async def workflow_version(workflow_id: str, version: int):
-    v = get_workflow_version(DATA_DIR, workflow_id, version)
-    if not v:
-        raise HTTPException(status_code=404, detail="Version not found")
-    return v
 
 
 @router.post("/workflows/{workflow_id}/diff")
@@ -364,42 +355,8 @@ async def orch_registry_list_gpus(request: Request):
         raise HTTPException(status_code=502, detail=str(e)) from e
 
 
-@router.get("/registry/models/{model_id}")
-async def orch_registry_get_model(model_id: str, request: Request):
-    """Hermes passthrough: get a single model record by ID from ops-controller."""
-    if not OPS_CONTROLLER_TOKEN:
-        raise HTTPException(status_code=503, detail="OPS_CONTROLLER_TOKEN not configured")
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(
-                f"{OPS_CONTROLLER_URL}/registry/models/{model_id}",
-                headers=_hermes_ops_headers(request),
-            )
-        if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
-        return r.json()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
-
-
 # ── GPU lease visibility (orchestration tab) ─────────────────────────────────────────────
 # Pure presentation proxies: the scheduler records/serves the truth; the dashboard displays it.
-
-
-@router.get("/gpu")
-async def orchestration_gpu() -> dict[str, Any]:
-    """Live scheduler state: running leases, queue, evicted residents, VRAM."""
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get(f"{SCHEDULER_URL}/status")
-            r.raise_for_status()
-            data = r.json()
-    except (httpx.HTTPError, ValueError) as e:
-        raise HTTPException(status_code=502, detail=f"scheduler unreachable: {e}") from e
-    # GET /status nests the scheduler block under "gpu"; tolerate a bare payload too.
-    return data.get("gpu", data) if isinstance(data, dict) else {}
 
 
 @router.get("/gpu/history")

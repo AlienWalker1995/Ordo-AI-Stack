@@ -44,7 +44,7 @@ Use local files as context in **Open WebUI** via Qdrant + the `rag-ingestion` se
    ```
 3. **Drop documents** under `data/rag-input/` (paths come from your `DATA_PATH` / `BASE_PATH`; default is `<repo>/data/rag-input/`). Supported types include `.txt`, `.md`, `.pdf`, and common code extensions — see `services/rag/ingest.py` for `SUPPORTED_EXTENSIONS`.
 4. **Open WebUI** → enable RAG for chat (vector DB is already pointed at Qdrant in compose).
-5. **Check status:** dashboard `GET /api/rag/status` or open the dashboard UI — collection name defaults to `documents` (`RAG_COLLECTION`).
+5. **Check status:** the dashboard Overview page (`GET /api/overview`, `knowledge.documents`); the collection name defaults to `documents` (`RAG_COLLECTION`).
 
 Env knobs (optional): `EMBED_MODEL`, `RAG_COLLECTION`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP` — set via the `overrides:` block in `ordo.yaml` (tracked template: [`ordo.example.yaml`](../ordo.example.yaml)) and re-render. The dashboard **RAG** section shows Qdrant collection point count when the stack can reach Qdrant. See the PRD **WS6: RAG Pipeline** for the full picture.
 

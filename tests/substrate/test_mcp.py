@@ -157,11 +157,6 @@ def test_hosted_server_renders_no_compose_service():
     assert yaml.safe_load(render_litellm_mcp_fragment(servers))["mcp_servers"]["ext"]["url"] == "https://h.example/mcp"
 
 
-def _render_mcp_for(plugin_ids):
-    from ordo.render import _render_mcp
-    return _render_mcp([p for p in REGISTRY.plugins if p.id in plugin_ids])
-
-
 # ── Restored roster (V1→V2 migration dropped these): codebase-memory, comfyui, n8n, orchestration
 #    must reappear in the rendered servers.json + compose services with correct wiring. ──
 RESTORED = {"codebase-memory", "comfyui", "n8n", "orchestration"}

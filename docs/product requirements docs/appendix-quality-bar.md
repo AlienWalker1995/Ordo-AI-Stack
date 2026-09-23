@@ -2,7 +2,7 @@
 
 ## Test Suite (Current `tests/`)
 
-87 test files: 42 in `tests/` plus 45 in `tests/substrate/` (the render-engine suite).
+86 test files: 41 in `tests/` plus 45 in `tests/substrate/` (the render-engine suite).
 
 | Area | Files | Representative coverage |
 |------|-------|--------------------------|
@@ -10,7 +10,7 @@
 | ComfyUI | 5 | workflow manager defaults, queue prompt (+ integration), default model env, comfyui-mcp management tools |
 | Orchestration | 4 | API, MCP tools, workflows, workflow versioning |
 | RAG | 2 | ingestion chunking/embedding, status |
-| Ops / secrets / stack | 11 | secrets isolation, Caddyfile invariants, stack-monitor sanitize/versions/pinned sources, storage purge, settings validation, service-catalog wiring + fragments, service lifecycle, monitoring config |
+| Ops / secrets / stack | 10 | secrets isolation, Caddyfile invariants, stack-monitor sanitize/versions/pinned sources, storage purge, service-catalog wiring + fragments, service lifecycle, monitoring config |
 | GPU / hardware | 3 | GPU stats, gpu-gate, llama.cpp KV-cache args |
 | Misc / policy | 9 | Hermes socket absent, Hermes ops client, Hermes ordo skills, MCP policy, MCP persist, services & throughput, throughput callback, text sanitizers, vault federate |
 | Substrate (render engine) | 45 | agents, backend protocol, bootstrap keys, bridge Dockerfiles, broker, build contexts, cli render guard, cloud fallback, compose (+ recreate), control (+ ASGI, routes), dashboards, evals, fetch, GPU arbitration, Langfuse (+ retention), lease exec/history, LiteLLM keys + Google SSO, local cost, MCP, memory vault (+ ingestion), model-gateway callbacks/merge, native, Obsidian LiveSync, ops-controller image, parity (+ render), plugin install, plugins, preflight, reference integrity, render, scheduler, service stats, env/images/comfy routes, source edit, status doctor, wizard |

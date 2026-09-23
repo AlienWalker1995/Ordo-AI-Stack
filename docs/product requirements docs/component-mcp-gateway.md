@@ -131,8 +131,6 @@ LiteLLM namespaces tools **`<litellm_name>-<tool>`**, and Hermes prefixes its ow
   gateway-level status, which is what previously let three dead servers report green for weeks.
 - Prometheus scrapes `model-gateway:11435/metrics`; `litellm_mcp_tool_calls_total{mcp_server_name,
   mcp_tool_name}` increments per tool call.
-- ops-controller's `GET /mcp/containers` lists containers by the compose label `ordo.mcp=true`. That is
-  inventory, not health.
 
 ## Adding a new server
 

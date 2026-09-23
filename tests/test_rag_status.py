@@ -1,6 +1,7 @@
-"""Contract tests for dashboard GET /api/rag/status."""
+"""Contract tests for the dashboard's rag_status(), which /api/overview reads in-process."""
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 
@@ -9,11 +10,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def client():
+def dashboard_with_qdrant():
     import dashboard.app as dashboard_app
 
     mock_resp = MagicMock()
@@ -25,14 +25,12 @@ def client():
     mock_client.get = AsyncMock(return_value=mock_resp)
 
     with patch.object(dashboard_app, "_get_http_client", return_value=mock_client):
-        yield TestClient(dashboard_app.app)
+        yield dashboard_app
 
 
-def test_rag_status_returns_ok_and_counts(client):
-    """GET /api/rag/status returns ok, collection, points_count when Qdrant responds."""
-    r = client.get("/api/rag/status")
-    assert r.status_code == 200
-    data = r.json()
+def test_rag_status_returns_ok_and_counts(dashboard_with_qdrant):
+    """rag_status() returns ok, collection, points_count when Qdrant responds."""
+    data = asyncio.run(dashboard_with_qdrant.rag_status())
     assert data.get("ok") is True
     assert data.get("collection") == "documents"
     assert data.get("points_count") == 42
@@ -49,10 +47,7 @@ def test_rag_status_empty_collection_404():
     mock_client.get = AsyncMock(return_value=mock_resp)
 
     with patch.object(dashboard_app, "_get_http_client", return_value=mock_client):
-        c = TestClient(dashboard_app.app)
-        r = c.get("/api/rag/status")
-    assert r.status_code == 200
-    data = r.json()
+        data = asyncio.run(dashboard_app.rag_status())
     assert data.get("ok") is True
     assert data.get("points_count") == 0
     assert data.get("status") == "empty"

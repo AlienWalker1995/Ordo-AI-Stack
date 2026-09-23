@@ -334,13 +334,10 @@ class WizardResult:
     source_path: Path
     secrets_path: Path
     emails_path: Path | None
-    ordo_yaml: dict[str, Any]
-    required_secrets: list[str]
     generated_secret_keys: list[str]
     provided_secret_keys: list[str]
     blank_secret_keys: list[str]
     compose_profiles: list[str]
-    caddy_hostname: str
     caddy_bind: str
     warnings: list[str]
 
@@ -631,10 +628,8 @@ def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
 
     return WizardResult(
         source_path=source_path, secrets_path=secrets_path, emails_path=emails_written,
-        ordo_yaml=source, required_secrets=rc.required_secrets,
         generated_secret_keys=gen, provided_secret_keys=given, blank_secret_keys=blank,
         compose_profiles=rc.compose_profiles,
-        caddy_hostname=str(source.get("site", {}).get("CADDY_TAILNET_HOSTNAME", "")),
         caddy_bind=str(source.get("site", {}).get("CADDY_BIND", "")),
         warnings=rc.warnings,
     )

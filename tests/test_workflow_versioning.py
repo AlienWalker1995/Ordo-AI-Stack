@@ -192,7 +192,7 @@ def test_mcp_diff_tool_request_reaches_the_diff_route(client: TestClient, monkey
 
 # --- Promote ---
 
-def test_promote_version(client: TestClient):
+def test_promote_version(client: TestClient, db_dir: Path):
     """Promote a version and verify success."""
     client.post(
         "/api/orchestration/workflows/save",
@@ -210,14 +210,14 @@ def test_promote_version(client: TestClient):
     assert body["promoted_version"] == 2
 
     # Verify promoted_at is set on the version
-    r2 = client.get("/api/orchestration/workflows/wf-promo/versions/2")
-    assert r2.status_code == 200
-    assert r2.json()["promoted_at"] is not None
+    from dashboard.orchestration_db import get_workflow_version
+
+    assert get_workflow_version(db_dir, "wf-promo", 2)["promoted_at"] is not None
 
 
 # --- Rollback ---
 
-def test_rollback_creates_new_version(client: TestClient):
+def test_rollback_creates_new_version(client: TestClient, db_dir: Path):
     """Rollback to a previous version creates a new version with the old content."""
     wf1 = _make_workflow("original")
     wf2 = _make_workflow("updated")
@@ -239,9 +239,9 @@ def test_rollback_creates_new_version(client: TestClient):
     assert body["rolled_back_to"] == 1
 
     # Verify the new version has the original workflow content
-    r2 = client.get("/api/orchestration/workflows/wf-rb/versions/3")
-    assert r2.status_code == 200
-    v3 = r2.json()
+    from dashboard.orchestration_db import get_workflow_version
+
+    v3 = get_workflow_version(db_dir, "wf-rb", 3)
     assert v3["compiled_json"]["1"]["inputs"]["text"] == "original"
     assert v3["rollback_of"] == 1
 

@@ -154,10 +154,6 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     if path in (
         "/api/health",
-        "/api/auth/config",
-        "/api/hardware",
-        "/api/throughput/stats",
-        "/api/rag/status",
         "/api/orchestration/readiness",
     ):
         return await call_next(request)
@@ -192,7 +188,6 @@ MODEL_GATEWAY_URL = os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11
 MODEL_GATEWAY_API_KEY = (os.environ.get("MODEL_GATEWAY_API_KEY") or os.environ.get("LITELLM_MASTER_KEY", "")).strip()
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://comfyui:8188").rstrip("/")
 MODELS_DIR = Path(os.environ.get("MODELS_DIR", "/models"))
-SCRIPTS_DIR = Path(os.environ.get("SCRIPTS_DIR", "/scripts"))
 
 
 def _model_gateway_headers() -> dict[str, str]:
@@ -218,23 +213,6 @@ def _scan_gguf_models() -> list[dict]:
     except OSError as e:
         logger.warning("GGUF model scan failed: %s", e)
     return models
-
-
-@app.get("/api/llm/models")
-async def llm_models():
-    """List GGUF models available on disk (primary) merged with gateway active-model info."""
-    disk_models = await asyncio.to_thread(_scan_gguf_models)
-    if disk_models:
-        return {"models": disk_models, "ok": True}
-    # Fallback: ask model-gateway
-    try:
-        r = await _get_http_client().get(f"{MODEL_GATEWAY_URL}/v1/models", headers=_model_gateway_headers())
-        r.raise_for_status()
-        data = r.json()
-        models = [{"name": m["id"]} for m in data.get("data", []) if m.get("id")]
-        return {"models": models, "ok": True}
-    except Exception as e:
-        return {"models": [], "ok": False, "error": str(e)}
 
 
 def _scan_comfyui_models() -> list[dict]:
@@ -892,7 +870,6 @@ async def _throughput_active_model() -> dict:
         return value
 
 
-@app.get("/api/throughput/stats")
 async def throughput_stats():
     """Per-model throughput stats over timestamped samples: peak, p50/p95/p99, latest,
     sample_count, first_ts/last_ts. Includes last_benchmark if available."""
@@ -1107,9 +1084,8 @@ QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333")
 RAG_COLLECTION = os.environ.get("RAG_COLLECTION", "documents")
 
 
-@app.get("/api/rag/status")
 async def rag_status():
-    """Qdrant health and document collection stats. No auth required."""
+    """Qdrant health and document collection stats."""
     try:
         r = await _get_http_client().get(f"{QDRANT_URL}/collections/{RAG_COLLECTION}", timeout=5.0)
         if r.status_code == 200:
@@ -1257,9 +1233,8 @@ def _probe_gpu() -> dict | None:
     return gpu
 
 
-@app.get("/api/hardware")
 async def hardware_stats():
-    """System resource stats. No auth required (read-only). Blocking calls run in thread pool (R7)."""
+    """System resource stats. Blocking calls run in thread pool (R7)."""
     cpu_pct = await asyncio.to_thread(psutil.cpu_percent, 0.1)
     mem = await asyncio.to_thread(psutil.virtual_memory)
     try:
@@ -1294,7 +1269,7 @@ async def hardware_stats():
 
 @app.get("/api/hardware/service-pressure")
 async def service_pressure():
-    """Per-service compute pressure (CPU/RAM/VRAM). No auth — read-only, like /api/hardware."""
+    """Per-service compute pressure (CPU/RAM/VRAM)."""
     from dashboard.services_catalog import OPS_SERVICE_MAP, SERVICES
 
     ops_url = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000").rstrip("/")
@@ -1401,14 +1376,12 @@ class _NoCacheHTMLStaticFiles(StaticFiles):
         return response
 
 
-static_dir = Path(__file__).parent / "static"
 frontend_dist = Path(__file__).parent / "frontend" / "dist"
 
 # The dashboard SPA is the React build in frontend/dist (the production image builds it; locally,
 # `npm run build` in frontend/). A production Vite build emits hashed ES modules referenced with
 # script-src 'self', so it satisfies the app's strict CSP. All /api/* and /grafana/* routes are
-# registered above and take precedence over these catch-all static mounts.
-_spa_dir = frontend_dist if (frontend_dist / "index.html").exists() else static_dir
+# registered above and take precedence over the catch-all static mount.
 
 # Served at / when the frontend has not been built (a bare checkout, CI): an honest page saying
 # so, rather than a 404 or a stale fallback UI.
@@ -1429,5 +1402,5 @@ async def _app_shell():
     return FileResponse(str(index), media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
-if _spa_dir.exists():
-    app.mount("/", _NoCacheHTMLStaticFiles(directory=str(_spa_dir), html=True), name="static")
+if (frontend_dist / "index.html").exists():
+    app.mount("/", _NoCacheHTMLStaticFiles(directory=str(frontend_dist), html=True), name="static")

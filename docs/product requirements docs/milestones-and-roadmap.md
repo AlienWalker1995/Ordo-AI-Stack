@@ -43,7 +43,7 @@
 
 - MCP health dots (green/yellow/red) per tool
 - SSRF scripts: `scripts/ssrf-egress-block.sh` and `.ps1`
-- Hardware stats: `GET /api/hardware`
+- Hardware stats: the Overview page (`GET /api/overview`)
 - Throughput benchmark: `POST /api/throughput/benchmark`
 - Model switch: `POST /api/models/switch` (catalog id → ops-controller render → recreate `llamacpp` + `model-gateway`)
 
@@ -113,7 +113,7 @@ docker compose exec dashboard curl -s http://model-gateway:11435/v1/models | jq 
 # or externally via the Caddy /llm edge route (bearer = LITELLM_MASTER_KEY):
 # curl -s -H "Authorization: Bearer $LITELLM_MASTER_KEY" https://<host>/llm/v1/models | jq .data[].id
 docker compose exec dashboard curl -s http://localhost:8080/api/mcp/health | jq .health
-docker compose exec dashboard curl -s http://localhost:8080/api/rag/status | jq .
+docker compose exec dashboard curl -s http://localhost:8080/api/overview | jq .knowledge
 docker inspect $(docker compose ps -q model-gateway) --format '{{.HostConfig.CapDrop}}'
 # → [ALL]
 ```

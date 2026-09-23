@@ -16,10 +16,10 @@ image: ordo/dashboard:latest
 # defaults to services/<id>. METADATA only; never rendered into compose.
 build:
   context: services/dashboard/dashboard
-# Read-only GPU visibility for the dashboard SERVICE ITSELF. Its `/api/hardware` route (the
+# Read-only GPU visibility for the dashboard SERVICE ITSELF. Its `hardware_stats()` (the
 # hw-stat bar's GPU widgets) shells to nvidia-smi (_probe_gpu) and enumerates cards
 # (gpu_stats.list_gpus), which the NVIDIA runtime only injects when the service reserves a GPU
-# with the `utility` cap. Without it `/api/hardware` returns gpu:null + gpus:[] and the GPU
+# with the `utility` cap. Without it `hardware_stats()` returns gpu:null + gpus:[] and the GPU
 # widgets go blank. `count: all` so it reads BOTH cards. Compute is NOT reserved.
 gpu: utility
 depends_on:
@@ -68,7 +68,7 @@ environment:
   # DASHBOARD_AUTH_TOKEN unset the app's AUTH_REQUIRED is False, so no Bearer / trusted-proxy
   # config is needed. (Dropping the hardcoded DASHBOARD_TRUSTED_PROXY_NET also kills a subnet
   # that drifted when ordo-net was recreated — operator mandate: auth is the edge's job.)
-  # `/api/hardware` calls psutil.disk_usage(BASE_PATH) for the hw-stat bar's DISK widget. The render
+  # `hardware_stats()` calls psutil.disk_usage(BASE_PATH) for the hw-stat bar's DISK widget. The render
   # emits BASE_PATH=<Windows host path> into the shared .env (compose NEEDS it there to interpolate
   # ${BASE_PATH} volume mounts on the host) — but env_file injects that Windows path into THIS Linux
   # container too, where psutil.disk_usage("C:/dev/...") raises FileNotFoundError -> disk_*:null.

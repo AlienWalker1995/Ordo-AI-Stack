@@ -116,7 +116,7 @@ def test_ops_controller_reserves_a_utility_gpu(tmp_path):
 
 
 def test_the_dashboard_itself_also_reserves_a_utility_gpu(tmp_path):
-    """Its /api/hardware route shells to nvidia-smi for the hw-stat bar's GPU widgets."""
+    """Its hardware_stats() shells to nvidia-smi for the hw-stat bar's GPU widgets."""
     from ordo.dashboards import DashboardRegistry
     dashboards = DashboardRegistry.load(ROOT / "services")
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},

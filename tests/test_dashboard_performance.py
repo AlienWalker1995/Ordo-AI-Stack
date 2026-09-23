@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi.testclient import TestClient
 
 
@@ -23,8 +25,7 @@ def test_throughput_record_persists_ttft_in_stats():
     )
     assert record.status_code == 200
 
-    stats = client.get("/api/throughput/stats")
-    assert stats.status_code == 200
-    model = stats.json()["models"]["qwen3-14b.gguf:chat"]
+    stats = asyncio.run(dashboard_app.throughput_stats())
+    model = stats["models"]["qwen3-14b.gguf:chat"]
     assert model["ttft_p50_ms"] == 180.0
     assert model["ttft_p95_ms"] == 180.0

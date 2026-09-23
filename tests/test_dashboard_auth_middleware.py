@@ -73,9 +73,6 @@ class TestNonApiPathsBypassAuth:
 
 ALLOWLISTED_PATHS = [
     "/api/health",
-    "/api/auth/config",
-    "/api/hardware",
-    "/api/rag/status",
     "/api/orchestration/readiness",
 ]
 

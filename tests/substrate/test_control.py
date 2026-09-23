@@ -264,13 +264,18 @@ def test_registry_enable_route_is_gone(tmp_path):
     assert cp.route("POST", "/registry/models/local-chat/enable", {"enabled": True})[0] == 404
 
 
-def test_env_allowlist_matches_ops_api():
-    assert ControlPlane.ENV_ALLOWED_KEYS == {
-        "DEFAULT_MODEL", "OPEN_WEBUI_DEFAULT_MODEL", "LLAMACPP_MODEL", "LLAMACPP_CTX_SIZE",
-        "LLAMACPP_EMBED_MODEL", "LLAMACPP_MMPROJ", "LLAMACPP_FLASH_ATTN",
-        "LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION", "LLAMACPP_KV_CACHE_TYPE_K",
-        "LLAMACPP_KV_CACHE_TYPE_V", "LLAMACPP_EXTRA_ARGS",
-    }
+@pytest.mark.parametrize("method, path", [
+    ("GET", "/env/DEFAULT_MODEL"),
+    ("POST", "/env/set"),
+    ("POST", "/images/pull"),
+    ("GET", "/mcp/containers"),
+    ("GET", "/registry/models/local-chat"),
+])
+def test_removed_routes_are_gone(tmp_path, method, path):
+    # They had no caller. /env/set also wrote .env directly, which the next render undoes:
+    # models change through POST /model-config (catalog id -> render).
+    cp, _ = _cp(tmp_path)
+    assert cp.route(method, path, {"confirm": True})[0] == 404
 
 
 def test_audit_route_uses_configured_file_and_limit(tmp_path, monkeypatch):

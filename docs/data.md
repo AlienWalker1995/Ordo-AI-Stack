@@ -143,7 +143,7 @@ On a fresh install the volume starts empty and `llamacpp` crash-loops with `fail
 3. Chunks are embedded via `EMBED_MODEL` through the model gateway.
 4. Points are written to Qdrant (`qdrant-data` named volume).
 
-Status: `GET /api/rag/status` on the dashboard returns current collection point count.
+Status: the dashboard's `GET /api/overview` reports the collection point count as `knowledge.documents`.
 
 ### Audit Logging
 
