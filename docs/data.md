@@ -1,6 +1,6 @@
 # Data Schemas, Lifecycle, and Persistence
 
-> The stack keeps a **single data root**, `data/` at the repo root; `site.DATA_PATH` in `ordo.yaml` renders it into the compose bind mounts. Config and bring-up flow through the render substrate: edit the declarative source `ordo.yaml` (tracked template `ordo.example.yaml`), run `ordo render` (`python -m ordo.cli render --out out`), then bring up the rendered compose from `out/` (`docker compose -p ordo … up`). Never hand-edit rendered output. Authoritative guide: [`operator-guide.md`](operator-guide.md).
+> The stack keeps a **single data root**, `data/` at the repo root; `site.DATA_PATH` in `ordo.yaml` renders it into the compose bind mounts. Config and bring-up flow through the render substrate: edit the declarative source `ordo.yaml` (tracked template `ordo.example.yaml`), run `ordo render` (`python -m ordo.cli render --out out`), then bring up the rendered stack from the repo root (`ordo up --all`). Never hand-edit rendered output. Authoritative guide: [`operator-guide.md`](operator-guide.md).
 
 Reference for where data lives, how it moves, and what survives a restart / rebuild.
 
@@ -117,7 +117,7 @@ Configuration: `EMBED_MODEL`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP` in `out/.env
 
 ### Initialization
 
-Triggered by `ordo render` + first `docker compose -p ordo … up` from `out/`.
+Triggered by `ordo render` + the first `ordo up --all`.
 
 - Creates `data/` and `models/` subdirectories.
 - Emits the MCP artifacts into `out/` (`out/mcp/servers.json`, `out/model-gateway/mcp_servers.yaml`); nothing is written under `data/mcp/`.
@@ -211,9 +211,9 @@ done
 ### Restore
 
 ```bash
-cd out && docker compose -p ordo down
+(cd out && docker compose -p ordo down)
 tar -xzf ordo-ai-stack-backup-<date>.tar.gz
-cd out && docker compose -p ordo up -d
+ordo up --all
 ```
 
 ## Data Migration
@@ -230,8 +230,8 @@ site:
 mkdir -p /new/path/to/data
 cp -a data/. /new/path/to/data/
 python -m ordo.cli render --out out
-cd out && docker compose -p ordo down
-cd out && docker compose -p ordo up -d
+(cd out && docker compose -p ordo down)
+ordo up --all
 ```
 
 ## Data Cleanup

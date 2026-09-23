@@ -63,8 +63,8 @@ plugins: [codebase-memory-ui]   # or: auto
 ```
 Then re-render and bring the stack up:
 ```
-ordo render
-cd out && docker compose -p ordo up -d
+ordo --source out/ordo.yaml render --out out
+ordo up --all
 ```
 Then browse **`https://<CADDY_TAILNET_HOSTNAME>:8448/`** (Google SSO). Index a
 repo first (the UI's "index" action, or `POST /rpc` `index_repository`)

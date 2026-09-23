@@ -33,7 +33,8 @@ echo "==> Smoke test (repo: $REPO_ROOT, compose: out/docker-compose.yml, project
 
 if [ "$UP" = true ]; then
   echo "==> Starting services..."
-  COMPOSE_PROFILES='*' docker compose "${COMPOSE_ARGS[@]}" up -d
+  # The sanctioned bring-up: every profile, both env files, refused while a GPU lease holds.
+  python -m ordo up --all --out out
   echo "==> Waiting 60s for healthchecks..."
   sleep 60
 fi

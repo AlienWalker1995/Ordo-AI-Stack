@@ -20,8 +20,9 @@ Write-Host "==> Smoke test (repo: $RepoRoot, compose: out/docker-compose.yml, pr
 
 if ($Up) {
     Write-Host "==> Starting services..."
-    $env:COMPOSE_PROFILES = "*"
-    docker compose @ComposeArgs up -d
+    # The sanctioned bring-up: every profile, both env files, refused while a GPU lease holds.
+    python -m ordo up --all --out out
+    if ($LASTEXITCODE -ne 0) { throw "ordo up --all failed (exit $LASTEXITCODE)" }
     Write-Host "==> Waiting 60s for healthchecks..."
     Start-Sleep -Seconds 60
 }

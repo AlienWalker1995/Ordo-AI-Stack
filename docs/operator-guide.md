@@ -62,19 +62,14 @@ ordo init                                     # re-run the wizard in an existing
 # …or step through it by hand:
 ordo --source out/ordo.yaml render --out out  # regenerate out/ from the source (NEVER bare `ordo render`)
 ordo preflight --ref out/.env                 # read-only GO/NO-GO readiness gate
-# bring up — COMPOSE_PROFILES must list the capability profiles you enabled (the wizard sets these for you):
-cd out && COMPOSE_PROFILES=edge,webui,… docker compose -p ordo --env-file .env --env-file secrets.env up -d
+# bring up: every rendered profile, both env files; refuses while a GPU lease holds the card
+ordo up --all                                 # --dry-run prints the docker compose argv instead
 ```
 
-To reconcile the **whole** deployment against a fresh render (every profile you have enabled,
-without having to remember the list), use Compose's wildcard:
-
-```bash
-cd out && COMPOSE_PROFILES='*' docker compose -p ordo --env-file .env --env-file secrets.env up -d
-```
-
-`COMPOSE_PROFILES=all` does **not** do this — there is no profile named `all`, so it silently
-selects only the profile-less services and leaves every optional service unreconciled.
+`ordo up --all` reconciles the **whole** deployment against a fresh render (every profile the
+render enabled). `ordo up <svc>...` / `ordo recreate <svc>...` touch only the named services
+(`--no-deps`; caddy is recreated together with its netns members), and refuse to start a resident
+the GPU scheduler evicted for a running render.
 
 Everything below is the reference for *how* that render engine works and *why* it's built this way.
 
@@ -227,7 +222,7 @@ gate). Only the Tailscale model is wired today; the others' required pieces are 
 - Always render from the real source: `ordo render --source out/ordo.yaml`.
 - **Re-render only inside a `--gpus all` container** (so hardware detection sees both cards); the
   rendered `llamacpp` block must come out **byte-identical** to what's running.
-- Apply with `docker compose ... up -d --no-deps <svc>` (per-service, no cascade). The dashboard's
+- Apply with `ordo recreate <svc>` (per-service, no cascade). The dashboard's
   per-service recreate button does exactly this against the existing `out/` compose (no re-render).
 
 ## What the cutover produced
