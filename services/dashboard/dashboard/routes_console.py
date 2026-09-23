@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import Response
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from dashboard import console
@@ -77,21 +77,39 @@ async def _comfy_json(path: str) -> dict | None:
     return await _get_json(f"{COMFYUI_URL}{path}", timeout=10.0)
 
 
-async def _comfy_bytes(filename: str, subfolder: str, kind: str) -> tuple[bytes, str] | None:
+# Response headers worth passing through from ComfyUI's /view: enough for a browser to seek.
+_PASSTHROUGH_HEADERS = ("content-type", "content-length", "content-range", "accept-ranges")
+
+
+async def _comfy_stream(filename: str, subfolder: str, kind: str, byte_range: str | None):
+    """Open ComfyUI's /view as a stream: (status, headers, body chunks), or None. A video is
+    never buffered whole, and a Range request is forwarded so the browser can seek."""
     from dashboard.app import _get_http_client
 
+    client = _get_http_client()
+    request = client.build_request(
+        "GET", f"{COMFYUI_URL}/view",
+        params={"filename": filename, "subfolder": subfolder, "type": kind},
+        headers={"Range": byte_range} if byte_range else None,
+        timeout=30.0,
+    )
     try:
-        r = await _get_http_client().get(
-            f"{COMFYUI_URL}/view",
-            params={"filename": filename, "subfolder": subfolder, "type": kind},
-            timeout=30.0,
-        )
+        r = await client.send(request, stream=True)
     except Exception as exc:
         logger.debug("ComfyUI /view failed: %s", exc)
         return None
-    if r.status_code != 200:
+    if r.status_code not in (200, 206):
+        await r.aclose()
         return None
-    return r.content, r.headers.get("content-type", "application/octet-stream")
+
+    async def body():
+        try:
+            async for chunk in r.aiter_bytes():
+                yield chunk
+        finally:
+            await r.aclose()
+
+    return r.status_code, {k: v for k, v in r.headers.items() if k.lower() in _PASSTHROUGH_HEADERS}, body()
 
 
 async def _hardware() -> dict:
@@ -211,8 +229,8 @@ async def activity(limit: int = Query(25, ge=1, le=100)) -> dict:
 
 @router.get("/services/table")
 async def services_table() -> dict:
-    cards, services = await asyncio.gather(_service_cards(), _ops_json("/services"))
-    return {"groups": console.build_service_table(cards, _containers(services)),
+    cards, services, status = await asyncio.gather(_service_cards(), _ops_json("/services"), _ops_json("/status"))
+    return {"groups": console.build_service_table(cards, _containers(services), (status or {}).get("gpu")),
             "control_plane": services is not None}
 
 
@@ -259,6 +277,14 @@ async def _switch(body: SwitchBody) -> dict:
     if entry.get("file") not in {f.get("name") for f in disk}:
         raise HTTPException(status_code=409, detail=f"'{body.model}' is not downloaded: "
                                                     f"{entry.get('file')} is not on disk")
+    # Recreating llama.cpp while a render holds the GPU would load the model onto the leased
+    # card: two tenants on one GPU is how the host crashed on 2026-08-08. Unknown is refused too.
+    status = await _ops_json("/status")
+    if status is None:
+        raise HTTPException(status_code=503, detail="The control plane did not report GPU state; not switching")
+    gpu = status.get("gpu") or {}
+    if gpu.get("running") or gpu.get("evicted_residents"):
+        raise HTTPException(status_code=409, detail="A render has the GPU right now; switch after it finishes")
     code, rendered = await _ops_call("POST", "/model-config", {"model": body.model})
     if code != 200:
         raise HTTPException(status_code=502, detail=rendered.get("error") or rendered.get("detail")
@@ -270,11 +296,25 @@ async def _switch(body: SwitchBody) -> dict:
         # confirmation carried on every destructive call.
         rc, data = await _ops_call("POST", f"/services/{service}/recreate", {"confirm": True})
         if rc != 200:
-            raise HTTPException(status_code=502, detail=f"recreating {service} failed: "
-                                                        f"{data.get('error') or data.get('detail') or rc}")
+            reason = data.get("error") or data.get("detail") or rc
+            rollback = await _roll_back(model_config.get("source_model"), recreated)
+            raise HTTPException(status_code=502, detail=f"recreating {service} failed: {reason}; {rollback}")
         recreated.append(service)
     return {"ok": True, "active_model": rendered.get("active_model"), "ctx_size": rendered.get("ctx_size"),
             "recreated": recreated, "hermes_restart_needed": plan["hermes_restart_needed"]}
+
+
+async def _roll_back(previous: str | None, recreated: list[str]) -> str:
+    """Put the source back on the previous model after a failed recreate, and return what was
+    already recreated to it, so the declared config never names a model nothing is running."""
+    if not previous:
+        return "the previous model is unknown, so the source still names the new one"
+    code, _ = await _ops_call("POST", "/model-config", {"model": previous})
+    if code != 200:
+        return f"rolling the source back to {previous} also failed; it still names the new model"
+    for service in recreated:
+        await _ops_call("POST", f"/services/{service}/recreate", {"confirm": True})
+    return f"rolled back the source to {previous}"
 
 
 class DeleteBody(BaseModel):
@@ -286,8 +326,27 @@ async def delete_model(body: DeleteBody) -> dict:
     name = (body.file or "").strip()
     if not name or "/" in name or "\\" in name or ".." in name or not name.lower().endswith(".gguf"):
         raise HTTPException(status_code=400, detail="Name a single .gguf file")
-    served, registry = await asyncio.gather(_served(), _ops_json("/registry/models"))
-    if name in console.in_use_files(served, _registry(registry)):
+    # A switch checks the file is on disk and then loads it; a delete in between would pull it
+    # out from under the recreate.
+    if _switch_lock.locked():
+        raise HTTPException(status_code=409, detail="A model switch is in progress; delete after it finishes")
+    async with _switch_lock:
+        return await _delete(name)
+
+
+async def _delete(name: str) -> dict:
+    served, registry, model_config = await asyncio.gather(
+        _served(), _ops_json("/registry/models"), _ops_json("/model-config"))
+    # Every unknown refuses: a file is only deletable when every server's dependency is known.
+    if registry is None or model_config is None:
+        raise HTTPException(status_code=503, detail="The control plane did not answer; cannot tell which files are in use")
+    if not served.get("cpu"):
+        # The CPU fallback's file is known only from what it serves.
+        raise HTTPException(status_code=503, detail="The CPU fallback is not reporting its model; try again when it is up")
+    in_use = console.in_use_files(served, _registry(registry))
+    if model_config.get("active_file"):
+        in_use.add(model_config["active_file"])
+    if name in in_use:
         raise HTTPException(status_code=409, detail=f"{name} is in use by a running model server")
     path = GGUF_DIR / name
     if not path.is_file():
@@ -310,19 +369,19 @@ async def media(limit: int = Query(24, ge=1, le=100)) -> dict:
 
 
 @router.get("/media/view")
-async def media_view(filename: str = "", subfolder: str = "", type: str = "output") -> Response:  # noqa: A002
+async def media_view(request: Request, filename: str = "", subfolder: str = "",
+                     type: str = "output") -> StreamingResponse:  # noqa: A002
     """Proxy one finished output for a thumbnail. Only `output` files, bare names, and safe
     subfolder segments: this reaches into ComfyUI's filesystem on the caller's behalf."""
     if type != "output" or not filename or not _SEGMENT.match(filename) or ".." in filename:
         raise HTTPException(status_code=400, detail="Only a bare output filename can be viewed")
     if subfolder and (".." in subfolder or not all(_SEGMENT.match(s) for s in subfolder.split("/"))):
         raise HTTPException(status_code=400, detail="Invalid subfolder")
-    got = await _comfy_bytes(filename, subfolder, type)
+    got = await _comfy_stream(filename, subfolder, type, request.headers.get("range"))
     if got is None:
         raise HTTPException(status_code=404, detail="Not found")
-    content, content_type = got
-    return Response(content=content, media_type=content_type,
-                    headers={"Cache-Control": "private, max-age=3600"})
+    status, headers, body = got
+    return StreamingResponse(body, status_code=status, headers={**headers, "Cache-Control": "private, max-age=3600"})
 
 
 # ---------------------------------------------------------------------------------------------

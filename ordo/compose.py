@@ -234,7 +234,9 @@ GATEWAY_LANGFUSE_ENV: dict[str, str] = {
 # The rendered gateway config, bound by HOST path. ops-controller recreates model-gateway (a
 # model switch does) running compose with its project directory at its own /config mount, so a
 # "./model-gateway" bind would resolve to /config/model-gateway on the host, which does not exist.
-_MODEL_GATEWAY_CONFIG_BIND = "${BASE_PATH}/out/model-gateway:/config:ro"
+# ":?" fails the compose call loudly if BASE_PATH is unset, instead of binding an empty
+# /out/model-gateway that Docker would create and the gateway would start without config.
+_MODEL_GATEWAY_CONFIG_BIND = "${BASE_PATH:?BASE_PATH must be set}/out/model-gateway:/config:ro"
 
 
 def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool = False,

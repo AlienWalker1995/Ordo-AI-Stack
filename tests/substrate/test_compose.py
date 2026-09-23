@@ -544,7 +544,7 @@ def test_model_gateway_wired_to_db_config_mount_and_mcp_net():
     mg = c["services"]["model-gateway"]
     assert mg["depends_on"]["litellm-db"] == {"condition": "service_healthy"}
     assert mg["depends_on"]["llamacpp"] == {"condition": "service_started"}
-    assert "${BASE_PATH}/out/model-gateway:/config:ro" in mg["volumes"]
+    assert "${BASE_PATH:?BASE_PATH must be set}/out/model-gateway:/config:ro" in mg["volumes"]
     assert mg["networks"] == ["ordo-net", "ordo-mcp-net"]
     env = mg["environment"]
     assert env["DATABASE_URL"] == "postgresql://litellm:${LITELLM_DB_PASSWORD}@litellm-db:5432/litellm"
@@ -564,7 +564,7 @@ def test_model_gateway_keys_is_a_one_shot_after_gateway_health():
     assert k["command"] == ["python3", "/app/bootstrap_keys.py"]
     assert k["restart"] == "on-failure"
     assert k["depends_on"]["model-gateway"] == {"condition": "service_healthy"}
-    assert "${BASE_PATH}/out/model-gateway:/config:ro" in k["volumes"]
+    assert "${BASE_PATH:?BASE_PATH must be set}/out/model-gateway:/config:ro" in k["volumes"]
     assert k["environment"]["LITELLM_KEYS_SPEC"] == "/config/keys.json"
     assert k["environment"]["MODEL_GATEWAY_URL"] == "http://model-gateway:11435"
     assert any(isinstance(f, dict) and f.get("path") == "secrets.env" for f in k["env_file"])

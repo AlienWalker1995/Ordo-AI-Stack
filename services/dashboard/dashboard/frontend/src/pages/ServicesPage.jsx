@@ -75,6 +75,9 @@ function StateActions({ row, onAction, busy }) {
   if (!row.controllable) {
     return <span className="text-caption text-muted" title="The control plane will not restart the service that is serving it">Host only</span>
   }
+  if (row.lent) {
+    return <span className="text-caption text-muted" title="Its GPU is lent to a render; it restarts when the render finishes">Lent to a render</span>
+  }
   return (
     <>
       {row.actions.includes('start') && <button type="button" className={BTN} disabled={busy} onClick={() => onAction(row, 'start')}>Start</button>}
@@ -122,7 +125,8 @@ function ServiceRow({ row, usage, onLogs, onAction, busy }) {
   )
 }
 
-function Group({ group, usageById, filter, onLogs, onAction, busyId }) {
+function Group({ group, usageById, filter: rawFilter, onLogs, onAction, busyId }) {
+  const filter = rawFilter.trim().toLowerCase()
   const rows = group.services.filter((s) => !filter
     || s.name.toLowerCase().includes(filter) || (s.compose || '').toLowerCase().includes(filter))
   if (!rows.length) return null
@@ -200,7 +204,7 @@ export default function ServicesPage() {
       <div className="flex flex-wrap items-center gap-3">
         <label htmlFor="service-filter" className="sr-only">Filter services</label>
         <input id="service-filter" className={INPUT + ' w-72 max-w-full'} placeholder="Filter by name"
-               value={filter} onChange={(e) => setFilter(e.target.value.trim().toLowerCase())} />
+               value={filter} onChange={(e) => setFilter(e.target.value)} />
         {!table.data.control_plane && <Unavailable>The control plane is not answering; states may be stale.</Unavailable>}
         {pressure.error && <span className="text-caption text-muted">CPU and memory are unavailable right now.</span>}
       </div>

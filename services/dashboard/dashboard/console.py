@@ -417,7 +417,8 @@ def _group_for_container(sid: str, verdict: str) -> str:
 
 
 def _row(compose: str | None, name: str, group: str, container: dict | None, open_url=None,
-         error=None, card_id: str | None = None, probe_ok: bool | None = None) -> dict:
+         error=None, card_id: str | None = None, probe_ok: bool | None = None,
+         lent: bool = False) -> dict:
     if compose is None:
         # A probe-only card: a link and a health check, not one container, so its state is the
         # probe's and it offers no lifecycle controls.
@@ -428,11 +429,14 @@ def _row(compose: str | None, name: str, group: str, container: dict | None, ope
         if verdict == "up" and error:
             verdict = "unhealthy"  # the container runs but its HTTP probe fails
         controllable = compose not in NOT_CONTROLLABLE
+    # A resident evicted so a render can borrow its GPU must not be started from here: that
+    # would put a second tenant on the leased card. It comes back when the lease is released.
+    actions = actions_for(verdict) if controllable and not lent else []
     return {
         "compose": compose, "card_id": card_id, "name": name, "group": group, "verdict": verdict,
         "uptime": uptime_from_status((container or {}).get("status")),
         "status": (container or {}).get("status"), "open_url": open_url, "error": error,
-        "controllable": controllable, "actions": actions_for(verdict) if controllable else [],
+        "controllable": controllable, "lent": lent, "actions": actions,
     }
 
 
@@ -446,8 +450,10 @@ def _card_container(card: dict, containers_by_id: dict) -> str | None:
     return None
 
 
-def build_service_table(cards: list[dict], containers_by_id: dict) -> list[dict]:
+def build_service_table(cards: list[dict], containers_by_id: dict,
+                        status_gpu: dict | None = None) -> list[dict]:
     """Every container, grouped; catalog services keep their friendly names and Open links."""
+    evicted = set((status_gpu or {}).get("evicted_residents") or {})
     rows: list[dict] = []
     claimed: set[str] = set()
     for card in cards or []:
@@ -457,11 +463,12 @@ def build_service_table(cards: list[dict], containers_by_id: dict) -> list[dict]
         rows.append(_row(compose, card.get("name") or card.get("id"), _group_for_card(card),
                          (containers_by_id or {}).get(compose) if compose else None, card.get("open_url"),
                          card.get("error") if card.get("ok") is False else None,
-                         card_id=card.get("id"), probe_ok=card.get("ok")))
+                         card_id=card.get("id"), probe_ok=card.get("ok"), lent=compose in evicted))
     for sid, container in sorted((containers_by_id or {}).items()):
         if sid in claimed:
             continue
-        rows.append(_row(sid, sid, _group_for_container(sid, _verdict(container)), container))
+        rows.append(_row(sid, sid, _group_for_container(sid, _verdict(container)), container,
+                         lent=sid in evicted))
     grouped = []
     for group in _GROUP_ORDER:
         members = [r for r in rows if r["group"] == group]

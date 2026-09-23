@@ -40,7 +40,7 @@ OPS = {
         "comfyui": {"service": "comfyui", "gpu_uuid": BIG},
         "voice-stt": {"service": "stt", "gpu_uuid": SMALL},
     }},
-    "/model-config": {"active_model": "turbo", "active_file": GPU_FILE, "ctx_size": 106496,
+    "/model-config": {"source_model": "auto", "active_model": "turbo", "active_file": GPU_FILE, "ctx_size": 106496,
                       "available": [{"id": "turbo", "tier": "ultra", "vram_gb": 24, "file": GPU_FILE},
                                     {"id": "absent", "tier": "ultra", "vram_gb": 24, "file": "absent.gguf"}]},
     "/jobs/history": {"history": [{"id": "train-lora", "kind": "train", "started": 100.0, "ended": 200.0,
@@ -68,6 +68,16 @@ HISTORY = {"r1": {"status": {"status_str": "success", "messages": [["execution_s
 
 async def fake_ops_json(path):
     return OPS.get(path)
+
+
+IDLE_STATUS = {"gpu": {"state": "idle", "running": [], "queued": [], "evicted_residents": {}, "rejected": []}}
+
+
+def gpu_idle():
+    """The live fixture has a render holding the GPU; a switch needs it idle."""
+    async def ops_json(path):
+        return IDLE_STATUS if path == "/status" else OPS.get(path)
+    return patch.object(routes_console, "_ops_json", side_effect=ops_json)
 
 
 @pytest.fixture
@@ -137,6 +147,14 @@ def test_service_table_is_grouped(live):
     assert groups["Jobs"][0]["compose"] == "evals" and groups["Jobs"][0]["verdict"] == "done"
 
 
+def test_a_model_evicted_for_a_render_cannot_be_started_from_the_table(live):
+    # Starting it would put a second tenant on the leased GPU.
+    rows = {r["compose"]: r for g in live.get("/api/services/table").json()["groups"] for r in g["services"]}
+    assert rows["llamacpp"]["lent"] is True
+    assert rows["llamacpp"]["actions"] == []
+    assert rows["llamacpp-cpu"]["lent"] is False
+
+
 # --- models ---
 
 def test_models_page_lists_slots_catalog_and_files(live):
@@ -160,7 +178,7 @@ def test_switch_goes_through_the_catalog_then_recreates_what_the_plan_names(live
             return 400, {"error": "Destructive operation requires confirmation."}
         return 200, {"ok": True}
 
-    with patch.object(routes_console, "_ops_call", side_effect=ops_call):
+    with gpu_idle(), patch.object(routes_console, "_ops_call", side_effect=ops_call):
         r = live.post("/api/models/switch", json={"model": "turbo"})
     assert r.status_code == 200, r.text
     assert calls[0] == ("POST", "/model-config", {"model": "turbo"})
@@ -190,7 +208,7 @@ def test_switch_stops_if_the_render_fails_and_recreates_nothing(live):
         calls.append(path)
         return 500, {"error": "render failed"}
 
-    with patch.object(routes_console, "_ops_call", side_effect=ops_call):
+    with gpu_idle(), patch.object(routes_console, "_ops_call", side_effect=ops_call):
         r = live.post("/api/models/switch", json={"model": "turbo"})
     assert r.status_code == 502
     assert calls == ["/model-config"]
@@ -210,6 +228,97 @@ def test_delete_removes_an_unused_file(live, tmp_path):
         r = live.post("/api/models/delete", json={"file": "spare.gguf"})
     assert r.status_code == 200
     assert not (tmp_path / "spare.gguf").exists()
+
+
+def test_switch_is_refused_while_a_render_holds_the_gpu(live):
+    # Recreating llama.cpp now would load the model onto a card a render has leased: two GPU
+    # tenants at once is how the host crashed on 2026-08-08.
+    with patch.object(routes_console, "_ops_call", new=AsyncMock()) as ops_call:
+        r = live.post("/api/models/switch", json={"model": "turbo"})
+    assert r.status_code == 409
+    assert "render" in r.json()["detail"]
+    ops_call.assert_not_called()
+
+
+def test_switch_is_refused_when_the_gpu_state_is_unknown(live):
+    async def ops_json(path):
+        return None if path == "/status" else OPS.get(path)
+
+    with patch.object(routes_console, "_ops_json", side_effect=ops_json), \
+         patch.object(routes_console, "_ops_call", new=AsyncMock()) as ops_call:
+        r = live.post("/api/models/switch", json={"model": "turbo"})
+    assert r.status_code == 503
+    ops_call.assert_not_called()
+
+
+def test_a_failed_recreate_rolls_the_render_back(live):
+    calls = []
+
+    async def ops_call(method, path, json=None):
+        calls.append((path, json))
+        if path == "/model-config":
+            return 200, {"ok": True, "active_model": (json or {}).get("model"), "ctx_size": 106496}
+        return 500, {"error": "docker said no"}
+
+    with gpu_idle(), patch.object(routes_console, "_ops_call", side_effect=ops_call):
+        r = live.post("/api/models/switch", json={"model": "turbo"})
+    assert r.status_code == 502
+    assert "rolled back" in r.json()["detail"]
+    assert calls[-1] == ("/model-config", {"model": "auto"})  # the source is back where it was
+
+
+def test_delete_refuses_while_the_registry_is_unreadable(live, tmp_path):
+    (tmp_path / "spare.gguf").write_bytes(b"x")
+
+    async def ops_json(path):
+        return None if path == "/registry/models" else OPS.get(path)
+
+    with patch.object(routes_console, "GGUF_DIR", tmp_path), \
+         patch.object(routes_console, "_ops_json", side_effect=ops_json):
+        r = live.post("/api/models/delete", json={"file": "spare.gguf"})
+    assert r.status_code == 503
+    assert (tmp_path / "spare.gguf").exists()
+
+
+def test_delete_refuses_while_a_model_server_is_not_reporting(live, tmp_path):
+    # The CPU fallback's file is only known from what it serves; while it restarts, any file
+    # might be the one it is about to load.
+    (tmp_path / "spare.gguf").write_bytes(b"x")
+    with patch.object(routes_console, "GGUF_DIR", tmp_path), \
+         patch.object(routes_console, "_served", new=AsyncMock(return_value={**SERVED, "cpu": None})):
+        r = live.post("/api/models/delete", json={"file": "spare.gguf"})
+    assert r.status_code == 503
+    assert (tmp_path / "spare.gguf").exists()
+
+
+def test_delete_protects_the_active_model_file_even_if_the_registry_omits_it(live, tmp_path):
+    (tmp_path / GPU_FILE).write_bytes(b"x")
+
+    async def ops_json(path):
+        return {"models": {}} if path == "/registry/models" else OPS.get(path)
+
+    with patch.object(routes_console, "GGUF_DIR", tmp_path), \
+         patch.object(routes_console, "_ops_json", side_effect=ops_json):
+        r = live.post("/api/models/delete", json={"file": GPU_FILE})
+    assert r.status_code == 409
+    assert (tmp_path / GPU_FILE).exists()
+
+
+def test_delete_is_refused_while_a_switch_is_running(live, tmp_path):
+    import asyncio
+
+    from httpx import ASGITransport, AsyncClient
+
+    (tmp_path / "spare.gguf").write_bytes(b"x")
+
+    async def scenario():
+        async with routes_console._switch_lock:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+                return (await client.post("/api/models/delete", json={"file": "spare.gguf"})).status_code
+
+    with patch.object(routes_console, "GGUF_DIR", tmp_path):
+        assert asyncio.run(scenario()) == 409
+    assert (tmp_path / "spare.gguf").exists()
 
 
 @pytest.mark.parametrize("name", ["../etc/passwd", "a/b.gguf", "notes.txt", ""])
@@ -237,10 +346,31 @@ def test_media_view_only_fetches_output_files(live, params):
     assert live.get("/api/media/view", params=params).status_code == 400
 
 
+def _streamed(status, headers, body):
+    async def chunks():
+        yield body[:2]
+        yield body[2:]
+    return AsyncMock(return_value=(status, headers, chunks()))
+
+
 def test_media_view_proxies_a_valid_output(live):
-    with patch.object(routes_console, "_comfy_bytes", new=AsyncMock(return_value=(b"PNG", "image/png"))):
+    fetch = _streamed(200, {"content-type": "image/png", "content-length": "3"}, b"PNG")
+    with patch.object(routes_console, "_comfy_stream", new=fetch):
         r = live.get("/api/media/view", params={"filename": "hero.png", "subfolder": "", "type": "output"})
     assert r.status_code == 200 and r.content == b"PNG" and r.headers["content-type"] == "image/png"
+    assert fetch.call_args.args[3] is None  # no Range asked for, none forwarded
+
+
+def test_media_view_forwards_a_range_request(live):
+    # Browsers seek video with Range; Safari will not play a video that ignores it.
+    fetch = _streamed(206, {"content-type": "video/mp4", "content-range": "bytes 0-3/100",
+                            "accept-ranges": "bytes", "content-length": "4"}, b"mp4!")
+    with patch.object(routes_console, "_comfy_stream", new=fetch):
+        r = live.get("/api/media/view", params={"filename": "clip.mp4", "type": "output"},
+                     headers={"Range": "bytes=0-3"})
+    assert r.status_code == 206
+    assert r.headers["content-range"] == "bytes 0-3/100" and r.content == b"mp4!"
+    assert fetch.call_args.args[3] == "bytes=0-3"
 
 
 # --- performance ---
@@ -289,7 +419,7 @@ def test_a_second_switch_while_one_is_running_is_refused(live):
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
             first = asyncio.create_task(client.post("/api/models/switch", json={"model": "turbo"}))
-            await started.wait()
+            await asyncio.wait_for(started.wait(), timeout=5)  # a refused first switch fails, not hangs
             try:
                 # Without a lock the second switch would also block on the render; bound it so
                 # the missing lock shows up as a failure, not a hang.
@@ -301,7 +431,7 @@ def test_a_second_switch_while_one_is_running_is_refused(live):
             release.set()
             return (await first).status_code, second_code
 
-    with patch.object(routes_console, "_ops_call", side_effect=slow_ops_call):
+    with gpu_idle(), patch.object(routes_console, "_ops_call", side_effect=slow_ops_call):
         first_code, second_code = asyncio.run(scenario())
     assert first_code == 200
     assert second_code == 409
