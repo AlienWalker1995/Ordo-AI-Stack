@@ -1,6 +1,6 @@
 """Surgical, safe edits to the declarative source (`ordo.yaml`) — pure text → text.
 
-Extracted from the dashboard (`services/v1-parity/dashboard/app.py`) so the SAME battle-tested
+Extracted from the dashboard (`services/dashboard/dashboard/app.py`) so the SAME battle-tested
 `plugins:` list editor backs both the dashboard's MCP toggle and the control-plane's service
 enable/disable (`ordo/control.py`). Keeping it in the `ordo` package makes it the single source of
 truth and lets the substrate tests exercise it directly (pyyaml-only, no server).
