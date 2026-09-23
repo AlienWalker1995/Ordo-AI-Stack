@@ -1,7 +1,6 @@
 # Test dependencies. Install: pip install -r tests/requirements.txt
 -r ../services/dashboard/dashboard/requirements.txt
 pytest>=7.0.0
-httpx>=0.26.0
 respx>=0.21.0
 # gpu-gate runs on aiohttp; tests/test_gpu_gate.py exercises the REAL gate module (stub arbiter
 # + stub upstream over real HTTP), so the version here must match the one baked into
