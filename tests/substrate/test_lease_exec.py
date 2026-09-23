@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 LEASE_EXEC = str(Path(__file__).resolve().parents[2] / "assets" / "lease-exec.py")
+TOKEN = "lease-test-token"
 
 
 class _StubOps:
@@ -43,11 +44,22 @@ class _StubOps:
                 self.end_headers()
                 self.wfile.write(data)
 
+            def _authorized(self):
+                # Same rule as ops-controller: every call carries the bearer token.
+                if self.headers.get("Authorization") == f"Bearer {TOKEN}":
+                    return True
+                self._send(401, {"error": "missing or invalid bearer token"})
+                return False
+
             def do_GET(self):
+                if not self._authorized():
+                    return
                 stub.polls += 1
                 self._send(200, {"gpu": stub._status()})    # GET /status nests under "gpu"
 
             def do_POST(self):
+                if not self._authorized():
+                    return
                 length = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(length) or b"{}")
                 if self.path == "/jobs":
@@ -77,6 +89,7 @@ def _env(stub_url, extra=None):
         "ORDO_LEASE_POLL_S": "0.05",
         "ORDO_LEASE_HEARTBEAT_S": "0.1",
         "ORDO_LEASE_ACQUIRE_TIMEOUT_S": "5",
+        "OPS_CONTROLLER_TOKEN": TOKEN,
         "PATH": os.environ["PATH"],
     }
     if os.environ.get("SYSTEMROOT"):  # Windows: sockets need it
@@ -85,11 +98,11 @@ def _env(stub_url, extra=None):
     return env
 
 
-def _run(stub_url, child_code, marker, timeout=30):
+def _run(stub_url, child_code, marker, timeout=30, env=None):
     code = child_code.replace("MARKER", str(marker).replace("\\", "/"))
     return subprocess.run(
         [sys.executable, LEASE_EXEC, "-c", code],
-        env=_env(stub_url), capture_output=True, text=True, timeout=timeout,
+        env=env or _env(stub_url), capture_output=True, text=True, timeout=timeout,
     )
 
 
@@ -126,6 +139,18 @@ def test_rejected_job_fails_loudly_without_running_child(tmp_path):
     assert r.returncode != 0
     assert not marker.exists()                  # GPU work must never run unleased
     assert stub.completes == []
+
+
+def test_missing_token_refuses_before_running_child(tmp_path):
+    # ops-controller refuses unauthenticated calls, so without the token the lease can never be
+    # taken: say so up front instead of surfacing a 401 from the first request.
+    stub = _StubOps()
+    marker = tmp_path / "ran.txt"
+    env = _env(stub.url, {"OPS_CONTROLLER_TOKEN": ""})
+    r = _run(stub.url, "open('MARKER','w').write('ok')", marker, env=env)
+    assert r.returncode != 0
+    assert "OPS_CONTROLLER_TOKEN" in r.stderr
+    assert not marker.exists() and stub.jobs == []
 
 
 def test_unreachable_controller_fails_loudly_without_running_child(tmp_path):

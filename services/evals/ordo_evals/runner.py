@@ -150,6 +150,7 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
     # E15 GPU-lease checks below can be exercised against a fake ops-controller response.
     probes = probes if probes is not None else LiveProbes(
         vault_dir=settings.vault_dir, ops_controller_url=settings.ops_controller_url,
+        ops_controller_token=settings.ops_controller_token,
         n8n_url=settings.n8n_url, qdrant_url=settings.qdrant_url, qdrant_collection=settings.qdrant_collection)
 
     # E15 (round-6 fix): refused before run_dir exists, same guarantee as the provenance gate above -

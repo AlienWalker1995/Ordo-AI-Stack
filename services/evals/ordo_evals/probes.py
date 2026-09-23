@@ -17,10 +17,11 @@ from ordo_evals.ids import safe_token
 
 
 class LiveProbes:
-    def __init__(self, *, vault_dir: Path, ops_controller_url: str, n8n_url: str, qdrant_url: str,
-                 qdrant_collection: str = "documents"):
+    def __init__(self, *, vault_dir: Path, ops_controller_url: str, ops_controller_token: str, n8n_url: str,
+                 qdrant_url: str, qdrant_collection: str = "documents"):
         self._vault = vault_dir.resolve()
         self._ops = ops_controller_url.rstrip("/")
+        self._ops_headers = {"Authorization": f"Bearer {ops_controller_token}"}
         self._n8n = n8n_url.rstrip("/")
         self._qdrant = qdrant_url.rstrip("/")
         self._qdrant_collection = qdrant_collection
@@ -55,7 +56,7 @@ class LiveProbes:
 
     def ops_status(self) -> dict[str, Any]:
         try:
-            response = httpx.get(f"{self._ops}/status", timeout=30.0)
+            response = httpx.get(f"{self._ops}/status", headers=self._ops_headers, timeout=30.0)
             response.raise_for_status()
             return response.json()
         except (httpx.HTTPError, ValueError) as exc:

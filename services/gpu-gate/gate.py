@@ -182,6 +182,8 @@ class Config:
             bad.append("GATE_UPSTREAM is required")
         if not self.ops_url:
             bad.append("OPS_CONTROLLER_URL is required")
+        if not self.ops_token:
+            bad.append("OPS_CONTROLLER_TOKEN is required (ops-controller refuses unauthenticated calls)")
         if self.vram_gb <= 0:
             bad.append("ORDO_LEASE_VRAM_GB must be > 0")
         if not self.job_id:
@@ -239,8 +241,7 @@ class Residency:
     # --- arbiter HTTP -------------------------------------------------------------------
     async def _ops(self, method: str, path: str, body: dict | None = None) -> dict:
         headers = {"Content-Type": "application/json"}
-        if self.cfg.ops_token:
-            headers["Authorization"] = f"Bearer {self.cfg.ops_token}"
+        headers["Authorization"] = f"Bearer {self.cfg.ops_token}"
         async with self.session.request(method, self.cfg.ops_url + path, json=body,
                                         headers=headers,
                                         timeout=aiohttp.ClientTimeout(total=30)) as r:

@@ -10,13 +10,17 @@ Design constraints (from the architecture decisions + the drift lessons):
     function of the source, so a runtime model switch can never drift the three ctx values apart.
   - The handlers are pure (method, path, body) -> (status, dict) so they're testable with no
     server/socket. `serve()` is a thin FastAPI binding around `route()` (no-cover).
-  - No auth here: the dashboard is localhost-only and this is the full control plane behind it
-    (the agreed model — auth is Caddy's job at the edge, not baked into every service).
+  - Every HTTP call must carry `Authorization: Bearer <OPS_CONTROLLER_TOKEN>`; only the health
+    probe is open. This API can stop services, re-render the stack and hand out GPU leases, so
+    network isolation alone is not enough: any compromised container on ordo-net could drive it.
+    The check lives in the HTTP layer (`app()`); `route()` itself stays pure.
 """
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import json
+import logging
 import os
 import re
 import socket
@@ -37,6 +41,11 @@ from .plugins import PluginRegistry
 from .render import render
 from .scheduler import Job, Scheduler
 from .source_edit import edit_plugins_list
+
+logger = logging.getLogger(__name__)
+
+# The only paths reachable without the bearer token: container healthchecks carry no credentials.
+UNAUTHENTICATED_PATHS = frozenset({"/health", "/healthz"})
 
 # Service plugins Hermes may install/enable on request (kind=service, profile-gated). The core
 # substrate (llamacpp, litellm-db, model-gateway, model-gateway-keys, ops-controller, dashboard,
@@ -1143,18 +1152,39 @@ class ControlPlane:
         status = int(payload.pop("_status", 200)) if isinstance(payload, dict) else 200
         return status, payload
 
-    def app(self):
-        """Build the FastAPI application that delegates every request to route()."""
+    def app(self, auth_token: str | None):
+        """Build the FastAPI application that delegates every authenticated request to route().
+
+        `auth_token` is required: without one the API would be open to every container on the
+        network, so an empty token is refused here rather than silently served.
+        """
         from fastapi import FastAPI, Request
         from fastapi.responses import JSONResponse
 
+        if not auth_token or not auth_token.strip():
+            raise ValueError("ops-controller needs OPS_CONTROLLER_TOKEN: refusing to serve an unauthenticated API")
+        expected = f"bearer {auth_token.strip()}".encode()
+
         cp = self
         app = FastAPI(title="ops-controller")
+
+        def _authorized(header: str) -> bool:
+            # Normalise only the scheme's case; the token itself is compared exactly, in constant time.
+            scheme, _, token = header.partition(" ")
+            presented = f"{scheme.lower()} {token.strip()}".encode()
+            return hmac.compare_digest(presented, expected)
 
         @app.middleware("http")
         async def dispatch(request: Request, call_next):
             method = request.method
             path = request.url.path
+            if path not in UNAUTHENTICATED_PATHS and not _authorized(request.headers.get("authorization", "")):
+                client = request.client.host if request.client else "unknown"
+                # Never log the presented credential, right or wrong.
+                logger.warning("ops-controller refused %s %s from %s: missing or invalid bearer token (401)",
+                               method, path, client)
+                return JSONResponse(content={"error": "missing or invalid bearer token"}, status_code=401,
+                                    headers={"WWW-Authenticate": "Bearer"})
             body = None
             if method in ("POST", "PUT", "PATCH"):
                 try:
@@ -1168,7 +1198,7 @@ class ControlPlane:
 
         return app
 
-    def serve(self, host: str = "0.0.0.0", port: int = 9000) -> None:  # pragma: no cover - needs a socket
+    def serve(self, auth_token: str | None, host: str = "0.0.0.0", port: int = 9000) -> None:  # pragma: no cover - needs a socket
         """Thin FastAPI binding around route().
 
         The binding is deliberately thin: every request is dispatched through route(), which stays a pure
@@ -1183,5 +1213,5 @@ class ControlPlane:
         """
         import uvicorn
 
-        app = self.app()
+        app = self.app(auth_token)
         uvicorn.run(app, host=host, port=port, log_level="warning")

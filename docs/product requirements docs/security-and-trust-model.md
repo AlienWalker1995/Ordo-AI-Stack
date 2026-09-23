@@ -17,7 +17,7 @@
 ## AuthN / AuthZ Tiers
 
 - **Tier 0:** No auth (health endpoints, read-only model list)
-- **Tier 1:** Bearer token (`OPS_CONTROLLER_TOKEN`), sent by ops-controller clients; ops-controller does not verify it today, so its protection is having no host port
+- **Tier 1:** Bearer token (`OPS_CONTROLLER_TOKEN`), required on every ops-controller call except the health probe and verified in constant time; it also has no host port
 - **Tier 2:** Edge SSO (Caddy oauth2-proxy + Google SSO + email allowlist) — the sole auth gate for every UI, including the dashboard. Caddy is the *only* service publishing host ports: under the port-per-service model, one shared Google sign-in (domain-scoped cookie, one OAuth callback) covers seven SSO-gated ports on `${CADDY_TAILNET_HOSTNAME}` — `:443` front door (landing page, `/oauth2` callback, `/llm/*` and `/mcp` Bearer-token APIs, n8n webhook/OAuth passthroughs, and 302s from every legacy subpath) plus one dedicated port per UI: `:8443` Open WebUI, `:8444` Dashboard (+ `/grafana/` embed), `:8445` n8n, `:8446` ComfyUI, `:8447` Hermes, `:8448` codebase-memory. UI service containers themselves have no host port and are reached only through their Caddy port or the internal `ordo-net`. The dashboard has no per-service auth token in this deployment (`DASHBOARD_AUTH_TOKEN` unset, `AUTH_REQUIRED=False`); the app code's optional Bearer fallback is dormant
 - **Future Tier 3:** Per-role OIDC / RBAC beyond the edge's binary allow/deny gate (if deeper multi-user separation is needed)
 - **RBAC:** Currently binary (authed = full access). Future: read-only role (view logs, health) vs admin role (start/stop).
