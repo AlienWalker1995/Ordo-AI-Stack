@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
+import sys
+import types
 from pathlib import Path
 from unittest.mock import patch
 
@@ -119,6 +122,72 @@ def test_diff_identical_versions(client: TestClient):
     r = client.post("/api/orchestration/workflows/wf-same/diff?v1=1&v2=1")
     assert r.status_code == 200
     assert r.json()["diff"] == ""
+
+
+def _load_orchestration_mcp_server(monkeypatch):
+    """Import services/orchestration/server.py with a stand-in FastMCP.
+
+    mcp/fastmcp is a service dependency, not a CI test dependency, so the stand-in keeps
+    this test running in CI. Its tool() decorator returns the function unchanged, exactly
+    like the real one, so the test calls the tool function the MCP server exposes.
+    """
+
+    class _StandInFastMCP:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def tool(self, *args, **kwargs):
+            return lambda fn: fn
+
+    fastmcp_module = types.ModuleType("mcp.server.fastmcp")
+    fastmcp_module.FastMCP = _StandInFastMCP
+    monkeypatch.setitem(sys.modules, "mcp", types.ModuleType("mcp"))
+    monkeypatch.setitem(sys.modules, "mcp.server", types.ModuleType("mcp.server"))
+    monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fastmcp_module)
+
+    server_path = Path(__file__).resolve().parents[1] / "services" / "orchestration" / "server.py"
+    spec = importlib.util.spec_from_file_location("orchestration_mcp_server_under_test", server_path)
+    server = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(server)
+    return server
+
+
+def test_mcp_diff_tool_request_reaches_the_diff_route(client: TestClient, monkeypatch):
+    """The diff_workflow_versions MCP tool's request is accepted by the dashboard route.
+
+    The tool must send v1/v2 the way the route reads them (query params); a body-only
+    request is rejected with 422 before the handler runs.
+    """
+    client.post(
+        "/api/orchestration/workflows/save",
+        json={"workflow_id": "wf-mcp-diff", "workflow": _make_workflow("mcp-one")},
+    )
+    client.post(
+        "/api/orchestration/workflows/save",
+        json={"workflow_id": "wf-mcp-diff", "workflow": _make_workflow("mcp-two")},
+    )
+    server = _load_orchestration_mcp_server(monkeypatch)
+
+    class _DashboardClient:
+        """Stands in for httpx.Client(timeout=...) and sends every request to the test app."""
+
+        def __init__(self, timeout: float):
+            pass
+
+        def __enter__(self):
+            return client
+
+        def __exit__(self, *exc_info):
+            return False
+
+    monkeypatch.setattr(server, "httpx", types.SimpleNamespace(Client=_DashboardClient))
+
+    body = server.diff_workflow_versions("wf-mcp-diff", 1, 2)
+
+    assert body["v1"] == 1
+    assert body["v2"] == 2
+    assert "mcp-one" in body["diff"]
+    assert "mcp-two" in body["diff"]
 
 
 # --- Promote ---

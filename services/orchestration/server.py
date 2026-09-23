@@ -149,7 +149,7 @@ def list_workflow_versions(workflow_id: str) -> dict:
 @mcp.tool()
 def diff_workflow_versions(workflow_id: str, v1: int, v2: int) -> dict:
     """Unified diff between two saved workflow versions. CRITICAL: Provide the raw ID only. Do NOT include the 'gateway__' prefix or any other namespace prefix inside the arguments of this tool."""
-    return _post(f"/api/orchestration/workflows/{workflow_id}/diff", {"v1": v1, "v2": v2})
+    return _post(f"/api/orchestration/workflows/{workflow_id}/diff?v1={v1}&v2={v2}", {})
 
 
 @mcp.tool()
