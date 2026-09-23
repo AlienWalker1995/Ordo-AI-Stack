@@ -447,9 +447,14 @@ def test_unhandled_exception_returns_500_not_traceback(monkeypatch):
 
 # ── Static app-shell caching ─────────────────────────────────────────────────
 
-def test_index_html_sends_no_cache(client):
+def test_index_html_sends_no_cache(client, tmp_path, monkeypatch):
     """The HTML app shell must revalidate every load, so a rebuilt dashboard
     (new SSO routes / service cards) is picked up without a hard refresh."""
+    import dashboard.app as dashboard_app
+
+    # A built shell, independent of whether this checkout has run `npm run build`.
+    (tmp_path / "index.html").write_text("<!doctype html><title>Ordo</title>", encoding="utf-8")
+    monkeypatch.setattr(dashboard_app, "frontend_dist", tmp_path)
     r = client.get("/")
     assert r.status_code == 200
     assert r.headers.get("content-type", "").startswith("text/html")

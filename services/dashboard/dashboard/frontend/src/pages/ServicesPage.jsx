@@ -76,7 +76,7 @@ function StateActions({ row, onAction, busy }) {
     return <span className="text-caption text-muted" title="The control plane will not restart the service that is serving it">Host only</span>
   }
   if (row.lent) {
-    return <span className="text-caption text-muted" title="Its GPU is lent to a render; it restarts when the render finishes">Lent to a render</span>
+    return <span className="text-caption text-muted" title="Its GPU is lent to a render; it restarts when the render finishes">Back after the render</span>
   }
   return (
     <>
@@ -92,8 +92,9 @@ function ServiceRow({ row, usage, onLogs, onAction, busy }) {
     <tr className="border-b border-border-subtle last:border-b-0 hover:bg-surface/60">
       <td className="py-2 pl-3 pr-2">
         <span className="flex items-center gap-2">
-          <Dot tone={VERDICT_TONE[row.verdict]} />
-          <span className="text-caption text-fg-muted">{VERDICT_LABEL[row.verdict] || row.verdict}</span>
+          {/* An evicted resident exits cleanly, but "Finished" would misread a loan as done. */}
+          <Dot tone={row.lent ? 'info' : VERDICT_TONE[row.verdict]} />
+          <span className="text-caption text-fg-muted">{row.lent ? 'Lent to a render' : VERDICT_LABEL[row.verdict] || row.verdict}</span>
         </span>
       </td>
       <td className="px-2 py-2">

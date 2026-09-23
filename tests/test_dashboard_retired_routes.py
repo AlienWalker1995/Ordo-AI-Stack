@@ -9,6 +9,7 @@ import os
 import sys
 
 import pytest
+from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -54,10 +55,11 @@ RETIRED = [
 
 
 def _served():
-    served = set()
-    for route in app.routes:
-        for method in getattr(route, "methods", None) or ():
-            served.add((method, getattr(route, "path", "")))
+    """(method, path) for every API route, read from the OpenAPI schema. Walking app.routes
+    breaks across FastAPI versions: newer ones nest included routers instead of flattening them."""
+    served = {("GET", "/legacy-index.html")} if TestClient(app).get("/legacy-index.html").status_code == 200 else set()
+    for path, operations in app.openapi()["paths"].items():
+        served.update((method.upper(), path) for method in operations)
     return served
 
 
