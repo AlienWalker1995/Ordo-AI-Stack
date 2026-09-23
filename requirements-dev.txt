@@ -9,5 +9,7 @@ ruff==0.8.6
 # to the same version the ops-controller image installs so CI tests what ships.
 pydantic==2.13.4
 # The control plane's transport is FastAPI (ordo/control.py ControlPlane.app), and the ASGI tests
-# build the real app. Same version as the image.
+# build the real app and drive it through starlette's TestClient, which needs httpx. Same versions
+# as the ops-controller image installs.
 fastapi==0.141.1
+httpx==0.28.1
