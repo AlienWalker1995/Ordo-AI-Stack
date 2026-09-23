@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Smoke test: bring up services and verify health.
-# Usage: ./scripts/smoke_test.sh [--no-up]  (default: runs docker compose up -d first)
+# Smoke test: verify the running stack's health. Changes nothing unless asked.
+# Usage: ./scripts/smoke_test.sh [--up]  (--up first brings the stack up the canonical way)
 #
-# Targets the rendered v2 compose (out/docker-compose.yml, project "ordo"). Only Caddy
+# Targets the rendered compose (out/docker-compose.yml, project "ordo"). Only Caddy
 # publishes a host port (:443) — every other service is ordo-net-internal, so health is
 # probed with `docker compose exec` against the same in-container commands each service's
 # own healthcheck already uses, not host-port curls.
@@ -16,20 +16,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-COMPOSE_ARGS=(--project-directory out -f out/docker-compose.yml -p ordo)
+# Both env files, always: compose interpolates ${...} from them, and a call without secrets.env
+# renders blank secrets, so an `up` would recreate services with empty credentials.
+COMPOSE_ARGS=(--project-directory out -f out/docker-compose.yml -p ordo
+              --env-file out/.env --env-file out/secrets.env)
 
-NO_UP=false
+UP=false
 for arg in "$@"; do
   case "$arg" in
-    --no-up) NO_UP=true ;;
+    --up) UP=true ;;
+    --no-up) ;;  # the default now; accepted so old invocations keep working
   esac
 done
 
 echo "==> Smoke test (repo: $REPO_ROOT, compose: out/docker-compose.yml, project: ordo)"
 
-if [ "$NO_UP" = false ]; then
+if [ "$UP" = true ]; then
   echo "==> Starting services..."
-  docker compose "${COMPOSE_ARGS[@]}" up -d
+  COMPOSE_PROFILES='*' docker compose "${COMPOSE_ARGS[@]}" up -d
   echo "==> Waiting 60s for healthchecks..."
   sleep 60
 fi
@@ -56,7 +60,8 @@ check_exec "dashboard" dashboard python3 -c \
 check_exec "model-gateway" model-gateway python3 -c \
   "import os, urllib.request; req = urllib.request.Request('http://localhost:11435/v1/models', headers={'Authorization': 'Bearer ' + os.environ.get('LITELLM_MASTER_KEY', 'local')}); urllib.request.urlopen(req)"
 # MCP is served by model-gateway (LiteLLM /mcp); its server list must not be empty.
-check_exec "mcp (model-gateway)" model-gateway python3 -c \n  "import json, os, urllib.request; req = urllib.request.Request('http://localhost:11435/v1/mcp/server', headers={'Authorization': 'Bearer ' + os.environ.get('LITELLM_MASTER_KEY', 'local')}); assert json.load(urllib.request.urlopen(req)), 'no MCP servers registered'"
+check_exec "mcp (model-gateway)" model-gateway python3 -c \
+  "import json, os, urllib.request; req = urllib.request.Request('http://localhost:11435/v1/mcp/server', headers={'Authorization': 'Bearer ' + os.environ.get('LITELLM_MASTER_KEY', 'local')}); assert json.load(urllib.request.urlopen(req)), 'no MCP servers registered'"
 
 echo "==> Service status"
 docker compose "${COMPOSE_ARGS[@]}" ps

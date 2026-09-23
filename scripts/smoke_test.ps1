@@ -1,22 +1,26 @@
-# Smoke test: bring up services and verify health.
-# Usage: .\scripts\smoke_test.ps1 [-NoUp]  (default: runs docker compose up -d first)
+# Smoke test: verify the running stack's health. Changes nothing unless asked.
+# Usage: .\scripts\smoke_test.ps1 [-Up]  (-Up first brings the stack up the canonical way)
 #
-# Targets the rendered v2 compose (out/docker-compose.yml, project "ordo"). Only Caddy
+# Targets the rendered compose (out/docker-compose.yml, project "ordo"). Only Caddy
 # publishes a host port (:443) -- every other service is ordo-net-internal, so health is
 # probed with `docker compose exec` against the same in-container commands each service's
 # own healthcheck already uses, not host-port requests.
-param([switch]$NoUp)
+param([switch]$Up, [switch]$NoUp)  # -NoUp is the default now; kept so old invocations work
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
-$ComposeArgs = @("--project-directory", "out", "-f", "out/docker-compose.yml", "-p", "ordo")
+# Both env files, always: compose interpolates ${...} from them, and a call without secrets.env
+# renders blank secrets, so an `up` would recreate services with empty credentials.
+$ComposeArgs = @("--project-directory", "out", "-f", "out/docker-compose.yml", "-p", "ordo",
+                 "--env-file", "out/.env", "--env-file", "out/secrets.env")
 
 Write-Host "==> Smoke test (repo: $RepoRoot, compose: out/docker-compose.yml, project: ordo)"
 
-if (-not $NoUp) {
+if ($Up) {
     Write-Host "==> Starting services..."
+    $env:COMPOSE_PROFILES = "*"
     docker compose @ComposeArgs up -d
     Write-Host "==> Waiting 60s for healthchecks..."
     Start-Sleep -Seconds 60
