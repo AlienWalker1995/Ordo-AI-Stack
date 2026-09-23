@@ -355,36 +355,6 @@ class WorkflowManager:
 
         return workflow
 
-    def _refresh_definition_if_stale(self, definition: WorkflowToolDefinition) -> None:
-        """Reload a tool definition's template from disk if the file has been modified."""
-        workflow_path = self._safe_workflow_path(definition.workflow_id)
-        if not workflow_path:
-            return
-
-        try:
-            current_mtime = workflow_path.stat().st_mtime
-        except OSError:
-            return
-
-        cached_mtime = self._workflow_mtime.get(definition.workflow_id)
-        if cached_mtime is not None and cached_mtime == current_mtime:
-            return  # File hasn't changed
-
-        logger.info("Refreshing tool definition '%s' from disk (mtime changed)", definition.workflow_id)
-        try:
-            with open(workflow_path, encoding="utf-8") as f:
-                workflow = json.load(f)
-            metadata = self._load_workflow_metadata(workflow_path)
-            definition.template = workflow
-            definition.parameters = self._merge_metadata_parameters(
-                self._extract_parameters(workflow), metadata
-            )
-            definition.output_preferences = self._guess_output_preferences(workflow)
-            self._workflow_cache[definition.workflow_id] = workflow
-            self._workflow_mtime[definition.workflow_id] = current_mtime
-        except (OSError, json.JSONDecodeError) as e:
-            logger.error("Failed to refresh workflow %s: %s", definition.workflow_id, e)
-
     def _load_workflows(self):
         definitions: list[WorkflowToolDefinition] = []
         if not self.workflows_dir.exists():
@@ -445,51 +415,6 @@ class WorkflowManager:
             definitions.append(definition)
 
         return definitions
-
-    def render_workflow(
-        self,
-        definition: WorkflowToolDefinition,
-        provided_params: dict[str, Any],
-        defaults_manager: DefaultsProvider | None = None,
-    ):
-
-        # Check if the workflow file has changed on disk and refresh the template
-        self._refresh_definition_if_stale(definition)
-
-        workflow = copy.deepcopy(definition.template)
-        workflow_path = self._safe_workflow_path(definition.workflow_id)
-        metadata = self._load_workflow_metadata(workflow_path) if workflow_path else {}
-        
-        # Determine namespace (image, audio, or video)
-        namespace = self._determine_namespace(definition.workflow_id)
-        
-        for param in definition.parameters.values():
-            if param.required and param.name not in provided_params:
-                raise ValueError(f"Missing required parameter '{param.name}'")
-            
-            # Use provided value, default, or generate (for seed)
-            raw_value = provided_params.get(param.name)
-            if raw_value is None:
-                if defaults_manager:
-                    # Use defaults manager to get value with proper precedence
-                    raw_value = defaults_manager.get_default(namespace, param.name, None)
-                    if raw_value is not None:
-                        logger.debug(f"Using default value for {param.name}: {raw_value}")
-                if raw_value is None:
-                    raw_value = self._get_parameter_default(param.name, param.annotation, metadata)
-                    if raw_value is not None:
-                        logger.debug(f"Using builtin default value for {param.name}: {raw_value}")
-                if raw_value is None:
-                    if param.required:
-                        raise ValueError(f"Missing required parameter '{param.name}'")
-                    else:
-                        continue
-            
-            coerced_value = self._coerce_value(raw_value, param.annotation)
-            for node_id, input_name in param.bindings:
-                workflow[node_id]["inputs"][input_name] = coerced_value
-        
-        return workflow
 
     def _extract_parameters(self, workflow: dict[str, Any]):
         parameters: OrderedDict[str, WorkflowParameter] = OrderedDict()

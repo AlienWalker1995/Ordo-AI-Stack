@@ -36,22 +36,6 @@ from dashboard.services_catalog import OPS_SERVICE_MAP
 from dashboard.settings import AUTH_REQUIRED as _AUTH_REQUIRED
 from dashboard.settings import DASHBOARD_AUTH_TOKEN
 
-
-async def _read_json_async(path: Path) -> dict:
-    """Read and parse a JSON file off the event loop."""
-    return await asyncio.to_thread(lambda: json.loads(path.read_text(encoding="utf-8")))
-
-
-async def _write_json_async(path: Path, data: dict) -> None:
-    """Serialise and write JSON off the event loop via atomic write-then-rename."""
-    def _atomic_write() -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        tmp.replace(path)
-    await asyncio.to_thread(_atomic_write)
-
-
 # Persistent httpx client — connection pooling avoids per-request TCP handshake overhead.
 _http_client: _httpx.AsyncClient | None = None
 

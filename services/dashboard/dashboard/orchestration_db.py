@@ -148,21 +148,6 @@ def promote_workflow_version(data_dir: Path, workflow_id: str, version: int) -> 
     return result.rowcount > 0
 
 
-def get_promoted_workflow(data_dir: Path, workflow_id: str) -> dict[str, Any] | None:
-    with _connect(data_dir) as conn:
-        row = conn.execute(
-            "SELECT * FROM workflow_versions WHERE workflow_id=? AND promoted_at IS NOT NULL "
-            "ORDER BY version DESC LIMIT 1",
-            (workflow_id,),
-        ).fetchone()
-    if not row:
-        return None
-    d = dict(row)
-    try:
-        d["compiled_json"] = json.loads(d["compiled_json"])
-    except (json.JSONDecodeError, TypeError):
-        pass
-    return d
 
 
 def rollback_workflow(data_dir: Path, workflow_id: str, to_version: int) -> int | None:

@@ -147,12 +147,3 @@ def _parse_env(path: Path) -> dict[str, str]:
     return result
 
 
-def capacity_check(gpus: dict[str, dict], gpu_uuid: str,
-                   enabled_models: list[ModelRecord], candidate_gb: float
-                   ) -> tuple[bool, float, float]:
-    """Sum est VRAM of enabled models already on gpu_uuid + candidate vs total.
-    Returns (fits, used_gb, total_gb)."""
-    total = float(gpus.get(gpu_uuid, {}).get("total_gb", 0.0))
-    used = sum(m.est_vram_gb for m in enabled_models
-               if m.gpu_uuid == gpu_uuid and m.enabled)
-    return (used + candidate_gb <= total, used, total)
