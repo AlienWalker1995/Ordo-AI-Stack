@@ -134,7 +134,7 @@ Add this authorized redirect URI to the SAME OAuth client already used for the e
 oauth2-proxy (Google Cloud Console -> APIs & Services -> Credentials -> that OAuth 2.0 Client ID
 -> Authorized redirect URIs):
 ```
-https://llm.tail63bdfc.ts.net/sso/callback
+https://llm.<tailnet>.ts.net/sso/callback
 ```
 General form: `<PROXY_BASE_URL>/sso/callback` (see `ordo/render.py::litellm_google_sso_env` for
 how `PROXY_BASE_URL` is derived on a different edge shape). The edge's oauth2-proxy gate still

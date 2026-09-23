@@ -42,8 +42,8 @@ LANGFUSE_SECRETS = ("LANGFUSE_DB_PASSWORD", "LANGFUSE_CLICKHOUSE_PASSWORD", "LAN
                     "LANGFUSE_ENCRYPTION_KEY", "LANGFUSE_ADMIN_PASSWORD", "LANGFUSE_PUBLIC_KEY",
                     "LANGFUSE_SECRET_KEY")
 
-EDGE_SITE = {"CADDY_TAILNET_HOSTNAME": "ultracam.tail63bdfc.ts.net",
-             "CADDY_TAILNET_DOMAIN": "tail63bdfc.ts.net",
+EDGE_SITE = {"CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
+             "CADDY_TAILNET_DOMAIN": "example.ts.net",
              "CADDY_BIND": "0.0.0.0"}
 
 
@@ -214,12 +214,12 @@ def test_all_ten_secrets_are_required():
 def test_public_url_uses_the_sidecar_name_when_tailnet_names_is_enabled():
     rc = render(_src(plugins=["edge", "tailnet-names", "langfuse"], site=EDGE_SITE),
                 CATALOG, REGISTRY)
-    assert rc.env["LANGFUSE_PUBLIC_URL"] == "https://langfuse.tail63bdfc.ts.net"
+    assert rc.env["LANGFUSE_PUBLIC_URL"] == "https://langfuse.example.ts.net"
 
 
 def test_public_url_falls_back_to_the_sso_port_without_the_sidecar_layer():
     rc = render(_src(plugins=["edge", "langfuse"], site=EDGE_SITE), CATALOG, REGISTRY)
-    assert rc.env["LANGFUSE_PUBLIC_URL"] == "https://ultracam.tail63bdfc.ts.net:8450"
+    assert rc.env["LANGFUSE_PUBLIC_URL"] == "https://host.example.ts.net:8450"
 
 
 def test_public_url_is_empty_without_an_edge_hostname():
