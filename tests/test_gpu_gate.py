@@ -52,6 +52,9 @@ class StubOps:
         self.jobs, self.completes, self.heartbeats = [], [], []
         self.polls = 0
         self.heartbeat_status = 200
+        self.restarts = []            # services restarted through ops-controller
+        self.restart_status = 200
+        self.on_restart = None        # callback: what restarting the upstream does to it
 
     def _sched(self):
         jid = self.jobs[-1] if self.jobs else None
@@ -94,7 +97,19 @@ class StubOps:
         app.router.add_post("/jobs", jobs)
         app.router.add_post("/jobs/complete", complete)
         app.router.add_post("/jobs/heartbeat", heartbeat)
+        async def restart(request):
+            service = request.match_info["service"]
+            if (await request.json()).get("confirm") is not True:
+                return web.json_response({"error": "confirm required"}, status=400)
+            self.restarts.append(service)
+            if self.restart_status != 200:
+                return web.json_response({"error": "restart failed"}, status=self.restart_status)
+            if self.on_restart:
+                self.on_restart()
+            return web.json_response({"ok": True})
+
         app.router.add_get("/status", status)
+        app.router.add_post("/services/{service}/restart", restart)
         return app
 
 
@@ -155,6 +170,7 @@ async def harness(monkeypatch):
             "GATE_QUEUE_PATH": "/queue", "GATE_QUEUE_STYLE": "comfyui",
             "GATE_DRAIN_SECONDS": "0.2", "GATE_POLL_SECONDS": "0.05",
             "OPS_CONTROLLER_URL": ops_url, "OPS_CONTROLLER_TOKEN": OPS_TOKEN, "ORDO_LEASE_VRAM_GB": "30",
+            "GATE_UPSTREAM_SERVICE": "comfyui",
             "ORDO_LEASE_KIND": "media", "ORDO_LEASE_JOB_ID": "gate-comfyui",
             "ORDO_LEASE_ACQUIRE_TIMEOUT_S": "2", "ORDO_LEASE_POLL_S": "0.05",
             "ORDO_LEASE_HEARTBEAT_S": "0.1",
@@ -375,6 +391,7 @@ async def test_backstop_acquires_when_work_bypasses_the_gate_and_records_it(harn
     ("GATE_UPSTREAM", "GATE_UPSTREAM"),
     ("OPS_CONTROLLER_URL", "OPS_CONTROLLER_URL"),
     ("OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN"),
+    ("GATE_UPSTREAM_SERVICE", "GATE_UPSTREAM_SERVICE"),
     ("ORDO_LEASE_VRAM_GB", "ORDO_LEASE_VRAM_GB"),
     ("ORDO_LEASE_JOB_ID", "ORDO_LEASE_JOB_ID"),
     ("GATE_SUBMIT_PATHS", "nothing would be gated"),
@@ -387,6 +404,7 @@ def test_gate_refuses_to_start_half_armed(monkeypatch, drop, expect):
     """A gate that boots without the facts it needs would proxy happily and arbitrate nothing —
     worse than being absent, because the topology would claim the traffic is gated."""
     env = {"GATE_UPSTREAM": "http://u:1", "OPS_CONTROLLER_URL": "http://o:2", "OPS_CONTROLLER_TOKEN": "t",
+           "GATE_UPSTREAM_SERVICE": "comfyui",
            "ORDO_LEASE_VRAM_GB": "30", "ORDO_LEASE_JOB_ID": "gate-x",
            "GATE_SUBMIT_PATHS": "/prompt", "GATE_QUEUE_PATH": "/queue"}
     for k, v in env.items():
@@ -420,19 +438,38 @@ async def test_a_refused_submission_withdraws_its_queued_request(harness):
 
 
 @pytest.mark.asyncio
-async def test_a_wedged_upstream_cannot_hold_the_card_forever(harness):
-    """The one failure the scheduler's TTL cannot catch: the gate is alive and heartbeating, so
-    the lease never expires, while the upstream reports work that makes no progress. Stranding
-    the resident off the card indefinitely is not an acceptable failure mode, so the hold is
-    capped and the condition raised as an alarm."""
+async def test_a_wedged_upstream_is_restarted_before_the_card_is_released(harness):
+    """The one failure the scheduler's TTL cannot catch: the gate is alive and heartbeating while
+    the upstream makes no progress. Releasing then would restore the resident LLM beside a render
+    that still holds VRAM (two tenants: the 2026-08-08 host crash), so the gate restarts the
+    upstream first and releases only once it is idle."""
     ops, upstream = StubOps(), StubUpstream()
+    ops.on_restart = lambda: setattr(upstream, "queue_depth", 0)   # a restart clears the queue
     url, app = await harness(ops, upstream, GATE_MAX_HOLD_SECONDS="0.5", GATE_DRAIN_SECONDS="600")
     async with aiohttp.ClientSession() as s:
         async with s.post(f"{url}/prompt", json={"prompt": {}}) as r:
             assert r.status == 200
     assert app[gate.RESIDENCY].held
-    upstream.queue_depth = 1          # never drains — wedged, not finished
-    await asyncio.sleep(0.8)
-    assert not app[gate.RESIDENCY].held, "a wedged upstream held the GPU past its cap"
+    upstream.queue_depth = 1          # never drains on its own: wedged
+    await asyncio.sleep(1.2)
+    assert ops.restarts == ["comfyui"], "the wedged upstream was not restarted"
+    assert not app[gate.RESIDENCY].held, "the card was never released after the restart"
     assert app[gate.RESIDENCY].stats["max_hold_expired"] == 1
     assert ops.completes[-1] == "gate-comfyui"
+
+
+async def test_a_wedged_upstream_that_cannot_be_restarted_keeps_the_card(harness):
+    """If the upstream cannot be stopped, releasing would put the resident beside it. Holding is
+    the safe failure: chat stays on the CPU fallback and the alarm says what needs a person."""
+    ops, upstream = StubOps(), StubUpstream()
+    ops.restart_status = 500
+    url, app = await harness(ops, upstream, GATE_MAX_HOLD_SECONDS="0.5", GATE_DRAIN_SECONDS="600")
+    async with aiohttp.ClientSession() as s:
+        async with s.post(f"{url}/prompt", json={"prompt": {}}) as r:
+            assert r.status == 200
+    completes_before = len(ops.completes)     # the startup stranded-lease clear counts as one
+    upstream.queue_depth = 1
+    await asyncio.sleep(1.2)
+    assert ops.restarts, "no restart was attempted"
+    assert app[gate.RESIDENCY].held, "released the card while the upstream may still hold VRAM"
+    assert len(ops.completes) == completes_before, "the lease was completed"

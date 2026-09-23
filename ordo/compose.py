@@ -560,6 +560,7 @@ def _gpu_gate(ps: PluginService, plugin: Plugin, claim: Any, *, net: str, env_fi
         "depends_on": [ps.name],
         "environment": {
             "GATE_UPSTREAM": f"http://{ps.name}:{g.upstream_port}",
+            "GATE_UPSTREAM_SERVICE": ps.name,
             "GATE_LISTEN_PORT": str(g.listen_port),
             "GATE_SUBMIT_PATHS": ",".join(g.submit_paths),
             "GATE_SUBMIT_METHODS": ",".join(g.submit_methods),

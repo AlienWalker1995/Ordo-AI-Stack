@@ -361,6 +361,11 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
                 if swept:
                     print(f"[scheduler] lease TTL expired for {swept} — resident restored on drain",
                           flush=True)
+                stray = broker.enforce_evictions()
+                if stray:
+                    print(f"[scheduler] ERROR: evicted resident(s) {stray} were running during a GPU "
+                          f"lease (started outside the scheduler, e.g. a whole-stack compose up); "
+                          f"stopped them again", flush=True)
             except Exception as e:  # noqa: BLE001 — the control plane must survive a sweep hiccup
                 print(f"[scheduler] lease sweep error: {e}", flush=True)
 
