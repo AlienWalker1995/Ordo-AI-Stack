@@ -95,7 +95,7 @@ def tailnet_open_url(service_id: str) -> str | None:
 # a container port copied in "for completeness" can collide with another card's (3000 is
 # open-webui's) and render a confidently wrong link.
 SERVICES_CATALOG_ENV = "SERVICES_CATALOG_PATH"
-# In-repo location of the fragments: this file lives at services/v1-parity/dashboard/,
+# In-repo location of the fragments: this file lives at services/dashboard/dashboard/,
 # so parents[2] is the shared services/ root the render registries also glob.
 _REPO_SERVICES_DIR = Path(__file__).resolve().parents[2]
 

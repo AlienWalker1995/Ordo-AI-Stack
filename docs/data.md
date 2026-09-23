@@ -1,6 +1,6 @@
 # Data Schemas, Lifecycle, and Persistence
 
-> ⚠️ **V1 removed 2026-07-24 (commit 62540bf); the repo was then flattened 2026-07-24 (commit 2d4bd9c) — there is no v2; there is only Ordo.** The stack keeps a **single data root** at `C:\dev\ordo-ai-stack\data`; `site.DATA_PATH` in `ordo.yaml` renders it into the compose bind mounts. The per-directory schemas / bind-mount / backup guidance below still broadly describes what lives under `data/`, but config and bring-up flow through the render substrate: edit the declarative source `ordo.yaml` (tracked template `ordo.example.yaml`), run `ordo render` (`python -m ordo.cli render --out out`), then bring up the rendered compose from `out/` (`docker compose -p ordo … up`). Never hand-edit rendered output. Authoritative guide: [`operator-guide.md`](operator-guide.md).
+> The stack keeps a **single data root**, `data/` at the repo root; `site.DATA_PATH` in `ordo.yaml` renders it into the compose bind mounts. Config and bring-up flow through the render substrate: edit the declarative source `ordo.yaml` (tracked template `ordo.example.yaml`), run `ordo render` (`python -m ordo.cli render --out out`), then bring up the rendered compose from `out/` (`docker compose -p ordo … up`). Never hand-edit rendered output. Authoritative guide: [`operator-guide.md`](operator-guide.md).
 
 Reference for where data lives, how it moves, and what survives a restart / rebuild.
 
@@ -16,8 +16,8 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 | `out/model-gateway/keys.json` (rendered from the manifests' `litellm_key:` blocks) | Per-consumer virtual keys plus their model and MCP grants | `model-gateway-keys` (one-shot bootstrap) |
 | `data/rag-input/` | Drop zone for RAG documents | `rag-ingestion` watch directory |
 | `models/gguf/` | llama.cpp GGUF download/staging dir (`ordo fetch` target) | Seeds the `models-gguf` named volume (not mounted by any service) |
-| `models-gguf` named volume | llama.cpp GGUF files at runtime (ext4 inside the Docker VM) | `llamacpp` / `llamacpp-cpu` / `llamacpp-embed` (`/models:ro`), dashboard (`/gguf-models` rw), ops-api (`/gguf-models:ro`) |
-| `comfyui-models` named volume | ComfyUI checkpoints, LoRAs, VAEs, encoders | `comfyui` (RO), dashboard (RW — pull UI), ops-api (RO) |
+| `models-gguf` named volume | llama.cpp GGUF files at runtime (ext4 inside the Docker VM) | `llamacpp` / `llamacpp-cpu` / `llamacpp-embed` (`/models:ro`), dashboard (`/gguf-models`, lists and deletes model files) |
+| `comfyui-models` named volume | ComfyUI checkpoints, LoRAs, VAEs, encoders | `comfyui` (RO), `ops-controller` (RW, `/models/comfyui`: downloads), dashboard (RW, `/models`: lists and deletes) |
 
 ### Sinks
 
@@ -132,9 +132,9 @@ All directories created this way persist across restarts and rebuilds.
 1. `ordo fetch --models-dir models/gguf` (checksum-mandatory) downloads catalog models to the host staging dir. The default `--models-dir` is `./models` — pass `models/gguf` explicitly.
 2. Copy into the volume: `docker run --rm -v ordo_models-gguf:/dst -v "$(pwd)/models/gguf:/src:ro" alpine cp /src/<file>.gguf /dst/` (or `docker cp` via any container mounting the volume).
 
-On a fresh install the volume starts empty and `llamacpp` crash-loops with `failed to load model` until seeded. The host `models/gguf/` dir doubles as the recovery copy. The dashboard's GGUF-pull UI was not ported (its backing endpoint returns 501); use the two-step above.
+On a fresh install the volume starts empty and `llamacpp` crash-loops with `failed to load model` until seeded. The host `models/gguf/` dir doubles as the recovery copy.
 
-**ComfyUI:** the dashboard's ComfyUI model-pack UI (backed by `scripts/comfyui/pull_comfyui_models.py`) downloads packs into the `comfyui-models` **named volume** (the dashboard's RW `/models` mount is the same volume ComfyUI reads RO), so downloads land where ComfyUI looks with no copy step. First run can be tens of GB. (The V1 `comfyui-model-puller` compose service was not ported — its old endpoints return 501.)
+**ComfyUI:** add a model with the `download_comfyui_model` MCP tool (`url` plus `category`, e.g. `checkpoints`, `loras`, `vae`). It calls `ops-controller` `POST /models/download`, which writes into the `comfyui-models` **named volume** (the same volume ComfyUI reads RO), so the file lands where ComfyUI looks with no copy step. One download runs at a time; poll `get_comfyui_model_download_status`. Music3 weight URLs are listed under `weights:` in `services/song-gen/plugin.yaml`.
 
 ### RAG Ingestion (`--profile rag`)
 
@@ -147,11 +147,11 @@ Status: `GET /api/rag/status` on the dashboard returns current collection point 
 
 ### Audit Logging
 
-Every privileged call through `ops-controller` appends one JSONL line to `data/ops-controller/audit.log`, with `X-Request-ID` propagated from the dashboard. Rotation by size; export by `scp data/ops-controller/audit.log*`.
+`ops-controller` appends one JSONL line to `data/ops-controller/audit.log` for each state-changing control-plane call it audits (`env/set`, image pulls, ComfyUI node-requirement installs, GPU-assign attempts). Rotation by size (50MB, one generation kept); export by copying `data/ops-controller/audit.log*`.
 
 ### Hermes Runtime State
 
-Hermes maintains its own state under `data/hermes/` — session records, Discord per-user allowlists, scheduled tasks. The compose entrypoint re-seeds Docker-network endpoints on each start, so switching Docker networks doesn't require wiping state. See [hermes-agent.md](hermes-agent.md) for upgrade notes.
+Hermes keeps its own state in the `hermes-home` named volume (mounted at `/home/hermes/.hermes`): session records, Discord per-user allowlists, scheduled tasks. The compose entrypoint re-seeds Docker-network endpoints on each start, so switching Docker networks doesn't require wiping state. See [hermes-agent.md](hermes-agent.md) for upgrade notes.
 
 ## Data Persistence Rules
 
@@ -190,7 +190,7 @@ Hermes maintains its own state under `data/hermes/` — session records, Discord
 3. `data/ops-controller/audit.log*` — audit history
 4. `ordo.yaml` and `out/secrets.env` — declarative source + operator secrets (**do not commit**)
 5. Model volumes (`models-gguf`, `comfyui-models`) are usually skipped — weights are
-   re-downloadable (`ordo fetch` / the model-pack UI), just expensive.
+   re-downloadable (`ordo fetch` / `download_comfyui_model`), just expensive.
 
 ### Host-side dirs
 

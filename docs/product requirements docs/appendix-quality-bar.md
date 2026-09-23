@@ -2,18 +2,18 @@
 
 ## Test Suite (Current `tests/`)
 
-65 test files: 36 in `tests/` plus 29 in `tests/substrate/` (the render-engine suite).
+87 test files: 42 in `tests/` plus 45 in `tests/substrate/` (the render-engine suite).
 
 | Area | Files | Representative coverage |
 |------|-------|--------------------------|
-| Dashboard | 8 | health, auth middleware, proxy auth, registry routes, service pressure, ComfyUI packs, dependencies, performance |
-| ComfyUI | 4 | workflow manager defaults, queue prompt (+ integration), default model env |
-| Orchestration | 4 | API, e2e, outbox, workflow versioning |
+| Dashboard | 8 | health, auth middleware, proxy auth, console (+ routes), retired routes, service pressure, throughput record/stats |
+| ComfyUI | 5 | workflow manager defaults, queue prompt (+ integration), default model env, comfyui-mcp management tools |
+| Orchestration | 4 | API, MCP tools, workflows, workflow versioning |
 | RAG | 2 | ingestion chunking/embedding, status |
-| Ops / secrets / stack | 7 | secrets isolation, Caddyfile invariants, stack-monitor sanitize/versions, storage purge, settings validation, service-catalog wiring |
-| GPU / hardware | 3 | GPU stats, GPU routes, llama.cpp turboquant |
-| Misc / policy | 8 | dependency-registry probe, catalog-derived dependencies, Hermes socket absent, Hermes ops client, MCP policy, MCP persist, services & throughput, text sanitizers |
-| Substrate (render engine) | 29 | agents, broker, build contexts, cli render guard, cloud fallback, compose (+ recreate), control, dashboards, fetch, lease exec/history, MCP, memory vault (+ ingestion), native, ops-api stats, parity (+ render), plugins, preflight, render, scheduler, status doctor, wizard |
+| Ops / secrets / stack | 11 | secrets isolation, Caddyfile invariants, stack-monitor sanitize/versions/pinned sources, storage purge, settings validation, service-catalog wiring + fragments, service lifecycle, monitoring config |
+| GPU / hardware | 3 | GPU stats, gpu-gate, llama.cpp KV-cache args |
+| Misc / policy | 9 | Hermes socket absent, Hermes ops client, Hermes ordo skills, MCP policy, MCP persist, services & throughput, throughput callback, text sanitizers, vault federate |
+| Substrate (render engine) | 45 | agents, backend protocol, bootstrap keys, bridge Dockerfiles, broker, build contexts, cli render guard, cloud fallback, compose (+ recreate), control (+ ASGI, routes), dashboards, evals, fetch, GPU arbitration, Langfuse (+ retention), lease exec/history, LiteLLM keys + Google SSO, local cost, MCP, memory vault (+ ingestion), model-gateway callbacks/merge, native, Obsidian LiveSync, ops-controller image, parity (+ render), plugin install, plugins, preflight, reference integrity, render, scheduler, service stats, env/images/comfy routes, source edit, status doctor, wizard |
 
 CI (`.github/workflows/ci.yml`): `secret-scan` (TruffleHog), `pytest` (`tests/`, excluding `tests/substrate/`), and `substrate` (path-gated, mocked-profile).
 

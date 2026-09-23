@@ -257,6 +257,13 @@ def test_gpu_assignments_route_is_gone(tmp_path):
     assert cp.route("GET", "/gpu/assignments", {})[0] == 404
 
 
+def test_registry_enable_route_is_gone(tmp_path):
+    # It dispatched to a handler that was never defined, so it could only crash. Models change
+    # through POST /model-config (catalog id -> render), not by toggling registry records.
+    cp, _ = _cp(tmp_path)
+    assert cp.route("POST", "/registry/models/local-chat/enable", {"enabled": True})[0] == 404
+
+
 def test_env_allowlist_matches_ops_api():
     assert ControlPlane.ENV_ALLOWED_KEYS == {
         "DEFAULT_MODEL", "OPEN_WEBUI_DEFAULT_MODEL", "LLAMACPP_MODEL", "LLAMACPP_CTX_SIZE",

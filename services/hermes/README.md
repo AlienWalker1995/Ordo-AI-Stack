@@ -2,7 +2,7 @@
 
 V2's Hermes agent image, referenced by the Hermes agent manifest (`services/hermes/agent.yaml`) via
 the `<project>/agent-<id>` convention as `ordo/agent-hermes:latest`, and reused by the
-`hermes-dashboard` plugin (V1 runs one Hermes image as both the gateway and the dashboard).
+`hermes-dashboard` plugin (one Hermes image serves as both the gateway and the dashboard).
 
 This is an **operator-specific** image: it wraps the operator's Hermes `data/` (SOUL.md, skills,
 automation) on top of the pinned Hermes base. It builds from this co-located context

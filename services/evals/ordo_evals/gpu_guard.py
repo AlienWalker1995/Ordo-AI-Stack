@@ -6,7 +6,7 @@ already points `OPS_CONTROLLER_URL` at the scheduler service (`ordo/control.py`'
 compose service `ops-controller`), which - by design, per its own module docstring ("No auth here:
 the dashboard is localhost-only and this is the full control plane behind it") - takes no auth at
 all. (The dashboard's `OPS_CONTROLLER_TOKEN` env var is for the control plane's own API -
-`services/v1-parity/dashboard.yaml` points the dashboard's own `OPS_CONTROLLER_URL` at
+`services/dashboard/dashboard.yaml` points the dashboard's own `OPS_CONTROLLER_URL` at
 `http://ops-controller:9000`, not at this one - so there is nothing to wire here.)
 
 Why this is the right ground truth for "is llama.cpp about to be (or already) starved of the GPU":

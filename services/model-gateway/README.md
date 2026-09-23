@@ -1,7 +1,7 @@
 # model-gateway (LiteLLM config-wrapper)
 
-The Ordo stack's `model-gateway` core service. This is the small config-wrapper build V1 runs
-(`ordo-ai-stack-model-gateway:latest`) — a pinned LiteLLM base plus the stack's config: the
+The Ordo stack's `model-gateway` core service. This is the small config-wrapper build
+(`ordo/model-gateway:latest`), a pinned LiteLLM base plus the stack's config: the
 canonical **`local-chat`** alias, the `local-embed` alias, the throughput callback, and the
 entrypoint that templates the config placeholders at startup.
 

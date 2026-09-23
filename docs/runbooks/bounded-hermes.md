@@ -1,121 +1,84 @@
-# Bounded Hermes — Operator Runbook
+# Hermes Docker Access: Operator Runbook
 
 ## Mental model
 
-By default an agent holding `/var/run/docker.sock` has full Docker daemon
-access — `docker exec` into any container, `docker inspect` env vars
-(including high-value tokens), recreate containers with arbitrary mounts.
-Any prompt-injection inherits all of it.
+Hermes (the `agent` service) has full Docker control of the host. Its
+manifest, `services/hermes/agent.yaml`, mounts `/var/run/docker.sock` and
+adds the container to group `0` so the unprivileged `hermes` user can use
+the socket. The docker CLI ships in the image.
 
-The bounded model removes the socket from Hermes. When it needs to restart
-a service, fetch logs, or manage the compose stack, it makes an HTTP call
-to `ops-api` (`OPS_API_URL=http://ops-api:9000`) — the single socket
-holder — and every privileged call is audited. (The `ordo serve`
-scheduler at `ops-controller:9000` is a separate service serving only
-`/status`, `/model-config`, `/jobs*`, `/health`; it has none of these
-verbs.)
+The guardrails are prompting, not enforcement: `services/hermes/seed/SOUL.md`
+carries the rules (take a scheduler GPU lease before any GPU work, never
+destroy its own container or persistent volumes). A raw socket bypasses the
+GPU lease, so a leaseless GPU container can still co-tenant the GPU with the
+resident llama.cpp. The rejected enforcing alternative (a guarded socket
+proxy) is recorded in `docs/design/hermes-owns-docker.md`.
 
-## What Hermes can do (via `services/hermes/ops_client.py`)
+Anything Hermes does over the raw socket is not audited by Ordo.
 
-- `OpsClient().list_containers()` → `GET /containers`
-- `OpsClient().container_logs(name, tail=N)` → `GET /containers/{name}/logs`
-- `OpsClient().restart_container(name)` → `POST /containers/{name}/restart`
-- `OpsClient().compose_up/compose_down/compose_restart(service=…)` →
-  `POST /services/{service}/recreate` (up/restart) or `/stop` (down)
+## First-class ops tools (the `ops-router` plugin)
 
-Stack-wide compose mutations (`service=None`) are a deliberate 501 — the
-render pipeline owns compose lifecycle, not ad-hoc mutation. `OpsClient`
-raises `OpsClientError` immediately if you omit `service`:
+`services/hermes/plugins/ops-router/` exposes the control plane's container
+verbs as Hermes tools. They wrap `OpsClient` (`services/hermes/ops_client.py`)
+and call `ops-controller` (`OPS_CONTROLLER_URL=http://ops-controller:9000`):
+
+| Tool | ops-controller route |
+|---|---|
+| `list_containers` | `GET /containers` |
+| `container_logs` | `GET /containers/{name}/logs` |
+| `restart_container` | `POST /containers/{name}/restart` |
+| `compose_restart`, `compose_up` | `POST /services/{name}/recreate` |
+
+`OpsClient` refuses stack-wide compose verbs (`service=None`) before making
+a request; the render pipeline owns stack lifecycle:
 
 ```python
 ops = OpsClient()
-ops.compose_restart()                       # OpsClientError: stack-wide disabled
-ops.compose_restart(service="open-webui")   # OK
+ops.compose_restart()                                   # OpsClientError: stack-wide disabled
+ops.compose_restart(service="open-webui", confirm=True) # OK
 ```
 
-## What Hermes cannot do
-
-- `docker exec` into other containers — specific named verbs only. If you
-  need `exec`, add a named verb to `ops-api` (below), never reintroduce
-  arbitrary shell.
-- `docker inspect` other containers — tokens in Docker secrets stay
-  invisible to Hermes even under prompt injection.
-- Mount new volumes, create containers from arbitrary images, or make any
-  Docker SDK call `ops-api` doesn't explicitly expose.
-
-## UX caveat (vendored upstream)
-
-Hermes' built-in docker tools (`vendor/hermes-agent/`, upstream-pinned)
-fail when they hit `/var/run/docker.sock`. Bridge the gap one of three
-ways:
-
-1. **Manual via `OpsClient`** (today's path) — from any shell with
-   `OPS_CONTROLLER_TOKEN` in env:
-   ```python
-   from hermes.ops_client import OpsClient
-   OpsClient().restart_container("open-webui")
-   ```
-2. **Hermes plugin** — a `pre_tool_call` hook (see
-   `services/hermes/plugins/push-through/`) that intercepts the built-in
-   docker/terminal tools and routes them through `OpsClient`. Smaller
-   blast radius than forking.
-3. **Fork upstream** (last resort) — maintain a fork that swaps
-   `tools/environments/docker.py` to call `OpsClient`. Highest
-   maintenance debt.
-
-The compose `${OPS_CONTROLLER_TOKEN:?required}` failsafe ensures Hermes
-never starts without the token, so option 2/3 always has a working
-`OpsClient` to delegate to.
+`OpsClient` requires `OPS_CONTROLLER_TOKEN` to be non-empty and sends it as
+a Bearer header. `ops-controller` itself does not check it (auth is Caddy's
+job at the edge, see the `ordo/control.py` module docstring).
 
 ## Audit log
 
+`ops-controller` appends JSONL records to `data/ops-controller/audit.log`
+(`AUDIT_LOG_PATH=/data/audit.log`) for `env/set`, image pulls, ComfyUI
+node-requirement installs and GPU-assign attempts:
+
 ```bash
-tail -f data/ops-controller/audit.jsonl | jq
+tail -f data/ops-controller/audit.log | jq
 ```
-Each line is one privileged call:
-```json
-{"ts": 1745611200.123, "caller": "hermes", "action": "container.restart",
- "target": "open-webui", "result": "ok"}
-```
-Rotation: at `AUDIT_LOG_MAX_BYTES` (default 50MB) `audit.jsonl` rolls to
-`audit.1.jsonl`; one historical generation is kept.
 
-## Adding a new privileged verb
+Container and service lifecycle verbs are not audited. Rotation: at 50MB the
+file rolls to `audit.1.log`; one historical generation is kept
+(`ordo/audit.py`).
 
-1. Write a failing test in `tests/substrate/` for the new endpoint.
-2. Implement it in the `ops-api` service source. Pattern:
-   `_: None = Depends(verify_token)` → do work → `_audit.record(...)` →
-   return.
-3. Add a method on `OpsClient` in `services/hermes/ops_client.py`.
-4. Migrate any caller that needs it.
-5. Test, commit, then from `out/`: `docker compose -p ordo restart
-   ops-api agent`.
+## Adding a new control-plane verb
 
-Resist `exec`. Specific verbs only.
+1. Write a failing test in `tests/substrate/` for the new route.
+2. Implement the handler on the control plane in `ordo/control.py` and add
+   it to `ControlPlane.route()`. Call `self._audit(...)` if it mutates state.
+3. Add a method on `OpsClient` in `services/hermes/ops_client.py` and, if
+   Hermes should call it as a tool, register it in the `ops-router` plugin.
+4. Rebuild the `ops-controller` and `agent-hermes` images, then recreate
+   both services.
 
-## Recovery — ops-api down
+## Recovery: ops-controller down
 
-Hermes-driven ops are blocked; the stack itself stays up. From the host
+The ops-router tools fail; the rest of the stack stays up. From the host
 (the rendered compose lives in `out/`):
+
 ```bash
 cd out
-docker compose -p ordo restart ops-api
+docker compose -p ordo --env-file .env --env-file secrets.env restart ops-controller
 ```
-The host shell keeps full Docker access — the host operator is trusted.
 
-## Recovery — Hermes ops_client misconfigured
+## Recovery: ops_client misconfigured
 
-Symptom: every Hermes-initiated op fails with `OPS_CONTROLLER_TOKEN env
-var is empty` or 401 from ops-api. Fix: confirm `OPS_CONTROLLER_TOKEN` in
-`out/secrets.env` matches the value ops-api uses (both render from
-`out/secrets.env.example`). Then from `out/`: `docker compose -p ordo
-restart agent hermes-dashboard`.
-
-## Verifying Hermes is bounded
-
-```bash
-pytest tests/test_hermes_socket_absent.py -v
-```
-Checks: socket absent (gateway + dashboard), root-group elevation absent,
-ops-controller reachable, `OPS_CONTROLLER_TOKEN`/`URL` present in env. The
-suite skips if Hermes containers aren't running.
+Symptom: every ops-router tool fails with `OPS_CONTROLLER_TOKEN env var is
+empty`. Fix: fill `OPS_CONTROLLER_TOKEN` in `out/secrets.env` (see
+[secrets.md](secrets.md)), then from `out/`:
+`docker compose -p ordo --env-file .env --env-file secrets.env up -d agent`.

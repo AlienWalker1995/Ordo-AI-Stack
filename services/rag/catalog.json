@@ -26,7 +26,7 @@
       "background": true,
       "ops_service": "rag-ingestion",
       "hint": "Headless folder-watch embedder for Qdrant (no web UI). Health via container healthcheck. Logs: docker compose logs rag-ingestion",
-      "notes": "Portless headless worker: no HTTP check on purpose — the grid reads its true up/down from ops-api container health (routes_hub) instead of showing a neutral unknown."
+      "notes": "Portless headless worker: no HTTP check on purpose, the grid reads its true up/down from ops-controller container health (routes_hub) instead of showing a neutral unknown."
     }
   ]
 }

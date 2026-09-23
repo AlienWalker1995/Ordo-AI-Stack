@@ -29,7 +29,7 @@ We will acknowledge receipt and aim to respond within a reasonable timeframe.
 ### Authentication
 
 - **Open WebUI:** The default `WEBUI_AUTH=False` disables login. This is intended for **local/single-user** use only. If you expose the stack to a network (e.g., via port forwarding or LAN access), **enable authentication** by setting `WEBUI_AUTH=True` in the environment.
-- **Dashboard:** No per-service auth — it publishes no host port and is reached only through the Caddy edge (oauth2-proxy + Google SSO) at `${CADDY_TAILNET_HOSTNAME}:8444`, which is the sole gate; internal callers reach it over the stack network. **ops-controller:** Set `OPS_CONTROLLER_TOKEN` (generate with `openssl rand -hex 32`) — it stays token-gated and its port is never exposed.
+- **Dashboard:** No per-service auth, it publishes no host port and is reached only through the Caddy edge (oauth2-proxy + Google SSO) at `${CADDY_TAILNET_HOSTNAME}:8444`, which is the sole gate; internal callers reach it over the stack network. **ops-controller:** Its port is never exposed; it is reachable only on the internal `ordo-net` network. Callers send `OPS_CONTROLLER_TOKEN` as a Bearer token, but `ordo serve` (`ordo/control.py`) does not validate it, so network isolation is the only gate.
 - **n8n:** No built-in auth of its own and publishes no host port — port 5678 is reachable only inside the `ordo-net` stack network. The Caddy edge gates the n8n UI behind oauth2-proxy + Google SSO on its own port (`${CADDY_TAILNET_HOSTNAME}:8445`); the only unauthenticated surface is n8n's public webhook/OAuth base, which stays on `:443` (`/n8n/rest/oauth2-credential/callback`, `/n8n/webhook/*`) so external URLs never change (see `auth/caddy/Caddyfile`).
 
 ### Network Binding
@@ -59,7 +59,7 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 | Threat | Check |
 |--------|-------|
 | docker.sock exposure | Only the control plane mounts it (`ops-controller`, guard-scoped to this project, and refusing to cycle the services running the request); MCP servers and the dashboard UI do not |
-| Controller compromise | Token in env; no default; never expose port |
+| Controller compromise | No host port; reachable only on `ordo-net` (the API does not check `OPS_CONTROLLER_TOKEN`) |
 | MCP SSRF (egress-capable servers, e.g. `searxng`) | Egress blocks for 100.64/10, RFC1918, 169.254.169.254: `./scripts/ssrf-egress-block.sh` (auto-detects the `ordo-net` subnet) |
 | Secret exfiltration (general) | Controller-only API keys; dashboard `/api/services` strips tokens from returned URLs |
 | Unauthenticated admin | Dashboard reached only via the Caddy edge (oauth2-proxy + Google SSO); no host port |
@@ -72,5 +72,5 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 
 1. **Reset OPS_CONTROLLER_TOKEN:** Generate new token, update `out/secrets.env`, then re-run `docker compose -p ordo … up` from `out/` to restart dashboard + ops-controller
 2. **Restore data:** Restore `data/` from a local backup
-3. **Disable MCP tools:** Remove the `kind: mcp` plugins from `ordo.yaml`'s `plugins:` list (or use the dashboard MCP tab), then `ordo render` and recreate `model-gateway`
+3. **Disable MCP tools:** Remove the `kind: mcp` plugins from `ordo.yaml`'s `plugins:` list (or use the MCP servers section of the dashboard's Settings drawer), then `ordo render` and recreate `model-gateway`
 4. **Safe mode:** Stop the `mcp-*` services and `agent`; use `llamacpp` + `open-webui` only

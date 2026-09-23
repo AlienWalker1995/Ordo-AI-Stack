@@ -98,7 +98,7 @@ class OpsClient:
 
     # --- control-plane (ops-controller scheduler, authless): service-plugin install/enable ---
     # These are the render authority: they edit ordo.yaml's plugin list + re-render out/. They do NOT
-    # start containers — the caller then brings each service up via compose_up() (ops-api recreate).
+    # start containers, the caller then brings each service up via compose_up() (ops-controller recreate).
     def list_plugins(self) -> dict[str, Any]:
         r = self._ctl.get("/plugins")
         self._check(r)

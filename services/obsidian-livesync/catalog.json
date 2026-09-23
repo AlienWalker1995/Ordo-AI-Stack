@@ -23,7 +23,7 @@
       "category": "notes",
       "background": true,
       "hint": "Headless CouchDB <-> data/memory-vault/notes/ mirror so the AI reads Obsidian notes. Health via container healthcheck. Logs: docker compose logs livesync-bridge",
-      "notes": "Portless headless worker: no HTTP check on purpose — grid reads container health via ops-api (routes_hub)."
+      "notes": "Portless headless worker: no HTTP check on purpose, grid reads container health via ops-controller (routes_hub)."
     }
   ]
 }

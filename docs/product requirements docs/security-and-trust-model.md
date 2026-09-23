@@ -4,7 +4,7 @@
 
 | Asset | Threat | Current State | Mitigation |
 |-------|--------|---------------|------------|
-| `docker.sock` (ops-api) | Container escape → host RCE | Mounted; allowlisted actions only | Bearer-token auth; no host port; allowlist in code; every privileged call audited. (The `ordo serve` scheduler on ops-controller mounts a *separate* `<project>-*`-scoped docker.sock for render/broker lifecycle only — auth-free by design, exposes no start/stop/logs/pull API.) |
+| `docker.sock` (ops-controller, Hermes agent) | Container escape → host RCE | Mounted | ops-controller: no host port; the `DockerBackend` guard scopes every call to `<project>-*` containers; destructive verbs require `confirm: true`; privileged env/pull/pip calls audited. Hermes: guardrails in its prompt, see [Hermes owns Docker](../design/hermes-owns-docker.md) |
 | MCP server containers | MCP server compromise → lateral movement | No Docker socket anywhere in the tool path; each server is a long-lived service on `ordo-mcp-net` (`internal: true`) | `no-new-privileges`, 1 CPU / 2 GB, no `env_file` (only its own declared env and secrets), reachable only by `model-gateway`, no host port |
 | Ops controller token | Token theft → privileged ops | Token in `out/secrets.env`; no default | Generate with `openssl rand -hex 32`; never expose controller port to host |
 | MCP tools (filesystem) | Data exfiltration via tool | Enabled as a `kind: mcp` plugin in `ordo.yaml`; each declares its own mounts (code root read-only) | Drop the plugin from `plugins:`, `ordo render`, recreate `model-gateway`; grant it to no key otherwise |
@@ -17,18 +17,16 @@
 ## AuthN / AuthZ Tiers
 
 - **Tier 0:** No auth (health endpoints, read-only model list)
-- **Tier 1:** Bearer token (ops-api — `OPS_CONTROLLER_TOKEN`)
+- **Tier 1:** Bearer token (`OPS_CONTROLLER_TOKEN`), sent by ops-controller clients; ops-controller does not verify it today, so its protection is having no host port
 - **Tier 2:** Edge SSO (Caddy oauth2-proxy + Google SSO + email allowlist) — the sole auth gate for every UI, including the dashboard. Caddy is the *only* service publishing host ports: under the port-per-service model, one shared Google sign-in (domain-scoped cookie, one OAuth callback) covers seven SSO-gated ports on `${CADDY_TAILNET_HOSTNAME}` — `:443` front door (landing page, `/oauth2` callback, `/llm/*` and `/mcp` Bearer-token APIs, n8n webhook/OAuth passthroughs, and 302s from every legacy subpath) plus one dedicated port per UI: `:8443` Open WebUI, `:8444` Dashboard (+ `/grafana/` embed), `:8445` n8n, `:8446` ComfyUI, `:8447` Hermes, `:8448` codebase-memory. UI service containers themselves have no host port and are reached only through their Caddy port or the internal `ordo-net`. The dashboard has no per-service auth token in this deployment (`DASHBOARD_AUTH_TOKEN` unset, `AUTH_REQUIRED=False`); the app code's optional Bearer fallback is dormant
 - **Future Tier 3:** Per-role OIDC / RBAC beyond the edge's binary allow/deny gate (if deeper multi-user separation is needed)
 - **RBAC:** Currently binary (authed = full access). Future: read-only role (view logs, health) vs admin role (start/stop).
 
 ## Correlation ID Flow
 
-1. External client sends `X-Request-ID: req-abc` to model gateway
-2. Model gateway logs it; includes in throughput record to dashboard
-3. Dashboard passes `X-Request-ID` when calling ops-api
-4. Ops-api includes in audit entry
-5. Result: one request traceable across model → throughput → ops → audit
+1. A client sends `X-Request-ID` to the dashboard
+2. The dashboard forwards it on its ops-controller calls (`services/dashboard/dashboard/app.py`, `routes_orchestration.py`)
+3. Gap: ops-controller does not record it in the audit entry yet
 
 ## Secret Handling
 
@@ -48,7 +46,7 @@
 | `LITELLM_SALT_KEY` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Encrypts provider credentials in `litellm-db`. **Never rotate** (excluded from `rotate-internal.sh`) |
 | `LITELLM_DB_PASSWORD` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Postgres password for `litellm-db` |
 | `LITELLM_KEY_HERMES` / `_OPEN_WEBUI` / `_AUTOMATION` / `_EDGE` | `out/secrets.env` | Compose `env_file:` / per-service `environment:` | Per-consumer virtual keys, provisioned by `model-gateway-keys` |
-| `OPS_CONTROLLER_TOKEN` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Required for the ops-api privileged (Bearer) API |
+| `OPS_CONTROLLER_TOKEN` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Bearer the dashboard, agent and MCP clients send to ops-controller |
 | `DISCORD_BOT_TOKEN` | `secrets/discord_token.sops` | Docker secret → agent (`/run/secrets/discord_token`) | Optional, only when Discord channel is used |
 | `HF_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Optional, for gated HF model pulls and ComfyUI-Manager custom-node fetches |
 

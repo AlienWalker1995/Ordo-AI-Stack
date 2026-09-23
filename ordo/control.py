@@ -1100,9 +1100,6 @@ class ControlPlane:
         if m == "GET" and path.startswith("/registry/models/") and path.count("/") == 3:
             model_id = path.split("/")[3]
             return self.registry_get_model(model_id)
-        if m == "POST" and path.startswith("/registry/models/") and path.endswith("/enable"):
-            model_id = path[len("/registry/models/"):-len("/enable")]
-            return self._as_response(self.registry_enable_model(model_id, body))
         if m == "GET" and path == "/registry/gpus":
             return 200, self.registry_gpus()
         # Slice 3: model download/pull routes

@@ -23,11 +23,11 @@ with the age private key at `~/.config/sops/age/keys.txt`.
   `ordo-hermes-backup` private repo. Mounted on `agent`; the
   entrypoint bridges it to the `GITHUB_BACKUP_PAT` env var, and the backup
   repo's credential helper reads it. Not used by the stack services themselves.
-- `hf_token.sops` — HuggingFace token (gated model downloads). Mounted
-  on `ops-controller`, `dashboard`, and the comfyui
-  model-pack downloads (the dashboard-spawned `pull_comfyui_models.py`).
-- `civitai_token.sops` — Civitai token (LoRA downloads). Mounted on
-  the comfyui model-pack downloads (the dashboard-spawned `pull_comfyui_models.py`).
+- `hf_token.sops`, HuggingFace token (gated model downloads). Decrypted to
+  a file by `scripts/secrets/decrypt.sh`; no compose service mounts the file.
+  The same token is `HF_TOKEN` in `out/secrets.env` (`comfyui` receives it).
+- `civitai_token.sops`, Civitai token (LoRA downloads). Decrypted to a file
+  by `scripts/secrets/decrypt.sh`; no compose service mounts it.
 - `n8n_api_key.sops` — n8n API key (n8n MCP server + gateway wiring; `N8N_API_KEY` in `out/secrets.env`).
 - `tailscale_authkey.sops` — reusable tagged `TS_AUTHKEY` for the tailnet-names and
   notes-funnel sidecars (env-form; consumed via `out/secrets.env`).
@@ -45,8 +45,8 @@ with the age private key at `~/.config/sops/age/keys.txt`.
   (the rendered compose reads `secrets.env` as a second, optional
   `env_file` layered after `.env`, so derived config and operator
   secrets stay in separate files).
-- The dashboard's per-service recreate (backend `ops-api`) replays the
-  rendered `out/` tree — both `.env` and `secrets.env` — so a
+- A service recreate through `ops-controller` (`POST /services/{id}/recreate`)
+  replays the rendered `out/` tree, both `.env` and `secrets.env`, so a
   secret-dependent service it recreates comes up with real values. It
   never holds the age key. See `docs/runbooks/secrets.md`.
 - Add a new secret: `echo -n "$VALUE" | sops --encrypt --age age1...

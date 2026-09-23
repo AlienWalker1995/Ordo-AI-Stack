@@ -131,7 +131,7 @@ docker compose -p ordo exec agent sh -c "cp /opt/ordo-seed/SOUL.md /home/hermes/
 
 If `hermes plugins enable push-through` returns non-zero on container start (older Hermes builds), the seeding block swallows the error and writes the sentinel anyway — enable manually with the command above.
 
-Design rationale: bounded push-through keeps Hermes off the docker socket; see `docs/runbooks/bounded-hermes.md` for the privilege model.
+Hermes holds the host Docker socket (guardrails are prompt rules in `SOUL.md`); see [`runbooks/bounded-hermes.md`](runbooks/bounded-hermes.md) for the privilege model and the `ops-router` tools.
 
 ## Updating Hermes
 
