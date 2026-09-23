@@ -1,0 +1,87 @@
+diff --git a/skills/creative/comfyui/scripts/_common.py b/skills/creative/comfyui/scripts/_common.py
+index efe592a..14be744 100644
+--- a/skills/creative/comfyui/scripts/_common.py
++++ b/skills/creative/comfyui/scripts/_common.py
+@@ -40,7 +40,12 @@ except ImportError:  # pragma: no cover - exercised via stdlib fallback
+ # Constants & catalogs
+ # =============================================================================
+ 
+-DEFAULT_LOCAL_HOST = "http://127.0.0.1:8188"
++# Where local work is submitted. A deployment that fronts ComfyUI with an admission
++# gate (for example one that must take a GPU lease before a render starts) publishes the
++# gate's address as COMFYUI_URL, and every script here must use it: submitting straight
++# to the engine skips the lease and lets a render share the GPU with whatever the gate
++# would have evicted. Unset falls back to the stock local address.
++DEFAULT_LOCAL_HOST = os.environ.get("COMFYUI_URL") or "http://127.0.0.1:8188"
+ DEFAULT_CLOUD_HOST = "https://cloud.comfy.org"
+ ENV_API_KEY = "COMFY_CLOUD_API_KEY"
+ 
+diff --git a/skills/creative/comfyui/tests/test_run_workflow.py b/skills/creative/comfyui/tests/test_run_workflow.py
+index ec40910..8e8693f 100644
+--- a/skills/creative/comfyui/tests/test_run_workflow.py
++++ b/skills/creative/comfyui/tests/test_run_workflow.py
+@@ -4,6 +4,10 @@ from __future__ import annotations
+ 
+ 
+ 
++import importlib
++
++import _common
++from _common import DEFAULT_LOCAL_HOST
+ from extract_schema import extract_schema
+ from run_workflow import (
+     ComfyRunner,
+@@ -177,7 +181,7 @@ class TestRunnerConstruction:
+     def test_local_default(self):
+         r = ComfyRunner()
+         assert r.is_cloud is False
+-        assert r.host == "http://127.0.0.1:8188"
++        assert r.host == DEFAULT_LOCAL_HOST
+ 
+     def test_cloud_detection(self):
+         r = ComfyRunner(host="https://cloud.comfy.org", api_key="abc")
+@@ -197,7 +201,7 @@ class TestRunnerConstruction:
+     def test_url_routing_local(self):
+         r = ComfyRunner()
+         url = r._url("/prompt")
+-        assert url == "http://127.0.0.1:8188/prompt"
++        assert url == f"{DEFAULT_LOCAL_HOST}/prompt"
+ 
+     def test_url_routing_cloud(self):
+         r = ComfyRunner(host="https://cloud.comfy.org", api_key="x")
+@@ -208,3 +212,35 @@ class TestRunnerConstruction:
+         r = ComfyRunner(host="https://cloud.comfy.org", api_key="x")
+         url = r._url("/history/abc-123")
+         assert url == "https://cloud.comfy.org/api/history_v2/abc-123"
++
++
++class TestDefaultHostFromEnvironment:
++    """The local default follows COMFYUI_URL so a gated deployment cannot be bypassed."""
++
++    def _reload(self, monkeypatch, value):
++        if value is None:
++            monkeypatch.delenv("COMFYUI_URL", raising=False)
++        else:
++            monkeypatch.setenv("COMFYUI_URL", value)
++        return importlib.reload(_common).DEFAULT_LOCAL_HOST
++
++    def test_follows_comfyui_url(self, monkeypatch):
++        try:
++            assert self._reload(monkeypatch, "http://gate:8188") == "http://gate:8188"
++        finally:
++            monkeypatch.undo()
++            importlib.reload(_common)
++
++    def test_falls_back_to_stock_local_when_unset(self, monkeypatch):
++        try:
++            assert self._reload(monkeypatch, None) == "http://127.0.0.1:8188"
++        finally:
++            monkeypatch.undo()
++            importlib.reload(_common)
++
++    def test_empty_value_is_treated_as_unset(self, monkeypatch):
++        try:
++            assert self._reload(monkeypatch, "") == "http://127.0.0.1:8188"
++        finally:
++            monkeypatch.undo()
++            importlib.reload(_common)

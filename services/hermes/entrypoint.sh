@@ -168,6 +168,12 @@ if [ -n "${HERMES_LANGFUSE_PUBLIC_KEY:-}" ] && [ ! -f "$LANGFUSE_MARK" ]; then
   gosu hermes touch "$LANGFUSE_MARK"
 fi
 
+# Repo-owned skills ship read-only in the image at /opt/ordo-skills (see the Dockerfile). Register
+# that dir as a Hermes external skills dir and move aside any local skill of the same name, which
+# would otherwise hide the shipped one. Every start, idempotent, and it never blocks boot. Runs
+# before the config.yaml permission tightening below because it may write config.yaml.
+timeout 60 gosu hermes python3 /opt/ordo/ordo_skills.py boot || true
+
 # config.yaml holds provider API keys. The writable-home repair above (chmod -R a+rwX)
 # and volume-migration copies can leave it world-readable (found live at 0777 on
 # 2026-08-07 despite save_config_value's own 0600 chmod), so tighten it explicitly on

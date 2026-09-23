@@ -187,6 +187,35 @@ RUN cd /opt/hermes-agent \
     && chown hermes:hermes tools/checkpoint_manager.py \
     && echo "checkpoint-scan-bounds patch applied"
 
+# SKILLS OWNED BY THIS REPO: the bundled ComfyUI skill, patched and shipped read-only.
+# Upstream's scripts default to submitting at http://127.0.0.1:8188, straight at the engine. On
+# this stack that skips the GPU admission gate, which is what takes the scheduler lease and evicts
+# the resident model before a render; without it the two share the GPU. The diff makes the
+# default follow COMFYUI_URL, the address the renderer already publishes (and already points at
+# the gate when ComfyUI is gated), falling back to stock when unset. The overlay markdown is
+# spliced into SKILL.md ahead of the upstream quick start, which otherwise tells the agent to
+# install and launch its own ComfyUI.
+# The result goes to /opt/ordo-skills, root-owned and read-only, which the entrypoint registers
+# as a Hermes `skills.external_dirs` entry: the curator will not rewrite it, the bundled sync
+# defers to it, and a volume loss cannot take it. Starting from the image's own bundled copy
+# means upstream fixes arrive with every hermes-agent pin bump.
+# --check first: the build fails loudly if a future pin bump breaks the patch.
+COPY skill-overlays/ /tmp/skill-overlays/
+COPY scripts/ordo_skills.py /opt/ordo/ordo_skills.py
+RUN cd /opt/hermes-agent \
+    && git apply --recount --check /tmp/skill-overlays/comfyui/submit-via-comfyui-url.diff \
+    && git apply --recount /tmp/skill-overlays/comfyui/submit-via-comfyui-url.diff \
+    && chown hermes:hermes skills/creative/comfyui/scripts/_common.py \
+                           skills/creative/comfyui/tests/test_run_workflow.py \
+    && python3 /opt/ordo/ordo_skills.py build \
+           skills/creative/comfyui \
+           /tmp/skill-overlays/comfyui/ordo-deployment.md \
+           /opt/ordo-skills/creative/comfyui \
+    && chown -R root:root /opt/ordo-skills /opt/ordo/ordo_skills.py \
+    && chmod -R a+rX,go-w /opt/ordo-skills /opt/ordo/ordo_skills.py \
+    && rm -rf /tmp/skill-overlays \
+    && echo "ordo skills built"
+
 USER hermes
 WORKDIR /opt/hermes-agent
 
