@@ -157,7 +157,7 @@ def test_entrypoint_substitutes_cost_placeholders_into_valid_yaml(tmp_path):
     script = ENTRYPOINT.read_text(encoding="utf-8")
     # Point the sed pipeline at our real template and a scratch output file instead of the
     # container paths (/app/config.template.yaml, /tmp/config.yaml) - same technique as
-    # tests/test_llamacpp_turboquant.py's wrapper redirection.
+    # tests/test_llamacpp_kv_cache_args.py's wrapper redirection.
     script = script.replace("/app/config.template.yaml", template_posix)
     script = script.replace("/tmp/config.yaml", out_posix)
     # Stop right after the sed pipeline - everything after it (copying the throughput

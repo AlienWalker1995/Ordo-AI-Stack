@@ -1,9 +1,7 @@
-"""Shell-wrapper assertions for the llama-server entrypoint when TurboQuant KV types are selected.
+"""Shell-wrapper assertions for the llama-server entrypoint's KV-cache quantization flags.
 
 The wrapper lives at scripts/llamacpp/run-llama-server.sh and assembles the llama-server arg vector
-from LLAMACPP_* env vars. TurboQuant cache types (turbo2, turbo3) require Flash Attention to be on
-or the kernels silently produce garbage — see docs/configuration.md. These tests pin the
-behavior that makes that mistake impossible."""
+from LLAMACPP_* env vars. These pin that the cache-type flags appear only when quantization is on."""
 
 from __future__ import annotations
 
@@ -92,56 +90,8 @@ def test_wrapper_syntax_is_posix_sh() -> None:
     assert result.returncode == 0, f"sh -n failed:\n{result.stderr}"
 
 
-def test_tbqp3_0_forces_flash_attention_on() -> None:
-    """When K or V cache type is any tbq* variant, --flash-attn on must be appended
-    regardless of LLAMACPP_FLASH_ATTN. TurboQuant kernels silently corrupt without FA."""
-    env = _base_env(
-        LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION="1",
-        LLAMACPP_KV_CACHE_TYPE_K="tbqp3_0",
-        LLAMACPP_KV_CACHE_TYPE_V="tbqp3_0",
-        LLAMACPP_FLASH_ATTN="off",  # deliberately hostile
-    )
-    args = _final_args(_run_wrapper(env))
-    assert "--cache-type-k tbqp3_0" in args, args
-    assert "--cache-type-v tbqp3_0" in args, args
-    # The guard must append `--flash-attn on` AFTER any earlier --flash-attn arg so
-    # llama-server takes the safe value (last-wins).
-    last_flash_attn_value = args.rsplit("--flash-attn", 1)[-1].strip().split()[0]
-    assert last_flash_attn_value == "on", (
-        f"expected last --flash-attn value to be 'on', got {last_flash_attn_value!r}\nargs={args}"
-    )
-
-
-def test_tbq4_0_also_forces_flash_attention_on() -> None:
-    """tbq4_0 (4-bit TurboQuant) has the same FA requirement as the packed variants."""
-    env = _base_env(
-        LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION="1",
-        LLAMACPP_KV_CACHE_TYPE_K="tbq4_0",
-        LLAMACPP_KV_CACHE_TYPE_V="tbq4_0",
-        LLAMACPP_FLASH_ATTN="auto",
-    )
-    args = _final_args(_run_wrapper(env))
-    last_flash_attn_value = args.rsplit("--flash-attn", 1)[-1].strip().split()[0]
-    assert last_flash_attn_value == "on", args
-
-
-def test_mixed_k_tbq_v_q4_0_still_forces_flash_attention() -> None:
-    """If only ONE of K/V is a tbq* type (asymmetric config), FA is still required
-    because the tbq* side's rotation-quantize kernels need it. The wrapper's guard
-    fires whenever either K or V matches tbq*."""
-    env = _base_env(
-        LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION="1",
-        LLAMACPP_KV_CACHE_TYPE_K="tbqp3_0",
-        LLAMACPP_KV_CACHE_TYPE_V="q4_0",
-        LLAMACPP_FLASH_ATTN="off",
-    )
-    args = _final_args(_run_wrapper(env))
-    last_flash_attn_value = args.rsplit("--flash-attn", 1)[-1].strip().split()[0]
-    assert last_flash_attn_value == "on", args
-
-
 def test_q4_0_does_not_force_flash_attention() -> None:
-    """Non-turbo cache types must not get the safety-rail flip — operator's
+    """Quantized cache types never force Flash Attention on: the operator's
     LLAMACPP_FLASH_ATTN setting stays authoritative."""
     env = _base_env(
         LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION="1",
@@ -161,8 +111,8 @@ def test_quantization_disabled_emits_no_cache_type_args() -> None:
     regardless of the type env vars, and the FA safety rail must not fire."""
     env = _base_env(
         LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION="0",
-        LLAMACPP_KV_CACHE_TYPE_K="tbqp3_0",  # should be ignored
-        LLAMACPP_KV_CACHE_TYPE_V="tbqp3_0",
+        LLAMACPP_KV_CACHE_TYPE_K="q8_0",  # should be ignored
+        LLAMACPP_KV_CACHE_TYPE_V="q8_0",
         LLAMACPP_FLASH_ATTN="auto",
     )
     args = _final_args(_run_wrapper(env))
