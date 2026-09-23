@@ -1,4 +1,4 @@
-// MCP tab for the LiteLLM model-gateway. Consumes /api/mcp/servers
+// MCP servers (Settings drawer) for the LiteLLM model-gateway. Consumes /api/mcp/servers
 // (enabled + configured + dynamic flag) and /api/mcp/health (gateway + per-server status),
 // and drives /api/mcp/add + /api/mcp/remove against the registered server list:
 //   - a gateway status badge (ok / unreachable / unknown),
@@ -32,7 +32,7 @@ function serverTitle(info) {
   return info.ok ? 'running' : info.error || 'unknown'
 }
 
-export default function McpTab() {
+export default function McpSettings() {
   const toast = useToast()
   const [selectValue, setSelectValue] = useState('')
   const [busy, setBusy] = useState(false)
@@ -117,10 +117,7 @@ export default function McpTab() {
   const LABEL = 'mb-2 block text-label text-muted'
 
   return (
-    <section className="mb-5 rounded-lg border border-border bg-card p-6 shadow-card">
-      <h2 className="section-rule mb-4 flex items-center gap-3 text-[0.62rem] font-bold uppercase tracking-[0.18em] text-muted">
-        MCP Tools (LiteLLM gateway)
-      </h2>
+    <div>
       <p className="mb-4 text-[0.8125rem] leading-[1.5] text-muted">
         Tools every agent and MCP client gets through the model-gateway at /mcp. Enable or
         disable a registered server below: the change is saved to ordo.yaml and applies on
@@ -219,6 +216,6 @@ export default function McpTab() {
           </div>
         </>
       )}
-    </section>
+    </div>
   )
 }
