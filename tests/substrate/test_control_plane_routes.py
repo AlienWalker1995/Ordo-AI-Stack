@@ -55,6 +55,19 @@ def test_get_model_config_returns_200_with_config_fields(tmp_path):
     assert body["source_model"] == "auto"
 
 
+def test_get_model_config_names_the_file_being_served(tmp_path):
+    """Consumers that key by GGUF file (throughput attribution, the dashboard's installed check)
+    need the served file, not only the catalog id; guessing it from the id is what went wrong."""
+    cp, _ = _cp(tmp_path, model="qwen3.8-27b-turbo-fable-q6")
+    code, body = cp.route("GET", "/model-config")
+    assert code == 200
+    assert body["active_model"] == "qwen3.8-27b-turbo-fable-q6"
+    assert body["active_file"] == CATALOG.get("qwen3.8-27b-turbo-fable-q6").file
+    files = {m["id"]: m["file"] for m in body["available"]}
+    assert files["qwen3.8-27b-turbo-fable-q6"] == body["active_file"]
+    assert all(m["file"] for m in body["available"])
+
+
 # --- POST /model-config ---
 
 def test_post_model_config_valid_model_returns_200(tmp_path):
