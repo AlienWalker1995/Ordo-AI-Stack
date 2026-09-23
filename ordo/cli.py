@@ -131,7 +131,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     try:
         result = wizard.run(cat, reg, out, interactive=interactive,
                             answers={} if not interactive else None,
-                            emails_path=emails_path)
+                            emails_path=emails_path, host_root=HERE)
     except wizard.SetupCancelled:
         # Operator aborted (Ctrl-C / declined the review). Nothing was written — the review-and
         # -confirm gate is the last step before any file is created.

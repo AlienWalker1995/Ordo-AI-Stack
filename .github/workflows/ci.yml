@@ -99,13 +99,14 @@ jobs:
       # The rendered edge (caddy) requires CADDY_BIND (host tailnet IP) AND BASE_PATH (repo root)
       # via ${VAR:?...} fail-loud guards — operator-supplied `site:` values the generic example
       # intentionally leaves unset. Load the rendered .env and add CI-only placeholders (never used
-      # at runtime) so config can interpolate. BASE_PATH backs the oauth2-proxy allowlist + Caddyfile
-      # mounts, which fail loud on an empty value (guards the deny-all empty-mount outage class).
+      # at runtime) so config can interpolate. BASE_PATH and DATA_PATH back every host bind, which
+      # fail loud on an empty value (guards the deny-all empty-mount outage class).
       - name: Rendered compose validates (docker engine)
         if: steps.filter.outputs.substrate == 'true'
         run: |
           echo "CADDY_BIND=127.0.0.1" >> /tmp/ordo-out/.env
           echo "BASE_PATH=." >> /tmp/ordo-out/.env
+          echo "DATA_PATH=./data" >> /tmp/ordo-out/.env
           docker compose -f /tmp/ordo-out/docker-compose.yml --env-file /tmp/ordo-out/.env config >/dev/null
           echo "rendered compose accepted by docker compose config"
 
