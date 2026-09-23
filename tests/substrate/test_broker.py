@@ -181,3 +181,19 @@ def test_broker_records_swept_lease(tmp_path):
     sched.tick(4000)                             # blow past every TTL
     assert b.sweep_leases() == ["crashy"]
     assert hist.tail()[0]["outcome"] == "swept"
+
+
+def test_service_rows_carry_docker_status_so_exit_codes_and_uptime_survive():
+    """The dashboard tells a finished one-shot job ("Exited (0)") from a crash ("Exited (1)") and
+    shows uptime ("Up 3 hours"), and both live only in docker's Status text."""
+    from ordo.broker import DockerBackend
+
+    row = DockerBackend._service_row(
+        {"service": "evals", "name": "ordo-evals-1", "state": "exited", "status": "Exited (0) 2 hours ago"}
+    )
+    assert row == {"id": "evals", "name": "ordo-evals-1", "state": "exited", "health": None,
+                   "status": "Exited (0) 2 hours ago"}
+    healthy = DockerBackend._service_row(
+        {"service": "qdrant", "name": "ordo-qdrant-1", "state": "running", "status": "Up 3 hours (healthy)"}
+    )
+    assert healthy["health"] == "healthy" and healthy["status"] == "Up 3 hours (healthy)"

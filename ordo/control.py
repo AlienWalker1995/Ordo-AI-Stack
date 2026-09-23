@@ -184,10 +184,14 @@ class ControlPlane:
         return {
             "source_model": src.model,           # what the source asks for ("auto" or an id)
             "active_model": rc.model.id,          # what best-fit/override actually resolved to
+            # The GGUF the resolved model serves. Consumers that key by file (throughput
+            # attribution, the dashboard's installed check) need this, not the catalog id.
+            "active_file": rc.model.file,
             "tier": rc.tier,
             "ctx_size": rc.ctx_size,
             "available": [
-                {"id": m.id, "tier": m.tier, "vram_gb": m.vram_gb} for m in self.catalog.models
+                {"id": m.id, "tier": m.tier, "vram_gb": m.vram_gb, "file": m.file}
+                for m in self.catalog.models
             ],
         }
 

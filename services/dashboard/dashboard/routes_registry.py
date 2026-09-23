@@ -39,43 +39,4 @@ def register(app, ops_request):
             raise HTTPException(status_code=code, detail=(data.get("detail", data) if isinstance(data, dict) else data))
         return data
 
-    @router.post("/models")
-    async def define_model(body: dict, request: Request):
-        code, data = await _ops_request(
-            "POST", "/registry/models", request=request,
-            json=body,
-        )
-        if code >= 400:
-            raise HTTPException(status_code=code, detail=(data.get("detail", data) if isinstance(data, dict) else data))
-        return data
-
-    @router.delete("/models/{model_id}")
-    async def delete_model(model_id: str, request: Request):
-        code, data = await _ops_request(
-            "DELETE", f"/registry/models/{model_id}", request=request,
-        )
-        if code >= 400:
-            raise HTTPException(status_code=code, detail=(data.get("detail", data) if isinstance(data, dict) else data))
-        return data
-
-    @router.post("/models/{model_id}/assign-gpu")
-    async def assign_gpu(model_id: str, body: dict, request: Request):
-        code, data = await _ops_request(
-            "POST", f"/registry/models/{model_id}/assign-gpu", request=request,
-            json=body,
-        )
-        if code >= 400:
-            raise HTTPException(status_code=code, detail=(data.get("detail", data) if isinstance(data, dict) else data))
-        return data
-
-    @router.post("/models/{model_id}/enable")
-    async def enable_model(model_id: str, body: dict, request: Request):
-        code, data = await _ops_request(
-            "POST", f"/registry/models/{model_id}/enable", request=request,
-            json=body,
-        )
-        if code >= 400:
-            raise HTTPException(status_code=code, detail=(data.get("detail", data) if isinstance(data, dict) else data))
-        return data
-
     app.include_router(router)

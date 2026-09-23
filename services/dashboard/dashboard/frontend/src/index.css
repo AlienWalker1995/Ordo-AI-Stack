@@ -3,8 +3,7 @@
    Design tokens live in tailwind.config.js (colors / fonts / radius /
    shadows / animations). This file adds only what utilities express
    poorly: the base body backdrop (a single neutral tonal lift) and the
-   stateful component effects (status-dot rings, section-rule tick,
-   service-card hover, skeleton shimmer).
+   stateful component effects (status dots, skeleton shimmer).
    ═══════════════════════════════════════════════════════════════ */
 @tailwind base;
 @tailwind components;
@@ -49,20 +48,6 @@
 }
 
 @layer components {
-  /* Section heading rule: a single calm accent tick that anchors each panel header. The
-     tick is a grounded mark (no glow halo) so it reads as hierarchy, not ornament. The
-     old trailing hairline was faux-structure (a decorative rule spanning the row) and has
-     been dropped — the tick alone carries the header. */
-  .section-rule::before {
-    content: '';
-    display: block;
-    width: 3px;
-    height: 0.9em;
-    background: theme('colors.accent');
-    border-radius: 999px;
-    flex-shrink: 0;
-  }
-
   /* Status dot — state encoded by colour alone, a bare mark with no ring halo (the halo
      read as a decorative glow). Only "pending" animates (a gentle opacity pulse) because
      motion there is meaningful: it marks an in-flight transition, not decoration. */
@@ -78,63 +63,6 @@
   .status-dot.pending {
     background: theme('colors.warning');
     animation: pulse-pending 1.1s ease-in-out infinite;
-  }
-
-  /* Service card — background/border own their hover + health states here (utilities
-     would out-specify a components-layer hover), so JSX only adds layout utilities. */
-  .service-card {
-    background: theme('colors.bg-elevated');
-    border: 1px solid theme('colors.border-subtle');
-    border-left: 2px solid theme('colors.border');
-    transition:
-      background-color 0.18s ease,
-      border-color 0.18s ease;
-  }
-  /* Hover changes state cleanly through tone — a single lighter-surface shift, with no
-     lift, no shadow bloom, no glowing border (the classic slop hover trio). The left edge
-     is reserved as a STATE indicator (ok / fail / pending below), not a decorative hover
-     accent, so hovering never repaints it. */
-  .service-card:hover {
-    background: theme('colors.surface');
-  }
-  .service-card.ok-status,
-  .service-card.ok-status:hover {
-    border-left-color: theme('colors.success');
-  }
-  .service-card.fail {
-    border-color: rgba(255, 51, 88, 0.2);
-    border-left-color: theme('colors.danger');
-    background: rgba(255, 51, 88, 0.1);
-  }
-  .service-card.pending {
-    border-left-color: theme('colors.warning');
-  }
-  /* Background-jobs treatment: set apart from the main grid. */
-  .service-card.bg-job {
-    background: theme('colors.surface');
-    opacity: 0.9;
-  }
-  .service-card.bg-job:hover {
-    opacity: 1;
-  }
-
-  /* Health bars in the hardware stat cards. */
-  .hw-bar-fill > span {
-    display: block;
-    height: 100%;
-    border-radius: 999px;
-    background: theme('colors.accent');
-    transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-  .hw-bar-fill.warn > span {
-    background: theme('colors.warning');
-  }
-  .hw-bar-fill.danger > span {
-    background: theme('colors.danger');
-  }
-  .hw-bar-fill.gpu-util > span {
-    background: theme('colors.accent');
-    opacity: 0.65;
   }
 
   /* Skeleton shimmer. */

@@ -544,7 +544,7 @@ def test_model_gateway_wired_to_db_config_mount_and_mcp_net():
     mg = c["services"]["model-gateway"]
     assert mg["depends_on"]["litellm-db"] == {"condition": "service_healthy"}
     assert mg["depends_on"]["llamacpp"] == {"condition": "service_started"}
-    assert "./model-gateway:/config:ro" in mg["volumes"]
+    assert "${BASE_PATH:?BASE_PATH must be set}/out/model-gateway:/config:ro" in mg["volumes"]
     assert mg["networks"] == ["ordo-net", "ordo-mcp-net"]
     env = mg["environment"]
     assert env["DATABASE_URL"] == "postgresql://litellm:${LITELLM_DB_PASSWORD}@litellm-db:5432/litellm"
@@ -564,7 +564,7 @@ def test_model_gateway_keys_is_a_one_shot_after_gateway_health():
     assert k["command"] == ["python3", "/app/bootstrap_keys.py"]
     assert k["restart"] == "on-failure"
     assert k["depends_on"]["model-gateway"] == {"condition": "service_healthy"}
-    assert "./model-gateway:/config:ro" in k["volumes"]
+    assert "${BASE_PATH:?BASE_PATH must be set}/out/model-gateway:/config:ro" in k["volumes"]
     assert k["environment"]["LITELLM_KEYS_SPEC"] == "/config/keys.json"
     assert k["environment"]["MODEL_GATEWAY_URL"] == "http://model-gateway:11435"
     assert any(isinstance(f, dict) and f.get("path") == "secrets.env" for f in k["env_file"])
@@ -586,3 +586,17 @@ def test_monitoring_config_mounts_come_from_the_tracked_tree(tmp_path):
         for v in binds:
             assert v.startswith("${BASE_PATH:?"), f"{svc} mounts a ./-relative copy: {v}"
             assert not v.startswith("./monitoring")
+
+
+def test_services_the_control_plane_recreates_have_no_project_relative_binds():
+    # ops-controller runs compose with the project directory at its own /config mount, so a
+    # "./x" bind it recreates resolves to /config/x on the HOST: a path that does not exist.
+    # A dashboard model switch recreated model-gateway that way and it crash-looped.
+    from ordo.broker import DockerBackend
+
+    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
+    offenders = {
+        name: [v for v in svc.get("volumes", []) if isinstance(v, str) and v.startswith("./")]
+        for name, svc in c["services"].items() if name not in DockerBackend.SELF_REFERENTIAL
+    }
+    assert {k: v for k, v in offenders.items() if v} == {}

@@ -8,10 +8,8 @@ import json
 import logging
 import os
 import re
-import subprocess
 import threading
 import time
-import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -25,16 +23,16 @@ logger = logging.getLogger(__name__)
 
 import httpx as _httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.gzip import GZipMiddleware
 
 from dashboard import gpu_stats, settings
 from dashboard import routes_gpu as _routes_gpu
-from dashboard import routes_model_config as _routes_model_config
 from dashboard import routes_registry as _routes_registry
 from dashboard.orchestration_db import get_job_counts, get_outbox_stats
+from dashboard.routes_console import router as console_router
 from dashboard.routes_hub import router as hub_router
 from dashboard.routes_orchestration import router as orchestration_router
 from dashboard.services_catalog import OPS_SERVICE_MAP
@@ -89,6 +87,7 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Ordo AI Stack Dashboard", version="1.0.0", lifespan=_lifespan)
+app.include_router(console_router)
 app.include_router(hub_router)
 app.include_router(orchestration_router)
 
@@ -223,16 +222,6 @@ def _model_gateway_headers() -> dict[str, str]:
         headers["Authorization"] = f"Bearer {MODEL_GATEWAY_API_KEY}"
     return headers
 
-# Background pull status dicts
-_comfyui_status: dict = {"running": False, "output": "", "done": False, "success": None}
-_gguf_pull_status: dict = {"running": False, "model": "", "output": "", "pct": 0, "done": False, "success": None}
-
-
-
-class PullRequest(BaseModel):
-    model: str
-
-
 # --- LLM (llama.cpp / GGUF) ---
 
 
@@ -269,245 +258,6 @@ async def llm_models():
         return {"models": [], "ok": False, "error": str(e)}
 
 
-@app.post("/api/llm/delete")
-async def llm_delete(req: PullRequest):
-    """Delete a GGUF model file from disk."""
-    name = (req.model or "").strip()
-    if not name or ".." in name or "/" in name:
-        raise HTTPException(status_code=400, detail="Invalid model name")
-    if not name.lower().endswith(".gguf"):
-        raise HTTPException(status_code=400, detail="Model must be a .gguf filename")
-    path = (_GGUF_MODELS_DIR / name).resolve()
-    try:
-        path.relative_to(_GGUF_MODELS_DIR.resolve())
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail="Invalid model path") from e
-    if not path.exists() or not path.is_file():
-        raise HTTPException(status_code=404, detail=f"Model '{name}' not found on disk")
-    try:
-        path.unlink()
-    except OSError as e:
-        raise HTTPException(status_code=500, detail=f"Cannot delete model: {e}") from e
-    logger.info("MODEL_DELETED model=%s path=%s", name, path)
-    return {"ok": True, "message": f"Deleted '{name}' from disk."}
-
-
-@app.post("/api/llm/unload")
-async def llm_unload(req: PullRequest):
-    """501 — Ollama-era relic. LiteLLM has no /api/delete; llama.cpp is the sole backend
-    (Ollama decommissioned 2026-07-01), so this could only ever 404/502 (audit P2-35).
-    Model lifecycle is the scheduler's job: switch models via the ops-controller
-    /model-config path (dashboard Model Control), which re-renders and recreates llamacpp."""
-    raise HTTPException(
-        status_code=501,
-        detail=(
-            "Unload is not a gateway operation: llama.cpp serves one active model, managed by "
-            "the render pipeline. Switch models via Model Control (/model-config) instead."
-        ),
-    )
-
-@app.post("/api/llamacpp/switch")
-async def llamacpp_switch_model(req: PullRequest, request: Request):
-    """Switch the active llamacpp model: writes LLAMACPP_MODEL to .env via ops-controller, then recreates llamacpp."""
-    model = (req.model or "").strip()
-    if not model or ".." in model or "/" in model:
-        raise HTTPException(status_code=400, detail="Invalid model filename")
-    if not model.lower().endswith(".gguf"):
-        raise HTTPException(status_code=400, detail="Model must be a .gguf filename")
-
-    # 1. Update LLAMACPP_MODEL in .env
-    code, data = await _ops_request(
-        "POST", "/env/set", request=request,
-        json={"key": "LLAMACPP_MODEL", "value": model, "confirm": True},
-    )
-    if code not in (200, 201):
-        raise HTTPException(status_code=502, detail=f"Failed to update .env: {data}")
-
-    # 2. Recreate llamacpp so the new env var takes effect
-    code2, data2 = await _ops_request(
-        "POST", "/services/llamacpp/recreate", request=request,
-        json={"confirm": True},
-    )
-    started = code2 in (200, 201, 202)
-    return {"ok": True, "model": model, "llamacpp_restarting": started}
-
-
-_model_switch_lock = asyncio.Lock()
-
-
-@app.post("/api/active-model")
-async def set_active_model(req: PullRequest, request: Request):
-    """Switch the active llamacpp model. All consumers use the canonical 'local-chat' alias."""
-    if _model_switch_lock.locked():
-        raise HTTPException(status_code=409, detail="Model switch already in progress")
-    async with _model_switch_lock:
-        return await _do_set_active_model(req, request)
-
-
-async def _do_set_active_model(req: PullRequest, request: Request):
-    model = (req.model or "").strip()
-    if not model or ".." in model or "/" in model:
-        raise HTTPException(status_code=400, detail="Invalid model filename")
-    if not model.lower().endswith(".gguf"):
-        raise HTTPException(status_code=400, detail="Model must be a .gguf filename")
-
-    bare_name = model[:-5]  # strip .gguf → gateway model id
-    if not bare_name:
-        raise HTTPException(status_code=400, detail="Invalid model filename")
-    results: dict = {}
-    errors: list[str] = []
-
-    # Switch LLAMACPP_MODEL + recreate llamacpp. Every consumer uses the
-    # canonical 'local-chat' alias from the model-gateway, so there's nothing
-    # else to update.
-    code, data = await _ops_request(
-        "POST", "/env/set", request=request,
-        json={"key": "LLAMACPP_MODEL", "value": model, "confirm": True},
-    )
-    if code not in (200, 201):
-        raise HTTPException(status_code=502, detail=f"Failed to update LLAMACPP_MODEL: {data}")
-    code2, _ = await _ops_request(
-        "POST", "/services/llamacpp/recreate", request=request, json={"confirm": True}
-    )
-    results["llamacpp_restarting"] = code2 in (200, 201, 202)
-    if not results["llamacpp_restarting"]:
-        errors.append("llamacpp recreate failed")
-
-    all_ok = len(errors) == 0
-    if errors:
-        logger.warning("Model switch to %s partial failure: %s", model, "; ".join(errors))
-    return {"ok": all_ok, "model": model, "errors": errors, **results}
-
-
-def _run_gguf_pull(model: str):
-    """Ask ops-controller to pull GGUFs (POST /models/gguf-pull). The V1 puller was not ported: the control plane
-    answers 501 and points at its in-process /models/download; pull on the host with `ordo fetch`."""
-    global _gguf_pull_status
-    with _state_lock:
-        _gguf_pull_status = {"running": True, "model": model, "output": "", "pct": 0, "done": False, "success": None}
-
-    repos = _normalize_gguf_pull_repos(model)
-    if repos is None:
-        repos = _normalize_gguf_pull_repos(_hf_url_to_repo(model))
-    if repos is None:
-        msg = (
-            "This stack pulls GGUF files (llama.cpp) directly from Hugging Face.\n\n"
-            "Enter a Hugging Face repo id (e.g. bartowski/Llama-3.2-3B-Instruct-GGUF), "
-            "a huggingface.co/… page or .gguf URL, hf.co/owner/repo, or type .env to pull all "
-            "repos listed in GGUF_MODELS in your .env.\n\n"
-            "Bare tag names like llama3.2:8b are not supported; use a Hugging Face repo id or .gguf URL."
-        )
-        with _state_lock:
-            _gguf_pull_status["output"] = msg
-            _gguf_pull_status["success"] = False
-            _gguf_pull_status["running"] = False
-            _gguf_pull_status["done"] = True
-        return
-
-    ops_url = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000").rstrip("/")
-    token = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
-    if not token:
-        with _state_lock:
-            _gguf_pull_status["output"] = "OPS_CONTROLLER_TOKEN is not set; cannot request a GGUF pull from the dashboard."
-            _gguf_pull_status["success"] = False
-            _gguf_pull_status["running"] = False
-            _gguf_pull_status["done"] = True
-        return
-
-    try:
-        import httpx as _httpx
-        with _httpx.Client(timeout=120.0) as client:
-            r = client.post(
-                f"{ops_url}/models/gguf-pull",
-                headers={"Authorization": f"Bearer {token}"},
-                json={"repos": repos, "confirm": True},
-            )
-            if r.status_code == 409:
-                with _state_lock:
-                    _gguf_pull_status["output"] = "Another model or GGUF pull is already in progress."
-                    _gguf_pull_status["success"] = False
-                    _gguf_pull_status["running"] = False
-                    _gguf_pull_status["done"] = True
-                return
-            if r.status_code >= 400:
-                try:
-                    det = r.json().get("detail", r.text)
-                except (ValueError, UnicodeDecodeError):
-                    det = r.text
-                with _state_lock:
-                    _gguf_pull_status["output"] = f"GGUF pull request failed: {det}"
-                    _gguf_pull_status["success"] = False
-                    _gguf_pull_status["running"] = False
-                    _gguf_pull_status["done"] = True
-                return
-
-        deadline = time.time() + 7200  # 2-hour max
-        consecutive_errors = 0
-        with _httpx.Client(timeout=60.0) as poll_client:
-            while time.time() < deadline:
-                time.sleep(1.5)
-                try:
-                    sr = poll_client.get(
-                        f"{ops_url}/models/gguf-pull/status",
-                        headers={"Authorization": f"Bearer {token}"},
-                    )
-                    if sr.status_code != 200:
-                        consecutive_errors += 1
-                        if consecutive_errors >= 20:
-                            raise RuntimeError(f"Poll returned {sr.status_code} 20 times in a row")
-                        continue
-                    consecutive_errors = 0
-                    st = sr.json()
-                except Exception as poll_err:
-                    consecutive_errors += 1
-                    if consecutive_errors >= 20:
-                        raise RuntimeError(f"Poll failed 20 times: {poll_err}")
-                    continue
-                with _state_lock:
-                    _gguf_pull_status["output"] = st.get("output", "")
-                    _gguf_pull_status["pct"] = 50 if st.get("running") else 100
-                if st.get("done"):
-                    with _state_lock:
-                        _gguf_pull_status["success"] = bool(st.get("success"))
-                        _gguf_pull_status["running"] = False
-                        _gguf_pull_status["done"] = True
-                    break
-            else:
-                raise TimeoutError("GGUF pull timed out after 2 hours")
-    except Exception as e:
-        logger.error("GGUF pull failed: %s", e)
-        with _state_lock:
-            _gguf_pull_status["output"] = (_gguf_pull_status.get("output") or "") + f"\nError: {e}"
-            _gguf_pull_status["success"] = False
-            _gguf_pull_status["running"] = False
-            _gguf_pull_status["done"] = True
-
-
-@app.post("/api/llm/pull")
-async def llm_pull(req: PullRequest):
-    """Request a GGUF pull via ops-controller in the background (501 until the puller is ported; see
-    _run_gguf_pull). Poll /api/llm/pull/status."""
-    global _gguf_pull_status
-    with _state_lock:
-        if _gguf_pull_status.get("running"):
-            raise HTTPException(status_code=409, detail="Pull already in progress")
-        _gguf_pull_status["running"] = True
-        _gguf_pull_status["model"] = req.model
-    thread = threading.Thread(target=_run_gguf_pull, args=(req.model,), daemon=True)
-    thread.start()
-    return {"status": "started", "model": req.model}
-
-
-@app.get("/api/llm/pull/status")
-async def llm_pull_status():
-    """Get GGUF pull progress."""
-    with _state_lock:
-        return dict(_gguf_pull_status)
-
-
-# --- ComfyUI ---
-
-
 def _scan_comfyui_models() -> list[dict]:
     """Scan ComfyUI models directory for installed files."""
     subdirs = COMFYUI_CATEGORIES
@@ -527,223 +277,6 @@ def _scan_comfyui_models() -> list[dict]:
                     }
                 )
     return sorted(models, key=lambda m: (m["category"], m["name"]))
-
-
-def _run_comfyui_pull_subprocess(packs: str | None = None):
-    """Fallback: run ComfyUI model pull script as subprocess (used when ComfyUI is not running)."""
-    script = SCRIPTS_DIR / "comfyui" / "pull_comfyui_models.py"
-    env = os.environ.copy()
-    env["MODELS_DIR"] = str(MODELS_DIR)
-    env["PYTHONUNBUFFERED"] = "1"
-    if packs:
-        env["COMFYUI_PACKS"] = packs
-    proc = None
-    try:
-        proc = subprocess.Popen(
-            ["python3", "-u", str(script)],
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            cwd=str(SCRIPTS_DIR.parent),
-        )
-        output_lines: list[str] = []
-        for line in proc.stdout:
-            output_lines.append(line)
-            if len(output_lines) > 50:
-                output_lines = output_lines[-50:]
-            with _state_lock:
-                _comfyui_status["output"] = "".join(output_lines)
-        proc.wait(timeout=7200)
-        with _state_lock:
-            _comfyui_status["success"] = proc.returncode == 0
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        logger.error("ComfyUI pull (subprocess) timed out after 7200s")
-        with _state_lock:
-            _comfyui_status["output"] += "\nError: process timed out after 2 hours"
-            _comfyui_status["success"] = False
-    except Exception as e:
-        logger.error("ComfyUI pull (subprocess) failed: %s", e)
-        if proc and proc.poll() is None:
-            proc.kill()
-        with _state_lock:
-            _comfyui_status["output"] += f"\nError: {e}"
-            _comfyui_status["success"] = False
-    finally:
-        with _state_lock:
-            _comfyui_status["running"] = False
-            _comfyui_status["done"] = True
-
-
-def _run_comfyui_pull(packs: str | None = None):
-    """Pull ComfyUI models from ``models.json``.
-
-    Defaults to **direct HuggingFace download** (``pull_comfyui_models.py``). ComfyUI
-    Manager's ``/manager/queue/install_model`` only accepts models that appear in its
-    curated ``model-list.json`` (``check_whitelist_for_model`` in Manager); arbitrary
-    URLs from our config return **400 Invalid model install request**.
-
-    Set ``COMFYUI_USE_MANAGER_FOR_PULL=1`` to use Manager's queue (only useful if the
-    model triple matches Manager's catalog). If ComfyUI is unreachable, falls back to
-    direct download when Manager mode was requested.
-    """
-    import json as _json
-    import uuid
-
-    global _comfyui_status
-    with _state_lock:
-        _comfyui_status = {"running": True, "output": "", "done": False, "success": None}
-
-    use_manager = os.environ.get("COMFYUI_USE_MANAGER_FOR_PULL", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-    if use_manager:
-        try:
-            urllib.request.urlopen(f"{COMFYUI_URL}/", timeout=5)  # noqa: S310 — internal URL only
-        except (OSError, urllib.error.URLError):
-            use_manager = False
-
-    if not use_manager:
-        with _state_lock:
-            _comfyui_status["output"] = (
-                "Downloading models directly (ComfyUI Manager only installs its cataloged "
-                "models; arbitrary HF URLs get 400 — see dashboard _run_comfyui_pull docstring).\n"
-            )
-        _run_comfyui_pull_subprocess(packs)
-        return
-
-    # Load models config
-    config_path = SCRIPTS_DIR / "comfyui" / "models.json"
-    try:
-        with open(config_path, encoding="utf-8") as f:
-            config = _json.load(f)
-    except Exception as e:
-        with _state_lock:
-            _comfyui_status["output"] = f"Failed to read models.json: {e}"
-            _comfyui_status["success"] = False
-            _comfyui_status["running"] = False
-            _comfyui_status["done"] = True
-        return
-
-    default_packs = config.get("defaults", {}).get("packs", [])
-    default_quant = config.get("defaults", {}).get("quant", "Q4_K_M")
-    selected_packs = [p.strip() for p in packs.split(",")] if packs else default_packs
-    all_packs = config.get("packs", {})
-
-    # Build list of Manager API requests
-    models_to_pull = []
-    for pack_name in selected_packs:
-        pack = all_packs.get(pack_name)
-        if not pack:
-            continue
-        for model in pack.get("models", []):
-            url = model.get("url", "")
-            if not url:
-                continue
-            url = url.replace("{quant}", default_quant)
-            raw_file = model["file"].replace("{quant}", default_quant)
-            filename = Path(raw_file).name
-            models_to_pull.append({
-                "ui_id": str(uuid.uuid4()),
-                "name": filename,
-                "type": model.get("type", model.get("dest", "checkpoints")),
-                "base": "other",
-                "save_path": model.get("dest", "checkpoints"),
-                "description": "",
-                "filename": filename,
-                "url": url,
-                "reference": f"https://huggingface.co/{model['repo']}",
-            })
-
-    output_lines: list[str] = []
-    _progress_idx: int = -1  # index of replaceable progress block (-1 = none)
-
-    def _append(msg: str, replaceable: bool = False) -> None:
-        nonlocal _progress_idx
-        if replaceable and _progress_idx >= 0:
-            output_lines[_progress_idx] = msg
-        else:
-            if replaceable:
-                _progress_idx = len(output_lines)
-            output_lines.append(msg)
-        with _state_lock:
-            _comfyui_status["output"] = "\n".join(output_lines)
-
-    if not models_to_pull:
-        _append("No models with URL found for selected packs.")
-        with _state_lock:
-            _comfyui_status["success"] = True
-            _comfyui_status["running"] = False
-            _comfyui_status["done"] = True
-        return
-
-    _append(f"Queuing {len(models_to_pull)} model(s) via ComfyUI Manager...")
-
-    try:
-        import httpx as _httpx
-        with _httpx.Client(timeout=30.0) as client:
-            for m in models_to_pull:
-                _append(f"  → {m['filename']} ({m['save_path']})")
-                r = client.post(f"{COMFYUI_URL}/manager/queue/install_model", json=m)
-                if r.status_code not in (200, 201):
-                    _append(f"    WARNING: Manager returned {r.status_code}: {r.text[:200]}")
-
-            _append("All models queued. Waiting for downloads to complete...")
-
-            deadline = time.time() + 7200  # 2-hour max
-            consecutive_errors = 0
-            while time.time() < deadline:
-                time.sleep(2)
-                try:
-                    r = client.get(f"{COMFYUI_URL}/manager/queue/status")
-                    data = r.json()
-                    consecutive_errors = 0
-                except (json.JSONDecodeError, _httpx.RequestError, _httpx.HTTPStatusError) as e:
-                    logger.debug("ComfyUI queue poll failed: %s", e)
-                    consecutive_errors += 1
-                    if consecutive_errors >= 20:
-                        raise RuntimeError(f"ComfyUI queue poll failed 20 times: {e}")
-                    continue
-
-                items = data if isinstance(data, list) else data.get("queue", [])
-                if not items:
-                    _append("Download queue empty — done.")
-                    break
-
-                done_count = sum(1 for i in items if i.get("status") == "done")
-                total = len(items)
-                pending = [i for i in items if i.get("status") not in ("done", "error", "failed")]
-                progress_parts = [f"Progress: {done_count}/{total} done"]
-                for item in pending[:3]:
-                    name = item.get("filename") or item.get("name", "?")
-                    pct = item.get("progress", 0)
-                    progress_parts.append(f"  {name}: {pct}%")
-                _append("\n".join(progress_parts), replaceable=True)
-
-                if all(i.get("status") in ("done", "error", "failed") for i in items):
-                    errors = [i for i in items if i.get("status") in ("error", "failed")]
-                    if errors:
-                        _append(f"Completed with {len(errors)} error(s).")
-                    else:
-                        _append("All downloads complete!")
-                    break
-            else:
-                raise TimeoutError("ComfyUI model pull timed out after 2 hours")
-
-        with _state_lock:
-            _comfyui_status["success"] = True
-    except Exception as e:
-        logger.error("ComfyUI Manager pull failed: %s", e)
-        with _state_lock:
-            _comfyui_status["output"] += f"\nError: {e}"
-            _comfyui_status["success"] = False
-    finally:
-        with _state_lock:
-            _comfyui_status["running"] = False
-            _comfyui_status["done"] = True
 
 
 COMFYUI_CATEGORIES = (
@@ -785,65 +318,6 @@ async def comfyui_models():
         return {"models": [], "ok": False, "error": str(e)}
 
 
-@app.get("/api/comfyui/packs")
-async def comfyui_packs():
-    """List available ComfyUI model packs from models.json."""
-    config_path = SCRIPTS_DIR / "comfyui" / "models.json"
-    if not config_path.exists():
-        return {"packs": {}, "defaults": [], "ok": False, "error": "models.json not found"}
-    try:
-        config = await _read_json_async(config_path)
-        default_quant = config.get("defaults", {}).get("quant", "Q4_K_M")
-        try:
-            models = await asyncio.to_thread(_scan_comfyui_models)
-            installed = {(m["category"], m["name"]) for m in models}
-        except (OSError, KeyError):
-            installed = set()
-        packs = {}
-        for name, pack in config.get("packs", {}).items():
-            models = pack.get("models", [])
-            resolved_files = []
-            installed_count = 0
-            for m in models:
-                category = m.get("dest", "checkpoints")
-                filename = Path(m["file"].replace("{quant}", default_quant)).name
-                resolved_files.append({"category": category, "name": filename})
-                if (category, filename) in installed:
-                    installed_count += 1
-
-            packs[name] = {
-                "description": pack.get("description", ""),
-                "capability": pack.get("capability", "other"),
-                "model_count": len(models),
-                "installed_count": installed_count,
-                "files": resolved_files,
-            }
-        return {"packs": packs, "defaults": config.get("defaults", {}).get("packs", []), "ok": True}
-    except Exception as e:
-        return {"packs": {}, "defaults": [], "ok": False, "error": str(e)}
-
-
-@app.post("/api/comfyui/pull")
-async def comfyui_pull(packs: str | None = None):
-    """Start ComfyUI model pull in background. Optional 'packs' query param (comma-separated pack names)."""
-    global _comfyui_status
-    with _state_lock:
-        if _comfyui_status.get("running"):
-            raise HTTPException(status_code=409, detail="Pull already in progress")
-        _comfyui_status["running"] = True
-    thread = threading.Thread(target=_run_comfyui_pull, args=(packs,))
-    thread.daemon = True
-    thread.start()
-    return {"status": "started", "message": "ComfyUI model pull started. Poll /api/comfyui/pull/status for progress."}
-
-
-@app.get("/api/comfyui/pull/status")
-async def comfyui_pull_status():
-    """Get ComfyUI pull progress."""
-    with _state_lock:
-        return dict(_comfyui_status)
-
-
 class ComfyuiInstallNodeRequirementsRequest(BaseModel):
     node_path: str
     confirm: bool = False
@@ -867,144 +341,6 @@ async def comfyui_install_node_requirements_api(
         json={"node_path": node, "confirm": True},
         timeout=600.0,
     )
-    if code >= 400:
-        raise HTTPException(status_code=code, detail=data.get("detail", data))
-    return data
-
-
-class ModelDownloadRequest(BaseModel):
-    url: str
-    category: str = ""
-    filename: str = ""
-
-
-class ModelPullRequest(BaseModel):
-    pack: str
-    confirm: bool = False
-
-
-def _normalize_gguf_pull_repos(model: str) -> str | None:
-    """Return comma-separated Hugging Face repo ids for the ops-controller GGUF pull, or '' to use GGUF_MODELS.
-
-    None means the string is not suitable (e.g. a bare tag like ``llama3.2:8b``).
-    """
-    def _normalize_repo_ref(raw: str) -> str | None:
-        candidate = raw.strip()
-        if not candidate:
-            return None
-
-        if "huggingface.co/" in candidate:
-            match = re.search(r"huggingface\.co/([^/\s]+/[^/\s:#?]+)", candidate)
-            if not match:
-                return None
-            candidate = match.group(1)
-        elif candidate.startswith("hf.co/"):
-            candidate = candidate[6:].strip()
-
-        if ":" in candidate:
-            repo, quant = candidate.rsplit(":", 1)
-            if re.fullmatch(r"[\w.-]+/[\w.-]+", repo) and re.fullmatch(r"[\w.-]+", quant):
-                return f"{repo}:{quant}"  # preserve quant filter for the GGUF pull
-            return None
-
-        if re.fullmatch(r"[\w.-]+/[\w.-]+", candidate):
-            return candidate
-        return None
-
-    s = (model or "").strip()
-    if not s:
-        return None
-    if s.upper() in (".ENV", "GGUF_MODELS", "@ENV", "ENV"):
-        return ""
-    if "," in s:
-        parts = [p.strip() for p in s.split(",") if p.strip()]
-        normalized_parts: list[str] = []
-        for p in parts:
-            normalized = _normalize_repo_ref(p)
-            if normalized is None:
-                return None
-            normalized_parts.append(normalized)
-        return ",".join(normalized_parts)
-    return _normalize_repo_ref(s)
-
-
-def _hf_url_to_repo(raw: str) -> str:
-    """Convert a HuggingFace GGUF URL to hf.co/owner/repo form for the ops-controller GGUF pull.
-    Non-HF strings (model names, hf.co/ refs) are returned as-is.
-    """
-    if "huggingface.co/" in raw:
-        # https://huggingface.co/owner/repo/resolve/main/file.gguf → hf.co/owner/repo
-        try:
-            path = raw.split("huggingface.co/")[1].split("/resolve/")[0]
-            return f"hf.co/{path}"
-        except IndexError:
-            pass
-    return raw
-
-
-@app.post("/api/models/download")
-async def models_download(req: ModelDownloadRequest, request: Request):
-    """Unified model download.
-    - GGUF / HF repo → background GGUF pull request via ops (same as ``/api/llm/pull``); poll ``/api/llm/pull/status``.
-    - safetensors / ckpt / pt / bin → proxied to ops-controller for file download.
-    """
-    raw = req.url.strip()
-    filename = req.filename.strip() or raw.split("/")[-1].split("?")[0]
-
-    # Decide target from extension or URL pattern
-    diffusion_exts = (".safetensors", ".ckpt", ".pt", ".pth", ".bin")
-    is_diffusion = any(filename.lower().endswith(e) for e in diffusion_exts)
-
-    if is_diffusion:
-        # Route to ops-controller (runs without uid 1000 restriction, has /models/comfyui mounted)
-        if not raw.startswith("https://"):
-            raise HTTPException(status_code=400, detail="URL must start with https://")
-        code, data = await _ops_request(
-            "POST", "/models/download", request=request,
-            json={"url": raw, "category": req.category, "filename": req.filename},
-        )
-        if code >= 400:
-            raise HTTPException(status_code=code, detail=data.get("detail", data))
-        return {**data, "target": "comfyui"}
-    else:
-        with _state_lock:
-            if _gguf_pull_status.get("running"):
-                raise HTTPException(status_code=409, detail="Pull already in progress")
-            _gguf_pull_status["running"] = True
-        thread = threading.Thread(target=_run_gguf_pull, args=(raw,), daemon=True)
-        thread.start()
-        return {
-            "status": "started",
-            "target": "gguf",
-            "message": "Poll /api/llm/pull/status for progress.",
-        }
-
-
-@app.get("/api/models/download/status")
-async def models_download_status(request: Request):
-    """Poll ComfyUI file download progress (proxied from ops-controller)."""
-    code, data = await _ops_request("GET", "/models/download/status", request=request)
-    if code >= 400:
-        raise HTTPException(status_code=code, detail=data.get("detail", data))
-    return data
-
-
-@app.post("/api/models/pull")
-async def models_pull(req: ModelPullRequest, request: Request):
-    """Run comfyui-model-puller for a pack (e.g. flux1-dev). Works for gated models. Proxied to ops-controller."""
-    code, data = await _ops_request(
-        "POST", "/models/pull", request=request,
-        json={"pack": req.pack.strip(), "confirm": req.confirm},
-    )
-    if code >= 400:
-        raise HTTPException(status_code=code, detail=data.get("detail", data))
-    return {**data, "target": "comfyui"}
-
-
-@app.get("/api/models/pull/status")
-async def models_pull_status(request: Request):
-    """Poll pack pull progress (proxied from ops-controller)."""
-    code, data = await _ops_request("GET", "/models/pull/status", request=request)
     if code >= 400:
         raise HTTPException(status_code=code, detail=data.get("detail", data))
     return data
@@ -1626,7 +962,9 @@ async def _throughput_active_model() -> dict:
             return _active_model_cache["value"]
         code, data = await _ops_request("GET", "/model-config", timeout=3.0)
         if code == 200 and isinstance(data, dict):
-            value = {"ok": True, "file": str(data["active_model"]) if data.get("active_model") else None}
+            # `active_file`, not `active_model`: samples are keyed by GGUF file and
+            # active_model is a catalog id (the v2 contract).
+            value = {"ok": True, "file": str(data["active_file"]) if data.get("active_file") else None}
         else:
             logger.warning("throughput active-model fetch failed (HTTP %s)", code)
             value = {"ok": False, "file": None}
@@ -1924,76 +1262,6 @@ async def ops_available(request: Request):
 
 # --- Default model ---
 
-class DefaultModelRequest(BaseModel):
-    model: str
-
-
-@app.get("/api/config/default-model")
-async def get_default_model(request: Request):
-    """Return DEFAULT_MODEL plus the Open WebUI-specific default from project .env when configured."""
-    if OPS_CONTROLLER_TOKEN:
-        code, data = await _ops_request("GET", "/env/DEFAULT_MODEL", request=request)
-        if code == 200 and isinstance(data, dict):
-            code2, data2 = await _ops_request("GET", "/env/OPEN_WEBUI_DEFAULT_MODEL", request=request)
-            return {
-                "default_model": (data.get("value") or "").strip(),
-                "open_webui_default_model": (data2.get("value") or "").strip()
-                if code2 == 200 and isinstance(data2, dict)
-                else "",
-            }
-    return {
-        "default_model": os.environ.get("DEFAULT_MODEL", ""),
-        "open_webui_default_model": os.environ.get("OPEN_WEBUI_DEFAULT_MODEL", ""),
-    }
-
-
-def _open_webui_default_model(name: str) -> str:
-    model = (name or "").strip()
-    if not model:
-        return ""
-    lower = model.lower()
-    if model.endswith(":chat") or "embed" in lower:
-        return model
-    return f"{model}:chat"
-
-
-@app.post("/api/config/default-model")
-async def set_default_model(req: DefaultModelRequest, request: Request):
-    """Write DEFAULT_MODEL and OPEN_WEBUI_DEFAULT_MODEL to .env and recreate open-webui."""
-    # Model ids may be namespaced: owner/model:tag (slashes allowed). Only reject empty / traversal.
-    name = (req.model or "").strip()
-    if not name or ".." in name:
-        raise HTTPException(status_code=400, detail="Invalid model name")
-    open_webui_model = _open_webui_default_model(name)
-
-    # 1. Write to .env
-    code, data = await _ops_request(
-        "POST", "/env/set", request=request,
-        json={"key": "DEFAULT_MODEL", "value": name, "confirm": True},
-    )
-    if code >= 400:
-        raise HTTPException(status_code=502, detail=f"env/set failed: {data.get('detail', data)}")
-    code_ui, data_ui = await _ops_request(
-        "POST", "/env/set", request=request,
-        json={"key": "OPEN_WEBUI_DEFAULT_MODEL", "value": open_webui_model, "confirm": True},
-    )
-    if code_ui >= 400:
-        raise HTTPException(status_code=502, detail=f"env/set failed: {data_ui.get('detail', data_ui)}")
-
-    # 2. Recreate open-webui so DEFAULT_MODELS env var is picked up
-    code2, data2 = await _ops_request(
-        "POST", "/services/open-webui/recreate", request=request, json={"confirm": True}
-    )
-
-    return {
-        "ok": code2 in (200, 201),
-        "model": name,
-        "open_webui_model": open_webui_model,
-        "webui_recreated": code2 in (200, 201),
-        "webui_error": data2.get("detail") if code2 >= 400 else None,
-    }
-
-
 # --- RAG ---
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333")
@@ -2264,7 +1532,6 @@ async def service_pressure():
 
 _routes_gpu.register(app, _ops_request)
 _routes_registry.register(app, _ops_request)
-_routes_model_config.register(app, _ops_request)
 
 # --- Static ---
 
@@ -2303,34 +1570,28 @@ class _NoCacheHTMLStaticFiles(StaticFiles):
 static_dir = Path(__file__).parent / "static"
 frontend_dist = Path(__file__).parent / "frontend" / "dist"
 
-# The dashboard SPA is the React build in frontend/dist when present (production image
-# and any local `npm run build`), otherwise the legacy vanilla shell in static/. The
-# legacy shell is always preserved and reachable at /legacy-index.html (a fallback while
-# the React port is validated). A production Vite build emits hashed ES modules referenced
-# with script-src 'self', so it satisfies the app's strict CSP. All /api/* and /grafana/*
-# routes are registered above and take precedence over these catch-all static mounts.
+# The dashboard SPA is the React build in frontend/dist (the production image builds it; locally,
+# `npm run build` in frontend/). A production Vite build emits hashed ES modules referenced with
+# script-src 'self', so it satisfies the app's strict CSP. All /api/* and /grafana/* routes are
+# registered above and take precedence over these catch-all static mounts.
 _spa_dir = frontend_dist if (frontend_dist / "index.html").exists() else static_dir
 
-
-@app.get("/legacy-index.html", include_in_schema=False)
-async def legacy_shell():
-    """Serve the preserved legacy vanilla-JS dashboard shell."""
-    legacy = static_dir / "legacy-index.html"
-    if not legacy.exists():
-        raise HTTPException(status_code=404, detail="legacy shell not present")
-    return FileResponse(str(legacy), media_type="text/html", headers={"Cache-Control": "no-cache"})
+# Served at / when the frontend has not been built (a bare checkout, CI): an honest page saying
+# so, rather than a 404 or a stale fallback UI.
+_UNBUILT_SHELL = (
+    "<!doctype html><meta charset=utf-8><title>Ordo</title>"
+    "<p>The dashboard frontend has not been built. Run <code>npm run build</code> in "
+    "<code>services/dashboard/dashboard/frontend</code>, or use the production image.</p>"
+)
 
 
 @app.get("/", include_in_schema=False)
 async def _app_shell():
-    """Serve the SPA app shell with revalidation headers. Uses the React build's index when
-    present (production image / local `npm run build`), else the preserved legacy shell — so
-    `/` still returns a 200 shell in a headless env (CI/tests) where the React build hasn't
-    run and `static/` has no `index.html`. Registered before the catch-all mount so it wins
-    for the exact `/` path; hashed assets are still served by the mount below."""
-    index = _spa_dir / "index.html"
+    """Serve the SPA app shell with revalidation headers. Registered before the catch-all mount
+    so it wins for the exact `/` path; hashed assets are still served by the mount below."""
+    index = frontend_dist / "index.html"
     if not index.exists():
-        index = static_dir / "legacy-index.html"
+        return HTMLResponse(_UNBUILT_SHELL, headers={"Cache-Control": "no-cache"})
     return FileResponse(str(index), media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 

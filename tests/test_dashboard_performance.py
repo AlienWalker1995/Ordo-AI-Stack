@@ -5,14 +5,6 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 
-def test_open_webui_default_model_prefers_chat_alias():
-    import dashboard.app as dashboard_app
-
-    assert dashboard_app._open_webui_default_model("qwen3-14b.gguf") == "qwen3-14b.gguf:chat"
-    assert dashboard_app._open_webui_default_model("qwen3-14b.gguf:chat") == "qwen3-14b.gguf:chat"
-    assert dashboard_app._open_webui_default_model("nomic-embed-text-v1.5.Q4_K_M.gguf") == "nomic-embed-text-v1.5.Q4_K_M.gguf"
-
-
 def test_throughput_record_persists_ttft_in_summary():
     import dashboard.app as dashboard_app
 

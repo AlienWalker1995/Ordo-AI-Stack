@@ -93,8 +93,10 @@ class MockBackend:
     def list_services(self) -> dict:
         self.list_services_calls.append(None)
         return {"services": [
-            {"id": "llamacpp", "name": "llamacpp", "state": "running", "health": "healthy"},
-            {"id": "dashboard", "name": "dashboard", "state": "running", "health": None},
+            {"id": "llamacpp", "name": "llamacpp", "state": "running", "health": "healthy",
+             "status": "Up 3 hours (healthy)"},
+            {"id": "dashboard", "name": "dashboard", "state": "running", "health": None,
+             "status": "Up 3 hours"},
         ]}
 
     def recreate_service(self, service: str) -> None:
@@ -321,12 +323,16 @@ class DockerBackend:
             return None
         return "starting" if "starting" in m.group(1) else m.group(1)
 
+    @classmethod
+    def _service_row(cls, r: dict) -> dict:
+        """One `docker ps` row as the /services payload. `status` is docker's raw text, kept
+        because the exit code ("Exited (0)" is a finished job, "Exited (1)" a crash) and the
+        uptime ("Up 3 hours") exist nowhere else."""
+        return {"id": r["service"], "name": r["name"], "state": r["state"],
+                "health": cls._health_from_status(r["status"]), "status": r["status"]}
+
     def list_services(self) -> dict:  # pragma: no cover - needs real docker
-        services = [
-            {"id": r["service"], "name": r["name"], "state": r["state"],
-             "health": self._health_from_status(r["status"])}
-            for r in self._project_ps()
-        ]
+        services = [self._service_row(r) for r in self._project_ps()]
         services.sort(key=lambda s: s["id"])
         return {"services": services}
 

@@ -21,6 +21,16 @@ scrape_configs:
         labels:
           service: llamacpp
 
+  # The CPU fallback llama.cpp server (same --metrics, same metric names). It answers chat while a
+  # render has the GPU, so without it the performance view is blind exactly when it matters.
+  # Queries must filter by job: both servers export identical llamacpp:* names.
+  - job_name: llamacpp-cpu
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['llamacpp-cpu:8080']
+        labels:
+          service: llamacpp-cpu
+
   # nvidia_gpu_exporter wraps nvidia-smi (works on consumer GPUs + WSL2, unlike
   # DCGM). Reports utilization, VRAM, temperature, power per GPU.
   - job_name: gpu
