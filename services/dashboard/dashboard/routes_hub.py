@@ -9,7 +9,6 @@ from dashboard.services_catalog import (
     OPS_SERVICE_MAP,
     _check_service,
     mcp_external_url,
-    probe_all,
     service_open_url,
     visible_services,
 )
@@ -110,8 +109,3 @@ async def health():
     return {"ok": all_ok, "services": list(results)}
 
 
-@router.get("/dependencies")
-async def dependencies():
-    """Live dependency probes derived from the single service catalog. No auth required."""
-    from dashboard.app import _get_http_client
-    return await probe_all(_get_http_client())

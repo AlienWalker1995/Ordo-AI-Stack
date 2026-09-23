@@ -7,24 +7,18 @@ out/services-catalog.json, which the dashboard container mounts read-only
 (SERVICES_CATALOG_PATH — same pattern as the manifest mount). In-repo (tests / dev) the
 fragments are read directly, so both paths serve the identical card list.
 
-Feeds three surfaces, all derived from the one loaded `SERVICES` catalog:
+Feeds two surfaces, both derived from the one loaded `SERVICES` catalog:
   * the service grid   — GET /api/services, /api/health (visible_services())
   * ops lifecycle wiring — OPS_SERVICE_MAP (derived from each card's `ops_service`)
-  * the dependency panel — GET /api/dependencies (dependency_services() + probe_all())
 
-The dependency panel used to be a second hardcoded catalog (dependency_registry.json);
-it now derives from this one catalog plus INFRA_DEPENDENCIES, so a service's check URL /
-name / hint / category lives in exactly one place. Separated from app.py for maintainability.
+A service's check URL / name / hint / category lives in exactly one place.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
-import time
 from pathlib import Path
-from typing import Any
 
 import httpx as _httpx
 
@@ -270,96 +264,3 @@ async def _check_service(url: str, client: _httpx.AsyncClient | None = None) -> 
         if "remoteprotocolerror" in err or "protocol" in err or "closed" in err or "disconnected" in err:
             return (True, "")
         return (False, str(e))
-
-
-# ── Dependency panel (GET /api/dependencies) ────────────────────────────────────────────
-#
-# Core infrastructure that is a genuine runtime dependency but has NO service-grid card
-# (no user-facing UI / Open link). It lives here — in the single catalog — rather than in a
-# separate registry file. Always present in every render, so no plugin gate.
-INFRA_DEPENDENCIES: list[dict[str, Any]] = [
-    {"id": "ops-controller", "name": "Ops Controller", "category": "ops",
-     "check": "http://ops-controller:9000/health",
-     "hint": "Lifecycle/recovery; not on hot path for chat."},
-    {"id": "dashboard", "name": "Dashboard", "category": "control",
-     "check": "http://localhost:8080/api/health",
-     "hint": "Self-check only works when the probe runs inside the dashboard container (uses localhost)."},
-]
-
-DEP_DESCRIPTION = (
-    "Live dependency probes derived from the single service catalog (manifest-gated) "
-    "plus core infrastructure. Sourced from services_catalog — no separate registry."
-)
-
-
-def dependency_services(
-    services: list[dict] | None = None, enabled: set[str] | None = None
-) -> list[dict]:
-    """The manifest-gated dependency view of the single catalog.
-
-    = every VISIBLE service that exposes a health `check` (headless workers with no
-    check are excluded so they don't show a false-red), PLUS the always-on core
-    INFRA_DEPENDENCIES that have no grid card. This is the one source behind
-    /api/dependencies — there is no separate dependency registry.
-    """
-    probeable = [s for s in visible_services(services, enabled) if s.get("check")]
-    return probeable + [dict(e) for e in INFRA_DEPENDENCIES]
-
-
-async def _probe_one(
-    url: str,
-    client: _httpx.AsyncClient,
-    timeout_sec: float = 3.0,
-    *,
-    soft_4xx: bool = False,
-) -> tuple[bool, float | None, str | None]:
-    """Strict health probe: 2xx == up. `soft_4xx` relaxes that to <500 for endpoints
-    (e.g. the MCP gateway) that answer a bare GET with a 4xx while still being up."""
-    t0 = time.perf_counter()
-    try:
-        r = await client.get(url, timeout=timeout_sec)
-        latency_ms = (time.perf_counter() - t0) * 1000.0
-        ok = 200 <= r.status_code < 300
-        if not ok and soft_4xx and r.status_code < 500:
-            ok = True
-        err = None if ok else f"HTTP {r.status_code}"
-        return ok, latency_ms, err
-    except (_httpx.RequestError, OSError) as e:
-        latency_ms = (time.perf_counter() - t0) * 1000.0
-        return False, latency_ms, str(e)
-
-
-async def _probe_dependency(entry: dict[str, Any], client: _httpx.AsyncClient) -> dict[str, Any]:
-    """Probe one catalog entry and shape it for the /api/dependencies response."""
-    url = entry.get("check") or ""
-    ok, lat, err = (
-        await _probe_one(url, client, soft_4xx=bool(entry.get("check_4xx_ok")))
-        if url
-        else (False, None, "no check_url")
-    )
-    return {
-        "id": entry.get("id"),
-        "name": entry.get("name"),
-        "category": entry.get("category"),
-        "hint": entry.get("hint", ""),
-        "ok": ok,
-        "latency_ms": round(lat, 2) if lat is not None else None,
-        "error": err,
-    }
-
-
-async def probe_all(client: _httpx.AsyncClient | None = None) -> dict[str, Any]:
-    """Build the GET /api/dependencies payload by probing dependency_services().
-
-    Response shape (backward-compatible with the old dependency_registry): a top-level
-    {version, description, entries[]} where each entry carries id/name/category/hint plus
-    the live ok/latency_ms/error the dashboard's dependency panel renders.
-    """
-    entries = dependency_services()
-    c = client or _httpx.AsyncClient(timeout=3.0, follow_redirects=True)
-    try:
-        results = await asyncio.gather(*[_probe_dependency(e, c) for e in entries])
-    finally:
-        if client is None:
-            await c.aclose()
-    return {"version": 1, "description": DEP_DESCRIPTION, "entries": list(results)}

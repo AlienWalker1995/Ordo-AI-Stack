@@ -51,6 +51,29 @@ RETIRED = [
     ("GET", "/api/models/pull/status"),
     # the pre-React vanilla shell
     ("GET", "/legacy-index.html"),
+    # backends of the retired 11-tab UI that nothing calls any more (the five pages use /api/overview,
+    # /api/services/table, /api/models, /api/media and /api/perf/*)
+    ("GET", "/api/registry/models"),
+    ("GET", "/api/registry/gpus"),
+    ("GET", "/api/registry/models/{model_id}"),
+    ("GET", "/api/gpu/list"),
+    ("GET", "/api/dependencies"),
+    ("GET", "/api/llm/ps"),
+    ("GET", "/api/ops/available"),
+    ("GET", "/api/performance/summary"),
+    ("GET", "/api/throughput/service-usage"),
+    # the media worker's job / publish / schedule queue, retired 2026-07-31; these answered 410 since
+    ("POST", "/api/orchestration/run"),
+    ("GET", "/api/orchestration/jobs"),
+    ("GET", "/api/orchestration/jobs/{job_id}"),
+    ("POST", "/api/orchestration/jobs/{job_id}/cancel"),
+    ("POST", "/api/orchestration/publish/enqueue"),
+    ("POST", "/api/orchestration/publish/callback"),
+    ("GET", "/api/orchestration/publish/status"),
+    ("POST", "/api/orchestration/schedules"),
+    ("GET", "/api/orchestration/schedules"),
+    ("PATCH", "/api/orchestration/schedules/{schedule_id}"),
+    ("DELETE", "/api/orchestration/schedules/{schedule_id}"),
 ]
 
 
