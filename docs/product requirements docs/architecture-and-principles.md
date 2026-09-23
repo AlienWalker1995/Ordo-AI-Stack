@@ -147,7 +147,7 @@ UI request:       Browser → Caddy :<service-port> (Google SSO, domain-scoped
 | **G3: Dashboard as control center** | Done | Ops Controller lifecycle API: start/stop/restart/recreate/logs/pull; no host port. Model switch from the Models page. Hardware stats, throughput benchmark, RAG status. |
 | **G4: Security + auditing** | Done | Audit JSONL. Dashboard auth is the Caddy edge (oauth2-proxy / Google SSO); no per-service dashboard token in this deployment (app code retains a dormant, unused optional Bearer capability). `SECURITY.md` + threat table. SSRF scripts. |
 | **G5: Docker best practices** | Done | `cap_drop: [ALL]`, `security_opt`, `read_only`, `tmpfs`, log rotation, resource limits, healthchecks, explicit named networks on all custom services. |
-| **G6: RAG pipeline** | Done | Qdrant vector DB. `rag-ingestion` service. Open WebUI connected to Qdrant. `GET /api/rag/status` in dashboard. |
+| **G6: RAG pipeline** | Done | Qdrant vector DB. `rag-ingestion` service. Open WebUI connected to Qdrant. Document count on the dashboard Overview. |
 
 ## Remaining Gaps
 

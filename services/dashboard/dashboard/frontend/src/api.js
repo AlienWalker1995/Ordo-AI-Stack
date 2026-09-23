@@ -2,8 +2,7 @@
 //
 // The dashboard is served same-origin behind Google SSO (Caddy forward_auth). The
 // browser already carries the SSO session, so requests just need `credentials:
-// 'same-origin'`; there is NO auth logic here — /api/auth/config returns
-// {auth_required:false} when the SSO header is present. CSP connect-src is 'self',
+// 'same-origin'`; there is NO auth logic here. CSP connect-src is 'self',
 // so every URL below is a root-relative /api/* path (never cross-origin).
 
 import { useCallback, useEffect, useRef, useState } from 'react'

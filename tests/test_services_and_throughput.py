@@ -1,6 +1,11 @@
-"""Tests for /api/services, /api/throughput/*, and the global exception handler."""
+"""Tests for the service cards, throughput stats, /api/throughput/*, and the global exception handler.
+
+routes_hub.services() and app.throughput_stats() have no HTTP route: /api/overview and the
+console pages read them in-process, so these tests call them directly.
+"""
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from unittest.mock import AsyncMock, MagicMock
@@ -27,12 +32,22 @@ def client(monkeypatch):
     return TestClient(dashboard_app.app)
 
 
-# ── /api/services ────────────────────────────────────────────────────────────
+def _service_cards() -> dict:
+    from dashboard.routes_hub import services
+
+    return asyncio.run(services())
+
+
+def _throughput_stats() -> dict:
+    from dashboard.app import throughput_stats
+
+    return asyncio.run(throughput_stats())
+
+
+# ── service cards ────────────────────────────────────────────────────────────
 
 def test_services_returns_all_services(client):
-    r = client.get("/api/services")
-    assert r.status_code == 200
-    data = r.json()
+    data = _service_cards()
     assert "services" in data
     services = data["services"]
     assert len(services) >= 7
@@ -42,8 +57,7 @@ def test_services_returns_all_services(client):
 
 
 def test_services_have_required_fields(client):
-    r = client.get("/api/services")
-    for svc in r.json()["services"]:
+    for svc in _service_cards()["services"]:
         assert "id" in svc
         assert "name" in svc
         assert "port" in svc
@@ -52,14 +66,13 @@ def test_services_have_required_fields(client):
 
 
 def test_background_flag_flows_through_services_endpoint(client, monkeypatch):
-    """The additive `background` key reaches the frontend via /api/services — routes_hub
+    """The additive `background` key reaches the frontend via the service cards: routes_hub
     spreads the catalog entry (minus `check`), so it must not strip it. `background` now
     marks every NON-user-facing service (backend infra + headless workers), which the
     frontend splits into its 'Background jobs' section. Force the manifest fail-open path
     so the plugin-gated voice/rag cards are present."""
     monkeypatch.delenv("MANIFEST_PATH", raising=False)
-    r = client.get("/api/services")
-    by_id = {s["id"]: s for s in r.json()["services"]}
+    by_id = {s["id"]: s for s in _service_cards()["services"]}
     for bg_id in ("rag-ingestion", "llamacpp", "qdrant", "stt", "tts"):
         assert by_id[bg_id]["background"] is True, f"{bg_id} should be background"
     # User-facing UIs (main grid) never carry a truthy background flag.
@@ -82,8 +95,7 @@ def test_headless_worker_shows_true_container_health(client, monkeypatch):
         ]}
 
     monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
-    r = client.get("/api/services")
-    by_id = {s["id"]: s for s in r.json()["services"]}
+    by_id = {s["id"]: s for s in _service_cards()["services"]}
     assert by_id["rag-ingestion"]["ok"] is True
     assert by_id["livesync-bridge"]["ok"] is False
     assert by_id["livesync-bridge"]["error"], "a down worker must carry a container-state reason"
@@ -107,7 +119,7 @@ def test_hermes_health_comes_from_container_state_under_its_compose_name(client,
         ]}
 
     monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
-    hermes = {s["id"]: s for s in client.get("/api/services").json()["services"]}["hermes"]
+    hermes = {s["id"]: s for s in _service_cards()["services"]}["hermes"]
     assert hermes["ok"] is True, "hermes must read healthy from its compose-named container row"
     assert hermes.get("error") is None
     assert "check" not in hermes, "the unreachable HTTP probe must not come back"
@@ -124,7 +136,7 @@ def test_hermes_card_reports_down_when_its_container_is_down(client, monkeypatch
         ]}
 
     monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
-    hermes = {s["id"]: s for s in client.get("/api/services").json()["services"]}["hermes"]
+    hermes = {s["id"]: s for s in _service_cards()["services"]}["hermes"]
     assert hermes["ok"] is False
     assert hermes["error"], "a down hermes must carry a container-state reason"
 
@@ -142,8 +154,7 @@ def test_model_gateway_open_url_prefers_its_subdomain(client, monkeypatch):
     monkeypatch.setenv("CADDY_TAILNET_HOSTNAME", "ordo.example.ts.net")
     monkeypatch.setenv("CADDY_TAILNET_DOMAIN", "example.ts.net")
     monkeypatch.setenv("TAILNET_NAMES_ENABLED", "1")
-    r = client.get("/api/services")
-    mg = {s["id"]: s for s in r.json()["services"]}["model-gateway"]
+    mg = {s["id"]: s for s in _service_cards()["services"]}["model-gateway"]
     assert not mg.get("background")
     assert mg["open_url"] == "https://llm.example.ts.net/ui/"
     assert "/llm/" not in mg["open_url"]
@@ -156,8 +167,7 @@ def test_model_gateway_open_url_falls_back_to_port_without_sidecars(client, monk
     monkeypatch.delenv("MANIFEST_PATH", raising=False)
     monkeypatch.delenv("TAILNET_NAMES_ENABLED", raising=False)
     monkeypatch.setenv("CADDY_TAILNET_HOSTNAME", "ordo.example.ts.net")
-    r = client.get("/api/services")
-    mg = {s["id"]: s for s in r.json()["services"]}["model-gateway"]
+    mg = {s["id"]: s for s in _service_cards()["services"]}["model-gateway"]
     assert mg["open_url"] == "https://ordo.example.ts.net:8449/ui/"
 
 
@@ -166,13 +176,12 @@ def test_model_gateway_open_url_falls_back_when_host_unset(client, monkeypatch):
     to its port/SSO route rather than emitting a broken link."""
     monkeypatch.delenv("MANIFEST_PATH", raising=False)
     monkeypatch.delenv("CADDY_TAILNET_HOSTNAME", raising=False)
-    r = client.get("/api/services")
-    mg = {s["id"]: s for s in r.json()["services"]}["model-gateway"]
+    mg = {s["id"]: s for s in _service_cards()["services"]}["model-gateway"]
     assert mg["open_url"] is None
 
 
 def test_services_do_not_leak_auth_token(client, monkeypatch):
-    """Regression: sensitive auth tokens must not appear in public /api/services URLs."""
+    """Regression: sensitive auth tokens must not appear in the service cards' URLs."""
     monkeypatch.setattr("dashboard.settings.DASHBOARD_AUTH_TOKEN", "secret-test-token-1234")
     # Re-import to pick up monkeypatched value
     import importlib
@@ -221,7 +230,7 @@ def test_throughput_record_ignores_empty_model(client):
     assert r.status_code == 200
 
 
-# ── /api/throughput/stats ────────────────────────────────────────────────────
+# ── throughput stats ─────────────────────────────────────────────────────────
 
 def test_throughput_stats_returns_models(client):
     client.post("/api/throughput/record", json={
@@ -229,9 +238,7 @@ def test_throughput_stats_returns_models(client):
         "output_tokens_per_sec": 30.0,
         "ttft_ms": 120.0,
     })
-    r = client.get("/api/throughput/stats")
-    assert r.status_code == 200
-    data = r.json()
+    data = _throughput_stats()
     assert data["ok"] is True
     m = data["models"]["stats-test-model"]
     for key in ("latest", "peak", "p50", "p95", "sample_count", "last_ts", "first_ts"):
@@ -254,16 +261,15 @@ def test_throughput_stats_includes_active_model(client, monkeypatch):
 
     monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
     monkeypatch.setattr(dashboard_app, "_active_model_cache", {"checked": 0.0, "value": None})
-    r = client.get("/api/throughput/stats")
-    body = r.json()
+    body = _throughput_stats()
     assert body["active_model"] == "Qwen-Test-Q6_K.gguf"
     assert body["active_model_alias"] == "qwen-test-q6_k"
     assert body["control_plane_ok"] is True
 
 
 def test_throughput_stats_active_model_null_when_ops_down(client, monkeypatch):
-    """ops-controller unreachable -> active_model is null (honest unknown), the endpoint
-    still serves stats, and the failure is negatively cached (one upstream call)."""
+    """ops-controller unreachable -> active_model is null (honest unknown), the stats
+    are still served, and the failure is negatively cached (one upstream call)."""
     import dashboard.app as dashboard_app
     calls = {"n": 0}
 
@@ -273,8 +279,8 @@ def test_throughput_stats_active_model_null_when_ops_down(client, monkeypatch):
 
     monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
     monkeypatch.setattr(dashboard_app, "_active_model_cache", {"checked": 0.0, "value": None})
-    first = client.get("/api/throughput/stats").json()
-    second = client.get("/api/throughput/stats").json()
+    first = _throughput_stats()
+    second = _throughput_stats()
     assert first["active_model"] is None
     assert second["active_model"] is None
     assert first["control_plane_ok"] is False
@@ -294,7 +300,7 @@ def test_throughput_stats_distinguishes_unconfigured_from_unreachable(client, mo
 
     monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
     monkeypatch.setattr(dashboard_app, "_active_model_cache", {"checked": 0.0, "value": None})
-    d = client.get("/api/throughput/stats").json()
+    d = _throughput_stats()
     assert d["active_model"] is None
     assert d["control_plane_ok"] is True
 
@@ -311,7 +317,7 @@ def test_throughput_record_accepts_alias_and_backend(client):
         "backend": "llamacpp",
     })
     assert r.status_code == 200 and r.json()["ok"] is True
-    stats = client.get("/api/throughput/stats").json()
+    stats = _throughput_stats()
     assert "Attrib-Test-Q6_K.gguf" in stats["models"]
 
 
@@ -325,7 +331,7 @@ def test_throughput_samples_evict_after_max_age(client):
     with dashboard_app._state_lock:
         for s in dashboard_app._throughput_samples["evict-me.gguf"]:
             s["ts"] -= dashboard_app._SAMPLE_MAX_AGE_SEC + 60
-    stats = client.get("/api/throughput/stats").json()
+    stats = _throughput_stats()
     assert "evict-me.gguf" not in stats["models"]
 
 
@@ -369,15 +375,6 @@ def test_throughput_store_v2_roundtrip(tmp_path, monkeypatch):
     assert dashboard_app._throughput_samples == {"M.gguf": [sample]}
 
 
-# ── /api/auth/config ─────────────────────────────────────────────────────────
-
-def test_auth_config_no_auth(client):
-    r = client.get("/api/auth/config")
-    assert r.status_code == 200
-    data = r.json()
-    assert data["auth_required"] is False
-
-
 # ── Global exception handler ────────────────────────────────────────────────
 
 def test_unhandled_exception_returns_500_not_traceback(monkeypatch):
@@ -388,16 +385,16 @@ def test_unhandled_exception_returns_500_not_traceback(monkeypatch):
     mock_client.get = AsyncMock(return_value=MagicMock(status_code=200))
     monkeypatch.setattr("dashboard.app._http_client", mock_client)
 
-    # Patch the GGUF disk scan (a dependency of /api/llm/models) to raise an
-    # unexpected error. It is called without a try/except in the route, so the
-    # error bubbles all the way to the global exception handler.
+    # Patch the service list (a dependency of /api/health) to raise an unexpected
+    # error. It is called without a try/except in the route, so the error bubbles
+    # all the way to the global exception handler.
     def _boom():
         raise RuntimeError("test boom")
 
-    monkeypatch.setattr("dashboard.app._scan_gguf_models", _boom)
+    monkeypatch.setattr("dashboard.routes_hub.visible_services", _boom)
 
     tc = TestClient(dashboard_app.app, raise_server_exceptions=False)
-    r = tc.get("/api/llm/models")
+    r = tc.get("/api/health")
     assert r.status_code == 500
     data = r.json()
     assert data["detail"] == "Internal server error"
@@ -429,7 +426,7 @@ def test_langfuse_open_url_prefers_its_subdomain(client, monkeypatch):
     monkeypatch.setenv("CADDY_TAILNET_HOSTNAME", "ordo.example.ts.net")
     monkeypatch.setenv("CADDY_TAILNET_DOMAIN", "example.ts.net")
     monkeypatch.setenv("TAILNET_NAMES_ENABLED", "1")
-    lf = {s["id"]: s for s in client.get("/api/services").json()["services"]}["langfuse"]
+    lf = {s["id"]: s for s in _service_cards()["services"]}["langfuse"]
     assert lf["open_url"] == "https://langfuse.example.ts.net/"
 
 
@@ -443,7 +440,7 @@ def test_langfuse_open_url_falls_back_to_its_sso_port_without_sidecars(client, m
     monkeypatch.delenv("MANIFEST_PATH", raising=False)
     monkeypatch.delenv("TAILNET_NAMES_ENABLED", raising=False)
     monkeypatch.setenv("CADDY_TAILNET_HOSTNAME", "ordo.example.ts.net")
-    lf = {s["id"]: s for s in client.get("/api/services").json()["services"]}["langfuse"]
+    lf = {s["id"]: s for s in _service_cards()["services"]}["langfuse"]
     assert lf["open_url"] == "https://ordo.example.ts.net:8450/"
     assert lf.get("port") is None and lf.get("url") is None, (
         "langfuse publishes no host port; a port/url pair would give the frontend a dead "
@@ -454,5 +451,5 @@ def test_langfuse_open_url_is_none_without_an_edge_host(client, monkeypatch):
     monkeypatch.delenv("MANIFEST_PATH", raising=False)
     monkeypatch.delenv("CADDY_TAILNET_HOSTNAME", raising=False)
     monkeypatch.delenv("TAILNET_NAMES_ENABLED", raising=False)
-    lf = {s["id"]: s for s in client.get("/api/services").json()["services"]}["langfuse"]
+    lf = {s["id"]: s for s in _service_cards()["services"]}["langfuse"]
     assert lf["open_url"] is None

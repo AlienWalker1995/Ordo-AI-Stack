@@ -72,7 +72,6 @@ _MODEL_DOWNLOAD_ALLOWED_HOSTS = {
 
 COMFYUI_MODELS_DIR = Path(os.environ.get("COMFYUI_MODELS_DIR", "/models/comfyui"))
 AUDIT_LOG_PATH = Path(os.environ.get("AUDIT_LOG_PATH", "/data/audit.jsonl"))
-OPS_ENV_PATH = Path(os.environ.get("OPS_ENV_PATH", "/config/.env"))
 COMFYUI_CUSTOM_NODES_DIR = Path(os.environ.get("COMFYUI_CUSTOM_NODES_DIR", "/comfyui-app/ComfyUI/custom_nodes"))
 COMFYUI_CONTAINER_NAME = os.environ.get("COMFYUI_CONTAINER_NAME", "ordo-comfyui-1")
 # One path segment of a ComfyUI custom-node pack. Deliberately narrower than the filesystem
@@ -498,7 +497,7 @@ class ControlPlane:
         except Exception as e:
             return self._error(500, str(e))
         # The backend returns the ops-api payload already ({"services": [...]}), the same as
-        # list_containers and mcp_containers below. Wrapping it again here produced
+        # list_containers below. Wrapping it again here produced
         # {"services": {"services": [...]}}, which the dashboard would read as an empty grid.
         return services
 
@@ -559,15 +558,6 @@ class ControlPlane:
             return self._error(500, str(e))
         return stats
 
-    def mcp_containers(self) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            containers = self.broker.backend.mcp_containers()
-        except Exception as e:
-            return self._error(500, str(e))
-        return containers
-
     def compose_up(self, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
             return self._error(503, "no broker configured")
@@ -619,13 +609,6 @@ class ControlPlane:
         """List all models in the runtime registry — same shape as ops-api's /registry/models."""
         models = self.model_registry.list_models()
         return {"models": {mid: rec.model_dump() for mid, rec in models.items()}}
-
-    def registry_get_model(self, model_id: str) -> tuple[int, dict[str, Any]]:
-        """Get a single model record by ID — same shape as ops-api's /registry/models/{id}."""
-        rec = self.model_registry.get(model_id)
-        if rec is None:
-            return 404, {"error": f"Model {model_id!r} not found"}
-        return 200, rec.model_dump()
 
     def registry_gpus(self) -> dict[str, Any]:
         """Live GPU info merged with registry model assignments — same shape as ops-api's /registry/gpus."""
@@ -822,30 +805,7 @@ class ControlPlane:
             "errors": errors,
         }
 
-    # --- Slice 3: env/model-config routes ---
-
-    ENV_ALLOWED_KEYS = frozenset({
-        "DEFAULT_MODEL", "OPEN_WEBUI_DEFAULT_MODEL", "LLAMACPP_MODEL",
-        "LLAMACPP_CTX_SIZE", "LLAMACPP_EMBED_MODEL", "LLAMACPP_MMPROJ",
-        "LLAMACPP_FLASH_ATTN", "LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION",
-        "LLAMACPP_KV_CACHE_TYPE_K", "LLAMACPP_KV_CACHE_TYPE_V", "LLAMACPP_EXTRA_ARGS",
-    })
-
-    def env_get(self, key: str) -> dict[str, Any]:
-        """Read a single allowed key from the registry env file."""
-        if key not in self.ENV_ALLOWED_KEYS:
-            return self._error(400, f"Key not in allowlist: {key!r}")
-        env_path = OPS_ENV_PATH
-        if not env_path.exists():
-            return {"key": key, "value": ""}
-        content = env_path.read_text(encoding="utf-8")
-        pattern = rf"^{re.escape(key)}=(.*)$"
-        m = re.search(pattern, content, re.MULTILINE)
-        raw = m.group(1).rstrip() if m else ""
-        # Strip optional surrounding quotes
-        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
-            raw = raw[1:-1]
-        return {"key": key, "value": raw}
+    # --- Audit ---
 
     def _audit(
         self,
@@ -869,84 +829,6 @@ class ControlPlane:
             )
         except Exception:
             pass
-
-    def env_set(self, body: dict[str, Any] | None) -> dict[str, Any]:
-        """Write a single allowlisted key into the registry env file. Requires confirm: true.
-
-        The write is atomic (temp file + os.replace) because this file is read by every compose
-        invocation: a half-written .env is a stack that will not render.
-        """
-        body = body or {}
-        if not body.get("confirm"):
-            return self._error(
-                400,
-                "Destructive operation requires confirmation. "
-                'Set {"confirm": true} in the request body to proceed.',
-            )
-        key = body.get("key") or ""
-        value = body.get("value")
-        if value is None:
-            value = ""
-        if not isinstance(value, str):
-            return self._error(400, "value must be a string")
-        if key not in self.ENV_ALLOWED_KEYS:
-            return self._error(400, f"Key not in allowlist: {key!r}")
-        if "\n" in value or "\r" in value:
-            return self._error(400, "Value must not contain newlines")
-        # LLAMACPP_EXTRA_ARGS is word-split by the llama.cpp run script, so its value reaches a
-        # shell. Constrain it to characters that cannot introduce a second command.
-        if key == "LLAMACPP_EXTRA_ARGS" and not re.fullmatch(r"[a-zA-Z0-9 _.=:/-]*", value):
-            return self._error(
-                400,
-                "LLAMACPP_EXTRA_ARGS: only alphanumeric, spaces, dashes, dots, equals, "
-                "colons, slashes allowed",
-            )
-        env_path = OPS_ENV_PATH
-        if not env_path.exists():
-            return self._error(404, f".env not found at {env_path}")
-        # Read and write raw bytes. `read_text`/`write_text` translate newlines, so on this CRLF
-        # file (the renderer runs on Windows; the controller runs in a Linux container) a one-key
-        # edit silently rewrote all 55 lines as LF, and the next render flipped them back: config
-        # churning against itself, on the file whose mtime marks ~41 containers for recreation.
-        # `[^\r\n]*` rather than `.*` for the same reason, since `.` matches a bare \r.
-        content = env_path.read_bytes().decode("utf-8")
-        pattern = rf"^{re.escape(key)}=[^\r\n]*"
-        if re.search(pattern, content, re.MULTILINE):
-            content = re.sub(pattern, f"{key}={value}", content, count=1, flags=re.MULTILINE)
-        else:
-            newline = "\r\n" if "\r\n" in content else "\n"
-            content = content.rstrip("\r\n") + f"{newline}{key}={value}{newline}"
-        tmp_path = env_path.with_suffix(".tmp")
-        tmp_path.write_bytes(content.encode("utf-8"))
-        os.replace(str(tmp_path), str(env_path))
-        self._audit("env_set", key, "ok", f"len={len(value)}")
-        return {"ok": True, "key": key}
-
-    def images_pull(self, body: dict[str, Any] | None) -> dict[str, Any]:
-        """Pull the current image for each named compose service."""
-        body = body or {}
-        services = body.get("services") or []
-        if not isinstance(services, list):
-            return self._error(400, "services must be a list")
-        if not self.broker:
-            return self._error(503, "no container backend")
-        errors: list[str] = []
-        pulled: list[str] = []
-        for service in services:
-            if not isinstance(service, str):
-                errors.append(f"{service!r}: not a service name")
-                continue
-            try:
-                self.broker.backend.pull_image(service)
-                pulled.append(service)
-            except Exception as exc:
-                errors.append(f"{service}: {exc}")
-        if not pulled and not errors:
-            return self._error(400, "No allowed services specified")
-        self._audit("pull", ",".join(pulled), "error" if errors else "ok", "; ".join(errors))
-        if errors:
-            return self._error(500, "; ".join(errors), services=pulled)
-        return {"ok": True, "services": pulled}
 
     @staticmethod
     def _validate_custom_node_path(node_path: str) -> str | None:
@@ -1149,8 +1031,6 @@ class ControlPlane:
             return self._as_response(self.container_restart(name, body))
         if m == "GET" and path == "/stats/services":
             return self._as_response(self.service_stats())
-        if m == "GET" and path == "/mcp/containers":
-            return self._as_response(self.mcp_containers())
         if m == "POST" and path == "/compose/up":
             return self._as_response(self.compose_up(body))
         if m == "POST" and path == "/compose/down":
@@ -1160,9 +1040,6 @@ class ControlPlane:
         # Registry routes (ported from ops-api, slice 2)
         if m == "GET" and path == "/registry/models":
             return 200, self.registry_models()
-        if m == "GET" and path.startswith("/registry/models/") and path.count("/") == 3:
-            model_id = path.split("/")[3]
-            return self.registry_get_model(model_id)
         if m == "GET" and path == "/registry/gpus":
             return 200, self.registry_gpus()
         # Slice 3: model download/pull routes
@@ -1180,15 +1057,7 @@ class ControlPlane:
             except ValueError:
                 return 422, {"error": "limit must be an integer"}
             return 200, self.audit_log(limit)
-        # Slice 3: env route
-        if m == "GET" and path.startswith("/env/") and path.count("/") == 2:
-            key = path.split("/")[2]
-            return self._as_response(self.env_get(key))
-        # Slice 4: the last four routes the dashboard calls, plus the two honest 410s
-        if m == "POST" and path == "/env/set":
-            return self._as_response(self.env_set(body))
-        if m == "POST" and path == "/images/pull":
-            return self._as_response(self.images_pull(body))
+        # Slice 4: ComfyUI node requirements, plus the two honest 410s
         if m == "POST" and path == "/comfyui/install-node-requirements":
             return self._as_response(self.comfyui_install_node_requirements(body))
         if m == "POST" and path == "/gpu/assign":

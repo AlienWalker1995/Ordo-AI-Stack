@@ -237,7 +237,6 @@ Re-render, then from `out/`: `docker compose -p ordo up -d llamacpp`. This drops
 | Endpoint (ops-controller) | Method | Purpose |
 |---|---|---|
 | `/registry/models` | GET | List all registered models |
-| `/registry/models/{id}` | GET | Read one model record |
 | `/registry/gpus` | GET | Live GPU inventory with the models assigned to each GPU |
 
 The dashboard proxies these as `/api/orchestration/registry/*`, and the `orchestration` MCP server exposes them as `list_models` and `gpu_status`. GPU pins are baked in at `ordo render` time, so `POST /gpu/assign` and `POST /registry/models/{id}/assign-gpu` answer 410.

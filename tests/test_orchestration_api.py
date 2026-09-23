@@ -252,22 +252,6 @@ def test_orch_registry_list_models_503_without_token(dash_client, monkeypatch):
 
 
 
-def test_orch_registry_get_model_ok(dash_client, monkeypatch):
-    """GET /api/orchestration/registry/models/{id} → 200 with model record."""
-    import dashboard.routes_orchestration as ro
-    monkeypatch.setattr(ro, "OPS_CONTROLLER_TOKEN", "tok")
-
-    payload = {"id": "local-chat", "kind": "chat", "service": "llamacpp"}
-
-    def _mk_client(*a, **k):
-        return _MockAsyncClient({"/registry/models/local-chat": _MockResp(payload)})
-
-    monkeypatch.setattr(ro.httpx, "AsyncClient", _mk_client)
-    r = dash_client.get("/api/orchestration/registry/models/local-chat")
-    assert r.status_code == 200
-    assert r.json()["kind"] == "chat"
-
-
 # ── GPU lease proxies (orchestration tab) ────────────────────────────────────────────────
 
 
@@ -296,20 +280,6 @@ class _FakeAsyncClient:
 
     async def get(self, url):
         return _FakeResp(self.payload)
-
-
-def test_gpu_route_unwraps_scheduler_status(client):
-    _FakeAsyncClient.payload = {
-        "manifest": {"x": 1},
-        "gpu": {"state": "busy", "running": [{"id": "lease-abc", "kind": "training"}],
-                "evicted_residents": {"llamacpp": 25.4}},
-    }
-    with patch("dashboard.routes_orchestration.httpx.AsyncClient", _FakeAsyncClient):
-        r = client.get("/api/orchestration/gpu")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["state"] == "busy" and body["running"][0]["kind"] == "training"
-    assert "manifest" not in body  # unwrapped to the gpu block
 
 
 def test_gpu_history_route_passes_through(client):

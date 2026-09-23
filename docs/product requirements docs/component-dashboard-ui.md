@@ -19,13 +19,9 @@ A web-based control plane that provides a single pane of glass for:
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
 | `/api/health` | GET | None | Dashboard + upstream service health (container healthcheck) |
-| `/api/auth/config` | GET | None | Auth method in use |
-| `/api/hardware` | GET | None | Host hardware stats (CPU, memory, disk, GPU via nvidia-smi) |
 | `/api/hardware/service-pressure` | GET | Y | Per-container CPU/RAM/VRAM (Services page) |
-| `/api/rag/status` | GET | None | Qdrant collection status + point count |
 | `/api/overview` | GET | Y | Status line, GPUs and who holds them, chat engine, attention items, host (Overview page) |
 | `/api/activity` | GET | Y | Renders, GPU leases and operator actions, newest first |
-| `/api/services` | GET | Y | Service links and live health |
 | `/api/services/table` | GET | Y | Grouped service rows with a verdict and allowed actions (Services page) |
 | `/api/ops/services/{id}/start` | POST | Y | Start service (via ops-controller) |
 | `/api/ops/services/{id}/stop` | POST | Y | Stop service |
@@ -34,9 +30,7 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/models` | GET | Y | Chat server slots (gpu, cpu, embed), catalog, GGUF files on disk (Models page) |
 | `/api/models/switch` | POST | Y | Switch the GPU model: catalog id -> ops-controller `POST /model-config` (renders) -> recreate `llamacpp` + `model-gateway`; refused while a GPU render lease is held |
 | `/api/models/delete` | POST | Y | Delete a GGUF file; refuses a file any server depends on |
-| `/api/llm/models` | GET | Y | GGUF files on disk merged with the active model |
 | `/api/throughput/record` | POST | `X-Throughput-Token` when `THROUGHPUT_RECORD_TOKEN` is set | Record a model call (called by model-gateway) |
-| `/api/throughput/stats` | GET | None | Per-model throughput statistics |
 | `/api/throughput/benchmark` | POST | Y | Short generation against `local-chat` |
 | `/api/perf/series` | GET | Y | Tokens per second per chat server (Prometheus) |
 | `/api/perf/grafana` | GET | Y | Whether Grafana is up + the embed path (Performance page) |
@@ -52,8 +46,8 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/orchestration/readiness` | GET | None | Orchestration readiness check |
 | `/api/orchestration/workflows*`, `/validate`, `/outputs` | GET/POST | Y | Workflow store used by the orchestration MCP server (`services/orchestration/server.py`) |
 | `/api/orchestration/comfyui/restart`, `/comfyui/status` | POST/GET | Y | Restart ComfyUI / its status (Media page) |
-| `/api/orchestration/registry/models`, `/registry/models/{id}`, `/registry/gpus` | GET | Y | Runtime model registry, proxied from ops-controller |
-| `/api/orchestration/gpu`, `/gpu/history` | GET | Y | Scheduler GPU state and finished GPU leases |
+| `/api/orchestration/registry/models`, `/registry/gpus` | GET | Y | Runtime model registry, proxied from ops-controller |
+| `/api/orchestration/gpu/history` | GET | Y | Finished GPU leases |
 
 To add a ComfyUI model, use the ComfyUI MCP tool `download_comfyui_model` (url + category); pull GGUFs with `ordo fetch --models-dir models/gguf`.
 

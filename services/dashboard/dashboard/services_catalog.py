@@ -8,8 +8,8 @@ out/services-catalog.json, which the dashboard container mounts read-only
 fragments are read directly, so both paths serve the identical card list.
 
 Feeds two surfaces, both derived from the one loaded `SERVICES` catalog:
-  * the service grid   — GET /api/services, /api/health (visible_services())
-  * ops lifecycle wiring — OPS_SERVICE_MAP (derived from each card's `ops_service`)
+  * the service grid: routes_hub.services(), GET /api/health (visible_services())
+  * ops lifecycle wiring: OPS_SERVICE_MAP (derived from each card's `ops_service`)
 
 A service's check URL / name / hint / category lives in exactly one place.
 """

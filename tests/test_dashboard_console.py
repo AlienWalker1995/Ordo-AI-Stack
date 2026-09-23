@@ -1,7 +1,7 @@
 """Pure builders behind the dashboard's Overview, Services, Models and Media pages.
 
 Everything here takes plain dicts shaped like the live payloads (control-plane /status,
-/services and /registry/models; the dashboard's /api/hardware and throughput store; ComfyUI's
+/services and /registry/models; the dashboard's hardware stats and throughput store; ComfyUI's
 /queue and /history), so the behaviour that matters is pinned without any network:
 
 * the GPU card says who holds each card, and when a render borrows the resident model's GPU

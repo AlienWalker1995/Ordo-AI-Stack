@@ -1,7 +1,7 @@
 """Pure builders for the dashboard's Overview, Services, Models and Media pages.
 
 Every function here takes plain dicts in the shapes the live sources return (control-plane
-/status, /services and /registry/models; the dashboard's own /api/hardware and throughput
+/status, /services and /registry/models; the dashboard's own hardware stats and throughput
 store; ComfyUI's /queue and /history; llama-server's /v1/models) and returns what a page
 renders. No I/O: routes_console.py fetches, these decide. That split is what lets the rules
 that matter (a render borrowing the GPU is not an outage, a finished job is not a failure, an

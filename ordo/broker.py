@@ -44,7 +44,6 @@ class ContainerBackend(Protocol):
     # wrapping it at the route would put the shape in two places and let them drift.
     def list_services(self) -> dict: ...
     def list_containers(self) -> list[dict]: ...  # bare list: ops-api's shape, see DockerBackend
-    def mcp_containers(self) -> dict: ...
     def service_stats(self) -> dict: ...
 
     # Compose verbs take an OPTIONAL service: no argument means the whole project, which for
@@ -69,7 +68,6 @@ class MockBackend:
         self.container_log_requests: list[tuple[str, int]] = []
         self.container_restart_calls: list[str] = []
         self.service_stats_calls: list = []
-        self.mcp_containers_calls: list = []
         self.compose_up_calls: list = []
         self.compose_down_calls: list = []
         self.compose_restart_calls: list = []
@@ -126,13 +124,6 @@ class MockBackend:
             },
             "vram_aggregate_unavailable": False,
         }
-
-    def mcp_containers(self) -> dict:
-        self.mcp_containers_calls.append(None)
-        return {"containers": [
-            {"id": "gateway", "name": "ordo-mcp-gateway-1", "service": "mcp-gateway",
-             "status": "running", "image": "mcp-gateway:latest"},
-        ]}
 
     def pull_image(self, service: str) -> None:
         self.pulled.append(service)
@@ -342,9 +333,7 @@ class DockerBackend:
         Two things here are deliberately not what they look like they should be, and both are
         matched against the live ops-api rather than guessed:
 
-        1. A bare list, while its sibling mcp_containers returns {"containers": [...]}. ops-api is
-           inconsistent between those two routes and the dashboard is written against both as they
-           are.
+        1. A bare list: ops-api's shape, which the dashboard is written against.
         2. NOT scoped to this compose project. ops-api returns all 86 containers on the host, where
            the project holds 53. This is the one method on this backend that deliberately looks
            outside the project, because the dashboard's container view shows the whole host. Every
@@ -363,36 +352,6 @@ class DockerBackend:
             if len(parts) == 3:
                 rows.append({"name": parts[0], "status": parts[1], "image": parts[2]})
         return rows
-
-    def mcp_containers(self) -> dict:  # pragma: no cover - needs real docker
-        """Containers labelled ordo.mcp=true, scoped to this project.
-
-        Fields match ops-api exactly (id, name, service, status, image) because the dashboard's MCP
-        cards read them by name. Note that ops-api is not internally consistent between its two
-        container routes: this one returns {"containers": [...]} while /containers returns a bare
-        list. Both shapes are reproduced as they are; harmonising them is a dashboard-facing change
-        and belongs in its own slice rather than hidden inside a port.
-        """
-        proc = subprocess.run(
-            ["docker", "ps", "-a",
-             "--filter", f"label=com.docker.compose.project={self.project}",
-             "--filter", "label=ordo.mcp=true",
-             "--format", '{{.Names}}\t{{.Label "com.docker.compose.service"}}\t{{.State}}\t{{.Image}}'],
-            capture_output=True, text=True, timeout=30,
-        )
-        rows = []
-        for line in proc.stdout.splitlines():
-            parts = line.split("\t")
-            if len(parts) == 4:
-                service = parts[1]
-                rows.append({
-                    # `id` is the service name minus the mcp- prefix, which is what the dashboard
-                    # keys its MCP cards on; ops-api derives it the same way.
-                    "id": service[len("mcp-"):] if service.startswith("mcp-") else service,
-                    "name": parts[0], "service": service,
-                    "status": parts[2], "image": parts[3],
-                })
-        return {"containers": rows}
 
     def _container_guard(self, name: str) -> str:
         """Container routes take a RAW container name, not a service name, so `_guard` does not

@@ -46,25 +46,22 @@ agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>
 | `/containers/{name}/logs` | GET | Tail one container's logs |
 | `/containers/{name}/restart` | POST | Restart one container (`confirm: true`) |
 | `/stats/services` | GET | Per-service CPU/memory stats |
-| `/mcp/containers` | GET | MCP server containers by compose label `ordo.mcp=true` (inventory only, not the health source: MCP health comes from LiteLLM `/v1/mcp/server/health`) |
 | `/compose/up`, `/compose/down`, `/compose/restart` | POST | Whole-project compose verbs (`confirm: true`) |
-| `/images/pull` | POST | Pull the current image for the named services |
 
 **Registry, downloads and diagnostics**
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/registry/models`, `/registry/models/{id}` | GET | Runtime model registry (`/data/model-registry.json`) |
+| `/registry/models` | GET | Runtime model registry (`/data/model-registry.json`) |
 | `/registry/gpus` | GET | GPUs seen by nvidia-smi |
 | `/gpu/assignments` | GET | Current GPU pins |
 | `/gpu/assign`, `/registry/models/{id}/assign-gpu` | POST | 410: GPU pins are render-time (`ordo.yaml`) |
 | `/models/download`, `/models/download/status` | POST, GET | Resumable download of one allowlisted-host URL into the ComfyUI models volume |
 | `/comfyui/install-node-requirements` | POST | pip-install a custom-node pack's `requirements.txt` inside the comfyui container |
-| `/env/{key}`, `/env/set` | GET, POST | Read/write one allowlisted key in the registry env file |
 | `/diagnostics/dstate` | GET | Processes stuck in uninterruptible sleep |
 | `/audit` | GET | Audit log tail (`limit`, default 50) |
 
-**Safety:** Every mutating lifecycle, compose, env and pip call requires `{"confirm": true}`.
+**Safety:** Every mutating lifecycle, compose and pip call requires `{"confirm": true}`.
 Plugin enable/disable is limited to the `INSTALLABLE_PLUGINS` allowlist in `ordo/control.py`;
 core substrate services cannot be added or removed through it.
 
@@ -72,11 +69,11 @@ core substrate services cannot be added or removed through it.
 
 `ordo/audit.py` writes one fsync'd JSONL line per privileged call to `AUDIT_LOG_PATH`
 (`/data/audit.log` in the container, `data/ops-controller/audit.log` on the host), rotating to
-`audit.1.log` at 50 MB. Export: `GET /audit?limit=N`. Audited today: `env_set`, image `pull`,
-`comfyui_pip_install`, and the `gpu_assign` 410s.
+`audit.1.log` at 50 MB. Export: `GET /audit?limit=N`. Audited today: `comfyui_pip_install` and
+the `gpu_assign` 410s.
 
 ```json
-{"ts": 1767225600.0, "caller": "dashboard", "action": "pull", "target": "comfyui", "result": "ok", "detail": ""}
+{"ts": 1767225600.0, "caller": "dashboard", "action": "comfyui_pip_install", "target": "ComfyUI-Thing", "result": "ok", "detail": "", "metadata": {"exit_code": 0}}
 ```
 
 Known limitation: `caller` is hardcoded to `"dashboard"`; multi-actor audit needs identity

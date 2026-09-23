@@ -137,9 +137,9 @@ async def _throughput() -> dict:
 
 
 async def _disk_files() -> list[dict]:
-    from dashboard.app import llm_models
+    from dashboard.app import _scan_gguf_models
 
-    return (await llm_models()).get("models", [])
+    return await asyncio.to_thread(_scan_gguf_models)
 
 
 async def _served() -> dict:

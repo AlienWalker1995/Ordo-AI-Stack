@@ -67,8 +67,3 @@ def list_gpus() -> dict:
     except Exception as e:
         logger.debug("nvidia-smi list_gpus failed: %s", e)
         return {"gpus": [], "reachable": False}
-
-
-def biggest(gpus: list[dict]) -> dict | None:
-    """Return the largest-VRAM GPU, or None."""
-    return max(gpus, key=lambda g: g["vram_total_mib"], default=None)

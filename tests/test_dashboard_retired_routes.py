@@ -62,6 +62,17 @@ RETIRED = [
     ("GET", "/api/ops/available"),
     ("GET", "/api/performance/summary"),
     ("GET", "/api/throughput/service-usage"),
+    # no HTTP caller after the five-page rewrite: the pages read these in-process through
+    # /api/overview and /api/models, or never used them (the bearer modal's auth probe)
+    ("GET", "/api/services"),
+    ("GET", "/api/hardware"),
+    ("GET", "/api/rag/status"),
+    ("GET", "/api/throughput/stats"),
+    ("GET", "/api/llm/models"),
+    ("GET", "/api/auth/config"),
+    ("GET", "/api/orchestration/gpu"),
+    ("GET", "/api/orchestration/registry/models/{model_id}"),
+    ("GET", "/api/orchestration/workflows/{workflow_id}/versions/{version}"),
     # the media worker's job / publish / schedule queue, retired 2026-07-31; these answered 410 since
     ("POST", "/api/orchestration/run"),
     ("GET", "/api/orchestration/jobs"),

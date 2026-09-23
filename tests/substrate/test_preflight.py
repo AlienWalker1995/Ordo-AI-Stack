@@ -13,7 +13,6 @@ REGISTRY = PluginRegistry.load(ROOT / "services")
 
 GPU = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                         "model": "auto", "plugins": "auto"})
-CPU = Source.from_dict({"hardware": {"gpus": [], "ram_gb": 32}, "model": "auto", "plugins": "auto"})
 
 
 def _byname(checks):

@@ -54,11 +54,6 @@ LANGFUSE_DEFAULT_ADMIN_EMAIL = "admin@ordo.local"
 # the same two values via services_catalog.service_open_url()).
 LITELLM_EDGE_PORT = 8449
 LITELLM_TAILNET_LABEL = "llm"
-# The callback route LiteLLM's Google SSO redirects to (litellm/proxy/management_endpoints/
-# ui_sso.py: auth_callback is mounted at "/sso/callback"; get_redirect_url_for_sso() appends this
-# route to PROXY_BASE_URL to build both the redirect it sends Google and the URI Google must be
-# told to allow). Verified against the installed litellm==1.100.1 source in ordo-model-gateway-1.
-LITELLM_SSO_CALLBACK_ROUTE = "sso/callback"
 
 # Secret env KEYS the CORE services need at runtime (values operator-managed in secrets.env, never
 # rendered). model-gateway/model-gateway-keys/ops-controller/dashboard/agent read these; plugins add more

@@ -181,7 +181,6 @@ def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
         "COMFYUI_CUSTOM_NODES_DIR": "/comfyui-app/ComfyUI/custom_nodes",
         "COMFYUI_CONTAINER_NAME": f"{project}-comfyui-1",
         "AUDIT_LOG_PATH": "/data/audit.log",
-        "OPS_ENV_PATH": "/config/.env",
     }
     # --source/--catalog are global (pre-subcommand) flags; --project/--out belong to `serve`.
     # --out is /config ITSELF: the deployment mounts the dir holding ordo.yaml AND the rendered
@@ -352,10 +351,10 @@ def _dashboard(project: str, net: str, env_file: str,
     env = dashboard.get("environment") or {}
     if env:
         s["environment"] = dict(env)
-    # GPU visibility for the dashboard SERVICE: the dashboard's `/api/hardware` shells to
+    # GPU visibility for the dashboard SERVICE: the dashboard's `hardware_stats()` shells to
     # nvidia-smi (_probe_gpu) + enumerates cards (gpu_stats.list_gpus) for the hw-stat bar's GPU
     # widgets, which the NVIDIA runtime only injects when the service reserves a GPU with the
-    # `utility` cap. Without it `/api/hardware` returns gpu:null + gpus:[] (both GPU widgets blank).
+    # `utility` cap. Without it `hardware_stats()` returns gpu:null + gpus:[] (both GPU widgets blank).
     # V1's dashboard container has exactly caps=[[utility]]; mirror it. `count: all` -> reads BOTH cards.
     gpu_caps = dashboard.get("gpu_capabilities") or []
     if gpu_caps:
