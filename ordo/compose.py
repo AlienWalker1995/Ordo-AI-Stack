@@ -231,6 +231,12 @@ GATEWAY_LANGFUSE_ENV: dict[str, str] = {
 }
 
 
+# The rendered gateway config, bound by HOST path. ops-controller recreates model-gateway (a
+# model switch does) running compose with its project directory at its own /config mount, so a
+# "./model-gateway" bind would resolve to /config/model-gateway on the host, which does not exist.
+_MODEL_GATEWAY_CONFIG_BIND = "${BASE_PATH}/out/model-gateway:/config:ro"
+
+
 def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool = False,
                     google_sso_env: dict[str, str] | None = None) -> dict[str, Any]:
     """LiteLLM behind the `local-chat` alias AND the MCP gateway (`/mcp`). The agent gates on
@@ -255,7 +261,7 @@ def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool
     s = _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file, secrets=True)
     s["networks"] = [net, _mcp_net(project)]
     s["depends_on"] = _depends_on({"llamacpp": "service_started", "litellm-db": "service_healthy"})
-    s["volumes"] = ["./model-gateway:/config:ro"]
+    s["volumes"] = [_MODEL_GATEWAY_CONFIG_BIND]
     s["environment"] = {
         "LITELLM_MODE": "PRODUCTION",   # no load_dotenv(): a stray .env cannot inject credentials
         "LITELLM_LOG": "ERROR",
@@ -291,7 +297,7 @@ def _model_gateway_keys(project: str, net: str, env_file: str) -> dict[str, Any]
     s = _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file, secrets=True)
     s["restart"] = "on-failure"
     s["command"] = ["python3", "/app/bootstrap_keys.py"]
-    s["volumes"] = ["./model-gateway:/config:ro"]
+    s["volumes"] = [_MODEL_GATEWAY_CONFIG_BIND]
     s["environment"] = {
         "MODEL_GATEWAY_URL": "http://model-gateway:11435",
         "LITELLM_KEYS_SPEC": "/config/keys.json",
