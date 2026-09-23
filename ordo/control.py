@@ -403,6 +403,39 @@ class ControlPlane:
 
     # --- Service lifecycle routes (ported from ops-api) ---
 
+    # The lifecycle verbs live in the same process as the GPU scheduler, so they ask it before
+    # starting anything. Starting an evicted resident during a lease (directly, by container
+    # name, or through a whole-stack compose up) puts two tenants on one card: the 2026-08-08
+    # host crash. Refusing here, once, replaces a "not during a lease" check in every caller.
+    # Stop is never refused, and a lease tenant (comfyui) may still be cycled by its own gate.
+
+    def _lease_conflict(self, service: str | None) -> dict[str, Any] | None:
+        """A 409 payload when starting `service` (None = the whole stack) would share the card."""
+        if not self.scheduler:
+            return None
+        status = self.scheduler.status()
+        holders = [job["id"] for job in status["running"]] + [job["id"] for job in status["queued"]]
+        evicted = status["evicted_residents"]
+        if service is None and status["leased"]:
+            return self._error(409, f"a GPU lease is active (held by {holders}, evicted {sorted(evicted)}); "
+                                    "a whole-stack start would restart the evicted residents beside it. "
+                                    "Name a service, or retry once the lease is released.",
+                               lease_holders=holders)
+        if service is not None and service in evicted:
+            return self._error(409, f"{service!r} is evicted for a GPU lease held by {holders}; starting it "
+                                    "would put two tenants on one card. The scheduler restores it when "
+                                    "the lease is released.", lease_holders=holders)
+        return None
+
+    def _container_lease_conflict(self, container: str) -> dict[str, Any] | None:
+        """`_lease_conflict` for a raw container name (`<project>-<service>-<n>`)."""
+        if not self.scheduler:
+            return None
+        for service in self.scheduler.evicted_residents:
+            if re.fullmatch(rf"[\w.-]+-{re.escape(service)}-\d+", container):
+                return self._lease_conflict(service)
+        return None
+
     def service_start(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
             return self._error(503, "no broker configured")
@@ -410,6 +443,9 @@ class ControlPlane:
             return {"would": "start", "service": service_id}
         if not body.get("confirm"):
             return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        conflict = self._lease_conflict(service_id)
+        if conflict:
+            return conflict
         try:
             self.broker.backend.start(service_id)
         except Exception as e:
@@ -436,6 +472,9 @@ class ControlPlane:
             return {"would": "restart", "service": service_id}
         if not body.get("confirm"):
             return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        conflict = self._lease_conflict(service_id)
+        if conflict:
+            return conflict
         try:
             self.broker.backend.restart(service_id)
         except Exception as e:
@@ -470,6 +509,9 @@ class ControlPlane:
             return {"would": "recreate", "service": service_id}
         if not body.get("confirm"):
             return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        conflict = self._lease_conflict(service_id)
+        if conflict:
+            return conflict
         try:
             self.broker.backend.recreate_service(service_id)
         except Exception as e:
@@ -499,6 +541,9 @@ class ControlPlane:
             return self._error(503, "no broker configured")
         if not body.get("confirm"):
             return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        conflict = self._container_lease_conflict(name)
+        if conflict:
+            return conflict
         try:
             self.broker.backend.container_restart(name)
         except Exception as e:
@@ -528,8 +573,12 @@ class ControlPlane:
             return self._error(503, "no broker configured")
         if not body.get("confirm"):
             return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        service = body.get("service") or None
+        conflict = self._lease_conflict(service)
+        if conflict:
+            return conflict
         try:
-            self.broker.backend.compose_up()
+            self.broker.backend.compose_up(service)
         except Exception as e:
             return self._error(500, str(e))
         return {"ok": True, "action": "compose-up"}
@@ -539,8 +588,9 @@ class ControlPlane:
             return self._error(503, "no broker configured")
         if not body.get("confirm"):
             return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        service = body.get("service") or None
         try:
-            self.broker.backend.compose_down()
+            self.broker.backend.compose_down(service)
         except Exception as e:
             return self._error(500, str(e))
         return {"ok": True, "action": "compose-down"}
@@ -550,8 +600,12 @@ class ControlPlane:
             return self._error(503, "no broker configured")
         if not body.get("confirm"):
             return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        service = body.get("service") or None
+        conflict = self._lease_conflict(service)
+        if conflict:
+            return conflict
         try:
-            self.broker.backend.compose_restart()
+            self.broker.backend.compose_restart(service)
         except Exception as e:
             return self._error(500, str(e))
         return {"ok": True, "action": "compose-restart"}
