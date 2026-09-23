@@ -32,7 +32,6 @@ from .audit import AuditLog
 from .broker import Broker
 from .catalog import Catalog
 from .config import Source
-from .gpu_assignments_fmt import parse_gpu_assignments_yaml
 from .model_registry import ModelRegistry
 from .plugins import PluginRegistry
 from .render import render
@@ -150,7 +149,6 @@ class ControlPlane:
         self.model_registry = ModelRegistry(
             registry_path=Path(registry_path),
             env_path=Path("/config/.env"),
-            gpu_assignments_path=Path("/config/overrides/gpu-assignments.yml"),
         )
         # Slice 3: model download/pull state (in-process, not persisted)
         self._dl_lock = threading.Lock()
@@ -580,13 +578,6 @@ class ControlPlane:
         for uuid, info in live.items():
             result[uuid] = {**info, "models": uuid_to_models.get(uuid, [])}
         return {"gpus": result}
-
-    def gpu_assignments(self) -> dict[str, Any]:
-        """Current service->GPU-uuid pins — same shape as ops-api's /gpu/assignments (dict, not list)."""
-        path = Path("/config/overrides/gpu-assignments.yml")
-        if not path.exists():
-            return {"assignments": {}}
-        return {"assignments": parse_gpu_assignments_yaml(path.read_text(encoding="utf-8"))}
 
     # --- Slice 3: model download/pull routes ---
 
@@ -1114,8 +1105,6 @@ class ControlPlane:
             return self._as_response(self.registry_enable_model(model_id, body))
         if m == "GET" and path == "/registry/gpus":
             return 200, self.registry_gpus()
-        if m == "GET" and path == "/gpu/assignments":
-            return 200, self.gpu_assignments()
         # Slice 3: model download/pull routes
         if m == "POST" and path == "/models/download":
             return self._as_response(self.models_download(body))

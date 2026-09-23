@@ -2,8 +2,8 @@
 
 Pure logic + file IO (no FastAPI, no docker) so it is unit-testable. ops-controller
 mounts this as the registry behind /registry/*; the dashboard and Hermes are equal
-clients. The registry is the *intent*; `.env` and overrides/gpu-assignments.yml are
-*derived enforcement* (see derive_env / derive_gpu_assignment).
+clients. The registry records the *intent*; the rendered compose file is what enforces it
+(model files and GPU pins are baked in at `ordo render` time).
 """
 from __future__ import annotations
 
@@ -39,10 +39,9 @@ ModelRecord.model_rebuild()
 
 
 class ModelRegistry:
-    def __init__(self, registry_path: Path, env_path: Path, gpu_assignments_path: Path):
+    def __init__(self, registry_path: Path, env_path: Path):
         self.registry_path = Path(registry_path)
         self.env_path = Path(env_path)
-        self.gpu_assignments_path = Path(gpu_assignments_path)
 
     def _read(self) -> dict[str, Any]:
         if not self.registry_path.exists():
@@ -81,35 +80,6 @@ class ModelRegistry:
         data.get("models", {}).pop(model_id, None)
         self._write(data)
 
-    _MODEL_FILE_ENV = {
-        "llamacpp": "LLAMACPP_MODEL",
-        "llamacpp-embed": "LLAMACPP_EMBED_MODEL",
-    }
-
-    def derive_env(self, record: ModelRecord) -> dict[str, str]:
-        """Env keys this record implies when enabled. Empty for multi-model (comfyui) and for any single-model service not in _MODEL_FILE_ENV."""
-        if record.runtime != "single-model":
-            return {}
-        out: dict[str, str] = {}
-        key = self._MODEL_FILE_ENV.get(record.service)
-        if key and record.source.get("file"):
-            out[key] = str(record.source["file"])
-        if record.service == "llamacpp":
-            cfg = record.config or {}
-            if cfg.get("ctx") is not None:
-                out["LLAMACPP_CTX_SIZE"] = str(cfg["ctx"])
-            if cfg.get("mmproj"):
-                out["LLAMACPP_MMPROJ"] = str(cfg["mmproj"])
-            if cfg.get("kv_cache_k"):
-                out["LLAMACPP_KV_CACHE_TYPE_K"] = str(cfg["kv_cache_k"])
-            if cfg.get("kv_cache_v"):
-                out["LLAMACPP_KV_CACHE_TYPE_V"] = str(cfg["kv_cache_v"])
-        return out
-
-    def derive_gpu_assignment(self, record: ModelRecord) -> tuple[str, str | None]:
-        """(service, gpu_uuid) — the pin this record implies. uuid None = unassigned."""
-        return (record.service, record.gpu_uuid)
-
     def reconcile(self) -> None:
         """Seed the registry from authoritative files. SEED-ONLY semantics: the
         registry is the source of intent, so a record that already exists is left
@@ -117,10 +87,6 @@ class ModelRegistry:
         are used ONLY to create records that don't exist yet (first run). Operators
         change models via the registry verbs, never by reconcile clobbering them."""
         env = _parse_env(self.env_path)
-        pins: dict[str, str | None] = {}
-        if self.gpu_assignments_path.exists():
-            pins = parse_gpu_assignments_yaml(
-                self.gpu_assignments_path.read_text(encoding="utf-8"))
         existing = self.list_models()
 
         def _ctx(value):
@@ -151,7 +117,7 @@ class ModelRegistry:
             self.upsert(ModelRecord(
                 id=mid, kind=kind, service=service, runtime=runtime,
                 source={"file": model_file} if model_file else {},
-                gpu_uuid=pins.get(service),
+                gpu_uuid=None,
                 enabled=True,
                 config=cfg,
                 est_vram_gb=est_vram,
@@ -162,22 +128,6 @@ class ModelRegistry:
 # ---------------------------------------------------------------------------
 # Module-level helpers (shared, no registry state needed)
 # ---------------------------------------------------------------------------
-
-# Re-export from the dependency-free shared module so all callers
-# (model_registry, main.py, detect_hardware) share one canonical implementation.
-try:
-    from gpu_assignments_fmt import parse_gpu_assignments_yaml, render_gpu_assignments_yaml
-except ModuleNotFoundError:
-    import importlib.util as _ilu
-    _f = _ilu.spec_from_file_location(
-        "gpu_assignments_fmt",
-        str(Path(__file__).resolve().parent / "gpu_assignments_fmt.py"),
-    )
-    _m = _ilu.module_from_spec(_f)
-    _f.loader.exec_module(_m)
-    render_gpu_assignments_yaml = _m.render_gpu_assignments_yaml
-    parse_gpu_assignments_yaml = _m.parse_gpu_assignments_yaml
-
 
 def _parse_env(path: Path) -> dict[str, str]:
     """Read a dotenv file, return {KEY: VALUE} for simple KEY=VALUE lines."""

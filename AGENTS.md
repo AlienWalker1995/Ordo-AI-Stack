@@ -1,52 +1,46 @@
 # Repository Guidelines
 
-> ⚠️ **The stack is Ordo, defined and operated entirely from the repo root.** Config is rendered from `ordo.yaml` (tracked template: `ordo.example.yaml`) into `out/` (gitignored) via `ordo render`, GPU work is scheduled by `ordo serve` (no reactive guardian), and agents are manifests under `services/<id>/agent.yaml` (Hermes default). The old top-level V1 layout (root `docker-compose.yml`, `./compose` / `.\compose.ps1`, `Makefile`, `overrides/`, `scripts/detect_hardware.py`, root `.env.example`, and the root `ops-controller/`, `model-gateway/`, `mcp/` source dirs) was **removed 2026-07-24** (commit `62540bf`) — the repo was the `v2/` stack from that removal until it was **flattened 2026-07-24** (commit `2d4bd9c`): the `v2/` directory no longer exists, its contents live at the repo root; there is no v2, there is only Ordo. Work on the stack at the repo root and follow `docs/operator-guide.md`. Every service is now co-located under `services/<id>/` — its render manifest (`plugin.yaml` / `agent.yaml` / `dashboard.yaml`) sits next to its build context (`Dockerfile` + sources). The source dirs that survived the V1 removal (the dashboard, `comfyui-mcp`, `orchestration`, etc., which still build live Ordo service images) moved under `services/<id>/` in the 2026-07-25 reorg; the "legacy top-level tree" guidance further below is retained for historical context only and no longer describes on-disk paths.
+Ordo is defined and operated from the repo root. Config is rendered from `ordo.yaml` (tracked template: `ordo.example.yaml`) into `out/` (gitignored) by `ordo render`; GPU work is scheduled by the control plane (`ops-controller`), and every service lives in `services/<id>/`. Operator workflow: `docs/operator-guide.md`.
 
-## Working on Ordo (the render substrate)
-- **Source of truth:** `ordo.yaml` (declarative). Never hand-edit rendered outputs in `out/` — they don't survive a re-render; use the source's `overrides:` block.
-- **Run the substrate tests (no host Python needed):**
-  ```bash
-  docker run --rm -v "$PWD:/w" -w /w python:3.11-slim \
-    sh -c "pip install -q pyyaml pytest && python -m pytest -q tests/substrate"
-  ```
-  Or, with host Python: `pip install . && python -m pytest tests/substrate -q` from the repo root (`PYTHONPATH=.`) (runtime dep is just PyYAML). CI runs a path-gated `substrate` job (ruff + the mocked-profile suite + a fresh-install render smoke), path-gated on `ordo/**`, `catalog/**`, `services/**` — see `.github/workflows/ci.yml`.
-- **Service images** build from `services/<id>/` (each has a README/Dockerfile with the exact context; a few — ops-controller, worker — build from the repo root against the `.dockerignore` allowlist). The control plane is `ops-controller` (`services/ops-controller/Dockerfile`, built from the repo root). The separate `ops-api` backend was retired 2026-09-23 once every route it served had been ported onto it.
-- **Agents** are data manifests at `services/<id>/agent.yaml`; Hermes is `default: true`. See `docs/agents.md`.
+## Working on the render substrate (`ordo/`)
+- **Source of truth:** the operator's `ordo.yaml`, which lives at `out/ordo.yaml`. Never hand-edit rendered files in `out/`; they do not survive a re-render. Use the source's `overrides:` block.
+- **Always pass the source:** `python -m ordo --source out/ordo.yaml render --out out` (`--source` goes before the subcommand). Without it the CLI renders the public `ordo.example.yaml` over `out/`, dropping the host paths the live stack needs.
+- **Bring-up:** render as above, then `docker compose -p ordo --env-file .env --env-file secrets.env up -d` from `out/`. `out/docker-compose.yml` is image-only, so `docker compose build` there does nothing: build images with `scripts/rebuild-local-images.sh`, which reads the build contexts from `ordo/buildspec.py`.
+- **The control plane renders with its own copy of `ordo/`:** `ops-controller` (`services/ops-controller/Dockerfile`, built from the repo root against the `.dockerignore` allowlist) ships the `ordo/` package and re-renders `out/` when a model is switched. After changing render code, rebuild the ops-controller image, or its next render reverts your change.
+- **Binds on services the control plane recreates** must use host paths (`${BASE_PATH}/...`), never `./...`: compose runs inside ops-controller with its project directory at `/config`. `tests/substrate/test_compose.py` enforces this.
 
-## Project Structure & Module Organization (service source dirs)
-Each service is a self-contained directory under `services/<id>/` holding both its render manifest (`plugin.yaml` / `agent.yaml` / `dashboard.yaml`) and its build context (Python sources + `Dockerfile` + a README with the exact context) — e.g. the dashboard sources at `services/dashboard/dashboard/`, `services/orchestration/`, `services/comfyui-mcp/`. Most images build from their own `services/<id>/` context; the one that needs the render substrate builds from the repo root — `ops-controller` (`services/ops-controller/Dockerfile`, `docker build -f services/ops-controller/Dockerfile -t ordo/ops-controller:latest .`), where a root `.dockerignore` allowlist (`ordo/`, `catalog/`, `services/`) keeps the context tiny. (The media-worker build that shared this root context was retired 2026-07-31, #133.) The old root `model-gateway/` and `ops-controller/` source dirs, and the `docker-compose.yml` / `compose.ps1` / `compose` entry points that built them, were removed 2026-07-24 (see `docs/operator-guide.md`). Tests are centralized in `tests/`. Operational scripts live in `scripts/`, documentation in `docs/`, generated runtime data in `data/`, and local model assets in `models/`. The `overrides/` dir (`compute.yml`, `gpu-assignments.yml`) is gone — hardware/GPU detection now happens at `ordo render` time (`hardware: auto` / `ordo detect`) and is written into `out/`. **Note:** each service's manifest + build context are co-located under `services/<id>/` — edits to the stack belong there.
+## Project structure
+- `ordo/`: the render substrate and control plane (`control.py` is the ops-controller API, `scheduler.py` the GPU lease arbiter).
+- `services/<id>/`: one directory per service, holding its render manifest (`plugin.yaml` / `agent.yaml` / `dashboard.yaml`), an optional `catalog.json` dashboard card, and its build context (`Dockerfile` + sources). Agents are manifests (`services/<id>/agent.yaml`); Hermes is `default: true` (see `docs/agents.md`).
+- `catalog/models.yaml`: the model catalog a model switch picks from.
+- `tests/` (with `tests/substrate/` for the render engine), `scripts/` (operational scripts), `docs/`, `monitoring/` (Prometheus + Grafana provisioning). `data/`, `models/` and `out/` are runtime state, never committed.
 
-## Build, Test, and Development Commands (root service sources)
-Install Python test dependencies with `pip install -r tests/requirements.txt`.
+## Build, test and lint
+- `pip install -r tests/requirements.txt`, then `python -m pytest tests/ -q --ignore=tests/substrate` (the main CI job).
+- `pip install -r requirements-dev.txt`, then `PYTHONPATH=. python -m pytest tests/substrate -q` (the path-gated substrate job, run on changes to `ordo/`, `catalog/` or `services/`).
+- `python -m ruff check .`: the lint gate. It honors `.gitignore`, so one command covers everything.
+- Dependencies are pinned to exact versions (for example `services/dashboard/dashboard/requirements.txt`, which `tests/requirements.txt` includes). Bump deliberately, rebuild, retest.
 
-- `python -m pytest tests/ -v`: run the full root Python test suite.
-- `python -m pytest tests/ -q`: quiet run used for CI checks.
-- `python -m ruff check .`: run lint checks used in CI (ruff honors `.gitignore`, so one command covers `ordo/`, every `services/<id>/`, `scripts/`, and `tests/`).
-- `docker compose build <service> && docker compose up -d <service>`: rebuild and hot-swap a single service, run from `out/` against the rendered compose (see `docs/operator-guide.md`). There is no root `make up`/Makefile or `./compose` / `.\compose.ps1` wrapper anymore — bring-up is always `ordo render --out out` followed by `docker compose -p ordo ... up` from `out/`.
+## Coding style
+Python 3.12+, `from __future__ import annotations` at the top of every file. Ruff enforces a 120-character line and the `E`, `F`, `I` and `UP` rules. `snake_case` for files, functions and variables, `PascalCase` for classes, `test_*.py` for tests. Keep service logic inside its own `services/<id>/` directory instead of adding cross-service utilities at the root.
 
-## Coding Style & Naming Conventions
-Target Python 3.12+. Ruff is the enforced linter; `pyproject.toml` sets a 120-character line length and enables `E`, `F`, `I`, and `UP` rules. Follow existing module patterns: `snake_case` for files, functions, and variables, `PascalCase` for classes, and `test_*.py` for tests. Keep service-specific logic inside its owning directory instead of adding cross-service utility modules at the repo root. Always use `from __future__ import annotations` at the top of Python files.
+## Dashboard (`services/dashboard/dashboard/`)
+- **Backend:** FastAPI. `routes_console.py` serves the five pages (`/api/overview`, `/api/activity`, `/api/services/table`, `/api/models` + `/switch` + `/delete`, `/api/media` + `/view`, `/api/perf/*`); it fetches concurrently and hands plain dicts to `console.py`, which holds the pure logic (verdicts, attention items, model slots). Keep that split: logic in `console.py`, I/O in the routes.
+- Blocking I/O (pynvml, psutil, subprocess) goes through `asyncio.to_thread`; shared in-process state is guarded by `_state_lock`.
+- Degrade, don't 500: an unreachable dependency becomes "unavailable" data, logged at `DEBUG`.
+- Auth: the edge SSO (Caddy + oauth2-proxy) is the only gate. `DASHBOARD_AUTH_TOKEN` exists in code but is unset in the deployment; don't add per-service tokens.
+- A model switch goes only through `/api/models/switch` (catalog id, then render, then recreate). Never write `.env` directly; the next render undoes it.
+- **Frontend:** React 18 + Vite + Tailwind in `frontend/`. Pages in `src/pages/*Page.jsx` (Overview, Services, Models, Media, Performance), shared primitives in `src/components/ui.jsx`, the API client and polling hooks in `src/api.js`, formatters in `src/lib/format.js`. Design tokens (colors, type scale, radii) live in `tailwind.config.js`: style with those utilities, never hardcoded hex. Build with `npm ci && npm run build`; the backend serves `frontend/dist/`.
+- Routes that were retired stay listed in `tests/test_dashboard_retired_routes.py` so they cannot quietly return.
 
-## Dashboard Service Patterns (`services/dashboard/dashboard/`)
-The dashboard backend is a FastAPI app in `services/v1-parity/dashboard/app.py` (with endpoint groups split across sibling `routes_*.py` modules). When adding endpoints:
-- Use `asyncio.to_thread(blocking_fn)` for any blocking I/O (pynvml, psutil, subprocess) — never block the event loop.
-- Shared in-process state (throughput samples, benchmarks) is protected by `_state_lock` (a `threading.Lock`). Always acquire it with `with _state_lock:`.
-- Hardware/health endpoints are public (no auth). The `_verify_auth(request)` / `DASHBOARD_AUTH_TOKEN` Bearer path still exists in code but is **unset in the Ordo deployment** (`AUTH_REQUIRED=False`) — the Caddy edge SSO is the sole gate. Don't reintroduce a per-service token requirement.
-- New endpoints go immediately before the `# --- Static ---` comment at the bottom of `app.py`.
-- Error handling: catch exceptions from optional dependencies (pynvml, httpx) and return a degraded-but-valid response rather than a 500. Log at `DEBUG` level with `logger.debug(...)`.
+## GPU work
+Every GPU render goes through the gate (`$COMFYUI_URL`, `http://comfyui-gate:8188`), which takes the scheduler lease first. Never submit to ComfyUI directly.
 
-## Frontend Conventions (`services/v1-parity/dashboard/frontend/`)
-The dashboard frontend is a **React 18 SPA built with Vite + Tailwind** (it has a build step — not a vanilla-JS single file). Source lives under `frontend/src/`: entry `main.jsx`, root `App.jsx`, one component per tab in `src/components/` (e.g. `ServicesTab.jsx`, `ModelctlTab.jsx`), the `/api/*` client in `src/api.js`, and base styles in `src/index.css`. When modifying it:
-- **Design tokens live in `tailwind.config.js`** (the "Ordo Nexus" dark theme — `bg`/`fg`/`accent`/… colors, `Barlow Condensed`/`DM Sans`/`JetBrains Mono` font families, radii, shadows, animations). Style with Tailwind utilities that reference these tokens (`bg-bg`, `text-fg`, `text-accent`, `font-mono`); never hardcode hex values. `src/index.css` holds only the base backdrop and the keyframe/pseudo-element effects that are awkward as utilities.
-- Fonts: `font-display` (`Barlow Condensed`) for section and row labels, `font-sans` (`DM Sans`) for body text, `font-mono` (`JetBrains Mono`) for numeric values and status codes.
-- Data flows through `fetch` + `async/await` in `src/api.js`; polling lives in the owning tab component (React effects/intervals). Add a new tab as a `*Tab.jsx` component wired into `App.jsx`.
-- **Build:** `npm ci && npm run build` (Vite) emits hashed assets to `frontend/dist/`, which the FastAPI backend serves; config is `vite.config.js` / `tailwind.config.js` / `postcss.config.js`.
+## Testing
+Add or update `pytest` coverage for every behavior change. Use `fastapi.testclient.TestClient` for endpoints, and mock external dependencies (pynvml, httpx, docker) with `unittest.mock.patch` or `monkeypatch`.
 
-## Testing Guidelines
-Add or update `pytest` coverage for every behavior change. Prefer focused unit tests near related coverage. Use `fastapi.testclient.TestClient` for endpoint tests. Mock external dependencies (pynvml, httpx, docker) with `unittest.mock.patch` or pytest `monkeypatch`.
+## Commits and pull requests
+Conventional prefixes (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`), with a service scope when the change is isolated to one (`feat(dashboard):`). `main` is protected: work on a branch and open a PR. PRs describe the user-visible change and the validation performed; include screenshots when the dashboard UI changes.
 
-## Commit & Pull Request Guidelines
-Recent history uses Conventional Commit prefixes such as `feat:`. Continue with `feat:`, `fix:`, `docs:`, `refactor:`, or `test:` followed by a short imperative summary. Use `feat(service):` scope when the change is isolated to one service (e.g., `feat(dashboard):`, `fix(bridge):`). Pull requests should describe the user-visible change, list validation performed, link related issues, and include screenshots only when UI behavior in `services/v1-parity/dashboard/` changes.
-
-## Security & Configuration Tips
-Never commit `data/`, `models/`, or the rendered `out/` (includes `out/secrets.env`). Start from `out/secrets.env.example`, keep tokens in environment variables, and review `SECURITY.md` before exposing services beyond localhost. (The root `.env` / SOPS `secrets/.env.sops` and the root `mcp/.env` / `overrides/compute.yml` were the V1 path; `mcp/` and `overrides/` no longer exist.) When adding monitoring containers that need host process visibility, use `pid: host` via `ordo.yaml`'s `overrides:` block (not by hand-editing rendered `out/docker-compose.yml`), and document why in an inline comment.
+## Security
+This repository is public: never commit `data/`, `models/`, `out/` (it contains `out/secrets.env`), tokens, emails or hostnames. Start from `out/secrets.env.example`; encrypted at-rest secrets live in `secrets/` (SOPS). Review `SECURITY.md` before exposing services beyond localhost. Host-level container options such as `pid: host` go through `ordo.yaml`'s `overrides:` block with a comment saying why, never by hand-editing `out/`.
