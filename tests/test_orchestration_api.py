@@ -251,23 +251,6 @@ def test_orch_registry_list_models_503_without_token(dash_client, monkeypatch):
     assert r.status_code == 503
 
 
-def test_orch_registry_assign_gpu_409_propagated(dash_client, monkeypatch):
-    """POST /api/orchestration/registry/models/{id}/assign-gpu mirrors upstream 409."""
-    import dashboard.routes_orchestration as ro
-    monkeypatch.setattr(ro, "OPS_CONTROLLER_TOKEN", "tok")
-
-    def _mk_client(*a, **k):
-        return _MockAsyncClient({
-            "/assign-gpu": _MockResp({"detail": "VRAM insufficient"}, status_code=409)
-        })
-
-    monkeypatch.setattr(ro.httpx, "AsyncClient", _mk_client)
-    r = dash_client.post(
-        "/api/orchestration/registry/models/local-chat/assign-gpu",
-        json={"gpu_uuid": "GPU-12345678-1234-1234-1234-123456789abc", "confirm": True},
-    )
-    assert r.status_code == 409
-
 
 def test_orch_registry_get_model_ok(dash_client, monkeypatch):
     """GET /api/orchestration/registry/models/{id} → 200 with model record."""

@@ -53,20 +53,4 @@ def register(app, ops_request):
         assignments = data.get("assignments", {}) if code == 200 else {}
         return {**info, "assignments": assignments}
 
-    @router.post("/api/gpu/assign")
-    async def gpu_assign(body: GpuAssignRequest, request: Request):
-        info = gpu_stats.list_gpus()
-        gpu = next((g for g in info["gpus"] if g["uuid"] == body.gpu_uuid), None)
-        if gpu is None:
-            return {"ok": False, "error": f"GPU {body.gpu_uuid} not found"}
-        need = estimate_service_vram_gb(body.service, body.model_size_gb)
-        cap = capacity_check(need, gpu["vram_total_gb"])
-        if not cap["ok"]:
-            return {"ok": False, "error": f"Capacity guard: {cap['reason']}"}
-        code, data = await ops_request(
-            "POST", "/gpu/assign", request=request,
-            json={"service": body.service, "gpu_uuid": body.gpu_uuid, "confirm": True},
-        )
-        return {"ok": code in (200, 201), "status": code, "result": data}
-
     app.include_router(router)

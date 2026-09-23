@@ -243,12 +243,14 @@ def test_throughput_stats_returns_models(client):
 
 def test_throughput_stats_includes_active_model(client, monkeypatch):
     """The tab must never GUESS the active model — /stats carries the ops-controller's
-    answer (the same authority Model Control uses)."""
+    answer. Samples are keyed by GGUF file, so it is `active_file` that matters: `active_model`
+    is a catalog id, and treating it as a file is what left the headline reading "no traffic
+    yet" under live traffic after the v2 cutover. The fake is in the v2 shape for that reason."""
     import dashboard.app as dashboard_app
 
     async def _fake_ops(method, path, *a, **k):
         assert (method, path) == ("GET", "/model-config")
-        return 200, {"active_model": "Qwen-Test-Q6_K.gguf", "running": {}}
+        return 200, {"active_model": "qwen-test-q6", "active_file": "Qwen-Test-Q6_K.gguf"}
 
     monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
     monkeypatch.setattr(dashboard_app, "_active_model_cache", {"checked": 0.0, "value": None})
@@ -288,7 +290,7 @@ def test_throughput_stats_distinguishes_unconfigured_from_unreachable(client, mo
     import dashboard.app as dashboard_app
 
     async def _fake_ops(method, path, *a, **k):
-        return 200, {"active_model": "", "running": {}}
+        return 200, {"active_model": "", "active_file": ""}
 
     monkeypatch.setattr("dashboard.app._ops_request", _fake_ops)
     monkeypatch.setattr(dashboard_app, "_active_model_cache", {"checked": 0.0, "value": None})

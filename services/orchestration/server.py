@@ -56,8 +56,8 @@ def _get(path: str, params: dict | None = None) -> dict[str, Any]:
         return r.json()
 
 
-def _post(path: str, body: dict[str, Any]) -> dict[str, Any]:
-    with httpx.Client(timeout=120.0) as client:
+def _post(path: str, body: dict[str, Any], timeout: float = 120.0) -> dict[str, Any]:
+    with httpx.Client(timeout=timeout) as client:
         r = client.post(f"{BASE}{path}", headers=_headers(), json=body)
         if r.status_code >= 400:
             try:
@@ -215,29 +215,22 @@ def gpu_status() -> dict:
 
 
 @mcp.tool()
+def list_model_catalog() -> dict:
+    """The chat models this stack can switch to: gpu/cpu/embed slots (what each server has
+    loaded), the catalog (id, file, installed, active) and the model files on disk (in_use)."""
+    return _get("/api/models")
+
+
+@mcp.tool()
 def set_active_model(model_id: str, confirm: bool = False) -> dict:
-    """Make a single-model registry entry the active model for its service (writes .env + recreates the service). confirm=true required."""
+    """Switch the GPU chat model to a catalog entry (an `id` from list_model_catalog whose
+    `installed` is true). The source is updated and re-rendered, then llama.cpp and the gateway
+    are recreated, so the switch survives the next render and carries the entry's sampler,
+    projector and context settings. Chat is unavailable on the GPU for about a minute while the
+    new model loads. confirm=true required."""
     if not confirm:
-        return {"error": "Set confirm=true to swap the active model (recreates the service)."}
-    return _post(f"/api/orchestration/registry/models/{model_id}/enable", {"confirm": True})
-
-
-@mcp.tool()
-def assign_model_gpu(model_id: str, gpu_uuid: str, confirm: bool = False) -> dict:
-    """Pin a model to a GPU by full UUID (GPU-xxxxxxxx-...); recreates its service. confirm=true required."""
-    if not confirm:
-        return {"error": "Set confirm=true to reassign the GPU (recreates the service)."}
-    return _post(f"/api/orchestration/registry/models/{model_id}/assign-gpu", {"gpu_uuid": gpu_uuid, "confirm": True})
-
-
-@mcp.tool()
-def register_model(record_json: str) -> dict:
-    """Define a new managed model. record_json: JSON with id, kind, service, runtime, source, est_vram_gb."""
-    try:
-        record = json.loads(record_json)
-    except json.JSONDecodeError as e:
-        return {"error": f"Invalid JSON in record_json: {e}"}
-    return _post("/api/orchestration/registry/models", record)
+        return {"error": "Set confirm=true to switch the chat model (restarts llama.cpp and the gateway)."}
+    return _post("/api/models/switch", {"model": model_id}, timeout=900.0)
 
 
 if __name__ == "__main__":

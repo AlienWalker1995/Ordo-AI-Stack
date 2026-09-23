@@ -463,69 +463,6 @@ async def orch_registry_get_model(model_id: str, request: Request):
         raise HTTPException(status_code=502, detail=str(e)) from e
 
 
-@router.post("/registry/models")
-async def orch_registry_define_model(body: dict, request: Request):
-    """Hermes passthrough: upsert a model record into ops-controller registry."""
-    if not OPS_CONTROLLER_TOKEN:
-        raise HTTPException(status_code=503, detail="OPS_CONTROLLER_TOKEN not configured")
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.post(
-                f"{OPS_CONTROLLER_URL}/registry/models",
-                headers=_hermes_ops_headers(request),
-                json=body,
-            )
-        if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
-        return r.json()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
-
-
-@router.post("/registry/models/{model_id}/enable")
-async def orch_registry_enable_model(model_id: str, body: dict, request: Request):
-    """Hermes passthrough: activate a model (writes env + recreates service) via ops-controller."""
-    if not OPS_CONTROLLER_TOKEN:
-        raise HTTPException(status_code=503, detail="OPS_CONTROLLER_TOKEN not configured")
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            r = await client.post(
-                f"{OPS_CONTROLLER_URL}/registry/models/{model_id}/enable",
-                headers=_hermes_ops_headers(request),
-                json=body,
-            )
-        if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
-        return r.json()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
-
-
-@router.post("/registry/models/{model_id}/assign-gpu")
-async def orch_registry_assign_gpu(model_id: str, body: dict, request: Request):
-    """Hermes passthrough: pin a model to a GPU UUID via ops-controller (recreates service)."""
-    if not OPS_CONTROLLER_TOKEN:
-        raise HTTPException(status_code=503, detail="OPS_CONTROLLER_TOKEN not configured")
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            r = await client.post(
-                f"{OPS_CONTROLLER_URL}/registry/models/{model_id}/assign-gpu",
-                headers=_hermes_ops_headers(request),
-                json=body,
-            )
-        if r.status_code >= 400:
-            raise HTTPException(status_code=r.status_code, detail=r.text)
-        return r.json()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
-
-
 # ── GPU lease visibility (orchestration tab) ─────────────────────────────────────────────
 # Pure presentation proxies: the scheduler records/serves the truth; the dashboard displays it.
 
