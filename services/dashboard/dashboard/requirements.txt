@@ -1,11 +1,15 @@
-fastapi>=0.109.0
-uvicorn[standard]>=0.27.0
-httpx>=0.26.0
-jsonschema>=4.22.0
-huggingface_hub>=0.23.0
-psutil>=5.9.0
-nvidia-ml-py>=12.535.0
+# Pinned to exact versions: a floating range let CI and the image resolve different FastAPI /
+# Starlette releases (0.135 vs 0.141, whose included-router layout differs). tests/requirements.txt
+# includes this file, so the image and CI install the same set. Bump deliberately, rebuild, retest.
+fastapi==0.141.1
+starlette==1.5.0
+uvicorn[standard]==0.52.1
+httpx==0.28.1
+pydantic==2.13.4
+jsonschema==4.26.0
+huggingface_hub==1.27.0
+psutil==7.2.2
+nvidia-ml-py==13.610.43
 # The MCP enable/disable handler edits out/ordo.yaml's plugins list (surgical line add/remove) and
 # validates the result round-trips through the YAML parser before writing — so it must have one.
-# Present transitively today; declared explicitly so the dependency can't silently drift away.
-pyyaml>=6.0
+pyyaml==6.0.3
