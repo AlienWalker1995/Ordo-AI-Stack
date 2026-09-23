@@ -45,7 +45,7 @@ class Agent:
     user: str = ""                   # "" -> compose omits `user:` and the image default applies
     # Supplementary groups (compose `group_add`). Hermes needs `["0"]` (root group) so the
     # unprivileged `hermes` user can reach the root:root docker.sock (mode 660) it mounts — the
-    # same pattern ops-api uses. Empty -> compose omits it.
+    # same pattern the control plane uses. Empty -> compose omits it.
     group_add: tuple[str, ...] = ()
     volumes: tuple[str, ...] = ()    # bind/volume specs (src:dst[:ro]); ${VAR} refs pass through
     environment: dict[str, str] = dataclasses.field(default_factory=dict)  # non-secret env

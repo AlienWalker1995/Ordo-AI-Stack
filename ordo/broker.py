@@ -168,6 +168,29 @@ class DockerBackend:
     def __init__(self, project: str = "ordo"):
         self.project = project
 
+    # Services the control plane must never cycle, because they are the ones serving the request.
+    #
+    # `agent` is the Hermes gateway. Hermes reaches these verbs through its own ops-router tools,
+    # so an unguarded restart is a process killing itself mid-tool-call: the request never returns,
+    # the tool call is recorded as failed, and the retry restarts it again. The retired ops-api
+    # encoded this by leaving `agent` out of a 25-name ALLOWED_SERVICES literal; a denylist states
+    # the actual rule instead, and does not need an edit every time a plugin is added.
+    #
+    # `ops-controller` is this process. A self-recreate orphans the compose call it is running.
+    #
+    # Everything else in the project is legitimately operator-controllable from the dashboard.
+    SELF_REFERENTIAL = frozenset({"agent", "ops-controller"})
+
+    def _lifecycle_guard(self, service: str) -> str:
+        """`_guard`, plus the refusal to act on whatever is serving this request."""
+        service = self._guard(service)
+        if service in self.SELF_REFERENTIAL:
+            raise ValueError(
+                f"{service!r} runs the control plane itself and cannot be cycled through it; "
+                "use docker/compose from the host"
+            )
+        return service
+
     def _guard(self, service: str) -> str:
         """Reject anything that isn't a bare compose service name for THIS project.
 
@@ -198,19 +221,19 @@ class DockerBackend:
         return names[0] if names else None
 
     def start(self, service: str) -> None:  # pragma: no cover - needs real docker
-        container = self._resolve(service)
+        container = self._resolve(self._lifecycle_guard(service))
         if container is None:
             return  # abstract lease job — nothing to start (caller owns its workload)
         subprocess.run(["docker", "start", container], check=True, timeout=60)
 
     def stop(self, service: str) -> None:  # pragma: no cover - needs real docker
-        container = self._resolve(service)
+        container = self._resolve(self._lifecycle_guard(service))
         if container is None:
             return  # abstract lease job — no container to stop
         subprocess.run(["docker", "stop", container], check=True, timeout=60)
 
     def restart(self, service: str) -> None:  # pragma: no cover - needs real docker
-        container = self._resolve(service)
+        container = self._resolve(self._lifecycle_guard(service))
         if container is None:
             return  # abstract lease job — no container to restart
         subprocess.run(["docker", "restart", container], check=True, timeout=60)
@@ -234,14 +257,43 @@ class DockerBackend:
 
     COMPOSE_DIR = "/config"
 
-    def _compose(self, *args: str) -> list[str]:
-        return [
+    def _compose(self, *args: str, all_profiles: bool = False) -> list[str]:
+        cmd = [
             "docker", "compose", "-p", self.project,
             "-f", f"{self.COMPOSE_DIR}/docker-compose.yml",
+        ]
+        # Every profile the stack was started with, so a target whose `depends_on:` names a
+        # PROFILED service resolves. Without it, `docker compose ... open-webui` aborts with
+        # "no such service: qdrant" (qdrant sits behind the `rag` profile) even though
+        # --no-deps means qdrant is never started. Widening the resolvable set is safe;
+        # --no-deps is what guarantees only the named service is touched.
+        if all_profiles:
+            for profile in self._profiles():
+                cmd += ["--profile", profile]
+        # BOTH env files. Passing any --env-file disables compose's implicit .env auto-load, so
+        # .env must be listed too; without secrets.env every ${LITELLM_MASTER_KEY} style
+        # reference goes UNSET and secret-dependent services crash-loop (the 2026-06-26
+        # oauth2-proxy 11-byte-cookie outage). Order matters: derived first, secrets second.
+        cmd += [
             "--env-file", f"{self.COMPOSE_DIR}/.env",
             "--env-file", f"{self.COMPOSE_DIR}/secrets.env",
-            *args,
         ]
+        return cmd + list(args)
+
+    def _profiles(self) -> list[str]:  # pragma: no cover - reads the rendered compose file
+        """Every profile named anywhere in the rendered compose file, sorted for determinism."""
+        try:
+            import yaml
+
+            with open(f"{self.COMPOSE_DIR}/docker-compose.yml", encoding="utf-8") as f:
+                doc = yaml.safe_load(f) or {}
+        except Exception:
+            return []
+        found: set[str] = set()
+        for service in (doc.get("services") or {}).values():
+            for profile in (service or {}).get("profiles") or []:
+                found.add(str(profile))
+        return sorted(found)
 
     def _project_ps(self) -> list[dict]:  # pragma: no cover - needs real docker
         """Every container in this project as {service, name, state, status}."""
@@ -359,12 +411,24 @@ class DockerBackend:
         subprocess.run(["docker", "restart", self._container_guard(name)], check=True, timeout=120)
 
     def recreate_service(self, service: str) -> None:  # pragma: no cover - needs real docker
-        """Recreate, which is NOT restart: an env change only takes effect on recreate. Goes
-        through compose so the declared config is applied. A `docker run` recreate silently drops
-        device reservations and compose labels (observed 2026-09-21: it produced a controller that
-        reported 0GB GPU and could no longer be managed by compose)."""
-        subprocess.run(self._compose("up", "-d", "--force-recreate", self._guard(service)),
-                       check=True, timeout=600)
+        """Recreate exactly one service. Recreate is NOT restart: an env change only takes effect
+        on recreate.
+
+        Goes through compose so the declared config is applied. A `docker run` recreate silently
+        drops device reservations and compose labels (observed 2026-09-21: it produced a controller
+        that reported 0GB GPU and could no longer be managed by compose).
+
+        `--no-deps` is mandatory: without it compose cascade-recreates the target's dependencies,
+        dropping their GPU pins and touching services the operator never asked about. `--force-
+        recreate` so a recreate with an unchanged compose file still restarts the container and
+        picks up an edited .env value. No render step: the rendered compose, with llamacpp's 5090
+        uuid pin baked into its environment/deploy blocks, is replayed as it stands.
+        """
+        subprocess.run(
+            self._compose("up", "-d", "--no-deps", "--force-recreate",
+                          self._lifecycle_guard(service), all_profiles=True),
+            check=True, timeout=600,
+        )
 
     def pull_image(self, service: str) -> None:  # pragma: no cover - needs real docker
         """Pull this service's declared image. Compose, not `docker pull`, because the image

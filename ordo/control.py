@@ -1035,43 +1035,6 @@ class ControlPlane:
                 continue
         return {"entries": entries}
 
-    def model_config_get(self) -> dict[str, Any]:
-        """Full model-control state for the dashboard."""
-        # Read current .env values
-        env_path = OPS_ENV_PATH
-        running = {}
-        if env_path.exists():
-            content = env_path.read_text(encoding="utf-8")
-            for key in self.ENV_ALLOWED_KEYS:
-                pattern = rf"^{re.escape(key)}=(.*)$"
-                m = re.search(pattern, content, re.MULTILINE)
-                if m:
-                    raw = m.group(1).rstrip()
-                    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
-                        raw = raw[1:-1]
-                    running[key] = raw
-        # List available models
-        models = self._list_ggufs()
-        mmprojs = self._list_ggufs(mmproj=True)
-        return {
-            "flags": [],
-            "defaults": {},
-            "active_model": running.get("LLAMACPP_MODEL", ""),
-            "overrides": running,
-            "effective": running,
-            "running": running,
-            "models": models,
-            "mmprojs": mmprojs,
-        }
-
-    def _list_ggufs(self, mmproj: bool = False) -> list[str]:
-        """List GGUF files in the models directory."""
-        models_dir = Path("/data/models")
-        if not models_dir.exists():
-            return []
-        pattern = "*.gguf" if not mmproj else "*.mmproj"
-        return sorted([f.name for f in models_dir.glob(pattern)])
-
     def _live_gpus(self) -> dict[str, dict[str, Any]]:
         """Query nvidia-smi for live GPU info — same as ops-api's _live_gpus()."""
         import subprocess

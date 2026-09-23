@@ -38,7 +38,7 @@ OPS_CONTROLLER_URL = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller
 OPS_CONTROLLER_TOKEN = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://comfyui:8188").rstrip("/")
 # The V2 scheduler (GPU lease arbiter). Distinct from OPS_CONTROLLER_URL, which this
-# dashboard deployment points at ops-api (the V1-parity control API) — the scheduler's
+# dashboard deployment points at ops-controller (the control plane) — the scheduler's
 # /status and /jobs/history live only on the ordo-serve control plane.
 SCHEDULER_URL = os.environ.get("SCHEDULER_URL", "http://ops-controller:9000").rstrip("/")
 

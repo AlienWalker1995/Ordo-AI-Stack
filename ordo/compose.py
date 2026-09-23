@@ -32,8 +32,8 @@ _CORE = ["llamacpp", "litellm-db", "model-gateway", "model-gateway-keys",
 
 # Build contexts for the SUBSTRATE services — the project images hardcoded below that have NO
 # manifest (`_model_gateway`/`_ops_controller`, and the patched llama.cpp build
-# pinned via a model's catalog `backend_image`). Manifest services (plugins/agents/dashboards,
-# incl. the v1-parity dashboard's `ops-api` backend) declare their own context via `build:` in
+# pinned via a model's catalog `backend_image`). Manifest services (plugins/agents/dashboards)
+# declare their own context via `build:` in
 # the manifest; only these hardcoded ones need to be declared here. `ordo.buildspec` reads this
 # to give preflight + the substrate test a single image→context resolver — so a rename/typo fails
 # CI, not deploy. Keyed by the image `repo/name` (matched on the `…-<name>` suffix too, for the
@@ -80,7 +80,7 @@ def _capability_gpu_reservation(capabilities: list[str]) -> dict[str, Any]:
     """An all-GPU (`count: all`, not a uuid pin — reads BOTH cards) reservation with the given
     NVIDIA capabilities. `["utility"]` injects `nvidia-smi` + NVML for read-only VRAM detection
     WITHOUT reserving compute; `["gpu"]` is a compute reservation. Data-driven so a service just
-    declares the visibility it needs (see `_dashboard_backend`)."""
+    declares the visibility it needs."""
     return {"deploy": {"resources": {"reservations": {"devices": [
         {"driver": "nvidia", "count": "all", "capabilities": list(capabilities)}]}}}}
 
@@ -336,34 +336,6 @@ def _dashboard(project: str, net: str, env_file: str,
         "test": ["CMD-SHELL", "curl -sf http://localhost:8080/api/health || exit 1"],
         "interval": "30s", "timeout": "10s", "retries": 3, "start_period": "30s",
     }
-    return s
-
-
-def _dashboard_backend(net: str, env_file: str, backend: dict[str, Any]) -> dict[str, Any]:
-    """Render the OPTIONAL companion backend a dashboard manifest declares (e.g. the V1-parity
-    `ops-api` control API). Fully data-driven — image/env/volumes/depends/healthcheck come straight
-    from the manifest. `group_add_root` mirrors V1's ops-controller `group_add: ["0"]` for
-    Docker-socket access on Docker Desktop (root:root socket)."""
-    s = _svc(backend["image"], net=net, env_file=env_file,
-             secrets=backend.get("wants_secrets", True))
-    if backend.get("group_add_root"):
-        s["group_add"] = ["0"]
-    # GPU visibility: the V1-parity `ops-api` backend enumerates GPUs by shelling to nvidia-smi
-    # (it's a copy of V1's ops-controller), which the NVIDIA runtime only injects when the service
-    # reserves a GPU with the `utility` capability. Without this the backend sees ZERO GPUs and the
-    # dashboard's GPU widgets report "No GPUs returned from registry". `count: all` reads both cards.
-    gpu_caps = backend.get("gpu_capabilities") or []
-    if gpu_caps:
-        s.update(_capability_gpu_reservation(list(gpu_caps)))
-    if backend.get("environment"):
-        s["environment"] = dict(backend["environment"])
-    if backend.get("volumes"):
-        s["volumes"] = list(backend["volumes"])
-    dep = _depends_on(backend.get("depends_on"))
-    if dep:
-        s["depends_on"] = dep
-    if backend.get("healthcheck"):
-        s["healthcheck"] = dict(backend["healthcheck"])
     return s
 
 
@@ -660,18 +632,12 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         "model-gateway-keys": _model_gateway_keys(project, net, env_file),
         "ops-controller": _ops_controller(project, net, env_file),
         # The dashboard is pluggable (data-driven): the selected manifest supplies image/env/
-        # depends/healthcheck. A manifest may also declare a companion backend (e.g. the V1-parity
-        # `ops-api`) which is rendered as its OWN service below — keeping V2's `ordo serve` service
-        # named `ops-controller` (its live clients depend on that name) collision-free.
+        # depends/healthcheck. It has no backend service of its own — it calls ops-controller.
         "dashboard": _dashboard(project, net, env_file, dashboard),
         # OPS_CONTROLLER_TOKEN + Discord/backup tokens are secrets (from secrets.env).
         "agent": _svc(agent_img, net=net, env_file=env_file,
                       depends=["model-gateway", "model-gateway-keys", "ops-controller"], secrets=True),
     }
-    # Optional dashboard backend (e.g. ops-api for the V1-parity dashboard) — rendered verbatim.
-    if dashboard and dashboard.get("backend"):
-        b = dashboard["backend"]
-        svcs[b["name"]] = _dashboard_backend(net, env_file, b)
     # The agent image's default CMD may be a no-op (agent-hermes defaults to `hermes --help`, which
     # prints usage and exits → restart loop). The manifest's `command` (Hermes: `hermes gateway`)
     # starts the persistent orchestrator; emit it so the rendered service overrides that default,

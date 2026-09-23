@@ -1,11 +1,11 @@
-"""HTTP client for the ops-api control plane's privileged verbs.
+"""HTTP client for the control plane's privileged verbs.
 
 Hermes uses this in place of raw `docker` / `docker compose` shelling.
 The class is intentionally narrow — every method maps to one named
-ops-api endpoint. There is no `exec` or arbitrary-shell verb.
+control-plane endpoint. There is no `exec` or arbitrary-shell verb.
 
-NB: the container/compose verbs live on the **ops-api** service (Bearer-gated,
-`http://ops-api:9000`), NOT on the `ordo serve` scheduler at ops-controller:9000
+NB: these verbs used to live on a separate **ops-api** service while they were being
+ported; ops-controller serves all of them now, so there is one URL
 — the scheduler serves only /status, /model-config, /jobs* and /health. This
 client originally pointed at the scheduler and every tool 404'd (audit P0-2,
 fixed 2026-07-24).
@@ -19,7 +19,7 @@ import httpx
 
 
 class OpsClientError(RuntimeError):
-    """Raised when ops-api returns a non-2xx response."""
+    """Raised when the control plane returns a non-2xx response."""
 
 
 class OpsClient:
@@ -30,18 +30,17 @@ class OpsClient:
         timeout: float = 60.0,
         ctl_url: str | None = None,
     ):
-        # OPS_API_URL, deliberately NOT OPS_CONTROLLER_URL: that var points at the
-        # scheduler, which has none of these routes (the original mis-wiring).
-        self.url = url or os.environ.get("OPS_API_URL", "http://ops-api:9000")
+        # One control plane. These verbs lived on a separate Bearer-gated `ops-api` while they
+        # were being ported; ops-controller serves all of them now, so both URLs are the same
+        # service and `ctl_url` below is kept only so existing callers keep working.
+        self.url = url or os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000")
         token = token or os.environ.get("OPS_CONTROLLER_TOKEN", "")
         if not token:
             raise OpsClientError("OPS_CONTROLLER_TOKEN env var is empty")
         self._headers = {"Authorization": f"Bearer {token}"}
         self._client = httpx.Client(base_url=self.url, headers=self._headers, timeout=timeout)
-        # The ordo-serve scheduler (ops-controller) — service-plugin install/render lives HERE (the
-        # render authority: /plugins), separate from the Bearer-gated ops-api verbs above. ControlPlane
-        # is authless by design (it trusts the localhost/tailnet boundary; auth is Caddy's job), so
-        # this client sends no token.
+        # Same service as `self.url`. ControlPlane is authless by design (it trusts the
+        # localhost/tailnet boundary; auth is Caddy's job), so this client sends no token.
         self.ctl_url = ctl_url or os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000")
         self._ctl = httpx.Client(base_url=self.ctl_url, timeout=timeout)
 

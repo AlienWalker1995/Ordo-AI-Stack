@@ -35,7 +35,7 @@ LITELLM_CONFIG_TEMPLATE = Path(__file__).resolve().parent.parent / "services" / 
 
 # Gate-enforced service -> the .env key its in-stack consumers already use for its base URL.
 # When the service is gated, render points that key at the gate so mcp-comfyui, the
-# dashboard and ops-api all submit through arbitration instead of around it. Guarded by
+# dashboard and the control plane all submit through arbitration instead of around it. Guarded by
 # tests/substrate/test_gpu_arbitration.py (every gated service must appear here, or its consumers
 # would silently keep the direct route).
 GATED_SERVICE_URL_ENV: dict[str, str] = {"comfyui": "COMFYUI_URL"}
@@ -233,7 +233,7 @@ class RenderedConfig:
     hermes: dict[str, Any]
     model_gateway: dict[str, Any]
     # Selected control-plane UI wiring (data-driven, like `hermes` for the agent). Carries the
-    # dashboard service's image/env/depends/healthcheck + an OPTIONAL backend service (ops-api).
+    # dashboard service's image/env/depends/healthcheck.
     dashboard: dict[str, Any]
     plugins_enabled: list[str]
     compose_profiles: list[str] = dataclasses.field(default_factory=list)
@@ -576,7 +576,7 @@ def render(source: Source, catalog: Catalog,
 
     # Resolve the chosen control-plane UI from the registry (native is the default). Unknown id ->
     # a warning + fall back to the default, so a typo surfaces at render/preflight. The selected
-    # dashboard flows its image/env/depends/healthcheck (+ an optional backend service) into compose.
+    # dashboard flows its image/env/depends/healthcheck into compose.
     dash, dash_notes = dashboards.resolve(source.dashboard)
     warnings = warnings + dash_notes
     dashboard: dict[str, Any] = {"id": source.dashboard}
@@ -590,22 +590,7 @@ def render(source: Source, catalog: Catalog,
             "healthcheck": dict(dash.healthcheck),
             "wants_secrets": dash.wants_secrets,
             "gpu_capabilities": list(dash.gpu_capabilities),
-            "backend": None,
         }
-        if dash.backend and dash.backend.name:
-            b = dash.backend
-            dashboard["backend"] = {
-                "name": b.name,
-                "image": b.image_for("ordo"),
-                "environment": dict(b.environment),
-                "volumes": list(b.volumes),
-                "depends_on": dict(b.depends_on),
-                "healthcheck": dict(b.healthcheck),
-                "group_add_root": b.group_add_root,
-                "wants_secrets": b.wants_secrets,
-                "gpu_capabilities": list(b.gpu_capabilities),
-            }
-
     # Registry-driven plugin resolution: enable what's requested AND fits AND has its deps.
     enabled, notes = plugins.resolve(source.plugins, hw)
     warnings = warnings + notes

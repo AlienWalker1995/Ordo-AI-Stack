@@ -1,10 +1,17 @@
-"""Single source of truth for llama.cpp launch flags the dashboard/ops-controller
-may set, and how each is validated.
+"""Single source of truth for the llama.cpp launch flags the dashboard may set, and how each
+is validated.
 
-Pure logic (no FastAPI/docker) so it is unit-testable and importable by both the
-API layer (validation + the env-key allowlist) and the render step. The dashboard
-fetches these descriptors to build its flag UI. MTP is exposed as two virtual
-flags (MTP_ENABLED / MTP_N_MAX) that render into LLAMACPP_EXTRA_ARGS.
+Pure logic (stdlib only) so it is unit-testable and importable by both the control plane
+(validation + the env-key allowlist) and the render step. The dashboard fetches these
+descriptors to build its flag UI. MTP is exposed as two virtual flags (MTP_ENABLED /
+MTP_N_MAX) that render into LLAMACPP_EXTRA_ARGS.
+
+Lives in the substrate rather than beside one service because the rule it encodes -- which
+.env keys the model-gateway's entrypoint templates, and therefore which edits must recreate
+the gateway as well as llamacpp -- is a property of the stack, not of whichever process
+happens to serve the HTTP route. (It moved here from services/ops-api when that service was
+retired; a model swap that recreated llamacpp alone left the gateway advertising the OLD
+model, so this is load-bearing.)
 """
 from __future__ import annotations
 
