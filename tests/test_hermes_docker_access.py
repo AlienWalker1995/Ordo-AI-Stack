@@ -1,13 +1,10 @@
-"""Plan C acceptance — verify Hermes' Docker socket and root-group access are gone.
+"""Hermes' Docker access, checked against the running stack.
 
-These tests require the stack to be running with the Plan C compose
-changes applied. They do live `docker exec` / `docker inspect` against
-the hermes-gateway and hermes-dashboard containers, so they assume:
-  - `make up` (or equivalent) brought the stack up.
-  - hermes-gateway and hermes-dashboard are both running and healthy.
+The agent container (`agent`) has the host Docker socket and the root group needed to use it:
+operator-granted on 2026-08-09, with guardrails in its prompt (docs/design/hermes-owns-docker.md).
+The hermes-dashboard container must have neither. Both still reach ops-controller.
 
-If neither container is up, the suite skips rather than fails — Plan C
-is a runtime invariant, not a static one.
+These are live checks (`docker exec` / `docker inspect`); they skip when the containers are not up.
 """
 from __future__ import annotations
 
@@ -63,13 +60,10 @@ def dashboard() -> str:
     return DASHBOARD
 
 
-def test_hermes_gateway_has_no_docker_sock(gateway: str):
-    """/var/run/docker.sock must not exist inside hermes-gateway. The mount
-    was the prompt-injection escape hatch; Plan C removes it."""
+def test_hermes_agent_has_the_docker_socket(gateway: str):
+    """By design (docs/design/hermes-owns-docker.md): Hermes operates the host's Docker."""
     r = _docker_exec(gateway, "test", "-S", "/var/run/docker.sock")
-    assert r.returncode != 0, (
-        "FAIL: /var/run/docker.sock present in hermes-gateway — Plan C regression"
-    )
+    assert r.returncode == 0, "the agent lost /var/run/docker.sock; Hermes can no longer run Docker"
 
 
 def test_hermes_dashboard_has_no_docker_sock(dashboard: str):
@@ -79,15 +73,11 @@ def test_hermes_dashboard_has_no_docker_sock(dashboard: str):
     )
 
 
-def test_hermes_gateway_not_in_root_group(gateway: str):
-    """`group_add: ['0']` must NOT be set; that was paired with the docker.sock
-    mount to grant non-root hermes access to root:root mode-660 socket on
-    Docker Desktop. With the socket gone, the root-group elevation is gone too."""
-    parsed = _inspect(gateway)
-    group_add = parsed["HostConfig"].get("GroupAdd", []) or []
-    assert "0" not in group_add, (
-        f"FAIL: group_add ['0'] still present (root-group access): {group_add!r}"
-    )
+def test_hermes_agent_is_in_the_root_group(gateway: str):
+    """The socket is root:root mode 660 on Docker Desktop; without group 0 every docker call
+    from the unprivileged hermes user fails with EACCES."""
+    group_add = _inspect(gateway)["HostConfig"].get("GroupAdd", []) or []
+    assert "0" in group_add, f"group_add is {group_add!r}; the hermes user cannot use the socket"
 
 
 def test_hermes_dashboard_not_in_root_group(dashboard: str):

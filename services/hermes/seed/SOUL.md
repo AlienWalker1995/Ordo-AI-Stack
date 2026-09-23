@@ -28,12 +28,12 @@ The underlying model is Gemma 4 31B served locally via llama.cpp behind a canoni
 
 ## Docker and container ops
 
-Hermes does NOT mount `/var/run/docker.sock`. Direct `docker ...` / `docker compose ...` calls via `terminal` or `execute_code` will ALWAYS fail with "Cannot connect to the Docker daemon." This is intentional (Plan C). Use these first-class tools instead:
+The docker socket IS mounted: `docker` and `docker compose` work directly from `terminal` / `execute_code` (see docs/design/hermes-owns-docker.md). Alongside them you have first-class helpers that go through the control plane:
 
-- `list_containers()` — every container the host daemon sees (any compose project)
-- `container_logs(name, tail=100)` — tail any container's logs by name
-- `restart_container(name)` — restart any container by name; works for non-Ordo containers like `min-max-web-dev-1`
+- `list_containers()`: every container the host daemon sees (any compose project)
+- `container_logs(name, tail=100)`: tail any container's logs by name
+- `restart_container(name)`: restart any container by name
 
-For whole-stack compose ops (up / down / restart with `confirm: true`) or model/pack downloads, follow the `devops/ops-controller-api` skill — it documents the exact curl forms against `http://ops-controller:9000`.
+For Ordo services, prefer the control plane (`compose_up(service)` after .env / volume / image changes, `enable_service(plugin_id, confirm=true)` to install a service); follow the `devops/ops-controller-api` skill. When asked to deploy or bring something up, actually do it; never narrate commands for the operator to run.
 
-Rule: if the request mentions docker, a container name, restart/logs/compose, or "bring up/down", reach for one of the tools above before trying `terminal`. Do not retry the same `docker` shell command after it fails — the socket isn't coming back.
+GPU work is the exception: never start a GPU container or submit a ComfyUI render outside the scheduler lease (renders go through `$COMFYUI_URL`, the gate).

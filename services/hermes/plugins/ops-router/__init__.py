@@ -1,8 +1,9 @@
 """ops-router — Hermes plugin exposing the control plane's container verbs as first-class tools.
 
-Replaces the lost docker.sock surface (Plan C). Five tools wrap the ops-controller
-HTTP API (OPS_CONTROLLER_URL=http://ops-controller:9000) so the model never has to
-know about curl or HTTP:
+Five tools wrap the ops-controller HTTP API (OPS_CONTROLLER_URL=http://ops-controller:9000)
+so the common container verbs go through the control plane (audited, lease-aware) without the
+model needing curl. Hermes also has the host docker socket (docs/design/hermes-owns-docker.md);
+these are the preferred path for Ordo services, not the only one.
 
 - list_containers    -> GET  /containers
 - container_logs     -> GET  /containers/{name}/logs
@@ -14,10 +15,8 @@ When to use which:
 - Process is wedged or a bind-mounted file changed   -> restart_container / compose_restart
 - .env, image, volumes, or network changed           -> compose_up (recreate)
 
-Plus a pre_llm_call hook that nudges the model toward these tools when the user
-message contains docker / container / restart / logs intent — guards against
-the model defaulting to `terminal: docker ...` (which has no socket and always
-fails with "Cannot connect to the Docker daemon").
+Plus a pre_llm_call hook that, on docker / container / restart / logs intent, reminds the model
+which verb picks up which kind of change (restart vs recreate vs enable).
 
 The OpsClient is the canonical services/hermes/ops_client.py copied into this plugin
 directory at Docker build time (see services/hermes/Dockerfile).
@@ -139,7 +138,7 @@ def _list_installable(args: dict, **kwargs) -> str:
 
 def _enable_service(args: dict, **kwargs) -> str:
     """Install/enable an optional service: render authority (ops-controller /plugins/{id}/enable)
-    to add + re-render it, then bring each of its services up via the ops-api recreate executor.
+    to add + re-render it, then bring each of its services up via the ops-controller recreate executor.
     Secret-dependent services that lack their secrets are rendered but NOT started — escalated to a
     host `make up`, never started broken."""
     plugin_id = (args.get("plugin_id") or "").strip()
@@ -205,7 +204,7 @@ LIST_CONTAINERS_SCHEMA = {
     "description": (
         "List every Docker container visible to the host daemon (every compose "
         "project, not just Ordo). Returns name, status, image. "
-        "Use this INSTEAD of `terminal: docker ps` — Hermes has no docker socket."
+        "Goes through ops-controller."
     ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
@@ -214,15 +213,14 @@ CONTAINER_LOGS_SCHEMA = {
     "name": "container_logs",
     "description": (
         "Tail a container's logs by name. Works for ANY container on the host "
-        "daemon, not just Ordo-allowlisted services (e.g. `min-max-web-dev-1`). "
-        "Use this INSTEAD of `terminal: docker logs ...`."
+        "daemon, not just Ordo-allowlisted services."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "name": {
                 "type": "string",
-                "description": "Container name, e.g. 'min-max-web-dev-1' or 'comfyui'.",
+                "description": "Container name, e.g. 'ordo-comfyui-1'.",
             },
             "tail": {
                 "type": "integer",
@@ -245,9 +243,7 @@ RESTART_CONTAINER_SCHEMA = {
     "description": (
         "Bounce a single container by name via ops-controller's "
         "/containers/{name}/restart endpoint. Works for ANY container the host "
-        "daemon sees (including non-Ordo containers like `min-max-web-dev-1`). "
-        "Use this INSTEAD of `terminal: docker restart ...` — Hermes has no "
-        "docker socket; that command will always fail. "
+        "daemon sees, including non-Ordo containers. "
         "NOTE: this does NOT pick up changes to environment variables / .env / "
         "volumes — use `compose_up` for that."
     ),
@@ -401,10 +397,8 @@ _DOCKER_INTENT = re.compile(
 )
 
 _NUDGE = (
-    "Routing note: this turn looks like a docker/container op. Hermes has no "
-    "docker socket — DO NOT call `terminal` or `execute_code` with `docker ...`; "
-    "it will fail with 'Cannot connect to the Docker daemon'. "
-    "Use the first-class tools: `list_containers`, `container_logs(name, tail)`, "
+    "Routing note: this turn looks like a docker/container op. For Ordo services prefer "
+    "the control-plane tools (direct `docker` also works for anything else): `list_containers`, `container_logs(name, tail)`, "
     "`restart_container(name)`, `compose_restart(service)`, `compose_up(service)`. "
     "Picking the right verb: if .env / environment / volumes changed, use "
     "`compose_up(service=...)` (recreate) — `restart_container` and "
@@ -439,7 +433,7 @@ def register(ctx) -> None:
         toolset="ops-router",
         schema=LIST_CONTAINERS_SCHEMA,
         handler=_list_containers,
-        description="List all containers via ops-controller (no docker socket needed).",
+        description="List all containers via ops-controller.",
         emoji="🧱",
     )
     ctx.register_tool(
