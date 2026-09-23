@@ -1,9 +1,9 @@
 """Surgical, safe edits to the declarative source (`ordo.yaml`) — pure text → text.
 
-Extracted from the dashboard (`services/dashboard/dashboard/app.py`) so the SAME battle-tested
-`plugins:` list editor backs both the dashboard's MCP toggle and the control-plane's service
-enable/disable (`ordo/control.py`). Keeping it in the `ordo` package makes it the single source of
-truth and lets the substrate tests exercise it directly (pyyaml-only, no server).
+The ONE `plugins:` list editor. Its only caller is the control plane's plugin enable/disable
+(`ordo/control.py`), which also backs the dashboard's MCP toggle: ops-controller is the single writer
+of the operator source. Keeping it in the `ordo` package lets the substrate tests exercise it
+directly (pyyaml-only, no server).
 
 The editor preserves every other line, comment, and the exact formatting, and REFUSES (raises
 ValueError) any edit it cannot guarantee is safe — no block `plugins:` key, an inline/flow list, an

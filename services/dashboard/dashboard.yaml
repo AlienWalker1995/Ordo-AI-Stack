@@ -45,14 +45,10 @@ environment:
   MODEL_GATEWAY_API_KEY: ${LITELLM_MASTER_KEY}
   # LiteLLM's MCP gateway is the model-gateway itself (MODEL_GATEWAY_URL above). The enabled server
   # set is the render-emitted out/mcp/servers.json (mounted read-only at /mcp-config); health comes
-  # from LiteLLM (/v1/mcp/server/health + tools/list outcomes), so a crashed server shows red.
+  # from LiteLLM (/v1/mcp/server/health + tools/list outcomes), so a crashed server shows red. A UI
+  # MCP toggle maps server_id -> plugin_id (inside servers.json) and asks ops-controller to
+  # enable/disable that plugin: ops-controller is the only writer of the operator source.
   MCP_SERVERS_PATH: /mcp-config/servers.json
-  # The operator source (out/ordo.yaml), mounted RW below. A UI MCP toggle edits ordo.yaml's plugins
-  # list (the single source of truth); the change applies on the next ordo render + model-gateway
-  # recreate. The server_id -> plugin_id map is inside servers.json.
-  # out/ordo.yaml carries host paths but NO secrets (those live in secrets.env), so it's safe behind
-  # the edge SSO.
-  ORDO_SOURCE_PATH: /ordo-source.yaml
   COMFYUI_URL: ${COMFYUI_URL:-http://comfyui:8188}
   QDRANT_URL: http://qdrant:6333
   # On-disk model dirs (bind-mounted below): /api/llm/* scans GGUF_MODELS_DIR; MODELS_DIR is comfyui.
@@ -99,15 +95,11 @@ volumes:
   # services/comfyui/plugin.yaml for the seam rationale).
   - comfyui-models:/models
   - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/dashboard:/data/dashboard
-  # ${BASE_PATH}/out/ (not ./) on the four binds below: ops-controller recreates the dashboard
+  # ${BASE_PATH}/out/ (not ./) on the three binds below: ops-controller recreates the dashboard
   # with the project dir at its own /config mount, where ./x resolves to a host path that
   # does not exist (tests/substrate/test_compose.py pins this).
   # The rendered out/mcp dir (servers.json). READ-ONLY: nothing live is written here any more.
   - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/mcp:/mcp-config:ro
-  # The operator source (out/ordo.yaml). RW so an MCP enable/disable persists into its `plugins:`
-  # list (the single source of truth) — a surgical, comment-preserving line add/remove.
-  # Contains host paths but NO secrets (secrets live in secrets.env), so it's safe behind edge SSO.
-  - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/ordo.yaml:/ordo-source.yaml:rw
   # The rendered manifest (out/manifest.json). Read-only: the grid's
   # enabled-gate only reads plugins_enabled. See MANIFEST_PATH above.
   - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/manifest.json:/ordo-manifest.json:ro
