@@ -11,6 +11,9 @@ services/codebase-memory-ui/nginx.conf text eol=lf
 # hermes-agent patches are applied with `git apply` inside the Linux image
 # build; keep LF so a Windows checkout can't corrupt the hunks.
 services/hermes/*.diff text eol=lf
+# Same for the skill overlays: the diffs go through `git apply` and the markdown is spliced into
+# an LF upstream SKILL.md, so a CRLF checkout would corrupt the one and mix endings in the other.
+services/hermes/skill-overlays/** text eol=lf
 
 # SOPS-encrypted files must keep LF endings or `sops` chokes parsing the
 # embedded timestamp metadata. The failure surfaces as
