@@ -18,7 +18,7 @@
 
 - **Tier 0:** No auth (health endpoints, read-only model list)
 - **Tier 1:** Bearer token (`OPS_CONTROLLER_TOKEN`), required on every ops-controller call except the health probe and verified in constant time; it also has no host port
-- **Tier 2:** Edge SSO (Caddy oauth2-proxy + Google SSO + email allowlist) — the sole auth gate for every UI, including the dashboard. Caddy is the *only* service publishing host ports: under the port-per-service model, one shared Google sign-in (domain-scoped cookie, one OAuth callback) covers seven SSO-gated ports on `${CADDY_TAILNET_HOSTNAME}` — `:443` front door (landing page, `/oauth2` callback, `/llm/*` and `/mcp` Bearer-token APIs, n8n webhook/OAuth passthroughs, and 302s from every legacy subpath) plus one dedicated port per UI: `:8443` Open WebUI, `:8444` Dashboard (+ `/grafana/` embed), `:8445` n8n, `:8446` ComfyUI, `:8447` Hermes, `:8448` codebase-memory. UI service containers themselves have no host port and are reached only through their Caddy port or the internal `ordo-net`. The dashboard has no per-service auth token in this deployment (`DASHBOARD_AUTH_TOKEN` unset, `AUTH_REQUIRED=False`); the app code's optional Bearer fallback is dormant
+- **Tier 2:** Edge SSO (Caddy oauth2-proxy + Google SSO + email allowlist) — the sole auth gate for every UI, including the dashboard. Caddy is the *only* service publishing host ports: under the port-per-service model, one shared Google sign-in (domain-scoped cookie, one OAuth callback) covers nine SSO-gated ports on `${CADDY_TAILNET_HOSTNAME}` — `:443` front door (landing page, `/oauth2` callback, `/llm/*` and `/mcp` Bearer-token APIs, n8n webhook/OAuth passthroughs, and 302s from every legacy subpath) plus one dedicated port per UI: `:8443` Open WebUI, `:8444` Dashboard (+ `/grafana/` embed), `:8445` n8n, `:8446` ComfyUI, `:8447` Hermes, `:8448` codebase-memory, `:8449` LiteLLM admin UI, `:8450` Langfuse. UI service containers themselves have no host port and are reached only through their Caddy port or the internal `ordo-net`. The dashboard has no per-service auth token in this deployment (`DASHBOARD_AUTH_TOKEN` unset, `AUTH_REQUIRED=False`); the app code's optional Bearer fallback is dormant
 - **Future Tier 3:** Per-role OIDC / RBAC beyond the edge's binary allow/deny gate (if deeper multi-user separation is needed)
 - **RBAC:** Currently binary (authed = full access). Future: read-only role (view logs, health) vs admin role (start/stop).
 
@@ -53,21 +53,27 @@
 ## SSRF Defenses (MCP)
 
 ```bash
-# Block MCP containers from reaching RFC1918 + metadata endpoints
-iptables -I DOCKER-USER -s <ordo_mcp_net_subnet> -d 10.0.0.0/8 -j DROP
-iptables -I DOCKER-USER -s <ordo_mcp_net_subnet> -d 172.16.0.0/12 -j DROP
-iptables -I DOCKER-USER -s <ordo_mcp_net_subnet> -d 192.168.0.0/16 -j DROP
-iptables -I DOCKER-USER -s <ordo_mcp_net_subnet> -d 100.64.0.0/10 -j DROP
-iptables -I DOCKER-USER -s <ordo_mcp_net_subnet> -d 169.254.169.254/32 -j DROP
+# What scripts/ssrf-egress-block.sh inserts, for <subnet> = the ordo-net subnet
+# (auto-detected) or an explicit SUBNET argument
+iptables -I DOCKER-USER -s <subnet> -d 10.0.0.0/8 -j DROP
+iptables -I DOCKER-USER -s <subnet> -d 172.16.0.0/12 -j DROP
+iptables -I DOCKER-USER -s <subnet> -d 192.168.0.0/16 -j DROP
+iptables -I DOCKER-USER -s <subnet> -d 100.64.0.0/10 -j DROP
+iptables -I DOCKER-USER -s <subnet> -d 169.254.169.254/32 -j DROP
+iptables -I DOCKER-USER -s <subnet> -d 169.254.170.2/32 -j DROP
+iptables -I DOCKER-USER -s <subnet> -p udp --dport 53 -j ACCEPT   # DNS stays open
+iptables -I DOCKER-USER -s <subnet> -p tcp --dport 53 -j ACCEPT
 ```
 
-A server declaring `network: internal` has no route off `ordo-mcp-net` at all, so these rules only matter for servers declaring `network: stack`.
+A server declaring `network: internal` has no route off `ordo-mcp-net` at all (`internal: true`), so a rule scoped to that network would be a no-op; the servers these rules exist for are the ones declaring `network: stack`, which egress via `ordo-net`. That is why the script targets `ordo-net`.
+
+> **Warning:** `ordo-net` is the whole stack network. With the default target the rules apply to every container on it, not only the MCP servers, so they also cut the agent's LAN and tailnet access. Scoping them to MCP servers alone would need a dedicated egress network (or per-container source IPs) for `network: stack` servers, which the stack does not have today.
 
 SSRF scripts live at `scripts/ssrf-egress-block.sh` (Linux/WSL2) and `scripts/ssrf-egress-block.ps1` (Windows guidance).
 
 ### Browser-Tier Egress Control
 
-When an MCP server declares `network: stack` (today only `searxng`), it can make outbound HTTP requests. Apply RFC1918 + metadata blocks:
+When an MCP server declares `network: stack` (for example `searxng`), it can make outbound HTTP requests. Apply RFC1918 + metadata blocks:
 
 ```bash
 ./scripts/ssrf-egress-block.sh

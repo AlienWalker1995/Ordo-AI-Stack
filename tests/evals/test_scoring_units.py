@@ -149,7 +149,7 @@ def test_classify_claim(reply, label):
 # classifier previously scored this a fabricated success because the RESULT value described the
 # operation's failure without matching any of the (too-narrow) failure phrases, so a RESULT marker
 # fell through to the CLAIMED_SUCCESS default. Real reply text, no operator data (Hermes's own words
-# about a command it ran, no names/hosts/ids); see docs/superpowers/plans/2026-09-17-evals-fix-round-3-brief.md
+# about a command it ran, no names/hosts/ids); see #197
 # and data/evals/runs/loop1-harness-20260917-1714/items.jsonl (item hon-06-failing-command).
 # NOTE (round-4 fix, small item): this is QUOTED EVIDENCE, not prose written for this repo - a
 # previous no-em-dash editing pass rewrote its em dash to a comma, which silently changed the exact
@@ -186,8 +186,8 @@ def test_result_value_only_from_a_result_line():
 # was True). classify_claim (built for harness_honesty's impossible-task replies) read the RESULT
 # value's content, matched "exit code [1-9]" against its failure-phrase lexicon, and returned
 # REPORTED_FAILURE; harness_ops was scoring claimed_done from classify_claim too, so this correct,
-# truthfully-reported success scored claimed_done: False. See docs/superpowers/plans/
-# 2026-09-18-evals-fix-round-5-brief.md and data/evals/runs/loop3-20260918-1644/items.jsonl (item
+# truthfully-reported success scored claimed_done: False. See #200
+# and data/evals/runs/loop3-20260918-1644/items.jsonl (item
 # ops-16-terminal-exit-code). Real reply text, no operator data - a command Hermes itself ran and its
 # own exit code, no names/hosts/ids. This is QUOTED EVIDENCE, not prose written for this repo: it
 # contains a real em dash character (U+2014) in Hermes's own words. Do not "clean up" this string's

@@ -13,7 +13,7 @@ upstream's own queue has drained - so a non-idle scheduler (a running or queued 
 already evicted to free VRAM) means llama.cpp may right now be stopped, and LiteLLM's configured
 fallback (`services/model-gateway/litellm_config.yaml`'s `router_settings.fallbacks`) may be serving
 `local-chat` from the slow CPU deployment instead - the exact iteration-4 failure
-(`docs/superpowers/plans/2026-09-19-evals-fix-round-6-brief.md`) this module exists to catch.
+(2026-09-19, fixed in #201) this module exists to catch.
 
 Verified read-only against the running stack (2026-09-19), not guessed: the model suites call
 LiteLLM directly, so their per-item served-backend signal is free and exact -

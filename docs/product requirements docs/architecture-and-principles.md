@@ -21,7 +21,7 @@
 ## Current Architecture
 
 Port-per-service model (2026-07-24): Caddy is still the **only** service that
-publishes host ports, but it now listens on **seven** SSO-gated ports on
+publishes host ports, but it now listens on **nine** SSO-gated ports on
 `${CADDY_TAILNET_HOSTNAME}` instead of one — each prebuilt SPA gets the root
 it was compiled for, retiring the subpath-rewrite bandaids (Open WebUI
 root-catchall, Hermes header-injected base, n8n `strip_prefix` surgery,
@@ -36,6 +36,7 @@ codebase-memory nginx rewrites).
 │       passthroughs, legacy-path 302s)                                        │
 │  :8443 Open WebUI   :8444 Dashboard (+ /grafana/)   :8445 n8n                 │
 │  :8446 ComfyUI      :8447 Hermes (at root)          :8448 codebase-memory     │
+│  :8449 LiteLLM admin UI                             :8450 Langfuse            │
 │  oauth2-proxy (Google SSO, one domain-scoped session across all ports)       │
 │  behind it; reverse-proxies every route below                                │
 └────────────────────────────────────────┬─────────────────────────────────────┘
@@ -161,18 +162,19 @@ UI request:       Browser → Caddy :<service-port> (Google SSO, domain-scoped
 
 All services run on a single Docker network, `ordo-net`. **Caddy is the only
 service the stack publishes to the host** — but since the 2026-07-24
-port-per-service model, Caddy itself listens on **seven** host ports
-(`${CADDY_BIND}:443` plus `${CADDY_BIND}:8443`–`:8448`), one per UI plus the
+port-per-service model, Caddy itself listens on **nine** host ports
+(`${CADDY_BIND}:443` plus `${CADDY_BIND}:8443`–`:8450`), one per UI plus the
 `:443` front door. Every UI and API still reaches the outside world
 exclusively through Caddy; nothing else binds a host port at all. Each
 prebuilt SPA is served at the root it was compiled for — `:8443` Open WebUI,
 `:8444` Dashboard (+ `/grafana/` embed), `:8445` n8n, `:8446` ComfyUI, `:8447`
-Hermes, `:8448` codebase-memory, all at their origin root behind a plain
+Hermes, `:8448` codebase-memory, `:8449` LiteLLM admin UI, `:8450` Langfuse,
+all at their origin root behind a plain
 `import sso_service <upstream>` — retiring the subpath-rewrite bandaids
 (Open WebUI root-catchall, Hermes header-injected base, n8n `strip_prefix`,
 codebase-memory nginx `sub_filter` rewrites) that the single-port model
 needed. The n8n, Hermes, and codebase-memory adapters were the last to
-converge: their subpath surgery is now deleted, so every one of the six UIs
+converge: their subpath surgery is now deleted, so every one of the eight UIs
 serves at root (the only surviving edge path-handling is Grafana's native
 same-origin `/grafana/` embed and n8n's external `:443/n8n` webhook/OAuth
 URLs — see below).
@@ -186,7 +188,7 @@ legacy subpath (`/chat`, `/dash`, `/comfy`, `/hermes`, `/codebase-memory`,
 `/grafana`, `/n8n`) to the new port, so old bookmarks keep working.
 
 All user-facing UIs sit behind oauth2-proxy / Google SSO, one Google
-sign-in for all seven ports **and the clean per-service tailnet names**: the
+sign-in for all nine ports **and the clean per-service tailnet names**: the
 oauth2-proxy session cookie is domain-scoped (port-agnostic), the OAuth
 callback always stays on `:443`, and the SSO gate's `rd=` redirect carries
 `{host}` (portless, not `{hostport}`), so a single wildcard
@@ -212,8 +214,8 @@ dashboard iframe expects that prefix), and n8n's external
 
 | Service | Host port | Notes |
 |---------|-----------|-------|
-| caddy | `${CADDY_BIND}:443`, `:8443`–`:8448` | The only host-published ports in the stack (seven total: the `:443` front door plus one per UI service). Bound to `0.0.0.0` (operator-approved 2026-07-17 for LAN reachability on an internet-dark network — see `docs/runbooks/auth.md`); the `${CADDY_BIND:?...}` failsafe only rejects an empty/unset value, it does not distinguish a tailnet IP from `0.0.0.0`. Reverse-proxies everything else with forward_auth → oauth2-proxy |
-| oauth2-proxy | — | Internal; sits behind Caddy; Google SSO with email allowlist (`auth/oauth2-proxy/emails.txt`); one domain-scoped session covers all seven Caddy ports |
+| caddy | `${CADDY_BIND}:443`, `:8443`–`:8450` | The only host-published ports in the stack (nine total: the `:443` front door plus one per UI service). Bound to `0.0.0.0` (operator-approved 2026-07-17 for LAN reachability on an internet-dark network — see `docs/runbooks/auth.md`); the `${CADDY_BIND:?...}` failsafe only rejects an empty/unset value, it does not distinguish a tailnet IP from `0.0.0.0`. Reverse-proxies everything else with forward_auth → oauth2-proxy |
+| oauth2-proxy | — | Internal; sits behind Caddy; Google SSO with email allowlist (`auth/oauth2-proxy/emails.txt`); one domain-scoped session covers all nine Caddy ports |
 | open-webui | — | Reached at `https://<tailnet>:8443/` (its own port, served at its compiled root); needs model-gateway, qdrant |
 | dashboard | — | Reached at `https://<tailnet>:8444/` (Grafana embed at `.../grafana/` on the same port); needs llamacpp, ops-controller, model-gateway |
 | n8n | — | UI reached at `https://<tailnet>:8445/`; public webhook base and OAuth-callback URL stay on `:443` (`https://<tailnet>/n8n/webhook/*`, `.../n8n/rest/oauth2-credential/callback*`, unchanged so nothing external needs re-registration) |

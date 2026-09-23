@@ -515,7 +515,7 @@ the flag and the recorded flag are for.
 
 ## Run validity: served backend, GPU-lease guard, and timing (E15, round-6 fix)
 
-Iteration 4 (2026-09-19, `docs/superpowers/plans/2026-09-15-eval-loop-protocol.md`'s ledger) ran while
+Iteration 4 of the eval loop (2026-09-19, fixed in #201) ran while
 ComfyUI took GPU residency repeatedly, evicting llama.cpp; LiteLLM's configured fallback
 (`services/model-gateway/litellm_config.yaml`'s `router_settings.fallbacks`) correctly failed
 `local-chat` over to the slow CPU deployment for part of the run - and nothing in the results showed

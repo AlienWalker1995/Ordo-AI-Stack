@@ -5,7 +5,7 @@ materialized vault notes using a content-hash manifest. Operator (vault)
 wins conflicts; agent versions are preserved, never silently lost; SOUL.md
 is never deleted. Stdlib only. Must never raise to its caller.
 
-Spec: docs/superpowers/specs/2026-08-19-memory-stack-overhaul-design.md
+Introduced in #181.
 """
 
 from __future__ import annotations

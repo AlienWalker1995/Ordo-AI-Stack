@@ -6,7 +6,7 @@
    - Authorized origin: `https://ordo.<tailnet>.ts.net`
    - Authorized redirect: `https://ordo.<tailnet>.ts.net/oauth2/callback`
    - This single `:443` redirect URI covers the whole stack: the
-     port-per-service model (`:443` front door plus `:8443`–`:8448`)
+     port-per-service model (`:443` front door plus `:8443`–`:8450`)
      shares one domain-scoped oauth2-proxy cookie — no per-port URIs.
 2. Capture the Client ID + secret into `.env` as
    `OAUTH2_PROXY_CLIENT_ID` / `OAUTH2_PROXY_CLIENT_SECRET`.

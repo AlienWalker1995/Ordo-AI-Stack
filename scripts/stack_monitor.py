@@ -2,7 +2,7 @@
 """Ordo-AI-Stack image audit — "should we update this image?"
 
 Enumerates EVERY service in the *deployed* compose (the rendered
-`out/docker-compose.yml`, not the root file), classifies each image by how it
+`out/docker-compose.yml`), classifies each image by how it
 is pinned, resolves the latest upstream version where one exists, and emits a
 single JSON document. The daily cron injects that JSON into its prompt and the
 `stack-audit` skill writes the Discord digest — the model curates, it does not
@@ -11,8 +11,9 @@ a human-readable table for debugging.
 
 Design notes / hard-won facts baked in as code (previously scattered across the
 skill's reference files):
-  - Deployed compose is `out/docker-compose.yml`; the root `docker-compose.yml`
-    is a different, stale file. Auditing the wrong one was the original bug.
+  - Deployed compose is `out/docker-compose.yml`, the only compose file (the root
+    `docker-compose.yml` was removed on 2026-07-24). If it is missing the audit
+    reports an error instead of auditing anything else.
   - `${VAR:-default}` image refs resolve against `.env` then the inline default.
   - Severity is install-aware: a CVE in release notes is only SECURITY if the
     pinned version is actually behind the fix. A bare `v` prefix is not a diff.
@@ -40,10 +41,7 @@ from pathlib import Path
 
 STACK_ROOT = Path(os.environ.get("ORDO_STACK_ROOT", "/c/dev/ordo-ai-stack"))
 SERVICES_DIR = STACK_ROOT / "services"
-COMPOSE_CANDIDATES = [
-    STACK_ROOT / "out" / "docker-compose.yml",  # rendered = deployed
-    STACK_ROOT / "docker-compose.yml",                 # fallback
-]
+COMPOSE_FILE = STACK_ROOT / "out" / "docker-compose.yml"  # rendered = deployed
 ENV_FILE = STACK_ROOT / "out" / ".env"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
 GLOBAL_DEADLINE_S = 100  # cron script timeout is 120s
@@ -495,9 +493,9 @@ def audit_pinned_sources():
 
 def audit():
     env = load_env()
-    compose_path = next((p for p in COMPOSE_CANDIDATES if p.exists()), None)
-    if compose_path is None:
-        return {"error": f"no compose file found (tried {[str(p) for p in COMPOSE_CANDIDATES]})"}
+    compose_path = COMPOSE_FILE
+    if not compose_path.exists():
+        return {"error": f"no compose file found at {compose_path} (run `ordo render` first)"}
 
     services = parse_compose(compose_path, env)
     results = []

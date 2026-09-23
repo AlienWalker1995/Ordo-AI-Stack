@@ -33,7 +33,7 @@ removes the SSO gate. See [Security note](#security-note) below.
 | **Exposure** | Private tailnet only; zero public surface | Public internet (your NAT/router or tunnel) | Public internet (cloud provider network) |
 | **DNS** | MagicDNS (`host.tailnet.ts.net` + `chat\|dash\|n8n\|comfy\|hermes\|graph.<tailnet>.ts.net`) | Your domain — public A/AAAA or split-horizon (`ordo.example.com`) | Route 53 / any DNS → the VM's elastic IP |
 | **Cert mechanism** | `tailscale cert` (front door) + per-node MagicDNS certs via `tailscale serve` (sidecars); both auto-renew | Wildcard `*.example.com` via ACME **DNS-01** (no inbound `:80` needed) | ACM behind an ALB, **or** Caddy DNS-01 on the instance |
-| **NAT / tunnel** | None — WireGuard mesh | Port-forward `:443` (+`:8443`–`:8448`) **or** an outbound tunnel | Security group allowing inbound `:443` only; ALB optional |
+| **NAT / tunnel** | None — WireGuard mesh | Port-forward `:443` (+`:8443`–`:8450`) **or** an outbound tunnel | Security group allowing inbound `:443` only; ALB optional |
 | **SSO gate** | Google SSO at the edge | Google SSO at the edge (unchanged) | Google SSO at the edge (unchanged) |
 | **Implemented?** | ✅ **Yes — current default** | ⚠️ Documented path, not wired | ⚠️ Documented path, not wired |
 
@@ -53,7 +53,7 @@ tailnet; there is no public DNS record and no port open to the internet.
 - **The SSO-gated port layer** — Caddy publishes `:443` (front door: landing page, the one Google
   OAuth callback, `/llm/*` and `/mcp` API routes, n8n webhook/OAuth passthroughs, legacy-subpath
   302s) plus one dedicated SSO-gated port per UI: `:8443` Open WebUI, `:8444` Dashboard (+`/grafana/`),
-  `:8445` n8n, `:8446` ComfyUI, `:8447` Hermes, `:8448` codebase-memory. Every prebuilt SPA is served
+  `:8445` n8n, `:8446` ComfyUI, `:8447` Hermes, `:8448` codebase-memory, `:8449` LiteLLM admin UI, `:8450` Langfuse. Every prebuilt SPA is served
   at the root it was compiled for. (See [operator-guide](operator-guide.md) and
   [configuration → Network Ports](configuration.md#network-ports).)
 - **Clean per-service hostnames** via the [`tailnet-names`](../services/tailnet-names/plugin.yaml)
@@ -125,7 +125,7 @@ membership.
     change from `auto_https off` + static `tls` to either Caddy-managed DNS-01 issuance
     (`tls { dns <provider> … }`) or a mounted wildcard cert. Describe-not-implement: no such build,
     credential, or `tls` block is in the tree.
-- **Inbound reachability** — either NAT/port-forward `:443` (plus `:8443`–`:8448` if you keep the
+- **Inbound reachability** — either NAT/port-forward `:443` (plus `:8443`–`:8450` if you keep the
   port-per-service layout) from your router to the host, **or** an outbound tunnel (e.g. a
   cloudflared/Tailscale-Funnel-style connector) so no inbound firewall hole is opened.
 - **A new Google OAuth redirect URI** — `https://ordo.example.com/oauth2/callback` — added to the
@@ -178,7 +178,7 @@ primitives differ.
     is just TLS + inbound.)
   - **Caddy DNS-01 on the instance** — the Route 53 DNS-provider variant of Model 2's custom Caddy
     build, issuing the wildcard directly on the VM (no ALB).
-- **Security groups locking inbound to `:443`** (plus `:8443`–`:8448` only if you expose the ports
+- **Security groups locking inbound to `:443`** (plus `:8443`–`:8450` only if you expose the ports
   directly rather than fronting everything through an ALB path). Everything else stays on the internal
   Docker network, unpublished.
 - The **same Google OAuth redirect URI** as Model 2 (`https://ordo.example.com/oauth2/callback`).

@@ -189,7 +189,7 @@ cutover. **Test suite: 181 passed, 2 skipped** (verified 2026-07-09).
 ## Operating this stack (it IS production now)
 The rendered services (43 as of 2026-09-12) run under compose project `ordo` from `C:\dev\ordo-ai-stack`, all reached through
 the edge — Caddy is still the **only** service that publishes host ports, but since 2026-07-24 it
-listens on **seven** SSO-gated ports on `${CADDY_TAILNET_HOSTNAME}`, one per UI surface, instead of
+listens on **nine** SSO-gated ports on `${CADDY_TAILNET_HOSTNAME}`, one per UI surface, instead of
 mounting every app under a subpath of a single `:443`:
 
 | Port | Service |
@@ -201,8 +201,10 @@ mounting every app under a subpath of a single `:443`:
 | `:8446` | ComfyUI |
 | `:8447` | Hermes (served at its own port root) |
 | `:8448` | codebase-memory (served at its own port root) |
+| `:8449` | LiteLLM admin UI (served at its own port root) |
+| `:8450` | Langfuse (served at its own port root) |
 
-One Google sign-in covers all seven ports **and the clean per-service tailnet names** — the
+One Google sign-in covers all nine ports **and the clean per-service tailnet names** — the
 oauth2-proxy cookie is domain-scoped and the SSO gate's `rd=` carries `{host}` (portless), so a
 single wildcard `--whitelist-domain=.<domain>` covers every port and sidecar name at once; the Google
 OAuth client needs no new redirect URIs. Old subpath URLs (`/chat`, `/dash`, `/n8n`, `/comfy`,

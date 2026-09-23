@@ -6,7 +6,7 @@ Deletes *really old* generated content so data/ storage stays flat. The LLM
 never decides what to delete — a Hermes cron just runs this script and relays
 its report.
 
-Retention policy (see docs/superpowers/specs/2026-06-19-storage-purge-design.md):
+Retention policy (introduced in #51):
   - Job drafts (data/drafts/<YYYY-MM-DD>_<slug>/): delete > 60 days (analytics
     window floor). Age comes from the folder-name date prefix, NOT mtime
     (metrics rewrites meta.json and would reset mtime).
