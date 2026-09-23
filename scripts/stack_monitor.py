@@ -565,8 +565,8 @@ def audit():
 
     # 9p-wedge sweep: containers can report "healthy" while a worker sits in
     # unkillable D-state on the 9p bridge (live incident 2026-08-07). The cron
-    # runtime has no docker socket, so ask ops-api's diagnostics endpoint;
-    # unreachable/unauthd is reported as a failure, never silently skipped.
+    # runtime has no docker socket, so ask the control plane's diagnostics endpoint;
+    # unreachable is reported as a failure, never silently skipped.
     dstate = fetch_dstate()
     if dstate.get("error"):
         failures.append(f"dstate probe: {dstate['error']}")
@@ -591,9 +591,9 @@ def audit():
 
 
 def fetch_dstate():
-    """Query ops-api for D-state (wedged) processes. Same Bearer token Hermes'
-    ops_client uses (OPS_CONTROLLER_TOKEN); OPS_API_URL overridable for tests."""
-    url = os.environ.get("OPS_API_URL", "http://ops-api:9000") + "/diagnostics/dstate"
+    """Query the control plane for D-state (wedged) processes. Same Bearer token Hermes'
+    ops_client uses (OPS_CONTROLLER_TOKEN); OPS_CONTROLLER_URL overridable for tests."""
+    url = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000") + "/diagnostics/dstate"
     token = os.environ.get("OPS_CONTROLLER_TOKEN", "")
     if not token:
         return {"error": "OPS_CONTROLLER_TOKEN not set in this runtime"}

@@ -35,12 +35,11 @@ build ordo/livesync-bridge       obsidian-livesync
 build ordo/mcpvault-mcp          memory-vault
 build ordo/model-gateway         model-gateway
 build ordo/n8n-mcp               n8n
-build ordo/ops-api               ops-api
 build ordo/ops-controller        ops-controller
 build ordo/orchestration-mcp     orchestration
 build ordo/qdrant-rag-mcp        qdrant-rag
 build ordo/rag-ingestion         rag
-build ordo/dashboard-v1          v1-parity/dashboard
+build ordo/dashboard             dashboard/dashboard
 
 # Deliberately NOT built here:
 #   ordo-ai-stack-llamacpp-patched  - a pinned upstream patch build, rebuilt only on a llama.cpp bump

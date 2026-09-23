@@ -32,8 +32,7 @@ healthcheck:
   retries: 3
   start_period: 30s
 environment:
-  # The v2 control plane. ops-api is retired: every route this dashboard calls is served by
-  # ops-controller (slices 1-4), which is the single control plane for the stack.
+  # The control plane. Every route this dashboard calls is served by ops-controller.
   OPS_CONTROLLER_URL: http://ops-controller:9000
   # Backend service URLs the dashboard reads at runtime (all V2 service names).
   LLAMACPP_URL: http://llamacpp:8080
@@ -70,9 +69,8 @@ environment:
   # container too, where psutil.disk_usage("C:/dev/...") raises FileNotFoundError -> disk_*:null.
   # A per-service `environment:` value BEATS env_file, so pin the IN-CONTAINER disk-probe target to
   # the always-mounted /data/dashboard (same host C: drive -> correct host-disk stats). This mirrors
-  # V1's dashboard container, which set NO BASE_PATH and so used app.py's `/data/dashboard` default.
-  # (Only the dashboard reads BASE_PATH for an in-container fs call; ops-api's BASE_PATH stays the
-  # host path — it's used solely to interpolate ${BASE_PATH} for compose subprocesses, where correct.)
+  # Only the dashboard reads BASE_PATH for an in-container fs call. Everywhere else it stays the
+  # HOST path, because that is what compose interpolates ${BASE_PATH} with for bind mounts.
   BASE_PATH: /data/dashboard
   # The rendered manifest (out/manifest.json) — the machine-readable enabled-plugin set.
   # The service grid gates its cards on manifest.plugins_enabled (services_catalog.visible_services)
