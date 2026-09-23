@@ -3,3 +3,11 @@
 pyyaml==6.0.2
 pytest==8.3.4
 ruff==0.8.6
+# ordo/model_registry.py (the runtime model state the control plane reads) is substrate code and
+# declares its schema with pydantic, so importing ordo.control needs it. It was reaching CI only
+# because a now-removed step installed services/ops-api/requirements.txt as a side effect; pinned
+# to the same version the ops-controller image installs so CI tests what ships.
+pydantic==2.13.4
+# The control plane's transport is FastAPI (ordo/control.py ControlPlane.app), and the ASGI tests
+# build the real app. Same version as the image.
+fastapi==0.141.1
