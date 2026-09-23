@@ -24,7 +24,7 @@ services:
       SEARXNG_SETTINGS_PATH: /etc/searxng/settings.yml
       SEARXNG_BASE_URL: http://searxng:8080/
     volumes:
-      - ${DATA_PATH:-./data}/searxng:/etc/searxng
+      - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/searxng:/etc/searxng
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://localhost:8080/healthz | grep -q OK || exit 1"]
       start_period: 30s

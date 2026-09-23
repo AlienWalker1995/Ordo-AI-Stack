@@ -130,13 +130,13 @@ services:
       # bind — moot for a named volume, removed.)
       - comfyui-models:/root/ComfyUI/models:ro
       # Render outputs — staged under the V2 data root.
-      - ${DATA_PATH:-./data}/comfyui-output:/root/ComfyUI/output
+      - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/comfyui-output:/root/ComfyUI/output
       # Boot reconciler + the repo-owned workflow templates it seeds. Read-only, and tiny —
       # the 9p pathology that drove the app tree and the weights onto named volumes is an
       # I/O-volume problem, not a "no binds ever" rule; llamacpp mounts its run script the
       # same way. Keeping the logic in a tracked, reviewable script (rather than a 20-line
       # YAML string) is what makes the version reconcile testable instead of folklore.
-      - ${BASE_PATH:-.}/scripts/comfyui:/comfyui-scripts:ro
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/scripts/comfyui:/comfyui-scripts:ro
     command:
       # Reconcile the app checkout to COMFYUI_APP_REF, install the Comfy-Org runtime pins
       # that ref declares, seed repo-owned workflows, install custom-node deps, then exec the

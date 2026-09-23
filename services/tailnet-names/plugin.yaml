@@ -44,7 +44,7 @@ services:
       TS_SERVE_CONFIG: /config/serve.json
     volumes:
       - ts-state-chat:/var/lib/tailscale
-      - ${BASE_PATH:-.}/assets/tailscale-serve/chat.json:/config/serve.json:ro
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/assets/tailscale-serve/chat.json:/config/serve.json:ro
     healthcheck:
       test: ["CMD", "tailscale", "status", "--peers=false"]
       start_period: 30s
@@ -64,7 +64,7 @@ services:
       TS_SERVE_CONFIG: /config/serve.json
     volumes:
       - ts-state-dash:/var/lib/tailscale
-      - ${BASE_PATH:-.}/assets/tailscale-serve/dash.json:/config/serve.json:ro
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/assets/tailscale-serve/dash.json:/config/serve.json:ro
     healthcheck:
       test: ["CMD", "tailscale", "status", "--peers=false"]
       start_period: 30s
@@ -84,7 +84,7 @@ services:
       TS_SERVE_CONFIG: /config/serve.json
     volumes:
       - ts-state-n8n:/var/lib/tailscale
-      - ${BASE_PATH:-.}/assets/tailscale-serve/n8n.json:/config/serve.json:ro
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/assets/tailscale-serve/n8n.json:/config/serve.json:ro
     healthcheck:
       test: ["CMD", "tailscale", "status", "--peers=false"]
       start_period: 30s
@@ -104,7 +104,7 @@ services:
       TS_SERVE_CONFIG: /config/serve.json
     volumes:
       - ts-state-comfy:/var/lib/tailscale
-      - ${BASE_PATH:-.}/assets/tailscale-serve/comfy.json:/config/serve.json:ro
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/assets/tailscale-serve/comfy.json:/config/serve.json:ro
     healthcheck:
       test: ["CMD", "tailscale", "status", "--peers=false"]
       start_period: 30s
@@ -124,7 +124,7 @@ services:
       TS_SERVE_CONFIG: /config/serve.json
     volumes:
       - ts-state-hermes:/var/lib/tailscale
-      - ${BASE_PATH:-.}/assets/tailscale-serve/hermes.json:/config/serve.json:ro
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/assets/tailscale-serve/hermes.json:/config/serve.json:ro
     healthcheck:
       test: ["CMD", "tailscale", "status", "--peers=false"]
       start_period: 30s
@@ -144,7 +144,7 @@ services:
       TS_SERVE_CONFIG: /config/serve.json
     volumes:
       - ts-state-graph:/var/lib/tailscale
-      - ${BASE_PATH:-.}/assets/tailscale-serve/graph.json:/config/serve.json:ro
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/assets/tailscale-serve/graph.json:/config/serve.json:ro
     healthcheck:
       test: ["CMD", "tailscale", "status", "--peers=false"]
       start_period: 30s
@@ -172,7 +172,7 @@ services:
       TS_SERVE_CONFIG: /config/serve.json
     volumes:
       - ts-state-llm:/var/lib/tailscale
-      - ${BASE_PATH:-.}/assets/tailscale-serve/llm.json:/config/serve.json:ro
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/assets/tailscale-serve/llm.json:/config/serve.json:ro
     healthcheck:
       test: ["CMD", "tailscale", "status", "--peers=false"]
       start_period: 30s
@@ -200,7 +200,7 @@ services:
       TS_SERVE_CONFIG: /config/serve.json
     volumes:
       - ts-state-langfuse:/var/lib/tailscale
-      - ${BASE_PATH:-.}/assets/tailscale-serve/langfuse.json:/config/serve.json:ro
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/assets/tailscale-serve/langfuse.json:/config/serve.json:ro
     healthcheck:
       test: ["CMD", "tailscale", "status", "--peers=false"]
       start_period: 30s

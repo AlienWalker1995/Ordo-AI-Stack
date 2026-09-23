@@ -44,7 +44,7 @@ services:
       # n8n-files STAYS a host bind BY DESIGN: it is the operator's Windows-side
       # file-exchange drop zone (light, sequential I/O — the acceptable 9p profile,
       # same exception as data/rag-input and the /c/dev mirror).
-      - ${DATA_PATH:-./data}/n8n-files:/files
+      - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/n8n-files:/files
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:5678/"]
       interval: 30s

@@ -48,10 +48,10 @@ services:
       ORDO_LEASE_KIND: training
     volumes:
       # Mutable working tree: configs/, outputs/, precomputed latents.
-      - ${DATA_PATH:-./data}/ltx-trainer:/workspace
+      - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/ltx-trainer:/workspace
       # Training datasets (read-only: this service must not mutate them). Owned by this plugin
       # since it became the sole trainer (reparented from data/ai-toolkit/datasets 2026-07-24).
-      - ${DATA_PATH:-./data}/ltx-trainer/datasets:/datasets:ro
+      - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/ltx-trainer/datasets:/datasets:ro
       # Base weights (bf16 dev checkpoint + Gemma text-encoder dir) in a NAMED VOLUME (ext4
       # inside the VM), NOT a host bind: model loads mmap the weights, and mmap over the
       # 9p/NTFS bind mount hard-hangs (a sharded load once sat 9h frozen — 2026-07-17).
@@ -60,7 +60,7 @@ services:
       # weights all live in ltx-models; this is just a small incidental cache, own named volume.
       - hf-hub-cache:/root/.cache/huggingface/hub
       # The lease seam (see header comment). RO: the container must not mutate the wrapper.
-      - ${BASE_PATH:-.}/assets/lease-exec.py:/ordo/lease-exec.py:ro
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/assets/lease-exec.py:/ordo/lease-exec.py:ro
     healthcheck:
       # Cheap invariants: the synced venv exists and the lease seam is mounted — the two things
       # a run depends on. (An `import torch` probe would burn ~10s of CPU every interval.)

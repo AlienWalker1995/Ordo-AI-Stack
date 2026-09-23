@@ -98,18 +98,19 @@ volumes:
   # delete removes the file ComfyUI loads; 9p bind retired 2026-08-07 (Stage 2, see
   # services/comfyui/plugin.yaml for the seam rationale).
   - comfyui-models:/models
-  - ${DATA_PATH:-./data}/dashboard:/data/dashboard
+  - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/dashboard:/data/dashboard
+  # ${BASE_PATH}/out/ (not ./) on the four binds below: ops-controller recreates the dashboard
+  # with the project dir at its own /config mount, where ./x resolves to a host path that
+  # does not exist (tests/substrate/test_compose.py pins this).
   # The rendered out/mcp dir (servers.json). READ-ONLY: nothing live is written here any more.
-  - ./mcp:/mcp-config:ro
+  - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/mcp:/mcp-config:ro
   # The operator source (out/ordo.yaml). RW so an MCP enable/disable persists into its `plugins:`
-  # list (the single source of truth) — a surgical, comment-preserving line add/remove. `./`
-  # resolves to the compose project-dir (out/) at runtime — same convention as the mcp mount above.
+  # list (the single source of truth) — a surgical, comment-preserving line add/remove.
   # Contains host paths but NO secrets (secrets live in secrets.env), so it's safe behind edge SSO.
-  - ./ordo.yaml:/ordo-source.yaml:rw
-  # The rendered manifest (out/manifest.json). `./` resolves to the compose project-dir
-  # (out/) at runtime — same convention as the mcp mount above. Read-only: the grid's
+  - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/ordo.yaml:/ordo-source.yaml:rw
+  # The rendered manifest (out/manifest.json). Read-only: the grid's
   # enabled-gate only reads plugins_enabled. See MANIFEST_PATH above.
-  - ./manifest.json:/ordo-manifest.json:ro
+  - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/manifest.json:/ordo-manifest.json:ro
   # The rendered service-card catalog (out/services-catalog.json). Read-only: the grid's
   # card list — see SERVICES_CATALOG_PATH above.
-  - ./services-catalog.json:/ordo-services-catalog.json:ro
+  - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/services-catalog.json:/ordo-services-catalog.json:ro

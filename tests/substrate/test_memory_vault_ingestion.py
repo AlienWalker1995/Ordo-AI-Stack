@@ -24,7 +24,7 @@ REGISTRY = PluginRegistry.load(ROOT / "services")
 P_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128}
 P_CPU = {"gpus": [], "ram_gb": 16}
 
-VAULT_MOUNT = "${MEMORY_VAULT_PATH:-${DATA_PATH:-./data}/memory-vault}:/watch/memory-vault:ro"
+VAULT_MOUNT = "${MEMORY_VAULT_PATH:-${DATA_PATH:?DATA_PATH must be set (non-empty)}/memory-vault}:/watch/memory-vault:ro"
 INGEST_PY = ROOT / "services" / "rag" / "ingest.py"
 
 
@@ -40,7 +40,7 @@ def test_rag_ingestion_mounts_vault_read_only():
     ri = c["services"]["rag-ingestion"]
     assert VAULT_MOUNT in ri["volumes"]
     # nested INSIDE the primary watch mount, which must stay first and unchanged
-    assert ri["volumes"][0] == "${DATA_PATH:-./data}/rag-input:/watch"
+    assert ri["volumes"][0] == "${DATA_PATH:?DATA_PATH must be set (non-empty)}/rag-input:/watch"
     # the vault mount is read-only — only the memory-vault MCP writes the vault
     vault = next(v for v in ri["volumes"] if "/watch/memory-vault" in v)
     assert vault.endswith(":ro")

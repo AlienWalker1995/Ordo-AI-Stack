@@ -154,7 +154,7 @@ group_add: ["0"]
 
 volumes:
   - hermes-home:/home/hermes/.hermes                           # THE BRAIN (named volume — see above)
-  - ${DATA_PATH:-./data}:/workspace/data                       # staged mutable data (skills' /workspace/data/*)
+  - ${DATA_PATH:?DATA_PATH must be set (non-empty)}:/workspace/data                       # staged mutable data (skills' /workspace/data/*)
   # The SAME volume, mounted a second time at the path skills hardcode. Cron jobs invoke scripts as
   # /workspace/data/hermes/skills/... (absolute), so both paths MUST resolve to one object; binding
   # only /home/hermes/.hermes would leave this path pointing at the retired host copy and silently
