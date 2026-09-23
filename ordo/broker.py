@@ -49,6 +49,8 @@ class ContainerBackend(Protocol):
 
     # Compose verbs take an OPTIONAL service: no argument means the whole project, which for
     # compose_down means the entire stack including the agent and the GPU scheduler.
+    def pull_image(self, service: str) -> None: ...
+    def exec_in(self, container: str, command: list[str]) -> tuple[int, str]: ...
     def compose_up(self, service: str | None = None) -> None: ...
     def compose_down(self, service: str | None = None) -> None: ...
     def compose_restart(self, service: str | None = None) -> None: ...
@@ -71,6 +73,9 @@ class MockBackend:
         self.compose_up_calls: list = []
         self.compose_down_calls: list = []
         self.compose_restart_calls: list = []
+        self.pulled: list[str] = []
+        self.execs: list[tuple[str, list[str]]] = []
+        self.exec_result: tuple[int, str] = (0, "")
 
     def start(self, service: str) -> None:
         self.started.append(service)
@@ -126,6 +131,13 @@ class MockBackend:
             {"id": "gateway", "name": "ordo-mcp-gateway-1", "service": "mcp-gateway",
              "status": "running", "image": "mcp-gateway:latest"},
         ]}
+
+    def pull_image(self, service: str) -> None:
+        self.pulled.append(service)
+
+    def exec_in(self, container: str, command: list[str]) -> tuple[int, str]:
+        self.execs.append((container, list(command)))
+        return self.exec_result
 
     def compose_up(self, service: str | None = None) -> None:
         self.compose_up_calls.append(None)
@@ -353,6 +365,35 @@ class DockerBackend:
         reported 0GB GPU and could no longer be managed by compose)."""
         subprocess.run(self._compose("up", "-d", "--force-recreate", self._guard(service)),
                        check=True, timeout=600)
+
+    def pull_image(self, service: str) -> None:  # pragma: no cover - needs real docker
+        """Pull this service's declared image. Compose, not `docker pull`, because the image
+        reference lives in the rendered compose file and nowhere else."""
+        service = self._guard(service)
+        proc = subprocess.run(
+            self._compose("pull", service), capture_output=True, text=True, timeout=1800,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError((proc.stderr or proc.stdout).strip()[:500])
+
+    def exec_in(self, container: str, command: list[str]) -> tuple[int, str]:  # pragma: no cover - needs real docker
+        """Run a command inside one container of THIS project; returns (exit_code, combined output).
+
+        Raises FileNotFoundError when the container is not in this project, so a caller can tell
+        "not running" apart from "ran and failed".
+        """
+        try:
+            name = self._container_guard(container)
+        except ValueError as exc:
+            # "not in this project" is the not-running case, which the caller reports as 503.
+            raise FileNotFoundError(container) from exc
+        proc = subprocess.run(
+            ["docker", "exec", name, *command], capture_output=True, text=True, timeout=1800,
+        )
+        output = (proc.stdout or "") + (proc.stderr or "")
+        if proc.returncode != 0 and "No such container" in output:
+            raise FileNotFoundError(name)
+        return proc.returncode, output
 
     def compose_up(self, service: str | None = None) -> None:  # pragma: no cover - needs real docker
         args = ["up", "-d"] + ([self._guard(service)] if service else [])

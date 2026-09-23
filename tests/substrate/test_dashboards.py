@@ -75,14 +75,14 @@ def test_v1_parity_swaps_the_dashboard_image(tmp_path):
     assert c["services"]["dashboard"]["image"] == "ordo/dashboard-v1:latest"
 
 
-def test_v1_parity_dashboard_points_at_ops_api_not_scheduler(tmp_path):
-    # the whole naming resolution: the V1 frontend is same-origin; its FastAPI backend reads
-    # OPS_CONTROLLER_URL at runtime, so pointing it at ops-api keeps V2's scheduler named
-    # `ops-controller` collision-free (no dashboard rebuild).
+def test_dashboard_points_at_the_v2_control_plane(tmp_path):
+    # The dashboard's FastAPI backend reads OPS_CONTROLLER_URL at runtime. It pointed at ops-api
+    # while the routes were being ported one slice at a time; slice 4 finished the port, so it now
+    # points at ops-controller, which is the only control plane. (No dashboard rebuild: same env.)
     c = _compose("v1-parity", tmp_path)
     env = c["services"]["dashboard"]["environment"]
-    assert env["OPS_CONTROLLER_URL"] == "http://ops-api:9000"
-    assert c["services"]["dashboard"]["depends_on"] == {"ops-api": {"condition": "service_started"}}
+    assert env["OPS_CONTROLLER_URL"] == "http://ops-controller:9000"
+    assert c["services"]["dashboard"]["depends_on"] == {"ops-controller": {"condition": "service_started"}}
 
 
 def test_v1_parity_renders_ops_api_backend_service(tmp_path):

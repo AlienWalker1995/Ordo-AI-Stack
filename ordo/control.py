@@ -28,6 +28,7 @@ from urllib.parse import urljoin, urlparse
 
 import yaml
 
+from .audit import AuditLog
 from .broker import Broker
 from .catalog import Catalog
 from .config import Source
@@ -64,6 +65,11 @@ _MODEL_DOWNLOAD_ALLOWED_HOSTS = {
 COMFYUI_MODELS_DIR = Path(os.environ.get("COMFYUI_MODELS_DIR", "/models/comfyui"))
 AUDIT_LOG_PATH = Path(os.environ.get("AUDIT_LOG_PATH", "/data/audit.jsonl"))
 OPS_ENV_PATH = Path(os.environ.get("OPS_ENV_PATH", "/config/.env"))
+COMFYUI_CUSTOM_NODES_DIR = Path(os.environ.get("COMFYUI_CUSTOM_NODES_DIR", "/comfyui-app/ComfyUI/custom_nodes"))
+COMFYUI_CONTAINER_NAME = os.environ.get("COMFYUI_CONTAINER_NAME", "ordo-comfyui-1")
+# One path segment of a ComfyUI custom-node pack. Deliberately narrower than the filesystem
+# allows: the segment is interpolated into a container path that a pip invocation then reads.
+_NODE_PATH_SEGMENT = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
 
 def _validate_download_url(url: str) -> None:
@@ -153,6 +159,13 @@ class ControlPlane:
         self._pull_status = {"running": False, "output": "", "done": True, "success": None, "pack": ""}
         self._gguf_pull_lock = threading.Lock()
         self._gguf_pull_status = {"running": False, "output": "", "done": True, "success": None, "repos": ""}
+        # The audit sink. ops-api owned the only writer, so a v2 controller that merely READS
+        # /data/audit.jsonl would leave the dashboard's Audit tab frozen at the moment ops-api was
+        # retired: every privileged verb would still happen, and none of them would be recorded.
+        # Built on first write, not here: AuditLog creates its parent directory, and a control
+        # plane that has never done anything privileged should not leave a /data behind.
+        self._audit_log: AuditLog | None = None
+
 
     # --- core operations (pure, testable) ---
     def _render(self) -> Any:
@@ -817,6 +830,188 @@ class ControlPlane:
             raw = raw[1:-1]
         return {"key": key, "value": raw}
 
+    def _audit(
+        self,
+        action: str,
+        target: str = "",
+        result: str = "ok",
+        detail: str = "",
+        **metadata: Any,
+    ) -> None:
+        """Record one privileged action. Never raises: an audit failure must not fail the action."""
+        try:
+            if self._audit_log is None:
+                self._audit_log = AuditLog(AUDIT_LOG_PATH)
+            extra: dict[str, Any] = {}
+            if detail:
+                extra["detail"] = detail
+            if metadata:
+                extra["metadata"] = metadata
+            self._audit_log.record(
+                action=action, target=target, result=result, caller="dashboard", **extra
+            )
+        except Exception:
+            pass
+
+    def env_set(self, body: dict[str, Any] | None) -> dict[str, Any]:
+        """Write a single allowlisted key into the registry env file. Requires confirm: true.
+
+        The write is atomic (temp file + os.replace) because this file is read by every compose
+        invocation: a half-written .env is a stack that will not render.
+        """
+        body = body or {}
+        if not body.get("confirm"):
+            return self._error(
+                400,
+                "Destructive operation requires confirmation. "
+                'Set {"confirm": true} in the request body to proceed.',
+            )
+        key = body.get("key") or ""
+        value = body.get("value")
+        if value is None:
+            value = ""
+        if not isinstance(value, str):
+            return self._error(400, "value must be a string")
+        if key not in self.ENV_ALLOWED_KEYS:
+            return self._error(400, f"Key not in allowlist: {key!r}")
+        if "\n" in value or "\r" in value:
+            return self._error(400, "Value must not contain newlines")
+        # LLAMACPP_EXTRA_ARGS is word-split by the llama.cpp run script, so its value reaches a
+        # shell. Constrain it to characters that cannot introduce a second command.
+        if key == "LLAMACPP_EXTRA_ARGS" and not re.fullmatch(r"[a-zA-Z0-9 _.=:/-]*", value):
+            return self._error(
+                400,
+                "LLAMACPP_EXTRA_ARGS: only alphanumeric, spaces, dashes, dots, equals, "
+                "colons, slashes allowed",
+            )
+        env_path = OPS_ENV_PATH
+        if not env_path.exists():
+            return self._error(404, f".env not found at {env_path}")
+        # Read and write raw bytes. `read_text`/`write_text` translate newlines, so on this CRLF
+        # file (the renderer runs on Windows; the controller runs in a Linux container) a one-key
+        # edit silently rewrote all 55 lines as LF, and the next render flipped them back: config
+        # churning against itself, on the file whose mtime marks ~41 containers for recreation.
+        # `[^\r\n]*` rather than `.*` for the same reason, since `.` matches a bare \r.
+        content = env_path.read_bytes().decode("utf-8")
+        pattern = rf"^{re.escape(key)}=[^\r\n]*"
+        if re.search(pattern, content, re.MULTILINE):
+            content = re.sub(pattern, f"{key}={value}", content, count=1, flags=re.MULTILINE)
+        else:
+            newline = "\r\n" if "\r\n" in content else "\n"
+            content = content.rstrip("\r\n") + f"{newline}{key}={value}{newline}"
+        tmp_path = env_path.with_suffix(".tmp")
+        tmp_path.write_bytes(content.encode("utf-8"))
+        os.replace(str(tmp_path), str(env_path))
+        self._audit("env_set", key, "ok", f"len={len(value)}")
+        return {"ok": True, "key": key}
+
+    def images_pull(self, body: dict[str, Any] | None) -> dict[str, Any]:
+        """Pull the current image for each named compose service."""
+        body = body or {}
+        services = body.get("services") or []
+        if not isinstance(services, list):
+            return self._error(400, "services must be a list")
+        if not self.broker:
+            return self._error(503, "no container backend")
+        errors: list[str] = []
+        pulled: list[str] = []
+        for service in services:
+            if not isinstance(service, str):
+                errors.append(f"{service!r}: not a service name")
+                continue
+            try:
+                self.broker.backend.pull_image(service)
+                pulled.append(service)
+            except Exception as exc:
+                errors.append(f"{service}: {exc}")
+        if not pulled and not errors:
+            return self._error(400, "No allowed services specified")
+        self._audit("pull", ",".join(pulled), "error" if errors else "ok", "; ".join(errors))
+        if errors:
+            return self._error(500, "; ".join(errors), services=pulled)
+        return {"ok": True, "services": pulled}
+
+    @staticmethod
+    def _validate_custom_node_path(node_path: str) -> str | None:
+        """Relative path under ComfyUI custom_nodes. Returns None if it is not one."""
+        cleaned = (node_path or "").strip().strip("/").replace("\\", "/")
+        if not cleaned or len(cleaned) > 240 or ".." in cleaned:
+            return None
+        for segment in cleaned.split("/"):
+            if not segment or not _NODE_PATH_SEGMENT.fullmatch(segment):
+                return None
+        return cleaned
+
+    def comfyui_install_node_requirements(self, body: dict[str, Any] | None) -> dict[str, Any]:
+        """pip install -r a custom node pack's requirements INSIDE the running comfyui container.
+
+        Installing on the host would put the packages somewhere ComfyUI never imports from.
+        """
+        body = body or {}
+        if not body.get("confirm"):
+            return self._error(
+                400,
+                "Destructive operation requires confirmation. "
+                'Set {"confirm": true} in the request body to proceed.',
+            )
+        node_path = self._validate_custom_node_path(body.get("node_path") or "")
+        if node_path is None:
+            return self._error(400, "Invalid node_path")
+        requirements_on_host = COMFYUI_CUSTOM_NODES_DIR / node_path / "requirements.txt"
+        if not requirements_on_host.is_file():
+            return self._error(
+                404, f"No requirements.txt at custom_nodes/{node_path}/requirements.txt"
+            )
+        if not self.broker:
+            return self._error(503, "no container backend")
+        requirements_in_container = f"/root/ComfyUI/custom_nodes/{node_path}/requirements.txt"
+        try:
+            exit_code, output = self.broker.backend.exec_in(
+                COMFYUI_CONTAINER_NAME,
+                ["python3", "-m", "pip", "install", "-r", requirements_in_container],
+            )
+        except FileNotFoundError:
+            return self._error(
+                503, f"Container {COMFYUI_CONTAINER_NAME!r} not found - start comfyui first"
+            )
+        except Exception as exc:
+            return self._error(500, f"exec failed: {exc}")
+        if len(output) > 12000:
+            output = output[:12000] + "\n... [truncated]"
+        ok = exit_code == 0
+        self._audit(
+            "comfyui_pip_install",
+            node_path,
+            "ok" if ok else "error",
+            output[:300],
+            exit_code=exit_code,
+        )
+        result: dict[str, Any] = {
+            "ok": ok,
+            "exit_code": exit_code,
+            "output": output,
+            "node_path": node_path,
+        }
+        if not ok:
+            result["_status"] = 500
+        return result
+
+    def gpu_assign_gone(self, target: str = "") -> dict[str, Any]:
+        """410 GONE. GPU pins are baked at `ordo render` time, not at runtime.
+
+        The v1 flow wrote overrides/gpu-assignments.yml and recreated the service. Under the render
+        substrate nothing reads that file back and a recreate replays the already-rendered compose
+        byte for byte, so the endpoint answered {"ok": true} while changing nothing. This mirrors
+        the /guardian/* retirement: an honest 410 beats a silent no-op.
+        """
+        self._audit("gpu_assign", target, "gone", "render-time pins")
+        return self._error(
+            410,
+            "GPU reassignment moved to the render pipeline: set the pin in ordo.yaml "
+            "(overrides:) and re-render (`ordo render`), then recreate the service. "
+            "Runtime reassignment was a silent no-op and has been retired.",
+        )
+
     def audit_log(self, limit: int = 50) -> dict[str, Any]:
         """Read audit log (last N entries)."""
         path = AUDIT_LOG_PATH
@@ -1024,6 +1219,17 @@ class ControlPlane:
         if m == "GET" and path.startswith("/env/") and path.count("/") == 2:
             key = path.split("/")[2]
             return self._as_response(self.env_get(key))
+        # Slice 4: the last four routes the dashboard calls, plus the two honest 410s
+        if m == "POST" and path == "/env/set":
+            return self._as_response(self.env_set(body))
+        if m == "POST" and path == "/images/pull":
+            return self._as_response(self.images_pull(body))
+        if m == "POST" and path == "/comfyui/install-node-requirements":
+            return self._as_response(self.comfyui_install_node_requirements(body))
+        if m == "POST" and path == "/gpu/assign":
+            return self._as_response(self.gpu_assign_gone((body or {}).get("service", "")))
+        if m == "POST" and path.startswith("/registry/models/") and path.endswith("/assign-gpu"):
+            return self._as_response(self.gpu_assign_gone(path.split("/")[3]))
         return 404, {"error": f"no route {method} {path}"}
 
     @staticmethod
