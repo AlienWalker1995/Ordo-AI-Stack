@@ -235,9 +235,28 @@ def test_named_services_off_the_card_are_allowed_during_a_lease(monkeypatch, out
     assert _tail(recorded[-1]) == ["up", "-d", "--no-deps", "--force-recreate", "model-gateway"]
 
 
-def test_ops_controller_and_agent_are_recreatable_during_a_lease(monkeypatch, out_dir, recorded):
+def test_agent_is_recreatable_during_a_lease(monkeypatch, out_dir, recorded):
     _status(monkeypatch, LEASED)
-    assert cli.main(["recreate", "ops-controller", "agent", "--out", str(out_dir)]) == 0
+    assert cli.main(["recreate", "agent", "--out", str(out_dir)]) == 0
+
+
+@pytest.mark.parametrize("gpu", [LEASED, LEASED_OLD_IMAGE])
+@pytest.mark.parametrize("argv", [["recreate", "ops-controller"], ["up", "ops-controller"],
+                                  ["recreate", "ops-controller", "agent"]])
+def test_ops_controller_is_refused_during_a_lease(monkeypatch, out_dir, recorded, capsys, gpu, argv):
+    """The scheduler's lease and eviction state live in ops-controller's memory. Restarting it
+    mid-lease loses them: the evicted resident is never restored, or is restored beside the render."""
+    _status(monkeypatch, gpu)
+    assert cli.main([*argv, "--out", str(out_dir)]) == 2
+    assert recorded == []
+    err = capsys.readouterr().err
+    assert "ops-controller" in err and "gate-comfyui" in err
+
+
+def test_ops_controller_is_recreatable_when_idle(monkeypatch, out_dir, recorded):
+    _status(monkeypatch, IDLE)
+    assert cli.main(["recreate", "ops-controller", "--out", str(out_dir)]) == 0
+    assert _tail(recorded[-1]) == ["up", "-d", "--no-deps", "--force-recreate", "ops-controller"]
 
 
 def test_a_caddy_recreate_checks_everything_compose_would_start(monkeypatch, out_dir, recorded):

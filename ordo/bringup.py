@@ -146,6 +146,11 @@ def lease_refusal(gpu: dict | None, *, whole_stack: bool, starts: set[str]) -> s
         return (f"refusing a whole-stack bring-up while the GPU is leased ({_holders(gpu)}). "
                 f"It would start the evicted residents beside the running GPU work. "
                 f"Wait for the lease to end, or name the services you need.")
+    if OPS_CONTROLLER_SERVICE in starts and is_leased(gpu):
+        return (f"refusing to recreate {OPS_CONTROLLER_SERVICE} while the GPU is leased ({_holders(gpu)}). "
+                f"The scheduler's lease and eviction state live in its memory: a restart loses them, so "
+                f"the evicted residents are never restored, or are restored beside the running GPU work. "
+                f"Wait for the lease to end.")
     evicted = sorted(starts & set(gpu.get("evicted_residents") or {}))
     if evicted:
         return (f"refusing to start {', '.join(evicted)}: evicted by the GPU scheduler to make room "
