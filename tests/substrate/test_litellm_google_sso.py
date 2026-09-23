@@ -24,8 +24,8 @@ REGISTRY = PluginRegistry.load(ROOT / "services")
 
 P_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128, "cpu_cores": 32}
 
-EDGE_SITE = {"CADDY_TAILNET_HOSTNAME": "ultracam.tail63bdfc.ts.net",
-             "CADDY_TAILNET_DOMAIN": "tail63bdfc.ts.net",
+EDGE_SITE = {"CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
+             "CADDY_TAILNET_DOMAIN": "example.ts.net",
              "CADDY_BIND": "0.0.0.0"}
 
 
@@ -47,16 +47,16 @@ SSO_KEYS = ("PROXY_BASE_URL", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET")
 # ── litellm_google_sso_env() unit coverage ──────────────────────────────────────
 
 def test_uses_the_sidecar_name_when_tailnet_names_is_enabled():
-    env = {"CADDY_TAILNET_HOSTNAME": "ultracam.tail63bdfc.ts.net",
-           "CADDY_TAILNET_DOMAIN": "tail63bdfc.ts.net"}
+    env = {"CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
+           "CADDY_TAILNET_DOMAIN": "example.ts.net"}
     out = litellm_google_sso_env(env, ["edge", "tailnet-names"], "")
-    assert out["PROXY_BASE_URL"] == "https://llm.tail63bdfc.ts.net"
+    assert out["PROXY_BASE_URL"] == "https://llm.example.ts.net"
 
 
 def test_falls_back_to_the_sso_port_without_the_sidecar_layer():
-    env = {"CADDY_TAILNET_HOSTNAME": "ultracam.tail63bdfc.ts.net"}
+    env = {"CADDY_TAILNET_HOSTNAME": "host.example.ts.net"}
     out = litellm_google_sso_env(env, ["edge"], "")
-    assert out["PROXY_BASE_URL"] == "https://ultracam.tail63bdfc.ts.net:8449"
+    assert out["PROXY_BASE_URL"] == "https://host.example.ts.net:8449"
 
 
 def test_empty_without_an_edge_hostname():
@@ -65,19 +65,19 @@ def test_empty_without_an_edge_hostname():
 
 def test_empty_when_hostname_known_but_edge_not_enabled():
     """A hostname alone (e.g. leftover site config) must not turn SSO on without the edge plugin."""
-    env = {"CADDY_TAILNET_HOSTNAME": "ultracam.tail63bdfc.ts.net"}
+    env = {"CADDY_TAILNET_HOSTNAME": "host.example.ts.net"}
     assert litellm_google_sso_env(env, [], "") == {}
 
 
 def test_google_client_vars_are_compose_references_not_values():
-    env = {"CADDY_TAILNET_HOSTNAME": "ultracam.tail63bdfc.ts.net"}
+    env = {"CADDY_TAILNET_HOSTNAME": "host.example.ts.net"}
     out = litellm_google_sso_env(env, ["edge"], "")
     assert out["GOOGLE_CLIENT_ID"] == "${OAUTH2_PROXY_CLIENT_ID}"
     assert out["GOOGLE_CLIENT_SECRET"] == "${OAUTH2_PROXY_CLIENT_SECRET}"
 
 
 def test_admin_id_present_only_when_identity_given():
-    env = {"CADDY_TAILNET_HOSTNAME": "ultracam.tail63bdfc.ts.net"}
+    env = {"CADDY_TAILNET_HOSTNAME": "host.example.ts.net"}
     assert "PROXY_ADMIN_ID" not in litellm_google_sso_env(env, ["edge"], "")
     with_id = litellm_google_sso_env(env, ["edge"], "112233445566778899")
     assert with_id["PROXY_ADMIN_ID"] == "112233445566778899"
@@ -100,7 +100,7 @@ def test_edge_on_without_a_hostname_renders_none_of_the_sso_vars():
 
 def test_edge_on_with_hostname_renders_the_port_fallback():
     env = _gateway_env(["edge"], site=EDGE_SITE)
-    assert env["PROXY_BASE_URL"] == "https://ultracam.tail63bdfc.ts.net:8449"
+    assert env["PROXY_BASE_URL"] == "https://host.example.ts.net:8449"
     assert env["GOOGLE_CLIENT_ID"] == "${OAUTH2_PROXY_CLIENT_ID}"
     assert env["GOOGLE_CLIENT_SECRET"] == "${OAUTH2_PROXY_CLIENT_SECRET}"
     assert "PROXY_ADMIN_ID" not in env
@@ -108,7 +108,7 @@ def test_edge_on_with_hostname_renders_the_port_fallback():
 
 def test_tailnet_names_renders_the_clean_subdomain():
     env = _gateway_env(["edge", "tailnet-names"], site=EDGE_SITE)
-    assert env["PROXY_BASE_URL"] == "https://llm.tail63bdfc.ts.net"
+    assert env["PROXY_BASE_URL"] == "https://llm.example.ts.net"
 
 
 def test_admin_identity_site_key_flows_to_proxy_admin_id():
