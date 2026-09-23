@@ -1,6 +1,6 @@
 # Pinned dev/CI deps for the v2 substrate — pinned (not floated) so CI is reproducible and a
 # ruff release can't silently surface new lint on an unrelated change (a known stack CI gotcha).
-pyyaml==6.0.2
+pyyaml==6.0.3
 pytest==8.3.4
 ruff==0.8.6
 # ordo/model_registry.py (the runtime model state the control plane reads) is substrate code and

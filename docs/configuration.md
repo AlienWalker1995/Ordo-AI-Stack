@@ -378,8 +378,9 @@ docker compose -p ordo exec comfyui git -C /root/ComfyUI rev-parse HEAD
 Rolling back is the same edit in reverse — the reconciler downgrades the checkout and re-pins the
 runtime deps to the older ref's `requirements.txt`.
 
-Current pin: **v0.33.1** (`72865f4f`), chosen as the first release carrying the MiniMax Music3
-nodes that `services/song-gen` declares.
+Current pin: **v0.37.0** (`73c9bad4`), the first release carrying Qwen-Image 2.1 support. The previous
+pin, **v0.33.1** (`72865f4f`), is the rollback; it is the first release carrying the MiniMax Music3
+nodes that `services/song-gen` declares, so never roll back below it.
 
 ## Network Ports
 

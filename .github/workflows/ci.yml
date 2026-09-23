@@ -12,12 +12,12 @@ jobs:
     name: Secret scanning
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Secret scanning (TruffleHog)
-        uses: trufflesecurity/trufflehog@v3.88.26
+        uses: trufflesecurity/trufflehog@b06f6d72a3791308bb7ba59c2b8cb7a083bd17e4 # v3.88.26
         with:
           # Lob detector excluded: it false-positives on `test_` + 35-word-char strings (its
           # verifier returns a bogus "verified" result), and this stack has no Lob integration —
@@ -29,10 +29,10 @@ jobs:
     name: Pytest
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
@@ -53,9 +53,9 @@ jobs:
     name: substrate (mocked-profile)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: dorny/paths-filter@v4
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           filters: |
@@ -72,9 +72,10 @@ jobs:
 
       - name: Set up Python
         if: steps.filter.outputs.substrate == 'true'
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          # 3.11: the version the ops-controller image runs ordo/ on.
+          python-version: "3.11"
           cache: pip
           cache-dependency-path: requirements-dev.txt
 

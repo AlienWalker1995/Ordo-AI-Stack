@@ -22,7 +22,7 @@ Ordo is defined and operated from the repo root. Config is rendered from `ordo.y
 - Dependencies are pinned to exact versions (for example `services/dashboard/dashboard/requirements.txt`, which `tests/requirements.txt` includes). Bump deliberately, rebuild, retest.
 
 ## Coding style
-Python 3.12+, `from __future__ import annotations` at the top of every file. Ruff enforces a 120-character line and the `E`, `F`, `I` and `UP` rules. `snake_case` for files, functions and variables, `PascalCase` for classes, `test_*.py` for tests. Keep service logic inside its own `services/<id>/` directory instead of adding cross-service utilities at the root.
+Python 3.11+ (the ops-controller image that ships `ordo/` runs 3.11, and ruff targets `py311`), `from __future__ import annotations` at the top of every file. Ruff enforces a 120-character line and the `E`, `F`, `I` and `UP` rules. `snake_case` for files, functions and variables, `PascalCase` for classes, `test_*.py` for tests. Keep service logic inside its own `services/<id>/` directory instead of adding cross-service utilities at the root.
 
 ## Dashboard (`services/dashboard/dashboard/`)
 - **Backend:** FastAPI. `routes_console.py` serves the five pages (`/api/overview`, `/api/activity`, `/api/services/table`, `/api/models` + `/switch` + `/delete`, `/api/media` + `/view`, `/api/perf/*`); it fetches concurrently and hands plain dicts to `console.py`, which holds the pure logic (verdicts, attention items, model slots). Keep that split: logic in `console.py`, I/O in the routes.

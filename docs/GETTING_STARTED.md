@@ -2,7 +2,7 @@
 
 > ⚠️ **See [`operator-guide.md`](operator-guide.md) for the authoritative getting-started + operator doc.** Ordo is defined and operated entirely from the render substrate (bring-up via `ordo render` → `docker compose -p ordo … up`). The workflow commands below reflect that flow — they assume you've rendered the stack once (`out/`) and run `docker compose` from there under project `ordo`.
 
-Quick paths to common workflows for a single homelab operator. The stack assumes you've completed the one-time auth setup ([docs/runbooks/auth.md](runbooks/auth.md)) and secrets setup ([docs/runbooks/secrets.md](runbooks/secrets.md)), so Caddy is up on `${CADDY_TAILNET_HOSTNAME}` — `:443` is the landing page (plus `/oauth2`, `/llm/*`, `/mcp`, n8n's webhook/OAuth passthroughs, and 302s from legacy subpaths) and each UI service has its own SSO-gated port (`:8443` Open WebUI, `:8444` dashboard, `:8445` n8n, `:8446` ComfyUI, `:8447` Hermes, `:8448` codebase-memory) — and you can sign in with a Google account on `auth/oauth2-proxy/emails.txt`. One sign-in covers every port.
+Quick paths to common workflows for a single homelab operator. The stack assumes you've completed the one-time auth setup ([docs/runbooks/auth.md](runbooks/auth.md)) and secrets setup ([docs/runbooks/secrets.md](runbooks/secrets.md)), so Caddy is up on `${CADDY_TAILNET_HOSTNAME}` — `:443` is the landing page (plus `/oauth2`, `/llm/*`, `/mcp`, n8n's webhook/OAuth passthroughs, and 302s from legacy subpaths) and each UI service has its own SSO-gated port (`:8443` Open WebUI, `:8444` dashboard, `:8445` n8n, `:8446` ComfyUI, `:8447` Hermes, `:8448` codebase-memory, `:8449` LiteLLM admin UI, `:8450` Langfuse) — and you can sign in with a Google account on `auth/oauth2-proxy/emails.txt`. One sign-in covers every port.
 
 ## Workflows
 
@@ -70,6 +70,8 @@ Single homelab operator with a small Google-account allowlist for friends / fami
 | `:8446` | ComfyUI |
 | `:8447` | Hermes (served at this port's root) |
 | `:8448` | codebase-memory (served at this port's root) |
+| `:8449` | LiteLLM admin UI (served at this port's root) |
+| `:8450` | Langfuse (served at this port's root) |
 
 1. Install Tailscale on the host running Ordo AI Stack and on each device that needs access.
 2. Issue a Tailscale cert for your chosen hostname: `tailscale cert ordo.<tailnet>.ts.net` (writes to `auth/caddy/certs/`).

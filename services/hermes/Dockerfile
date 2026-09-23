@@ -68,7 +68,7 @@ RUN npm install && npm run build
 # before the multiarch dir). --all enables FTS5 (messages_fts + trigram) and the other
 # loadable features Debian's build carried; the runtime stage asserts both version and
 # trigram FTS5 at build time so a flag regression fails the build, not the gateway.
-FROM python:3.11-slim AS sqlite-builder
+FROM python:3.11.15-slim-trixie@sha256:6d85378d88a19cd4d76079817532d62232be95757cb45945a99fec8e8084b9c2 AS sqlite-builder
 ARG SQLITE_YEAR=2026
 ARG SQLITE_AUTOCONF=3530400
 # sha256 of sqlite-autoconf-3530400.tar.gz (3.53.4), computed 2026-08-08.
@@ -87,7 +87,7 @@ RUN curl -fsSL "https://sqlite.org/${SQLITE_YEAR}/sqlite-autoconf-${SQLITE_AUTOC
     && make -j"$(nproc)" && make install
 
 # ── Stage 2: runtime ──
-FROM python:3.11-slim AS runtime
+FROM python:3.11.15-slim-trixie@sha256:6d85378d88a19cd4d76079817532d62232be95757cb45945a99fec8e8084b9c2 AS runtime
 ARG HERMES_REPO
 ARG HERMES_PINNED_SHA
 
@@ -116,8 +116,8 @@ assert conn.execute("SELECT count(*) FROM t WHERE t MATCH 'ello'").fetchone()[0]
 print("sqlite", sqlite3.sqlite_version, "with fts5+trigram: OK")
 SQLEOF
 
-# uv — fast Python package manager.
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+# uv (fast Python package manager), pinned via the versioned installer URL.
+RUN curl -LsSf https://astral.sh/uv/0.12.3/install.sh | sh \
     && mv /root/.local/bin/uv /usr/local/bin/uv \
     && mv /root/.local/bin/uvx /usr/local/bin/uvx
 
@@ -418,12 +418,12 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Ordo AI Stack: ship the push-through plugin (bundled location, opt-in via entrypoint
-# on first run) and the seeded SOUL.md. See docs/superpowers/specs/2026-04-21-hermes-push-through-design.md.
+# on first run) and the seeded SOUL.md.
 COPY --chown=hermes:hermes plugins/push-through/ /opt/hermes-agent/plugins/push-through/
 COPY --chown=hermes:hermes seed/SOUL.md /opt/ordo-seed/SOUL.md
 
 # Vault federation: two-way sync of SOUL/memories with the Obsidian vault
-# (spec: docs/superpowers/specs/2026-08-19-memory-stack-overhaul-design.md).
+# (introduced in #181; behavior in scripts/vault_federate.py's docstring).
 COPY --chown=hermes:hermes scripts/vault_federate.py /opt/ordo/vault_federate.py
 
 # Ordo AI Stack: ship the ops-router plugin alongside push-through. Exposes

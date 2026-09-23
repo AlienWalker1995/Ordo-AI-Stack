@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# Block MCP gateway containers from reaching private ranges
-# and cloud metadata. Reduces SSRF risk. See the "SSRF Defenses (MCP)"
-# section of docs/product requirements docs/security-and-trust-model.md.
+# Block containers on the stack network (ordo-net by default) from reaching private
+# ranges, the tailnet/CGNAT range and cloud metadata. Reduces SSRF risk from egress-capable
+# MCP servers. See the "SSRF Defenses (MCP)" section of
+# docs/product requirements docs/security-and-trust-model.md.
+#
+# WARNING: the default target is the whole ordo-net subnet, so the rules apply to EVERY
+# stack container on it, not only MCP servers (for example the agent's LAN and tailnet
+# access). Pass an explicit SUBNET to scope them more narrowly.
 #
 # Usage:
-#   ./scripts/ssrf-egress-block.sh                        # block MCP subnet (auto-detects ordo-net)
+#   ./scripts/ssrf-egress-block.sh                        # block the ordo-net subnet (auto-detected)
 #   ./scripts/ssrf-egress-block.sh --dry-run              # print commands only
 #   ./scripts/ssrf-egress-block.sh --remove               # remove rules
 #   ./scripts/ssrf-egress-block.sh 172.18.0.0/16          # explicit subnet override
@@ -104,14 +109,14 @@ remove_rules() {
 subnet=$(get_subnet)
 
 if [ -z "$subnet" ]; then
-  echo "Could not detect subnet for MCP gateway. Start the stack once (docker compose up -d), or pass an explicit SUBNET." >&2
+  echo "Could not detect the ordo-net subnet. Start the stack once (docker compose up -d), or pass an explicit SUBNET." >&2
   exit 1
 fi
 
 if [ "$REMOVE" = true ]; then
-  remove_rules "$subnet" "mcp"
+  remove_rules "$subnet" "ordo-net"
 else
-  apply_rules "$subnet" "mcp"
+  apply_rules "$subnet" "ordo-net"
 fi
 
 echo "Done. Verify: sudo iptables -L DOCKER-USER -n -v"
