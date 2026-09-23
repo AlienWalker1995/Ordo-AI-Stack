@@ -1,9 +1,7 @@
 # Plugin manifest (data-only) — the remote-access EDGE / front door: Caddy (TLS + reverse proxy)
-# + oauth2-proxy (Google SSO forward-auth). OPTIONAL, profile 'edge'. This is the ONE place V2
-# publishes a host port (Caddy :443) — every other service is reached THROUGH the edge. Because
-# it's opt-in behind its profile, it stays dormant during a beside-run and only comes up post-flip
-# (see CUTOVER.md), so it can't fight the live stack's edge. A local floor install skips this and
-# is localhost-only.
+# + oauth2-proxy (Google SSO forward-auth). OPTIONAL, profile 'edge'. This is the ONE place the
+# stack publishes a host port (Caddy :443): every other service is reached THROUGH the edge. A local
+# floor install skips this and is localhost-only.
 id: edge
 name: Edge (Caddy + oauth2-proxy, remote access)
 description: TLS front door + Google SSO forward-auth for remote (Tailscale) access. Opt-in.

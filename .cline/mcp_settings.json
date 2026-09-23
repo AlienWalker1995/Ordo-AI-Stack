@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "ordo-mcp": {
-      "url": "https://<tailnet-hostname>/mcp",
-      "headers": { "Authorization": "Bearer <LITELLM_KEY_EDGE from out/secrets.env>" },
-      "disabled": false
-    }
-  }
-}

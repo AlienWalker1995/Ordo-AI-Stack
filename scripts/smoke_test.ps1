@@ -40,7 +40,8 @@ function Check-Exec {
 Write-Host "==> Checking health endpoints (in-network)..."
 Check-Exec "dashboard" "dashboard" @("python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')")
 Check-Exec "model-gateway" "model-gateway" @("python3", "-c", "import os, urllib.request; req = urllib.request.Request('http://localhost:11435/v1/models', headers={'Authorization': 'Bearer ' + os.environ.get('LITELLM_MASTER_KEY', 'local')}); urllib.request.urlopen(req)")
-Check-Exec "mcp-gateway" "mcp-gateway" @("sh", "/mcp-scripts/healthcheck.sh")
+# MCP is served by model-gateway (LiteLLM /mcp); its server list must not be empty.
+Check-Exec "mcp (model-gateway)" "model-gateway" @("python3", "-c", "import json, os, urllib.request; req = urllib.request.Request('http://localhost:11435/v1/mcp/server', headers={'Authorization': 'Bearer ' + os.environ.get('LITELLM_MASTER_KEY', 'local')}); assert json.load(urllib.request.urlopen(req)), 'no MCP servers registered'")
 
 Write-Host "==> Service status"
 docker compose @ComposeArgs ps

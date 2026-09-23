@@ -55,7 +55,8 @@ check_exec "dashboard" dashboard python3 -c \
   "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')"
 check_exec "model-gateway" model-gateway python3 -c \
   "import os, urllib.request; req = urllib.request.Request('http://localhost:11435/v1/models', headers={'Authorization': 'Bearer ' + os.environ.get('LITELLM_MASTER_KEY', 'local')}); urllib.request.urlopen(req)"
-check_exec "mcp-gateway" mcp-gateway sh /mcp-scripts/healthcheck.sh
+# MCP is served by model-gateway (LiteLLM /mcp); its server list must not be empty.
+check_exec "mcp (model-gateway)" model-gateway python3 -c \n  "import json, os, urllib.request; req = urllib.request.Request('http://localhost:11435/v1/mcp/server', headers={'Authorization': 'Bearer ' + os.environ.get('LITELLM_MASTER_KEY', 'local')}); assert json.load(urllib.request.urlopen(req)), 'no MCP servers registered'"
 
 echo "==> Service status"
 docker compose "${COMPOSE_ARGS[@]}" ps
