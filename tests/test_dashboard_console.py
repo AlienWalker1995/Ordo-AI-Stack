@@ -182,6 +182,19 @@ def test_a_rejected_gpu_job_is_an_alert():
     assert items and "big-render" in items[0]["title"]
 
 
+def test_a_model_evicted_for_a_render_is_not_an_alert():
+    # While a render borrows the GPU the resident chat server is stopped on purpose: its probe
+    # fails and its container is down, and the page already says chat is on the CPU fallback.
+    cards = [{"id": "llamacpp", "ops_service": "llamacpp", "name": "llama.cpp (GPU)", "ok": False,
+              "error": "[Errno -2] Name or service not known"}]
+    rows = containers(llamacpp={"state": "exited", "status": "Exited (137) 5 seconds ago"})
+    items = console.build_attention(cards, rows, {"disk_pct": 10, "ram_pct": 10}, RENDERING)
+    assert items == []
+    # the same failure with no render holding the GPU is a real problem
+    items = console.build_attention(cards, rows, {"disk_pct": 10, "ram_pct": 10}, IDLE)
+    assert [i["title"] for i in items] == ["llama.cpp (GPU) is not responding"]
+
+
 # --- renders, media, activity ---
 
 HISTORY = {

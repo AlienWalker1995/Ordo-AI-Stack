@@ -155,6 +155,9 @@ def test_switch_goes_through_the_catalog_then_recreates_what_the_plan_names(live
         calls.append((method, path, json))
         if path == "/model-config":
             return 200, {"ok": True, "active_model": "turbo", "ctx_size": 106496}
+        # the control plane refuses a recreate that does not carry confirm (ordo/control.py)
+        if not (json or {}).get("confirm"):
+            return 400, {"error": "Destructive operation requires confirmation."}
         return 200, {"ok": True}
 
     with patch.object(routes_console, "_ops_call", side_effect=ops_call):

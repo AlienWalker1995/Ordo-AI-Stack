@@ -266,7 +266,9 @@ async def _switch(body: SwitchBody) -> dict:
     plan = console.switch_plan(model_config.get("ctx_size"), rendered.get("ctx_size"))
     recreated = []
     for service in plan["recreate"]:
-        rc, data = await _ops_call("POST", f"/services/{service}/recreate")
+        # The operator already confirmed the switch in the page; the control plane wants that
+        # confirmation carried on every destructive call.
+        rc, data = await _ops_call("POST", f"/services/{service}/recreate", {"confirm": True})
         if rc != 200:
             raise HTTPException(status_code=502, detail=f"recreating {service} failed: "
                                                         f"{data.get('error') or data.get('detail') or rc}")

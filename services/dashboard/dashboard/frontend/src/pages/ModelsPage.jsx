@@ -124,7 +124,7 @@ function Files({ files, onDeleted }) {
     }
   }
   return (
-    <div className="overflow-x-auto">
+    <div className="relative overflow-x-auto">
       <table className="w-full min-w-[560px] border-collapse">
         <thead>
           <tr className="text-left text-micro uppercase tracking-[0.08em] text-muted">

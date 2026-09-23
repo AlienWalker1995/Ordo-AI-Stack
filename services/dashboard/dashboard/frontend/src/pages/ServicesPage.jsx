@@ -66,32 +66,21 @@ function LogsDrawer({ service, onClose }) {
   )
 }
 
-function ActionMenu({ row, onAction, busy }) {
-  const detailsRef = useRef(null)
-  const run = (action) => {
-    detailsRef.current?.removeAttribute('open')
-    onAction(row, action)
-  }
+// State actions sit inline in a fixed-width slot so Logs lines up down the column. A dropdown
+// here would be clipped by the table's horizontal scroller.
+function StateActions({ row, onAction, busy }) {
   if (!row.compose) {
     return <span className="text-caption text-muted" title="This is a link and a health check, not one container">Link only</span>
   }
   if (!row.controllable) {
     return <span className="text-caption text-muted" title="The control plane will not restart the service that is serving it">Host only</span>
   }
-  const startable = row.actions.includes('start')
   return (
-    <div className="flex w-[4.5rem] items-center justify-end">
-      {startable && <button type="button" className={BTN} disabled={busy} onClick={() => run('start')}>Start</button>}
-      {!startable && (
-        <details ref={detailsRef} className="relative">
-          <summary className={BTN + ' list-none'} aria-label={`More actions for ${row.name}`}>More</summary>
-          <div className="absolute right-0 z-20 mt-1 grid min-w-[8rem] gap-1 rounded-sm border border-border bg-surface p-1 shadow-card-lg">
-            <button type="button" className={BTN + ' justify-start'} disabled={busy} onClick={() => run('restart')}>Restart</button>
-            <button type="button" className={BTN_DANGER + ' justify-start'} disabled={busy} onClick={() => run('stop')}>Stop</button>
-          </div>
-        </details>
-      )}
-    </div>
+    <>
+      {row.actions.includes('start') && <button type="button" className={BTN} disabled={busy} onClick={() => onAction(row, 'start')}>Start</button>}
+      {row.actions.includes('restart') && <button type="button" className={BTN} disabled={busy} onClick={() => onAction(row, 'restart')} aria-label={`Restart ${row.name}`}>Restart</button>}
+      {row.actions.includes('stop') && <button type="button" className={BTN_DANGER} disabled={busy} onClick={() => onAction(row, 'stop')} aria-label={`Stop ${row.name}`}>Stop</button>}
+    </>
   )
 }
 
@@ -123,8 +112,10 @@ function ServiceRow({ row, usage, onLogs, onAction, busy }) {
       <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted">{usage?.mem_gb != null ? `${usage.mem_gb.toFixed(1)} GB` : '—'}</td>
       <td className="whitespace-nowrap py-2 pl-2 pr-3">
         <div className="flex items-center justify-end gap-1.5">
-          {row.compose && <button type="button" className={BTN} onClick={() => onLogs(row)}>Logs</button>}
-          <ActionMenu row={row} onAction={onAction} busy={busy} />
+          {row.compose && <button type="button" className={BTN} onClick={() => onLogs(row)} aria-label={`Logs for ${row.name}`}>Logs</button>}
+          <div className="flex w-[8.5rem] items-center gap-1.5">
+            <StateActions row={row} onAction={onAction} busy={busy} />
+          </div>
         </div>
       </td>
     </tr>
@@ -144,8 +135,8 @@ function Group({ group, usageById, filter, onLogs, onAction, busyId }) {
         <span className="text-caption font-normal text-muted">{rows.length}</span>
         {problems > 0 && <Chip tone="danger">{problems} need attention</Chip>}
       </summary>
-      <div className="overflow-x-auto border-t border-border-subtle">
-        <table className="w-full min-w-[720px] border-collapse">
+      <div className="relative overflow-x-auto border-t border-border-subtle">
+        <table className="w-full min-w-[46rem] border-collapse">
           <thead>
             <tr className="text-left text-micro uppercase tracking-[0.08em] text-muted">
               <th className="w-[8.5rem] py-2 pl-3 pr-2 font-semibold">Status</th>
@@ -153,7 +144,7 @@ function Group({ group, usageById, filter, onLogs, onAction, busyId }) {
               <th className="w-[8rem] px-2 py-2 font-semibold">Up for</th>
               <th className="w-[6.5rem] px-2 py-2 text-right font-semibold">CPU</th>
               <th className="w-[6rem] px-2 py-2 text-right font-semibold">Memory</th>
-              <th className="w-[11rem] py-2 pl-2 pr-3"><span className="sr-only">Actions</span></th>
+              <th className="w-[13.5rem] py-2 pl-2 pr-3"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>

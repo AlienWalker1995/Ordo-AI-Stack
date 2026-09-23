@@ -194,10 +194,12 @@ def build_attention(cards: list[dict], containers_by_id: dict, hardware: dict,
                     status_gpu: dict | None) -> list[dict]:
     """What needs a person, most severe first. Finished jobs and stopped services are not
     problems; a failing health probe, an unhealthy or crashed container, a nearly full disk and
-    a rejected GPU job are."""
+    a rejected GPU job are. A chat model evicted so a render can borrow its GPU is stopped on
+    purpose, so its failing probe is not a problem either."""
     items: list[dict] = []
+    evicted = set((status_gpu or {}).get("evicted_residents") or {})
     for card in cards or []:
-        if card.get("ok") is False:
+        if card.get("ok") is False and (card.get("ops_service") or card.get("id")) not in evicted:
             items.append({"severity": "critical", "title": f"{card.get('name')} is not responding",
                           "detail": card.get("error") or "", "service": card.get("id")})
     for sid, row in sorted((containers_by_id or {}).items()):

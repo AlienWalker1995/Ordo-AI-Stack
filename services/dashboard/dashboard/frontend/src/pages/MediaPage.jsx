@@ -26,7 +26,7 @@ function OutputTile({ render, output }) {
     body = <video src={url} preload="metadata" muted controls className="aspect-square w-full rounded-sm bg-bg object-cover" aria-label={output.filename} />
   } else if (output.media === 'audio') {
     body = (
-      <div className="grid aspect-square w-full min-w-0 content-center gap-2 rounded-sm bg-bg p-2">
+      <div className="grid aspect-square w-full min-w-0 grid-cols-[minmax(0,1fr)] content-center gap-2 rounded-sm bg-bg p-2">
         <span className="text-center text-caption text-muted">Audio</span>
         <audio src={url} preload="none" controls className="w-full min-w-0 max-w-full" aria-label={output.filename} />
       </div>
@@ -35,7 +35,7 @@ function OutputTile({ render, output }) {
     body = <div className="grid aspect-square w-full place-content-center rounded-sm bg-bg text-caption text-muted">{output.media}</div>
   }
   return (
-    <figure className="grid min-w-0 gap-1">
+    <figure className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1">
       {body}
       <figcaption className="flex items-center justify-between gap-2 text-micro text-muted">
         <span className="truncate font-mono" title={output.filename}>{output.filename}</span>

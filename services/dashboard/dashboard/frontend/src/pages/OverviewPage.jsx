@@ -48,8 +48,15 @@ function GpuCard({ gpu }) {
   )
 }
 
+// Both chat servers share one time axis so their histories line up.
+function seriesDomain(series) {
+  const stamps = [...(series?.gpu || []), ...(series?.cpu || [])].map((p) => p[0])
+  return stamps.length ? [Math.min(...stamps), Math.max(...stamps)] : undefined
+}
+
 function ChatEngine({ chat, series }) {
   const onCpu = chat.engine === 'cpu'
+  const domain = seriesDomain(series)
   const headline = {
     gpu: 'Chat is on the GPU',
     cpu: 'Chat is on the CPU fallback',
@@ -75,7 +82,7 @@ function ChatEngine({ chat, series }) {
             </span>
             {series?.available === false
               ? <span className="text-caption text-muted">History needs the monitoring profile</span>
-              : <Sparkline points={s.points} tone={s.tone} label={`${s.label} tokens generated, last 24 hours`} />}
+              : <Sparkline points={s.points} tone={s.tone} domain={domain} label={`${s.label} tokens generated, last 24 hours`} />}
             <span className="text-micro text-muted">Output over the last 24 h</span>
           </div>
         ))}

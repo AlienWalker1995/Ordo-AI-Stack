@@ -90,7 +90,9 @@ export function Skeleton({ className = 'h-4 w-full' }) {
 }
 
 // Sparkline of [[epochSeconds, value], ...]: area fill, emphasised endpoint, scaled to its own max.
-export function Sparkline({ points, tone = 'accent', label, height = 32 }) {
+// `domain` ([startEpoch, endEpoch]) pins the time axis, so a series that began an hour ago is
+// drawn in the last hour of the window instead of stretched across all of it.
+export function Sparkline({ points, tone = 'accent', label, height = 32, domain }) {
   const stroke = { accent: 'text-accent', warning: 'text-warning', success: 'text-success' }[tone] || 'text-accent'
   if (!points || points.length < 2) {
     return <div className="flex items-end text-caption text-muted" style={{ height }}>No samples yet</div>
@@ -99,8 +101,8 @@ export function Sparkline({ points, tone = 'accent', label, height = 32 }) {
   const h = height
   const xs = points.map((p) => p[0])
   const ys = points.map((p) => p[1])
-  const x0 = Math.min(...xs)
-  const x1 = Math.max(...xs)
+  const x0 = domain ? domain[0] : Math.min(...xs)
+  const x1 = domain ? domain[1] : Math.max(...xs)
   const yMax = Math.max(...ys, 0.0001)
   const px = (t) => ((t - x0) / Math.max(1, x1 - x0)) * w
   const py = (v) => h - 2 - (v / yMax) * (h - 6)
@@ -108,7 +110,7 @@ export function Sparkline({ points, tone = 'accent', label, height = 32 }) {
   const last = points[points.length - 1]
   return (
     <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className={'block w-full ' + stroke} style={{ height }} role="img" aria-label={label}>
-      <path d={`${line} L${w} ${h} L0 ${h} Z`} fill="currentColor" opacity="0.14" />
+      <path d={`${line} L${px(last[0]).toFixed(1)} ${h} L${px(points[0][0]).toFixed(1)} ${h} Z`} fill="currentColor" opacity="0.14" />
       <path d={line} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
       <circle cx={px(last[0])} cy={py(last[1])} r="2.2" fill="currentColor" />
     </svg>
