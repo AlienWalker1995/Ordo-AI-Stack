@@ -17,9 +17,9 @@ env:
   SONG_GEN_ENABLED: "1"
 
 # --- backends -----------------------------------------------------------------------------
-# Data-only declaration of which song models this plugin can drive. Each entry names the
-# model-pack in scripts/comfyui/models.json that supplies its weights and the seeded workflow
-# that drives it, so "what is installed" and "what is declared" are the same list.
+# Data-only declaration of which song models this plugin can drive: the weight files each one
+# needs and the seeded workflow that drives it. Add a missing weight with the comfyui MCP tool
+# download_comfyui_model (url + category), using the pinned URL below.
 backends:
   - id: minimax-music3
     name: MiniMax Music3
@@ -29,7 +29,11 @@ backends:
     # COMFYUI_APP_REF to v0.33.1 (72865f4f) precisely so this backend is usable; do not
     # roll that pin back without dropping this backend.
     min_comfyui_version: "0.33.1"
-    model_pack: minimax-music3
+    # Pinned to the Comfy-Org repack revision: /resolve/main/ is a moving ref.
+    weights:
+      - {category: diffusion_models, url: "https://huggingface.co/Comfy-Org/MiniMax-Music-3/resolve/6444666eb6edfb2c7fcab5f8b81da8b84b4b17b6/diffusion_models/minimax_music3_dit_fp16.safetensors"}
+      - {category: text_encoders, url: "https://huggingface.co/Comfy-Org/MiniMax-Music-3/resolve/6444666eb6edfb2c7fcab5f8b81da8b84b4b17b6/text_encoders/minimax_music3_text_encoder_pruned_bf16.safetensors"}
+      - {category: vae, url: "https://huggingface.co/Comfy-Org/MiniMax-Music-3/resolve/6444666eb6edfb2c7fcab5f8b81da8b84b4b17b6/vae/minimax_music3_dav.safetensors"}
     workflow: scripts/comfyui/workflows/minimax-music3.json
     license: Apache-2.0
     notes: >-
@@ -39,6 +43,6 @@ backends:
     name: ACE-Step 1.5 XL SFT
     default: false
     min_comfyui_version: "0.30.0"
-    model_pack: null      # operator-supplied weights; not in the model-pack manifest
+    weights: null         # operator-supplied weights
     workflow: null        # driven from the operator's own user/default/workflows/audio graphs
     license: Apache-2.0

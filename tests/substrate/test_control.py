@@ -236,42 +236,18 @@ def test_models_download_status_initial(tmp_path):
     assert r[1]["done"] is True
 
 
-def test_models_packs(tmp_path):
+@pytest.mark.parametrize("method, path", [
+    ("GET", "/models/packs"),
+    ("POST", "/models/pull"),
+    ("GET", "/models/pull/status"),
+    ("POST", "/models/gguf-pull"),
+    ("GET", "/models/gguf-pull/status"),
+])
+def test_model_pack_pull_routes_are_gone(tmp_path, method, path):
+    # The V1 pack puller was never ported: these answered 404/501 forever while the agent saw them
+    # as working MCP tools. Per-file downloads (/models/download) are the one working path.
     cp, _ = _cp(tmp_path)
-    models_json = tmp_path / "models.json"
-    models_json.write_text(json.dumps({
-        "packs": {
-            "flux1-dev": {"description": "FLUX.1 dev model", "models": ["model.safetensors"]},
-            "sd15": {"description": "Stable Diffusion 1.5", "models": ["v1-5-pruned.ckpt"]},
-        }
-    }))
-    # Patch the path in the handler
-    import ordo.control as control_mod
-    original = control_mod.Path("/workspace/scripts/comfyui/models.json")
-    control_mod.Path = lambda p: models_json if p == "/workspace/scripts/comfyui/models.json" else original
-    try:
-        r = cp.route("GET", "/models/packs")
-        assert r[0] == 200
-        assert r[1]["ok"] is True
-        assert "flux1-dev" in r[1]["packs"]
-        assert r[1]["packs"]["flux1-dev"]["description"] == "FLUX.1 dev model"
-        assert r[1]["packs"]["flux1-dev"]["model_count"] == 1
-    finally:
-        control_mod.Path = Path
-
-
-def test_models_pull_not_implemented(tmp_path):
-    cp, _ = _cp(tmp_path)
-    r = cp.route("POST", "/models/pull", {"pack": "flux1-dev"})
-    assert r[0] == 501
-    assert "not available" in r[1]["error"]
-
-
-def test_models_gguf_pull_not_implemented(tmp_path):
-    cp, _ = _cp(tmp_path)
-    r = cp.route("POST", "/models/gguf-pull", {"repos": ["test"]})
-    assert r[0] == 501
-    assert "not available" in r[1]["error"]
+    assert cp.route(method, path, {})[0] == 404
 
 
 def test_env_allowlist_matches_ops_api():

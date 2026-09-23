@@ -155,10 +155,6 @@ class ControlPlane:
         # Slice 3: model download/pull state (in-process, not persisted)
         self._dl_lock = threading.Lock()
         self._dl_status = {"running": False, "output": "", "done": True, "success": None, "progress": 0, "filename": "", "category": ""}
-        self._pull_lock = threading.Lock()
-        self._pull_status = {"running": False, "output": "", "done": True, "success": None, "pack": ""}
-        self._gguf_pull_lock = threading.Lock()
-        self._gguf_pull_status = {"running": False, "output": "", "done": True, "success": None, "repos": ""}
         # The audit sink. ops-api owned the only writer, so a v2 controller that merely READS
         # /data/audit.jsonl would leave the dashboard's Audit tab frozen at the moment ops-api was
         # retired: every privileged verb would still happen, and none of them would be recorded.
@@ -712,43 +708,6 @@ class ControlPlane:
                 self._dl_status["running"] = False
                 self._dl_status["done"] = True
 
-    def models_packs(self) -> dict[str, Any]:
-        """List ComfyUI model pack IDs and descriptions."""
-        path = Path("/workspace/scripts/comfyui/models.json")
-        if not path.exists():
-            return self._error(404, "models.json not found in workspace")
-        try:
-            data = json.loads(path.read_text())
-        except json.JSONDecodeError as e:
-            return self._error(500, f"Invalid models.json: {e}")
-        packs_out = {}
-        for pid, p in data.get("packs", {}).items():
-            if not isinstance(p, dict):
-                continue
-            packs_out[pid] = {
-                "description": p.get("description", ""),
-                "model_count": len(p.get("models", [])),
-            }
-        return {"ok": True, "packs": packs_out}
-
-    def models_pull(self, body: dict[str, Any]) -> dict[str, Any]:
-        """501 — the V1 comfyui-model-puller service/profile was not ported to the render substrate."""
-        return self._error(501, "Pack pulls are not available: the V1 comfyui-model-puller was not ported to the render substrate. Use POST /models/download (in-process) for individual models.")
-
-    def models_pull_status(self) -> dict[str, Any]:
-        """Poll pack pull progress."""
-        with self._pull_lock:
-            return dict(self._pull_status)
-
-    def models_gguf_pull(self, body: dict[str, Any]) -> dict[str, Any]:
-        """501 — the V1 gguf-puller service/profile was not ported to the render substrate."""
-        return self._error(501, "GGUF pack pulls are not available: the V1 gguf-puller was not ported to the render substrate. Use POST /models/download (in-process) instead.")
-
-    def models_gguf_pull_status(self) -> dict[str, Any]:
-        """Poll GGUF pull progress."""
-        with self._gguf_pull_lock:
-            return dict(self._gguf_pull_status)
-
     # --- Slice 3: diagnostics routes ---
 
     def diagnostics_dstate(self) -> dict[str, Any]:
@@ -1162,16 +1121,6 @@ class ControlPlane:
             return self._as_response(self.models_download(body))
         if m == "GET" and path == "/models/download/status":
             return 200, self.models_download_status()
-        if m == "GET" and path == "/models/packs":
-            return 200, self.models_packs()
-        if m == "POST" and path == "/models/pull":
-            return self._as_response(self.models_pull(body))
-        if m == "GET" and path == "/models/pull/status":
-            return 200, self.models_pull_status()
-        if m == "POST" and path == "/models/gguf-pull":
-            return self._as_response(self.models_gguf_pull(body))
-        if m == "GET" and path == "/models/gguf-pull/status":
-            return 200, self.models_gguf_pull_status()
         # Slice 3: diagnostics routes
         if m == "GET" and path == "/diagnostics/dstate":
             return 200, self.diagnostics_dstate()
