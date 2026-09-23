@@ -6,13 +6,13 @@
 |-----------|--------|----------------------|
 | **M0** | Done | Audit schema, Docker healthchecks, log rotation, SECURITY.md, runbooks |
 | **M1** | Done | Model Gateway: OpenAI-compat, llama.cpp, streaming, embeddings, throughput |
-| **M2** | Done | Ops Controller: start/stop/restart/logs/pull/audit; dashboard calls controller; bearer auth |
+| **M2** | Done | Ops Controller: start/stop/restart/logs/pull/audit; dashboard calls controller |
 | **M3** | Done | MCP server registry + health API; cap_drop/read_only hardening; model list cache; Open WebUI → gateway default |
-| **M4** | Done | Single `ordo-net` Docker network (edge-only host-port publish); correlation IDs (X-Request-ID → audit); smoke tests |
-| **M5** | Done | Dashboard MCP health dots (green/yellow/red); SSRF egress scripts; hardware stats; throughput benchmark; default-model management |
+| **M4** | Done | Single `ordo-net` Docker network (edge-only host-port publish); correlation IDs (X-Request-ID forwarded dashboard → ops-controller); smoke tests |
+| **M5** | Done | Dashboard MCP health dots (green/yellow/red); SSRF egress scripts; hardware stats; throughput benchmark; model switch |
 | **M5-ext** | Done | RAG pipeline (Qdrant + rag-ingestion); Open WebUI → Qdrant; RAG status endpoint; Responses API + completions compat; cache-bust endpoint |
 | **M6** | Partial | **Done:** MCP servers backend-only on `ordo-mcp-net`; per-consumer MCP scoping via LiteLLM virtual keys; CI; audit log rotation. **Skipped:** `WEBUI_AUTH` default → True |
-| **M7** | Core done | **Done:** dependency registry + `GET /api/dependencies`; model-gateway `/health` + `/ready`; dashboard probes UI; `doctor`; CI fixture validation. **Remaining:** L3 semantics, retry/circuit policies, MCP hardening, golden traces, browser session lifecycle |
+| **M7** | Core done | **Done:** model-gateway `/health` + `/ready`; `ordo doctor`; CI fixture validation. **Remaining:** L3 semantics, retry/circuit policies, MCP hardening, golden traces, browser session lifecycle |
 
 ---
 
@@ -34,8 +34,8 @@
 
 **User-visible outcomes:**
 - Single `ordo-net` Docker network (edge-only host-port publish); llama.cpp/ops-controller reachable only in-network
-- Request IDs: `X-Request-ID` forwarded dashboard → ops-controller and stored in audit entries
-- Smoke tests: `tests/test_compose_smoke.py`
+- Request IDs: `X-Request-ID` forwarded dashboard → ops-controller (not yet recorded in audit entries)
+- Smoke tests: `scripts/smoke_test.sh` and `.ps1`
 
 ---
 
@@ -45,7 +45,7 @@
 - SSRF scripts: `scripts/ssrf-egress-block.sh` and `.ps1`
 - Hardware stats: `GET /api/hardware`
 - Throughput benchmark: `POST /api/throughput/benchmark`
-- Default model management: `GET/POST /api/config/default-model`
+- Model switch: `POST /api/models/switch` (catalog id → ops-controller render → recreate `llamacpp` + `model-gateway`)
 
 ## M5-ext — RAG + APIs (Done)
 
@@ -65,7 +65,7 @@
 | MCP servers → backend only | `ordo-mcp-net` (`internal: true`), reachable only by `model-gateway`; no host port published (edge-only publish model) |
 | Per-consumer MCP scoping | LiteLLM virtual-key `object_permission.mcp_servers` grants with `require_key_mcp_access_defined: true` |
 | CI pipeline | `.github/workflows/ci.yml` |
-| Audit log rotation | `ops-api`: `AUDIT_LOG_MAX_BYTES` (default 10MB) |
+| Audit log rotation | ops-controller `ordo/audit.py`: rotates at 50 MB |
 
 ### Still Open / Deferred
 

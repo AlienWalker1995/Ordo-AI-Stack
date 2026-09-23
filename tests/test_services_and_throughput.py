@@ -300,9 +300,9 @@ def test_throughput_stats_distinguishes_unconfigured_from_unreachable(client, mo
 
 
 def test_throughput_record_accepts_alias_and_backend(client):
-    """v2 payload: the gateway callback attributes samples to the REAL served GGUF and
-    passes the requested alias + backend service alongside. Old senders (no alias/backend)
-    must keep working — both fields optional."""
+    """v2 payload: the gateway callback attributes samples to the REAL served GGUF and also
+    sends the requested alias + backend. They must still be accepted (the sender is unchanged);
+    the sample is attributed to the GGUF."""
     r = client.post("/api/throughput/record", json={
         "model": "Attrib-Test-Q6_K.gguf",
         "output_tokens_per_sec": 41.0,
@@ -313,12 +313,6 @@ def test_throughput_record_accepts_alias_and_backend(client):
     assert r.status_code == 200 and r.json()["ok"] is True
     stats = client.get("/api/throughput/stats").json()
     assert "Attrib-Test-Q6_K.gguf" in stats["models"]
-    import dashboard.app as dashboard_app
-    with dashboard_app._state_lock:
-        evt = next(u for u in reversed(dashboard_app._service_usage)
-                   if u["model"] == "Attrib-Test-Q6_K.gguf")
-    assert evt["alias"] == "local-chat"
-    assert evt["backend"] == "llamacpp"
 
 
 def test_throughput_samples_evict_after_max_age(client):
@@ -353,7 +347,6 @@ def test_throughput_store_v1_file_triggers_clean_reset(tmp_path, monkeypatch):
     monkeypatch.setattr(dashboard_app, "_THROUGHPUT_FILE", f)
     monkeypatch.setattr(dashboard_app, "_throughput_samples", {})
     monkeypatch.setattr(dashboard_app, "_ttft_samples", {})
-    monkeypatch.setattr(dashboard_app, "_service_usage", [])
     monkeypatch.setattr(dashboard_app, "_last_benchmark", None)
     dashboard_app._load_throughput_state()
     assert dashboard_app._throughput_samples == {}
@@ -374,39 +367,6 @@ def test_throughput_store_v2_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setattr(dashboard_app, "_throughput_samples", {})
     dashboard_app._load_throughput_state()
     assert dashboard_app._throughput_samples == {"M.gguf": [sample]}
-
-
-def test_performance_summary_sorts_by_recency(client):
-    """top_models orders by last_ts desc — a retired model with a huge lifetime
-    sample_count must not outrank the model serving right now."""
-    import dashboard.app as dashboard_app
-    for _ in range(5):
-        client.post("/api/throughput/record", json={
-            "model": "old-but-many.gguf", "output_tokens_per_sec": 10.0})
-    with dashboard_app._state_lock:
-        for s in dashboard_app._throughput_samples["old-but-many.gguf"]:
-            s["ts"] -= 3600
-    client.post("/api/throughput/record", json={
-        "model": "fresh.gguf", "output_tokens_per_sec": 50.0})
-    top = client.get("/api/performance/summary").json()["throughput"]["top_models"]
-    names = [t["model"] for t in top]
-    assert names.index("fresh.gguf") < names.index("old-but-many.gguf")
-    assert all("last_ts" in t for t in top)
-
-
-# ── /api/throughput/service-usage ────────────────────────────────────────────
-
-def test_throughput_service_usage_returns_by_model(client):
-    client.post("/api/throughput/record", json={
-        "model": "usage-test",
-        "output_tokens_per_sec": 20.0,
-        "service": "open-webui",
-    })
-    r = client.get("/api/throughput/service-usage")
-    assert r.status_code == 200
-    data = r.json()
-    assert data["ok"] is True
-    assert "by_model" in data
 
 
 # ── /api/auth/config ─────────────────────────────────────────────────────────

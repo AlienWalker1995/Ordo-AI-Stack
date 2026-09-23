@@ -428,8 +428,7 @@ COPY --chown=hermes:hermes scripts/vault_federate.py /opt/ordo/vault_federate.py
 
 # Ordo AI Stack: ship the ops-router plugin alongside push-through. Exposes
 # ops-controller verbs (list_containers / container_logs / restart_container)
-# as first-class tools so the model never tries `terminal: docker ...` (which
-# fails — Plan C removed the docker.sock mount). Co-locate the canonical
+# as first-class tools, the audited control-plane path for Ordo services. Co-locate the canonical
 # ops_client.py inside the plugin dir so the plugin can `from .ops_client import OpsClient`.
 COPY --chown=hermes:hermes plugins/ops-router/ /opt/hermes-agent/plugins/ops-router/
 COPY --chown=hermes:hermes ops_client.py /opt/hermes-agent/plugins/ops-router/ops_client.py

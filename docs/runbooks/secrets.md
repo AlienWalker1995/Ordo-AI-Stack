@@ -11,8 +11,11 @@
   - **File-form** → `~/.ai-toolkit/runtime/secrets/<name>`, mounted into
     containers as Docker secrets (`/run/secrets/<name>`), so they never
     appear in `docker inspect`.
-- `~/.ai-toolkit/runtime/secrets/` is **outside** the container mounts, so
-  a prompt-injected agent cannot read file-form tokens. `out/secrets.env`
+- `~/.ai-toolkit/runtime/secrets/` is **outside** the container bind mounts,
+  so file-form tokens are not readable as plain files from inside a
+  container. This is not a hard boundary for Hermes: the `agent` service
+  mounts `/var/run/docker.sock` (see
+  [bounded-hermes.md](bounded-hermes.md)). `out/secrets.env`
   **is** inside the repo working tree the `agent` container mounts — treat
   it with the same care as any working-copy file.
 
@@ -33,14 +36,14 @@
   `<NAME>` env var — so the app reads the token from its environment and
   never needs a plaintext secret in `.env`.
 
-**`ops-api` recreates carry secrets forward.** Because the `ops-api`
-container loads `out/secrets.env` as an `env_file`, its process already
-holds the real values and passes them through to the compose subprocess it
-spawns (`_compose_env` in `services/ops-api/main.py`). So a
-secret-dependent service it recreates (oauth2-proxy, caddy, searxng, n8n,
-dashboard, model-gateway) comes up with real values rather than
-crash-looping on placeholders. `ops-api` never holds the age key —
-decrypting `.sops` blobs stays a host-only operation.
+**`ops-controller` recreates carry secrets forward.** `ops-controller`
+mounts `out/` at `/config`, and every compose call it makes passes both
+`--env-file /config/.env` and `--env-file /config/secrets.env`
+(`DockerBackend._compose` in `ordo/broker.py`). So a secret-dependent
+service it recreates (oauth2-proxy, caddy, searxng, n8n, dashboard,
+model-gateway) comes up with real values rather than crash-looping on
+placeholders. `ops-controller` never holds the age key: decrypting `.sops`
+blobs stays a host-only operation.
 
 > **Never paste secrets or the age key into chat, a log, or an issue, and
 > never "fix" a secret-stripped service by writing placeholder values into

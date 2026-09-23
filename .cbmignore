@@ -7,7 +7,6 @@
 # Secrets / credentials
 .env
 .env.*
-!.env.example
 *.sops
 *.sops.*
 secrets/
@@ -20,7 +19,6 @@ id_ed25519
 
 # Runtime / operator state (gitignored, not source)
 data/
-overrides/
 
 # Large / generated / non-source
 models/

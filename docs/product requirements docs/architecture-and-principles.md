@@ -69,22 +69,22 @@ codebase-memory nginx rewrites).
 │  └──────────────────────────┘              └──────────────────────────────┘    │
 │                                                                                │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐                  │
-│  │ llama.cpp :8080 │  │ ops-api :9000   │  │ Qdrant :6333 │                  │
-│  │ (no host port)  │  │ docker.sock     │  │ vector DB    │                  │
-│  │ LLM inference   │  │ bearer auth     │  │ RAG backend  │                  │
+│  │ llama.cpp :8080 │  │ ops-controller  │  │ Qdrant :6333 │                  │
+│  │ (no host port)  │  │ :9000 scheduler │  │ vector DB    │                  │
+│  │ LLM inference   │  │ lifecycle API   │  │ RAG backend  │                  │
 │  │ GPU via         │  │ audit log       │  └──────────────┘                  │
-│  │ render engine   │  ├─────────────────┤                                     │
-│  │                 │  │ ops-controller  │                                     │
-│  │                 │  │ :9000 scheduler │                                     │
-│  │                 │  │ (no auth, no    │                                     │
-│  │                 │  │  docker verbs)  │                                     │
+│  │ render engine   │  │ docker.sock     │                                     │
+│  │                 │  │ (project-scoped)│                                     │
+│  │                 │  │ model switch    │                                     │
+│  │                 │  │                 │                                     │
+│  │                 │  │                 │                                     │
 │  └─────────────────┘  └─────────────────┘                                     │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐                  │
 │  │ Dashboard :8080 │  │ RAG Ingest      │  │ ComfyUI :8188│                  │
 │  │ no docker.sock  │  │ --profile rag   │  │              │                  │
 │  │ auth: edge SSO  │  │ watches         │  │              │                  │
 │  │ → ops ctrl API  │  │ data/rag-input/ │  │              │                  │
-│  │ MCP tab reads   │  │                 │  │              │                  │
+│  │ Settings reads  │  │                 │  │              │                  │
 │  │ out/mcp/        │  │                 │  │              │                  │
 │  │ servers.json    │  │                 │  │              │                  │
 │  └─────────────────┘  └─────────────────┘  └──────────────┘                  │
@@ -110,9 +110,8 @@ codebase-memory nginx rewrites).
 - **litellm-db** `:5432` (internal): Postgres holding LiteLLM's virtual keys, teams and spend. Models and MCP servers stay in the rendered config (`STORE_MODEL_IN_DB=False`); chat keeps working when the DB is down (`allow_requests_on_db_unavailable`).
 - **model-gateway-keys** (one-shot): Bootstraps the per-consumer virtual keys and their model/MCP grants from `out/model-gateway/keys.json`; idempotent, and the agent waits on it (`service_completed_successfully`).
 - **MCP servers** (`mcp-<server_id>`): One long-lived compose service per enabled `kind: mcp` plugin, `transport: http`, on the internal `ordo-mcp-net`. Images are digest-pinned or built from a repo build context; no `env_file` (only the manifest's own `env:` / `secrets:`), `no-new-privileges`, 1 CPU / 2 GB, healthchecked, labelled `ordo.mcp=true` / `ordo.mcp.server_id`. No container in the tool path mounts `docker.sock`.
-- **Ops API** `:9000` (internal) — Authenticated REST (Bearer); start/stop/restart/logs/pull; append-only JSONL audit log; docker.sock access with allowlisted operations only. This is the audited, bearer-gated control plane the dashboard calls for lifecycle actions.
-- **Ops Controller** `:9000` (internal) — The `ordo serve` GPU-lease scheduler; no host port and deliberately **no auth and no container-lifecycle verbs**. It holds a `<project>-*`-scoped docker.sock only to start/stop the render/broker containers it schedules — it does not expose the start/stop/restart/logs/pull API (that is Ops API).
-- **Dashboard** internal `:8080` (no host port of its own; published to the tailnet by Caddy on its own dedicated port, `${CADDY_TAILNET_HOSTNAME}:8444`, behind oauth2-proxy / Google SSO; Grafana rides the same port at `/grafana/`) — No docker.sock; calls controller for ops; model inventory + default-model management; MCP tool management + health badges; throughput stats + benchmark; hardware stats; RAG status. Auth: the Caddy edge (oauth2-proxy / Google SSO) is the sole auth gate; no per-service dashboard token is set in this deployment. The dashboard app code retains an optional, dormant Bearer capability (`DASHBOARD_AUTH_TOKEN` + trusted-proxy header trust) that is unused here — edge SSO is the auth model, not a fallback to rely on.
+- **Ops Controller** `:9000` (internal): `ordo serve` (`ordo/control.py`). GPU-lease scheduler, drift-safe model switch (`POST /model-config` rewrites `ordo.yaml` and re-renders), and the compose-lifecycle API the dashboard and agent call (start/stop/restart/recreate/logs/image pull), with an append-only JSONL audit log. No host port; it does not verify callers' Bearer token. Its docker.sock access is scoped to `<project>-*` containers by the `DockerBackend` guard. See [Ops Controller](component-ops-controller.md).
+- **Dashboard** internal `:8080` (no host port of its own; published to the tailnet by Caddy on its own dedicated port, `${CADDY_TAILNET_HOSTNAME}:8444`, behind oauth2-proxy / Google SSO; Grafana rides the same port at `/grafana/`), No docker.sock; calls ops-controller for lifecycle actions and model switches. Five pages (Overview, Services, Models, Media, Performance, the last embedding Grafana), a Settings drawer (MCP servers + health badges, ComfyUI custom-node requirements) and a Ctrl/Cmd K command palette. Auth: the Caddy edge (oauth2-proxy / Google SSO) is the sole auth gate; no per-service dashboard token is set in this deployment. The dashboard app code retains an optional, dormant Bearer capability (`DASHBOARD_AUTH_TOKEN` + trusted-proxy header trust) that is unused here, edge SSO is the auth model, not a fallback to rely on.
 - **llama.cpp** `:8080` — LLM inference; backend-only (no host port); GPU pinning resolved by the render engine (`hardware: auto` / `ordo detect`) into `out/`.
 - **Qdrant** `:6333` — Vector database; backend-only; used by Open WebUI for RAG and by `rag-ingestion` service.
 - **RAG Ingestion** — Watch-mode document ingester (`--profile rag`); reads `data/rag-input/`; chunks and embeds via model gateway; stores in Qdrant.
@@ -128,11 +127,11 @@ Model request:    Client → Caddy :443/llm/* (bearer key) → Model Gateway (X-
 
 Tool call:        Client → Caddy :443/mcp (LiteLLM key) → Model Gateway /mcp (key MCP grant check) → mcp-<server> on ordo-mcp-net
 
-Ops action:       Dashboard → Ops API (Bearer auth) → Docker socket
+Ops action:       Dashboard → Ops Controller → Docker socket (project-scoped)
                                       ↓ audit event
                               data/ops-controller/audit.log
 
-Audit query:      Dashboard → GET /audit (auth) → Ops API reads JSONL
+Audit query:      GET /audit on Ops Controller → reads JSONL
 
 UI request:       Browser → Caddy :<service-port> (Google SSO, domain-scoped
                    session) → service container, served at its own root
@@ -144,7 +143,7 @@ UI request:       Browser → Caddy :<service-port> (Google SSO, domain-scoped
 |------|--------|----------|
 | **G1: Any service → any model** | Done | Gateway `:11435` fronting llama.cpp; streaming, embeddings, tool-calling, Responses API. Open WebUI uses `OPENAI_API_BASE_URL` → gateway. Hermes and other clients route via the same `/v1` surface. |
 | **G2: Shared tools with health** | Done | LiteLLM MCP gateway on `model-gateway` aggregating the `mcp-*` services; `GET /api/mcp/health` reads `/v1/mcp/server/health` + `tools/list` `server_outcomes`; dashboard health badges. |
-| **G3: Dashboard as control center** | Done | Ops API: start/stop/restart/logs/pull; no host port; bearer auth. Hardware stats, throughput benchmark, default-model management, RAG status. |
+| **G3: Dashboard as control center** | Done | Ops Controller lifecycle API: start/stop/restart/recreate/logs/pull; no host port. Model switch from the Models page. Hardware stats, throughput benchmark, RAG status. |
 | **G4: Security + auditing** | Done | Audit JSONL. Dashboard auth is the Caddy edge (oauth2-proxy / Google SSO); no per-service dashboard token in this deployment (app code retains a dormant, unused optional Bearer capability). `SECURITY.md` + threat table. SSRF scripts. |
 | **G5: Docker best practices** | Done | `cap_drop: [ALL]`, `security_opt`, `read_only`, `tmpfs`, log rotation, resource limits, healthchecks, explicit named networks on all custom services. |
 | **G6: RAG pipeline** | Done | Qdrant vector DB. `rag-ingestion` service. Open WebUI connected to Qdrant. `GET /api/rag/status` in dashboard. |
@@ -255,7 +254,7 @@ ordo-ai-stack/
 ├── services/            # Every stack service, self-contained under services/<id>/: its render
 │                        #   manifest (plugin.yaml / agent.yaml / dashboard.yaml) co-located with
 │                        #   its build context (Dockerfile + sources). One dir per service, e.g.:
-│   ├── v1-parity/dashboard/  # Ops dashboard — FastAPI backend + React/Vite SPA (frontend/)
+│   ├── dashboard/       # Ops dashboard: dashboard.yaml + dashboard/ (FastAPI backend + React/Vite SPA in frontend/)
 │   ├── rag/             # Document ingester (Dockerfile, ingest.py)
 │   ├── orchestration/   # Orchestration MCP server
 │   ├── comfyui-mcp/     # ComfyUI MCP server
@@ -263,7 +262,7 @@ ordo-ai-stack/
 │   ├── codebase-memory/ # Headless codebase-memory MCP
 │   ├── codebase-memory-ui/  # Codebase-memory 3D graph UI service
 │   ├── hermes/          # Hermes agent build context (Dockerfile, entrypoint.sh, plugins/, seed/) + its agent.yaml manifest
-│   └── …                # edge, model-gateway, memory-vault, n8n, searxng, monitoring, voice, native, …
+│   └── …                # edge, model-gateway, memory-vault, n8n, searxng, monitoring, voice, …
 ├── ordo/                # Render substrate (Python package): `ordo render`, `ordo detect`, etc.
 ├── catalog/             # Curated model catalog (models.yaml)
 ├── auth/                # Edge auth: auth/caddy (Caddyfile), auth/oauth2-proxy (SSO allowlist)
@@ -272,8 +271,7 @@ ordo-ai-stack/
 ├── monitoring/          # Grafana + Prometheus config (monitoring plugin)
 ├── scripts/             # llamacpp runtime assets, secrets flow, smoke tests, cron-run monitors
 ├── tests/               # Contract + smoke tests; render-substrate tests under tests/substrate/
-├── product requirements docs/  # This documentation
-├── docs/                # Getting started, runbooks; docs/operator-guide.md is the authoritative operating guide
+├── docs/                # Getting started, runbooks, docs/product requirements docs/ (this documentation); docs/operator-guide.md is the authoritative operating guide
 ├── data/                # gitignored, runtime data
 │   │                    # (no data/mcp/: MCP config renders into out/mcp/servers.json)
 │   ├── ops-controller/  # audit.log

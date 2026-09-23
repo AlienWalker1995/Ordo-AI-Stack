@@ -32,5 +32,4 @@ reports a missing one as "build from services/llamacpp-patched", not "Docker wil
 (An old `launch.txt` flag snapshot was removed 2026-08-05: it predated the render substrate
 and contradicted the live config on every distinguishing flag — `-c 196608` vs the deployed
 131072, an MTP `--spec-type` the flag builder strips as inert, a model no longer in the
-catalog. The launch surface is owned by `catalog/models.yaml` + `services/ops-api/llamacpp_flags.py`
-+ `scripts/llamacpp/run-llama-server.sh`; tuning rationale belongs in the catalog entry comments.)
+catalog. The launch surface is owned by `catalog/models.yaml` + `scripts/llamacpp/run-llama-server.sh`; tuning rationale belongs in the catalog entry comments.)

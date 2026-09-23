@@ -21,21 +21,21 @@ A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`
 |-----------|--------|-----------|
 | OpenAI-compat model gateway (llama.cpp) | Live | `services/model-gateway/` |
 | Model list TTL cache + cache-bust endpoint | Live | `services/model-gateway/` |
-| `X-Request-ID` correlation end-to-end | Live | `services/model-gateway/`, `services/v1-parity/dashboard/app.py`, `ordo/` (`ordo serve`) |
+| `X-Request-ID` forwarded by the dashboard to ops-controller | Partial (ops-controller does not record it yet) | `services/dashboard/dashboard/app.py`, `services/dashboard/dashboard/routes_orchestration.py` |
 | Responses API (`/v1/responses`) | Live | `services/model-gateway/` |
 | Completions compat (`/v1/completions`) | Live | `services/model-gateway/` |
 | MCP tool aggregation on the model gateway | Live | `services/model-gateway/`, `ordo/compose.py::_mcp_service`, `out/docker-compose.yml` |
 | MCP server manifests (`kind: mcp`) rendered to LiteLLM + dashboard | Live | `services/*/plugin.yaml`, `out/model-gateway/mcp_servers.yaml`, `out/mcp/servers.json` |
-| MCP health endpoint + UI badges | Live | `services/v1-parity/dashboard/app.py` |
-| Ops API — container lifecycle (start/stop/restart/logs/pull) | Live | `services/ops-api/main.py` |
-| Append-only JSONL audit log | Live | `services/ops-api/main.py`, `services/ops-api/audit.py` |
-| Dashboard auth via Caddy edge SSO (oauth2-proxy + Google + allowlist); optional dormant per-service Bearer token in code, unused in deployment | Live | `services/v1-parity/dashboard/app.py` |
-| Dashboard throughput stats + benchmark | Live | `services/v1-parity/dashboard/app.py` |
-| Dashboard hardware stats | Live | `services/v1-parity/dashboard/app.py` |
-| Dashboard default-model management | Live | `services/v1-parity/dashboard/app.py` |
+| MCP health endpoint + UI badges (Settings drawer) | Live | `services/dashboard/dashboard/app.py` |
+| Container lifecycle API (start/stop/restart/recreate/logs/pull) | Live | `ordo/control.py`, `ordo/broker.py` |
+| Append-only JSONL audit log | Live | `ordo/audit.py`, `ordo/control.py` |
+| Dashboard auth via Caddy edge SSO (oauth2-proxy + Google + allowlist); optional dormant per-service Bearer token in code, unused in deployment | Live | `services/dashboard/dashboard/app.py` |
+| Dashboard throughput stats + benchmark | Live | `services/dashboard/dashboard/app.py` |
+| Dashboard hardware stats | Live | `services/dashboard/dashboard/app.py` |
+| Dashboard model switch (catalog id -> render -> recreate llama.cpp + model-gateway) | Live | `services/dashboard/dashboard/routes_console.py`, `ordo/control.py` |
 | RAG pipeline (Qdrant + rag-ingestion) | Live | `services/rag/`, `out/docker-compose.yml` |
 | Open WebUI → Qdrant vector DB | Live | `out/docker-compose.yml` |
-| RAG status endpoint | Live | `services/v1-parity/dashboard/app.py` |
+| RAG status endpoint | Live | `services/dashboard/dashboard/app.py` |
 | Docker hardening (cap_drop, read_only, networks) | Live | `out/docker-compose.yml` |
 | Single `ordo-net` Docker network (edge-only host-port publish) | Live | `out/docker-compose.yml` |
 | llama.cpp backend-only (no host port) | Live | `out/docker-compose.yml` |
@@ -47,7 +47,7 @@ A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`
 
 | Risk | Severity | Status |
 |------|----------|--------|
-| `docker.sock` only in the control plane (`ops-controller` and the dashboard's `ops-api` backend) | High | Accepted, mitigated by allowlist + auth + no host port; the MCP tool path no longer touches the socket |
+| `docker.sock` only in the control plane (`ops-controller`) and the Hermes agent | High | Accepted, mitigated by the project-prefix guard, confirm-gated verbs and no host port; the MCP tool path no longer touches the socket |
 | `WEBUI_AUTH` still defaults to `False` | Medium | Tracked — change to `True` in M6 |
 | Per-tool `allowed_tools` narrowing unused | Low | Schema supports it; per-consumer scoping is already enforced by LiteLLM virtual-key MCP grants |
 | Rendered compose validated in CI | Low | Done — `.github/workflows/ci.yml` has `secret-scan`, `pytest` (incl. ruff), and `substrate` jobs on push/PR; `substrate` runs `docker compose config` against the rendered output (path-filtered, no separate `compose-smoke` job) |
@@ -67,11 +67,11 @@ See [Reliability & Service Contracts](reliability-and-contracts.md) for full det
 
 - [Architecture & Principles](architecture-and-principles.md) – System architecture, product principles, data flows, network assignments.
 - [Model Gateway](component-model-gateway.md) – Unified model routing and provider-facing API keys (llama.cpp / OpenAI-compatible surface).
-- [Ops Controller](component-ops-controller.md) – Secure Docker Compose control plane (token-auth lifecycle API, internal port 9000).
+- [Ops Controller](component-ops-controller.md) – Docker Compose control plane: GPU scheduler, model switch, lifecycle API (internal port 9000).
 - [MCP & Tool Aggregation](component-mcp-gateway.md) – One `/mcp` endpoint on the model gateway; the `mcp-*` servers behind it, scoped per LiteLLM key.
 - [RAG Pipeline](component-rag-pipeline.md) – Qdrant vector search + document ingestion.
 - [Orchestration Layer](component-orchestration-layer.md) – Multi-service workflow coordination (target architecture; implementation evolves with the repo).
-- [Dashboard UI](component-dashboard-ui.md) – Ops dashboard (Compose, models, workspace, MCP explorer).
+- [Dashboard UI](component-dashboard-ui.md) – Ops dashboard: Overview, Services, Models, Media and Performance pages, Settings drawer.
 - [Security & Trust Model](security-and-trust-model.md) – Threat model, auth tiers, SSRF, secret handling.
 - [Reliability & Contracts](reliability-and-contracts.md) – Service contracts, health depth, circuit breakers, observability.
 - [Milestones & Roadmap](milestones-and-roadmap.md) – M0–M7 milestone tracking, PR slices, acceptance criteria.

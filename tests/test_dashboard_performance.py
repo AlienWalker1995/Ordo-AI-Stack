@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
-
 from fastapi.testclient import TestClient
 
 
-def test_throughput_record_persists_ttft_in_summary():
+def test_throughput_record_persists_ttft_in_stats():
     import dashboard.app as dashboard_app
 
     with dashboard_app._state_lock:
         dashboard_app._throughput_samples.clear()
         dashboard_app._ttft_samples.clear()
-        dashboard_app._service_usage.clear()
         dashboard_app._last_benchmark = None
 
     client = TestClient(dashboard_app.app)
@@ -26,13 +23,8 @@ def test_throughput_record_persists_ttft_in_summary():
     )
     assert record.status_code == 200
 
-    with patch.object(dashboard_app, "_AUTH_REQUIRED", False), \
-         patch.object(dashboard_app, "rag_status", AsyncMock(return_value={"ok": True, "documents": 0})):
-        summary = client.get("/api/performance/summary")
-
-    assert summary.status_code == 200
-    body = summary.json()
-    top = body["throughput"]["top_models"][0]
-    assert top["model"] == "qwen3-14b.gguf:chat"
-    assert top["latest_ttft_ms"] == 180.0
-    assert top["p95_ttft_ms"] == 180.0
+    stats = client.get("/api/throughput/stats")
+    assert stats.status_code == 200
+    model = stats.json()["models"]["qwen3-14b.gguf:chat"]
+    assert model["ttft_p50_ms"] == 180.0
+    assert model["ttft_p95_ms"] == 180.0

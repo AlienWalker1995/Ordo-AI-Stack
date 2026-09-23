@@ -1,63 +1,20 @@
-"""SQLite-backed job store, publish outbox, workflow versions, and schedules.
+"""SQLite-backed workflow version store (save, list, diff, promote, roll back).
 
-Replaces the old in-memory + single-JSON approach (the orchestration_jobs.py compat shim was removed 2026-07-24 — import from this module directly).
+The media worker's job queue, publish outbox and schedules lived here too until that worker was
+retired (2026-07-31); DB files created before then still hold those tables, unused.
 
-Journal mode is DELETE (a plain rollback journal), NOT WAL. This DB lives on a
-9p/Windows Docker bind mount and is opened by both the dashboard and the worker;
-WAL's shared-memory `-shm` mmap is unreliable there ("disk I/O error") and a stale
-`-shm` from an abruptly-replaced container gets stuck busy and crash-loops the whole
-control plane. See `_connect` for the full rationale. Concurrency is a single worker
-writer + dashboard readers over a small, transient store — DELETE mode is safe here.
+Journal mode is DELETE (a plain rollback journal), NOT WAL: this DB lives on a 9p/Windows
+Docker bind mount, where WAL's shared-memory `-shm` mmap is unreliable ("disk I/O error") and a
+stale `-shm` from an abruptly-replaced container gets stuck busy. See `_connect`.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
-import uuid
-from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from enum import StrEnum
 from pathlib import Path
 from typing import Any
-
-
-class JobState(StrEnum):
-    queued = "queued"
-    validated = "validated"
-    running = "running"
-    artifact_ready = "artifact_ready"
-    publish_enqueued = "publish_enqueued"
-    published = "published"
-    failed = "failed"
-    cancelling = "cancelling"
-    cancelled = "cancelled"
-
-
-@dataclass
-class OrchestrationJob:
-    job_id: str
-    state: JobState
-    created_at: str
-    updated_at: str
-    template_id: str | None = None
-    workflow_id: str | None = None
-    prompt_id: str | None = None
-    error: str | None = None
-    outputs: dict[str, Any] | None = None
-    publish_webhook: str | None = None
-    publish_status: str | None = None
-    params_json: str | None = None
-    compiled_workflow: str | None = None
-    retry_count: int = 0
-    scheduled_at: str | None = None
-    extra: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        d = asdict(self)
-        d["state"] = self.state.value
-        return d
 
 
 def _now_iso() -> str:
@@ -70,18 +27,17 @@ def _db_path(data_dir: Path) -> Path:
     # `.sqlite3`, not the old `.db`: a stale WAL `-shm` mmap on the 9p bind mount can get
     # wedged busy (undeletable until a Docker restart) and disk-I/O-error the old file. A
     # fresh filename side-steps the wedged orphan; combined with DELETE journal mode above,
-    # no `-shm` is ever created again so this can't recur. (Job store is transient.)
+    # no `-shm` is ever created again so this can't recur.
     return d / "orchestration.sqlite3"
 
 
 def _connect(data_dir: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(_db_path(data_dir)), timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    # Rollback journal, NOT WAL. This db lives on a 9p/Windows Docker bind mount AND is
-    # opened by BOTH the dashboard and the worker; WAL's shared-memory (-shm) mmap is
-    # unreliable there ("disk I/O error"), and a stale -shm from an abruptly-replaced
-    # container gets stuck busy and crash-loops the whole control plane. DELETE mode uses
-    # a plain -journal (no mmap), which is 9p-safe and fine for this small transient store.
+    # Rollback journal, NOT WAL. This db lives on a 9p/Windows Docker bind mount, where WAL's
+    # shared-memory (-shm) mmap is unreliable ("disk I/O error") and a stale -shm from an
+    # abruptly-replaced container gets stuck busy. DELETE mode uses a plain -journal (no
+    # mmap), which is 9p-safe and fine for this small store.
     conn.execute("PRAGMA journal_mode=DELETE")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -89,40 +45,6 @@ def _connect(data_dir: Path) -> sqlite3.Connection:
 
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS jobs (
-    job_id TEXT PRIMARY KEY,
-    state TEXT NOT NULL DEFAULT 'queued',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    template_id TEXT,
-    workflow_id TEXT,
-    prompt_id TEXT,
-    error TEXT,
-    outputs_json TEXT,
-    publish_webhook TEXT,
-    publish_status TEXT,
-    params_json TEXT,
-    compiled_workflow TEXT,
-    retry_count INTEGER DEFAULT 0,
-    scheduled_at TEXT,
-    extra_json TEXT DEFAULT '{}'
-);
-
-CREATE TABLE IF NOT EXISTS publish_outbox (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_id TEXT NOT NULL,
-    webhook_url TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    attempts INTEGER DEFAULT 0,
-    last_attempt_at TEXT,
-    next_retry_at TEXT,
-    delivered_at TEXT,
-    dead_lettered_at TEXT,
-    error TEXT,
-    idempotency_key TEXT UNIQUE,
-    FOREIGN KEY (job_id) REFERENCES jobs(job_id)
-);
-
 CREATE TABLE IF NOT EXISTS workflow_versions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     workflow_id TEXT NOT NULL,
@@ -135,468 +57,16 @@ CREATE TABLE IF NOT EXISTS workflow_versions (
     UNIQUE(workflow_id, version)
 );
 
-CREATE TABLE IF NOT EXISTS schedules (
-    schedule_id TEXT PRIMARY KEY,
-    cron_expr TEXT NOT NULL,
-    template_id TEXT,
-    workflow_id TEXT,
-    params_json TEXT DEFAULT '{}',
-    enabled INTEGER DEFAULT 1,
-    last_run_at TEXT,
-    next_run_at TEXT,
-    created_at TEXT NOT NULL
-);
-
--- Performance indexes for hot polling paths (worker + dashboard)
-CREATE INDEX IF NOT EXISTS idx_jobs_state_created ON jobs(state, created_at);
-CREATE INDEX IF NOT EXISTS idx_outbox_pending ON publish_outbox(delivered_at, attempts, next_retry_at);
-CREATE INDEX IF NOT EXISTS idx_outbox_job_id ON publish_outbox(job_id);
-CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_run_at);
 CREATE INDEX IF NOT EXISTS idx_wf_versions_lookup ON workflow_versions(workflow_id, version);
 CREATE INDEX IF NOT EXISTS idx_wf_versions_promoted ON workflow_versions(workflow_id, version DESC) WHERE promoted_at IS NOT NULL;
 """
 
 
 def init_db(data_dir: Path) -> None:
-    """Create tables and migrate legacy JSON store if present."""
+    """Create the workflow-versions table if it is missing."""
     with _connect(data_dir) as conn:
         conn.executescript(_SCHEMA)
-        _migrate_add_outbox_dead_letter(conn)
         conn.commit()
-    _migrate_json_store(data_dir)
-
-
-def _migrate_add_outbox_dead_letter(conn: sqlite3.Connection) -> None:
-    """Idempotently add publish_outbox.dead_lettered_at to pre-existing DBs.
-
-    CREATE TABLE IF NOT EXISTS never alters an already-created table, so DBs
-    provisioned before the dead-letter reaper landed need the column added.
-    """
-    cols = {row["name"] for row in conn.execute("PRAGMA table_info(publish_outbox)").fetchall()}
-    if "dead_lettered_at" not in cols:
-        conn.execute("ALTER TABLE publish_outbox ADD COLUMN dead_lettered_at TEXT")
-
-
-def _migrate_json_store(data_dir: Path) -> None:
-    legacy = data_dir / "orchestration" / "orchestration_jobs.json"
-    if not legacy.is_file():
-        return
-    try:
-        raw = json.loads(legacy.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return
-    with _connect(data_dir) as conn:
-        count = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-        if count > 0:
-            return  # already migrated
-        for jid, row in raw.items():
-            try:
-                st = JobState(row.get("state", "queued"))
-            except ValueError:
-                st = JobState.queued
-            conn.execute(
-                """INSERT OR IGNORE INTO jobs
-                   (job_id, state, created_at, updated_at, template_id, workflow_id,
-                    prompt_id, error, outputs_json, publish_webhook, publish_status, extra_json)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    jid, st.value,
-                    row.get("created_at", _now_iso()),
-                    row.get("updated_at", _now_iso()),
-                    row.get("template_id"),
-                    row.get("workflow_id"),
-                    row.get("prompt_id"),
-                    row.get("error"),
-                    json.dumps(row.get("outputs")) if row.get("outputs") else None,
-                    row.get("publish_webhook"),
-                    row.get("publish_status"),
-                    json.dumps(row.get("extra") or {}),
-                ),
-            )
-        conn.commit()
-
-
-def _row_to_job(row: sqlite3.Row) -> OrchestrationJob:
-    try:
-        state = JobState(row["state"])
-    except ValueError:
-        state = JobState.queued
-    outputs = None
-    if row["outputs_json"]:
-        try:
-            outputs = json.loads(row["outputs_json"])
-        except (json.JSONDecodeError, TypeError):
-            pass
-    extra: dict = {}
-    if row["extra_json"]:
-        try:
-            extra = json.loads(row["extra_json"])
-        except (json.JSONDecodeError, TypeError):
-            pass
-    return OrchestrationJob(
-        job_id=row["job_id"],
-        state=state,
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-        template_id=row["template_id"],
-        workflow_id=row["workflow_id"],
-        prompt_id=row["prompt_id"],
-        error=row["error"],
-        outputs=outputs,
-        publish_webhook=row["publish_webhook"],
-        publish_status=row["publish_status"],
-        params_json=row["params_json"],
-        compiled_workflow=row["compiled_workflow"],
-        retry_count=row["retry_count"] or 0,
-        scheduled_at=row["scheduled_at"],
-        extra=extra,
-    )
-
-
-# ── Jobs ──────────────────────────────────────────────────────────────────────
-
-def create_job(
-    data_dir: Path,
-    *,
-    template_id: str | None = None,
-    workflow_id: str | None = None,
-    params: dict[str, Any] | None = None,
-    compiled_workflow: dict[str, Any] | None = None,
-    scheduled_at: str | None = None,
-    extra: dict[str, Any] | None = None,
-) -> OrchestrationJob:
-    jid = str(uuid.uuid4())
-    t = _now_iso()
-    with _connect(data_dir) as conn:
-        conn.execute(
-            """INSERT INTO jobs
-               (job_id, state, created_at, updated_at, template_id, workflow_id,
-                params_json, compiled_workflow, scheduled_at, extra_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (
-                jid, JobState.queued.value, t, t,
-                template_id, workflow_id,
-                json.dumps(params) if params else None,
-                json.dumps(compiled_workflow) if compiled_workflow else None,
-                scheduled_at,
-                json.dumps(extra or {}),
-            ),
-        )
-        conn.commit()
-        row = conn.execute("SELECT * FROM jobs WHERE job_id=?", (jid,)).fetchone()
-    return _row_to_job(row)
-
-
-def get_job(data_dir: Path, job_id: str) -> OrchestrationJob | None:
-    with _connect(data_dir) as conn:
-        row = conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
-    return _row_to_job(row) if row else None
-
-
-def list_jobs(data_dir: Path, state: str | None = None, limit: int = 100) -> list[OrchestrationJob]:
-    limit = max(1, min(limit, 1000))
-    with _connect(data_dir) as conn:
-        if state:
-            rows = conn.execute(
-                "SELECT * FROM jobs WHERE state=? ORDER BY created_at DESC LIMIT ?",
-                (state, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
-            ).fetchall()
-    return [_row_to_job(r) for r in rows]
-
-
-_VALID_TRANSITIONS: dict[JobState, set[JobState]] = {
-    JobState.queued: {JobState.validated, JobState.cancelling, JobState.failed},
-    JobState.validated: {JobState.running, JobState.cancelling, JobState.failed, JobState.queued},
-    JobState.running: {JobState.artifact_ready, JobState.failed, JobState.cancelling},
-    JobState.artifact_ready: {JobState.publish_enqueued, JobState.published, JobState.failed},
-    JobState.publish_enqueued: {JobState.published, JobState.failed},
-    JobState.cancelling: {JobState.cancelled},
-    JobState.published: set(),
-    JobState.failed: {JobState.queued},
-    JobState.cancelled: set(),
-}
-
-
-def update_job(data_dir: Path, job_id: str, **fields: Any) -> OrchestrationJob | None:
-    if not fields:
-        return get_job(data_dir, job_id)
-    allowed = {
-        "state", "prompt_id", "error", "outputs", "publish_webhook",
-        "publish_status", "retry_count", "compiled_workflow", "params_json",
-    }
-    # Validate state transitions atomically via conditional UPDATE
-    new_state = None
-    if "state" in fields:
-        new_state = JobState(fields["state"]) if isinstance(fields["state"], str) else fields["state"]
-    col_map = {"outputs": "outputs_json", "state": "state"}
-    sets = ["updated_at=?"]
-    vals: list[Any] = [_now_iso()]
-    for k, v in fields.items():
-        if k not in allowed:
-            continue
-        col = col_map.get(k, k)
-        if k == "outputs":
-            v = json.dumps(v) if v is not None else None
-        elif k == "state" and isinstance(v, JobState):
-            v = v.value
-        sets.append(f"{col}=?")
-        vals.append(v)
-    if len(sets) == 1:
-        return get_job(data_dir, job_id)
-    with _connect(data_dir) as conn:
-        if new_state is not None:
-            # Build reverse lookup: which source states can transition to new_state?
-            valid_from = {s.value for s, targets in _VALID_TRANSITIONS.items() if new_state in targets}
-            if valid_from:
-                placeholders = ", ".join("?" for _ in valid_from)
-                where = f"WHERE job_id=? AND state IN ({placeholders})"
-                query_vals = vals + [job_id] + sorted(valid_from)
-            else:
-                where = "WHERE job_id=? AND 0"  # no valid source states
-                query_vals = vals + [job_id]
-            updated = conn.execute(
-                f"UPDATE jobs SET {', '.join(sets)} {where}", query_vals
-            ).rowcount
-            if updated == 0:
-                import logging as _logging
-                current = conn.execute("SELECT state FROM jobs WHERE job_id=?", (job_id,)).fetchone()
-                cur_state = current["state"] if current else "missing"
-                _logging.getLogger("orchestration_db").warning(
-                    "Invalid state transition for job %s: %s -> %s (ignored)",
-                    job_id, cur_state, new_state,
-                )
-        else:
-            vals.append(job_id)
-            conn.execute(f"UPDATE jobs SET {', '.join(sets)} WHERE job_id=?", vals)
-        conn.commit()
-        row = conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
-    return _row_to_job(row) if row else None
-
-
-def claim_next_job(data_dir: Path) -> OrchestrationJob | None:
-    """Atomically claim one queued job → validated. Returns None if queue empty."""
-    with _connect(data_dir) as conn:
-        row = conn.execute(
-            "SELECT job_id FROM jobs WHERE state=? ORDER BY created_at ASC LIMIT 1",
-            (JobState.queued.value,),
-        ).fetchone()
-        if not row:
-            return None
-        jid = row["job_id"]
-        now = _now_iso()
-        updated = conn.execute(
-            "UPDATE jobs SET state=?, updated_at=? WHERE job_id=? AND state=?",
-            (JobState.validated.value, now, jid, JobState.queued.value),
-        ).rowcount
-        conn.commit()
-        if updated == 0:
-            return None  # lost the race
-        row = conn.execute("SELECT * FROM jobs WHERE job_id=?", (jid,)).fetchone()
-    return _row_to_job(row) if row else None
-
-
-def cancel_job(data_dir: Path, job_id: str) -> OrchestrationJob | None:
-    """Request cancellation for a queued, validated, or running job."""
-    with _connect(data_dir) as conn:
-        conn.execute(
-            "UPDATE jobs SET state=?, updated_at=? WHERE job_id=? AND state IN (?,?,?)",
-            (JobState.cancelling.value, _now_iso(), job_id,
-             JobState.queued.value, JobState.validated.value, JobState.running.value),
-        )
-        conn.commit()
-        row = conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
-    return _row_to_job(row) if row else None
-
-
-def recover_stale_running_jobs(data_dir: Path) -> int:
-    """On worker startup: re-queue any jobs stuck in running/validated (from a previous crash)."""
-    now = _now_iso()
-    with _connect(data_dir) as conn:
-        result = conn.execute(
-            "UPDATE jobs SET state=?, updated_at=?, error='recovered from stale running state' "
-            "WHERE state IN (?,?)",
-            (JobState.queued.value, now, JobState.running.value, JobState.validated.value),
-        )
-        conn.commit()
-        return result.rowcount
-
-
-def get_job_counts(data_dir: Path) -> dict[str, int]:
-    with _connect(data_dir) as conn:
-        rows = conn.execute(
-            "SELECT state, COUNT(*) AS count FROM jobs GROUP BY state"
-        ).fetchall()
-    counts = {state.value: 0 for state in JobState}
-    for row in rows:
-        counts[str(row["state"])] = int(row["count"])
-    return counts
-
-
-def get_outbox_stats(data_dir: Path) -> dict[str, int]:
-    with _connect(data_dir) as conn:
-        row = conn.execute(
-            "SELECT "
-            "SUM(CASE WHEN delivered_at IS NULL AND dead_lettered_at IS NULL THEN 1 ELSE 0 END) AS pending, "
-            "SUM(CASE WHEN delivered_at IS NOT NULL THEN 1 ELSE 0 END) AS delivered, "
-            "SUM(CASE WHEN dead_lettered_at IS NOT NULL AND delivered_at IS NULL THEN 1 ELSE 0 END) AS dead_lettered "
-            "FROM publish_outbox"
-        ).fetchone()
-    return {
-        "pending": int(row["pending"] or 0),
-        "delivered": int(row["delivered"] or 0),
-        "dead_lettered": int(row["dead_lettered"] or 0),
-    }
-
-
-def vacuum_db(data_dir: Path) -> None:
-    """Run VACUUM with a short timeout to avoid blocking readers/writers.
-
-    VACUUM requires an exclusive lock on the entire database.  Using a short
-    busy_timeout means it will fail fast (OperationalError) rather than block
-    the dashboard or other worker threads for the duration of the rewrite.
-    """
-    import logging as _logging
-
-    conn = sqlite3.connect(str(_db_path(data_dir)), timeout=5, check_same_thread=False)
-    try:
-        conn.execute("VACUUM")
-        conn.commit()
-    except sqlite3.OperationalError as exc:
-        _logging.getLogger("orchestration_db").debug("VACUUM skipped (DB busy): %s", exc)
-    finally:
-        conn.close()
-
-
-# ── Publish outbox ─────────────────────────────────────────────────────────────
-
-def _outbox_key(job_id: str, webhook_url: str) -> str:
-    return hashlib.sha256(f"{job_id}:{webhook_url}".encode()).hexdigest()
-
-
-def create_outbox_entry(
-    data_dir: Path,
-    job_id: str,
-    webhook_url: str,
-    payload: dict[str, Any],
-) -> str:
-    key = _outbox_key(job_id, webhook_url)
-    with _connect(data_dir) as conn:
-        conn.execute(
-            """INSERT OR IGNORE INTO publish_outbox
-               (job_id, webhook_url, payload_json, idempotency_key)
-               VALUES (?,?,?,?)""",
-            (job_id, webhook_url, json.dumps(payload), key),
-        )
-        conn.commit()
-    return key
-
-
-def get_pending_outbox(data_dir: Path, max_attempts: int = 5) -> list[dict[str, Any]]:
-    now = _now_iso()
-    with _connect(data_dir) as conn:
-        rows = conn.execute(
-            """SELECT * FROM publish_outbox
-               WHERE delivered_at IS NULL
-               AND dead_lettered_at IS NULL
-               AND attempts < ?
-               AND (next_retry_at IS NULL OR next_retry_at <= ?)
-               ORDER BY id ASC LIMIT 20""",
-            (max_attempts, now),
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def mark_outbox_delivered(data_dir: Path, idempotency_key: str) -> None:
-    with _connect(data_dir) as conn:
-        conn.execute(
-            "UPDATE publish_outbox SET delivered_at=?, error=NULL WHERE idempotency_key=?",
-            (_now_iso(), idempotency_key),
-        )
-        conn.commit()
-
-
-def mark_outbox_delivered_by_id(data_dir: Path, row_id: int) -> None:
-    """Mark an outbox entry delivered by row ID (fallback when idempotency_key is NULL)."""
-    with _connect(data_dir) as conn:
-        conn.execute(
-            "UPDATE publish_outbox SET delivered_at=?, error=NULL WHERE id=?",
-            (_now_iso(), row_id),
-        )
-        conn.commit()
-
-
-def record_outbox_attempt(data_dir: Path, row_id: int, error: str | None = None) -> None:
-    from datetime import timedelta
-    with _connect(data_dir) as conn:
-        # Single atomic UPDATE — avoids read-then-write race under concurrency
-        conn.execute(
-            "UPDATE publish_outbox SET "
-            "attempts = COALESCE(attempts, 0) + 1, "
-            "last_attempt_at = ?, "
-            "error = ? "
-            "WHERE id = ?",
-            (_now_iso(), error, row_id),
-        )
-        # Compute next_retry_at from the updated attempts value
-        row = conn.execute("SELECT attempts FROM publish_outbox WHERE id=?", (row_id,)).fetchone()
-        if row:
-            n = row["attempts"] or 1
-            delay_sec = min(30 * (4 ** (n - 1)), 7200)
-            next_retry = (datetime.now(UTC) + timedelta(seconds=delay_sec)).isoformat().replace("+00:00", "Z")
-            conn.execute("UPDATE publish_outbox SET next_retry_at=? WHERE id=?", (next_retry, row_id))
-        conn.commit()
-
-
-def reap_dead_outbox(data_dir: Path, max_attempts: int = 5) -> int:
-    """Dead-letter outbox entries that have exhausted their retry budget.
-
-    Once `attempts >= max_attempts`, `get_pending_outbox` stops polling the row but
-    nothing else fires, so an undelivered entry — and the `publish_enqueued` job that
-    owns it — would sit unresolved forever (counted under `pending` in the stats,
-    needing manual DB surgery). This reaper scans for those stranded rows, stamps
-    `dead_lettered_at`, and drives the owning job through the only valid terminal
-    transition for a publish-stuck job: `publish_enqueued -> failed` (see
-    `_VALID_TRANSITIONS`), recording the reason in `publish_status`.
-
-    Idempotent: a second run finds nothing because `dead_lettered_at` is now set, and
-    the job's terminal state no longer satisfies the `publish_enqueued` guard in
-    `update_job`. Returns the number of rows dead-lettered on this pass.
-
-    Meant to be called from the worker's existing poll loop — no thread of its own.
-    """
-    now = _now_iso()
-    with _connect(data_dir) as conn:
-        rows = conn.execute(
-            "SELECT id, job_id FROM publish_outbox "
-            "WHERE delivered_at IS NULL AND dead_lettered_at IS NULL AND attempts >= ?",
-            (max_attempts,),
-        ).fetchall()
-        if not rows:
-            return 0
-        ids = [r["id"] for r in rows]
-        placeholders = ", ".join("?" for _ in ids)
-        conn.execute(
-            f"UPDATE publish_outbox SET dead_lettered_at=? WHERE id IN ({placeholders})",
-            [now, *ids],
-        )
-        conn.commit()
-        job_ids = {r["job_id"] for r in rows}
-    # Transition owning jobs on fresh connections (update_job opens its own); the
-    # publish_enqueued guard in update_job makes this a no-op for jobs already
-    # resolved, keeping the whole reap idempotent.
-    for jid in job_ids:
-        update_job(
-            data_dir,
-            jid,
-            state=JobState.failed,
-            publish_status="publish_failed: retries exhausted",
-            error="publish delivery failed after max attempts (dead-lettered)",
-        )
-    return len(rows)
 
 
 # ── Workflow versions ──────────────────────────────────────────────────────────
@@ -678,21 +148,6 @@ def promote_workflow_version(data_dir: Path, workflow_id: str, version: int) -> 
     return result.rowcount > 0
 
 
-def get_promoted_workflow(data_dir: Path, workflow_id: str) -> dict[str, Any] | None:
-    with _connect(data_dir) as conn:
-        row = conn.execute(
-            "SELECT * FROM workflow_versions WHERE workflow_id=? AND promoted_at IS NOT NULL "
-            "ORDER BY version DESC LIMIT 1",
-            (workflow_id,),
-        ).fetchone()
-    if not row:
-        return None
-    d = dict(row)
-    try:
-        d["compiled_json"] = json.loads(d["compiled_json"])
-    except (json.JSONDecodeError, TypeError):
-        pass
-    return d
 
 
 def rollback_workflow(data_dir: Path, workflow_id: str, to_version: int) -> int | None:
@@ -724,112 +179,6 @@ def rollback_workflow(data_dir: Path, workflow_id: str, to_version: int) -> int 
     return row["mv"]
 
 
-# ── Schedules ─────────────────────────────────────────────────────────────────
-
-def create_schedule(
-    data_dir: Path,
-    cron_expr: str,
-    template_id: str | None = None,
-    workflow_id: str | None = None,
-    params: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    sid = str(uuid.uuid4())
-    now = _now_iso()
-    try:
-        from croniter import croniter
-        next_run = croniter(cron_expr, datetime.now(UTC)).get_next(datetime).isoformat().replace("+00:00", "Z")
-    except (ImportError, ValueError, KeyError):
-        next_run = None
-    with _connect(data_dir) as conn:
-        conn.execute(
-            """INSERT INTO schedules
-               (schedule_id, cron_expr, template_id, workflow_id, params_json,
-                enabled, next_run_at, created_at)
-               VALUES (?,?,?,?,?,1,?,?)""",
-            (sid, cron_expr, template_id, workflow_id,
-             json.dumps(params or {}), next_run, now),
-        )
-        conn.commit()
-        row = conn.execute("SELECT * FROM schedules WHERE schedule_id=?", (sid,)).fetchone()
-    return dict(row)
-
-
-def list_schedules(data_dir: Path) -> list[dict[str, Any]]:
-    with _connect(data_dir) as conn:
-        rows = conn.execute("SELECT * FROM schedules ORDER BY created_at DESC").fetchall()
-    return [dict(r) for r in rows]
-
-
-def get_schedule(data_dir: Path, schedule_id: str) -> dict[str, Any] | None:
-    with _connect(data_dir) as conn:
-        row = conn.execute(
-            "SELECT * FROM schedules WHERE schedule_id=?", (schedule_id,)
-        ).fetchone()
-    return dict(row) if row else None
-
-
-def update_schedule(data_dir: Path, schedule_id: str, **fields: Any) -> dict[str, Any] | None:
-    allowed = {"enabled", "cron_expr", "params_json"}
-    sets, vals = [], []
-    for k, v in fields.items():
-        if k not in allowed:
-            continue
-        sets.append(f"{k}=?")
-        vals.append(v)
-    # Recompute next_run_at when cron_expr changes
-    if "cron_expr" in fields:
-        try:
-            from croniter import croniter
-            next_run = croniter(fields["cron_expr"], datetime.now(UTC)).get_next(datetime).isoformat().replace("+00:00", "Z")
-        except (ImportError, ValueError, KeyError):
-            next_run = None
-        sets.append("next_run_at=?")
-        vals.append(next_run)
-    if not sets:
-        return get_schedule(data_dir, schedule_id)
-    vals.append(schedule_id)
-    with _connect(data_dir) as conn:
-        conn.execute(f"UPDATE schedules SET {', '.join(sets)} WHERE schedule_id=?", vals)
-        conn.commit()
-        row = conn.execute("SELECT * FROM schedules WHERE schedule_id=?", (schedule_id,)).fetchone()
-    return dict(row) if row else None
-
-
-def delete_schedule(data_dir: Path, schedule_id: str) -> bool:
-    with _connect(data_dir) as conn:
-        result = conn.execute("DELETE FROM schedules WHERE schedule_id=?", (schedule_id,))
-        conn.commit()
-    return result.rowcount > 0
-
-
-def get_due_schedules(data_dir: Path) -> list[dict[str, Any]]:
-    now = _now_iso()
-    with _connect(data_dir) as conn:
-        rows = conn.execute(
-            "SELECT * FROM schedules WHERE enabled=1 AND (next_run_at IS NULL OR next_run_at<=?)",
-            (now,),
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def tick_schedule(data_dir: Path, schedule_id: str, cron_expr: str) -> None:
-    """Update last_run_at and compute next_run_at after firing a schedule."""
-    now = _now_iso()
-    try:
-        from croniter import croniter
-        next_run = croniter(cron_expr, datetime.now(UTC)).get_next(datetime).isoformat().replace("+00:00", "Z")
-    except (ImportError, ValueError, KeyError):
-        next_run = None
-    with _connect(data_dir) as conn:
-        conn.execute(
-            "UPDATE schedules SET last_run_at=?, next_run_at=? WHERE schedule_id=?",
-            (now, next_run, schedule_id),
-        )
-        conn.commit()
-
-
-# ── Backward-compat shim: load_store ─────────────────────────────────────────
-
 def load_store(data_dir: Path) -> None:
-    """Called by routes_orchestration on startup; ensures DB is ready."""
+    """Called by routes_orchestration on startup; ensures the DB is ready."""
     init_db(data_dir)

@@ -1,11 +1,9 @@
 """Top-level conftest for the ``tests/`` suite.
 
-Several tests import ``services/ops-api/main.py`` via ``spec_from_file_location``
-and trigger its module-level ``_audit_log = AuditLog(AUDIT_LOG_PATH)``. The
-default path is ``/data/audit.jsonl`` (the production volume mount), and
-``AuditLog.__init__`` calls ``mkdir(parents=True)`` on the parent — which
-fails with ``PermissionError`` on a clean CI runner where ``/data`` doesn't
-exist and isn't writable.
+Constructing the control plane (``ordo/control.py``) opens its audit log at
+``AUDIT_LOG_PATH``, default ``/data/audit.jsonl`` (the production volume mount),
+and creates the parent directory, which fails with ``PermissionError`` on a clean
+CI runner where ``/data`` doesn't exist and isn't writable.
 
 Set a writable default before any test module runs so the import succeeds.
 Individual tests that need to inspect the audit file still override

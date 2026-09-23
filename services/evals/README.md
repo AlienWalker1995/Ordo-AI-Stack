@@ -561,8 +561,8 @@ run's numbers even though nothing here caught it.
   mid-run, rather than finishing a run whose remaining suites would be meaningless. ops-controller
   being unreachable is treated the same as leased - refusing on an unverifiable status, not assuming
   it is fine. No new secret: `OPS_CONTROLLER_URL` (already in the evals service env) points at
-  `ordo/control.py`'s `ControlPlane`, which by design takes no auth at all (the dashboard's
-  `OPS_CONTROLLER_TOKEN` is for the separate `ops-api` service and does not apply here).
+  `ordo/control.py`'s `ControlPlane`, which does not validate a token at all (other callers send
+  `OPS_CONTROLLER_TOKEN`, but ops-controller ignores it, so evals needs none).
 - **Timing sanity signal.** Every item's generated-tokens-per-second is recorded on
   `metadata.tokens_per_second` where the data allows (`ordo_evals.timing`), and an item running at
   under 1/10th its own suite's median is flagged `metadata.slow_item` - visible even when

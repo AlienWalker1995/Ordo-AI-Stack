@@ -330,7 +330,7 @@ def _dashboard(project: str, net: str, env_file: str,
     env = dashboard.get("environment") or {}
     if env:
         s["environment"] = dict(env)
-    # GPU visibility for the dashboard SERVICE: the V1-parity dashboard's `/api/hardware` shells to
+    # GPU visibility for the dashboard SERVICE: the dashboard's `/api/hardware` shells to
     # nvidia-smi (_probe_gpu) + enumerates cards (gpu_stats.list_gpus) for the hw-stat bar's GPU
     # widgets, which the NVIDIA runtime only injects when the service reserves a GPU with the
     # `utility` cap. Without it `/api/hardware` returns gpu:null + gpus:[] (both GPU widgets blank).

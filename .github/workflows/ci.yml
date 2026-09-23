@@ -44,11 +44,6 @@ jobs:
       - name: Ruff lint
         run: python -m ruff check .
 
-      - name: Create minimal .env for compose tests
-        run: |
-          echo "BASE_PATH=." > .env
-          echo "OPS_CONTROLLER_TOKEN=placeholder-for-ci" >> .env
-
       # tests/substrate/ is the render-engine suite — it runs in the path-gated `substrate`
       # job below (with its own pinned deps), so exclude it here to avoid double-running.
       - name: Run tests

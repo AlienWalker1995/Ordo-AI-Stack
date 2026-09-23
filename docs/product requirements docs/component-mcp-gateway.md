@@ -131,7 +131,7 @@ LiteLLM namespaces tools **`<litellm_name>-<tool>`**, and Hermes prefixes its ow
   gateway-level status, which is what previously let three dead servers report green for weeks.
 - Prometheus scrapes `model-gateway:11435/metrics`; `litellm_mcp_tool_calls_total{mcp_server_name,
   mcp_tool_name}` increments per tool call.
-- `ops-api`'s `GET /mcp/containers` lists containers by the compose label `ordo.mcp=true`. That is
+- ops-controller's `GET /mcp/containers` lists containers by the compose label `ordo.mcp=true`. That is
   inventory, not health.
 
 ## Adding a new server
@@ -173,7 +173,7 @@ In all three cases, finish by adding the plugin id to `ordo.yaml`'s `plugins:` l
 ## Operations
 
 - **Enable or disable a server:** edit `ordo.yaml`'s `plugins:` list, directly or through the
-  dashboard MCP tab (which performs the same comment-preserving edit). The dashboard response
+  MCP section of the dashboard's Settings drawer (which performs the same comment-preserving edit). The dashboard response
   carries `{"applied": false, "next": "ordo render + recreate model-gateway"}`.
 - **No hot reload.** LiteLLM reads config-file MCP servers at startup, so a change takes effect
   only after `ordo render` plus a `model-gateway` recreate.
@@ -189,16 +189,6 @@ In all three cases, finish by adding the plugin id to `ordo.yaml`'s `plugins:` l
 
 - **End-user identity per MCP call.** Scoping is per consumer key, not per human.
 - **Replacing n8n or ComfyUI.** The gateway invokes them; it does not own their authoring UIs.
-
-## History
-
-Until 2026-09 this component was a separate `docker/mcp-gateway` container on port 8811 that held
-the host Docker socket, spawned each MCP server as a throwaway sibling over stdio, and read its
-enabled set from a plain-text server list plus a rewritten Docker-catalog fragment. External access
-was gated by a static bearer token. All of that was retired in the LiteLLM MCP migration: the
-socket left the tool path, the servers became long-lived compose services, the catalog files became
-`out/model-gateway/mcp_servers.yaml` and `out/mcp/servers.json`, and the static token became
-LiteLLM virtual keys. The helper scripts that appended to the old server list were removed with it.
 
 ---
 

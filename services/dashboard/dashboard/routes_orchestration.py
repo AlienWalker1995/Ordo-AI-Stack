@@ -218,59 +218,6 @@ async def rollback_workflow_endpoint(workflow_id: str, to_version: int = Query(.
     return {"ok": True, "workflow_id": workflow_id, "new_version": new_v, "rolled_back_to": to_version}
 
 
-# ── Job execution ─────────────────────────────────────────────────────────────
-
-# The media "worker" (headless render/publish job processor) was RETIRED. The live media
-# pipeline runs via Hermes cron + the direct render_publish scripts (ComfyUI + ops-controller
-# GPU lease + n8n webhook), never this queue. The job / publish / schedule endpoints below stay
-# MOUNTED but return 410 Gone, so any stale caller fails loudly instead of enqueueing into a dead
-# queue. The worker-INDEPENDENT verbs on this router (readiness, workflows, validate, outputs,
-# comfyui/*, registry/*, gpu*) remain fully live.
-_WORKER_RETIRED = (
-    "The render/publish job worker was retired. This endpoint is gone; the live media pipeline "
-    "runs via Hermes cron + the direct render_publish scripts. Worker-independent orchestration "
-    "verbs (workflows, validate, outputs, comfyui/*, registry, gpu) remain."
-)
-
-
-@router.post("/run")
-async def run_workflow():
-    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
-
-
-@router.get("/jobs")
-async def list_jobs_endpoint():
-    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
-
-
-@router.get("/jobs/{job_id}")
-async def job_status(job_id: str):
-    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
-
-
-@router.post("/jobs/{job_id}/cancel")
-async def cancel_job_endpoint(job_id: str):
-    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
-
-
-# ── Publish pipeline — RETIRED (see _WORKER_RETIRED above) ─────────────────────
-
-
-@router.post("/publish/enqueue")
-async def publish_enqueue():
-    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
-
-
-@router.post("/publish/callback")
-async def publish_callback():
-    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
-
-
-@router.get("/publish/status")
-async def publish_status():
-    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
-
-
 # ── Outputs (replaces raw filesystem mount) ───────────────────────────────────
 
 COMFYUI_OUTPUT_DIR = Path(os.environ.get("COMFYUI_OUTPUT_DIR", "/comfyui-output")).resolve()
@@ -299,32 +246,6 @@ async def list_outputs():
     except OSError as e:
         logger.warning("Could not read output dir: %s", e)
     return {"outputs": files[:200], "output_dir": str(COMFYUI_OUTPUT_DIR)}
-
-
-# ── Schedules ─────────────────────────────────────────────────────────────────
-
-# RETIRED with the media worker (see _WORKER_RETIRED above) — the worker's cron scheduler is
-# gone; scheduled media runs are Hermes cron jobs now, not rows in this store.
-
-
-@router.post("/schedules")
-async def create_schedule_endpoint():
-    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
-
-
-@router.get("/schedules")
-async def list_schedules_endpoint():
-    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
-
-
-@router.patch("/schedules/{schedule_id}")
-async def update_schedule_endpoint(schedule_id: str):
-    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
-
-
-@router.delete("/schedules/{schedule_id}")
-async def delete_schedule_endpoint(schedule_id: str):
-    raise HTTPException(status_code=410, detail=_WORKER_RETIRED)
 
 
 # ── ComfyUI ops ───────────────────────────────────────────────────────────────

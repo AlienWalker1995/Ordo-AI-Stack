@@ -2,23 +2,24 @@
 
 ## Purpose
 
-The V2 control plane (`ordo serve`, `ordo/control.py`). Drives the GPU/job broker and
-scheduler, and performs the drift-safe model switch (writes the declarative `ordo.yaml`
+The Ordo control plane (`ordo serve`, `ordo/control.py`). Drives the GPU/job broker and
+scheduler, performs the drift-safe model switch (writes the declarative `ordo.yaml`
 source, then re-renders `.env` + compose + Hermes ctx in one pass so they can never
-disagree). It holds `docker.sock` only for the broker's `start`/`stop` calls, and the
-`DockerBackend` guard scopes every one of those to the `<project>-*` prefix — it cannot
-reach containers outside this compose project.
-
-This is **not** the audited, Bearer-token-gated compose-lifecycle API — that is a
-separate, optional service, `ops-api`. See "Related service: ops-api" below.
+disagree), and owns the compose-lifecycle API the dashboard and agent call (start, stop,
+restart, recreate, logs, image pulls, audit). It holds `docker.sock`, and the
+`DockerBackend` guard (`ordo/broker.py`) scopes every container call to the `<project>-*`
+prefix, so it cannot reach containers outside this compose project.
 
 ## API Reference
 
 **Base URL:** `http://ops-controller:9000` (internal network; no host port)
 
-**Auth:** None. This is the agreed model (`ordo/control.py`): the dashboard is
-localhost-only / reached only through the Caddy edge, and auth is the edge's job, not
-baked into every internal service.
+**Auth:** None enforced by ops-controller itself (`ordo/control.py` has no auth check). It
+publishes no host port and is reachable only on the internal network; callers (dashboard,
+agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>` from
+`out/secrets.env` by convention.
+
+**Scheduler and model switch**
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -26,101 +27,75 @@ baked into every internal service.
 | `/status` | GET | GPU/scheduler state + the current rendered manifest |
 | `/model-config` | GET | Source model, resolved active model, tier, ctx size, catalog |
 | `/model-config` | POST | Switch active model (`{"model": "<id>"|"auto"}`); rewrites `ordo.yaml` and re-renders |
+| `/plugins` | GET | Installable plugins and their state |
+| `/plugins/{id}/enable`, `/plugins/{id}/disable` | POST | Add/remove an allowlisted plugin in `ordo.yaml` |
 | `/jobs` | POST | Request GPU capacity for a job (`id`, `vram_gb`) |
 | `/jobs/complete` | POST | Release a completed job (`id`) |
 | `/jobs/heartbeat` | POST | Heartbeat a running job (`id`) |
 | `/jobs/history` | GET | Last 100 finished leases, newest first |
 | `/jobs/cloud-routed` | GET | Return-and-drain jobs the scheduler routed to cloud fallback |
 
+**Compose lifecycle**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/services` | GET | Compose services + state |
+| `/services/{id}/start`, `/stop`, `/restart`, `/recreate` | POST | Lifecycle verb (`confirm: true` required; `dry_run: true` returns the planned action) |
+| `/services/{id}/logs` | GET | Tail logs (100 lines) |
+| `/containers` | GET | Project containers |
+| `/containers/{name}/logs` | GET | Tail one container's logs |
+| `/containers/{name}/restart` | POST | Restart one container (`confirm: true`) |
+| `/stats/services` | GET | Per-service CPU/memory stats |
+| `/mcp/containers` | GET | MCP server containers by compose label `ordo.mcp=true` (inventory only, not the health source: MCP health comes from LiteLLM `/v1/mcp/server/health`) |
+| `/compose/up`, `/compose/down`, `/compose/restart` | POST | Whole-project compose verbs (`confirm: true`) |
+| `/images/pull` | POST | Pull the current image for the named services |
+
+**Registry, downloads and diagnostics**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/registry/models`, `/registry/models/{id}` | GET | Runtime model registry (`/data/model-registry.json`) |
+| `/registry/gpus` | GET | GPUs seen by nvidia-smi |
+| `/gpu/assignments` | GET | Current GPU pins |
+| `/gpu/assign`, `/registry/models/{id}/assign-gpu` | POST | 410: GPU pins are render-time (`ordo.yaml`) |
+| `/models/download`, `/models/download/status` | POST, GET | Resumable download of one allowlisted-host URL into the ComfyUI models volume |
+| `/comfyui/install-node-requirements` | POST | pip-install a custom-node pack's `requirements.txt` inside the comfyui container |
+| `/env/{key}`, `/env/set` | GET, POST | Read/write one allowlisted key in the registry env file |
+| `/diagnostics/dstate` | GET | Processes stuck in uninterruptible sleep |
+| `/audit` | GET | Audit log tail (`limit`, default 50) |
+
+**Safety:** Every mutating lifecycle, compose, env and pip call requires `{"confirm": true}`.
+Plugin enable/disable is limited to the `INSTALLABLE_PLUGINS` allowlist in `ordo/control.py`;
+core substrate services cannot be added or removed through it.
+
+## Audit Log
+
+`ordo/audit.py` writes one fsync'd JSONL line per privileged call to `AUDIT_LOG_PATH`
+(`/data/audit.log` in the container, `data/ops-controller/audit.log` on the host), rotating to
+`audit.1.log` at 50 MB. Export: `GET /audit?limit=N`. Audited today: `env_set`, image `pull`,
+`comfyui_pip_install`, and the `gpu_assign` 410s.
+
+```json
+{"ts": 1767225600.0, "caller": "dashboard", "action": "pull", "target": "comfyui", "result": "ok", "detail": ""}
+```
+
+Known limitation: `caller` is hardcoded to `"dashboard"`; multi-actor audit needs identity
+propagation.
+
 ## Design Principle
 
 **Recovery, not hot path.** Normal model and tool traffic flows agent clients → model
-gateway and agent clients → the same gateway's `/mcp` endpoint directly. Ops controller only arbitrates GPU
-capacity (the broker/scheduler) and performs model switches; no user request should
-require ops-controller success to complete a chat or tool call.
+gateway and agent clients → the same gateway's `/mcp` endpoint directly. Ops controller
+arbitrates GPU capacity, performs model switches and runs operator lifecycle actions; no user
+request should require ops-controller success to complete a chat or tool call.
 
 ## Non-Goals
 
 - Being in the hot path for chat/tool requests
-- Direct UI — all interactions go through the dashboard or the scheduler's own clients
-- Full compose lifecycle (start/stop/restart of arbitrary services, image pulls, log
-  tailing) — that is `ops-api`, see below
+- Direct UI: all interactions go through the dashboard, the agent, or the scheduler's own clients
 
 ## Dependencies
 
-- Docker socket (`/var/run/docker.sock`) — broker `start`/`stop` only, guard-scoped to `<project>-*`
-- Rendered config dir mounted read-write at `/config` (source `ordo.yaml` + rendered `out/`) — the single write path for a model switch
-
-## Related service: ops-api
-
-The V1-parity dashboard's optional backend (`services/v1-parity/dashboard.yaml`,
-`services/ops-api/main.py`), rendered as its own compose service named `ops-api` — not
-part of ops-controller. It owns the audited, Bearer-token-gated compose-lifecycle API:
-
-**Base URL:** `http://ops-api:9000` (internal network; no host port)
-
-**Auth:** `Authorization: Bearer <OPS_CONTROLLER_TOKEN>` (env var name is legacy from
-V1; the token gates `ops-api`, not `ops-controller`)
-
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/health` | GET | None | Docker daemon reachability |
-| `/services` | GET | None | List compose services + state |
-| `/services/{id}/start` | POST | Bearer | Start (confirm: true required) |
-| `/services/{id}/stop` | POST | Bearer | Stop (confirm: true required) |
-| `/services/{id}/restart` | POST | Bearer | Restart (confirm: true required) |
-| `/services/{id}/logs` | GET | Bearer | Tail logs (tail=100 max 500) |
-| `/images/pull` | POST | Bearer | Pull images for services |
-| `/mcp/containers` | GET | Bearer | List MCP server containers by compose label `ordo.mcp=true` (inventory only, not the health source: MCP health comes from LiteLLM `/v1/mcp/server/health`) |
-| `/audit` | GET | Bearer | Audit log (limit=50) |
-
-**Safety:** All mutating endpoints require `{"confirm": true}`. Optional `{"dry_run": true}` returns planned action without executing. Service targets are restricted to an `ALLOWED_SERVICES` allowlist in `services/ops-api/main.py`. Whole-stack `/compose/*` mutations stay disabled by default (`OPS_COMPOSE_MUTATIONS_ENABLED=0`) — V2's `ordo serve` (ops-controller) owns stack lifecycle.
-
-### Audit Event Pipeline (ops-api)
-
-#### Schema
-
-```json
-{
-  "ts": "2026-03-01T12:34:56.789Z",
-  "action": "restart",
-  "resource": "llamacpp",
-  "actor": "dashboard",
-  "result": "ok",
-  "detail": "",
-  "correlation_id": "req-abc123",
-  "metadata": {"dry_run": false}
-}
-```
-
-#### Fields
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `ts` | string | Yes | ISO8601 UTC |
-| `action` | enum | Yes | `start\|stop\|restart\|pull\|logs\|mcp_add\|mcp_remove\|model_pull\|model_delete` |
-| `resource` | string | Yes | Service ID, model name, or tool name |
-| `actor` | string | Yes | `dashboard\|cli\|api` |
-| `result` | enum | Yes | `ok\|error` |
-| `detail` | string | No | Error message or context |
-| `correlation_id` | string | No | From `X-Request-ID` header |
-| `metadata` | object | No | Extra context (tail count, dry_run, etc.) |
-
-#### Storage
-
-`data/ops-controller/audit.log` on the host (staged V2 data tree; mounted into the
-`ops-api` container at `/data`, `AUDIT_LOG_PATH=/data/audit.log`) — JSONL, append-only.
-Rotate at 10MB (`AUDIT_LOG_MAX_BYTES`). Export: `GET /audit?limit=N`.
-
-#### Correlation ID Flow
-
-1. External client sends `X-Request-ID: req-abc` to model gateway
-2. Model gateway logs it; includes in throughput record to dashboard
-3. Dashboard passes `X-Request-ID` when calling `ops-api`
-4. `ops-api` includes it in the audit entry
-5. Result: one request traceable across model → throughput → ops-api → audit
-
-### Known Limitations (ops-api)
-
-- `actor` field in `_audit()` hardcoded to `"dashboard"` — acceptable for now; multi-actor needs identity propagation
-- No CSRF token — sufficient for localhost deployment
+- Docker socket (`/var/run/docker.sock`), guard-scoped to `<project>-*`
+- Rendered config dir mounted read-write at `/config` (source `ordo.yaml` + rendered `out/`), the single write path for a model switch
+- `${DATA_PATH}/ops-controller` at `/data` (model registry + audit log)

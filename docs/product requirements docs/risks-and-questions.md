@@ -26,5 +26,5 @@
 | 8 | **ComfyUI non-root** | Open — `yanwk/comfyui-boot` runs as root; image limitation |
 | 9 | **Smoke test in CI** | Resolved — see `.github/workflows/ci.yml` |
 | 10 | **N8N LLM node** | Open — use OpenAI-compat node with `baseURL: http://model-gateway:11435/v1`; needs example workflow doc |
-| 11 | **RAG embed model pull** | Open — `nomic-embed-text` must be pulled before ingestion; add to model-puller default list or document |
+| 11 | **RAG embed model pull** | Open, `nomic-embed-text` must be pulled before ingestion; fetch it with `ordo fetch` or document it |
 | 12 | **Reliability spine (M7)** | Partial — registry + health/ready + doctor/validation shipped; circuit breakers / full L3 semantics remain |

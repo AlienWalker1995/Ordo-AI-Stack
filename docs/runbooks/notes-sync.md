@@ -26,8 +26,8 @@ iOS / Mac / PC  --Self-hosted LiveSync plugin-->  CouchDB  <--livesync-bridge-->
 `LIVESYNC_E2EE_PASSPHRASE` into `out/secrets.env`. Then:
 
 ```bash
-# create the vault notes/ folder (uid-1000-clean) + the couchdb data dir
-./scripts/ensure_dirs.sh                 # (or scripts/ensure_dirs.ps1 on Windows)
+# create the vault notes/ folder (CouchDB data lives in the couchdb-data named volume)
+mkdir -p data/memory-vault/notes         # or under your MEMORY_VAULT_PATH
 # build the bridge image (from pinned source) and render
 docker build -t ordo/livesync-bridge:latest services/obsidian-livesync
 ordo --source out/ordo.yaml render --out out

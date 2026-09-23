@@ -29,31 +29,12 @@ from pydantic import BaseModel, Field
 from starlette.middleware.gzip import GZipMiddleware
 
 from dashboard import gpu_stats, settings
-from dashboard import routes_gpu as _routes_gpu
-from dashboard import routes_registry as _routes_registry
-from dashboard.orchestration_db import get_job_counts, get_outbox_stats
 from dashboard.routes_console import router as console_router
 from dashboard.routes_hub import router as hub_router
 from dashboard.routes_orchestration import router as orchestration_router
 from dashboard.services_catalog import OPS_SERVICE_MAP
 from dashboard.settings import AUTH_REQUIRED as _AUTH_REQUIRED
 from dashboard.settings import DASHBOARD_AUTH_TOKEN
-
-
-async def _read_json_async(path: Path) -> dict:
-    """Read and parse a JSON file off the event loop."""
-    return await asyncio.to_thread(lambda: json.loads(path.read_text(encoding="utf-8")))
-
-
-async def _write_json_async(path: Path, data: dict) -> None:
-    """Serialise and write JSON off the event loop via atomic write-then-rename."""
-    def _atomic_write() -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        tmp.replace(path)
-    await asyncio.to_thread(_atomic_write)
-
 
 # Persistent httpx client — connection pooling avoids per-request TCP handshake overhead.
 _http_client: _httpx.AsyncClient | None = None
@@ -173,11 +154,9 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     if path in (
         "/api/health",
-        "/api/dependencies",
         "/api/auth/config",
         "/api/hardware",
         "/api/throughput/stats",
-        "/api/throughput/service-usage",
         "/api/rag/status",
         "/api/orchestration/readiness",
     ):
@@ -754,10 +733,6 @@ def _evict_stale_models(now: float) -> None:
 # Last benchmark result (persists across page refresh until dashboard restart)
 _last_benchmark: dict | None = None
 
-# Service usage: list of { model, service, tps, ts } for "which service uses which model"
-_service_usage: list[dict] = []
-_MAX_SERVICE_USAGE = 500
-
 DASHBOARD_DATA_PATH = Path(os.environ.get("DASHBOARD_DATA_PATH", "./data/dashboard")).resolve()
 DASHBOARD_DATA_PATH.mkdir(parents=True, exist_ok=True)
 _THROUGHPUT_FILE = DASHBOARD_DATA_PATH / "throughput.json"
@@ -767,7 +742,7 @@ def _load_throughput_state() -> None:
     """Load throughput samples and last benchmark from disk (R4). v1 files (no
     version field) get a clean reset — their samples are un-timestamped and
     alias-conflated; only last_benchmark carries over."""
-    global _throughput_samples, _ttft_samples, _last_benchmark, _service_usage
+    global _throughput_samples, _ttft_samples, _last_benchmark
     if not _THROUGHPUT_FILE.exists():
         return
     try:
@@ -788,7 +763,6 @@ def _load_throughput_state() -> None:
             k: [s for s in v if isinstance(s, dict) and "ms" in s and "ts" in s]
             for k, v in (data.get("ttft_samples") or {}).items() if isinstance(v, list)
         }
-        _service_usage = [u for u in (data.get("service_usage") or []) if isinstance(u, dict)][-_MAX_SERVICE_USAGE:]
     except Exception as e:
         logger.warning("Throughput state load failed: %s", e)
 
@@ -803,7 +777,6 @@ def _save_throughput_state() -> None:
             "samples": _throughput_samples,
             "ttft_samples": _ttft_samples,
             "last_benchmark": _last_benchmark,
-            "service_usage": _service_usage[-_MAX_SERVICE_USAGE:],
         }), encoding="utf-8")
         tmp.replace(_THROUGHPUT_FILE)
     except Exception as e:
@@ -871,62 +844,8 @@ async def throughput_record(req: ThroughputRecordRequest):
             _ttft_samples[model].append({"ms": req.ttft_ms, "ts": now})
             if len(_ttft_samples[model]) > _MAX_SAMPLES_PER_MODEL:
                 _ttft_samples[model] = _ttft_samples[model][-_MAX_SAMPLES_PER_MODEL:]
-        # Service usage (which service is taxing which model)
-        service = (req.service or "unknown").strip()[:64]
-        _service_usage.append({
-            "model": model,
-            "service": service,
-            "alias": req.alias.strip()[:256],
-            "backend": req.backend.strip()[:64],
-            "tps": round(req.output_tokens_per_sec, 1),
-            "ttft_ms": round(req.ttft_ms, 1) if req.ttft_ms > 0 else 0.0,
-            "ts": now,
-        })
-        if len(_service_usage) > _MAX_SERVICE_USAGE:
-            _service_usage[:] = _service_usage[-_MAX_SERVICE_USAGE:]
         _maybe_save_throughput()
     return {"ok": True}
-
-
-@app.get("/api/throughput/service-usage")
-async def throughput_service_usage():
-    """Return recent service usage: which service used which model (from model gateway traffic)."""
-    now = time.time()
-    with _state_lock:
-        usage_snapshot = list(_service_usage)
-    recent = [u for u in usage_snapshot if (now - u["ts"]) < 86400]
-    by_model: dict[str, list[dict]] = {}
-    for u in recent:
-        m = u["model"]
-        if m not in by_model:
-            by_model[m] = []
-        by_model[m].append({
-            "service": u["service"],
-            "tps": u["tps"],
-            "ts": u["ts"],
-        })
-    # Per model: unique services, last activity, last tps per service
-    result: dict[str, dict] = {}
-    for model, usages in by_model.items():
-        by_svc: dict[str, list] = {}
-        for u in usages:
-            s = u["service"]
-            if s not in by_svc:
-                by_svc[s] = []
-            by_svc[s].append({"tps": u["tps"], "ts": u["ts"], "ttft_ms": u.get("ttft_ms", 0.0)})
-        result[model] = {
-            "services": [
-                {
-                    "name": svc,
-                    "last_tps": max(u["tps"] for u in vals),
-                    "last_ttft_ms": max(u.get("ttft_ms", 0.0) for u in vals),
-                    "last_ts": max(u["ts"] for u in vals),
-                    "count": len(vals),
-                }
-                for svc, vals in by_svc.items()
-            ],
-        }
-    return {"by_model": result, "ok": True}
 
 
 # Authoritative active model, from the same ops-controller /model-config the Model
@@ -1014,75 +933,6 @@ async def throughput_stats():
     if benchmark:
         out["last_benchmark"] = benchmark
     return out
-
-
-@app.get("/api/performance/summary")
-async def performance_summary():
-    """Compact performance summary for dashboards, automation, and audits."""
-    with _state_lock:
-        snapshot = {m: list(s) for m, s in _throughput_samples.items()}
-        ttft_snapshot = {m: list(s) for m, s in _ttft_samples.items()}
-        benchmark = dict(_last_benchmark) if _last_benchmark else None
-        recent_usage = list(_service_usage)
-    now = time.time()
-    recent_usage = [u for u in recent_usage if (now - u["ts"]) < 86400]
-    top_models = []
-    for model, samples in snapshot.items():
-        if not samples:
-            continue
-        tps_vals = [s["tps"] for s in samples]
-        sorted_s = sorted(tps_vals)
-        ttfts = [s["ms"] for s in ttft_snapshot.get(model, [])]
-        sorted_ttfts = sorted(ttfts)
-        top_models.append(
-            {
-                "model": model,
-                "latest_tps": round(tps_vals[-1], 1),
-                "p95_tps": round(_percentile(sorted_s, 95), 1),
-                "latest_ttft_ms": round(ttfts[-1], 1) if ttfts else 0.0,
-                "p95_ttft_ms": round(_percentile(sorted_ttfts, 95), 1) if sorted_ttfts else 0.0,
-                "sample_count": len(samples),
-                "last_ts": samples[-1]["ts"],
-            }
-        )
-    top_models.sort(key=lambda item: item["last_ts"], reverse=True)
-    try:
-        rag = await asyncio.wait_for(rag_status(), timeout=2.0)
-    except TimeoutError:
-        rag = {"ok": False, "error": "timeout"}
-    return {
-        "ok": True,
-        "llamacpp_ctx_size": int(os.environ.get("LLAMACPP_CTX_SIZE", "262144") or 262144),
-        "worker_concurrency": int(os.environ.get("WORKER_CONCURRENCY", "1") or 1),
-        "throughput": {
-            "tracked_models": len(top_models),
-            "top_models": top_models[:10],
-            "last_benchmark": benchmark,
-            "service_events_24h": len(recent_usage),
-        },
-        "orchestration": {
-            "jobs": get_job_counts(DASHBOARD_DATA_PATH),
-            "outbox": get_outbox_stats(DASHBOARD_DATA_PATH),
-        },
-        "rag": rag,
-    }
-
-
-@app.get("/api/llm/ps")
-async def llm_ps():
-    """List models currently advertised by model-gateway."""
-    try:
-        r = await _get_http_client().get(
-            f"{MODEL_GATEWAY_URL.rstrip('/')}/v1/models",
-            headers=_model_gateway_headers(),
-            timeout=10.0,
-        )
-        r.raise_for_status()
-        data = r.json()
-        models = [{"name": m["id"]} for m in data.get("data", []) if m.get("id")]
-        return {"models": models}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Model gateway request failed: {e}")
 
 
 # Embedding models don't support chat completions — exclude from throughput benchmark
@@ -1250,17 +1100,6 @@ async def ops_logs(service_id: str, request: Request, tail: int = 100):
         raise HTTPException(status_code=code, detail=data.get("detail", data))
     return data
 
-
-@app.get("/api/ops/available")
-async def ops_available(request: Request):
-    """Check if ops controller is configured and reachable."""
-    if not OPS_CONTROLLER_TOKEN:
-        return {"available": False, "reason": "OPS_CONTROLLER_TOKEN not set"}
-    code, _ = await _ops_request("GET", "/health", request=request)
-    return {"available": code == 200}
-
-
-# --- Default model ---
 
 # --- RAG ---
 
@@ -1527,11 +1366,6 @@ async def service_pressure():
         "vram_aggregate_unavailable": bool(raw.get("vram_aggregate_unavailable", False)),
     }
 
-
-# --- GPU routes ---
-
-_routes_gpu.register(app, _ops_request)
-_routes_registry.register(app, _ops_request)
 
 # --- Static ---
 
