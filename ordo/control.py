@@ -15,12 +15,16 @@ Design constraints (from the architecture decisions + the drift lessons):
 """
 from __future__ import annotations
 
+import ipaddress
 import json
+import os
 import re
+import socket
 import subprocess
 import threading
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 import yaml
 
@@ -43,6 +47,74 @@ INSTALLABLE_PLUGINS = frozenset({
     "comfyui", "song-gen", "voice", "rag", "open-webui", "monitoring",
     "automation", "searxng-web", "codebase-memory-ui", "obsidian-livesync", "llamacpp-cpu",
 })
+
+# Model download validation (matches ops-api)
+COMFYUI_CATEGORIES = (
+    "checkpoints", "loras", "text_encoders", "latent_upscale_models",
+    "vae", "unet", "clip", "clip_vision", "controlnet", "embeddings",
+    "upscale_models", "diffusion_models", "vae_approx",
+)
+
+_MODEL_DOWNLOAD_ALLOWED_HOSTS = {
+    "huggingface.co", "hf-mirror.com", "cdn-lfs.huggingface.co",
+    "cdn-lfs-us-1.huggingface.co", "cdn-lfs-eu-1.huggingface.co",
+    "civitai.com", "github.com", "objects.githubusercontent.com",
+}
+
+COMFYUI_MODELS_DIR = Path(os.environ.get("COMFYUI_MODELS_DIR", "/models/comfyui"))
+AUDIT_LOG_PATH = Path(os.environ.get("AUDIT_LOG_PATH", "/data/audit.jsonl"))
+OPS_ENV_PATH = Path(os.environ.get("OPS_ENV_PATH", "/config/.env"))
+
+
+def _validate_download_url(url: str) -> None:
+    """Block SSRF: only allow HTTPS to known model-hosting domains, reject private IPs."""
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.port not in (None, 443):
+        raise ValueError("URL must use HTTPS on the standard port")
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise ValueError("Cannot parse hostname from URL")
+    if host not in _MODEL_DOWNLOAD_ALLOWED_HOSTS:
+        raise ValueError(
+            f"Host {host!r} not in allowed list. "
+            f"Allowed: {', '.join(sorted(_MODEL_DOWNLOAD_ALLOWED_HOSTS))}"
+        )
+    try:
+        for info in socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM):
+            addr = ipaddress.ip_address(info[4][0])
+            if addr.is_private or addr.is_reserved or addr.is_loopback or addr.is_link_local:
+                raise ValueError(f"Host {host!r} resolves to private/reserved IP {addr}")
+    except socket.gaierror as exc:
+        raise ValueError(f"Cannot resolve host {host!r}: {exc}") from exc
+
+
+def _validated_redirect_url(current_url: str, location: str) -> str:
+    redirect_url = urljoin(current_url, location)
+    _validate_download_url(redirect_url)
+    return redirect_url
+
+
+def _auto_detect_category(url: str, filename: str) -> str:
+    """Auto-detect ComfyUI model category from URL/filename."""
+    url_lower = url.lower()
+    name_lower = filename.lower()
+    for cat in sorted(COMFYUI_CATEGORIES, key=len, reverse=True):
+        if cat in url_lower or cat in name_lower:
+            return cat
+    combined = f"{url_lower} {name_lower}"
+    for keyword, category in (
+        ("lora", "loras"),
+        ("text_encoder", "text_encoders"),
+        ("clip", "text_encoders"),
+        ("vae", "vae"),
+        ("unet", "unet"),
+        ("controlnet", "controlnet"),
+        ("upscale", "upscale_models"),
+        ("embedding", "embeddings"),
+    ):
+        if keyword in combined:
+            return category
+    return "checkpoints"
 
 
 class ControlPlane:
@@ -510,6 +582,10 @@ class ControlPlane:
         url = str(body.get("url", "")).strip()
         if not url.startswith("https://"):
             return self._error(400, "URL must start with https://")
+        try:
+            _validate_download_url(url)
+        except ValueError as e:
+            return self._error(400, str(e))
         with self._dl_lock:
             if self._dl_status.get("running"):
                 return self._error(409, "A download is already in progress")
@@ -517,8 +593,10 @@ class ControlPlane:
         if not filename or ".." in filename or "/" in filename or "\\" in filename:
             return self._error(400, "Invalid or undetectable filename")
         category = str(body.get("category", "")).strip()
+        if category and category not in COMFYUI_CATEGORIES:
+            return self._error(400, f"Invalid category. Must be one of: {COMFYUI_CATEGORIES}")
         if not category:
-            category = "checkpoints"  # default
+            category = _auto_detect_category(url, filename)
         # Start download in background thread
         thread = threading.Thread(
             target=self._run_model_download,
@@ -536,21 +614,86 @@ class ControlPlane:
     def _run_model_download(self, url: str, category: str, filename: str) -> None:
         """Background download worker."""
         with self._dl_lock:
-            self._dl_status.update({"running": True, "done": False, "success": None, "progress": 0, "filename": filename, "category": category})
+            self._dl_status.update({
+                "running": True, "output": f"Starting: {filename}", "done": False,
+                "success": None, "progress": 0, "filename": filename, "category": category,
+            })
+        dest_dir = COMFYUI_MODELS_DIR / category
         try:
-            dest_dir = Path(f"/data/comfyui-models/{category}")
             dest_dir.mkdir(parents=True, exist_ok=True)
-            dest = dest_dir / filename
-            proc = subprocess.run(
-                ["curl", "-L", "-f", "-o", str(dest), url],
-                capture_output=True, text=True, timeout=3600,
-            )
-            success = proc.returncode == 0
+        except OSError as e:
             with self._dl_lock:
-                self._dl_status.update({"running": False, "done": True, "success": success, "output": proc.stderr[-2000:] if proc.stderr else ""})
+                self._dl_status.update({
+                    "output": f"Cannot create dir: {e}", "success": False,
+                    "running": False, "done": True,
+                })
+            return
+
+        dest = dest_dir / filename
+        temp_path = dest.with_suffix(dest.suffix + ".tmp")
+        try:
+            import httpx
+            start_byte = temp_path.stat().st_size if temp_path.exists() else 0
+            req_headers = {"User-Agent": "ordo-ai-stack/1.0"}
+            if start_byte > 0:
+                req_headers["Range"] = f"bytes={start_byte}-"
+            with httpx.Client(timeout=60.0, follow_redirects=False) as client:
+                current_url = url
+                for _ in range(10):
+                    _validate_download_url(current_url)
+                    response = client.send(
+                        client.build_request("GET", current_url, headers=req_headers),
+                        stream=True,
+                    )
+                    if response.status_code not in (301, 302, 303, 307, 308):
+                        break
+                    location = response.headers.get("location")
+                    response.close()
+                    if not location:
+                        raise ValueError("Redirect response did not include a location")
+                    current_url = _validated_redirect_url(current_url, location)
+                else:
+                    raise ValueError("Too many redirects while downloading model")
+                with response:
+                    r = response
+                    r.raise_for_status()
+                    total = 0
+                    total_header = r.headers.get("Content-Range") or r.headers.get("Content-Length")
+                    if total_header and "/" in str(total_header):
+                        total = int(str(total_header).split("/")[-1].strip())
+                    elif r.headers.get("Content-Length"):
+                        total = int(r.headers["Content-Length"]) + (start_byte or 0)
+                    total_mb = total / (1024 * 1024) if total else 0
+                    downloaded = start_byte
+                    append = start_byte > 0 and r.status_code == 206
+                    with open(temp_path, "ab" if append else "wb") as f:
+                        for chunk in r.iter_bytes(chunk_size=1024 * 1024):
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            dl_mb = downloaded / (1024 * 1024)
+                            pct = int(downloaded * 100 / total) if total else 0
+                            msg = f"Downloading {filename} → {category}/\n"
+                            msg += f"{dl_mb:.0f} / {total_mb:.0f} MB ({pct}%)" if total else f"{dl_mb:.0f} MB downloaded"
+                            with self._dl_lock:
+                                self._dl_status["output"] = msg
+                                self._dl_status["progress"] = pct
+            temp_path.rename(dest)
+            with self._dl_lock:
+                self._dl_status["success"] = True
+                self._dl_status["output"] += f"\nDone — saved to {category}/{filename}"
         except Exception as e:
             with self._dl_lock:
-                self._dl_status.update({"running": False, "done": True, "success": False, "output": str(e)})
+                self._dl_status["output"] += f"\nError: {e}"
+                self._dl_status["success"] = False
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
+        finally:
+            with self._dl_lock:
+                self._dl_status["running"] = False
+                self._dl_status["done"] = True
 
     def models_packs(self) -> dict[str, Any]:
         """List ComfyUI model pack IDs and descriptions."""
@@ -652,37 +795,17 @@ class ControlPlane:
     # --- Slice 3: env/model-config routes ---
 
     ENV_ALLOWED_KEYS = frozenset({
-        "LLAMACPP_MODEL", "LLAMACPP_CONTEXT", "LLAMACPP_THREADS", "LLAMACPP_BATCH",
-        "LLAMACPP_NGPU", "LLAMACPP_TENSOR_SPLIT", "LLAMACPP_MAIN_GPU",
-        "LLAMACPP_MLOCK", "LLAMACPP_MMAP", "LLAMACPP_VERBOSE",
-        "LLAMACPP_LOG_FILE", "LLAMACPP_LOG_LEVEL", "LLAMACPP_LOG_FORMAT",
-        "LLAMACPP_LOG_TIME", "LLAMACPP_LOG_TIMESTAMP", "LLAMACPP_LOG_COLOR",
-        "LLAMACPP_LOG_FILE_APPEND", "LLAMACPP_LOG_FILE_MAX_SIZE",
-        "LLAMACPP_LOG_FILE_MAX_BACKUPS", "LLAMACPP_LOG_FILE_COMPRESS",
-        "LLAMACPP_LOG_FILE_ROTATE", "LLAMACPP_LOG_FILE_ROTATE_SIZE",
-        "LLAMACPP_LOG_FILE_ROTATE_COUNT", "LLAMACPP_LOG_FILE_ROTATE_COMPRESS",
-        "LLAMACPP_LOG_FILE_ROTATE_WHEN", "LLAMACPP_LOG_FILE_ROTATE_INTERVAL",
-        "LLAMACPP_LOG_FILE_ROTATE_AT_MIDNIGHT", "LLAMACPP_LOG_FILE_ROTATE_ON_OPEN",
-        "LLAMACPP_LOG_FILE_ROTATE_ON_CLOSE", "LLAMACPP_LOG_FILE_ROTATE_ON_SIGNAL",
-        "LLAMACPP_LOG_FILE_ROTATE_ON_HUP", "LLAMACPP_LOG_FILE_ROTATE_ON_TERM",
-        "LLAMACPP_LOG_FILE_ROTATE_ON_INT", "LLAMACPP_LOG_FILE_ROTATE_ON_USR1",
-        "LLAMACPP_LOG_FILE_ROTATE_ON_USR2", "LLAMACPP_LOG_FILE_ROTATE_ON_PIPE",
-        "LLAMACPP_LOG_FILE_ROTATE_ON_ALARM", "LLAMACPP_LOG_FILE_ROTATE_ON_CHLD",
-        "LLAMACPP_LOG_FILE_ROTATE_ON_CONT", "LLAMACPP_LOG_FILE_ROTATE_ON_STOP",
-        "LLAMACPP_LOG_FILE_ROTATE_ON_TSTP", "LLAMACPP_LOG_FILE_ROTATE_ON_TTIN",
-        "LLAMACPP_LOG_FILE_ROTATE_ON_TTOU", "LLAMACPP_LOG_FILE_ROTATE_ON_IO",
-        "LLAMACPP_LOG_FILE_ROTATE_ON_XCPU", "LLAMACPP_LOG_FILE_ROTATE_ON_XFSZ",
-        "LLAMACPP_LOG_FILE_ROTATE_ON_VTALRM", "LLAMACPP_LOG_FILE_ROTATE_ON_PROF",
-        "LLAMACPP_LOG_FILE_ROTATE_ON_WINCH", "LLAMACPP_LOG_FILE_ROTATE_ON_URG",
-        "LLAMACPP_LOG_FILE_ROTATE_ON_POLL", "LLAMACPP_LOG_FILE_ROTATE_ON_PWR",
-        "LLAMACPP_LOG_FILE_ROTATE_ON_SYS", "LLAMACPP_LOG_FILE_ROTATE_ON_RT",
+        "DEFAULT_MODEL", "OPEN_WEBUI_DEFAULT_MODEL", "LLAMACPP_MODEL",
+        "LLAMACPP_CTX_SIZE", "LLAMACPP_EMBED_MODEL", "LLAMACPP_MMPROJ",
+        "LLAMACPP_FLASH_ATTN", "LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION",
+        "LLAMACPP_KV_CACHE_TYPE_K", "LLAMACPP_KV_CACHE_TYPE_V", "LLAMACPP_EXTRA_ARGS",
     })
 
     def env_get(self, key: str) -> dict[str, Any]:
         """Read a single allowed key from the registry env file."""
         if key not in self.ENV_ALLOWED_KEYS:
             return self._error(400, f"Key not in allowlist: {key!r}")
-        env_path = Path("/config/.env")
+        env_path = OPS_ENV_PATH
         if not env_path.exists():
             return {"key": key, "value": ""}
         content = env_path.read_text(encoding="utf-8")
@@ -696,18 +819,18 @@ class ControlPlane:
 
     def audit_log(self, limit: int = 50) -> dict[str, Any]:
         """Read audit log (last N entries)."""
-        path = Path("/data/audit.jsonl")
+        path = AUDIT_LOG_PATH
         if not path.exists():
             return {"entries": []}
         try:
+            from collections import deque
+
             with open(path, encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
+                lines = deque(f, maxlen=limit)
         except OSError as e:
             return {"entries": [], "error": f"failed to read audit log: {e}"}
-        # Return last N entries, newest first
-        tail = lines[-limit:]
         entries = []
-        for line in reversed(tail):
+        for line in reversed(lines):
             line = line.strip()
             if not line:
                 continue
@@ -720,7 +843,7 @@ class ControlPlane:
     def model_config_get(self) -> dict[str, Any]:
         """Full model-control state for the dashboard."""
         # Read current .env values
-        env_path = Path("/config/.env")
+        env_path = OPS_ENV_PATH
         running = {}
         if env_path.exists():
             content = env_path.read_text(encoding="utf-8")
@@ -785,8 +908,15 @@ class ControlPlane:
             return {}
 
     # --- routing (also pure) ---
-    def route(self, method: str, path: str, body: dict[str, Any] | None = None) -> tuple[int, dict]:
+    def route(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        query: dict[str, str] | None = None,
+    ) -> tuple[int, dict]:
         body = body or {}
+        query = query or {}
         m = method.upper()
         if m == "GET" and path == "/status":
             return 200, self.status()
@@ -885,7 +1015,11 @@ class ControlPlane:
             return 200, self.diagnostics_dstate()
         # Slice 3: audit route
         if m == "GET" and path == "/audit":
-            return 200, self.audit_log()
+            try:
+                limit = int(query.get("limit", "50"))
+            except ValueError:
+                return 422, {"error": "limit must be an integer"}
+            return 200, self.audit_log(limit)
         # Slice 3: env route
         if m == "GET" and path.startswith("/env/") and path.count("/") == 2:
             key = path.split("/")[2]
@@ -921,7 +1055,7 @@ class ControlPlane:
                         body = json.loads(raw)
                 except json.JSONDecodeError:
                     return JSONResponse(content={"error": "invalid JSON body"}, status_code=400)
-            status, payload = cp.route(method, path, body)
+            status, payload = cp.route(method, path, body, dict(request.query_params))
             return JSONResponse(content=payload, status_code=status)
 
         return app

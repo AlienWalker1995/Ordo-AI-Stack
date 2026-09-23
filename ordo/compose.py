@@ -154,10 +154,14 @@ def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
         "/var/run/docker.sock:/var/run/docker.sock",  # broker start/stop (guard-scoped)
         "./:/config",                                 # ordo.yaml + rendered out/ (single write path)
         "${DATA_PATH:-./data}/ops-controller:/data",  # model registry + audit log (same as ops-api)
+        "comfyui-models:/models/comfyui",             # shared ComfyUI model store (same as ops-api)
     ]
     s["environment"] = {
         "ORDO_PROJECT": project,
         "MODEL_REGISTRY_PATH": "/data/model-registry.json",
+        "COMFYUI_MODELS_DIR": "/models/comfyui",
+        "AUDIT_LOG_PATH": "/data/audit.log",
+        "OPS_ENV_PATH": "/config/.env",
     }
     # --source/--catalog are global (pre-subcommand) flags; --project/--out belong to `serve`.
     # --out is /config ITSELF: the deployment mounts the dir holding ordo.yaml AND the rendered
