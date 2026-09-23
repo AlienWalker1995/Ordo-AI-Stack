@@ -39,8 +39,10 @@ def test_notes_services_render_with_expected_wiring():
     assert bridge["image"] == "ordo/livesync-bridge:latest"
     # live-watch on Docker Desktop bind mounts needs polling (no inotify events)
     assert bridge["environment"]["CHOKIDAR_USEPOLLING"] == "1"
-    # secrets arrive via the secrets.env env_file, never ${..} interpolation (compose-config safe)
-    assert any("secrets.env" in str(f) for f in bridge["env_file"]), "bridge must layer secrets.env"
+    # exactly its two secrets, as references (the passphrase must never silently default to empty)
+    assert bridge["environment"]["COUCHDB_PASSWORD"] == "${COUCHDB_PASSWORD}"
+    assert bridge["environment"]["LIVESYNC_E2EE_PASSPHRASE"] == "${LIVESYNC_E2EE_PASSPHRASE}"
+    assert couch["environment"]["COUCHDB_PASSWORD"] == "${COUCHDB_PASSWORD}"
     # mirrors the vault's notes/ subfolder — the ONE shared vault the MCP + RAG use
     assert any("/memory-vault}/notes:/app/data/notes" in v or "/notes:/app/data/notes" in v
                for v in bridge["volumes"]), "bridge must bind the vault notes/ folder"

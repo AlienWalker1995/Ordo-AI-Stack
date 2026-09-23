@@ -18,7 +18,7 @@ That's it. Hermes starts automatically, waits for model-gateway / model-gateway-
 
 Web UI: `https://${CADDY_TAILNET_HOSTNAME}:8447/` (Google SSO, its own dedicated Caddy port, served at the origin root — see [docs/runbooks/auth.md](runbooks/auth.md)). The old `https://${CADDY_TAILNET_HOSTNAME}/hermes*` URL still works — Caddy's `:443` front door 302s it to `:8447/`.
 Logs: `docker compose -p ordo logs -f agent hermes-dashboard`
-Restart: `docker compose -p ordo restart agent`
+Restart: `docker compose -p ordo restart agent` (to pick up changed env or secrets, recreate instead: `docker compose -p ordo --env-file .env --env-file secrets.env up -d --force-recreate agent`)
 Stop only Hermes: `docker compose -p ordo stop agent hermes-dashboard`
 
 (All `docker compose` commands below assume you're in `out/`, the rendered output directory, with `-p ordo`.)

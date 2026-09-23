@@ -99,9 +99,10 @@ cat <<EOF
 
 Next steps:
   1. Copy the rotated values into out/secrets.env (the file compose reads).
-  2. cd out
-     docker compose -p ordo restart model-gateway model-gateway-keys litellm-db \\
-         dashboard ops-controller agent hermes-dashboard open-webui n8n oauth2-proxy
+  2. cd out   (recreate, not restart: a restart keeps the old environment; always both env files)
+     COMPOSE_PROFILES='*' docker compose -p ordo --env-file .env --env-file secrets.env \\
+         up -d --force-recreate model-gateway model-gateway-keys litellm-db dashboard \\
+         ops-controller agent hermes-dashboard open-webui n8n oauth2-proxy
      cd ..
   3. git commit secrets/.env.sops + push.
 
@@ -113,13 +114,14 @@ before-restart step on the two stores that persist their own copy:
   ALTER USER langfuse PASSWORD '<new>'                    inside langfuse-db
   ALTER USER clickhouse IDENTIFIED BY '<new>'             inside langfuse-clickhouse
 then recreate the profile so redis/minio pick up their new env:
-  docker compose -p ordo --profile langfuse up -d --force-recreate \\
+  COMPOSE_PROFILES='*' docker compose -p ordo --env-file .env --env-file secrets.env up -d --force-recreate \\
       langfuse-db langfuse-clickhouse langfuse-redis langfuse-minio \\
       langfuse-worker langfuse-web
 Rotating LANGFUSE_NEXTAUTH_SECRET invalidates open Langfuse sessions (sign in again).
 
 Rotating HERMES_API_SERVER_KEY requires recreating the agent so Hermes picks up the new
-bearer (docker compose -p ordo up -d --force-recreate agent); eval runs must use the new value.
+bearer (from out/: docker compose -p ordo --env-file .env --env-file secrets.env up -d
+--force-recreate agent); eval runs must use the new value.
 
 All existing oauth2-proxy sessions invalidate (cookie secret rotated).
 You'll need to sign in via Google again.

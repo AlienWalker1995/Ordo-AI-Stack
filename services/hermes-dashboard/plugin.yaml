@@ -33,7 +33,8 @@ services:
   - name: hermes-dashboard
     # Same image as the Hermes agent (V1 builds one hermes image, runs it as gateway + dashboard).
     image: ordo/agent-hermes:latest
-    wants_secrets: true
+    # Its Chat tab runs full agent sessions, so the same env secrets as the agent.
+    secrets: [LITELLM_KEY_HERMES, OPS_CONTROLLER_TOKEN]
     # Binds LOOPBACK, inside caddy's network namespace. This is what keeps the whole
     # stack on ONE auth model — oauth2-proxy at the edge, nothing per-service.
     #
@@ -62,6 +63,9 @@ services:
     network_mode: service:caddy
     env:
       PYTHONIOENCODING: utf-8
+      # Chat-tab sessions trace to Langfuse like the agent's (same pair, fail-open when unset).
+      HERMES_LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      HERMES_LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       OPS_CONTROLLER_URL: http://ops-controller:9000
       LLAMACPP_CTX_SIZE: ${LLAMACPP_CTX_SIZE:-262144}
       HERMES_WEB_DIST: /opt/hermes-agent/hermes_cli/web_dist

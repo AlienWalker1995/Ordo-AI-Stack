@@ -41,9 +41,10 @@ class PluginService:
     # (`service_healthy`) rather than merely created - the shape agent.yaml already uses, and what
     # an application service needs when its datastores must finish migrating/starting first.
     depends_on: list[str] | dict[str, str] = dataclasses.field(default_factory=list)
-    # True → this service reads the operator-managed `secrets.env` as a second env_file (so its
-    # ${SECRET} refs resolve). Secret VALUES never live in the rendered config, only the reference.
-    wants_secrets: bool = False
+    # The secret NAMES this service reads. Each renders as `KEY: ${KEY}` in its environment, and
+    # compose interpolates the value from `--env-file secrets.env`, so a service holds only the
+    # secrets it needs. Secret VALUES never live in the rendered config, only the reference.
+    secrets: tuple[str, ...] = ()
     # Host port publishes. RESERVED for the edge/front-door plugin (Caddy's :443) — core services
     # deliberately publish none (isolation). Opt-in behind the plugin's profile, so it stays dormant
     # until `--profile edge` unless the edge plugin is enabled.
@@ -82,6 +83,11 @@ class PluginService:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PluginService:
         name = str(d["name"])
+        where = f"service {name!r}"
+        if "wants_secrets" in d:
+            raise ValueError(
+                f"{where}: `wants_secrets` was replaced by `secrets: [NAMES]`. A service now lists the "
+                "secret names it reads, instead of receiving the whole secrets.env")
         gpu_pin = str(d.get("gpu_pin", ""))
         raw_depends = d.get("depends_on", []) or []
         depends_on: list[str] | dict[str, str] = (
@@ -101,7 +107,7 @@ class PluginService:
             volumes=[str(v) for v in (d.get("volumes", []) or [])],
             healthcheck=dict(d.get("healthcheck", {}) or {}),
             depends_on=depends_on,
-            wants_secrets=bool(d.get("wants_secrets", False)),
+            secrets=tuple(str(k) for k in (d.get("secrets", []) or [])),
             ports=[str(p) for p in (d.get("ports", []) or [])],
             shm_size=str(d.get("shm_size", "")),
             network_mode=str(d.get("network_mode", "")),

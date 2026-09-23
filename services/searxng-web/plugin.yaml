@@ -19,7 +19,7 @@ services:
   - name: searxng
     # Pinned to the live registry manifest digest (V1 floats searxng/searxng:latest — pin, don't float).
     image: searxng/searxng@sha256:37c616a774b90fb5df9239eb143f1b11866ddf7b830cd1ebcca6ba11b38cc2bf
-    wants_secrets: true       # SEARXNG_SECRET resolves from secrets.env
+    secrets: [SEARXNG_SECRET]   # overrides settings.yml's secret_key
     env:
       SEARXNG_SETTINGS_PATH: /etc/searxng/settings.yml
       SEARXNG_BASE_URL: http://searxng:8080/

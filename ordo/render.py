@@ -81,6 +81,11 @@ CORE_SECRET_KEYS: tuple[str, ...] = (
     "GITHUB_PERSONAL_ACCESS_TOKEN",  # ComfyUI-Manager (git-based node installs)
 )
 
+# Secrets a service may read that are deliberately NOT required (not in secrets.env.example):
+# THROUGHPUT_RECORD_TOKEN has no SOPS source and the dashboard only enforces it "when set" (see the
+# note in CORE_SECRET_KEYS). A service passes these as ${KEY:-} so an absent value is simply empty.
+OPTIONAL_SECRET_KEYS: tuple[str, ...] = ("THROUGHPUT_RECORD_TOKEN",)
+
 # Deep-merge an override dict onto a derived dict (overrides win, survive regeneration).
 def _apply_overrides(derived: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
     out = dict(derived)
@@ -315,6 +320,8 @@ class RenderedConfig:
             agent_volumes=self.hermes.get("agent_volumes") or None,
             agent_environment=self.hermes.get("agent_environment") or None,
             agent_secret_files=self.hermes.get("agent_secret_files") or None,
+            agent_secrets=self.hermes.get("agent_secrets") or None,
+            litellm_key_envs=[k["env"] for k in self.litellm_keys],
             agent_depends_on=self.hermes.get("agent_depends_on") or None,
             agent_healthcheck=self.hermes.get("agent_healthcheck") or None,
             dashboard=self.dashboard,
@@ -569,6 +576,7 @@ def render(source: Source, catalog: Catalog,
         "agent_volumes": (list(agent.volumes) if agent else []),
         "agent_environment": (dict(agent.environment) if agent else {}),
         "agent_secret_files": ([dict(s) for s in agent.secret_files] if agent else []),
+        "agent_secrets": (list(agent.secrets) if agent else []),
         "agent_depends_on": (dict(agent.depends_on) if agent else {}),
         "agent_healthcheck": (dict(agent.healthcheck) if agent else {}),
     }
@@ -588,7 +596,7 @@ def render(source: Source, catalog: Catalog,
             "volumes": list(dash.volumes),
             "depends_on": dict(dash.depends_on),
             "healthcheck": dict(dash.healthcheck),
-            "wants_secrets": dash.wants_secrets,
+            "secrets": list(dash.secrets),
             "gpu_capabilities": list(dash.gpu_capabilities),
         }
     # Registry-driven plugin resolution: enable what's requested AND fits AND has its deps.

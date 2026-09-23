@@ -113,26 +113,36 @@ def _depends_on(peers: dict[str, str] | list[str] | None) -> Any:
     return list(peers)
 
 
-# Operator-managed secrets live here (SOPS-decrypted / hand-filled), NEVER in the rendered .env.
-# Services that need secrets read it as a SECOND env_file layered over the derived .env.
-SECRETS_ENV_FILE = "secrets.env"
+# Operator-managed secrets live in secrets.env (SOPS-decrypted / hand-filled), NEVER in the rendered
+# .env, and no service loads that file whole. Each service lists the secret NAMES it reads; they
+# render as `KEY: ${KEY}` and compose interpolates the values from `--env-file secrets.env` (every
+# compose call passes both env files). So a tailnet sidecar holds TS_AUTHKEY and nothing else.
+def _env_files(env_file: str | None) -> list:
+    return [env_file] if env_file else []
 
 
-def _env_files(env_file: str | None, secrets: bool) -> list:
-    # secrets.env is operator-managed and may be absent at render/config time (it holds no derived
-    # values), so it's declared `required: false` — `docker compose config` must not fail when the
-    # operator hasn't filled it yet. `ordo render` emits secrets.env.example listing the keys.
-    files: list = [env_file] if env_file else []
-    if secrets:
-        files.append({"path": SECRETS_ENV_FILE, "required": False})
-    return files
+def _secret_env(names) -> dict[str, str]:
+    """`KEY: ${KEY}` per secret name. An optional one (OPTIONAL_SECRET_KEYS) becomes ${KEY:-} so an
+    absent value is empty rather than a compose warning; a required one stays ${KEY}, so a missing
+    value is reported."""
+    from .render import OPTIONAL_SECRET_KEYS
+    return {n: (f"${{{n}:-}}" if n in OPTIONAL_SECRET_KEYS else f"${{{n}}}") for n in names}
+
+
+def _add_secrets(s: dict[str, Any], names) -> None:
+    """Merge secret refs into a service's environment. A value the manifest already set explicitly
+    (e.g. `OPS_CONTROLLER_TOKEN: ${OPS_CONTROLLER_TOKEN:-}`) is kept as written."""
+    if not names:
+        return
+    env = s.setdefault("environment", {})
+    for k, v in _secret_env(names).items():
+        env.setdefault(k, v)
 
 
 def _svc(image: str, *, net: str, env_file: str | None = None, gpu: bool = False,
-         profiles: list[str] | None = None, depends: list[str] | None = None,
-         secrets: bool = False) -> dict[str, Any]:
+         profiles: list[str] | None = None, depends: list[str] | None = None) -> dict[str, Any]:
     s: dict[str, Any] = {"image": image, "restart": "unless-stopped", "networks": [net]}
-    files = _env_files(env_file, secrets)
+    files = _env_files(env_file)
     if files:
         s["env_file"] = files
     if profiles:
@@ -149,7 +159,9 @@ def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
     DockerBackend guard scopes every start/stop to `<project>-*`, so socket access can NOT
     reach containers outside this project. The rendered config dir is mounted read-only
     so a runtime model switch re-renders in place (one write path stays inside the project)."""
-    s = _svc(f"{project}/ops-controller:latest", net=net, env_file=env_file, secrets=True)
+    # Its own bearer token only. It reads secrets.env as a FILE for compose interpolation, never
+    # from its env, so a rotated secret is interpolated fresh on the next recreate.
+    s = _svc(f"{project}/ops-controller:latest", net=net, env_file=env_file)
     s["volumes"] = [
         "/var/run/docker.sock:/var/run/docker.sock",  # broker start/stop (guard-scoped)
         "./:/config",                                 # ordo.yaml + rendered out/ (single write path)
@@ -179,6 +191,9 @@ def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
     # Read-only GPU visibility so the scheduler can see real VRAM (mirrors V1's utility cap).
     s.update(_utility_gpu_reservation())
     s["environment"]["NVIDIA_DRIVER_CAPABILITIES"] = "utility"
+    # Its own bearer token only. It reads secrets.env as a FILE for compose interpolation, never
+    # from its env, so a rotated secret is interpolated fresh on the next recreate.
+    _add_secrets(s, ["OPS_CONTROLLER_TOKEN"])
     return s
 
 
@@ -260,7 +275,7 @@ def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool
     same mechanism CADDY_TAILNET_HOSTNAME below uses, so no secret VALUE is ever set here. Empty
     when the edge wiring can't produce a PROXY_BASE_URL; the admin/master-key login is unaffected
     either way (see services/model-gateway/README.md)."""
-    s = _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file, secrets=True)
+    s = _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file)
     s["networks"] = [net, _mcp_net(project)]
     s["depends_on"] = _depends_on({"llamacpp": "service_started", "litellm-db": "service_healthy"})
     s["volumes"] = [_MODEL_GATEWAY_CONFIG_BIND]
@@ -279,6 +294,10 @@ def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool
         s["environment"].update(GATEWAY_LANGFUSE_ENV)
     if google_sso_env:
         s["environment"].update(google_sso_env)
+    # Master key (admin API + healthcheck), the DB-credential salt, the throughput-record token the
+    # dashboard checks, and the Langfuse pair only while its callback is on.
+    _add_secrets(s, ["LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "THROUGHPUT_RECORD_TOKEN",
+                     *(["LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"] if langfuse_tracing else [])])
     s["healthcheck"] = {
         "test": ["CMD-SHELL", (
             "python3 -c \"import os, urllib.request; "
@@ -291,12 +310,14 @@ def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool
     return s
 
 
-def _model_gateway_keys(project: str, net: str, env_file: str) -> dict[str, Any]:
+def _model_gateway_keys(project: str, net: str, env_file: str,
+                        key_envs: list[str] | None = None) -> dict[str, Any]:
     """One-shot: provision the per-consumer LiteLLM virtual keys from the rendered keys.json
     (bootstrap_keys.py, idempotent). Same image as the gateway (no second build), runs after the
     gateway is healthy, exits 0 when the desired state holds; `on-failure` retries transient API
     errors. The agent depends on `service_completed_successfully` so Hermes never starts keyless."""
-    s = _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file, secrets=True)
+    # The master key to call the admin API, plus every consumer key it provisions (keys.json).
+    s = _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file)
     s["restart"] = "on-failure"
     s["command"] = ["python3", "/app/bootstrap_keys.py"]
     s["volumes"] = [_MODEL_GATEWAY_CONFIG_BIND]
@@ -304,6 +325,7 @@ def _model_gateway_keys(project: str, net: str, env_file: str) -> dict[str, Any]
         "MODEL_GATEWAY_URL": "http://model-gateway:11435",
         "LITELLM_KEYS_SPEC": "/config/keys.json",
     }
+    _add_secrets(s, ["LITELLM_MASTER_KEY", *(key_envs or [])])
     s["depends_on"] = _depends_on({"model-gateway": "service_healthy"})
     return s
 
@@ -320,10 +342,10 @@ def _dashboard(project: str, net: str, env_file: str,
     the V2-native curl probe as a floor."""
     dashboard = dashboard or {}
     image = dashboard.get("image") or f"{project}/dashboard:latest"
-    wants_secrets = dashboard.get("wants_secrets", True)
+    secrets = dashboard.get("secrets", ())
     # depends_on: manifest may map {peer: condition}; default to start-ordering on ops-controller.
     depends = dashboard.get("depends_on") or {"ops-controller": "service_started"}
-    s = _svc(image, net=net, env_file=env_file, secrets=wants_secrets)
+    s = _svc(image, net=net, env_file=env_file)
     dep = _depends_on(depends)
     if dep:
         s["depends_on"] = dep
@@ -344,6 +366,7 @@ def _dashboard(project: str, net: str, env_file: str,
         "test": ["CMD-SHELL", "curl -sf http://localhost:8080/api/health || exit 1"],
         "interval": "30s", "timeout": "10s", "retries": 3, "start_period": "30s",
     }
+    _add_secrets(s, secrets)
     return s
 
 
@@ -447,7 +470,7 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: st
         # target's namespace (e.g. the tailnet-name sidecars inside Caddy's netns).
         s.pop("networks")
         s["network_mode"] = ps.network_mode
-    files = _env_files(env_file, ps.wants_secrets)
+    files = _env_files(env_file)
     if files:
         s["env_file"] = files
     if plugin.compose_profile:
@@ -470,6 +493,7 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: st
         s.update(_GPU_RESERVATION)
     if env:
         s["environment"] = env
+    _add_secrets(s, ps.secrets)
     if ps.command:
         s["command"] = list(ps.command)
     if ps.volumes:
@@ -532,9 +556,7 @@ def _gpu_gate(ps: PluginService, plugin: Plugin, claim: Any, *, net: str, env_fi
         "image": f"{project}/gpu-gate:latest",
         "restart": "unless-stopped",
         "networks": [net],
-        # secrets.env carries OPS_CONTROLLER_TOKEN; .env carries nothing the gate needs, but the
-        # layering matches every other service (and keeps ${...} refs resolvable).
-        "env_file": _env_files(env_file, True),
+        "env_file": _env_files(env_file),
         "depends_on": [ps.name],
         "environment": {
             "GATE_UPSTREAM": f"http://{ps.name}:{g.upstream_port}",
@@ -565,6 +587,7 @@ def _gpu_gate(ps: PluginService, plugin: Plugin, claim: Any, *, net: str, env_fi
         # The gate rides its upstream's profile: a dormant service must not get a live gate, and
         # an enabled service must never come up without one.
         s["profiles"] = [plugin.compose_profile]
+    _add_secrets(s, ["OPS_CONTROLLER_TOKEN"])  # it takes GPU leases from ops-controller
     return name, s
 
 
@@ -577,6 +600,8 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
                    agent_volumes: list[str] | None = None,
                    agent_environment: dict[str, str] | None = None,
                    agent_secret_files: list[dict[str, str]] | None = None,
+                   agent_secrets: list[str] | None = None,
+                   litellm_key_envs: list[str] | None = None,
                    agent_depends_on: dict[str, str] | None = None,
                    agent_healthcheck: dict[str, Any] | None = None,
                    dashboard: dict[str, Any] | None = None,
@@ -637,14 +662,14 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         # LITELLM_MASTER_KEY + LITELLM_SALT_KEY + THROUGHPUT_RECORD_TOKEN are secrets (secrets.env).
         "model-gateway": _model_gateway(project, net, env_file, langfuse_tracing=langfuse_tracing,
                                          google_sso_env=litellm_google_sso_env),
-        "model-gateway-keys": _model_gateway_keys(project, net, env_file),
+        "model-gateway-keys": _model_gateway_keys(project, net, env_file, litellm_key_envs),
         "ops-controller": _ops_controller(project, net, env_file),
         # The dashboard is pluggable (data-driven): the selected manifest supplies image/env/
         # depends/healthcheck. It has no backend service of its own — it calls ops-controller.
         "dashboard": _dashboard(project, net, env_file, dashboard),
-        # OPS_CONTROLLER_TOKEN + Discord/backup tokens are secrets (from secrets.env).
+        # Env secrets from the agent manifest's `secrets:`; Discord/backup tokens are file secrets.
         "agent": _svc(agent_img, net=net, env_file=env_file,
-                      depends=["model-gateway", "model-gateway-keys", "ops-controller"], secrets=True),
+                      depends=["model-gateway", "model-gateway-keys", "ops-controller"]),
     }
     # The agent image's default CMD may be a no-op (agent-hermes defaults to `hermes --help`, which
     # prints usage and exits → restart loop). The manifest's `command` (Hermes: `hermes gateway`)
@@ -660,6 +685,7 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         svcs["agent"], user=agent_user, group_add=agent_group_add, volumes=agent_volumes,
         environment=agent_environment, secret_files=agent_secret_files,
         depends_on=agent_depends_on, healthcheck=agent_healthcheck)
+    _add_secrets(svcs["agent"], agent_secrets or ())  # after the manifest env, which would replace it
     # optional plugin services, built from the resolved manifests (no hardcoded if-blocks).
     # render() only passes services whose plugin is enabled, so profile-gating already happened;
     # the per-service `profiles:` keeps them dormant until `--profile <p>` is used too.

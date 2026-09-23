@@ -78,8 +78,9 @@ sops secrets/<name>.sops            # same for individual file-form tokens
 ```
 For env-form keys, also copy the changed value into `out/secrets.env` —
 that's the file compose reads; re-encrypting `.env.sops` alone doesn't
-propagate. Then restart the dependent service from `out/`, e.g.
-`docker compose -p ordo restart agent`.
+propagate. Then recreate the dependent service from `out/` (a `restart` keeps the old
+environment), always with both env files, since each service's secrets are interpolated from
+secrets.env: `docker compose -p ordo --env-file .env --env-file secrets.env up -d --force-recreate agent`.
 
 ## Rotate internal tokens
 
@@ -92,7 +93,8 @@ once:
 scripts/secrets/rotate-internal.sh          # re-encrypts secrets/.env.sops
 # copy the rotated values into out/secrets.env
 cd out
-docker compose -p ordo restart model-gateway dashboard ops-controller \
+COMPOSE_PROFILES='*' docker compose -p ordo --env-file .env --env-file secrets.env \
+    up -d --force-recreate model-gateway dashboard ops-controller \
     agent hermes-dashboard model-gateway-keys oauth2-proxy
 cd ../..
 git add secrets/.env.sops && git commit -m "chore(secrets): rotate internal tokens" && git push
@@ -124,7 +126,7 @@ echo -n "$NEW_VALUE" | \
        > secrets/<name>.sops
 scripts/secrets/decrypt.sh                          # file-form -> ~/.ai-toolkit/runtime/secrets/
 # env-form tokens (e.g. HF, GitHub PAT): also update the matching key in out/secrets.env
-docker compose -p ordo restart <consumer-service>    # run from out/
+docker compose -p ordo --env-file .env --env-file secrets.env up -d --force-recreate <consumer-service>  # from out/
 git add secrets/<name>.sops && git commit && git push
 ```
 

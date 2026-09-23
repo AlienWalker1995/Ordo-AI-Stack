@@ -32,6 +32,10 @@ healthcheck:
   timeout: 10s
   retries: 3
   start_period: 30s
+# Env secrets it reads: the control-plane token, and the throughput token it checks on
+# /api/throughput/record (must match model-gateway's). LITELLM_MASTER_KEY is mapped in environment.
+secrets: [OPS_CONTROLLER_TOKEN, THROUGHPUT_RECORD_TOKEN]
+
 environment:
   # The control plane. Every route this dashboard calls is served by ops-controller.
   OPS_CONTROLLER_URL: http://ops-controller:9000

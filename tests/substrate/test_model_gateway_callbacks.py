@@ -110,9 +110,10 @@ def test_gateway_langfuse_env_values():
 
 
 def test_gateway_never_carries_a_langfuse_key_literal():
-    """The key pair reaches the gateway only through the secrets.env env_file."""
+    """The key pair reaches the gateway only as ${...} references, interpolated from secrets.env."""
     env = _gateway_env(["langfuse"])
-    assert "LANGFUSE_PUBLIC_KEY" not in env and "LANGFUSE_SECRET_KEY" not in env
+    assert env["LANGFUSE_PUBLIC_KEY"] == "${LANGFUSE_PUBLIC_KEY}"
+    assert env["LANGFUSE_SECRET_KEY"] == "${LANGFUSE_SECRET_KEY}"
 
 
 # ── add_callbacks.py ───────────────────────────────────────────────────────────

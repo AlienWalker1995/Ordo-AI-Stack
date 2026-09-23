@@ -72,7 +72,6 @@ services:
         # A human is watching a browser spinner. Wait this long for the card, then refuse
         # honestly rather than hanging the UI — see services/gpu-gate.
         acquire_timeout_seconds: 120
-    wants_secrets: true   # HF_TOKEN / GITHUB_PERSONAL_ACCESS_TOKEN resolve from secrets.env
     # Docker defaults /dev/shm to 64MB, which starves torch DataLoader workers and the VAE
     # decode path on large frames. The DEPLOYED out/docker-compose.yml already carried
     # `shm_size: 8g`, but it was hand-added to the generated file, which this source did not

@@ -145,26 +145,15 @@ def test_secrets_scoped_to_enabled_plugins():
     assert set(CORE_SECRET_KEYS) <= set(rc.required_secrets)  # core secrets always required
 
 
-def test_services_needing_secrets_get_secrets_env_file():
+def test_services_get_secret_references_not_the_secrets_file():
+    # Per-service scoping is specified in test_secret_scoping.py; here only the parity shape: the
+    # services that need secrets carry ${KEY} references and none loads secrets.env whole.
     c = _dual().compose_dict()
-
-    def _has_secrets(svc):
-        return any(isinstance(f, dict) and f.get("path") == "secrets.env"
-                   for f in c["services"][svc].get("env_file", []))
-    # core services that use secrets, plus a ported one, all layer the secrets.env (required:false)
-    for svc in ("model-gateway", "ops-controller", "dashboard", "agent",
-                "open-webui", "searxng", "oauth2-proxy"):
-        assert _has_secrets(svc), f"{svc} missing secrets.env env_file"
-    # a service with no secrets does NOT get it (qdrant is plain)
-    assert not _has_secrets("qdrant")
-
-
-def test_secrets_env_file_is_not_required():
-    # docker compose config must not fail when secrets.env is absent → required:false
-    c = _dual().compose_dict()
-    ef = c["services"]["model-gateway"]["env_file"]
-    sec = next(f for f in ef if isinstance(f, dict) and f["path"] == "secrets.env")
-    assert sec["required"] is False
+    for svc in c["services"].values():
+        assert all("secrets.env" not in str(f) for f in svc.get("env_file", []))
+    assert c["services"]["ops-controller"]["environment"]["OPS_CONTROLLER_TOKEN"] == "${OPS_CONTROLLER_TOKEN}"
+    assert c["services"]["oauth2-proxy"]["environment"]["OAUTH2_PROXY_COOKIE_SECRET"] == "${OAUTH2_PROXY_COOKIE_SECRET}"
+    assert "OPS_CONTROLLER_TOKEN" not in (c["services"]["qdrant"].get("environment") or {})
 
 
 def test_edge_mounts_tracked_config_not_copies():

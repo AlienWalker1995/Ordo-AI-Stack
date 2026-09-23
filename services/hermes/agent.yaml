@@ -45,6 +45,11 @@ depends_on:
 
 # Env the container reads (non-secret; secret VALUES come from secrets.env / secret_files below).
 # ${VAR:-default} refs resolve against the rendered .env at compose time (single source of truth).
+# Env secrets it reads (rendered KEY: ${KEY}): its LiteLLM key (the entrypoint refuses to start
+# without it) and the control-plane token (ops-router tools, reel scripts). Nothing else from
+# secrets.env reaches the agent.
+secrets: [LITELLM_KEY_HERMES, OPS_CONTROLLER_TOKEN]
+
 environment:
   PYTHONIOENCODING: utf-8
   # The control plane: GPU leases, /status, /model-config, and the container/compose verbs the
@@ -77,7 +82,7 @@ environment:
   # langfuse plugin disabled both keys interpolate to "", the plugin's _get_langfuse() returns
   # None once, and every hook short-circuits. Hermes must never depend on its own telemetry
   # being up - a trace store outage would otherwise take the agent down with it.
-  # The keys arrive from secrets.env (already an env_file on this service) under their LANGFUSE_*
+  # The keys are interpolated from secrets.env under their LANGFUSE_*
   # names, because they are the SAME project key pair the langfuse plugin's headless init
   # creates; this maps them onto the HERMES_LANGFUSE_* names the plugin reads. One pair, one
   # source of truth, no second place to update after a rotation.
