@@ -26,7 +26,7 @@ build:
 # it reads BOTH cards (5090 + 1070). Compute is NOT reserved (utility != gpu cap).
 gpu: utility
 depends_on:
-  ops-api: service_started
+  ops-controller: service_started
 # V1's /api/health probe — keeps the agent's `dashboard: service_healthy` gate satisfiable. The
 # V1 image ships python3 (not curl), so use V1's python3 urllib probe verbatim.
 healthcheck:
@@ -36,8 +36,9 @@ healthcheck:
   retries: 3
   start_period: 30s
 environment:
-  # Point the dashboard's backend proxy at the V1-parity API service (NOT V2's scheduler).
-  OPS_CONTROLLER_URL: http://ops-api:9000
+  # The v2 control plane. ops-api is retired: every route this dashboard calls is served by
+  # ops-controller (slices 1-4), which is the single control plane for the stack.
+  OPS_CONTROLLER_URL: http://ops-controller:9000
   # Backend service URLs the dashboard reads at runtime (all V2 service names).
   LLAMACPP_URL: http://llamacpp:8080
   MODEL_GATEWAY_URL: http://model-gateway:11435

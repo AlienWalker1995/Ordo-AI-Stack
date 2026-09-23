@@ -155,11 +155,19 @@ def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
         "./:/config",                                 # ordo.yaml + rendered out/ (single write path)
         "${DATA_PATH:-./data}/ops-controller:/data",  # model registry + audit log (same as ops-api)
         "comfyui-models:/models/comfyui",             # shared ComfyUI model store (same as ops-api)
+        # ComfyUI's app tree, read-only: /comfyui/install-node-requirements has to see whether a
+        # custom-node pack ships a requirements.txt before it runs pip inside the comfyui
+        # container. ops-api read this from ./data/comfyui-storage, which is BOTH the retired
+        # pre-named-volume rollback copy AND resolved against out/ rather than the repo, so that
+        # route answered 404 for every pack. The nodes only ever live in this volume.
+        "comfyui-app:/comfyui-app:ro",
     ]
     s["environment"] = {
         "ORDO_PROJECT": project,
         "MODEL_REGISTRY_PATH": "/data/model-registry.json",
         "COMFYUI_MODELS_DIR": "/models/comfyui",
+        "COMFYUI_CUSTOM_NODES_DIR": "/comfyui-app/ComfyUI/custom_nodes",
+        "COMFYUI_CONTAINER_NAME": f"{project}-comfyui-1",
         "AUDIT_LOG_PATH": "/data/audit.log",
         "OPS_ENV_PATH": "/config/.env",
     }
