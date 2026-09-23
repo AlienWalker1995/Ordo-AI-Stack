@@ -35,10 +35,7 @@ services:
     # Torch shares offloaded/pinned tensors via /dev/shm; Docker's 64MB default dies as soon
     # as dataloader workers engage (hit live 2026-07-16).
     shm_size: 8g
-    wants_secrets: true
-    # HF_TOKEN deliberately does NOT appear in env: secrets flow via secrets.env (wants_secrets).
-    # Re-declaring it as ${VAR:-} would substitute EMPTY from the rendered .env and override the
-    # real env_file value (live incident 2026-07-15).
+    secrets: [HF_TOKEN]    # gated model downloads; rendered as HF_TOKEN: ${HF_TOKEN}
     command: ["sleep", "infinity"]
     env:
       TZ: UTC

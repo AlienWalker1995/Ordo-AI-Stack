@@ -37,7 +37,8 @@ services:
     # to create its admin; the bridge then sets require_valid_user + Obsidian CORS via the _config
     # API (a bind-mounted ini crashes this image's chown-under-set-e entrypoint on Docker Desktop).
     image: couchdb:3.4.3@sha256:d603d4086836b1e20f1ec35d2d38e49359639c2eb56a54c8ba0ddbdff0f3dabe
-    wants_secrets: true
+    # The entrypoint recreates the admin from COUCHDB_USER (.env) + COUCHDB_PASSWORD on every start.
+    secrets: [COUCHDB_PASSWORD]
     volumes:
       # NAMED VOLUME (ext4), not a ${DATA_PATH} 9p bind — CouchDB fsyncs its .couch
       # shards constantly; DB state never rides the wedge-prone 9p bridge (see the
@@ -57,7 +58,8 @@ services:
     # config from env, then materializes LiveSync notes as plain .md under the vault's notes/
     # folder (uid 1000, vault-aligned) so the AI reads them with no desktop Obsidian running.
     image: ordo/livesync-bridge:latest
-    wants_secrets: true
+    # The passphrase must be declared: an empty one would silently change end-to-end encryption.
+    secrets: [COUCHDB_PASSWORD, LIVESYNC_E2EE_PASSPHRASE]
     env:
       # BIDIRECTIONAL sync. CouchDB -> notes/ is network-driven (always live) so the AI stack
       # (rag-ingestion + memory-vault MCP) reads the vault. disk -> CouchDB lets agents (Hermes /

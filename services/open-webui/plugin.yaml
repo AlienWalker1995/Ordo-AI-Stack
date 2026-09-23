@@ -21,7 +21,6 @@ services:
   - name: open-webui
     # Pinned to the exact version V1 runs (V1 uses ${OPEN_WEBUI_IMAGE:-...v0.10.1}). Pin, don't float.
     image: ghcr.io/open-webui/open-webui:v0.11.3
-    wants_secrets: true     # LITELLM_MASTER_KEY resolves from secrets.env
     env:
       ENABLE_OLLAMA_API: "false"
       OPENAI_API_BASE_URL: ${OPENAI_API_BASE:-http://model-gateway:11435/v1}

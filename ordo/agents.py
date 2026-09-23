@@ -52,6 +52,8 @@ class Agent:
     # File-based Docker secrets the agent reads from /run/secrets/* — [{source, target}], the SAME
     # host files as the operator's stack; independent of secrets.env (which is env-var secrets).
     secret_files: tuple[dict[str, str], ...] = ()
+    # Env-var secret NAMES the agent reads, rendered as `KEY: ${KEY}` (see PluginService.secrets).
+    secrets: tuple[str, ...] = ()
     # depends_on with optional health conditions: {peer: "service_healthy"|"service_started"}.
     # Empty -> compose omits it (render adds the core-peer list). A value -> emitted with conditions.
     depends_on: dict[str, str] = dataclasses.field(default_factory=dict)
@@ -87,6 +89,7 @@ class Agent:
             healthcheck=dict(d.get("healthcheck", {}) or {}),
             build=BuildSpec.from_dict(d.get("build")),
             litellm_key=dict(d.get("litellm_key", {}) or {}),
+            secrets=tuple(str(k) for k in (d.get("secrets", []) or [])),
         )
 
     def image_for(self, project: str) -> str:

@@ -34,7 +34,7 @@ services:
   - name: tailnet-chat
     image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
     network_mode: service:caddy
-    wants_secrets: true          # TS_AUTHKEY arrives via secrets.env — NEVER re-declared in env
+    secrets: [TS_AUTHKEY]        # used on first login (TS_AUTH_ONCE); state persists after
     depends_on: [caddy]
     env:
       TS_HOSTNAME: chat
@@ -54,7 +54,7 @@ services:
   - name: tailnet-dash
     image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
     network_mode: service:caddy
-    wants_secrets: true
+    secrets: [TS_AUTHKEY]
     depends_on: [caddy]
     env:
       TS_HOSTNAME: dash
@@ -74,7 +74,7 @@ services:
   - name: tailnet-n8n
     image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
     network_mode: service:caddy
-    wants_secrets: true
+    secrets: [TS_AUTHKEY]
     depends_on: [caddy]
     env:
       TS_HOSTNAME: n8n
@@ -94,7 +94,7 @@ services:
   - name: tailnet-comfy
     image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
     network_mode: service:caddy
-    wants_secrets: true
+    secrets: [TS_AUTHKEY]
     depends_on: [caddy]
     env:
       TS_HOSTNAME: comfy
@@ -114,7 +114,7 @@ services:
   - name: tailnet-hermes
     image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
     network_mode: service:caddy
-    wants_secrets: true
+    secrets: [TS_AUTHKEY]
     depends_on: [caddy]
     env:
       TS_HOSTNAME: hermes
@@ -134,7 +134,7 @@ services:
   - name: tailnet-graph
     image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
     network_mode: service:caddy
-    wants_secrets: true
+    secrets: [TS_AUTHKEY]
     depends_on: [caddy]
     env:
       TS_HOSTNAME: graph
@@ -162,7 +162,7 @@ services:
   - name: tailnet-llm
     image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
     network_mode: service:caddy
-    wants_secrets: true
+    secrets: [TS_AUTHKEY]
     depends_on: [caddy]
     env:
       TS_HOSTNAME: llm
@@ -190,7 +190,7 @@ services:
   - name: tailnet-langfuse
     image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
     network_mode: service:caddy
-    wants_secrets: true
+    secrets: [TS_AUTHKEY]
     depends_on: [caddy]
     env:
       TS_HOSTNAME: langfuse

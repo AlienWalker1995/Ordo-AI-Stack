@@ -26,7 +26,8 @@ services:
   - name: oauth2-proxy
     # alpine variant ships wget for the healthcheck (the distroless :latest has no shell).
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.4-alpine
-    wants_secrets: true       # OAUTH2_PROXY_* resolve from secrets.env
+    # oauth2-proxy maps every flag to OAUTH2_PROXY_<FLAG>; these three are passed only by env.
+    secrets: [OAUTH2_PROXY_CLIENT_ID, OAUTH2_PROXY_CLIENT_SECRET, OAUTH2_PROXY_COOKIE_SECRET]
     command:
       - --provider=google
       - --http-address=0.0.0.0:4180
@@ -60,7 +61,7 @@ services:
       retries: 3
   - name: caddy
     image: caddy:2.11.4-alpine
-    wants_secrets: false      # no secrets: the /mcp and /llm routes delegate auth to LiteLLM
+    # no secrets: the /mcp and /llm routes delegate auth to LiteLLM
     # --watch: reload the Caddyfile in-process whenever its content changes. The Caddyfile is a
     # bind-mounted file (line 90), and `docker compose up` CANNOT detect a bind-mount's content
     # changing — only its own service-definition changing. So a commit that edits the Caddyfile

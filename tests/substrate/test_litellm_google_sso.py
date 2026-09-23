@@ -153,7 +153,11 @@ def test_no_secret_value_is_inlined_in_the_rendered_compose():
         for key, raw in (svc.get("environment") or {}).items():
             if credential_key.search(key):
                 assert "${" in str(raw), f"{name}.{key} is credential-shaped but holds a literal"
-    # and no live secret NAME appears outside a ${...} reference anywhere in the rendered file
-    literal_free = interpolation.sub("", text)
-    for secret in ("OAUTH2_PROXY_CLIENT_ID", "OAUTH2_PROXY_CLIENT_SECRET"):
-        assert secret not in literal_free, f"{secret} appears outside a ${{...}} reference"
+    # and no env VALUE carries a secret name outside a ${...} reference (a service may use the
+    # secret's own name as its variable, e.g. oauth2-proxy's OAUTH2_PROXY_CLIENT_ID)
+    for name, svc in services.items():
+        for key, raw in (svc.get("environment") or {}).items():
+            outside = interpolation.sub("", str(raw))
+            for secret in ("OAUTH2_PROXY_CLIENT_ID", "OAUTH2_PROXY_CLIENT_SECRET"):
+                assert secret not in outside, f"{name}.{key} carries {secret} outside a ${{...}} reference"
+    assert text  # the whole file rendered

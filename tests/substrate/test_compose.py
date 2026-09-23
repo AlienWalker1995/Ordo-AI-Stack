@@ -551,9 +551,12 @@ def test_model_gateway_wired_to_db_config_mount_and_mcp_net():
     assert env["STORE_MODEL_IN_DB"] == "False"
     assert env["FORWARDED_ALLOW_IPS"] == "*"
     assert env["LITELLM_MODE"] == "PRODUCTION" and env["LITELLM_LOG"] == "ERROR"
-    # secrets arrive via the secrets.env env_file; re-declaring them here would shadow to empty
-    for k in ("LITELLM_SALT_KEY", "LITELLM_MASTER_KEY", "LITELLM_DB_PASSWORD"):
-        assert k not in env
+    # its own secrets arrive as ${KEY} references (compose interpolates them from secrets.env);
+    # the DB password only inside DATABASE_URL, never as a variable of its own
+    for k in ("LITELLM_SALT_KEY", "LITELLM_MASTER_KEY"):
+        assert env[k] == "${" + k + "}"
+    assert "LITELLM_DB_PASSWORD" not in env
+    assert "env_file" not in mg or all("secrets.env" not in str(f) for f in mg["env_file"])
     assert c["networks"]["ordo-mcp-net"] == {"name": "ordo-mcp-net", "internal": True}
 
 
@@ -567,7 +570,9 @@ def test_model_gateway_keys_is_a_one_shot_after_gateway_health():
     assert "${BASE_PATH:?BASE_PATH must be set}/out/model-gateway:/config:ro" in k["volumes"]
     assert k["environment"]["LITELLM_KEYS_SPEC"] == "/config/keys.json"
     assert k["environment"]["MODEL_GATEWAY_URL"] == "http://model-gateway:11435"
-    assert any(isinstance(f, dict) and f.get("path") == "secrets.env" for f in k["env_file"])
+    # the master key plus every consumer key it provisions, as references, and nothing else secret
+    assert k["environment"]["LITELLM_MASTER_KEY"] == "${LITELLM_MASTER_KEY}"
+    assert all("secrets.env" not in str(f) for f in k.get("env_file", []))
     assert "model-gateway-keys" in compose.core_services()
 
 

@@ -50,7 +50,8 @@ class Dashboard:
     volumes: tuple[str, ...] = ()    # on-disk model dirs etc. (${VAR} refs pass through)
     depends_on: dict[str, str] = dataclasses.field(default_factory=dict)
     healthcheck: dict[str, Any] = dataclasses.field(default_factory=dict)
-    wants_secrets: bool = True
+    # Secret NAMES the dashboard reads, rendered as `KEY: ${KEY}` (see PluginService.secrets).
+    secrets: tuple[str, ...] = ()
     # GPU visibility for the dashboard service. `/api/hardware` shells to nvidia-smi (_probe_gpu)
     # and enumerates cards via gpu_stats.list_gpus for the hw-stat bar's GPU widgets — the NVIDIA
     # runtime only injects nvidia-smi/NVML when the service reserves a GPU with the `utility` cap.
@@ -64,6 +65,11 @@ class Dashboard:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Dashboard:
+        where = f"dashboard {d.get('id')!r}"
+        if "wants_secrets" in d:
+            raise ValueError(
+                f"{where}: `wants_secrets` was replaced by `secrets: [NAMES]`. A service now lists the "
+                "secret names it reads, instead of receiving the whole secrets.env")
         return cls(
             id=str(d["id"]), name=str(d.get("name", d["id"])),
             description=str(d.get("description", "")),
@@ -73,7 +79,7 @@ class Dashboard:
             volumes=tuple(str(v) for v in (d.get("volumes", []) or [])),
             depends_on={str(k): str(v) for k, v in (d.get("depends_on", {}) or {}).items()},
             healthcheck=dict(d.get("healthcheck", {}) or {}),
-            wants_secrets=bool(d.get("wants_secrets", True)),
+            secrets=tuple(str(k) for k in (d.get("secrets", []) or [])),
             gpu_capabilities=_gpu_caps(d),
             build=BuildSpec.from_dict(d.get("build")),
         )
