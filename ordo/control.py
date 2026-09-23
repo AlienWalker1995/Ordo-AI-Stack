@@ -51,7 +51,9 @@ UNAUTHENTICATED_PATHS = frozenset({"/health", "/healthz"})
 # substrate (llamacpp, litellm-db, model-gateway, model-gateway-keys, ops-controller, dashboard,
 # agent), the edge / front-door (edge, tailnet-names — secret-dependent, host `make up` only), and
 # the agent itself are NOT here, so they can never be created/removed via this path — the
-# allowlist is the security gate.
+# allowlist is the security gate. Every kind=mcp plugin (an agent tool server) is installable as
+# well, derived from its manifest kind (see `_installable`): the dashboard's MCP toggle persists
+# through this same write path.
 INSTALLABLE_PLUGINS = frozenset({
     "comfyui", "song-gen", "voice", "rag", "open-webui", "monitoring",
     "automation", "searxng-web", "codebase-memory-ui", "obsidian-livesync", "llamacpp-cpu",
@@ -254,6 +256,22 @@ class ControlPlane:
                 stack.extend(d for d in p.depends_on if d not in seen)
         return need
 
+    def _installable(self, plugin_id: str) -> bool:
+        """The allowlisted service plugins plus every kind=mcp plugin in the registry."""
+        if plugin_id in INSTALLABLE_PLUGINS:
+            return True
+        plugin = self.registry.get(plugin_id)
+        return plugin is not None and plugin.kind == "mcp"
+
+    def _installable_ids(self) -> list[str]:
+        return sorted(p.id for p in self.registry.plugins if self._installable(p.id))
+
+    @staticmethod
+    def _enabled_ids(rc: Any) -> set[str]:
+        """Every plugin a render enabled. `plugins_enabled` lists only kind=service plugins; the
+        enabled kind=mcp plugins are the ones behind its MCP servers."""
+        return set(rc.plugins_enabled) | {s["plugin_id"] for s in rc.mcp_servers}
+
     def _plugin_view(self, p: Any, enabled: set[str], present: set[str], hw: Any) -> dict[str, Any]:
         return {
             "id": p.id, "name": p.name, "description": p.description,
@@ -269,11 +287,11 @@ class ControlPlane:
         """The installable-service catalog for the agent skill: each allowlisted plugin with its
         services, compose profile, secret keys, hardware fit, and whether it's already enabled."""
         rc = self._render()
-        enabled = set(rc.plugins_enabled)
+        enabled = self._enabled_ids(rc)
         present = self._secrets_present()
         return {"plugins": [
             self._plugin_view(p, enabled, present, rc.hardware)
-            for p in self.registry.plugins if p.id in INSTALLABLE_PLUGINS
+            for p in self.registry.plugins if self._installable(p.id)
         ]}
 
     def enable_plugin(self, plugin_id: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -281,11 +299,11 @@ class ControlPlane:
         it (+ any unmet deps) to ordo.yaml's `plugins:` list, re-render, regenerate out/. Under
         `plugins: auto` a fitting plugin is ALREADY rendered (dormant behind its profile), so this is
         a no-op edit and the caller just recreates the service. Refuses anything not in
-        INSTALLABLE_PLUGINS, and anything that doesn't fit the hardware."""
-        if plugin_id not in INSTALLABLE_PLUGINS:
+        installable (`_installable`), and anything that doesn't fit the hardware."""
+        if not self._installable(plugin_id):
             return self._error(403, f"'{plugin_id}' is not an installable service (core, edge/"
                                "front-door, and the agent are refused)",
-                               installable=sorted(INSTALLABLE_PLUGINS))
+                               installable=self._installable_ids())
         plugin = self.registry.get(plugin_id)
         if plugin is None:
             return self._error(404, f"plugin '{plugin_id}' is not in the registry")
@@ -295,7 +313,7 @@ class ControlPlane:
         services = [s.name for s in plugin.services]
         present = self._secrets_present()
 
-        if plugin_id in set(rc.plugins_enabled):
+        if plugin_id in self._enabled_ids(rc):
             # already rendered (the common case under plugins: auto) — no source edit; recreate only
             return {"ok": True, "already_rendered": True, "plugin": plugin_id,
                     "services": services, "compose_profile": plugin.compose_profile,
@@ -317,8 +335,8 @@ class ControlPlane:
             return self._error(409, reason)
 
         # explicit plugin list: add the plugin + any unmet deps, VALIDATE the render, then persist.
-        to_add = self._deps_closure(plugin_id, set(rc.plugins_enabled))
-        blocked = [pid for pid in to_add if pid not in INSTALLABLE_PLUGINS]
+        to_add = self._deps_closure(plugin_id, self._enabled_ids(rc))
+        blocked = [pid for pid in to_add if not self._installable(pid)]
         if blocked:
             return self._error(409, f"'{plugin_id}' requires {blocked}, which are not installable")
         text = self.source_path.read_text(encoding="utf-8")
@@ -329,7 +347,7 @@ class ControlPlane:
             return self._error(422, f"cannot safely edit ordo.yaml plugins list: {e}")
         edited = Source.from_dict(yaml.safe_load(text))
         rc2 = render(edited, self.catalog, self.registry)
-        if plugin_id not in set(rc2.plugins_enabled):
+        if plugin_id not in self._enabled_ids(rc2):
             return self._error(409, f"'{plugin_id}' still not enabled after the edit (unmet "
                                "dependency or fit) — nothing written")
         # commit: ONE write path — the source text, then regenerate every derived output.
@@ -345,7 +363,7 @@ class ControlPlane:
         """Remove a service plugin from an EXPLICIT plugins list + re-render (symmetric to enable).
         Under `plugins: auto` there's no list item to remove — the caller stops the container, but it
         returns on the next render unless the operator sets an explicit list; that is reported."""
-        if plugin_id not in INSTALLABLE_PLUGINS:
+        if not self._installable(plugin_id):
             return self._error(403, f"'{plugin_id}' is not an installable service")
         plugin = self.registry.get(plugin_id)
         if plugin is None:

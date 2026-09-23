@@ -7,9 +7,9 @@
 //   - enable a registered, not-yet-enabled server from the dropdown,
 //   - poll health every 15s (paused when hidden).
 // Add/remove surface the backend's persist result as a toast: success with the "applies
-// after render + recreate" hint when {persistent:true}, otherwise an error toast with the
+// after a model-gateway recreate" hint when {persistent:true}, otherwise an error toast with the
 // {note} explaining why the change wasn't saved. When {dynamic:false} the add/remove
-// controls are disabled with a hint that ordo.yaml isn't mounted read-write.
+// controls are disabled with a hint that the control plane isn't configured.
 import { useState } from 'react'
 import { api, usePolling } from '../api.js'
 import { useToast } from './Toast.jsx'
@@ -120,8 +120,8 @@ export default function McpSettings() {
     <div>
       <p className="mb-4 text-[0.8125rem] leading-[1.5] text-muted">
         Tools every agent and MCP client gets through the model-gateway at /mcp. Enable or
-        disable a registered server below: the change is saved to ordo.yaml and applies on
-        the next render + model-gateway recreate.
+        disable a registered server below: the control plane saves the change to ordo.yaml and
+        re-renders, and it applies on the next model-gateway recreate.
       </p>
 
       {error && !data ? (
@@ -201,8 +201,9 @@ export default function McpSettings() {
           ) : (
             <div className="border-t border-border-subtle pt-5">
               <div className="rounded-sm border border-border-subtle border-l-[3px] border-l-warning bg-warning/[0.04] px-4 py-3 text-[0.8125rem] leading-[1.5] text-fg-muted">
-                ordo.yaml isn't mounted read-write, so enable/disable is disabled here. Edit the
-                plugins: list in ordo.yaml, then ordo render + recreate model-gateway.
+                The control plane isn't configured (OPS_CONTROLLER_TOKEN is unset), so enable/disable
+                is disabled here. Edit the plugins: list in ordo.yaml, then ordo render + recreate
+                model-gateway.
               </div>
             </div>
           )}

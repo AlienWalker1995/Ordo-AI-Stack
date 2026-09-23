@@ -10,6 +10,3 @@ jsonschema==4.26.0
 huggingface_hub==1.27.0
 psutil==7.2.2
 nvidia-ml-py==13.610.43
-# The MCP enable/disable handler edits out/ordo.yaml's plugins list (surgical line add/remove) and
-# validates the result round-trips through the YAML parser before writing — so it must have one.
-pyyaml==6.0.3

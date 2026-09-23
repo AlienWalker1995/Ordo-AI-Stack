@@ -7,7 +7,6 @@ import ipaddress
 import json
 import logging
 import os
-import re
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -17,7 +16,6 @@ from pathlib import Path
 _state_lock = threading.Lock()
 
 import psutil
-import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -307,18 +305,16 @@ async def comfyui_install_node_requirements_api(
 # The enabled server set is RENDER-OWNED: `ordo render` emits out/mcp/servers.json (mounted read-only
 # at /mcp-config) from the enabled kind=mcp plugins in out/ordo.yaml. Health comes from LiteLLM
 # (/v1/mcp/server/health + the per-server outcomes tools/list returns), never inferred. A UI toggle
-# edits ordo.yaml's `plugins:` list (the single source of truth) and tells the operator to re-render
-# and recreate model-gateway: config-file MCP servers reload only on restart (no hot reload).
+# asks ops-controller to edit ordo.yaml's `plugins:` list (the single source of truth) and re-render,
+# then tells the operator to recreate model-gateway: config-file MCP servers reload only on restart.
 # MODEL_GATEWAY_URL / MODEL_GATEWAY_API_KEY are the module-level constants defined near the top.
 MCP_SERVERS_PATH = os.environ.get("MCP_SERVERS_PATH")
-ORDO_SOURCE_PATH = os.environ.get("ORDO_SOURCE_PATH")
 _MCP_HEADERS = {
     "Content-Type": "application/json",
     "Accept": "application/json, text/event-stream",
     "x-litellm-api-key": f"Bearer {MODEL_GATEWAY_API_KEY}",
 }
-MCP_APPLY_HINT = ("saved to ordo.yaml; apply with an `ordo render` "
-                  "(`ordo --source out/ordo.yaml render --out out`) and a model-gateway recreate "
+MCP_APPLY_HINT = ("saved to ordo.yaml and rendered; apply with a model-gateway recreate "
                   "(LiteLLM reads config-file MCP servers at startup only)")
 
 
@@ -454,145 +450,41 @@ async def _litellm_mcp_outcomes() -> tuple[bool, dict[str, dict], str | None]:
 
 
 # ── Persistence: an MCP toggle must update ordo.yaml's `plugins:` list ────────────────────────────
-# The enabled server set is RENDER-OWNED: a re-render reseeds out/mcp/servers.json from the enabled
+# The enabled server set is RENDER-OWNED: a render reseeds out/mcp/servers.json from the enabled
 # kind=mcp plugins in out/ordo.yaml, and LiteLLM reads its MCP servers from the rendered fragment at
-# startup. So the ONLY durable place a toggle can land is that source. We translate the toggled
-# server_id -> its plugin_id (via servers.json's plugin_map) and surgically add/remove that
-# `  - <plugin>` line in ordo.yaml, preserving every other line + comment. ordo.yaml stays the single
-# source of truth: the next `ordo render` regenerates the SAME servers.json, so there is no drift.
-
-# A `- <plugin-id>` item in a block-style YAML list (optional indent, dash, id, optional trailing
-# comment). Zero-indent items are what `yaml.safe_dump` emits (a wizard-written source), so accept
-# them too. MIRRORS ordo/source_edit.PLUGIN_ITEM_RE — keep the two in sync (the canonical is in the
-# ordo package; the dashboard image doesn't vendor `ordo`, so this is a validated copy).
-_PLUGIN_ITEM_RE = re.compile(r"^(?P<indent>[ \t]*)-\s+(?P<id>[A-Za-z0-9._-]+)\s*(?:#.*)?$")
+# startup. So the ONLY durable place a toggle can land is that source, and ops-controller is its only
+# writer: we translate the toggled server_id -> its plugin_id (via servers.json's plugin_map) and ask
+# ops-controller to enable/disable that plugin, which edits ordo.yaml surgically and re-renders out/.
 
 
-def _ordo_source_path() -> Path | None:
-    """Path to the mounted, writable ordo.yaml source, or None (a toggle then cannot be persisted)."""
-    if not ORDO_SOURCE_PATH:
-        return None
-    p = Path(ORDO_SOURCE_PATH)
-    return p if p.exists() else None
-
-
-def _edit_plugins_list(text: str, plugin_id: str, action: str) -> str:
-    """Surgically add/remove `  - <plugin_id>` in ordo.yaml's block-style `plugins:` list, preserving
-    every other line, comment, and the exact formatting. Pure text → text (no I/O), so it's unit-
-    testable and the caller controls the write.
-
-      action='remove': drop the matching item line(s). Returns text unchanged if already absent.
-      action='add':    insert `  - <plugin_id>` (same indent/EOL as the last item) after the last
-                       existing item. Returns text unchanged if already present.
-
-    Raises ValueError if a safe edit can't be GUARANTEED — no block `plugins:` key, inline/flow list,
-    empty list, or the result fails to round-trip through the YAML parser with exactly the intended
-    change. The caller catches this and surfaces a 'not persistent' note rather than risking the
-    operator's hand-authored source.
-    """
-    if action not in ("add", "remove"):
-        raise ValueError(f"unknown action {action!r}")
-    lines = text.splitlines(keepends=True)
-    # Locate a BARE `plugins:` block key (optional trailing comment only). An inline `plugins: [a, b]`
-    # has content after the colon and is deliberately rejected — it can't be line-edited safely.
-    key_idx = None
-    for i, ln in enumerate(lines):
-        if re.match(r"^plugins:\s*(?:#.*)?$", ln):
-            key_idx = i
-            break
-    if key_idx is None:
-        raise ValueError("ordo.yaml has no block-style `plugins:` list")
-    # Collect the list items in this block; stop at the next top-level key. Blank lines and indented
-    # comments are treated as still inside the block (they interleave the items).
-    items: list[tuple[int, str]] = []   # (line index, plugin id)
-    i = key_idx + 1
-    while i < len(lines):
-        ln = lines[i]
-        m = _PLUGIN_ITEM_RE.match(ln)
-        if m:
-            items.append((i, m.group("id")))
-            i += 1
-        elif ln.strip() == "" or re.match(r"^\s+#", ln):
-            i += 1
-        elif re.match(r"^\S", ln):       # next top-level key — block ends
-            break
-        else:                            # unexpected indented, non-item content — stop, stay safe
-            break
-    if not items:
-        raise ValueError("`plugins:` is empty or not a block-style list")
-
-    present = [idx for idx, pid in items if pid == plugin_id]
-    if action == "remove":
-        if not present:
-            return text
-        drop = set(present)
-        new_lines = [ln for j, ln in enumerate(lines) if j not in drop]
-    else:  # add
-        if present:
-            return text
-        last_idx = items[-1][0]
-        m = _PLUGIN_ITEM_RE.match(lines[last_idx])
-        indent = m.group("indent")
-        eol = "\r\n" if lines[last_idx].endswith("\r\n") else "\n"
-        new_line = f"{indent}- {plugin_id}{eol}"
-        new_lines = lines[:last_idx + 1] + [new_line] + lines[last_idx + 1:]
-
-    new_text = "".join(new_lines)
-    # Safety net: the edit MUST round-trip and yield exactly the intended plugins-set change, or we
-    # refuse it (raise) rather than persist a broken source.
-    try:
-        doc = yaml.safe_load(new_text)
-    except yaml.YAMLError as e:
-        raise ValueError(f"edited ordo.yaml no longer parses: {e}") from e
-    plugins = doc.get("plugins") if isinstance(doc, dict) else None
-    if not isinstance(plugins, list):
-        raise ValueError("edited ordo.yaml `plugins` is not a list")
-    if action == "add" and plugin_id not in plugins:
-        raise ValueError("plugin missing from `plugins` after add")
-    if action == "remove" and plugin_id in plugins:
-        raise ValueError("plugin still in `plugins` after remove")
-    return new_text
-
-
-def _persist_mcp_toggle(server: str, action: str) -> dict:
-    """Persist an enable(action='add')/disable(action='remove') of MCP `server` into ordo.yaml's
-    plugins list. Never raises, it returns a status the endpoint attaches to its response:
+async def _persist_mcp_toggle(server: str, action: str) -> dict:
+    """Persist an enable(action='add')/disable(action='remove') of MCP `server` through ops-controller
+    (`POST /plugins/{plugin}/enable|disable`). Never raises, it returns a status the endpoint attaches
+    to its response:
 
       {persistent: bool, plugin: str|None, note: str|None}
 
-    Not persistent when: ordo.yaml isn't mounted/writable; the server isn't a registered mcp plugin
-    (adding a brand-new non-plugin MCP to ordo.yaml is OUT OF SCOPE, flagged rather than faked); or a
-    safe surgical edit can't be guaranteed. There is no live path any more, so in every such case
-    nothing changed at all, which the note states.
+    Not persistent when: the server isn't a registered mcp plugin (adding a brand-new non-plugin MCP
+    to ordo.yaml is OUT OF SCOPE, flagged rather than faked); ops-controller refuses or is unreachable;
+    or a disable under `plugins: auto`, which has no list item to remove.
     """
-    path = _ordo_source_path()
-    if not path:
-        return {"persistent": False, "plugin": None,
-                "note": "ordo.yaml not mounted (ORDO_SOURCE_PATH unset) - change not persisted; "
-                        "ordo.yaml left untouched."}
     plugin = _read_server_plugin_map().get(server)
     if not plugin:
         return {"persistent": False, "plugin": None,
                 "note": f"'{server}' is not a registered mcp plugin - change not persisted; ordo.yaml "
                         "left untouched. Adding a brand-new non-plugin MCP to ordo.yaml is out of "
                         "scope."}
-    try:
-        original = path.read_text(encoding="utf-8")
-        edited = _edit_plugins_list(original, plugin, action)
-        if edited != original:
-            # In-place write (NOT write-temp-then-rename): ordo.yaml is a SINGLE-FILE bind mount,
-            # so the app user can neither create a sibling `.tmp` (its dir is the read-only container
-            # root) nor rename over the mount. `edited` is already validated inside _edit_plugins_list
-            # (round-trips through yaml.safe_load + asserts the exact plugins-set change), so writing
-            # the known-good content directly is safe.
-            path.write_text(edited, encoding="utf-8")
-        return {"persistent": True, "plugin": plugin, "note": None}
-    except (ValueError, OSError) as e:
-        logger.warning("ordo.yaml persist failed for server=%s plugin=%s action=%s: %s",
-                       server, plugin, action, e)
+    verb = "enable" if action == "add" else "disable"
+    code, data = await _ops_request("POST", f"/plugins/{plugin}/{verb}", timeout=120.0)
+    if code != 200 or not data.get("ok"):
+        reason = data.get("error") or data.get("detail") or f"HTTP {code}"
+        logger.warning("MCP toggle persist failed for server=%s plugin=%s action=%s: %s",
+                       server, plugin, action, reason)
         return {"persistent": False, "plugin": plugin,
-                "note": f"could not safely edit ordo.yaml ({e}) - change not persisted; ordo.yaml "
-                        "left untouched."}
+                "note": f"ops-controller could not {verb} {plugin} ({reason}) - change not persisted."}
+    if data.get("transient"):
+        return {"persistent": False, "plugin": plugin, "note": data.get("note")}
+    return {"persistent": True, "plugin": plugin, "note": None}
 
 
 @app.get("/api/mcp/servers")
@@ -603,7 +495,7 @@ async def mcp_servers():
     return {
         "enabled": enabled,
         "configured": sorted(data["plugin_map"]),
-        "dynamic": _ordo_source_path() is not None,
+        "dynamic": bool(OPS_CONTROLLER_TOKEN),
         "registry": {"servers": {str(s["id"]): s for s in data["servers"] if s.get("id")}},
         "ok": True,
     }
@@ -654,7 +546,7 @@ def _valid_mcp_server_name(name: str) -> bool:
 
 @app.post("/api/mcp/add")
 async def mcp_add(req: McpAddRequest):
-    """Enable a REGISTERED MCP plugin: persists to ordo.yaml; applied on the next render + recreate."""
+    """Enable a REGISTERED MCP plugin: ops-controller persists + renders; applied on a model-gateway recreate."""
     server = req.server.strip()
     if not _valid_mcp_server_name(server):
         raise HTTPException(status_code=400, detail="Invalid server id.")
@@ -666,21 +558,21 @@ async def mcp_add(req: McpAddRequest):
     enabled = [str(s["id"]) for s in data["servers"] if s.get("id")]
     if server in enabled:
         return {"status": "already_enabled", "servers": enabled, "applied": False, "next": None}
-    persist = _persist_mcp_toggle(server, "add")
+    persist = await _persist_mcp_toggle(server, "add")
     logger.info("MCP_SERVER_ADDED server=%s persistent=%s plugin=%s", server, persist["persistent"], persist["plugin"])
     return {"status": "added", "servers": enabled + [server], "applied": False, "next": MCP_APPLY_HINT, **persist}
 
 
 @app.post("/api/mcp/remove")
 async def mcp_remove(req: McpRemoveRequest):
-    """Disable an enabled MCP plugin: persists to ordo.yaml; applied on the next render + recreate."""
+    """Disable an enabled MCP plugin: ops-controller persists + renders; applied on a model-gateway recreate."""
     server = req.server.strip()
     if not _valid_mcp_server_name(server):
         raise HTTPException(status_code=400, detail="Invalid server id.")
     enabled = _read_mcp_servers()
     if server not in enabled:
         return {"status": "already_removed", "servers": enabled, "applied": False, "next": None}
-    persist = _persist_mcp_toggle(server, "remove")
+    persist = await _persist_mcp_toggle(server, "remove")
     logger.info("MCP_SERVER_REMOVED server=%s persistent=%s plugin=%s", server, persist["persistent"], persist["plugin"])
     return {"status": "removed", "servers": [s for s in enabled if s != server], "applied": False,
             "next": MCP_APPLY_HINT, **persist}

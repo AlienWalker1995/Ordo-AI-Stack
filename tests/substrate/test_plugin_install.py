@@ -4,8 +4,10 @@ The render authority: enable/disable a service plugin the drift-safe way (edit o
 list -> re-render -> regenerate out/), the SAME one-write-path as the model switch. Under
 `plugins: auto` a fitting plugin is already rendered (dormant behind its profile), so enable is a
 no-op edit; on an explicit list it edits + re-renders. Core/edge/agent are refused (allowlist);
-unfittable plugins are refused with the resolve note.
+unfittable plugins are refused with the resolve note. Every kind=mcp plugin is installable too: the
+dashboard's MCP toggle goes through this same write path instead of editing the source itself.
 """
+import json
 from pathlib import Path
 
 import yaml
@@ -31,7 +33,10 @@ def test_list_plugins_returns_installable_catalog(tmp_path):
     cp, _ = _cp(tmp_path)
     code, body = cp.route("GET", "/plugins")
     assert code == 200
-    assert {p["id"] for p in body["plugins"]} == set(INSTALLABLE_PLUGINS)   # exactly the allowlist
+    mcp_ids = {p.id for p in REGISTRY.plugins if p.kind == "mcp"}
+    assert mcp_ids                                                           # the repo ships mcp plugins
+    # exactly the service allowlist plus every kind=mcp plugin
+    assert {p["id"] for p in body["plugins"]} == set(INSTALLABLE_PLUGINS) | mcp_ids
     ow = next(p for p in body["plugins"] if p["id"] == "open-webui")
     assert "open-webui" in ow["services"] and ow["compose_profile"] == "webui"
     assert isinstance(ow["fits"], bool) and isinstance(ow["enabled"], bool)
@@ -83,3 +88,32 @@ def test_disable_under_auto_is_transient(tmp_path):
     cp, _ = _cp(tmp_path, plugins="auto")
     code, body = cp.route("POST", "/plugins/comfyui/disable", {"confirm": True})
     assert code == 200 and body.get("transient") is True
+
+
+def test_enable_mcp_plugin_edits_source_and_renders_servers_json(tmp_path):
+    cp, src = _cp(tmp_path, plugins=["comfyui"])
+    src.write_text("# operator comment\n" + src.read_text())
+    code, body = cp.route("POST", "/plugins/comfyui-mcp/enable", {"confirm": True})
+    assert code == 200 and body["ok"] and body["already_rendered"] is False
+    text = src.read_text()
+    assert "comfyui-mcp" in yaml.safe_load(text)["plugins"]
+    assert text.startswith("# operator comment\n")         # surgical edit: comments survive
+    servers = json.loads((tmp_path / "out" / "mcp" / "servers.json").read_text())
+    assert "comfyui" in [s["id"] for s in servers["servers"]]  # rendered in the same step
+
+
+def test_disable_mcp_plugin_removes_and_rerenders(tmp_path):
+    cp, src = _cp(tmp_path, plugins=["comfyui", "comfyui-mcp"])
+    code, body = cp.route("POST", "/plugins/comfyui-mcp/disable", {"confirm": True})
+    assert code == 200 and body["ok"]
+    assert "comfyui-mcp" not in yaml.safe_load(src.read_text())["plugins"]
+    servers = json.loads((tmp_path / "out" / "mcp" / "servers.json").read_text())
+    assert "comfyui" not in [s["id"] for s in servers["servers"]]
+
+
+def test_enable_already_enabled_mcp_plugin_writes_nothing(tmp_path):
+    cp, src = _cp(tmp_path, plugins=["comfyui", "comfyui-mcp"])
+    before = src.read_text()
+    code, body = cp.route("POST", "/plugins/comfyui-mcp/enable", {"confirm": True})
+    assert code == 200 and body["already_rendered"] is True   # an mcp plugin counts as enabled
+    assert src.read_text() == before

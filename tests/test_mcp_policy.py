@@ -1,6 +1,6 @@
 """MCP dashboard API contract on top of LiteLLM's MCP gateway: enabled servers come from the rendered
 servers.json, health from LiteLLM's /v1/mcp/server/health + tools/list server_outcomes (a crashed
-server can no longer be reported ok), toggles persist to ordo.yaml only."""
+server can no longer be reported ok), toggles persist to ordo.yaml through ops-controller only."""
 from __future__ import annotations
 
 import os
@@ -71,7 +71,7 @@ def test_mcp_rows_accepts_a_bare_list_or_an_envelope_and_drops_junk():
 
 def test_mcp_servers_lists_enabled_and_configured_from_servers_json():
     with patch("dashboard.app._read_servers_json", return_value=SERVERS_JSON), \
-         patch("dashboard.app._ordo_source_path", return_value=__import__("pathlib").Path("/tmp/ordo.yaml")):
+         patch("dashboard.app.OPS_CONTROLLER_TOKEN", "token"):
         r = client.get("/api/mcp/servers")
     assert r.status_code == 200
     d = r.json()
@@ -79,6 +79,13 @@ def test_mcp_servers_lists_enabled_and_configured_from_servers_json():
     assert d["configured"] == ["comfyui", "n8n", "searxng"]      # every registered kind=mcp plugin's server id
     assert d["dynamic"] is True and d["ok"] is True
     assert d["registry"]["servers"]["searxng"]["url"] == "http://mcp-searxng:8080/mcp"
+
+
+def test_mcp_servers_is_not_dynamic_without_the_control_plane_token():
+    # the toggle persists through ops-controller; without its token nothing can be saved
+    with patch("dashboard.app._read_servers_json", return_value=SERVERS_JSON),          patch("dashboard.app.OPS_CONTROLLER_TOKEN", ""):
+        d = client.get("/api/mcp/servers").json()
+    assert d["dynamic"] is False
 
 
 def test_mcp_health_marks_a_server_ok_only_when_healthy_and_serving_tools():
@@ -113,11 +120,11 @@ def test_mcp_health_gateway_down_marks_everything_down():
 def test_mcp_add_persists_to_ordo_yaml_and_reports_render_needed():
     with patch("dashboard.app._read_servers_json", return_value=SERVERS_JSON), \
          patch("dashboard.app._persist_mcp_toggle",
-               return_value={"persistent": True, "plugin": "n8n", "note": None}) as p:
+               new=AsyncMock(return_value={"persistent": True, "plugin": "n8n", "note": None})) as p:
         r = client.post("/api/mcp/add", json={"server": "n8n"})
     d = r.json()
-    p.assert_called_once_with("n8n", "add")
-    assert d["status"] == "added" and d["applied"] is False and "ordo render" in d["next"]
+    p.assert_awaited_once_with("n8n", "add")
+    assert d["status"] == "added" and d["applied"] is False and "model-gateway" in d["next"]
     assert d["servers"] == ["searxng", "comfyui", "memory-vault", "n8n"]
 
 
@@ -130,6 +137,6 @@ def test_mcp_add_rejects_a_server_that_is_not_a_registered_plugin():
 def test_mcp_remove_persists_and_reports_render_needed():
     with patch("dashboard.app._read_servers_json", return_value=SERVERS_JSON), \
          patch("dashboard.app._persist_mcp_toggle",
-               return_value={"persistent": True, "plugin": "searxng", "note": None}):
+               new=AsyncMock(return_value={"persistent": True, "plugin": "searxng", "note": None})):
         d = client.post("/api/mcp/remove", json={"server": "searxng"}).json()
     assert d["status"] == "removed" and d["applied"] is False and d["servers"] == ["comfyui", "memory-vault"]
