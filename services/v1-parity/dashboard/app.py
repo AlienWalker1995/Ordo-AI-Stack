@@ -2199,25 +2199,25 @@ async def service_pressure():
         "ram_total_gb": round(psutil.virtual_memory().total / 1e9, 1),
     }
 
-    def _empty_payload():
+    def _unavailable_payload():
         services_out = [{
             "id": s["id"], "name": s["name"],
-            "cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0,
-            "vram_gb": 0.0, "vram_pct": 0.0,
+            "cpu_pct": None, "mem_gb": None, "mem_pct": None,
+            "vram_gb": None, "vram_pct": None,
             "has_gpu": bool(s.get("has_gpu", False)),
-            "running": False,
+            "running": None,
         } for s in SERVICES]
-        return {"gpu": None, "host": host_info, "services": services_out, "vram_aggregate_unavailable": True}
+        return {"gpu": None, "host": host_info, "services": services_out, "vram_aggregate_unavailable": True, "unavailable": True}
 
     try:
-        async with _httpx.AsyncClient(timeout=3.0) as client:
+        async with _httpx.AsyncClient(timeout=8.0) as client:
             r = await client.get(f"{ops_url}/stats/services", headers=headers)
             if r.status_code != 200:
-                return _empty_payload()
+                return _unavailable_payload()
             raw = r.json()
     except (_httpx.RequestError, OSError) as e:
         logger.debug("service-pressure: ops-controller unreachable: %s", e)
-        return _empty_payload()
+        return _unavailable_payload()
 
     raw_services: dict = raw.get("services") or {}
     catalog = {s["id"]: s for s in SERVICES}

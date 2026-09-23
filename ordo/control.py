@@ -15,9 +15,16 @@ Design constraints (from the architecture decisions + the drift lessons):
 """
 from __future__ import annotations
 
+import ipaddress
 import json
+import os
+import re
+import socket
+import subprocess
+import threading
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 import yaml
 
@@ -40,6 +47,74 @@ INSTALLABLE_PLUGINS = frozenset({
     "comfyui", "song-gen", "voice", "rag", "open-webui", "monitoring",
     "automation", "searxng-web", "codebase-memory-ui", "obsidian-livesync", "llamacpp-cpu",
 })
+
+# Model download validation (matches ops-api)
+COMFYUI_CATEGORIES = (
+    "checkpoints", "loras", "text_encoders", "latent_upscale_models",
+    "vae", "unet", "clip", "clip_vision", "controlnet", "embeddings",
+    "upscale_models", "diffusion_models", "vae_approx",
+)
+
+_MODEL_DOWNLOAD_ALLOWED_HOSTS = {
+    "huggingface.co", "hf-mirror.com", "cdn-lfs.huggingface.co",
+    "cdn-lfs-us-1.huggingface.co", "cdn-lfs-eu-1.huggingface.co",
+    "civitai.com", "github.com", "objects.githubusercontent.com",
+}
+
+COMFYUI_MODELS_DIR = Path(os.environ.get("COMFYUI_MODELS_DIR", "/models/comfyui"))
+AUDIT_LOG_PATH = Path(os.environ.get("AUDIT_LOG_PATH", "/data/audit.jsonl"))
+OPS_ENV_PATH = Path(os.environ.get("OPS_ENV_PATH", "/config/.env"))
+
+
+def _validate_download_url(url: str) -> None:
+    """Block SSRF: only allow HTTPS to known model-hosting domains, reject private IPs."""
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.port not in (None, 443):
+        raise ValueError("URL must use HTTPS on the standard port")
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise ValueError("Cannot parse hostname from URL")
+    if host not in _MODEL_DOWNLOAD_ALLOWED_HOSTS:
+        raise ValueError(
+            f"Host {host!r} not in allowed list. "
+            f"Allowed: {', '.join(sorted(_MODEL_DOWNLOAD_ALLOWED_HOSTS))}"
+        )
+    try:
+        for info in socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM):
+            addr = ipaddress.ip_address(info[4][0])
+            if addr.is_private or addr.is_reserved or addr.is_loopback or addr.is_link_local:
+                raise ValueError(f"Host {host!r} resolves to private/reserved IP {addr}")
+    except socket.gaierror as exc:
+        raise ValueError(f"Cannot resolve host {host!r}: {exc}") from exc
+
+
+def _validated_redirect_url(current_url: str, location: str) -> str:
+    redirect_url = urljoin(current_url, location)
+    _validate_download_url(redirect_url)
+    return redirect_url
+
+
+def _auto_detect_category(url: str, filename: str) -> str:
+    """Auto-detect ComfyUI model category from URL/filename."""
+    url_lower = url.lower()
+    name_lower = filename.lower()
+    for cat in sorted(COMFYUI_CATEGORIES, key=len, reverse=True):
+        if cat in url_lower or cat in name_lower:
+            return cat
+    combined = f"{url_lower} {name_lower}"
+    for keyword, category in (
+        ("lora", "loras"),
+        ("text_encoder", "text_encoders"),
+        ("clip", "text_encoders"),
+        ("vae", "vae"),
+        ("unet", "unet"),
+        ("controlnet", "controlnet"),
+        ("upscale", "upscale_models"),
+        ("embedding", "embeddings"),
+    ):
+        if keyword in combined:
+            return category
+    return "checkpoints"
 
 
 class ControlPlane:
@@ -71,6 +146,13 @@ class ControlPlane:
             env_path=Path("/config/.env"),
             gpu_assignments_path=Path("/config/overrides/gpu-assignments.yml"),
         )
+        # Slice 3: model download/pull state (in-process, not persisted)
+        self._dl_lock = threading.Lock()
+        self._dl_status = {"running": False, "output": "", "done": True, "success": None, "progress": 0, "filename": "", "category": ""}
+        self._pull_lock = threading.Lock()
+        self._pull_status = {"running": False, "output": "", "done": True, "success": None, "pack": ""}
+        self._gguf_pull_lock = threading.Lock()
+        self._gguf_pull_status = {"running": False, "output": "", "done": True, "success": None, "repos": ""}
 
     # --- core operations (pure, testable) ---
     def _render(self) -> Any:
@@ -493,6 +575,308 @@ class ControlPlane:
             return {"assignments": {}}
         return {"assignments": parse_gpu_assignments_yaml(path.read_text(encoding="utf-8"))}
 
+    # --- Slice 3: model download/pull routes ---
+
+    def models_download(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Start a resumable file download to the ComfyUI models directory."""
+        url = str(body.get("url", "")).strip()
+        if not url.startswith("https://"):
+            return self._error(400, "URL must start with https://")
+        try:
+            _validate_download_url(url)
+        except ValueError as e:
+            return self._error(400, str(e))
+        with self._dl_lock:
+            if self._dl_status.get("running"):
+                return self._error(409, "A download is already in progress")
+        filename = str(body.get("filename", "")).strip() or url.split("/")[-1].split("?")[0]
+        if not filename or ".." in filename or "/" in filename or "\\" in filename:
+            return self._error(400, "Invalid or undetectable filename")
+        category = str(body.get("category", "")).strip()
+        if category and category not in COMFYUI_CATEGORIES:
+            return self._error(400, f"Invalid category. Must be one of: {COMFYUI_CATEGORIES}")
+        if not category:
+            category = _auto_detect_category(url, filename)
+        # Start download in background thread
+        thread = threading.Thread(
+            target=self._run_model_download,
+            args=(url, category, filename),
+            daemon=True,
+        )
+        thread.start()
+        return {"status": "started", "category": category, "filename": filename}
+
+    def models_download_status(self) -> dict[str, Any]:
+        """Poll active download progress."""
+        with self._dl_lock:
+            return dict(self._dl_status)
+
+    def _run_model_download(self, url: str, category: str, filename: str) -> None:
+        """Background download worker."""
+        with self._dl_lock:
+            self._dl_status.update({
+                "running": True, "output": f"Starting: {filename}", "done": False,
+                "success": None, "progress": 0, "filename": filename, "category": category,
+            })
+        dest_dir = COMFYUI_MODELS_DIR / category
+        try:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            with self._dl_lock:
+                self._dl_status.update({
+                    "output": f"Cannot create dir: {e}", "success": False,
+                    "running": False, "done": True,
+                })
+            return
+
+        dest = dest_dir / filename
+        temp_path = dest.with_suffix(dest.suffix + ".tmp")
+        try:
+            import httpx
+            start_byte = temp_path.stat().st_size if temp_path.exists() else 0
+            req_headers = {"User-Agent": "ordo-ai-stack/1.0"}
+            if start_byte > 0:
+                req_headers["Range"] = f"bytes={start_byte}-"
+            with httpx.Client(timeout=60.0, follow_redirects=False) as client:
+                current_url = url
+                for _ in range(10):
+                    _validate_download_url(current_url)
+                    response = client.send(
+                        client.build_request("GET", current_url, headers=req_headers),
+                        stream=True,
+                    )
+                    if response.status_code not in (301, 302, 303, 307, 308):
+                        break
+                    location = response.headers.get("location")
+                    response.close()
+                    if not location:
+                        raise ValueError("Redirect response did not include a location")
+                    current_url = _validated_redirect_url(current_url, location)
+                else:
+                    raise ValueError("Too many redirects while downloading model")
+                with response:
+                    r = response
+                    r.raise_for_status()
+                    total = 0
+                    total_header = r.headers.get("Content-Range") or r.headers.get("Content-Length")
+                    if total_header and "/" in str(total_header):
+                        total = int(str(total_header).split("/")[-1].strip())
+                    elif r.headers.get("Content-Length"):
+                        total = int(r.headers["Content-Length"]) + (start_byte or 0)
+                    total_mb = total / (1024 * 1024) if total else 0
+                    downloaded = start_byte
+                    append = start_byte > 0 and r.status_code == 206
+                    with open(temp_path, "ab" if append else "wb") as f:
+                        for chunk in r.iter_bytes(chunk_size=1024 * 1024):
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            dl_mb = downloaded / (1024 * 1024)
+                            pct = int(downloaded * 100 / total) if total else 0
+                            msg = f"Downloading {filename} → {category}/\n"
+                            msg += f"{dl_mb:.0f} / {total_mb:.0f} MB ({pct}%)" if total else f"{dl_mb:.0f} MB downloaded"
+                            with self._dl_lock:
+                                self._dl_status["output"] = msg
+                                self._dl_status["progress"] = pct
+            temp_path.rename(dest)
+            with self._dl_lock:
+                self._dl_status["success"] = True
+                self._dl_status["output"] += f"\nDone — saved to {category}/{filename}"
+        except Exception as e:
+            with self._dl_lock:
+                self._dl_status["output"] += f"\nError: {e}"
+                self._dl_status["success"] = False
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
+        finally:
+            with self._dl_lock:
+                self._dl_status["running"] = False
+                self._dl_status["done"] = True
+
+    def models_packs(self) -> dict[str, Any]:
+        """List ComfyUI model pack IDs and descriptions."""
+        path = Path("/workspace/scripts/comfyui/models.json")
+        if not path.exists():
+            return self._error(404, "models.json not found in workspace")
+        try:
+            data = json.loads(path.read_text())
+        except json.JSONDecodeError as e:
+            return self._error(500, f"Invalid models.json: {e}")
+        packs_out = {}
+        for pid, p in data.get("packs", {}).items():
+            if not isinstance(p, dict):
+                continue
+            packs_out[pid] = {
+                "description": p.get("description", ""),
+                "model_count": len(p.get("models", [])),
+            }
+        return {"ok": True, "packs": packs_out}
+
+    def models_pull(self, body: dict[str, Any]) -> dict[str, Any]:
+        """501 — the V1 comfyui-model-puller service/profile was not ported to the render substrate."""
+        return self._error(501, "Pack pulls are not available: the V1 comfyui-model-puller was not ported to the render substrate. Use POST /models/download (in-process) for individual models.")
+
+    def models_pull_status(self) -> dict[str, Any]:
+        """Poll pack pull progress."""
+        with self._pull_lock:
+            return dict(self._pull_status)
+
+    def models_gguf_pull(self, body: dict[str, Any]) -> dict[str, Any]:
+        """501 — the V1 gguf-puller service/profile was not ported to the render substrate."""
+        return self._error(501, "GGUF pack pulls are not available: the V1 gguf-puller was not ported to the render substrate. Use POST /models/download (in-process) instead.")
+
+    def models_gguf_pull_status(self) -> dict[str, Any]:
+        """Poll GGUF pull progress."""
+        with self._gguf_pull_lock:
+            return dict(self._gguf_pull_status)
+
+    # --- Slice 3: diagnostics routes ---
+
+    def diagnostics_dstate(self) -> dict[str, Any]:
+        """Report uninterruptible-sleep (D-state) processes across running containers."""
+        wedged = []
+        scanned = 0
+        errors = []
+        try:
+            proc = subprocess.run(
+                ["docker", "ps", "-a", "--format", "{{.Names}}"],
+                capture_output=True, text=True, timeout=30,
+            )
+            container_names = [n.strip() for n in proc.stdout.splitlines() if n.strip()]
+            for name in container_names:
+                scanned += 1
+                try:
+                    top = subprocess.run(
+                        ["docker", "top", name, "-eo", "pid,stat,wchan:40,comm"],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    lines = top.stdout.strip().splitlines()
+                    if len(lines) < 2:
+                        continue
+                    # Parse header to find column indices
+                    header = lines[0].split()
+                    try:
+                        pid_idx = header.index("PID")
+                        stat_idx = header.index("STAT")
+                        wchan_idx = header.index("WCHAN")
+                        comm_idx = header.index("COMMAND")
+                    except ValueError:
+                        errors.append(f"{name}: unexpected ps columns {header}")
+                        continue
+                    for line in lines[1:]:
+                        parts = line.split()
+                        if len(parts) < len(header):
+                            continue
+                        stat = parts[stat_idx]
+                        if not stat.startswith("D"):
+                            continue
+                        wchan = parts[wchan_idx]
+                        wedged.append({
+                            "container": name,
+                            "pid": parts[pid_idx],
+                            "stat": stat,
+                            "wchan": wchan,
+                            "comm": parts[comm_idx],
+                            "p9": "p9" in wchan,
+                        })
+                except Exception as exc:
+                    errors.append(f"{name}: {exc}")
+        except Exception as exc:
+            errors.append(f"docker ps failed: {exc}")
+        return {
+            "scanned": scanned,
+            "wedged": wedged,
+            "p9_wedged": [w for w in wedged if w["p9"]],
+            "errors": errors,
+        }
+
+    # --- Slice 3: env/model-config routes ---
+
+    ENV_ALLOWED_KEYS = frozenset({
+        "DEFAULT_MODEL", "OPEN_WEBUI_DEFAULT_MODEL", "LLAMACPP_MODEL",
+        "LLAMACPP_CTX_SIZE", "LLAMACPP_EMBED_MODEL", "LLAMACPP_MMPROJ",
+        "LLAMACPP_FLASH_ATTN", "LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION",
+        "LLAMACPP_KV_CACHE_TYPE_K", "LLAMACPP_KV_CACHE_TYPE_V", "LLAMACPP_EXTRA_ARGS",
+    })
+
+    def env_get(self, key: str) -> dict[str, Any]:
+        """Read a single allowed key from the registry env file."""
+        if key not in self.ENV_ALLOWED_KEYS:
+            return self._error(400, f"Key not in allowlist: {key!r}")
+        env_path = OPS_ENV_PATH
+        if not env_path.exists():
+            return {"key": key, "value": ""}
+        content = env_path.read_text(encoding="utf-8")
+        pattern = rf"^{re.escape(key)}=(.*)$"
+        m = re.search(pattern, content, re.MULTILINE)
+        raw = m.group(1).rstrip() if m else ""
+        # Strip optional surrounding quotes
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+            raw = raw[1:-1]
+        return {"key": key, "value": raw}
+
+    def audit_log(self, limit: int = 50) -> dict[str, Any]:
+        """Read audit log (last N entries)."""
+        path = AUDIT_LOG_PATH
+        if not path.exists():
+            return {"entries": []}
+        try:
+            from collections import deque
+
+            with open(path, encoding="utf-8", errors="replace") as f:
+                lines = deque(f, maxlen=limit)
+        except OSError as e:
+            return {"entries": [], "error": f"failed to read audit log: {e}"}
+        entries = []
+        for line in reversed(lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return {"entries": entries}
+
+    def model_config_get(self) -> dict[str, Any]:
+        """Full model-control state for the dashboard."""
+        # Read current .env values
+        env_path = OPS_ENV_PATH
+        running = {}
+        if env_path.exists():
+            content = env_path.read_text(encoding="utf-8")
+            for key in self.ENV_ALLOWED_KEYS:
+                pattern = rf"^{re.escape(key)}=(.*)$"
+                m = re.search(pattern, content, re.MULTILINE)
+                if m:
+                    raw = m.group(1).rstrip()
+                    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+                        raw = raw[1:-1]
+                    running[key] = raw
+        # List available models
+        models = self._list_ggufs()
+        mmprojs = self._list_ggufs(mmproj=True)
+        return {
+            "flags": [],
+            "defaults": {},
+            "active_model": running.get("LLAMACPP_MODEL", ""),
+            "overrides": running,
+            "effective": running,
+            "running": running,
+            "models": models,
+            "mmprojs": mmprojs,
+        }
+
+    def _list_ggufs(self, mmproj: bool = False) -> list[str]:
+        """List GGUF files in the models directory."""
+        models_dir = Path("/data/models")
+        if not models_dir.exists():
+            return []
+        pattern = "*.gguf" if not mmproj else "*.mmproj"
+        return sorted([f.name for f in models_dir.glob(pattern)])
+
     def _live_gpus(self) -> dict[str, dict[str, Any]]:
         """Query nvidia-smi for live GPU info — same as ops-api's _live_gpus()."""
         import subprocess
@@ -524,8 +908,15 @@ class ControlPlane:
             return {}
 
     # --- routing (also pure) ---
-    def route(self, method: str, path: str, body: dict[str, Any] | None = None) -> tuple[int, dict]:
+    def route(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        query: dict[str, str] | None = None,
+    ) -> tuple[int, dict]:
         body = body or {}
+        query = query or {}
         m = method.upper()
         if m == "GET" and path == "/status":
             return 200, self.status()
@@ -604,6 +995,35 @@ class ControlPlane:
             return 200, self.registry_gpus()
         if m == "GET" and path == "/gpu/assignments":
             return 200, self.gpu_assignments()
+        # Slice 3: model download/pull routes
+        if m == "POST" and path == "/models/download":
+            return self._as_response(self.models_download(body))
+        if m == "GET" and path == "/models/download/status":
+            return 200, self.models_download_status()
+        if m == "GET" and path == "/models/packs":
+            return 200, self.models_packs()
+        if m == "POST" and path == "/models/pull":
+            return self._as_response(self.models_pull(body))
+        if m == "GET" and path == "/models/pull/status":
+            return 200, self.models_pull_status()
+        if m == "POST" and path == "/models/gguf-pull":
+            return self._as_response(self.models_gguf_pull(body))
+        if m == "GET" and path == "/models/gguf-pull/status":
+            return 200, self.models_gguf_pull_status()
+        # Slice 3: diagnostics routes
+        if m == "GET" and path == "/diagnostics/dstate":
+            return 200, self.diagnostics_dstate()
+        # Slice 3: audit route
+        if m == "GET" and path == "/audit":
+            try:
+                limit = int(query.get("limit", "50"))
+            except ValueError:
+                return 422, {"error": "limit must be an integer"}
+            return 200, self.audit_log(limit)
+        # Slice 3: env route
+        if m == "GET" and path.startswith("/env/") and path.count("/") == 2:
+            key = path.split("/")[2]
+            return self._as_response(self.env_get(key))
         return 404, {"error": f"no route {method} {path}"}
 
     @staticmethod
@@ -635,7 +1055,7 @@ class ControlPlane:
                         body = json.loads(raw)
                 except json.JSONDecodeError:
                     return JSONResponse(content={"error": "invalid JSON body"}, status_code=400)
-            status, payload = cp.route(method, path, body)
+            status, payload = cp.route(method, path, body, dict(request.query_params))
             return JSONResponse(content=payload, status_code=status)
 
         return app

@@ -1,6 +1,8 @@
 """Control plane exposes the substrate over HTTP and switches models drift-safely (one write path)."""
+import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from ordo.broker import Broker, MockBackend
@@ -169,3 +171,126 @@ def test_jobs_cloud_routed_route_drains_exactly_once(tmp_path):
     cp.scheduler._cloud_routed = ["too-big-job"]  # simulate a fallback routing
     assert cp.route("GET", "/jobs/cloud-routed") == (200, {"cloud_routed": ["too-big-job"]})
     assert cp.route("GET", "/jobs/cloud-routed") == (200, {"cloud_routed": []})
+
+
+
+
+# ── Slice 3: model download/pull routes ──────────────────────────────────────────────────────────
+
+def test_models_download_invalid_url(tmp_path):
+    cp, _ = _cp(tmp_path)
+    r = cp.route("POST", "/models/download", {"url": "http://example.com/model.safetensors"})
+    assert r[0] == 400
+    assert "https://" in r[1]["error"]
+
+
+def test_models_download_unallowed_host(tmp_path):
+    cp, _ = _cp(tmp_path)
+    r = cp.route("POST", "/models/download", {"url": "https://evil.example.com/model.safetensors"})
+    assert r[0] == 400
+    assert "not in allowed list" in r[1]["error"]
+
+
+def test_models_download_invalid_category(tmp_path):
+    cp, _ = _cp(tmp_path)
+    r = cp.route("POST", "/models/download", {
+        "url": "https://huggingface.co/user/model/resolve/main/model.safetensors",
+        "category": "invalid_category",
+    })
+    assert r[0] == 400
+    assert "Invalid category" in r[1]["error"]
+
+
+def test_models_download_category_traversal(tmp_path):
+    cp, _ = _cp(tmp_path)
+    r = cp.route("POST", "/models/download", {
+        "url": "https://huggingface.co/user/model/resolve/main/model.safetensors",
+        "category": "../etc",
+    })
+    assert r[0] == 400
+    assert "Invalid category" in r[1]["error"]
+
+
+def test_model_download_redirect_rejects_untrusted_host():
+    from ordo.control import _validated_redirect_url
+
+    with pytest.raises(ValueError, match="not in allowed list"):
+        _validated_redirect_url("https://huggingface.co/model", "https://evil.example/file")
+
+
+def test_models_download_invalid_filename(tmp_path):
+    cp, _ = _cp(tmp_path)
+    r = cp.route("POST", "/models/download", {
+        "url": "https://huggingface.co/user/model/resolve/main/model.safetensors",
+        "filename": "../etc/passwd",
+    })
+    assert r[0] == 400
+    assert "Invalid or undetectable filename" in r[1]["error"]
+
+
+def test_models_download_status_initial(tmp_path):
+    cp, _ = _cp(tmp_path)
+    r = cp.route("GET", "/models/download/status")
+    assert r[0] == 200
+    assert r[1]["running"] is False
+    assert r[1]["done"] is True
+
+
+def test_models_packs(tmp_path):
+    cp, _ = _cp(tmp_path)
+    models_json = tmp_path / "models.json"
+    models_json.write_text(json.dumps({
+        "packs": {
+            "flux1-dev": {"description": "FLUX.1 dev model", "models": ["model.safetensors"]},
+            "sd15": {"description": "Stable Diffusion 1.5", "models": ["v1-5-pruned.ckpt"]},
+        }
+    }))
+    # Patch the path in the handler
+    import ordo.control as control_mod
+    original = control_mod.Path("/workspace/scripts/comfyui/models.json")
+    control_mod.Path = lambda p: models_json if p == "/workspace/scripts/comfyui/models.json" else original
+    try:
+        r = cp.route("GET", "/models/packs")
+        assert r[0] == 200
+        assert r[1]["ok"] is True
+        assert "flux1-dev" in r[1]["packs"]
+        assert r[1]["packs"]["flux1-dev"]["description"] == "FLUX.1 dev model"
+        assert r[1]["packs"]["flux1-dev"]["model_count"] == 1
+    finally:
+        control_mod.Path = Path
+
+
+def test_models_pull_not_implemented(tmp_path):
+    cp, _ = _cp(tmp_path)
+    r = cp.route("POST", "/models/pull", {"pack": "flux1-dev"})
+    assert r[0] == 501
+    assert "not available" in r[1]["error"]
+
+
+def test_models_gguf_pull_not_implemented(tmp_path):
+    cp, _ = _cp(tmp_path)
+    r = cp.route("POST", "/models/gguf-pull", {"repos": ["test"]})
+    assert r[0] == 501
+    assert "not available" in r[1]["error"]
+
+
+def test_env_allowlist_matches_ops_api():
+    assert ControlPlane.ENV_ALLOWED_KEYS == {
+        "DEFAULT_MODEL", "OPEN_WEBUI_DEFAULT_MODEL", "LLAMACPP_MODEL", "LLAMACPP_CTX_SIZE",
+        "LLAMACPP_EMBED_MODEL", "LLAMACPP_MMPROJ", "LLAMACPP_FLASH_ATTN",
+        "LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION", "LLAMACPP_KV_CACHE_TYPE_K",
+        "LLAMACPP_KV_CACHE_TYPE_V", "LLAMACPP_EXTRA_ARGS",
+    }
+
+
+def test_audit_route_uses_configured_file_and_limit(tmp_path, monkeypatch):
+    import ordo.control as control_mod
+
+    path = tmp_path / "audit.log"
+    path.write_text('\n'.join(json.dumps({"id": i}) for i in range(3)), encoding="utf-8")
+    monkeypatch.setattr(control_mod, "AUDIT_LOG_PATH", path)
+    cp, _ = _cp(tmp_path)
+
+    assert cp.route("GET", "/audit", query={"limit": "2"}) == (
+        200, {"entries": [{"id": 2}, {"id": 1}]}
+    )
