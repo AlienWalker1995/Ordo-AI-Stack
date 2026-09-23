@@ -1,0 +1,110 @@
+id: dashboard
+name: Ordo control-plane dashboard
+description: >
+  The operator's control-plane UI. Feature set: GGUF model management (/api/llm/*), model-control
+  flag cards, GPU and model-registry views, orchestration and ComfyUI tabs, throughput and
+  performance panels, Grafana tab (/grafana/), token auth and Caddy SSO trust.
+
+  The frontend is same-origin (it calls /api/* only, with no baked backend hostname) and the
+  FastAPI backend reads OPS_CONTROLLER_URL at runtime, so it points straight at `ops-controller`,
+  which serves every route it calls.
+default: true
+image: ordo/dashboard:latest
+# Build context is NESTED (the Dockerfile lives in the dashboard/ subdir, not this manifest's own
+# services/dashboard/ folder), so it's declared explicitly — the resolver/substrate test otherwise
+# defaults to services/<id>. METADATA only; never rendered into compose.
+build:
+  context: services/dashboard/dashboard
+# Read-only GPU visibility for the dashboard SERVICE ITSELF. Its `/api/hardware` route (the
+# hw-stat bar's GPU widgets) shells to nvidia-smi (_probe_gpu) and enumerates cards
+# (gpu_stats.list_gpus), which the NVIDIA runtime only injects when the service reserves a GPU
+# with the `utility` cap. Without it `/api/hardware` returns gpu:null + gpus:[] and the GPU
+# widgets go blank. `count: all` so it reads BOTH cards. Compute is NOT reserved.
+gpu: utility
+depends_on:
+  ops-controller: service_started
+# The /api/health probe keeps the agent's `dashboard: service_healthy` gate satisfiable. The
+# image ships python3 and not curl, so the probe is a python3 urllib call.
+healthcheck:
+  test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 30s
+environment:
+  # The control plane. Every route this dashboard calls is served by ops-controller.
+  OPS_CONTROLLER_URL: http://ops-controller:9000
+  # Backend service URLs the dashboard reads at runtime (all V2 service names).
+  LLAMACPP_URL: http://llamacpp:8080
+  MODEL_GATEWAY_URL: http://model-gateway:11435
+  MODEL_GATEWAY_API_KEY: ${LITELLM_MASTER_KEY}
+  # LiteLLM's MCP gateway is the model-gateway itself (MODEL_GATEWAY_URL above). The enabled server
+  # set is the render-emitted out/mcp/servers.json (mounted read-only at /mcp-config); health comes
+  # from LiteLLM (/v1/mcp/server/health + tools/list outcomes), so a crashed server shows red.
+  MCP_SERVERS_PATH: /mcp-config/servers.json
+  # The operator source (out/ordo.yaml), mounted RW below. A UI MCP toggle edits ordo.yaml's plugins
+  # list (the single source of truth); the change applies on the next ordo render + model-gateway
+  # recreate. The server_id -> plugin_id map is inside servers.json.
+  # out/ordo.yaml carries host paths but NO secrets (those live in secrets.env), so it's safe behind
+  # the edge SSO.
+  ORDO_SOURCE_PATH: /ordo-source.yaml
+  COMFYUI_URL: ${COMFYUI_URL:-http://comfyui:8188}
+  QDRANT_URL: http://qdrant:6333
+  # On-disk model dirs (bind-mounted below): /api/llm/* scans GGUF_MODELS_DIR; MODELS_DIR is comfyui.
+  GGUF_MODELS_DIR: /gguf-models
+  MODELS_DIR: /models
+  LLAMACPP_CTX_SIZE: ${LLAMACPP_CTX_SIZE:-262144}
+  # Dashboard state (orchestration jobs, throughput samples, MCP registry) — staged V2 data tree.
+  # V1 defaults DASHBOARD_DATA_PATH to ./data/dashboard under /app (not writable by appuser); pin it
+  # to the mounted /data/dashboard so startup mkdir succeeds.
+  DASHBOARD_DATA_PATH: /data/dashboard
+  # No per-service dashboard auth: the Caddy edge (oauth2-proxy + Google SSO) is the ONLY gate,
+  # and the dashboard has no host port (reachable only through the edge or over ordo-net). With
+  # DASHBOARD_AUTH_TOKEN unset the app's AUTH_REQUIRED is False, so no Bearer / trusted-proxy
+  # config is needed. (Dropping the hardcoded DASHBOARD_TRUSTED_PROXY_NET also kills a subnet
+  # that drifted when ordo-net was recreated — operator mandate: auth is the edge's job.)
+  # `/api/hardware` calls psutil.disk_usage(BASE_PATH) for the hw-stat bar's DISK widget. The render
+  # emits BASE_PATH=<Windows host path> into the shared .env (compose NEEDS it there to interpolate
+  # ${BASE_PATH} volume mounts on the host) — but env_file injects that Windows path into THIS Linux
+  # container too, where psutil.disk_usage("C:/dev/...") raises FileNotFoundError -> disk_*:null.
+  # A per-service `environment:` value BEATS env_file, so pin the IN-CONTAINER disk-probe target to
+  # the always-mounted /data/dashboard (same host C: drive -> correct host-disk stats). This mirrors
+  # Only the dashboard reads BASE_PATH for an in-container fs call. Everywhere else it stays the
+  # HOST path, because that is what compose interpolates ${BASE_PATH} with for bind mounts.
+  BASE_PATH: /data/dashboard
+  # The rendered manifest (out/manifest.json) — the machine-readable enabled-plugin set.
+  # The service grid gates its cards on manifest.plugins_enabled (services_catalog.visible_services)
+  # so it reflects what THIS render actually enabled and can't silently omit an enabled service.
+  # Mounted read-only; the dashboard only reads it. Fails open (full catalog) if ever absent.
+  MANIFEST_PATH: /ordo-manifest.json
+  # The rendered service-card catalog (out/services-catalog.json) — `ordo render` aggregates it
+  # from the per-service services/<id>/catalog.json fragments (each service declares its own
+  # dashboard card next to its other manifests). services_catalog.py loads it from this path;
+  # the React grid renders it. Missing/unreadable -> the loader falls back to reading the repo
+  # fragments directly (dev checkouts) and logs loudly if neither source exists.
+  SERVICES_CATALOG_PATH: /ordo-services-catalog.json
+# The dashboard reads on-disk GGUFs directly for /api/llm/* (shared read-only from the V1 tree via
+# BASE_PATH) and lists comfyui models via MODELS_DIR; its own state lives in the staged V2 data tree.
+volumes:
+  # RW view of the SAME models-gguf volume the llama.cpp services read — the pull UI
+  # must land files where the backends look; 9p bind retired 2026-08-07 (see ordo/compose.py).
+  - models-gguf:/gguf-models
+  # RW view of the SAME comfyui-models volume ComfyUI reads — the model-pack pull UI
+  # downloads land where ComfyUI looks; 9p bind retired 2026-08-07 (Stage 2, see
+  # services/comfyui/plugin.yaml for the seam rationale).
+  - comfyui-models:/models
+  - ${DATA_PATH:-./data}/dashboard:/data/dashboard
+  # The rendered out/mcp dir (servers.json). READ-ONLY: nothing live is written here any more.
+  - ./mcp:/mcp-config:ro
+  # The operator source (out/ordo.yaml). RW so an MCP enable/disable persists into its `plugins:`
+  # list (the single source of truth) — a surgical, comment-preserving line add/remove. `./`
+  # resolves to the compose project-dir (out/) at runtime — same convention as the mcp mount above.
+  # Contains host paths but NO secrets (secrets live in secrets.env), so it's safe behind edge SSO.
+  - ./ordo.yaml:/ordo-source.yaml:rw
+  # The rendered manifest (out/manifest.json). `./` resolves to the compose project-dir
+  # (out/) at runtime — same convention as the mcp mount above. Read-only: the grid's
+  # enabled-gate only reads plugins_enabled. See MANIFEST_PATH above.
+  - ./manifest.json:/ordo-manifest.json:ro
+  # The rendered service-card catalog (out/services-catalog.json). Read-only: the grid's
+  # card list — see SERVICES_CATALOG_PATH above.
+  - ./services-catalog.json:/ordo-services-catalog.json:ro

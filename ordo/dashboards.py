@@ -1,21 +1,18 @@
 """Dashboard registry — the control-plane UI is pluggable (like agents), declared as data.
 
-The Ordo "dashboard" is the operator's control-plane web UI. The V2 substrate SHIPS a minimal,
-V2-native single-file SPA (`native`, the open-source default) that talks straight to the
-`ordo serve` control plane. But a deployment can select a different dashboard — e.g. this
-operator's feature-rich V1 dashboard (`v1-parity`: GGUF model management via /api/llm/*,
-model-control flag cards, GPU/model-registry views, Grafana tab, token auth) — WITHOUT patching
-the substrate. Selection is data-driven, mirroring the agent registry: drop a
-`services/<id>/dashboard.yaml` in and set `dashboard: <id>` in ordo.yaml.
+The Ordo "dashboard" is the operator's control-plane web UI, and it is pluggable the same way
+agents are: drop a `services/<id>/dashboard.yaml` in and set `dashboard: <id>` in ordo.yaml, and
+the substrate needs no patching. The shipped one (`dashboard`) talks straight to the `ordo serve`
+control plane (service `ops-controller`).
 
 A dashboard manifest declares:
-  - `image`  ("" -> the <project>/dashboard:latest convention),
-  - `environment` / `depends_on` / `healthcheck` for the dashboard service, and
-  - an OPTIONAL `backend:` service (its own image/env/volumes/depends/healthcheck). The V1
-    dashboard's frontend is same-origin (`/api/*`) and its FastAPI backend reads the backend
-    URL from `OPS_CONTROLLER_URL` at runtime, so the V1 image is reused UNCHANGED and pointed at
-    a dedicated backend service (`ops-api`) — this keeps V2's `ordo serve` scheduler service
-    named `ops-controller` (its live clients depend on that name) with ZERO collision.
+  - `image`  ("" -> the <project>/dashboard:latest convention), and
+  - `environment` / `depends_on` / `healthcheck` for the dashboard service.
+
+A dashboard has no backend service of its own: `ops-controller` is the control plane, and a
+dashboard's frontend is same-origin (`/api/*`) with its server reading `OPS_CONTROLLER_URL` at
+runtime. (A companion `backend:` service used to be declarable here, for the transitional
+`ops-api` while the routes were ported. Nothing declares one now.)
 """
 from __future__ import annotations
 
@@ -27,7 +24,7 @@ from .buildspec import BuildSpec
 
 
 def _gpu_caps(b: dict[str, Any]) -> tuple[str, ...]:
-    """Parse a backend's GPU reservation capabilities, data-driven. Accepts either the explicit
+    """Parse a dashboard's GPU reservation capabilities, data-driven. Accepts either the explicit
     `gpu_capabilities: [utility]` list OR the `gpu: <cap>` shorthand string (e.g. `gpu: utility`).
     Empty/absent -> no reservation. Mirrors the shorthand-or-list style used elsewhere in the
     manifests so a service just declares what visibility it needs."""
@@ -43,37 +40,6 @@ def _gpu_caps(b: dict[str, Any]) -> tuple[str, ...]:
 
 
 @dataclasses.dataclass(frozen=True)
-class DashboardBackend:
-    """An OPTIONAL companion backend service a dashboard needs (e.g. the V1 ops-controller API,
-    rendered as service `ops-api`). Data-driven — compose renders it verbatim alongside the
-    dashboard service. Empty name -> the dashboard has no separate backend."""
-    name: str = ""
-    image: str = ""                  # "" -> the <project>/<name>:latest convention
-    environment: dict[str, str] = dataclasses.field(default_factory=dict)
-    volumes: tuple[str, ...] = ()
-    depends_on: dict[str, str] = dataclasses.field(default_factory=dict)
-    healthcheck: dict[str, Any] = dataclasses.field(default_factory=dict)
-    # Add the backend to the root group (0) for Docker-socket access on Docker Desktop
-    # (root:root socket) — mirrors V1's ops-controller `group_add: ["0"]`.
-    group_add_root: bool = False
-    wants_secrets: bool = True       # reads secrets.env (OPS_CONTROLLER_TOKEN etc.) as a 2nd env_file
-    # GPU visibility for the backend, as capabilities on an all-GPU reservation. The V1-parity
-    # `ops-api` backend enumerates GPUs/VRAM by shelling to nvidia-smi (it IS a copy of V1's
-    # ops-controller), which the NVIDIA runtime only injects when the service reserves a GPU with
-    # the `utility` capability — so this backend MUST declare `gpu: utility` (or the equivalent
-    # `gpu_capabilities: [utility]`) or it enumerates ZERO GPUs and the dashboard's GPU widgets
-    # report "No GPUs returned from registry". `count: all` (via the empty device_ids) so it reads
-    # BOTH cards. Empty -> no reservation (a backend that doesn't touch the GPU). Mirrors V1 exactly.
-    gpu_capabilities: tuple[str, ...] = ()
-    # Build-context identity (METADATA; NEVER rendered). Absent -> `services/<name>/` (the backend's
-    # own dir, e.g. `ops-api` -> services/ops-api). See ordo.buildspec.
-    build: BuildSpec = dataclasses.field(default_factory=BuildSpec)
-
-    def image_for(self, project: str) -> str:
-        return self.image or f"{project}/{self.name}:latest"
-
-
-@dataclasses.dataclass(frozen=True)
 class Dashboard:
     id: str
     name: str
@@ -85,37 +51,19 @@ class Dashboard:
     depends_on: dict[str, str] = dataclasses.field(default_factory=dict)
     healthcheck: dict[str, Any] = dataclasses.field(default_factory=dict)
     wants_secrets: bool = True
-    backend: DashboardBackend | None = None
-    # GPU visibility for the dashboard SERVICE ITSELF (distinct from the backend's). The V1-parity
-    # dashboard's `/api/hardware` shells to nvidia-smi (_probe_gpu) and enumerates cards via
-    # gpu_stats.list_gpus for the hw-stat bar's GPU widgets — the NVIDIA runtime only injects
-    # nvidia-smi/NVML when the service reserves a GPU with the `utility` cap. V1's dashboard
-    # container has exactly caps=[[utility]]; without it here `/api/hardware` returns gpu:null +
-    # gpus:[]. Declared via `gpu: utility` (or `gpu_capabilities: [utility]`) in the manifest;
-    # `count: all` (empty device_ids) so it reads BOTH cards. Empty -> no reservation.
+    # GPU visibility for the dashboard service. `/api/hardware` shells to nvidia-smi (_probe_gpu)
+    # and enumerates cards via gpu_stats.list_gpus for the hw-stat bar's GPU widgets — the NVIDIA
+    # runtime only injects nvidia-smi/NVML when the service reserves a GPU with the `utility` cap.
+    # Without it `/api/hardware` returns gpu:null + gpus:[]. Declared via `gpu: utility` (or
+    # `gpu_capabilities: [utility]`); `count: all` (empty device_ids) so it reads BOTH cards.
     gpu_capabilities: tuple[str, ...] = ()
-    # Build-context identity (METADATA; NEVER rendered). Absent -> the dashboard's own `services/<id>/`.
-    # The v1-parity dashboard's Dockerfile is nested (services/v1-parity/dashboard), so it declares
-    # an explicit `build.context`. See ordo.buildspec.
+    # Build-context identity (METADATA; NEVER rendered). Absent -> the dashboard's own
+    # `services/<id>/`. The shipped dashboard's Dockerfile is nested (services/dashboard/app), so
+    # it declares an explicit `build.context`. See ordo.buildspec.
     build: BuildSpec = dataclasses.field(default_factory=BuildSpec)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Dashboard:
-        b = d.get("backend") or None
-        backend = None
-        if b:
-            backend = DashboardBackend(
-                name=str(b.get("name", "")),
-                image=str(b.get("image", "")),
-                environment={str(k): str(v) for k, v in (b.get("environment", {}) or {}).items()},
-                volumes=tuple(str(v) for v in (b.get("volumes", []) or [])),
-                depends_on={str(k): str(v) for k, v in (b.get("depends_on", {}) or {}).items()},
-                healthcheck=dict(b.get("healthcheck", {}) or {}),
-                group_add_root=bool(b.get("group_add_root", False)),
-                wants_secrets=bool(b.get("wants_secrets", True)),
-                gpu_capabilities=_gpu_caps(b),
-                build=BuildSpec.from_dict(b.get("build")),
-            )
         return cls(
             id=str(d["id"]), name=str(d.get("name", d["id"])),
             description=str(d.get("description", "")),
@@ -126,7 +74,6 @@ class Dashboard:
             depends_on={str(k): str(v) for k, v in (d.get("depends_on", {}) or {}).items()},
             healthcheck=dict(d.get("healthcheck", {}) or {}),
             wants_secrets=bool(d.get("wants_secrets", True)),
-            backend=backend,
             gpu_capabilities=_gpu_caps(d),
             build=BuildSpec.from_dict(d.get("build")),
         )

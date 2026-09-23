@@ -1,21 +1,27 @@
-"""Locks the dashboard↔ops-api service-control wiring and the manifest enabled-gate.
+"""Locks the dashboard↔control-plane service-control wiring and the manifest enabled-gate.
 
 Covers two audit findings:
-  1. Hermes lifecycle buttons 400 — `hermes` had no OPS_SERVICE_MAP entry and
-     `hermes-dashboard` was not in ops-api's ALLOWED_SERVICES.
-  2. Service-grid drift — the catalog was hand-maintained and could silently omit
-     an enabled service; the grid is now gated on the render manifest's enabled set.
+  1. Hermes lifecycle buttons 400 — `hermes` had no OPS_SERVICE_MAP entry and `hermes-dashboard`
+     was not controllable.
+  2. Service-grid drift — the catalog was hand-maintained and could silently omit an enabled
+     service; the grid is now gated on the render manifest's enabled set.
 
-ALLOWED_SERVICES is extracted from ops-api/main.py by AST parse (NOT import) so this
-dashboard test never pulls in docker/fastapi or the module's startup side effects.
+The control plane's authority used to be a 25-name ALLOWED_SERVICES literal in ops-api, read out
+of that file by AST parse. ops-controller replaced it with the rule that literal was approximating:
+any compose service in THIS project is controllable, except the ones running the request. So the
+assertions below check the rendered stack and `DockerBackend.SELF_REFERENTIAL` instead of a list
+that needed an edit for every new plugin.
 """
 from __future__ import annotations
 
-import ast
 import json
 import os
 import sys
 from pathlib import Path
+
+import yaml
+
+from ordo.broker import DockerBackend
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -28,44 +34,56 @@ from dashboard.services_catalog import (  # noqa: E402
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-OPS_API_MAIN = REPO_ROOT / "services" / "ops-api" / "main.py"
+RENDERED_COMPOSE = REPO_ROOT / "out" / "docker-compose.yml"
 
 
-def _ops_api_allowed_services() -> set[str]:
-    """Extract the ALLOWED_SERVICES set literal from ops-api/main.py without importing it."""
-    tree = ast.parse(OPS_API_MAIN.read_text(encoding="utf-8"))
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            for tgt in node.targets:
-                if isinstance(tgt, ast.Name) and tgt.id == "ALLOWED_SERVICES":
-                    return set(ast.literal_eval(node.value))
-    raise AssertionError("ALLOWED_SERVICES not found in ops-api/main.py")
-
-
-ALLOWED_SERVICES = _ops_api_allowed_services()
+def _rendered_services() -> set[str]:
+    """Every service in the rendered stack — what the control plane will actually accept."""
+    if not RENDERED_COMPOSE.exists():
+        return set()
+    doc = yaml.safe_load(RENDERED_COMPOSE.read_text(encoding="utf-8")) or {}
+    return set(doc.get("services") or {})
 
 
 # ── (a) Hermes ─────────────────────────────────────────────────────────────────
 
-def test_hermes_maps_to_dashboard_service_and_is_allowlisted():
+def test_hermes_card_targets_the_ui_service_not_the_gateway():
     assert OPS_SERVICE_MAP["hermes"] == "hermes-dashboard"
-    assert "hermes-dashboard" in ALLOWED_SERVICES
 
 
-def test_agent_gateway_is_not_allowlisted():
-    """The Hermes agent/gateway self-restart is delicate — it must NOT be controllable."""
-    assert "agent" not in ALLOWED_SERVICES
-    assert "hermes" not in OPS_SERVICE_MAP.values()  # never target the gateway directly
+def test_the_agent_gateway_is_never_a_lifecycle_target():
+    """Hermes reaches these verbs through its own tools, so restarting `agent` is a process
+    killing itself mid-tool-call. No card may target it, and the backend refuses it outright."""
+    assert "agent" not in OPS_SERVICE_MAP.values()
+    assert "agent" in DockerBackend.SELF_REFERENTIAL
+    with __import__("pytest").raises(ValueError):
+        DockerBackend("ordo")._lifecycle_guard("agent")
+
+
+def test_the_control_plane_refuses_to_cycle_itself():
+    assert "ops-controller" not in OPS_SERVICE_MAP.values()
+    with __import__("pytest").raises(ValueError):
+        DockerBackend("ordo")._lifecycle_guard("ops-controller")
 
 
 # ── (b) every controllable card is fully wired ──────────────────────────────────
 
-def test_every_ops_mapped_service_is_allowlisted():
-    """Each OPS_SERVICE_MAP target must be an allowlisted compose service name, else
-    the card's start/stop/restart buttons 400 in ops-api."""
+def test_every_ops_mapped_service_exists_in_the_rendered_stack():
+    """Each OPS_SERVICE_MAP target must be a real compose service, else the card's
+    start/stop/restart buttons fail against a name the control plane cannot resolve."""
+    rendered = _rendered_services()
+    if not rendered:
+        __import__("pytest").skip("no rendered stack in this checkout")
     for display_id, compose_id in OPS_SERVICE_MAP.items():
-        assert compose_id in ALLOWED_SERVICES, (
-            f"{display_id} -> {compose_id} missing from ops-api ALLOWED_SERVICES"
+        assert compose_id in rendered, (
+            f"{display_id} -> {compose_id} is not a service in the rendered stack"
+        )
+
+
+def test_no_card_targets_a_service_the_backend_refuses():
+    for display_id, compose_id in OPS_SERVICE_MAP.items():
+        assert compose_id not in DockerBackend.SELF_REFERENTIAL, (
+            f"{display_id} -> {compose_id} is self-referential; its buttons would always fail"
         )
 
 

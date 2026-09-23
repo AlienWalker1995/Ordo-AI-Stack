@@ -35,8 +35,6 @@ def _all_project_images() -> set[str]:
         imgs.add(a.image_for("ordo"))
     for d in DASHBOARDS.dashboards:
         imgs.add(d.image_for("ordo"))
-        if d.backend and d.backend.name:
-            imgs.add(d.backend.image_for("ordo"))
     # substrate images (hardcoded in compose.py, no manifest): the project-namespaced core services
     # + the patched llama.cpp build referenced via a model's catalog backend_image.
     for name in SUBSTRATE_BUILD_CONTEXTS:

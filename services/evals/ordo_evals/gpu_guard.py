@@ -5,9 +5,9 @@ by `checks._check_ops_model`). No new secret and no new endpoint: `services/eval
 already points `OPS_CONTROLLER_URL` at the scheduler service (`ordo/control.py`'s `ControlPlane`,
 compose service `ops-controller`), which - by design, per its own module docstring ("No auth here:
 the dashboard is localhost-only and this is the full control plane behind it") - takes no auth at
-all. (The dashboard's `OPS_CONTROLLER_TOKEN` env var is for the unrelated `ops-api` service -
+all. (The dashboard's `OPS_CONTROLLER_TOKEN` env var is for the control plane's own API -
 `services/v1-parity/dashboard.yaml` points the dashboard's own `OPS_CONTROLLER_URL` at
-`http://ops-api:9000`, not at this one - so there is nothing to invent or wire here.)
+`http://ops-controller:9000`, not at this one - so there is nothing to wire here.)
 
 Why this is the right ground truth for "is llama.cpp about to be (or already) starved of the GPU":
 `services/gpu-gate/gate.py` sits in front of every GPU-work submission API (ComfyUI's the canonical

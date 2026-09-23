@@ -380,7 +380,7 @@ async def _do_set_active_model(req: PullRequest, request: Request):
 
 
 def _run_gguf_pull(model: str):
-    """Ask ops-controller to pull GGUFs (POST /models/gguf-pull). The V1 puller was not ported: ops-api
+    """Ask ops-controller to pull GGUFs (POST /models/gguf-pull). The V1 puller was not ported: the control plane
     answers 501 and points at its in-process /models/download; pull on the host with `ordo fetch`."""
     global _gguf_pull_status
     with _state_lock:

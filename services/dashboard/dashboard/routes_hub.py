@@ -24,10 +24,10 @@ async def services():
     from dashboard.app import _get_http_client, _ops_request
     client = _get_http_client()
 
-    # Container state/health from ops-api (docker.sock). This is the ONLY liveness signal for the
+    # Container state/health from ops-controller (docker.sock). The ONLY liveness signal for the
     # headless background workers (worker, rag-ingestion, livesync-bridge) that expose no HTTP
     # `check` — without it their card would show a neutral "unknown". Fetched ONCE here (not per
-    # service) and merged into the check:None branch below. Fails soft: if ops-api is unreachable
+    # service) and merged into the check:None branch below. Fails soft: if the control plane is down
     # or the token is unset, those services fall back to "unknown", never a false-red.
     container_by_id: dict[str, dict] = {}
     code, data = await _ops_request("GET", "/services")
@@ -36,9 +36,9 @@ async def services():
 
     def _container_health(svc_id: str) -> tuple[bool | None, str]:
         """(ok, error) from container state/health for a service with no HTTP check.
-        Returns (None, "") — a neutral 'unknown' — when ops-api has no row for it.
+        Returns (None, "") — a neutral 'unknown' — when the control plane has no row for it.
 
-        ops-api keys /services by COMPOSE service name, which is not always the card id
+        the control plane keys /services by COMPOSE service name, not always the card id
         (`hermes` -> `hermes-dashboard`). Resolve through OPS_SERVICE_MAP first or the
         lookup misses and a running service renders as a permanent grey 'unknown'."""
         c = container_by_id.get(OPS_SERVICE_MAP.get(svc_id, svc_id))

@@ -127,8 +127,6 @@ def manifest_image_contexts(
         claim(a.image_for(project), a.build.resolved(a.id))
     for d in dashboards.dashboards:
         claim(d.image_for(project), d.build.resolved(d.id))
-        if d.backend and d.backend.name:
-            claim(d.backend.image_for(project), d.backend.build.resolved(d.backend.name))
     for p in plugins.plugins:
         for img in _plugin_images(p):
             claim(img, p.build.resolved(p.id))

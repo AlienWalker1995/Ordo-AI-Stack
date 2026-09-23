@@ -35,7 +35,7 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 # Imports intentionally ordered after _state_lock / app for readability
-"services/v1-parity/dashboard/app.py" = ["E402"]
+"services/dashboard/dashboard/app.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["dashboard", "ordo"]
@@ -49,7 +49,7 @@ asyncio_mode = "auto"
 # non-source dirs makes `pytest` and `pytest tests/` behave identically.
 testpaths = ["tests"]
 norecursedirs = ["data", "models", "out", "secrets", "tmp*", ".git", "*.egg-info"]
-# services/ reorg import root: tests import the v1-parity dashboard package as
+# services/ reorg import root: tests import the dashboard package as
 # `from dashboard.X import Y` without editing any import statement. (A second entry for the
 # retired media worker was removed with it, 2026-07-31 #133.)
 # services/evals is the eval harness package root (tests/evals imports `ordo_evals`); in the
@@ -57,4 +57,4 @@ norecursedirs = ["data", "models", "out", "secrets", "tmp*", ".git", "*.egg-info
 # services/rag lets tests/rag import `ingest` directly (services/rag/ingest.py), so the hidden-path
 # exclusion rule the E6 fix relies on (see tests/rag/test_ingest.py) is exercised against the real
 # module, not a copy.
-pythonpath = ["services/v1-parity", "services/evals", "services/rag"]
+pythonpath = ["services/dashboard", "services/evals", "services/rag"]

@@ -47,11 +47,9 @@ depends_on:
 # ${VAR:-default} refs resolve against the rendered .env at compose time (single source of truth).
 environment:
   PYTHONIOENCODING: utf-8
-  # Scheduler (GPU leases, /status, /model-config) — the `ordo serve` control plane.
+  # The control plane: GPU leases, /status, /model-config, and the container/compose verbs the
+  # ops-router tools call (services/hermes/ops_client.py). One service, one URL.
   OPS_CONTROLLER_URL: http://ops-controller:9000
-  # Container/compose verbs (ops-router tools via services/hermes/ops_client.py) live on the
-  # SEPARATE Bearer-gated ops-api service — NOT the scheduler (which 404s them; audit P0-2).
-  OPS_API_URL: http://ops-api:9000
   # STT provider base URL — the local faster-whisper service (voice profile). Harmless if voice off.
   STT_OPENAI_BASE_URL: ${STT_OPENAI_BASE_URL:-http://stt:8000/v1}
   # Single source of truth for the context window (llamacpp KV / gateway max_input_tokens / the
@@ -146,7 +144,7 @@ environment:
 # and Windows has no path to it. That removes the failure mode instead of repairing it on a timer.
 # Root group so the unprivileged `hermes` user can reach the root:root docker.sock (mode 660)
 # mounted below — without it the mount is present but every docker call gets EACCES (the bug
-# that made Hermes report "no docker access" despite the socket being mounted). Mirrors ops-api.
+# that made Hermes report "no docker access" despite the socket being mounted).
 group_add: ["0"]
 
 volumes:

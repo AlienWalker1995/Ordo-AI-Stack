@@ -4,7 +4,7 @@ The arbiter already exists: `ordo serve`'s Scheduler + Broker is a global queue 
 RESIDENCY (`POST /jobs` = "grant me VRAM", `POST /jobs/complete` = "I'm done"). What was missing
 is the other half — a way for a service to DECLARE that it competes for the card. Without that,
 the arbiter learned the shape of contention from tribal knowledge: `ordo serve` carried a
-`--resident-service llamacpp` default, ops-api carried a `COMFYUI_GUARDIAN_TARGET` env, and
+`--resident-service llamacpp` default, the old ops-api carried a `COMFYUI_GUARDIAN_TARGET`, and
 every other GPU service was arbitrated only by whoever remembered to call `/jobs`. That gap is
 what let a hand-queued ComfyUI render share the 5090 with the resident llama.cpp for four hours
 at ~98% VRAM on 2026-08-08 until the graphics kernel bugchecked (0x113).
@@ -366,7 +366,6 @@ CORE_GPU_ARBITRATION: dict[str, GpuArbitration] = {
     # GPU widgets) — no compute context, no meaningful VRAM. See compose._utility_gpu_reservation.
     "ops-controller": GpuArbitration(mode="exempt", enforcement="none", device="primary"),
     "dashboard": GpuArbitration(mode="exempt", enforcement="none", device="primary"),
-    "ops-api": GpuArbitration(mode="exempt", enforcement="none", device="primary"),
 }
 
 

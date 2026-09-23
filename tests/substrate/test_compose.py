@@ -99,37 +99,30 @@ def test_plain_gpu_service_reserves_gpu_capability():
         "a plain gpu:true service must reserve the compute `gpu` capability, not `utility`"
 
 
-def test_dashboard_backend_renders_utility_gpu_reservation():
-    # A dashboard backend that declares `gpu_capabilities: [utility]` must render an all-GPU
-    # (count: all) reservation with the utility cap — the fix for "No GPUs returned from registry".
-    backend = {"name": "ops-api", "image": "ordo/ops-api:latest",
-               "gpu_capabilities": ["utility"]}
-    c = compose.render_compose(has_gpu=True, compose_profiles=[],
-                               dashboard={"backend": backend})
-    devs = c["services"]["ops-api"]["deploy"]["resources"]["reservations"]["devices"]
-    assert any(d.get("capabilities") == ["utility"] and d.get("count") == "all" for d in devs), \
-        "an ops-api backend with gpu_capabilities:[utility] must reserve all GPUs with the utility cap"
-
-
-def test_dashboard_backend_without_gpu_has_no_reservation():
-    # A backend that declares no GPU capabilities gets no reservation (unchanged behaviour).
-    backend = {"name": "some-api", "image": "x:latest"}
-    c = compose.render_compose(has_gpu=True, compose_profiles=[],
-                               dashboard={"backend": backend})
-    assert "deploy" not in c["services"]["some-api"]
-
-
-def test_v1_parity_ops_api_backend_has_utility_gpu(tmp_path):
-    # End-to-end through the real v1-parity manifest + render: the ops-api service the operator's
-    # dashboard depends on must carry the utility GPU reservation, else its GPU widgets go blank.
+def test_ops_controller_reserves_a_utility_gpu(tmp_path):
+    """The control plane enumerates GPUs by shelling to nvidia-smi, which the NVIDIA runtime only
+    injects when the service reserves a GPU with the `utility` capability. Without it the VRAM-fit
+    admission sees a CPU-only host, drops every GPU plugin as 'not available', and the dashboard's
+    GPU widgets report "No GPUs returned from registry". `count: all` so it reads BOTH cards, and
+    `utility` rather than `gpu` so no compute is reserved."""
     from ordo.dashboards import DashboardRegistry
     dashboards = DashboardRegistry.load(ROOT / "services")
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
-                            "model": "auto", "plugins": "auto", "dashboard": "v1-parity"})
+                            "model": "auto", "plugins": "auto"})
     c = render(src, CATALOG, REGISTRY, dashboards=dashboards).compose_dict()
-    devs = c["services"]["ops-api"]["deploy"]["resources"]["reservations"]["devices"]
-    assert any(d.get("capabilities") == ["utility"] for d in devs), \
-        "the v1-parity ops-api backend must reserve a GPU with the utility cap (nvidia-smi injection)"
+    devs = c["services"]["ops-controller"]["deploy"]["resources"]["reservations"]["devices"]
+    assert any(d.get("capabilities") == ["utility"] and d.get("count") == "all" for d in devs)
+
+
+def test_the_dashboard_itself_also_reserves_a_utility_gpu(tmp_path):
+    """Its /api/hardware route shells to nvidia-smi for the hw-stat bar's GPU widgets."""
+    from ordo.dashboards import DashboardRegistry
+    dashboards = DashboardRegistry.load(ROOT / "services")
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto", "plugins": "auto"})
+    c = render(src, CATALOG, REGISTRY, dashboards=dashboards).compose_dict()
+    devs = c["services"]["dashboard"]["deploy"]["resources"]["reservations"]["devices"]
+    assert any(d.get("capabilities") == ["utility"] for d in devs)
 
 
 def test_agent_swappable():
@@ -457,12 +450,11 @@ def test_gguf_models_on_named_volume():
     # GGUF weights are served from the models-gguf named volume (ext4 inside the
     # Docker VM), never a ${BASE_PATH} 9p bind: heavy sequential reads wedge the
     # 9p client in D-state (third casualty 2026-08-07 — after the Hermes brain
-    # and the ComfyUI app tree). dashboard mounts RW (pull target lands where the
-    # backends read); everything else RO.
+    # and the ComfyUI app tree). dashboard mounts RW (the pull target lands where the
+    # servers read); everything else RO.
     from ordo.dashboards import DashboardRegistry
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
-                            "model": "auto", "plugins": ["llamacpp-cpu", "rag"],
-                            "dashboard": "v1-parity"})
+                            "model": "auto", "plugins": ["llamacpp-cpu", "rag"]})
     c = render(src, CATALOG, REGISTRY,
                dashboards=DashboardRegistry.load(ROOT / "services")).compose_dict()
     assert "models-gguf" in c["volumes"]
@@ -471,7 +463,6 @@ def test_gguf_models_on_named_volume():
         "llamacpp-cpu": "models-gguf:/models:ro",
         "llamacpp-embed": "models-gguf:/models:ro",
         "dashboard": "models-gguf:/gguf-models",
-        "ops-api": "models-gguf:/gguf-models:ro",
     }
     for name, mount in expected.items():
         vols = c["services"][name]["volumes"]
@@ -512,18 +503,17 @@ def test_comfyui_models_on_named_volume():
     # Stage-2 of the 9p eviction: the ~390GB ComfyUI weights tree is the largest
     # state mount; it wedged --enable-assets and rode the same doomed bridge.
     # comfyui reads RO; dashboard RW (model-pack pull UI lands downloads where
-    # ComfyUI reads); ops-api RO listing.
+    # ComfyUI reads); the control plane lists the same tree.
     from ordo.dashboards import DashboardRegistry
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
-                            "model": "auto", "plugins": ["comfyui"],
-                            "dashboard": "v1-parity"})
+                            "model": "auto", "plugins": ["comfyui"]})
     c = render(src, CATALOG, REGISTRY,
                dashboards=DashboardRegistry.load(ROOT / "services")).compose_dict()
     assert "comfyui-models" in c["volumes"]
     expected = {
         "comfyui": "comfyui-models:/root/ComfyUI/models:ro",
         "dashboard": "comfyui-models:/models",
-        "ops-api": "comfyui-models:/models/comfyui:ro",
+        "ops-controller": "comfyui-models:/models/comfyui",
     }
     for name, mount in expected.items():
         vols = c["services"][name]["volumes"]

@@ -1,4 +1,4 @@
-"""Tests for the Hermes OpsClient — the ops-api HTTP wrapper.
+"""Tests for the Hermes OpsClient — the control plane's HTTP wrapper.
 
 Moved here from the sibling copy (audit P1-8): the pytest CI job
 only collects tests/, so the sibling copy never ran. The module is loaded
@@ -6,14 +6,15 @@ by file path (importlib spec_from_file_location) rather than
 ``from services.hermes.ops_client import ...`` so collection doesn't depend
 on the build context being importable as a package (it has no __init__.py).
 
-Also updated for the fixed wiring (audit P0-2): OpsClient now talks to
-**ops-api** (OPS_API_URL, default http://ops-api:9000), not the
-ops-controller scheduler which 404s on every container/compose route.
-Compose verbs map to ops-api's per-service surface — POST
-/services/{name}/recreate (up/restart) and POST /services/{name}/stop
-(down) — since ops-api's stack-wide /compose/* is a deliberate 501.
+These verbs lived on a separate Bearer-gated `ops-api` while they were being
+ported off it (audit P0-2 was the mis-wiring in the other direction: the client
+pointed at a scheduler that 404'd them). ops-controller serves all of them now,
+so there is ONE base URL: OPS_CONTROLLER_URL, default http://ops-controller:9000.
+Compose verbs still map to the per-service surface — POST
+/services/{name}/recreate (up/restart) and POST /services/{name}/stop (down) —
+since the stack-wide /compose/* is a deliberate 501.
 
-respx mocks the HTTPX transport so no network or live ops-api is required.
+respx mocks the HTTPX transport so no network or live control plane is required.
 """
 from __future__ import annotations
 
@@ -33,7 +34,7 @@ _spec.loader.exec_module(ops_client_mod)
 OpsClient = ops_client_mod.OpsClient
 OpsClientError = ops_client_mod.OpsClientError
 
-BASE_URL = "http://ops-api:9000"
+BASE_URL = "http://ops-controller:9000"
 
 
 @pytest.fixture
@@ -43,15 +44,19 @@ def client(monkeypatch):
     return OpsClient()
 
 
-def test_default_base_url_is_ops_api_not_ops_controller(monkeypatch):
-    """No OPS_API_URL set -> defaults to http://ops-api:9000. Setting
-    OPS_CONTROLLER_URL (the scheduler that 404s on these routes) must have
-    no effect — that was the original mis-wiring (audit P0-2)."""
+def test_base_url_defaults_to_the_control_plane(monkeypatch):
+    """No env set -> http://ops-controller:9000, the one service that serves these routes."""
     monkeypatch.setenv("OPS_CONTROLLER_TOKEN", "test-token")
-    monkeypatch.delenv("OPS_API_URL", raising=False)
-    monkeypatch.setenv("OPS_CONTROLLER_URL", "http://ops-controller:9000")
+    monkeypatch.delenv("OPS_CONTROLLER_URL", raising=False)
+    assert OpsClient().url == BASE_URL
+
+
+def test_base_url_follows_ops_controller_url(monkeypatch):
+    monkeypatch.setenv("OPS_CONTROLLER_TOKEN", "test-token")
+    monkeypatch.setenv("OPS_CONTROLLER_URL", "http://elsewhere:9000")
     c = OpsClient()
-    assert c.url == BASE_URL
+    assert c.url == "http://elsewhere:9000"
+    assert c.ctl_url == "http://elsewhere:9000"  # one service, so both point at it
 
 
 def test_token_required(monkeypatch):
@@ -117,7 +122,7 @@ def test_compose_down_maps_to_stop(client):
 
 
 def test_compose_verbs_without_service_raise(client):
-    """Stack-wide /compose/* is a deliberate 501 on ops-api; OpsClient refuses
+    """Stack-wide /compose/* is a deliberate 501; OpsClient refuses
     client-side rather than hitting a route that always fails."""
     with pytest.raises(OpsClientError, match="stack-wide"):
         client.compose_restart(service=None)

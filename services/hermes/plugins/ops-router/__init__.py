@@ -1,9 +1,8 @@
-"""ops-router — Hermes plugin exposing ops-api verbs as first-class tools.
+"""ops-router — Hermes plugin exposing the control plane's container verbs as first-class tools.
 
-Replaces the lost docker.sock surface (Plan C). Five tools wrap the ops-api
-control plane's HTTP API (Bearer-gated, OPS_API_URL=http://ops-api:9000 — NOT
-the ordo-serve scheduler, which has none of these routes) so the model never
-has to know about curl or HTTP:
+Replaces the lost docker.sock surface (Plan C). Five tools wrap the ops-controller
+HTTP API (OPS_CONTROLLER_URL=http://ops-controller:9000) so the model never has to
+know about curl or HTTP:
 
 - list_containers    -> GET  /containers
 - container_logs     -> GET  /containers/{name}/logs

@@ -51,7 +51,7 @@ then recreate `model-gateway`.
 
 GGUF model provisioning is **`ordo fetch`** (checksum-mandatory, offline-capable). The V1
 `pull_gguf_models.py` script and its `model-puller` one-shot Docker service are gone;
-`ordo/ops-api` no longer shells out to either (`/models/gguf-pull` now returns 501).
+The control plane no longer shells out to either (`/models/gguf-pull` returns 501).
 
 ## n8n
 

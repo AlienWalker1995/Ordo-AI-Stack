@@ -250,7 +250,7 @@ def build_source(answers: dict[str, Any] | None = None) -> dict[str, Any]:
         "tier": a.get("tier", "auto"),
         "model": a.get("model", "auto"),
         "agent": a.get("agent", "hermes"),        # Hermes is the default
-        "dashboard": a.get("dashboard", "native"),
+        "dashboard": a.get("dashboard", "dashboard"),
         "plugins": a.get("plugins", "auto"),
         "cloud_fallback": a.get("cloud_fallback", {"enabled": False}),
         "overrides": a.get("overrides", {}),
