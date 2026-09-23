@@ -579,6 +579,24 @@ class Broker:
         """Renew a running job's lease (liveness-based). No reconcile — nothing starts or stops."""
         return self.scheduler.heartbeat(job_id)
 
+    def enforce_evictions(self) -> list[str]:
+        """Stop any evicted resident that is running anyway, and return their names.
+
+        A resident is evicted so a GPU lease can use its VRAM. Anything outside the scheduler can
+        start it again (a whole-stack `docker compose up -d` starts every stopped service), which
+        puts two tenants on one card: the 2026-08-08 host crash. While the scheduler holds a
+        resident evicted, its view wins. Called on the serve loop's timer.
+        """
+        evicted = self.scheduler.evicted_residents
+        if not evicted:
+            return []
+        running = {r.get("id") for r in (self.backend.list_services() or {}).get("services", [])
+                   if r.get("state") == "running"}
+        stray = sorted(set(evicted) & running)
+        for name in stray:
+            self.backend.stop(name)
+        return stray
+
     def sweep_leases(self) -> list[str]:
         """Force-complete stranded leases (TTL elapsed) and reconcile — restores the resident.
 

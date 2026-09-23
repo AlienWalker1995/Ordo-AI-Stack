@@ -165,6 +165,9 @@ class Config:
         self.poll_seconds = _env_f("GATE_POLL_SECONDS", 5.0)
         self.ops_url = _env("OPS_CONTROLLER_URL").rstrip("/")
         self.ops_token = _env("OPS_CONTROLLER_TOKEN")
+        # The compose service behind GATE_UPSTREAM: what the gate asks ops-controller to restart
+        # when the upstream wedges, so the card is never released under a render still holding VRAM.
+        self.upstream_service = _env("GATE_UPSTREAM_SERVICE")
         self.vram_gb = _env_f("ORDO_LEASE_VRAM_GB", 0.0)
         self.kind = _env("ORDO_LEASE_KIND", "media")
         self.job_id = _env("ORDO_LEASE_JOB_ID")
@@ -184,6 +187,8 @@ class Config:
             bad.append("OPS_CONTROLLER_URL is required")
         if not self.ops_token:
             bad.append("OPS_CONTROLLER_TOKEN is required (ops-controller refuses unauthenticated calls)")
+        if not self.upstream_service:
+            bad.append("GATE_UPSTREAM_SERVICE is required (the service to restart if the upstream wedges)")
         if self.vram_gb <= 0:
             bad.append("ORDO_LEASE_VRAM_GB must be > 0")
         if not self.job_id:
@@ -226,12 +231,10 @@ class Residency:
         self._last_busy = 0.0
         self._last_heartbeat = 0.0
         self._held_since_mono: float | None = None
-        # Set when a hold is capped out. Suppresses the BACKSTOP only — without it the backstop
-        # would re-acquire on the very next poll (the wedged queue is still non-empty) and the
-        # cap would accomplish nothing. Cleared once the upstream's queue actually reads empty.
-        # A fresh submission through the gate is NOT suppressed: that is a new, intentional
-        # request from a caller who is waiting for an answer, not an inference about old work.
-        self._backstop_suppressed = False
+        # Wedge handling for the current hold: None = not triggered, True = the upstream was
+        # restarted (release once it reads idle), False = the restart failed (keep the card, retry).
+        self._wedge_restarted: bool | None = None
+        self._last_restart_attempt = 0.0
         self.stats = {
             "acquired": 0, "released": 0, "denied": 0, "bypass_detected": 0,
             "reacquired_after_loss": 0, "max_hold_expired": 0, "held_since": None,
@@ -286,8 +289,6 @@ class Residency:
             self._last_busy = time.monotonic()
             if self.held:
                 return
-            # An explicit submission clears a wedge suppression: someone is actively asking.
-            self._backstop_suppressed = False
             deadline = time.monotonic() + self.cfg.acquire_timeout
             try:
                 status = self._gpu(await self._ops("POST", "/jobs", {
@@ -354,6 +355,24 @@ class Residency:
                         "scheduler's TTL sweep is the backstop", e)
             self.stats["last_error"] = f"withdraw failed: {e}"
 
+    def _restart_retry_seconds(self) -> float:
+        return max(1.0, self.cfg.poll_seconds * 12)
+
+    async def _restart_upstream(self) -> bool:
+        """Restart the upstream service through ops-controller. True when the restart was accepted."""
+        self._last_restart_attempt = time.monotonic()
+        try:
+            await self._ops("POST", f"/services/{self.cfg.upstream_service}/restart", {"confirm": True})
+        except (aiohttp.ClientError, OSError, ValueError) as e:
+            LOG.error("could not restart %s (%s): KEEPING the card rather than releasing it beside "
+                      "a render that may still hold VRAM. It needs a person.",
+                      self.cfg.upstream_service, e)
+            self.stats["last_error"] = f"upstream restart failed: {e}"
+            return False
+        LOG.warning("restarted %s after the max hold; releasing once it reads idle",
+                    self.cfg.upstream_service)
+        return True
+
     async def release(self, *, reason: str) -> None:
         async with self._lock:
             if not self.held:
@@ -369,6 +388,7 @@ class Residency:
                 self.stats["last_error"] = f"release failed: {e}"
             self.held = False
             self._held_since_mono = None
+            self._wedge_restarted = None
             self.stats["released"] += 1
             self.stats["held_since"] = None
 
@@ -417,7 +437,7 @@ class Residency:
                 now = time.monotonic()
                 if busy:
                     self._last_busy = now
-                    if not self.held and not self._backstop_suppressed:
+                    if not self.held:
                         # Work reached the upstream without passing through the gate. This is
                         # reactive — the render has already started — so it narrows the window
                         # rather than closing it. Loud, counted, and never the primary path.
@@ -431,35 +451,33 @@ class Residency:
                 if self.held:
                     held_for = now - (self._held_since_mono or now)
                     if self.cfg.max_hold_seconds and held_for >= self.cfg.max_hold_seconds:
-                        # A wedged upstream is the one case heartbeating makes WORSE: the gate is
-                        # alive and faithfully renewing residency for work that will never
-                        # finish, so the scheduler's TTL — which exists for a dead client — never
-                        # fires and the resident LLM stays off the card indefinitely. That
-                        # violates the hard rule that nothing may strand the resident, so the
-                        # hold is capped. This is a genuine trade-off, not a clean win: releasing
-                        # lets the resident back onto a card that may still have a wedged render
-                        # on it. The cap is therefore set far above any legitimate render and its
-                        # expiry is an ALARM — the real fix for a wedged upstream is to notice
-                        # and restart it, which this log is what makes possible.
-                        self.stats["max_hold_expired"] += 1
-                        self._backstop_suppressed = True
-                        LOG.error("MAX HOLD EXCEEDED: residency held %.0fs (cap %.0fs) while "
-                                  "%s still reports outstanding work. Releasing so the resident "
-                                  "is not stranded off the card — the upstream is very likely "
-                                  "WEDGED and needs attention.",
-                                  held_for, self.cfg.max_hold_seconds, self.cfg.upstream)
-                        await self.release(reason="max hold exceeded (upstream likely wedged)")
-                        continue
+                        # A wedged upstream is the one case heartbeating makes WORSE: the gate
+                        # renews residency for work that will never finish, so the scheduler's
+                        # TTL never fires. But releasing would restore the resident LLM beside a
+                        # render that still holds VRAM: two tenants on one card, the 2026-08-08
+                        # host crash. So the upstream is restarted first (which drops its work and
+                        # its VRAM) and the card is released only once it reads idle. If the
+                        # restart fails the card is KEPT (chat stays on the CPU fallback, a far
+                        # better failure than a crashed host) and the restart is retried.
+                        if self._wedge_restarted is None:
+                            self.stats["max_hold_expired"] += 1
+                            LOG.error("MAX HOLD EXCEEDED: residency held %.0fs (cap %.0fs) while %s "
+                                      "still reports outstanding work. Restarting %s before "
+                                      "releasing the card.", held_for, self.cfg.max_hold_seconds,
+                                      self.cfg.upstream, self.cfg.upstream_service)
+                            self._wedge_restarted = await self._restart_upstream()
+                        elif self._wedge_restarted is False and \
+                                now - self._last_restart_attempt >= self._restart_retry_seconds():
+                            self._wedge_restarted = await self._restart_upstream()
+                        if self._wedge_restarted and busy is False:
+                            await self.release(reason="max hold exceeded: upstream restarted and idle")
+                            continue
                     if now - self._last_heartbeat >= self.cfg.heartbeat_seconds:
                         await self.heartbeat()
                         self._last_heartbeat = now
                     if not busy and (now - self._last_busy) >= self.cfg.drain_seconds:
                         await self.release(reason=f"queue empty for "
                                                   f"{self.cfg.drain_seconds:.0f}s")
-                if busy is False and self._backstop_suppressed:
-                    # The wedge cleared on its own (or was cleared by hand) — re-arm the backstop.
-                    self._backstop_suppressed = False
-                    LOG.info("upstream queue drained — backstop re-armed")
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001 — the watcher must never die silently
@@ -473,7 +491,7 @@ class Residency:
             "kind": self.cfg.kind,
             "upstream": self.cfg.upstream,
             "max_hold_seconds": self.cfg.max_hold_seconds,
-            "backstop_suppressed": self._backstop_suppressed,
+            "wedge_restarted": self._wedge_restarted,
             "submit_paths": list(self.cfg.submit_paths),
             "submit_methods": sorted(self.cfg.submit_methods),
             **self.stats,

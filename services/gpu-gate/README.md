@@ -69,6 +69,7 @@ first consumer.
 | `GATE_QUEUE_PATH` / `GATE_QUEUE_STYLE` | how to tell whether work is outstanding |
 | `GATE_DRAIN_SECONDS` | queue must read empty this long before residency is released |
 | `GATE_MAX_HOLD_SECONDS` | cap on one continuous hold (wedged-upstream guard; `0` disables) |
+| `GATE_UPSTREAM_SERVICE` | the compose service behind `GATE_UPSTREAM`, restarted when it wedges (rendered from the manifest) |
 | `OPS_CONTROLLER_URL` / `OPS_CONTROLLER_TOKEN` | the arbiter |
 | `ORDO_LEASE_*` | the residency request, shared with `assets/lease-exec.py` |
 
@@ -87,7 +88,7 @@ Every one of these is deliberate, and each has a test in `tests/test_gpu_gate.py
 | gate restarts | stable job id + an unconditional release at startup clears a lease its previous incarnation stranded, without waiting out the TTL. |
 | arbiter restarts and forgets the lease | heartbeat 404s → re-acquire, rather than letting the resident be restored into VRAM the render is still using. |
 | upstream unreachable | treated as *not* busy, so a dead upstream drains and gives the card back. |
-| upstream **wedged** (alive, reports work, makes no progress) | the one case the scheduler's TTL cannot catch, because a live gate keeps heartbeating. Capped by `GATE_MAX_HOLD_SECONDS`: residency is released, the backstop is suppressed until the queue drains, and the condition is logged as an alarm. This is a real trade-off, not a clean win — releasing lets the resident back onto a card that may still have a wedged render on it — so the cap is set far above any legitimate render and its expiry means *go look at the upstream*. |
+| upstream **wedged** (alive, reports work, makes no progress) | the one case the scheduler's TTL cannot catch, because a live gate keeps heartbeating. Capped by `GATE_MAX_HOLD_SECONDS`: the gate restarts `GATE_UPSTREAM_SERVICE` through ops-controller (which drops the stuck work and its VRAM) and releases the card only once the upstream reads idle. If the restart fails the card is **kept** and the restart retried: releasing would restore the resident LLM beside a render still holding VRAM, two tenants on one card. |
 
 ## Known limitation
 

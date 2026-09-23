@@ -197,3 +197,23 @@ def test_service_rows_carry_docker_status_so_exit_codes_and_uptime_survive():
         {"service": "qdrant", "name": "ordo-qdrant-1", "state": "running", "status": "Up 3 hours (healthy)"}
     )
     assert healthy["health"] == "healthy" and healthy["status"] == "Up 3 hours (healthy)"
+
+
+def test_an_evicted_resident_started_from_outside_is_stopped_again():
+    # A whole-stack `docker compose up -d` during a render starts every stopped service, the
+    # evicted resident included; the scheduler still believes it is off the card. Two tenants on
+    # one GPU is how the host crashed (2026-08-08), so the broker puts it back down.
+    b = _broker()
+    b.scheduler.cache_idle("llamacpp", 25)
+    b.request(Job("render", 20, "media"))
+    assert "llamacpp" in b.scheduler.evicted_residents
+    b.backend.stopped.clear()
+    assert b.enforce_evictions() == ["llamacpp"]    # MockBackend reports llamacpp running
+    assert b.backend.stopped == ["llamacpp"]
+
+
+def test_nothing_is_stopped_when_no_resident_is_evicted():
+    b = _broker()
+    b.scheduler.cache_idle("llamacpp", 25)
+    assert b.enforce_evictions() == []
+    assert b.backend.stopped == []
