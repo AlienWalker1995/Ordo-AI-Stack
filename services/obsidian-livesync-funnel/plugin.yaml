@@ -27,7 +27,9 @@ services:
   - name: notes-funnel
     # Tailscale sidecar in CouchDB's network namespace, so `tailscale serve` can proxy to CouchDB
     # over loopback (serve targets 127.0.0.1 only). AllowFunnel in the serve config makes it public.
-    image: tailscale/tailscale:v1.98.4@sha256:2eeac25816c4e0ff5a28ed914d413477c2cbf2ac9b73c1bf6d6e116fe9dda7f0
+    # Multi-arch INDEX digest (amd64 + arm64), never a per-platform child: a child digest runs
+    # emulated or not at all on the other arch. Verify: docker buildx imagetools inspect <ref>
+    image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
     network_mode: service:couchdb
     secrets: [TS_AUTHKEY]
     depends_on: [couchdb]

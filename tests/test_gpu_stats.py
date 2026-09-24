@@ -32,3 +32,39 @@ def test_parse_smi_gpus_comma_in_name():
 def test_parse_smi_gpus_empty():
     assert gpu_stats.parse_smi_gpus("") == []
 
+
+
+# On a CPU-only host the dashboard gets no `utility` reservation, so neither NVML nor nvidia-smi
+# exists in its container. The hw-stat bar must degrade to gpu:null + gpus:[], never raise.
+def _no_nvidia(monkeypatch):
+    import builtins
+    import subprocess
+
+    real_import = builtins.__import__
+
+    def import_without_pynvml(name, *args, **kwargs):
+        if name == "pynvml":
+            raise ImportError("pynvml")
+        return real_import(name, *args, **kwargs)
+
+    def missing_binary(*_args, **_kwargs):
+        raise FileNotFoundError("nvidia-smi")
+
+    monkeypatch.setattr(builtins, "__import__", import_without_pynvml)
+    monkeypatch.setattr(subprocess, "check_output", missing_binary)
+
+
+def test_list_gpus_without_nvidia_smi_is_empty(monkeypatch):
+    _no_nvidia(monkeypatch)
+    assert gpu_stats.list_gpus() == {"gpus": [], "reachable": False}
+
+
+def test_hardware_stats_without_a_gpu_returns_no_gpus(monkeypatch):
+    import asyncio
+
+    import dashboard.app as app
+    _no_nvidia(monkeypatch)
+    assert app._probe_gpu() is None
+    stats = asyncio.run(app.hardware_stats())
+    assert stats["gpu"] is None
+    assert stats["gpus"] == []

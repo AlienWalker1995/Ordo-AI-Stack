@@ -280,3 +280,33 @@ def test_audit_route_uses_configured_file_and_limit(tmp_path, monkeypatch):
     assert cp.route("GET", "/audit", query={"limit": "2"}) == (
         200, {"entries": [{"id": 2}, {"id": 1}]}
     )
+
+
+# ── no NVIDIA driver on the host ───────────────────────────────────────────────
+# On a CPU-only host ops-controller gets no `utility` reservation, so nvidia-smi is not in its
+# container. Its GPU enumeration must come back empty, never raise.
+def test_hardware_detection_without_nvidia_smi_finds_no_gpus(monkeypatch):
+    from ordo import hardware
+    monkeypatch.setattr(hardware.shutil, "which", lambda _name: None)
+    assert hardware._detect_gpus() == ()
+    assert hardware.detect().has_gpu is False
+
+
+def test_hardware_detection_when_nvidia_smi_cannot_exec_finds_no_gpus(monkeypatch):
+    from ordo import hardware
+    monkeypatch.setattr(hardware.shutil, "which", lambda _name: "/usr/bin/nvidia-smi")
+
+    def missing_binary(*_args, **_kwargs):
+        raise FileNotFoundError("nvidia-smi")
+    monkeypatch.setattr(hardware.subprocess, "run", missing_binary)
+    assert hardware._detect_gpus() == ()
+
+
+def test_registry_gpus_without_nvidia_smi_is_empty(tmp_path, monkeypatch):
+    import subprocess
+    cp, _ = _cp(tmp_path)
+
+    def missing_binary(*_args, **_kwargs):
+        raise FileNotFoundError("nvidia-smi")
+    monkeypatch.setattr(subprocess, "run", missing_binary)
+    assert cp.registry_gpus() == {"gpus": {}}

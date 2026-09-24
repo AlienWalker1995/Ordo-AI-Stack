@@ -126,6 +126,39 @@ def test_the_dashboard_itself_also_reserves_a_utility_gpu(tmp_path):
     assert any(d.get("capabilities") == ["utility"] for d in devs)
 
 
+def _reserved_device_services(c: dict) -> list[str]:
+    return [name for name, svc in c["services"].items()
+            if svc.get("deploy", {}).get("resources", {}).get("reservations", {}).get("devices")]
+
+
+def test_a_cpu_only_render_reserves_no_devices():
+    """A host with no NVIDIA GPU has no NVIDIA container runtime, and compose refuses to create a
+    service that requests an `nvidia` device there. ops-controller and dashboard used to reserve
+    the `utility` capability unconditionally, and the agent depends on both, so the whole stack
+    was dead on CPU-only, Mac, AMD and arm64 hosts. Every plugin is requested so the check covers
+    each service the registry can render (gpu-exporter included)."""
+    from ordo.dashboards import DashboardRegistry
+    dashboards = DashboardRegistry.load(ROOT / "services")
+    every_plugin = [p.id for p in REGISTRY.plugins]
+    for plugins in ("auto", every_plugin):
+        src = Source.from_dict({"hardware": {"gpus": [], "ram_gb": 64},
+                                "model": "auto", "plugins": plugins})
+        c = render(src, CATALOG, REGISTRY, dashboards=dashboards).compose_dict()
+        assert _reserved_device_services(c) == [], plugins
+
+
+def test_an_nvidia_render_keeps_the_control_plane_utility_reservations():
+    """The CPU-only gate must not cost an NVIDIA host its read-only GPU visibility."""
+    from ordo.dashboards import DashboardRegistry
+    dashboards = DashboardRegistry.load(ROOT / "services")
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto", "plugins": "auto"})
+    c = render(src, CATALOG, REGISTRY, dashboards=dashboards).compose_dict()
+    reserved = _reserved_device_services(c)
+    assert {"ops-controller", "dashboard", "llamacpp"} <= set(reserved)
+    assert c["services"]["ops-controller"]["environment"]["NVIDIA_DRIVER_CAPABILITIES"] == "utility"
+
+
 def test_agent_swappable():
     """The agent is pluggable: any id renders as <project>/agent-<id>:latest.
 
