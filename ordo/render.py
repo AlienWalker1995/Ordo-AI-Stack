@@ -386,6 +386,7 @@ class RenderedConfig:
             agent_environment=self.hermes.get("agent_environment") or None,
             agent_secret_files=self.hermes.get("agent_secret_files") or None,
             agent_secrets=self.hermes.get("agent_secrets") or None,
+            agent_derived_env=self.hermes.get("agent_derived_env") or None,
             litellm_key_envs=[k["env"] for k in self.litellm_keys],
             agent_depends_on=self.hermes.get("agent_depends_on") or None,
             agent_healthcheck=self.hermes.get("agent_healthcheck") or None,
@@ -403,7 +404,10 @@ class RenderedConfig:
             # `local_port` publishes it on loopback so a local-only install can reach it.
             publish_local_ports=local_access(self.plugins_enabled),
             # {} when the edge wiring can't produce a PROXY_BASE_URL (see litellm_google_sso_env).
-            litellm_google_sso_env=self.model_gateway.get("google_sso_env") or {})
+            litellm_google_sso_env=self.model_gateway.get("google_sso_env") or {},
+            # The keys this render wrote to .env: a service's declared derived key renders as a
+            # `${KEY?}` reference only when the render produced it.
+            available_env=frozenset(self.env))
         images.pin_first_party(doc["services"], self.first_party_images, image_tags or {})
         return doc
 
@@ -654,6 +658,7 @@ def render(source: Source, catalog: Catalog,
         "agent_environment": (dict(agent.environment) if agent else {}),
         "agent_secret_files": ([dict(s) for s in agent.secret_files] if agent else []),
         "agent_secrets": (list(agent.secrets) if agent else []),
+        "agent_derived_env": (list(agent.derived_env) if agent else []),
         "agent_depends_on": (dict(agent.depends_on) if agent else {}),
         "agent_healthcheck": (dict(agent.healthcheck) if agent else {}),
     }
@@ -674,6 +679,7 @@ def render(source: Source, catalog: Catalog,
             "depends_on": dict(dash.depends_on),
             "healthcheck": dict(dash.healthcheck),
             "secrets": list(dash.secrets),
+            "derived_env": list(dash.derived_env),
             "gpu_capabilities": list(dash.gpu_capabilities),
             "local_port": dash.local_port,
             "local_login_secret": dash.local_login_secret,

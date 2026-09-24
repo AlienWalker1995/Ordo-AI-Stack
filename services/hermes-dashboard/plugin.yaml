@@ -71,6 +71,13 @@ services:
       OPS_CONTROLLER_URL: http://ops-controller:9000
       LLAMACPP_CTX_SIZE: ${LLAMACPP_CTX_SIZE:-262144}
       HERMES_WEB_DIST: /opt/hermes-agent/hermes_cli/web_dist
+    # Derived keys it reads from the rendered .env (rendered `KEY: ${KEY?...}`, each only while the
+    # render produces it). COMFYUI_URL: the ComfyUI admission gate, as for the agent (chat-tab
+    # sessions run the same skills). HERMES_MAX_TOKENS / HERMES_COMPRESSION_THRESHOLD_PERCENT
+    # (`site:` knobs): this service runs the image's entrypoint, which seeds model.max_tokens and
+    # compression.threshold into the config.yaml it SHARES with the agent. Without them it would
+    # reseed the defaults over the agent's tuned values on every restart.
+    derived_env: [COMFYUI_URL, HERMES_MAX_TOKENS, HERMES_COMPRESSION_THRESHOLD_PERCENT]
     volumes:
       # Same named volume as the agent — the dashboard reads/writes the SAME brain (skills, chat
       # sessions, cron). Must stay identical to services/hermes/agent.yaml's mount or the two

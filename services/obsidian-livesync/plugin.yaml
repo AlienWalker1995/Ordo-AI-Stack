@@ -17,7 +17,7 @@ provides: [notes]
 compose_profile: notes
 env:
   NOTES_ENABLED: "1"
-  # Non-secret sync coordinates — shared by both services (via the derived .env env_file) and
+  # Non-secret sync coordinates (derived .env keys), read by both services via `derived_env:` and
   # documented for LiveSync client setup. The password + E2EE passphrase are secrets (below).
   COUCHDB_USER: ordoadmin
   COUCHDB_INTERNAL_URL: http://couchdb:5984
@@ -26,8 +26,8 @@ secrets:
   # Minted by the wizard (SECRET_GENERATORS). COUCHDB_PASSWORD is the CouchDB admin password
   # (require_valid_user gates everything). LIVESYNC_E2EE_PASSPHRASE encrypts note CONTENT at rest
   # in CouchDB — enter it identically in every Obsidian LiveSync client; it is mirrored into the
-  # bridge so it can materialize plaintext files. Both reach the containers via secrets.env
-  # (env_file), never ${..} interpolation, so `docker compose config` never needs the value.
+  # bridge so it can materialize plaintext files. Each service lists the ones it reads in its own
+  # `secrets:`, rendered as `KEY: ${KEY}` refs compose interpolates from secrets.env.
   - COUCHDB_PASSWORD
   - LIVESYNC_E2EE_PASSPHRASE
 services:
@@ -39,6 +39,7 @@ services:
     image: couchdb:3.4.3@sha256:d603d4086836b1e20f1ec35d2d38e49359639c2eb56a54c8ba0ddbdff0f3dabe
     # The entrypoint recreates the admin from COUCHDB_USER (.env) + COUCHDB_PASSWORD on every start.
     secrets: [COUCHDB_PASSWORD]
+    derived_env: [COUCHDB_USER]
     volumes:
       # NAMED VOLUME (ext4), not a ${DATA_PATH} 9p bind — CouchDB fsyncs its .couch
       # shards constantly; DB state never rides the wedge-prone 9p bridge (see the
@@ -60,6 +61,8 @@ services:
     image: ordo/livesync-bridge
     # The passphrase must be declared: an empty one would silently change end-to-end encryption.
     secrets: [COUCHDB_PASSWORD, LIVESYNC_E2EE_PASSPHRASE]
+    # The entrypoint's `:?` guards: the CouchDB coordinates, from the plugin env block above (.env).
+    derived_env: [COUCHDB_USER, COUCHDB_INTERNAL_URL, LIVESYNC_DATABASE]
     env:
       # BIDIRECTIONAL sync. CouchDB -> notes/ is network-driven (always live) so the AI stack
       # (rag-ingestion + memory-vault MCP) reads the vault. disk -> CouchDB lets agents (Hermes /

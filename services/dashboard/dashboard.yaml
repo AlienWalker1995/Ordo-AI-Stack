@@ -44,6 +44,10 @@ healthcheck:
 # callers on the dashboard's protected routes), and the throughput token it checks on
 # /api/throughput/record (must match model-gateway's). LITELLM_MASTER_KEY is mapped in environment.
 secrets: [OPS_CONTROLLER_TOKEN, THROUGHPUT_RECORD_TOKEN]
+# Derived keys it reads from the rendered .env (rendered `KEY: ${KEY?...}`; it never loads the whole
+# file). services_catalog.py builds the service cards' Open links from the edge hostname and, while
+# the tailnet-names plugin is on, its per-app domain. Each renders only while its plugin is enabled.
+derived_env: [CADDY_TAILNET_HOSTNAME, CADDY_TAILNET_DOMAIN, TAILNET_NAMES_ENABLED]
 
 environment:
   # The control plane. Every route this dashboard calls is served by ops-controller.
@@ -74,15 +78,6 @@ environment:
   # No dashboard-specific auth config: its protected routes (dashboard/auth.py) trust the SSO
   # identity only from the `caddy` peer, resolved by name (no subnet to drift), or the
   # OPS_CONTROLLER_TOKEN bearer declared in `secrets:` above.
-  # `hardware_stats()` calls psutil.disk_usage(BASE_PATH) for the hw-stat bar's DISK widget. The render
-  # emits BASE_PATH=<Windows host path> into the shared .env (compose NEEDS it there to interpolate
-  # ${BASE_PATH} volume mounts on the host) — but env_file injects that Windows path into THIS Linux
-  # container too, where psutil.disk_usage("C:/dev/...") raises FileNotFoundError -> disk_*:null.
-  # A per-service `environment:` value BEATS env_file, so pin the IN-CONTAINER disk-probe target to
-  # the always-mounted /data/dashboard (same host C: drive -> correct host-disk stats). This mirrors
-  # Only the dashboard reads BASE_PATH for an in-container fs call. Everywhere else it stays the
-  # HOST path, because that is what compose interpolates ${BASE_PATH} with for bind mounts.
-  BASE_PATH: /data/dashboard
   # The rendered manifest (out/manifest.json) — the machine-readable enabled-plugin set.
   # The service grid gates its cards on manifest.plugins_enabled (services_catalog.visible_services)
   # so it reflects what THIS render actually enabled and can't silently omit an enabled service.

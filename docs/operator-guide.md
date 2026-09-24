@@ -239,7 +239,7 @@ retires the subpath-rewrite class of workaround (Open WebUI root-catchall, Herme
 base injection, n8n `strip_prefix`, codebase-memory nginx rewrites) in favor of giving every
 prebuilt SPA the root it was actually compiled for. One data root at
 `C:\dev\ordo-ai-stack\data` (Hermes brain at `data\hermes`). Secrets live in gitignored
-`out\secrets.env` (a second `env_file`).
+`out\secrets.env` (a second compose `--env-file`).
 
 This Tailscale front door is the **default of three swappable access layers** — the edge
 (`services/edge`) and clean-URL names (`services/tailnet-names`) are plugins, so the same rendered stack
