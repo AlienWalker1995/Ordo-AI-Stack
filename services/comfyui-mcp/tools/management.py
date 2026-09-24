@@ -88,7 +88,7 @@ def register_management_tools(mcp: FastMCP) -> None:
         """Run pip install -r requirements.txt inside the comfyui container for a custom_nodes subfolder.
 
         Args:
-            node_path: Path under ComfyUI custom_nodes (e.g. juno-comfyui-nodes-main). Must contain requirements.txt on the shared host volume.
+            node_path: Path under ComfyUI custom_nodes (e.g. ordo-comfyui-nodes). Must contain requirements.txt on the shared host volume.
             confirm: Must be true to execute (safety).
 
         Requires: comfyui service running; ops-controller with OPS_CONTROLLER_TOKEN; files already under data/comfyui-storage/ComfyUI/custom_nodes/.
