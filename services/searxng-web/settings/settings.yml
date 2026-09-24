@@ -1,0 +1,32 @@
+# SearXNG settings for the Ordo stack, mounted read-only at /etc/ordo-searxng (SEARXNG_SETTINGS_PATH,
+# see ../plugin.yaml). Tracked so every install gets the same engine selection.
+#
+# No secret_key here: SearXNG reads server.secret_key from $SEARXNG_SECRET, which compose
+# interpolates from out/secrets.env. The service has no host port; only stack containers reach it
+# (the searxng MCP server behind the model gateway).
+
+use_default_settings: true
+
+general:
+  instance_name: "ordo-searxng"
+
+server:
+  limiter: false
+  public_instance: false
+
+search:
+  formats:
+    - json
+    - html
+  default_lang: "en"
+  autocomplete: ""
+
+ui:
+  static_use_hash: true
+
+# The upstream default engines were all captcha-blocked from this stack; these two answer.
+engines:
+  - name: bing
+    disabled: false
+  - name: yandex
+    disabled: false
