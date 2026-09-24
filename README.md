@@ -141,7 +141,7 @@ Local-first AI; operator-deployed front door. The dashboard does not mount `dock
 ## Development & testing
 
 - **Runtime:** everything runs in containers; install Docker and set `BASE_PATH` to the repo path.
-- **Substrate:** the render engine is a real `ordo` command (`pip install .`; runtime dep = just PyYAML). Python **3.12+** for tests/lint.
+- **Substrate:** the render engine is a real `ordo` command (`pip install -e .`; runtime dep = just PyYAML; `.[serve]` adds the control plane). Python **3.11+**.
 
 ```bash
 # render-engine tests (no host Python needed)
