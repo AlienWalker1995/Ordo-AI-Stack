@@ -91,3 +91,15 @@ def test_install_script_installs_the_cli_editable():
     script = (ROOT / "install.sh").read_text(encoding="utf-8")
     assert "pip install --quiet -e ." in script
     assert "pip install --quiet ." not in script
+
+
+def test_render_names_missing_required_site_keys_and_writes_nothing(tmp_path, capsys):
+    # An explicit plugin list naming a plugin whose required site keys are unset fails at render,
+    # naming the plugin and keys, instead of at `docker compose` interpolation.
+    src = tmp_path / "ordo.yaml"
+    src.write_text(SOURCE.replace("plugins: []", "plugins: [edge]"), encoding="utf-8")
+    out = tmp_path / "out"
+    assert cli.main(["render", "--source", str(src), "--out", str(out)]) == 1
+    error = capsys.readouterr().out
+    assert "'edge'" in error and "CADDY_BIND" in error
+    assert not out.exists()

@@ -73,6 +73,8 @@ Single homelab operator with a small Google-account allowlist for friends / fami
 | `:8449` | LiteLLM admin UI (served at this port's root) |
 | `:8450` | Langfuse (served at this port's root) |
 
+The edge (Caddy + oauth2-proxy) stays off until `CADDY_BIND`, `CADDY_TAILNET_HOSTNAME` and `CADDY_TAILNET_DOMAIN` are set under `site:` in `out/ordo.yaml`; set them (steps 2-3 below), then `ordo render --source out/ordo.yaml --out out` turns it on.
+
 1. Install Tailscale on the host running Ordo AI Stack and on each device that needs access.
 2. Issue a Tailscale cert for your chosen hostname: `tailscale cert ordo.<tailnet>.ts.net` (writes to `auth/caddy/certs/`).
 3. Set `CADDY_BIND` — the tailnet IPv4 from `tailscale ip -4` binds Caddy to that interface only; `0.0.0.0` is also a supported, operator-approved posture (binds all interfaces, still tailnet-dark since nothing else is published) if that suits your setup. Set `CADDY_TAILNET_HOSTNAME` to the hostname you certified.

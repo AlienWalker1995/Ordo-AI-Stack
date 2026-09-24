@@ -309,3 +309,28 @@ def test_unknown_path_returns_404(tmp_path):
     assert code == 404
     assert "error" in body
     assert "no route" in body["error"]
+
+
+def _cp_explicit(tmp_path, plugins):
+    src = tmp_path / "ordo.yaml"
+    src.write_text(yaml.safe_dump(
+        {"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128}, "plugins": plugins}
+    ))
+    return ControlPlane(src, CATALOG, REGISTRY, tmp_path / "out", scheduler=Scheduler(32)), src
+
+
+def test_post_plugin_enable_missing_site_key_explicit_list_returns_409(tmp_path):
+    # memory-vault needs site.MEMORY_VAULT_PATH: the render refuses, so nothing is written.
+    cp, src = _cp_explicit(tmp_path, ["rag"])
+    before = src.read_text()
+    code, body = cp.route("POST", "/plugins/memory-vault/enable", {})
+    assert code == 409
+    assert "MEMORY_VAULT_PATH" in body["error"]
+    assert src.read_text() == before
+
+
+def test_post_plugin_enable_missing_site_key_auto_returns_409_naming_key(tmp_path):
+    cp, _ = _cp(tmp_path)
+    code, body = cp.route("POST", "/plugins/memory-vault/enable", {})
+    assert code == 409
+    assert "MEMORY_VAULT_PATH" in body["error"]

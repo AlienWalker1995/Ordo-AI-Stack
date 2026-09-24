@@ -27,6 +27,7 @@ default: false
 requires:
   nvidia: false
   ram_gb: 2
+  site: [MEMORY_VAULT_PATH]  # the vault binds fail loud without it
 provides: [evals]
 compose_profile: evals
 env:

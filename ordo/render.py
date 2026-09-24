@@ -609,8 +609,9 @@ def render(source: Source, catalog: Catalog,
             "secrets": list(dash.secrets),
             "gpu_capabilities": list(dash.gpu_capabilities),
         }
-    # Registry-driven plugin resolution: enable what's requested AND fits AND has its deps.
-    enabled, notes = plugins.resolve(source.plugins, hw)
+    # Registry-driven plugin resolution: enable what's requested AND fits AND has its required
+    # site keys AND has its deps.
+    enabled, notes = plugins.resolve(source.plugins, hw, source.site)
     warnings = warnings + notes
     services = [p for p in enabled if p.kind == "service"]
     mcps = [p for p in enabled if p.kind == "mcp"]

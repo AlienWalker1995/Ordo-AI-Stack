@@ -28,6 +28,9 @@ plugins: [edge]
 site:
   BASE_PATH: /srv/operator/ordo
   DATA_PATH: /srv/operator/ordo/data
+  CADDY_BIND: 127.0.0.1
+  CADDY_TAILNET_HOSTNAME: host.example.ts.net
+  CADDY_TAILNET_DOMAIN: example.ts.net
 """
 
 

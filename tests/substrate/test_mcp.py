@@ -14,6 +14,9 @@ from ordo.render import render
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
+# The site keys the edge and memory-vault plugins require (`requires.site`), so they render.
+REQUIRED_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
+                 "CADDY_TAILNET_DOMAIN": "example.ts.net", "MEMORY_VAULT_PATH": "/srv/vault"}
 P_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128}
 P_CPU = {"gpus": [], "ram_gb": 16}
 # A manifest healthcheck OVERRIDE (the renderer supplies the default probe; searxng-mcp is the one
@@ -24,7 +27,7 @@ _HC = {"test": ["CMD", "node", "-e", "require('net').connect(9000,'127.0.0.1')"]
 
 
 def _src(**kw):
-    base = {"hardware": "auto", "tier": "auto", "model": "auto", "plugins": "auto"}
+    base = {"hardware": "auto", "tier": "auto", "model": "auto", "plugins": "auto", "site": REQUIRED_SITE}
     base.update(kw)
     return Source.from_dict(base)
 
