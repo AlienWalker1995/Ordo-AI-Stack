@@ -19,6 +19,10 @@ build:
 # Local access while the edge is off: http://127.0.0.1:8444 (the port Caddy serves the dashboard on).
 # The renderer binds it to loopback only and drops it when the edge is enabled.
 local_port: {host: 8444, container: 8080}
+# Without the edge there is no SSO identity, so the local operator signs in with this secret
+# (dashboard/auth.py exchanges it for a session cookie). The renderer passes it to the dashboard,
+# and requires it in secrets.env, only while local_port is published; `ordo up` prints the link.
+local_login_secret: DASHBOARD_LOCAL_LOGIN_TOKEN
 # Read-only GPU visibility for the dashboard SERVICE ITSELF. Its `hardware_stats()` (the
 # hw-stat bar's GPU widgets) shells to nvidia-smi (_probe_gpu) and enumerates cards
 # (gpu_stats.list_gpus), which the NVIDIA runtime only injects when the service reserves a GPU

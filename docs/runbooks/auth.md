@@ -28,6 +28,27 @@
 
 `ordo remote disable` reverses all of it (UIs back on `127.0.0.1`).
 
+## Local mode: dashboard sign-in without the edge
+
+With the edge off there is no SSO identity, so the dashboard
+(`http://127.0.0.1:8444`) takes a local sign-in instead. The render
+passes `DASHBOARD_LOCAL_LOGIN_TOKEN` to the dashboard only (and requires
+it in `out/secrets.env`, where `ordo init` generates it); with the edge
+on, no service receives it and the sign-in route answers 404.
+
+- `ordo up` prints `http://127.0.0.1:8444/#sign-in=<token>`. The token
+  is in the URL fragment, which the browser never sends to the server;
+  the page posts it once for an HttpOnly, SameSite=Strict session cookie
+  (30 days). Or paste the token into the page's sign-in prompt.
+- An install made before this secret existed gets it minted by its next
+  `ordo up`.
+- Revoke every session: replace the value in `out/secrets.env`, then
+  `ordo recreate dashboard`. Sessions are signed with a key derived from
+  the token, so old cookies stop working.
+- Other containers on the stack network cannot use it: they hold neither
+  the token nor a cookie minted from it, so their unauthenticated calls
+  still get 401 (the confused-deputy guarantee of `dashboard/auth.py`).
+
 ## Edit the allowlist
 
 Edit `auth/oauth2-proxy/emails.txt`, then `docker compose restart

@@ -65,6 +65,9 @@ class Dashboard:
     build: BuildSpec = dataclasses.field(default_factory=BuildSpec)
     # Loopback host port while the edge is off (see plugins.LocalPort). None -> no local access.
     local_port: LocalPort | None = None
+    # The secret the local operator signs in with while the edge is off (no SSO identity exists).
+    # Passed to the dashboard, and required in secrets.env, only while `local_port` is published.
+    local_login_secret: str = ""
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Dashboard:
@@ -73,6 +76,10 @@ class Dashboard:
             raise ValueError(
                 f"{where}: `wants_secrets` was replaced by `secrets: [NAMES]`. A service now lists the "
                 "secret names it reads, instead of receiving the whole secrets.env")
+        local_port = LocalPort.from_manifest(d.get("local_port"), where)
+        local_login_secret = str(d.get("local_login_secret", "") or "")
+        if local_login_secret and local_port is None:
+            raise ValueError(f"{where}: `local_login_secret` needs a `local_port`: it is the sign-in for that port")
         return cls(
             id=str(d["id"]), name=str(d.get("name", d["id"])),
             description=str(d.get("description", "")),
@@ -85,7 +92,8 @@ class Dashboard:
             secrets=tuple(str(k) for k in (d.get("secrets", []) or [])),
             gpu_capabilities=_gpu_caps(d),
             build=BuildSpec.from_dict(d.get("build")),
-            local_port=LocalPort.from_manifest(d.get("local_port"), where),
+            local_port=local_port,
+            local_login_secret=local_login_secret,
         )
 
     def image_for(self, project: str) -> str:

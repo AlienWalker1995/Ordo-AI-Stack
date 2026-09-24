@@ -393,6 +393,10 @@ def _dashboard(project: str, net: str, env_file: str, nvidia_gpu: bool,
     local_port = dashboard.get("local_port")
     if publish_local_ports and local_port is not None:
         s["ports"] = [local_port.publish()]
+        # No SSO edge means no operator identity: the local operator signs in with this secret
+        # (dashboard/auth.py). Only rendered with the port, so an edge render never carries it.
+        if dashboard.get("local_login_secret"):
+            _add_secrets(s, [dashboard["local_login_secret"]])
     return s
 
 

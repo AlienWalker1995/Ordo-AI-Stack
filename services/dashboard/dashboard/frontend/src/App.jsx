@@ -3,6 +3,7 @@
 // the page that absorbed them.
 import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import CommandPalette from './components/CommandPalette.jsx'
+import LocalSignIn from './components/LocalSignIn.jsx'
 import SettingsDrawer from './components/SettingsDrawer.jsx'
 import { ToastProvider } from './components/Toast.jsx'
 
@@ -132,6 +133,8 @@ export default function App() {
             </button>
           </div>
         </header>
+
+        <LocalSignIn />
 
         <main id="page" role="tabpanel" aria-labelledby={`tab-${active}`} tabIndex={-1}>
           <PageErrorBoundary key={active}>

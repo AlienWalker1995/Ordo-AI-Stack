@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.gzip import GZipMiddleware
 
 from dashboard import auth, gpu_stats
+from dashboard.routes_auth import router as auth_router
 from dashboard.routes_console import router as console_router
 from dashboard.routes_hub import router as hub_router
 from dashboard.routes_orchestration import router as orchestration_router
@@ -56,6 +57,7 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Ordo AI Stack Dashboard", version="1.0.0", lifespan=_lifespan)
+app.include_router(auth_router)
 app.include_router(console_router)
 app.include_router(hub_router)
 app.include_router(orchestration_router)
@@ -102,15 +104,13 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     if not auth.requires_principal(request.method, path):
         return await call_next(request)
-    peer_ip = request.client.host if request.client else None
-    edge_addresses: set[str] = set()
-    if request.headers.get(auth.EDGE_IDENTITY_HEADER, "").strip():
-        edge_addresses = await asyncio.to_thread(auth.edge_proxy_addresses)
-    if auth.principal(request.headers, peer_ip, edge_addresses) is None:
+    if await auth.request_principal(request) is None:
+        peer_ip = request.client.host if request.client else None
         logger.warning("AUTH_FAIL path=%s method=%s src=%s", path, request.method, peer_ip or "unknown")
+        how = "Sign in with the link `ordo up` printed" if auth.local_mode() else "Sign in through the SSO edge"
         return JSONResponse(
             status_code=401,
-            content={"detail": "Sign in through the SSO edge, or send Authorization: Bearer <OPS_CONTROLLER_TOKEN>"},
+            content={"detail": f"{how}, or send Authorization: Bearer <OPS_CONTROLLER_TOKEN>"},
         )
     return await call_next(request)
 
