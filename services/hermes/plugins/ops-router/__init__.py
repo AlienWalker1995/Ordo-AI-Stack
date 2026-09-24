@@ -290,12 +290,15 @@ COMPOSE_RESTART_SCHEMA = {
 COMPOSE_UP_SCHEMA = {
     "name": "compose_up",
     "description": (
-        "Compose recreate: `docker compose up -d <service>` via ops-controller's "
-        "/compose/up endpoint. Recreates the container so it picks up changes "
-        "to .env / environment / volumes / network / image. This is the verb "
-        "you want after editing .env (e.g. changing LLAMACPP_MODEL). Does NOT "
-        "rebuild images; if you need a rebuild, ask the operator to run "
-        "`docker compose up -d --build --force-recreate <service>` from the host."
+        "Compose recreate of one service (and the services in its network "
+        "namespace) via ops-controller's /compose/up endpoint; refused while the "
+        "GPU lease would be violated. Recreates the container so it picks up a "
+        "rendered config change (environment, volumes, network, image tag). Use it "
+        "after a render changed the service's config. Never edit .env: it is "
+        "rendered, and the next render reverts it. A model switch goes through "
+        "/model-config, not this verb. Does NOT build images; for a new image ask "
+        "the operator to run `ordo build <service>`, render, then "
+        "`ordo recreate <service>` on the host."
     ),
     "parameters": {
         "type": "object",
