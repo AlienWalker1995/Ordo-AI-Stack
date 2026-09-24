@@ -2,10 +2,35 @@
 from __future__ import annotations
 
 import dataclasses
+import difflib
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from .hardware import GPU, HardwareProfile
+
+# `site:` flows verbatim into the rendered .env, so each key must be a usable env var name.
+_SITE_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+# Options that used to exist: a leftover key gets a migration hint instead of a typo suggestion.
+_RETIRED_KEYS = {
+    "cloud_fallback": "was removed (it routed oversized GPU jobs to a route nothing polled); "
+                      "delete the block",
+}
+
+
+def _reject_unknown_keys(where: str, keys: Any, valid: list[str]) -> None:
+    """Raise ValueError naming the first key not in `valid`, with the closest valid key as a hint."""
+    for key in keys:
+        if key in valid:
+            continue
+        if where == "ordo.yaml" and key in _RETIRED_KEYS:
+            raise ValueError(f"{where}: key {key!r} {_RETIRED_KEYS[key]}")
+        close = difflib.get_close_matches(str(key), valid, n=1)
+        hint = f"did you mean {close[0]!r}?" if close else f"valid keys: {valid}"
+        raise ValueError(f"{where}: unknown key {key!r} ({hint})")
 
 
 @dataclasses.dataclass
@@ -38,6 +63,7 @@ class Source:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Source:
+        _reject_unknown_keys("ordo.yaml", data, [f.name for f in dataclasses.fields(cls)])
         s = cls(
             hardware=data.get("hardware", "auto"),
             tier=str(data.get("tier", "auto")),
@@ -60,6 +86,14 @@ class Source:
             raise ValueError("overrides must be a mapping")
         if not isinstance(self.site, dict):
             raise ValueError("site must be a mapping of env KEY -> value")
+        for key in self.site:
+            if not isinstance(key, str) or not _SITE_KEY.match(key):
+                raise ValueError(f"site: key {key!r} is not an env var name (expected {_SITE_KEY.pattern})")
+        if isinstance(self.hardware, dict):
+            _reject_unknown_keys("hardware", self.hardware, [f.name for f in dataclasses.fields(HardwareProfile)])
+            for i, gpu in enumerate(self.hardware.get("gpus") or []):
+                if isinstance(gpu, dict):
+                    _reject_unknown_keys(f"hardware.gpus[{i}]", gpu, [f.name for f in dataclasses.fields(GPU)])
         if not isinstance(self.cost, dict):
             raise ValueError("cost must be a mapping")
         if self.plugins != "auto" and not isinstance(self.plugins, list):
