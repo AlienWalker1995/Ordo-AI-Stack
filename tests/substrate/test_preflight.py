@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
 
-GPU = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+GPU = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32, "compute_cap": "12.0"}], "ram_gb": 128},
                         "model": "auto", "plugins": "auto"})
 
 

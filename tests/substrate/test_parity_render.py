@@ -18,8 +18,8 @@ REQUIRED_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.exam
 
 UUID_5090 = "GPU-97fe65ee-5e2d-8c9b-32d0-362f510ceb96"
 UUID_1070 = "GPU-20fac13a-5e5b-1818-581f-63901612fd84"
-P_DUAL = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": UUID_5090},
-                   {"name": "GTX 1070", "vram_gb": 8, "uuid": UUID_1070}],
+P_DUAL = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": UUID_5090, "compute_cap": "12.0"},
+                   {"name": "GTX 1070", "vram_gb": 8, "uuid": UUID_1070, "compute_cap": "6.1"}],
           "ram_gb": 128, "cpu_cores": 32}
 
 # Every kind=service plugin V2 ships after the parity port (GPU + CPU-ok), on the real dual-GPU host.

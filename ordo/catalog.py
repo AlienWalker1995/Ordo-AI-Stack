@@ -13,7 +13,8 @@ from typing import Any
 
 import yaml
 
-from .hardware import HardwareProfile
+from . import llamacpp_backend
+from .hardware import HardwareProfile, compute_cap_tuple, normalize_compute_cap
 
 # Tier ordering, smallest → largest, for "force a tier" and best-fit ranking.
 TIER_ORDER = ["cpu", "low", "medium", "high", "ultra"]
@@ -40,6 +41,10 @@ class Model:
     mmproj: str | None = None          # vision projector (multimodal models)
     extra_args: str = ""               # model-specific llama.cpp flags (e.g. MTP spec-decode)
     backend_image: str | None = None   # override the default llama.cpp image (e.g. a patched build)
+    # The lowest NVIDIA compute capability `backend_image` has kernels for ("12.0" for the
+    # sm_120-only patched build). Required with a backend_image: the sizer only picks the model on a
+    # GPU known to meet it. "" = no requirement (the upstream per-backend images).
+    min_compute_cap: str = ""
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Model:
@@ -54,10 +59,35 @@ class Model:
             kv_kb_per_token=(float(d["kv_kb_per_token"]) if d.get("kv_kb_per_token") else None),
             mmproj=(d.get("mmproj") or None), extra_args=str(d.get("extra_args", "")),
             backend_image=(d.get("backend_image") or None),
+            min_compute_cap=normalize_compute_cap(req.get("min_compute_cap")),
         )
 
     def _rank(self) -> tuple[int, float]:
         return (TIER_ORDER.index(self.tier) if self.tier in TIER_ORDER else -1, self.vram_gb)
+
+
+def compute_blocker(m: Model, hw: HardwareProfile) -> str:
+    """Why this host cannot run the special build `m` pins ("" when it can, or m pins none).
+
+    The build targets `m.min_compute_cap` and up, on CUDA only. An NVIDIA GPU whose capability is
+    unknown does not qualify: handing an sm_120-only build to an unknown card is how a 48GB L40S
+    got an LLM that cannot start."""
+    if not m.min_compute_cap:
+        return ""
+    backend, _notes = llamacpp_backend.select(hw)
+    gpu = hw.primary_gpu
+    if backend.name != "cuda" or gpu is None:
+        return (f"needs its CUDA build {m.backend_image} (compute capability {m.min_compute_cap}+), "
+                f"and this host's llama.cpp backend is {backend.name}")
+    have = compute_cap_tuple(gpu.compute_cap)
+    if have is None:
+        return (f"needs compute capability {m.min_compute_cap}+ ({m.backend_image}) and the compute "
+                f"capability of {gpu.name} is unknown; declare it as hardware.gpus[].compute_cap "
+                "(nvidia-smi --query-gpu=compute_cap --format=csv)")
+    if have < compute_cap_tuple(m.min_compute_cap):
+        return (f"needs compute capability {m.min_compute_cap}+ ({m.backend_image}); "
+                f"{gpu.name} is {gpu.compute_cap}")
+    return ""
 
 
 class Catalog:
@@ -74,7 +104,13 @@ class Catalog:
         return self._by_id.get(model_id)
 
     def fits(self, m: Model, hw: HardwareProfile, reserve_gb: float = DEFAULT_VRAM_RESERVE_GB) -> bool:
-        if hw.has_gpu and m.vram_gb > 0:
+        return not compute_blocker(m, hw) and self._fits_budget(m, hw, reserve_gb)
+
+    @staticmethod
+    def _fits_budget(m: Model, hw: HardwareProfile, reserve_gb: float) -> bool:
+        """VRAM (GPU backend) or RAM + cpu_ok (CPU backend), ignoring which build the model needs."""
+        backend, _notes = llamacpp_backend.select(hw)
+        if backend.accelerated and m.vram_gb > 0:
             return m.vram_gb <= (hw.primary_vram_gb - reserve_gb)
         # CPU path: model must support CPU and fit in RAM
         return m.cpu_ok and m.ram_gb <= hw.ram_gb if hw.ram_gb else m.cpu_ok
@@ -86,6 +122,10 @@ class Catalog:
         """Return (chosen model, warnings). Never raises — always yields a runnable choice."""
         warnings: list[str] = []
         candidates = [m for m in self.models if self.fits(m, hw, reserve_gb)]
+        # Models the budget allows but whose special build cannot run on this GPU. Reported below
+        # when one outranks the pick, so a big non-Blackwell card says why it got a smaller model.
+        build_blocked = [m for m in self.models
+                         if self._fits_budget(m, hw, reserve_gb) and compute_blocker(m, hw)]
 
         if tier and tier != "auto":
             tier_c = [m for m in candidates if m.tier == tier]
@@ -107,7 +147,14 @@ class Catalog:
             )
             return cpu_models[0], warnings
 
-        return max(candidates, key=Model._rank), warnings
+        chosen = max(candidates, key=Model._rank)
+        skipped_by_reason: dict[str, list[str]] = {}
+        for m in build_blocked:
+            if m._rank() > chosen._rank():
+                skipped_by_reason.setdefault(compute_blocker(m, hw), []).append(m.id)
+        for reason, ids in skipped_by_reason.items():
+            warnings.append(f"skipped {', '.join(ids)}: {reason}")
+        return chosen, warnings
 
     def resolve(
         self, hw: HardwareProfile, model_id: str = "auto", tier: str | None = "auto",
@@ -119,7 +166,11 @@ class Catalog:
             if not m:
                 raise ValueError(f"model '{model_id}' not in catalog")
             warnings: list[str] = []
-            if not self.fits(m, hw, reserve_gb):
+            blocker = compute_blocker(m, hw)
+            if blocker:
+                warnings.append(f"'{m.id}' {blocker} (override honored anyway; expect llama.cpp to fail "
+                                "to load it)")
+            if not self._fits_budget(m, hw, reserve_gb):
                 warnings.append(
                     f"'{m.id}' needs ~{m.vram_gb:.0f}GB VRAM but only "
                     f"~{max(hw.primary_vram_gb - reserve_gb, 0):.0f}GB is usable — "

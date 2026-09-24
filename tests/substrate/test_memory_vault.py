@@ -44,7 +44,7 @@ def test_plugin_service_shm_size_passthrough_and_omit():
     # data-driven: a service that declares shm_size emits it; one that doesn't omits the key
     # entirely (so no service regresses to an explicit-but-empty shm_size).
     p = Plugin.from_dict({"id": "x", "kind": "service", "compose_profile": "x", "services": []})
-    kw = dict(net="ordo-net", env_file=".env", has_gpu=False,
+    kw = dict(net="ordo-net", env_file=".env", nvidia_gpu=False,
               primary_uuid=None, secondary_uuid=None, project="ordo")
     with_shm = _plugin_service(
         PluginService.from_dict({"name": "s1", "image": "img", "shm_size": "1gb"}), p, **kw)

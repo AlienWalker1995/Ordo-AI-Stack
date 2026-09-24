@@ -509,7 +509,7 @@ def _collect_answers(catalog: Catalog, registry: PluginRegistry, pl: WizardPlan,
     if _confirm("Customize which optional capabilities are enabled?", default=False):
         enabled_caps: list[str] = []
         for cap, meta in CAPABILITIES.items():
-            if _confirm(f"  enable {meta['label']}?", default=not meta["gpu"] or pl.hardware.has_gpu):
+            if _confirm(f"  enable {meta['label']}?", default=not meta["gpu"] or pl.hardware.primary_is_nvidia):
                 enabled_caps.append(cap)
         a["plugins"] = plugins_from_capabilities(enabled_caps, all_ids)
         caps_label = ", ".join(enabled_caps) or "chat only"

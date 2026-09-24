@@ -11,7 +11,7 @@ from ordo.render import render
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 
-PROFILE_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128,
+PROFILE_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "compute_cap": "12.0"}], "ram_gb": 128,
                 "cpu_cores": 32, "platform": "Linux"}
 PROFILE_CPU = {"gpus": [], "ram_gb": 16, "cpu_cores": 8, "platform": "Linux"}
 PROFILE_8GB = {"gpus": [{"name": "RTX 3070", "vram_gb": 8}], "ram_gb": 32,

@@ -218,17 +218,21 @@ The `llamacpp` service does **not** run a TurboQuant fork. `services/llamacpp-pa
 
 Both exist to support SWA/hybrid-cache models; the build fails loudly if either patch fails to apply, so bump the pinned commit only after re-verifying both still apply cleanly. The resulting image is tagged `ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470` in `out/docker-compose.yml`.
 
+The build compiles CUDA kernels for sm_120 (Blackwell) only, so every catalog model that pins it declares `requires.min_compute_cap: "12.0"`, and the sizer only picks those models on a GPU known to meet it (see Compute Configuration below). Models without a `backend_image` run the host's upstream build.
+
 ### KV-cache quantization
 
 The `LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION` / `LLAMACPP_KV_CACHE_TYPE_K` / `LLAMACPP_KV_CACHE_TYPE_V` vars (set in `ordo.yaml`, re-render to apply) are real and wired into `scripts/llamacpp/run-llama-server.sh` as `--cache-type-k` / `--cache-type-v`. Both default to `q4_0` when quantization is enabled. Because this is a mainline build, only mainline's KV-cache types are valid (`q8_0`, `q4_0`, `q4_1`, `q5_0`, `q5_1`, `iq4_nl`, `f16`); TurboQuant `tbq*` types do not exist on this build and the server rejects them at startup.
 
 ### Rollback to stock upstream
 
-In `ordo.yaml`:
+In `ordo.yaml`, point the chat service at the pinned upstream CUDA build (the `CUDA` image in `ordo/llamacpp_backend.py`):
+```yaml
+overrides:
+  llamacpp:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda12-b9935@sha256:502fde462776339020cec39425525e9ce78f17cd9f7b14123f55f5197b1da00a
 ```
-LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda
-```
-Re-render, then from the repo root: `ordo recreate llamacpp` (refused while a GPU lease has it evicted). This drops the two hybrid/recurrent patches above; no other config changes are required.
+Re-render, then from the repo root: `ordo recreate llamacpp` (refused while a GPU lease has it evicted). This drops the two hybrid/recurrent patches above, so a `qwen35`-arch model may no longer load on it.
 
 ## Model Registry
 
@@ -302,11 +306,25 @@ To override manually, pin an explicit `hardware:` block in `ordo.yaml` instead o
 
 ```yaml
 hardware:
-  gpus: [{ name: "RTX 5090", vram_gb: 32 }]
+  gpus: [{ name: "RTX 5090", vram_gb: 32, vendor: nvidia, compute_cap: "12.0" }]
   ram_gb: 128
   cpu_cores: 32
   platform: Linux
+  arch: x86_64
 ```
+
+`vendor` is `nvidia` (the default), `amd`, `intel` or `apple`. `compute_cap` is NVIDIA only (`nvidia-smi --query-gpu=compute_cap --format=csv`); without it, models that need a specific build (the patched sm_120 image) are skipped with a warning. `arch` is `x86_64` or `arm64` and defaults to this machine's.
+
+**llama.cpp backend.** `ordo/llamacpp_backend.py` maps the primary GPU to one upstream llama.cpp server image, all pinned to one build by tag and digest:
+
+| Primary GPU | Backend | Device wiring |
+|---|---|---|
+| none, Apple (Docker has no Metal) | `cpu` | none |
+| NVIDIA, compute capability 5.0+ or unknown | `cuda` | `driver: nvidia` reservation, pinned by uuid |
+| AMD on x86_64 | `rocm` (experimental) | `/dev/kfd`, `/dev/dri` |
+| AMD on arm64, Intel | `vulkan` (experimental) | `/dev/dri` |
+
+A catalog model's `backend_image` replaces the image, never the device wiring. NVIDIA-only plugins (`requires.nvidia`) and every `driver: nvidia` reservation are rendered only when the primary GPU is NVIDIA. The ROCm and Vulkan paths are rendered and `docker compose config`-validated but have not run on real AMD or Intel hardware.
 
 **ComfyUI `CLI_ARGS`:** Set `COMFYUI_CLI_ARGS` under `site:` in `ordo.yaml` (it flows verbatim into the rendered `.env`) and re-render. Without it, the rendered default is `--cpu --enable-manager`.
 

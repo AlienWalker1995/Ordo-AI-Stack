@@ -54,7 +54,7 @@ def test_bundle_redacts_secrets():
 
 
 def test_bundle_structure():
-    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32, "compute_cap": "12.0"}], "ram_gb": 128},
                             "model": "auto", "plugins": "auto"})
     b = doctor.collect_bundle(src, CATALOG, REGISTRY)
     # the catalog's top-ranked ultra model, and the operator's default as of 2026-09-20

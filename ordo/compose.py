@@ -5,7 +5,8 @@ colliding with anything else on the host:
   - a dedicated project name + network (no collision with other compose projects),
   - NO host port publishes on core services (reached via the dashboard/agent, per the deployment
     model) so nothing fights other services' ports,
-  - GPU reservations only when a GPU is present,
+  - NVIDIA GPU reservations only when the compute GPU is NVIDIA (the one vendor with a compose
+    device driver); other GPUs reach llama.cpp as passed-through device nodes,
   - core services read the rendered .env (single source → no drift),
   - plugin services appear only behind their compose profile (media/voice),
   - each enabled MCP server is its own `mcp-<id>` service on an INTERNAL network that only
@@ -23,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 from . import gpu
 
 if TYPE_CHECKING:
+    from .llamacpp_backend import LlamaCppBackend
     from .plugins import Plugin, PluginService
 
 # The mandatory 6-service core (from the architecture decisions), plus the agent (added
@@ -166,7 +168,7 @@ def _svc(image: str, *, net: str, env_file: str | None = None, gpu: bool = False
     return s
 
 
-def _ops_controller(project: str, net: str, env_file: str, has_gpu: bool) -> dict[str, Any]:
+def _ops_controller(project: str, net: str, env_file: str, nvidia_gpu: bool) -> dict[str, Any]:
     """The control plane. It drives the broker, so it needs the Docker socket — but the
     DockerBackend guard scopes every start/stop to `<project>-*`, so socket access can NOT
     reach containers outside this project. The rendered config dir is mounted read-only
@@ -202,7 +204,7 @@ def _ops_controller(project: str, net: str, env_file: str, has_gpu: bool) -> dic
     # Read-only GPU visibility so the scheduler can see real VRAM (mirrors V1's utility cap).
     # NVIDIA hosts only: without the NVIDIA runtime compose refuses the device request, and the
     # agent depends on this service. On a CPU host nvidia-smi is absent and detect() sees no GPU.
-    if has_gpu:
+    if nvidia_gpu:
         s.update(_utility_gpu_reservation())
         s["environment"]["NVIDIA_DRIVER_CAPABILITIES"] = "utility"
     # Its own bearer token only. It reads secrets.env as a FILE for compose interpolation, never
@@ -344,7 +346,7 @@ def _model_gateway_keys(project: str, net: str, env_file: str,
     return s
 
 
-def _dashboard(project: str, net: str, env_file: str, has_gpu: bool,
+def _dashboard(project: str, net: str, env_file: str, nvidia_gpu: bool,
                dashboard: dict[str, Any] | None = None) -> dict[str, Any]:
     """The control-plane UI service. The dashboard is PLUGGABLE (data-driven, like the agent):
     the selected `dashboard` manifest supplies the image, env, depends_on and healthcheck. When no
@@ -373,7 +375,7 @@ def _dashboard(project: str, net: str, env_file: str, has_gpu: bool,
     # V1's dashboard container has exactly caps=[[utility]]; mirror it. `count: all` -> reads BOTH cards.
     # NVIDIA hosts only (see _ops_controller): the probes already degrade to gpu:null + gpus:[].
     gpu_caps = dashboard.get("gpu_capabilities") or []
-    if gpu_caps and has_gpu:
+    if gpu_caps and nvidia_gpu:
         s.update(_capability_gpu_reservation(list(gpu_caps)))
     if dashboard.get("volumes"):
         s["volumes"] = list(dashboard["volumes"])
@@ -474,7 +476,7 @@ def _apply_agent_runtime(svc: dict[str, Any], *, user: str | None, group_add: li
 
 
 def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: str,
-                    has_gpu: bool, primary_uuid: str | None, secondary_uuid: str | None,
+                    nvidia_gpu: bool, primary_uuid: str | None, secondary_uuid: str | None,
                     project: str) -> dict[str, Any]:
     """Render ONE compose service from a plugin's declared PluginService — data-driven, so
     adding a service is a manifest edit, not a code change here. `${...}` / `./...` refs and
@@ -502,7 +504,7 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: st
     elif ps.gpu_pin == "primary" and primary_uuid:
         env.update(_pin_env(primary_uuid))
         s.update(_gpu_pinned_reservation(primary_uuid))
-    elif (ps.gpu or ps.gpu_pin) and has_gpu:
+    elif (ps.gpu or ps.gpu_pin) and nvidia_gpu:
         # a GPU service on a machine whose primary uuid didn't resolve (CI/mock) — fall back to the
         # all-GPU reservation so the shape is still valid; the uuid pin is added when detect() has it.
         s.update(_GPU_RESERVATION)
@@ -610,7 +612,8 @@ def _gpu_gate(ps: PluginService, plugin: Plugin, claim: Any, *, net: str, upstre
     return name, s
 
 
-def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "hermes",
+def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
+                   compose_profiles: list[str], agent: str = "hermes",
                    project: str = "ordo", env_file: str = ".env",
                    agent_image: str | None = None,
                    agent_command: list[str] | None = None,
@@ -636,22 +639,27 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
     # the agent is swappable (Hermes is the default); a registry manifest may pin any image,
     # else fall back to the <project>/agent-<id>:latest convention.
     agent_img = agent_image or f"{project}/agent-{agent}:latest"
-    # the llama.cpp image is the stock upstream build unless the chosen model pins a patched
-    # one (e.g. Qwen3.6 SWA) via its catalog `backend_image` — flowed here through render.
-    # Pinned to the digest of the same stock image running as ordo-llamacpp-embed-1, resolved
-    # 2026-07-24 (re-resolve via `docker inspect ordo-llamacpp-embed-1` on bump).
-    llamacpp_img = (llamacpp_image
-                     or "ghcr.io/ggml-org/llama.cpp:server@sha256:295dc9897fa8a643e4a513fbcaada51d3b8db4b0afa4fda7aeae2386757de58b")
-    llamacpp = _svc(llamacpp_img, net=net, env_file=env_file, gpu=has_gpu)
+    # The llama.cpp build is the host's backend (ordo/llamacpp_backend.py: CPU, CUDA, ROCm or
+    # Vulkan upstream server image) unless the chosen model pins its own build (e.g. the patched
+    # Qwen3.6/3.8 image) via its catalog `backend_image`. render resolves which and passes it in
+    # as llamacpp_image; the backend alone decides how the service reaches the GPU.
+    llamacpp_img = llamacpp_image or llamacpp_backend.image
+    uses_cuda = llamacpp_backend.name == "cuda"
+    llamacpp = _svc(llamacpp_img, net=net, env_file=env_file, gpu=uses_cuda)
     # always-on Prometheus metrics endpoint (the monitoring plugin's prometheus scrapes it).
     llamacpp["command"] = [LLAMACPP_METRICS_ARG]
     # Pin the compute service to the PRIMARY card by uuid (V1 does this in gpu-assignments.yml).
     # Without the CUDA_VISIBLE_DEVICES pin, on a dual-GPU WSL2 box `count: all` lets llama.cpp see
     # the 1070 too — a failure that only surfaces against real dual-GPU hardware. The
     # `.env` still carries no pin; this is a compose-level env override on the service.
-    if has_gpu and primary_gpu_uuid:
+    if uses_cuda and primary_gpu_uuid:
         llamacpp["deploy"] = _gpu_pinned_reservation(primary_gpu_uuid)["deploy"]
         llamacpp["environment"] = _pin_env(primary_gpu_uuid)
+    # ROCm / Vulkan: compose has no device driver for these GPUs, so the device nodes are passed
+    # through instead (/dev/kfd + /dev/dri for ROCm, /dev/dri for Vulkan). EXPERIMENTAL: rendered
+    # and `docker compose config`-validated, not yet run on real AMD/Intel hardware.
+    if llamacpp_backend.devices:
+        llamacpp["devices"] = list(llamacpp_backend.devices)
     # The patched image is a drop-in binary at /app/llama-server; the launch LOGIC lives in the
     # host wrapper scripts/llamacpp/run-llama-server.sh, which translates the rendered LLAMACPP_*
     # env into the full `llama-server -m /models/<gguf> -c <ctx> -ngl -1 …` argv. Without this
@@ -682,10 +690,10 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         "model-gateway": _model_gateway(project, net, env_file, langfuse_tracing=langfuse_tracing,
                                          google_sso_env=litellm_google_sso_env),
         "model-gateway-keys": _model_gateway_keys(project, net, env_file, litellm_key_envs),
-        "ops-controller": _ops_controller(project, net, env_file, has_gpu),
+        "ops-controller": _ops_controller(project, net, env_file, nvidia_gpu),
         # The dashboard is pluggable (data-driven): the selected manifest supplies image/env/
         # depends/healthcheck. It has no backend service of its own — it calls ops-controller.
-        "dashboard": _dashboard(project, net, env_file, has_gpu, dashboard),
+        "dashboard": _dashboard(project, net, env_file, nvidia_gpu, dashboard),
         # Env secrets from the agent manifest's `secrets:`; Discord/backup tokens are file secrets.
         "agent": _svc(agent_img, net=net, env_file=env_file,
                       depends=["model-gateway", "model-gateway-keys", "ops-controller"]),
@@ -712,7 +720,7 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
     gated_nets: list[str] = []
     for plugin, ps in (plugin_services or []):
         svcs[ps.name] = _plugin_service(ps, plugin, net=net, env_file=env_file,
-                                        has_gpu=has_gpu, primary_uuid=primary_gpu_uuid,
+                                        nvidia_gpu=nvidia_gpu, primary_uuid=primary_gpu_uuid,
                                         secondary_uuid=secondary_gpu_uuid,
                                         project=project)
         # A service whose GPU use is gate-enforced gets its gate rendered WITH it, from the same

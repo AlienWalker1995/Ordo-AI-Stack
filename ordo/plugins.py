@@ -308,7 +308,9 @@ class Plugin:
         return any(s.gpu_pin == "secondary" for s in self.services)
 
     def fits(self, hw: HardwareProfile) -> bool:
-        if self.nvidia and not hw.has_gpu:
+        # `nvidia: true` means an NVIDIA compute card, not just any GPU: these images are CUDA
+        # builds and compose can only reserve NVIDIA devices.
+        if self.nvidia and not hw.primary_is_nvidia:
             return False
         if self.vram_gb and hw.primary_vram_gb < self.vram_gb:
             return False
