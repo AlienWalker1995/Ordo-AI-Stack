@@ -13,6 +13,11 @@ requires:
   nvidia: false
   ram_gb: 1
 provides: [tools]
+# The dashboard refuses anonymous internal callers on /api/orchestration/* and every mutation, so
+# this adapter sends the ops-controller bearer (it grants nothing the token's holder could not do
+# at ops-controller directly). Declared here, the key is scoped to this service's environment.
+secrets:
+  - OPS_CONTROLLER_TOKEN
 # No plugin-level depends_on: the target is the CORE `dashboard` service (always present, not a
 # plugin), so there's no plugin dependency to gate on. (A plugin `depends_on` must name an enabled
 # PLUGIN or the plugin is dropped; `dashboard` is core, so listing it would wrongly drop this MCP.)
@@ -26,6 +31,5 @@ mcp:
   network: stack
   env:
     ORCHESTRATION_DASHBOARD_URL: http://dashboard:8080
-    # No DASHBOARD_AUTH_TOKEN: the dashboard has no per-service auth (edge SSO is the only gate),
-    # so this internal caller reaches dashboard:8080 over ordo-net without a Bearer.
+    OPS_CONTROLLER_TOKEN: ${OPS_CONTROLLER_TOKEN}
   tools: [orchestration_readiness, list_templates, comfyui_status, list_models, gpu_status]

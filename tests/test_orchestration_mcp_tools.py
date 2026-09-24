@@ -38,3 +38,11 @@ def test_set_active_model_uses_the_catalog_switch():
 def test_the_catalog_is_listable_so_hermes_can_pick_an_id():
     source = ast.get_source_segment(SERVER.read_text(encoding="utf-8"), _tools()["list_model_catalog"])
     assert '"/api/models"' in source
+
+
+def test_dashboard_calls_carry_the_ops_controller_bearer():
+    """The dashboard refuses anonymous internal callers on /api/orchestration/* and every
+    mutation; this adapter authenticates with the ops-controller token it is scoped to."""
+    text = SERVER.read_text(encoding="utf-8")
+    assert 'os.environ.get("OPS_CONTROLLER_TOKEN"' in text
+    assert "DASHBOARD_AUTH_TOKEN" not in text

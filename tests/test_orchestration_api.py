@@ -15,8 +15,8 @@ from dashboard.workflow_boundary import assert_api_workflow, is_ui_workflow_expo
 
 
 @pytest.fixture
-def client():
-    return TestClient(app)
+def client(dashboard_operator_headers):
+    return TestClient(app, headers=dashboard_operator_headers)
 
 
 def test_ui_export_detection():
@@ -222,9 +222,9 @@ class _MockAsyncClient:
 
 
 @pytest.fixture
-def dash_client():
+def dash_client(dashboard_operator_headers):
     from dashboard.app import app
-    return TestClient(app, raise_server_exceptions=False)
+    return TestClient(app, raise_server_exceptions=False, headers=dashboard_operator_headers)
 
 
 def test_orch_registry_list_models_ok(dash_client, monkeypatch):

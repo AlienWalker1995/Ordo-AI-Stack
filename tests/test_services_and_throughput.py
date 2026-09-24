@@ -28,7 +28,6 @@ def client(monkeypatch):
     mock_client = MagicMock()
     mock_client.get = AsyncMock(return_value=MagicMock(status_code=200))
     monkeypatch.setattr("dashboard.app._http_client", mock_client)
-    monkeypatch.setattr(dashboard_app, "_AUTH_REQUIRED", False)
     return TestClient(dashboard_app.app)
 
 
@@ -182,7 +181,7 @@ def test_model_gateway_open_url_falls_back_when_host_unset(client, monkeypatch):
 
 def test_services_do_not_leak_auth_token(client, monkeypatch):
     """Regression: sensitive auth tokens must not appear in the service cards' URLs."""
-    monkeypatch.setattr("dashboard.settings.DASHBOARD_AUTH_TOKEN", "secret-test-token-1234")
+    monkeypatch.setattr("dashboard.settings.OPS_CONTROLLER_TOKEN", "secret-test-token-1234")
     # Re-import to pick up monkeypatched value
     import importlib
 
@@ -380,7 +379,6 @@ def test_throughput_store_v2_roundtrip(tmp_path, monkeypatch):
 def test_unhandled_exception_returns_500_not_traceback(monkeypatch):
     import dashboard.app as dashboard_app
 
-    monkeypatch.setattr(dashboard_app, "_AUTH_REQUIRED", False)
     mock_client = MagicMock()
     mock_client.get = AsyncMock(return_value=MagicMock(status_code=200))
     monkeypatch.setattr("dashboard.app._http_client", mock_client)

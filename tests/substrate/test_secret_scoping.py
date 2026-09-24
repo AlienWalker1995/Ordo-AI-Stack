@@ -49,6 +49,7 @@ SPEC: dict[str, set[str]] = {
     "comfyui": {"OPS_CONTROLLER_TOKEN", "LITELLM_MASTER_KEY", "HF_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"},
     "comfyui-gate": {"OPS_CONTROLLER_TOKEN"},
     "mcp-comfyui": {"OPS_CONTROLLER_TOKEN"},
+    "mcp-orchestration": {"OPS_CONTROLLER_TOKEN"},
     "mcp-n8n": {"N8N_API_KEY"},
     "n8n": {"LITELLM_KEY_AUTOMATION"},
     "open-webui": {"LITELLM_KEY_OPEN_WEBUI"},
@@ -111,7 +112,7 @@ def test_the_ops_token_reaches_only_its_callers(rendered):
     rc, compose = rendered
     holders = {n for n, svc in compose["services"].items() if "OPS_CONTROLLER_TOKEN" in _delivered(svc, {"OPS_CONTROLLER_TOKEN"})}
     assert holders == {"ops-controller", "dashboard", "agent", "hermes-dashboard", "comfyui", "comfyui-gate",
-                       "mcp-comfyui", "evals"}
+                       "mcp-comfyui", "mcp-orchestration", "evals"}
 
 
 def test_declared_secrets_are_provisioned(rendered):

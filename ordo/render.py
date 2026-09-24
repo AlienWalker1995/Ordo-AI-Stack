@@ -63,9 +63,8 @@ CORE_SECRET_KEYS: tuple[str, ...] = (
     "LITELLM_SALT_KEY",           # LiteLLM DB credential-encryption salt. NEVER rotate (stored creds unreadable)
     "LITELLM_DB_PASSWORD",        # litellm-db postgres password (compose-interpolated into DATABASE_URL)
     "OPS_CONTROLLER_TOKEN",       # bearer between agent/dashboard/mcp <-> ops-controller
-    # NB: no DASHBOARD_AUTH_TOKEN — the dashboard has NO per-service auth. The Caddy edge
-    # (oauth2-proxy + Google SSO) is the ONLY gate; internal callers reach it over ordo-net.
-    # (operator mandate: auth is the edge's job, not baked into every service — 2026-07-15.)
+    # NB: no DASHBOARD_AUTH_TOKEN. Operators reach the dashboard through the Caddy edge SSO;
+    # internal callers of its protected routes send OPS_CONTROLLER_TOKEN (dashboard/auth.py).
     # NB: THROUGHPUT_RECORD_TOKEN is intentionally NOT required. There is no SOPS source that can
     # supply it, and the dashboard only enforces it "when set" (dashboard/app.py) — the /api/
     # throughput/record route is open when the var is empty. Demanding a key nothing can provide

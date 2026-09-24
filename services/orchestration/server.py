@@ -19,7 +19,9 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 BASE = os.environ.get("ORCHESTRATION_DASHBOARD_URL", "http://dashboard:8080").rstrip("/")
-TOKEN = os.environ.get("DASHBOARD_AUTH_TOKEN", "").strip()
+# The dashboard refuses anonymous internal callers on /api/orchestration/* and every mutation;
+# this adapter authenticates with the ops-controller bearer it is scoped to (plugin.yaml secrets).
+TOKEN = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
 
 
 def _clean_gemma_special_tokens(text: str) -> str:

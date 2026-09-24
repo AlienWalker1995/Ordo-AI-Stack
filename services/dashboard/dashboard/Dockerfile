@@ -35,4 +35,6 @@ RUN chmod +x /entrypoint.sh
 
 EXPOSE 8080
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["uvicorn", "dashboard.app:app", "--host", "0.0.0.0", "--port", "8080"]
+# --no-proxy-headers: request.client must stay the TCP peer, which dashboard/auth.py compares
+# against the edge proxy; an X-Forwarded-For rewrite would let a caller claim the edge's address.
+CMD ["uvicorn", "dashboard.app:app", "--host", "0.0.0.0", "--port", "8080", "--no-proxy-headers"]

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-import ipaddress
 import json
 import logging
 import os
@@ -26,13 +25,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.gzip import GZipMiddleware
 
-from dashboard import gpu_stats, settings
+from dashboard import auth, gpu_stats
 from dashboard.routes_console import router as console_router
 from dashboard.routes_hub import router as hub_router
 from dashboard.routes_orchestration import router as orchestration_router
 from dashboard.services_catalog import OPS_SERVICE_MAP
-from dashboard.settings import AUTH_REQUIRED as _AUTH_REQUIRED
-from dashboard.settings import DASHBOARD_AUTH_TOKEN
 
 # Persistent httpx client — connection pooling avoids per-request TCP handshake overhead.
 _http_client: _httpx.AsyncClient | None = None
@@ -43,17 +40,10 @@ def _get_http_client() -> _httpx.AsyncClient:
     assert _http_client is not None, "HTTP client not initialised — is lifespan running?"
     return _http_client
 
-# Dashboard auth (optional bearer token only; see dashboard.settings)
-
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     global _http_client
-    if not _AUTH_REQUIRED:
-        logger.warning(
-            "Dashboard is running WITHOUT authentication. "
-            "Set DASHBOARD_AUTH_TOKEN in .env to require Bearer auth on /api/*."
-        )
     _http_client = _httpx.AsyncClient(
         timeout=30.0,
         limits=_httpx.Limits(max_connections=100, max_keepalive_connections=20),
@@ -78,52 +68,6 @@ async def _global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
-def _request_from_trusted_proxy(request: Request) -> bool:
-    """True if the request originates from the configured proxy network."""
-    if not settings.DASHBOARD_TRUST_PROXY_HEADERS:
-        return False
-    if settings.DASHBOARD_TRUSTED_PROXY_NET is None:
-        return False
-    client_ip = request.client.host if request.client else None
-    if client_ip is None:
-        return False
-    try:
-        return ipaddress.ip_address(client_ip) in settings.DASHBOARD_TRUSTED_PROXY_NET
-    except ValueError:
-        return False
-
-
-def _verify_auth(request: Request) -> bool | str:
-    """Verify the request's authentication.
-
-    Order of precedence:
-      1. Trusted-proxy branch — if the request originates from the configured
-         proxy network and carries an X-Forwarded-Email header, accept it.
-         If the proxy is trusted but no email is present, fail closed when
-         AUTH_REQUIRED so a misconfigured proxy can't silently bypass auth.
-      2. Bearer-token branch — Authorization: Bearer <DASHBOARD_AUTH_TOKEN>
-         (preserved for orchestration-mcp / internal callers).
-
-    Returns a truthy value when auth passes (the email or True for bearer),
-    False when auth fails. Returns True when auth is not required.
-    """
-    if _request_from_trusted_proxy(request):
-        email = request.headers.get("X-Forwarded-Email", "").strip()
-        if email:
-            return email
-        # Trusted proxy connected but no identity header — refuse rather
-        # than silently bypass auth (fail-closed).
-        return not _AUTH_REQUIRED
-
-    if not _AUTH_REQUIRED:
-        return True
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return False
-    token = auth[7:].strip()
-    return hmac.compare_digest(token, DASHBOARD_AUTH_TOKEN)
-
-
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     """Add CSP and security headers to reduce XSS token theft risk."""
@@ -146,14 +90,9 @@ async def security_headers_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    """Require auth for /api/* except health/hub read-only endpoints."""
+    """Require a principal for state-changing and ops-forwarding /api/* routes (dashboard/auth.py)."""
     path = request.url.path
     if not path.startswith("/api/"):
-        return await call_next(request)
-    if path in (
-        "/api/health",
-        "/api/orchestration/readiness",
-    ):
         return await call_next(request)
     # /api/throughput/record: requires THROUGHPUT_RECORD_TOKEN when set (model-gateway internal; PRD §3.E)
     if path == "/api/throughput/record":
@@ -161,13 +100,18 @@ async def auth_middleware(request: Request, call_next):
         if token and not hmac.compare_digest(request.headers.get("X-Throughput-Token", ""), token):
             return JSONResponse(status_code=401, content={"detail": "Invalid or missing X-Throughput-Token"})
         return await call_next(request)
-    if _AUTH_REQUIRED and not _verify_auth(request):
-        logger.warning(
-            "AUTH_FAIL path=%s method=%s src=%s",
-            path, request.method,
-            request.client.host if request.client else "unknown",
+    if not auth.requires_principal(request.method, path):
+        return await call_next(request)
+    peer_ip = request.client.host if request.client else None
+    edge_addresses: set[str] = set()
+    if request.headers.get(auth.EDGE_IDENTITY_HEADER, "").strip():
+        edge_addresses = await asyncio.to_thread(auth.edge_proxy_addresses)
+    if auth.principal(request.headers, peer_ip, edge_addresses) is None:
+        logger.warning("AUTH_FAIL path=%s method=%s src=%s", path, request.method, peer_ip or "unknown")
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Sign in through the SSO edge, or send Authorization: Bearer <OPS_CONTROLLER_TOKEN>"},
         )
-        return JSONResponse(status_code=401, content={"detail": "Bearer token required"})
     return await call_next(request)
 
 

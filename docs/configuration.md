@@ -20,13 +20,13 @@ Set `site.BASE_PATH` in `ordo.yaml` (template: `ordo.example.yaml`) and re-rende
 |---|---|---|
 | `DATA_PATH` | `${BASE_PATH}/data` | Override data directory location |
 | `DEFAULT_MODEL` | `local-chat` | Canonical model alias used by Open WebUI, Hermes, and LiteLLM |
-| `OPS_CONTROLLER_TOKEN` | *(empty)* | Bearer token the dashboard, Hermes' `OpsClient` and `comfyui-mcp` send to `ops-controller`; each refuses to call it while the value is empty (`ordo init` generates one). Set as a secret in `out/secrets.env` |
+| `OPS_CONTROLLER_TOKEN` | *(empty)* | Bearer token the dashboard, Hermes' `OpsClient` and `comfyui-mcp` send to `ops-controller` (and `mcp-orchestration` sends to the dashboard's protected routes); each refuses to call it while the value is empty (`ordo init` generates one). Set as a secret in `out/secrets.env` |
 | `HF_TOKEN` | *(empty)* | Hugging Face token for gated model downloads; set as a secret in `out/secrets.env` |
 | `GITHUB_PERSONAL_ACCESS_TOKEN` | *(empty)* | GitHub token passed to `comfyui` as `GITHUB_TOKEN` for ComfyUI-Manager custom-node fetches; optional; set as a secret in `out/secrets.env` |
 | `LOCAL_INPUT_COST_PER_TOKEN` | `0` | Electricity-derived $/token for local model prompt input, computed by the render engine from `ordo.yaml`'s `cost:` block (see [Local Model Cost](#local-model-cost) below): never hand-set |
 | `LOCAL_OUTPUT_COST_PER_TOKEN` | `0` | Electricity-derived $/token for local model output, same source as above |
 
-> The dashboard has no per-service auth token in this deployment — the Caddy edge (oauth2-proxy + Google SSO + email allowlist) is the sole authentication gate for the dashboard, same as every other UI, no matter which of Caddy's SSO-gated ports it's served on (see [Network Ports](#network-ports)). The dashboard app code retains an optional, dormant `DASHBOARD_AUTH_TOKEN` Bearer fallback, but it is not set here and is not a recommended secret — don't generate or configure it.
+> The dashboard has no token of its own. Operators reach it through the Caddy edge (oauth2-proxy + Google SSO + email allowlist), like every other UI (see [Network Ports](#network-ports)). Its state-changing and ops-forwarding routes also accept `Authorization: Bearer <OPS_CONTROLLER_TOKEN>` from internal callers, and refuse everyone else (`services/dashboard/dashboard/auth.py`).
 
 ### Hermes Agent
 
