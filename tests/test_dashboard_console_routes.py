@@ -219,6 +219,21 @@ def test_switch_stops_if_the_render_fails_and_recreates_nothing(live):
     assert calls == ["/model-config"]
 
 
+def test_a_control_plane_refusal_passes_through_as_409_and_recreates_nothing(live):
+    # The control plane refuses a model whose file (or projector) is missing from the volume.
+    calls = []
+
+    async def ops_call(method, path, json=None):
+        calls.append(path)
+        return 409, {"error": "vision.gguf is not in the ordo_models-gguf volume: run `ordo fetch turbo`"}
+
+    with gpu_idle(), patch.object(routes_console, "_ops_call", side_effect=ops_call):
+        r = live.post("/api/models/switch", json={"model": "turbo"})
+    assert r.status_code == 409
+    assert "ordo fetch turbo" in r.json()["detail"]
+    assert calls == ["/model-config"]
+
+
 def test_delete_refuses_a_file_a_server_is_using(live, tmp_path):
     (tmp_path / CPU_FILE).write_bytes(b"x")
     with patch.object(routes_console, "GGUF_DIR", tmp_path):

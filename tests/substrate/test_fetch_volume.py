@@ -9,6 +9,7 @@ with `sh` + `curl` against a file:// URL when those are on PATH.
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import os
 import re
@@ -31,6 +32,8 @@ CATALOG = Catalog.load(CATALOG_PATH)
 PROFILE_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128,
                 "cpu_cores": 32, "platform": "Linux"}
 PROFILE_CPU = {"gpus": [], "ram_gb": 16, "cpu_cores": 8, "platform": "Linux"}
+PROFILE_BLACKWELL = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "compute_cap": "12.0"}], "ram_gb": 128,
+                     "cpu_cores": 32, "platform": "Linux"}
 
 HELLO = b"hello world"
 HELLO_SHA = hashlib.sha256(HELLO).hexdigest()
@@ -136,20 +139,6 @@ def test_the_whole_stack_needs_the_chat_cpu_fallback_and_embed_models(tmp_path):
 def test_a_service_that_reads_no_model_needs_nothing(tmp_path):
     out = _write_out(tmp_path)
     assert fetch.required_model_files(_doc(out), _env(out), ["dashboard", "ops-controller"]) == []
-
-
-@pytest.mark.parametrize("hardware", [PROFILE_5090, PROFILE_CPU])
-def test_every_file_a_default_render_needs_is_pinned_in_the_catalog(tmp_path, hardware):
-    """The invariant that makes `ordo up` work with no manual model step: whatever the render
-    reads from the volume has a catalog source and sha256 to fetch it from."""
-    out = _write_out(tmp_path, hardware)
-    doc = _doc(out)
-    for need in fetch.required_model_files(doc, _env(out), list(doc["services"])):
-        if need.optional:
-            continue
-        model = CATALOG.by_file(need.file)
-        assert model is not None, f"{need.file} ({need.service}) has no catalog entry"
-        assert model.sha256 and model.source.startswith("https://"), model.id
 
 
 def test_support_models_are_never_picked_as_the_chat_model():
@@ -433,3 +422,123 @@ def test_script_replaces_a_corrupt_file_only_after_the_new_one_verifies(served):
     proc = _run_script(dest, url, "m.gguf", HELLO_SHA)
     assert proc.returncode == 0, proc.stderr
     assert (dest / "m.gguf").read_bytes() == HELLO
+
+
+# ── vision projectors: a catalog source like any other weights file ──────────
+
+LIVE_MODEL = "qwen3.8-27b-turbo-fable-q6"
+LIVE_PROJECTOR = "Qwen3.8-27B-TurboFable-vision-f16.gguf"
+
+
+def _with_projector(projector: dict | None = None, **model) -> Model:
+    spec = {"file": "m-vision.gguf", "source": "https://example.test/repo/resolve/main/mmproj-F16.gguf",
+            "sha256": HELLO_SHA, "size_bytes": 900_000_000}
+    if projector is not None:
+        spec = projector
+    return Model.from_dict({"id": "m", "file": "m.gguf", "source": "https://example.test/m.gguf",
+                            "sha256": HELLO_SHA, "requires": {"vram_gb": 1}, "mmproj": spec, **model})
+
+
+def test_a_pinned_projector_renders_as_a_path_in_the_models_volume():
+    model = _with_projector()
+    assert model.mmproj == "/models/m-vision.gguf"               # what LLAMACPP_MMPROJ carries
+    assert model.projector is not None
+    assert model.projector.file == "m-vision.gguf"
+    assert model.projector.sha256 == HELLO_SHA
+    assert model.projector.size_bytes == 900_000_000
+
+
+def test_a_bare_projector_path_still_loads_and_has_no_source():
+    model = Model.from_dict({"id": "m", "file": "m.gguf", "mmproj": "/models/by-hand.gguf"})
+    assert model.mmproj == "/models/by-hand.gguf"
+    assert model.projector is None
+
+
+@pytest.mark.parametrize("missing", ["file", "source", "sha256"])
+def test_a_projector_entry_must_pin_file_source_and_sha256(missing):
+    spec = {"file": "m-vision.gguf", "source": "https://example.test/mmproj-F16.gguf", "sha256": HELLO_SHA}
+    del spec[missing]
+    with pytest.raises(ValueError, match=missing):
+        _with_projector(spec)
+
+
+def test_a_projector_is_a_downloadable_entry_but_never_a_chat_model():
+    catalog = Catalog([_with_projector()])
+    projector = catalog.by_file("m-vision.gguf")
+    assert projector is not None and projector.id == "m-mmproj"
+    assert catalog.get_entry("m-mmproj") == projector
+    assert catalog.get("m-mmproj") is None
+    assert [m.id for m in catalog.models] == ["m"]
+    assert [m.file for m in catalog.files_of(catalog.get("m"))] == ["m.gguf", "m-vision.gguf"]
+
+
+def test_the_live_models_projector_is_pinned_to_its_upstream_file():
+    """The default model's projector: the repo's own mmproj-F16.gguf, whose LFS oid was checked
+    against the copy in the live models volume (same bytes, same sha256)."""
+    projector = CATALOG.by_file(LIVE_PROJECTOR)
+    assert projector is not None
+    assert projector.source == ("https://huggingface.co/DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-"
+                                "Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF/resolve/main/mmproj-F16.gguf")
+    assert projector.sha256 == "82e620db8cb83267e9775e5aad3e8d8aa5af7ace825e94c52d3d730eb35af88a"
+    assert projector.size_bytes == 927_606_976
+    assert CATALOG.get(LIVE_MODEL).mmproj == f"/models/{LIVE_PROJECTOR}"
+
+
+def test_every_catalog_entry_pins_its_size():
+    """The preflight disk check sums these; a missing size would under-count the download."""
+    for model in CATALOG.entries():
+        assert model.size_bytes and model.size_bytes > 0, model.id
+
+
+def test_a_projector_renamed_on_download_is_not_refused():
+    """Upstream projectors are all called mmproj-F16.gguf; each lands under its own name."""
+    assert fetch.refusal(_with_projector().projector) is None
+
+
+def test_a_source_that_is_not_a_file_url_is_still_refused():
+    assert "not a download URL" in fetch.refusal(_model(source="https://huggingface.co/huihui-ai"))
+
+
+def test_up_fetches_a_missing_pinned_projector():
+    doc, env = _stack()
+    env["LLAMACPP_MMPROJ"] = "/models/m-vision.gguf"
+    runner = FakeRunner(files={"m.gguf"})
+    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=Catalog([_with_projector()]), project="ordo",
+                               secrets={}, runner=runner, dry_run=False) == 0
+    (argv, _env_), = runner.helper_runs()
+    values = dict(argv[i + 1].split("=", 1) for i, arg in enumerate(argv) if arg == "-e" and "=" in argv[i + 1])
+    assert values["ORDO_FETCH_FILE"] == "m-vision.gguf"
+    assert values["ORDO_FETCH_URL"].endswith("/mmproj-F16.gguf")
+
+
+@pytest.mark.parametrize("hardware", [PROFILE_5090, PROFILE_CPU, PROFILE_BLACKWELL])
+def test_every_file_a_default_render_loads_has_a_catalog_source(tmp_path, hardware):
+    """The invariant that makes `ordo up` work with no manual model step, projectors included:
+    whatever the render reads from the volume has a catalog source and sha256 to fetch it from."""
+    out = _write_out(tmp_path, hardware)
+    doc = _doc(out)
+    if hardware is PROFILE_BLACKWELL:
+        assert _env(out)["LLAMACPP_MMPROJ"] == f"/models/{LIVE_PROJECTOR}"   # the live host's render
+    for need in fetch.required_model_files(doc, _env(out), list(doc["services"])):
+        model = CATALOG.by_file(need.file)
+        assert model is not None, f"{need.file} ({need.service}) has no catalog entry"
+        assert fetch.refusal(model) is None, model.id
+
+
+def test_fetch_by_id_also_fetches_the_models_projector(tmp_path):
+    args = argparse.Namespace(all=False, model=LIVE_MODEL, out=str(tmp_path))
+    targets = cli._volume_fetch_targets(args, CATALOG)
+    assert [m.file for m in targets] == [CATALOG.get(LIVE_MODEL).file, LIVE_PROJECTOR]
+
+
+def test_the_native_plan_includes_the_projector(tmp_path):
+    actions = fetch.plan(Catalog([_with_projector()]), ["m"], tmp_path)
+    assert [a.model_id for a in actions] == ["m", "m-mmproj"]
+
+
+def test_volume_files_never_creates_the_volume_it_lists():
+    # `docker run -v <name>:...` would create an unlabeled volume that compose then refuses to adopt.
+    absent = FakeRunner(volume_exists=False)
+    assert fetch.volume_files(absent, "ordo") == set()
+    assert not any(fetch.LIST_MARKER in argv for argv, _ in absent.calls)
+    assert fetch.volume_files(FakeRunner(files={"a.gguf"}), "ordo") == {"a.gguf"}

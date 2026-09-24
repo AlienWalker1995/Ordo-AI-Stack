@@ -12,8 +12,8 @@ renders the target config and checks every gate we can verify WITHOUT starting a
     pulls them (a note, not a blocker).
 
 Host checks (`host_checks`) answer the other half, "can THIS machine run it": Docker reachable,
-Compose v2, the NVIDIA runtime when a GPU is reserved, disk for the model, free host ports, and
-no blank required secret. `ordo up` runs them before it starts anything.
+Compose v2, the NVIDIA runtime when a GPU is reserved, disk for every model file still to fetch,
+free host ports, and no blank required secret. `ordo up` runs them before it starts anything.
 
 Blocking checks failing = NO-GO. Non-blocking = a warning you can proceed past knowingly.
 Every verdict is pure logic over injected facts; the I/O that gathers the facts (docker, sockets,
@@ -29,10 +29,10 @@ import re
 import shutil
 import socket
 import subprocess
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
-from . import buildspec, parity
+from . import buildspec, fetch, parity, served_models
 from .agents import AgentRegistry
 from .catalog import Catalog
 from .config import Source
@@ -223,6 +223,33 @@ class HostFacts:
     busy_ports: frozenset[tuple[str, int]]    # published (address, port) pairs another process holds
     disk_path: str                            # where the model's volume lands (or the best proxy)
     disk_free_gb: float | None
+    # The file names already in the models volume (empty when it does not exist yet); None when it
+    # could not be listed, so every model file counts as still to fetch.
+    volume_files: frozenset[str] | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class ModelFile:
+    """A weights file a service loads from the models volume, and its size."""
+    file: str
+    gb: float
+
+
+def model_files(services: dict, env: Mapping[str, str], catalog: Catalog) -> list[ModelFile]:
+    """Every file `services` load from the models volume (chat model, projector, CPU fallback,
+    embedder), sized from its catalog entry. An entry with no pinned size_bytes falls back to its
+    vram_gb / ram_gb estimate; a file with no catalog entry counts 0 (`ordo up` refuses it anyway)."""
+    found = []
+    for need in served_models.model_files({"services": services}, env):
+        entry = catalog.by_file(need.file)
+        if entry is None:
+            gb = 0.0
+        elif entry.size_bytes:
+            gb = entry.size_bytes / 1024 ** 3
+        else:
+            gb = entry.vram_gb or entry.ram_gb
+        found.append(ModelFile(need.file, gb))
+    return found
 
 
 def published_ports(services: dict, env: dict[str, str]) -> list[tuple[str, int]]:
@@ -269,7 +296,8 @@ def _compose_major(version: str) -> int:
 
 
 def host_checks(services: dict, env: dict[str, str], facts: HostFacts, *, secret_keys: Iterable[str],
-                optional_secrets: Iterable[str], secrets_path: str | None, model_gb: float) -> list[Check]:
+                optional_secrets: Iterable[str], secrets_path: str | None,
+                model_files: Sequence[ModelFile]) -> list[Check]:
     """One Check per host requirement of the services about to start. Each failure is one line
     that says what to do."""
     checks = [Check("docker daemon reachable", facts.docker_error is None,
@@ -291,12 +319,21 @@ def host_checks(services: dict, env: dict[str, str], facts: HostFacts, *, secret
                             f"Toolkit and run `sudo nvidia-ctk runtime configure --runtime=docker`, then "
                             f"restart Docker"))
 
-    if model_gb > 0 and facts.disk_free_gb is not None:
-        enough = facts.disk_free_gb >= model_gb
-        checks.append(Check("free disk for the model", enough,
-                            f"{facts.disk_free_gb:.0f} GB free at {facts.disk_path}" if enough else
-                            f"the model needs ~{model_gb:.0f} GB but only {facts.disk_free_gb:.0f} GB is free "
-                            f"at {facts.disk_path}: free space or pick a smaller model (`model:` in ordo.yaml)"))
+    if model_files and facts.disk_free_gb is not None:
+        present = facts.volume_files
+        to_fetch = [f for f in model_files if present is None or f.file not in present]
+        need_gb = sum(f.gb for f in to_fetch)
+        enough = facts.disk_free_gb >= need_gb
+        if not to_fetch:
+            detail = "every model file is already in the models volume"
+        elif enough:
+            detail = (f"{facts.disk_free_gb:.0f} GB free at {facts.disk_path} for ~{need_gb:.1f} GB "
+                      f"({len(to_fetch)} model files to fetch)")
+        else:
+            detail = (f"the {len(to_fetch)} model files still to fetch ({', '.join(f.file for f in to_fetch)}) "
+                      f"need ~{need_gb:.1f} GB but only {facts.disk_free_gb:.0f} GB is free at {facts.disk_path}: "
+                      f"free space or pick a smaller model (`model:` in ordo.yaml)")
+        checks.append(Check("free disk for the models", enough, detail))
 
     busy = [f"{address}:{port}" for address, port in published_ports(services, env)
             if (address, port) in facts.busy_ports]
@@ -385,6 +422,11 @@ def gather_host_facts(ports: list[tuple[str, int]], project: str,
     except OSError:
         disk_free_gb = None
 
+    volume_files = None
+    if docker_error is None:
+        listed = fetch.volume_files(fetch.DockerRunner(), project)
+        volume_files = frozenset(listed) if listed is not None else None
+
     return HostFacts(docker_error=docker_error, compose_version=compose_version,
                      runtimes=frozenset((info.get("Runtimes") or {}).keys()), busy_ports=busy,
-                     disk_path=disk_path, disk_free_gb=disk_free_gb)
+                     disk_path=disk_path, disk_free_gb=disk_free_gb, volume_files=volume_files)

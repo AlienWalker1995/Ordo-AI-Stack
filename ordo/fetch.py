@@ -29,7 +29,8 @@ import subprocess
 import sys
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from urllib.parse import urlparse
 
 from .catalog import Catalog, Model
 
@@ -69,7 +70,12 @@ class Action:
 def plan(catalog: Catalog, wanted: list[str] | None, models_dir: str | Path,
          allow_unverified: bool = False) -> list[Action]:
     """What `fetch` would do for each requested model (or all). Pure — reads the filesystem."""
-    models = catalog.models if not wanted else [m for m in catalog.entries() if m.id in set(wanted)]
+    chosen = catalog.models if not wanted else [m for m in catalog.entries() if m.id in set(wanted)]
+    models: list[Model] = []
+    for chosen_model in chosen:
+        for entry in catalog.files_of(chosen_model):      # the weights, then a pinned projector
+            if entry not in models:
+                models.append(entry)
     out: list[Action] = []
     for m in models:
         status = classify(m, models_dir)
@@ -273,6 +279,16 @@ def files_in_volume(runner, volume: str) -> set[str] | None:
     return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
 
+def volume_files(runner, project: str) -> set[str] | None:
+    """The file names in the project's models volume: empty when the volume does not exist yet,
+    None when it could not be listed. Checks first, because listing a missing volume with `docker
+    run -v` would create it without the labels compose needs to adopt it."""
+    volume = volume_name(project)
+    if not volume_exists(runner, volume):
+        return set()
+    return files_in_volume(runner, volume)
+
+
 @dataclasses.dataclass(frozen=True)
 class NeededFile:
     file: str
@@ -322,7 +338,12 @@ def required_model_files(doc: dict, env: Mapping[str, str], services: Sequence[s
 
 def refusal(model: Model, allow_unverified: bool = False) -> str | None:
     """Why this entry cannot be downloaded into the volume, or None when it can."""
-    if not model.source.startswith("https://") or not model.source.endswith(model.file):
+    # A file URL, not a repo or org page. Its name may differ from `file` (a projector is stored
+    # under a model-specific name), but it has to be the same kind of file.
+    url = urlparse(model.source)
+    url_name = PurePosixPath(url.path).name
+    suffix = PurePosixPath(model.file).suffix
+    if url.scheme != "https" or not suffix or not url_name.endswith(suffix):
         return f"{model.id}: the catalog source {model.source!r} is not a download URL for {model.file}"
     if not model.sha256 and not allow_unverified:
         return (f"{model.id}: no sha256 pinned; refusing to download unverified weights "

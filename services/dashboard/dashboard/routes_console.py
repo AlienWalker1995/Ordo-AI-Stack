@@ -292,8 +292,10 @@ async def _switch(body: SwitchBody) -> dict:
         raise HTTPException(status_code=409, detail="A render has the GPU right now; switch after it finishes")
     code, rendered = await _ops_call("POST", "/model-config", {"model": body.model})
     if code != 200:
-        raise HTTPException(status_code=502, detail=rendered.get("error") or rendered.get("detail")
-                            or f"render failed ({code})")
+        # A 409 is the control plane refusing the switch (a model file missing from the volume, a
+        # substrate mismatch): the operator's to resolve, so it reaches the page as a refusal.
+        raise HTTPException(status_code=409 if code == 409 else 502,
+                            detail=rendered.get("error") or rendered.get("detail") or f"render failed ({code})")
     plan = console.switch_plan(model_config.get("ctx_size"), rendered.get("ctx_size"))
     recreated = []
     for service in plan["recreate"]:

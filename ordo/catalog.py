@@ -23,6 +23,10 @@ TIER_ORDER = ["cpu", "low", "medium", "high", "ultra"]
 # Deliberately generous — headroom is why chat stays fast.
 DEFAULT_VRAM_RESERVE_GB = 4.0
 
+# Where the chat service mounts the models volume: a pinned projector's `file` is rendered as
+# LLAMACPP_MMPROJ=<this>/<file>.
+CHAT_MODELS_MOUNT = "/models"
+
 
 @dataclasses.dataclass(frozen=True)
 class Model:
@@ -48,10 +52,21 @@ class Model:
     # The source needs a Hugging Face token (a gated repo). The fetch hands HF_TOKEN to the download
     # only for such a model, so an ungated download never carries the token.
     gated: bool = False
+    # Bytes of the weights file, pinned with its sha256. The preflight disk check sums the files
+    # still to fetch; None falls back to the vram_gb / ram_gb estimate.
+    size_bytes: int | None = None
+    # The vision projector as a downloadable entry of its own, when the catalog pins its source
+    # (`mmproj:` as a mapping). A bare `mmproj:` path has no source: it has to be copied in by hand.
+    projector: Model | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Model:
         req = d.get("requires", {}) or {}
+        mmproj = d.get("mmproj") or None
+        projector = None
+        if isinstance(mmproj, dict):
+            projector = _projector(str(d["id"]), str(d.get("name", d["id"])), mmproj)
+            mmproj = f"{CHAT_MODELS_MOUNT}/{projector.file}"
         return cls(
             id=str(d["id"]), name=str(d.get("name", d["id"])),
             backend=str(d.get("backend", "llama.cpp")), file=str(d.get("file", "")),
@@ -60,14 +75,33 @@ class Model:
             cpu_ok=bool(req.get("cpu_ok", False)),
             ctx_default=int(d.get("ctx_default", 8192)), tier=str(d.get("tier", "low")),
             kv_kb_per_token=(float(d["kv_kb_per_token"]) if d.get("kv_kb_per_token") else None),
-            mmproj=(d.get("mmproj") or None), extra_args=str(d.get("extra_args", "")),
+            mmproj=mmproj, extra_args=str(d.get("extra_args", "")),
             backend_image=(d.get("backend_image") or None),
             min_compute_cap=normalize_compute_cap(req.get("min_compute_cap")),
             gated=bool(d.get("gated", False)),
+            size_bytes=(int(d["size_bytes"]) if d.get("size_bytes") else None),
+            projector=projector,
         )
 
     def _rank(self) -> tuple[int, float]:
         return (TIER_ORDER.index(self.tier) if self.tier in TIER_ORDER else -1, self.vram_gb)
+
+
+def _projector(model_id: str, model_name: str, spec: dict[str, Any]) -> Model:
+    """A pinned `mmproj:` mapping as a downloadable entry, id `<model id>-mmproj`.
+
+    Its `file` is the name it gets in the models volume. Upstream projectors are nearly all named
+    mmproj-F16.gguf, so the source's own name would collide between models."""
+    missing = [key for key in ("file", "source", "sha256") if not spec.get(key)]
+    if missing:
+        raise ValueError(f"{model_id}: the mmproj entry must pin {', '.join(missing)} "
+                         "(or be a bare path to a projector copied in by hand)")
+    return Model.from_dict({
+        "id": f"{model_id}-mmproj", "name": f"{model_name}, vision projector", "backend": "llama.cpp",
+        "file": spec["file"], "source": spec["source"], "sha256": spec["sha256"],
+        "size_bytes": spec.get("size_bytes"), "gated": spec.get("gated", False),
+        "requires": {"vram_gb": 0, "ram_gb": 0, "cpu_ok": True}, "tier": "projector",
+    })
 
 
 def compute_blocker(m: Model, hw: HardwareProfile) -> str:
@@ -115,8 +149,14 @@ class Catalog:
         return self._by_id.get(model_id)
 
     def entries(self) -> list[Model]:
-        """Every downloadable entry: chat models, then support models."""
-        return self.models + self.support_models
+        """Every downloadable entry: chat models, then support models, then pinned projectors."""
+        projectors = [m.projector for m in self.models + self.support_models if m.projector]
+        return self.models + self.support_models + projectors
+
+    @staticmethod
+    def files_of(model: Model) -> list[Model]:
+        """The entries a model needs in the volume: its weights, then its pinned projector."""
+        return [model] + ([model.projector] if model.projector else [])
 
     def get_entry(self, model_id: str) -> Model | None:
         """Any downloadable entry by id, chat or support."""
