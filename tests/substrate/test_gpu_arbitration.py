@@ -399,22 +399,21 @@ def _cpu_failover_ctx_arg() -> str:
 
 
 def _expand_compose_var(value: str, env: dict[str, str]) -> str:
-    """Resolve a `${VAR:-fallback}` compose value against a rendered .env, as compose would."""
+    """Resolve a `${VAR?message}` compose value against a rendered .env, failing as compose would."""
     if not (value.startswith("${") and value.endswith("}")):
         return value
-    name, _, fallback = value[2:-1].partition(":-")
-    return env.get(name) or fallback
+    name, _, message = value[2:-1].partition("?")
+    assert name in env, f"compose would refuse: {message}"
+    return env[name]
 
 
 def test_cpu_failover_serves_the_same_context_window_as_the_gpu_model(rendered):
     """A failover that accepts less than the primary rejects requests exactly when it is needed:
     a long conversation would break the moment the card is handed over."""
     ctx_arg = _cpu_failover_ctx_arg()
-    # `${LLAMACPP_CPU_CTX:-131072}` — the DEFAULT is what runs unless the operator overrides it,
-    # so resolve it the way the container will rather than reading the literal. LLAMACPP_CPU_CTX
-    # is DERIVED: the renderer emits it from the same resolved window it gives the GPU backend,
-    # so the two agree by construction even when a heavier model sizes that window down. The
-    # literal after `:-` is only the fallback for an .env this renderer never wrote.
+    # `${LLAMACPP_CPU_CTX?...}`: LLAMACPP_CPU_CTX is DERIVED. The renderer emits it from the same
+    # resolved window it gives the GPU backend, so the two agree by construction even when a heavier
+    # model sizes that window down, and there is no fallback that could disagree.
     default_ctx = int(_expand_compose_var(ctx_arg, rendered.env))
     assert default_ctx == rendered.ctx_size, (
         f"CPU failover window {default_ctx} != GPU window {rendered.ctx_size}; a swap would "
@@ -434,10 +433,8 @@ def test_cpu_failover_window_tracks_the_gpu_window_per_model(registry, model_id,
         "catalog sizing changed; this case no longer exercises what it claims to")
     assert rc.env["LLAMACPP_CPU_CTX"] == rc.env["LLAMACPP_CTX_SIZE"] == str(rc.ctx_size)
     assert int(_expand_compose_var(_cpu_failover_ctx_arg(), rc.env)) == rc.ctx_size
-    if sizes_down:
-        # ...and the manifest fallback is NOT the answer here, so a regression to it would show
-        fallback = int(_cpu_failover_ctx_arg().split(":-")[1].rstrip("}"))
-        assert fallback > rc.ctx_size
+    # ...and the manifest carries no fallback a regression could land on
+    assert ":-" not in _cpu_failover_ctx_arg()
 
 
 def test_the_failover_router_is_configured_to_route_there():

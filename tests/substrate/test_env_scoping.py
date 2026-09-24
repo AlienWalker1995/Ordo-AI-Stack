@@ -55,15 +55,18 @@ SPEC: dict[str, set[str]] = {
     "model-gateway": {"LLAMACPP_CTX_SIZE", "LLAMACPP_N_PREDICT", "LLAMACPP_CPU_CTX", "LLAMACPP_MODEL",
                       "LLAMACPP_IMAGE", "LLAMACPP_MMPROJ", "LOCAL_INPUT_COST_PER_TOKEN",
                       "LOCAL_OUTPUT_COST_PER_TOKEN", "LLAMACPP_CPU_MODEL", "LLAMACPP_EMBED_MODEL"},
-    # services_catalog.py builds the cards' Open links from the edge hostname / tailnet domain.
-    "dashboard": {"CADDY_TAILNET_HOSTNAME", "CADDY_TAILNET_DOMAIN", "TAILNET_NAMES_ENABLED"},
+    # services_catalog.py builds the cards' Open links from the edge hostname / tailnet domain; the
+    # console and orchestration routes reach ComfyUI through its gate.
+    "dashboard": {"CADDY_TAILNET_HOSTNAME", "CADDY_TAILNET_DOMAIN", "TAILNET_NAMES_ENABLED", "COMFYUI_URL"},
     # The gated ComfyUI URL: the dialogue publisher, the reel/image scripts, the idle-reclaim cron and
     # the baked comfyui skill all submit to $COMFYUI_URL (AR2). Without it they fall back to a
-    # direct address, which bypasses the GPU lease.
-    "agent": {"COMFYUI_URL"},
-    # + the two Hermes budget knobs: its entrypoint seeds them into the config.yaml it shares with the
-    # agent, so without them a restart would reset the agent's tuned values to the defaults.
-    "hermes-dashboard": {"COMFYUI_URL", "HERMES_MAX_TOKENS", "HERMES_COMPRESSION_THRESHOLD_PERCENT"},
+    # direct address, which bypasses the GPU lease. The entrypoint seeds the context window and the two
+    # Hermes budget knobs into config.yaml.
+    "agent": {"COMFYUI_URL", "LLAMACPP_CTX_SIZE", "HERMES_MAX_TOKENS", "HERMES_COMPRESSION_THRESHOLD_PERCENT"},
+    # The same image entrypoint seeds the same keys into the config.yaml it shares with the agent, so
+    # without them a restart would reset the agent's values to the defaults.
+    "hermes-dashboard": {"COMFYUI_URL", "LLAMACPP_CTX_SIZE", "HERMES_MAX_TOKENS",
+                         "HERMES_COMPRESSION_THRESHOLD_PERCENT"},
     # The official couchdb image's docker-entrypoint.sh creates the admin from COUCHDB_USER.
     "couchdb": {"COUCHDB_USER"},
     # services/obsidian-livesync/entrypoint.sh (`:?` guards on all three).
@@ -104,8 +107,7 @@ def test_each_service_receives_exactly_its_derived_keys(rendered):
 def test_every_env_name_is_declared(rendered):
     """A service's environment is its own env block + its declared derived keys + its secrets, and
     nothing else. Any rendered .env key that appears in a service's environment is either one it
-    declared in derived_env or one its env block sets explicitly (e.g. the dashboard's
-    `LLAMACPP_CTX_SIZE: ${LLAMACPP_CTX_SIZE:-...}`), never one that arrived by accident."""
+    declared in derived_env or one its env block sets explicitly, never one that arrived by accident."""
     rc, services = rendered
     agent = AgentRegistry.load(ROOT / "services").default_agent()
     dashboard = DashboardRegistry.load(ROOT / "services").default_dashboard()
@@ -198,3 +200,47 @@ def test_manifests_refuse_env_file_and_double_declaration(make, env_block):
         make({"env_file": [".env"]})
     with pytest.raises(ValueError, match="derived_env"):
         make({env_block: {"COMFYUI_URL": "x"}, "derived_env": ["COMFYUI_URL"]})
+
+
+# `${KEY:-default}` / `${KEY-default}`: a compose default. For a key the render computes (the context
+# window, the ComfyUI gate URL, the CPU failover window) a default can only hide a missing key behind a
+# value that disagrees with the render: the Hermes context window defaulted to 262144 while the render
+# said 106496. Such a key is declared in `derived_env:` (rendered `${KEY?...}`) and fails loud instead.
+# Optional `site:` knobs are exempt: when the operator leaves one unset it is absent from .env, and a
+# default there is the service's own fallback, not a second copy of a computed value.
+_DEFAULTED_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*):?-")
+
+
+def _strings(node):
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for key, value in node.items():
+            yield from _strings(key)
+            yield from _strings(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _strings(item)
+
+
+def test_no_rendered_service_defaults_a_computed_key(rendered):
+    rc, services = rendered
+    computed = set(rc.env) - set(SITE)
+    defaulted = sorted({(name, key) for name, spec in services.items() for text in _strings(spec)
+                        for key in _DEFAULTED_REF.findall(text) if key in computed})
+    assert not defaulted, f"computed keys with a compose default (declare them in derived_env:): {defaulted}"
+
+
+def test_no_process_defaults_the_context_window():
+    """The same rule inside the processes: the entrypoints that read the context window (llama-server's
+    launcher, the gateway's model_info, the Hermes config seed) refuse to start without it instead of
+    falling back to a window the render never chose."""
+    readers = ["scripts/llamacpp/run-llama-server.sh", "services/model-gateway/entrypoint.sh",
+               "services/hermes/entrypoint.sh"]
+    window = re.compile(r"\$\{(LLAMACPP_CTX_SIZE|LLAMACPP_CPU_CTX):?-")
+    defaulted = [f"{path}: {m.group(0)}" for path in readers
+                 for m in window.finditer((ROOT / path).read_text(encoding="utf-8"))]
+    assert not defaulted, defaulted
+    for path in readers:
+        text = (ROOT / path).read_text(encoding="utf-8")
+        assert "LLAMACPP_CTX_SIZE:?" in text or "LLAMACPP_CTX_SIZE?" in text, path

@@ -13,7 +13,7 @@ set -- \
   --host 0.0.0.0 \
   --port 8080 \
   --model "/models/${LLAMACPP_MODEL:-model.gguf}" \
-  --ctx-size "${LLAMACPP_CTX_SIZE:-262144}" \
+  --ctx-size "${LLAMACPP_CTX_SIZE:?LLAMACPP_CTX_SIZE is missing: it is rendered into out/.env by ordo render}" \
   --parallel "${LLAMACPP_PARALLEL:-1}" \
   --rope-scaling "${LLAMACPP_ROPE_SCALING:-none}" \
   --rope-scale "${LLAMACPP_ROPE_SCALE:-1}" \

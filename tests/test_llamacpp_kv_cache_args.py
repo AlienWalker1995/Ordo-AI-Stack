@@ -122,3 +122,14 @@ def test_quantization_disabled_emits_no_cache_type_args() -> None:
     assert args.count("--flash-attn") == 1, args
     flash_value = args.split("--flash-attn", 1)[1].strip().split()[0]
     assert flash_value == "auto", args
+
+
+def test_missing_context_window_refuses_to_start() -> None:
+    """The window is computed by the render. Without it the wrapper exits instead of starting
+    llama-server on a window the render never chose (it used to fall back to 262144)."""
+    env = {k: v for k, v in {**os.environ, **_base_env()}.items() if k != "LLAMACPP_CTX_SIZE"}
+    script = WRAPPER.read_text(encoding="utf-8").replace("exec /app/llama-server", "echo FINAL_ARGS:")
+    result = subprocess.run([_sh()], input=script, env=env, capture_output=True, text=True, timeout=10)
+    assert result.returncode != 0, result.stdout
+    assert "FINAL_ARGS:" not in result.stdout
+    assert "LLAMACPP_CTX_SIZE" in result.stderr
