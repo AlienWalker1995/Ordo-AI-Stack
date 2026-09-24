@@ -268,10 +268,6 @@ def _envelope_kind(payload: dict[str, Any], *, depth: int) -> str | None:
     return None
 
 
-def is_definitive_negative(content: str | None) -> bool:
-    return definitive_negative_kind(content) is not None
-
-
 def null_metrics() -> dict[str, Any]:
     """The stopping fields with nothing to report. Used for both an item whose trajectory could not
     be read at all (a state.db session that is gone - nulls, never guesses) and one that was read and
