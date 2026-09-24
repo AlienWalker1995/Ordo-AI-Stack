@@ -166,7 +166,7 @@ def _svc(image: str, *, net: str, env_file: str | None = None, gpu: bool = False
     return s
 
 
-def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
+def _ops_controller(project: str, net: str, env_file: str, has_gpu: bool) -> dict[str, Any]:
     """The control plane. It drives the broker, so it needs the Docker socket — but the
     DockerBackend guard scopes every start/stop to `<project>-*`, so socket access can NOT
     reach containers outside this project. The rendered config dir is mounted read-only
@@ -200,8 +200,11 @@ def _ops_controller(project: str, net: str, env_file: str) -> dict[str, Any]:
     # source. "/config/out" nested into a dir nothing consumes — silent drift (found 2026-07-15).
     s["command"] = ["--source", "/config/ordo.yaml", "serve", "--project", project, "--out", "/config"]
     # Read-only GPU visibility so the scheduler can see real VRAM (mirrors V1's utility cap).
-    s.update(_utility_gpu_reservation())
-    s["environment"]["NVIDIA_DRIVER_CAPABILITIES"] = "utility"
+    # NVIDIA hosts only: without the NVIDIA runtime compose refuses the device request, and the
+    # agent depends on this service. On a CPU host nvidia-smi is absent and detect() sees no GPU.
+    if has_gpu:
+        s.update(_utility_gpu_reservation())
+        s["environment"]["NVIDIA_DRIVER_CAPABILITIES"] = "utility"
     # Its own bearer token only. It reads secrets.env as a FILE for compose interpolation, never
     # from its env, so a rotated secret is interpolated fresh on the next recreate.
     _add_secrets(s, ["OPS_CONTROLLER_TOKEN"])
@@ -341,7 +344,7 @@ def _model_gateway_keys(project: str, net: str, env_file: str,
     return s
 
 
-def _dashboard(project: str, net: str, env_file: str,
+def _dashboard(project: str, net: str, env_file: str, has_gpu: bool,
                dashboard: dict[str, Any] | None = None) -> dict[str, Any]:
     """The control-plane UI service. The dashboard is PLUGGABLE (data-driven, like the agent):
     the selected `dashboard` manifest supplies the image, env, depends_on and healthcheck. When no
@@ -368,8 +371,9 @@ def _dashboard(project: str, net: str, env_file: str,
     # widgets, which the NVIDIA runtime only injects when the service reserves a GPU with the
     # `utility` cap. Without it `hardware_stats()` returns gpu:null + gpus:[] (both GPU widgets blank).
     # V1's dashboard container has exactly caps=[[utility]]; mirror it. `count: all` -> reads BOTH cards.
+    # NVIDIA hosts only (see _ops_controller): the probes already degrade to gpu:null + gpus:[].
     gpu_caps = dashboard.get("gpu_capabilities") or []
-    if gpu_caps:
+    if gpu_caps and has_gpu:
         s.update(_capability_gpu_reservation(list(gpu_caps)))
     if dashboard.get("volumes"):
         s["volumes"] = list(dashboard["volumes"])
@@ -678,10 +682,10 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         "model-gateway": _model_gateway(project, net, env_file, langfuse_tracing=langfuse_tracing,
                                          google_sso_env=litellm_google_sso_env),
         "model-gateway-keys": _model_gateway_keys(project, net, env_file, litellm_key_envs),
-        "ops-controller": _ops_controller(project, net, env_file),
+        "ops-controller": _ops_controller(project, net, env_file, has_gpu),
         # The dashboard is pluggable (data-driven): the selected manifest supplies image/env/
         # depends/healthcheck. It has no backend service of its own — it calls ops-controller.
-        "dashboard": _dashboard(project, net, env_file, dashboard),
+        "dashboard": _dashboard(project, net, env_file, has_gpu, dashboard),
         # Env secrets from the agent manifest's `secrets:`; Discord/backup tokens are file secrets.
         "agent": _svc(agent_img, net=net, env_file=env_file,
                       depends=["model-gateway", "model-gateway-keys", "ops-controller"]),

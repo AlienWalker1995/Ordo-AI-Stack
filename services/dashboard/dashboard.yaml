@@ -21,6 +21,7 @@ build:
 # (gpu_stats.list_gpus), which the NVIDIA runtime only injects when the service reserves a GPU
 # with the `utility` cap. Without it `hardware_stats()` returns gpu:null + gpus:[] and the GPU
 # widgets go blank. `count: all` so it reads BOTH cards. Compute is NOT reserved.
+# Rendered on NVIDIA hosts only: a CPU-only host has no NVIDIA runtime to satisfy it.
 gpu: utility
 depends_on:
   ops-controller: service_started
