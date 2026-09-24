@@ -58,8 +58,9 @@ services:
     # service sets `network_mode: service:caddy`, compose.py emits
     # `depends_on.caddy.restart: true`, so `docker compose up -d` / `docker compose restart
     # caddy` restart this member with caddy. `--no-deps` bypasses depends_on, so a caddy
-    # recreate must name the members: `ordo recreate caddy` does. A BARE `docker restart
-    # caddy` won't cascade: use compose.
+    # recreate must name the members: `ordo recreate caddy` and ops-controller's lifecycle
+    # verbs (the dashboard's Restart button) do, via `bringup.lifecycle_group`. A BARE
+    # `docker restart ordo-caddy-1` won't cascade.
     command: ["hermes", "dashboard", "--port", "9119", "--host", "127.0.0.1", "--no-open", "--insecure"]
     network_mode: service:caddy
     env:

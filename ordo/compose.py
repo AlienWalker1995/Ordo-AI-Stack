@@ -536,9 +536,11 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: st
         # coupled to the owner's — `depends_on.<owner>.restart: true` (compose spec, Compose v2.17+)
         # makes `docker compose up -d` and `docker compose restart <owner>` bring the member with the
         # owner atomically, replacing the manual `docker restart ordo-tailnet-*` after every caddy
-        # recreate. (A BARE `docker restart <owner>` bypasses compose and still won't cascade — use
-        # the compose commands.) depends_on must be all-or-nothing long form, so peers keep the
-        # default service_started condition and only the owner carries restart.
+        # recreate. (A BARE `docker restart <owner>` bypasses compose and still won't cascade. The
+        # `--no-deps` paths, `ordo up/recreate` and ops-controller's lifecycle verbs, name the
+        # members explicitly through `bringup.lifecycle_group`.) depends_on must be all-or-nothing
+        # long form, so peers keep the default service_started condition and only the owner
+        # carries restart.
         owner = ps.network_mode.split("service:", 1)[1]
         # dict(dep) keeps any declared `service_healthy` conditions; a plain list becomes the
         # default service_started, because depends_on must be all-or-nothing long form here.

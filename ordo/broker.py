@@ -22,7 +22,7 @@ import re
 import subprocess
 from typing import Protocol
 
-from .bringup import compose_argv, load_compose, profiles_in
+from .bringup import compose_argv, lifecycle_group, load_compose, plan_named, profiles_in
 from .scheduler import Job, Scheduler
 
 
@@ -47,8 +47,13 @@ class ContainerBackend(Protocol):
     def list_containers(self) -> list[dict]: ...  # bare list: ops-api's shape, see DockerBackend
     def service_stats(self) -> dict: ...
 
+    # The rendered compose this backend acts on. The control plane derives a service's netns
+    # members from it (`bringup.lifecycle_group`), so it reads the same file the compose verbs run.
+    def rendered_compose(self) -> dict: ...
+
     # Compose verbs take an OPTIONAL service: no argument means the whole project, which for
-    # compose_down means the entire stack including the agent and the GPU scheduler.
+    # compose_down means the entire stack including the agent and the GPU scheduler. A named
+    # service is expanded to its `lifecycle_group` (itself plus its netns members) in one call.
     def exec_in(self, container: str, command: list[str]) -> tuple[int, str]: ...
     def compose_up(self, service: str | None = None) -> None: ...
     def compose_down(self, service: str | None = None) -> None: ...
@@ -73,6 +78,7 @@ class MockBackend:
         self.compose_restart_calls: list = []
         self.execs: list[tuple[str, list[str]]] = []
         self.exec_result: tuple[int, str] = (0, "")
+        self.compose_doc: dict = {"services": {}}
 
     def start(self, service: str) -> None:
         self.started.append(service)
@@ -123,6 +129,9 @@ class MockBackend:
             },
             "vram_aggregate_unavailable": False,
         }
+
+    def rendered_compose(self) -> dict:
+        return self.compose_doc
 
     def exec_in(self, container: str, command: list[str]) -> tuple[int, str]:
         self.execs.append((container, list(command)))
@@ -255,10 +264,15 @@ class DockerBackend:
     def _profiles(self) -> list[str]:  # pragma: no cover - reads the rendered compose file
         """Every profile named anywhere in the rendered compose file, sorted for determinism."""
         try:
-            doc = load_compose(self.COMPOSE_DIR)
+            doc = self.rendered_compose()
         except Exception:
             return []
         return profiles_in(doc)
+
+    def rendered_compose(self) -> dict:
+        """The rendered compose file. Raises OSError / yaml.YAMLError when unreadable: a caller
+        that cannot see the netns members must refuse rather than orphan them."""
+        return load_compose(self.COMPOSE_DIR)
 
     def _project_ps(self) -> list[dict]:  # pragma: no cover - needs real docker
         """Every container in this project as {service, name, state, status}."""
@@ -347,9 +361,9 @@ class DockerBackend:
     def container_restart(self, name: str) -> None:  # pragma: no cover - needs real docker
         subprocess.run(["docker", "restart", self._container_guard(name)], check=True, timeout=120)
 
-    def recreate_service(self, service: str) -> None:  # pragma: no cover - needs real docker
-        """Recreate exactly one service. Recreate is NOT restart: an env change only takes effect
-        on recreate.
+    def recreate_service(self, service: str) -> None:
+        """Recreate one service and its netns members. Recreate is NOT restart: an env change only
+        takes effect on recreate.
 
         Goes through compose so the declared config is applied. A `docker run` recreate silently
         drops device reservations and compose labels (observed 2026-09-21: it produced a controller
@@ -360,12 +374,15 @@ class DockerBackend:
         recreate` so a recreate with an unchanged compose file still restarts the container and
         picks up an edited .env value. No render step: the rendered compose, with llamacpp's 5090
         uuid pin baked into its environment/deploy blocks, is replayed as it stands.
+
+        The args come from `bringup.plan_named`, the planner `ordo recreate` uses on the host: a
+        netns owner (caddy) is recreated in the same call as its members, which would otherwise
+        keep the destroyed namespace.
         """
-        subprocess.run(
-            self._compose("up", "-d", "--no-deps", "--force-recreate",
-                          self._lifecycle_guard(service), all_profiles=True),
-            check=True, timeout=600,
-        )
+        args, starts = plan_named(self.rendered_compose(), [self._lifecycle_guard(service)], force_recreate=True)
+        for name in starts:
+            self._lifecycle_guard(name)  # a member cannot be the control plane either
+        subprocess.run(self._compose(*args, all_profiles=True), check=True, timeout=600)
 
     def exec_in(self, container: str, command: list[str]) -> tuple[int, str]:  # pragma: no cover - needs real docker
         """Run a command inside one container of THIS project; returns (exit_code, combined output).
@@ -386,24 +403,31 @@ class DockerBackend:
             raise FileNotFoundError(name)
         return proc.returncode, output
 
-    def compose_up(self, service: str | None = None) -> None:  # pragma: no cover - needs real docker
-        # A named up is `--no-deps`: otherwise compose also starts the service's dependencies,
-        # and during a GPU lease that includes the evicted llamacpp (the lease guard in
-        # control.py checks only the named service).
-        args = ["up", "-d"] + (["--no-deps", self._guard(service)] if service else [])
-        subprocess.run(self._compose(*args), check=True, timeout=900)
+    def compose_up(self, service: str | None = None) -> None:
+        # A named up is the host's `ordo up <service>`: `bringup.plan_named`, so `--no-deps` (else
+        # compose also starts the service's dependencies, and during a GPU lease that includes the
+        # evicted llamacpp; the lease guard in control.py checks only the group) plus the netns
+        # members, with every profile so a profiled dependency resolves.
+        if service is None:
+            subprocess.run(self._compose("up", "-d"), check=True, timeout=900)
+            return
+        args, _ = plan_named(self.rendered_compose(), [self._guard(service)], force_recreate=False)
+        subprocess.run(self._compose(*args, all_profiles=True), check=True, timeout=900)
 
-    def compose_restart(self, service: str | None = None) -> None:  # pragma: no cover - needs real docker
-        args = ["restart"] + ([self._guard(service)] if service else [])
-        subprocess.run(self._compose(*args), check=True, timeout=600)
+    def compose_restart(self, service: str | None = None) -> None:
+        # Compose restarts named services in dependency order, and every member depends on its
+        # owner, so the members come back after the owner has its new namespace.
+        group = lifecycle_group(self.rendered_compose(), self._guard(service)) if service else []
+        subprocess.run(self._compose("restart", *group), check=True, timeout=600)
 
-    def compose_down(self, service: str | None = None) -> None:  # pragma: no cover - needs real docker
+    def compose_down(self, service: str | None = None) -> None:
         """Whole-project down when called with no service. This is the highest-blast-radius verb
         the backend exposes: it stops the entire stack, the agent and the GPU scheduler included.
         It is implemented because the protocol declares it, not because anything should call it
-        casually."""
-        args = ["down"] + ([self._guard(service)] if service else [])
-        subprocess.run(self._compose(*args), check=True, timeout=600)
+        casually. A named owner takes its netns members down with it: a member left running
+        would sit in the removed namespace."""
+        group = lifecycle_group(self.rendered_compose(), self._guard(service)) if service else []
+        subprocess.run(self._compose("down", *group), check=True, timeout=600)
 
     def service_stats(self) -> dict:  # pragma: no cover - needs real docker
         """Per-service CPU and memory.
