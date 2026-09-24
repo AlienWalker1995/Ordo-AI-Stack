@@ -1,5 +1,6 @@
-"""ordo/source_edit.edit_plugins_list — the shared, safe `plugins:` list editor (canonical copy,
-mirrored by the dashboard's `_edit_plugins_list`). Pure text->text; refuses anything it can't guarantee."""
+"""ordo/source_edit.edit_plugins_list: the one `plugins:` editor, used by ops-controller's plugin
+enable/disable (which also backs the dashboard MCP toggle). Pure text->text; refuses anything it
+can't guarantee."""
 import pytest
 import yaml
 

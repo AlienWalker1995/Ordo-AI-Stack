@@ -81,13 +81,15 @@ class OpsClient:
         return self._compose("restart", service, confirm)
 
     def _compose(self, verb: str, service: str | None, confirm: bool) -> dict[str, Any]:
-        # ops-api's stack-wide /compose/* endpoints are a deliberate 501 (compose
-        # mutations are the render pipeline's job). The supported per-service
-        # equivalent is POST /services/{id}/recreate (up/restart) — use it.
+        # This client refuses stack-wide verbs itself. ops-controller DOES serve
+        # POST /compose/{up,down,restart} without a service: it runs the verb on the
+        # whole project, so a stack-wide down stops everything, ops-controller and the
+        # GPU scheduler included. Stack lifecycle is the operator's `ordo up`. The
+        # per-service equivalent is POST /services/{id}/recreate (up/restart).
         if service is None:
             raise OpsClientError(
-                "stack-wide compose verbs are disabled on ops-api (501 by design); "
-                "pass a service name for a per-service recreate, or use the render pipeline"
+                "stack-wide compose verbs are refused by this client (ops-controller would run "
+                "them on the whole project); pass a service name for a per-service recreate"
             )
         if verb == "down":
             r = self._client.post(f"/services/{service}/stop")

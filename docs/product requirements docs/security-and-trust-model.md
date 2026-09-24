@@ -33,22 +33,23 @@
 ### End-to-End
 
 - `out/secrets.env` — gitignored, host-only, rendered from `out/secrets.env.example`; not committed
-- MCP tool secrets (e.g. `N8N_API_KEY`) — same `out/secrets.env`, but an `mcp-*` service has **no** `env_file`: only the keys its manifest declares in `env:` / `secrets:` are interpolated into its compose environment
+- Scoped delivery: no service loads `out/secrets.env` as an `env_file`. Each service's manifest lists the secret names it reads (`secrets:`), the renderer emits `KEY: ${KEY}` into that service's `environment:`, and compose interpolates the values from `--env-file secrets.env` (which `ordo up` / `ordo recreate` and ops-controller always pass). A service holds only the secrets it reads; `tests/substrate/test_secret_scoping.py` pins the contract.
+- MCP tool secrets (e.g. `N8N_API_KEY`): same `out/secrets.env`, same scoped interpolation
 - Agent runtime state under `data/hermes/` — gitignored; Discord bot token is supplied via Docker secrets (file at `/run/secrets/discord_token`, SOPS-encrypted at rest under `secrets/discord_token.sops`); per-user allowlists are runtime state inside `data/hermes/`.
-- Gateway tokens — in `out/secrets.env`, set via compose `env_file:`
-- **Secret rotation:** Update `out/secrets.env` (or re-render via `ordo render`), then `docker compose -p ordo up -d --force-recreate <service>` from `out/`.
+- Gateway tokens: in `out/secrets.env`, interpolated per service as above
+- **Secret rotation:** Update `out/secrets.env` (a render never writes it), then `ordo recreate <service>` from the repo root for each service that reads the key (a `restart` keeps the old environment).
 
 ### Stack Secrets
 
 | Secret | Location | Injected by | Notes |
 |--------|----------|-------------|-------|
-| `LITELLM_MASTER_KEY` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | `sk-` + 32+ chars, enforced by the entrypoint; LiteLLM admin UI login |
-| `LITELLM_SALT_KEY` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Encrypts provider credentials in `litellm-db`. **Never rotate** (excluded from `rotate-internal.sh`) |
-| `LITELLM_DB_PASSWORD` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Postgres password for `litellm-db` |
-| `LITELLM_KEY_HERMES` / `_OPEN_WEBUI` / `_AUTOMATION` / `_EDGE` | `out/secrets.env` | Compose `env_file:` / per-service `environment:` | Per-consumer virtual keys, provisioned by `model-gateway-keys` |
-| `OPS_CONTROLLER_TOKEN` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Bearer the dashboard, agent and MCP clients send to ops-controller |
+| `LITELLM_MASTER_KEY` | `out/secrets.env` | Per-service `KEY: ${KEY}`, interpolated from `secrets.env` | `sk-` + 32+ chars, enforced by the entrypoint; LiteLLM admin UI login |
+| `LITELLM_SALT_KEY` | `out/secrets.env` | Per-service `KEY: ${KEY}`, interpolated from `secrets.env` | Encrypts provider credentials in `litellm-db`. **Never rotate** (excluded from `rotate-internal.sh`) |
+| `LITELLM_DB_PASSWORD` | `out/secrets.env` | Per-service `KEY: ${KEY}`, interpolated from `secrets.env` | Postgres password for `litellm-db` |
+| `LITELLM_KEY_HERMES` / `_OPEN_WEBUI` / `_AUTOMATION` / `_EDGE` | `out/secrets.env` | Per-service `KEY: ${KEY}`, interpolated from `secrets.env` | Per-consumer virtual keys, provisioned by `model-gateway-keys` |
+| `OPS_CONTROLLER_TOKEN` | `out/secrets.env` | Per-service `KEY: ${KEY}`, interpolated from `secrets.env` | Bearer the dashboard, agent and MCP clients send to ops-controller |
 | `DISCORD_BOT_TOKEN` | `secrets/discord_token.sops` | Docker secret → agent (`/run/secrets/discord_token`) | Optional, only when Discord channel is used |
-| `HF_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN` | `out/secrets.env` | Compose `env_file:` (`secrets.env`) | Optional, for gated HF model pulls and ComfyUI-Manager custom-node fetches |
+| `HF_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN` | `out/secrets.env` | Per-service `KEY: ${KEY}`, interpolated from `secrets.env` | Optional, for gated HF model pulls and ComfyUI-Manager custom-node fetches |
 
 ## SSRF Defenses (MCP)
 

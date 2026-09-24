@@ -6,8 +6,8 @@
   private key). Everything else is encrypted at rest in `secrets/*.sops`,
   safe to commit to a public repo.
 - Two delivery forms decrypt only when needed:
-  - **Env-form** → the gitignored `out/secrets.env`, which the rendered
-    compose reads directly as a second `env_file`.
+  - **Env-form** → the gitignored `out/secrets.env`, from which compose
+    interpolates each service's own secrets (no service loads it whole).
   - **File-form** → `~/.ai-toolkit/runtime/secrets/<name>`, mounted into
     containers as Docker secrets (`/run/secrets/<name>`), so they never
     appear in `docker inspect`.
@@ -25,11 +25,17 @@
   emits `out/secrets.env.example` (keys only, values empty). Copy it to
   `out/secrets.env` and fill real values — by hand or via
   `sops --decrypt --input-type=dotenv --output-type=dotenv
-  secrets/.env.sops`. The rendered `out/docker-compose.yml` already
-  declares `secrets.env` as a `required: false` second `env_file` on every
-  service that needs it, so a plain `docker compose -p ordo up -d` from
-  `out/` picks up the values (`OAUTH2_PROXY_*`, `OPS_CONTROLLER_TOKEN`,
-  `LITELLM_MASTER_KEY`, `SEARXNG_SECRET`, `N8N_API_KEY`, …).
+  secrets/.env.sops`. No service loads `secrets.env` as an `env_file`:
+  each service's manifest lists the secret names it reads (`secrets:` on a
+  plugin service, the agent and dashboard manifests, or the core service's
+  list in `ordo/compose.py`), the renderer emits `KEY: ${KEY}` into that
+  service's `environment:`, and compose interpolates the value from
+  `--env-file secrets.env`. A service therefore holds only the secrets it
+  reads (`tests/substrate/test_secret_scoping.py` pins this). `ordo up` /
+  `ordo recreate` always pass both env files, so the values arrive
+  (`OAUTH2_PROXY_*`, `OPS_CONTROLLER_TOKEN`, `LITELLM_MASTER_KEY`,
+  `SEARXNG_SECRET`, `N8N_API_KEY`, …). A hand-assembled compose command
+  without `--env-file secrets.env` interpolates every secret empty.
 - **File-form** (`secrets/<name>.sops` → `runtime/secrets/<name>`): mounted
   as Docker secrets at `/run/secrets/<name>`. Where an app SDK expects a
   plain env var, the consumer's entrypoint **bridges** `<NAME>_FILE` → a
@@ -66,9 +72,9 @@ blobs stays a host-only operation.
    manager under "Ordo SOPS age key — disaster recovery."
 4. Paste the public key line (`age1...`) into `secrets/.sops.yaml` under
    `creation_rules.[*].age`. The public key is safe to commit.
-5. Render (`python -m ordo.cli render --out out`), copy
+5. Render (`python -m ordo --source out/ordo.yaml render --out out`), copy
    `out/secrets.env.example` → `out/secrets.env`, fill real values, then
-   `docker compose -p ordo up -d` from `out/`.
+   `ordo up --all` from the repo root.
 
 ## Edit a secret
 
@@ -78,9 +84,9 @@ sops secrets/<name>.sops            # same for individual file-form tokens
 ```
 For env-form keys, also copy the changed value into `out/secrets.env` —
 that's the file compose reads; re-encrypting `.env.sops` alone doesn't
-propagate. Then recreate the dependent service from `out/` (a `restart` keeps the old
-environment), always with both env files, since each service's secrets are interpolated from
-secrets.env: `docker compose -p ordo --env-file .env --env-file secrets.env up -d --force-recreate agent`.
+propagate. Then recreate each service that reads the key, from the repo root (a `restart`
+keeps the old environment), for example `ordo recreate agent`. To find the readers, grep
+`out/docker-compose.yml` for `${KEY}`.
 
 ## Rotate internal tokens
 
@@ -91,21 +97,18 @@ makes every credential LiteLLM stored in Postgres unreadable. Rotate the rest at
 once:
 ```
 scripts/secrets/rotate-internal.sh          # re-encrypts secrets/.env.sops
-# copy the rotated values into out/secrets.env
-cd out
-COMPOSE_PROFILES='*' docker compose -p ordo --env-file .env --env-file secrets.env \
-    up -d --force-recreate model-gateway dashboard ops-controller \
-    agent hermes-dashboard model-gateway-keys oauth2-proxy
-cd ../..
+# copy the rotated values into out/secrets.env, then run the `ordo recreate` the
+# script prints, outside a GPU lease (it includes ops-controller, which
+# `ordo recreate` refuses to restart while the card is leased)
 git add secrets/.env.sops && git commit -m "chore(secrets): rotate internal tokens" && git push
 ```
 The cookie-secret rotation invalidates every oauth2-proxy session.
 
-`LITELLM_DB_PASSWORD` needs one extra step before the restart above: the new
+`LITELLM_DB_PASSWORD` needs one extra step before the recreate above: the new
 password only works once Postgres itself has it, so run
 `ALTER USER litellm PASSWORD '<new value>';` inside the `litellm-db` container
-(`docker compose -p ordo exec litellm-db psql -U litellm -d litellm`) before
-copying the rotated value into `out/secrets.env` and restarting
+(`docker exec -it ordo-litellm-db-1 psql -U litellm -d litellm`) before
+copying the rotated value into `out/secrets.env` and recreating
 `model-gateway`.
 
 ## Rotate high-value tokens (issuer-side)
@@ -126,7 +129,7 @@ echo -n "$NEW_VALUE" | \
        > secrets/<name>.sops
 scripts/secrets/decrypt.sh                          # file-form -> ~/.ai-toolkit/runtime/secrets/
 # env-form tokens (e.g. HF, GitHub PAT): also update the matching key in out/secrets.env
-docker compose -p ordo --env-file .env --env-file secrets.env up -d --force-recreate <consumer-service>  # from out/
+ordo recreate <consumer-service>                    # from the repo root
 git add secrets/<name>.sops && git commit && git push
 ```
 
@@ -155,6 +158,6 @@ Treat as catastrophic:
 |---|---|---|
 | `decrypt.sh` fails with `Failed to get the data key` | `SOPS_AGE_KEY_FILE` unset or key unreadable | Set `SOPS_AGE_KEY_FILE=$HOME/.config/sops/age/keys.txt`; verify `chmod 600` |
 | `invalid character` on `.env.sops` decrypt | SOPS doesn't auto-detect dotenv | Pass `--input-type=dotenv --output-type=dotenv` (the decrypt script already does) |
-| Container exits with `cookie_secret must be 16, 24, or 32 bytes` | `OAUTH2_PROXY_COOKIE_SECRET` made with `openssl rand -base64 32` (44 chars) | Regenerate with `tr -dc 'a-zA-Z0-9' </dev/urandom \| head -c 32`, edit `secrets/.env.sops`, restart |
+| Container exits with `cookie_secret must be 16, 24, or 32 bytes` | `OAUTH2_PROXY_COOKIE_SECRET` made with `openssl rand -base64 32` (44 chars) | Regenerate with `tr -dc 'a-zA-Z0-9' </dev/urandom \| head -c 32`, edit `secrets/.env.sops`, copy it into `out/secrets.env`, `ordo recreate oauth2-proxy` |
 | App can't reach a provider but the token "looks right" | `_FILE`→env-var bridge didn't run | Confirm the service entrypoint sources the bridge before calling the SDK, and `/run/secrets/<name>` exists in the container |
 | `docker compose up` fails on a missing bind-mount source under `runtime/secrets/` | `~/.ai-toolkit/runtime/secrets/` not populated | Run `scripts/secrets/decrypt.sh` first |

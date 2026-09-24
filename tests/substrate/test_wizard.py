@@ -20,11 +20,11 @@ def test_plan_reflects_hardware():
     assert p.tier == "ultra"
     # the catalog's top-ranked ultra model, and the operator's default as of 2026-09-20
     assert p.model_id == "qwen3.8-27b-turbo-fable-q6"
-    assert "song-gen" in p.plugins_available
+    assert "song-gen" in {p.id for p in REGISTRY.resolve("auto", HW_5090)[0]}
 
-    p_cpu = wizard.plan(CATALOG, REGISTRY, HW_CPU)
-    assert "comfyui" not in p_cpu.plugins_available   # no GPU media on CPU
-    assert "song-gen" not in p_cpu.plugins_available
+    cpu_plugins = {p.id for p in REGISTRY.resolve("auto", HW_CPU)[0]}
+    assert "comfyui" not in cpu_plugins   # no GPU media on CPU
+    assert "song-gen" not in cpu_plugins
     # light MCP tool servers still run on CPU (they're not GPU-bound)
 
 
@@ -127,7 +127,7 @@ def test_run_headless_full_answers_render(tmp_path):
     })
     src = Source.load(result.source_path)
     render(src, CATALOG, REGISTRY)   # must not raise
-    assert result.caddy_bind == "100.64.0.1"
+    assert src.site["CADDY_BIND"] == "100.64.0.1"
     assert "HF_TOKEN" in result.provided_secret_keys
 
 

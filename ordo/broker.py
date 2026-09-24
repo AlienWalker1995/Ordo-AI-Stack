@@ -49,7 +49,6 @@ class ContainerBackend(Protocol):
 
     # Compose verbs take an OPTIONAL service: no argument means the whole project, which for
     # compose_down means the entire stack including the agent and the GPU scheduler.
-    def pull_image(self, service: str) -> None: ...
     def exec_in(self, container: str, command: list[str]) -> tuple[int, str]: ...
     def compose_up(self, service: str | None = None) -> None: ...
     def compose_down(self, service: str | None = None) -> None: ...
@@ -72,7 +71,6 @@ class MockBackend:
         self.compose_up_calls: list = []
         self.compose_down_calls: list = []
         self.compose_restart_calls: list = []
-        self.pulled: list[str] = []
         self.execs: list[tuple[str, list[str]]] = []
         self.exec_result: tuple[int, str] = (0, "")
 
@@ -125,9 +123,6 @@ class MockBackend:
             },
             "vram_aggregate_unavailable": False,
         }
-
-    def pull_image(self, service: str) -> None:
-        self.pulled.append(service)
 
     def exec_in(self, container: str, command: list[str]) -> tuple[int, str]:
         self.execs.append((container, list(command)))
@@ -371,16 +366,6 @@ class DockerBackend:
                           self._lifecycle_guard(service), all_profiles=True),
             check=True, timeout=600,
         )
-
-    def pull_image(self, service: str) -> None:  # pragma: no cover - needs real docker
-        """Pull this service's declared image. Compose, not `docker pull`, because the image
-        reference lives in the rendered compose file and nowhere else."""
-        service = self._guard(service)
-        proc = subprocess.run(
-            self._compose("pull", service), capture_output=True, text=True, timeout=1800,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError((proc.stderr or proc.stdout).strip()[:500])
 
     def exec_in(self, container: str, command: list[str]) -> tuple[int, str]:  # pragma: no cover - needs real docker
         """Run a command inside one container of THIS project; returns (exit_code, combined output).

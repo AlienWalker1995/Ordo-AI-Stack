@@ -11,7 +11,7 @@ IDLE_STATUS = {
     "manifest": {"model": {"id": "qwen3.8-27b-uncensored-q6"}},
     "gpu": {"state": "idle", "total_vram_gb": 32.0, "free_vram_gb": 32.0, "running": [], "queued": [],
            "waiting_on_vram": False, "eta_seconds": 0.0, "idle_cached": {"llamacpp": 20.0},
-           "evicted_residents": {}, "cloud_routed": [], "rejected": []},
+           "evicted_residents": {}, "rejected": []},
 }
 
 NO_SCHEDULER_STATUS = {"manifest": {"model": {"id": "qwen3.8-27b-uncensored-q6"}}, "gpu": {"state": "no-scheduler"}}
@@ -20,7 +20,7 @@ NO_SCHEDULER_STATUS = {"manifest": {"model": {"id": "qwen3.8-27b-uncensored-q6"}
 def _busy_status(**gpu_overrides):
     gpu = {"state": "busy", "total_vram_gb": 32.0, "free_vram_gb": 4.0, "running": [], "queued": [],
           "waiting_on_vram": False, "eta_seconds": None, "idle_cached": {}, "evicted_residents": {},
-          "cloud_routed": [], "rejected": []}
+          "rejected": []}
     gpu.update(gpu_overrides)
     return {"manifest": {"model": {"id": "qwen3.8-27b-uncensored-q6"}}, "gpu": gpu}
 

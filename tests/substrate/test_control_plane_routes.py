@@ -283,20 +283,6 @@ def test_get_jobs_history_empty_without_sink(tmp_path):
     assert body == {"history": []}
 
 
-# --- GET /jobs/cloud-routed ---
-
-def test_get_jobs_cloud_routed_returns_200_and_drains(tmp_path):
-    cp, _ = _cp(tmp_path)
-    cp.scheduler._cloud_routed = ["too-big-job"]
-    code, body = cp.route("GET", "/jobs/cloud-routed")
-    assert code == 200
-    assert body == {"cloud_routed": ["too-big-job"]}
-    # Second call returns empty (drained)
-    code2, body2 = cp.route("GET", "/jobs/cloud-routed")
-    assert code2 == 200
-    assert body2 == {"cloud_routed": []}
-
-
 # --- GET /health ---
 
 def test_get_health_returns_200(tmp_path):

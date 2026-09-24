@@ -8,7 +8,7 @@ these are the preferred path for Ordo services, not the only one.
 - list_containers    -> GET  /containers
 - container_logs     -> GET  /containers/{name}/logs
 - restart_container  -> POST /containers/{name}/restart       (bounce existing container)
-- compose_restart    -> POST /services/{name}/recreate        (per-service; stack-wide is 501 by design)
+- compose_restart    -> POST /services/{name}/recreate        (per-service; stack-wide is refused client-side)
 - compose_up         -> POST /services/{name}/recreate        (picks up new .env / volumes / network)
 
 When to use which:

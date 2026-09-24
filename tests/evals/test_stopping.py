@@ -45,7 +45,6 @@ def untrusted(body, source="mcp__gateway__searxng_web_url_read"):
 ])
 def test_definitive_negatives_are_recognized(content, kind):
     assert stopping.definitive_negative_kind(content) == kind
-    assert stopping.is_definitive_negative(content) is True
 
 
 @pytest.mark.parametrize("content", [
@@ -60,7 +59,6 @@ def test_definitive_negatives_are_recognized(content, kind):
 ])
 def test_results_that_are_not_definitive_negatives(content):
     assert stopping.definitive_negative_kind(content) is None
-    assert stopping.is_definitive_negative(content) is False
 
 
 def test_a_fetched_page_mentioning_404_is_data_not_a_verdict():

@@ -37,10 +37,6 @@ dashboard: dashboard
 # the `langfuse` compose profile. To run it, replace `auto` with an explicit list that includes it.
 plugins: auto
 
-# Cloud tier-fallback: off by default (fully local, offline-capable). Opt-in only.
-cloud_fallback:
-  enabled: false
-
 # Host/site config — NOT derived from the model and NOT secret. Flows VERBATIM into the rendered
 # .env so the plugin manifests' ${VAR} bind-mount + edge refs resolve deterministically instead of
 # defaulting to `./data` relative to out/. This is the single source of truth for the operator's

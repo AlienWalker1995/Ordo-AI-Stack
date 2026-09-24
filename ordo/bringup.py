@@ -16,15 +16,15 @@ import json
 import shlex
 import subprocess
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 
 import yaml
 
 COMPOSE_FILE = "docker-compose.yml"
 OPS_CONTROLLER_SERVICE = "ops-controller"
-# Services sharing caddy's network namespace follow caddy: recreating caddy alone with --no-deps
-# leaves them attached to the old, dead namespace.
+# Services sharing caddy's network namespace follow caddy: recreating caddy without them leaves
+# them attached to the old, dead namespace, so a caddy bring-up names them too.
 NETNS_OWNER = "caddy"
 
 # Runs inside the ops-controller container, which holds its own token and serves on loopback.
@@ -89,40 +89,16 @@ def netns_members(doc: dict, owner: str = NETNS_OWNER) -> list[str]:
     )
 
 
-def _direct_dependencies(spec: dict) -> set[str]:
-    depends_on = spec.get("depends_on") or []
-    names = set(depends_on.keys() if isinstance(depends_on, dict) else depends_on)
-    network_mode = str(spec.get("network_mode") or "")
-    if network_mode.startswith("service:"):
-        names.add(network_mode.removeprefix("service:"))
-    return names
-
-
-def dependency_closure(doc: dict, services: Iterable[str]) -> set[str]:
-    """`services` plus everything compose starts for them when `--no-deps` is not passed."""
-    services_by_name = _services(doc)
-    closure: set[str] = set()
-    pending = list(services)
-    while pending:
-        name = pending.pop()
-        if name in closure:
-            continue
-        closure.add(name)
-        pending.extend(_direct_dependencies(services_by_name.get(name) or {}))
-    return closure
-
-
 def plan_named(doc: dict, services: Sequence[str], *, force_recreate: bool) -> tuple[list[str], set[str]]:
     """(compose args, services compose will start) for a named-service bring-up.
 
-    Named services are started alone (`--no-deps`), except caddy: its netns members must be
-    recreated with it, and it is never `--no-deps`, so compose also starts its dependencies.
+    Named services are started alone (`--no-deps`). caddy also takes its netns members, listed by
+    name so compose recreates them after caddy (it still orders named services by `depends_on`
+    under `--no-deps`), while caddy's own dependencies are left alone.
     """
     targets = list(services)
     if NETNS_OWNER in targets:
         targets += [m for m in netns_members(doc) if m not in targets]
-        args = ["up", "-d"] + (["--force-recreate"] if force_recreate else []) + targets
-        return args, dependency_closure(doc, targets)
     args = ["up", "-d", "--no-deps"] + (["--force-recreate"] if force_recreate else []) + targets
     return args, set(targets)
 

@@ -10,6 +10,7 @@ Live defect, 2026-09-23: the Dockerfile copied /usr/local/bin/docker and nothing
 `docker compose` was "not a docker command" and compose up/down/restart, service recreate and
 image pull were all broken on the real control plane.
 """
+import re
 from pathlib import Path
 
 DOCKERFILE = Path(__file__).resolve().parents[2] / "services" / "ops-controller" / "Dockerfile"
@@ -27,3 +28,19 @@ def test_image_ships_the_compose_plugin():
         "only /usr/local/bin/docker leaves every compose-backed route returning 500 against real "
         "docker while mock-backed tests pass."
     )
+
+
+def test_docker_client_is_pinned_by_version_and_digest():
+    """The compose plugin must match the host's, or each side hashes bind mounts differently.
+
+    compose v2.33 (the floating `docker:27-cli`) adds `create_host_path: true` to every bind, the
+    host's v5.1.0 does not, so a container created by one side reads as changed to the other and
+    every ops-controller recreate cascaded into services the host had just created (drift D2).
+    """
+    sources = re.findall(r"^COPY --from=(\S+)", DOCKERFILE.read_text(encoding="utf-8"), re.MULTILINE)
+    assert sources, "expected the docker CLI and compose plugin to be copied from a docker image"
+    for source in sources:
+        assert re.fullmatch(r"docker:\d+\.\d+\.\d+-cli@sha256:[0-9a-f]{64}", source), (
+            f"{source!r} floats: pin the exact docker CLI tag (whose bundled compose matches the host's) "
+            f"and its digest"
+        )

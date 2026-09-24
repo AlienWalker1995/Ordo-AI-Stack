@@ -164,7 +164,7 @@
 # oauth2-proxy stays the ONE auth gate and there is no second credential anywhere.
 #
 # Recreating caddy destroys this namespace and orphans hermes-dashboard along with
-# the tailnet sidecars — recreate them together, never with --no-deps.
+# the tailnet sidecars, so recreate them together: `ordo recreate caddy` names them.
 :8447 {
     import sso_service_loopback 127.0.0.1:9119
 }

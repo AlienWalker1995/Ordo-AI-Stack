@@ -30,7 +30,7 @@ The dashboard's `GET /api/overview` reports the collection point count as `knowl
 ## User Flow
 
 ```
-1. docker compose -p ordo --profile rag up -d   # from out/ (see docs/operator-guide.md); start Qdrant + rag-ingestion
+1. ordo up qdrant rag-ingestion                 # from the repo root (see docs/operator-guide.md)
 2. cp document.pdf data/rag-input/              # drop document
 3. rag-ingestion chunks + embeds + stores       # automatic
 4. Open WebUI chat → toggle RAG                 # retrieves relevant chunks

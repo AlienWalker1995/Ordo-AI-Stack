@@ -309,6 +309,21 @@ def test_write_emits_server_plugin_map_in_servers_json(tmp_path):
     assert [p.name for p in (tmp_path / "mcp").iterdir()] == ["servers.json"]
 
 
+
+def test_write_prunes_the_retired_mcp_gateway_artefacts(tmp_path):
+    """A re-render over an existing out/ removes the files older renders emitted: they sat in the
+    dir the dashboard mounts, looking live. Operator-owned files in out/ are never touched."""
+    retired = ("mcp/servers.txt", "mcp/registry-custom.yaml", "mcp/registry-custom.docker.yaml",
+               "mcp/server-plugin-map.json", "mcp-registry.yaml")
+    operator_owned = ("ordo.yaml", "secrets.env", "lease-history.jsonl", "auth/caddy/tailnet.crt")
+    for rel in retired + operator_owned:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("stale\n", encoding="utf-8")
+    render(_src(hardware=P_5090), CATALOG, REGISTRY).write(tmp_path)
+    assert [rel for rel in retired if (tmp_path / rel).exists()] == []
+    assert [rel for rel in operator_owned if not (tmp_path / rel).exists()] == []
+    assert [p.name for p in (tmp_path / "mcp").iterdir()] == ["servers.json"]
+
 # ── McpSpec: the validated `mcp:` manifest block. One streamable-HTTP server per plugin, either a
 #    compose service built from `image` or a hosted `url`. Invalid shapes fail at manifest load. ──
 def test_mcp_spec_image_server_requires_http_and_a_port():

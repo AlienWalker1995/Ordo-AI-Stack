@@ -101,7 +101,9 @@ Next steps:
   1. Copy the rotated values into out/secrets.env (the file compose reads).
   2. Recreate (not restart: a restart keeps the old environment), from the repo root:
      ordo recreate model-gateway model-gateway-keys litellm-db dashboard \\
-         ops-controller agent hermes-dashboard open-webui n8n oauth2-proxy
+         ops-controller agent hermes-dashboard open-webui n8n oauth2-proxy \\
+         comfyui comfyui-gate mcp-comfyui
+     (outside a GPU lease: ordo recreate refuses ops-controller while the card is leased)
   3. git commit secrets/.env.sops + push.
 
 LITELLM_DB_PASSWORD rotation also requires ALTER USER litellm PASSWORD inside

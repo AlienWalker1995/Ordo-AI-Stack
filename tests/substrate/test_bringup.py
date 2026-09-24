@@ -150,12 +150,13 @@ def test_core_is_a_whole_stack_up_with_no_profiles(monkeypatch, out_dir, recorde
     assert _tail(cmd) == ["up", "-d"]
 
 
-def test_caddy_is_never_no_deps_and_takes_its_netns_members(monkeypatch, out_dir, recorded):
+def test_caddy_takes_its_netns_members_by_name_and_stays_no_deps(monkeypatch, out_dir, recorded):
+    """The members are named, so compose recreates them after caddy; `--no-deps` keeps caddy's own
+    dependencies (oauth2-proxy here, ops-controller and llamacpp live) out of the recreate."""
     _status(monkeypatch, IDLE)
     assert cli.main(["recreate", "caddy", "--out", str(out_dir)]) == 0
     tail = _tail(recorded[-1])
-    assert "--no-deps" not in tail
-    assert tail == ["up", "-d", "--force-recreate", "caddy", "hermes-dashboard", "tailnet-chat"]
+    assert tail == ["up", "-d", "--no-deps", "--force-recreate", "caddy", "hermes-dashboard", "tailnet-chat"]
 
 
 def test_a_netns_member_alone_is_still_no_deps(monkeypatch, out_dir, recorded):
@@ -259,14 +260,17 @@ def test_ops_controller_is_recreatable_when_idle(monkeypatch, out_dir, recorded)
     assert _tail(recorded[-1]) == ["up", "-d", "--no-deps", "--force-recreate", "ops-controller"]
 
 
-def test_a_caddy_recreate_checks_everything_compose_would_start(monkeypatch, out_dir, recorded):
-    """Without --no-deps compose starts the dependency closure, so the check covers it too."""
+def test_a_caddy_recreate_is_allowed_during_a_lease(monkeypatch, out_dir, recorded):
+    """caddy has nothing to do with the card. Its dependency closure reaches ops-controller and
+    the evicted llamacpp, but `--no-deps` starts only caddy and its named members, so neither the
+    evicted resident nor the lease holder's control plane is touched."""
     compose = yaml.safe_load((out_dir / "docker-compose.yml").read_text(encoding="utf-8"))
-    compose["services"]["oauth2-proxy"]["depends_on"] = ["llamacpp"]
+    compose["services"]["oauth2-proxy"]["depends_on"] = ["llamacpp", "ops-controller"]
     (out_dir / "docker-compose.yml").write_text(yaml.safe_dump(compose), encoding="utf-8")
     _status(monkeypatch, LEASED)
-    assert cli.main(["recreate", "caddy", "--out", str(out_dir)]) == 2
-    assert recorded == []
+    assert cli.main(["recreate", "caddy", "--out", str(out_dir)]) == 0
+    assert _tail(recorded[-1]) == ["up", "-d", "--no-deps", "--force-recreate",
+                                   "caddy", "hermes-dashboard", "tailnet-chat"]
 
 
 def test_no_ops_controller_running_proceeds(monkeypatch, out_dir, recorded):

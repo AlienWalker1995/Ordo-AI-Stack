@@ -17,8 +17,8 @@ requires:
 provides: [tools]
 depends_on: [comfyui]      # queries the comfyui service (kind=service plugin) + ops-controller
 # OPS_CONTROLLER_TOKEN is an operator secret. Declaring it here emits the key into
-# secrets.env.example; the rendered MCP service reads secrets.env as a second env_file, so the
-# ${OPS_CONTROLLER_TOKEN} ref below interpolates to the real value at compose time.
+# secrets.env.example and a scoped ${OPS_CONTROLLER_TOKEN} ref into this service's environment,
+# which compose interpolates from `--env-file secrets.env`.
 secrets:
   - OPS_CONTROLLER_TOKEN
 mcp:

@@ -105,11 +105,11 @@
 python -m pytest tests/ -v
 
 # Compose smoke (render, then bring up from out/)
-python -m ordo.cli render --out out
-cd out && docker compose -p ordo up -d
-docker compose ps           # all services healthy within 3 min
-# model-gateway publishes NO host port (only Caddy publishes host ports) — reach it in-network from another container:
-docker compose exec dashboard curl -s http://model-gateway:11435/v1/models | jq .data[].id
+python -m ordo --source out/ordo.yaml render --out out
+ordo up --all
+docker ps --filter label=com.docker.compose.project=ordo   # all services healthy within 3 min
+# model-gateway publishes NO host port (only Caddy publishes host ports): reach it in-network from another container:
+docker exec ordo-dashboard-1 curl -s http://model-gateway:11435/v1/models | jq .data[].id
 # or externally via the Caddy /llm edge route (bearer = LITELLM_MASTER_KEY):
 # curl -s -H "Authorization: Bearer $LITELLM_MASTER_KEY" https://<host>/llm/v1/models | jq .data[].id
 docker compose exec dashboard curl -s http://localhost:8080/api/mcp/health | jq .health

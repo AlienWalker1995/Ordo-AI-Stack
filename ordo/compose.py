@@ -236,7 +236,7 @@ def _litellm_db(net: str) -> dict[str, Any]:
 # LITELLM_OTEL_V2 is deliberately NOT set: on 1.100.1 the V2 path ignores LANGFUSE_TRACING_ENVIRONMENT
 # (traces land in `default`), makes the root observation a proxy span with a NULL input, and exports
 # every Postgres auth/spend call as its own observation. The project key pair (LANGFUSE_PUBLIC_KEY /
-# LANGFUSE_SECRET_KEY) arrives through the secrets.env env_file, like every other secret here.
+# LANGFUSE_SECRET_KEY) is a scoped `KEY: ${KEY}` secret ref, like every other secret here.
 GATEWAY_LANGFUSE_ENV: dict[str, str] = {
     "LITELLM_EXTRA_CALLBACKS": "langfuse_otel",
     "LANGFUSE_OTEL_HOST": "http://langfuse-web:3000",
@@ -262,7 +262,7 @@ def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool
     Mounts the rendered out/model-gateway dir read-only: mcp_servers.yaml (the entrypoint merges it
     into the LiteLLM config) and keys.json (read by model-gateway-keys). Joins the internal MCP
     network so it can reach the mcp-* services. Secrets (LITELLM_MASTER_KEY, LITELLM_SALT_KEY,
-    THROUGHPUT_RECORD_TOKEN) come from the secrets.env env_file and are NOT re-declared here.
+    THROUGHPUT_RECORD_TOKEN) are scoped `KEY: ${KEY}` refs added by _add_secrets below.
 
     `langfuse_tracing` (the langfuse plugin is enabled) adds GATEWAY_LANGFUSE_ENV; without it the
     service renders exactly as before and the gateway boots on the template's callbacks alone.
