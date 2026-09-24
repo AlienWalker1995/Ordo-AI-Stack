@@ -14,7 +14,7 @@ FROM python@sha256:6d85378d88a19cd4d76079817532d62232be95757cb45945a99fec8e8084b
 COPY --from=docker:29.2.1-cli@sha256:cab69e2d0a1a2ea9a1ce1060252f439e83483ae41ec09317aecb33b08a0656a5 /usr/local/bin/docker /usr/local/bin/docker
 # ...and the compose PLUGIN, because `docker compose` is a plugin, not a subcommand of that binary.
 # Without it every route built on DockerBackend._compose() (compose up/down/restart, service
-# recreate, image pull) answers 500 with docker's own help text, while mock-backed tests stay
+# recreate) answers 500 with docker's own help text, while mock-backed tests stay
 # green — the same shape as the slice-1 protocol gap. Guarded by
 # tests/substrate/test_ops_controller_image.py.
 COPY --from=docker:29.2.1-cli@sha256:cab69e2d0a1a2ea9a1ce1060252f439e83483ae41ec09317aecb33b08a0656a5 /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
