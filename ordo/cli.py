@@ -4,6 +4,8 @@
     ordo render [--out DIR]     # render config from ordo.yaml into DIR (default ./out)
     ordo doctor                 # sanity checks (catalog integrity, source validity)
     ordo serve                  # run the control-plane HTTP service (ops-controller)
+    ordo up [--all|--core|SVC…] # bring the rendered stack up from the host (GPU-lease checked)
+    ordo recreate SVC…          # force-recreate services from the host (GPU-lease checked)
 
 `render` writes to an output dir only (it starts nothing), and `serve`'s Docker backend is
 hard-scoped to the ordo project prefix so it only ever touches its own project's containers.
@@ -15,7 +17,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import doctor, fetch, gpu, native, parity, preflight, wizard
+from . import bringup, doctor, fetch, gpu, native, parity, preflight, wizard
 from .broker import Broker, DockerBackend
 from .catalog import Catalog
 from .config import Source
@@ -173,23 +175,19 @@ def cmd_init(args: argparse.Namespace) -> int:
     # `plugins: auto` has already RENDERED every fitting optional service dormant behind its profile,
     # so installing later is a cheap recreate ("install open-webui"). The full configured stack (all
     # profiles — front door + every service) is the printed alternative.
-    profiles = ",".join(result.compose_profiles)
     if _prompt_yn("Bring up CORE + Hermes now (a capable agent, minimal footprint; install optional "
                   "services later by asking Hermes)?", default=False):
-        _run(["docker", "compose", "-p", "ordo", "--env-file", ".env", "--env-file",
-              "secrets.env", "up", "-d"], cwd=out)  # no COMPOSE_PROFILES -> core + agent only
+        bringup.bring_up(str(out), "ordo", [], whole_stack=True, with_profiles=False,
+                         force_recreate=False, dry_run=False)  # no profiles -> core + agent only
         print("\nHermes is coming up. Once it's loaded (via its chat gateway), ask it to install "
               "services — e.g. \"install open-webui\", \"turn on web search\".")
-        if profiles:
-            print(f"Full configured stack (front door + all services) when you want it:\n  cd {out} "
-                  f"&& COMPOSE_PROFILES={profiles} docker compose -p ordo --env-file .env "
-                  f"--env-file secrets.env up -d")
+        if result.compose_profiles:
+            print(f"Full configured stack (front door + all services) when you want it:\n"
+                  f"  ordo up --all --out {out}")
     else:
-        print(f"\nWhen ready — CORE + Hermes:  cd {out} && "
-              f"docker compose -p ordo --env-file .env --env-file secrets.env up -d")
-        if profiles:
-            print(f"Full configured stack:       cd {out} && COMPOSE_PROFILES={profiles} "
-                  f"docker compose -p ordo --env-file .env --env-file secrets.env up -d")
+        print(f"\nWhen ready, CORE + Hermes:  ordo up --core --out {out}")
+        if result.compose_profiles:
+            print(f"Full configured stack:       ordo up --all --out {out}")
     return 0
 
 
@@ -302,6 +300,21 @@ def cmd_native(args: argparse.Namespace) -> int:
     rc = render(src, cat)
     print(native.plan(rc, models_dir=args.models_dir).as_text())
     return 0
+
+
+def cmd_up(args: argparse.Namespace) -> int:
+    forms = int(args.all) + int(args.core) + int(bool(args.services))
+    if forms != 1:
+        print("ordo up: give exactly one of --all, --core or SERVICE...", file=sys.stderr)
+        return 1
+    whole_stack = args.all or args.core
+    return bringup.bring_up(args.out, args.project, args.services, whole_stack=whole_stack,
+                            with_profiles=not args.core, force_recreate=False, dry_run=args.dry_run)
+
+
+def cmd_recreate(args: argparse.Namespace) -> int:
+    return bringup.bring_up(args.out, args.project, args.services, whole_stack=False,
+                            with_profiles=True, force_recreate=True, dry_run=args.dry_run)
 
 
 def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a socket
@@ -445,6 +458,23 @@ def main(argv: list[str] | None = None) -> int:
     pf.add_argument("--project", default="ordo")
     pf.add_argument("--no-images", action="store_true", help="skip the docker image-presence check")
     pf.set_defaults(func=cmd_preflight)
+    # `up` / `recreate`: the one host bring-up path. Both env files and every rendered profile
+    # (the argv builder is shared with ops-controller), named services never cascade onto their
+    # dependencies (caddy excepted: it takes its netns members), and both refuse when the GPU
+    # lease would be violated.
+    pu = sub.add_parser("up", help="bring the rendered stack up (refuses during a GPU lease)")
+    pu.add_argument("services", nargs="*", metavar="SERVICE",
+                    help="start only these services (--no-deps; caddy also takes its netns members)")
+    pu.add_argument("--all", action="store_true", help="whole stack, every rendered profile")
+    pu.add_argument("--core", action="store_true", help="whole stack without profiles: core + agent")
+    prc = sub.add_parser("recreate", help="force-recreate services (refuses an evicted GPU resident)")
+    prc.add_argument("services", nargs="+", metavar="SERVICE")
+    for sp, func in ((pu, cmd_up), (prc, cmd_recreate)):
+        sp.add_argument("--out", default="out", help="the rendered stack directory (default: out)")
+        sp.add_argument("--project", default="ordo", help="compose project name (default: ordo)")
+        sp.add_argument("--dry-run", action="store_true",
+                        help="check the lease and print the docker compose argv without running it")
+        sp.set_defaults(func=func)
     pv = sub.add_parser("serve")
     pv.add_argument("--host", default="0.0.0.0")
     pv.add_argument("--port", type=int, default=9000)

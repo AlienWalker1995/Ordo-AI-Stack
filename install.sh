@@ -117,7 +117,7 @@ Config written to $TARGET/out/. To finish interactively:
   cd "$TARGET" && . .venv/bin/activate && ordo init --out out --force
 Or continue manually:
   ordo --source out/ordo.yaml render --out out
-  cd out && docker compose -p ordo --env-file .env --env-file secrets.env up -d
+  ordo up --core --out out     # core + Hermes; \`ordo up --all --out out\` for every service
 EOF
 fi
 

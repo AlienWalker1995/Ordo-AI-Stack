@@ -22,6 +22,7 @@ import re
 import subprocess
 from typing import Protocol
 
+from .bringup import compose_argv, load_compose, profiles_in
 from .scheduler import Job, Scheduler
 
 
@@ -244,49 +245,25 @@ class DockerBackend:
     # --- compose-project queries and lifecycle (ported from ops-api, slice 1) ---
     #
     # Everything below stays in this class's existing style: the docker CLI over subprocess,
-    # scoped to THIS compose project by label, no third-party SDK. `_compose()` builds the
-    # invocation the operator uses by hand, including BOTH env files, because a compose call
-    # missing secrets.env renders a different file than the one the stack was brought up with.
+    # scoped to THIS compose project by label, no third-party SDK. `_compose()` builds its argv with
+    # `bringup.compose_argv`, the same builder the host's `ordo up` uses, so both env files and the
+    # profile set are identical whether the control plane or the operator runs compose.
 
     COMPOSE_DIR = "/config"
 
     def _compose(self, *args: str, all_profiles: bool = False) -> list[str]:
-        cmd = [
-            "docker", "compose", "-p", self.project,
-            "-f", f"{self.COMPOSE_DIR}/docker-compose.yml",
-        ]
-        # Every profile the stack was started with, so a target whose `depends_on:` names a
-        # PROFILED service resolves. Without it, `docker compose ... open-webui` aborts with
-        # "no such service: qdrant" (qdrant sits behind the `rag` profile) even though
-        # --no-deps means qdrant is never started. Widening the resolvable set is safe;
-        # --no-deps is what guarantees only the named service is touched.
-        if all_profiles:
-            for profile in self._profiles():
-                cmd += ["--profile", profile]
-        # BOTH env files. Passing any --env-file disables compose's implicit .env auto-load, so
-        # .env must be listed too; without secrets.env every ${LITELLM_MASTER_KEY} style
-        # reference goes UNSET and secret-dependent services crash-loop (the 2026-06-26
-        # oauth2-proxy 11-byte-cookie outage). Order matters: derived first, secrets second.
-        cmd += [
-            "--env-file", f"{self.COMPOSE_DIR}/.env",
-            "--env-file", f"{self.COMPOSE_DIR}/secrets.env",
-        ]
-        return cmd + list(args)
+        # all_profiles: every profile in the rendered file, so a target whose `depends_on:` names
+        # a PROFILED service resolves (see compose_argv).
+        profiles = self._profiles() if all_profiles else []
+        return compose_argv(self.COMPOSE_DIR, self.project, *args, profiles=profiles)
 
     def _profiles(self) -> list[str]:  # pragma: no cover - reads the rendered compose file
         """Every profile named anywhere in the rendered compose file, sorted for determinism."""
         try:
-            import yaml
-
-            with open(f"{self.COMPOSE_DIR}/docker-compose.yml", encoding="utf-8") as f:
-                doc = yaml.safe_load(f) or {}
+            doc = load_compose(self.COMPOSE_DIR)
         except Exception:
             return []
-        found: set[str] = set()
-        for service in (doc.get("services") or {}).values():
-            for profile in (service or {}).get("profiles") or []:
-                found.add(str(profile))
-        return sorted(found)
+        return profiles_in(doc)
 
     def _project_ps(self) -> list[dict]:  # pragma: no cover - needs real docker
         """Every container in this project as {service, name, state, status}."""

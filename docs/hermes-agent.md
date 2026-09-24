@@ -1,6 +1,6 @@
 # Hermes Agent (Docker-mode)
 
-> ⚠️ **Naming note — v2 is the only stack (V1 top-level tree retired 2026-07-24, commit `62540bf`). The repo was later flattened (2026-07-24, commit `2d4bd9c`): the `v2/` directory no longer exists — its contents live at the repo root; there is no v2, there is only Ordo.** Hermes is the stack's assistant-agent layer and **is the default agent**. The stack models an agent as a **data manifest** ([`../services/hermes/agent.yaml`](../services/hermes/agent.yaml)) that the renderer wires into a single `agent` compose service (the hermes web UI ships as the separate `hermes-dashboard` service-plugin, profile `hermes-ui`). The agent contract (chat via model-gateway, tools via the model-gateway `/mcp` endpoint, GPU via the ops-controller `/jobs` scheduler, `.env` read-only) is documented in [`agents.md`](agents.md). Hermes' persistent brain lives in the **`hermes-home` named volume** (moved off the `data/hermes/` bind 2026-08-05, #143) and the Discord/`SOUL.md`/state notes below remain accurate. The agent image is built from its co-located build context **`services/hermes/`** (`Dockerfile` alongside the `agent.yaml` manifest) via `docker build -t ordo/agent-hermes:latest ./services/hermes` and selected via `agent: hermes` in `ordo.yaml`. The stack is brought up entirely from the repo root: edit `ordo.yaml` (template `ordo.example.yaml`), render with `ordo render` (`python -m ordo.cli render --out out`), then `docker compose -p ordo … up` from `out/` — see [`operator-guide.md`](operator-guide.md).
+> ⚠️ **Naming note — v2 is the only stack (V1 top-level tree retired 2026-07-24, commit `62540bf`). The repo was later flattened (2026-07-24, commit `2d4bd9c`): the `v2/` directory no longer exists — its contents live at the repo root; there is no v2, there is only Ordo.** Hermes is the stack's assistant-agent layer and **is the default agent**. The stack models an agent as a **data manifest** ([`../services/hermes/agent.yaml`](../services/hermes/agent.yaml)) that the renderer wires into a single `agent` compose service (the hermes web UI ships as the separate `hermes-dashboard` service-plugin, profile `hermes-ui`). The agent contract (chat via model-gateway, tools via the model-gateway `/mcp` endpoint, GPU via the ops-controller `/jobs` scheduler, `.env` read-only) is documented in [`agents.md`](agents.md). Hermes' persistent brain lives in the **`hermes-home` named volume** (moved off the `data/hermes/` bind 2026-08-05, #143) and the Discord/`SOUL.md`/state notes below remain accurate. The agent image is built from its co-located build context **`services/hermes/`** (`Dockerfile` alongside the `agent.yaml` manifest) via `docker build -t ordo/agent-hermes:latest ./services/hermes` and selected via `agent: hermes` in `ordo.yaml`. The stack is brought up entirely from the repo root: edit `ordo.yaml` (template `ordo.example.yaml`), render with `ordo render` (`python -m ordo.cli render --out out`), then `ordo up --all` from the repo root — see [`operator-guide.md`](operator-guide.md).
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) is the stack's assistant-agent layer. It runs as two compose services — `agent` (Discord / Telegram messaging) and `hermes-dashboard` (web UI, container port 9119, published by Caddy at `https://${CADDY_TAILNET_HOSTNAME}:8447/` — served at its origin root behind a plain SSO proxy, no forwarded-prefix base injection) — that come up with the rest of the stack.
 
@@ -10,15 +10,14 @@ Bring up the whole stack from the repo root (there is no committed root `docker-
 
 ```bash
 python -m ordo.cli render --out out   # renders ordo.yaml -> out/{.env,docker-compose.yml,secrets.env.example,…}
-cd out
-docker compose -p ordo up -d
+ordo up --all                          # refuses while a GPU lease holds the card
 ```
 
 That's it. Hermes starts automatically, waits for model-gateway / model-gateway-keys / dashboard to be healthy, then registers messaging platforms (if configured) and serves the web UI.
 
 Web UI: `https://${CADDY_TAILNET_HOSTNAME}:8447/` (Google SSO, its own dedicated Caddy port, served at the origin root — see [docs/runbooks/auth.md](runbooks/auth.md)). The old `https://${CADDY_TAILNET_HOSTNAME}/hermes*` URL still works — Caddy's `:443` front door 302s it to `:8447/`.
 Logs: `docker compose -p ordo logs -f agent hermes-dashboard`
-Restart: `docker compose -p ordo restart agent` (to pick up changed env or secrets, recreate instead: `docker compose -p ordo --env-file .env --env-file secrets.env up -d --force-recreate agent`)
+Restart: `docker compose -p ordo restart agent` (to pick up changed env or secrets, recreate instead, from the repo root: `ordo recreate agent`)
 Stop only Hermes: `docker compose -p ordo stop agent hermes-dashboard`
 
 (All `docker compose` commands below assume you're in `out/`, the rendered output directory, with `-p ordo`.)
@@ -43,7 +42,7 @@ killed cron for 22h — the volume removes that failure mode.
 Edit brain files via `docker exec ordo-agent-1 gosu hermes …` (or the
 `\\wsl$\docker-desktop\...\volumes\ordo_hermes-home\_data` path from Windows). To start
 from a clean slate: `docker compose -p ordo down`, `docker volume rm ordo_hermes-home`,
-`docker compose -p ordo up -d`.
+`ordo up --all` (from the repo root).
 
 ## Discord setup
 
@@ -73,7 +72,7 @@ After editing `ordo.yaml`:
 
 ```bash
 python -m ordo.cli render --out out   # re-render
-cd out && docker compose -p ordo up -d --no-deps agent   # recreate with new env
+ordo recreate agent                   # recreate with new env
 ```
 
 ### Verifying
@@ -140,7 +139,7 @@ The Hermes upstream SHA is pinned in `services/hermes/Dockerfile` as `ARG HERMES
 1. Check recent commits: `git ls-remote https://github.com/NousResearch/hermes-agent.git main` — pick a SHA.
 2. Edit `services/hermes/Dockerfile`, change the `ARG HERMES_PINNED_SHA` default.
 3. Rebuild the image from the `services/hermes/` build context: `docker build -t ordo/agent-hermes:latest ./services/hermes` (run from the repo root).
-4. `cd out && docker compose -p ordo up -d agent hermes-dashboard` (recreates with the rebuilt image).
+4. `ordo recreate agent hermes-dashboard` (recreates with the rebuilt image).
 
 You can also override without editing the file: `docker build --build-arg HERMES_PINNED_SHA=<sha> -t ordo/agent-hermes:latest ./services/hermes`.
 
@@ -163,8 +162,8 @@ docker compose -p ordo logs hermes-dashboard | tail -50
 
 **Clean restart (throws away all sessions + skills):**
 ```bash
-docker compose -p ordo down
+(cd out && docker compose -p ordo down)
 docker volume rm ordo_hermes-home
-docker compose -p ordo up -d
+ordo up --all
 ```
 

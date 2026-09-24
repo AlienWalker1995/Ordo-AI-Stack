@@ -1,0 +1,341 @@
+"""`ordo up` / `ordo recreate`: the one sanctioned host bring-up command.
+
+Every host entry point used to hand-assemble `docker compose -p ordo --env-file ...` with its own
+profile set and `--no-deps` choice, and none of them checked the GPU lease. A whole-stack `up -d`
+during a render restarted the evicted llama.cpp beside the render (two tenants on one card). These
+tests pin the argv the command builds (shared with ops-controller's DockerBackend, so the two
+cannot diverge) and the lease refusals. Nothing touches docker: the status reader and
+subprocess.run are replaced.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+from ordo import bringup, cli
+from ordo.broker import DockerBackend
+
+COMPOSE = {
+    "services": {
+        "llamacpp": {"image": "x"},
+        "model-gateway": {"image": "x", "depends_on": {"llamacpp": {"condition": "service_started"}}},
+        "open-webui": {"image": "x", "profiles": ["webui"], "depends_on": ["model-gateway", "qdrant"]},
+        "qdrant": {"image": "x", "profiles": ["rag"]},
+        "ops-controller": {"image": "x"},
+        "agent": {"image": "x", "depends_on": ["model-gateway"]},
+        "oauth2-proxy": {"image": "x", "profiles": ["edge"]},
+        "caddy": {"image": "x", "profiles": ["edge"], "depends_on": ["oauth2-proxy"]},
+        "tailnet-chat": {"image": "x", "profiles": ["edge"], "network_mode": "service:caddy"},
+        "hermes-dashboard": {"image": "x", "profiles": ["hermes-ui"], "network_mode": "service:caddy"},
+    }
+}
+
+IDLE = {"state": "idle", "leased": False, "running": [], "queued": [], "evicted_residents": {}}
+LEASED = {
+    "state": "busy",
+    "leased": True,
+    "running": [{"id": "gate-comfyui", "kind": "media"}],
+    "queued": [],
+    "evicted_residents": {"llamacpp": 27.5},
+}
+# An ops-controller image older than the `leased` field: only the raw lists.
+LEASED_OLD_IMAGE = {k: v for k, v in LEASED.items() if k != "leased"}
+
+
+@pytest.fixture
+def out_dir(tmp_path) -> Path:
+    (tmp_path / "docker-compose.yml").write_text(yaml.safe_dump(COMPOSE), encoding="utf-8")
+    return tmp_path
+
+
+@pytest.fixture
+def recorded(monkeypatch) -> list[list[str]]:
+    """Captures every argv the command would run; nothing reaches docker."""
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, *a, **kw):
+        calls.append(list(cmd))
+
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr("ordo.bringup.subprocess.run", fake_run)
+    return calls
+
+
+def _status(monkeypatch, gpu):
+    """Replace the ops-controller status reader. `gpu` None = ops-controller not running."""
+    def fake(project):
+        if isinstance(gpu, Exception):
+            raise gpu
+        return gpu
+
+    monkeypatch.setattr("ordo.bringup.read_gpu_status", fake)
+
+
+def _profiles(cmd: list[str]) -> list[str]:
+    return [cmd[i + 1] for i, a in enumerate(cmd) if a == "--profile"]
+
+
+def _tail(cmd: list[str]) -> list[str]:
+    """The compose subcommand and its arguments (everything after the last global flag)."""
+    return cmd[cmd.index("up"):]
+
+
+# --- the shared argv builder ---
+
+
+def test_compose_argv_shape():
+    cmd = bringup.compose_argv("/d", "ordo", "up", "-d", profiles=["a", "b"])
+    assert cmd == [
+        "docker", "compose", "-p", "ordo", "-f", "/d/docker-compose.yml",
+        "--profile", "a", "--profile", "b",
+        "--env-file", "/d/.env", "--env-file", "/d/secrets.env",
+        "up", "-d",
+    ]
+
+
+def test_docker_backend_uses_the_shared_builder(out_dir):
+    backend = DockerBackend("ordo")
+    backend.COMPOSE_DIR = str(out_dir)
+    assert backend._compose("up", "-d", "x", all_profiles=True) == bringup.compose_argv(
+        str(out_dir), "ordo", "up", "-d", "x", profiles=bringup.profiles_in(COMPOSE))
+    assert backend._compose("pull", "x") == bringup.compose_argv(str(out_dir), "ordo", "pull", "x")
+
+
+def test_profiles_are_every_profile_in_the_rendered_compose_sorted():
+    assert bringup.profiles_in(COMPOSE) == ["edge", "hermes-ui", "rag", "webui"]
+
+
+# --- argv the CLI builds ---
+
+
+def test_named_up_is_no_deps_with_both_env_files_and_every_profile(monkeypatch, out_dir, recorded):
+    _status(monkeypatch, IDLE)
+    assert cli.main(["up", "open-webui", "--out", str(out_dir)]) == 0
+    cmd = recorded[-1]
+    assert cmd[:4] == ["docker", "compose", "-p", "ordo"]
+    assert cmd[cmd.index("-f") + 1] == f"{out_dir.resolve().as_posix()}/docker-compose.yml"
+    env_files = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--env-file"]
+    assert env_files == [f"{out_dir.resolve().as_posix()}/.env", f"{out_dir.resolve().as_posix()}/secrets.env"]
+    assert _profiles(cmd) == ["edge", "hermes-ui", "rag", "webui"]
+    assert _tail(cmd) == ["up", "-d", "--no-deps", "open-webui"]
+
+
+def test_recreate_adds_force_recreate(monkeypatch, out_dir, recorded):
+    _status(monkeypatch, IDLE)
+    assert cli.main(["recreate", "model-gateway", "agent", "--out", str(out_dir)]) == 0
+    assert _tail(recorded[-1]) == ["up", "-d", "--no-deps", "--force-recreate", "model-gateway", "agent"]
+
+
+def test_all_is_a_whole_stack_up_with_every_profile(monkeypatch, out_dir, recorded):
+    _status(monkeypatch, IDLE)
+    assert cli.main(["up", "--all", "--out", str(out_dir)]) == 0
+    cmd = recorded[-1]
+    assert _profiles(cmd) == ["edge", "hermes-ui", "rag", "webui"]
+    assert _tail(cmd) == ["up", "-d"]
+
+
+def test_core_is_a_whole_stack_up_with_no_profiles(monkeypatch, out_dir, recorded):
+    _status(monkeypatch, IDLE)
+    assert cli.main(["up", "--core", "--out", str(out_dir)]) == 0
+    cmd = recorded[-1]
+    assert _profiles(cmd) == []
+    assert _tail(cmd) == ["up", "-d"]
+
+
+def test_caddy_is_never_no_deps_and_takes_its_netns_members(monkeypatch, out_dir, recorded):
+    _status(monkeypatch, IDLE)
+    assert cli.main(["recreate", "caddy", "--out", str(out_dir)]) == 0
+    tail = _tail(recorded[-1])
+    assert "--no-deps" not in tail
+    assert tail == ["up", "-d", "--force-recreate", "caddy", "hermes-dashboard", "tailnet-chat"]
+
+
+def test_a_netns_member_alone_is_still_no_deps(monkeypatch, out_dir, recorded):
+    _status(monkeypatch, IDLE)
+    assert cli.main(["recreate", "tailnet-chat", "--out", str(out_dir)]) == 0
+    assert _tail(recorded[-1]) == ["up", "-d", "--no-deps", "--force-recreate", "tailnet-chat"]
+
+
+def test_dry_run_prints_the_argv_and_runs_nothing(monkeypatch, out_dir, recorded, capsys):
+    _status(monkeypatch, IDLE)
+    assert cli.main(["up", "--all", "--out", str(out_dir), "--dry-run"]) == 0
+    assert recorded == []
+    printed = capsys.readouterr().out
+    assert "docker compose -p ordo" in printed and "secrets.env up -d" in printed
+
+
+def test_unknown_service_is_refused(monkeypatch, out_dir, recorded):
+    _status(monkeypatch, IDLE)
+    assert cli.main(["up", "no-such-thing", "--out", str(out_dir)]) == 1
+    assert recorded == []
+
+
+def test_up_needs_exactly_one_target_form(monkeypatch, out_dir, recorded):
+    _status(monkeypatch, IDLE)
+    assert cli.main(["up", "--out", str(out_dir)]) == 1
+    assert cli.main(["up", "--all", "agent", "--out", str(out_dir)]) == 1
+    assert cli.main(["up", "--all", "--core", "--out", str(out_dir)]) == 1
+    assert recorded == []
+
+
+def test_missing_render_is_refused(monkeypatch, tmp_path, recorded):
+    _status(monkeypatch, IDLE)
+    assert cli.main(["up", "--all", "--out", str(tmp_path / "nope")]) == 1
+    assert recorded == []
+
+
+# --- the GPU lease ---
+
+
+@pytest.mark.parametrize("gpu", [LEASED, LEASED_OLD_IMAGE])
+def test_all_is_refused_during_a_lease_naming_the_holders(monkeypatch, out_dir, recorded, capsys, gpu):
+    _status(monkeypatch, gpu)
+    assert cli.main(["up", "--all", "--out", str(out_dir)]) == 2
+    assert recorded == []
+    err = capsys.readouterr().err
+    assert "gate-comfyui" in err and "llamacpp" in err
+
+
+def test_core_is_refused_during_a_lease(monkeypatch, out_dir, recorded):
+    _status(monkeypatch, LEASED)
+    assert cli.main(["up", "--core", "--out", str(out_dir)]) == 2
+    assert recorded == []
+
+
+def test_old_image_running_only_counts_as_leased(monkeypatch, out_dir, recorded):
+    _status(monkeypatch, {"state": "busy", "running": [{"id": "job-1", "kind": "media"}], "evicted_residents": {}})
+    assert cli.main(["up", "--all", "--out", str(out_dir)]) == 2
+    assert recorded == []
+
+
+def test_naming_an_evicted_resident_is_refused(monkeypatch, out_dir, recorded, capsys):
+    _status(monkeypatch, LEASED)
+    assert cli.main(["recreate", "llamacpp", "--out", str(out_dir)]) == 2
+    assert recorded == []
+    assert "llamacpp" in capsys.readouterr().err
+
+
+def test_dry_run_still_reports_the_refusal(monkeypatch, out_dir, recorded):
+    _status(monkeypatch, LEASED)
+    assert cli.main(["up", "--all", "--out", str(out_dir), "--dry-run"]) == 2
+
+
+def test_named_services_off_the_card_are_allowed_during_a_lease(monkeypatch, out_dir, recorded):
+    """--no-deps means only the named service starts, so the evicted resident stays down."""
+    _status(monkeypatch, LEASED)
+    assert cli.main(["recreate", "model-gateway", "--out", str(out_dir)]) == 0
+    assert _tail(recorded[-1]) == ["up", "-d", "--no-deps", "--force-recreate", "model-gateway"]
+
+
+def test_agent_is_recreatable_during_a_lease(monkeypatch, out_dir, recorded):
+    _status(monkeypatch, LEASED)
+    assert cli.main(["recreate", "agent", "--out", str(out_dir)]) == 0
+
+
+@pytest.mark.parametrize("gpu", [LEASED, LEASED_OLD_IMAGE])
+@pytest.mark.parametrize("argv", [["recreate", "ops-controller"], ["up", "ops-controller"],
+                                  ["recreate", "ops-controller", "agent"]])
+def test_ops_controller_is_refused_during_a_lease(monkeypatch, out_dir, recorded, capsys, gpu, argv):
+    """The scheduler's lease and eviction state live in ops-controller's memory. Restarting it
+    mid-lease loses them: the evicted resident is never restored, or is restored beside the render."""
+    _status(monkeypatch, gpu)
+    assert cli.main([*argv, "--out", str(out_dir)]) == 2
+    assert recorded == []
+    err = capsys.readouterr().err
+    assert "ops-controller" in err and "gate-comfyui" in err
+
+
+def test_ops_controller_is_recreatable_when_idle(monkeypatch, out_dir, recorded):
+    _status(monkeypatch, IDLE)
+    assert cli.main(["recreate", "ops-controller", "--out", str(out_dir)]) == 0
+    assert _tail(recorded[-1]) == ["up", "-d", "--no-deps", "--force-recreate", "ops-controller"]
+
+
+def test_a_caddy_recreate_checks_everything_compose_would_start(monkeypatch, out_dir, recorded):
+    """Without --no-deps compose starts the dependency closure, so the check covers it too."""
+    compose = yaml.safe_load((out_dir / "docker-compose.yml").read_text(encoding="utf-8"))
+    compose["services"]["oauth2-proxy"]["depends_on"] = ["llamacpp"]
+    (out_dir / "docker-compose.yml").write_text(yaml.safe_dump(compose), encoding="utf-8")
+    _status(monkeypatch, LEASED)
+    assert cli.main(["recreate", "caddy", "--out", str(out_dir)]) == 2
+    assert recorded == []
+
+
+def test_no_ops_controller_running_proceeds(monkeypatch, out_dir, recorded):
+    """A fresh install has no control plane yet, so there is no lease to honor."""
+    _status(monkeypatch, None)
+    assert cli.main(["up", "--all", "--out", str(out_dir)]) == 0
+    assert _tail(recorded[-1]) == ["up", "-d"]
+
+
+def test_unreadable_status_fails_closed(monkeypatch, out_dir, recorded, capsys):
+    _status(monkeypatch, bringup.LeaseUnknown("ops-controller is running but /status failed"))
+    assert cli.main(["recreate", "model-gateway", "--out", str(out_dir)]) == 2
+    assert recorded == []
+    assert "/status failed" in capsys.readouterr().err
+
+
+# --- the status reader ---
+
+
+class _Proc:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def _fake_docker(monkeypatch, ps: _Proc, exec_: _Proc | None = None) -> list[list[str]]:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, *a, **kw):
+        calls.append(list(cmd))
+        if cmd[:2] == ["docker", "ps"]:
+            return ps
+        if cmd[:2] == ["docker", "exec"] and exec_ is not None:
+            return exec_
+        raise AssertionError(f"unexpected command {cmd}")
+
+    monkeypatch.setattr("ordo.bringup.subprocess.run", fake_run)
+    return calls
+
+
+def test_status_reader_finds_the_container_by_compose_labels(monkeypatch):
+    calls = _fake_docker(monkeypatch, _Proc(stdout="ordo-ops-controller-1\n"),
+                         _Proc(stdout='{"state": "idle", "leased": false}\n'))
+    assert bringup.read_gpu_status("ordo") == {"state": "idle", "leased": False}
+    ps = calls[0]
+    assert "label=com.docker.compose.project=ordo" in ps
+    assert "label=com.docker.compose.service=ops-controller" in ps
+    exec_ = calls[1]
+    assert exec_[:3] == ["docker", "exec", "ordo-ops-controller-1"]
+    script = exec_[-1]
+    assert "http://127.0.0.1:9000/status" in script and "OPS_CONTROLLER_TOKEN" in script
+
+
+def test_status_reader_returns_none_when_ops_controller_is_not_running(monkeypatch):
+    _fake_docker(monkeypatch, _Proc(stdout=""))
+    assert bringup.read_gpu_status("ordo") is None
+
+
+@pytest.mark.parametrize("exec_", [
+    _Proc(returncode=1, stderr="HTTP Error 401: Unauthorized"),
+    _Proc(stdout="not json"),
+    _Proc(stdout="[]"),
+])
+def test_status_reader_fails_closed_when_the_status_cannot_be_read(monkeypatch, exec_):
+    _fake_docker(monkeypatch, _Proc(stdout="ordo-ops-controller-1\n"), exec_)
+    with pytest.raises(bringup.LeaseUnknown):
+        bringup.read_gpu_status("ordo")
+
+
+def test_status_reader_fails_closed_when_docker_cannot_be_queried(monkeypatch):
+    _fake_docker(monkeypatch, _Proc(returncode=1, stderr="Cannot connect to the Docker daemon"))
+    with pytest.raises(bringup.LeaseUnknown):
+        bringup.read_gpu_status("ordo")

@@ -41,7 +41,7 @@ with the age private key at `~/.config/sops/age/keys.txt`.
   values empty. Copy it to `out/secrets.env` and fill in real values
   (SOPS-decrypt the relevant `secrets/<name>.sops` file, or hand-set).
   `out/secrets.env` is gitignored, never committed.
-- Bring up the stack: from `out/`, `docker compose -p ordo up -d`
+- Bring up the stack: from the repo root, `ordo up --all`
   (the rendered compose reads `secrets.env` as a second, optional
   `env_file` layered after `.env`, so derived config and operator
   secrets stay in separate files).
