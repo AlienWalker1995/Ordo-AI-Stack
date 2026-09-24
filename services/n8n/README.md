@@ -10,7 +10,7 @@ plugin; this directory only builds the MCP bridge.
 ## Build
 
 ```sh
-docker build -t ordo/n8n-mcp:latest services/n8n
+ordo build mcp-n8n
 ```
 
 ## Why the bridge

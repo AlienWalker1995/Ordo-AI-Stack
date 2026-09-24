@@ -203,7 +203,7 @@ def test_comfyui_server_id_decoupled_from_plugin_id():
 def test_codebase_memory_wiring():
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     cb = next(s for s in rc.mcp_servers if s["id"] == "codebase-memory")
-    assert cb["image"] == "ordo/codebase-memory-mcp:latest"
+    assert cb["image"] == "ordo/codebase-memory-mcp"
     # a 100% local indexer: internal MCP network only, so only LiteLLM can reach it
     assert cb["network"] == "internal"
     assert cb["url"] == "http://mcp-codebase-memory:9000/mcp"
@@ -221,7 +221,7 @@ def test_n8n_bridged_and_banner_suppressed():
     n8 = next(s for s in rc.mcp_servers if s["id"] == "n8n")
     # Project-built stdio bridge (services/n8n/Dockerfile) over the pinned upstream image: the
     # upstream's own HTTP mode is session-ful and LiteLLM cannot hold a session across operations.
-    assert n8["image"] == "ordo/n8n-mcp:latest"
+    assert n8["image"] == "ordo/n8n-mcp"
     assert n8["port"] == 9000
     # No upstream bearer: the bridge listens on the internal MCP network only.
     assert n8["auth_type"] == "" and n8["auth_secret"] == ""

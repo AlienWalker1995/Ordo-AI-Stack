@@ -813,7 +813,7 @@ explicitly, a test asserts no dataset asks for it, and the runner requests no GP
 | Piece | Where |
 |---|---|
 | Plugin manifest | `services/evals/plugin.yaml` (`id: evals`, profile `evals`, `default: false`) |
-| Image | `ordo/evals:latest`, built from `services/evals/Dockerfile` (dependencies only; the code is bind-mounted from `${BASE_PATH}/services/evals`) |
+| Image | `ordo/evals`, built from `services/evals/Dockerfile` (dependencies only; the code is bind-mounted from `${BASE_PATH}/services/evals`) |
 | Code | `services/evals/ordo_evals/` (CLI: `python -m ordo_evals`) |
 | Tests | `tests/evals/` (checkers, scorers, schemas, the privacy guard) and `tests/substrate/test_evals.py` (render shape) |
 | Model access | its own LiteLLM virtual key `LITELLM_KEY_EVALS` (chat + embeddings, no MCP servers) |
@@ -822,7 +822,7 @@ explicitly, a test asserts no dataset asks for it, and the runner requests no GP
 Rebuild the image only when `requirements.txt` changes:
 
 ```bash
-docker build -f services/evals/Dockerfile -t ordo/evals:latest services/evals
+ordo build evals
 ```
 
 The image bakes the IFEval dataset (at the revision `inspect_evals` pins) and the NLTK tokenizer data

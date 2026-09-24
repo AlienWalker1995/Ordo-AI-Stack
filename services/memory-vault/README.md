@@ -7,7 +7,7 @@ native Obsidian browses when opened at that path).
 ## Build
 
 ```sh
-docker build -t ordo/mcpvault-mcp:latest services/memory-vault
+ordo build mcp-memory-vault
 ```
 
 ## Pins

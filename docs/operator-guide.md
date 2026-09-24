@@ -57,6 +57,10 @@ On confirm it writes `out/ordo.yaml` + `out/secrets.env` (chmod 600, never commi
 **offers** to render, download the model, and bring the stack up — printing your dashboard URL.
 Nothing starts unless you say yes. Re-run `ordo init` any time to reconfigure.
 
+Onboarding is two commands: `ordo init` (say yes to the render), then `ordo up --core` (or
+`--all`). The first `ordo up` builds the stack's own images, because nothing publishes them: it
+builds every first-party image the rendered compose names that Docker does not have yet.
+
 **Manual / already-cloned path** — the wizard just automates this; you can drive the engine directly:
 
 ```bash
@@ -64,7 +68,8 @@ ordo init                                     # re-run the wizard in an existing
 # …or step through it by hand:
 ordo --source out/ordo.yaml render --out out  # regenerate out/ from the source (NEVER bare `ordo render`)
 ordo preflight --ref out/.env                 # read-only GO/NO-GO readiness gate
-# bring up: every rendered profile, both env files; refuses while a GPU lease holds the card
+# bring up: every rendered profile, both env files; refuses while a GPU lease holds the card.
+# Builds any missing first-party image first (--no-build skips that).
 ordo up --all                                 # --dry-run prints the docker compose argv instead
 ```
 
@@ -72,6 +77,37 @@ ordo up --all                                 # --dry-run prints the docker comp
 render enabled). `ordo up <svc>...` / `ordo recreate <svc>...` touch only the named services
 (`--no-deps`; a caddy bring-up also names its netns members, so they are recreated with it), and
 refuse to start a resident the GPU scheduler evicted for a running render.
+
+### First-party images: `ordo build`
+
+The rendered compose is image-only, so the stack's own images (`ordo/<name>`: ops-controller,
+model-gateway, gpu-gate, the dashboard, the agent, the MCP adapters) are built from the checkout by
+`ordo build`, never by hand:
+
+- Each image is tagged `ordo/<name>:<commit>`: the 12-character sha of the last commit that changed
+  its build context (for ops-controller, which builds from the repo root, the `ordo/`, `catalog/`
+  and `services/` paths the root `.dockerignore` lets in). Uncommitted changes there add `-dirty`,
+  and a `-dirty` tag is always rebuilt. The image also carries the full commit in the
+  `org.opencontainers.image.revision` label.
+- An image whose tag already exists is not rebuilt, so `ordo build --all` is cheap to repeat.
+- Each build is recorded in `out/images.json`, and `ordo/<name>:current` moves to it.
+- Every render (yours, and ops-controller's on a model switch) writes the recorded tag into the
+  compose `image:` field, or `current` for an image not built yet. The compose therefore names the
+  exact build each service runs, and `docker inspect` on a container shows its commit.
+
+Deploying a new checkout:
+
+```bash
+ordo build --all                              # builds only the images whose inputs changed
+ordo --source out/ordo.yaml render --out out  # pins the compose to the new tags
+ordo up --all                                 # recreates only the services whose image changed
+```
+
+Rolling back is the same three commands on older code. Check out the older commit and run them:
+its tags are still in the local image cache, so `ordo build` records them without rebuilding, the
+render points the compose back at them, and `ordo up` recreates only what changed. (A `git revert`
+works too; it is a new commit, so it gets a new tag, built mostly from Docker's layer cache.)
+Nothing is retagged by hand.
 
 Everything below is the reference for *how* that render engine works and *why* it's built this way.
 
@@ -225,6 +261,7 @@ gate). Only the Tailscale model is wired today; the others' required pieces are 
 - Always render from the real source: `ordo render --source out/ordo.yaml`.
 - **Re-render only inside a `--gpus all` container** (so hardware detection sees both cards); the
   rendered `llamacpp` block must come out **byte-identical** to what's running.
+- Image changes go through `ordo build`, then a render (see "First-party images" above).
 - Apply with `ordo recreate <svc>` (per-service, no cascade). The dashboard's
   per-service recreate button does exactly this against the existing `out/` compose (no re-render).
 

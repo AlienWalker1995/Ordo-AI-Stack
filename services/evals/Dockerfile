@@ -1,7 +1,7 @@
 # ordo/evals - dependencies for the eval harness (services/evals). Code is NOT baked in.
 #
 # Build context is THIS folder:
-#   docker build -f services/evals/Dockerfile -t ordo/evals:latest services/evals
+#   ordo build evals   (tags ordo/evals:<commit>; see ordo/images.py)
 #
 # The tracked code and generic datasets are bind-mounted at /app by the plugin manifest
 # (${BASE_PATH}/services/evals:/app:ro), so the image only has to change when requirements.txt does.

@@ -62,7 +62,7 @@ def test_memory_vault_manifest_loaded():
 def test_memory_vault_mcp_render_passes_through_catalog_fields():
     rc = render(_src(["memory-vault"]), CATALOG, REGISTRY)
     mv = next(s for s in rc.mcp_servers if s["id"] == "memory-vault")
-    assert mv["image"] == "ordo/mcpvault-mcp:latest"
+    assert mv["image"] == "ordo/mcpvault-mcp"
     # a pure-fs tool: internal MCP network only, so only LiteLLM can reach it
     assert mv["network"] == "internal"
     assert mv["url"] == "http://mcp-memory-vault:9000/mcp"
@@ -85,7 +85,7 @@ def test_memory_vault_compose_service_has_rw_vault(tmp_path):
     # its compose service carries the vault volume through, READ-WRITE (no :ro)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
     mv = c["services"]["mcp-memory-vault"]
-    assert mv["image"] == "ordo/mcpvault-mcp:latest"
+    assert mv["image"] == "ordo/mcpvault-mcp:current"
     assert mv["volumes"] == [_VAULT_VOLUME]
 
 

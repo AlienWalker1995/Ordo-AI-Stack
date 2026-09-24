@@ -52,7 +52,7 @@ services:
     # its fully `==`-pinned requirements.txt). The image carries DEPENDENCIES ONLY: the tracked code
     # and generic datasets are bind-mounted from the repo at /app, so a code change never runs a
     # stale copy baked into an old image.
-    image: ordo/evals:latest
+    image: ordo/evals
     restart: "no"
     env:
       PYTHONUNBUFFERED: "1"

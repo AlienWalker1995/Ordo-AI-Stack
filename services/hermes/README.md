@@ -1,7 +1,7 @@
 # agent-hermes (the default Ordo agent)
 
 V2's Hermes agent image, referenced by the Hermes agent manifest (`services/hermes/agent.yaml`) via
-the `<project>/agent-<id>` convention as `ordo/agent-hermes:latest`, and reused by the
+the `<project>/agent-<id>` convention as `ordo/agent-hermes`, and reused by the
 `hermes-dashboard` plugin (one Hermes image serves as both the gateway and the dashboard).
 
 This is an **operator-specific** image: it wraps the operator's Hermes `data/` (SOUL.md, skills,
@@ -11,7 +11,7 @@ at a pinned SHA). Project buildable image, so `ordo preflight` reports a missing
 
 ## Build
 ```
-docker build -t ordo/agent-hermes:latest C:/dev/ordo-ai-stack/services/hermes
+ordo build agent
 ```
 
 Referenced (not duplicated) — the Hermes build context + the operator's `data/` are the single

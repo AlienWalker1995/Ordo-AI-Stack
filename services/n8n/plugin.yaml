@@ -23,7 +23,7 @@ mcp:
   # services/n8n; see services/n8n/Dockerfile). The image's own MCP_MODE=http transport is
   # session-ful and LiteLLM cannot hold a session across operations, so we serve the upstream's
   # stdio server through a stateless mcp-proxy instead.
-  image: ordo/n8n-mcp:latest
+  image: ordo/n8n-mcp
   transport: http
   port: 9000
   network: stack           # reaches n8n:5678

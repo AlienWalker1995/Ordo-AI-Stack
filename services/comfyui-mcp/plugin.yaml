@@ -27,7 +27,7 @@ mcp:
   server_id: comfyui
   # Project buildable image (build context services/comfyui-mcp): pinned by its build context
   # (upstream commit e0101b2312f3 + stack overrides), so preflight reports 'build first'.
-  image: ordo/comfyui-mcp:latest
+  image: ordo/comfyui-mcp
   transport: http
   port: 9000
   network: stack           # comfyui (via the admission gate) + ops-controller

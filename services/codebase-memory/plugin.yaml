@@ -20,7 +20,7 @@ mcp:
   # the offline nomic-embed-code embeddings, and bridges its stdio server to streamable HTTP with a
   # pinned mcp-proxy. Pinned by its build context (CBM_VERSION + CBM_SHA256), so preflight reports
   # 'build first', not a digest warning.
-  image: ordo/codebase-memory-mcp:latest
+  image: ordo/codebase-memory-mcp
   transport: http
   port: 9000
   network: internal        # 100% local indexer: only LiteLLM can reach it, it reaches nothing

@@ -1,7 +1,7 @@
 # model-gateway (LiteLLM config-wrapper)
 
 The Ordo stack's `model-gateway` core service. This is the small config-wrapper build
-(`ordo/model-gateway:latest`), a pinned LiteLLM base plus the stack's config: the
+(`ordo/model-gateway`), a pinned LiteLLM base plus the stack's config: the
 canonical **`local-chat`** alias, the `local-embed` alias, the throughput callback, and the
 entrypoint that templates the config placeholders at startup.
 
@@ -51,7 +51,7 @@ metadata tracks the running deployment instead of drifting:
 remaining `supports_*` flags (tools, reasoning) describe the llama-server invocation
 (`--jinja`, `--reasoning-format`) rather than a model family, and are static in the config.
 
-The Ordo stack references it as a **project buildable image** (`ordo/model-gateway:latest`) — pinned by
+The Ordo stack references it as a **project buildable image** (`ordo/model-gateway`) — pinned by
 its build context, not pulled from a registry — so `ordo preflight` reports a missing one as
 "build first", never "Docker will pull". This is why the Ordo stack does NOT reference the unconfigured
 upstream `ghcr.io/berriai/litellm:main` directly: that image has no `local-chat` alias.
@@ -95,7 +95,7 @@ day survives the purge; only the per-request log rows expire.
 
 ## Build
 ```
-docker build -t ordo/model-gateway:latest services/model-gateway
+ordo build model-gateway
 ```
 
 ## Signing in

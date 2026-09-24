@@ -4,7 +4,8 @@
     ordo render [--out DIR]     # render config from ordo.yaml into DIR (default ./out)
     ordo doctor                 # sanity checks (catalog integrity, source validity)
     ordo serve                  # run the control-plane HTTP service (ops-controller)
-    ordo up [--all|--core|SVC…] # bring the rendered stack up from the host (GPU-lease checked)
+    ordo build [--all|SVC…]     # build the first-party images the rendered stack runs, tagged by commit
+    ordo up [--all|--core|SVC…] # build missing images, bring the rendered stack up (GPU-lease checked)
     ordo recreate SVC…          # force-recreate services from the host (GPU-lease checked)
 
 `render` writes to an output dir only (it starts nothing), and `serve`'s Docker backend is
@@ -17,7 +18,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import bringup, doctor, fetch, gpu, native, parity, preflight, wizard
+from . import bringup, doctor, fetch, gpu, images, native, parity, preflight, wizard
 from .catalog import Catalog
 from .config import Source
 from .hardware import detect
@@ -162,7 +163,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     if not interactive:
         # Headless/CI: config only. NEVER render/fetch/bring-up unattended (the safety line).
         print(f"\nConfig written. Next (review first): ordo render --source {result.source_path} "
-              f"--out {out}")
+              f"--out {out}, then ordo up --core --out {out} (the first up builds the stack's images)")
         return 0
 
     # pragma: no cover below (interactive offers)
@@ -181,7 +182,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     if _prompt_yn("Bring up CORE + Hermes now (a capable agent, minimal footprint; install optional "
                   "services later by asking Hermes)?", default=False):
         bringup.bring_up(str(out), "ordo", [], whole_stack=True, with_profiles=False,
-                         force_recreate=False, dry_run=False)  # no profiles -> core + agent only
+                         force_recreate=False, dry_run=False, build=True)  # no profiles -> core + agent only
         print("\nHermes is coming up. Once it's loaded (via its chat gateway), ask it to install "
               "services — e.g. \"install open-webui\", \"turn on web search\".")
         if result.compose_profiles:
@@ -265,9 +266,10 @@ def _local_images() -> set[str]:  # pragma: no cover - shells to docker
 def cmd_preflight(args: argparse.Namespace) -> int:
     src, cat = _load(Path(args.source), Path(args.catalog))
     reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
-    images = None if args.no_images else _local_images()
-    go, checks = preflight.run(src, cat, reg, ref_env=args.ref, images_present=images,
-                               secrets_env=args.secrets, project=args.project)
+    present = None if args.no_images else _local_images()
+    go, checks = preflight.run(src, cat, reg, ref_env=args.ref, images_present=present,
+                               secrets_env=args.secrets, project=args.project,
+                               image_tags=images.load_record(args.out))
     for c in checks:
         mark = "OK " if c.ok else ("!! " if c.blocking else "-- ")
         print(f"  [{mark}] {c.name}: {c.detail}")
@@ -314,12 +316,22 @@ def cmd_up(args: argparse.Namespace) -> int:
         return 1
     whole_stack = args.all or args.core
     return bringup.bring_up(args.out, args.project, args.services, whole_stack=whole_stack,
-                            with_profiles=not args.core, force_recreate=False, dry_run=args.dry_run)
+                            with_profiles=not args.core, force_recreate=False, dry_run=args.dry_run,
+                            build=not args.no_build)
 
 
 def cmd_recreate(args: argparse.Namespace) -> int:
     return bringup.bring_up(args.out, args.project, args.services, whole_stack=False,
-                            with_profiles=True, force_recreate=True, dry_run=args.dry_run)
+                            with_profiles=True, force_recreate=True, dry_run=args.dry_run,
+                            build=not args.no_build)
+
+
+def cmd_build(args: argparse.Namespace) -> int:
+    if int(args.all) + int(bool(args.services)) != 1:
+        print("ordo build: give exactly one of --all or SERVICE...", file=sys.stderr)
+        return 1
+    return images.run_build(args.out, None if args.all else args.services, project=args.project,
+                            dry_run=args.dry_run)
 
 
 def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a socket
@@ -468,6 +480,8 @@ def main(argv: list[str] | None = None) -> int:
     pf.add_argument("--secrets", help="local secrets.env to check required keys against (non-blocking)")
     pf.add_argument("--project", default="ordo")
     pf.add_argument("--no-images", action="store_true", help="skip the docker image-presence check")
+    pf.add_argument("--out", default="out",
+                    help="the rendered stack directory whose images.json build record to check (default: out)")
     pf.set_defaults(func=cmd_preflight)
     # `up` / `recreate`: the one host bring-up path. Both env files and every rendered profile
     # (the argv builder is shared with ops-controller), named services never cascade onto their
@@ -485,7 +499,19 @@ def main(argv: list[str] | None = None) -> int:
         sp.add_argument("--project", default="ordo", help="compose project name (default: ordo)")
         sp.add_argument("--dry-run", action="store_true",
                         help="check the lease and print the docker compose argv without running it")
+        sp.add_argument("--no-build", action="store_true",
+                        help="do not build first-party images the rendered compose names but the "
+                             "daemon lacks (compose then fails on the missing image)")
         sp.set_defaults(func=func)
+    # `build`: first-party images, tagged with the commit that last changed each image's inputs and
+    # recorded in <out>/images.json, which every render pins the compose to (ordo/images.py).
+    pb = sub.add_parser("build", help="build the first-party images the rendered stack runs")
+    pb.add_argument("services", nargs="*", metavar="SERVICE", help="build only these services' images")
+    pb.add_argument("--all", action="store_true", help="every first-party image the rendered compose names")
+    pb.add_argument("--out", default="out", help="the rendered stack directory (default: out)")
+    pb.add_argument("--project", default="ordo", help="compose project name (default: ordo)")
+    pb.add_argument("--dry-run", action="store_true", help="print what would be built, build nothing")
+    pb.set_defaults(func=cmd_build)
     pv = sub.add_parser("serve")
     pv.add_argument("--host", default="0.0.0.0")
     pv.add_argument("--port", type=int, default=9000)

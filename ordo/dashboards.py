@@ -6,7 +6,7 @@ the substrate needs no patching. The shipped one (`dashboard`) talks straight to
 control plane (service `ops-controller`).
 
 A dashboard manifest declares:
-  - `image`  ("" -> the <project>/dashboard:latest convention), and
+  - `image`  ("" -> the <project>/dashboard convention), and
   - `environment` / `depends_on` / `healthcheck` for the dashboard service.
 
 A dashboard has no backend service of its own: `ops-controller` is the control plane, and a
@@ -44,7 +44,7 @@ class Dashboard:
     id: str
     name: str
     description: str
-    image: str                       # "" -> the <project>/dashboard:latest convention
+    image: str                       # "" -> the <project>/dashboard convention
     default: bool
     environment: dict[str, str] = dataclasses.field(default_factory=dict)
     volumes: tuple[str, ...] = ()    # on-disk model dirs etc. (${VAR} refs pass through)
@@ -85,7 +85,7 @@ class Dashboard:
         )
 
     def image_for(self, project: str) -> str:
-        return self.image or f"{project}/dashboard:latest"
+        return self.image or f"{project}/dashboard"
 
 
 class DashboardRegistry:

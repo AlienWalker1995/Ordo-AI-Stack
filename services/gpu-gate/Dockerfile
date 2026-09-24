@@ -1,7 +1,7 @@
 # gpu-gate — the generic GPU admission gate.
 #
 # Build context is THIS folder:
-#   docker build -f services/gpu-gate/Dockerfile -t ordo/gpu-gate:latest services/gpu-gate
+#   ordo build comfyui-gate   (tags ordo/gpu-gate:<commit>; see ordo/images.py)
 # Resolved for preflight + tests via compose.SUBSTRATE_BUILD_CONTEXTS (ordo/buildspec.py), like
 # the other substrate images that compose renders without a plugin manifest.
 #

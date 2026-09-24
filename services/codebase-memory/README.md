@@ -18,7 +18,7 @@ context: the `Dockerfile`'s `CBM_VERSION` + `CBM_SHA256`), which is why `ordo pr
 missing one as "build first":
 
 ```
-docker build -t ordo/codebase-memory-mcp:latest services/codebase-memory
+ordo build mcp-codebase-memory
 ```
 
 ## How it's wired
@@ -58,7 +58,7 @@ hyphens replaced by underscores. Hermes adds its own gateway prefix, so it sees
    e.g. `CODE_ROOT: C:/dev` (must match what Hermes sees at `/c/dev`); it flows verbatim into the
    rendered `.env`.
 2. Build the image (see the **Build** section above):
-   `docker build -t ordo/codebase-memory-mcp:latest services/codebase-memory`
+   `ordo build mcp-codebase-memory`
 3. The `codebase-memory` plugin (co-located [`plugin.yaml`](plugin.yaml)) isn't NVIDIA-gated, so
    it's already on under the default `plugins: auto`. Run `ordo render`, then bring the stack up
    from `out/` and recreate `model-gateway` so LiteLLM reads the updated

@@ -1,7 +1,7 @@
 # orchestration-mcp (Stable orchestration adapter)
 
 Build context for the Orchestration MCP image, referenced by the `orchestration` plugin
-([`plugin.yaml`](plugin.yaml)) as `ordo/orchestration-mcp:latest`. A thin adapter exposing STABLE
+([`plugin.yaml`](plugin.yaml)) as `ordo/orchestration-mcp`. A thin adapter exposing STABLE
 tool names (list_templates / create_from_template / validate, save, diff, promote and rollback
 workflows / list_outputs / comfyui status and restart / model registry and GPU status /
 list_model_catalog / set_active_model) that delegate over HTTP to the dashboard at
@@ -17,7 +17,7 @@ Backing: the `ordo/dashboard` image serves `/api/orchestration/*`
 
 ## Build
 ```
-docker build -t ordo/orchestration-mcp:latest services/orchestration
+ordo build mcp-orchestration
 ```
 
 This directory (`server.py`, `requirements.txt`, `Dockerfile`) is the single source of truth for

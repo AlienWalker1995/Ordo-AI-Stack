@@ -36,7 +36,7 @@ def test_notes_services_render_with_expected_wiring():
     assert couch["profiles"] == ["notes"]
 
     bridge = svcs["livesync-bridge"]
-    assert bridge["image"] == "ordo/livesync-bridge:latest"
+    assert bridge["image"] == "ordo/livesync-bridge:current"
     # live-watch on Docker Desktop bind mounts needs polling (no inotify events)
     assert bridge["environment"]["CHOKIDAR_USEPOLLING"] == "1"
     # exactly its two secrets, as references (the passphrase must never silently default to empty)

@@ -14,7 +14,7 @@ The contract every agent image MUST honour (open standards, per the architecture
     instead of evicting llama.cpp — so the scheduler, not the agent, arbitrates the card.
   - CONFIG: treat the rendered `.env` as read-only truth; never hand-edit derived config.
 
-`image` defaults to the `<project>/agent-<id>:latest` convention but a manifest may pin any image.
+`image` defaults to the `<project>/agent-<id>` convention (render adds the tag `ordo build` recorded) but a manifest may pin any image.
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ class Agent:
     id: str
     name: str
     description: str
-    image: str                       # "" -> resolved to the <project>/agent-<id>:latest convention
+    image: str                       # "" -> resolved to the <project>/agent-<id> convention
     default: bool
     consumes: tuple[str, ...]
     env: dict[str, str]
@@ -93,7 +93,7 @@ class Agent:
         )
 
     def image_for(self, project: str) -> str:
-        return self.image or f"{project}/agent-{self.id}:latest"
+        return self.image or f"{project}/agent-{self.id}"
 
     def unknown_services(self) -> list[str]:
         return [s for s in self.consumes if s not in KNOWN_SERVICES]

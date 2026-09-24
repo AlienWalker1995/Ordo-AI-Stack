@@ -6,7 +6,7 @@ job-submission request reach the service behind it.
 Build:
 
 ```
-docker build -f services/gpu-gate/Dockerfile -t ordo/gpu-gate:latest services/gpu-gate
+ordo build comfyui-gate
 ```
 
 ## Why a gate rather than a lease call

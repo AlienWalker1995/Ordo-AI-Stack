@@ -1,6 +1,6 @@
 # ops-controller — the Ordo control plane (ordo serve).
 # Build context is the REPO ROOT (the root .dockerignore allowlists only the render-data dirs,
-# so the context stays tiny):  docker build -f services/ops-controller/Dockerfile -t ordo/ops-controller:latest .
+# so the context stays tiny):  ordo build ops-controller   (tags ordo/ops-controller:<commit>)
 # Renders config, exposes /status + /model-config + /jobs, and drives the GPU broker.
 # It needs the Docker CLI to start/stop containers, but the broker's DockerBackend
 # guard scopes every action to the ordo project prefix, so it can never touch anything else.

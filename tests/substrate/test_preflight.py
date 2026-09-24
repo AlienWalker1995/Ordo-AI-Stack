@@ -68,7 +68,7 @@ def test_parity_mismatch_is_no_go(tmp_path):
 def test_required_images_include_core_and_ops():
     rc = render(GPU, CATALOG, REGISTRY)
     imgs = preflight.required_images(rc)
-    assert "ordo/ops-controller:latest" in imgs
+    assert "ordo/ops-controller:current" in imgs
     # the 5090 picks Qwen3.6, which pins the patched build — that image, not the stock one
     assert "ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470" in imgs
 
@@ -99,9 +99,9 @@ def test_all_project_images_get_a_generic_build_from_hint():
     go, checks = preflight.run(GPU, CATALOG, REGISTRY, images_present=set())  # nothing cached
     proj = _byname(checks)["project images built locally"]
     assert not proj.ok and not go
-    assert "ordo/model-gateway:latest (build from services/model-gateway)" in proj.detail
-    if "ordo/rag-ingestion:latest" in needed:
-        assert "ordo/rag-ingestion:latest (build from services/rag)" in proj.detail
+    assert "ordo/model-gateway:current (build from services/model-gateway)" in proj.detail
+    if "ordo/rag-ingestion:current" in needed:
+        assert "ordo/rag-ingestion:current (build from services/rag)" in proj.detail
 
 
 def test_mcp_pinned_check_passes_with_real_images():
@@ -142,3 +142,15 @@ def test_service_images_pin_gate_flags_rolling_tags():
     go, checks = preflight.run(GPU, CATALOG, REGISTRY)
     chk = _byname(checks)["service images pinned (no rolling tags)"]
     assert chk.ok, f"unexpected floating images in the default render: {chk.detail}"
+
+
+def test_required_images_follow_the_build_record():
+    """Preflight checks the tags the render will actually write, i.e. the `ordo build` record."""
+    rc = render(GPU, CATALOG, REGISTRY)
+    imgs = preflight.required_images(rc, image_tags={"ordo/ops-controller": "0123456789ab"})
+    assert "ordo/ops-controller:0123456789ab" in imgs
+    go, checks = preflight.run(GPU, CATALOG, REGISTRY, images_present=set(),
+                               image_tags={"ordo/ops-controller": "0123456789ab"})
+    proj = _byname(checks)["project images built locally"]
+    assert "ordo/ops-controller:0123456789ab" in proj.detail
+    assert "ordo build" in proj.detail

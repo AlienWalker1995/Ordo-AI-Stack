@@ -24,7 +24,7 @@ secrets:
 mcp:
   # Project buildable image (build context services/orchestration): pinned by its build context,
   # so preflight reports 'build first' rather than a digest warning.
-  image: ordo/orchestration-mcp:latest
+  image: ordo/orchestration-mcp
   transport: http
   port: 9000
   # Reaches dashboard:8080 on the stack network (plus the internal MCP network LiteLLM dials).

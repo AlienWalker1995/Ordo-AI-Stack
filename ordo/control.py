@@ -200,9 +200,8 @@ class ControlPlane:
             f"ops-controller's render substrate ({self.substrate_digest[:12]}) differs from the last "
             f"host render's ({str(recorded)[:12]}): the image is older or newer than the checkout that "
             "rendered out/, and a render here would silently change what that checkout rendered. "
-            "Rebuild ordo/ops-controller from "
-            "the checkout that rendered out/ (docker build -f services/ops-controller/Dockerfile "
-            "-t ordo/ops-controller:latest .), then `ordo recreate ops-controller`.",
+            "Rebuild ordo/ops-controller from the checkout that rendered out/ (`ordo build "
+            "ops-controller`), re-render, then `ordo recreate ops-controller`.",
             substrate_digest=self.substrate_digest, rendered_substrate_digest=recorded)
 
     def status(self) -> dict[str, Any]:

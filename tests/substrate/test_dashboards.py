@@ -57,7 +57,7 @@ def test_unknown_dashboard_falls_back_to_default_with_warning():
 # ── the rendered dashboard service ─────────────────────────────────────────────
 def test_render_uses_the_shipped_dashboard_image(tmp_path):
     c = _compose("dashboard", tmp_path)
-    assert c["services"]["dashboard"]["image"] == "ordo/dashboard:latest"
+    assert c["services"]["dashboard"]["image"] == "ordo/dashboard:current"
 
 
 def test_dashboard_points_at_the_v2_control_plane(tmp_path):
@@ -79,7 +79,7 @@ def test_the_scheduler_keeps_its_name_and_command(tmp_path):
     """Live clients (Hermes, the ComfyUI gate, the dashboard) all address `ops-controller`."""
     c = _compose("dashboard", tmp_path)
     ctrl = c["services"]["ops-controller"]
-    assert ctrl["image"] == "ordo/ops-controller:latest"
+    assert ctrl["image"] == "ordo/ops-controller:current"
     assert "serve" in ctrl["command"]
 
 

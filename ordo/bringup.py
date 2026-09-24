@@ -21,6 +21,8 @@ from pathlib import Path
 
 import yaml
 
+from . import images
+
 COMPOSE_FILE = "docker-compose.yml"
 OPS_CONTROLLER_SERVICE = "ops-controller"
 # Services sharing caddy's network namespace follow caddy: recreating caddy without them leaves
@@ -186,11 +188,13 @@ def read_gpu_status(project: str) -> dict | None:
 
 
 def bring_up(out_dir: str, project: str, services: Sequence[str], *, whole_stack: bool,
-             with_profiles: bool, force_recreate: bool, dry_run: bool) -> int:
-    """Check the lease, then run (or with dry_run print) the compose bring-up.
+             with_profiles: bool, force_recreate: bool, dry_run: bool, build: bool = False) -> int:
+    """Check the lease, build missing first-party images (`build`), then run (or with dry_run
+    print) the compose bring-up.
 
-    Exit codes: 0 ok, 1 bad input (no render, unknown service), 2 refused because of the GPU
-    lease or because the lease could not be read; otherwise compose's own exit code.
+    Exit codes: 0 ok, 1 bad input (no render, unknown service) or a failed image build, 2 refused
+    because of the GPU lease or because the lease could not be read; otherwise compose's own exit
+    code.
     """
     compose_dir = Path(out_dir).resolve().as_posix()
     try:
@@ -221,6 +225,16 @@ def bring_up(out_dir: str, project: str, services: Sequence[str], *, whole_stack
     if refusal:
         print(refusal, file=sys.stderr)
         return 2
+
+    if build:
+        # Only what this bring-up starts: a --core up leaves profiled services down, so their
+        # images are not needed yet.
+        needed = starts if with_profiles or not whole_stack else {
+            name for name in starts if not (_services(doc)[name] or {}).get("profiles")}
+        # Read by module attribute at call time, so tests can replace the build step.
+        code = images.ensure_images(compose_dir, doc, sorted(needed), project=project, dry_run=dry_run)
+        if code:
+            return code
 
     cmd = compose_argv(compose_dir, project, *args, profiles=profiles)
     print(f"$ {shlex.join(cmd)}")
