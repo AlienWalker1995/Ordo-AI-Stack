@@ -11,13 +11,25 @@ renders the target config and checks every gate we can verify WITHOUT starting a
     built locally (blocking); upstream images (llama.cpp, litellm, …) may be absent — Docker
     pulls them (a note, not a blocker).
 
+Host checks (`host_checks`) answer the other half, "can THIS machine run it": Docker reachable,
+Compose v2, the NVIDIA runtime when a GPU is reserved, disk for the model, free host ports, and
+no blank required secret. `ordo up` runs them before it starts anything.
+
 Blocking checks failing = NO-GO. Non-blocking = a warning you can proceed past knowingly.
-Pure logic here (docker/image presence is injected); the CLI wires the real `docker images`.
+Every verdict is pure logic over injected facts; the I/O that gathers the facts (docker, sockets,
+disk) is the `gather_host_facts` section at the bottom, and the CLI wires the real `docker images`.
 """
 from __future__ import annotations
 
 import dataclasses
+import errno
+import json
+import os
 import re
+import shutil
+import socket
+import subprocess
+from collections.abc import Iterable
 from pathlib import Path
 
 from . import buildspec, parity
@@ -32,17 +44,20 @@ from .render import (
     render,
 )
 
-# ${VAR} or ${VAR:-default} — the compose interpolation syntax a plugin image ref may carry
-# (e.g. `${COMFYUI_IMAGE:-yanwk/comfyui-boot@sha256:…}`). Resolved against the rendered .env
-# (with the `:-default` fallback) so the image-presence check compares the ACTUAL resolved ref.
-_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+# ${VAR}, ${VAR:-default} or ${VAR:?message}: the compose interpolation a rendered value may carry
+# (e.g. `${COMFYUI_IMAGE:-yanwk/comfyui-boot@sha256:…}`, `${CADDY_BIND:?…}:443:443`). Resolved
+# against the rendered .env (with the `:-default` fallback) so a check compares the ACTUAL value.
+_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?])([^}]*))?\}")
 
 
-def _expand(image: str, env: dict[str, str]) -> str:
+def _expand(value: str, env: dict[str, str]) -> str:
     def sub(m: re.Match[str]) -> str:
         val = env.get(m.group(1))
-        return val if val not in (None, "") else (m.group(2) or "")
-    return _VAR_RE.sub(sub, image)
+        if val not in (None, ""):
+            return val
+        is_default = (m.group(2) or "").endswith("-")
+        return (m.group(3) or "") if is_default else ""
+    return _VAR_RE.sub(sub, value)
 
 
 @dataclasses.dataclass
@@ -61,10 +76,27 @@ def required_images(rc, project: str = "ordo", image_tags: dict[str, str] | None
     return sorted({_expand(svc["image"], rc.env) for svc in c["services"].values()})
 
 
-def _missing_secret_keys(rc, secrets_env: str) -> list[str]:
-    """Keys the enabled stack requires that a present secrets.env leaves empty/absent."""
-    present = {k for k, v in parity.load_env(secrets_env).items() if v}
-    return [k for k in rc.required_secrets if k not in present]
+def secret_checks(needed: Iterable[str], optional: Iterable[str], secrets_path: str) -> list[Check]:
+    """Blank or absent secrets among `needed`: a REQUIRED one blocks, an optional one is a note.
+
+    Names only, never values. `optional` is what the manifests declare the stack runs without
+    (`optional_secrets:`, e.g. HF_TOKEN), so a blank one of those never stops a bring-up."""
+    optional_set = set(optional)
+    if not Path(secrets_path).exists():
+        return [Check("required secrets set", False,
+                      f"{secrets_path} is missing: run `ordo init` (it writes one) or copy secrets.env.example")]
+    present = {k for k, v in parity.load_env(secrets_path).items() if v}
+    blank = [k for k in dict.fromkeys(needed) if k not in present]
+    blank_required = [k for k in blank if k not in optional_set]
+    blank_optional = [k for k in blank if k in optional_set]
+    checks = [Check("required secrets set", not blank_required,
+                    "all set" if not blank_required
+                    else f"blank in {secrets_path}: {', '.join(blank_required)} (fill them in, then re-run)")]
+    if blank_optional:
+        checks.append(Check("optional secrets", False,
+                            f"blank (features that need them stay limited): {', '.join(blank_optional)}",
+                            blocking=False))
+    return checks
 
 
 def run(
@@ -172,15 +204,187 @@ def run(
             checks.append(Check("upstream images cached", False,
                                 f"Docker will pull: {', '.join(upstream_missing)}", blocking=False))
 
-    # 7. secrets present (non-blocking): if a local secrets.env exists, warn which required KEYS
-    # are still empty/absent. Missing secrets.env entirely is fine here — it's operator-managed and
-    # created out-of-band; this only helps catch a half-filled one before the flip.
-    if secrets_env is not None and Path(secrets_env).exists():
-        missing = _missing_secret_keys(rc, secrets_env)
-        checks.append(Check(f"secrets present in {secrets_env}", not missing,
-                            "all required secrets set" if not missing
-                            else f"{len(missing)} missing: {', '.join(missing)}",
-                            blocking=False))
+    # 7. secrets: when a secrets.env is given, a blank REQUIRED key blocks (the service that reads
+    # it would crash-loop); a blank optional one (declared `optional_secrets:`) is only a note.
+    if secrets_env is not None:
+        checks += secret_checks(rc.required_secrets, rc.optional_secrets, secrets_env)
 
     go = all(c.ok for c in checks if c.blocking)
     return go, checks
+
+
+# ── Host checks: can THIS machine run the rendered stack? ─────────────────────
+@dataclasses.dataclass(frozen=True)
+class HostFacts:
+    """What the host looks like, gathered by `gather_host_facts` (or built by a test)."""
+    docker_error: str | None                  # None: the daemon answered `docker info`
+    compose_version: str | None               # `docker compose version --short`; None when absent
+    runtimes: frozenset[str]                  # container runtimes the daemon has registered
+    busy_ports: frozenset[tuple[str, int]]    # published (address, port) pairs another process holds
+    disk_path: str                            # where the model's volume lands (or the best proxy)
+    disk_free_gb: float | None
+
+
+def published_ports(services: dict, env: dict[str, str]) -> list[tuple[str, int]]:
+    """Every (address, host port) the services publish, with `${VAR}` resolved from the .env.
+
+    Only `address:host:container` and `host:container` publish a fixed host port; a bare container
+    port gets a random one, which cannot collide."""
+    found: list[tuple[str, int]] = []
+    for spec in services.values():
+        for raw in (spec or {}).get("ports") or []:
+            parts = _expand(str(raw), env).split("/")[0].split(":")
+            if len(parts) == 3:
+                address, host_port = parts[0] or "0.0.0.0", parts[1]
+            elif len(parts) == 2:
+                address, host_port = "0.0.0.0", parts[0]
+            else:
+                continue
+            if host_port.isdigit():
+                found.append((address, int(host_port)))
+    return found
+
+
+def nvidia_services(services: dict) -> list[str]:
+    """Services whose compose reserves an NVIDIA device (they need the NVIDIA container runtime)."""
+    names = []
+    for name, spec in services.items():
+        resources = ((spec or {}).get("deploy") or {}).get("resources") or {}
+        devices = (resources.get("reservations") or {}).get("devices") or []
+        if any(str(device.get("driver", "")) == "nvidia" for device in devices):
+            names.append(name)
+    return sorted(names)
+
+
+def secret_refs(services: dict, secret_keys: Iterable[str]) -> list[str]:
+    """The secret keys the services reference as `${KEY}` anywhere in their definition."""
+    keys = set(secret_keys)
+    text = json.dumps(services)
+    return sorted({m.group(1) for m in _VAR_RE.finditer(text) if m.group(1) in keys})
+
+
+def _compose_major(version: str) -> int:
+    match = re.match(r"v?(\d+)", version.strip())
+    return int(match.group(1)) if match else 0
+
+
+def host_checks(services: dict, env: dict[str, str], facts: HostFacts, *, secret_keys: Iterable[str],
+                optional_secrets: Iterable[str], secrets_path: str | None, model_gb: float) -> list[Check]:
+    """One Check per host requirement of the services about to start. Each failure is one line
+    that says what to do."""
+    checks = [Check("docker daemon reachable", facts.docker_error is None,
+                    "ok" if facts.docker_error is None
+                    else f"start Docker (Docker Desktop, or `sudo systemctl start docker`): {facts.docker_error}")]
+
+    compose_ok = facts.compose_version is not None and _compose_major(facts.compose_version) >= 2
+    checks.append(Check("docker compose v2 present", compose_ok,
+                        f"v{facts.compose_version}" if compose_ok else
+                        f"install the Docker Compose v2 plugin (`docker compose`); found "
+                        f"{facts.compose_version or 'none'}"))
+
+    gpu_services = nvidia_services(services)
+    if gpu_services and facts.docker_error is None:
+        has_runtime = "nvidia" in facts.runtimes
+        checks.append(Check("NVIDIA container runtime present", has_runtime,
+                            "registered" if has_runtime else
+                            f"{', '.join(gpu_services)} reserve an NVIDIA GPU: install the NVIDIA Container "
+                            f"Toolkit and run `sudo nvidia-ctk runtime configure --runtime=docker`, then "
+                            f"restart Docker"))
+
+    if model_gb > 0 and facts.disk_free_gb is not None:
+        enough = facts.disk_free_gb >= model_gb
+        checks.append(Check("free disk for the model", enough,
+                            f"{facts.disk_free_gb:.0f} GB free at {facts.disk_path}" if enough else
+                            f"the model needs ~{model_gb:.0f} GB but only {facts.disk_free_gb:.0f} GB is free "
+                            f"at {facts.disk_path}: free space or pick a smaller model (`model:` in ordo.yaml)"))
+
+    busy = [f"{address}:{port}" for address, port in published_ports(services, env)
+            if (address, port) in facts.busy_ports]
+    checks.append(Check("host ports free", not busy,
+                        "all free" if not busy else
+                        f"already in use by another process: {', '.join(busy)} (stop it, then re-run)"))
+
+    if secrets_path is not None:  # None: the caller checks secrets itself (`ordo preflight --secrets`)
+        checks += secret_checks(secret_refs(services, secret_keys), optional_secrets, secrets_path)
+    return checks
+
+
+# ── Gathering the host facts (I/O; everything above is pure) ──────────────────
+_DOCKER_PORT_RE = re.compile(r"(?:\d{1,3}(?:\.\d{1,3}){3}|\[[^\]]*\]):(\d+)(?:-(\d+))?->")
+
+
+def parse_docker_ports(text: str) -> set[int]:
+    """Host ports in `docker ps --format {{.Ports}}` text (`0.0.0.0:8443-8445->8443-8445/tcp`)."""
+    held: set[int] = set()
+    for m in _DOCKER_PORT_RE.finditer(text):
+        first = int(m.group(1))
+        last = int(m.group(2)) if m.group(2) else first
+        held.update(range(first, last + 1))
+    return held
+
+
+def _docker(*args: str) -> subprocess.CompletedProcess | None:  # pragma: no cover - shells to docker
+    try:
+        return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+_ADDRESS_IN_USE = {errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", errno.EADDRINUSE)}
+
+
+def _port_busy(address: str, port: int) -> bool:  # pragma: no cover - binds a socket
+    """True when another process already holds (address, port). A bind refused for any other
+    reason (a privileged port, an address this host lacks) is left for Docker to report."""
+    family = socket.AF_INET6 if ":" in address else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind((address, port))
+        except OSError as e:
+            return e.errno in _ADDRESS_IN_USE
+    return False
+
+
+def gather_host_facts(ports: list[tuple[str, int]], project: str,
+                      fallback_disk_path: str) -> HostFacts:  # pragma: no cover - shells to docker
+    info_proc = _docker("info", "--format", "{{json .}}")
+    docker_error: str | None = None
+    info: dict = {}
+    if info_proc is None:
+        docker_error = "the `docker` command was not found"
+    elif info_proc.returncode != 0:
+        lines = (info_proc.stderr or info_proc.stdout).strip().splitlines()
+        docker_error = lines[-1] if lines else f"docker info exited {info_proc.returncode}"
+    else:
+        try:
+            info = json.loads(info_proc.stdout)
+        except ValueError:
+            docker_error = "docker info returned unreadable output"
+
+    version_proc = _docker("compose", "version", "--short")
+    compose_version = None
+    if version_proc is not None and version_proc.returncode == 0:
+        compose_version = version_proc.stdout.strip() or None
+
+    # Ports this project's own running containers publish are not a conflict: re-running `ordo up`
+    # on a running stack keeps them.
+    ours: set[int] = set()
+    ps_proc = _docker("ps", "--filter", f"label=com.docker.compose.project={project}", "--format", "{{.Ports}}")
+    if ps_proc is not None and ps_proc.returncode == 0:
+        ours = parse_docker_ports(ps_proc.stdout)
+    busy = frozenset((address, port) for address, port in ports
+                     if port not in ours and _port_busy(address, port))
+
+    # The model lands in a Docker volume under the daemon's root. That path is only measurable when
+    # the daemon runs on this host (Linux); Docker Desktop keeps it in its VM, so fall back to the
+    # rendered stack's disk.
+    root = str(info.get("DockerRootDir") or "")
+    disk_path = root if root and os.path.isdir(root) else fallback_disk_path
+    try:
+        disk_free_gb: float | None = shutil.disk_usage(disk_path).free / 1024 ** 3
+    except OSError:
+        disk_free_gb = None
+
+    return HostFacts(docker_error=docker_error, compose_version=compose_version,
+                     runtimes=frozenset((info.get("Runtimes") or {}).keys()), busy_ports=busy,
+                     disk_path=disk_path, disk_free_gb=disk_free_gb)

@@ -14,11 +14,13 @@ hard-scoped to the ordo project prefix so it only ever touches its own project's
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
-from . import bringup, doctor, fetch, gpu, images, native, parity, preflight, wizard
+from . import bringup, doctor, fetch, gpu, images, native, parity, preflight, remote, wizard
 from .catalog import Catalog
 from .config import Source
 from .hardware import detect
@@ -117,10 +119,22 @@ def _run(cmd: list[str], cwd: Path | None = None,
         return 1
 
 
+def _local_urls(compose_doc: dict) -> list[str]:
+    """`http://127.0.0.1:<port>  (<service>)` for every UI the render publishes on loopback."""
+    urls = []
+    for name, spec in (compose_doc.get("services") or {}).items():
+        for port in (spec or {}).get("ports") or []:
+            parts = str(port).split(":")
+            if len(parts) == 3 and parts[0] == "127.0.0.1":
+                urls.append(f"http://127.0.0.1:{parts[1]}  ({name})")
+    return urls
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     # --catalog may arrive via the global (before the subcommand) or the subparser (after it);
     # the subparser default is None, so fall back to the resolved global/bundled default.
-    cat = Catalog.load(Path(args.catalog or DEFAULT_CATALOG))
+    catalog_path = Path(args.catalog or DEFAULT_CATALOG)
+    cat = Catalog.load(catalog_path)
     reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
     out = Path(args.out)
     interactive = not args.yes and sys.stdin.isatty()
@@ -129,69 +143,62 @@ def cmd_init(args: argparse.Namespace) -> int:
     # running out/ (ordo.yaml + secrets.env) from an accidental `ordo init` with the default --out.
     for existing in (out / "ordo.yaml", out / "secrets.env"):
         if existing.exists() and not args.force:
-            print(f"refusing to overwrite existing {existing} — pass --out to a fresh directory "
+            print(f"refusing to overwrite existing {existing}: pass --out to a fresh directory "
                   f"or --force to replace it (this protects a running stack's config).")
             return 1
 
-    emails_path = HERE / "auth" / "oauth2-proxy" / "emails.txt"
     try:
         result = wizard.run(cat, reg, out, interactive=interactive,
-                            answers={} if not interactive else None,
-                            emails_path=emails_path, host_root=HERE)
+                            answers={} if not interactive else None, host_root=HERE)
     except wizard.SetupCancelled:
-        # Operator aborted (Ctrl-C / declined the review). Nothing was written — the review-and
-        # -confirm gate is the last step before any file is created.
+        # Operator aborted (Ctrl-C). Nothing was written: the files are written after the questions.
         print("\nSetup cancelled - nothing was written.")
         return 130
 
     print(f"\nWrote {result.source_path}")
     print(f"Wrote {result.secrets_path}  (chmod 600)")
-    if result.emails_path:
-        print(f"Wrote {result.emails_path}  (SSO allowlist)")
+    print(f"  Model   : {result.model_name} ({result.model_id})")
+    print(f"  Plugins : {', '.join(result.plugins_enabled) or '(none)'}")
+    print(f"  Tools   : {', '.join(result.mcp_servers) or '(none)'}")
     if result.generated_secret_keys:
-        print(f"  generated {len(result.generated_secret_keys)} internal secret(s): "
-              f"{', '.join(result.generated_secret_keys)}")
-    if result.provided_secret_keys:
-        print(f"  stored {len(result.provided_secret_keys)} provided secret(s): "
-              f"{', '.join(result.provided_secret_keys)}")
+        print(f"  generated {len(result.generated_secret_keys)} internal secret(s)")
+    if result.optional_blank_secret_keys:
+        print(f"  optional, blank until you need them: {', '.join(result.optional_blank_secret_keys)}")
     if result.blank_secret_keys:
-        print(f"  ! {len(result.blank_secret_keys)} external secret(s) left BLANK "
-              f"(fill in {result.secrets_path} before bring-up): {', '.join(result.blank_secret_keys)}")
+        print(f"  ! required secret(s) left BLANK (fill in {result.secrets_path} before bring-up): "
+              f"{', '.join(result.blank_secret_keys)}")
     for w in result.warnings:
         print(f"  ! {w}")
 
+    remote_line = f"Remote access (Tailscale + Google sign-in), any time later: ordo remote enable --out {out}"
     if not interactive:
-        # Headless/CI: config only. NEVER render/fetch/bring-up unattended (the safety line).
-        print(f"\nConfig written. Next (review first): ordo render --source {result.source_path} "
-              f"--out {out}, then ordo up --core --out {out} (the first up builds the stack's images)")
+        # Headless/CI: config only. NEVER render or bring up unattended (the safety line).
+        print(f"\nNext (review first):\n  ordo render --source {result.source_path} --out {out}\n"
+              f"  ordo up --all --out {out}\n{remote_line}")
         return 0
 
-    # pragma: no cover below (interactive offers)
-    print("\n— Next steps —")
-    if _prompt_yn(f"Render the config now (ordo render --out {out})?", default=True):
-        _run([sys.executable, "-m", "ordo", "--source", str(result.source_path),
-              "render", "--out", str(out)])
-    if _prompt_yn("Download the selected model now (ordo fetch)?", default=False):
-        _run([sys.executable, "-m", "ordo", "--source", str(result.source_path),
-              "fetch", "--models-dir", args.models_dir])
-    # Onboarding default: bring up CORE + Hermes ONLY (no COMPOSE_PROFILES) so you get a capable
-    # agent with a minimal footprint, then ask Hermes to install optional services on request.
-    # `plugins: auto` has already RENDERED every fitting optional service dormant behind its profile,
-    # so installing later is a cheap recreate ("install open-webui"). The full configured stack (all
-    # profiles — front door + every service) is the printed alternative.
-    if _prompt_yn("Bring up CORE + Hermes now (a capable agent, minimal footprint; install optional "
-                  "services later by asking Hermes)?", default=False):
-        bringup.bring_up(str(out), "ordo", [], whole_stack=True, with_profiles=False,
-                         force_recreate=False, dry_run=False, build=True)  # no profiles -> core + agent only
-        print("\nHermes is coming up. Once it's loaded (via its chat gateway), ask it to install "
-              "services — e.g. \"install open-webui\", \"turn on web search\".")
-        if result.compose_profiles:
-            print(f"Full configured stack (front door + all services) when you want it:\n"
-                  f"  ordo up --all --out {out}")
-    else:
-        print(f"\nWhen ready, CORE + Hermes:  ordo up --core --out {out}")
-        if result.compose_profiles:
-            print(f"Full configured stack:       ordo up --all --out {out}")
+    # pragma: no cover below (interactive) - question 3 of 3.
+    if not _prompt_yn("\n3/3  Start now? (render, check this host, bring the stack up)", default=True):
+        print(f"\nWhen ready:\n  ordo render --source {result.source_path} --out {out}\n"
+              f"  ordo up --all --out {out}\n{remote_line}")
+        return 0
+    render_args = argparse.Namespace(source=str(result.source_path), source_explicit=True,
+                                     catalog=str(catalog_path), out=str(out), force=False)
+    if cmd_render(render_args) != 0:
+        return 1
+    if not _host_preflight(str(out), "ordo", [], whole_stack=True, with_profiles=True):
+        print(f"\nFix the above, then: ordo up --all --out {out}\n{remote_line}")
+        return 1
+    # build=True: the first up builds the stack's first-party images (`ordo build`).
+    rc = bringup.bring_up(str(out), "ordo", [], whole_stack=True, with_profiles=True,
+                          force_recreate=False, dry_run=False, build=True)
+    if rc != 0:
+        return rc
+    urls = _local_urls(bringup.load_compose(out.resolve().as_posix()))
+    if urls:
+        print("\nOpen (this machine only):\n  " + "\n  ".join(urls))
+    print("The chat model loads from the models-gguf volume; seed it once (docs/data.md, \"Model Pull\").")
+    print(remote_line)
     return 0
 
 
@@ -207,6 +214,70 @@ def _prompt_yn(msg: str, default: bool = True) -> bool:  # pragma: no cover - in
     if not ans:
         return default
     return ans in ("y", "yes")
+
+
+def _remote_answers_from_flags(args: argparse.Namespace) -> wizard.RemoteAnswers:
+    """--yes: every answer from flags; the OAuth pair may come from the environment instead, so the
+    client secret need not sit in shell history."""
+    return wizard.RemoteAnswers(
+        hostname=args.hostname or "",
+        bind=args.bind or "",
+        client_id=args.client_id or os.environ.get("OAUTH2_PROXY_CLIENT_ID", ""),
+        client_secret=args.client_secret or os.environ.get("OAUTH2_PROXY_CLIENT_SECRET", ""),
+        emails=wizard.parse_emails(args.emails or ""),
+    )
+
+
+def _offer_tailscale_cert(hostname: str, interactive: bool) -> None:  # pragma: no cover - shells out
+    argv = remote.tailscale_cert_argv(hostname)
+    cert = remote.CERT_DIR / "tailnet.crt"
+    if cert.exists():
+        print(f"TLS cert present: {cert}")
+        return
+    if interactive and shutil.which("tailscale") and _prompt_yn("Issue the TLS cert now (tailscale cert)?"):
+        remote.CERT_DIR.mkdir(parents=True, exist_ok=True)
+        if _run(argv) == 0:
+            return
+    print(f"Issue the TLS cert (renew it every ~90 days):\n  {' '.join(argv)}")
+
+
+def cmd_remote(args: argparse.Namespace) -> int:
+    out = Path(args.out)
+    source = Path(args.source) if args.source_explicit else out / "ordo.yaml"
+    if not source.exists():
+        print(f"no config at {source}: run `ordo init` first", file=sys.stderr)
+        return 1
+    cat = Catalog.load(Path(args.catalog))
+    reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
+    interactive = not args.yes and sys.stdin.isatty()
+    try:
+        if args.action == "enable":
+            answers = wizard.ask_remote_access() if interactive else _remote_answers_from_flags(args)
+            change = remote.enable(source, out / "secrets.env", answers, cat, reg)
+        else:
+            if interactive and not _prompt_yn("Turn remote access off (UIs go back to this machine only)?"):
+                return 1
+            change = remote.disable(source, out / "secrets.env", cat, reg)
+    except wizard.SetupCancelled:
+        print("\ncancelled - nothing was written.")
+        return 130
+    except ValueError as e:
+        print(f"error: {e}\nnothing was written.", file=sys.stderr)
+        return 1
+    change.rendered.write(out)
+    print(f"Updated {source} and {out / 'secrets.env'}; rendered -> {out}/")
+    if change.generated_secret_keys:
+        print(f"  generated: {', '.join(change.generated_secret_keys)}")
+    if change.blank_secret_keys:
+        print(f"  ! still blank in {out / 'secrets.env'}: {', '.join(change.blank_secret_keys)}")
+    if args.action == "enable":
+        print(f"Remote access on: https://{answers.hostname}/  "
+              f"({len(answers.emails)} allowlisted address(es) in {remote.ALLOWLIST_PATH})")
+        _offer_tailscale_cert(answers.hostname, interactive)
+    else:
+        print("Remote access off: the UIs publish on 127.0.0.1 again.")
+    print(f"Apply it: ordo up --all --out {out}")
+    return 0
 
 
 def cmd_parity(args: argparse.Namespace) -> int:
@@ -267,13 +338,23 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     src, cat = _load(Path(args.source), Path(args.catalog))
     reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
     present = None if args.no_images else _local_images()
+    image_tags = images.load_record(args.out)
     go, checks = preflight.run(src, cat, reg, ref_env=args.ref, images_present=present,
                                secrets_env=args.secrets, project=args.project,
-                               image_tags=images.load_record(args.out))
-    for c in checks:
-        mark = "OK " if c.ok else ("!! " if c.blocking else "-- ")
-        print(f"  [{mark}] {c.name}: {c.detail}")
-    print(f"\n{'GO — safe to cut over' if go else 'NO-GO — resolve the [!!] blocking checks above'}")
+                               image_tags=image_tags)
+    if not args.no_host:
+        # The whole configured stack (every profile), exactly what `ordo up --all` would start.
+        rc = render(src, cat, reg)
+        services = rc.compose_dict(project=args.project, image_tags=image_tags)["services"]
+        facts = preflight.gather_host_facts(preflight.published_ports(services, rc.env), args.project,
+                                            str(Path(args.out).resolve()))
+        host = preflight.host_checks(services, rc.env, facts, secret_keys=rc.required_secrets,
+                                     optional_secrets=rc.optional_secrets, secrets_path=None,
+                                     model_gb=rc.manifest()["model"]["disk_gb"])
+        checks += host
+        go = go and all(c.ok for c in host if c.blocking)
+    _print_checks(checks)
+    print(f"\n{'GO: ready to bring up' if go else 'NO-GO: resolve the [!!] blocking checks above'}")
     return 0 if go else 1
 
 
@@ -309,12 +390,57 @@ def cmd_native(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_checks(checks: list[preflight.Check]) -> None:
+    for c in checks:
+        mark = "OK " if c.ok else ("!! " if c.blocking else "-- ")
+        print(f"  [{mark}] {c.name}: {c.detail}")
+
+
+def _host_preflight(out_dir: str, project: str, services: list[str], *, whole_stack: bool,
+                    with_profiles: bool) -> bool:
+    """Run the host checks for what this `ordo up` would start. False = refuse the bring-up.
+
+    A render that cannot be read (or names an unknown service) is left to bring_up, which reports it."""
+    out = Path(out_dir)
+    try:
+        doc = bringup.load_compose(out.resolve().as_posix())
+    except (OSError, ValueError):
+        return True
+    if any(name not in (doc.get("services") or {}) for name in services):
+        return True
+    starting = bringup.starting_services(doc, services, whole_stack=whole_stack, with_profiles=with_profiles)
+    manifest_path = out / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+    secret_keys = manifest.get("required_secrets")
+    if secret_keys is None:  # a render from before the manifest listed them
+        example = out / "secrets.env.example"
+        secret_keys = list(parity.load_env(str(example))) if example.exists() else []
+    model = manifest.get("model") or {}
+    env = parity.load_env(str(out / ".env")) if (out / ".env").exists() else {}
+    facts = preflight.gather_host_facts(preflight.published_ports(starting, env), project, str(out.resolve()))
+    checks = preflight.host_checks(
+        starting, env, facts, secret_keys=secret_keys,
+        optional_secrets=manifest.get("optional_secrets", []), secrets_path=str(out / "secrets.env"),
+        model_gb=float(model.get("disk_gb", model.get("vram_gb", 0)) or 0))
+    failed = [c for c in checks if c.blocking and not c.ok]
+    if failed or any(not c.ok for c in checks):
+        _print_checks(checks)
+    if failed:
+        print("\nNO-GO: fix the [!!] lines above and re-run (or pass --no-preflight to skip these checks).")
+        return False
+    return True
+
+
 def cmd_up(args: argparse.Namespace) -> int:
     forms = int(args.all) + int(args.core) + int(bool(args.services))
     if forms != 1:
         print("ordo up: give exactly one of --all, --core or SERVICE...", file=sys.stderr)
         return 1
     whole_stack = args.all or args.core
+    if not args.dry_run and not args.no_preflight:
+        if not _host_preflight(args.out, args.project, args.services, whole_stack=whole_stack,
+                               with_profiles=not args.core):
+            return 1
     return bringup.bring_up(args.out, args.project, args.services, whole_stack=whole_stack,
                             with_profiles=not args.core, force_recreate=False, dry_run=args.dry_run,
                             build=not args.no_build)
@@ -438,9 +564,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="render the default/example source even if --out holds a differing ordo.yaml "
                          "(overrides the anti-clobber guard)")
     pr.set_defaults(func=cmd_render)
-    # `init` = the one-command install wizard (hardware → model → capabilities → tailnet+SSO →
-    # secrets → write ordo.yaml + secrets.env, then offer render/fetch/up). `setup` is a
-    # backwards-compatible alias. Both write a DIRECTORY (--out) holding the config the stack runs.
+    # `init` = the one-command install wizard: at most three questions (model, features, start
+    # now), local-only, no accounts. `setup` is a backwards-compatible alias. Both write a
+    # DIRECTORY (--out) holding the config the stack runs. Remote access is `ordo remote enable`.
     for name in ("init", "setup"):
         pi = sub.add_parser(name)
         pi.add_argument("--out", default="out",
@@ -450,13 +576,23 @@ def main(argv: list[str] | None = None) -> int:
         pi.add_argument("--force", action="store_true",
                         help="overwrite existing ordo.yaml/secrets.env in --out (clobbers a running "
                              "stack's config)")
-        pi.add_argument("--models-dir", default="./models",
-                        help="where `ordo fetch` downloads GGUFs (if offered)")
         # Accept --catalog after the subcommand too (the global one must precede it); a value here
         # overrides the global default so `ordo init --catalog X` works as written.
         pi.add_argument("--catalog", default=None,
                         help="model catalog to size against (defaults to the bundled catalog)")
         pi.set_defaults(func=cmd_init)
+    # `remote enable|disable`: the opt-in remote access (Tailscale HTTPS + Google SSO edge).
+    prm = sub.add_parser("remote", help="turn remote access (Tailscale + Google sign-in) on or off")
+    prm.add_argument("action", choices=["enable", "disable"])
+    prm.add_argument("--out", default="out", help="the config + rendered stack directory (default: out)")
+    prm.add_argument("--yes", action="store_true", help="no prompts: take every answer from the flags below")
+    prm.add_argument("--hostname", help="tailnet hostname, e.g. ordo.tail1234.ts.net")
+    prm.add_argument("--bind", help="Caddy bind address: the tailnet IP, or 0.0.0.0")
+    prm.add_argument("--client-id", help="Google OAuth client id (or env OAUTH2_PROXY_CLIENT_ID)")
+    prm.add_argument("--client-secret",
+                     help="Google OAuth client secret (prefer env OAUTH2_PROXY_CLIENT_SECRET: flags land in history)")
+    prm.add_argument("--emails", help="allowlisted Google accounts, comma-separated")
+    prm.set_defaults(func=cmd_remote)
     pp = sub.add_parser("parity")
     pp.add_argument("--ref", required=True, help="reference .env to compare the render against")
     pp.set_defaults(func=cmd_parity)
@@ -482,6 +618,8 @@ def main(argv: list[str] | None = None) -> int:
     pf.add_argument("--no-images", action="store_true", help="skip the docker image-presence check")
     pf.add_argument("--out", default="out",
                     help="the rendered stack directory whose images.json build record to check (default: out)")
+    pf.add_argument("--no-host", action="store_true",
+                    help="skip the host checks (docker daemon, compose v2, NVIDIA runtime, disk, ports)")
     pf.set_defaults(func=cmd_preflight)
     # `up` / `recreate`: the one host bring-up path. Both env files and every rendered profile
     # (the argv builder is shared with ops-controller), named services never cascade onto their
@@ -492,6 +630,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="start only these services (--no-deps; caddy also takes its netns members)")
     pu.add_argument("--all", action="store_true", help="whole stack, every rendered profile")
     pu.add_argument("--core", action="store_true", help="whole stack without profiles: core + agent")
+    pu.add_argument("--no-preflight", action="store_true",
+                    help="skip the host checks (docker, GPU runtime, disk, ports, secrets) run before starting")
     prc = sub.add_parser("recreate", help="force-recreate services (refuses an evicted GPU resident)")
     prc.add_argument("services", nargs="+", metavar="SERVICE")
     for sp, func in ((pu, cmd_up), (prc, cmd_recreate)):

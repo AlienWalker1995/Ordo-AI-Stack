@@ -18,6 +18,38 @@ from .buildspec import BuildSpec
 from .gpu import GpuArbitration
 from .hardware import HardwareProfile
 
+# The only address a local port binds to. Not manifest-configurable: a manifest names a port, and
+# the renderer decides the address, so no manifest can publish a UI past this machine.
+LOOPBACK = "127.0.0.1"
+
+
+@dataclasses.dataclass(frozen=True)
+class LocalPort:
+    """A UI's host port for local access when the edge is off (`local_port: {host, container}`).
+
+    Rendered as `127.0.0.1:<host>:<container>`, and only while the edge plugin is disabled: with
+    the edge on, Caddy is the one front door and this port stays closed."""
+    host: int
+    container: int
+
+    @classmethod
+    def from_manifest(cls, raw: Any, where: str) -> LocalPort | None:
+        if raw is None:
+            return None
+        if not isinstance(raw, dict) or set(raw) != {"host", "container"}:
+            raise ValueError(f"{where}: local_port must be a mapping with exactly `host` and `container` "
+                             f"port numbers (got {raw!r})")
+        ports = {}
+        for half in ("host", "container"):
+            value = raw[half]
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 < value < 65536:
+                raise ValueError(f"{where}: local_port.{half} must be a port number 1-65535 (got {value!r})")
+            ports[half] = value
+        return cls(host=ports["host"], container=ports["container"])
+
+    def publish(self) -> str:
+        return f"{LOOPBACK}:{self.host}:{self.container}"
+
 
 @dataclasses.dataclass(frozen=True)
 class PluginService:
@@ -51,6 +83,8 @@ class PluginService:
     # deliberately publish none (isolation). Opt-in behind the plugin's profile, so it stays dormant
     # until `--profile edge` unless the edge plugin is enabled.
     ports: list[str] = dataclasses.field(default_factory=list)
+    # Loopback host port for a UI while the edge is off (see LocalPort). None -> no local access.
+    local_port: LocalPort | None = None
     # /dev/shm size (compose `shm_size`, e.g. "1gb"). Docker defaults to 64MB, which starves
     # Electron/Chromium + Selkies-style streaming GUIs (frame buffers live in shared memory) and
     # drops the session mid-stream. Empty → omit the key (docker default). Data-driven like gpu.
@@ -111,6 +145,7 @@ class PluginService:
             depends_on=depends_on,
             secrets=tuple(str(k) for k in (d.get("secrets", []) or [])),
             ports=[str(p) for p in (d.get("ports", []) or [])],
+            local_port=LocalPort.from_manifest(d.get("local_port"), where),
             shm_size=str(d.get("shm_size", "")),
             network_mode=str(d.get("network_mode", "")),
             entrypoint=[str(e) for e in (d.get("entrypoint", []) or [])],
@@ -265,6 +300,9 @@ class Plugin:
     # render emits these into secrets.env.example; the rendered compose reads them via a second
     # env_file `secrets.env` — derived (.env) config and operator secrets stay in separate files.
     secrets: tuple[str, ...] = ()
+    # The subset of `secrets` this plugin runs without (e.g. HF_TOKEN, only for gated downloads).
+    # Preflight blocks a bring-up on a blank required secret, never on one of these.
+    optional_secrets: tuple[str, ...] = ()
     # Build-context identity (METADATA for preflight/tests; NEVER rendered into compose). Absent ->
     # the plugin's own `services/<id>/` + `Dockerfile`. Declared only when the context isn't the
     # plugin's own dir. See ordo.buildspec.
@@ -281,6 +319,11 @@ class Plugin:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Plugin:
         req = d.get("requires", {}) or {}
+        secrets = tuple(str(s) for s in (d.get("secrets", []) or []))
+        optional_secrets = tuple(str(s) for s in (d.get("optional_secrets", []) or []))
+        undeclared = [key for key in optional_secrets if key not in secrets]
+        if undeclared:
+            raise ValueError(f"plugin '{d['id']}': optional_secrets {undeclared} are not in its `secrets:` list")
         return cls(
             id=str(d["id"]), name=str(d.get("name", d["id"])),
             description=str(d.get("description", "")),
@@ -295,7 +338,8 @@ class Plugin:
             mcp=(McpSpec.from_dict(dict(d.get("mcp", {}) or {}), plugin_id=str(d["id"]))
                  if str(d.get("kind", "service")) == "mcp" else None),
             services=tuple(PluginService.from_dict(s) for s in (d.get("services", []) or [])),
-            secrets=tuple(str(s) for s in (d.get("secrets", []) or [])),
+            secrets=secrets,
+            optional_secrets=optional_secrets,
             build=BuildSpec.from_dict(d.get("build")),
             litellm_key=dict(d.get("litellm_key", {}) or {}),
             site_keys=tuple(str(k) for k in (req.get("site", []) or [])),

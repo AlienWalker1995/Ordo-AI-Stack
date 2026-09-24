@@ -44,6 +44,13 @@ LEASED = {
 LEASED_OLD_IMAGE = {k: v for k, v in LEASED.items() if k != "leased"}
 
 
+@pytest.fixture(autouse=True)
+def host_ready(monkeypatch):
+    """These tests pin the argv and the lease refusals; the host preflight `ordo up` runs first
+    is tested in test_preflight_host.py."""
+    monkeypatch.setattr(cli, "_host_preflight", lambda *a, **k: True)
+
+
 @pytest.fixture
 def out_dir(tmp_path) -> Path:
     (tmp_path / "docker-compose.yml").write_text(yaml.safe_dump(COMPOSE), encoding="utf-8")

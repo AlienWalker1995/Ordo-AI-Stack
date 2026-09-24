@@ -60,11 +60,8 @@ if ($ScriptDir -and (Test-Path (Join-Path $ScriptDir 'pyproject.toml')) -and (Te
     $Target = $ScriptDir
     Info "Using existing clone at $Target"
 } else {
+    # No prompt: $env:ORDO_DIR overrides it, so `ordo init`'s three questions are the only ones.
     $Target = $DefaultDir
-    if ($Interactive) {
-        $ans = Read-Host "Install directory [$DefaultDir]"
-        if ($ans) { $Target = $ans }
-    }
     if ((Test-Path (Join-Path $Target '.git')) -and (Test-Path (Join-Path $Target 'pyproject.toml'))) {
         Info "Repo already present at $Target - pulling latest"
         git -C $Target pull --ff-only

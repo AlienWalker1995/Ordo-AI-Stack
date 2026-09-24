@@ -28,9 +28,7 @@ EXPECTED_SERVICE_PLUGINS = {
     "rag", "automation", "open-webui",                     # ported CPU-ok services
     "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
     "ltx-trainer",                                        # LoRA trainer (sole trainer since 2026-07-24)
-    "tailnet-names",                                      # post-parity: per-service Tailscale clean-URL sidecars
     "obsidian-livesync",                                 # cross-device Obsidian notes sync (CouchDB LiveSync + bridge)
-    "obsidian-livesync-funnel",                          # opt-in off-tailnet public access (Tailscale Funnel)
     "llamacpp-cpu",                                      # CPU LLM fallback (needs 24GB RAM, no GPU); dormant behind the cpu-fallback profile
 }
 # memory-vault is a post-parity add (file-based markdown-memory MCP). codebase-memory / comfyui /
@@ -57,17 +55,18 @@ def test_parity_matrix_counts():
     # 18 kind=service plugins are REGISTERED (11 parity set + ltx-trainer + tailnet-names +
     # obsidian-livesync + obsidian-livesync-funnel + llamacpp-cpu + langfuse + evals) and 7 kind=mcp
     # (qdrant-rag, searxng, memory-vault + the restored codebase-memory / comfyui-mcp / n8n /
-    # orchestration). 16 of the service plugins ENABLE on the full host: langfuse and evals are
-    # opt-in (`default: false`), so `plugins: auto` deliberately leaves them out. (The media "worker"
+    # orchestration). 14 of the service plugins ENABLE on the full host: langfuse, evals, the public
+    # Funnel and the tailnet-name sidecars are opt-in (`default: false`), so `plugins: auto`
+    # deliberately leaves them out. (The media "worker"
     # plugin was retired, dropping the parity set from 12 to 11; llamacpp-cpu - the CPU LLM
     # fallback - was added post-parity.)
     svc = [p for p in REGISTRY.plugins if p.kind == "service"]
     mcp = [p for p in REGISTRY.plugins if p.kind == "mcp"]
     opt_in = [p.id for p in svc if not p.default]
     assert len(svc) == 18 and len(mcp) == 7
-    assert opt_in == ["evals", "langfuse"]
+    assert opt_in == ["evals", "langfuse", "obsidian-livesync-funnel", "tailnet-names"]
     rc = _dual()
-    assert len(rc.plugins_enabled) == 16
+    assert len(rc.plugins_enabled) == 14
     assert len(rc.mcp_servers) == 7
 
 

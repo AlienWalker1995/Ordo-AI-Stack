@@ -442,6 +442,7 @@ def test_a_failed_build_stops_the_bring_up(monkeypatch, tmp_path, no_docker):
 def test_cli_up_builds_by_default_and_no_build_turns_it_off(monkeypatch, tmp_path, no_docker):
     from ordo import cli
 
+    monkeypatch.setattr(cli, "_host_preflight", lambda *a, **k: True)  # tested in test_preflight_host.py
     seen = _capture_ensure(monkeypatch)
     out = str(_out(tmp_path))
     assert cli.main(["up", "--all", "--out", out]) == 0

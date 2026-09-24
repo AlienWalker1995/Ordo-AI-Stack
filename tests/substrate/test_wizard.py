@@ -1,4 +1,5 @@
 """Wizard: plan proposal, capability + secret mapping, and a write -> render round-trip."""
+import sys
 from pathlib import Path
 
 from ordo import wizard
@@ -196,6 +197,93 @@ def test_run_leaves_edge_out_of_an_explicit_list_when_the_front_door_is_blank(tm
     src = Source.load(result.source_path)
     assert "edge" not in src.plugins
     assert "memory-vault" in src.plugins            # its vault path defaulted under data/
-    note = next(w for w in result.warnings if "'edge'" in w)
-    assert "CADDY_BIND" in note
+    # the edge being off is the local install working as intended: no "set CADDY_*" advice
+    # (the CLI points at `ordo remote enable` instead)
+    assert not any("'edge'" in w or "CADDY_BIND" in w for w in result.warnings)
     render(src, CATALOG, REGISTRY)                  # must not raise
+
+
+# --- the three-question local path ---
+
+
+def test_feature_presets_map_to_a_plugin_selection():
+    all_ids = [p.id for p in REGISTRY.plugins if p.default]
+    assert wizard.plugins_from_features("everything", all_ids) == "auto"
+    chat = wizard.plugins_from_features("chat", all_ids)
+    assert "open-webui" in chat and "rag" in chat            # Open WebUI cannot run without rag
+    assert "comfyui" not in chat and "n8n" not in chat
+    tools = wizard.plugins_from_features("tools", all_ids)
+    assert {"searxng", "n8n", "rag"} <= set(tools) and "comfyui" not in tools
+    assert wizard.DEFAULT_FEATURES == "everything"
+
+
+def test_headless_features_answer_selects_the_preset(tmp_path):
+    result = wizard.run(CATALOG, REGISTRY, tmp_path / "out", interactive=False,
+                        answers={"features": "chat"}, host_root=tmp_path / "repo")
+    src = Source.load(result.source_path)
+    assert isinstance(src.plugins, list) and "comfyui" not in src.plugins
+
+
+def test_the_result_says_what_was_chosen(tmp_path, monkeypatch):
+    monkeypatch.setattr(wizard, "detect", lambda: HW_CPU)
+    result = wizard.run(CATALOG, REGISTRY, tmp_path / "out", interactive=False, answers={},
+                        host_root=tmp_path / "repo")
+    assert result.model_id and result.model_name
+    assert "open-webui" in result.plugins_enabled
+
+
+def _scripted_input(monkeypatch, answers):
+    """Feed `answers` to input() in order and record every prompt shown."""
+    prompts = []
+    queue = list(answers)
+
+    def fake_input(prompt=""):
+        prompts.append(prompt)
+        return queue.pop(0)
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    return prompts
+
+
+def test_interactive_init_asks_three_questions_and_nothing_about_accounts(tmp_path, monkeypatch, capsys):
+    from ordo import cli
+    monkeypatch.setattr(wizard, "detect", lambda: HW_CPU)
+    monkeypatch.setattr(sys.modules["ordo.render"], "detect", lambda: HW_CPU)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    prompts = _scripted_input(monkeypatch, ["", "", "n"])   # Enter, Enter, "not now"
+    assert cli.main(["init", "--out", str(tmp_path / "out")]) == 0
+    assert len(prompts) == 3
+    assert [p.split()[0] for p in prompts] == ["1/3", "2/3", "3/3"]
+    printed = capsys.readouterr().out
+    assert "Tailscale" not in "".join(prompts) and "OAuth" not in printed
+    assert "ordo remote enable" in printed
+    assert Source.load(tmp_path / "out" / "ordo.yaml").plugins == "auto"   # the default preset
+
+
+def test_interactive_features_choice_is_applied(tmp_path, monkeypatch):
+    monkeypatch.setattr(wizard, "detect", lambda: HW_CPU)
+    monkeypatch.setattr(sys.modules["ordo.render"], "detect", lambda: HW_CPU)
+    _scripted_input(monkeypatch, ["", "1"])                  # keep the model, "Chat only"
+    result = wizard.run(CATALOG, REGISTRY, tmp_path / "out", interactive=True, host_root=tmp_path / "repo")
+    assert "open-webui" in result.plugins_enabled and "automation" not in result.plugins_enabled
+
+
+def test_update_secrets_keeps_existing_values_and_mints_missing_ones(tmp_path):
+    path = tmp_path / "secrets.env"
+    path.write_text("LITELLM_MASTER_KEY=sk-keep\nOLD_UNRELATED=x\n", encoding="utf-8")
+    generated, blank = wizard.update_secrets(
+        path, ["LITELLM_MASTER_KEY", "OAUTH2_PROXY_COOKIE_SECRET", "OAUTH2_PROXY_CLIENT_ID"],
+        provided={"OAUTH2_PROXY_CLIENT_ID": "cid"})
+    values = dict(ln.split("=", 1) for ln in path.read_text(encoding="utf-8").splitlines()
+                  if ln and not ln.startswith("#"))
+    assert values["LITELLM_MASTER_KEY"] == "sk-keep"
+    assert values["OAUTH2_PROXY_CLIENT_ID"] == "cid"
+    assert values["OAUTH2_PROXY_COOKIE_SECRET"] and generated == ["OAUTH2_PROXY_COOKIE_SECRET"]
+    assert values["OLD_UNRELATED"] == "x" and blank == []
+
+
+def test_update_secrets_removes_keys(tmp_path):
+    path = tmp_path / "secrets.env"
+    path.write_text("A=1\nB=2\n", encoding="utf-8")
+    wizard.update_secrets(path, [], remove=["B"])
+    assert "B=" not in path.read_text(encoding="utf-8")

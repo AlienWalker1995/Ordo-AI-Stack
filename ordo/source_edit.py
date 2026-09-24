@@ -1,11 +1,11 @@
 """Surgical, safe edits to the declarative source (`ordo.yaml`) — pure text → text.
 
-The ONE `plugins:` list editor. Its only caller is the control plane's plugin enable/disable
-(`ordo/control.py`), which also backs the dashboard's MCP toggle: ops-controller is the single writer
-of the operator source. Keeping it in the `ordo` package lets the substrate tests exercise it
-directly (pyyaml-only, no server).
+The ONE `plugins:` list editor and the ONE `site:` editor. The control plane's plugin enable/disable
+(`ordo/control.py`, which also backs the dashboard's MCP toggle) edits `plugins:`; the host command
+`ordo remote enable/disable` (`ordo/remote.py`) edits both. Keeping them in the `ordo` package lets
+the substrate tests exercise them directly (pyyaml-only, no server).
 
-The editor preserves every other line, comment, and the exact formatting, and REFUSES (raises
+Each editor preserves every other line, comment, and the exact formatting, and REFUSES (raises
 ValueError) any edit it cannot guarantee is safe — no block `plugins:` key, an inline/flow list, an
 empty list, or a result that fails to round-trip through the YAML parser with exactly the intended
 change. Callers catch that and decline to persist rather than risk the operator's hand-authored source.
@@ -96,4 +96,92 @@ def edit_plugins_list(text: str, plugin_id: str, action: str) -> str:
         raise ValueError("plugin missing from `plugins` after add")
     if action == "remove" and plugin_id in plugins:
         raise ValueError("plugin still in `plugins` after remove")
+    return new_text
+
+
+# A `site:` entry line at the block's indent: `  KEY: value` (the value may continue on deeper lines).
+_SITE_ENTRY_RE = re.compile(r"^(?P<indent>[ \t]+)(?P<key>[A-Z][A-Z0-9_]*):(?:\s|$)")
+
+
+def _site_line(indent: str, key: str, value: str, eol: str) -> str:
+    """`<indent>KEY: <value>` with the value quoted exactly as YAML needs it."""
+    rendered = yaml.safe_dump({key: value}, default_flow_style=False, width=10**6).rstrip("\n")
+    return f"{indent}{rendered}{eol}"
+
+
+def edit_site_keys(text: str, set_values: dict[str, str], remove: list[str]) -> str:
+    """Set and remove keys in ordo.yaml's block-style `site:` mapping, preserving every other line.
+
+    A key being set replaces its existing entry in place (continuation lines included) or is
+    appended to the block; a removed key drops its entry. No `site:` key at all -> a block is
+    appended at the end. Raises ValueError when the edit cannot be made safely (an inline
+    `site: {...}` mapping, or a result that does not parse to exactly the intended mapping)."""
+    lines = text.splitlines(keepends=True)
+    eol = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
+    try:
+        before = yaml.safe_load(text) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"ordo.yaml does not parse: {e}") from e
+    expected_site = {k: v for k, v in dict(before.get("site") or {}).items() if k not in remove}
+    expected_site.update(set_values)
+
+    key_idx = next((i for i, ln in enumerate(lines) if re.match(r"^site:", ln)), None)
+    if key_idx is None:
+        new_lines = list(lines)
+        if new_lines and not new_lines[-1].endswith(("\n", "\r\n")):
+            new_lines[-1] += eol
+        if set_values:
+            new_lines.append(f"site:{eol}")
+            new_lines += [_site_line("  ", k, v, eol) for k, v in set_values.items()]
+    else:
+        if not re.match(r"^site:\s*(?:#.*)?$", lines[key_idx]):
+            raise ValueError("ordo.yaml's `site:` is not a block mapping; edit it by hand")
+        # Group the block into entries: (key, [line indexes]) - continuation lines join the entry above.
+        entries: list[tuple[str, list[int]]] = []
+        indent = "  "
+        end = key_idx + 1
+        while end < len(lines):
+            ln = lines[end]
+            match = _SITE_ENTRY_RE.match(ln)
+            if match and (not entries or match.group("indent") == indent):
+                indent = match.group("indent")
+                entries.append((match.group("key"), [end]))
+            elif ln.strip() == "" or re.match(r"^\s+#", ln):
+                pass
+            elif re.match(r"^\S", ln):
+                break
+            elif entries:
+                entries[-1][1].append(end)   # a continuation line of the entry above
+            else:
+                raise ValueError("ordo.yaml's `site:` block has content this editor cannot read")
+            end += 1
+        replace = {k: idxs for k, idxs in entries}
+        drop: set[int] = set()
+        insert_at: dict[int, str] = {}
+        for key in remove:
+            drop.update(replace.get(key, []))
+        pending = dict(set_values)
+        for key, idxs in entries:
+            if key in pending:
+                drop.update(idxs)
+                insert_at[idxs[0]] = _site_line(indent, key, pending.pop(key), eol)
+        last_entry = max((idx for _, idxs in entries for idx in idxs), default=key_idx)
+        new_lines = []
+        for i, ln in enumerate(lines):
+            if i in insert_at:
+                new_lines.append(insert_at[i])
+            elif i not in drop:
+                new_lines.append(ln)
+            if i == last_entry:
+                new_lines += [_site_line(indent, k, v, eol) for k, v in pending.items()]
+
+    new_text = "".join(new_lines)
+    try:
+        after = yaml.safe_load(new_text) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"edited ordo.yaml no longer parses: {e}") from e
+    if dict(after.get("site") or {}) != expected_site:
+        raise ValueError("edited ordo.yaml `site:` is not the intended mapping")
+    if {k: v for k, v in after.items() if k != "site"} != {k: v for k, v in before.items() if k != "site"}:
+        raise ValueError("editing `site:` changed another part of ordo.yaml")
     return new_text

@@ -1,8 +1,10 @@
 """Guided setup wizard — the front end of the one-command install.
 
-Takes a fresh operator from nothing to a written config: detect hardware → confirm the
-auto-picked model → choose capabilities → tailnet + Google SSO + access → generate/collect
-secrets → write ``ordo.yaml`` (the declarative source) and ``secrets.env`` (operator secrets).
+Takes a fresh operator from nothing to a written config in at most three questions: confirm the
+auto-picked model for the detected hardware → pick a feature preset → (in the CLI) start now.
+Internal secrets are generated; nothing asks for an account. It writes ``ordo.yaml`` (the
+declarative source) and ``secrets.env`` (operator secrets). Remote access (Tailscale + Google
+SSO) is a later opt-in: ``ordo remote enable`` reuses the prompts and validators defined here.
 Everything downstream renders from ``ordo.yaml``; compose interpolates each service's declared
 secrets from ``secrets.env`` (``--env-file``), which is NEVER committed.
 
@@ -81,12 +83,31 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
     },
 }
 
+# The one features question: each preset keeps a set of the optional capabilities above
+# (None = everything the hardware supports, i.e. `plugins: auto`). Chat itself is always on; the
+# chat preset keeps `rag` because Open WebUI stores its documents in Qdrant and cannot run without it.
+FEATURE_PRESETS: dict[str, dict[str, Any]] = {
+    "chat": {"label": "Chat only (Open WebUI + the agent)", "capabilities": ["rag"]},
+    "tools": {"label": "Chat + tools (web search, document RAG, n8n automation)",
+              "capabilities": ["rag", "search", "automation"]},
+    "everything": {"label": "Everything this hardware supports", "capabilities": None},
+}
+DEFAULT_FEATURES = "everything"
+
+
+def plugins_from_features(preset: str, all_plugin_ids: list[str]) -> Any:
+    """The ordo.yaml `plugins:` value for a feature preset ("auto" for everything)."""
+    if preset not in FEATURE_PRESETS:
+        raise ValueError(f"unknown feature preset {preset!r} (choose one of {', '.join(FEATURE_PRESETS)})")
+    return plugins_from_capabilities(FEATURE_PRESETS[preset]["capabilities"], all_plugin_ids)
+
 
 # ── Secrets: what the wizard generates vs. prompts for ────────────────────────
 # GENERATED keys are internal shared secrets with no external authority — the wizard mints a
 # strong random value so the operator never has to. Everything else in a render's
-# `required_secrets` is EXTERNAL (issued by Google / Hugging Face / Tailscale / GitHub) and is
-# prompted for (skippable — left blank in secrets.env for the operator to fill later).
+# `required_secrets` is EXTERNAL (issued by Google / Hugging Face / Tailscale / GitHub): `ordo init`
+# leaves it blank for later (a manifest-declared optional one never blocks a bring-up), and
+# `ordo remote enable` collects the Google OAuth pair when remote access is turned on.
 def _cookie_secret() -> str:
     # oauth2-proxy requires a cookie secret of EXACTLY 16, 24, or 32 bytes (AES-SIV); a urlsafe
     # base64 of 32 random bytes decodes back to 32 bytes and is what oauth2-proxy's docs recommend.
@@ -161,18 +182,6 @@ def generator_for(key: str) -> Any | None:
     return None
 
 
-# External secrets — human-readable prompt text (order = display order). A key that is required
-# by the render but absent here AND not in SECRET_GENERATORS is still emitted (blank) so nothing
-# the stack needs is silently dropped.
-EXTERNAL_SECRETS: dict[str, str] = {
-    "OAUTH2_PROXY_CLIENT_ID": "Google OAuth client ID",
-    "OAUTH2_PROXY_CLIENT_SECRET": "Google OAuth client secret",
-    "HF_TOKEN": "Hugging Face token (gated model pulls) — optional, Enter to skip",
-    "TS_AUTHKEY": "Tailscale auth key (clean tailnet service URLs) — optional, Enter to skip",
-    "GITHUB_PERSONAL_ACCESS_TOKEN": "GitHub PAT (ComfyUI-Manager) - optional, Enter to skip",
-}
-
-
 @dataclasses.dataclass
 class WizardPlan:
     """What the wizard would propose, for the user to confirm/override."""
@@ -195,7 +204,7 @@ def plan(catalog: Catalog, registry: PluginRegistry,
     )
 
 
-def _tailnet_domain(hostname: str) -> str:
+def tailnet_domain(hostname: str) -> str:
     """`ordo.tail1234.ts.net` → `tail1234.ts.net` (everything after the first label)."""
     host = (hostname or "").strip().strip(".")
     return host.split(".", 1)[1] if "." in host else host
@@ -239,6 +248,19 @@ def _drop_plugins_missing_site_keys(plugin_ids: list[str], registry: PluginRegis
     return kept, notes
 
 
+def _remote_access_plugins(registry: PluginRegistry) -> set[str]:
+    """The edge plugin and every plugin that (transitively) depends on it."""
+    found = {"edge"}
+    changed = True
+    while changed:
+        changed = False
+        for plugin in registry.plugins:
+            if plugin.id not in found and found & set(plugin.depends_on):
+                found.add(plugin.id)
+                changed = True
+    return found
+
+
 def build_source(answers: dict[str, Any] | None = None) -> dict[str, Any]:
     """Turn wizard answers into a valid ordo.yaml dict. All fields optional → sane defaults.
 
@@ -255,7 +277,7 @@ def build_source(answers: dict[str, Any] | None = None) -> dict[str, Any]:
     host = str(a.get("caddy_hostname", "") or "").strip()
     if host:
         site["CADDY_TAILNET_HOSTNAME"] = host
-        site["CADDY_TAILNET_DOMAIN"] = str(a.get("caddy_domain") or _tailnet_domain(host))
+        site["CADDY_TAILNET_DOMAIN"] = str(a.get("caddy_domain") or tailnet_domain(host))
     bind = str(a.get("caddy_bind", "") or "").strip()
     if bind:
         site["CADDY_BIND"] = bind
@@ -332,6 +354,53 @@ def write_secrets(values: dict[str, str], path: str | Path) -> Path:
     return p
 
 
+def update_secrets(path: str | Path, required_keys: list[str], provided: dict[str, str] | None = None,
+                   remove: list[str] | None = None) -> tuple[list[str], list[str]]:
+    """Bring an existing secrets.env up to a render's required keys, line by line.
+
+    A provided value replaces the key's value; a required key that is absent or blank gets a
+    generated value when it is an internal secret, else an empty line; a key in `remove` is
+    dropped. Every other line (existing values, comments) is kept as is. Returns
+    (generated keys, keys left blank). Values are never printed."""
+    p = Path(path)
+    provided = {k: str(v).strip() for k, v in (provided or {}).items() if str(v or "").strip()}
+    drop = set(remove or [])
+    lines = p.read_text(encoding="utf-8").splitlines() if p.exists() else []
+    existing: dict[str, str] = {}
+    kept: list[str] = []
+    for line in lines:
+        key, sep, value = line.partition("=")
+        key = key.strip()
+        if sep and key and not line.lstrip().startswith("#"):
+            if key in drop:
+                continue
+            existing[key] = value.strip()
+            if key in provided:
+                line = f"{key}={provided[key]}"
+        kept.append(line)
+    generated: list[str] = []
+    blank: list[str] = []
+    for key in list(dict.fromkeys([*required_keys, *provided])):
+        if key in provided or existing.get(key):
+            if key in provided and key not in existing:
+                kept.append(f"{key}={provided[key]}")
+            continue
+        gen = generator_for(key)
+        value = gen() if gen is not None else ""
+        (generated if value else blank).append(key)
+        if key in existing:   # present but blank: fill that line in place
+            kept = [f"{key}={value}" if ln.partition("=")[0].strip() == key else ln for ln in kept]
+        else:
+            kept.append(f"{key}={value}")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    try:
+        os.chmod(p, 0o600)
+    except OSError:
+        pass
+    return generated, blank
+
+
 def write_emails(emails: list[str], path: str | Path) -> Path:
     """Write the oauth2-proxy allowlist (one email per line). This is a TRACKED repo file the
     edge mounts read-only; only written when the operator supplies at least one address."""
@@ -344,15 +413,19 @@ def write_emails(emails: list[str], path: str | Path) -> Path:
 
 @dataclasses.dataclass
 class WizardResult:
-    """Structured outcome — the CLI turns this into the post-wizard render/fetch/up offers."""
+    """Structured outcome: the CLI prints what was chosen and turns this into the "start now" offer."""
     source_path: Path
     secrets_path: Path
-    emails_path: Path | None
     generated_secret_keys: list[str]
     provided_secret_keys: list[str]
     blank_secret_keys: list[str]
     compose_profiles: list[str]
     warnings: list[str]
+    model_id: str = ""
+    model_name: str = ""
+    plugins_enabled: list[str] = dataclasses.field(default_factory=list)   # service plugins
+    mcp_servers: list[str] = dataclasses.field(default_factory=list)       # tool servers
+    optional_blank_secret_keys: list[str] = dataclasses.field(default_factory=list)
 
 
 # ── Input validation (pure — unit-tested without a TTY) ──────────────────────
@@ -427,6 +500,62 @@ def _prompt(msg: str, default: str = "", *, required: bool = False,
         # else: re-prompt (Ctrl-C to abort the wizard)
 
 
+def _choose(msg: str, options: dict[str, str], default: str) -> str:  # pragma: no cover - interactive
+    """Numbered single choice; returns the chosen option's key (Enter keeps `default`)."""
+    keys = list(options)
+    for number, key in enumerate(keys, start=1):
+        marker = "  (default)" if key == default else ""
+        print(f"    [{number}] {options[key]}{marker}")
+    while True:
+        ans = _read(f"{msg} [{keys.index(default) + 1}]: ").strip()
+        if not ans:
+            return default
+        if ans.isdigit() and 1 <= int(ans) <= len(keys):
+            return keys[int(ans) - 1]
+        print(f"  ! enter a number from 1 to {len(keys)}")
+
+
+def _welcome() -> None:  # pragma: no cover - interactive only
+    bar = "=" * 60
+    print(f"\n{bar}")
+    print("  Ordo setup: three questions, each with a default (press Enter).")
+    print("  Everything runs on this machine; no accounts needed.")
+    print("  Remote access (Tailscale + Google sign-in) is a later,")
+    print("  optional step: `ordo remote enable`.")
+    print("  Press Ctrl-C to cancel; nothing is written before the end.")
+    print(f"{bar}")
+
+
+def _collect_answers(catalog: Catalog, registry: PluginRegistry, pl: WizardPlan,
+                     out_dir: Path) -> dict[str, Any]:
+    # pragma: no cover below (interactive) - every branch here is TTY-driven.
+    # Two of the local path's three questions live here (model, features); the third, "start
+    # now?", is asked by `ordo init` after the config is written.
+    a: dict[str, Any] = {}
+    # Opt-in plugins (`default: false`) are excluded here for the same reason `plugins: auto`
+    # excludes them: the features question never offers them, so it must not enable them either.
+    all_ids = [p.id for p in registry.plugins if p.default]
+    _welcome()
+
+    print(f"\nDetected: {pl.hardware.summary()}")
+    print(f"Best-fit model: {pl.model_name}  (tier={pl.tier}, ~{pl.ctx_estimate:,} ctx)")
+    for w in pl.warnings:
+        print(f"  ! {w}")
+    if not _confirm("1/3  Use this model?", default=True):
+        by_tier: dict[str, list[str]] = {}
+        for m in catalog.models:
+            by_tier.setdefault(m.tier, []).append(m.id)
+        for tier, ids in by_tier.items():
+            print(f"    [{tier}] {', '.join(ids)}")
+        a["model"] = _read("  Model id (Enter = auto): ").strip() or "auto"
+
+    print("")
+    options = {key: meta["label"] for key, meta in FEATURE_PRESETS.items()}
+    preset = _choose("2/3  Features", options, DEFAULT_FEATURES)
+    a["plugins"] = plugins_from_features(preset, all_ids)
+    return a
+
+
 def _tailscale_ip() -> str:  # pragma: no cover - shells to tailscale
     if not shutil.which("tailscale"):
         return ""
@@ -439,170 +568,76 @@ def _tailscale_ip() -> str:  # pragma: no cover - shells to tailscale
     return ""
 
 
-def _try_tailscale_cert(hostname: str) -> None:  # pragma: no cover - shells to tailscale
-    if not (hostname and shutil.which("tailscale")):
-        if hostname:
-            print("  tailscale not on PATH — skip cert; issue it later with "
-                  f"`tailscale cert {hostname}`")
-        return
-    if _confirm(f"Run `tailscale cert {hostname}` now to issue the edge TLS cert?", default=False):
-        try:
-            subprocess.run(["tailscale", "cert", hostname], check=False)
-        except (OSError, subprocess.SubprocessError) as e:
-            print(f"  cert issuance failed ({e}) — run `tailscale cert {hostname}` manually later")
+@dataclasses.dataclass
+class RemoteAnswers:
+    """What `ordo remote enable` collects: the tailnet name, the Caddy bind, the Google OAuth
+    client and the allowlist. The domain is derived from the hostname."""
+    hostname: str
+    bind: str
+    client_id: str
+    client_secret: str
+    emails: list[str]
 
 
-_STEPS = 6
+def remote_answer_errors(answers: RemoteAnswers) -> list[str]:
+    """Every problem with a set of remote-access answers (empty list = usable). Never echoes the
+    client secret."""
+    errors = []
+    host_err = hostname_error(answers.hostname)
+    if host_err:
+        errors.append(f"hostname: {host_err}")
+    if not answers.bind.strip():
+        errors.append("bind: an address is required (the tailnet IP, or 0.0.0.0)")
+    if not answers.client_id.strip():
+        errors.append("client id: required (Google OAuth 2.0 Web client)")
+    if not answers.client_secret.strip():
+        errors.append("client secret: required (Google OAuth 2.0 Web client)")
+    if not answers.emails:
+        errors.append("emails: at least one allowlisted address is required")
+    bad = invalid_emails(answers.emails)
+    if bad:
+        errors.append(f"emails: not a valid address: {', '.join(bad)}")
+    return errors
 
 
-def _welcome() -> None:  # pragma: no cover - interactive only
-    bar = "=" * 60
-    print(f"\n{bar}")
-    print("  Ordo setup")
-    print("  Configure your whole stack in a few minutes. Every choice")
-    print("  has a sensible default (press Enter to accept it).")
-    print("")
-    print("  Before you start, have these ready for the front-door step:")
-    print("    * a Tailscale tailnet hostname (e.g. ordo.tail1234.ts.net)")
-    print("    * a Google OAuth 2.0 Web client (id + secret)")
-    print("  You can skip the front door and add it later.")
-    print("")
-    print("  Press Ctrl-C at any prompt to cancel. Nothing is written")
-    print("  until you review and confirm at the end.")
-    print(f"{bar}")
-
-
-def _collect_answers(catalog: Catalog, registry: PluginRegistry, pl: WizardPlan,
-                     out_dir: Path) -> tuple[dict[str, Any], dict[str, str], list[str]]:
-    # pragma: no cover below (interactive)  — every branch here is TTY-driven.
-    a: dict[str, Any] = {}
-    # Opt-in plugins (`default: false`) are excluded here for the same reason `plugins: auto`
-    # excludes them: the capability screen never offers them, so it must not enable them either.
-    all_ids = [p.id for p in registry.plugins if p.default]
-    _welcome()
-
-    # Step 1 - Hardware
-    print(f"\nStep 1/{_STEPS} - Hardware")
-    print(f"  detected: {pl.hardware.summary()}")
-    if not _confirm("Use detected hardware?", default=True):
-        print("  -> left on auto-detect; pin it later via `hardware:` in ordo.yaml.")
-
-    # Step 2 - Model
-    print(f"\nStep 2/{_STEPS} - Model")
-    print(f"  best fit: {pl.model_name}  (tier={pl.tier}, ~{pl.ctx_estimate:,} ctx)")
-    for w in pl.warnings:
-        print(f"  ! {w}")
-    model_label = f"{pl.model_name} (auto)"
-    if not _confirm("Accept the recommended model?", default=True):
-        by_tier: dict[str, list[str]] = {}
-        for m in catalog.models:
-            by_tier.setdefault(m.tier, []).append(m.id)
-        for tier, ids in by_tier.items():
-            print(f"    [{tier}] {', '.join(ids)}")
-        chosen = _prompt("Model id (or 'auto')", "auto")
-        a["model"] = chosen
-        model_label = chosen
-
-    # Step 3 - Capabilities
-    print(f"\nStep 3/{_STEPS} - Capabilities  (chat is always on)")
-    caps_label = "auto (everything the hardware supports)"
-    if _confirm("Customize which optional capabilities are enabled?", default=False):
-        enabled_caps: list[str] = []
-        for cap, meta in CAPABILITIES.items():
-            if _confirm(f"  enable {meta['label']}?", default=not meta["gpu"] or pl.hardware.primary_is_nvidia):
-                enabled_caps.append(cap)
-        a["plugins"] = plugins_from_capabilities(enabled_caps, all_ids)
-        caps_label = ", ".join(enabled_caps) or "chat only"
-    else:
-        a["plugins"] = "auto"
-
-    # Step 4 - Secure front door (Tailscale + Google SSO). Required inputs are enforced here:
-    # a blank hostname / client id / client secret / allowlist prompts to leave-blank-or-retry,
-    # so the operator makes an explicit choice instead of silently shipping a broken SSO gate.
-    provided: dict[str, str] = {}
-    emails: list[str] = []
-    print(f"\nStep 4/{_STEPS} - Secure front door (Tailscale + Google SSO)")
-    print("  Gates every UI behind Google sign-in on your tailnet.")
-    if _confirm("Set up the secure front door now?", default=True):
-        host = _prompt("Tailnet hostname (e.g. ordo.tail1234.ts.net)", "",
-                       required=True, validate=hostname_error,
-                       why="the SSO front door can't come up without it")
-        if host:
-            a["caddy_hostname"] = host
-        callback = f"https://{host or '<hostname>'}/oauth2/callback"
-        print("  Create an OAuth 2.0 Client at https://console.cloud.google.com/apis/credentials")
-        print(f"    type: Web application   Authorized redirect URI: {callback}")
-        provided["OAUTH2_PROXY_CLIENT_ID"] = _prompt(
-            "Google OAuth client ID", "", required=True, why="required for Google sign-in")
-        provided["OAUTH2_PROXY_CLIENT_SECRET"] = _prompt(
-            "Google OAuth client secret", "", required=True, why="required for Google sign-in")
-        while True:
-            raw = _prompt("Allowlisted emails (comma-separated)", "", required=True,
-                          why="no one can sign in until an email is allowlisted")
-            emails = parse_emails(raw)
-            bad = invalid_emails(emails)
-            if not bad:
-                break
-            print(f"  ! not a valid email: {', '.join(bad)}")
-        ts_ip = _tailscale_ip()
-        hint = f" (tailnet IP {ts_ip})" if ts_ip else ""
-        a["caddy_bind"] = _prompt(
-            f"Caddy bind address - tailnet IP restricts to the tailnet, 0.0.0.0 = all{hint}",
-            ts_ip or "0.0.0.0")
-        if host:
-            _try_tailscale_cert(host)
-        frontdoor_label = f"on - {host}" if host else "on - (hostname deferred)"
-    else:
-        print("  ! Skipping SSO: the stack will run WITHOUT the sign-in gate. Anyone who can reach")
-        print("    the bind address gets unauthenticated access. Bind to loopback to stay safe,")
-        print("    or add SSO later with `ordo init --force`.")
-        if not _confirm("Continue without the SSO front door?", default=False):
-            raise SetupCancelled
-        a["caddy_bind"] = _prompt(
-            "Caddy bind address (127.0.0.1 = this machine only, recommended without SSO)",
-            "127.0.0.1")
-        frontdoor_label = "OFF (no SSO gate)"
-
-    # Step 5 - External tokens (all optional)
-    print(f"\nStep 5/{_STEPS} - External tokens  (all optional - Enter to skip)")
-    for key, label in EXTERNAL_SECRETS.items():
-        if key in provided:  # OAUTH2_* already collected in the front-door step
-            continue
-        provided[key] = _prompt(f"  {label}", "")
-
-    # Step 6 - Review & confirm. NOTHING is written until this is accepted.
-    have = [k for k, v in provided.items() if v]
-    blank = [k for k, v in provided.items() if not v]
-    print(f"\nStep 6/{_STEPS} - Review")
-    print(f"  hardware      {pl.hardware.summary()}")
-    print(f"  model         {model_label}")
-    print(f"  capabilities  {caps_label}")
-    print(f"  front door    {frontdoor_label}")
-    if emails:
-        print(f"  allowlist     {', '.join(emails)}")
-    secret_line = f"{len(SECRET_GENERATORS)} auto-generated"
-    if have:
-        secret_line += f"; provided: {', '.join(have)}"
-    if blank:
-        secret_line += f"; blank: {', '.join(blank)}"
-    print(f"  secrets       {secret_line}")
-    print(f"  writes        {out_dir / 'ordo.yaml'}  +  {out_dir / 'secrets.env'}")
-    print("\n  Onboarding: the stack comes up as CORE + Hermes on the model above (minimal footprint).")
-    print("  Optional services stay off until you ask Hermes to install them (\"install open-webui\").")
-    if not _confirm("\nWrite this configuration?", default=True):
-        raise SetupCancelled
-
-    return a, provided, emails
+def ask_remote_access() -> RemoteAnswers:  # pragma: no cover - interactive only
+    """The remote-access prompts (`ordo remote enable`). Each required value re-prompts until it
+    is valid; Ctrl-C cancels with nothing written."""
+    print("\nRemote access: Tailscale HTTPS + Google sign-in in front of every UI.")
+    print("  Needs: MagicDNS + HTTPS certificates on in your tailnet, and a Google OAuth client.")
+    host = _prompt("Tailnet hostname (e.g. ordo.tail1234.ts.net)", "", validate=hostname_error)
+    while not host:
+        host = _prompt("Tailnet hostname (required)", "", validate=hostname_error)
+    ts_ip = _tailscale_ip()
+    hint = f" (tailnet IP {ts_ip})" if ts_ip else ""
+    bind = _prompt(f"Caddy bind address - tailnet IP restricts to the tailnet, 0.0.0.0 = all{hint}",
+                   ts_ip or "0.0.0.0")
+    print("  Create an OAuth 2.0 Client at https://console.cloud.google.com/apis/credentials")
+    print(f"    type: Web application   Authorized redirect URI: https://{host}/oauth2/callback")
+    client_id = ""
+    while not client_id:
+        client_id = _prompt("Google OAuth client ID", "")
+    client_secret = ""
+    while not client_secret:
+        client_secret = _prompt("Google OAuth client secret", "")
+    while True:
+        emails = parse_emails(_prompt("Allowlisted emails (comma-separated)", ""))
+        bad = invalid_emails(emails)
+        if emails and not bad:
+            break
+        print(f"  ! not a valid email: {', '.join(bad)}" if bad else "  ! at least one email is required")
+    return RemoteAnswers(hostname=host, bind=bind, client_id=client_id, client_secret=client_secret,
+                         emails=emails)
 
 
 def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
         interactive: bool = True, answers: dict[str, Any] | None = None,
-        emails_path: str | Path | None = None, host_root: str | Path | None = None) -> WizardResult:
+        host_root: str | Path | None = None) -> WizardResult:
     """Run the wizard. Non-interactive (`interactive=False`) is the headless/CI path: it consumes
-    `answers` (and `answers['secrets']` / `answers['emails']`) and writes config only.
+    `answers` (`features` picks a preset, `secrets` supplies values) and writes config only.
 
-    Writes ``<out_dir>/ordo.yaml`` and ``<out_dir>/secrets.env``; optionally the oauth2-proxy
-    allowlist at ``emails_path``. Returns a WizardResult describing what was written.
+    Writes ``<out_dir>/ordo.yaml`` and ``<out_dir>/secrets.env``. Returns a WizardResult
+    describing what was written and chosen.
 
     ``host_root`` is the repo checkout on the host. Every host bind is ``${BASE_PATH:?}`` /
     ``${DATA_PATH:?}`` (fail loud: a relative path resolves to a host path that does not exist
@@ -612,12 +647,15 @@ def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
     out = Path(out_dir)
     pl = plan(catalog, registry)
 
+    provided: dict[str, str] = {}
     if interactive:  # pragma: no cover - TTY-driven
-        a, provided, emails = _collect_answers(catalog, registry, pl, out)
+        a = _collect_answers(catalog, registry, pl, out)
     else:
         a = dict(answers or {})
         provided = dict(a.pop("secrets", {}) or {})
-        emails = list(a.pop("emails", []) or [])
+        features = a.pop("features", None)
+        if features is not None:
+            a["plugins"] = plugins_from_features(str(features), [p.id for p in registry.plugins if p.default])
 
     if host_root is not None:
         site = dict(a.get("site") or {})
@@ -642,13 +680,19 @@ def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
     values, gen, given, blank = resolve_secrets(rc.required_secrets, provided)
     secrets_path = write_secrets(values, out / "secrets.env")
 
-    emails_written: Path | None = None
-    if emails and emails_path is not None:
-        emails_written = write_emails(emails, emails_path)
+    # The edge and what depends on it are off because remote access is off: that is the local
+    # install working as intended, and `ordo remote enable` (which the CLI points to) turns it on.
+    # Their "set CADDY_* under site:" notes would only send a local user to hand-edit the source.
+    remote_only = _remote_access_plugins(registry)
+    notes = [w for w in site_notes + rc.warnings if not any(w.startswith(f"'{pid}' ") for pid in remote_only)]
 
     return WizardResult(
-        source_path=source_path, secrets_path=secrets_path, emails_path=emails_written,
-        generated_secret_keys=gen, provided_secret_keys=given, blank_secret_keys=blank,
+        source_path=source_path, secrets_path=secrets_path,
+        generated_secret_keys=gen, provided_secret_keys=given,
+        blank_secret_keys=[k for k in blank if k not in rc.optional_secrets],
+        optional_blank_secret_keys=[k for k in blank if k in rc.optional_secrets],
         compose_profiles=rc.compose_profiles,
-        warnings=site_notes + rc.warnings,
+        warnings=notes,
+        model_id=rc.model.id, model_name=rc.model.name, plugins_enabled=list(rc.plugins_enabled),
+        mcp_servers=[str(server["id"]) for server in rc.mcp_servers],
     )
