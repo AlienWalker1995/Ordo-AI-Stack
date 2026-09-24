@@ -402,7 +402,10 @@ class DockerBackend:
         return proc.returncode, output
 
     def compose_up(self, service: str | None = None) -> None:  # pragma: no cover - needs real docker
-        args = ["up", "-d"] + ([self._guard(service)] if service else [])
+        # A named up is `--no-deps`: otherwise compose also starts the service's dependencies,
+        # and during a GPU lease that includes the evicted llamacpp (the lease guard in
+        # control.py checks only the named service).
+        args = ["up", "-d"] + (["--no-deps", self._guard(service)] if service else [])
         subprocess.run(self._compose(*args), check=True, timeout=900)
 
     def compose_restart(self, service: str | None = None) -> None:  # pragma: no cover - needs real docker

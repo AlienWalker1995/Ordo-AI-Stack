@@ -134,3 +134,19 @@ def test_the_real_rendered_stack_has_profiles_to_pass():
         for p in (service or {}).get("profiles") or []
     }
     assert profiles, "the rendered stack defines no profiles, so the --profile flags are untested"
+
+
+def test_a_named_compose_up_never_starts_the_services_dependencies(capture):
+    # `up -d model-gateway` without --no-deps also starts llamacpp (its dependency). During a GPU
+    # lease llamacpp is evicted, and the lease guard only checks the NAMED service, so that
+    # call would put the resident back on the leased card beside the render.
+    backend, recorded = capture
+    backend.compose_up("open-webui")
+    cmd = recorded[-1]
+    assert cmd[-4:] == ["up", "-d", "--no-deps", "open-webui"]
+
+
+def test_a_whole_stack_compose_up_is_unchanged(capture):
+    backend, recorded = capture
+    backend.compose_up()
+    assert recorded[-1][-2:] == ["up", "-d"]
