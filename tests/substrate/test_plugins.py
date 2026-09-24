@@ -21,8 +21,13 @@ P_DUAL = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": UUID_5090},
           "ram_gb": 128, "cpu_cores": 32}
 
 
+# Every site key a plugin requires, so the hardware-gating tests below see only the hardware gate.
+FULL_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
+             "CADDY_TAILNET_DOMAIN": "example.ts.net", "MEMORY_VAULT_PATH": "/srv/vault"}
+
+
 def _src(**kw):
-    base = {"hardware": "auto", "tier": "auto", "model": "auto", "plugins": "auto"}
+    base = {"hardware": "auto", "tier": "auto", "model": "auto", "plugins": "auto", "site": FULL_SITE}
     base.update(kw)
     return Source.from_dict(base)
 
@@ -148,3 +153,69 @@ def test_ltx_trainer_manifest_invariants():
     # (found live 2026-07-15).
     for key in list(m["secrets"]) + ["OPS_CONTROLLER_TOKEN"]:
         assert key not in svc["env"], f"{key} must not be re-declared in the env block"
+
+
+# ── requires.site: the site keys a plugin cannot run without ─────────────────────────────────────
+EDGE_SITE_KEYS = ("CADDY_BIND", "CADDY_TAILNET_HOSTNAME", "CADDY_TAILNET_DOMAIN")
+# Keys a manifest may reference as ${KEY:?} without declaring them in requires.site: the host
+# roots every render carries (ordo init records them), and COMFYUI_URL, which the render derives.
+_NOT_SITE_KEYS = {"BASE_PATH", "DATA_PATH", "COMFYUI_URL"}
+
+
+def test_manifests_declare_required_site_keys():
+    assert REGISTRY.get("edge").site_keys == EDGE_SITE_KEYS
+    assert REGISTRY.get("memory-vault").site_keys == ("MEMORY_VAULT_PATH",)
+    assert REGISTRY.get("evals").site_keys == ("MEMORY_VAULT_PATH",)
+
+
+def test_every_fail_loud_site_ref_is_declared():
+    # A ${KEY:?} ref is a key compose refuses to run without. Each one in a manifest must be in
+    # that plugin's requires.site, so the render gates it instead of a late compose failure.
+    import json
+    import re
+
+    import yaml
+    for manifest in sorted((ROOT / "services").glob("*/plugin.yaml")):
+        values = json.dumps(yaml.safe_load(manifest.read_text(encoding="utf-8")))  # comments dropped
+        refs = set(re.findall(r"\$\{([A-Z0-9_]+):\?", values))
+        plugin_id = manifest.parent.name
+        undeclared = refs - _NOT_SITE_KEYS - set(REGISTRY.get(plugin_id).site_keys)
+        assert not undeclared, f"{plugin_id}: ${{KEY:?}} refs missing from requires.site: {undeclared}"
+
+
+def test_auto_skips_plugin_missing_site_keys_and_its_dependents():
+    rc = render(Source.from_dict({"hardware": P_CPU, "plugins": "auto"}), CATALOG, REGISTRY)
+    enabled = set(rc.plugins_enabled) | {s["plugin_id"] for s in rc.mcp_servers}
+    assert "edge" not in enabled
+    assert "memory-vault" not in enabled
+    # dependents of a skipped plugin are dropped by the dependency closure
+    assert "hermes-dashboard" not in enabled and "tailnet-names" not in enabled
+    edge_note = next(w for w in rc.warnings if "'edge'" in w and "site" in w)
+    assert all(key in edge_note for key in EDGE_SITE_KEYS)
+    assert "ordo render" in edge_note
+    assert any("'memory-vault'" in w and "MEMORY_VAULT_PATH" in w for w in rc.warnings)
+
+
+def test_auto_enables_plugin_once_site_keys_are_set():
+    rc = render(Source.from_dict({"hardware": P_CPU, "plugins": "auto", "site": FULL_SITE}), CATALOG, REGISTRY)
+    assert {"edge", "hermes-dashboard", "tailnet-names"} <= set(rc.plugins_enabled)
+    assert "memory-vault" in {s["plugin_id"] for s in rc.mcp_servers}
+    assert not any("site key" in w for w in rc.warnings)
+
+
+def test_auto_treats_blank_site_key_as_missing():
+    site = {"CADDY_BIND": " ", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
+            "CADDY_TAILNET_DOMAIN": "example.ts.net"}
+    rc = render(Source.from_dict({"hardware": P_CPU, "plugins": "auto", "site": site}), CATALOG, REGISTRY)
+    assert "edge" not in rc.plugins_enabled
+    assert any("'edge'" in w and "CADDY_BIND" in w for w in rc.warnings)
+
+
+def test_explicit_plugin_missing_site_keys_is_a_render_error():
+    import pytest
+    src = Source.from_dict({"hardware": P_CPU, "plugins": ["edge", "memory-vault"]})
+    with pytest.raises(ValueError) as err:
+        render(src, CATALOG, REGISTRY)
+    message = str(err.value)
+    assert "'edge'" in message and all(key in message for key in EDGE_SITE_KEYS)
+    assert "'memory-vault'" in message and "MEMORY_VAULT_PATH" in message

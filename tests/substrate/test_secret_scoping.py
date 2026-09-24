@@ -24,6 +24,9 @@ from ordo.render import CORE_SECRET_KEYS, OPTIONAL_SECRET_KEYS, render
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
+# The site keys the edge and memory-vault plugins require (`requires.site`), so they render.
+REQUIRED_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
+                 "CADDY_TAILNET_DOMAIN": "example.ts.net", "MEMORY_VAULT_PATH": "/srv/vault"}
 HW = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": "GPU-aaaa"},
                {"name": "GTX 1070", "vram_gb": 8, "uuid": "GPU-bbbb"}], "ram_gb": 128, "cpu_cores": 32}
 # The same plugin set the operator's stack runs, so every secret-bearing service renders.
@@ -35,10 +38,11 @@ PLUGINS = ["comfyui", "song-gen", "voice", "rag", "qdrant-rag", "llamacpp-cpu", 
 TAILNET = {"TS_AUTHKEY"}
 LANGFUSE_PAIR = {"LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"}
 SPEC: dict[str, set[str]] = {
-    # (+ GOOGLE_CLIENT_ID/SECRET <- OAUTH2_PROXY_CLIENT_* when a site edge hostname enables LiteLLM
-    # SSO; that wiring has its own tests in test_litellm_google_sso.py)
+    # + GOOGLE_CLIENT_ID/SECRET <- OAUTH2_PROXY_CLIENT_*: the edge requires a site hostname, which
+    # turns on LiteLLM SSO (that wiring has its own tests in test_litellm_google_sso.py)
     "model-gateway": {"LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "LITELLM_DB_PASSWORD",
-                      "THROUGHPUT_RECORD_TOKEN"} | LANGFUSE_PAIR,
+                      "THROUGHPUT_RECORD_TOKEN", "OAUTH2_PROXY_CLIENT_ID", "OAUTH2_PROXY_CLIENT_SECRET"}
+                     | LANGFUSE_PAIR,
     "model-gateway-keys": {"LITELLM_MASTER_KEY", "LITELLM_KEY_HERMES", "LITELLM_KEY_AUTOMATION", "LITELLM_KEY_EDGE",
                            "LITELLM_KEY_EVALS", "LITELLM_KEY_OPEN_WEBUI"},
     "litellm-db": {"LITELLM_DB_PASSWORD"},
@@ -74,7 +78,8 @@ SPEC: dict[str, set[str]] = {
 
 @pytest.fixture(scope="module")
 def rendered():
-    rc = render(Source.from_dict({"hardware": HW, "model": "auto", "plugins": PLUGINS}), CATALOG, REGISTRY)
+    rc = render(Source.from_dict({"hardware": HW, "model": "auto", "plugins": PLUGINS, "site": REQUIRED_SITE}),
+                CATALOG, REGISTRY)
     return rc, rc.compose_dict()
 
 

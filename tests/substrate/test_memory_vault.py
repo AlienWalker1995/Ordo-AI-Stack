@@ -34,7 +34,8 @@ _HC = {"test": ["CMD", "python3", "-c",
 
 def _src(plugins, hardware=P_5090):
     return Source.from_dict(
-        {"hardware": hardware, "tier": "auto", "model": "auto", "plugins": plugins}
+        {"hardware": hardware, "tier": "auto", "model": "auto", "plugins": plugins,
+         "site": {"MEMORY_VAULT_PATH": "/srv/vault"}}
     )
 
 

@@ -45,7 +45,9 @@ walks you through:
    warning that the stack then runs unauthenticated). When you set it up, the tailnet hostname
    (`CADDY_TAILNET_HOSTNAME`), OAuth client id/secret, and email allowlist are **required** — a blank
    answer prompts to defer-or-retry rather than silently shipping a broken gate. Prints the exact
-   Google console URL + callback and offers to provision a `tailscale cert`.
+   Google console URL + callback and offers to provision a `tailscale cert`. Skipped, remote access
+   (the `edge` plugin) stays off until you set `CADDY_BIND`, `CADDY_TAILNET_HOSTNAME` and
+   `CADDY_TAILNET_DOMAIN` under `site:` in `out/ordo.yaml` and re-run `ordo render`.
 5. **External tokens** — Hugging Face, Tailscale, GitHub; all optional (Enter to skip). Internal
    keys (LiteLLM, ops, MCP, cookie, SearXNG, n8n) are auto-generated.
 6. **Review & confirm** — a summary of every choice with a final **Y/n**; decline and nothing is

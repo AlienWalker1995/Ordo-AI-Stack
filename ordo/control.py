@@ -360,6 +360,11 @@ class ControlPlane:
                           f"'{plugin_id}' does not fit this hardware")
             return self._error(409, reason)
 
+        missing_site_keys = plugin.missing_site_keys(src.site)
+        if missing_site_keys:
+            return self._error(409, f"'{plugin_id}' needs site key(s) {', '.join(missing_site_keys)}: "
+                               "set them under `site:` in ordo.yaml, then render")
+
         if src.plugins == "auto" or src.plugins is None:
             # fits + auto but not enabled -> a dependency was gated off (dropped by the dep fixpoint)
             _, notes = self.registry.resolve([plugin_id], hw)

@@ -91,9 +91,9 @@ def test_edge_off_renders_none_of_the_sso_vars():
         assert key not in env, f"{key} rendered on model-gateway with the edge plugin disabled"
 
 
-def test_edge_on_without_a_hostname_renders_none_of_the_sso_vars():
-    """Edge enabled but no site hostname yet (fresh install) must not half-render the vars."""
-    env = _gateway_env(["edge"])
+def test_fresh_install_without_a_hostname_renders_none_of_the_sso_vars():
+    """No site hostname yet (fresh install): `auto` leaves the edge off, so no SSO var renders."""
+    env = _gateway_env("auto")
     for key in (*SSO_KEYS, "PROXY_ADMIN_ID"):
         assert key not in env
 

@@ -97,19 +97,28 @@ jobs:
 
       # Prove the rendered compose is loadable by the REAL docker engine (not just a well-shaped
       # dict). `config` parses + validates; it does not create or start anything.
-      # The rendered edge (caddy) requires CADDY_BIND (host tailnet IP) AND BASE_PATH (repo root)
-      # via ${VAR:?...} fail-loud guards — operator-supplied `site:` values the generic example
-      # intentionally leaves unset. Load the rendered .env and add CI-only placeholders (never used
-      # at runtime) so config can interpolate. BASE_PATH and DATA_PATH back every host bind, which
-      # fail loud on an empty value (guards the deny-all empty-mount outage class).
+      # BASE_PATH and DATA_PATH back every host bind via ${VAR:?...} fail-loud guards (the deny-all
+      # empty-mount outage class). The generic example leaves them unset, so add CI-only
+      # placeholders (never used at runtime). The edge stays off: the example sets no CADDY_* keys.
       - name: Rendered compose validates (docker engine)
         if: steps.filter.outputs.substrate == 'true'
         run: |
-          echo "CADDY_BIND=127.0.0.1" >> /tmp/ordo-out/.env
           echo "BASE_PATH=." >> /tmp/ordo-out/.env
           echo "DATA_PATH=./data" >> /tmp/ordo-out/.env
           docker compose -f /tmp/ordo-out/docker-compose.yml --env-file /tmp/ordo-out/.env config >/dev/null
           echo "rendered compose accepted by docker compose config"
+
+      # The operator's first run, end to end: the headless wizard, a render, and the engine check
+      # with ONLY the generated env files. Any site key a default plugin cannot run without must
+      # be recorded by the wizard or gate the plugin off; a hand-added variable here would hide that.
+      - name: Fresh install renders and validates
+        if: steps.filter.outputs.substrate == 'true'
+        run: |
+          pip install -e .
+          ordo init --yes --out /tmp/fresh/out
+          ordo render --source /tmp/fresh/out/ordo.yaml --out /tmp/fresh/out
+          docker compose -f /tmp/fresh/out/docker-compose.yml --env-file /tmp/fresh/out/.env \
+            --env-file /tmp/fresh/out/secrets.env config -q
 
       - name: Skip (no substrate changes)
         if: steps.filter.outputs.substrate != 'true'

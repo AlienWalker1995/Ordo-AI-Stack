@@ -13,6 +13,9 @@ from ordo.render import render
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
+# The site keys the edge and memory-vault plugins require (`requires.site`), so they render.
+REQUIRED_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
+                 "CADDY_TAILNET_DOMAIN": "example.ts.net", "MEMORY_VAULT_PATH": "/srv/vault"}
 
 
 def test_core_services_present():
@@ -211,7 +214,7 @@ def _dual_gpu_src(plugins="auto"):
     return Source.from_dict({"hardware": {"gpus": [
         {"name": "RTX 5090", "vram_gb": 32, "uuid": "GPU-PRIMARY-uuid"},
         {"name": "GTX 1070", "vram_gb": 8, "uuid": "GPU-SECONDARY-uuid"}],
-        "ram_gb": 128}, "model": "auto", "plugins": plugins})
+        "ram_gb": 128}, "model": "auto", "plugins": plugins, "site": REQUIRED_SITE})
 
 
 # ── Defect class: PRIMARY GPU pin (compute services must be pinned to the primary card by uuid, not
@@ -338,7 +341,7 @@ def test_edge_security_mounts_fail_loud_on_empty_base_path():
     → zero-email allowlist → deny-all outage (this happened). `:?` makes `docker compose config`
     reject an empty value instead. Matches the CADDY_BIND `:?` precedent in the same plugin."""
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
-                            "model": "auto", "plugins": ["edge"]})
+                            "model": "auto", "plugins": ["edge"], "site": REQUIRED_SITE})
     c = render(src, CATALOG, REGISTRY).compose_dict()
 
     emails_mounts = [v for v in c["services"]["oauth2-proxy"]["volumes"] if "emails.txt" in v]
@@ -397,7 +400,7 @@ def test_ops_controller_serve_out_matches_deployed_layout():
 def _render_with_plugins(plugins, tmp_path):
     src = Source.from_dict({
         "hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
-        "model": "auto", "agent": "hermes", "plugins": list(plugins),
+        "model": "auto", "agent": "hermes", "plugins": list(plugins), "site": REQUIRED_SITE,
     })
     render(src, CATALOG, REGISTRY).write(tmp_path)
     return yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
@@ -646,7 +649,7 @@ def test_services_the_control_plane_recreates_have_no_project_relative_binds():
     every_plugin = [p.id for p in REGISTRY.plugins]
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}, {"vram_gb": 8}], "ram_gb": 128},
                             "model": "auto", "plugins": every_plugin,
-                            "site": {"BASE_PATH": "/srv/ordo", "DATA_PATH": "/srv/ordo/data"}})
+                            "site": {"BASE_PATH": "/srv/ordo", "DATA_PATH": "/srv/ordo/data", **REQUIRED_SITE}})
     rc = render(src, CATALOG, REGISTRY, agents=AgentRegistry.load(ROOT / "services"),
                 dashboards=DashboardRegistry.load(ROOT / "services"))
     offenders = []

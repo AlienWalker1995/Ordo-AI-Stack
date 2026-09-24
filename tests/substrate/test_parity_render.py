@@ -12,6 +12,9 @@ from ordo.render import CORE_SECRET_KEYS, render
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
+# The site keys the edge and memory-vault plugins require (`requires.site`), so they render.
+REQUIRED_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
+                 "CADDY_TAILNET_DOMAIN": "example.ts.net", "MEMORY_VAULT_PATH": "/srv/vault"}
 
 UUID_5090 = "GPU-97fe65ee-5e2d-8c9b-32d0-362f510ceb96"
 UUID_1070 = "GPU-20fac13a-5e5b-1818-581f-63901612fd84"
@@ -39,7 +42,7 @@ EXPECTED_MCP = {"qdrant-rag", "searxng", "memory-vault",
 
 
 def _dual():
-    return render(Source.from_dict({"hardware": P_DUAL, "model": "auto", "plugins": "auto"}),
+    return render(Source.from_dict({"hardware": P_DUAL, "model": "auto", "plugins": "auto", "site": REQUIRED_SITE}),
                   CATALOG, REGISTRY)
 
 

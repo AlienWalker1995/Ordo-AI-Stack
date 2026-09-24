@@ -1,12 +1,14 @@
 """Plugin registry — plugins declare their hardware needs + config fragment (data, not code).
 
 The renderer reads manifests and composes enabled plugins into the rendered config. A plugin
-is enabled only if it's requested (auto/explicit), its hardware requirements are met, AND its
-declared dependencies are also enabled. Media plugins self-declare NVIDIA-only.
+is enabled only if it's requested (auto/explicit), its hardware requirements are met, the site
+keys it requires are set, AND its declared dependencies are also enabled. Media plugins
+self-declare NVIDIA-only.
 """
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -271,6 +273,10 @@ class Plugin:
     # render derives the env var LITELLM_KEY_<ID>, adds it to required secrets, and emits the grant
     # into out/model-gateway/keys.json for bootstrap_keys.py. Empty -> this plugin gets no key.
     litellm_key: dict[str, Any] = dataclasses.field(default_factory=dict)
+    # `requires.site`: the operator `site:` keys this plugin cannot run without (its compose fails
+    # loud, `${KEY:?}`, on an empty value). `plugins: auto` skips the plugin while any is missing;
+    # an explicit `plugins:` list that names it is a render error.
+    site_keys: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Plugin:
@@ -292,6 +298,7 @@ class Plugin:
             secrets=tuple(str(s) for s in (d.get("secrets", []) or [])),
             build=BuildSpec.from_dict(d.get("build")),
             litellm_key=dict(d.get("litellm_key", {}) or {}),
+            site_keys=tuple(str(k) for k in (req.get("site", []) or [])),
         )
 
     @property
@@ -312,6 +319,10 @@ class Plugin:
         if self.needs_secondary_gpu and hw.secondary_gpu is None:
             return False
         return True
+
+    def missing_site_keys(self, site: Mapping[str, Any]) -> list[str]:
+        """The required site keys that are absent or blank in `site`, in manifest order."""
+        return [key for key in self.site_keys if not str(site.get(key, "") or "").strip()]
 
 
 class PluginRegistry:
@@ -335,10 +346,14 @@ class PluginRegistry:
         return self._by_id.get(plugin_id)
 
     def resolve(
-        self, requested: Any, hw: HardwareProfile,
+        self, requested: Any, hw: HardwareProfile, site: Mapping[str, Any] | None = None,
     ) -> tuple[list[Plugin], list[str]]:
         """Return (enabled plugins, notes). 'auto' = everything the hardware can run, MINUS the
-        opt-in plugins (`default: false`), which only an explicit `plugins:` list can enable."""
+        opt-in plugins (`default: false`), which only an explicit `plugins:` list can enable.
+
+        `site` is the source's `site:` block. When given, a plugin missing a required site key is
+        skipped under 'auto' (with a note naming the keys), and an explicit list that names one
+        raises ValueError. None leaves the site gate out, for callers asking only about hardware."""
         notes: list[str] = []
         if requested == "auto" or requested is None:
             wanted = {p.id for p in self.plugins if p.default}
@@ -363,6 +378,21 @@ class PluginRegistry:
             elif requested != "auto":
                 notes.append(f"'{pid}' needs {'NVIDIA + ' if p.nvidia else ''}"
                              f"{p.vram_gb:.0f}GB VRAM — not available; skipped")
+
+        # site gate: a plugin whose compose refuses to run without a site key stays off until set
+        if site is not None:
+            missing_by_plugin = {pid: p.missing_site_keys(site) for pid, p in enabled.items()}
+            missing_by_plugin = {pid: keys for pid, keys in missing_by_plugin.items() if keys}
+            if missing_by_plugin and requested not in ("auto", None):
+                problems = "; ".join(f"'{pid}' needs {', '.join(keys)}"
+                                     for pid, keys in sorted(missing_by_plugin.items()))
+                raise ValueError(f"required site key(s) missing: {problems}. Set them under `site:` "
+                                 "in ordo.yaml, or remove the plugin from `plugins:`, then re-run "
+                                 "`ordo render`")
+            for pid, keys in sorted(missing_by_plugin.items()):
+                notes.append(f"'{pid}' not enabled - required site key(s) {', '.join(keys)} not set; "
+                             "set them under `site:` in ordo.yaml and re-run `ordo render`")
+                del enabled[pid]
 
         # dependency gate: drop plugins whose deps aren't all enabled (iterate to fixpoint)
         changed = True

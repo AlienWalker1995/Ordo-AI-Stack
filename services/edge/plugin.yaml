@@ -8,6 +8,7 @@ description: TLS front door + Google SSO forward-auth for remote (Tailscale) acc
 requires:
   nvidia: false
   ram_gb: 1
+  site: [CADDY_BIND, CADDY_TAILNET_HOSTNAME, CADDY_TAILNET_DOMAIN]   # off until the operator sets them
 provides: [edge]
 compose_profile: edge
 env:

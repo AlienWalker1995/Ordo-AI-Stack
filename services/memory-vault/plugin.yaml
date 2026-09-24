@@ -11,6 +11,7 @@ kind: mcp                  # an MCP server service (agent tools), not a plain st
 requires:
   nvidia: false            # pure filesystem — no GPU, no network
   ram_gb: 1
+  site: [MEMORY_VAULT_PATH]  # the vault bind fails loud without it
 provides: [tools]
 mcp:
   # Project buildable image (build context services/memory-vault): wraps @bitbonsai/mcpvault pinned

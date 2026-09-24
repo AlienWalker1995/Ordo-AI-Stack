@@ -31,6 +31,9 @@ from ordo.render import DEFAULT_PLUGINS_DIR, GATED_SERVICE_URL_ENV, render
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
+# The site keys the edge and memory-vault plugins require (`requires.site`), so they render.
+REQUIRED_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
+                 "CADDY_TAILNET_DOMAIN": "example.ts.net", "MEMORY_VAULT_PATH": "/srv/vault"}
 
 DUAL_GPU = {
     "gpus": [{"name": "RTX 5090", "vram_gb": 32.0, "uuid": "GPU-primary"},
@@ -45,7 +48,7 @@ def registry() -> PluginRegistry:
 
 
 def _src(**kw):
-    base = {"hardware": DUAL_GPU, "tier": "auto", "model": "auto", "plugins": "auto"}
+    base = {"hardware": DUAL_GPU, "tier": "auto", "model": "auto", "plugins": "auto", "site": REQUIRED_SITE}
     base.update(kw)
     return Source.from_dict(base)
 

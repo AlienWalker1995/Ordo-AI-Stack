@@ -169,3 +169,32 @@ def test_run_keeps_host_paths_the_operator_chose(tmp_path):
     site = Source.load(result.source_path).site
     assert site["DATA_PATH"] == "/srv/ordo-data"
     assert site["BASE_PATH"] == (tmp_path / "repo").as_posix()
+
+
+def test_run_defaults_the_memory_vault_under_data(tmp_path):
+    # memory-vault cannot run without MEMORY_VAULT_PATH; a local vault under data/ is the default.
+    repo = tmp_path / "repo"
+    result = wizard.run(CATALOG, REGISTRY, tmp_path / "out", interactive=False, answers={},
+                        host_root=repo)
+    assert Source.load(result.source_path).site["MEMORY_VAULT_PATH"] == f"{repo.as_posix()}/data/memory-vault"
+
+
+def test_run_keeps_the_vault_the_operator_chose(tmp_path):
+    result = wizard.run(CATALOG, REGISTRY, tmp_path / "out", interactive=False,
+                        answers={"site": {"MEMORY_VAULT_PATH": "/srv/vault"}}, host_root=tmp_path / "repo")
+    assert Source.load(result.source_path).site["MEMORY_VAULT_PATH"] == "/srv/vault"
+
+
+def test_run_leaves_edge_out_of_an_explicit_list_when_the_front_door_is_blank(tmp_path):
+    # A partial capability selection writes an explicit plugins list. With the front-door step left
+    # blank, the edge has no CADDY_* keys, so it stays out of the list (a render would refuse it).
+    kept = [c for c in wizard.CAPABILITIES if c != "voice"]
+    all_ids = [p.id for p in REGISTRY.plugins]
+    result = wizard.run(CATALOG, REGISTRY, tmp_path / "out", interactive=False, answers={
+        "plugins": wizard.plugins_from_capabilities(kept, all_ids)}, host_root=tmp_path / "repo")
+    src = Source.load(result.source_path)
+    assert "edge" not in src.plugins
+    assert "memory-vault" in src.plugins            # its vault path defaulted under data/
+    note = next(w for w in result.warnings if "'edge'" in w)
+    assert "CADDY_BIND" in note
+    render(src, CATALOG, REGISTRY)                  # must not raise

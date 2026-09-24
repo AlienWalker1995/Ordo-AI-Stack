@@ -222,6 +222,23 @@ def plugins_from_capabilities(enabled_caps: list[str] | None,
     return [pid for pid in all_plugin_ids if pid not in drop]
 
 
+def _drop_plugins_missing_site_keys(plugin_ids: list[str], registry: PluginRegistry,
+                                    site: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """Keep an explicit plugins list renderable: leave out each plugin whose required site keys
+    are unset (the render refuses an explicit list naming one), with a note saying how to add it."""
+    kept: list[str] = []
+    notes: list[str] = []
+    for plugin_id in plugin_ids:
+        plugin = registry.get(plugin_id)
+        missing = plugin.missing_site_keys(site) if plugin else []
+        if missing:
+            notes.append(f"'{plugin_id}' left out of plugins: set {', '.join(missing)} under `site:` in "
+                         f"ordo.yaml and add '{plugin_id}' to `plugins:`, then re-run `ordo render`")
+        else:
+            kept.append(plugin_id)
+    return kept, notes
+
+
 def build_source(answers: dict[str, Any] | None = None) -> dict[str, Any]:
     """Turn wizard answers into a valid ordo.yaml dict. All fields optional → sane defaults.
 
@@ -590,7 +607,7 @@ def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
     ``host_root`` is the repo checkout on the host. Every host bind is ``${BASE_PATH:?}`` /
     ``${DATA_PATH:?}`` (fail loud: a relative path resolves to a host path that does not exist
     when ops-controller recreates a service), so the source records both unless the operator
-    already chose them.
+    already chose them, plus a MEMORY_VAULT_PATH under DATA_PATH.
     """
     out = Path(out_dir)
     pl = plan(catalog, registry)
@@ -607,9 +624,16 @@ def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
         base = Path(host_root).resolve().as_posix()
         site.setdefault("BASE_PATH", base)
         site.setdefault("DATA_PATH", f"{site['BASE_PATH']}/data")
+        # memory-vault requires a vault path; a local vault under data/ is the sensible default.
+        # The edge stays off until the operator supplies its CADDY_* keys.
+        site.setdefault("MEMORY_VAULT_PATH", f"{site['DATA_PATH']}/memory-vault")
         a["site"] = site
 
     source = build_source(a)
+    site_notes: list[str] = []
+    if isinstance(source["plugins"], list):
+        source["plugins"], site_notes = _drop_plugins_missing_site_keys(
+            source["plugins"], registry, source.get("site", {}))
     source_path = write_source(source, out / "ordo.yaml")
 
     # Render in-memory (writes NOTHING) purely to learn the exact secret KEY set the selected
@@ -626,5 +650,5 @@ def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
         source_path=source_path, secrets_path=secrets_path, emails_path=emails_written,
         generated_secret_keys=gen, provided_secret_keys=given, blank_secret_keys=blank,
         compose_profiles=rc.compose_profiles,
-        warnings=rc.warnings,
+        warnings=site_notes + rc.warnings,
     )

@@ -81,7 +81,13 @@ def _guard_render_source(args: argparse.Namespace) -> None:
 def cmd_render(args: argparse.Namespace) -> int:
     _guard_render_source(args)
     src, cat = _load(Path(args.source), Path(args.catalog))
-    rc = render(src, cat)
+    try:
+        rc = render(src, cat)
+    except ValueError as e:
+        # e.g. an explicit plugin whose required site keys are unset: fail here, naming them,
+        # rather than at `docker compose` interpolation. Nothing is written.
+        print(f"error: {e}")
+        return 1
     rc.write(args.out)
     print(f"Rendered -> {args.out}/  (model={rc.model.id}, ctx={rc.ctx_size:,})")
     print(f"secrets.env.example -> {len(rc.required_secrets)} required key(s): "

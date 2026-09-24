@@ -13,12 +13,16 @@ from ordo.render import litellm_model_names, render, render_litellm_keys
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
+# The site keys the edge and memory-vault plugins require (`requires.site`), so they render.
+REQUIRED_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
+                 "CADDY_TAILNET_DOMAIN": "example.ts.net", "MEMORY_VAULT_PATH": "/srv/vault"}
 P_DUAL = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": "GPU-A"},
                    {"name": "GTX 1070", "vram_gb": 8, "uuid": "GPU-B"}], "ram_gb": 128}
 
 
 def _full():
-    return render(Source.from_dict({"hardware": P_DUAL, "model": "auto", "plugins": "auto"}), CATALOG, REGISTRY)
+    return render(Source.from_dict({"hardware": P_DUAL, "model": "auto", "plugins": "auto", "site": REQUIRED_SITE}),
+                  CATALOG, REGISTRY)
 
 
 def test_key_env_names_derive_from_consumer_ids():

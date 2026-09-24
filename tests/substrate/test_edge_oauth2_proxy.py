@@ -19,7 +19,9 @@ ROOT = Path(__file__).resolve().parents[2]
 def _oauth2_proxy_command() -> list[str]:
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                             "model": "auto", "plugins": ["edge"],
-                            "site": {"BASE_PATH": "/srv/ordo", "DATA_PATH": "/srv/ordo/data"}})
+                            "site": {"BASE_PATH": "/srv/ordo", "DATA_PATH": "/srv/ordo/data",
+                                     "CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
+                                     "CADDY_TAILNET_DOMAIN": "example.ts.net"}})
     rc = render(src, Catalog.load(ROOT / "catalog" / "models.yaml"), PluginRegistry.load(ROOT / "services"))
     return rc.compose_dict()["services"]["oauth2-proxy"]["command"]
 
