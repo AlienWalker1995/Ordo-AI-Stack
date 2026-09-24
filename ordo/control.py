@@ -34,6 +34,7 @@ import yaml
 
 from . import substrate
 from .audit import AuditLog
+from .bringup import lifecycle_group
 from .broker import Broker
 from .catalog import Catalog
 from .config import Source
@@ -131,6 +132,10 @@ def _auto_detect_category(url: str, filename: str) -> str:
         if keyword in combined:
             return category
     return "checkpoints"
+
+
+class LifecycleGroupUnknown(Exception):
+    """The rendered compose could not be read, so a service's netns members are unknown."""
 
 
 class ControlPlane:
@@ -496,6 +501,58 @@ class ControlPlane:
                 return self._lease_conflict(service)
         return None
 
+    # A service's netns members (`network_mode: service:<it>`) share its network namespace, so
+    # every verb that gives it a new namespace must cycle them too, after it; otherwise they keep
+    # running in the dead one with only `lo` (observed 2026-09-24: a caddy restart from the
+    # dashboard cut off hermes-dashboard and every tailnet sidecar). The group comes from
+    # `bringup.lifecycle_group`, the planner the host's `ordo up` / `ordo recreate` use.
+
+    def _rendered_compose(self, target: str) -> dict:
+        try:
+            return self.broker.backend.rendered_compose()
+        except Exception as e:
+            raise LifecycleGroupUnknown(
+                f"cannot read the rendered compose to find {target!r}'s netns members ({e}); "
+                "refusing rather than orphaning them") from e
+
+    def _lifecycle_group(self, service: str) -> list[str]:
+        """[service, *its netns members]. Raises LifecycleGroupUnknown when the render is unreadable."""
+        return lifecycle_group(self._rendered_compose(service), service)
+
+    def _container_members(self, container: str) -> list[str]:
+        """The netns members that follow a raw container (`<project>-<service>-<n>`), or []."""
+        doc = self._rendered_compose(container)
+        # Longest name first, so `ordo-tailnet-chat-1` is tailnet-chat even if a `chat` exists.
+        for service in sorted(doc.get("services") or {}, key=len, reverse=True):
+            if re.fullmatch(rf"[\w.-]+-{re.escape(service)}-\d+", container):
+                return lifecycle_group(doc, service)[1:]
+        return []
+
+    def _group_lease_conflict(self, group: list[str]) -> dict[str, Any] | None:
+        """`_lease_conflict` for each service a verb would start."""
+        for service in group:
+            conflict = self._lease_conflict(service)
+            if conflict:
+                return conflict
+        return None
+
+    def _restart_members(self, members: list[str]) -> None:
+        """Restart each member, after its owner has its new namespace. A restart, not a start:
+        a member left running while the owner was down is still in the dead namespace, and
+        `docker start` of a running container does nothing."""
+        for member in members:
+            try:
+                self.broker.backend.restart(member)
+            except Exception as e:
+                raise RuntimeError(f"netns member {member!r} was not restarted and has no network "
+                                   f"until it is: {e}") from e
+
+    @staticmethod
+    def _with_members(payload: dict[str, Any], members: list[str]) -> dict[str, Any]:
+        if members:
+            payload["members"] = members
+        return payload
+
     def service_start(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
             return self._error(503, "no broker configured")
@@ -503,14 +560,19 @@ class ControlPlane:
             return {"would": "start", "service": service_id}
         if not body.get("confirm"):
             return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
-        conflict = self._lease_conflict(service_id)
+        try:
+            group = self._lifecycle_group(service_id)
+        except LifecycleGroupUnknown as e:
+            return self._error(500, str(e))
+        conflict = self._group_lease_conflict(group)
         if conflict:
             return conflict
         try:
             self.broker.backend.start(service_id)
+            self._restart_members(group[1:])
         except Exception as e:
             return self._error(500, str(e))
-        return {"ok": True, "service": service_id, "action": "started"}
+        return self._with_members({"ok": True, "service": service_id, "action": "started"}, group[1:])
 
     def service_stop(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
@@ -520,10 +582,17 @@ class ControlPlane:
         if not body.get("confirm"):
             return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
         try:
+            group = self._lifecycle_group(service_id)
+        except LifecycleGroupUnknown as e:
+            return self._error(500, str(e))
+        try:
+            # Members first: stopping only the owner leaves them running in a dead namespace.
+            for member in group[1:]:
+                self.broker.backend.stop(member)
             self.broker.backend.stop(service_id)
         except Exception as e:
             return self._error(500, str(e))
-        return {"ok": True, "service": service_id, "action": "stopped"}
+        return self._with_members({"ok": True, "service": service_id, "action": "stopped"}, group[1:])
 
     def service_restart(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
@@ -532,14 +601,19 @@ class ControlPlane:
             return {"would": "restart", "service": service_id}
         if not body.get("confirm"):
             return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
-        conflict = self._lease_conflict(service_id)
+        try:
+            group = self._lifecycle_group(service_id)
+        except LifecycleGroupUnknown as e:
+            return self._error(500, str(e))
+        conflict = self._group_lease_conflict(group)
         if conflict:
             return conflict
         try:
             self.broker.backend.restart(service_id)
+            self._restart_members(group[1:])
         except Exception as e:
             return self._error(500, str(e))
-        return {"ok": True, "service": service_id, "action": "restarted"}
+        return self._with_members({"ok": True, "service": service_id, "action": "restarted"}, group[1:])
 
     def service_logs(self, service_id: str, tail: int = 100) -> dict[str, Any]:
         if not self.broker:
@@ -569,14 +643,20 @@ class ControlPlane:
             return {"would": "recreate", "service": service_id}
         if not body.get("confirm"):
             return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
-        conflict = self._lease_conflict(service_id)
+        try:
+            group = self._lifecycle_group(service_id)
+        except LifecycleGroupUnknown as e:
+            return self._error(500, str(e))
+        conflict = self._group_lease_conflict(group)
         if conflict:
             return conflict
         try:
+            # One compose call recreates the whole group: the backend plans it with the same
+            # `bringup.plan_named` the host's `ordo recreate` uses.
             self.broker.backend.recreate_service(service_id)
         except Exception as e:
             return self._error(500, str(e))
-        return {"ok": True, "service": service_id, "action": "recreated"}
+        return self._with_members({"ok": True, "service": service_id, "action": "recreated"}, group[1:])
 
     def list_containers(self) -> dict[str, Any]:
         if not self.broker:
@@ -601,14 +681,19 @@ class ControlPlane:
             return self._error(503, "no broker configured")
         if not body.get("confirm"):
             return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
-        conflict = self._container_lease_conflict(name)
+        try:
+            members = self._container_members(name)
+        except LifecycleGroupUnknown as e:
+            return self._error(500, str(e))
+        conflict = self._container_lease_conflict(name) or self._group_lease_conflict(members)
         if conflict:
             return conflict
         try:
             self.broker.backend.container_restart(name)
+            self._restart_members(members)
         except Exception as e:
             return self._error(500, str(e))
-        return {"ok": True, "container": name, "action": "restarted"}
+        return self._with_members({"ok": True, "container": name, "action": "restarted"}, members)
 
     def service_stats(self) -> dict[str, Any]:
         if not self.broker:
@@ -625,7 +710,13 @@ class ControlPlane:
         if not body.get("confirm"):
             return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
         service = body.get("service") or None
-        conflict = self._lease_conflict(service)
+        try:
+            # A named compose verb acts on the service's whole lifecycle group (the backend
+            # expands it through `bringup`), so every member is lease-checked too.
+            conflict = (self._group_lease_conflict(self._lifecycle_group(service)) if service
+                        else self._lease_conflict(None))
+        except LifecycleGroupUnknown as e:
+            return self._error(500, str(e))
         if conflict:
             return conflict
         try:
@@ -652,7 +743,13 @@ class ControlPlane:
         if not body.get("confirm"):
             return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
         service = body.get("service") or None
-        conflict = self._lease_conflict(service)
+        try:
+            # A named compose verb acts on the service's whole lifecycle group (the backend
+            # expands it through `bringup`), so every member is lease-checked too.
+            conflict = (self._group_lease_conflict(self._lifecycle_group(service)) if service
+                        else self._lease_conflict(None))
+        except LifecycleGroupUnknown as e:
+            return self._error(500, str(e))
         if conflict:
             return conflict
         try:

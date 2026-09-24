@@ -25,9 +25,6 @@ from . import images
 
 COMPOSE_FILE = "docker-compose.yml"
 OPS_CONTROLLER_SERVICE = "ops-controller"
-# Services sharing caddy's network namespace follow caddy: recreating caddy without them leaves
-# them attached to the old, dead namespace, so a caddy bring-up names them too.
-NETNS_OWNER = "caddy"
 
 # Runs inside the ops-controller container, which holds its own token and serves on loopback.
 _STATUS_SCRIPT = (
@@ -83,7 +80,7 @@ def _services(doc: dict) -> dict:
     return doc.get("services") or {}
 
 
-def netns_members(doc: dict, owner: str = NETNS_OWNER) -> list[str]:
+def netns_members(doc: dict, owner: str) -> list[str]:
     """Services declared with `network_mode: service:<owner>`, sorted."""
     return sorted(
         name for name, spec in _services(doc).items()
@@ -91,16 +88,30 @@ def netns_members(doc: dict, owner: str = NETNS_OWNER) -> list[str]:
     )
 
 
+def lifecycle_group(doc: dict, service: str) -> list[str]:
+    """`service` followed by the services living in its network namespace.
+
+    The ONE place that knows which services follow which. A member shares its owner's network
+    namespace, and anything that gives the owner a new one (restart, stop and start, a `--no-deps`
+    recreate, a named down) leaves the member attached to the dead namespace: still running,
+    still "healthy", with only `lo`. So every verb that cycles the owner cycles the group, owner
+    first. A member (or any service nothing joins) is a group of one: acting on a member acts on
+    the member only. The host CLI (`plan_named`) and ops-controller's lifecycle verbs both expand
+    through here, so they cannot disagree about who follows whom.
+    """
+    return [service] + [m for m in netns_members(doc, service) if m != service]
+
+
 def plan_named(doc: dict, services: Sequence[str], *, force_recreate: bool) -> tuple[list[str], set[str]]:
     """(compose args, services compose will start) for a named-service bring-up.
 
-    Named services are started alone (`--no-deps`). caddy also takes its netns members, listed by
-    name so compose recreates them after caddy (it still orders named services by `depends_on`
-    under `--no-deps`), while caddy's own dependencies are left alone.
+    Named services are started alone (`--no-deps`), each with its `lifecycle_group`: the netns
+    members are listed by name so compose recreates them after their owner (it still orders named
+    services by `depends_on` under `--no-deps`), while the owner's own dependencies are left alone.
     """
-    targets = list(services)
-    if NETNS_OWNER in targets:
-        targets += [m for m in netns_members(doc) if m not in targets]
+    targets: list[str] = []
+    for service in services:
+        targets += [name for name in lifecycle_group(doc, service) if name not in targets]
     args = ["up", "-d", "--no-deps"] + (["--force-recreate"] if force_recreate else []) + targets
     return args, set(targets)
 

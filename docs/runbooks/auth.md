@@ -51,9 +51,15 @@ tailscale cert \
   --cert-file auth/caddy/certs/tailnet.crt \
   --key-file  auth/caddy/certs/tailnet.key \
   ordo.<tailnet>.ts.net
-docker compose restart caddy
+ordo recreate caddy
 ```
 A monthly cron (`0 4 1 * *`) running the above stays ahead of expiry.
+
+Run the renewal from the repo root. hermes-dashboard and the tailnet sidecars share caddy's network
+namespace, and `ordo recreate caddy` recreates them in the same call. The dashboard's Restart
+button for caddy (ops-controller `POST /services/caddy/restart`) is also safe: it restarts the
+members after caddy. Never a bare `docker restart ordo-caddy-1`: it leaves every member running
+with no network interface.
 
 ## Recovery — Google OIDC outage
 
