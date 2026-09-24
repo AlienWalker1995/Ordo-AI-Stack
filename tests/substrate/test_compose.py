@@ -145,7 +145,7 @@ def test_a_cpu_only_render_reserves_no_devices():
     every_plugin = [p.id for p in REGISTRY.plugins]
     for plugins in ("auto", every_plugin):
         src = Source.from_dict({"hardware": {"gpus": [], "ram_gb": 64},
-                                "model": "auto", "plugins": plugins})
+                                "model": "auto", "plugins": plugins, "site": REQUIRED_SITE})
         c = render(src, CATALOG, REGISTRY, dashboards=dashboards).compose_dict()
         assert _reserved_device_services(c) == [], plugins
 
