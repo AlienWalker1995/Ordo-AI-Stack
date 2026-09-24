@@ -15,7 +15,7 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 | `out/mcp/servers.json` (rendered from `ordo.yaml`) | Enabled MCP servers plus the registered-plugin map | dashboard (`MCP_SERVERS_PATH=/mcp-config/servers.json`) |
 | `out/model-gateway/keys.json` (rendered from the manifests' `litellm_key:` blocks) | Per-consumer virtual keys plus their model and MCP grants | `model-gateway-keys` (one-shot bootstrap) |
 | `data/rag-input/` | Drop zone for RAG documents | `rag-ingestion` watch directory |
-| `models/gguf/` | llama.cpp GGUF download/staging dir (`ordo fetch` target) | Seeds the `models-gguf` named volume (not mounted by any service) |
+| `models/gguf/` | Optional host copy of GGUFs (`ordo fetch --models-dir models/gguf`, the native path) | Not mounted by any service |
 | `models-gguf` named volume | llama.cpp GGUF files at runtime (ext4 inside the Docker VM) | `llamacpp` / `llamacpp-cpu` / `llamacpp-embed` (`/models:ro`), dashboard (`/gguf-models`, lists and deletes model files) |
 | `comfyui-models` named volume | ComfyUI checkpoints, LoRAs, VAEs, encoders | `comfyui` (RO), `ops-controller` (RW, `/models/comfyui`: downloads), dashboard (RW, `/models`: lists and deletes) |
 
@@ -127,12 +127,14 @@ All directories created this way persist across restarts and rebuilds.
 
 ### Model Pull
 
-**llama.cpp GGUF:** runtime models live in the `models-gguf` **named volume** (ext4 inside the Docker VM — Windows bind mounts ride the 9p bridge, which wedges under a 20GB+ sequential model load). Adding a model is a two-step:
+**llama.cpp GGUF:** runtime models live in the `models-gguf` **named volume** (ext4 inside the Docker VM; Windows bind mounts ride the 9p bridge, which wedges under a 20GB+ sequential model load). Files get there by download, straight into the volume:
 
-1. `ordo fetch --models-dir models/gguf` (checksum-mandatory) downloads catalog models to the host staging dir. The default `--models-dir` is `./models` — pass `models/gguf` explicitly.
-2. Copy into the volume: `docker run --rm -v ordo_models-gguf:/dst -v "$(pwd)/models/gguf:/src:ro" alpine cp /src/<file>.gguf /dst/` (or `docker cp` via any container mounting the volume).
+- `ordo up` fetches every model file the services it starts load that the volume lacks: the chat model (`llamacpp`), the CPU fallback (`llamacpp-cpu`) and the embedder (`llamacpp-embed`). `--no-fetch` skips it.
+- `ordo fetch` does the same for the whole rendered stack and also re-verifies files already present (`ordo fetch <catalog-id>` for one entry, `--all` for the catalog, `--plan-only` to list present/missing).
 
-On a fresh install the volume starts empty and `llamacpp` crash-loops with `failed to load model` until seeded. The host `models/gguf/` dir doubles as the recovery copy.
+Both run a short-lived helper container (`curlimages/curl`, digest-pinned in `ordo/fetch.py`) that mounts only the volume, downloads with resume into a hidden `.<file>.part`, verifies the catalog sha256 and renames the file into place. A checksum mismatch deletes the download and fails; an interrupted download resumes on the next run. Sources and checksums come from `catalog/models.yaml` (`models:` for chat, `support_models:` for the CPU fallback and embedder); an unpinned entry is refused unless `ordo fetch --allow-unverified`. A catalog entry marked `gated: true` gets `HF_TOKEN` from `out/secrets.env`, passed to the helper by name, never printed.
+
+A vision projector (`mmproj`) has no catalog source yet: without it `llamacpp` starts with vision off. Copy one in by hand: `docker run --rm -v ordo_models-gguf:/dst -v "$(pwd)/models/gguf:/src:ro" alpine cp /src/<file>.gguf /dst/`.
 
 **ComfyUI:** add a model with the `download_comfyui_model` MCP tool (`url` plus `category`, e.g. `checkpoints`, `loras`, `vae`). It calls `ops-controller` `POST /models/download`, which writes into the `comfyui-models` **named volume** (the same volume ComfyUI reads RO), so the file lands where ComfyUI looks with no copy step. One download runs at a time; poll `get_comfyui_model_download_status`. Music3 weight URLs are listed under `weights:` in `services/song-gen/plugin.yaml`.
 

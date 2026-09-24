@@ -686,10 +686,9 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
         # 2026-08-07 the 9p mount began wedging GGUF reads deterministically
         # (p9_client_rpc D-state at ~100MB into the file, fresh VM, first contact),
         # eventually crashing the whole Docker VM. Third 9p casualty after the Hermes
-        # brain (#143) and comfyui-storage (#156). Adding a model now means `ordo fetch`
-        # to the host staging dir then copying into the volume (docker cp via a helper
-        # container — the dashboard GGUF-pull endpoint is still a 501 stub, see
-        # docs/data.md "Model Pull") — models/gguf is retired from every hot path.
+        # brain (#143) and comfyui-storage (#156). `ordo fetch` (and `ordo up`, for any
+        # file missing) downloads straight into this volume through a helper container
+        # (ordo/fetch.py); models/gguf is retired from every hot path.
         "models-gguf:/models:ro",
         "${BASE_PATH:?BASE_PATH must be set (non-empty)}/scripts/llamacpp:/llamacpp-scripts:ro",
     ]

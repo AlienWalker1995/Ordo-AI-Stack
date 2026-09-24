@@ -347,7 +347,7 @@ Host bind mounts (reachable from Windows):
 | *(none)* | MCP config is no longer host-bind state: `ordo render` writes `out/mcp/servers.json` and `out/model-gateway/mcp_servers.yaml` |
 | `data/dashboard/` | Dashboard throughput / benchmark data |
 | `data/comfyui-output/` | ComfyUI render outputs |
-| `models/gguf/` | Download/staging dir (`ordo fetch` target) — seeds the volume, not mounted by services |
+| `models/gguf/` | Optional host copy of GGUFs (`ordo fetch --models-dir`, the native path); not mounted by services |
 
 Named volumes (state; back up via a helper container, see [data.md](data.md)):
 

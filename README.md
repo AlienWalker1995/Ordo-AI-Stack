@@ -57,7 +57,7 @@ It writes `out/ordo.yaml` and `out/secrets.env` (internal secrets generated, nev
 | Chat (Open WebUI) | http://127.0.0.1:8443 |
 | Dashboard | http://127.0.0.1:8444 |
 
-Later, by hand: `ordo up --all` (it runs the host checks first; `--no-preflight` skips them). On a first run, seed the chat model into its volume once ([Model Pull](docs/data.md#model-pull)).
+Later, by hand: `ordo up --all` (it runs the host checks first; `--no-preflight` skips them). It downloads the chat model into its volume on a first run, checksum-verified ([Model Pull](docs/data.md#model-pull)).
 
 ### Remote access (optional, later)
 

@@ -46,7 +46,10 @@ SSO) is `ordo remote enable`, any time later ([auth runbook](runbooks/auth.md)).
 
 Onboarding is two commands: `ordo init` (say yes to the render), then `ordo up --core` (or
 `--all`). The first `ordo up` builds the stack's own images, because nothing publishes them: it
-builds every first-party image the rendered compose names that Docker does not have yet.
+builds every first-party image the rendered compose names that Docker does not have yet, then
+downloads every model file the starting services load (the chat model, plus the CPU fallback and
+the embedder when those are enabled) that the `models-gguf` volume lacks, checksum-verified
+(`--no-fetch` skips that). There is no manual model copy step.
 
 **Manual / already-cloned path** — the wizard just automates this; you can drive the engine directly:
 
@@ -56,7 +59,8 @@ ordo init                                     # re-run the wizard in an existing
 ordo --source out/ordo.yaml render --out out  # regenerate out/ from the source (NEVER bare `ordo render`)
 ordo preflight --ref out/.env                 # read-only GO/NO-GO gate, host checks included
 # bring up: every rendered profile, both env files; refuses while a GPU lease holds the card.
-# Builds any missing first-party image first (--no-build skips that).
+# Builds any missing first-party image first (--no-build skips that), then fetches missing model
+# files into the models-gguf volume (--no-fetch skips that; `ordo fetch` alone re-verifies them).
 ordo up --all                                 # --dry-run prints the docker compose argv instead
 ```
 

@@ -176,3 +176,27 @@ models:
     # commit 86b9470 (LLM_ARCH_QWEN35 in src/llama-arch.cpp); same image as the 3.6s.
     backend_image: ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470
     tier: ultra
+
+# Support models: weights the rendered stack reads from the same models-gguf volume that are NOT
+# chat-model candidates (the sizer never picks them). Pinned here so `ordo fetch` / `ordo up` can
+# provision them. The file names match the defaults the plugin manifests load
+# (`${LLAMACPP_CPU_MODEL:-...}` in services/llamacpp-cpu, `${LLAMACPP_EMBED_MODEL:-...}` in
+# services/rag). sha256 = the Hugging Face LFS oid of each file.
+support_models:
+  - id: qwen3.6-35b-a3b-cpu-q4
+    name: Qwen3.6 35B A3B (UD-Q4_K_M), CPU fallback
+    backend: llama.cpp
+    file: Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+    source: https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+    # 22,134,528,992 bytes.
+    sha256: ac0e2c1189e055faa36eff361580e79c5bd6f8e76bffb4ce547f167d53e31a61
+    requires: { vram_gb: 0, ram_gb: 24, cpu_ok: true }
+
+  - id: nomic-embed-text-v1.5-q4
+    name: nomic-embed-text v1.5 (Q4_K_M), embeddings
+    backend: llama.cpp
+    file: nomic-embed-text-v1.5.Q4_K_M.gguf
+    source: https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf
+    # 84,106,624 bytes.
+    sha256: d4e388894e09cf3816e8b0896d81d265b55e7a9fff9ab03fe8bf4ef5e11295ac
+    requires: { vram_gb: 0, ram_gb: 1, cpu_ok: true }
