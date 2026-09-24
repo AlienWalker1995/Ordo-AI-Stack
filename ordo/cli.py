@@ -18,14 +18,11 @@ import sys
 from pathlib import Path
 
 from . import bringup, doctor, fetch, gpu, native, parity, preflight, wizard
-from .broker import Broker, DockerBackend
 from .catalog import Catalog
 from .config import Source
-from .control import ControlPlane
 from .hardware import detect
 from .plugins import PluginRegistry
 from .render import DEFAULT_PLUGINS_DIR, render
-from .scheduler import Scheduler
 
 HERE = Path(__file__).resolve().parent.parent
 DEFAULT_SOURCE = HERE / "ordo.example.yaml"
@@ -321,6 +318,12 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
     import threading
     import time
 
+    # The control plane's libraries (fastapi, uvicorn, pydantic, httpx) are the `serve` extra:
+    # imported here so every other command runs on the PyYAML-only core.
+    from .broker import Broker, DockerBackend
+    from .control import ControlPlane
+    from .scheduler import Scheduler
+
     cat = Catalog.load(Path(args.catalog))
     reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
     src = Source.load(Path(args.source))
@@ -482,6 +485,12 @@ def main(argv: list[str] | None = None) -> int:
     pv.add_argument("--lease-poll-seconds", type=float, default=10.0,
                     help="how often the scheduler advances its lease clock + sweeps expired leases")
     pv.set_defaults(func=cmd_serve)
+    # Accept --source after the subcommand too (`ordo render --source X`, the form `ordo init`
+    # prints). SUPPRESS leaves a global `ordo --source X render` untouched when it is absent here.
+    for subparser in sub.choices.values():
+        if "--source" not in subparser._option_string_actions:
+            subparser.add_argument("--source", default=argparse.SUPPRESS,
+                                   help="the operator source (same as the global --source)")
     args = p.parse_args(argv)
     # Distinguish an explicit `--source` from the implicit default, then resolve the sentinel so
     # every command still sees a concrete path (unchanged behaviour for all but cmd_render's guard).

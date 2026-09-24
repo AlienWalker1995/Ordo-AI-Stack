@@ -1,6 +1,9 @@
 # Ordo — packaging so the render substrate installs as a real one-command tool:
-#   pip install .   ->   ordo detect | render | preflight | serve | setup | doctor | parity
-# Runtime dependency is only PyYAML (the render engine is otherwise stdlib — this is the
+#   pip install -e .          ->   ordo init | render | up | recreate | preflight | doctor | parity
+#   pip install -e ".[serve]" ->   also `ordo serve` (the control plane; ops-controller's image)
+# Editable (-e): the CLI works on a repo checkout (services/, catalog/, auth/ beside ordo/), so a
+# plain `pip install .` would point every repo path into site-packages.
+# The core runtime dependency is only PyYAML (the render engine is otherwise stdlib: this is the
 # "core runs anywhere, offline-capable after an online install" requirement).
 [build-system]
 requires = ["setuptools>=61"]
@@ -13,6 +16,10 @@ description = "Ordo — a portable, self-configuring, hardware-right-sizing AI s
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["pyyaml>=6.0"]
+
+[project.optional-dependencies]
+# Kept in step with services/ops-controller/requirements.txt, which pins the exact versions.
+serve = ["fastapi>=0.141,<1", "uvicorn>=0.53,<1", "pydantic>=2.13,<3", "httpx>=0.28,<1"]
 
 [project.scripts]
 ordo = "ordo.cli:main"

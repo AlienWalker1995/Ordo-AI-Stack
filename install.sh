@@ -96,7 +96,7 @@ fi
 # shellcheck disable=SC1091
 . .venv/bin/activate 2>/dev/null || . .venv/Scripts/activate  # Scripts/ on Git-Bash/Windows
 python -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
-python -m pip install --quiet . || die "pip install failed."
+python -m pip install --quiet -e . || die "pip install failed."
 
 have ordo || die "the 'ordo' command did not install — check the pip output above."
 info "ordo installed: $(ordo --help >/dev/null 2>&1 && echo ok)"

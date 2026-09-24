@@ -87,7 +87,7 @@ if (-not (Test-Path '.venv')) {
 $VenvPy = Join-Path $Target '.venv\Scripts\python.exe'
 if (-not (Test-Path $VenvPy)) { Die 'failed to create virtualenv - is the Python venv module installed?' }
 & $VenvPy -m pip install --quiet --upgrade pip *> $null
-& $VenvPy -m pip install --quiet .
+& $VenvPy -m pip install --quiet -e .
 if ($LASTEXITCODE -ne 0) { Die 'pip install failed - check the output above.' }
 
 # -- 4. Run the wizard --------------------------------------------------------
