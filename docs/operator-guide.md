@@ -68,6 +68,8 @@ ordo up --all                                 # --dry-run prints the docker comp
 render enabled). `ordo up <svc>...` / `ordo recreate <svc>...` touch only the named services
 (`--no-deps`; a caddy bring-up also names its netns members, so they are recreated with it), and
 refuse to start a resident the GPU scheduler evicted for a running render.
+`ordo recreate --reading KEY...` recreates every long-running service whose rendered definition
+reads one of those keys (after rotating secrets; `scripts/secrets/rotate-internal.sh` prints it).
 
 ### First-party images: `ordo build`
 

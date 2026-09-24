@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Rotate internal Ordo tokens by regenerating random values, re-encrypting
-# secrets/.env.sops, and printing the restart commands. Run this when:
+# secrets/.env.sops, and printing the recreate command. Run this when:
 # - You suspect any of these tokens has leaked.
 # - You're cycling out a contributor / collaborator (single-user homelab,
 #   so this is mostly aspirational, but the workflow exists).
@@ -89,6 +89,15 @@ BEGIN { OFS="=" }
 { print }
 ' "$TMP" > "$TMP.new"
 
+# The names whose value changed (the awk above prints one line per input line, in order).
+ROTATED=$(awk -F= 'NR == FNR { before[FNR] = $0; next } $0 != before[FNR] { print $1 }' "$TMP" "$TMP.new" \
+    | tr '\n' ' ')
+ROTATED="${ROTATED% }"
+if [ -z "$ROTATED" ]; then
+    echo "ERROR: none of the rotatable keys is in secrets/.env.sops; nothing rotated." >&2
+    exit 1
+fi
+
 sops --encrypt --age $(grep "^# public key:" "$KEY_PATH" | awk '{print $4}') \
     --input-type=dotenv --output-type=dotenv "$TMP.new" \
     > secrets/.env.sops
@@ -97,29 +106,26 @@ cat <<EOF
 
 ==> Internal tokens rotated in secrets/.env.sops.
 
+Rotated: ${ROTATED}
+
 Next steps:
   1. Copy the rotated values into out/secrets.env (the file compose reads).
-  2. Recreate (not restart: a restart keeps the old environment), from the repo root:
-     ordo recreate model-gateway model-gateway-keys litellm-db dashboard \\
-         ops-controller agent hermes-dashboard open-webui n8n oauth2-proxy \\
-         comfyui comfyui-gate mcp-comfyui
-     (outside a GPU lease: ordo recreate refuses ops-controller while the card is leased)
-  3. git commit secrets/.env.sops + push.
+  2. The stores that keep their own copy of a password need it changed BEFORE the recreate
+     (see docs/runbooks/secrets.md):
+       ALTER USER litellm PASSWORD '<new>'                inside litellm-db
+     and, if the langfuse plugin is enabled:
+       ALTER USER langfuse PASSWORD '<new>'               inside langfuse-db
+       ALTER USER clickhouse IDENTIFIED BY '<new>'        inside langfuse-clickhouse
+  3. Recreate every service that reads a rotated key (not restart: a restart keeps the old
+     environment). The set comes from the render, so it covers every holder; --dry-run lists it.
+     From the repo root, outside a GPU lease (ordo recreate refuses ops-controller while the card
+     is leased):
+       ordo recreate --reading ${ROTATED}
+  4. git commit secrets/.env.sops + push.
 
-LITELLM_DB_PASSWORD rotation also requires ALTER USER litellm PASSWORD inside
-litellm-db BEFORE the restart (see docs/runbooks/secrets.md).
-
-If the langfuse plugin is enabled, its rotated credentials need the same
-before-restart step on the two stores that persist their own copy:
-  ALTER USER langfuse PASSWORD '<new>'                    inside langfuse-db
-  ALTER USER clickhouse IDENTIFIED BY '<new>'             inside langfuse-clickhouse
-then recreate the profile so redis/minio pick up their new env:
-  ordo recreate langfuse-db langfuse-clickhouse langfuse-redis langfuse-minio \\
-      langfuse-worker langfuse-web
+The evals one-shot is not recreated: it reads its environment on each run, so the next run
+uses the new LITELLM_KEY_EVALS / HERMES_API_SERVER_KEY.
 Rotating LANGFUSE_NEXTAUTH_SECRET invalidates open Langfuse sessions (sign in again).
-
-Rotating HERMES_API_SERVER_KEY requires recreating the agent so Hermes picks up the new
-bearer (ordo recreate agent); eval runs must use the new value.
 
 All existing oauth2-proxy sessions invalidate (cookie secret rotated).
 You'll need to sign in via Google again.

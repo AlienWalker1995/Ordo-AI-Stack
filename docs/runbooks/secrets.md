@@ -97,9 +97,10 @@ makes every credential LiteLLM stored in Postgres unreadable. Rotate the rest at
 once:
 ```
 scripts/secrets/rotate-internal.sh          # re-encrypts secrets/.env.sops
-# copy the rotated values into out/secrets.env, then run the `ordo recreate` the
-# script prints, outside a GPU lease (it includes ops-controller, which
-# `ordo recreate` refuses to restart while the card is leased)
+# copy the rotated values into out/secrets.env, then run the
+# `ordo recreate --reading <rotated keys>` the script prints, outside a GPU lease:
+# it recreates every service whose rendered definition reads a rotated key
+# (ops-controller included, which `ordo recreate` refuses while the card is leased)
 git add secrets/.env.sops && git commit -m "chore(secrets): rotate internal tokens" && git push
 ```
 The cookie-secret rotation invalidates every oauth2-proxy session.
