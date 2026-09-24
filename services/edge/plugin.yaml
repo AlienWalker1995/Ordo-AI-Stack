@@ -45,6 +45,12 @@ services:
       - --cookie-secure=true
       - --cookie-samesite=lax
       - --cookie-expire=24h
+      # Per-request CSRF cookies: open tabs poll their APIs while signed out, and each poll
+      # starts a login. With one shared CSRF cookie the newest start overwrites it and the
+      # Google callback fails "CSRF token mismatch" (tests/substrate/test_edge_oauth2_proxy.py).
+      - --cookie-csrf-per-request=true
+      - --cookie-csrf-per-request-limit=10
+      - --cookie-csrf-expire=5m
       - --authenticated-emails-file=/etc/oauth2-proxy/emails.txt
       - --skip-provider-button=true
     volumes:
