@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .buildspec import BuildSpec
+from .plugins import LocalPort
 
 
 def _gpu_caps(b: dict[str, Any]) -> tuple[str, ...]:
@@ -62,6 +63,8 @@ class Dashboard:
     # `services/<id>/`. The shipped dashboard's Dockerfile is nested (services/dashboard/app), so
     # it declares an explicit `build.context`. See ordo.buildspec.
     build: BuildSpec = dataclasses.field(default_factory=BuildSpec)
+    # Loopback host port while the edge is off (see plugins.LocalPort). None -> no local access.
+    local_port: LocalPort | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Dashboard:
@@ -82,6 +85,7 @@ class Dashboard:
             secrets=tuple(str(k) for k in (d.get("secrets", []) or [])),
             gpu_capabilities=_gpu_caps(d),
             build=BuildSpec.from_dict(d.get("build")),
+            local_port=LocalPort.from_manifest(d.get("local_port"), where),
         )
 
     def image_for(self, project: str) -> str:

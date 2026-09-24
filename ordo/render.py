@@ -24,7 +24,7 @@ from .hardware import HardwareProfile, detect
 from .llamacpp_backend import CPU as CPU_BACKEND
 from .llamacpp_backend import LlamaCppBackend
 from .llamacpp_backend import select as select_backend
-from .plugins import PluginRegistry
+from .plugins import Plugin, PluginRegistry
 
 # Render data now lives co-located under services/<id>/ (plugin.yaml / agent.yaml / dashboard.yaml
 # / catalog.json); each registry globs its own manifest kind out of the shared services/ root.
@@ -77,6 +77,10 @@ CORE_SECRET_KEYS: tuple[str, ...] = (
     "HF_TOKEN",                   # Hugging Face (gated model pulls)
     "GITHUB_PERSONAL_ACCESS_TOKEN",  # ComfyUI-Manager (git-based node installs)
 )
+
+# The core keys above the stack runs WITHOUT (they only unlock gated downloads). Listed so a blank
+# one is a preflight note, not a blocker; a plugin that reads one declares it in `optional_secrets:`.
+CORE_OPTIONAL_SECRET_KEYS: tuple[str, ...] = ("HF_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN")
 
 # Secrets a service may read that are deliberately NOT required (not in secrets.env.example):
 # THROUGHPUT_RECORD_TOKEN has no SOPS source and the dashboard only enforces it "when set" (see the
@@ -265,6 +269,9 @@ class RenderedConfig:
     # secret env KEYS the enabled services need (core + plugins). Values are NEVER rendered — they
     # live in an operator-managed secrets.env; write() emits secrets.env.example (keys only).
     required_secrets: list[str] = dataclasses.field(default_factory=list)
+    # The subset of required_secrets the stack runs without: every enabled plugin that reads the
+    # key declares it `optional_secrets:`. Preflight notes a blank one instead of blocking.
+    optional_secrets: list[str] = dataclasses.field(default_factory=list)
     # Per-consumer LiteLLM virtual-key grants declared by the agent/plugin manifests
     # (`litellm_key:`). Rendered to out/model-gateway/keys.json, which the model-gateway-keys
     # one-shot reads to provision the keys against the running LiteLLM proxy.
@@ -305,7 +312,9 @@ class RenderedConfig:
             "hardware": self.hardware.summary(),
             "tier": self.tier,
             "model": {"id": self.model.id, "file": self.model.file, "vram_gb": self.model.vram_gb,
-                      "resident_vram_gb": self.resident_vram_gb()},
+                      "resident_vram_gb": self.resident_vram_gb(),
+                      # Weights on disk ~ weights in VRAM; a CPU model declares RAM instead.
+                      "disk_gb": self.model.vram_gb or self.model.ram_gb},
             "ctx_size": self.ctx_size,
             "llamacpp_backend": self.llamacpp_backend.name,
             # The declared GPU-contention map — what competes for which card and how it is
@@ -315,6 +324,9 @@ class RenderedConfig:
             "plugins_enabled": self.plugins_enabled,
             "compose_profiles": self.compose_profiles,
             "mcp_servers": [s["id"] for s in self.mcp_servers],
+            # Secret NAMES (never values): what `ordo up`'s preflight checks secrets.env against.
+            "required_secrets": self.required_secrets,
+            "optional_secrets": self.optional_secrets,
             "warnings": self.warnings,
             # What this render was made from. ops-controller refuses to re-render over a render made
             # from different inputs, so its baked copy cannot silently revert the checkout's changes.
@@ -364,6 +376,9 @@ class RenderedConfig:
             mcp_servers=self.mcp_servers,
             # Gateway-wide Langfuse tracing follows the plugin: on with it, absent without it.
             langfuse_tracing="langfuse" in self.plugins_enabled,
+            # With the edge on, Caddy is the one front door; without it, each UI that declares a
+            # `local_port` publishes it on loopback so a local-only install can reach it.
+            publish_local_ports="edge" not in self.plugins_enabled,
             # {} when the edge wiring can't produce a PROXY_BASE_URL (see litellm_google_sso_env).
             litellm_google_sso_env=self.model_gateway.get("google_sso_env") or {})
         images.pin_first_party(doc["services"], self.first_party_images, image_tags or {})
@@ -637,6 +652,7 @@ def render(source: Source, catalog: Catalog,
             "healthcheck": dict(dash.healthcheck),
             "secrets": list(dash.secrets),
             "gpu_capabilities": list(dash.gpu_capabilities),
+            "local_port": dash.local_port,
         }
     # Registry-driven plugin resolution: enable what's requested AND fits AND has its required
     # site keys AND has its deps.
@@ -712,6 +728,22 @@ def render(source: Source, catalog: Catalog,
     for s in mcp_servers:
         if s["auth_secret"] and s["auth_secret"] not in required_secrets:
             required_secrets.append(s["auth_secret"])
+    # A key is optional only when every reader says so: the core list for a core key, and each
+    # enabled plugin that declares it.
+    readers: dict[str, list[Plugin]] = {}
+    for p in enabled:
+        for key in p.secrets:
+            readers.setdefault(key, []).append(p)
+
+    def _is_optional(key: str) -> bool:
+        if key in CORE_SECRET_KEYS and key not in CORE_OPTIONAL_SECRET_KEYS:
+            return False
+        plugin_readers = readers.get(key, [])
+        if not plugin_readers:
+            return key in CORE_OPTIONAL_SECRET_KEYS
+        return all(key in p.optional_secrets for p in plugin_readers)
+
+    optional_secrets = [key for key in required_secrets if _is_optional(key)]
 
     return RenderedConfig(
         hardware=hw, model=model, ctx_size=ctx, tier=(model.tier),
@@ -721,6 +753,7 @@ def render(source: Source, catalog: Catalog,
         mcp_servers=mcp_servers, mcp_server_plugin_map=mcp_server_plugin_map,
         plugin_services=plugin_services,
         required_secrets=required_secrets,
+        optional_secrets=optional_secrets,
         litellm_keys=litellm_keys,
         llamacpp_backend=backend,
         first_party_images=tuple(sorted(images.first_party_contexts(plugins, agents, dashboards))),

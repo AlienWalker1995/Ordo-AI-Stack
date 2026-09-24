@@ -112,27 +112,28 @@ def test_mcp_pinned_check_passes_with_real_images():
 
 
 def test_secrets_check_absent_file_is_skipped(tmp_path):
-    # no secrets.env passed → no secrets check emitted at all (operator-managed, out-of-band)
+    # no secrets.env passed -> no secrets check emitted at all (operator-managed, out-of-band)
     _go, checks = preflight.run(GPU, CATALOG, REGISTRY)
-    assert not any(c.name.startswith("secrets present") for c in checks)
+    assert not any("secrets" in c.name for c in checks)
 
 
-def test_secrets_check_warns_on_missing_keys(tmp_path):
+def test_a_blank_required_secret_is_no_go(tmp_path):
     sec = tmp_path / "secrets.env"
     sec.write_text("LITELLM_MASTER_KEY=abc\n")             # only one of the required keys filled
     go, checks = preflight.run(GPU, CATALOG, REGISTRY, secrets_env=str(sec))
-    c = next(c for c in checks if c.name.startswith("secrets present"))
-    assert not c.ok and not c.blocking                     # non-blocking warning
-    assert "OPS_CONTROLLER_TOKEN" in c.detail and go is True  # still GO (only a warning)
+    c = _byname(checks)["required secrets set"]
+    assert not c.ok and c.blocking and not go              # a service would crash-loop without it
+    assert "OPS_CONTROLLER_TOKEN" in c.detail
+    assert "HF_TOKEN" not in c.detail                      # optional: a note, never a blocker
 
 
-def test_secrets_check_ok_when_all_present(tmp_path):
+def test_secrets_check_ok_when_all_required_present(tmp_path):
     rc = render(GPU, CATALOG, REGISTRY)
     sec = tmp_path / "secrets.env"
-    sec.write_text("".join(f"{k}=x\n" for k in rc.required_secrets))
-    _go, checks = preflight.run(GPU, CATALOG, REGISTRY, secrets_env=str(sec))
-    c = next(c for c in checks if c.name.startswith("secrets present"))
-    assert c.ok
+    sec.write_text("".join(f"{k}=x\n" for k in rc.required_secrets if k not in rc.optional_secrets))
+    go, checks = preflight.run(GPU, CATALOG, REGISTRY, secrets_env=str(sec))
+    assert _byname(checks)["required secrets set"].ok and go
+    assert not _byname(checks)["optional secrets"].blocking
 
 
 def test_service_images_pin_gate_flags_rolling_tags():

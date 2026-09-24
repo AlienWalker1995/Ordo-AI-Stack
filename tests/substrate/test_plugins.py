@@ -34,11 +34,11 @@ def _src(**kw):
 
 # The CPU-ok service plugins — enable on ANY hardware (they run without a GPU), but stay dormant
 # behind their compose profile until requested. Voice/comfyui/song-gen are the GPU-gated ones
-# handled separately. All but tailnet-names are the V1-parity port; tailnet-names is the post-parity
-# per-service Tailscale clean-URL sidecar set, which rides the edge profile the same CPU-ok way.
+# handled separately. The tailnet-name sidecars are opt-in (they need a tagged Tailscale key), so
+# `plugins: auto` leaves them out.
 CPU_OK_SERVICE_PLUGINS = {"monitoring", "rag", "automation", "open-webui",
                           "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
-                          "tailnet-names", "obsidian-livesync", "obsidian-livesync-funnel"}
+                          "obsidian-livesync"}
 
 
 def test_registry_loaded_manifests():
@@ -198,7 +198,8 @@ def test_auto_skips_plugin_missing_site_keys_and_its_dependents():
 
 def test_auto_enables_plugin_once_site_keys_are_set():
     rc = render(Source.from_dict({"hardware": P_CPU, "plugins": "auto", "site": FULL_SITE}), CATALOG, REGISTRY)
-    assert {"edge", "hermes-dashboard", "tailnet-names"} <= set(rc.plugins_enabled)
+    assert {"edge", "hermes-dashboard"} <= set(rc.plugins_enabled)
+    assert "tailnet-names" not in rc.plugins_enabled    # opt-in: listed by id, never by auto
     assert "memory-vault" in {s["plugin_id"] for s in rc.mcp_servers}
     assert not any("site key" in w for w in rc.warnings)
 

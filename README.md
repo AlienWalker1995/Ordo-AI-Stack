@@ -40,26 +40,37 @@ irm https://raw.githubusercontent.com/AlienWalker1995/Ordo-AI-Stack/main/install
 
 > The Windows line must run in **PowerShell**, not `cmd`. (`curl … | sh` only works inside a POSIX shell — Git Bash or WSL — so on native Windows use the PowerShell one-liner.)
 
-Either path checks prerequisites (git, Docker + `docker compose` v2, Python 3.11+; warns if there's no NVIDIA GPU), clones the repo (`~/ordo`, or `%USERPROFILE%\ordo` on Windows — override with the `ORDO_DIR` env var), installs the CLI into a virtualenv, and launches the wizard. That's the only step — everything else is the wizard.
+Either path checks prerequisites (git, Docker + `docker compose` v2, Python 3.11+; warns if there's no NVIDIA GPU), clones the repo (`~/ordo`, or `%USERPROFILE%\ordo` on Windows; override with the `ORDO_DIR` env var), installs the CLI into a virtualenv, and launches the wizard.
 
-### The setup wizard — `ordo init`
+### Quickstart: local only, no accounts
 
-The wizard **is** the configuration experience: every decision about your stack is made here, in the terminal, with a sensible default on each prompt (press **Enter** to accept it). Press **Ctrl-C** at any prompt to cancel — nothing is written until you review and confirm at the end.
+`ordo init` asks three questions, each with a default (press **Enter**):
 
-1. **Hardware** — confirms the auto-detected GPU / RAM / CPU (or pin it later for reproducibility).
-2. **Model** — accepts the best-fit pick from the catalog, or choose another by tier.
-3. **Capabilities** — which optional groups to turn on (chat is always on): image/video, RAG, voice, automation (n8n), web search, monitoring, **notes sync** (cross-device Obsidian). Default is hardware-gated auto.
-4. **Secure front door** — set up the SSO gate now (bring your own Tailscale tailnet and Google OAuth client), or skip it (with an explicit warning that the stack then runs unauthenticated). If you set it up, the hostname, OAuth client id/secret, and email allowlist are **required** — leave one blank and the wizard asks whether to defer it or re-enter, so you never ship a half-configured gate. It prints the exact Google console URL + callback and offers to provision a TLS cert.
-5. **External tokens** — Hugging Face, Tailscale, and GitHub tokens; all optional (Enter to skip). Internal keys (LiteLLM, ops, MCP, cookie, SearXNG, n8n) are **auto-generated** for you.
-6. **Review & confirm** — a summary of every choice (hardware, model, capabilities, front door, secrets) with a final **Y/n**. Decline and nothing is written.
+1. **Model**: the best fit for the detected hardware, or pick another.
+2. **Features**: chat only, chat + tools, or everything this hardware supports (default).
+3. **Start now?**: renders the config, checks this host (`ordo preflight`), and runs `ordo up --all`.
 
-On confirm it writes `out/ordo.yaml` and `out/secrets.env` (chmod 600, never committed), then **offers** to render the config, download the model, and bring the stack up — finishing with your dashboard URL. Nothing is started unless you say yes; a piped or `--yes` install only writes config and stops.
+It writes `out/ordo.yaml` and `out/secrets.env` (internal secrets generated, never committed) and prints the model and plugins it chose. The UIs listen on this machine only:
 
-Re-run `ordo init` any time to reconfigure. **Prefer to drive the render engine by hand?** Skip the wizard and follow `ordo render` → `ordo preflight` → `docker compose up` in the **[operator guide](docs/operator-guide.md)**.
+| UI | URL |
+|---|---|
+| Chat (Open WebUI) | http://127.0.0.1:8443 |
+| Dashboard | http://127.0.0.1:8444 |
+
+Later, by hand: `ordo up --all` (it runs the host checks first; `--no-preflight` skips them). On a first run, seed the chat model into its volume once ([Model Pull](docs/data.md#model-pull)).
+
+### Remote access (optional, later)
+
+```bash
+ordo remote enable     # Tailscale hostname, bind address, Google OAuth client, allowlisted emails
+ordo up --all
+```
+
+Caddy then becomes the one front door (HTTPS on your tailnet, Google sign-in) and the loopback ports close. `ordo remote disable` reverses it. Details: [auth runbook](docs/runbooks/auth.md).
 
 ## Overview
 
-**Deployment model:** a single operator running the stack on their own hardware, reached through one authenticated front door. Only the edge proxy publishes host ports — every UI sits behind SSO, and one sign-in (a domain-scoped cookie) covers the whole stack, gated by an email allowlist you control. Internal services (model gateway, the MCP servers behind it, vector store) publish no host ports and are reachable only on the project network, or through the front door's authenticated API routes. The concrete port layout lives in the [operator guide](docs/operator-guide.md) and the [auth runbook](docs/runbooks/auth.md).
+**Deployment model:** a single operator running the stack on their own hardware. Out of the box the chat UI and dashboard listen on `127.0.0.1` only; with remote access on (`ordo remote enable`) the stack is reached through one authenticated front door and only the edge proxy publishes host ports: every UI sits behind SSO, and one sign-in (a domain-scoped cookie) covers the whole stack, gated by an email allowlist you control. Internal services (model gateway, the MCP servers behind it, vector store) publish no host ports and are reachable only on the project network, or through the front door's authenticated API routes. The concrete port layout lives in the [operator guide](docs/operator-guide.md) and the [auth runbook](docs/runbooks/auth.md).
 
 **Who it is for:** anyone who wants to run local AI models on their own machine and reach them securely from their own devices — with configuration discipline built in rather than bolted on.
 

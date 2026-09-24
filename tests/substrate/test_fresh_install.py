@@ -74,3 +74,17 @@ def test_fresh_headless_install_renders_a_valid_stack(tmp_path, monkeypatch, har
          "--env-file", str(out / ".env"), "--env-file", str(out / "secrets.env"), "config", "-q"],
         capture_output=True, text=True)
     assert check.returncode == 0, check.stderr
+
+
+@pytest.mark.parametrize("hardware_name", sorted(HARDWARE))
+def test_fresh_install_leaves_no_required_secret_blank(tmp_path, monkeypatch, hardware_name):
+    """A local-only user answers no token prompts: every secret the default stack cannot run
+    without is generated, and whatever stays blank is declared optional by its plugin. (The Funnel
+    plugin once rode in on `plugins: auto` and demanded a Tailscale key from every fresh install.)"""
+    hardware = HardwareProfile.from_spec(HARDWARE[hardware_name])
+    monkeypatch.setattr(wizard, "detect", lambda: hardware)
+    monkeypatch.setattr(RENDER_MODULE, "detect", lambda: hardware)
+    result = wizard.run(CATALOG, REGISTRY, tmp_path / "out", interactive=False, answers={},
+                        host_root=tmp_path / "repo")
+    rc = render(Source.load(result.source_path), CATALOG, REGISTRY)
+    assert [key for key in result.blank_secret_keys if key not in rc.optional_secrets] == []

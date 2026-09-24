@@ -4,7 +4,8 @@ The isolation properties below are what let the stack stand on its own without
 colliding with anything else on the host:
   - a dedicated project name + network (no collision with other compose projects),
   - NO host port publishes on core services (reached via the dashboard/agent, per the deployment
-    model) so nothing fights other services' ports,
+    model) so nothing fights other services' ports; the one exception is a UI's declared
+    `local_port`, published on 127.0.0.1 only and only while the edge is off,
   - NVIDIA GPU reservations only when the compute GPU is NVIDIA (the one vendor with a compose
     device driver); other GPUs reach llama.cpp as passed-through device nodes,
   - core services read the rendered .env (single source → no drift),
@@ -351,7 +352,8 @@ def _model_gateway_keys(project: str, net: str, env_file: str,
 
 
 def _dashboard(project: str, net: str, env_file: str, nvidia_gpu: bool,
-               dashboard: dict[str, Any] | None = None) -> dict[str, Any]:
+               dashboard: dict[str, Any] | None = None,
+               publish_local_ports: bool = False) -> dict[str, Any]:
     """The control-plane UI service. The dashboard is PLUGGABLE (data-driven, like the agent):
     the selected `dashboard` manifest supplies the image, env, depends_on and healthcheck. When no
     selection is passed (bare/legacy call) it falls back to the V2-native SPA defaults.
@@ -388,6 +390,9 @@ def _dashboard(project: str, net: str, env_file: str, nvidia_gpu: bool,
         "interval": "30s", "timeout": "10s", "retries": 3, "start_period": "30s",
     }
     _add_secrets(s, secrets)
+    local_port = dashboard.get("local_port")
+    if publish_local_ports and local_port is not None:
+        s["ports"] = [local_port.publish()]
     return s
 
 
@@ -481,7 +486,7 @@ def _apply_agent_runtime(svc: dict[str, Any], *, user: str | None, group_add: li
 
 def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: str,
                     nvidia_gpu: bool, primary_uuid: str | None, secondary_uuid: str | None,
-                    project: str) -> dict[str, Any]:
+                    project: str, publish_local_ports: bool = False) -> dict[str, Any]:
     """Render ONE compose service from a plugin's declared PluginService — data-driven, so
     adding a service is a manifest edit, not a code change here. `${...}` / `./...` refs and
     named volumes pass straight through to compose (project-scoped, no live-stack collision)."""
@@ -545,6 +550,8 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: st
         s["depends_on"] = dep
     if ps.ports:  # edge/front-door only (Caddy :443); gated behind the plugin's opt-in profile
         s["ports"] = list(ps.ports)
+    if publish_local_ports and ps.local_port is not None:  # loopback-only, and only without the edge
+        s["ports"] = s.get("ports", []) + [ps.local_port.publish()]
     if ps.shm_size:  # bump /dev/shm past docker's 64MB default (Electron/Selkies streaming needs it)
         s["shm_size"] = ps.shm_size
     if ps.entrypoint:  # REPLACES the image's baked ENTRYPOINT (exec form - no shell splitting)
@@ -638,7 +645,8 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
                    gpu_claims: dict[str, Any] | None = None,
                    mcp_servers: list[dict[str, Any]] | None = None,
                    langfuse_tracing: bool = False,
-                   litellm_google_sso_env: dict[str, str] | None = None) -> dict[str, Any]:
+                   litellm_google_sso_env: dict[str, str] | None = None,
+                   publish_local_ports: bool = False) -> dict[str, Any]:
     net = f"{project}-net"
     # the agent is swappable (Hermes is the default); a registry manifest may pin any image,
     # else fall back to the <project>/agent-<id> convention (render tags it, see ordo/images.py).
@@ -697,7 +705,7 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
         "ops-controller": _ops_controller(project, net, env_file, nvidia_gpu),
         # The dashboard is pluggable (data-driven): the selected manifest supplies image/env/
         # depends/healthcheck. It has no backend service of its own — it calls ops-controller.
-        "dashboard": _dashboard(project, net, env_file, nvidia_gpu, dashboard),
+        "dashboard": _dashboard(project, net, env_file, nvidia_gpu, dashboard, publish_local_ports),
         # Env secrets from the agent manifest's `secrets:`; Discord/backup tokens are file secrets.
         "agent": _svc(agent_img, net=net, env_file=env_file,
                       depends=["model-gateway", "model-gateway-keys", "ops-controller"]),
@@ -726,7 +734,7 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
         svcs[ps.name] = _plugin_service(ps, plugin, net=net, env_file=env_file,
                                         nvidia_gpu=nvidia_gpu, primary_uuid=primary_gpu_uuid,
                                         secondary_uuid=secondary_gpu_uuid,
-                                        project=project)
+                                        project=project, publish_local_ports=publish_local_ports)
         # A service whose GPU use is gate-enforced gets its gate rendered WITH it, from the same
         # declaration. Not opt-in and not a separate manifest entry: the two cannot disagree, and
         # an enabled gated service can never come up without the thing that arbitrates it.

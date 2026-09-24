@@ -60,3 +60,49 @@ def test_crlf_is_preserved():
 def test_bad_action_raises():
     with pytest.raises(ValueError):
         edit_plugins_list(SAMPLE, "x", "toggle")
+
+
+# --- edit_site_keys: the `site:` editor `ordo remote enable/disable` uses ---
+
+from ordo.source_edit import edit_site_keys  # noqa: E402
+
+SITE_SAMPLE = (
+    "# my source\n"
+    "model: auto\n"
+    "plugins: auto\n"
+    "site:\n"
+    "  BASE_PATH: /srv/ordo    # host checkout\n"
+    "  LONG_ARGS: --a --b\n"
+    "    --c --d\n"
+    "  DATA_PATH: /srv/ordo/data\n"
+    "cost: {}\n"
+)
+
+
+def test_set_adds_and_replaces_keeping_everything_else():
+    out = edit_site_keys(SITE_SAMPLE, {"CADDY_BIND": "127.0.0.1", "DATA_PATH": "/data"}, [])
+    doc = yaml.safe_load(out)
+    assert doc["site"] == {"BASE_PATH": "/srv/ordo", "LONG_ARGS": "--a --b --c --d",
+                           "DATA_PATH": "/data", "CADDY_BIND": "127.0.0.1"}
+    assert "# my source\n" in out and "# host checkout" in out and doc["cost"] == {}
+
+
+def test_remove_drops_a_key_and_its_continuation_lines():
+    out = edit_site_keys(SITE_SAMPLE, {}, ["LONG_ARGS", "NOT_THERE"])
+    assert yaml.safe_load(out)["site"] == {"BASE_PATH": "/srv/ordo", "DATA_PATH": "/srv/ordo/data"}
+    assert "--c --d" not in out
+
+
+def test_a_missing_site_block_is_appended():
+    out = edit_site_keys("model: auto\n", {"CADDY_BIND": "0.0.0.0"}, [])
+    assert yaml.safe_load(out) == {"model": "auto", "site": {"CADDY_BIND": "0.0.0.0"}}
+
+
+def test_values_are_quoted_when_yaml_needs_it():
+    out = edit_site_keys(SITE_SAMPLE, {"WEIRD": "a: b # c"}, [])
+    assert yaml.safe_load(out)["site"]["WEIRD"] == "a: b # c"
+
+
+def test_an_inline_site_mapping_is_refused():
+    with pytest.raises(ValueError):
+        edit_site_keys("site: {A: b}\n", {"CADDY_BIND": "0.0.0.0"}, [])

@@ -105,6 +105,16 @@ def plan_named(doc: dict, services: Sequence[str], *, force_recreate: bool) -> t
     return args, set(targets)
 
 
+def starting_services(doc: dict, services: Sequence[str], *, whole_stack: bool, with_profiles: bool) -> dict:
+    """The compose definitions of the services this bring-up starts (what preflight checks)."""
+    defined = _services(doc)
+    if whole_stack:
+        return {name: spec for name, spec in defined.items()
+                if with_profiles or not (spec or {}).get("profiles")}
+    _args, targets = plan_named(doc, services, force_recreate=False)
+    return {name: defined[name] for name in sorted(targets) if name in defined}
+
+
 def is_leased(gpu: dict) -> bool:
     """`leased` is the scheduler's own verdict; older images only expose the raw lists."""
     return bool(gpu.get("leased") or gpu.get("running") or gpu.get("evicted_residents"))

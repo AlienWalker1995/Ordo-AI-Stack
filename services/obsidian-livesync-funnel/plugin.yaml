@@ -10,6 +10,9 @@
 # `funnel` attribute (one-time, operator-only — see docs/runbooks/notes-sync.md). Rendering +
 # compose-config are validated here; live reachability requires those operator prerequisites.
 id: obsidian-livesync-funnel
+# Opt-in: `plugins: auto` leaves it out, so public exposure (and the Tailscale key it needs) only
+# happens when the operator lists it by id.
+default: false
 name: Obsidian sync - public access (Tailscale Funnel)
 description: Off-tailnet public HTTPS for the CouchDB LiveSync endpoint via Tailscale Funnel (notes.<tailnet>). Opt-in.
 requires:

@@ -16,6 +16,8 @@ env:
 secrets:
   - HF_TOKEN
   - GITHUB_PERSONAL_ACCESS_TOKEN
+# Both only unlock gated model/node downloads; ComfyUI runs without them.
+optional_secrets: [HF_TOKEN, GITHUB_PERSONAL_ACCESS_TOKEN]
 # compose service(s) — compose.py renders these from data (no hardcoded if-blocks)
 services:
   - name: comfyui

@@ -8,33 +8,25 @@
    - This single `:443` redirect URI covers the whole stack: the
      port-per-service model (`:443` front door plus `:8443`–`:8450`)
      shares one domain-scoped oauth2-proxy cookie — no per-port URIs.
-2. Capture the Client ID + secret into `.env` as
-   `OAUTH2_PROXY_CLIENT_ID` / `OAUTH2_PROXY_CLIENT_SECRET`.
-3. Generate a cookie secret — **exactly 16, 24, or 32 raw bytes**, not
-   base64:
+2. Turn it on (prompts for the tailnet hostname, the Caddy bind address,
+   the client ID + secret and the allowlisted emails; `--yes` takes them
+   from flags, and the secret from `OAUTH2_PROXY_CLIENT_SECRET`):
    ```
-   LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 32
+   ordo remote enable
    ```
-   Save to `.env` as `OAUTH2_PROXY_COOKIE_SECRET`.
-4. Issue the Tailscale cert:
-   ```
-   mkdir -p auth/caddy/certs
-   tailscale cert \
-     --cert-file auth/caddy/certs/tailnet.crt \
-     --key-file  auth/caddy/certs/tailnet.key \
-     ordo.<tailnet>.ts.net
-   ```
-5. Set `CADDY_BIND` in `.env`. Use your tailnet IP (`tailscale ip -4`)
-   to restrict Caddy to the tailnet interface, or `0.0.0.0` to bind all
-   interfaces (LAN included; the router's NAT remains the boundary). The
-   `:?` failsafe on every `caddy.ports` mapping refuses only an
-   empty/unset value.
-6. Replace `auth/oauth2-proxy/emails.txt` with your real allowlist (one
-   email per line). Do **not** commit it — the repo file stays
-   `YOUR_ALLOWLIST_EMAIL`; run
-   `git update-index --skip-worktree auth/oauth2-proxy/emails.txt` to
-   suppress accidental staging.
-7. `ordo up caddy oauth2-proxy` (from the repo root).
+   It writes the `CADDY_*` keys under `site:` in `out/ordo.yaml`, the
+   client pair into `out/secrets.env` (the cookie secret is generated),
+   the allowlist into `auth/oauth2-proxy/emails.txt`, re-renders, and
+   offers to issue the Tailscale cert into `auth/caddy/certs/`. Use your
+   tailnet IP (`tailscale ip -4`) as the bind to restrict Caddy to the
+   tailnet, or `0.0.0.0` for all interfaces (LAN included). The allowlist
+   file is tracked with the placeholder `YOUR_ALLOWLIST_EMAIL`: run
+   `git update-index --skip-worktree auth/oauth2-proxy/emails.txt` so
+   real addresses are never staged.
+3. `ordo up --all` (from the repo root). The loopback UI ports close and
+   Caddy becomes the one front door.
+
+`ordo remote disable` reverses all of it (UIs back on `127.0.0.1`).
 
 ## Edit the allowlist
 

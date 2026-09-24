@@ -3,10 +3,10 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/AlienWalker1995/Ordo-AI-Stack/main/install.sh | sh
 #
-# Takes a fresh machine from nothing to a configured stack: checks prerequisites, clones the repo,
-# installs the `ordo` CLI into a virtualenv, then launches the interactive setup wizard
-# (`ordo init`) which asks about hardware, model, capabilities, tailnet + Google SSO, and secrets,
-# and offers to render + bring the stack up. POSIX sh; idempotent; safe to re-run.
+# Takes a fresh machine from nothing to a running local stack: checks prerequisites, clones the
+# repo into $ORDO_DIR (default ~/ordo), installs the `ordo` CLI into a virtualenv, then launches
+# `ordo init`: three questions (model, features, start now), no accounts. Remote access is a later
+# opt-in (`ordo remote enable`). POSIX sh; idempotent; safe to re-run.
 set -eu
 
 REPO_URL="${ORDO_REPO_URL:-https://github.com/AlienWalker1995/Ordo-AI-Stack.git}"
@@ -27,18 +27,6 @@ elif { true </dev/tty; } 2>/dev/null; then
 else
     TTY_IN=""; INTERACTIVE=0
 fi
-
-ask() {
-    # ask "Prompt" "default" -> echoes answer (default when non-interactive or empty)
-    _prompt="$1"; _default="$2"
-    if [ "$INTERACTIVE" -eq 1 ]; then
-        printf '%s [%s]: ' "$_prompt" "$_default" >&2
-        read -r _ans <"$TTY_IN" || _ans=""
-        [ -n "$_ans" ] && printf '%s' "$_ans" || printf '%s' "$_default"
-    else
-        printf '%s' "$_default"
-    fi
-}
 
 # ── 1. Prerequisites ─────────────────────────────────────────────────────────
 info "Checking prerequisites"
@@ -74,7 +62,7 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/pyproject.toml" ] && [ -d "$SCRIPT_
     TARGET="$SCRIPT_DIR"
     info "Using existing clone at $TARGET"
 else
-    TARGET="$(ask 'Install directory' "$DEFAULT_DIR")"
+    TARGET="$DEFAULT_DIR"   # override with ORDO_DIR=...; no prompt, so init's 3 questions are the only ones
     if [ -d "$TARGET/.git" ] && [ -f "$TARGET/pyproject.toml" ]; then
         info "Repo already present at $TARGET — pulling latest"
         git -C "$TARGET" pull --ff-only || warn "git pull failed (local changes?) — using the existing checkout."
@@ -117,7 +105,8 @@ Config written to $TARGET/out/. To finish interactively:
   cd "$TARGET" && . .venv/bin/activate && ordo init --out out --force
 Or continue manually:
   ordo --source out/ordo.yaml render --out out
-  ordo up --core --out out     # core + Hermes; \`ordo up --all --out out\` for every service
+  ordo up --all --out out
+Remote access, any time later: ordo remote enable --out out
 EOF
 fi
 

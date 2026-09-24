@@ -17,6 +17,8 @@ provides: [training]
 compose_profile: ""    # always-on with the core stack (idle container, no VRAM held)
 secrets:
   - HF_TOKEN
+# Only gated model downloads need it; the trainer runs without it.
+optional_secrets: [HF_TOKEN]
 services:
   - name: ltx-trainer
     # Locally built from services/ltx-trainer/Dockerfile — tag pins the upstream repo SHA.

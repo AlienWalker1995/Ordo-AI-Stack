@@ -22,7 +22,7 @@ iOS / Mac / PC  --Self-hosted LiveSync plugin-->  CouchDB  <--livesync-bridge-->
 
 ## 1. Enable it on the stack
 
-`ordo init` offers a **Notes sync** capability; keep it enabled and it mints `COUCHDB_PASSWORD` +
+`ordo init`'s default features preset includes **Notes sync**; it mints `COUCHDB_PASSWORD` +
 `LIVESYNC_E2EE_PASSPHRASE` into `out/secrets.env`. Then:
 
 ```bash
@@ -73,11 +73,13 @@ ACL (admin console -> Access controls):
 ]
 ```
 
-Then bring up the opt-in profile (separate from `notes` — public exposure is a deliberate flip):
+Then enable the opt-in plugin (`plugins: auto` never enables it: public exposure is a deliberate
+flip). Add `obsidian-livesync-funnel` to `plugins:` in `ordo.yaml` (with `TS_AUTHKEY` set in
+`out/secrets.env`), re-render, and start it:
 
 ```bash
-cd out && COMPOSE_PROFILES=<your-profiles>,notes,notes-funnel docker compose -p ordo \
-  --env-file .env --env-file secrets.env up -d notes-funnel
+python -m ordo --source out/ordo.yaml render --out out
+ordo up notes-funnel
 docker exec ordo-notes-funnel-1 tailscale funnel status    # confirm it's public
 ```
 

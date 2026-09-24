@@ -21,6 +21,9 @@ services:
   - name: open-webui
     # Pinned to the exact version V1 runs (V1 uses ${OPEN_WEBUI_IMAGE:-...v0.10.1}). Pin, don't float.
     image: ghcr.io/open-webui/open-webui:v0.11.3
+    # Local access while the edge is off: http://127.0.0.1:8443 (the port Caddy serves chat on).
+    # The renderer binds it to loopback only and drops it when the edge is enabled.
+    local_port: {host: 8443, container: 8080}
     env:
       ENABLE_OLLAMA_API: "false"
       OPENAI_API_BASE_URL: ${OPENAI_API_BASE:-http://model-gateway:11435/v1}

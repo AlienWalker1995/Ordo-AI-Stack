@@ -32,30 +32,17 @@ no NVIDIA GPU), clones the repo (`~/ordo`, or `%USERPROFILE%\ordo` on Windows �
 `ORDO_DIR` env var), installs `ordo` into a virtualenv, and runs **`ordo init`** — the interactive
 wizard that configures the whole stack.
 
-**The wizard (`ordo init`) is the setup path.** Every prompt has a sensible default (press **Enter**
-to accept); **Ctrl-C** cancels at any point and nothing is written until you confirm at the end. It
-walks you through:
+**The wizard (`ordo init`) is the setup path**: three questions, each with a default (press
+**Enter**), no accounts:
 
-1. **Hardware** — confirm the auto-detected GPU / RAM / CPU (or pin it later for reproducibility).
-2. **Model** — accept the best-fit catalog pick, or choose another by tier.
-3. **Capabilities** — optional groups to enable (chat is always on): image/video, RAG, voice,
-   automation (n8n), web search, monitoring, notes sync (cross-device Obsidian /
-   [CouchDB LiveSync](runbooks/notes-sync.md)). Default is hardware-gated auto.
-4. **Secure front door** — set up the Tailscale + Google SSO gate now, or skip it (with an explicit
-   warning that the stack then runs unauthenticated). When you set it up, the tailnet hostname
-   (`CADDY_TAILNET_HOSTNAME`), OAuth client id/secret, and email allowlist are **required** — a blank
-   answer prompts to defer-or-retry rather than silently shipping a broken gate. Prints the exact
-   Google console URL + callback and offers to provision a `tailscale cert`. Skipped, remote access
-   (the `edge` plugin) stays off until you set `CADDY_BIND`, `CADDY_TAILNET_HOSTNAME` and
-   `CADDY_TAILNET_DOMAIN` under `site:` in `out/ordo.yaml` and re-run `ordo render`.
-5. **External tokens** — Hugging Face, Tailscale, GitHub; all optional (Enter to skip). Internal
-   keys (LiteLLM, ops, MCP, cookie, SearXNG, n8n) are auto-generated.
-6. **Review & confirm** — a summary of every choice with a final **Y/n**; decline and nothing is
-   written.
+1. **Model**: the best-fit catalog pick for the detected hardware, or choose another.
+2. **Features**: chat only, chat + tools, or everything this hardware supports (default).
+3. **Start now?**: render, run the host checks, and `ordo up --all`.
 
-On confirm it writes `out/ordo.yaml` + `out/secrets.env` (chmod 600, never committed), then
-**offers** to render, download the model, and bring the stack up — printing your dashboard URL.
-Nothing starts unless you say yes. Re-run `ordo init` any time to reconfigure.
+It writes `out/ordo.yaml` + `out/secrets.env` (chmod 600, never committed; internal secrets
+generated) and prints the model and plugins it chose, also under `--yes`. With the edge off, the
+chat UI and dashboard publish on `127.0.0.1:8443` / `:8444` only. Remote access (Tailscale + Google
+SSO) is `ordo remote enable`, any time later ([auth runbook](runbooks/auth.md)).
 
 Onboarding is two commands: `ordo init` (say yes to the render), then `ordo up --core` (or
 `--all`). The first `ordo up` builds the stack's own images, because nothing publishes them: it
@@ -67,7 +54,7 @@ builds every first-party image the rendered compose names that Docker does not h
 ordo init                                     # re-run the wizard in an existing checkout
 # …or step through it by hand:
 ordo --source out/ordo.yaml render --out out  # regenerate out/ from the source (NEVER bare `ordo render`)
-ordo preflight --ref out/.env                 # read-only GO/NO-GO readiness gate
+ordo preflight --ref out/.env                 # read-only GO/NO-GO gate, host checks included
 # bring up: every rendered profile, both env files; refuses while a GPU lease holds the card.
 # Builds any missing first-party image first (--no-build skips that).
 ordo up --all                                 # --dry-run prints the docker compose argv instead
