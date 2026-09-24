@@ -67,18 +67,14 @@ A monthly cron (`0 4 1 * *`) running the above stays ahead of expiry.
 
 When Google sign-in is unreachable, all browser paths fail. Two levers:
 
-1. **Bearer fallback (break-glass, opt-in).** The dashboard's
-   `_verify_auth()` retains an optional bearer path, disabled by default
-   (`DASHBOARD_AUTH_TOKEN` unset, `AUTH_REQUIRED=False`) since the Caddy
-   edge is the sole gate. As an emergency: set `DASHBOARD_AUTH_TOKEN` in
-   `.env`, restart the dashboard, temporarily re-enable its host-port
-   publish, and reach it directly:
+1. **Bearer (break-glass).** The dashboard's protected routes accept
+   `Authorization: Bearer <OPS_CONTROLLER_TOKEN>` (`dashboard/auth.py`).
+   The dashboard has no host port, so call it from a container on
+   `ordo-net` that holds the token:
    ```
-   curl -H "Authorization: Bearer $DASHBOARD_AUTH_TOKEN" \
-     http://localhost:8080/api/...
+   docker exec ordo-agent-1 sh -c 'curl -H "Authorization: Bearer $OPS_CONTROLLER_TOKEN" \
+     http://dashboard:8080/api/...'
    ```
-   Revert (unset the token, remove the host-port publish) once sign-in
-   is restored.
 2. **Direct container access.** `docker exec` runs any verb inside a
    service container while public access is broken.
 

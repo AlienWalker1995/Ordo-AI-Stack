@@ -60,7 +60,12 @@
 # sign-in via a bare :844x port lands on the :443 hub instead of returning to
 # the port; the domain-scoped cookie then covers every port + name, so it's a
 # one-time extra click, not a broken flow.
+#
+# Identity headers reach an upstream from forward_auth only. copy_headers already drops a client
+# copy of each X-Forwarded-* target, but a client X-Auth-Request-* header would pass straight
+# through, so delete those first (the dashboard trusts this identity for operator actions).
 (sso_forward_auth) {
+    request_header -X-Auth-Request-*
     forward_auth oauth2-proxy:4180 {
         uri /oauth2/auth
         copy_headers X-Auth-Request-Email>X-Forwarded-Email X-Auth-Request-User>X-Forwarded-User X-Auth-Request-Preferred-Username>X-Forwarded-Preferred-Username

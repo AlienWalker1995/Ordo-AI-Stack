@@ -8,8 +8,7 @@
 | `MODEL_CACHE_TTL_SEC` | model-gateway | Model list cache TTL seconds | `60` |
 | `DASHBOARD_URL` | model-gateway | Dashboard for throughput recording | `http://dashboard:8080` |
 | `OPS_CONTROLLER_URL` | dashboard, agent, hermes-dashboard, comfyui, mcp-comfyui, ltx-trainer | Control plane (`ops-controller`) URL: GPU leases, model switch, service lifecycle | `http://ops-controller:9000` |
-| `OPS_CONTROLLER_TOKEN` | dashboard, agent, hermes-dashboard, comfyui-mcp, gpu gates | Bearer the clients send to ops-controller (from `out/secrets.env`) | *(required)* |
-| `DASHBOARD_AUTH_TOKEN` | dashboard | Optional dormant Bearer-auth fallback in dashboard code; not set in the Ordo deployment — the Caddy edge (oauth2-proxy + Google SSO) is the sole auth gate for the dashboard | *(unset; not used)* |
+| `OPS_CONTROLLER_TOKEN` | dashboard, agent, hermes-dashboard, comfyui-mcp, orchestration, gpu gates | Bearer the clients send to ops-controller; the dashboard also accepts it on its protected routes (from `out/secrets.env`) | *(required)* |
 | `OPEN_WEBUI_DEFAULT_MODEL` | open-webui | Default model shown in Open WebUI chat (rendered into `DEFAULT_MODELS`) | `local-chat` |
 | `HERMES_DASHBOARD_PORT` | hermes-dashboard | Not wired to anything — the dashboard's listen port is hardcoded via `--port 9119` in `services/hermes-dashboard/plugin.yaml`; documented here for reference only | `9119` |
 | `DISCORD_BOT_TOKEN_FILE` | agent | Docker secret file path for the Discord bot token; the entrypoint reads it into `DISCORD_BOT_TOKEN` inside the container. Plaintext `DISCORD_BOT_TOKEN` env is never set — `tests/test_secrets_isolation.py` asserts it's absent | `/run/secrets/discord_token` |

@@ -31,7 +31,7 @@ def db_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def client(db_dir: Path, monkeypatch):
+def client(db_dir: Path, monkeypatch, dashboard_operator_headers):
     monkeypatch.setenv("DASHBOARD_DATA_PATH", str(db_dir))
 
     with patch(
@@ -49,7 +49,7 @@ def client(db_dir: Path, monkeypatch):
 
         from dashboard.app import app
 
-        yield TestClient(app)
+        yield TestClient(app, headers=dashboard_operator_headers)
 
 
 # --- Save + list ---

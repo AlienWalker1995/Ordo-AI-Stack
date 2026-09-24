@@ -69,8 +69,25 @@ def test_caddy_tls_uses_tailscale_cert(caddyfile_text: str) -> None:
 def test_caddy_renames_xauthrequest_to_xforwarded(caddyfile_text: str) -> None:
     """Caddy `copy_headers Source>Target` syntax renames oauth2-proxy's
     X-Auth-Request-* headers into the X-Forwarded-* names that the
-    dashboard's _verify_auth() reads."""
+    dashboard's edge-identity check (dashboard/auth.py) reads."""
     assert "X-Auth-Request-Email>X-Forwarded-Email" in caddyfile_text
+
+
+def test_sso_gate_strips_client_supplied_identity_headers(caddyfile_text: str) -> None:
+    """Identity headers reaching an upstream must come from forward_auth only.
+
+    `copy_headers` already deletes a client-supplied copy of each TARGET header
+    (X-Forwarded-Email/User/Preferred-Username; verified against caddy 2.11.4), but a
+    client-supplied X-Auth-Request-* header passes through to the upstream untouched.
+    The shared gate therefore deletes every client X-Auth-Request-* header BEFORE
+    forward_auth runs, so no upstream can be handed a forged oauth2-proxy identity."""
+    snippet = caddyfile_text.split("(sso_forward_auth) {", 1)[1].split("\n}\n", 1)[0]
+    strip = snippet.find("request_header -X-Auth-Request-*")
+    gate = snippet.find("forward_auth oauth2-proxy:4180")
+    assert strip != -1, "the SSO gate no longer strips client-supplied X-Auth-Request-* headers"
+    assert gate != -1, "the SSO gate no longer calls oauth2-proxy"
+    assert strip < gate, "the strip must run before forward_auth copies the real identity in"
+    assert "X-Auth-Request-Email>X-Forwarded-Email" in snippet
 
 
 def test_no_ai_toolkit_references(caddyfile_text: str) -> None:

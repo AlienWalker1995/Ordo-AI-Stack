@@ -30,7 +30,7 @@ def db_dir(tmp_path: Path):
 
 
 @pytest.fixture
-def client(db_dir: Path, monkeypatch):
+def client(db_dir: Path, monkeypatch, dashboard_operator_headers):
     """Dashboard TestClient with isolated DB."""
     monkeypatch.setenv("DASHBOARD_DATA_PATH", str(db_dir))
 
@@ -47,7 +47,7 @@ def client(db_dir: Path, monkeypatch):
 
     from dashboard.app import app
 
-    yield TestClient(app)
+    yield TestClient(app, headers=dashboard_operator_headers)
 
 
 def test_workflow_version_lifecycle(client: TestClient, db_dir: Path):

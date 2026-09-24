@@ -81,7 +81,7 @@ def gpu_idle():
 
 
 @pytest.fixture
-def live():
+def live(dashboard_operator_headers):
     """Every fetcher patched with the payloads above."""
     with patch.object(routes_console, "_ops_json", side_effect=fake_ops_json), \
          patch.object(routes_console, "_hardware", new=AsyncMock(return_value=HARDWARE)), \
@@ -92,7 +92,7 @@ def live():
          patch.object(routes_console, "_disk_files", new=AsyncMock(return_value=DISK)), \
          patch.object(routes_console, "_comfy_json", new=AsyncMock(side_effect=lambda path: (
              {"queue_running": [], "queue_pending": []} if path == "/queue" else HISTORY))):
-        yield TestClient(app)
+        yield TestClient(app, headers=dashboard_operator_headers)
 
 
 # --- overview ---
@@ -304,7 +304,7 @@ def test_delete_protects_the_active_model_file_even_if_the_registry_omits_it(liv
     assert (tmp_path / GPU_FILE).exists()
 
 
-def test_delete_is_refused_while_a_switch_is_running(live, tmp_path):
+def test_delete_is_refused_while_a_switch_is_running(live, tmp_path, dashboard_operator_headers):
     import asyncio
 
     from httpx import ASGITransport, AsyncClient
@@ -313,7 +313,9 @@ def test_delete_is_refused_while_a_switch_is_running(live, tmp_path):
 
     async def scenario():
         async with routes_console._switch_lock:
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://t", headers=dashboard_operator_headers
+            ) as client:
                 return (await client.post("/api/models/delete", json={"file": "spare.gguf"})).status_code
 
     with patch.object(routes_console, "GGUF_DIR", tmp_path):
@@ -415,7 +417,7 @@ def test_grafana_status_reports_reachability_and_the_embed_path(live):
         assert live.get("/api/perf/grafana").json()["available"] is False
 
 
-def test_a_second_switch_while_one_is_running_is_refused(live):
+def test_a_second_switch_while_one_is_running_is_refused(live, dashboard_operator_headers):
     """Two switches interleaving would render one model and recreate for another."""
     import asyncio
 
@@ -432,7 +434,9 @@ def test_a_second_switch_while_one_is_running_is_refused(live):
     async def scenario():
         from httpx import ASGITransport, AsyncClient
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://t", headers=dashboard_operator_headers
+        ) as client:
             first = asyncio.create_task(client.post("/api/models/switch", json={"model": "turbo"}))
             await asyncio.wait_for(started.wait(), timeout=5)  # a refused first switch fails, not hangs
             try:

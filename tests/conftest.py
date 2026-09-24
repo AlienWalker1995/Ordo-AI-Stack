@@ -16,6 +16,8 @@ import os
 import tempfile
 from pathlib import Path
 
+import pytest
+
 os.environ.setdefault(
     "AUDIT_LOG_PATH",
     str(Path(tempfile.gettempdir()) / "ordo-test-audit.jsonl"),
@@ -31,3 +33,17 @@ os.environ.setdefault(
     "DASHBOARD_DATA_PATH",
     tempfile.mkdtemp(prefix="ordo-test-dashboard-"),
 )
+
+
+# The dashboard refuses anonymous callers on its state-changing and ops-forwarding routes
+# (services/dashboard/dashboard/auth.py). Route-behaviour tests authenticate the way an internal
+# caller does: with the ops-controller bearer, configured for the test.
+DASHBOARD_TEST_OPS_TOKEN = "test-ops-controller-token"
+
+
+@pytest.fixture
+def dashboard_operator_headers(monkeypatch) -> dict[str, str]:
+    import dashboard.settings as dashboard_settings
+
+    monkeypatch.setattr(dashboard_settings, "OPS_CONTROLLER_TOKEN", DASHBOARD_TEST_OPS_TOKEN)
+    return {"Authorization": f"Bearer {DASHBOARD_TEST_OPS_TOKEN}"}

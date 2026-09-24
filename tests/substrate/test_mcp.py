@@ -241,7 +241,10 @@ def test_orchestration_wiring():
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     orc = next(s for s in rc.mcp_servers if s["id"] == "orchestration")
     assert orc["env"]["ORCHESTRATION_DASHBOARD_URL"] == "http://dashboard:8080"
-    # No per-service dashboard auth (edge SSO is the only gate) — orchestration carries no Bearer.
+    # The dashboard refuses anonymous internal callers on its ops-forwarding routes, so the adapter
+    # sends the ops-controller bearer it is scoped to (declared in the manifest's `secrets:`).
+    assert orc["env"]["OPS_CONTROLLER_TOKEN"] == "${OPS_CONTROLLER_TOKEN}"
+    assert "OPS_CONTROLLER_TOKEN" in rc.required_secrets
     assert "DASHBOARD_AUTH_TOKEN" not in orc["env"]
     # it must reach dashboard:8080, so it joins the stack network as well as the internal MCP one
     assert orc["network"] == "stack"

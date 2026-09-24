@@ -117,26 +117,26 @@ def test_mcp_health_gateway_down_marks_everything_down():
     assert all(s["ok"] is False for s in d["servers"])
 
 
-def test_mcp_add_persists_to_ordo_yaml_and_reports_render_needed():
+def test_mcp_add_persists_to_ordo_yaml_and_reports_render_needed(dashboard_operator_headers):
     with patch("dashboard.app._read_servers_json", return_value=SERVERS_JSON), \
          patch("dashboard.app._persist_mcp_toggle",
                new=AsyncMock(return_value={"persistent": True, "plugin": "n8n", "note": None})) as p:
-        r = client.post("/api/mcp/add", json={"server": "n8n"})
+        r = client.post("/api/mcp/add", json={"server": "n8n"}, headers=dashboard_operator_headers)
     d = r.json()
     p.assert_awaited_once_with("n8n", "add")
     assert d["status"] == "added" and d["applied"] is False and "model-gateway" in d["next"]
     assert d["servers"] == ["searxng", "comfyui", "memory-vault", "n8n"]
 
 
-def test_mcp_add_rejects_a_server_that_is_not_a_registered_plugin():
+def test_mcp_add_rejects_a_server_that_is_not_a_registered_plugin(dashboard_operator_headers):
     with patch("dashboard.app._read_servers_json", return_value=SERVERS_JSON):
-        r = client.post("/api/mcp/add", json={"server": "duckduckgo"})
+        r = client.post("/api/mcp/add", json={"server": "duckduckgo"}, headers=dashboard_operator_headers)
     assert r.status_code == 400 and "not a registered" in r.json()["detail"]
 
 
-def test_mcp_remove_persists_and_reports_render_needed():
+def test_mcp_remove_persists_and_reports_render_needed(dashboard_operator_headers):
     with patch("dashboard.app._read_servers_json", return_value=SERVERS_JSON), \
          patch("dashboard.app._persist_mcp_toggle",
                new=AsyncMock(return_value={"persistent": True, "plugin": "searxng", "note": None})):
-        d = client.post("/api/mcp/remove", json={"server": "searxng"}).json()
+        d = client.post("/api/mcp/remove", json={"server": "searxng"}, headers=dashboard_operator_headers).json()
     assert d["status"] == "removed" and d["applied"] is False and d["servers"] == ["comfyui", "memory-vault"]
