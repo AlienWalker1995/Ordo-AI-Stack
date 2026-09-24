@@ -268,6 +268,7 @@ class _FakeResp:
 
 class _FakeAsyncClient:
     payload: dict = {}
+    requests: list = []
 
     def __init__(self, *a, **kw):
         pass
@@ -278,7 +279,8 @@ class _FakeAsyncClient:
     async def __aexit__(self, *a):
         return False
 
-    async def get(self, url):
+    async def get(self, url, headers=None):
+        _FakeAsyncClient.requests.append((url, headers or {}))
         return _FakeResp(self.payload)
 
 
@@ -303,3 +305,19 @@ def test_media_readiness_fails_loud_without_a_gate_url(monkeypatch):
     assert media["ok"] is False and "COMFYUI_URL" in media["error"]
     assert out["ok"] is False
     assert all("8188" not in str(call.args[0]) for call in probe.call_args_list)
+
+
+def test_gpu_history_authenticates_to_the_control_plane(client, monkeypatch):
+    # ops-controller refuses every unauthenticated call (#225); this route sent no token and
+    # the Performance page's lease history read 502 "401 Unauthorized".
+    from dashboard import routes_orchestration
+
+    monkeypatch.setattr(routes_orchestration, "OPS_CONTROLLER_TOKEN", "test-token")
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.payload = {"history": []}
+    with patch("dashboard.routes_orchestration.httpx.AsyncClient", _FakeAsyncClient):
+        r = client.get("/api/orchestration/gpu/history")
+    assert r.status_code == 200
+    url, headers = _FakeAsyncClient.requests[-1]
+    assert url == f"{routes_orchestration.OPS_CONTROLLER_URL}/jobs/history"
+    assert headers.get("Authorization") == "Bearer test-token"
