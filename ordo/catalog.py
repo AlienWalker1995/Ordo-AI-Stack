@@ -45,6 +45,9 @@ class Model:
     # sm_120-only patched build). Required with a backend_image: the sizer only picks the model on a
     # GPU known to meet it. "" = no requirement (the upstream per-backend images).
     min_compute_cap: str = ""
+    # The source needs a Hugging Face token (a gated repo). The fetch hands HF_TOKEN to the download
+    # only for such a model, so an ungated download never carries the token.
+    gated: bool = False
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Model:
@@ -60,6 +63,7 @@ class Model:
             mmproj=(d.get("mmproj") or None), extra_args=str(d.get("extra_args", "")),
             backend_image=(d.get("backend_image") or None),
             min_compute_cap=normalize_compute_cap(req.get("min_compute_cap")),
+            gated=bool(d.get("gated", False)),
         )
 
     def _rank(self) -> tuple[int, float]:
@@ -91,17 +95,36 @@ def compute_blocker(m: Model, hw: HardwareProfile) -> str:
 
 
 class Catalog:
-    def __init__(self, models: list[Model]):
+    """`models` are the chat models the sizer picks from. `support_models` are the other weights the
+    rendered stack reads from the same models-gguf volume (the CPU fallback, the embedder): pinned
+    here so `ordo fetch` can provision them, and never candidates for the chat model."""
+
+    def __init__(self, models: list[Model], support_models: list[Model] | None = None):
         self.models = models
+        self.support_models = list(support_models or [])
         self._by_id = {m.id: m for m in models}
 
     @classmethod
     def load(cls, path: str | Path) -> Catalog:
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-        return cls([Model.from_dict(m) for m in (data.get("models") or [])])
+        return cls([Model.from_dict(m) for m in (data.get("models") or [])],
+                   [Model.from_dict(m) for m in (data.get("support_models") or [])])
 
     def get(self, model_id: str) -> Model | None:
+        """A chat model by id (support models are not chat models)."""
         return self._by_id.get(model_id)
+
+    def entries(self) -> list[Model]:
+        """Every downloadable entry: chat models, then support models."""
+        return self.models + self.support_models
+
+    def get_entry(self, model_id: str) -> Model | None:
+        """Any downloadable entry by id, chat or support."""
+        return next((m for m in self.entries() if m.id == model_id), None)
+
+    def by_file(self, file: str) -> Model | None:
+        """The entry whose weights file is `file` (the name it has in the models volume)."""
+        return next((m for m in self.entries() if m.file == file), None)
 
     def fits(self, m: Model, hw: HardwareProfile, reserve_gb: float = DEFAULT_VRAM_RESERVE_GB) -> bool:
         return not compute_blocker(m, hw) and self._fits_budget(m, hw, reserve_gb)

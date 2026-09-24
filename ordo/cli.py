@@ -5,7 +5,8 @@
     ordo doctor                 # sanity checks (catalog integrity, source validity)
     ordo serve                  # run the control-plane HTTP service (ops-controller)
     ordo build [--all|SVC…]     # build the first-party images the rendered stack runs, tagged by commit
-    ordo up [--all|--core|SVC…] # build missing images, bring the rendered stack up (GPU-lease checked)
+    ordo fetch [MODEL]          # download model files into the models volume, checksum-verified
+    ordo up [--all|--core|SVC…] # build missing images, fetch missing models, bring the stack up (GPU-lease checked)
     ordo recreate SVC…          # force-recreate services from the host (GPU-lease checked)
 
 `render` writes to an output dir only (it starts nothing), and `serve`'s Docker backend is
@@ -178,7 +179,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         return 0
 
     # pragma: no cover below (interactive) - question 3 of 3.
-    if not _prompt_yn("\n3/3  Start now? (render, check this host, bring the stack up)", default=True):
+    if not _prompt_yn("\n3/3  Start now? (render, check this host, download the model, bring the stack up)",
+                      default=True):
         print(f"\nWhen ready:\n  ordo render --source {result.source_path} --out {out}\n"
               f"  ordo up --all --out {out}\n{remote_line}")
         return 0
@@ -189,15 +191,15 @@ def cmd_init(args: argparse.Namespace) -> int:
     if not _host_preflight(str(out), "ordo", [], whole_stack=True, with_profiles=True):
         print(f"\nFix the above, then: ordo up --all --out {out}\n{remote_line}")
         return 1
-    # build=True: the first up builds the stack's first-party images (`ordo build`).
+    # build=True: the first up builds the stack's first-party images (`ordo build`); models_catalog
+    # downloads the model files the stack loads into the models volume (`ordo fetch`).
     rc = bringup.bring_up(str(out), "ordo", [], whole_stack=True, with_profiles=True,
-                          force_recreate=False, dry_run=False, build=True)
+                          force_recreate=False, dry_run=False, build=True, models_catalog=catalog_path)
     if rc != 0:
         return rc
     urls = _local_urls(bringup.load_compose(out.resolve().as_posix()))
     if urls:
         print("\nOpen (this machine only):\n  " + "\n  ".join(urls))
-    print("The chat model loads from the models-gguf volume; seed it once (docs/data.md, \"Model Pull\").")
     print(remote_line)
     return 0
 
@@ -358,8 +360,41 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     return 0 if go else 1
 
 
+def _volume_fetch_targets(args: argparse.Namespace, cat: Catalog) -> list | None:
+    """The catalog entries `ordo fetch` provisions into the volume, or None (an error was printed).
+
+    Default: every file the rendered stack in --out loads (chat, CPU fallback, embedder)."""
+    if args.all:
+        return cat.entries()
+    if args.model:
+        model = cat.get_entry(args.model)
+        if model is None:
+            print(f"no catalog entry '{args.model}'", file=sys.stderr)
+            return None
+        return [model]
+    out = Path(args.out)
+    try:
+        doc = bringup.load_compose(out.resolve().as_posix())
+    except (OSError, ValueError) as e:
+        print(f"cannot read the rendered stack in {out} ({e}); render first, or name a catalog id",
+              file=sys.stderr)
+        return None
+    env = parity.load_env(str(out / ".env")) if (out / ".env").exists() else {}
+    targets = []
+    for need in fetch.required_model_files(doc, env, list(doc.get("services") or {})):
+        model = cat.by_file(need.file)
+        if model is None:
+            print(f"  [no catalog entry] {need.file} ({need.service}"
+                  f"{', optional' if need.optional else ''}): copy it into the volume by hand")
+        elif model not in targets:
+            targets.append(model)
+    return targets
+
+
 def cmd_fetch(args: argparse.Namespace) -> int:
     cat = Catalog.load(Path(args.catalog))
+    if args.models_dir is None:
+        return _fetch_into_volume(args, cat)
     wanted = None if args.all else ([args.model] if args.model else None)
     if not args.all and not args.model:
         # default target: the model the current source resolves to
@@ -375,12 +410,41 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         return 1
     todo = [a for a in actions if a.action in (fetch.DOWNLOAD, fetch.REDOWNLOAD)]
     for a in todo:  # pragma: no cover - real network downloads
-        model = cat.get(a.model_id)
+        model = cat.get_entry(a.model_id)
         print(f"fetching {model.id} …")
         result = fetch.fetch_one(model, args.models_dir, allow_unverified=args.allow_unverified)
         print(f"  -> {result.reason}")
     print(f"\n{len(todo)} fetched, {len(actions) - len(todo) - len(blocked)} already present")
     return 0
+
+
+def _fetch_into_volume(args: argparse.Namespace, cat: Catalog) -> int:  # pragma: no cover - docker
+    """`ordo fetch` (the default): download into the models volume the stack reads, verifying every
+    file, present ones included."""
+    targets = _volume_fetch_targets(args, cat)
+    if targets is None:
+        return 1
+    refused = [reason for model in targets if (reason := fetch.refusal(model, args.allow_unverified))]
+    if refused:
+        print("refusing:\n  " + "\n  ".join(refused), file=sys.stderr)
+        return 1
+    runner = fetch.DockerRunner()
+    volume = fetch.volume_name(args.project)
+    exists = fetch.volume_exists(runner, volume)
+    present = (fetch.files_in_volume(runner, volume) or set()) if exists else set()
+    for model in targets:
+        print(f"  [{'present' if model.file in present else 'missing'}] {model.id}: {model.file}")
+    if args.plan_only or not targets:
+        return 0
+    if not exists and not fetch.create_volume(runner, volume, args.project):
+        print(f"cannot create the {volume} volume", file=sys.stderr)
+        return 1
+    secrets_path = Path(args.out) / "secrets.env"
+    secrets = parity.load_env(str(secrets_path)) if secrets_path.exists() else {}
+    code = fetch.fetch_into_volume(targets, project=args.project, secrets=secrets, runner=runner)
+    if code == 0:
+        print(f"\n{len(targets)} model file(s) in place and verified in {volume}")
+    return code
 
 
 def cmd_native(args: argparse.Namespace) -> int:
@@ -443,7 +507,8 @@ def cmd_up(args: argparse.Namespace) -> int:
             return 1
     return bringup.bring_up(args.out, args.project, args.services, whole_stack=whole_stack,
                             with_profiles=not args.core, force_recreate=False, dry_run=args.dry_run,
-                            build=not args.no_build)
+                            build=not args.no_build,
+                            models_catalog=None if args.no_fetch else Path(args.catalog))
 
 
 def cmd_recreate(args: argparse.Namespace) -> int:
@@ -600,10 +665,15 @@ def main(argv: list[str] | None = None) -> int:
     pd.add_argument("--bundle", help="write a sanitized support bundle to this path")
     pd.add_argument("--project", default="ordo", help="compose project name (default: ordo)")
     pd.set_defaults(func=cmd_doctor)
-    pget = sub.add_parser("fetch")
-    pget.add_argument("model", nargs="?", help="catalog model id (default: the source's model)")
-    pget.add_argument("--all", action="store_true", help="fetch every catalog model")
-    pget.add_argument("--models-dir", default="./models")
+    pget = sub.add_parser("fetch", help="download catalog models into the models volume, checksum-verified")
+    pget.add_argument("model", nargs="?",
+                      help="catalog id (default: every model file the rendered stack in --out loads)")
+    pget.add_argument("--all", action="store_true", help="fetch every catalog entry")
+    pget.add_argument("--out", default="out", help="the rendered stack directory (default: out)")
+    pget.add_argument("--project", default="ordo",
+                      help="compose project whose <project>_models-gguf volume receives the files (default: ordo)")
+    pget.add_argument("--models-dir", default=None,
+                      help="download to this host directory instead of the volume (the native, non-Docker path)")
     pget.add_argument("--allow-unverified", action="store_true",
                       help="permit downloading a model with no pinned sha256 (unsafe)")
     pget.add_argument("--plan-only", action="store_true", help="print the plan, download nothing")
@@ -632,6 +702,9 @@ def main(argv: list[str] | None = None) -> int:
     pu.add_argument("--core", action="store_true", help="whole stack without profiles: core + agent")
     pu.add_argument("--no-preflight", action="store_true",
                     help="skip the host checks (docker, GPU runtime, disk, ports, secrets) run before starting")
+    pu.add_argument("--no-fetch", action="store_true",
+                    help="do not download the model files the starting services need into the models "
+                         "volume (a service whose file is missing then fails to load it)")
     prc = sub.add_parser("recreate", help="force-recreate services (refuses an evicted GPU resident)")
     prc.add_argument("services", nargs="+", metavar="SERVICE")
     for sp, func in ((pu, cmd_up), (prc, cmd_recreate)):

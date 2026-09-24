@@ -37,14 +37,13 @@ Alternatively, `ordo up --all` alone brings up the same services without re-rend
 
 Use local files as context in **Open WebUI** via Qdrant + the `rag-ingestion` service.
 
-1. **Provide the embedding model** (once): download the embedding GGUF (**`nomic-embed-text`**, or your `EMBED_MODEL`) to `models/gguf/` and copy it into the `models-gguf` named volume that `llamacpp-embed` serves from — see [data.md — Model Pull](data.md#model-pull) for the two-step.
-2. **Start the RAG profile** (adds Qdrant + `rag-ingestion`):
+1. **Start the RAG profile** (adds Qdrant + `rag-ingestion`). `ordo up` downloads the embedding model (**`nomic-embed-text`**) into the `models-gguf` volume that `llamacpp-embed` serves from the first time, checksum-verified (see [data.md: Model Pull](data.md#model-pull)):
    ```bash
    ordo up qdrant llamacpp-embed rag-ingestion
    ```
-3. **Drop documents** under `data/rag-input/` (paths come from your `DATA_PATH` / `BASE_PATH`; default is `<repo>/data/rag-input/`). Supported types include `.txt`, `.md`, `.pdf`, and common code extensions — see `services/rag/ingest.py` for `SUPPORTED_EXTENSIONS`.
-4. **Open WebUI** → enable RAG for chat (vector DB is already pointed at Qdrant in compose).
-5. **Check status:** the dashboard Overview page (`GET /api/overview`, `knowledge.documents`); the collection name defaults to `documents` (`RAG_COLLECTION`).
+2. **Drop documents** under `data/rag-input/` (paths come from your `DATA_PATH` / `BASE_PATH`; default is `<repo>/data/rag-input/`). Supported types include `.txt`, `.md`, `.pdf`, and common code extensions — see `services/rag/ingest.py` for `SUPPORTED_EXTENSIONS`.
+3. **Open WebUI** → enable RAG for chat (vector DB is already pointed at Qdrant in compose).
+4. **Check status:** the dashboard Overview page (`GET /api/overview`, `knowledge.documents`); the collection name defaults to `documents` (`RAG_COLLECTION`).
 
 Env knobs (optional): `EMBED_MODEL`, `RAG_COLLECTION`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP` — set via the `overrides:` block in `ordo.yaml` (tracked template: [`ordo.example.yaml`](../ordo.example.yaml)) and re-render. The dashboard **RAG** section shows Qdrant collection point count when the stack can reach Qdrant. See the PRD **WS6: RAG Pipeline** for the full picture.
 
