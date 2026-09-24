@@ -160,4 +160,4 @@ Treat as catastrophic:
 | `invalid character` on `.env.sops` decrypt | SOPS doesn't auto-detect dotenv | Pass `--input-type=dotenv --output-type=dotenv` (the decrypt script already does) |
 | Container exits with `cookie_secret must be 16, 24, or 32 bytes` | `OAUTH2_PROXY_COOKIE_SECRET` made with `openssl rand -base64 32` (44 chars) | Regenerate with `tr -dc 'a-zA-Z0-9' </dev/urandom \| head -c 32`, edit `secrets/.env.sops`, copy it into `out/secrets.env`, `ordo recreate oauth2-proxy` |
 | App can't reach a provider but the token "looks right" | `_FILE`→env-var bridge didn't run | Confirm the service entrypoint sources the bridge before calling the SDK, and `/run/secrets/<name>` exists in the container |
-| `docker compose up` fails on a missing bind-mount source under `runtime/secrets/` | `~/.ai-toolkit/runtime/secrets/` not populated | Run `scripts/secrets/decrypt.sh` first |
+| `ordo up` fails on a missing bind-mount source under `runtime/secrets/` | `~/.ai-toolkit/runtime/secrets/` not populated | Run `scripts/secrets/decrypt.sh` first |

@@ -86,8 +86,8 @@ gosu hermes "$HERMES_BIN" config set model.api_key         "${LITELLM_KEY_HERMES
 gosu hermes "$HERMES_BIN" config set model.default         "local-chat"                    >/dev/null
 # Context window: single source of truth is LLAMACPP_CTX_SIZE in .env. The
 # compose file plumbs it into this container's env; the seed below overwrites
-# whatever hermes had cached so a change to .env + `docker compose up -d
-# hermes-gateway hermes-dashboard` is enough to update the UI progress bar
+# whatever hermes had cached so a re-render + `ordo recreate agent
+# hermes-dashboard` is enough to update the UI progress bar
 # (`0/<N>K`). Falls back to 262144 (256k) if unset — matches the stack default.
 gosu hermes "$HERMES_BIN" config set model.context_length  "${LLAMACPP_CTX_SIZE:-262144}"  >/dev/null
 # Per-turn budgets — hoisted from in-container config.yaml so they're

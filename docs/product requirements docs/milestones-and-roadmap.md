@@ -26,7 +26,7 @@
 
 **Acceptance criteria:**
 - **Given** `searxng` enabled in `ordo.yaml`'s `plugins:`, **When** `GET /api/mcp/health`, **Then** the response contains a `searxng` entry with `status: healthy` and `tool_count > 0`, sourced from `/v1/mcp/server/health` + `tools/list` `server_outcomes`
-- **Given** `docker compose up -d`, **When** `docker inspect model-gateway`, **Then** `HostConfig.CapDrop` contains `ALL`, `ReadonlyRootfs` is `true`
+- **Given** `ordo up --all`, **When** `docker inspect model-gateway`, **Then** `HostConfig.CapDrop` contains `ALL`, `ReadonlyRootfs` is `true`
 
 ---
 
@@ -77,7 +77,7 @@
 
 ### M6 Acceptance Criteria
 
-- **Given** `docker compose up -d`, **When** env does not set `WEBUI_AUTH`, **Then** Open WebUI requires login
+- **Given** `ordo up --all`, **When** env does not set `WEBUI_AUTH`, **Then** Open WebUI requires login
 - **Given** `docker inspect ordo-mcp-searxng-1`, **Then** `NetworkSettings.Networks` contains `ordo-mcp-net` (and `ordo-net` only when the manifest declares `network: stack`)
 - **Given** audit log exceeds 10MB, **When** next privileged action occurs, **Then** old log renamed to `audit.log.1`
 - **Given** push to main branch, **When** CI runs, **Then** all contract + smoke tests pass

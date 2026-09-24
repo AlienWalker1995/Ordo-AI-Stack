@@ -68,17 +68,16 @@ file rolls to `audit.1.log`; one historical generation is kept
 
 ## Recovery: ops-controller down
 
-The ops-router tools fail; the rest of the stack stays up. From the host
-(the rendered compose lives in `out/`):
+The ops-router tools fail; the rest of the stack stays up. From the repo root:
 
 ```bash
-cd out
-docker compose -p ordo --env-file .env --env-file secrets.env restart ops-controller
+ordo recreate ops-controller
 ```
 
 ## Recovery: ops_client misconfigured
 
 Symptom: every ops-router tool fails with `OPS_CONTROLLER_TOKEN env var is
 empty`. Fix: fill `OPS_CONTROLLER_TOKEN` in `out/secrets.env` (see
-[secrets.md](secrets.md)), then from `out/`:
-`docker compose -p ordo --env-file .env --env-file secrets.env up -d agent`.
+[secrets.md](secrets.md)), then from the repo root: `ordo recreate agent`. It is
+`--no-deps` and lease-checked: the agent's dependency closure contains `llamacpp`, so a
+bare compose `up -d agent` would start the evicted GPU resident beside a leased render.

@@ -109,7 +109,7 @@ remove_rules() {
 subnet=$(get_subnet)
 
 if [ -z "$subnet" ]; then
-  echo "Could not detect the ordo-net subnet. Start the stack once (docker compose up -d), or pass an explicit SUBNET." >&2
+  echo "Could not detect the ordo-net subnet. Start the stack once (ordo up --all), or pass an explicit SUBNET." >&2
   exit 1
 fi
 

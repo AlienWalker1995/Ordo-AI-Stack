@@ -70,7 +70,7 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 
 ## Break-glass
 
-1. **Reset OPS_CONTROLLER_TOKEN:** Generate new token, update `out/secrets.env`, then re-run `docker compose -p ordo … up` from `out/` to restart dashboard + ops-controller
+1. **Reset OPS_CONTROLLER_TOKEN:** Generate new token, update `out/secrets.env`, then, outside a GPU lease and from the repo root, `ordo recreate ops-controller dashboard` plus every other service that sends it (`grep -n '${OPS_CONTROLLER_TOKEN' out/docker-compose.yml`; see [Rollback Procedures](docs/product%20requirements%20docs/appendix-rollback.md) #5). `ordo recreate` is lease-checked and `--no-deps`; a hand-assembled compose bring-up is neither
 2. **Restore data:** Restore `data/` from a local backup
 3. **Disable MCP tools:** Remove the `kind: mcp` plugins from `ordo.yaml`'s `plugins:` list (or use the MCP servers section of the dashboard's Settings drawer), then `ordo render` and recreate `model-gateway`
 4. **Safe mode:** Stop the `mcp-*` services and `agent`; use `llamacpp` + `open-webui` only
