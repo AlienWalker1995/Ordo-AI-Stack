@@ -316,7 +316,7 @@ def test_get_health_returns_200(tmp_path):
     client = _client(cp)
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"ok": True}
+    assert resp.json()["ok"] is True and resp.json()["substrate_digest"]
 
 
 # --- GET /healthz ---
@@ -326,7 +326,7 @@ def test_get_healthz_returns_200(tmp_path):
     client = _client(cp)
     resp = client.get("/healthz")
     assert resp.status_code == 200
-    assert resp.json() == {"ok": True}
+    assert resp.json()["ok"] is True and resp.json()["substrate_digest"]
 
 
 # --- Unknown path ---

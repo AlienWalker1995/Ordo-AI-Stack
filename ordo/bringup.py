@@ -134,11 +134,10 @@ def lease_refusal(gpu: dict | None, *, whole_stack: bool, starts: set[str]) -> s
     return None
 
 
-def read_gpu_status(project: str) -> dict | None:
-    """ops-controller's scheduler status, or None when no ops-controller container is running.
+def find_ops_controller(project: str) -> str | None:
+    """The running ops-controller container's name, or None when there is none.
 
-    Read by `docker exec` so the host needs neither the token nor a published port. Raises
-    LeaseUnknown when docker cannot be queried or the status cannot be read (fail closed).
+    Raises LeaseUnknown when docker cannot be queried.
     """
     try:
         ps = subprocess.run(
@@ -154,9 +153,18 @@ def read_gpu_status(project: str) -> dict | None:
     if ps.returncode != 0:
         raise LeaseUnknown(f"cannot query docker for the ops-controller container: {ps.stderr.strip()}")
     names = ps.stdout.split()
-    if not names:
+    return names[0] if names else None
+
+
+def read_gpu_status(project: str) -> dict | None:
+    """ops-controller's scheduler status, or None when no ops-controller container is running.
+
+    Read by `docker exec` so the host needs neither the token nor a published port. Raises
+    LeaseUnknown when docker cannot be queried or the status cannot be read (fail closed).
+    """
+    container = find_ops_controller(project)
+    if container is None:
         return None
-    container = names[0]
     try:
         proc = subprocess.run(
             ["docker", "exec", container, "python", "-c", _STATUS_SCRIPT],

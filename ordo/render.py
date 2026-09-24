@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from . import compose, gpu
+from . import compose, gpu, substrate
 from .agents import AgentRegistry
 from .catalog import DEFAULT_VRAM_RESERVE_GB, Catalog, Model
 from .config import Source
@@ -305,6 +305,9 @@ class RenderedConfig:
             "compose_profiles": self.compose_profiles,
             "mcp_servers": [s["id"] for s in self.mcp_servers],
             "warnings": self.warnings,
+            # What this render was made from. ops-controller refuses to re-render over a render made
+            # from different inputs, so its baked copy cannot silently revert the checkout's changes.
+            "substrate_digest": substrate.current_digest(),
             "derived": {
                 "env.LLAMACPP_CTX_SIZE": self.env["LLAMACPP_CTX_SIZE"],
                 "env.LLAMACPP_CPU_CTX": self.env["LLAMACPP_CPU_CTX"],

@@ -289,7 +289,7 @@ def test_get_health_returns_200(tmp_path):
     cp, _ = _cp(tmp_path)
     code, body = cp.route("GET", "/health")
     assert code == 200
-    assert body == {"ok": True}
+    assert body["ok"] is True and body["substrate_digest"]
 
 
 # --- GET /healthz ---
@@ -298,7 +298,7 @@ def test_get_healthz_returns_200(tmp_path):
     cp, _ = _cp(tmp_path)
     code, body = cp.route("GET", "/healthz")
     assert code == 200
-    assert body == {"ok": True}
+    assert body["ok"] is True and body["substrate_digest"]
 
 
 # --- Unknown path ---
