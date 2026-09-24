@@ -152,8 +152,9 @@ current split: today there is only Ordo.
     so the `local-chat` alias + reload wrapper survive and `preflight` reports "build first". The two
     MCP **placeholder digests** are replaced with real refs (qdrant-rag = a project buildable image,
     searxng = the live registry digest). **Secrets model:** derived `.env` and operator secrets stay
-    in **separate files** — services that need secrets read a second env_file `secrets.env`
-    (`required: false`, so a missing one never fails `docker compose config`), and `ordo render`
+    in **separate files**. No service loads `secrets.env` whole: each service declares the secret
+    names it reads, the renderer emits `KEY: ${KEY}`, and compose interpolates the values from
+    `--env-file secrets.env` (see `docs/runbooks/secrets.md`), and `ordo render`
     emits **`secrets.env.example`** listing the required KEYS (names only, values empty) gathered from
     the core set + each enabled plugin's `secrets:`. `ordo preflight --secrets <file>` adds a
     non-blocking check for missing keys. ✅

@@ -13,8 +13,8 @@ requires:
 provides: [tools]
 depends_on: [automation]   # queries the n8n service (automation kind=service plugin)
 # N8N_API_KEY is the operator secret (the n8n personal API token). Declaring it here emits the key
-# into secrets.env.example; the rendered MCP service reads secrets.env as a second env_file, so the
-# ${...} ref below interpolates to the real value at compose time. No bearer between LiteLLM and
+# into secrets.env.example, and compose interpolates the ${...} ref below from `--env-file
+# secrets.env` (the service loads no env_file). No bearer between LiteLLM and
 # this server: the bridge listens on the internal MCP network only.
 secrets:
   - N8N_API_KEY
