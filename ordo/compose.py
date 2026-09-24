@@ -8,7 +8,9 @@ colliding with anything else on the host:
     `local_port`, published on 127.0.0.1 only and only while the edge is off,
   - NVIDIA GPU reservations only when the compute GPU is NVIDIA (the one vendor with a compose
     device driver); other GPUs reach llama.cpp as passed-through device nodes,
-  - core services read the rendered .env (single source → no drift),
+  - no service loads the rendered .env whole: each receives only the derived keys it reads, as
+    `KEY: ${KEY?...}` refs compose interpolates from `--env-file .env` (single source, no drift,
+    and a changed key recreates only its readers),
   - plugin services appear only behind their compose profile (media/voice),
   - each enabled MCP server is its own `mcp-<id>` service on an INTERNAL network that only
     model-gateway joins (no Docker socket, no env_file, capped CPU/memory),
@@ -136,10 +138,6 @@ def _depends_on(peers: dict[str, str] | list[str] | None) -> Any:
 # .env, and no service loads that file whole. Each service lists the secret NAMES it reads; they
 # render as `KEY: ${KEY}` and compose interpolates the values from `--env-file secrets.env` (every
 # compose call passes both env files). So a tailnet sidecar holds TS_AUTHKEY and nothing else.
-def _env_files(env_file: str | None) -> list:
-    return [env_file] if env_file else []
-
-
 def _secret_env(names) -> dict[str, str]:
     """`KEY: ${KEY}` per secret name. An optional one (OPTIONAL_SECRET_KEYS) becomes ${KEY:-} so an
     absent value is empty rather than a compose warning; a required one stays ${KEY}, so a missing
@@ -158,12 +156,60 @@ def _add_secrets(s: dict[str, Any], names) -> None:
         env.setdefault(k, v)
 
 
-def _svc(image: str, *, net: str, env_file: str | None = None, gpu: bool = False,
+# Derived config (the rendered out/.env) follows the same rule as secrets: no service loads the file
+# (no `env_file`). A service lists the derived NAMES it reads (`derived_env:` in its manifest, or the
+# lists below for the core services) and each renders as `KEY: ${KEY?...}`, which compose interpolates
+# from `--env-file .env`. A render that changes one key therefore changes the config hash of exactly
+# the services that read it. With a whole-file env_file it changed every service, so the next `up`
+# recreated the whole stack (GPU residents included) over a key most of them never read.
+#
+# A key the render did not produce this time (COMFYUI_URL without comfyui, CADDY_* without the edge,
+# a `site:` knob the operator did not set) is left out, exactly as the whole-file env_file left it out.
+# `?` (not `:?`) fails the compose call when a declared key is missing from .env, while still
+# allowing a legitimately empty value (LLAMACPP_MMPROJ on a text-only model).
+#
+# The keys each core service reads, taken from its entrypoint.
+# llama.cpp: scripts/llamacpp/run-llama-server.sh, which turns these into the llama-server argv.
+LLAMACPP_DERIVED_ENV: tuple[str, ...] = (
+    "LLAMACPP_MODEL", "LLAMACPP_CTX_SIZE", "LLAMACPP_PARALLEL", "LLAMACPP_ROPE_SCALING",
+    "LLAMACPP_ROPE_SCALE", "LLAMACPP_YARN_ORIG_CTX", "LLAMACPP_GPU_LAYERS", "LLAMACPP_FLASH_ATTN",
+    "LLAMACPP_N_PREDICT", "LLAMACPP_REASONING_BUDGET", "LLAMACPP_MMPROJ",
+    "LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION", "LLAMACPP_KV_CACHE_TYPE_K", "LLAMACPP_KV_CACHE_TYPE_V",
+    "LLAMACPP_EXTRA_ARGS",
+    "LLAMACPP_OVERRIDE_KV",  # an optional `site:` knob (--override-kv), absent unless set
+)
+# model-gateway: services/model-gateway/entrypoint.sh, which writes these into the LiteLLM config's
+# model_info (context window, max output, weights names, vision, per-token cost). The CPU and embed
+# model names are `site:` knobs, present only when the operator sets them.
+MODEL_GATEWAY_DERIVED_ENV: tuple[str, ...] = (
+    "LLAMACPP_CTX_SIZE", "LLAMACPP_N_PREDICT", "LLAMACPP_CPU_CTX", "LLAMACPP_MODEL",
+    "LLAMACPP_CPU_MODEL", "LLAMACPP_EMBED_MODEL", "LLAMACPP_IMAGE", "LLAMACPP_MMPROJ",
+    "LOCAL_INPUT_COST_PER_TOKEN", "LOCAL_OUTPUT_COST_PER_TOKEN",
+)
+
+
+def _derived_env(names, available_env) -> dict[str, str]:
+    """`KEY: ${KEY?...}` per declared derived name the render produced. `available_env` is the set of
+    keys in the rendered .env; None (a bare render_compose call) emits every declared name."""
+    return {n: f"${{{n}?{n} is missing from the rendered .env}}" for n in names
+            if available_env is None or n in available_env}
+
+
+def _add_derived_env(s: dict[str, Any], names, available_env) -> None:
+    """Merge derived-config refs into a service's environment. A value the service already sets
+    explicitly is kept as written (a manifest may not declare a name in both places, see
+    plugins.parse_derived_env)."""
+    refs = _derived_env(names, available_env)
+    if not refs:
+        return
+    env = s.setdefault("environment", {})
+    for k, v in refs.items():
+        env.setdefault(k, v)
+
+
+def _svc(image: str, *, net: str, gpu: bool = False,
          profiles: list[str] | None = None, depends: list[str] | None = None) -> dict[str, Any]:
     s: dict[str, Any] = {"image": image, "restart": "unless-stopped", "networks": [net]}
-    files = _env_files(env_file)
-    if files:
-        s["env_file"] = files
     if profiles:
         s["profiles"] = profiles
     if depends:
@@ -173,14 +219,16 @@ def _svc(image: str, *, net: str, env_file: str | None = None, gpu: bool = False
     return s
 
 
-def _ops_controller(project: str, net: str, env_file: str, nvidia_gpu: bool) -> dict[str, Any]:
+def _ops_controller(project: str, net: str, nvidia_gpu: bool) -> dict[str, Any]:
     """The control plane. It drives the broker, so it needs the Docker socket — but the
     DockerBackend guard scopes every start/stop to `<project>-*`, so socket access can NOT
     reach containers outside this project. The rendered config dir is mounted read-only
     so a runtime model switch re-renders in place (one write path stays inside the project)."""
-    # Its own bearer token only. It reads secrets.env as a FILE for compose interpolation, never
-    # from its env, so a rotated secret is interpolated fresh on the next recreate.
-    s = _svc(f"{project}/ops-controller", net=net, env_file=env_file)
+    # No derived env, and no secret but its own bearer token. It reads .env and secrets.env as FILES
+    # (--env-file) for compose interpolation, never from its process env: compose prefers a process
+    # env value over --env-file, so a derived key in its env would shadow the fresh .env its own
+    # re-render just wrote (a model switch would recreate llama.cpp with the old values).
+    s = _svc(f"{project}/ops-controller", net=net)
     s["volumes"] = [
         "/var/run/docker.sock:/var/run/docker.sock",  # broker start/stop (guard-scoped)
         "./:/config",                                 # ordo.yaml + rendered out/ (single write path)
@@ -274,8 +322,9 @@ GATEWAY_LANGFUSE_ENV: dict[str, str] = {
 _MODEL_GATEWAY_CONFIG_BIND = "${BASE_PATH:?BASE_PATH must be set}/out/model-gateway:/config:ro"
 
 
-def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool = False,
-                    google_sso_env: dict[str, str] | None = None) -> dict[str, Any]:
+def _model_gateway(project: str, net: str, langfuse_tracing: bool = False,
+                    google_sso_env: dict[str, str] | None = None,
+                    available_env=None) -> dict[str, Any]:
     """LiteLLM behind the `local-chat` alias AND the MCP gateway (`/mcp`). The agent gates on
     `model-gateway: service_healthy` (audit G5), so this service MUST render a healthcheck or that
     gate is unsatisfiable and the agent never starts. Probe: GET /v1/models with the master key.
@@ -295,7 +344,7 @@ def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool
     same mechanism CADDY_TAILNET_HOSTNAME below uses, so no secret VALUE is ever set here. Empty
     when the edge wiring can't produce a PROXY_BASE_URL; the admin/master-key login is unaffected
     either way (see services/model-gateway/README.md)."""
-    s = _svc(f"{project}/model-gateway", net=net, env_file=env_file)
+    s = _svc(f"{project}/model-gateway", net=net)
     s["networks"] = [net, _mcp_net(project)]
     s["depends_on"] = _depends_on({"llamacpp": "service_started", "litellm-db": "service_healthy"})
     s["volumes"] = [_MODEL_GATEWAY_CONFIG_BIND]
@@ -314,6 +363,7 @@ def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool
         s["environment"].update(GATEWAY_LANGFUSE_ENV)
     if google_sso_env:
         s["environment"].update(google_sso_env)
+    _add_derived_env(s, MODEL_GATEWAY_DERIVED_ENV, available_env)
     # Master key (admin API + healthcheck), the DB-credential salt, the throughput-record token the
     # dashboard checks, and the Langfuse pair only while its callback is on.
     _add_secrets(s, ["LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "THROUGHPUT_RECORD_TOKEN",
@@ -330,14 +380,15 @@ def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool
     return s
 
 
-def _model_gateway_keys(project: str, net: str, env_file: str,
+def _model_gateway_keys(project: str, net: str,
                         key_envs: list[str] | None = None) -> dict[str, Any]:
     """One-shot: provision the per-consumer LiteLLM virtual keys from the rendered keys.json
     (bootstrap_keys.py, idempotent). Same image as the gateway (no second build), runs after the
     gateway is healthy, exits 0 when the desired state holds; `on-failure` retries transient API
     errors. The agent depends on `service_completed_successfully` so Hermes never starts keyless."""
-    # The master key to call the admin API, plus every consumer key it provisions (keys.json).
-    s = _svc(f"{project}/model-gateway", net=net, env_file=env_file)
+    # The master key to call the admin API, plus every consumer key it provisions (keys.json). No
+    # derived env: the entrypoint execs this command before it reads any LLAMACPP_* key.
+    s = _svc(f"{project}/model-gateway", net=net)
     s["restart"] = "on-failure"
     s["command"] = ["python3", "/app/bootstrap_keys.py"]
     s["volumes"] = [_MODEL_GATEWAY_CONFIG_BIND]
@@ -350,9 +401,9 @@ def _model_gateway_keys(project: str, net: str, env_file: str,
     return s
 
 
-def _dashboard(project: str, net: str, env_file: str, nvidia_gpu: bool,
+def _dashboard(project: str, net: str, nvidia_gpu: bool,
                dashboard: dict[str, Any] | None = None,
-               publish_local_ports: bool = False) -> dict[str, Any]:
+               publish_local_ports: bool = False, available_env=None) -> dict[str, Any]:
     """The control-plane UI service. The dashboard is PLUGGABLE (data-driven, like the agent):
     the selected `dashboard` manifest supplies the image, env, depends_on and healthcheck. When no
     selection is passed (bare/legacy call) it falls back to the V2-native SPA defaults.
@@ -366,7 +417,7 @@ def _dashboard(project: str, net: str, env_file: str, nvidia_gpu: bool,
     secrets = dashboard.get("secrets", ())
     # depends_on: manifest may map {peer: condition}; default to start-ordering on ops-controller.
     depends = dashboard.get("depends_on") or {"ops-controller": "service_started"}
-    s = _svc(image, net=net, env_file=env_file)
+    s = _svc(image, net=net)
     dep = _depends_on(depends)
     if dep:
         s["depends_on"] = dep
@@ -396,6 +447,7 @@ def _dashboard(project: str, net: str, env_file: str, nvidia_gpu: bool,
         # (dashboard/auth.py). Only rendered with the port, so an edge render never carries it.
         if dashboard.get("local_login_secret"):
             _add_secrets(s, [dashboard["local_login_secret"]])
+    _add_derived_env(s, dashboard.get("derived_env", ()), available_env)
     return s
 
 
@@ -487,9 +539,10 @@ def _apply_agent_runtime(svc: dict[str, Any], *, user: str | None, group_add: li
         svc["healthcheck"] = dict(healthcheck)
 
 
-def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: str,
+def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str,
                     nvidia_gpu: bool, primary_uuid: str | None, secondary_uuid: str | None,
-                    project: str, publish_local_ports: bool = False) -> dict[str, Any]:
+                    project: str, publish_local_ports: bool = False,
+                    available_env=None) -> dict[str, Any]:
     """Render ONE compose service from a plugin's declared PluginService — data-driven, so
     adding a service is a manifest edit, not a code change here. `${...}` / `./...` refs and
     named volumes pass straight through to compose (project-scoped, no live-stack collision)."""
@@ -499,9 +552,6 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: st
         # target's namespace (e.g. the tailnet-name sidecars inside Caddy's netns).
         s.pop("networks")
         s["network_mode"] = ps.network_mode
-    files = _env_files(env_file)
-    if files:
-        s["env_file"] = files
     if plugin.compose_profile:
         s["profiles"] = [plugin.compose_profile]
     env = dict(ps.env)
@@ -523,6 +573,7 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: st
     if env:
         s["environment"] = env
     _add_secrets(s, ps.secrets)
+    _add_derived_env(s, ps.derived_env, available_env)
     if ps.command:
         s["command"] = list(ps.command)
     if ps.volumes:
@@ -574,7 +625,7 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: st
 
 
 def _gpu_gate(ps: PluginService, plugin: Plugin, claim: Any, *, net: str, upstream_net: str,
-              env_file: str, project: str) -> tuple[str, dict[str, Any]]:
+              project: str) -> tuple[str, dict[str, Any]]:
     """Render the admission gate that fronts a `gpu_arbitration.enforcement: gate` service.
 
     Derived entirely from the declaration — one generic image, no per-service code. The gate
@@ -592,7 +643,6 @@ def _gpu_gate(ps: PluginService, plugin: Plugin, claim: Any, *, net: str, upstre
         "image": f"{project}/gpu-gate",
         "restart": "unless-stopped",
         "networks": [net, upstream_net],
-        "env_file": _env_files(env_file),
         "depends_on": [ps.name],
         "environment": {
             "GATE_UPSTREAM": f"http://{ps.name}:{g.upstream_port}",
@@ -630,7 +680,7 @@ def _gpu_gate(ps: PluginService, plugin: Plugin, claim: Any, *, net: str, upstre
 
 def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
                    compose_profiles: list[str], agent: str = "hermes",
-                   project: str = "ordo", env_file: str = ".env",
+                   project: str = "ordo",
                    agent_image: str | None = None,
                    agent_command: list[str] | None = None,
                    agent_user: str | None = None,
@@ -639,6 +689,7 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
                    agent_environment: dict[str, str] | None = None,
                    agent_secret_files: list[dict[str, str]] | None = None,
                    agent_secrets: list[str] | None = None,
+                   agent_derived_env: list[str] | None = None,
                    litellm_key_envs: list[str] | None = None,
                    agent_depends_on: dict[str, str] | None = None,
                    agent_healthcheck: dict[str, Any] | None = None,
@@ -651,7 +702,10 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
                    mcp_servers: list[dict[str, Any]] | None = None,
                    langfuse_tracing: bool = False,
                    litellm_google_sso_env: dict[str, str] | None = None,
-                   publish_local_ports: bool = False) -> dict[str, Any]:
+                   publish_local_ports: bool = False,
+                   available_env: frozenset[str] | None = None) -> dict[str, Any]:
+    """`available_env` is the set of keys in the rendered .env (RenderedConfig.env): a declared
+    derived key renders only when the render produced it. None emits every declared key."""
     net = f"{project}-net"
     # the agent is swappable (Hermes is the default); a registry manifest may pin any image,
     # else fall back to the <project>/agent-<id> convention (render tags it, see ordo/images.py).
@@ -662,7 +716,7 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     # as llamacpp_image; the backend alone decides how the service reaches the GPU.
     llamacpp_img = llamacpp_image or llamacpp_backend.image
     uses_cuda = llamacpp_backend.name == "cuda"
-    llamacpp = _svc(llamacpp_img, net=net, env_file=env_file, gpu=uses_cuda)
+    llamacpp = _svc(llamacpp_img, net=net, gpu=uses_cuda)
     # always-on Prometheus metrics endpoint (the monitoring plugin's prometheus scrapes it).
     llamacpp["command"] = [LLAMACPP_METRICS_ARG]
     # Pin the compute service to the PRIMARY card by uuid (V1 does this in gpu-assignments.yml).
@@ -675,6 +729,7 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     # ROCm / Vulkan: compose has no device driver for these GPUs, so the device nodes are passed
     # through instead (/dev/kfd + /dev/dri for ROCm, /dev/dri for Vulkan). EXPERIMENTAL: rendered
     # and `docker compose config`-validated, not yet run on real AMD/Intel hardware.
+    _add_derived_env(llamacpp, LLAMACPP_DERIVED_ENV, available_env)
     if llamacpp_backend.devices:
         llamacpp["devices"] = list(llamacpp_backend.devices)
     # The patched image is a drop-in binary at /app/llama-server; the launch LOGIC lives in the
@@ -703,15 +758,17 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
         "llamacpp": llamacpp,
         "litellm-db": _litellm_db(net),
         # LITELLM_MASTER_KEY + LITELLM_SALT_KEY + THROUGHPUT_RECORD_TOKEN are secrets (secrets.env).
-        "model-gateway": _model_gateway(project, net, env_file, langfuse_tracing=langfuse_tracing,
-                                         google_sso_env=litellm_google_sso_env),
-        "model-gateway-keys": _model_gateway_keys(project, net, env_file, litellm_key_envs),
-        "ops-controller": _ops_controller(project, net, env_file, nvidia_gpu),
+        "model-gateway": _model_gateway(project, net, langfuse_tracing=langfuse_tracing,
+                                         google_sso_env=litellm_google_sso_env,
+                                         available_env=available_env),
+        "model-gateway-keys": _model_gateway_keys(project, net, litellm_key_envs),
+        "ops-controller": _ops_controller(project, net, nvidia_gpu),
         # The dashboard is pluggable (data-driven): the selected manifest supplies image/env/
         # depends/healthcheck. It has no backend service of its own — it calls ops-controller.
-        "dashboard": _dashboard(project, net, env_file, nvidia_gpu, dashboard, publish_local_ports),
+        "dashboard": _dashboard(project, net, nvidia_gpu, dashboard, publish_local_ports,
+                                available_env=available_env),
         # Env secrets from the agent manifest's `secrets:`; Discord/backup tokens are file secrets.
-        "agent": _svc(agent_img, net=net, env_file=env_file,
+        "agent": _svc(agent_img, net=net,
                       depends=["model-gateway", "model-gateway-keys", "ops-controller"]),
     }
     # The agent image's default CMD may be a no-op (agent-hermes defaults to `hermes --help`, which
@@ -729,16 +786,18 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
         environment=agent_environment, secret_files=agent_secret_files,
         depends_on=agent_depends_on, healthcheck=agent_healthcheck)
     _add_secrets(svcs["agent"], agent_secrets or ())  # after the manifest env, which would replace it
+    _add_derived_env(svcs["agent"], agent_derived_env or (), available_env)
     # optional plugin services, built from the resolved manifests (no hardcoded if-blocks).
     # render() only passes services whose plugin is enabled, so profile-gating already happened;
     # the per-service `profiles:` keeps them dormant until `--profile <p>` is used too.
     claims = gpu_claims or {}
     gated_nets: list[str] = []
     for plugin, ps in (plugin_services or []):
-        svcs[ps.name] = _plugin_service(ps, plugin, net=net, env_file=env_file,
+        svcs[ps.name] = _plugin_service(ps, plugin, net=net,
                                         nvidia_gpu=nvidia_gpu, primary_uuid=primary_gpu_uuid,
                                         secondary_uuid=secondary_gpu_uuid,
-                                        project=project, publish_local_ports=publish_local_ports)
+                                        project=project, publish_local_ports=publish_local_ports,
+                                        available_env=available_env)
         # A service whose GPU use is gate-enforced gets its gate rendered WITH it, from the same
         # declaration. Not opt-in and not a separate manifest entry: the two cannot disagree, and
         # an enabled gated service can never come up without the thing that arbitrates it.
@@ -756,8 +815,7 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
             svcs[ps.name]["networks"] = [upstream_net]
             gated_nets.append(upstream_net)
             gate_name, gate_svc = _gpu_gate(ps, plugin, claims[ps.name], net=net,
-                                            upstream_net=upstream_net,
-                                            env_file=env_file, project=project)
+                                            upstream_net=upstream_net, project=project)
             svcs[gate_name] = gate_svc
 
     # MCP servers: one compose service per image-backed record; hosted (url-only) servers render

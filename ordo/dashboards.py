@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .buildspec import BuildSpec
-from .plugins import LocalPort
+from .plugins import LocalPort, parse_derived_env
 
 
 def _gpu_caps(b: dict[str, Any]) -> tuple[str, ...]:
@@ -53,6 +53,9 @@ class Dashboard:
     healthcheck: dict[str, Any] = dataclasses.field(default_factory=dict)
     # Secret NAMES the dashboard reads, rendered as `KEY: ${KEY}` (see PluginService.secrets).
     secrets: tuple[str, ...] = ()
+    # Derived-config NAMES (keys of the rendered .env) the dashboard reads, rendered as
+    # `KEY: ${KEY?...}` (see PluginService.derived_env). The dashboard never loads the whole .env.
+    derived_env: tuple[str, ...] = ()
     # GPU visibility for the dashboard service. `hardware_stats()` shells to nvidia-smi (_probe_gpu)
     # and enumerates cards via gpu_stats.list_gpus for the hw-stat bar's GPU widgets — the NVIDIA
     # runtime only injects nvidia-smi/NVML when the service reserves a GPU with the `utility` cap.
@@ -90,6 +93,7 @@ class Dashboard:
             depends_on={str(k): str(v) for k, v in (d.get("depends_on", {}) or {}).items()},
             healthcheck=dict(d.get("healthcheck", {}) or {}),
             secrets=tuple(str(k) for k in (d.get("secrets", []) or [])),
+            derived_env=parse_derived_env(where, d),
             gpu_capabilities=_gpu_caps(d),
             build=BuildSpec.from_dict(d.get("build")),
             local_port=local_port,

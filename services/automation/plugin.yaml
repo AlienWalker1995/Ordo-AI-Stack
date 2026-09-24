@@ -37,6 +37,9 @@ services:
       N8N_EDITOR_BASE_URL: ${N8N_WEBHOOK_URL:-}
       N8N_AUTH_EXCLUDE_ENDPOINTS: rest/oauth2-credential/callback,webhook
       N8N_SECURE_COOKIE: "false"
+    # n8n's own config also reads N8N_WEBHOOK_URL under that name (@n8n/config `webhookUrl`), besides
+    # the WEBHOOK_URL / N8N_EDITOR_BASE_URL mappings above. Present only when `site:` sets it.
+    derived_env: [N8N_WEBHOOK_URL]
     volumes:
       # NAMED VOLUME (ext4) for n8n's SQLite home — DB state never rides the
       # wedge-prone 9p bridge (see the qdrant mount note in services/rag/plugin.yaml).

@@ -25,6 +25,7 @@ from typing import Any
 import yaml
 
 from .buildspec import BuildSpec
+from .plugins import parse_derived_env
 
 # The core services an agent may declare it consumes — used to validate a manifest isn't asking
 # for something the core doesn't provide.
@@ -54,6 +55,9 @@ class Agent:
     secret_files: tuple[dict[str, str], ...] = ()
     # Env-var secret NAMES the agent reads, rendered as `KEY: ${KEY}` (see PluginService.secrets).
     secrets: tuple[str, ...] = ()
+    # Derived-config NAMES (keys of the rendered .env) the agent reads, rendered as
+    # `KEY: ${KEY?...}` (see PluginService.derived_env). The agent never loads the whole .env.
+    derived_env: tuple[str, ...] = ()
     # depends_on with optional health conditions: {peer: "service_healthy"|"service_started"}.
     # Empty -> compose omits it (render adds the core-peer list). A value -> emitted with conditions.
     depends_on: dict[str, str] = dataclasses.field(default_factory=dict)
@@ -90,6 +94,7 @@ class Agent:
             build=BuildSpec.from_dict(d.get("build")),
             litellm_key=dict(d.get("litellm_key", {}) or {}),
             secrets=tuple(str(k) for k in (d.get("secrets", []) or [])),
+            derived_env=parse_derived_env(f"agent {d.get('id')!r}", d),
         )
 
     def image_for(self, project: str) -> str:

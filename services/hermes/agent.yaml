@@ -50,6 +50,12 @@ depends_on:
 # secrets.env reaches the agent.
 secrets: [LITELLM_KEY_HERMES, OPS_CONTROLLER_TOKEN]
 
+# Derived keys it reads from the rendered .env (rendered `KEY: ${KEY?...}`; the agent never loads the
+# whole file). COMFYUI_URL is the ComfyUI admission gate: the dialogue/reel/image publishers, the
+# idle-reclaim cron script and the baked comfyui skill submit to it. Without it they fall back to a
+# direct ComfyUI address, which bypasses the GPU lease. Rendered only while comfyui is enabled.
+derived_env: [COMFYUI_URL]
+
 environment:
   PYTHONIOENCODING: utf-8
   # The control plane: GPU leases, /status, /model-config, and the container/compose verbs the

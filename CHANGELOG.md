@@ -78,6 +78,15 @@ All notable changes to this project are documented here. The format is loosely b
   default.
 
 ### Changed
+- **Each service receives only the derived config it reads.** No service loads the rendered `.env`
+  as an `env_file` any more; it stays the compose interpolation source (`--env-file`). A service
+  lists the derived keys it reads (`derived_env:` in its manifest, or the core lists in
+  `ordo/compose.py`) and the render passes exactly those as `KEY: ${KEY?...}`, which fails the compose
+  call if the key is missing from `.env`. Changing one derived key (a model switch, a plugin's
+  `*_ENABLED` flag) now recreates only the services that read it, instead of all 43. The agent and
+  hermes-dashboard declare the gated `COMFYUI_URL` explicitly, so the dialogue publisher and the
+  comfyui skill can no longer lose it and fall back to a direct ComfyUI address. A manifest that
+  declares `env_file` is rejected. `tests/substrate/test_env_scoping.py` pins the per-service contract.
 - **LiteLLM MCP gateway migration (2026-09-12).** The Docker `mcp-gateway` service is gone; its
   job is now done by **LiteLLM's own MCP gateway**, served by `model-gateway` at `/mcp` alongside
   `/v1/*`. `model-gateway` runs **LiteLLM v1.100.1 pinned by digest** with hardened proxy settings

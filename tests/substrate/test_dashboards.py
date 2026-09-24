@@ -141,13 +141,16 @@ def test_dashboard_reserves_a_utility_gpu(tmp_path):
     assert any(d.get("capabilities") == ["utility"] and d.get("count") == "all" for d in devs)
 
 
-def test_dashboard_pins_the_in_container_disk_probe_path(tmp_path):
-    """`hardware_stats()` calls psutil.disk_usage(BASE_PATH) for the DISK widget. The shared .env
-    carries BASE_PATH=<Windows host path> (needed for compose ${BASE_PATH} interpolation) and
-    env_file leaks it into the Linux container, where disk_usage("C:/...") raises. A per-service
-    `environment:` value beats env_file."""
+def test_the_host_base_path_does_not_reach_the_dashboard(tmp_path):
+    """`hardware_stats()` calls psutil.disk_usage(BASE_PATH), defaulting to the mounted
+    /data/dashboard (dashboard/app.py). The rendered .env carries BASE_PATH=<Windows host path> for
+    compose's bind-mount interpolation; in the Linux container that path would make disk_usage raise.
+    No service loads .env whole any more and the dashboard does not declare BASE_PATH, so the host
+    path cannot reach it and the in-container default applies."""
     c = _compose("dashboard", tmp_path)
-    assert c["services"]["dashboard"]["environment"]["BASE_PATH"] == "/data/dashboard"
+    svc = c["services"]["dashboard"]
+    assert "env_file" not in svc
+    assert "BASE_PATH" not in svc["environment"]
 
 
 def test_this_deployments_source_selects_the_shipped_dashboard():

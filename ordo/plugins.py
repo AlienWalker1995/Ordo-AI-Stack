@@ -79,6 +79,11 @@ class PluginService:
     # compose interpolates the value from `--env-file secrets.env`, so a service holds only the
     # secrets it needs. Secret VALUES never live in the rendered config, only the reference.
     secrets: tuple[str, ...] = ()
+    # The DERIVED config NAMES (keys of the rendered out/.env) this service reads at runtime. Each
+    # renders as `KEY: ${KEY?...}` and compose interpolates the value from `--env-file .env`. No
+    # service loads the whole .env (no env_file), so a render that changes one derived key changes
+    # the config of exactly the services that declare it, and nothing else is recreated.
+    derived_env: tuple[str, ...] = ()
     # Host port publishes. RESERVED for the edge/front-door plugin (Caddy's :443) — core services
     # deliberately publish none (isolation). Opt-in behind the plugin's profile, so it stays dormant
     # until `--profile edge` unless the edge plugin is enabled.
@@ -144,6 +149,7 @@ class PluginService:
             healthcheck=dict(d.get("healthcheck", {}) or {}),
             depends_on=depends_on,
             secrets=tuple(str(k) for k in (d.get("secrets", []) or [])),
+            derived_env=parse_derived_env(where, d),
             ports=[str(p) for p in (d.get("ports", []) or [])],
             local_port=LocalPort.from_manifest(d.get("local_port"), where),
             shm_size=str(d.get("shm_size", "")),
@@ -154,6 +160,21 @@ class PluginService:
             resources={str(k): str(v) for k, v in (d.get("resources", {}) or {}).items()},
             restart=_restart_policy(name, d.get("restart", "")),
         )
+
+
+def parse_derived_env(where: str, d: Mapping[str, Any]) -> tuple[str, ...]:
+    """Parse a manifest's `derived_env: [NAMES]`. A name the manifest also sets in its own env block
+    would be two sources for one variable, so it is refused rather than silently resolved."""
+    if "env_file" in d:
+        raise ValueError(
+            f"{where}: `env_file` is not supported. List the derived keys the service reads in "
+            "`derived_env: [NAMES]` instead of loading the whole rendered .env")
+    names = tuple(str(k) for k in (d.get("derived_env", []) or []))
+    explicit = set(d.get("env") or {}) | set(d.get("environment") or {})
+    both = sorted(set(names) & explicit)
+    if both:
+        raise ValueError(f"{where}: {both} is set in the env block AND listed in derived_env; keep one")
+    return names
 
 
 # The compose restart policies a plugin service may declare. `always` is left out on purpose: it

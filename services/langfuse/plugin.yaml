@@ -330,12 +330,9 @@ services:
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
       # RETENTION POLICY: 90 days unless `site: {LANGFUSE_RETENTION_DAYS: <n>}` in ordo.yaml puts a
-      # value in .env. The default lives HERE, as a compose default, and not as a derived .env key on
-      # purpose: every service reads .env as an env_file, so adding a key there changes the
-      # environment of every container and a full `up` recreates the whole stack, GPU services
-      # included (measured 2026-09-15 with `up --dry-run`). Scoped to its two consumers it recreates
-      # nothing else. langfuse-minio-lifecycle below carries the SAME default; a substrate test keeps
-      # the two equal.
+      # value in .env. The default lives HERE, as a compose default scoped to its two consumers, so a
+      # change to it recreates nothing else. langfuse-minio-lifecycle below carries the SAME default;
+      # a substrate test keeps the two equal.
       LANGFUSE_RETENTION_DAYS: ${LANGFUSE_RETENTION_DAYS:-90}
       # 15 minutes after LiteLLM's spend-log cleanup (04:30 UTC, litellm_config.yaml), off the hour.
       LANGFUSE_RETENTION_RUN_AT: "04:45"

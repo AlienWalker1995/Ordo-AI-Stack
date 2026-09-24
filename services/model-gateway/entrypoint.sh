@@ -15,9 +15,10 @@ if [ "$#" -gt 0 ]; then
   exec "$@"
 fi
 
-# model_info documentation values — sourced from the SAME env vars the backend llama-server
-# containers read (shared .env via env_file), so the gateway's advertised metadata cannot
-# drift from the running deployment. Defaults mirror the compose/run-script defaults exactly.
+# model_info documentation values, sourced from the SAME rendered .env keys the backend llama-server
+# containers read (each service declares the keys it reads, see MODEL_GATEWAY_DERIVED_ENV in
+# ordo/compose.py), so the gateway's advertised metadata cannot drift from the running deployment.
+# Defaults mirror the compose/run-script defaults exactly.
 CTX_SIZE="${LLAMACPP_CTX_SIZE:-262144}"
 N_PREDICT="${LLAMACPP_N_PREDICT:-65536}"
 CPU_CTX_SIZE="${LLAMACPP_CPU_CTX:-131072}"

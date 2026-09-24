@@ -374,8 +374,8 @@ RETENTION_SERVICES = ("langfuse-retention", "langfuse-minio-lifecycle")
 
 
 def test_retention_days_default_is_scoped_to_its_two_consumers():
-    """90 days, as ONE compose default on both consumers, and NOT a derived .env key: every service
-    reads .env as an env_file, so a new .env key recreates the whole stack (GPU services included)."""
+    """90 days, as ONE compose default on both consumers, and NOT a derived .env key: the default
+    stays scoped to the two services that read it."""
     rc = render(_src(), CATALOG, REGISTRY)
     assert "LANGFUSE_RETENTION_DAYS" not in rc.env
     svcs = _compose(rc)
