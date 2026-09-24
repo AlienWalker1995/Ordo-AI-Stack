@@ -76,7 +76,10 @@ tailscale cert \
   ordo.<tailnet>.ts.net
 ordo recreate caddy
 ```
-A monthly cron (`0 4 1 * *`) running the above stays ahead of expiry.
+Renewal is manual: no job in the repo, the Hermes cron or the host scheduler runs it. Check the
+expiry with `openssl x509 -enddate -noout -in auth/caddy/certs/tailnet.crt` and renew a couple of
+weeks ahead (note the date in a calendar). `ordo remote enable` offers the same `tailscale cert`
+call with these file names.
 
 Run the renewal from the repo root. hermes-dashboard and the tailnet sidecars share caddy's network
 namespace, and `ordo recreate caddy` recreates them in the same call. The dashboard's Restart

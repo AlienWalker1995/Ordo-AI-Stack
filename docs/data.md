@@ -10,7 +10,7 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 
 | Source | Description | Consumer |
 |---|---|---|
-| `out/.env` (rendered from `ordo.yaml`) | Environment configuration | All services at startup |
+| `out/.env` (rendered from `ordo.yaml`) | Derived configuration | Compose interpolation (`--env-file`); each service receives only the keys it declares (`derived_env:`) |
 | `out/model-gateway/mcp_servers.yaml` (rendered from `ordo.yaml`) | Enabled MCP servers, as the LiteLLM `mcp_servers` fragment | `model-gateway` (merged into its config at startup) |
 | `out/mcp/servers.json` (rendered from `ordo.yaml`) | Enabled MCP servers plus the registered-plugin map | dashboard (`MCP_SERVERS_PATH=/mcp-config/servers.json`) |
 | `out/model-gateway/keys.json` (rendered from the manifests' `litellm_key:` blocks) | Per-consumer virtual keys plus their model and MCP grants | `model-gateway-keys` (one-shot bootstrap) |

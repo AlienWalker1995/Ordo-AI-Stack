@@ -24,7 +24,7 @@ We will acknowledge receipt and aim to respond within a reasonable timeframe.
 
 ## Security Considerations
 
-> **Secrets (production, since the 2026-07-09 cutover):** operator secret **values** live in a gitignored **`out/secrets.env`**, rendered from the keys-only `out/secrets.env.example` and kept **separate from derived config** (`.env` stays config-only). Services that need secrets read `secrets.env` as a second `env_file` (`required: false`). Verify with `ordo preflight --secrets out/secrets.env`. **Never commit `out/secrets.env`** (nor the operator-real `ordo.yaml`, which carries host paths + tailnet identity). The SOPS + age at-rest model under `secrets/` still backs the encrypted material. The `.env` / `runtime/.env` notes below describe the legacy V1 secret flow.
+> **Secrets (production, since the 2026-07-09 cutover):** operator secret **values** live in a gitignored **`out/secrets.env`**, rendered from the keys-only `out/secrets.env.example` and kept **separate from derived config** (`.env` stays config-only). No service loads it as an `env_file`: each service declares the secret names it reads, and compose interpolates just those from `--env-file secrets.env`. Verify with `ordo preflight --secrets out/secrets.env`. **Never commit `out/secrets.env`** (nor the operator-real `ordo.yaml`, which carries host paths + tailnet identity). The SOPS + age at-rest model under `secrets/` still backs the encrypted material. The `.env` / `runtime/.env` notes below describe the legacy V1 secret flow.
 
 ### Authentication
 

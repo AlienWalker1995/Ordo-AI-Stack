@@ -252,8 +252,6 @@ gate). Only the Tailscale model is wired today; the others' required pieces are 
 **Render discipline** (the drift cure, in daily operation):
 - Change config by editing the source `ordo.yaml`, then **re-render** — never hand-edit `out/.env`.
 - Always render from the real source: `ordo render --source out/ordo.yaml`.
-- **Re-render only inside a `--gpus all` container** (so hardware detection sees both cards); the
-  rendered `llamacpp` block must come out **byte-identical** to what's running.
 - Image changes go through `ordo build`, then a render (see "First-party images" above).
 - Apply with `ordo recreate <svc>` (per-service, no cascade). The dashboard's
   per-service recreate button does exactly this against the existing `out/` compose (no re-render).

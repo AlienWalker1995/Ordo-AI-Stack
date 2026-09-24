@@ -49,7 +49,7 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/orchestration/registry/models`, `/registry/gpus` | GET | Y | Served models and GPU pins derived from the render, proxied from ops-controller |
 | `/api/orchestration/gpu/history` | GET | Y | Finished GPU leases |
 
-To add a ComfyUI model, use the ComfyUI MCP tool `download_comfyui_model` (url + category); pull GGUFs with `ordo fetch --models-dir models/gguf`.
+To add a ComfyUI model, use the ComfyUI MCP tool `download_comfyui_model` (url + category); pull a GGUF with `ordo fetch <catalog-id>` (downloaded and checksum-verified into the `models-gguf` volume).
 
 ## Core Responsibilities
 

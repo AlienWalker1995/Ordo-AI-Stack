@@ -68,7 +68,7 @@ Rendered into `.env` (the last two are DEFAULTS an operator may override from `s
 | `LANGFUSE_ENABLED` | `1` when the plugin is enabled | Consumer-visible enable flag, like every other plugin |
 | `LANGFUSE_PUBLIC_URL` | derived from the edge | Langfuse's `NEXTAUTH_URL`: `https://langfuse.<CADDY_TAILNET_DOMAIN>` with the tailnet-names sidecars, `https://<CADDY_TAILNET_HOSTNAME>:8450` with the edge alone, empty without an edge hostname. Must match the URL the browser uses or the post-login redirect strands |
 | `LANGFUSE_ADMIN_EMAIL` | `admin@ordo.local` | Login identity seeded by the headless init |
-| `LANGFUSE_RETENTION_DAYS` | `90` (compose default on the two retention services) | Trace retention: `langfuse-retention` deletes traces older than this through the public API (daily at 04:45 UTC) and `langfuse-minio-lifecycle` expires the `langfuse` bucket's objects after the same number of days. A positive whole number; set it with `site:` in `ordo.yaml`. Not a derived `.env` key, because a new `.env` key changes every container's environment and recreates the whole stack |
+| `LANGFUSE_RETENTION_DAYS` | `90` (compose default on the two retention services) | Trace retention: `langfuse-retention` deletes traces older than this through the public API (daily at 04:45 UTC) and `langfuse-minio-lifecycle` expires the `langfuse` bucket's objects after the same number of days. A positive whole number; set it with `site:` in `ordo.yaml`. The default is a compose default scoped to its two consumers (`services/langfuse/plugin.yaml`), so changing it recreates only those two |
 
 Set on the `model-gateway` service by the renderer only while the plugin is enabled
 (`ordo/compose.py::GATEWAY_LANGFUSE_ENV`; not `.env` keys, never hand-set):
