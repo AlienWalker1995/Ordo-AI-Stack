@@ -181,7 +181,6 @@ class WizardPlan:
     model_id: str
     model_name: str
     ctx_estimate: int
-    plugins_available: list[str]
     warnings: list[str]
 
 
@@ -189,11 +188,10 @@ def plan(catalog: Catalog, registry: PluginRegistry,
          hardware: HardwareProfile | None = None) -> WizardPlan:
     hw = hardware or detect()
     model, warns = catalog.best_fit(hw)
-    available, notes = registry.resolve("auto", hw)
+    _, notes = registry.resolve("auto", hw)
     return WizardPlan(
         hardware=hw, tier=model.tier, model_id=model.id, model_name=model.name,
-        ctx_estimate=model.ctx_default, plugins_available=[p.id for p in available],
-        warnings=warns + notes,
+        ctx_estimate=model.ctx_default, warnings=warns + notes,
     )
 
 
@@ -338,7 +336,6 @@ class WizardResult:
     provided_secret_keys: list[str]
     blank_secret_keys: list[str]
     compose_profiles: list[str]
-    caddy_bind: str
     warnings: list[str]
 
 
@@ -630,6 +627,5 @@ def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
         source_path=source_path, secrets_path=secrets_path, emails_path=emails_written,
         generated_secret_keys=gen, provided_secret_keys=given, blank_secret_keys=blank,
         compose_profiles=rc.compose_profiles,
-        caddy_bind=str(source.get("site", {}).get("CADDY_BIND", "")),
         warnings=rc.warnings,
     )
