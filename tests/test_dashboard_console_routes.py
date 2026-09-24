@@ -373,6 +373,21 @@ def test_media_view_forwards_a_range_request(live):
     assert fetch.call_args.args[3] == "bytes=0-3"
 
 
+def test_comfyui_calls_are_skipped_when_no_gate_url_is_configured(monkeypatch):
+    """COMFYUI_URL is the gate's URL, rendered only while comfyui is enabled. Without it there is
+    nowhere legitimate to send the request (comfyui itself is reachable only by its gate), so the
+    dashboard reports ComfyUI as unavailable instead of guessing a direct address."""
+    import asyncio
+
+    monkeypatch.setattr(routes_console, "COMFYUI_URL", "")
+    no_http = AsyncMock(side_effect=AssertionError("no request may be made without a gate URL"))
+    with patch.object(routes_console, "_get_json", new=no_http):
+        assert asyncio.run(routes_console._comfy_json("/queue")) is None
+    with patch("dashboard.app._get_http_client",
+               side_effect=AssertionError("no request may be made without a gate URL")):
+        assert asyncio.run(routes_console._comfy_stream("a.png", "", "output", None)) is None
+
+
 # --- performance ---
 
 def test_perf_series_returns_gpu_and_cpu_rates(live):

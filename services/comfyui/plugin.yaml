@@ -62,7 +62,11 @@ services:
         upstream_port: 8188
         # Every path that starts GPU work. `/api/prompt` is the same handler under the
         # frontend's /api prefix — gating only `/prompt` would leave a live bypass.
-        submit_paths: [/prompt, /api/prompt]
+        # `/dialogue_reel/render` is the custom node (custom_nodes/dialogue_reel_endpoint) that
+        # launches the Rick and Morty reel render as a subprocess; that subprocess queues its
+        # VibeVoice-Large prompts on ComfyUI's own loopback /prompt, which never passes the gate,
+        # so residency has to be taken when the render is launched.
+        submit_paths: [/prompt, /api/prompt, /dialogue_reel/render]
         submit_methods: [POST]
         # A submit returns as soon as the prompt is accepted; the render runs afterwards. The
         # queue is therefore the only honest signal for when the work has actually drained.

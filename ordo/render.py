@@ -636,10 +636,10 @@ def render(source: Source, catalog: Catalog,
     # Internal base URLs for gate-enforced services. A gate is a drop-in on the upstream's port,
     # so redirecting every in-stack consumer through it is a hostname change — but it must be ONE
     # change, in one place, or half the callers keep bypassing arbitration. The derived value
-    # lands in .env and every consumer manifest reads `${<VAR>:-http://<service>:<port>}`, so the
-    # fallback is the direct URL if the service ever stops being gated. The var NAME is a fact
-    # about the existing consumers (they already read COMFYUI_URL), which is why it is a small
-    # explicit table rather than something derived.
+    # lands in .env and consumer manifests read `${<VAR>}` with NO direct fallback: the gated
+    # service sits on a network only its gate joins (compose.gated_upstream_net), so a direct URL
+    # could not work anyway. The var NAME is a fact about the existing consumers (they already
+    # read COMFYUI_URL), which is why it is a small explicit table rather than something derived.
     for _p, _ps in plugin_services:
         arb = _ps.gpu_arbitration
         var = GATED_SERVICE_URL_ENV.get(_ps.name)

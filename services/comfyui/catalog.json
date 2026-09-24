@@ -6,7 +6,7 @@
       "order": 50,
       "port": 8188,
       "url": "http://localhost:8188",
-      "check": "http://comfyui:8188",
+      "check": "http://comfyui-gate:8188",
       "has_gpu": true,
       "plugin": "comfyui",
       "category": "media",
