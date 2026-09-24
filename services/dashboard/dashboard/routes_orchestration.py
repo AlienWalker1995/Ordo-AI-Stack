@@ -37,10 +37,6 @@ OPS_CONTROLLER_URL = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller
 OPS_CONTROLLER_TOKEN = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
 # The ComfyUI GPU admission gate; empty when comfyui is not enabled.
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "").rstrip("/")
-# The V2 scheduler (GPU lease arbiter). Distinct from OPS_CONTROLLER_URL, which this
-# dashboard deployment points at ops-controller (the control plane) — the scheduler's
-# /status and /jobs/history live only on the ordo-serve control plane.
-SCHEDULER_URL = os.environ.get("SCHEDULER_URL", "http://ops-controller:9000").rstrip("/")
 
 
 def _resolve_workflow_under_root(workflow_id: str, root: Path) -> Path | None:
@@ -366,7 +362,8 @@ async def orchestration_gpu_history() -> dict[str, Any]:
     """Finished leases (newest first) from the scheduler's durable lease record."""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get(f"{SCHEDULER_URL}/jobs/history")
+            # The scheduler lives in ops-controller, which requires the bearer token (#225).
+            r = await client.get(f"{OPS_CONTROLLER_URL}/jobs/history", headers=_ops_headers(None))
             r.raise_for_status()
             return r.json()
     except (httpx.HTTPError, ValueError) as e:
