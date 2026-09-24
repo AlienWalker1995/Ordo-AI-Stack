@@ -68,8 +68,8 @@ ordo up --all                                 # --dry-run prints the docker comp
 
 `ordo up --all` reconciles the **whole** deployment against a fresh render (every profile the
 render enabled). `ordo up <svc>...` / `ordo recreate <svc>...` touch only the named services
-(`--no-deps`; caddy is recreated together with its netns members), and refuse to start a resident
-the GPU scheduler evicted for a running render.
+(`--no-deps`; a caddy bring-up also names its netns members, so they are recreated with it), and
+refuse to start a resident the GPU scheduler evicted for a running render.
 
 Everything below is the reference for *how* that render engine works and *why* it's built this way.
 
