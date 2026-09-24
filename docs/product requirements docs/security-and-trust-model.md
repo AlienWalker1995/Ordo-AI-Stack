@@ -4,7 +4,7 @@
 
 | Asset | Threat | Current State | Mitigation |
 |-------|--------|---------------|------------|
-| `docker.sock` (ops-controller, Hermes agent) | Container escape → host RCE | Mounted | ops-controller: no host port; the `DockerBackend` guard scopes every call to `<project>-*` containers; destructive verbs require `confirm: true`; privileged env/pull/pip calls audited. Hermes: guardrails in its prompt, see [Hermes owns Docker](../design/hermes-owns-docker.md) |
+| `docker.sock` (ops-controller, Hermes agent) | Container escape → host RCE | Mounted | ops-controller: no host port; the `DockerBackend` guard scopes every call to `<project>-*` containers; destructive verbs require `confirm: true`; every state-changing call audited, refusals included. Hermes: guardrails in its prompt, see [Hermes owns Docker](../design/hermes-owns-docker.md) |
 | MCP server containers | MCP server compromise → lateral movement | No Docker socket anywhere in the tool path; each server is a long-lived service on `ordo-mcp-net` (`internal: true`) | `no-new-privileges`, 1 CPU / 2 GB, no `env_file` (only its own declared env and secrets), reachable only by `model-gateway`, no host port |
 | Ops controller token | Token theft → privileged ops | Token in `out/secrets.env`; no default | Generate with `openssl rand -hex 32`; never expose controller port to host |
 | MCP tools (filesystem) | Data exfiltration via tool | Enabled as a `kind: mcp` plugin in `ordo.yaml`; each declares its own mounts (code root read-only) | Drop the plugin from `plugins:`, `ordo render`, recreate `model-gateway`; grant it to no key otherwise |

@@ -63,6 +63,7 @@ def _ops_post(path: str, body: dict[str, Any], timeout: int = 600) -> dict:
     headers = {
         "Authorization": f"Bearer {OPS_CONTROLLER_TOKEN}",
         "Content-Type": "application/json",
+        "X-Actor": "comfyui-mcp",  # names the caller in ops-controller's audit log
     }
     try:
         r = requests.post(url, json=body, headers=headers, timeout=timeout)

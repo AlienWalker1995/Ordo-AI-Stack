@@ -9,7 +9,7 @@
 5. **Pluggable providers:** LiteLLM gateway fronts llama.cpp and can add future OpenAI-compatible endpoints.
 6. **Shared tools, guarded:** One MCP endpoint on the model gateway, fed by `kind: mcp` plugin manifests. Per-consumer scoping via LiteLLM virtual-key MCP grants (`require_key_mcp_access_defined`). Health checks per server; secrets outside plaintext.
 7. **Safe-by-default ops:** Controller token required (no default). Destructive actions require `confirm: true`. Dry-run mode. Audit log for every privileged action.
-8. **Auditable by design:** Every privileged call → audit event with `ts`, `action`, `resource`, `actor`, `result`, `correlation_id`. Append-only. Exportable.
+8. **Auditable by design:** Every state-changing call → one audit record with `ts`, `caller`, `action`, `target`, `result`, `status`, refusals included (schema: [data.md](../data.md#audit-log)). Append-only, size-bounded. Exportable via `GET /audit`.
 9. **Deny-by-default:** A virtual key sees only the MCP servers its grant lists (`require_key_mcp_access_defined: true`); no grant means no tools, and no key means 401. Auth enabled where supported.
 10. **Minimize breaking changes:** The OpenAI-compatible gateway surface is the preferred path for model access. MCP servers are declared once in `ordo.yaml`'s `plugins:` list and rendered into both the LiteLLM fragment and the dashboard's server list.
 11. **Observable:** Structured JSON logs from all custom services. Request IDs (`X-Request-ID`) propagated across model→ops→tool calls. Audit log as primary observability artifact for privileged actions.

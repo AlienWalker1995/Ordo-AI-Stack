@@ -78,6 +78,17 @@ All notable changes to this project are documented here. The format is loosely b
   default.
 
 ### Changed
+- **ops-controller audits every state-changing call.** The audit log recorded two actions
+  (ComfyUI pip installs and the GPU-assign 410s), so lifecycle and compose verbs, model switches,
+  plugin changes and GPU leases left no trace. Every `POST` now leaves exactly one record, written
+  in one place (`ControlPlane.handle()`), whatever its outcome: success, dry run, `401` without the
+  bearer, `409` during a lease, `400` without `confirm`, or failure. Each record names the caller
+  (the new `X-Actor` header, which the dashboard, Hermes, gpu-gate and comfyui-mcp now send), the
+  action and target, the HTTP status, `dry_run`/`confirm` and a short error; never a header, a
+  credential or other body fields. Reads are not recorded. The log rotates at 10 MB and keeps five
+  generations (it kept one at 50 MB); `GET /audit` reads across them and bounds `limit` to 1..1000.
+  The dashboard's activity feed titles the new actions and leaves lease calls to the lease history.
+  The existing record format is unchanged (new fields only), so old records still read back.
 - **Each service receives only the derived config it reads.** No service loads the rendered `.env`
   as an `env_file` any more; it stays the compose interpolation source (`--env-file`). A service
   lists the derived keys it reads (`derived_env:` in its manifest, or the core lists in

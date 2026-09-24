@@ -66,17 +66,19 @@ core substrate services cannot be added or removed through it.
 
 ## Audit Log
 
-`ordo/audit.py` writes one fsync'd JSONL line per privileged call to `AUDIT_LOG_PATH`
-(`/data/audit.log` in the container, `data/ops-controller/audit.log` on the host), rotating to
-`audit.1.log` at 50 MB. Export: `GET /audit?limit=N`. Audited today: `comfyui_pip_install` and
-the `gpu_assign` 410s.
+`ordo/audit.py` writes one fsync'd JSONL line to `AUDIT_LOG_PATH` (`/data/audit.log` in the
+container, `data/ops-controller/audit.log` on the host) for every state-changing call, whatever
+its outcome: success, dry run, `401`/`409`/`400` refusal or failure. Reads are not recorded. The
+one writer is `ControlPlane.handle()`, which wraps `route()`, so a new route is audited without
+opting in. The log rotates at 10 MB and keeps five generations (`audit.1.log` ... `audit.5.log`).
+Export: `GET /audit?limit=N` (`1 <= N <= 1000`, newest first, across the generations).
 
 ```json
-{"ts": 1767225600.0, "caller": "dashboard", "action": "comfyui_pip_install", "target": "ComfyUI-Thing", "result": "ok", "detail": "", "metadata": {"exit_code": 0}}
+{"ts":1790281806.1,"caller":"dashboard","action":"restart","target":"n8n","result":"ok","method":"POST","path":"/services/n8n/restart","status":200,"dry_run":false,"confirm":true}
 ```
 
-Known limitation: `caller` is hardcoded to `"dashboard"`; multi-actor audit needs identity
-propagation.
+`caller` is the request's `X-Actor` header (`unknown` when absent). Every client sends one, but it
+is self-declared: all callers hold the same bearer token. Full schema: [data.md](../data.md#audit-log).
 
 ## Design Principle
 

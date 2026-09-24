@@ -37,7 +37,8 @@ class OpsClient:
         token = token or os.environ.get("OPS_CONTROLLER_TOKEN", "")
         if not token:
             raise OpsClientError("OPS_CONTROLLER_TOKEN env var is empty")
-        self._headers = {"Authorization": f"Bearer {token}"}
+        # X-Actor names the caller in ops-controller's audit log.
+        self._headers = {"Authorization": f"Bearer {token}", "X-Actor": "hermes"}
         self._client = httpx.Client(base_url=self.url, headers=self._headers, timeout=timeout)
         # Same service as `self.url`. ControlPlane is authless by design (it trusts the
         # localhost/tailnet boundary; auth is Caddy's job), so this client sends no token.

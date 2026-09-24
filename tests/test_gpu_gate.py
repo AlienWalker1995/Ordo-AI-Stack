@@ -71,6 +71,9 @@ class StubOps:
             # Same rule as ops-controller: every call carries the bearer token.
             if request.headers.get("Authorization") != f"Bearer {OPS_TOKEN}":
                 return web.json_response({"error": "missing or invalid bearer token"}, status=401)
+            # The gate names itself, so ops-controller's audit log records who took each lease.
+            if request.headers.get("X-Actor") != "gpu-gate":
+                return web.json_response({"error": "missing X-Actor"}, status=400)
             return await handler(request)
 
         app = web.Application(middlewares=[require_token])

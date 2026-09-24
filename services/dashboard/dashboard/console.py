@@ -31,6 +31,9 @@ _TENANT_LABELS = {
 _READ_ONLY_ACTIONS = frozenset({
     "containers.list", "container.logs", "diagnostics.dstate", "logs",
 })
+# GPU lease calls. The lease history already shows each lease once; its request, heartbeat and
+# release calls would repeat it several times over.
+_LEASE_ACTIONS = frozenset({"lease.request", "lease.heartbeat", "lease.release"})
 
 _AUDIT_TITLES = {
     "restart": "Restarted {target}",
@@ -39,12 +42,20 @@ _AUDIT_TITLES = {
     "stop": "Stopped {target}",
     "recreate": "Recreated {target}",
     "env_set": "Changed {target}",
-    "model_config": "Switched model",
+    "model_config": "Switched model to {target}",
     "model_switch": "Switched model to {target}",
     "pull": "Pulled image {target}",
     "comfyui_pip_install": "Installed requirements for {target}",
     "model_delete": "Deleted model file {target}",
+    "plugin.enable": "Enabled {target}",
+    "plugin.disable": "Disabled {target}",
+    "compose.up": "Compose up {target}",
+    "compose.down": "Compose down {target}",
+    "compose.restart": "Compose restart {target}",
+    "models.download": "Started download of {target}",
 }
+# How a call that did not succeed reads, by the audit record's `result`.
+_AUDIT_OUTCOME_SUFFIX = {"refused": " (refused)", "error": " (failed)"}
 
 _MEDIA_BY_SUFFIX = {
     **dict.fromkeys((".png", ".jpg", ".jpeg", ".webp"), "image"),
@@ -298,13 +309,16 @@ def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], l
                       "severity": "ok" if lease.get("outcome") == "completed" else "warning"})
     for entry in audit or []:
         action = entry.get("action", "")
-        if action in _READ_ONLY_ACTIONS or entry.get("ts") is None:
+        if action in _READ_ONLY_ACTIONS or action in _LEASE_ACTIONS or entry.get("ts") is None:
             continue
         target = entry.get("target") or ""
         title = _AUDIT_TITLES.get(action, "{action} {target}").format(action=action, target=target).strip()
         ok = entry.get("result") in ("ok", None)
-        items.append({"ts": float(entry["ts"]), "kind": "action",
-                      "title": title if ok else f"{title} (failed)",
+        if not ok:
+            title += _AUDIT_OUTCOME_SUFFIX.get(entry.get("result"), " (failed)")
+        elif entry.get("dry_run"):
+            title += " (dry run)"
+        items.append({"ts": float(entry["ts"]), "kind": "action", "title": title,
                       "severity": "info" if ok else "warning"})
     items.sort(key=lambda i: i["ts"], reverse=True)
     return items[:limit]

@@ -14,6 +14,9 @@ Design constraints (from the architecture decisions + the drift lessons):
     probe is open. This API can stop services, re-render the stack and hand out GPU leases, so
     network isolation alone is not enough: any compromised container on ordo-net could drive it.
     The check lives in the HTTP layer (`app()`); `route()` itself stays pure.
+  - Every state-changing call (POST/PUT/PATCH/DELETE) leaves one audit record, whatever its
+    outcome, refusals included. It is written in one place, `handle()` (plus the 401 and bad-JSON
+    refusals in `app()`, which never reach it), so a new route is audited without opting in.
 """
 from __future__ import annotations
 
@@ -83,6 +86,76 @@ COMFYUI_CONTAINER_NAME = os.environ.get("COMFYUI_CONTAINER_NAME", "ordo-comfyui-
 # One path segment of a ComfyUI custom-node pack. Deliberately narrower than the filesystem
 # allows: the segment is interpolated into a container path that a pip invocation then reads.
 _NODE_PATH_SEGMENT = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+# --- audit ---
+# Every call with one of these methods changes state (or asks to), so it leaves one audit record
+# whatever its outcome. GET/HEAD never do; a read would flood the log (Hermes polls).
+AUDITED_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+AUDIT_READ_LIMIT_MAX = 1000
+# Who asked, as the caller names itself. Unauthenticated callers can send anything, so the value
+# is reduced to a short, safe token before it is written.
+ACTOR_HEADER = "x-actor"
+_ACTOR_UNSAFE = re.compile(r"[^A-Za-z0-9_.:@-]")
+_ACTOR_MAX = 64
+_AUDIT_FIELD_MAX = 200
+_AUDIT_ERROR_MAX = 300
+# (path prefix, path suffix, action): the target is the path segment between them.
+_AUDIT_PATH_VERBS = (
+    ("/services/", "/start", "start"),
+    ("/services/", "/stop", "stop"),
+    ("/services/", "/restart", "restart"),
+    ("/services/", "/recreate", "recreate"),
+    ("/containers/", "/restart", "container.restart"),
+    ("/plugins/", "/enable", "plugin.enable"),
+    ("/plugins/", "/disable", "plugin.disable"),
+    ("/registry/models/", "/assign-gpu", "gpu_assign"),
+)
+# path: (action, the one body field that names the target).
+_AUDIT_BODY_VERBS = {
+    "/model-config": ("model_config", "model"),
+    "/jobs": ("lease.request", "id"),
+    "/jobs/complete": ("lease.release", "id"),
+    "/jobs/heartbeat": ("lease.heartbeat", "id"),
+    "/compose/up": ("compose.up", "service"),
+    "/compose/down": ("compose.down", "service"),
+    "/compose/restart": ("compose.restart", "service"),
+    "/models/download": ("models.download", "filename"),
+    "/comfyui/install-node-requirements": ("comfyui_pip_install", "node_path"),
+    "/gpu/assign": ("gpu_assign", "service"),
+}
+
+
+def _clip(value: Any, limit: int = _AUDIT_FIELD_MAX) -> str:
+    return str(value)[:limit]
+
+
+def audit_actor(header: str | None) -> str:
+    """The caller's self-declared name from `X-Actor`, made safe to log; 'unknown' when absent."""
+    actor = _ACTOR_UNSAFE.sub("", (header or "").strip())[:_ACTOR_MAX]
+    return actor or "unknown"
+
+
+def audit_subject(path: str, body: Any) -> tuple[str, str]:
+    """(action, target) for a state-changing call. Reads only the one body field that names the
+    target, so nothing else a caller sends (a URL's query string, a credential) reaches the log."""
+    for prefix, suffix, action in _AUDIT_PATH_VERBS:
+        if path.startswith(prefix) and path.endswith(suffix) and len(path) > len(prefix) + len(suffix):
+            return action, _clip(path[len(prefix):-len(suffix)])
+    if path not in _AUDIT_BODY_VERBS:
+        return "unknown", ""
+    action, field = _AUDIT_BODY_VERBS[path]
+    fields = body if isinstance(body, dict) else {}
+    target = str(fields.get(field) or "").strip()
+    if action == "models.download" and not target:
+        # The file name the download would use: the URL's last path segment, never its query.
+        target = urlparse(str(fields.get("url") or "")).path.rsplit("/", 1)[-1]
+    return action, _clip(target)
+
+
+def audit_result(status: int) -> str:
+    if status < 400:
+        return "ok"
+    return "refused" if status < 500 else "error"
 
 
 def _validate_download_url(url: str) -> None:
@@ -168,11 +241,9 @@ class ControlPlane:
         # Slice 3: model download/pull state (in-process, not persisted)
         self._dl_lock = threading.Lock()
         self._dl_status = {"running": False, "output": "", "done": True, "success": None, "progress": 0, "filename": "", "category": ""}
-        # The audit sink. ops-api owned the only writer, so a v2 controller that merely READS
-        # /data/audit.jsonl would leave the dashboard's Audit tab frozen at the moment ops-api was
-        # retired: every privileged verb would still happen, and none of them would be recorded.
-        # Built on first write, not here: AuditLog creates its parent directory, and a control
-        # plane that has never done anything privileged should not leave a /data behind.
+        # The audit sink: `handle()` writes one record per state-changing call. Built on first use
+        # from AUDIT_LOG_PATH (read then, so tests can point it elsewhere); it creates its
+        # directory on the first write only.
         self._audit_log: AuditLog | None = None
 
 
@@ -991,28 +1062,83 @@ class ControlPlane:
 
     # --- Audit ---
 
-    def _audit(
+    def _audit_sink(self) -> AuditLog:
+        if self._audit_log is None:
+            self._audit_log = AuditLog(AUDIT_LOG_PATH)
+        return self._audit_log
+
+    def audit_call(
         self,
-        action: str,
-        target: str = "",
-        result: str = "ok",
-        detail: str = "",
-        **metadata: Any,
+        method: str,
+        path: str,
+        body: Any,
+        actor: str,
+        status: int,
+        error: str | None = None,
+        detail: str | None = None,
     ) -> None:
-        """Record one privileged action. Never raises: an audit failure must not fail the action."""
+        """Write the one record for a state-changing call.
+
+        The record holds only named fields (see `audit_subject`): never the request body, the
+        headers or a credential. Never raises: an audit failure must not fail the action, but it
+        is logged so a broken log does not go unnoticed.
+        """
+        fields = body if isinstance(body, dict) else {}
+        action, target = audit_subject(path, body)
+        extra: dict[str, Any] = {
+            "method": method.upper(),
+            "path": _clip(path),
+            "status": status,
+            "dry_run": bool(fields.get("dry_run")),
+            "confirm": bool(fields.get("confirm")),
+        }
+        if error:
+            extra["error"] = _clip(error, _AUDIT_ERROR_MAX)
+        if detail:
+            extra["detail"] = _clip(detail)
         try:
-            if self._audit_log is None:
-                self._audit_log = AuditLog(AUDIT_LOG_PATH)
-            extra: dict[str, Any] = {}
-            if detail:
-                extra["detail"] = detail
-            if metadata:
-                extra["metadata"] = metadata
-            self._audit_log.record(
-                action=action, target=target, result=result, caller="dashboard", **extra
-            )
+            self._audit_sink().record(action=action, target=target, result=audit_result(status),
+                                      caller=actor, **extra)
         except Exception:
-            pass
+            logger.exception("ops-controller could not write the audit record for %s %s", method, path)
+
+    def _lease_detail(self, path: str, body: Any, status: int, payload: Any) -> str | None:
+        """How the scheduler answered a lease request: 'granted', 'queued', or 'rejected' (a job
+        the card can never hold)."""
+        if path != "/jobs" or status != 200 or not isinstance(payload, dict) or not isinstance(body, dict):
+            return None
+        job_id = str(body.get("id"))
+        running = {str(job.get("id")) for job in payload.get("running") or [] if isinstance(job, dict)}
+        if job_id in running:
+            return "granted"
+        if job_id in {str(rejected) for rejected in payload.get("rejected") or []}:
+            return "rejected"
+        return "queued"
+
+    def handle(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None,
+        query: dict[str, str] | None,
+        actor: str,
+    ) -> tuple[int, dict]:
+        """`route()` plus the audit record: the HTTP binding's one entry point.
+
+        Every call with an AUDITED_METHODS method leaves exactly one record, whatever route() does
+        with it (success, dry run, 4xx refusal, 5xx failure or an exception). Reads leave none.
+        """
+        if method.upper() not in AUDITED_METHODS:
+            return self.route(method, path, body, query)
+        try:
+            status, payload = self.route(method, path, body, query)
+        except Exception as e:
+            self.audit_call(method, path, body, actor, 500, str(e) or type(e).__name__)
+            raise
+        error = payload.get("error") if isinstance(payload, dict) else None
+        self.audit_call(method, path, body, actor, status, str(error) if error else None,
+                        self._lease_detail(path, body, status, payload))
+        return status, payload
 
     @staticmethod
     def _validate_custom_node_path(node_path: str) -> str | None:
@@ -1062,13 +1188,6 @@ class ControlPlane:
         if len(output) > 12000:
             output = output[:12000] + "\n... [truncated]"
         ok = exit_code == 0
-        self._audit(
-            "comfyui_pip_install",
-            node_path,
-            "ok" if ok else "error",
-            output[:300],
-            exit_code=exit_code,
-        )
         result: dict[str, Any] = {
             "ok": ok,
             "exit_code": exit_code,
@@ -1077,6 +1196,7 @@ class ControlPlane:
         }
         if not ok:
             result["_status"] = 500
+            result["error"] = f"pip install exited {exit_code}"
         return result
 
     def gpu_assign_gone(self, target: str = "") -> dict[str, Any]:
@@ -1087,7 +1207,6 @@ class ControlPlane:
         byte for byte, so the endpoint answered {"ok": true} while changing nothing. This mirrors
         the /guardian/* retirement: an honest 410 beats a silent no-op.
         """
-        self._audit("gpu_assign", target, "gone", "render-time pins")
         return self._error(
             410,
             "GPU reassignment moved to the render pipeline: set the pin in ordo.yaml "
@@ -1096,27 +1215,11 @@ class ControlPlane:
         )
 
     def audit_log(self, limit: int = 50) -> dict[str, Any]:
-        """Read audit log (last N entries)."""
-        path = AUDIT_LOG_PATH
-        if not path.exists():
-            return {"entries": []}
+        """The newest `limit` audit records, newest first, across the rotated generations."""
         try:
-            from collections import deque
-
-            with open(path, encoding="utf-8", errors="replace") as f:
-                lines = deque(f, maxlen=limit)
+            return {"entries": self._audit_sink().tail(limit)}
         except OSError as e:
             return {"entries": [], "error": f"failed to read audit log: {e}"}
-        entries = []
-        for line in reversed(lines):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entries.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        return {"entries": entries}
 
     def _live_gpus(self) -> dict[str, dict[str, Any]]:
         """Query nvidia-smi for live GPU info — same as ops-api's _live_gpus()."""
@@ -1236,6 +1339,8 @@ class ControlPlane:
                 limit = int(query.get("limit", "50"))
             except ValueError:
                 return 422, {"error": "limit must be an integer"}
+            if not 1 <= limit <= AUDIT_READ_LIMIT_MAX:
+                return 422, {"error": f"limit must be between 1 and {AUDIT_READ_LIMIT_MAX}"}
             return 200, self.audit_log(limit)
         # Slice 4: ComfyUI node requirements, plus the two honest 410s
         if m == "POST" and path == "/comfyui/install-node-requirements":
@@ -1281,12 +1386,19 @@ class ControlPlane:
         async def dispatch(request: Request, call_next):
             method = request.method
             path = request.url.path
+            actor = audit_actor(request.headers.get(ACTOR_HEADER))
+            audited = method.upper() in AUDITED_METHODS
             if path not in UNAUTHENTICATED_PATHS and not _authorized(request.headers.get("authorization", "")):
                 client = request.client.host if request.client else "unknown"
                 # Never log the presented credential, right or wrong.
                 logger.warning("ops-controller refused %s %s from %s: missing or invalid bearer token (401)",
                                method, path, client)
-                return JSONResponse(content={"error": "missing or invalid bearer token"}, status_code=401,
+                error = "missing or invalid bearer token"
+                if audited:
+                    # The body of an unauthenticated call is never read, so the record has only
+                    # what the method and path say.
+                    cp.audit_call(method, path, None, actor, 401, error)
+                return JSONResponse(content={"error": error}, status_code=401,
                                     headers={"WWW-Authenticate": "Bearer"})
             body = None
             if method in ("POST", "PUT", "PATCH"):
@@ -1295,8 +1407,10 @@ class ControlPlane:
                     if raw:
                         body = json.loads(raw)
                 except json.JSONDecodeError:
-                    return JSONResponse(content={"error": "invalid JSON body"}, status_code=400)
-            status, payload = cp.route(method, path, body, dict(request.query_params))
+                    error = "invalid JSON body"
+                    cp.audit_call(method, path, None, actor, 400, error)
+                    return JSONResponse(content={"error": error}, status_code=400)
+            status, payload = cp.handle(method, path, body, dict(request.query_params), actor)
             return JSONResponse(content=payload, status_code=status)
 
         return app

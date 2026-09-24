@@ -488,3 +488,30 @@ def test_a_second_switch_while_one_is_running_is_refused(live, dashboard_operato
         first_code, second_code = asyncio.run(scenario())
     assert first_code == 200
     assert second_code == 409
+
+
+def test_ops_requests_name_the_dashboard_as_the_actor(monkeypatch):
+    # ops-controller's audit log records the X-Actor of every state-changing call.
+    import asyncio
+
+    from dashboard import app as dashboard_app
+
+    monkeypatch.setattr(dashboard_app, "OPS_CONTROLLER_TOKEN", "t")
+    sent = {}
+
+    class _Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"ok": True}
+
+    class _Client:
+        async def request(self, method, url, headers=None, **_kwargs):
+            sent.update(headers)
+            return _Response()
+
+    with patch("dashboard.app._get_http_client", return_value=_Client()):
+        asyncio.run(dashboard_app._ops_request("POST", "/services/n8n/restart", json={"confirm": True}))
+    assert sent["X-Actor"] == "dashboard"
+    assert sent["Authorization"] == "Bearer t"

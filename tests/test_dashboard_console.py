@@ -249,6 +249,37 @@ def test_activity_merges_sources_newest_first_and_drops_read_only_noise():
     assert [i["ts"] for i in items] == sorted((i["ts"] for i in items), reverse=True)
 
 
+def _audit(action, target="", **fields):
+    return {"ts": 1790171500.0, "caller": "dashboard", "action": action, "target": target,
+            "result": "ok", **fields}
+
+
+@pytest.mark.parametrize("entry, title", [
+    (_audit("plugin.enable", "comfyui"), "Enabled comfyui"),
+    (_audit("plugin.disable", "comfyui"), "Disabled comfyui"),
+    (_audit("compose.up", "open-webui"), "Compose up open-webui"),
+    (_audit("compose.down", "open-webui"), "Compose down open-webui"),
+    (_audit("compose.restart", "open-webui"), "Compose restart open-webui"),
+    (_audit("model_config", "qwen"), "Switched model to qwen"),
+    (_audit("models.download", "w.safetensors"), "Started download of w.safetensors"),
+    (_audit("stop", "n8n", dry_run=True), "Stopped n8n (dry run)"),
+    (_audit("start", "llamacpp", result="refused", status=409), "Started llamacpp (refused)"),
+    (_audit("restart", "n8n", result="error", status=500), "Restarted n8n (failed)"),
+])
+def test_activity_titles_every_recorded_verb(entry, title):
+    [item] = console.merge_activity([], [entry], [], limit=10)
+    assert item["title"] == title
+    assert item["severity"] == ("info" if entry["result"] == "ok" else "warning")
+
+
+def test_activity_leaves_lease_calls_to_the_lease_history():
+    # The lease history already shows each lease once; its request/heartbeat/release calls would
+    # repeat it several times over.
+    audit = [_audit("lease.request", "train-lora"), _audit("lease.heartbeat", "train-lora"),
+             _audit("lease.release", "train-lora")]
+    assert console.merge_activity([], audit, [], limit=10) == []
+
+
 def test_activity_is_capped():
     audit = [{"ts": float(i), "caller": "dashboard", "action": "restart", "target": f"s{i}", "result": "ok"}
              for i in range(40)]

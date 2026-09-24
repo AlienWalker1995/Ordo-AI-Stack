@@ -245,6 +245,7 @@ class Residency:
     async def _ops(self, method: str, path: str, body: dict | None = None) -> dict:
         headers = {"Content-Type": "application/json"}
         headers["Authorization"] = f"Bearer {self.cfg.ops_token}"
+        headers["X-Actor"] = "gpu-gate"  # names the caller in ops-controller's audit log
         async with self.session.request(method, self.cfg.ops_url + path, json=body,
                                         headers=headers,
                                         timeout=aiohttp.ClientTimeout(total=30)) as r:

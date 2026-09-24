@@ -853,7 +853,8 @@ async def _ops_request(
     extra = kwargs.pop("headers", {})
     if request and request.headers.get("X-Request-ID"):
         extra = {**extra, "X-Request-ID": request.headers["X-Request-ID"]}
-    headers = {"Authorization": f"Bearer {OPS_CONTROLLER_TOKEN}", **extra}
+    # X-Actor names the caller in ops-controller's audit log; a caller may override it.
+    headers = {"Authorization": f"Bearer {OPS_CONTROLLER_TOKEN}", "X-Actor": "dashboard", **extra}
     try:
         r = await _get_http_client().request(method, url, headers=headers, timeout=timeout, **kwargs)
         try:

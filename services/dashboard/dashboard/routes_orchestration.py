@@ -66,7 +66,8 @@ def _safe_workflow_path(workflow_id: str) -> Path | None:
 def _ops_headers(request: Request | None) -> dict[str, str]:
     if not OPS_CONTROLLER_TOKEN:
         return {}
-    h: dict[str, str] = {"Authorization": f"Bearer {OPS_CONTROLLER_TOKEN}"}
+    # X-Actor names the caller in ops-controller's audit log.
+    h: dict[str, str] = {"Authorization": f"Bearer {OPS_CONTROLLER_TOKEN}", "X-Actor": "orchestration"}
     if request and request.headers.get("X-Request-ID"):
         h["X-Request-ID"] = request.headers["X-Request-ID"]
     return h

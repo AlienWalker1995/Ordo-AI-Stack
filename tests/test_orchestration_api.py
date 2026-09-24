@@ -321,3 +321,4 @@ def test_gpu_history_authenticates_to_the_control_plane(client, monkeypatch):
     url, headers = _FakeAsyncClient.requests[-1]
     assert url == f"{routes_orchestration.OPS_CONTROLLER_URL}/jobs/history"
     assert headers.get("Authorization") == "Bearer test-token"
+    assert headers.get("X-Actor") == "orchestration"   # the caller ops-controller's audit log records

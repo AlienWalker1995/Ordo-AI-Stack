@@ -65,7 +65,7 @@
 | MCP servers → backend only | `ordo-mcp-net` (`internal: true`), reachable only by `model-gateway`; no host port published (edge-only publish model) |
 | Per-consumer MCP scoping | LiteLLM virtual-key `object_permission.mcp_servers` grants with `require_key_mcp_access_defined: true` |
 | CI pipeline | `.github/workflows/ci.yml` |
-| Audit log rotation | ops-controller `ordo/audit.py`: rotates at 50 MB |
+| Audit log rotation | ops-controller `ordo/audit.py`: rotates at 10 MB, keeps five generations |
 
 ### Still Open / Deferred
 
@@ -79,7 +79,7 @@
 
 - **Given** `docker compose up -d`, **When** env does not set `WEBUI_AUTH`, **Then** Open WebUI requires login
 - **Given** `docker inspect ordo-mcp-searxng-1`, **Then** `NetworkSettings.Networks` contains `ordo-mcp-net` (and `ordo-net` only when the manifest declares `network: stack`)
-- **Given** audit log exceeds 10MB, **When** next privileged action occurs, **Then** old log renamed to `audit.log.1`
+- **Given** audit log exceeds 10MB, **When** next privileged action occurs, **Then** old log renamed to `audit.1.log` (five generations kept)
 - **Given** push to main branch, **When** CI runs, **Then** all contract + smoke tests pass
 
 ---
