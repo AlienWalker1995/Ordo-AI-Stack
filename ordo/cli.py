@@ -21,7 +21,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import bringup, doctor, fetch, gpu, images, native, parity, preflight, remote, wizard
+from . import bringup, doctor, fetch, gpu, images, native, parity, preflight, remote, served_models, wizard
 from .catalog import Catalog
 from .config import Source
 from .hardware import detect
@@ -230,7 +230,8 @@ def cmd_init(args: argparse.Namespace) -> int:
                                      catalog=str(catalog_path), out=str(out), force=False)
     if cmd_render(render_args) != 0:
         return 1
-    if not _host_preflight(str(out), "ordo", [], whole_stack=True, with_profiles=True):
+    if not _host_preflight(str(out), "ordo", [], whole_stack=True, with_profiles=True,
+                           catalog_path=str(catalog_path)):
         print(f"\nFix the above, then: ordo up --all --out {out}\n{remote_line}")
         return 1
     # build=True: the first up builds the stack's first-party images (`ordo build`); models_catalog
@@ -395,7 +396,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
                                             str(Path(args.out).resolve()))
         host = preflight.host_checks(services, rc.env, facts, secret_keys=rc.required_secrets,
                                      optional_secrets=rc.optional_secrets, secrets_path=None,
-                                     model_gb=rc.manifest()["model"]["disk_gb"])
+                                     model_files=preflight.model_files(services, rc.env, cat))
         checks += host
         go = go and all(c.ok for c in host if c.blocking)
     _print_checks(checks)
@@ -406,7 +407,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 def _volume_fetch_targets(args: argparse.Namespace, cat: Catalog) -> list | None:
     """The catalog entries `ordo fetch` provisions into the volume, or None (an error was printed).
 
-    Default: every file the rendered stack in --out loads (chat, CPU fallback, embedder)."""
+    Default: every file the rendered stack in --out loads (chat, projector, CPU fallback, embedder)."""
     if args.all:
         return cat.entries()
     if args.model:
@@ -414,7 +415,7 @@ def _volume_fetch_targets(args: argparse.Namespace, cat: Catalog) -> list | None
         if model is None:
             print(f"no catalog entry '{args.model}'", file=sys.stderr)
             return None
-        return [model]
+        return cat.files_of(model)          # its weights, and its projector when one is pinned
     out = Path(args.out)
     try:
         doc = bringup.load_compose(out.resolve().as_posix())
@@ -424,7 +425,7 @@ def _volume_fetch_targets(args: argparse.Namespace, cat: Catalog) -> list | None
         return None
     env = parity.load_env(str(out / ".env")) if (out / ".env").exists() else {}
     targets = []
-    for need in fetch.required_model_files(doc, env, list(doc.get("services") or {})):
+    for need in served_models.model_files(doc, env):
         model = cat.by_file(need.file)
         if model is None:
             print(f"  [no catalog entry] {need.file} ({need.service}"
@@ -504,7 +505,7 @@ def _print_checks(checks: list[preflight.Check]) -> None:
 
 
 def _host_preflight(out_dir: str, project: str, services: list[str], *, whole_stack: bool,
-                    with_profiles: bool) -> bool:
+                    with_profiles: bool, catalog_path: str) -> bool:
     """Run the host checks for what this `ordo up` would start. False = refuse the bring-up.
 
     A render that cannot be read (or names an unknown service) is left to bring_up, which reports it."""
@@ -522,13 +523,12 @@ def _host_preflight(out_dir: str, project: str, services: list[str], *, whole_st
     if secret_keys is None:  # a render from before the manifest listed them
         example = out / "secrets.env.example"
         secret_keys = list(parity.load_env(str(example))) if example.exists() else []
-    model = manifest.get("model") or {}
     env = parity.load_env(str(out / ".env")) if (out / ".env").exists() else {}
     facts = preflight.gather_host_facts(preflight.published_ports(starting, env), project, str(out.resolve()))
     checks = preflight.host_checks(
         starting, env, facts, secret_keys=secret_keys,
         optional_secrets=manifest.get("optional_secrets", []), secrets_path=str(out / "secrets.env"),
-        model_gb=float(model.get("disk_gb", model.get("vram_gb", 0)) or 0))
+        model_files=preflight.model_files(starting, env, Catalog.load(catalog_path)))
     failed = [c for c in checks if c.blocking and not c.ok]
     if failed or any(not c.ok for c in checks):
         _print_checks(checks)
@@ -549,7 +549,7 @@ def cmd_up(args: argparse.Namespace) -> int:
         print(f"generated the dashboard's local sign-in secret in {out / 'secrets.env'}")
     if not args.dry_run and not args.no_preflight:
         if not _host_preflight(args.out, args.project, args.services, whole_stack=whole_stack,
-                               with_profiles=not args.core):
+                               with_profiles=not args.core, catalog_path=args.catalog):
             return 1
     rc = bringup.bring_up(args.out, args.project, args.services, whole_stack=whole_stack,
                           with_profiles=not args.core, force_recreate=False, dry_run=args.dry_run,
@@ -596,7 +596,8 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
     history = LeaseHistory(Path(args.out) / "lease-history.jsonl")
     broker = Broker(sched, DockerBackend(project=args.project), history=history)
     cp = ControlPlane(Path(args.source), cat, reg, args.out, scheduler=sched, broker=broker,
-                      history=history)
+                      history=history,
+                      model_volume_files=lambda: fetch.volume_files(fetch.DockerRunner(), args.project))
 
     # Resident registration, DERIVED from the declared GPU inventory (ordo/gpu.py) rather than
     # from a `--resident-service llamacpp` default. Every service that DECLARES it holds VRAM on

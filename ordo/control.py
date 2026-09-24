@@ -26,6 +26,7 @@ import re
 import socket
 import subprocess
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -38,6 +39,7 @@ from .bringup import lifecycle_group
 from .broker import Broker
 from .catalog import Catalog
 from .config import Source
+from .fetch import CHAT_SERVICE
 from .plugins import PluginRegistry
 from .render import render
 from .scheduler import Job, Scheduler
@@ -148,8 +150,13 @@ class ControlPlane:
         scheduler: Scheduler | None = None,
         broker: Broker | None = None,
         history=None,
+        model_volume_files: Callable[[], set[str] | None] | None = None,
     ):
         self.source_path = Path(source_path)
+        # Lists the file names in the models volume (None: it could not be listed). A model switch
+        # checks the target's files against it before writing anything. None = no volume to check
+        # (a control plane without the Docker socket, and the unit tests that do not wire one).
+        self.model_volume_files = model_volume_files
         self.catalog = catalog
         self.registry = registry
         self.out_dir = Path(out_dir)
@@ -249,12 +256,38 @@ class ControlPlane:
         # ONE write path: mutate only the model key of the raw source, preserving everything else.
         raw = yaml.safe_load(self.source_path.read_text(encoding="utf-8")) or {}
         raw["model"] = model_id
+        missing = self._missing_model_files(render(Source.from_dict(raw), self.catalog, self.registry))
+        if missing:
+            return missing
         self.source_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
 
         rc = self._render()
         rc.write(self.out_dir)  # regenerate .env + compose + hermes ctx + manifest from the source
         return {"ok": True, "active_model": rc.model.id, "ctx_size": rc.ctx_size,
                 "warnings": rc.warnings, "wrote": str(self.out_dir)}
+
+    def _missing_model_files(self, target: Any) -> dict[str, Any] | None:
+        """A refusal when the chat service would load a file the models volume lacks, else None.
+
+        Checked before the source is written: the caller recreates llama.cpp right after a switch,
+        and onto a missing weights file it crash-loops (a missing projector leaves it running
+        without vision while model-gateway advertises vision). The fix is deliberately NOT a
+        download from here: tens of GB is the host's `ordo fetch` (resumable, preflighted for
+        disk), and a download inside this process would die with every ops-controller recreate."""
+        if self.model_volume_files is None:
+            return None
+        present = self.model_volume_files()
+        if present is None:
+            return self._error(503, "cannot list the models volume to confirm the model's files are in "
+                                    "place; not switching")
+        needed = [f for f in model_files(target.compose_dict(), target.env) if f.service == CHAT_SERVICE]
+        missing = [need.file for need in needed if need.file not in present]
+        if not missing:
+            return None
+        command = f"ordo fetch {target.model.id}"
+        verb = "is" if len(missing) == 1 else "are"
+        return self._error(409, f"{', '.join(missing)} {verb} not in the models volume: run `{command}` on "
+                                "the host, then switch again", missing_files=missing, fetch_command=command)
 
     # --- service-plugin install/enable (render authority for Hermes-driven onboarding) ---
     def _secrets_present(self) -> set[str]:

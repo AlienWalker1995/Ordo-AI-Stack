@@ -15,6 +15,14 @@
 # (ordo/llamacpp_backend.py). Such an entry MUST declare requires.min_compute_cap, the lowest
 # NVIDIA compute capability that build has kernels for, so the sizer never hands it to a GPU it
 # cannot run on. The patched build is compiled for sm_120 only (services/llamacpp-patched).
+#
+# size_bytes is the file's byte count, pinned next to its sha256: the preflight disk check sums
+# the files still to fetch from it.
+#
+# mmproj (vision projector) takes one of two forms. A mapping (file, source, sha256, size_bytes)
+# pins a downloadable projector: `ordo fetch` / `ordo up` provision it like the weights, into the
+# models volume under `file`, and the render points LLAMACPP_MMPROJ at /models/<file>. A bare path
+# (/models/<file>) names a projector with no pinned source, which has to be copied in by hand.
 
 version: 1
 
@@ -25,6 +33,7 @@ models:
     file: qwen2.5-0.5b-instruct-q4_k_m.gguf
     source: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
     sha256: 74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db
+    size_bytes: 491400032
     requires: { vram_gb: 0, ram_gb: 2, cpu_ok: true }
     ctx_default: 32768
     tier: cpu
@@ -35,6 +44,7 @@ models:
     file: qwen2.5-3b-instruct-q4_k_m.gguf
     source: https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf
     sha256: 626b4a6678b86442240e33df819e00132d3ba7dddfe1cdc4fbb18e0a9615c62d
+    size_bytes: 2104932768
     requires: { vram_gb: 3, ram_gb: 6, cpu_ok: true }
     ctx_default: 32768
     tier: low
@@ -47,6 +57,7 @@ models:
     file: Qwen2.5-7B-Instruct-Q4_K_M.gguf
     source: https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf
     sha256: 65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423
+    size_bytes: 4683074240
     requires: { vram_gb: 6, ram_gb: 8, cpu_ok: false }
     ctx_default: 65536
     tier: medium
@@ -59,6 +70,7 @@ models:
     file: Qwen2.5-14B-Instruct-Q5_K_M.gguf
     source: https://huggingface.co/bartowski/Qwen2.5-14B-Instruct-GGUF/resolve/main/Qwen2.5-14B-Instruct-Q5_K_M.gguf
     sha256: 48ad2dafedac636f62847f5338c356cd21f5cfa6b1e2c885360cb10c890b8cb2
+    size_bytes: 10508873856
     requires: { vram_gb: 11, ram_gb: 12, cpu_ok: false }
     ctx_default: 98304
     tier: high
@@ -70,6 +82,7 @@ models:
     source: https://huggingface.co/huihui-ai
     # sha256 of the 22,430,998,848-byte Q6_K weights, computed from the on-disk file.
     sha256: c03727f9fdfb7c8c02a8d7a0662563a0b0d7a6e192a03834a45f58300408b4ea
+    size_bytes: 22430998848
     requires: { vram_gb: 21, ram_gb: 16, cpu_ok: false, min_compute_cap: "12.0" }
     ctx_default: 131072
     # hybrid attention/SSM: KV is ~34.8 KB/token over 16 full-attn layers (q8_0).
@@ -98,6 +111,7 @@ models:
     source: https://huggingface.co/DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF/resolve/main/Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-Q6_K.gguf
     # sha256 of the 23,582,382,688-byte Q6_K file, read from the repo's own LFS oid before download.
     sha256: f814af8d2ce6e636962aec38a30c11a84568d208de4d60f4fc45ed8a77ad0160
+    size_bytes: 23582382688
     # 23.6GiB weights, 1.2GiB more than qwen3.8-27b-uncensored-q6, so the same ultra tier with no
     # headroom to spare.
     requires: { vram_gb: 24, ram_gb: 16, cpu_ok: false, min_compute_cap: "12.0" }
@@ -107,8 +121,13 @@ models:
     ctx_default: 131072
     # Same `qwen35` hybrid arch as the rest of the Qwen3.8-27B family.
     kv_kb_per_token: 34.8
-    # The repo's own F16 projector, renamed on copy-in to match the file: convention above.
-    mmproj: /models/Qwen3.8-27B-TurboFable-vision-f16.gguf
+    # The repo's own F16 projector, stored under a model-specific name (every upstream projector is
+    # called mmproj-F16.gguf). sha256 = its HF LFS oid, matched against the copy in the live volume.
+    mmproj:
+      file: Qwen3.8-27B-TurboFable-vision-f16.gguf
+      source: https://huggingface.co/DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF/resolve/main/mmproj-F16.gguf
+      sha256: 82e620db8cb83267e9775e5aad3e8d8aa5af7ace825e94c52d3d730eb35af88a
+      size_bytes: 927606976
     # SAMPLER DEFAULTS ARE PART OF THE CONFIG, not left to whatever a client happens to send.
     # Serving this model on llama.cpp's defaults makes it run away: "Say the single word: ready"
     # generated 32,735 reasoning tokens straight into the 32768 reasoning cap, about 11 minutes a
@@ -137,13 +156,19 @@ models:
     source: https://huggingface.co/JonathanColetti/Qwen3.8-27B-Uncensored-GGUF/resolve/main/Qwen3.8-27B-Uncensored-Q6_K.gguf
     # sha256 of the 22,430,999,968-byte Q6_K file, computed on the downloaded copy.
     sha256: a50aa1478295b58ee3d93eabe02c17f6d5fcf6cb787fd8a0ab07ac629a46cae6
+    size_bytes: 22430999968
     requires: { vram_gb: 23, ram_gb: 16, cpu_ok: false, min_compute_cap: "12.0" }
     # Same 131072 stack-wide window as the base Qwen3.8-27B.
     ctx_default: 131072
     # Same `qwen35` hybrid arch as the base Qwen3.8-27B (abliteration is LLM-only).
     kv_kb_per_token: 34.8
-    # The uncensored repo's own vision projector (CLIP, qwen3vl_merger), renamed on copy-in.
-    mmproj: /models/Qwen3.8-27B-Uncensored-vision-f16.gguf
+    # The uncensored repo's own vision projector (CLIP, qwen3vl_merger), stored under this name.
+    # sha256 = its HF LFS oid.
+    mmproj:
+      file: Qwen3.8-27B-Uncensored-vision-f16.gguf
+      source: https://huggingface.co/JonathanColetti/Qwen3.8-27B-Uncensored-GGUF/resolve/main/mmproj-Qwen3.8-27B-Uncensored-F16.gguf
+      sha256: 5ac423f8a29059dc24e51bc6a43e9380dcd57a9347f28b62591e0b3f60b7081c
+      size_bytes: 927606912
     # NO MTP flags: this is a Q6_K abliterated model, where draft-mtp speculative
     # decoding collapses to ~7 tok/s (65-85% acceptance, VRAM pressure). See
     # llm-model-management -> references/mtp-performance.md.
@@ -159,6 +184,7 @@ models:
     source: https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-Q6_K.gguf
     # sha256 = HF LFS oid of the 22,884,407,264-byte Q6_K file (unsloth/Qwen3.8-27B-GGUF).
     sha256: ade6d6615688aafa1dcfc9f5b4e1a66447bc02f8e099a006a10f9263f22f8ccc
+    size_bytes: 22884407264
     requires: { vram_gb: 23, ram_gb: 16, cpu_ok: false, min_compute_cap: "12.0" }
     # Native context is 262144, but we deploy at the stack-wide 131072 window
     # (CPU-fallback parity + KV VRAM budget).
@@ -190,6 +216,7 @@ support_models:
     source: https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
     # 22,134,528,992 bytes.
     sha256: ac0e2c1189e055faa36eff361580e79c5bd6f8e76bffb4ce547f167d53e31a61
+    size_bytes: 22134528992
     requires: { vram_gb: 0, ram_gb: 24, cpu_ok: true }
 
   - id: nomic-embed-text-v1.5-q4
@@ -199,4 +226,5 @@ support_models:
     source: https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf
     # 84,106,624 bytes.
     sha256: d4e388894e09cf3816e8b0896d81d265b55e7a9fff9ab03fe8bf4ef5e11295ac
+    size_bytes: 84106624
     requires: { vram_gb: 0, ram_gb: 1, cpu_ok: true }

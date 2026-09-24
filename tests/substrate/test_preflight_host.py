@@ -30,14 +30,19 @@ SECRET_KEYS = ["LITELLM_MASTER_KEY", "HF_TOKEN"]
 OPTIONAL = ["HF_TOKEN"]
 
 
+# What a Blackwell render loads from the models volume: chat, CPU fallback, embedder, projector.
+MODEL_FILES = [preflight.ModelFile("chat.gguf", 22.0), preflight.ModelFile("cpu.gguf", 20.6),
+               preflight.ModelFile("embed.gguf", 0.08), preflight.ModelFile("vision.gguf", 0.86)]
+
+
 def _checks(tmp_path, facts=READY, services=SERVICES, secrets="LITELLM_MASTER_KEY=sk-1\nHF_TOKEN=\n",
-            model_gb=22.0):
+            model_files=MODEL_FILES):
     path = tmp_path / "secrets.env"
     if secrets is not None:
         path.write_text(secrets, encoding="utf-8")
     return {c.name: c for c in preflight.host_checks(
         services, ENV, facts, secret_keys=SECRET_KEYS, optional_secrets=OPTIONAL,
-        secrets_path=str(path), model_gb=model_gb)}
+        secrets_path=str(path), model_files=model_files)}
 
 
 def _failed(checks):
@@ -80,11 +85,51 @@ def test_nvidia_runtime_is_not_needed_without_a_gpu_reservation(tmp_path):
     assert _failed(_checks(tmp_path, facts=facts, services=cpu_only)) == []
 
 
-def test_too_little_disk_for_the_model_blocks(tmp_path):
-    facts = HostFacts(**{**READY.__dict__, "disk_free_gb": 10.0})
-    check = _checks(tmp_path, facts=facts, model_gb=22.0)["free disk for the model"]
+def test_too_little_disk_for_the_model_files_still_to_fetch_blocks(tmp_path):
+    # The chat model is in place; the CPU fallback, embedder and projector still have to come down.
+    facts = HostFacts(**{**READY.__dict__, "disk_free_gb": 21.0, "volume_files": frozenset({"chat.gguf"})})
+    check = _checks(tmp_path, facts=facts)["free disk for the models"]
     assert check.blocking and not check.ok
-    assert "22" in check.detail and "10" in check.detail
+    assert "21.5 GB" in check.detail and "21 GB" in check.detail and "3 model files" in check.detail
+
+
+def test_every_missing_model_file_counts_not_just_the_chat_model(tmp_path):
+    # 22 GB free covers the chat model alone (the old check), not all four files.
+    facts = HostFacts(**{**READY.__dict__, "disk_free_gb": 23.0, "volume_files": frozenset()})
+    check = _checks(tmp_path, facts=facts)["free disk for the models"]
+    assert check.blocking and not check.ok
+    assert "43.5 GB" in check.detail and "4 model files" in check.detail
+
+
+def test_model_files_already_in_the_volume_need_no_disk(tmp_path):
+    facts = HostFacts(**{**READY.__dict__, "disk_free_gb": 1.0,
+                         "volume_files": frozenset(f.file for f in MODEL_FILES)})
+    check = _checks(tmp_path, facts=facts)["free disk for the models"]
+    assert check.ok and "already in the models volume" in check.detail
+
+
+def test_a_volume_that_could_not_be_listed_counts_every_file(tmp_path):
+    facts = HostFacts(**{**READY.__dict__, "disk_free_gb": 30.0, "volume_files": None})
+    assert not _checks(tmp_path, facts=facts)["free disk for the models"].ok
+
+
+def test_model_files_are_every_file_the_render_loads_sized_from_the_catalog():
+    from ordo.catalog import Catalog
+    from ordo.config import Source
+    from ordo.plugins import PluginRegistry
+    from ordo.render import render
+
+    root = Path(__file__).resolve().parents[2]
+    catalog = Catalog.load(root / "catalog" / "models.yaml")
+    source = Source.from_dict({"hardware": {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "compute_cap": "12.0"}],
+                                            "ram_gb": 128}, "model": "auto", "plugins": "auto"})
+    rc = render(source, catalog, PluginRegistry.load(root / "services"))
+    services = rc.compose_dict(project="ordo")["services"]
+    files = {f.file: f.gb for f in preflight.model_files(services, rc.env, catalog)}
+    assert set(files) == {rc.model.file, "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf", "nomic-embed-text-v1.5.Q4_K_M.gguf",
+                          "Qwen3.8-27B-TurboFable-vision-f16.gguf"}
+    assert files["Qwen3.8-27B-TurboFable-vision-f16.gguf"] == pytest.approx(927_606_976 / 1024 ** 3)
+    assert files[rc.model.file] == pytest.approx(rc.model.size_bytes / 1024 ** 3)
 
 
 def test_a_published_port_held_by_another_process_blocks(tmp_path):

@@ -310,3 +310,66 @@ def test_registry_gpus_without_nvidia_smi_is_empty(tmp_path, monkeypatch):
         raise FileNotFoundError("nvidia-smi")
     monkeypatch.setattr(subprocess, "run", missing_binary)
     assert cp.registry_gpus() == {"gpus": {}}
+
+
+# ── a model switch never recreates llama.cpp onto a file the models volume lacks ─────────────────
+
+BLACKWELL = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "compute_cap": "12.0"}], "ram_gb": 128}
+TURBO = "qwen3.8-27b-turbo-fable-q6"
+TURBO_FILE = CATALOG.get(TURBO).file
+TURBO_PROJECTOR = "Qwen3.8-27B-TurboFable-vision-f16.gguf"
+
+
+def _cp_volume(tmp_path, files, model="qwen2.5-14b-instruct-q5"):
+    src = tmp_path / "ordo.yaml"
+    src.write_text(yaml.safe_dump({"hardware": BLACKWELL, "model": model, "plugins": "auto"}))
+    sched = Scheduler(32)
+    listed = []
+
+    def volume_files():
+        listed.append(True)
+        return None if files is None else set(files)
+
+    cp = ControlPlane(src, CATALOG, REGISTRY, tmp_path / "out", scheduler=sched,
+                      broker=Broker(sched, MockBackend()), model_volume_files=volume_files)
+    return cp, src, listed
+
+
+def test_switching_to_a_model_whose_file_is_missing_is_refused_and_writes_nothing(tmp_path):
+    cp, src, _ = _cp_volume(tmp_path, files={TURBO_PROJECTOR})
+    before = src.read_text()
+    code, body = cp.route("POST", "/model-config", {"model": TURBO})
+    assert code == 409
+    assert TURBO_FILE in body["error"] and f"ordo fetch {TURBO}" in body["error"]
+    assert body["missing_files"] == [TURBO_FILE]
+    assert body["fetch_command"] == f"ordo fetch {TURBO}"
+    assert src.read_text() == before                  # source untouched
+    assert not (tmp_path / "out").exists()             # nothing rendered, so nothing to recreate onto
+
+
+def test_a_missing_projector_is_refused_too(tmp_path):
+    # llama.cpp would start without vision while model-gateway advertises it.
+    cp, _, _ = _cp_volume(tmp_path, files={TURBO_FILE})
+    code, body = cp.route("POST", "/model-config", {"model": TURBO})
+    assert code == 409 and body["missing_files"] == [TURBO_PROJECTOR]
+
+
+def test_auto_is_checked_against_the_model_it_resolves_to(tmp_path):
+    cp, _, _ = _cp_volume(tmp_path, files=set())
+    code, body = cp.route("POST", "/model-config", {"model": "auto"})
+    assert code == 409 and body["fetch_command"] == f"ordo fetch {TURBO}"
+
+
+def test_a_switch_proceeds_when_every_file_is_in_the_volume(tmp_path):
+    cp, src, listed = _cp_volume(tmp_path, files={TURBO_FILE, TURBO_PROJECTOR})
+    code, body = cp.route("POST", "/model-config", {"model": TURBO})
+    assert code == 200 and body["active_model"] == TURBO and listed
+    assert yaml.safe_load(src.read_text())["model"] == TURBO
+
+
+def test_a_volume_that_cannot_be_listed_refuses_the_switch(tmp_path):
+    cp, src, _ = _cp_volume(tmp_path, files=None)
+    before = src.read_text()
+    code, body = cp.route("POST", "/model-config", {"model": TURBO})
+    assert code == 503 and "models volume" in body["error"]
+    assert src.read_text() == before
