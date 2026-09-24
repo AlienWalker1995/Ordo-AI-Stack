@@ -228,7 +228,7 @@ def build_source(answers: dict[str, Any] | None = None) -> dict[str, Any]:
     answers keys (all optional):
         hardware ('auto'|spec), tier, model, agent, dashboard,
         plugins ('auto'|list) — the RESOLVED plugin selection,
-        cloud_fallback (dict), overrides (dict),
+        overrides (dict),
         caddy_hostname, caddy_domain, caddy_bind — edge access, folded into `site:`,
         site (dict) — extra verbatim env keys, merged under the caddy_* ones.
     """
@@ -250,7 +250,6 @@ def build_source(answers: dict[str, Any] | None = None) -> dict[str, Any]:
         "agent": a.get("agent", "hermes"),        # Hermes is the default
         "dashboard": a.get("dashboard", "dashboard"),
         "plugins": a.get("plugins", "auto"),
-        "cloud_fallback": a.get("cloud_fallback", {"enabled": False}),
         "overrides": a.get("overrides", {}),
     }
     if site:

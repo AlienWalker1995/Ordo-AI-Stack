@@ -17,7 +17,6 @@ class Source:
     # Control-plane UI (pluggable, like the agent): any `services/<id>/dashboard.yaml`.
     dashboard: str = "dashboard"
     plugins: Any = "auto"           # "auto" or list[str]
-    cloud_fallback: dict[str, Any] = dataclasses.field(default_factory=lambda: {"enabled": False})
     overrides: dict[str, Any] = dataclasses.field(default_factory=dict)
     # Host/site config — NOT derived from the model and NOT secret: bind-mount roots
     # (DATA_PATH, BASE_PATH, CODE_ROOT), the edge hostnames (CADDY_*), and any other
@@ -46,7 +45,6 @@ class Source:
             agent=str(data.get("agent", "hermes")),
             dashboard=str(data.get("dashboard", "dashboard")),
             plugins=data.get("plugins", "auto"),
-            cloud_fallback=data.get("cloud_fallback") or {"enabled": False},
             overrides=data.get("overrides") or {},
             site=data.get("site") or {},
             cost=data.get("cost") or {},

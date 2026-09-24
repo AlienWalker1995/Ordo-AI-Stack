@@ -54,13 +54,11 @@ class Scheduler:
     def __init__(
         self,
         total_vram_gb: float,
-        cloud_fallback: bool = False,
         lease_ttl_default: float = DEFAULT_LEASE_TTL_SECONDS,
         lease_ttl_max: float = LEASE_TTL_MAX_SECONDS,
         heartbeat_ttl: float = HEARTBEAT_TTL_SECONDS,
     ):
         self.total_vram_gb = float(total_vram_gb)
-        self.cloud_fallback = bool(cloud_fallback)
         self.lease_ttl_default = float(lease_ttl_default)
         self.lease_ttl_max = float(lease_ttl_max)
         self.heartbeat_ttl = float(heartbeat_ttl)
@@ -74,8 +72,7 @@ class Scheduler:
         self._evicted: dict[str, float] = {}      # resident id -> vram it held (stopped, awaiting restore)
         self._lru = itertools.count()             # recency counter for cached models
         self._lru_order: dict[str, int] = {}
-        self._cloud_routed: list[str] = []        # too-big jobs sent to cloud (fallback enabled)
-        self._rejected: list[str] = []            # too-big jobs with no fallback (can't run)
+        self._rejected: list[str] = []            # too-big jobs (can never run on this card)
 
     # --- introspection ---
     @property
@@ -162,11 +159,11 @@ class Scheduler:
         while self._queue:
             head = self._queue[0]
             if head.vram_gb > self.total_vram_gb:
-                # Can NEVER fit on this GPU. Removing it (route to cloud, or reject) instead of
-                # blocking is the fix for a real starvation bug: a too-big head would otherwise
-                # stall every smaller job queued behind it forever. Then keep pumping the rest.
+                # Can NEVER fit on this GPU. Rejecting it instead of blocking is the fix for a
+                # real starvation bug: a too-big head would otherwise stall every smaller job
+                # queued behind it forever. Then keep pumping the rest.
                 self._queue.pop(0)
-                (self._cloud_routed if self.cloud_fallback else self._rejected).append(head.id)
+                self._rejected.append(head.id)
                 del self._rejected[:-50]  # bound: append-only for process lifetime otherwise (audit P3-16)
                 continue
             if head.vram_gb > self.free_vram_gb:
@@ -263,11 +260,6 @@ class Scheduler:
             self.complete(jid)
         return expired
 
-    def drain_cloud_routed(self) -> list[str]:
-        """Return + clear the jobs routed to cloud, so the agent dispatches each exactly once."""
-        routed, self._cloud_routed = self._cloud_routed, []
-        return routed
-
     def tick(self, dt_seconds: float) -> None:
         """Advance elapsed time for running jobs (drives the ETA) and the lease clock."""
         self._clock += dt_seconds
@@ -308,6 +300,5 @@ class Scheduler:
             # the media-lease surface: residents currently stopped to free VRAM, awaiting restore
             "idle_cached": {k: round(v, 1) for k, v in self._idle_cached.items()},
             "evicted_residents": {k: round(v, 1) for k, v in self._evicted.items()},
-            "cloud_routed": list(self._cloud_routed),
             "rejected": list(self._rejected),
         }

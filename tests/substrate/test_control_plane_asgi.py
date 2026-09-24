@@ -309,20 +309,6 @@ def test_get_jobs_history_empty_without_sink(tmp_path):
     assert resp.json() == {"history": []}
 
 
-# --- GET /jobs/cloud-routed ---
-
-def test_get_jobs_cloud_routed_returns_200_and_drains(tmp_path):
-    cp, _ = _cp(tmp_path)
-    cp.scheduler._cloud_routed = ["too-big-job"]
-    client = _client(cp)
-    resp = client.get("/jobs/cloud-routed")
-    assert resp.status_code == 200
-    assert resp.json() == {"cloud_routed": ["too-big-job"]}
-    resp2 = client.get("/jobs/cloud-routed")
-    assert resp2.status_code == 200
-    assert resp2.json() == {"cloud_routed": []}
-
-
 # --- GET /health ---
 
 def test_get_health_returns_200(tmp_path):

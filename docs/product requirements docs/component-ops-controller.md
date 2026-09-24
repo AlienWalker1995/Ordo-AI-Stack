@@ -33,7 +33,6 @@ agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>
 | `/jobs/complete` | POST | Release a completed job (`id`) |
 | `/jobs/heartbeat` | POST | Heartbeat a running job (`id`) |
 | `/jobs/history` | GET | Last 100 finished leases, newest first |
-| `/jobs/cloud-routed` | GET | Return-and-drain jobs the scheduler routed to cloud fallback |
 
 **Compose lifecycle**
 

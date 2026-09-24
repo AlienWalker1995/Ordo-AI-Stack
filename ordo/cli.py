@@ -325,8 +325,7 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
     reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
     src = Source.load(Path(args.source))
     hw = detect()
-    cloud_fallback = bool((src.cloud_fallback or {}).get("enabled"))
-    sched = Scheduler(hw.primary_vram_gb if hw.has_gpu else 0.0, cloud_fallback=cloud_fallback)
+    sched = Scheduler(hw.primary_vram_gb if hw.has_gpu else 0.0)
     # Durable lease record (served at GET /jobs/history for the dashboard's orchestration tab).
     # Lives next to the rendered outputs — the same writable /config mount, no extra volume.
     from .lease_history import LeaseHistory
