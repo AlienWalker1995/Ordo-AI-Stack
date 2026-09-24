@@ -17,8 +17,9 @@ secrets:
   - SEARXNG_SECRET
 services:
   - name: searxng
-    # Pinned to the live registry manifest digest (V1 floats searxng/searxng:latest — pin, don't float).
-    image: searxng/searxng@sha256:37c616a774b90fb5df9239eb143f1b11866ddf7b830cd1ebcca6ba11b38cc2bf
+    # Pinned by tag + digest. Upstream engines change their anti-bot pages often; an old build gets
+    # CAPTCHAs from every scraped engine (2026.4.22 returned 0 results for everything). Bump it.
+    image: searxng/searxng:2026.9.23-3cd69d30e@sha256:bcfaed4091d59f7ce85670bd701a2d0295872196dc19908a3965a8353b149f83
     secrets: [SEARXNG_SECRET]   # overrides settings.yml's secret_key
     env:
       SEARXNG_SETTINGS_PATH: /etc/searxng/settings.yml
