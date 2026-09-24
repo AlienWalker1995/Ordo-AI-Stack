@@ -8,6 +8,7 @@ import yaml
 from ordo import compose
 from ordo.catalog import Catalog
 from ordo.config import Source
+from ordo.llamacpp_backend import CPU
 from ordo.plugins import McpSpec, PluginRegistry
 from ordo.render import render
 
@@ -155,7 +156,7 @@ def test_hosted_server_renders_no_compose_service():
     hosted = Plugin.from_dict({"id": "ext", "kind": "mcp", "mcp": {"url": "https://h.example/mcp", "transport": "http"}})
     servers, notes = _render_mcp([hosted])
     assert notes == [] and servers[0]["hosted"] and servers[0]["service"] == ""
-    c = compose.render_compose(has_gpu=False, compose_profiles=[], mcp_servers=servers)
+    c = compose.render_compose(nvidia_gpu=False, llamacpp_backend=CPU, compose_profiles=[], mcp_servers=servers)
     assert not any(n.startswith("mcp-") for n in c["services"])
     assert yaml.safe_load(render_litellm_mcp_fragment(servers))["mcp_servers"]["ext"]["url"] == "https://h.example/mcp"
 

@@ -21,6 +21,9 @@ from .catalog import DEFAULT_VRAM_RESERVE_GB, Catalog, Model
 from .config import Source
 from .dashboards import DashboardRegistry
 from .hardware import HardwareProfile, detect
+from .llamacpp_backend import CPU as CPU_BACKEND
+from .llamacpp_backend import LlamaCppBackend
+from .llamacpp_backend import select as select_backend
 from .plugins import PluginRegistry
 
 # Render data now lives co-located under services/<id>/ (plugin.yaml / agent.yaml / dashboard.yaml
@@ -204,13 +207,14 @@ def render_litellm_keys(consumers: list[tuple[str, dict[str, Any]]],
     return keys
 
 
-def _max_ctx_for_vram(model: Model, hw: HardwareProfile, reserve_gb: float) -> int:
+def _max_ctx_for_vram(model: Model, hw: HardwareProfile, reserve_gb: float,
+                      backend: LlamaCppBackend) -> int:
     """Largest context that fits after weights + reserve, capped at the model's trained ctx.
 
     Encodes the KV-math lesson: KV grows ~linearly with ctx, so on a smaller card we cut
     ctx rather than spill. Falls back to ctx_default when we can't estimate (CPU / no kv rate).
     """
-    if not hw.has_gpu or not model.kv_kb_per_token:
+    if not backend.accelerated or not model.kv_kb_per_token:
         return model.ctx_default
     free_after_weights_gb = hw.primary_vram_gb - model.vram_gb - reserve_gb
     if free_after_weights_gb <= 0:
@@ -265,6 +269,10 @@ class RenderedConfig:
     # (`litellm_key:`). Rendered to out/model-gateway/keys.json, which the model-gateway-keys
     # one-shot reads to provision the keys against the running LiteLLM proxy.
     litellm_keys: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    # The llama.cpp build this host runs (ordo/llamacpp_backend.py). Its image is the default for
+    # the chat service (a model's `backend_image` or an override still wins, via LLAMACPP_IMAGE);
+    # its device wiring is what compose gives that service.
+    llamacpp_backend: LlamaCppBackend = CPU_BACKEND
 
     def resident_vram_gb(self) -> float:
         """The GPU footprint the resident LLM actually holds while cached: weights + KV at the
@@ -296,6 +304,7 @@ class RenderedConfig:
             "model": {"id": self.model.id, "file": self.model.file, "vram_gb": self.model.vram_gb,
                       "resident_vram_gb": self.resident_vram_gb()},
             "ctx_size": self.ctx_size,
+            "llamacpp_backend": self.llamacpp_backend.name,
             # The declared GPU-contention map — what competes for which card and how it is
             # arbitrated. Surfaced in the manifest (and via ops-controller /status) so the
             # answer to "who can touch the GPU" is inspectable, not folklore.
@@ -317,11 +326,16 @@ class RenderedConfig:
 
     def compose_dict(self, project: str = "ordo") -> dict[str, Any]:
         """The isolated, runnable compose for the stack — built from the resolved plugin
-        services (data-driven), with the primary- AND secondary-GPU uuids resolved for the pins."""
-        pri = self.hardware.primary_gpu
-        sec = self.hardware.secondary_gpu
+        services (data-driven), with the primary- AND secondary-GPU uuids resolved for the pins.
+        Only NVIDIA cards are pinned or reserved: `driver: nvidia` is the only GPU device driver
+        compose has, and a request for it on a host without it stops the container starting."""
+        nvidia = self.hardware.primary_is_nvidia
+        pri = self.hardware.primary_gpu if nvidia else None
+        sec = self.hardware.secondary_gpu if nvidia else None
+        if sec is not None and sec.vendor != "nvidia":
+            sec = None
         return compose.render_compose(
-            has_gpu=self.hardware.has_gpu, compose_profiles=self.compose_profiles,
+            nvidia_gpu=nvidia, compose_profiles=self.compose_profiles,
             agent=self.hermes.get("agent", "hermes"), project=project,
             agent_image=self.hermes.get("agent_image") or None,
             agent_command=self.hermes.get("agent_command") or None,
@@ -335,7 +349,8 @@ class RenderedConfig:
             agent_depends_on=self.hermes.get("agent_depends_on") or None,
             agent_healthcheck=self.hermes.get("agent_healthcheck") or None,
             dashboard=self.dashboard,
-            llamacpp_image=self.env.get("LLAMACPP_IMAGE") or None,
+            llamacpp_backend=self.llamacpp_backend,
+            llamacpp_image=self.env["LLAMACPP_IMAGE"],
             plugin_services=self.plugin_services,
             primary_gpu_uuid=(pri.uuid if pri else None),
             secondary_gpu_uuid=(sec.uuid if sec else None),
@@ -504,7 +519,9 @@ def render(source: Source, catalog: Catalog,
            agents: AgentRegistry | None = None,
            dashboards: DashboardRegistry | None = None) -> RenderedConfig:
     hw = _resolve_hardware(source)
+    backend, backend_notes = select_backend(hw)
     model, warnings = catalog.resolve(hw, source.model, source.tier, reserve_gb)
+    warnings = backend_notes + warnings
     if plugins is None:
         plugins = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
     if agents is None:
@@ -512,14 +529,14 @@ def render(source: Source, catalog: Catalog,
     if dashboards is None:
         dashboards = DashboardRegistry.load(DEFAULT_DASHBOARDS_DIR)
 
-    ctx = _max_ctx_for_vram(model, hw, reserve_gb)
+    ctx = _max_ctx_for_vram(model, hw, reserve_gb, backend)
 
     # --- one source value → every consumer (this is the whole point) ---
     derived: dict[str, Any] = {
         "llamacpp": {
             "ctx_size": ctx,
             "model": model.file,
-            "gpu_layers": -1 if hw.has_gpu else 0,
+            "gpu_layers": -1 if backend.accelerated else 0,
             "kv_cache_type": "q8_0",
             "parallel": 1,
             "flash_attn": "auto",
@@ -531,7 +548,8 @@ def render(source: Source, catalog: Catalog,
             "enable_kv_quant": 1,
             "mmproj": model.mmproj or "",
             "extra_args": model.extra_args,
-            "image": model.backend_image or "",
+            # The model's special build when it pins one, else this host's backend build.
+            "image": model.backend_image or backend.image,
         },
     }
     # `overrides:` survive regeneration; everything else is recomputed each render.
@@ -563,10 +581,9 @@ def render(source: Source, catalog: Catalog,
         "LLAMACPP_MMPROJ": str(lc["mmproj"]),
         "LLAMACPP_EXTRA_ARGS": str(lc["extra_args"]),
     }
-    # Only surface a backend-image override when the model declares one; the default image
-    # lives in compose.render_compose, so an empty var here would just be noise/drift.
-    if lc["image"]:
-        env["LLAMACPP_IMAGE"] = str(lc["image"])
+    # The image the chat service runs, always explicit: compose reads it from here, and
+    # model-gateway advertises it (served_by), so both name the build that is actually running.
+    env["LLAMACPP_IMAGE"] = str(lc["image"])
     # Electricity-derived per-token cost for every local model (local-chat, the GPU/CPU pins,
     # local-embed): see local_token_costs. Empty `cost:` -> "0"/"0" (unchanged $0 default).
     input_cost_per_token, output_cost_per_token = local_token_costs(source.cost)
@@ -695,6 +712,7 @@ def render(source: Source, catalog: Catalog,
         plugin_services=plugin_services,
         required_secrets=required_secrets,
         litellm_keys=litellm_keys,
+        llamacpp_backend=backend,
     )
 
 

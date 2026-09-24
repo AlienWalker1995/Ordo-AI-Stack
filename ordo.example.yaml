@@ -5,10 +5,11 @@
 # Hardware: "auto" detects the machine. For CI / reproducibility, pin an explicit profile.
 hardware: auto
 # hardware:
-#   gpus: [{ name: "RTX 5090", vram_gb: 32 }]
+#   gpus: [{ name: "RTX 5090", vram_gb: 32, vendor: nvidia, compute_cap: "12.0" }]
 #   ram_gb: 128
 #   cpu_cores: 32
 #   platform: Linux
+#   arch: x86_64
 
 # Tier: "auto" lets the sizer pick from hardware (game auto-detect). Or force a named tier
 # (cpu | low | medium | high | ultra) — the sizer still refuses to pick a model that won't fit

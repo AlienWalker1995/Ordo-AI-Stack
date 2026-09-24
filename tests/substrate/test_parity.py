@@ -8,7 +8,7 @@ from ordo.render import render
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
-P_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128}
+P_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "compute_cap": "12.0"}], "ram_gb": 128}
 
 
 def _ultra_env():

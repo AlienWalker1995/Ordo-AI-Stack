@@ -7,6 +7,7 @@ import yaml
 from ordo import compose
 from ordo.catalog import Catalog
 from ordo.config import Source
+from ordo.llamacpp_backend import CPU, CUDA
 from ordo.plugins import PluginRegistry
 from ordo.render import render
 
@@ -19,13 +20,13 @@ REQUIRED_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.exam
 
 
 def test_core_services_present():
-    c = compose.render_compose(has_gpu=True, compose_profiles=["media", "voice"])
+    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=["media", "voice"])
     for s in compose.core_services() + ["agent"]:
         assert s in c["services"]
 
 
 def test_isolated_no_port_clashes():
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
+    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], project="ordo")
     assert c["name"] == "ordo"
     assert "ordo-net" in c["networks"]
     for name, svc in c["services"].items():
@@ -37,9 +38,9 @@ def test_isolated_no_port_clashes():
 
 
 def test_gpu_reservation_gated_by_hardware():
-    with_gpu = compose.render_compose(has_gpu=True, compose_profiles=[])
+    with_gpu = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[])
     assert "deploy" in with_gpu["services"]["llamacpp"]
-    no_gpu = compose.render_compose(has_gpu=False, compose_profiles=[])
+    no_gpu = compose.render_compose(nvidia_gpu=False, llamacpp_backend=CPU, compose_profiles=[])
     assert "deploy" not in no_gpu["services"]["llamacpp"]
 
 
@@ -52,13 +53,13 @@ def test_plugin_services_behind_profiles():
     assert c["services"]["comfyui"]["profiles"] == ["media"]
     assert "stt" not in c["services"] and "tts" not in c["services"]  # voice needs a 2nd GPU
     # no plugins requested → only core + agent, no plugin services
-    c2 = compose.render_compose(has_gpu=True, compose_profiles=[])
+    c2 = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[])
     assert "comfyui" not in c2["services"]
 
 
 def test_llamacpp_emits_metrics():
     # render always emits --metrics so the monitoring plugin's prometheus can scrape :8080
-    c = compose.render_compose(has_gpu=True, compose_profiles=[])
+    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[])
     assert c["services"]["llamacpp"]["command"] == ["--metrics"]
 
 
@@ -74,7 +75,7 @@ def test_monitoring_named_volumes_declared():
 
 
 def test_ops_controller_has_scoped_socket():
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
+    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], project="ordo")
     ops = c["services"]["ops-controller"]
     assert "/var/run/docker.sock:/var/run/docker.sock" in ops["volumes"]  # drives the broker
     # but it's launched scoped to the project — the guard can't reach ordo-ai-stack-*
@@ -87,7 +88,7 @@ def test_ops_controller_has_utility_gpu_visibility():
     # only injects when the service reserves a GPU with the `utility` capability. Without it the
     # scheduler sees CPU-only (total_vram=0) and drops every GPU plugin. V1's ops-controller has
     # caps=[[utility]]; guard that V2 renders the same read-only visibility.
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
+    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], project="ordo")
     ops = c["services"]["ops-controller"]
     devs = ops["deploy"]["resources"]["reservations"]["devices"]
     assert any(d.get("capabilities") == ["utility"] for d in devs), \
@@ -97,7 +98,7 @@ def test_ops_controller_has_utility_gpu_visibility():
 def test_plain_gpu_service_reserves_gpu_capability():
     # A regular compute GPU service (gpu=True) must reserve the `gpu` capability — the utility
     # refactor must NOT change that (llamacpp/plugins get compute, not read-only visibility).
-    c = compose.render_compose(has_gpu=True, compose_profiles=[])
+    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[])
     devs = c["services"]["llamacpp"]["deploy"]["resources"]["reservations"]["devices"]
     assert any(d.get("capabilities") == ["gpu"] for d in devs), \
         "a plain gpu:true service must reserve the compute `gpu` capability, not `utility`"
@@ -169,21 +170,20 @@ def test_agent_swappable():
     agent, which read as if that one were special-cased — an arbitrary name proves
     the convention is generic, which is the actual contract under test.
     """
-    c = compose.render_compose(has_gpu=False, compose_profiles=[], agent="someagent")
+    c = compose.render_compose(nvidia_gpu=False, llamacpp_backend=CPU, compose_profiles=[], agent="someagent")
     assert "agent-someagent" in c["services"]["agent"]["image"]
 
 
-def test_llamacpp_image_defaults_to_upstream():
-    c = compose.render_compose(has_gpu=True, compose_profiles=[])
-    assert c["services"]["llamacpp"]["image"] == (
-        "ghcr.io/ggml-org/llama.cpp:server"
-        "@sha256:295dc9897fa8a643e4a513fbcaada51d3b8db4b0afa4fda7aeae2386757de58b"
-    )
+def test_llamacpp_image_defaults_to_the_backend_build():
+    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[])
+    assert c["services"]["llamacpp"]["image"] == CUDA.image
+    c = compose.render_compose(nvidia_gpu=False, llamacpp_backend=CPU, compose_profiles=[])
+    assert c["services"]["llamacpp"]["image"] == CPU.image
 
 
 def test_llamacpp_image_override():
     patched = "ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470"
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], llamacpp_image=patched)
+    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], llamacpp_image=patched)
     assert c["services"]["llamacpp"]["image"] == patched
 
 
@@ -198,8 +198,8 @@ def test_render_writes_runnable_compose(tmp_path):
 
 
 def test_backend_image_flows_from_catalog_to_compose_and_env(tmp_path):
-    # the 5090 best-fits qwen3.8-27b-uncensored-q6, whose catalog entry pins the patched build
-    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+    # the 5090 best-fits an ultra Qwen3.8, whose catalog entry pins the patched sm_120 build
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32, "compute_cap": "12.0"}], "ram_gb": 128},
                             "model": "auto", "plugins": "auto"})
     rc = render(src, CATALOG, REGISTRY)
     assert rc.model.backend_image == "ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470"
@@ -319,19 +319,17 @@ def test_only_ops_controller_and_agent_mount_the_docker_socket():
     assert with_sock == ["agent", "ops-controller"]
 
 
-def test_model_without_backend_image_keeps_default(tmp_path):
-    # a small GPU best-fits a stock model (no backend_image) -> upstream image, no LLAMACPP_IMAGE
+def test_model_without_backend_image_runs_the_hosts_cuda_build(tmp_path):
+    # a small NVIDIA GPU best-fits a stock model (no backend_image) -> the upstream CUDA server
+    # build. It used to get the CPU-only `:server` image with -ngl -1, so "GPU" chat ran on the CPU.
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 8}], "ram_gb": 32},
                             "model": "auto", "plugins": "auto"})
     rc = render(src, CATALOG, REGISTRY)
     assert rc.model.backend_image is None
-    assert "LLAMACPP_IMAGE" not in rc.env
+    assert rc.env["LLAMACPP_IMAGE"] == CUDA.image
     rc.write(tmp_path)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
-    assert c["services"]["llamacpp"]["image"] == (
-        "ghcr.io/ggml-org/llama.cpp:server"
-        "@sha256:295dc9897fa8a643e4a513fbcaada51d3b8db4b0afa4fda7aeae2386757de58b"
-    )
+    assert c["services"]["llamacpp"]["image"] == CUDA.image
 
 
 def test_edge_security_mounts_fail_loud_on_empty_base_path():
@@ -380,7 +378,7 @@ def test_ops_controller_serve_out_matches_deployed_layout():
     # (compose project dir = out). serve's --out must therefore be /config itself: writing to
     # /config/out re-renders into a nested dir NOTHING consumes — a model switch would silently
     # never reach the live .env/compose (found live 2026-07-15).
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
+    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], project="ordo")
     cmd = c["services"]["ops-controller"]["command"]
     assert cmd[cmd.index("--out") + 1] == "/config"
     assert "./:/config" in c["services"]["ops-controller"]["volumes"]
@@ -564,7 +562,7 @@ def test_comfyui_models_on_named_volume():
 
 # ── LiteLLM Postgres + key bootstrap + the internal MCP network (spec §3) ─────────────────────
 def test_litellm_db_is_core_pinned_and_healthchecked():
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
+    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], project="ordo")
     db = c["services"]["litellm-db"]
     assert db["image"].startswith("postgres:16-alpine@sha256:")
     assert db["volumes"] == ["litellm-db-data:/var/lib/postgresql/data"]
@@ -577,7 +575,7 @@ def test_litellm_db_is_core_pinned_and_healthchecked():
 
 
 def test_model_gateway_wired_to_db_config_mount_and_mcp_net():
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
+    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], project="ordo")
     mg = c["services"]["model-gateway"]
     assert mg["depends_on"]["litellm-db"] == {"condition": "service_healthy"}
     assert mg["depends_on"]["llamacpp"] == {"condition": "service_started"}
@@ -598,7 +596,7 @@ def test_model_gateway_wired_to_db_config_mount_and_mcp_net():
 
 
 def test_model_gateway_keys_is_a_one_shot_after_gateway_health():
-    c = compose.render_compose(has_gpu=True, compose_profiles=[], project="ordo")
+    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], project="ordo")
     k = c["services"]["model-gateway-keys"]
     assert k["image"] == "ordo/model-gateway:latest"
     assert k["command"] == ["python3", "/app/bootstrap_keys.py"]

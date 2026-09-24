@@ -26,6 +26,7 @@ from ordo import compose, gpu
 from ordo.catalog import Catalog
 from ordo.config import Source
 from ordo.hardware import GPU, HardwareProfile
+from ordo.llamacpp_backend import CUDA
 from ordo.plugins import PluginRegistry
 from ordo.render import DEFAULT_PLUGINS_DIR, GATED_SERVICE_URL_ENV, render
 
@@ -36,8 +37,8 @@ REQUIRED_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.exam
                  "CADDY_TAILNET_DOMAIN": "example.ts.net", "MEMORY_VAULT_PATH": "/srv/vault"}
 
 DUAL_GPU = {
-    "gpus": [{"name": "RTX 5090", "vram_gb": 32.0, "uuid": "GPU-primary"},
-             {"name": "GTX 1070", "vram_gb": 8.0, "uuid": "GPU-secondary"}],
+    "gpus": [{"name": "RTX 5090", "vram_gb": 32.0, "uuid": "GPU-primary", "compute_cap": "12.0"},
+             {"name": "GTX 1070", "vram_gb": 8.0, "uuid": "GPU-secondary", "compute_cap": "6.1"}],
     "ram_gb": 128.0, "cpu_cores": 32, "platform": "Linux",
 }
 
@@ -79,7 +80,7 @@ def test_every_gpu_reserving_plugin_service_declares_arbitration(registry):
 
 def test_every_core_service_with_a_gpu_reservation_is_declared():
     """Same rule for the substrate services compose renders without a manifest."""
-    rendered_compose = compose.render_compose(has_gpu=True, compose_profiles=[])
+    rendered_compose = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[])
     reserving = {
         name for name, svc in rendered_compose["services"].items()
         if "deploy" in svc and "gpu" in str(svc["deploy"])
@@ -319,7 +320,7 @@ def test_a_gated_service_cannot_share_another_network_namespace(rendered):
     plugin, ps = next((p, s) for p, s in rendered.plugin_services if s.name == "comfyui")
     in_caddys_netns = dataclasses.replace(ps, network_mode="service:caddy")
     with pytest.raises(ValueError, match="network_mode"):
-        compose.render_compose(has_gpu=True, compose_profiles=["media"],
+        compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=["media"],
                                plugin_services=[(plugin, in_caddys_netns)],
                                gpu_claims={c.service: c for c in rendered.gpu_inventory()})
 

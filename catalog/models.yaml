@@ -10,6 +10,11 @@
 # requires.vram_gb = weights only; the renderer adds a KV/compute headroom reserve on top,
 # so a 28GB-weights model does NOT get picked for a 32GB card (that mistake caused the
 # saturation → RAM-spill → 2.4 tok/s incident).
+#
+# backend_image pins a special llama.cpp build instead of the per-host upstream one
+# (ordo/llamacpp_backend.py). Such an entry MUST declare requires.min_compute_cap, the lowest
+# NVIDIA compute capability that build has kernels for, so the sizer never hands it to a GPU it
+# cannot run on. The patched build is compiled for sm_120 only (services/llamacpp-patched).
 
 version: 1
 
@@ -65,7 +70,7 @@ models:
     source: https://huggingface.co/huihui-ai
     # sha256 of the 22,430,998,848-byte Q6_K weights, computed from the on-disk file.
     sha256: c03727f9fdfb7c8c02a8d7a0662563a0b0d7a6e192a03834a45f58300408b4ea
-    requires: { vram_gb: 21, ram_gb: 16, cpu_ok: false }
+    requires: { vram_gb: 21, ram_gb: 16, cpu_ok: false, min_compute_cap: "12.0" }
     ctx_default: 131072
     # hybrid attention/SSM: KV is ~34.8 KB/token over 16 full-attn layers (q8_0).
     kv_kb_per_token: 34.8
@@ -95,7 +100,7 @@ models:
     sha256: f814af8d2ce6e636962aec38a30c11a84568d208de4d60f4fc45ed8a77ad0160
     # 23.6GiB weights, 1.2GiB more than qwen3.8-27b-uncensored-q6, so the same ultra tier with no
     # headroom to spare.
-    requires: { vram_gb: 24, ram_gb: 16, cpu_ok: false }
+    requires: { vram_gb: 24, ram_gb: 16, cpu_ok: false, min_compute_cap: "12.0" }
     # Card claims 256k native; 131072 is the stack-wide CAP. The renderer sizes the actual window
     # down from it to whatever KV fits after these weights (114688 on a 32GB card) and emits the
     # CPU failover's window from that same value, so the failover can never accept less.
@@ -132,7 +137,7 @@ models:
     source: https://huggingface.co/JonathanColetti/Qwen3.8-27B-Uncensored-GGUF/resolve/main/Qwen3.8-27B-Uncensored-Q6_K.gguf
     # sha256 of the 22,430,999,968-byte Q6_K file, computed on the downloaded copy.
     sha256: a50aa1478295b58ee3d93eabe02c17f6d5fcf6cb787fd8a0ab07ac629a46cae6
-    requires: { vram_gb: 23, ram_gb: 16, cpu_ok: false }
+    requires: { vram_gb: 23, ram_gb: 16, cpu_ok: false, min_compute_cap: "12.0" }
     # Same 131072 stack-wide window as the base Qwen3.8-27B.
     ctx_default: 131072
     # Same `qwen35` hybrid arch as the base Qwen3.8-27B (abliteration is LLM-only).
@@ -154,7 +159,7 @@ models:
     source: https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-Q6_K.gguf
     # sha256 = HF LFS oid of the 22,884,407,264-byte Q6_K file (unsloth/Qwen3.8-27B-GGUF).
     sha256: ade6d6615688aafa1dcfc9f5b4e1a66447bc02f8e099a006a10f9263f22f8ccc
-    requires: { vram_gb: 23, ram_gb: 16, cpu_ok: false }
+    requires: { vram_gb: 23, ram_gb: 16, cpu_ok: false, min_compute_cap: "12.0" }
     # Native context is 262144, but we deploy at the stack-wide 131072 window
     # (CPU-fallback parity + KV VRAM budget).
     ctx_default: 131072
