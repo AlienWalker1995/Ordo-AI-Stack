@@ -85,3 +85,108 @@ def test_the_chat_card_links_to_the_published_local_port():
     host, host_port, _ = LOCAL_UIS["open-webui"].split(":")
     assert card["port"] == int(host_port)
     assert card["url"] == f"http://{host}:{host_port}"
+
+
+# --------------------------------------------------------------------------- #
+# The dashboard's local sign-in secret follows the same edge on/off derivation
+# --------------------------------------------------------------------------- #
+
+LOCAL_LOGIN_SECRET = "DASHBOARD_LOCAL_LOGIN_TOKEN"
+
+
+def _rendered(site: dict):
+    source = Source.from_dict({"hardware": HARDWARE, "model": "auto", "plugins": "auto", "site": site})
+    return render(source, CATALOG, REGISTRY)
+
+
+def _services_reading(compose: dict, key: str) -> list[str]:
+    return sorted(name for name, svc in compose["services"].items() if key in (svc.get("environment") or {}))
+
+
+def test_without_the_edge_only_the_dashboard_gets_the_local_sign_in_secret():
+    rc = _rendered(HOST_PATHS)
+    compose = rc.compose_dict()
+    assert _services_reading(compose, LOCAL_LOGIN_SECRET) == ["dashboard"]
+    assert compose["services"]["dashboard"]["environment"][LOCAL_LOGIN_SECRET] == "${" + LOCAL_LOGIN_SECRET + "}"
+    assert LOCAL_LOGIN_SECRET in rc.required_secrets
+    assert LOCAL_LOGIN_SECRET not in rc.optional_secrets
+
+
+def test_with_the_edge_no_service_gets_the_local_sign_in_secret():
+    rc = _rendered({**HOST_PATHS, **EDGE_KEYS})
+    assert _services_reading(rc.compose_dict(), LOCAL_LOGIN_SECRET) == []
+    assert LOCAL_LOGIN_SECRET not in rc.required_secrets
+
+
+def test_the_local_sign_in_secret_is_declared_by_the_dashboard_manifest():
+    import yaml
+
+    raw = yaml.safe_load((ROOT / "services/dashboard/dashboard.yaml").read_text(encoding="utf-8"))
+    assert Dashboard.from_dict(raw).local_login_secret == LOCAL_LOGIN_SECRET
+
+
+def test_a_local_sign_in_secret_needs_a_local_port():
+    with pytest.raises(ValueError):
+        Dashboard.from_dict({"id": "d", "image": "d", "local_login_secret": LOCAL_LOGIN_SECRET})
+
+
+def test_the_local_sign_in_secret_is_generated_not_asked_for():
+    from ordo import wizard
+
+    value = wizard.generator_for(LOCAL_LOGIN_SECRET)()
+    assert len(value) >= 32
+
+
+def test_the_manifest_records_the_dashboard_sign_in_only_without_the_edge():
+    assert _rendered(HOST_PATHS).manifest()["dashboard_sign_in"] == {
+        "url": "http://127.0.0.1:8444", "secret": LOCAL_LOGIN_SECRET}
+    assert "dashboard_sign_in" not in _rendered({**HOST_PATHS, **EDGE_KEYS}).manifest()
+
+
+# --------------------------------------------------------------------------- #
+# `ordo up` / `ordo init`: the operator gets a sign-in link, and an older local install its secret
+# --------------------------------------------------------------------------- #
+
+
+def _out_dir(tmp_path: Path, site: dict, secrets: str) -> Path:
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "manifest.json").write_text(json.dumps(_rendered(site).manifest()), encoding="utf-8")
+    (out / "secrets.env").write_text(secrets, encoding="utf-8")
+    return out
+
+
+def test_up_mints_a_missing_local_sign_in_secret_and_keeps_the_rest(tmp_path):
+    from ordo import cli, parity
+
+    out = _out_dir(tmp_path, HOST_PATHS, "OPS_CONTROLLER_TOKEN=keep-me\n")
+    assert cli._ensure_local_sign_in_secret(out) is True
+    values = parity.load_env(str(out / "secrets.env"))
+    assert values["OPS_CONTROLLER_TOKEN"] == "keep-me"
+    assert len(values[LOCAL_LOGIN_SECRET]) >= 32
+    minted = values[LOCAL_LOGIN_SECRET]
+    assert cli._ensure_local_sign_in_secret(out) is False    # idempotent: an existing value stays
+    assert parity.load_env(str(out / "secrets.env"))[LOCAL_LOGIN_SECRET] == minted
+
+
+def test_up_leaves_secrets_alone_with_the_edge(tmp_path):
+    from ordo import cli
+
+    out = _out_dir(tmp_path, {**HOST_PATHS, **EDGE_KEYS}, "OPS_CONTROLLER_TOKEN=keep-me\n")
+    assert cli._ensure_local_sign_in_secret(out) is False
+    assert (out / "secrets.env").read_text(encoding="utf-8") == "OPS_CONTROLLER_TOKEN=keep-me\n"
+
+
+def test_the_sign_in_link_carries_the_token_in_the_fragment(tmp_path):
+    from ordo import cli
+
+    out = _out_dir(tmp_path, HOST_PATHS, f"{LOCAL_LOGIN_SECRET}=tok-123\n")
+    # The fragment never reaches the server (no access log, no Referer); the SPA posts it once.
+    assert cli._dashboard_sign_in_link(out) == "http://127.0.0.1:8444/#sign-in=tok-123"
+
+
+def test_no_sign_in_link_with_the_edge(tmp_path):
+    from ordo import cli
+
+    out = _out_dir(tmp_path, {**HOST_PATHS, **EDGE_KEYS}, f"{LOCAL_LOGIN_SECRET}=tok-123\n")
+    assert cli._dashboard_sign_in_link(out) is None

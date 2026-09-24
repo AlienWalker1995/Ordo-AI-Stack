@@ -24,7 +24,7 @@ from . import wizard
 from .catalog import Catalog
 from .config import Source
 from .plugins import PluginRegistry
-from .render import RenderedConfig, render
+from .render import EDGE_PLUGIN, RenderedConfig, render
 from .source_edit import edit_plugins_list, edit_site_keys
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -34,7 +34,6 @@ ALLOWLIST_PLACEHOLDER = "YOUR_ALLOWLIST_EMAIL"
 # Where Caddy reads its TLS pair (auth/caddy/Caddyfile `tls_tailnet`, mounted from here).
 CERT_DIR = REPO_ROOT / "auth" / "caddy" / "certs"
 
-EDGE_PLUGIN = "edge"
 OAUTH_CLIENT_KEYS = ("OAUTH2_PROXY_CLIENT_ID", "OAUTH2_PROXY_CLIENT_SECRET")
 
 

@@ -24,7 +24,7 @@ from .hardware import HardwareProfile, detect
 from .llamacpp_backend import CPU as CPU_BACKEND
 from .llamacpp_backend import LlamaCppBackend
 from .llamacpp_backend import select as select_backend
-from .plugins import Plugin, PluginRegistry
+from .plugins import LOOPBACK, Plugin, PluginRegistry
 
 # Render data now lives co-located under services/<id>/ (plugin.yaml / agent.yaml / dashboard.yaml
 # / catalog.json); each registry globs its own manifest kind out of the shared services/ root.
@@ -68,6 +68,7 @@ CORE_SECRET_KEYS: tuple[str, ...] = (
     "OPS_CONTROLLER_TOKEN",       # bearer between agent/dashboard/mcp <-> ops-controller
     # NB: no DASHBOARD_AUTH_TOKEN. Operators reach the dashboard through the Caddy edge SSO;
     # internal callers of its protected routes send OPS_CONTROLLER_TOKEN (dashboard/auth.py).
+    # Without the edge, the dashboard manifest's `local_login_secret` is added by render() below.
     # NB: THROUGHPUT_RECORD_TOKEN is intentionally NOT required. There is no SOPS source that can
     # supply it, and the dashboard only enforces it "when set" (dashboard/app.py) — the /api/
     # throughput/record route is open when the var is empty. Demanding a key nothing can provide
@@ -86,6 +87,17 @@ CORE_OPTIONAL_SECRET_KEYS: tuple[str, ...] = ("HF_TOKEN", "GITHUB_PERSONAL_ACCES
 # THROUGHPUT_RECORD_TOKEN has no SOPS source and the dashboard only enforces it "when set" (see the
 # note in CORE_SECRET_KEYS). A service passes these as ${KEY:-} so an absent value is simply empty.
 OPTIONAL_SECRET_KEYS: tuple[str, ...] = ("THROUGHPUT_RECORD_TOKEN",)
+
+# The SSO edge plugin (services/edge). Whether it is enabled is THE switch between the two access
+# modes; nothing else (no flag, no env var) selects the mode.
+EDGE_PLUGIN = "edge"
+
+
+def local_access(enabled_plugin_ids) -> bool:
+    """True when the render has no edge: UIs publish loopback ports and the dashboard takes a local
+    sign-in. False when the edge is Caddy's single front door with SSO."""
+    return EDGE_PLUGIN not in enabled_plugin_ids
+
 
 # Deep-merge an override dict onto a derived dict (overrides win, survive regeneration).
 def _apply_overrides(derived: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
@@ -328,6 +340,7 @@ class RenderedConfig:
             "required_secrets": self.required_secrets,
             "optional_secrets": self.optional_secrets,
             "warnings": self.warnings,
+            **self._dashboard_sign_in(),
             # What this render was made from. ops-controller refuses to re-render over a render made
             # from different inputs, so its baked copy cannot silently revert the checkout's changes.
             "substrate_digest": substrate.current_digest(),
@@ -338,6 +351,16 @@ class RenderedConfig:
                 "model_gateway.ctx": self.model_gateway["ctx"],
             },
         }
+
+    def _dashboard_sign_in(self) -> dict[str, Any]:
+        """`dashboard_sign_in: {url, secret}` while the dashboard is published on loopback with a
+        local sign-in secret (the edge is off); nothing with the edge on. `ordo up` reads it to
+        mint the secret and print the sign-in link, so neither the port nor the key name is repeated."""
+        local_port = self.dashboard.get("local_port")
+        secret = self.dashboard.get("local_login_secret")
+        if not (local_access(self.plugins_enabled) and local_port is not None and secret):
+            return {}
+        return {"dashboard_sign_in": {"url": f"http://{LOOPBACK}:{local_port.host}", "secret": secret}}
 
     def compose_dict(self, project: str = "ordo", image_tags: dict[str, str] | None = None) -> dict[str, Any]:
         """The isolated, runnable compose for the stack — built from the resolved plugin
@@ -378,7 +401,7 @@ class RenderedConfig:
             langfuse_tracing="langfuse" in self.plugins_enabled,
             # With the edge on, Caddy is the one front door; without it, each UI that declares a
             # `local_port` publishes it on loopback so a local-only install can reach it.
-            publish_local_ports="edge" not in self.plugins_enabled,
+            publish_local_ports=local_access(self.plugins_enabled),
             # {} when the edge wiring can't produce a PROXY_BASE_URL (see litellm_google_sso_env).
             litellm_google_sso_env=self.model_gateway.get("google_sso_env") or {})
         images.pin_first_party(doc["services"], self.first_party_images, image_tags or {})
@@ -653,6 +676,7 @@ def render(source: Source, catalog: Catalog,
             "secrets": list(dash.secrets),
             "gpu_capabilities": list(dash.gpu_capabilities),
             "local_port": dash.local_port,
+            "local_login_secret": dash.local_login_secret,
         }
     # Registry-driven plugin resolution: enable what's requested AND fits AND has its required
     # site keys AND has its deps.
@@ -728,6 +752,11 @@ def render(source: Source, catalog: Catalog,
     for s in mcp_servers:
         if s["auth_secret"] and s["auth_secret"] not in required_secrets:
             required_secrets.append(s["auth_secret"])
+    # The dashboard's local sign-in secret, only while it is published on loopback (edge off).
+    local_login_secret = dashboard.get("local_login_secret")
+    if (local_login_secret and dashboard.get("local_port") is not None
+            and local_access([p.id for p in enabled]) and local_login_secret not in required_secrets):
+        required_secrets.append(local_login_secret)
     # A key is optional only when every reader says so: the core list for a core key, and each
     # enabled plugin that declares it.
     readers: dict[str, list[Plugin]] = {}

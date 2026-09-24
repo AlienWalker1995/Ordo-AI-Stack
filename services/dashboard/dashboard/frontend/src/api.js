@@ -1,11 +1,15 @@
 // Thin same-origin fetch wrapper for the dashboard's FastAPI /api/* backend.
 //
-// The dashboard is served same-origin behind Google SSO (Caddy forward_auth). The
-// browser already carries the SSO session, so requests just need `credentials:
-// 'same-origin'`; there is NO auth logic here. CSP connect-src is 'self',
-// so every URL below is a root-relative /api/* path (never cross-origin).
+// The dashboard is served same-origin: behind Google SSO (Caddy forward_auth) with the edge on,
+// or on 127.0.0.1 with a local session cookie without it (components/LocalSignIn.jsx). Either
+// way the browser carries the session, so requests just need `credentials: 'same-origin'`; the
+// only auth logic here is announcing a 401 so the sign-in prompt can re-check. CSP connect-src
+// is 'self', so every URL below is a root-relative /api/* path (never cross-origin).
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+
+// Dispatched on window when the backend refuses a request for want of a signed-in operator.
+export const UNAUTHORIZED_EVENT = 'ordo:unauthorized'
 
 export class ApiError extends Error {
   constructor(message, status, body) {
@@ -41,6 +45,7 @@ async function request(path, { method = 'GET', body, headers, signal } = {}) {
   const payload = isJson ? await res.json().catch(() => null) : await res.text().catch(() => null)
 
   if (!res.ok) {
+    if (res.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
     const detail = (payload && (payload.detail || payload.error)) || res.statusText
     throw new ApiError(typeof detail === 'string' ? detail : `HTTP ${res.status}`, res.status, payload)
   }

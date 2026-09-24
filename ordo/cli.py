@@ -131,6 +131,48 @@ def _local_urls(compose_doc: dict) -> list[str]:
     return urls
 
 
+def _dashboard_sign_in(out: Path) -> dict | None:
+    """The render's `dashboard_sign_in` record ({url, secret}); None with the edge on or no render."""
+    manifest_path = out / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    return json.loads(manifest_path.read_text(encoding="utf-8")).get("dashboard_sign_in")
+
+
+def _ensure_local_sign_in_secret(out: Path) -> bool:
+    """Mint the dashboard's local sign-in secret when the render needs it and secrets.env lacks it
+    (a local install made before the secret existed). True when a value was written; an existing
+    value is never replaced."""
+    sign_in = _dashboard_sign_in(out)
+    secrets_path = out / "secrets.env"
+    if sign_in is None or not secrets_path.exists():
+        return False
+    if parity.load_env(str(secrets_path)).get(sign_in["secret"]):
+        return False
+    generated, _ = wizard.update_secrets(secrets_path, [sign_in["secret"]])
+    return sign_in["secret"] in generated
+
+
+def _dashboard_sign_in_link(out: Path) -> str | None:
+    """`http://127.0.0.1:<port>/#sign-in=<token>` for the local operator; None with the edge on.
+
+    The token rides in the URL fragment, which the browser never sends to the server (no access
+    log line, no Referer); the dashboard's page posts it once and swaps it for a session cookie."""
+    sign_in = _dashboard_sign_in(out)
+    if sign_in is None or not (out / "secrets.env").exists():
+        return None
+    token = parity.load_env(str(out / "secrets.env")).get(sign_in["secret"], "")
+    if not token:
+        return None
+    return f"{sign_in['url']}/#sign-in={token}"
+
+
+def _print_dashboard_sign_in(out: Path) -> None:
+    link = _dashboard_sign_in_link(out)
+    if link:
+        print(f"\nDashboard sign-in (this machine only; the link holds your sign-in token):\n  {link}")
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     # --catalog may arrive via the global (before the subcommand) or the subparser (after it);
     # the subparser default is None, so fall back to the resolved global/bundled default.
@@ -200,6 +242,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     urls = _local_urls(bringup.load_compose(out.resolve().as_posix()))
     if urls:
         print("\nOpen (this machine only):\n  " + "\n  ".join(urls))
+    _print_dashboard_sign_in(out)
     print(remote_line)
     return 0
 
@@ -501,14 +544,20 @@ def cmd_up(args: argparse.Namespace) -> int:
         print("ordo up: give exactly one of --all, --core or SERVICE...", file=sys.stderr)
         return 1
     whole_stack = args.all or args.core
+    out = Path(args.out)
+    if not args.dry_run and _ensure_local_sign_in_secret(out):
+        print(f"generated the dashboard's local sign-in secret in {out / 'secrets.env'}")
     if not args.dry_run and not args.no_preflight:
         if not _host_preflight(args.out, args.project, args.services, whole_stack=whole_stack,
                                with_profiles=not args.core):
             return 1
-    return bringup.bring_up(args.out, args.project, args.services, whole_stack=whole_stack,
-                            with_profiles=not args.core, force_recreate=False, dry_run=args.dry_run,
-                            build=not args.no_build,
-                            models_catalog=None if args.no_fetch else Path(args.catalog))
+    rc = bringup.bring_up(args.out, args.project, args.services, whole_stack=whole_stack,
+                          with_profiles=not args.core, force_recreate=False, dry_run=args.dry_run,
+                          build=not args.no_build,
+                          models_catalog=None if args.no_fetch else Path(args.catalog))
+    if rc == 0 and not args.dry_run and (whole_stack or "dashboard" in args.services):
+        _print_dashboard_sign_in(out)
+    return rc
 
 
 def cmd_recreate(args: argparse.Namespace) -> int:
