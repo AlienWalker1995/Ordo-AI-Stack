@@ -34,7 +34,7 @@ REGISTRY = PluginRegistry.load(ROOT / "services")
 RENDER_MODULE = sys.modules["ordo.render"]
 
 UPSTREAM_IMAGE = re.compile(r"^ghcr\.io/ggml-org/llama\.cpp:server(-[a-z0-9]+)?-b(\d+)@sha256:[0-9a-f]{64}$")
-PATCHED_IMAGE = "ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470"
+PATCHED_IMAGE = "ordo/llamacpp-patched"
 
 
 def _completed(returncode: int, stdout: str = "", stderr: str = "") -> SimpleNamespace:
@@ -291,7 +291,8 @@ def test_compute_target(target, tmp_path, monkeypatch):
 
     c = yaml.safe_load((out / "docker-compose.yml").read_text(encoding="utf-8"))
     llamacpp = c["services"]["llamacpp"]
-    assert llamacpp["image"] == expected_image
+    # a special build is first-party, so render pins its recorded tag (`current` before a build)
+    assert llamacpp["image"] == (f"{special_image}:current" if special_image else backend.image)
     if backend_name == "cuda":
         assert _nvidia_devices(llamacpp)
         assert "devices" not in llamacpp

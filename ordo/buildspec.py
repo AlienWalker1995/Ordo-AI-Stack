@@ -71,7 +71,6 @@ def image_ident(image: str) -> str:
     ltx-trainer:9377…}`) and the preflight-EXPANDED ref (`ordo/ltx-trainer:9377…`) resolve alike.
 
     `ordo/model-gateway:latest`               -> `ordo/model-gateway`
-    `ordo-ai-stack-llamacpp-patched:qwen36…`  -> `ordo-ai-stack-llamacpp-patched`
     `${LTX_TRAINER_IMAGE:-ordo/ltx-trainer:9…}` -> `ordo/ltx-trainer`
     `ghcr.io/x/y@sha256:…`                     -> `ghcr.io/x/y`
     """
@@ -85,11 +84,10 @@ def image_ident(image: str) -> str:
 
 
 def substrate_context(image: str) -> str | None:
-    """Build context for a hardcoded substrate image, else None. Matches on the `repo/name` or the
-    `…-<name>` suffix so both `ordo/model-gateway` and `ordo-ai-stack-llamacpp-patched` resolve."""
+    """Build context for a substrate image (`<project>/<name>`, any tag), else None."""
     ident = image_ident(image)
     for name, ctx in SUBSTRATE_BUILD_CONTEXTS.items():
-        if ident == name or ident.endswith("/" + name) or ident.endswith("-" + name):
+        if ident == name or ident.endswith("/" + name):
             return ctx
     return None
 

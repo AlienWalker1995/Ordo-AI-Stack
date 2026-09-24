@@ -32,7 +32,7 @@ import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
-from . import buildspec, fetch, parity, served_models
+from . import buildspec, fetch, images, parity, served_models
 from .agents import AgentRegistry
 from .catalog import Catalog
 from .config import Source
@@ -120,6 +120,9 @@ def run(
     # context (or buildspec.EXTERNAL for an out-of-band image); an upstream pull image resolves to
     # None. This REPLACES the old `_is_buildable` substring special-case + the hardcoded llamacpp hint.
     resolve_ctx = buildspec.context_resolver(registry, agents, dashboards, project=project)
+    # The images `ordo build` builds. A project image outside this set carries its own tag or is built
+    # out of band, so the hint must not promise that `ordo build` produces it.
+    first_party = images.first_party_contexts(registry, agents, dashboards, project=project)
 
     def _is_buildable(image: str) -> bool:
         return resolve_ctx(image) is not None
@@ -194,11 +197,20 @@ def run(
             # Generic build-from hint derived from the single resolver — every project image gets
             # a context pointer (no per-image special-case). An out-of-band image (EXTERNAL) has no
             # in-repo context, so it's shown bare.
-            hints = []
-            for i in proj_missing:
-                ctx = resolve_ctx(i)
-                hints.append(f"{i} (build from {ctx})" if ctx and ctx != buildspec.EXTERNAL else i)
-            detail = f"build first (`ordo build --all`, or `ordo up` builds them): {', '.join(hints)}"
+            def hint(image: str) -> str:
+                ctx = resolve_ctx(image)
+                return f"{image} (build from {ctx})" if ctx and ctx != buildspec.EXTERNAL else image
+
+            managed = [i for i in proj_missing if buildspec.image_ident(i) in first_party]
+            by_hand = [i for i in proj_missing if buildspec.image_ident(i) not in first_party]
+            parts = []
+            if managed:
+                parts.append(f"build first (`ordo build --all`, or `ordo up` builds them): "
+                             f"{', '.join(hint(i) for i in managed)}")
+            if by_hand:
+                parts.append(f"not built by `ordo build` (own tag or built out of band), build under the "
+                             f"exact name shown: {', '.join(hint(i) for i in by_hand)}")
+            detail = "; ".join(parts)
         checks.append(Check("project images built locally", not proj_missing, detail))
         if upstream_missing:
             checks.append(Check("upstream images cached", False,

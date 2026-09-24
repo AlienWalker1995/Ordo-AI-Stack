@@ -216,7 +216,7 @@ The `llamacpp` service does **not** run a TurboQuant fork. `services/llamacpp-pa
 1. **Checkpoint search fix for hybrid/recurrent models** (`tools/server/server-context.cpp`) — addresses upstream issues #22384, #20225, #24055.
 2. **`recurrent_shrink`/`expand` API for prompt-cache operations** — a minimal diff for upstream PR #24785.
 
-Both exist to support SWA/hybrid-cache models; the build fails loudly if either patch fails to apply, so bump the pinned commit only after re-verifying both still apply cleanly. The resulting image is tagged `ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470` in `out/docker-compose.yml`.
+Both exist to support SWA/hybrid-cache models; the build fails loudly if either patch fails to apply, so bump the pinned commit only after re-verifying both still apply cleanly. The resulting image is the first-party `ordo/llamacpp-patched`: `ordo build llamacpp` builds it and records its tag, and render pins `out/docker-compose.yml` to that tag.
 
 The build compiles CUDA kernels for sm_120 (Blackwell) only, so every catalog model that pins it declares `requires.min_compute_cap: "12.0"`, and the sizer only picks those models on a GPU known to meet it (see Compute Configuration below). Models without a `backend_image` run the host's upstream build.
 

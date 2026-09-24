@@ -37,14 +37,12 @@ if TYPE_CHECKING:
 _CORE = ["llamacpp", "litellm-db", "model-gateway", "model-gateway-keys",
          "ops-controller", "dashboard"]
 
-# Build contexts for the SUBSTRATE services — the project images hardcoded below that have NO
-# manifest (`_model_gateway`/`_ops_controller`, and the patched llama.cpp build
-# pinned via a model's catalog `backend_image`). Manifest services (plugins/agents/dashboards)
-# declare their own context via `build:` in
-# the manifest; only these hardcoded ones need to be declared here. `ordo.buildspec` reads this
-# to give preflight + the substrate test a single image→context resolver — so a rename/typo fails
-# CI, not deploy. Keyed by the image `repo/name` (matched on the `…-<name>` suffix too, for the
-# `ordo-ai-stack-llamacpp-patched` build tag). This is build METADATA — never rendered into compose.
+# Build contexts for the SUBSTRATE images: the project images with NO manifest (`_model_gateway`,
+# `_ops_controller`, the gpu-gate, and the patched llama.cpp build a model's catalog `backend_image`
+# names). Manifest services (plugins/agents/dashboards) declare their own context via `build:` in
+# the manifest; only these need to be declared here. `ordo.buildspec` reads this to give preflight +
+# the substrate test a single image→context resolver, so a rename/typo fails CI, not deploy. Keyed
+# by the image name under the project namespace. This is build METADATA, never rendered into compose.
 SUBSTRATE_BUILD_CONTEXTS: dict[str, str] = {
     "model-gateway": "services/model-gateway",
     "ops-controller": "services/ops-controller",
@@ -55,10 +53,10 @@ SUBSTRATE_BUILD_CONTEXTS: dict[str, str] = {
     # and no new build path.
     "gpu-gate": "services/gpu-gate",
 }
-# The substrate images compose.py names itself. They are declared UNTAGGED: render fills in the tag
-# `ordo build` recorded (ordo/images.py). llamacpp-patched is not listed: a model's catalog
-# `backend_image` names it with its own pinned tag.
-SUBSTRATE_IMAGES: tuple[str, ...] = ("model-gateway", "ops-controller", "gpu-gate")
+# The substrate images `ordo build` builds and render tags. Each is declared UNTAGGED (by compose.py,
+# or for llamacpp-patched by a model's catalog `backend_image`): render fills in the tag `ordo build`
+# recorded (ordo/images.py).
+SUBSTRATE_IMAGES: tuple[str, ...] = ("model-gateway", "ops-controller", "gpu-gate", "llamacpp-patched")
 
 # --metrics turns on llama-server's native Prometheus endpoint at /metrics:8080 (token rates,
 # queue depth). Always-on — it's cheap, and the monitoring plugin's prometheus scrapes it.
@@ -751,9 +749,8 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
         "${BASE_PATH:?BASE_PATH must be set (non-empty)}/scripts/llamacpp:/llamacpp-scripts:ro",
     ]
     # model-gateway is the V1 custom-built LiteLLM config wrapper (+ the MCP gateway since 2026-09);
-    # pinned as a project-namespaced BUILDABLE image (build context services/model-gateway) so
-    # preflight reports 'build first' not 'Docker will pull' — matching the llamacpp-patched
-    # precedent. The V2-native ops-controller + dashboard remain the new control plane.
+    # a first-party BUILDABLE image (build context services/model-gateway) so preflight reports
+    # 'build first' not 'Docker will pull'. The V2-native ops-controller + dashboard remain the new control plane.
     svcs: dict[str, Any] = {
         "llamacpp": llamacpp,
         "litellm-db": _litellm_db(net),

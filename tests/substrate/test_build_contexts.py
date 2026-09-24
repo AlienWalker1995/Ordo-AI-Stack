@@ -1,6 +1,6 @@
 """Build-context identity is a DECLARED, testable property (audit §2.1).
 
-Every PROJECT-built image (`ordo/*` or `ordo-ai-stack-*`) referenced by ANY manifest OR by the
+Every PROJECT-built image (`ordo/*`) referenced by ANY manifest OR by the
 hardcoded substrate services must resolve — through the single `ordo.buildspec` resolver — to an
 EXISTING build context + Dockerfile under `services/` (or be explicitly declared built out-of-band
 via `build: {external: true}`). So a folder rename or an image typo fails CI, not deploy.
@@ -35,11 +35,10 @@ def _all_project_images() -> set[str]:
         imgs.add(a.image_for("ordo"))
     for d in DASHBOARDS.dashboards:
         imgs.add(d.image_for("ordo"))
-    # substrate images (hardcoded in compose.py, no manifest): the project-namespaced core services
-    # + the patched llama.cpp build referenced via a model's catalog backend_image.
+    # substrate images (no manifest): the core services compose.py names + the patched llama.cpp
+    # build a model's catalog backend_image names.
     for name in SUBSTRATE_BUILD_CONTEXTS:
         imgs.add(f"ordo/{name}")
-    imgs.add("ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470")
     return {i for i in imgs if buildspec._is_project(i, "ordo")}
 
 
@@ -99,9 +98,9 @@ def test_external_agents_declared_out_of_band():
 
 
 def test_patched_llamacpp_resolves_via_substrate_not_substring():
-    """The patched llama.cpp build (image name has NO `ordo/` prefix) resolves through the substrate
-    map — the generic replacement for the deleted `'llamacpp-patched' in image` special-case."""
-    assert RESOLVE("ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470") == "services/llamacpp-patched"
+    """The patched llama.cpp build (named by a catalog `backend_image`, not a manifest) resolves through
+    the substrate map: the generic replacement for the deleted `'llamacpp-patched' in image` special-case."""
+    assert RESOLVE("ordo/llamacpp-patched:0123456789ab") == "services/llamacpp-patched"
 
 
 def test_build_field_is_not_rendered_into_compose():

@@ -35,8 +35,12 @@ PROFILE_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128,
                 "cpu_cores": 32, "platform": "Linux"}
 
 
-def _rc():
-    return render(Source.from_dict({"hardware": PROFILE_5090, "model": "auto", "plugins": "auto"}), CATALOG)
+def _rc(hardware=PROFILE_5090):
+    return render(Source.from_dict({"hardware": hardware, "model": "auto", "plugins": "auto"}), CATALOG)
+
+
+# A 5090 that reports its compute capability: the sizer picks a model that needs the patched sm_120 build.
+PROFILE_5090_SM120 = {**PROFILE_5090, "gpus": [{"name": "RTX 5090", "vram_gb": 32, "compute_cap": "12.0"}]}
 
 
 class FakeDocker:
@@ -221,15 +225,14 @@ def test_dry_run_builds_and_records_nothing(tmp_path):
 
 def test_first_party_set_covers_the_substrate_and_manifest_builds():
     for ident in ("ordo/ops-controller", "ordo/model-gateway", "ordo/gpu-gate", "ordo/dashboard",
-                  "ordo/agent-hermes", "ordo/rag-ingestion", "ordo/n8n-mcp"):
+                  "ordo/agent-hermes", "ordo/rag-ingestion", "ordo/n8n-mcp", "ordo/llamacpp-patched"):
         assert ident in FIRST_PARTY, ident
 
 
 def test_pinned_and_external_images_are_not_first_party():
-    # ltx-trainer and the patched llama.cpp carry their own pinned tags; openai-agent is built
-    # out of band. `ordo build` must not retag any of them.
+    # ltx-trainer carries its own pinned tag; openai-agent is built out of band. `ordo build` must not
+    # retag either.
     assert "ordo/ltx-trainer" not in FIRST_PARTY
-    assert "ordo-ai-stack-llamacpp-patched" not in FIRST_PARTY
     assert "ordo/agent-openai-agent" not in FIRST_PARTY
 
 
@@ -270,7 +273,7 @@ def test_render_pins_the_recorded_tag_and_leaves_the_rest_alone(tmp_path):
     assert refs["dashboard"] == "ordo/dashboard:current"            # not built yet
     # upstream and pinned images are untouched by the record
     assert refs["litellm-db"] == rc.compose_dict()["services"]["litellm-db"]["image"]
-    assert "@sha256:" in refs["llamacpp"] or refs["llamacpp"].startswith("ordo-ai-stack-llamacpp-patched:")
+    assert "@sha256:" in refs["llamacpp"] or refs["llamacpp"] == "ordo/llamacpp-patched:current"
 
 
 def test_every_rendered_first_party_ref_is_current_or_recorded(tmp_path):
@@ -450,19 +453,47 @@ def test_cli_up_builds_by_default_and_no_build_turns_it_off(monkeypatch, tmp_pat
     assert len(seen) == 1
 
 
-@pytest.mark.parametrize("hardware", [
-    PROFILE_5090,                                                        # patched build via catalog
-    {"gpus": [], "ram_gb": 32, "cpu_cores": 8, "platform": "Linux"},    # upstream CPU server image
-])
-def test_the_llamacpp_image_is_never_retagged_by_the_record(tmp_path, hardware):
-    """llama.cpp's image comes from the backend selector (a digest-pinned upstream image) or from a
-    model's catalog `backend_image` (the patched build, with its own pinned tag). Neither is an
-    `ordo build` image, so no record entry, even one naming it, changes what render writes."""
+def test_an_upstream_llamacpp_image_is_never_retagged_by_the_record(tmp_path):
+    """Without a special build, llama.cpp runs the backend selector's digest-pinned upstream image.
+    It is not an `ordo build` image, so no record entry, even one naming it, changes what render writes."""
+    hardware = {"gpus": [], "ram_gb": 32, "cpu_cores": 8, "platform": "Linux"}
     rc = render(Source.from_dict({"hardware": hardware, "model": "auto", "plugins": "auto"}), CATALOG)
     expected = rc.compose_dict()["services"]["llamacpp"]["image"]
-    assert images.has_tag(expected)
-    images.save_record(tmp_path, {"ordo-ai-stack-llamacpp-patched": "a" * 12,
-                                  "ghcr.io/ggml-org/llama.cpp": "b" * 12,
+    assert "@sha256:" in expected
+    images.save_record(tmp_path, {"ghcr.io/ggml-org/llama.cpp": "b" * 12,
                                   buildspec.image_ident(expected): "c" * 12})
     rc.write(tmp_path)
     assert _compose_images(tmp_path)["llamacpp"] == expected
+
+
+def test_the_patched_llamacpp_build_is_pinned_to_its_recorded_tag(tmp_path):
+    """The patched sm_120 build a catalog `backend_image` names is first-party: `ordo build` builds it
+    from services/llamacpp-patched and records the tag, and render pins the compose to it like every
+    other first-party image."""
+    rc = _rc(PROFILE_5090_SM120)
+    assert rc.model.backend_image == "ordo/llamacpp-patched"
+    rc.write(tmp_path)
+    assert _compose_images(tmp_path)["llamacpp"] == "ordo/llamacpp-patched:current"
+    images.save_record(tmp_path, {"ordo/llamacpp-patched": "a" * 12})
+    rc.write(tmp_path)
+    assert _compose_images(tmp_path)["llamacpp"] == "ordo/llamacpp-patched:" + "a" * 12
+
+
+def test_ordo_build_selects_the_patched_llamacpp_build(tmp_path):
+    rc = _rc(PROFILE_5090_SM120)
+    rc.write(tmp_path)
+    doc = yaml.safe_load((tmp_path / "docker-compose.yml").read_text(encoding="utf-8"))
+    assert images.select_images(doc, FIRST_PARTY, ["llamacpp"]) == ["ordo/llamacpp-patched"]
+    assert "ordo/llamacpp-patched" in images.select_images(doc, FIRST_PARTY, None)
+    target = images.build_target("ordo/llamacpp-patched", FIRST_PARTY["ordo/llamacpp-patched"], ROOT)
+    assert (target.context, target.dockerfile) == ("services/llamacpp-patched", "services/llamacpp-patched/Dockerfile")
+
+
+def test_every_catalog_backend_image_is_a_first_party_build():
+    """A special llama.cpp build is built by `ordo build`, never by hand under a hand-picked tag: its
+    catalog `backend_image` names an untagged first-party image, and render fills in the tag."""
+    special = {m.id: m.backend_image for m in CATALOG.models if m.backend_image}
+    assert special
+    for model_id, ref in special.items():
+        assert not images.has_tag(ref), f"{model_id}: {ref} carries its own tag; render owns it"
+        assert ref in FIRST_PARTY, f"{model_id}: {ref} is not an image `ordo build` manages"
