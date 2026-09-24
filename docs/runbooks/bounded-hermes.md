@@ -44,23 +44,25 @@ job at the edge, see the `ordo/control.py` module docstring).
 
 ## Audit log
 
-`ops-controller` appends JSONL records to `data/ops-controller/audit.log`
-(`AUDIT_LOG_PATH=/data/audit.log`) for `env/set`, image pulls, ComfyUI
-node-requirement installs and GPU-assign attempts:
+`ops-controller` appends one JSONL record to `data/ops-controller/audit.log`
+(`AUDIT_LOG_PATH=/data/audit.log`) for every state-changing call, refusals
+included; Hermes's calls carry `"caller":"hermes"` (schema:
+[data.md](../data.md#audit-log)):
 
 ```bash
 tail -f data/ops-controller/audit.log | jq
 ```
 
-Container and service lifecycle verbs are not audited. Rotation: at 50MB the
-file rolls to `audit.1.log`; one historical generation is kept
+Rotation: at 10 MB the file rolls to `audit.1.log`; five generations are kept
 (`ordo/audit.py`).
 
 ## Adding a new control-plane verb
 
 1. Write a failing test in `tests/substrate/` for the new route.
 2. Implement the handler on the control plane in `ordo/control.py` and add
-   it to `ControlPlane.route()`. Call `self._audit(...)` if it mutates state.
+   it to `ControlPlane.route()`. A `POST` is audited automatically; add its
+   `(action, target)` mapping to `_AUDIT_PATH_VERBS` or `_AUDIT_BODY_VERBS` so
+   the record names it (otherwise it is recorded as `unknown`).
 3. Add a method on `OpsClient` in `services/hermes/ops_client.py` and, if
    Hermes should call it as a tool, register it in the `ops-router` plugin.
 4. Rebuild the `ops-controller` and `agent-hermes` images, then recreate

@@ -74,6 +74,7 @@ def test_list_containers_includes_bearer(client):
         out = client.list_containers()
         request = mock.calls.last.request
         assert request.headers["Authorization"] == "Bearer test-token"
+        assert request.headers["X-Actor"] == "hermes"   # the caller ops-controller's audit log records
     assert out[0]["name"] == "a"
 
 

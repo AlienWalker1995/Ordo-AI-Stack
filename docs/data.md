@@ -37,21 +37,31 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 
 ### Audit Log
 
-**Location:** `data/ops-controller/audit.log`. Append-only JSONL.
+**Location:** `data/ops-controller/audit.log` (`AUDIT_LOG_PATH=/data/audit.log` in the container). Append-only JSONL, one fsync'd line per record.
+
+Every state-changing call to ops-controller (every `POST`, whatever the route) leaves exactly one record, whatever its outcome: success, dry run, refusal (`401` without the bearer, `409` during a GPU lease, `400` without `confirm`) or failure. Reads (`GET`) leave none. The records are written in one place, `ControlPlane.handle()` in `ordo/control.py`, so a new route is audited without opting in.
 
 ```json
-{"timestamp":"2026-03-22T10:00:00Z","action":"model_pulled","model":"qwen3:8b","status":"success"}
-{"timestamp":"2026-03-22T10:01:00Z","action":"service_started","service":"llamacpp","status":"success"}
+{"ts":1790281806.1,"caller":"dashboard","action":"restart","target":"n8n","result":"ok","method":"POST","path":"/services/n8n/restart","status":200,"dry_run":false,"confirm":true}
+{"ts":1790281810.4,"caller":"hermes","action":"start","target":"llamacpp","result":"refused","method":"POST","path":"/services/llamacpp/start","status":409,"dry_run":false,"confirm":true,"error":"'llamacpp' is evicted for a GPU lease held by ['gate-comfyui']; ..."}
+{"ts":1790281815.0,"caller":"gpu-gate","action":"lease.request","target":"gate-comfyui","result":"ok","method":"POST","path":"/jobs","status":200,"dry_run":false,"confirm":false,"detail":"granted"}
 ```
 
 | Field | Type | Description |
 |---|---|---|
-| `timestamp` | ISO 8601 | Event timestamp |
-| `action` | string | `model_pulled`, `service_started`, `env_set`, etc. |
-| `status` | string | `success`, `failed`, ... |
-| `model` / `service` / `component` | string (optional) | Action-specific target |
+| `ts` | float | Unix timestamp |
+| `caller` | string | The caller's `X-Actor` header (`dashboard`, `orchestration`, `hermes`, `gpu-gate`, `comfyui-mcp`), reduced to `[A-Za-z0-9_.:@-]`, at most 64 characters; `unknown` when absent. Self-declared: every caller holds the same bearer token |
+| `action` | string | `start`, `stop`, `restart`, `recreate`, `container.restart`, `compose.up`, `compose.down`, `compose.restart`, `model_config`, `plugin.enable`, `plugin.disable`, `lease.request`, `lease.heartbeat`, `lease.release`, `models.download`, `comfyui_pip_install`, `gpu_assign`; `unknown` for a path that is no route |
+| `target` | string | The service, container, plugin, model id, lease id or file the call names (empty for a whole-stack compose verb) |
+| `result` | string | `ok` (2xx/3xx), `refused` (4xx) or `error` (5xx) |
+| `method`, `path`, `status` | string, string, int | The request line and the HTTP status answered |
+| `dry_run`, `confirm` | bool | The request body's flags |
+| `error` | string (optional) | The answer's error message, at most 300 characters |
+| `detail` | string (optional) | For `lease.request`: `granted`, `queued` or `rejected` (a job the card can never hold) |
 
-Size-bounded: `ops-controller` rotates to `audit.log.1` when `AUDIT_LOG_MAX_BYTES` (default 10 MB) is exceeded.
+Nothing else from the request is recorded: no headers, no credential, and no body field beyond the one that names the target (a download URL's query string is dropped). Older records, from before every call was audited, have only `ts`, `caller`, `action`, `target`, `result` (and sometimes `detail`, `metadata`), and still read back.
+
+Size-bounded: when the live file reaches 10 MB it becomes `audit.1.log`, older generations shift up (`audit.2.log` ...), and five are kept, so the log never exceeds about 60 MB. `GET /audit?limit=N` (bearer-protected, `1 <= N <= 1000`) returns the newest `N` records across the generations, newest first; the dashboard's activity feed reads it.
 
 ### MCP Registry
 
@@ -151,7 +161,7 @@ Status: the dashboard's `GET /api/overview` reports the collection point count a
 
 ### Audit Logging
 
-`ops-controller` appends one JSONL line to `data/ops-controller/audit.log` for each state-changing control-plane call it audits (`env/set`, image pulls, ComfyUI node-requirement installs, GPU-assign attempts). Rotation by size (50MB, one generation kept); export by copying `data/ops-controller/audit.log*`.
+`ops-controller` appends one JSONL line to `data/ops-controller/audit.log` for every state-changing control-plane call, refusals included (schema: [Audit Log](#audit-log)). Rotation by size (10 MB, five generations kept); export by copying `data/ops-controller/audit*.log`.
 
 ### Hermes Runtime State
 
@@ -191,7 +201,7 @@ Hermes keeps its own state in the `hermes-home` named volume (mounted at `/home/
 
 1. `hermes-home` volume — agent brain (state, config, skills, cron)
 2. `qdrant-data`, `couchdb-data`, `n8n-data`, `open-webui-data` volumes — service state
-3. `data/ops-controller/audit.log*` — audit history
+3. `data/ops-controller/audit*.log` — audit history
 4. `ordo.yaml` and `out/secrets.env` — declarative source + operator secrets (**do not commit**)
 5. Model volumes (`models-gguf`, `comfyui-models`) are usually skipped — weights are
    re-downloadable (`ordo fetch` / `download_comfyui_model`), just expensive.
@@ -242,14 +252,14 @@ ordo up --all
 
 | Data | Action | Frequency |
 |---|---|---|
-| `data/ops-controller/audit.log` | Archive rotated files (`audit.log.1` etc.) | Monthly |
+| `data/ops-controller/audit.log` | Optional: archive rotated files (`audit.1.log` ... `audit.5.log`) before they age out; rotation bounds the size on its own | As needed |
 | `data/rag-input/` | Remove processed files | As needed |
 | `data/comfyui-storage/output/` | Prune old outputs | As needed |
 | `models-gguf` volume | Remove unused models | Quarterly |
 
 ```bash
-# Archive current audit log
-mv data/ops-controller/audit.log data/ops-controller/audit.log.$(date +%Y%m%d)
+# Archive the rotated audit generations (the live audit.log stays in place)
+mkdir -p audit-archive && cp data/ops-controller/audit.*.log audit-archive/
 
 # Prune GGUF models (list, then delete unused files inside the volume)
 docker run --rm -v ordo_models-gguf:/models alpine ls -la /models

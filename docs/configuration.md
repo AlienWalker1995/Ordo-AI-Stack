@@ -426,9 +426,8 @@ Old subpath URLs (`/chat`, `/dash`, `/n8n`, `/comfy`, `/hermes`, `/codebase-memo
 
 ## Audit Log Schema
 
-`data/ops-controller/audit.log` is JSONL, append-only, one event per line:
+`data/ops-controller/audit.log` is JSONL, append-only, one record per state-changing call (refusals included). The schema, the rotation and `GET /audit` are documented in [data.md](data.md#audit-log).
 
 ```json
-{"ts":1774173600.12,"caller":"dashboard","action":"env_set","target":"LLAMACPP_CTX_SIZE","result":"ok","detail":"len=6"}
-{"ts":1774173660.48,"caller":"dashboard","action":"pull","target":"ghcr.io/example/image:1.2.3","result":"ok"}
+{"ts":1790281806.1,"caller":"dashboard","action":"restart","target":"n8n","result":"ok","method":"POST","path":"/services/n8n/restart","status":200,"dry_run":false,"confirm":true}
 ```
