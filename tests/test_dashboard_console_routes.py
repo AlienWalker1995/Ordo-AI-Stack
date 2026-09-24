@@ -41,6 +41,11 @@ OPS = {
         "voice-stt": {"service": "stt", "gpu_uuid": SMALL},
     }},
     "/model-config": {"source_model": "auto", "active_model": "turbo", "active_file": GPU_FILE, "ctx_size": 106496,
+                      "active_mmproj": "vision.gguf",
+                      "model_files": [{"file": GPU_FILE, "service": "llamacpp", "optional": False},
+                                      {"file": "vision.gguf", "service": "llamacpp", "optional": True},
+                                      {"file": CPU_FILE, "service": "llamacpp-cpu", "optional": False},
+                                      {"file": EMBED_FILE, "service": "llamacpp-embed", "optional": False}],
                       "available": [{"id": "turbo", "tier": "ultra", "vram_gb": 24, "file": GPU_FILE},
                                     {"id": "absent", "tier": "ultra", "vram_gb": 24, "file": "absent.gguf"}]},
     "/jobs/history": {"history": [{"id": "train-lora", "kind": "train", "started": 100.0, "ended": 200.0,
@@ -267,41 +272,55 @@ def test_a_failed_recreate_rolls_the_render_back(live):
     assert calls[-1] == ("/model-config", {"model": "auto"})  # the source is back where it was
 
 
-def test_delete_refuses_while_the_registry_is_unreadable(live, tmp_path):
+def test_delete_refuses_while_the_control_plane_is_unreadable(live, tmp_path):
     (tmp_path / "spare.gguf").write_bytes(b"x")
 
     async def ops_json(path):
-        return None if path == "/registry/models" else OPS.get(path)
+        return None if path == "/model-config" else OPS.get(path)
 
-    with patch.object(routes_console, "GGUF_DIR", tmp_path), \
-         patch.object(routes_console, "_ops_json", side_effect=ops_json):
+    with patch.object(routes_console, "GGUF_DIR", tmp_path),          patch.object(routes_console, "_ops_json", side_effect=ops_json):
         r = live.post("/api/models/delete", json={"file": "spare.gguf"})
     assert r.status_code == 503
     assert (tmp_path / "spare.gguf").exists()
 
 
-def test_delete_refuses_while_a_model_server_is_not_reporting(live, tmp_path):
-    # The CPU fallback's file is only known from what it serves; while it restarts, any file
-    # might be the one it is about to load.
+def test_delete_refuses_when_the_control_plane_does_not_list_the_rendered_files(live, tmp_path):
+    # An ops-controller older than the render-derived answer: which files are in use is unknown.
     (tmp_path / "spare.gguf").write_bytes(b"x")
-    with patch.object(routes_console, "GGUF_DIR", tmp_path), \
-         patch.object(routes_console, "_served", new=AsyncMock(return_value={**SERVED, "cpu": None})):
+    older = {k: v for k, v in OPS["/model-config"].items() if k != "model_files"}
+
+    async def ops_json(path):
+        return older if path == "/model-config" else OPS.get(path)
+
+    with patch.object(routes_console, "GGUF_DIR", tmp_path),          patch.object(routes_console, "_ops_json", side_effect=ops_json):
         r = live.post("/api/models/delete", json={"file": "spare.gguf"})
     assert r.status_code == 503
     assert (tmp_path / "spare.gguf").exists()
 
 
-def test_delete_protects_the_active_model_file_even_if_the_registry_omits_it(live, tmp_path):
-    (tmp_path / GPU_FILE).write_bytes(b"x")
-
-    async def ops_json(path):
-        return {"models": {}} if path == "/registry/models" else OPS.get(path)
-
-    with patch.object(routes_console, "GGUF_DIR", tmp_path), \
-         patch.object(routes_console, "_ops_json", side_effect=ops_json):
-        r = live.post("/api/models/delete", json={"file": GPU_FILE})
+@pytest.mark.parametrize("name", [CPU_FILE, EMBED_FILE, "vision.gguf", GPU_FILE])
+def test_delete_protects_every_rendered_file_while_no_server_answers(live, tmp_path, name):
+    # A stopped, evicted or restarting server loads the render's file when it comes back.
+    (tmp_path / name).write_bytes(b"x")
+    with patch.object(routes_console, "GGUF_DIR", tmp_path),          patch.object(routes_console, "_served",
+                      new=AsyncMock(return_value={"gpu": None, "cpu": None, "embed": None})):
+        r = live.post("/api/models/delete", json={"file": name})
     assert r.status_code == 409
-    assert (tmp_path / GPU_FILE).exists()
+    assert (tmp_path / name).exists()
+
+
+def test_delete_does_not_consult_the_retired_registry(live, tmp_path):
+    (tmp_path / "spare.gguf").write_bytes(b"x")
+    paths = []
+
+    async def ops_json(path):
+        paths.append(path)
+        return OPS.get(path)
+
+    with patch.object(routes_console, "GGUF_DIR", tmp_path),          patch.object(routes_console, "_ops_json", side_effect=ops_json):
+        r = live.post("/api/models/delete", json={"file": "spare.gguf"})
+    assert r.status_code == 200
+    assert "/registry/models" not in paths
 
 
 def test_delete_is_refused_while_a_switch_is_running(live, tmp_path, dashboard_operator_headers):

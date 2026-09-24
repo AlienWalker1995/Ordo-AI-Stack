@@ -206,13 +206,13 @@ def restart_comfyui(confirm: bool = False) -> dict:
 
 @mcp.tool()
 def list_models() -> dict:
-    """List all managed models (registry): id, kind, service, gpu_uuid, enabled, source."""
+    """Every model the current render serves: id, kind, service, source.file, gpu_uuid, config (ctx, mmproj)."""
     return _get("/api/orchestration/registry/models")
 
 
 @mcp.tool()
 def gpu_status() -> dict:
-    """Live GPU VRAM/util + which models are assigned to each GPU."""
+    """Live GPU VRAM/util + which models the render pins to each GPU."""
     return _get("/api/orchestration/registry/gpus")
 
 

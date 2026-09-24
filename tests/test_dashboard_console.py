@@ -257,8 +257,16 @@ def test_activity_is_capped():
 
 # --- models ---
 
+# The render's answer (ops-controller /model-config): every file a rendered service loads.
+MODEL_FILES = [
+    {"file": GPU_FILE, "service": "llamacpp", "optional": False},
+    {"file": MMPROJ_FILE, "service": "llamacpp", "optional": True},
+    {"file": CPU_FILE, "service": "llamacpp-cpu", "optional": False},
+    {"file": EMBED_FILE, "service": "llamacpp-embed", "optional": False},
+]
 MODEL_CONFIG = {
     "active_model": "qwen3.8-27b-turbo-fable-q6", "active_file": GPU_FILE, "ctx_size": 106496,
+    "active_mmproj": MMPROJ_FILE, "model_files": MODEL_FILES,
     "available": [
         {"id": "qwen3.8-27b-turbo-fable-q6", "tier": "ultra", "vram_gb": 24.0, "file": GPU_FILE},
         {"id": "qwen3.8-27b-q6", "tier": "ultra", "vram_gb": 24.0, "file": "Qwen3.8-27B-Q6_K.gguf"},
@@ -276,7 +284,7 @@ THROUGHPUT = {"models": {GPU_FILE: {"p50": 22.2, "sample_count": 500}, CPU_FILE:
 
 
 def test_model_slots_come_from_what_each_server_loaded():
-    m = console.model_slots(MODEL_CONFIG, SERVED, DISK, REGISTRY, THROUGHPUT)
+    m = console.model_slots(MODEL_CONFIG, SERVED, DISK, THROUGHPUT)
     assert m["gpu"]["file"] == GPU_FILE and m["gpu"]["catalog_id"] == "qwen3.8-27b-turbo-fable-q6"
     assert m["gpu"]["p50"] == 22.2 and m["gpu"]["ctx"] == 106496
     assert m["cpu"]["file"] == CPU_FILE and m["cpu"]["p50"] == 2.7
@@ -284,7 +292,7 @@ def test_model_slots_come_from_what_each_server_loaded():
 
 
 def test_catalog_entries_without_a_file_on_disk_are_not_installed():
-    m = console.model_slots(MODEL_CONFIG, SERVED, DISK, REGISTRY, THROUGHPUT)
+    m = console.model_slots(MODEL_CONFIG, SERVED, DISK, THROUGHPUT)
     by_id = {c["id"]: c for c in m["catalog"]}
     assert by_id["qwen3.8-27b-turbo-fable-q6"]["installed"] is True
     assert by_id["qwen3.8-27b-turbo-fable-q6"]["active"] is True
@@ -292,18 +300,36 @@ def test_catalog_entries_without_a_file_on_disk_are_not_installed():
 
 
 def test_files_in_use_by_any_server_are_marked_and_the_rest_are_not():
-    m = console.model_slots(MODEL_CONFIG, SERVED, DISK, REGISTRY, THROUGHPUT)
+    m = console.model_slots(MODEL_CONFIG, SERVED, DISK, THROUGHPUT)
     used = {f["name"]: f["in_use"] for f in m["files"]}
     assert used[GPU_FILE] and used[CPU_FILE] and used[EMBED_FILE] and used[MMPROJ_FILE]
     assert used["old-experiment.gguf"] is False
 
 
 def test_in_use_files_is_the_single_answer_for_delete_guards():
-    assert console.in_use_files(SERVED, REGISTRY) == {GPU_FILE, CPU_FILE, EMBED_FILE, MMPROJ_FILE}
+    assert console.in_use_files(SERVED, MODEL_CONFIG) == {GPU_FILE, CPU_FILE, EMBED_FILE, MMPROJ_FILE}
+
+
+def test_every_file_the_render_loads_is_in_use_even_while_no_server_answers():
+    """A server that is down, evicted or restarting loads the render's file when it comes back."""
+    nothing_served = {"gpu": None, "cpu": None, "embed": None}
+    assert console.in_use_files(nothing_served, MODEL_CONFIG) == {GPU_FILE, CPU_FILE, EMBED_FILE, MMPROJ_FILE}
+
+
+def test_after_a_switch_the_new_projector_is_in_use_and_the_old_one_is_not():
+    """The render names the projector the next load uses. The retired registry file kept naming
+    the old one, which left the new projector deletable while llama.cpp was evicted."""
+    switched = {**MODEL_CONFIG, "active_mmproj": "new-vision.gguf", "model_files": [
+        {"file": GPU_FILE, "service": "llamacpp", "optional": False},
+        {"file": "new-vision.gguf", "service": "llamacpp", "optional": True},
+    ]}
+    used = console.in_use_files({"gpu": None, "cpu": None, "embed": None}, switched)
+    assert "new-vision.gguf" in used and MMPROJ_FILE not in used
 
 
 def test_a_server_that_did_not_answer_and_has_no_declaration_leaves_its_slot_unknown():
-    m = console.model_slots(MODEL_CONFIG, {"gpu": None, "cpu": CPU_FILE, "embed": None}, DISK, {}, THROUGHPUT)
+    m = console.model_slots({**MODEL_CONFIG, "active_file": None},
+                            {"gpu": None, "cpu": CPU_FILE, "embed": None}, DISK, THROUGHPUT)
     assert m["gpu"]["file"] is None and m["gpu"]["catalog_id"] == "qwen3.8-27b-turbo-fable-q6"
 
 
@@ -391,12 +417,12 @@ def test_an_evicted_gpu_models_file_is_still_in_use():
     """During a render the GPU server is stopped, so it reports nothing loaded. Its file is still
     the active model and must not become deletable for the length of the render."""
     served_mid_render = {"gpu": None, "cpu": CPU_FILE, "embed": EMBED_FILE}
-    assert GPU_FILE in console.in_use_files(served_mid_render, REGISTRY)
+    assert GPU_FILE in console.in_use_files(served_mid_render, MODEL_CONFIG)
 
 
-def test_the_gpu_slot_falls_back_to_the_registry_while_the_server_is_evicted():
+def test_the_gpu_slot_falls_back_to_the_rendered_model_while_the_server_is_evicted():
     m = console.model_slots(MODEL_CONFIG, {"gpu": None, "cpu": CPU_FILE, "embed": EMBED_FILE},
-                            DISK, REGISTRY, THROUGHPUT)
+                            DISK, THROUGHPUT)
     assert m["gpu"]["file"] == GPU_FILE and m["gpu"]["p50"] == 22.2 and m["gpu"]["loaded"] is False
 
 

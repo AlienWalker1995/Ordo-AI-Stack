@@ -25,7 +25,7 @@ agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>
 |----------|--------|-------------|
 | `/health`, `/healthz` | GET | Liveness |
 | `/status` | GET | GPU/scheduler state + the current rendered manifest |
-| `/model-config` | GET | Source model, resolved active model, tier, ctx size, catalog |
+| `/model-config` | GET | Source model, resolved active model, its file and projector, every file the render loads (`model_files`), tier, ctx size, catalog |
 | `/model-config` | POST | Switch active model (`{"model": "<id>"|"auto"}`); rewrites `ordo.yaml` and re-renders |
 | `/plugins` | GET | Installable plugins and their state |
 | `/plugins/{id}/enable`, `/plugins/{id}/disable` | POST | Add/remove an allowlisted plugin in `ordo.yaml` |
@@ -51,8 +51,8 @@ agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/registry/models` | GET | Runtime model registry (`/data/model-registry.json`) |
-| `/registry/gpus` | GET | GPUs seen by nvidia-smi |
+| `/registry/models` | GET | Every model the current render serves (file, GPU pin, ctx, projector), derived on each call |
+| `/registry/gpus` | GET | GPUs seen by nvidia-smi, with the models the render pins to each |
 | `/gpu/assignments` | GET | Current GPU pins |
 | `/gpu/assign`, `/registry/models/{id}/assign-gpu` | POST | 410: GPU pins are render-time (`ordo.yaml`) |
 | `/models/download`, `/models/download/status` | POST, GET | Resumable download of one allowlisted-host URL into the ComfyUI models volume |
@@ -94,4 +94,4 @@ request should require ops-controller success to complete a chat or tool call.
 
 - Docker socket (`/var/run/docker.sock`), guard-scoped to `<project>-*`
 - Rendered config dir mounted read-write at `/config` (source `ordo.yaml` + rendered `out/`), the single write path for a model switch
-- `${DATA_PATH}/ops-controller` at `/data` (model registry + audit log)
+- `${DATA_PATH}/ops-controller` at `/data` (audit log)

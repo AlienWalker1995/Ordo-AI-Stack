@@ -184,7 +184,7 @@ def _ops_controller(project: str, net: str, env_file: str, nvidia_gpu: bool) -> 
     s["volumes"] = [
         "/var/run/docker.sock:/var/run/docker.sock",  # broker start/stop (guard-scoped)
         "./:/config",                                 # ordo.yaml + rendered out/ (single write path)
-        "${DATA_PATH:?DATA_PATH must be set (non-empty)}/ops-controller:/data",  # model registry + audit log (same as ops-api)
+        "${DATA_PATH:?DATA_PATH must be set (non-empty)}/ops-controller:/data",  # audit log
         "comfyui-models:/models/comfyui",             # shared ComfyUI model store (same as ops-api)
         # ComfyUI's app tree, read-only: /comfyui/install-node-requirements has to see whether a
         # custom-node pack ships a requirements.txt before it runs pip inside the comfyui
@@ -195,7 +195,6 @@ def _ops_controller(project: str, net: str, env_file: str, nvidia_gpu: bool) -> 
     ]
     s["environment"] = {
         "ORDO_PROJECT": project,
-        "MODEL_REGISTRY_PATH": "/data/model-registry.json",
         "COMFYUI_MODELS_DIR": "/models/comfyui",
         "COMFYUI_CUSTOM_NODES_DIR": "/comfyui-app/ComfyUI/custom_nodes",
         "COMFYUI_CONTAINER_NAME": f"{project}-comfyui-1",
