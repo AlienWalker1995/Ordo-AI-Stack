@@ -252,12 +252,6 @@ def _identity(git: GitLike, inputs: Sequence[str]) -> tuple[str, str, bool]:
     return commit, tag, dirty
 
 
-def content_tag(git: GitLike, inputs: Sequence[str]) -> tuple[str, bool]:
-    """(tag, dirty) for an image whose build inputs are `inputs`."""
-    _, tag, dirty = _identity(git, inputs)
-    return tag, dirty
-
-
 # --- building ---
 
 

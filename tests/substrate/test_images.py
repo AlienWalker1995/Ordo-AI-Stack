@@ -110,19 +110,26 @@ def test_malformed_record_is_an_error_not_a_silent_fallback(tmp_path, text):
 # --- tag derivation ---
 
 
-def test_tag_is_the_short_commit_that_last_changed_the_inputs():
+def _recorded_tag(git, inputs: tuple[str, ...], out_dir: Path) -> str:
+    """The tag `ordo build` records for an image whose build inputs are `inputs`."""
+    target = images.BuildTarget("ordo/x", f"{inputs[0]}/Dockerfile", inputs[0], inputs)
+    assert images.build_images([target], git=git, docker=FakeDocker(), out_dir=out_dir) == 0
+    return images.load_record(out_dir)["ordo/x"]
+
+
+def test_tag_is_the_short_commit_that_last_changed_the_inputs(tmp_path):
     git = FakeGit({("services/gpu-gate",): "0123456789abcdef" * 2 + "01234567"})
-    assert images.content_tag(git, ("services/gpu-gate",)) == ("0123456789ab", False)
+    assert _recorded_tag(git, ("services/gpu-gate",), tmp_path) == "0123456789ab"
 
 
-def test_uncommitted_changes_to_the_inputs_add_dirty():
+def test_uncommitted_changes_to_the_inputs_add_dirty(tmp_path):
     git = FakeGit({("services/gpu-gate",): "0123456789ab" + "0" * 28}, dirty={("services/gpu-gate",)})
-    assert images.content_tag(git, ("services/gpu-gate",)) == ("0123456789ab-dirty", True)
+    assert _recorded_tag(git, ("services/gpu-gate",), tmp_path) == "0123456789ab-dirty"
 
 
-def test_never_committed_inputs_fall_back_to_head_and_are_dirty():
+def test_never_committed_inputs_fall_back_to_head_and_are_dirty(tmp_path):
     git = FakeGit({}, dirty={("services/new",)}, head="abcdefabcdef" + "0" * 28)
-    assert images.content_tag(git, ("services/new",)) == ("abcdefabcdef-dirty", True)
+    assert _recorded_tag(git, ("services/new",), tmp_path) == "abcdefabcdef-dirty"
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -148,11 +155,12 @@ def test_real_git_tags_follow_only_their_own_context(tmp_path):
     second = _git(repo, "rev-parse", "HEAD")
 
     git = images.Git(repo)
-    assert images.content_tag(git, ("services/a",)) == (first[:12], False)
-    assert images.content_tag(git, ("services/b",)) == (second[:12], False)
+    out = tmp_path / "out"
+    assert _recorded_tag(git, ("services/a",), out) == first[:12]
+    assert _recorded_tag(git, ("services/b",), out) == second[:12]
     (repo / "services" / "a" / "extra.txt").write_text("untracked\n", encoding="utf-8")
-    assert images.content_tag(git, ("services/a",)) == (first[:12] + "-dirty", True)
-    assert images.content_tag(git, ("services/b",)) == (second[:12], False)
+    assert _recorded_tag(git, ("services/a",), out) == first[:12] + "-dirty"
+    assert _recorded_tag(git, ("services/b",), out) == second[:12]
 
 
 def test_root_context_image_is_identified_by_the_dockerignore_allowlist():
