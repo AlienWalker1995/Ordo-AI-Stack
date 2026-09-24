@@ -12,20 +12,22 @@ compose_profile: search
 env:
   SEARXNG_ENABLED: "1"
 secrets:
-  # SEARXNG_SECRET is the server.secret_key. V1 keeps it in data/searxng/settings.yml (the bind
-  # mount); the operator manages it out-of-band. Declared here so it lands in secrets.env.example.
+  # SEARXNG_SECRET is the server.secret_key (SearXNG reads it from this env var); the tracked
+  # settings carry none. Declared here so it lands in secrets.env.example.
   - SEARXNG_SECRET
 services:
   - name: searxng
     # Pinned by tag + digest. Upstream engines change their anti-bot pages often; an old build gets
     # CAPTCHAs from every scraped engine (2026.4.22 returned 0 results for everything). Bump it.
     image: searxng/searxng:2026.9.23-3cd69d30e@sha256:bcfaed4091d59f7ce85670bd701a2d0295872196dc19908a3965a8353b149f83
-    secrets: [SEARXNG_SECRET]   # overrides settings.yml's secret_key
+    secrets: [SEARXNG_SECRET]
     env:
-      SEARXNG_SETTINGS_PATH: /etc/searxng/settings.yml
+      # The tracked settings (engine selection), read-only and outside /etc/searxng, which the
+      # image's entrypoint owns (it chowns it and seeds a template settings.yml there).
+      SEARXNG_SETTINGS_PATH: /etc/ordo-searxng/settings.yml
       SEARXNG_BASE_URL: http://searxng:8080/
     volumes:
-      - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/searxng:/etc/searxng
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/services/searxng-web/settings:/etc/ordo-searxng:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://localhost:8080/healthz | grep -q OK || exit 1"]
       start_period: 30s

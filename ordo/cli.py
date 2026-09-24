@@ -21,6 +21,8 @@ import shutil
 import sys
 from pathlib import Path
 
+import yaml
+
 from . import bringup, doctor, fetch, gpu, images, native, parity, preflight, remote, served_models, wizard
 from .catalog import Catalog
 from .config import Source
@@ -561,7 +563,25 @@ def cmd_up(args: argparse.Namespace) -> int:
 
 
 def cmd_recreate(args: argparse.Namespace) -> int:
-    return bringup.bring_up(args.out, args.project, args.services, whole_stack=False,
+    if bool(args.services) == bool(args.reading):
+        print("ordo recreate: give exactly one of SERVICE... or --reading KEY...", file=sys.stderr)
+        return 1
+    services = list(args.services)
+    if args.reading:
+        # The services that read the keys, from the render: after a secret rotation this is the
+        # set that must be recreated (a restart keeps the old environment).
+        try:
+            doc = bringup.load_compose(Path(args.out).resolve().as_posix())
+        except (OSError, yaml.YAMLError) as e:
+            print(f"cannot read {args.out}/{bringup.COMPOSE_FILE} ({e}); render first: "
+                  "ordo --source out/ordo.yaml render --out out", file=sys.stderr)
+            return 1
+        services = bringup.readers_of(doc, args.reading)
+        if not services:
+            print(f"no rendered service reads {', '.join(args.reading)}; nothing to recreate")
+            return 0
+        print(f"services reading {', '.join(args.reading)}: {' '.join(services)}")
+    return bringup.bring_up(args.out, args.project, services, whole_stack=False,
                             with_profiles=True, force_recreate=True, dry_run=args.dry_run,
                             build=not args.no_build)
 
@@ -756,7 +776,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="do not download the model files the starting services need into the models "
                          "volume (a service whose file is missing then fails to load it)")
     prc = sub.add_parser("recreate", help="force-recreate services (refuses an evicted GPU resident)")
-    prc.add_argument("services", nargs="+", metavar="SERVICE")
+    prc.add_argument("services", nargs="*", metavar="SERVICE")
+    prc.add_argument("--reading", nargs="+", metavar="KEY", default=[],
+                     help="instead of naming services, recreate every long-running service whose rendered "
+                          "definition reads one of these keys (after rotating secrets)")
     for sp, func in ((pu, cmd_up), (prc, cmd_recreate)):
         sp.add_argument("--out", default="out", help="the rendered stack directory (default: out)")
         sp.add_argument("--project", default="ordo", help="compose project name (default: ordo)")

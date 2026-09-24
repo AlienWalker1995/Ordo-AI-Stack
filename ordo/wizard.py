@@ -270,19 +270,12 @@ def build_source(answers: dict[str, Any] | None = None) -> dict[str, Any]:
         hardware ('auto'|spec), tier, model, agent, dashboard,
         plugins ('auto'|list) — the RESOLVED plugin selection,
         overrides (dict),
-        caddy_hostname, caddy_domain, caddy_bind — edge access, folded into `site:`,
-        site (dict) — extra verbatim env keys, merged under the caddy_* ones.
+        site (dict): verbatim env keys. Remote access (the edge's CADDY_* keys) is written by
+        `ordo remote enable`, not here.
     """
     a = answers or {}
 
     site: dict[str, Any] = dict(a.get("site", {}) or {})
-    host = str(a.get("caddy_hostname", "") or "").strip()
-    if host:
-        site["CADDY_TAILNET_HOSTNAME"] = host
-        site["CADDY_TAILNET_DOMAIN"] = str(a.get("caddy_domain") or tailnet_domain(host))
-    bind = str(a.get("caddy_bind", "") or "").strip()
-    if bind:
-        site["CADDY_BIND"] = bind
 
     src: dict[str, Any] = {
         "hardware": a.get("hardware", "auto"),
@@ -419,7 +412,6 @@ class WizardResult:
     source_path: Path
     secrets_path: Path
     generated_secret_keys: list[str]
-    provided_secret_keys: list[str]
     blank_secret_keys: list[str]
     compose_profiles: list[str]
     warnings: list[str]
@@ -679,7 +671,7 @@ def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
     # Render in-memory (writes NOTHING) purely to learn the exact secret KEY set the selected
     # stack needs + its compose profiles — data-driven, so the wizard never hardcodes a key list.
     rc = render(Source.from_dict(source), catalog, registry)
-    values, gen, given, blank = resolve_secrets(rc.required_secrets, provided)
+    values, gen, _given, blank = resolve_secrets(rc.required_secrets, provided)
     secrets_path = write_secrets(values, out / "secrets.env")
 
     # The edge and what depends on it are off because remote access is off: that is the local
@@ -690,7 +682,7 @@ def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
 
     return WizardResult(
         source_path=source_path, secrets_path=secrets_path,
-        generated_secret_keys=gen, provided_secret_keys=given,
+        generated_secret_keys=gen,
         blank_secret_keys=[k for k in blank if k not in rc.optional_secrets],
         optional_blank_secret_keys=[k for k in blank if k in rc.optional_secrets],
         compose_profiles=rc.compose_profiles,

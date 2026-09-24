@@ -51,18 +51,20 @@ on, no service receives it and the sign-in route answers 404.
 
 ## Edit the allowlist
 
-Edit `auth/oauth2-proxy/emails.txt`, then `docker compose restart
-oauth2-proxy`. Sessions for removed emails stay valid until cookie
+Edit `auth/oauth2-proxy/emails.txt` (or run `ordo remote enable`), then
+`ordo recreate oauth2-proxy` from the repo root (the file is bind-mounted and
+read at start). Sessions for removed emails stay valid until cookie
 expiry (24h max); to force-invalidate, rotate the cookie secret (below).
 
 ## Cookie / session rotation
 
 ```
 NEW_SECRET=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 32)
-# set OAUTH2_PROXY_COOKIE_SECRET in .env to $NEW_SECRET
-docker compose restart oauth2-proxy
+# set OAUTH2_PROXY_COOKIE_SECRET in out/secrets.env to $NEW_SECRET
+ordo recreate oauth2-proxy
 ```
-Rotating the secret invalidates every session — everyone re-authenticates.
+A plain container restart keeps the old environment, so the new secret only loads on a recreate.
+Rotating the secret invalidates every session: everyone re-authenticates.
 
 ## Tailscale cert renewal
 
@@ -74,7 +76,10 @@ tailscale cert \
   ordo.<tailnet>.ts.net
 ordo recreate caddy
 ```
-A monthly cron (`0 4 1 * *`) running the above stays ahead of expiry.
+Renewal is manual: no job in the repo, the Hermes cron or the host scheduler runs it. Check the
+expiry with `openssl x509 -enddate -noout -in auth/caddy/certs/tailnet.crt` and renew a couple of
+weeks ahead (note the date in a calendar). `ordo remote enable` offers the same `tailscale cert`
+call with these file names.
 
 Run the renewal from the repo root. hermes-dashboard and the tailnet sidecars share caddy's network
 namespace, and `ordo recreate caddy` recreates them in the same call. The dashboard's Restart
@@ -99,7 +104,7 @@ When Google sign-in is unreachable, all browser paths fail. Two levers:
 
 ## Recovery — oauth2-proxy crash
 
-`docker compose restart oauth2-proxy` (Caddy's `forward_auth` retries
+`ordo recreate oauth2-proxy` from the repo root (Caddy's `forward_auth` retries
 automatically). If it's unhealthy on boot, check
 `docker logs ordo-oauth2-proxy-1` — the most common cause is an
 `OAUTH2_PROXY_COOKIE_SECRET` that isn't exactly 16/24/32 bytes.

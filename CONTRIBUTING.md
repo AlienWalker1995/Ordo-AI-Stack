@@ -9,11 +9,11 @@ Thanks for contributing to Ordo.
 - **Tests (no host Python needed)** — run in a throwaway container:
   ```bash
   docker run --rm -v "$PWD:/w" -w /w python:3.11-slim \
-    sh -c "pip install -q pyyaml pytest && python -m pytest -q tests/substrate"
+    sh -c "pip install -q -r requirements-dev.txt && PYTHONPATH=. python -m pytest -q tests/substrate"
   ```
-  (or `pip install -e .` then `python -m pytest tests/substrate` from the repo root, with `PYTHONPATH=.`). CI runs a path-gated `substrate` job — see `.github/workflows/ci.yml`.
-- **Render + deploy** — edit the declarative source `ordo.yaml`, then `ordo render` and bring up the rendered compose from `out/` (`docker compose -p ordo …`). Never hand-edit `out/*` — it's regenerated. See [`docs/operator-guide.md`](docs/operator-guide.md).
-- **Service images** build from `services/<id>/` (each has a README with the exact context).
+  (or `pip install -r requirements-dev.txt` then `PYTHONPATH=. python -m pytest tests/substrate` from the repo root). The main suite is `pip install -r tests/requirements.txt`, then `python -m pytest tests/ -q --ignore=tests/substrate`. CI runs both, the substrate job path-gated; see `.github/workflows/ci.yml`.
+- **Render + deploy:** edit the declarative source (`out/ordo.yaml`), then `python -m ordo --source out/ordo.yaml render --out out` and `ordo up --all` from the repo root (never a hand-assembled compose bring-up). Never hand-edit `out/*`: it's regenerated. See [`docs/operator-guide.md`](docs/operator-guide.md).
+- **Service images** (`ordo/<name>`) are built by `ordo build <svc>` (or `ordo build --all`), which tags each with the commit that last changed its build context; never by hand.
 
 ## Edge serving contract
 

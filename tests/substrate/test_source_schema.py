@@ -64,8 +64,8 @@ def test_wizard_written_source_loads(tmp_path):
                      "platform": "Linux"},
         "tier": "high", "model": "auto", "plugins": ["comfyui"],
         "overrides": {"llamacpp": {"ctx_size": 131072}},
-        "caddy_hostname": "ordo.tail1234.ts.net", "caddy_bind": "0.0.0.0",
-        "site": {"DATA_PATH": "/srv/ordo/data", "BASE_PATH": "/srv/ordo"},
+        "site": {"DATA_PATH": "/srv/ordo/data", "BASE_PATH": "/srv/ordo",
+                 "CADDY_TAILNET_HOSTNAME": "ordo.tail1234.ts.net", "CADDY_BIND": "0.0.0.0"},
     })
     path = wizard.write_source(src, tmp_path / "ordo.yaml")
     loaded = Source.load(path)

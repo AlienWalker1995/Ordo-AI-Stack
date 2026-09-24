@@ -17,8 +17,8 @@ The CPU pin is the same digest llamacpp-cpu and llamacpp-embed already run
 (tests/substrate/test_llamacpp_backend.py holds the three together). Bump every backend to one
 new build together, re-resolving each digest.
 
-A catalog model may still pin a special build (`backend_image`, e.g. the patched sm_120-only
-image); it then declares `requires.min_compute_cap`, and catalog.fits keeps it off GPUs that
+A catalog model may still pin a special build (`backend_image`, e.g. the first-party patched
+sm_120-only image `ordo/llamacpp-patched`); it then declares `requires.min_compute_cap`, and catalog.fits keeps it off GPUs that
 build cannot run on.
 """
 from __future__ import annotations

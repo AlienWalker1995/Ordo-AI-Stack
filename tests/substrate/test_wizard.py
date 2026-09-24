@@ -46,15 +46,6 @@ def test_build_source_honors_answers():
     Source.from_dict(src)
 
 
-def test_build_source_folds_access_into_site():
-    src = wizard.build_source({"caddy_hostname": "ordo.tail1234.ts.net", "caddy_bind": "0.0.0.0"})
-    site = src["site"]
-    assert site["CADDY_TAILNET_HOSTNAME"] == "ordo.tail1234.ts.net"
-    assert site["CADDY_TAILNET_DOMAIN"] == "tail1234.ts.net"     # derived from the hostname
-    assert site["CADDY_BIND"] == "0.0.0.0"
-    Source.from_dict(src)                            # site must stay a valid source
-
-
 def test_plugins_from_capabilities():
     all_ids = [p.id for p in REGISTRY.plugins]
     # every optional capability kept → "auto"
@@ -100,7 +91,8 @@ def test_resolve_secrets_honors_provided():
 def test_run_headless_writes_valid_source_and_secrets(tmp_path):
     # the non-interactive install path: answers -> ordo.yaml + secrets.env, render must accept it
     result = wizard.run(CATALOG, REGISTRY, tmp_path, interactive=False,
-                        answers={"caddy_hostname": "ordo.tail1234.ts.net", "caddy_bind": "0.0.0.0"})
+                        answers={"site": {"CADDY_TAILNET_HOSTNAME": "ordo.tail1234.ts.net",
+                                          "CADDY_BIND": "0.0.0.0"}})
     assert result.source_path.exists() and result.secrets_path.exists()
 
     # ordo.yaml renders end-to-end
@@ -124,13 +116,13 @@ def test_run_headless_full_answers_render(tmp_path):
     result = wizard.run(CATALOG, REGISTRY, tmp_path, interactive=False, answers={
         "model": "auto", "tier": "auto",
         "plugins": wizard.plugins_from_capabilities(kept, all_ids),
-        "caddy_hostname": "ordo.tail1234.ts.net", "caddy_bind": "100.64.0.1",
+        "site": {"CADDY_TAILNET_HOSTNAME": "ordo.tail1234.ts.net", "CADDY_BIND": "100.64.0.1"},
         "secrets": {"HF_TOKEN": "hf_x", "OAUTH2_PROXY_CLIENT_ID": "cid"},
     })
     src = Source.load(result.source_path)
     render(src, CATALOG, REGISTRY)   # must not raise
     assert src.site["CADDY_BIND"] == "100.64.0.1"
-    assert "HF_TOKEN" in result.provided_secret_keys
+    assert "HF_TOKEN=hf_x" in result.secrets_path.read_text(encoding="utf-8").splitlines()
 
 
 def test_hostname_error_accepts_valid_and_rejects_junk():

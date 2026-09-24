@@ -88,7 +88,7 @@ flowchart LR
     subgraph out["Rendered runtime (out/, regenerated — never hand-edited)"]
         C[".env · docker-compose.yml<br/>agent context · MCP server list · service catalog"]
     end
-    D[("docker compose up")]
+    D[("ordo up")]
     Y --> R
     M --> R
     R --> C

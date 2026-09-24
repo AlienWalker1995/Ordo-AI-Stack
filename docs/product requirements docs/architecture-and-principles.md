@@ -2,7 +2,7 @@
 
 ## Product Principles
 
-1. **Local-first:** Render + `docker compose -p ordo … up -d` from `out/`. No cloud dependency for core flows. All data on host.
+1. **Local-first:** `ordo render`, then `ordo up --all` from the repo root. No cloud dependency for core flows. All data on host.
 2. **Compose as source of truth:** All services in the rendered compose (`ordo.yaml` → `ordo render` → `out/docker-compose.yml`). Controller talks to Docker for ops; no K8s.
 3. **Least privilege:** Dashboard never mounts docker.sock. Controller has minimal allowlisted actions. Non-root containers everywhere feasible. `cap_drop: [ALL]` as default; add back only what's required.
 4. **One model endpoint:** OpenAI-compatible API (`/v1/chat/completions`, `/v1/embeddings`) as canonical surface, fronting llama.cpp. Services should prefer the gateway over direct llama.cpp.

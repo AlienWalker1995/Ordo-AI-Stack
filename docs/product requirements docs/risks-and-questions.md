@@ -4,7 +4,7 @@
 
 | Risk | Impact | Mitigation | Rollback |
 |------|--------|------------|---------|
-| `read_only: true` breaks model-gateway or dashboard | Service crash if writes to unexpected paths | Add `tmpfs: [/tmp]`; test with `docker compose up` before merging | Remove `read_only: true` from affected service |
+| `read_only: true` breaks model-gateway or dashboard | Service crash if writes to unexpected paths | Add `tmpfs: [/tmp]`; test with `ordo up --all` before merging | Remove `read_only: true` from affected service |
 | `cap_drop: [ALL]` breaks N8N or ComfyUI | Service fails if needing capabilities | Apply to custom-build services first; test third-party separately; add `cap_add` as needed | Remove `cap_drop` from affected service |
 | ops-controller user change breaks docker.sock access | 403 on all docker operations | Verify docker group GID on host; set `user: "1000:<gid>"` | Revert user to root temporarily |
 | Model gateway cache serves stale model list | Users see deleted models | Cache TTL is 60s; `DELETE /v1/cache` to invalidate | Set `MODEL_CACHE_TTL_SEC=0` to disable cache |

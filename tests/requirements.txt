@@ -1,14 +1,14 @@
 # Test dependencies. Install: pip install -r tests/requirements.txt
 -r ../services/dashboard/dashboard/requirements.txt
-pytest>=7.0.0
+pytest==8.3.4  # the same version requirements-dev.txt pins for the substrate job
 # The tests load ordo manifests and sources (ordo/, evals); the dashboard image no longer needs YAML.
 pyyaml==6.0.3
-respx>=0.21.0
+respx==0.23.1
 # gpu-gate runs on aiohttp; tests/test_gpu_gate.py exercises the REAL gate module (stub arbiter
 # + stub upstream over real HTTP), so the version here must match the one baked into
 # services/gpu-gate/Dockerfile or CI would be testing a different proxy than the stack runs.
 aiohttp==3.14.3
 # asyncio_mode = "auto" (pyproject) needs this. Present transitively today; declared explicitly
 # so the dependency can't silently drift away and quietly turn async tests into no-ops.
-pytest-asyncio>=0.24.0
+pytest-asyncio==1.3.0
 ruff==0.8.6  # pinned to match requirements-dev.txt — this is the job that actually runs the lint gate

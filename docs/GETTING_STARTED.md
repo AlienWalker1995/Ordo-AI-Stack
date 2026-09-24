@@ -2,32 +2,31 @@
 
 > ⚠️ **See [`operator-guide.md`](operator-guide.md) for the authoritative getting-started + operator doc.** Ordo is defined and operated entirely from the render substrate. A fresh install is two commands: `ordo init` (the wizard; accept its offer to render) and `ordo up --core` (or `--all`), which builds the stack's own images on first run. The workflow commands below assume you've rendered the stack once (`out/`) and run `ordo` from the repo root; `ordo up` builds any image it needs that is not built yet.
 
-Quick paths to common workflows for a single homelab operator. The stack assumes you've completed the one-time auth setup ([docs/runbooks/auth.md](runbooks/auth.md)) and secrets setup ([docs/runbooks/secrets.md](runbooks/secrets.md)), so Caddy is up on `${CADDY_TAILNET_HOSTNAME}` — `:443` is the landing page (plus `/oauth2`, `/llm/*`, `/mcp`, n8n's webhook/OAuth passthroughs, and 302s from legacy subpaths) and each UI service has its own SSO-gated port (`:8443` Open WebUI, `:8444` dashboard, `:8445` n8n, `:8446` ComfyUI, `:8447` Hermes, `:8448` codebase-memory, `:8449` LiteLLM admin UI, `:8450` Langfuse) — and you can sign in with a Google account on `auth/oauth2-proxy/emails.txt`. One sign-in covers every port.
+Quick paths to common workflows for a single homelab operator. A fresh install is local-only: the chat UI and the dashboard publish on `127.0.0.1:8443` / `:8444`, and no Caddy or oauth2-proxy is rendered. With remote access on (`ordo remote enable`, see [Tailscale + SSO front door](#tailscale--sso-front-door) below), Caddy is up on `${CADDY_TAILNET_HOSTNAME}`: `:443` is the landing page (plus `/oauth2`, `/llm/*`, `/mcp`, n8n's webhook/OAuth passthroughs, and 302s from legacy subpaths) and each UI service has its own SSO-gated port (`:8443` Open WebUI, `:8444` dashboard, `:8445` n8n, `:8446` ComfyUI, `:8447` Hermes, `:8448` codebase-memory, `:8449` LiteLLM admin UI, `:8450` Langfuse), and you can sign in with a Google account on `auth/oauth2-proxy/emails.txt`. One sign-in covers every port.
 
 ## Workflows
 
 ### I want to chat
 
-1. Start: `ordo up caddy oauth2-proxy llamacpp dashboard open-webui`
-2. Pull a model via the dashboard (`https://${CADDY_TAILNET_HOSTNAME}:8444/` → Starter pack, or pick one)
-3. Open `https://${CADDY_TAILNET_HOSTNAME}:8443/` — Open WebUI
+1. Start: `ordo up --all`. It downloads the chat model the render picked into the `models-gguf` volume on the first run, checksum-verified (`ordo fetch <catalog-id>` fetches another catalog model; a model switch goes through the dashboard's Models page).
+2. Open Open WebUI: `http://127.0.0.1:8443/` locally, or `https://${CADDY_TAILNET_HOSTNAME}:8443/` with remote access on.
 
 No GPU required for chat (llama.cpp runs on CPU, slower but works).
 
 ### I want to generate images (LTX-2)
 
-1. Render the stack (`ordo render` from the repo root — hardware, including NVIDIA/AMD/Intel/CPU, is auto-detected), then `ordo up --all` (brings up Caddy + oauth2-proxy + AI services + ComfyUI)
+1. Render the stack (`python -m ordo --source out/ordo.yaml render --out out` from the repo root; hardware, including NVIDIA/AMD/Intel/CPU, is auto-detected), then `ordo up --all` (brings up every rendered profile, ComfyUI included)
 2. Pull LTX-2 models via the dashboard (~60 GB, first run takes a while)
 3. Open `https://${CADDY_TAILNET_HOSTNAME}:8446/` — ComfyUI
 
 ### I want workflow automation
 
-1. Start: `ordo up caddy oauth2-proxy llamacpp n8n`
+1. Enable the `automation` plugin in `out/ordo.yaml`'s `plugins:`, render, then `ordo up --all` (a named `ordo up n8n` is `--no-deps`, so it would not start the model gateway n8n calls).
 2. Open `https://${CADDY_TAILNET_HOSTNAME}:8445/` — n8n (the UI lives on this port; n8n's public webhook/OAuth-callback base, `N8N_WEBHOOK_URL=https://${CADDY_TAILNET_HOSTNAME}/n8n`, is unchanged and stays on `:443`)
 
 ### Full stack
 
-**Recommended:** follow the [`operator-guide.md`](operator-guide.md) bring-up (`ordo render` → `ordo up --all`) — hardware auto-detection, model selection, and plugin gating all happen at render time. Caddy + oauth2-proxy come up alongside the AI services and front-door them automatically, each on its own SSO-gated port.
+**Recommended:** follow the [`operator-guide.md`](operator-guide.md) bring-up (`ordo render` → `ordo up --all`): hardware auto-detection, model selection, and plugin gating all happen at render time. With remote access on, Caddy + oauth2-proxy come up alongside the AI services and front-door them automatically, each on its own SSO-gated port.
 
 Alternatively, `ordo up --all` alone brings up the same services without re-rendering, if `out/` is already current.
 
@@ -72,12 +71,12 @@ Single homelab operator with a small Google-account allowlist for friends / fami
 | `:8449` | LiteLLM admin UI (served at this port's root) |
 | `:8450` | Langfuse (served at this port's root) |
 
-The edge (Caddy + oauth2-proxy) stays off until `CADDY_BIND`, `CADDY_TAILNET_HOSTNAME` and `CADDY_TAILNET_DOMAIN` are set under `site:` in `out/ordo.yaml`; set them (steps 2-3 below), then `ordo render --source out/ordo.yaml --out out` turns it on.
+The edge (Caddy + oauth2-proxy) stays off until remote access is enabled. `ordo remote enable` is the one path: it writes the `site:` keys (`CADDY_BIND`, `CADDY_TAILNET_HOSTNAME`, `CADDY_TAILNET_DOMAIN`), the Google OAuth client pair and the email allowlist, renders, and offers the Tailscale cert under the file names Caddy loads.
 
 1. Install Tailscale on the host running Ordo AI Stack and on each device that needs access.
-2. Issue a Tailscale cert for your chosen hostname: `tailscale cert ordo.<tailnet>.ts.net` (writes to `auth/caddy/certs/`).
-3. Set `CADDY_BIND` — the tailnet IPv4 from `tailscale ip -4` binds Caddy to that interface only; `0.0.0.0` is also a supported, operator-approved posture (binds all interfaces, still tailnet-dark since nothing else is published) if that suits your setup. Set `CADDY_TAILNET_HOSTNAME` to the hostname you certified.
-4. Set up the Google OAuth client and email allowlist per [docs/runbooks/auth.md](runbooks/auth.md) — no new redirect URI is needed for the port model; the OAuth callback stays on `:443`.
+2. Create the Google OAuth client per [docs/runbooks/auth.md](runbooks/auth.md). No new redirect URI is needed for the port model; the OAuth callback stays on `:443`.
+3. From the repo root: `ordo remote enable` (hostname, bind address, OAuth client, allowlisted emails; accept the cert offer). For the bind address, the tailnet IPv4 from `tailscale ip -4` binds Caddy to that interface only; `0.0.0.0` is also a supported posture (binds all interfaces, still tailnet-dark since nothing else is published).
+4. `ordo up --all`.
 5. Browse to `https://${CADDY_TAILNET_HOSTNAME}/` from any tailnet device for the landing page, or go straight to a service's port (e.g. `https://${CADDY_TAILNET_HOSTNAME}:8443/` for Open WebUI). Caddy terminates TLS with the Tailscale-issued cert, oauth2-proxy enforces Google sign-in against `auth/oauth2-proxy/emails.txt`, and one sign-in covers every port — the SSO cookie is domain-scoped and the post-login redirect carries `{host}` (portless), so a single wildcard `--whitelist-domain=.<domain>` covers every port and clean sidecar name at once. Old subpath bookmarks (`/chat`, `/dash`, `/n8n`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`) still work — `:443` 302s them to the matching port.
 
 Traffic between tailnet devices is WireGuard-encrypted; Caddy adds app-layer TLS for the Google OAuth flow and the SSO cookie. Open WebUI's own auth (`WEBUI_AUTH`) is off by default because the proxy already gates it; flip to `True` only if you want per-user workspaces inside Open WebUI on top of the shared SSO gate.

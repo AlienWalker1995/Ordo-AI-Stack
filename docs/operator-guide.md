@@ -68,6 +68,8 @@ ordo up --all                                 # --dry-run prints the docker comp
 render enabled). `ordo up <svc>...` / `ordo recreate <svc>...` touch only the named services
 (`--no-deps`; a caddy bring-up also names its netns members, so they are recreated with it), and
 refuse to start a resident the GPU scheduler evicted for a running render.
+`ordo recreate --reading KEY...` recreates every long-running service whose rendered definition
+reads one of those keys (after rotating secrets; `scripts/secrets/rotate-internal.sh` prints it).
 
 ### First-party images: `ordo build`
 
@@ -126,7 +128,7 @@ direct fix for the #1 pain — now proven in production, not just in test.
 | `ordo/hardware.py` | hardware detection (GPU/VRAM/RAM/CPU) + mockable profiles for CI |
 | `ordo/catalog.py` | load catalog + **best-fit** model selection with a VRAM headroom reserve (encodes the "don't fill the card" lesson) |
 | `ordo/config.py` | load/validate the declarative source |
-| `ordo/render.py` | `(source + hardware + catalog + plugins) → RenderedConfig`; writes `out/.env`, `out/hermes.context.json`, `out/manifest.json` |
+| `ordo/render.py` | `(source + hardware + catalog + plugins) → RenderedConfig`; writes `out/.env`, `out/manifest.json` |
 | `ordo/plugins.py` + `services/*/plugin.yaml` | **registry-driven** plugins: each manifest declares hardware needs + a config fragment; the renderer enables what fits (media = NVIDIA-only) and resolves `depends_on` |
 | `ordo/scheduler.py` | GPU **scheduler decision engine** — FIFO admission + co-run-when-it-fits + LRU idle-evict (replaces the reactive guardian that caused the outage; the process broker drives it against the real `ordo-` containers — live in production) |
 | `ordo/cli.py` | `ordo detect | render | doctor | serve | preflight | …` — the one-script control surface |
@@ -206,7 +208,7 @@ current split: today there is only Ordo.
     Validated live: `write_note` through the gateway persists a real file on disk that native Obsidian
     sees; `read_note`/`search_notes` round-trip; llamacpp/agent untouched.
 
-`ordo render` writes the complete stack (`.env` + `docker-compose.yml` + `hermes.context.json` +
+`ordo render` writes the complete stack (`.env` + `docker-compose.yml` +
 `manifest.json` + `mcp/servers.json` + `model-gateway/mcp_servers.yaml` + `model-gateway/keys.json` + `secrets.env.example`); `ordo serve` runs the control plane
 (service `ops-controller`) that regenerates it drift-safely at runtime; `ordo preflight` gated the
 cutover. **Test suite: 181 passed, 2 skipped** (verified 2026-07-09).
@@ -250,8 +252,6 @@ gate). Only the Tailscale model is wired today; the others' required pieces are 
 **Render discipline** (the drift cure, in daily operation):
 - Change config by editing the source `ordo.yaml`, then **re-render** — never hand-edit `out/.env`.
 - Always render from the real source: `ordo render --source out/ordo.yaml`.
-- **Re-render only inside a `--gpus all` container** (so hardware detection sees both cards); the
-  rendered `llamacpp` block must come out **byte-identical** to what's running.
 - Image changes go through `ordo build`, then a render (see "First-party images" above).
 - Apply with `ordo recreate <svc>` (per-service, no cascade). The dashboard's
   per-service recreate button does exactly this against the existing `out/` compose (no re-render).

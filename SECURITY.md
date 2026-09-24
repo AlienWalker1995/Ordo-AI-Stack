@@ -24,7 +24,7 @@ We will acknowledge receipt and aim to respond within a reasonable timeframe.
 
 ## Security Considerations
 
-> **Secrets (production, since the 2026-07-09 cutover):** operator secret **values** live in a gitignored **`out/secrets.env`**, rendered from the keys-only `out/secrets.env.example` and kept **separate from derived config** (`.env` stays config-only). Services that need secrets read `secrets.env` as a second `env_file` (`required: false`). Verify with `ordo preflight --secrets out/secrets.env`. **Never commit `out/secrets.env`** (nor the operator-real `ordo.yaml`, which carries host paths + tailnet identity). The SOPS + age at-rest model under `secrets/` still backs the encrypted material. The `.env` / `runtime/.env` notes below describe the legacy V1 secret flow.
+> **Secrets (production, since the 2026-07-09 cutover):** operator secret **values** live in a gitignored **`out/secrets.env`**, rendered from the keys-only `out/secrets.env.example` and kept **separate from derived config** (`.env` stays config-only). No service loads it as an `env_file`: each service declares the secret names it reads, and compose interpolates just those from `--env-file secrets.env`. Verify with `ordo preflight --secrets out/secrets.env`. **Never commit `out/secrets.env`** (nor the operator-real `ordo.yaml`, which carries host paths + tailnet identity). The SOPS + age at-rest model under `secrets/` still backs the encrypted material. The `.env` / `runtime/.env` notes below describe the legacy V1 secret flow.
 
 ### Authentication
 
@@ -70,7 +70,7 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 
 ## Break-glass
 
-1. **Reset OPS_CONTROLLER_TOKEN:** Generate new token, update `out/secrets.env`, then re-run `docker compose -p ordo … up` from `out/` to restart dashboard + ops-controller
+1. **Reset OPS_CONTROLLER_TOKEN:** Generate new token, update `out/secrets.env`, then, outside a GPU lease and from the repo root, `ordo recreate ops-controller dashboard` plus every other service that sends it (`grep -n '${OPS_CONTROLLER_TOKEN' out/docker-compose.yml`; see [Rollback Procedures](docs/product%20requirements%20docs/appendix-rollback.md) #5). `ordo recreate` is lease-checked and `--no-deps`; a hand-assembled compose bring-up is neither
 2. **Restore data:** Restore `data/` from a local backup
 3. **Disable MCP tools:** Remove the `kind: mcp` plugins from `ordo.yaml`'s `plugins:` list (or use the MCP servers section of the dashboard's Settings drawer), then `ordo render` and recreate `model-gateway`
 4. **Safe mode:** Stop the `mcp-*` services and `agent`; use `llamacpp` + `open-webui` only

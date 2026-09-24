@@ -13,6 +13,7 @@ Two things live here:
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import subprocess
 import sys
@@ -100,6 +101,35 @@ def lifecycle_group(doc: dict, service: str) -> list[str]:
     through here, so they cannot disagree about who follows whom.
     """
     return [service] + [m for m in netns_members(doc, service) if m != service]
+
+
+def _strings(node: object) -> list[str]:
+    """Every string in a compose service definition (keys and values, at any depth)."""
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, dict):
+        return [s for key, value in node.items() for s in _strings(key) + _strings(value)]
+    if isinstance(node, list):
+        return [s for item in node for s in _strings(item)]
+    return []
+
+
+def readers_of(doc: dict, keys: Sequence[str]) -> list[str]:
+    """The long-running services whose rendered definition interpolates any of `keys`, sorted.
+
+    Read from the rendered compose, so it covers every way a service reads a key: a declared
+    `secrets:` entry (`KEY: ${KEY}`), a key mapped onto another name (`X: ${KEY:-}`), or a command
+    line (`--requirepass ${KEY}`). A one-shot job (`restart: "no"`, the evals runner) is left out:
+    it reads its environment on each run, and recreating it would start one.
+    """
+    refs = [re.compile(r"\$\{" + re.escape(key) + r"[}:?-]") for key in keys]
+    readers = []
+    for name, spec in _services(doc).items():
+        if str((spec or {}).get("restart")) == "no":
+            continue
+        if any(ref.search(text) for text in _strings(spec) for ref in refs):
+            readers.append(name)
+    return sorted(readers)
 
 
 def plan_named(doc: dict, services: Sequence[str], *, force_recreate: bool) -> tuple[list[str], set[str]]:

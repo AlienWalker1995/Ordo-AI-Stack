@@ -1,6 +1,6 @@
 # secrets/
 
-> **Note.** The SOPS + age **at-rest** model here (encrypted `*.sops` blobs, safe to commit) is unchanged. Runtime materialization is owned by the render substrate: `ordo render` writes a keys-only `out/secrets.env.example`; the operator fills real values into a gitignored **`out/secrets.env`** (SOPS-decrypt or hand-set) that the rendered compose reads as a second `env_file`. The old V1 `make decrypt-secrets` → `~/.ai-toolkit/runtime/` + `make up` two-`--env-file` flow was removed along with the rest of the V1 tree (2026-07-24, commit `62540bf`).
+> **Note.** The SOPS + age **at-rest** model here (encrypted `*.sops` blobs, safe to commit) is unchanged. Runtime materialization is owned by the render substrate: `ordo render` writes a keys-only `out/secrets.env.example`; the operator fills real values into a gitignored **`out/secrets.env`** (SOPS-decrypt or hand-set) from which compose interpolates each service's declared secrets (`--env-file secrets.env`; no service loads it whole). The old V1 `make decrypt-secrets` → `~/.ai-toolkit/runtime/` + `make up` two-`--env-file` flow was removed along with the rest of the V1 tree (2026-07-24, commit `62540bf`).
 
 Encrypted-at-rest secrets for the Ordo AI stack. **All `*.sops` files in
 this directory are safe to commit to a public repo** — they decrypt only
@@ -42,9 +42,10 @@ with the age private key at `~/.config/sops/age/keys.txt`.
   (SOPS-decrypt the relevant `secrets/<name>.sops` file, or hand-set).
   `out/secrets.env` is gitignored, never committed.
 - Bring up the stack: from the repo root, `ordo up --all`
-  (the rendered compose reads `secrets.env` as a second, optional
-  `env_file` layered after `.env`, so derived config and operator
-  secrets stay in separate files).
+  (compose interpolates each service's declared secrets from
+  `--env-file secrets.env`, and its declared derived keys from
+  `--env-file .env`; no service loads either file whole, so derived
+  config and operator secrets stay in separate files).
 - A service recreate through `ops-controller` (`POST /services/{id}/recreate`)
   replays the rendered `out/` tree, both `.env` and `secrets.env`, so a
   secret-dependent service it recreates comes up with real values. It

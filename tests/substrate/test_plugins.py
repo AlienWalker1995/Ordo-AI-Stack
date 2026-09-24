@@ -220,3 +220,25 @@ def test_explicit_plugin_missing_site_keys_is_a_render_error():
     message = str(err.value)
     assert "'edge'" in message and all(key in message for key in EDGE_SITE_KEYS)
     assert "'memory-vault'" in message and "MEMORY_VAULT_PATH" in message
+
+
+def test_searxng_runs_the_tracked_settings_read_only():
+    """SearXNG's engine selection is part of the stack, not of one host's data dir: the upstream
+    defaults were all captcha-blocked, so a fresh install got a search tool that found nothing.
+    The settings are tracked in services/searxng-web/ and mounted read-only; the secret_key comes
+    from SEARXNG_SECRET (secrets.env), never from the tracked file."""
+    import yaml
+
+    rc = render(Source.from_dict({"hardware": {"gpus": [], "ram_gb": 32}, "model": "auto",
+                                  "plugins": ["searxng-web", "searxng"]}), CATALOG, REGISTRY)
+    searxng = rc.compose_dict()["services"]["searxng"]
+    mounts = [v for v in searxng["volumes"] if ":/etc/ordo-searxng" in v]
+    assert mounts == ["${BASE_PATH:?BASE_PATH must be set (non-empty)}/services/searxng-web/settings:/etc/ordo-searxng:ro"]
+    assert not [v for v in searxng["volumes"] if "DATA_PATH" in v]
+    assert searxng["environment"]["SEARXNG_SETTINGS_PATH"] == "/etc/ordo-searxng/settings.yml"
+    assert searxng["environment"]["SEARXNG_SECRET"].startswith("${SEARXNG_SECRET")
+
+    settings = yaml.safe_load((ROOT / "services" / "searxng-web" / "settings" / "settings.yml").read_text(encoding="utf-8"))
+    assert "secret_key" not in (settings.get("server") or {})
+    enabled = {e["name"] for e in settings["engines"] if e.get("disabled") is False}
+    assert {"bing", "yandex"} <= enabled

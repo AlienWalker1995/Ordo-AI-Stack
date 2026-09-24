@@ -7,7 +7,7 @@
 
 ## Product Vision
 
-A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`ordo render`) and bringing it up with `docker compose -p ordo … up -d` from `out/`. Core guarantees:
+A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`ordo render`) and bringing it up with `ordo up --all` from the repo root. Core guarantees:
 
 1. **One model endpoint** — Every service reaches every model served by llama.cpp via a single OpenAI-compatible gateway. No per-service provider config.
 2. **Shared tools with health** — MCP tools served from one `/mcp` endpoint on the model gateway, with per-server health badges and per-consumer key scoping.

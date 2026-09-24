@@ -46,8 +46,11 @@ healthcheck:
 secrets: [OPS_CONTROLLER_TOKEN, THROUGHPUT_RECORD_TOKEN]
 # Derived keys it reads from the rendered .env (rendered `KEY: ${KEY?...}`; it never loads the whole
 # file). services_catalog.py builds the service cards' Open links from the edge hostname and, while
-# the tailnet-names plugin is on, its per-app domain. Each renders only while its plugin is enabled.
-derived_env: [CADDY_TAILNET_HOSTNAME, CADDY_TAILNET_DOMAIN, TAILNET_NAMES_ENABLED]
+# the tailnet-names plugin is on, its per-app domain. COMFYUI_URL is the ComfyUI GPU admission gate
+# (render.GATED_SERVICE_URL_ENV): absent without comfyui, which the dashboard reports as ComfyUI
+# unavailable. Never a direct fallback: comfyui sits on a network only its gate joins. Each renders
+# only while its plugin is enabled.
+derived_env: [CADDY_TAILNET_HOSTNAME, CADDY_TAILNET_DOMAIN, TAILNET_NAMES_ENABLED, COMFYUI_URL]
 
 environment:
   # The control plane. Every route this dashboard calls is served by ops-controller.
@@ -62,15 +65,10 @@ environment:
   # MCP toggle maps server_id -> plugin_id (inside servers.json) and asks ops-controller to
   # enable/disable that plugin: ops-controller is the only writer of the operator source.
   MCP_SERVERS_PATH: /mcp-config/servers.json
-  # The ComfyUI GPU admission gate, rendered only while comfyui is enabled (render.GATED_SERVICE_URL_ENV).
-  # Empty otherwise, which the dashboard reports as ComfyUI unavailable. Never a direct fallback:
-  # comfyui sits on a network only its gate joins.
-  COMFYUI_URL: ${COMFYUI_URL:-}
   QDRANT_URL: http://qdrant:6333
   # On-disk model dirs (bind-mounted below): /api/llm/* scans GGUF_MODELS_DIR; MODELS_DIR is comfyui.
   GGUF_MODELS_DIR: /gguf-models
   MODELS_DIR: /models
-  LLAMACPP_CTX_SIZE: ${LLAMACPP_CTX_SIZE:-262144}
   # Dashboard state (orchestration jobs, throughput samples, MCP registry) — staged V2 data tree.
   # V1 defaults DASHBOARD_DATA_PATH to ./data/dashboard under /app (not writable by appuser); pin it
   # to the mounted /data/dashboard so startup mkdir succeeds.

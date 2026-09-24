@@ -72,13 +72,13 @@ HINTS = {
     "fedirz/faster-whisper-server": {"gh": "fedirz/faster-whisper-server", "hub": "fedirz/faster-whisper-server"},
     "remsky/kokoro-fastapi-gpu":    {"gh": "remsky/Kokoro-FastAPI"},
     "ggml-org/llama.cpp":           {"gh": "ggml-org/llama.cpp",
-                                     "note": "moving tag; prod runs a locally-patched build (see .env LLAMACPP_IMAGE)"},
+                                     "note": "moving tag; a catalog backend_image can name the patched build (ordo/llamacpp-patched)"},
     "yanwk/comfyui-boot":           {"hub": "yanwk/comfyui-boot", "upstream": ("ComfyUI", "comfy-org/ComfyUI"),
                                      "note": "boot wrapper; cu128-slim is a moving tag"},
 }
 
 # Registry namespaces that mean "built here", not pulled from a registry.
-LOCAL_PREFIXES = ("ordo/", "ordo-v2/", "ordo-ai-stack-", "ordo-ai-stack/")  # ordo/ = current; rest historical
+LOCAL_PREFIXES = ("ordo/",)  # every image `ordo build` makes, the patched llama.cpp build included
 ROLLING_TAGS = {"latest", "stable", "main", "edge", "nightly", "dev",
                 "server", "server-cuda", "cpu", "cu128-slim", "cu124-slim"}
 BASE_IMAGE_RE = re.compile(r"^(python|alpine|ubuntu|debian|busybox|node|golang):", re.I)

@@ -350,3 +350,99 @@ def test_status_reader_fails_closed_when_docker_cannot_be_queried(monkeypatch):
     _fake_docker(monkeypatch, _Proc(returncode=1, stderr="Cannot connect to the Docker daemon"))
     with pytest.raises(bringup.LeaseUnknown):
         bringup.read_gpu_status("ordo")
+
+
+# --- recreating the readers of rotated secrets ---
+
+READERS_COMPOSE = {
+    "services": {
+        "ops-controller": {"image": "x", "environment": {"OPS_CONTROLLER_TOKEN": "${OPS_CONTROLLER_TOKEN}"}},
+        "mcp-orchestration": {"image": "x", "environment": {"OPS_CONTROLLER_TOKEN": "${OPS_CONTROLLER_TOKEN}"}},
+        # a secret mapped onto another name, with a fail-open default
+        "agent": {"image": "x", "environment": {"HERMES_LANGFUSE_PUBLIC_KEY": "${LANGFUSE_PUBLIC_KEY:-}"}},
+        # a secret read on the command line, not through the environment
+        "langfuse-redis": {"image": "x", "command": ["--requirepass", "${LANGFUSE_REDIS_AUTH?missing}"]},
+        # a one-shot job reads its environment per run; recreating it would start a run
+        "evals": {"image": "x", "restart": "no", "environment": {"OPS_CONTROLLER_TOKEN": "${OPS_CONTROLLER_TOKEN}"}},
+        # a longer name that merely starts with a rotated key is not that key
+        "dashboard": {"image": "x", "environment": {"X": "${OPS_CONTROLLER_TOKEN_FILE:-}"}},
+        "caddy": {"image": "x"},
+    }
+}
+
+
+def test_readers_are_every_long_running_service_that_interpolates_a_key():
+    assert bringup.readers_of(READERS_COMPOSE, ["OPS_CONTROLLER_TOKEN"]) == ["mcp-orchestration", "ops-controller"]
+    assert bringup.readers_of(READERS_COMPOSE, ["LANGFUSE_PUBLIC_KEY", "LANGFUSE_REDIS_AUTH"]) == [
+        "agent", "langfuse-redis"]
+    assert bringup.readers_of(READERS_COMPOSE, ["NOT_READ_BY_ANYONE"]) == []
+
+
+def test_recreate_reading_recreates_exactly_the_readers(monkeypatch, tmp_path, recorded):
+    (tmp_path / "docker-compose.yml").write_text(yaml.safe_dump(READERS_COMPOSE), encoding="utf-8")
+    _status(monkeypatch, IDLE)
+    assert cli.main(["recreate", "--reading", "OPS_CONTROLLER_TOKEN", "LANGFUSE_REDIS_AUTH",
+                     "--out", str(tmp_path)]) == 0
+    assert _tail(recorded[-1]) == ["up", "-d", "--no-deps", "--force-recreate",
+                                   "langfuse-redis", "mcp-orchestration", "ops-controller"]
+
+
+def test_recreate_takes_services_or_reading_not_both(out_dir):
+    assert cli.main(["recreate", "agent", "--reading", "OPS_CONTROLLER_TOKEN", "--out", str(out_dir)]) == 1
+    assert cli.main(["recreate", "--out", str(out_dir)]) == 1
+
+
+def test_recreate_reading_a_key_nothing_reads_does_nothing(monkeypatch, out_dir, recorded):
+    _status(monkeypatch, IDLE)
+    assert cli.main(["recreate", "--reading", "NOT_READ_BY_ANYONE", "--out", str(out_dir)]) == 0
+    assert recorded == []
+
+
+def test_the_rendered_stack_recreates_every_holder_of_the_control_plane_token():
+    """The rotation script's hand list missed mcp-orchestration (it holds the token via `secrets:`).
+    Derived from the render, it cannot: every long-running reader is found, the evals one-shot is not."""
+    from ordo.catalog import Catalog
+    from ordo.config import Source
+    from ordo.plugins import PluginRegistry
+    from ordo.render import render
+
+    root = Path(__file__).resolve().parents[2]
+    source = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128}, "model": "auto",
+                               "plugins": ["orchestration", "evals", "comfyui", "hermes-dashboard"],
+                               "site": {"MEMORY_VAULT_PATH": "/srv/vault"}})
+    doc = render(source, Catalog.load(root / "catalog" / "models.yaml"),
+                 PluginRegistry.load(root / "services")).compose_dict()
+    readers = bringup.readers_of(doc, ["OPS_CONTROLLER_TOKEN"])
+    assert {"ops-controller", "dashboard", "agent", "mcp-orchestration"} <= set(readers)
+    assert "evals" not in readers and "evals" in doc["services"]
+
+
+ROTATE_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "secrets" / "rotate-internal.sh"
+
+
+def test_the_rotation_script_recreates_the_readers_not_a_hand_list():
+    script = ROTATE_SCRIPT.read_text(encoding="utf-8")
+    assert "ordo recreate --reading ${ROTATED}" in script
+    hand_lists = [line for line in script.splitlines()
+                  if line.strip().startswith("ordo recreate") and "--reading" not in line]
+    assert not hand_lists, hand_lists
+
+
+def test_the_rotation_script_names_exactly_the_keys_whose_value_changed(tmp_path):
+    import re
+    import shutil
+    import subprocess
+
+    awk = shutil.which("awk")
+    if awk is None:
+        pytest.skip("awk not available")
+    program = re.search(r"ROTATED=\$\(awk -F= '([^']*)'", ROTATE_SCRIPT.read_text(encoding="utf-8")).group(1)
+    before = tmp_path / "before"
+    after = tmp_path / "after"
+    before.write_text("# comment\nLITELLM_SALT_KEY=s\nOPS_CONTROLLER_TOKEN=a\nLITELLM_KEY_EVALS=b=c\n",
+                      encoding="utf-8")
+    after.write_text("# comment\nLITELLM_SALT_KEY=s\nOPS_CONTROLLER_TOKEN=x\nLITELLM_KEY_EVALS=y\n",
+                     encoding="utf-8")
+    changed = subprocess.run([awk, "-F=", program, str(before), str(after)], capture_output=True,
+                             text=True, check=True).stdout.split()
+    assert changed == ["OPS_CONTROLLER_TOKEN", "LITELLM_KEY_EVALS"]

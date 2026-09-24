@@ -18,10 +18,11 @@ fi
 # model_info documentation values, sourced from the SAME rendered .env keys the backend llama-server
 # containers read (each service declares the keys it reads, see MODEL_GATEWAY_DERIVED_ENV in
 # ordo/compose.py), so the gateway's advertised metadata cannot drift from the running deployment.
-# Defaults mirror the compose/run-script defaults exactly.
-CTX_SIZE="${LLAMACPP_CTX_SIZE:-262144}"
+# The two context windows have no default: a missing one would advertise a window the render never
+# chose, so the gateway refuses to start instead.
+CTX_SIZE="${LLAMACPP_CTX_SIZE:?LLAMACPP_CTX_SIZE is missing: it is rendered into out/.env by ordo render}"
 N_PREDICT="${LLAMACPP_N_PREDICT:-65536}"
-CPU_CTX_SIZE="${LLAMACPP_CPU_CTX:-131072}"
+CPU_CTX_SIZE="${LLAMACPP_CPU_CTX:?LLAMACPP_CPU_CTX is missing: it is rendered into out/.env by ordo render}"
 GPU_WEIGHTS="${LLAMACPP_MODEL:-model.gguf}"
 CPU_WEIGHTS="${LLAMACPP_CPU_MODEL:-Qwen3.6-35B-A3B-UD-Q4_K_M.gguf}"
 EMBED_WEIGHTS="${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}"

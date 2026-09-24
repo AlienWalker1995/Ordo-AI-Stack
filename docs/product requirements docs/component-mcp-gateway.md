@@ -181,7 +181,8 @@ In all three cases, finish by adding the plugin id to `ordo.yaml`'s `plugins:` l
   badge in the dashboard. `/mcp` itself stays up, and `restart: unless-stopped` plus the healthcheck
   handle a crash-loop without operator intervention.
 - **Images are pinned:** public images by digest, project images by build context. The rendered
-  compose is image-only, so rebuilds use `docker build`, not `docker compose build`.
+  compose is image-only, so rebuilds use `ordo build <svc>` (then render and `ordo recreate <svc>`),
+  never `docker compose build` or a hand `docker build`.
 
 ## Non-goals
 

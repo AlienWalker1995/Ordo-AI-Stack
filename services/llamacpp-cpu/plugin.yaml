@@ -44,14 +44,14 @@ services:
       # the GPU is evicted — which is when it's needed. LLAMACPP_CPU_CTX is DERIVED: the renderer
       # emits it from the same resolved window as LLAMACPP_CTX_SIZE, so the two agree by
       # construction even when a heavier model sizes the GPU window below the model's ctx_default.
-      # The literal below is a last-resort fallback for an .env this renderer never wrote.
+      # No fallback: a missing key fails the compose call instead of serving a disagreeing window.
       # This value is NOT how much a client fills (Hermes compacts far earlier); it's the model
       # window. Undersizing it bites live: a 38k-token turn 503'd against a 32k ctx ("exceeds
       # available context size"). Cost is near-zero: ctx-size sets the KV *allocation* (~6-7GB at
       # q8, trivial vs 117GB RAM), NOT per-request work — llama.cpp prefills only the actual
       # tokens sent, so a bigger window adds no latency to normal turns.
       - --ctx-size
-      - "${LLAMACPP_CPU_CTX:-131072}"
+      - "${LLAMACPP_CPU_CTX?LLAMACPP_CPU_CTX is missing from the rendered .env}"
       - --parallel
       - "1"
       - --jinja                     # use the GGUF's chat template (Qwen3.6)

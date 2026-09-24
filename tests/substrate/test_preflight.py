@@ -70,22 +70,23 @@ def test_required_images_include_core_and_ops():
     imgs = preflight.required_images(rc)
     assert "ordo/ops-controller:current" in imgs
     # the 5090 picks Qwen3.6, which pins the patched build — that image, not the stock one
-    assert "ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470" in imgs
+    assert "ordo/llamacpp-patched:current" in imgs
 
 
 def test_patched_llamacpp_is_buildable_not_pullable():
     # a missing patched image must be 'build first' (blocking), never 'Docker will pull'
     rc = render(GPU, CATALOG, REGISTRY)
     needed = preflight.required_images(rc)
-    patched = "ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470"
+    patched = "ordo/llamacpp-patched:current"
     assert patched in needed
     present = {i for i in needed if i != patched}          # everything cached except the patched build
     go, checks = preflight.run(GPU, CATALOG, REGISTRY, images_present=present)
     proj = _byname(checks)["project images built locally"]
     assert not proj.ok and proj.blocking and not go        # NO-GO — it can't be pulled
-    # GENERIC hint from the single resolver (no per-image special-case): llamacpp-patched, whose
-    # image name has NO `ordo/` prefix, still resolves to its build context through the substrate map.
+    # GENERIC hint from the single resolver (no per-image special-case), and a true one: the patched
+    # build is first-party, so `ordo build` builds it.
     assert f"{patched} (build from services/llamacpp-patched)" in proj.detail
+    assert "`ordo build --all`" in proj.detail
     # it must NOT show up as a pullable upstream image
     assert not any(c.name.startswith("upstream") and patched in c.detail for c in checks)
 
@@ -155,3 +156,17 @@ def test_required_images_follow_the_build_record():
     proj = _byname(checks)["project images built locally"]
     assert "ordo/ops-controller:0123456789ab" in proj.detail
     assert "ordo build" in proj.detail
+
+
+def test_the_build_hint_never_promises_ordo_build_for_an_image_it_does_not_build():
+    # ltx-trainer carries its own pinned tag, so `ordo build` does not build it: the hint for it must
+    # not say `ordo build --all` produces it (it used to, for the patched llama.cpp build too).
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32, "compute_cap": "12.0"}], "ram_gb": 128},
+                            "model": "auto", "plugins": ["ltx-trainer"]})
+    rc = render(src, CATALOG, REGISTRY)
+    needed = preflight.required_images(rc)
+    trainer = next(i for i in needed if i.startswith("ordo/ltx-trainer:"))
+    _go, checks = preflight.run(src, CATALOG, REGISTRY, images_present={i for i in needed if i != trainer})
+    detail = _byname(checks)["project images built locally"].detail
+    assert "`ordo build --all`" not in detail
+    assert "not built by `ordo build`" in detail and f"{trainer} (build from services/ltx-trainer)" in detail

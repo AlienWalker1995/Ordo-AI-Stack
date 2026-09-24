@@ -84,12 +84,13 @@ gosu hermes "$HERMES_BIN" config set model.provider        "custom"             
 gosu hermes "$HERMES_BIN" config set model.base_url        "http://model-gateway:11435/v1" >/dev/null
 gosu hermes "$HERMES_BIN" config set model.api_key         "${LITELLM_KEY_HERMES}"         >/dev/null
 gosu hermes "$HERMES_BIN" config set model.default         "local-chat"                    >/dev/null
-# Context window: single source of truth is LLAMACPP_CTX_SIZE in .env. The
-# compose file plumbs it into this container's env; the seed below overwrites
-# whatever hermes had cached so a change to .env + `docker compose up -d
-# hermes-gateway hermes-dashboard` is enough to update the UI progress bar
-# (`0/<N>K`). Falls back to 262144 (256k) if unset — matches the stack default.
-gosu hermes "$HERMES_BIN" config set model.context_length  "${LLAMACPP_CTX_SIZE:-262144}"  >/dev/null
+# Context window: single source of truth is LLAMACPP_CTX_SIZE, which the render
+# computes and compose passes in (derived_env). The seed below overwrites whatever
+# hermes had cached, so a re-render + `ordo recreate agent hermes-dashboard` is
+# enough to update the UI progress bar (`0/<N>K`). No fallback: refuse to start
+# rather than seed a window the render never chose.
+CONTEXT_WINDOW="${LLAMACPP_CTX_SIZE:?LLAMACPP_CTX_SIZE is missing: it is rendered into out/.env by ordo render}"
+gosu hermes "$HERMES_BIN" config set model.context_length  "$CONTEXT_WINDOW"  >/dev/null
 # Per-turn budgets — hoisted from in-container config.yaml so they're
 # monitorable from .env. See the matching env vars in docker-compose.yml's
 # hermes-gateway / hermes-dashboard service blocks.
@@ -110,7 +111,7 @@ gosu hermes "$HERMES_BIN" config set agent.api_max_retries  "${HERMES_API_MAX_RE
 # compression model is smaller than the main-model compression threshold.
 # See agent/model_metadata.py get_model_context_length resolution order #0
 # and run_agent.py line ~1605 where auxiliary.compression.context_length is read.
-gosu hermes "$HERMES_BIN" config set auxiliary.compression.context_length "${LLAMACPP_CTX_SIZE:-262144}" >/dev/null
+gosu hermes "$HERMES_BIN" config set auxiliary.compression.context_length "$CONTEXT_WINDOW" >/dev/null
 # Compaction trigger as a fraction of the effective input budget (context_length - max_tokens).
 # Only seed when explicitly set so this stays a no-op (framework default) for deployments that
 # don't tune it. With a large max_tokens the default floors the trigger at MINIMUM_CONTEXT_LENGTH

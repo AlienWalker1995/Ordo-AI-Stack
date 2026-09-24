@@ -182,7 +182,7 @@ def test_llamacpp_image_defaults_to_the_backend_build():
 
 
 def test_llamacpp_image_override():
-    patched = "ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470"
+    patched = "ordo/llamacpp-patched:0123456789ab"
     c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], llamacpp_image=patched)
     assert c["services"]["llamacpp"]["image"] == patched
 
@@ -202,11 +202,12 @@ def test_backend_image_flows_from_catalog_to_compose_and_env(tmp_path):
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32, "compute_cap": "12.0"}], "ram_gb": 128},
                             "model": "auto", "plugins": "auto"})
     rc = render(src, CATALOG, REGISTRY)
-    assert rc.model.backend_image == "ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470"
+    assert rc.model.backend_image == "ordo/llamacpp-patched"
     assert rc.env["LLAMACPP_IMAGE"] == rc.model.backend_image
     rc.write(tmp_path)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
-    assert c["services"]["llamacpp"]["image"] == rc.model.backend_image
+    # first-party: render pins the tag `ordo build` recorded (`current` before the first build)
+    assert c["services"]["llamacpp"]["image"] == rc.model.backend_image + ":current"
 
 
 def _dual_gpu_src(plugins="auto"):

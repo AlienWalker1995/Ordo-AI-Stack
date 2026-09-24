@@ -20,8 +20,9 @@ The model, in one place:
   `ordo up`) recreates only the services whose image actually changed.
 
 Manifests and compose.py therefore declare first-party images UNTAGGED (`ordo/dashboard`): the
-tag is render's to fill. An image declared with its own tag (the patched llama.cpp, ltx-trainer)
-or built out of band (`build: {external: true}`) is not first-party here and is never retagged.
+tag is render's to fill; so does a model's catalog `backend_image` (the patched llama.cpp build).
+An image declared with its own tag (ltx-trainer) or built out of band (`build: {external: true}`)
+is not first-party here and is never retagged.
 """
 from __future__ import annotations
 
@@ -110,7 +111,8 @@ def first_party_contexts(plugins: PluginRegistry, agents: AgentRegistry, dashboa
     """`{image: build context}` for every image `ordo build` owns and render tags.
 
     That is every project image with an in-repo build context whose declaration carries no tag of
-    its own: the substrate images compose.py names, plus each manifest image built in the repo."""
+    its own: the substrate images (compose.py's, and the catalog's patched llama.cpp build), plus
+    each manifest image built in the repo."""
     contexts = buildspec.manifest_image_contexts(plugins, agents, dashboards, project=project)
     declared = [a.image_for(project) for a in agents.agents]
     declared += [d.image_for(project) for d in dashboards.dashboards]
@@ -248,12 +250,6 @@ def _identity(git: GitLike, inputs: Sequence[str]) -> tuple[str, str, bool]:
     dirty = git.is_dirty(inputs)
     tag = commit[:SHORT_SHA_LENGTH] + ("-dirty" if dirty else "")
     return commit, tag, dirty
-
-
-def content_tag(git: GitLike, inputs: Sequence[str]) -> tuple[str, bool]:
-    """(tag, dirty) for an image whose build inputs are `inputs`."""
-    _, tag, dirty = _identity(git, inputs)
-    return tag, dirty
 
 
 # --- building ---
