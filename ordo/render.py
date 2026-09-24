@@ -222,6 +222,19 @@ def _max_ctx_for_vram(model: Model, hw: HardwareProfile, reserve_gb: float) -> i
     return max(8192, min(model.ctx_default, max_tokens))
 
 
+# Files older renders emitted into out/ and this one no longer does: the Docker mcp-gateway
+# artefacts retired by #185. write() deletes them, because out/mcp is mounted into the dashboard
+# and a stale file there looks live. An explicit list, not "everything write() did not emit":
+# out/ also holds operator-owned state (ordo.yaml, secrets.env, lease history, certs).
+RETIRED_OUTPUTS = (
+    "mcp-registry.yaml",
+    "mcp/servers.txt",
+    "mcp/registry-custom.yaml",
+    "mcp/registry-custom.docker.yaml",
+    "mcp/server-plugin-map.json",
+)
+
+
 @dataclasses.dataclass
 class RenderedConfig:
     hardware: HardwareProfile
@@ -377,6 +390,8 @@ class RenderedConfig:
         (out / "docker-compose.yml").write_text(
             yaml.safe_dump(self.compose_dict(), sort_keys=False),
             encoding="utf-8")
+        for retired in RETIRED_OUTPUTS:
+            (out / retired).unlink(missing_ok=True)
 
 
 def aggregate_services_catalog(services_dir: str | Path = DEFAULT_PLUGINS_DIR) -> dict[str, Any]:
