@@ -32,6 +32,7 @@ from urllib.parse import urljoin, urlparse
 
 import yaml
 
+from . import substrate
 from .audit import AuditLog
 from .broker import Broker
 from .catalog import Catalog
@@ -151,6 +152,8 @@ class ControlPlane:
         self.scheduler = scheduler
         self.broker = broker
         self.history = history  # LeaseHistory sink (shared with the broker) — /jobs/history
+        # The digest of the render inputs this process ships (its baked copy, in the image).
+        self.substrate_digest = substrate.current_digest()
         # Model registry (runtime state) — same store as ops-api reads.
         # registry_path defaults to /data/model-registry.json (mounted in compose).
         if registry_path is None:
@@ -174,6 +177,33 @@ class ControlPlane:
     # --- core operations (pure, testable) ---
     def _render(self) -> Any:
         return render(Source.load(self.source_path), self.catalog, self.registry)
+
+    def _substrate_conflict(self) -> dict[str, Any] | None:
+        """A 409 payload when out/ was last rendered from different inputs than this process ships.
+
+        Rendering over it would silently revert whatever the newer side changed (the image renders
+        from its own baked copy of ordo/, catalog/ and the manifests). No manifest, or one written
+        before renders recorded a digest, is allowed: this render then records ours.
+        """
+        manifest_path = self.out_dir / "manifest.json"
+        if not manifest_path.exists():
+            return None
+        try:
+            recorded = json.loads(manifest_path.read_text(encoding="utf-8")).get("substrate_digest")
+        except (OSError, ValueError, AttributeError) as e:
+            return self._error(409, f"cannot read {manifest_path} to check the render substrate ({e}); "
+                               "re-render from the host checkout, then retry")
+        if not recorded or recorded == self.substrate_digest:
+            return None
+        return self._error(
+            409,
+            f"ops-controller's render substrate ({self.substrate_digest[:12]}) differs from the last "
+            f"host render's ({str(recorded)[:12]}): the image is older or newer than the checkout that "
+            "rendered out/, and a render here would silently change what that checkout rendered. "
+            "Rebuild ordo/ops-controller from "
+            "the checkout that rendered out/ (docker build -f services/ops-controller/Dockerfile "
+            "-t ordo/ops-controller:latest .), then `ordo recreate ops-controller`.",
+            substrate_digest=self.substrate_digest, rendered_substrate_digest=recorded)
 
     def status(self) -> dict[str, Any]:
         """Live status: GPU/scheduler state + the current rendered manifest."""
@@ -211,6 +241,9 @@ class ControlPlane:
         if model_id != "auto" and self.catalog.get(model_id) is None:
             ids = [m.id for m in self.catalog.models]
             return self._error(404, f"model '{model_id}' not in catalog", available=ids)
+        conflict = self._substrate_conflict()
+        if conflict:
+            return conflict
 
         # ONE write path: mutate only the model key of the raw source, preserving everything else.
         raw = yaml.safe_load(self.source_path.read_text(encoding="utf-8")) or {}
@@ -350,6 +383,9 @@ class ControlPlane:
         if plugin_id not in self._enabled_ids(rc2):
             return self._error(409, f"'{plugin_id}' still not enabled after the edit (unmet "
                                "dependency or fit) — nothing written")
+        conflict = self._substrate_conflict()
+        if conflict:
+            return conflict
         # commit: ONE write path — the source text, then regenerate every derived output.
         self.source_path.write_text(text, encoding="utf-8")
         rc2.write(self.out_dir)
@@ -381,6 +417,9 @@ class ControlPlane:
             return self._error(422, f"cannot safely edit ordo.yaml plugins list: {e}")
         if new_text == text:
             return {"ok": True, "already_absent": True, "plugin": plugin_id, "services": services}
+        conflict = self._substrate_conflict()
+        if conflict:
+            return conflict
         edited = Source.from_dict(yaml.safe_load(new_text))
         rc2 = render(edited, self.catalog, self.registry)
         self.source_path.write_text(new_text, encoding="utf-8")
@@ -1015,7 +1054,8 @@ class ControlPlane:
             # Finished leases, newest first — what the orchestration tab's history table shows.
             return 200, {"history": self.history.tail(100) if self.history else []}
         if m == "GET" and path in ("/health", "/healthz"):
-            return 200, {"ok": True}
+            # The digest is not secret; `ordo doctor` reads it here to compare with the checkout.
+            return 200, {"ok": True, "substrate_digest": self.substrate_digest}
         # Service lifecycle routes (ported from ops-api)
         if m == "POST" and path.startswith("/services/") and path.endswith("/start"):
             service_id = path[len("/services/"):-len("/start")]

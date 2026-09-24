@@ -225,10 +225,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if unpinned:
         print(f"! {len(unpinned)} catalog model(s) have no sha256 (download refuses unless "
               f"--allow-unverified): {', '.join(unpinned)}")
+    substrate_ok, substrate_line = doctor.substrate_check(args.project)
+    print(substrate_line)
     if args.bundle:
         doctor.write_bundle(bundle, args.bundle)
         print(f"support bundle -> {args.bundle} (secrets redacted)")
-    return 0
+    return 0 if substrate_ok else 1
 
 
 def _local_images() -> set[str]:  # pragma: no cover - shells to docker
@@ -442,6 +444,7 @@ def main(argv: list[str] | None = None) -> int:
     pp.set_defaults(func=cmd_parity)
     pd = sub.add_parser("doctor")
     pd.add_argument("--bundle", help="write a sanitized support bundle to this path")
+    pd.add_argument("--project", default="ordo", help="compose project name (default: ordo)")
     pd.set_defaults(func=cmd_doctor)
     pget = sub.add_parser("fetch")
     pget.add_argument("model", nargs="?", help="catalog model id (default: the source's model)")
