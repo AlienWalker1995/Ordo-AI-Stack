@@ -38,7 +38,7 @@ def _all_project_images() -> set[str]:
     # substrate images (hardcoded in compose.py, no manifest): the project-namespaced core services
     # + the patched llama.cpp build referenced via a model's catalog backend_image.
     for name in SUBSTRATE_BUILD_CONTEXTS:
-        imgs.add(f"ordo/{name}:latest")
+        imgs.add(f"ordo/{name}")
     imgs.add("ordo-ai-stack-llamacpp-patched:qwen36-swa-86b9470")
     return {i for i in imgs if buildspec._is_project(i, "ordo")}
 
@@ -73,12 +73,12 @@ def test_folder_id_differs_from_image_name_resolves_to_folder():
     """The services where folder-id ≠ image-name (audit §2.1) must resolve to their real folder,
     not the (nonexistent) image-named one — the exact bug the resolver cures."""
     expected = {
-        "ordo/n8n-mcp:latest": "services/n8n",
-        "ordo/mcpvault-mcp:latest": "services/memory-vault",
-        "ordo/rag-ingestion:latest": "services/rag",
-        "ordo/codebase-memory-mcp:latest": "services/codebase-memory",
-        "ordo/orchestration-mcp:latest": "services/orchestration",
-        "ordo/qdrant-rag-mcp:latest": "services/qdrant-rag",
+        "ordo/n8n-mcp": "services/n8n",
+        "ordo/mcpvault-mcp": "services/memory-vault",
+        "ordo/rag-ingestion": "services/rag",
+        "ordo/codebase-memory-mcp": "services/codebase-memory",
+        "ordo/orchestration-mcp": "services/orchestration",
+        "ordo/qdrant-rag-mcp": "services/qdrant-rag",
     }
     for img, ctx in expected.items():
         assert RESOLVE(img) == ctx, f"{img} resolved to {RESOLVE(img)!r}, expected {ctx!r}"
@@ -88,7 +88,7 @@ def test_hermes_resolves_to_its_in_repo_context():
     """agent-hermes has a co-located in-repo build context (services/hermes/ + Dockerfile), so it
     must resolve to that real folder — NOT external. Guards the reorg: a manifest that re-declares
     hermes external, or a move that strands its Dockerfile, fails here."""
-    assert RESOLVE("ordo/agent-hermes:latest") == "services/hermes"
+    assert RESOLVE("ordo/agent-hermes") == "services/hermes"
     assert (ROOT / "services/hermes/Dockerfile").is_file()
 
 

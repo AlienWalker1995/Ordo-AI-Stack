@@ -53,10 +53,11 @@ class Check:
     blocking: bool = True
 
 
-def required_images(rc, project: str = "ordo") -> list[str]:
+def required_images(rc, project: str = "ordo", image_tags: dict[str, str] | None = None) -> list[str]:
     """The exact images the rendered compose will need (core + agent + enabled plugins), with
-    ${VAR:-default} refs expanded against the rendered .env so presence-matching is accurate."""
-    c = rc.compose_dict(project=project)
+    ${VAR:-default} refs expanded against the rendered .env so presence-matching is accurate.
+    `image_tags` is the `ordo build` record the render pins first-party images to."""
+    c = rc.compose_dict(project=project, image_tags=image_tags)
     return sorted({_expand(svc["image"], rc.env) for svc in c["services"].values()})
 
 
@@ -72,6 +73,7 @@ def run(
     images_present: set[str] | None = None,
     secrets_env: str | None = None,
     project: str = "ordo",
+    image_tags: dict[str, str] | None = None,
     agents: AgentRegistry | None = None,
     dashboards: DashboardRegistry | None = None,
 ) -> tuple[bool, list[Check]]:
@@ -151,7 +153,7 @@ def run(
 
     # 6. images available — project images must be built (blocking); upstream may be pulled (note)
     if images_present is not None:
-        needed = required_images(rc, project)
+        needed = required_images(rc, project, image_tags)
         proj_missing = [i for i in needed if _is_buildable(i) and i not in images_present]
         upstream_missing = [i for i in needed
                             if not _is_buildable(i) and i not in images_present]
@@ -164,7 +166,7 @@ def run(
             for i in proj_missing:
                 ctx = resolve_ctx(i)
                 hints.append(f"{i} (build from {ctx})" if ctx and ctx != buildspec.EXTERNAL else i)
-            detail = f"build first: {', '.join(hints)}"
+            detail = f"build first (`ordo build --all`, or `ordo up` builds them): {', '.join(hints)}"
         checks.append(Check("project images built locally", not proj_missing, detail))
         if upstream_missing:
             checks.append(Check("upstream images cached", False,

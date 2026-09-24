@@ -100,7 +100,7 @@ def test_edge_publishes_the_only_host_port():
 
 def test_core_gateway_and_mcp_services_are_project_or_pinned_images():
     c = _dual().compose_dict()
-    assert c["services"]["model-gateway"]["image"] == "ordo/model-gateway:latest"
+    assert c["services"]["model-gateway"]["image"] == "ordo/model-gateway:current"
     assert "mcp-gateway" not in c["services"]
     for n in ("mcp-orchestration", "mcp-qdrant-rag", "mcp-comfyui", "mcp-codebase-memory",
               "mcp-memory-vault", "mcp-n8n"):

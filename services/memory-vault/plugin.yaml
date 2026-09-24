@@ -18,7 +18,7 @@ mcp:
   # to an exact npm version and bridges its stdio server to streamable HTTP with a pinned mcp-proxy.
   # Like the other ordo/* MCP images it's pinned by build context (preflight shows 'build first'),
   # not a registry digest.
-  image: ordo/mcpvault-mcp:latest
+  image: ordo/mcpvault-mcp
   transport: http
   port: 9000
   network: internal        # pure filesystem tool: only LiteLLM can reach it, it reaches nothing

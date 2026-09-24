@@ -32,7 +32,7 @@ secrets:
 services:
   - name: hermes-dashboard
     # Same image as the Hermes agent (V1 builds one hermes image, runs it as gateway + dashboard).
-    image: ordo/agent-hermes:latest
+    image: ordo/agent-hermes
     # Its Chat tab runs full agent sessions, so the same env secrets as the agent.
     secrets: [LITELLM_KEY_HERMES, OPS_CONTROLLER_TOKEN]
     # Binds LOOPBACK, inside caddy's network namespace. This is what keeps the whole

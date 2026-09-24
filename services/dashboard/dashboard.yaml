@@ -10,7 +10,7 @@ description: >
   FastAPI backend reads OPS_CONTROLLER_URL at runtime, so it points straight at `ops-controller`,
   which serves every route it calls.
 default: true
-image: ordo/dashboard:latest
+image: ordo/dashboard
 # Build context is NESTED (the Dockerfile lives in the dashboard/ subdir, not this manifest's own
 # services/dashboard/ folder), so it's declared explicitly — the resolver/substrate test otherwise
 # defaults to services/<id>. METADATA only; never rendered into compose.

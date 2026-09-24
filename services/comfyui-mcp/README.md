@@ -1,7 +1,7 @@
 # comfyui-mcp (ComfyUI MCP server)
 
 Build context for the ComfyUI MCP image, referenced by the `comfyui-mcp` plugin
-([`plugin.yaml`](plugin.yaml)) as `ordo/comfyui-mcp:latest`. It bundles the upstream
+([`plugin.yaml`](plugin.yaml)) as `ordo/comfyui-mcp`. It bundles the upstream
 `joenorton/comfyui-mcp-server` (pinned to commit `e0101b2312f3`) plus the stack's overrides
 (stdio-clean `print()` redirect, flat `run_workflow` args + default workflow, custom-node pip +
 comfyui-restart tools via ops-controller, and system-state tools: GPU / queue / models / nodes /
@@ -12,7 +12,7 @@ registry to digest-pin against, so it's a **project buildable image** (pinned by
 
 ## Build
 ```
-docker build -t ordo/comfyui-mcp:latest services/comfyui-mcp
+ordo build mcp-comfyui
 ```
 
 This directory (`Dockerfile`, `managers/`, `tools/`) is the single source of truth for the service.

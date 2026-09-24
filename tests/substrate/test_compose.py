@@ -164,7 +164,7 @@ def test_an_nvidia_render_keeps_the_control_plane_utility_reservations():
 
 
 def test_agent_swappable():
-    """The agent is pluggable: any id renders as <project>/agent-<id>:latest.
+    """The agent is pluggable: any id renders as <project>/agent-<id>.
 
     Uses a deliberately fictional id. The previous fixture named a real (now dead)
     agent, which read as if that one were special-cased — an arbitrary name proves
@@ -598,7 +598,7 @@ def test_model_gateway_wired_to_db_config_mount_and_mcp_net():
 def test_model_gateway_keys_is_a_one_shot_after_gateway_health():
     c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], project="ordo")
     k = c["services"]["model-gateway-keys"]
-    assert k["image"] == "ordo/model-gateway:latest"
+    assert k["image"] == "ordo/model-gateway"      # untagged: render adds the build tag
     assert k["command"] == ["python3", "/app/bootstrap_keys.py"]
     assert k["restart"] == "on-failure"
     assert k["depends_on"]["model-gateway"] == {"condition": "service_healthy"}

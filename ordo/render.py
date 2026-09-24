@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from . import compose, gpu, substrate
+from . import compose, gpu, images, substrate
 from .agents import AgentRegistry
 from .catalog import DEFAULT_VRAM_RESERVE_GB, Catalog, Model
 from .config import Source
@@ -273,6 +273,9 @@ class RenderedConfig:
     # the chat service (a model's `backend_image` or an override still wins, via LLAMACPP_IMAGE);
     # its device wiring is what compose gives that service.
     llamacpp_backend: LlamaCppBackend = CPU_BACKEND
+    # The first-party images (`ordo/<name>`, untagged) whose tag render fills in from the
+    # out/images.json record `ordo build` writes. See ordo/images.py.
+    first_party_images: tuple[str, ...] = ()
 
     def resident_vram_gb(self) -> float:
         """The GPU footprint the resident LLM actually holds while cached: weights + KV at the
@@ -324,17 +327,20 @@ class RenderedConfig:
             },
         }
 
-    def compose_dict(self, project: str = "ordo") -> dict[str, Any]:
+    def compose_dict(self, project: str = "ordo", image_tags: dict[str, str] | None = None) -> dict[str, Any]:
         """The isolated, runnable compose for the stack — built from the resolved plugin
         services (data-driven), with the primary- AND secondary-GPU uuids resolved for the pins.
         Only NVIDIA cards are pinned or reserved: `driver: nvidia` is the only GPU device driver
-        compose has, and a request for it on a host without it stops the container starting."""
+        compose has, and a request for it on a host without it stops the container starting.
+
+        `image_tags` is the `ordo build` record ({image: tag}); a first-party image it does not
+        name renders at `images.FALLBACK_TAG`."""
         nvidia = self.hardware.primary_is_nvidia
         pri = self.hardware.primary_gpu if nvidia else None
         sec = self.hardware.secondary_gpu if nvidia else None
         if sec is not None and sec.vendor != "nvidia":
             sec = None
-        return compose.render_compose(
+        doc = compose.render_compose(
             nvidia_gpu=nvidia, compose_profiles=self.compose_profiles,
             agent=self.hermes.get("agent", "hermes"), project=project,
             agent_image=self.hermes.get("agent_image") or None,
@@ -360,6 +366,8 @@ class RenderedConfig:
             langfuse_tracing="langfuse" in self.plugins_enabled,
             # {} when the edge wiring can't produce a PROXY_BASE_URL (see litellm_google_sso_env).
             litellm_google_sso_env=self.model_gateway.get("google_sso_env") or {})
+        images.pin_first_party(doc["services"], self.first_party_images, image_tags or {})
+        return doc
 
     def write(self, out_dir: str | Path) -> None:
         out = Path(out_dir)
@@ -403,9 +411,11 @@ class RenderedConfig:
                         for s in self.mcp_servers],
             "plugin_map": self.mcp_server_plugin_map,
         }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        # an isolated, runnable compose for the stack (own project/network, no port clashes)
+        # an isolated, runnable compose for the stack (own project/network, no port clashes). The
+        # first-party image tags come from the record `ordo build` keeps in this same directory, so
+        # the host render and ops-controller's render (out/ is its /config) pin the same builds.
         (out / "docker-compose.yml").write_text(
-            yaml.safe_dump(self.compose_dict(), sort_keys=False),
+            yaml.safe_dump(self.compose_dict(image_tags=images.load_record(out)), sort_keys=False),
             encoding="utf-8")
         for retired in RETIRED_OUTPUTS:
             (out / retired).unlink(missing_ok=True)
@@ -713,11 +723,12 @@ def render(source: Source, catalog: Catalog,
         required_secrets=required_secrets,
         litellm_keys=litellm_keys,
         llamacpp_backend=backend,
+        first_party_images=tuple(sorted(images.first_party_contexts(plugins, agents, dashboards))),
     )
 
 
 def _is_project_image(image: str, project: str = "ordo") -> bool:
-    """A locally-BUILT project MCP image (e.g. ordo/qdrant-rag-mcp:latest). It has no public
+    """A locally-BUILT project MCP image (e.g. ordo/qdrant-rag-mcp). It has no public
     registry to digest-pin against — it's pinned by its build context (like llamacpp-patched), so
     it's reproducible without an @sha256. Preflight surfaces it as 'build first', not a leak risk."""
     return image.startswith(f"{project}/")

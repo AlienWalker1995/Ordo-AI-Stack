@@ -54,7 +54,7 @@ requires:
 provides: [tools]
 depends_on: [rag]
 mcp:
-  image: ordo/qdrant-rag-mcp:latest
+  image: ordo/qdrant-rag-mcp          # untagged: render adds the `ordo build` tag
   transport: http
   port: 9000
   network: stack          # qdrant:6333 + llamacpp-embed:8080

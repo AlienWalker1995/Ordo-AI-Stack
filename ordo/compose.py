@@ -52,6 +52,10 @@ SUBSTRATE_BUILD_CONTEXTS: dict[str, str] = {
     # and no new build path.
     "gpu-gate": "services/gpu-gate",
 }
+# The substrate images compose.py names itself. They are declared UNTAGGED: render fills in the tag
+# `ordo build` recorded (ordo/images.py). llamacpp-patched is not listed: a model's catalog
+# `backend_image` names it with its own pinned tag.
+SUBSTRATE_IMAGES: tuple[str, ...] = ("model-gateway", "ops-controller", "gpu-gate")
 
 # --metrics turns on llama-server's native Prometheus endpoint at /metrics:8080 (token rates,
 # queue depth). Always-on — it's cheap, and the monitoring plugin's prometheus scrapes it.
@@ -175,7 +179,7 @@ def _ops_controller(project: str, net: str, env_file: str, nvidia_gpu: bool) -> 
     so a runtime model switch re-renders in place (one write path stays inside the project)."""
     # Its own bearer token only. It reads secrets.env as a FILE for compose interpolation, never
     # from its env, so a rotated secret is interpolated fresh on the next recreate.
-    s = _svc(f"{project}/ops-controller:latest", net=net, env_file=env_file)
+    s = _svc(f"{project}/ops-controller", net=net, env_file=env_file)
     s["volumes"] = [
         "/var/run/docker.sock:/var/run/docker.sock",  # broker start/stop (guard-scoped)
         "./:/config",                                 # ordo.yaml + rendered out/ (single write path)
@@ -291,7 +295,7 @@ def _model_gateway(project: str, net: str, env_file: str, langfuse_tracing: bool
     same mechanism CADDY_TAILNET_HOSTNAME below uses, so no secret VALUE is ever set here. Empty
     when the edge wiring can't produce a PROXY_BASE_URL; the admin/master-key login is unaffected
     either way (see services/model-gateway/README.md)."""
-    s = _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file)
+    s = _svc(f"{project}/model-gateway", net=net, env_file=env_file)
     s["networks"] = [net, _mcp_net(project)]
     s["depends_on"] = _depends_on({"llamacpp": "service_started", "litellm-db": "service_healthy"})
     s["volumes"] = [_MODEL_GATEWAY_CONFIG_BIND]
@@ -333,7 +337,7 @@ def _model_gateway_keys(project: str, net: str, env_file: str,
     gateway is healthy, exits 0 when the desired state holds; `on-failure` retries transient API
     errors. The agent depends on `service_completed_successfully` so Hermes never starts keyless."""
     # The master key to call the admin API, plus every consumer key it provisions (keys.json).
-    s = _svc(f"{project}/model-gateway:latest", net=net, env_file=env_file)
+    s = _svc(f"{project}/model-gateway", net=net, env_file=env_file)
     s["restart"] = "on-failure"
     s["command"] = ["python3", "/app/bootstrap_keys.py"]
     s["volumes"] = [_MODEL_GATEWAY_CONFIG_BIND]
@@ -357,7 +361,7 @@ def _dashboard(project: str, net: str, env_file: str, nvidia_gpu: bool,
     that gate is unsatisfiable and the agent never starts — so a manifest that omits one still gets
     the V2-native curl probe as a floor."""
     dashboard = dashboard or {}
-    image = dashboard.get("image") or f"{project}/dashboard:latest"
+    image = dashboard.get("image") or f"{project}/dashboard"
     secrets = dashboard.get("secrets", ())
     # depends_on: manifest may map {peer: condition}; default to start-ordering on ops-controller.
     depends = dashboard.get("depends_on") or {"ops-controller": "service_started"}
@@ -573,7 +577,7 @@ def _gpu_gate(ps: PluginService, plugin: Plugin, claim: Any, *, net: str, upstre
     g = ps.gpu_arbitration.gate
     name = gpu.gate_service_name(ps.name)
     s: dict[str, Any] = {
-        "image": f"{project}/gpu-gate:latest",
+        "image": f"{project}/gpu-gate",
         "restart": "unless-stopped",
         "networks": [net, upstream_net],
         "env_file": _env_files(env_file),
@@ -637,8 +641,8 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
                    litellm_google_sso_env: dict[str, str] | None = None) -> dict[str, Any]:
     net = f"{project}-net"
     # the agent is swappable (Hermes is the default); a registry manifest may pin any image,
-    # else fall back to the <project>/agent-<id>:latest convention.
-    agent_img = agent_image or f"{project}/agent-{agent}:latest"
+    # else fall back to the <project>/agent-<id> convention (render tags it, see ordo/images.py).
+    agent_img = agent_image or f"{project}/agent-{agent}"
     # The llama.cpp build is the host's backend (ordo/llamacpp_backend.py: CPU, CUDA, ROCm or
     # Vulkan upstream server image) unless the chosen model pins its own build (e.g. the patched
     # Qwen3.6/3.8 image) via its catalog `backend_image`. render resolves which and passes it in

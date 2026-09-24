@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Added
+- **`ordo build`: first-party images tagged by commit.** The stack's own images (`ordo/<name>`)
+  no longer float on `:latest`. `ordo build` tags each one with the short sha of the last commit
+  that changed its build context (`-dirty` for uncommitted changes), skips tags that already exist,
+  moves `ordo/<name>:current`, and records the tag in `out/images.json`. Every render (host and
+  ops-controller) writes the recorded tag into the compose, so `docker inspect` names the commit
+  and a rollback is a re-render. `ordo up` builds missing first-party images first (`--no-build`
+  skips it), so a fresh install is `ordo init` + `ordo up`. `scripts/rebuild-local-images.sh` is
+  removed.
 - **Eval harness for the model and for Hermes (`evals` plugin, opt-in).** Six suites measure the
   `local-chat` model (IFEval at 60 prompts, 40 function-calling cases, 40 exact-answer reasoning
   items, and a private set of real operator asks) and the Hermes harness (15 tasks with an

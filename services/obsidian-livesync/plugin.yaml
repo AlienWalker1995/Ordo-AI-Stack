@@ -57,7 +57,7 @@ services:
     # Waits for CouchDB, ensures the system + notes databases exist (idempotent), renders its
     # config from env, then materializes LiveSync notes as plain .md under the vault's notes/
     # folder (uid 1000, vault-aligned) so the AI reads them with no desktop Obsidian running.
-    image: ordo/livesync-bridge:latest
+    image: ordo/livesync-bridge
     # The passphrase must be declared: an empty one would silently change end-to-end encryption.
     secrets: [COUCHDB_PASSWORD, LIVESYNC_E2EE_PASSPHRASE]
     env:

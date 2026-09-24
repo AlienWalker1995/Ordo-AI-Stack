@@ -27,7 +27,7 @@ id: my-agent
 name: My Agent
 description: what it is
 default: false                 # exactly one agent should be default: true
-image: ghcr.io/me/my-agent:latest   # omit -> <project>/agent-<id>:latest (operator builds it)
+image: ghcr.io/me/my-agent:1.4.2    # omit -> <project>/agent-<id>, built by `ordo build` from services/<id>/
 consumes:                      # validated against the core services
   - model-gateway
   - model-gateway-keys

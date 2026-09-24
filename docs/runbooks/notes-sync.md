@@ -28,12 +28,9 @@ iOS / Mac / PC  --Self-hosted LiveSync plugin-->  CouchDB  <--livesync-bridge-->
 ```bash
 # create the vault notes/ folder (CouchDB data lives in the couchdb-data named volume)
 mkdir -p data/memory-vault/notes         # or under your MEMORY_VAULT_PATH
-# build the bridge image (from pinned source) and render
-docker build -t ordo/livesync-bridge:latest services/obsidian-livesync
+# render, then bring it up; `ordo up` builds the bridge image (from pinned source) on first run
 ordo --source out/ordo.yaml render --out out
-# bring it up (add `notes` to your existing profiles)
-cd out && COMPOSE_PROFILES=<your-profiles>,notes docker compose -p ordo \
-  --env-file .env --env-file secrets.env up -d couchdb livesync-bridge
+ordo up couchdb livesync-bridge
 ```
 
 Verify: `docker logs ordo-livesync-bridge-1` shows `Database is now ready` and
