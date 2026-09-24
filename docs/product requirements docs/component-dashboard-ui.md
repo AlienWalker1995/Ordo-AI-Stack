@@ -46,7 +46,7 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/orchestration/readiness` | GET | None | Orchestration readiness check |
 | `/api/orchestration/workflows*`, `/validate`, `/outputs` | GET/POST | Y | Workflow store used by the orchestration MCP server (`services/orchestration/server.py`) |
 | `/api/orchestration/comfyui/restart`, `/comfyui/status` | POST/GET | Y | Restart ComfyUI / its status (Media page) |
-| `/api/orchestration/registry/models`, `/registry/gpus` | GET | Y | Runtime model registry, proxied from ops-controller |
+| `/api/orchestration/registry/models`, `/registry/gpus` | GET | Y | Served models and GPU pins derived from the render, proxied from ops-controller |
 | `/api/orchestration/gpu/history` | GET | Y | Finished GPU leases |
 
 To add a ComfyUI model, use the ComfyUI MCP tool `download_comfyui_model` (url + category); pull GGUFs with `ordo fetch --models-dir models/gguf`.

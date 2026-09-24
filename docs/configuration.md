@@ -165,8 +165,8 @@ Opt-in local speech services with OpenAI-compatible APIs. Both services run on
 the **secondary GPU** by default (the smallest GPU, e.g. GTX 1070) to leave the
 primary GPU free for the LLM. On single-GPU hosts they share the primary.
 GPU pinning is decided by the render engine's hardware detection and baked
-directly into `out/docker-compose.yml`; the ops-controller model registry
-(`voice-stt` / `voice-tts` records) owns the intent.
+directly into `out/docker-compose.yml`; ops-controller's `/registry/models` reports the
+resulting `voice-stt` / `voice-tts` pins, read from that render.
 
 **Enable** (from the repo root):
 
@@ -176,9 +176,9 @@ ordo up stt tts
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `STT_MODEL` | `Systran/faster-whisper-small` | Hugging Face repo ID for faster-whisper |
+| `WHISPER__MODEL` (in `services/voice/plugin.yaml`) | `Systran/faster-whisper-small` | Hugging Face repo ID for faster-whisper |
 | `STT_COMPUTE_TYPE` | `int8` | Quantization type (`int8` is Pascal-compatible; use `float16` on Turing+) |
-| `TTS_VOICE` | `af_bella` | Default voice label (registry record + client default). Kokoro selects the voice **per request** via the API `voice` param — this is not a container env. |
+| Hermes `tts.openai.voice` | `af_bella` | Kokoro selects the voice **per request** via the API `voice` param, so the default voice is the client's setting (Hermes' `config.yaml`), not a container env. |
 
 **Internal endpoints (backend network only — no host ports):**
 
@@ -201,7 +201,7 @@ ordo up stt tts
   provider at the local Kokoro service requires `tts.openai.base_url`, but the current
   Hermes config schema does **not** persist a TTS `base_url` (and there is no env for
   it), so this Hermes version cannot target local Kokoro for replies. The Kokoro
-  service is still deployed + registry-managed and reachable at `http://tts:8880/v1`
+  service is still deployed and reachable at `http://tts:8880/v1`
   for n8n / the media/render pipeline / scripts / a future Hermes that honours a TTS base URL.
   For a fully-local reply voice today, use Hermes' native `neutts` provider (on-device).
 
@@ -234,18 +234,22 @@ overrides:
 ```
 Re-render, then from the repo root: `ordo recreate llamacpp` (refused while a GPU lease has it evicted). This drops the two hybrid/recurrent patches above, so a `qwen35`-arch model may no longer load on it.
 
-## Model Registry
+## Served Models
 
-`data/ops-controller/model-registry.json` (mounted at `/data/model-registry.json` in `ops-controller`, path overridable with `MODEL_REGISTRY_PATH`) records each managed model's kind, service, GPU UUID and VRAM estimate. It is read-only at runtime:
+ops-controller derives what the stack serves from the current render (`ordo.yaml`, the model
+catalog and the rendered compose) on every call; nothing is stored. Each record names the model
+id, service, the file it loads, its GPU pin and, for `local-chat`, the context window and vision
+projector:
 
 | Endpoint (ops-controller) | Method | Purpose |
 |---|---|---|
-| `/registry/models` | GET | List all registered models |
-| `/registry/gpus` | GET | Live GPU inventory with the models assigned to each GPU |
+| `/registry/models` | GET | Every model the render serves (`local-chat`, `local-chat-cpu`, `local-embed`, `comfyui`, `voice-stt`, `voice-tts`, for the services that are rendered) |
+| `/registry/gpus` | GET | Live GPU inventory with the models the render pins to each GPU |
+| `/model-config` | GET | The active model, its file and projector (`active_file`, `active_mmproj`), and `model_files`: every file a rendered service loads |
 
-The dashboard proxies these as `/api/orchestration/registry/*`, and the `orchestration` MCP server exposes them as `list_models` and `gpu_status`. GPU pins are baked in at `ordo render` time, so `POST /gpu/assign` and `POST /registry/models/{id}/assign-gpu` answer 410.
+The dashboard proxies the first two as `/api/orchestration/registry/*`, and the `orchestration` MCP server exposes them as `list_models` and `gpu_status`. The dashboard's model-file delete refuses every file in `model_files` and every file a server has loaded. GPU pins are baked in at `ordo render` time, so `POST /gpu/assign` and `POST /registry/models/{id}/assign-gpu` answer 410.
 
-The registry does not choose the running model. The active chat model is the `model:` key in `ordo.yaml`: switch it from the dashboard's Models page or the `set_active_model` MCP tool. Both call the dashboard's `POST /api/models/switch`, which calls `ops-controller` `POST /model-config` (writes `ordo.yaml`, re-renders) and then recreates `llamacpp` and `model-gateway`. A switch is refused while a GPU render lease is held.
+The active chat model is the `model:` key in `ordo.yaml`, and its projector is the catalog entry's `mmproj`: switch it from the dashboard's Models page or the `set_active_model` MCP tool. Both call the dashboard's `POST /api/models/switch`, which calls `ops-controller` `POST /model-config` (writes `ordo.yaml`, re-renders) and then recreates `llamacpp` and `model-gateway`. A switch is refused while a GPU render lease is held.
 
 ## Local Model Cost
 

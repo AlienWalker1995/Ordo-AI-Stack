@@ -155,6 +155,15 @@ All notable changes to this project are documented here. The format is loosely b
   naming both ids, as the component doc already promised.
 
 ### Removed
+- **The runtime model registry file (`data/ops-controller/model-registry.json`).** It was a
+  second, hand-edited record of which GGUF and vision projector llama.cpp serves, with no writer
+  since GPU assignment went 410. ops-controller's `/registry/models` and `/registry/gpus` now
+  derive every record from the current render on each call (same response shape, plus a
+  `local-chat-cpu` record), and `/model-config` adds `active_mmproj` and `model_files` (every file
+  a rendered service loads). The dashboard's model-file delete guard protects exactly those files
+  (chat model, projector, CPU fallback, embeddings) plus whatever a server has loaded, so a
+  switch to a model with a different projector protects the new one. `ordo/model_registry.py`
+  and the `MODEL_REGISTRY_PATH` env are gone; the file on disk is ignored and can be deleted.
 - **Media worker service retired (2026-07-28).** The headless dashboard "media worker"
   (`services/worker/` plugin, container `worker`, image `ordo/worker`) — a durable SQLite-queue
   job processor that drove ComfyUI render + publish jobs and cron-style schedules — is gone. It

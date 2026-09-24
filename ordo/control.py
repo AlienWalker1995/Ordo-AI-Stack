@@ -38,10 +38,10 @@ from .bringup import lifecycle_group
 from .broker import Broker
 from .catalog import Catalog
 from .config import Source
-from .model_registry import ModelRegistry
 from .plugins import PluginRegistry
 from .render import render
 from .scheduler import Job, Scheduler
+from .served_models import model_files, models_by_gpu, served_models
 from .source_edit import edit_plugins_list
 
 logger = logging.getLogger(__name__)
@@ -148,7 +148,6 @@ class ControlPlane:
         scheduler: Scheduler | None = None,
         broker: Broker | None = None,
         history=None,
-        registry_path: str | Path | None = None,
     ):
         self.source_path = Path(source_path)
         self.catalog = catalog
@@ -159,15 +158,6 @@ class ControlPlane:
         self.history = history  # LeaseHistory sink (shared with the broker) — /jobs/history
         # The digest of the render inputs this process ships (its baked copy, in the image).
         self.substrate_digest = substrate.current_digest()
-        # Model registry (runtime state) — same store as ops-api reads.
-        # registry_path defaults to /data/model-registry.json (mounted in compose).
-        if registry_path is None:
-            import os
-            registry_path = os.environ.get("MODEL_REGISTRY_PATH", "/data/model-registry.json")
-        self.model_registry = ModelRegistry(
-            registry_path=Path(registry_path),
-            env_path=Path("/config/.env"),
-        )
         # Slice 3: model download/pull state (in-process, not persisted)
         self._dl_lock = threading.Lock()
         self._dl_status = {"running": False, "output": "", "done": True, "success": None, "progress": 0, "filename": "", "category": ""}
@@ -219,12 +209,19 @@ class ControlPlane:
     def get_model_config(self) -> dict[str, Any]:
         src = Source.load(self.source_path)
         rc = self._render()
+        mmproj = rc.env.get("LLAMACPP_MMPROJ") or ""
         return {
             "source_model": src.model,           # what the source asks for ("auto" or an id)
             "active_model": rc.model.id,          # what best-fit/override actually resolved to
             # The GGUF the resolved model serves. Consumers that key by file (throughput
             # attribution, the dashboard's installed check) need this, not the catalog id.
             "active_file": rc.model.file,
+            # The vision projector llama.cpp loads beside it (a bare file name, like active_file).
+            "active_mmproj": mmproj.rsplit("/", 1)[-1] or None,
+            # Every file a rendered service loads (chat model + projector, CPU fallback, embed):
+            # the dashboard's delete guard protects exactly these.
+            "model_files": [{"file": f.file, "service": f.service, "optional": f.optional}
+                            for f in model_files(rc.compose_dict(), rc.env)],
             "tier": rc.tier,
             "ctx_size": rc.ctx_size,
             "available": [
@@ -758,26 +755,22 @@ class ControlPlane:
             return self._error(500, str(e))
         return {"ok": True, "action": "compose-restart"}
 
-    # --- Registry routes (ported from ops-api, slice 2) ---
-    # These read the RUNTIME model registry (model-registry.json), not the static
-    # catalog. The registry is the source of truth for which models are enabled,
-    # on which GPU, with what config — exactly what ops-api serves.
+    # --- Registry routes ---
+    # Derived from the render on every call (ordo/served_models.py): which models the stack
+    # serves, from which file, on which GPU. There is no stored registry to drift from ordo.yaml.
+
+    def _served_models(self) -> dict[str, dict[str, Any]]:
+        rc = self._render()
+        return served_models(rc.compose_dict(), rc.env, rc.gpu_inventory())
 
     def registry_models(self) -> dict[str, Any]:
-        """List all models in the runtime registry — same shape as ops-api's /registry/models."""
-        models = self.model_registry.list_models()
-        return {"models": {mid: rec.model_dump() for mid, rec in models.items()}}
+        """Every model the current render serves, keyed by model id."""
+        return {"models": self._served_models()}
 
     def registry_gpus(self) -> dict[str, Any]:
-        """Live GPU info merged with registry model assignments — same shape as ops-api's /registry/gpus."""
-        # Get live GPU info from nvidia-smi (same as ops-api's _live_gpus())
+        """Live GPU info (nvidia-smi) with the models the render pins to each card."""
         live = self._live_gpus()
-        models = self.model_registry.list_models()
-        # Build uuid -> list of model ids
-        uuid_to_models: dict[str, list[str]] = {}
-        for mid, m in models.items():
-            if m.gpu_uuid:
-                uuid_to_models.setdefault(m.gpu_uuid, []).append(mid)
+        uuid_to_models = models_by_gpu(self._served_models())
         result: dict[str, Any] = {}
         for uuid, info in live.items():
             result[uuid] = {**info, "models": uuid_to_models.get(uuid, [])}

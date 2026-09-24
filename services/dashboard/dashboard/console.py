@@ -322,10 +322,6 @@ def served_file(v1_models: dict | None) -> str | None:
     return PurePosixPath(str(data[0]["id"])).name
 
 
-# Registry services whose model is a GGUF on the shared weights volume.
-_GGUF_SERVICES = frozenset({"llamacpp", "llamacpp-embed"})
-
-
 def resident_gpu_file(registry: dict) -> str | None:
     """The file the GPU chat server is declared to serve, whether or not it is loaded now."""
     for entry in (registry or {}).values():
@@ -334,31 +330,31 @@ def resident_gpu_file(registry: dict) -> str | None:
     return None
 
 
-def in_use_files(served: dict, registry: dict) -> set[str]:
-    """Every model file a server depends on: what is loaded now, what the registry declares, and
-    the vision projector. Declared matters because a render evicts the GPU server, which then
-    reports nothing loaded; its file is still the active model and must not become deletable."""
+def in_use_files(served: dict, model_config: dict) -> set[str]:
+    """Every model file a server depends on: what each server has loaded now, plus every file the
+    current render loads (ops-controller /model-config `model_files`: the chat model and its
+    projector, the CPU fallback's model, the embedding model). The render matters because a
+    stopped, evicted or restarting server reports nothing loaded, and loads the render's file
+    when it comes back."""
     used = {f for f in (served or {}).values() if f}
-    for entry in (registry or {}).values():
-        if entry.get("service") in _GGUF_SERVICES and (entry.get("source") or {}).get("file"):
-            used.add(entry["source"]["file"])
-        mmproj = (entry.get("config") or {}).get("mmproj")
-        if mmproj:
-            used.add(PurePosixPath(str(mmproj)).name)
+    for entry in (model_config or {}).get("model_files") or []:
+        if entry.get("file"):
+            used.add(entry["file"])
+    if (model_config or {}).get("active_file"):
+        used.add(model_config["active_file"])
     return used
 
 
-def model_slots(model_config: dict, served: dict, disk_files: list[dict], registry: dict,
-                throughput: dict) -> dict:
+def model_slots(model_config: dict, served: dict, disk_files: list[dict], throughput: dict) -> dict:
     stats = (throughput or {}).get("models") or {}
 
     def p50(file: str | None):
         return (stats.get(file) or {}).get("p50") if file else None
 
     on_disk = {f.get("name") for f in disk_files or []}
-    used = in_use_files(served, registry)
+    used = in_use_files(served, model_config)
     active_id = (model_config or {}).get("active_model")
-    gpu_file = served.get("gpu") or resident_gpu_file(registry)
+    gpu_file = served.get("gpu") or (model_config or {}).get("active_file")
     return {
         "gpu": {"catalog_id": active_id, "file": gpu_file, "loaded": served.get("gpu") is not None,
                 "ctx": (model_config or {}).get("ctx_size"), "p50": p50(gpu_file)},

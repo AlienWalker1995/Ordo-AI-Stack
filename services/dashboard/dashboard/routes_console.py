@@ -245,12 +245,12 @@ async def services_table() -> dict:
 
 @router.get("/models")
 async def models() -> dict:
-    model_config, served, disk, registry, throughput = await asyncio.gather(
-        _ops_json("/model-config"), _served(), _disk_files(), _ops_json("/registry/models"), _throughput(),
+    model_config, served, disk, throughput = await asyncio.gather(
+        _ops_json("/model-config"), _served(), _disk_files(), _throughput(),
     )
     if model_config is None:
         raise HTTPException(status_code=503, detail="The control plane is not answering")
-    return console.model_slots(model_config, served, disk, _registry(registry), throughput)
+    return console.model_slots(model_config, served, disk, throughput)
 
 
 class SwitchBody(BaseModel):
@@ -340,17 +340,13 @@ async def delete_model(body: DeleteBody) -> dict:
 
 
 async def _delete(name: str) -> dict:
-    served, registry, model_config = await asyncio.gather(
-        _served(), _ops_json("/registry/models"), _ops_json("/model-config"))
+    served, model_config = await asyncio.gather(_served(), _ops_json("/model-config"))
     # Every unknown refuses: a file is only deletable when every server's dependency is known.
-    if registry is None or model_config is None:
+    # `model_files` is the render's list of what every model server loads; a control plane too
+    # old to send it cannot say.
+    if model_config is None or "model_files" not in model_config:
         raise HTTPException(status_code=503, detail="The control plane did not answer; cannot tell which files are in use")
-    if not served.get("cpu"):
-        # The CPU fallback's file is known only from what it serves.
-        raise HTTPException(status_code=503, detail="The CPU fallback is not reporting its model; try again when it is up")
-    in_use = console.in_use_files(served, _registry(registry))
-    if model_config.get("active_file"):
-        in_use.add(model_config["active_file"])
+    in_use = console.in_use_files(served, model_config)
     if name in in_use:
         raise HTTPException(status_code=409, detail=f"{name} is in use by a running model server")
     path = GGUF_DIR / name
