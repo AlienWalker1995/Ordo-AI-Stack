@@ -184,10 +184,12 @@ def test_comfyui_server_id_decoupled_from_plugin_id():
     assert "comfyui" in ids and "comfyui-mcp" not in ids
     cm = next(s for s in rc.mcp_servers if s["id"] == "comfyui")
     assert cm["plugin_id"] == "comfyui-mcp" and cm["service"] == "mcp-comfyui"
-    # ComfyUI's URL crosses this seam as a compose ${VAR} ref, so render can point COMFYUI_URL at
-    # the admission gate when comfyui is gate-enforced. A literal here would pin the agent to the
-    # DIRECT service and let every agent-submitted prompt bypass GPU arbitration.
-    assert cm["env"]["COMFYUI_URL"] == "${COMFYUI_URL:-http://comfyui:8188}"
+    # ComfyUI's URL crosses this seam as a compose ${VAR} ref that render points at the admission
+    # gate. It is REQUIRED (`:?`), never defaulted: comfyui sits on a network only its gate joins,
+    # so a direct fallback cannot work, and an unset value must stop compose rather than start an
+    # MCP server that cannot reach ComfyUI.
+    assert cm["env"]["COMFYUI_URL"].startswith("${COMFYUI_URL:?")
+    assert "comfyui:8188" not in cm["env"]["COMFYUI_URL"]
     assert cm["env"]["OPS_CONTROLLER_TOKEN"] == "${OPS_CONTROLLER_TOKEN}"
     assert cm["env"]["COMFY_MCP_DEFAULT_MODEL"] == "${COMFY_MCP_DEFAULT_MODEL:-flux1-schnell-fp8.safetensors}"
     # renders can take many minutes: the per-server LiteLLM tool timeout must cover a queue+wait

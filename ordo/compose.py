@@ -9,7 +9,9 @@ colliding with anything else on the host:
   - core services read the rendered .env (single source → no drift),
   - plugin services appear only behind their compose profile (media/voice),
   - each enabled MCP server is its own `mcp-<id>` service on an INTERNAL network that only
-    model-gateway joins (no Docker socket, no env_file, capped CPU/memory).
+    model-gateway joins (no Docker socket, no env_file, capped CPU/memory),
+  - each `gpu_arbitration.enforcement: gate` upstream (ComfyUI) sits on a private network that
+    only its admission gate joins, so the gate is the one route to it (see gated_upstream_net).
 
 The images/build contexts are the substrate's own; this renders the SHAPE and wiring. The
 process broker starts/stops these against the scheduler.
@@ -62,6 +64,16 @@ def _mcp_net(project: str) -> str:
     can reach an MCP server directly; the servers reach the stack only if they also join
     `<project>-net`). `internal: true` at the top level = no default gateway, no egress."""
     return f"{project}-mcp-net"
+
+def gated_upstream_net(project: str, service: str) -> str:
+    """The private network of a gate-enforced service: shared by that service and its admission
+    gate ONLY. Nothing else can resolve `<service>:<port>`, so every caller has to go through the
+    gate, which takes the GPU lease before it forwards a submission. Before this, ComfyUI sat on
+    `<project>-net` and the gate was a convention: Hermes scripts submitted straight to
+    comfyui:8188, one with no lease at all. A plain bridge, not `internal`: the upstream keeps its
+    egress for model and custom-node downloads; isolation here is about who can reach IT."""
+    return f"{project}-{service}-net"
+
 
 _GPU_RESERVATION = {
     "deploy": {"resources": {"reservations": {"devices": [
@@ -539,8 +551,8 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str, env_file: st
     return s
 
 
-def _gpu_gate(ps: PluginService, plugin: Plugin, claim: Any, *, net: str, env_file: str,
-              project: str) -> tuple[str, dict[str, Any]]:
+def _gpu_gate(ps: PluginService, plugin: Plugin, claim: Any, *, net: str, upstream_net: str,
+              env_file: str, project: str) -> tuple[str, dict[str, Any]]:
     """Render the admission gate that fronts a `gpu_arbitration.enforcement: gate` service.
 
     Derived entirely from the declaration — one generic image, no per-service code. The gate
@@ -548,13 +560,16 @@ def _gpu_gate(ps: PluginService, plugin: Plugin, claim: Any, *, net: str, env_fi
     is a hostname change and nothing else. It reserves NO GPU: it is an HTTP proxy that acquires
     residency from ops-controller before letting a submission through, and it is a CLIENT of the
     arbiter — it never starts or stops another container.
+
+    It joins two networks: `net`, where its callers are, and `upstream_net`, the upstream's
+    private network (gated_upstream_net), which no other service joins.
     """
     g = ps.gpu_arbitration.gate
     name = gpu.gate_service_name(ps.name)
     s: dict[str, Any] = {
         "image": f"{project}/gpu-gate:latest",
         "restart": "unless-stopped",
-        "networks": [net],
+        "networks": [net, upstream_net],
         "env_file": _env_files(env_file),
         "depends_on": [ps.name],
         "environment": {
@@ -690,6 +705,7 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
     # render() only passes services whose plugin is enabled, so profile-gating already happened;
     # the per-service `profiles:` keeps them dormant until `--profile <p>` is used too.
     claims = gpu_claims or {}
+    gated_nets: list[str] = []
     for plugin, ps in (plugin_services or []):
         svcs[ps.name] = _plugin_service(ps, plugin, net=net, env_file=env_file,
                                         has_gpu=has_gpu, primary_uuid=primary_gpu_uuid,
@@ -700,7 +716,19 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
         # an enabled gated service can never come up without the thing that arbitrates it.
         arb = ps.gpu_arbitration
         if arb is not None and arb.enforcement == "gate" and ps.name in claims:
+            if ps.network_mode:
+                # Sharing another container's namespace would make the upstream reachable by
+                # every peer of that container, voiding the isolation below without a trace.
+                raise ValueError(
+                    f"{plugin.id}/{ps.name} is gpu_arbitration.enforcement: gate, so it must sit on "
+                    f"its own private network; network_mode {ps.network_mode!r} cannot be combined "
+                    f"with that")
+            upstream_net = gated_upstream_net(project, ps.name)
+            # The upstream leaves the stack network entirely: its only peer is its gate.
+            svcs[ps.name]["networks"] = [upstream_net]
+            gated_nets.append(upstream_net)
             gate_name, gate_svc = _gpu_gate(ps, plugin, claims[ps.name], net=net,
+                                            upstream_net=upstream_net,
                                             env_file=env_file, project=project)
             svcs[gate_name] = gate_svc
 
@@ -713,7 +741,8 @@ def render_compose(*, has_gpu: bool, compose_profiles: list[str], agent: str = "
     out: dict[str, Any] = {
         "name": project,
         "services": svcs,
-        "networks": {net: {"name": net}, _mcp_net(project): {"name": _mcp_net(project), "internal": True}},
+        "networks": {net: {"name": net}, _mcp_net(project): {"name": _mcp_net(project), "internal": True},
+                     **{n: {"name": n} for n in gated_nets}},
     }
     # Declare any named volumes the plugin services reference (a `src:dst` where src is a bare
     # name, not a ./bind or absolute path) — compose requires them in the top-level `volumes:`.

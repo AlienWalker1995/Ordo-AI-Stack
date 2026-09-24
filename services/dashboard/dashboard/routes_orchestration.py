@@ -35,7 +35,8 @@ DATA_DIR = Path(os.environ.get("DASHBOARD_DATA_PATH", "./data/dashboard")).resol
 WORKFLOWS_DIR = Path(os.environ.get("COMFYUI_WORKFLOWS_DIR", "/comfyui-workflows")).resolve()
 OPS_CONTROLLER_URL = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000").rstrip("/")
 OPS_CONTROLLER_TOKEN = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
-COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://comfyui:8188").rstrip("/")
+# The ComfyUI GPU admission gate; empty when comfyui is not enabled.
+COMFYUI_URL = os.environ.get("COMFYUI_URL", "").rstrip("/")
 # The V2 scheduler (GPU lease arbiter). Distinct from OPS_CONTROLLER_URL, which this
 # dashboard deployment points at ops-controller (the control plane) — the scheduler's
 # /status and /jobs/history live only on the ordo-serve control plane.
@@ -285,19 +286,20 @@ async def comfyui_status(request: Request):
                     if svc.get("id") == "comfyui":
                         container_state = svc.get("state", "unknown")
                         break
-            # Probe ComfyUI's queue directly instead of relying on guardian_status,
+            # Probe ComfyUI's queue (through its gate) instead of relying on guardian_status,
             # which is only updated when COMFYUI_SERIALIZE_LLAMACPP is enabled.
-            try:
-                qr = await client.get(f"{COMFYUI_URL}/api/queue", timeout=5.0)
-                if qr.status_code < 400:
-                    qdata = qr.json()
-                    queue = {
-                        "reachable": True,
-                        "pending": len(qdata.get("queue_pending", [])),
-                        "running": len(qdata.get("queue_running", [])),
-                    }
-            except Exception:
-                queue = {"reachable": False}
+            if COMFYUI_URL:
+                try:
+                    qr = await client.get(f"{COMFYUI_URL}/api/queue", timeout=5.0)
+                    if qr.status_code < 400:
+                        qdata = qr.json()
+                        queue = {
+                            "reachable": True,
+                            "pending": len(qdata.get("queue_pending", [])),
+                            "running": len(qdata.get("queue_running", [])),
+                        }
+                except Exception:
+                    queue = {"reachable": False}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
     return {

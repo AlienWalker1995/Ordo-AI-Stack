@@ -288,3 +288,18 @@ def test_gpu_history_route_passes_through(client):
         r = client.get("/api/orchestration/gpu/history")
     assert r.status_code == 200
     assert r.json()["history"][0]["outcome"] == "completed"
+
+
+def test_media_readiness_fails_loud_without_a_gate_url(monkeypatch):
+    """When media is required but COMFYUI_URL is unset, readiness names the missing setting
+    rather than probing a guessed direct address (comfyui is reachable only through its gate)."""
+    from dashboard import orchestration_readiness
+
+    monkeypatch.setattr(orchestration_readiness, "ORCHESTRATION_MEDIA_REQUIRED", True)
+    monkeypatch.setattr(orchestration_readiness, "COMFYUI_URL", "")
+    with patch("dashboard.orchestration_readiness._probe_get", return_value=(True, None)) as probe,             patch("dashboard.orchestration_readiness._probe_litellm_mcp_tools", return_value=(True, 1, None)):
+        out = orchestration_readiness.compute_readiness()
+    media = next(c for c in out["checks"] if c["id"] == "comfyui_media")
+    assert media["ok"] is False and "COMFYUI_URL" in media["error"]
+    assert out["ok"] is False
+    assert all("8188" not in str(call.args[0]) for call in probe.call_args_list)

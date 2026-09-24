@@ -18,10 +18,13 @@ pytest.importorskip(
 )
 from mcp.server.fastmcp import FastMCP  # noqa: E402
 
+# What compose sets COMFYUI_URL to: the GPU admission gate (the tools have no direct default).
+GATE_URL = "http://comfyui-gate:8188"
+
 
 @pytest.fixture
-def mcp_app():
-    """Create a FastMCP app with system tools registered."""
+def mcp_app(monkeypatch):
+    """Create a FastMCP app with system tools registered, pointed at the gate."""
     import sys
     from pathlib import Path
 
@@ -32,6 +35,7 @@ def mcp_app():
 
     mcp = FastMCP("test")
     from tools.system import register_system_tools
+    monkeypatch.setattr("tools.system.COMFYUI_URL", GATE_URL)
     register_system_tools(mcp)
     return mcp
 
@@ -75,6 +79,7 @@ class TestQueuePrompt:
         assert result["ok"] is True
         assert result["prompt_id"] == "abc-123"
         mock_post.assert_called_once()
+        assert mock_post.call_args[0][0] == f"{GATE_URL}/prompt"
         call_body = mock_post.call_args[1].get("json") or mock_post.call_args[0][1] if len(mock_post.call_args[0]) > 1 else mock_post.call_args[1]["json"]
         assert "prompt" in call_body
 
@@ -151,3 +156,20 @@ class TestQueuePrompt:
         assert result["ok"] is True
         posted_body = mock_post.call_args[1]["json"]
         assert posted_body["prompt"]["1"]["inputs"]["ckpt_name"] == "flux1-schnell-fp8.safetensors"
+
+
+def test_without_a_gate_url_nothing_is_sent(monkeypatch):
+    """No COMFYUI_URL means no gate to submit through; the tool must refuse, not guess comfyui:8188."""
+    import sys
+    from pathlib import Path
+
+    mcp_root = Path("services/comfyui-mcp")
+    if str(mcp_root) not in sys.path:
+        sys.path.insert(0, str(mcp_root))
+    import tools.system as system
+
+    monkeypatch.setattr(system, "COMFYUI_URL", "")
+    with patch("tools.system.requests.post", side_effect=AssertionError("must not send")), \
+            patch("tools.system.requests.get", side_effect=AssertionError("must not send")):
+        for result in (system._comfy_post("/prompt", {"prompt": {}}), system._comfy_get("/queue")):
+            assert result["ok"] is False and "COMFYUI_URL" in result["error"]

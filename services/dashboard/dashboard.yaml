@@ -49,7 +49,10 @@ environment:
   # MCP toggle maps server_id -> plugin_id (inside servers.json) and asks ops-controller to
   # enable/disable that plugin: ops-controller is the only writer of the operator source.
   MCP_SERVERS_PATH: /mcp-config/servers.json
-  COMFYUI_URL: ${COMFYUI_URL:-http://comfyui:8188}
+  # The ComfyUI GPU admission gate, rendered only while comfyui is enabled (render.GATED_SERVICE_URL_ENV).
+  # Empty otherwise, which the dashboard reports as ComfyUI unavailable. Never a direct fallback:
+  # comfyui sits on a network only its gate joins.
+  COMFYUI_URL: ${COMFYUI_URL:-}
   QDRANT_URL: http://qdrant:6333
   # On-disk model dirs (bind-mounted below): /api/llm/* scans GGUF_MODELS_DIR; MODELS_DIR is comfyui.
   GGUF_MODELS_DIR: /gguf-models

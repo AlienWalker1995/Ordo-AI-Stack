@@ -15,6 +15,8 @@ These tests lock the replacement in place:
 """
 from __future__ import annotations
 
+import dataclasses
+import json
 from pathlib import Path
 
 import pytest
@@ -205,6 +207,118 @@ def test_comfyui_gates_both_prompt_paths(registry):
     ps = next(s for p in registry.plugins if p.id == "comfyui" for s in p.services
               if s.name == "comfyui")
     assert set(ps.gpu_arbitration.gate.submit_paths) >= {"/prompt", "/api/prompt"}
+
+
+def test_comfyui_gates_the_dialogue_reel_endpoint(registry):
+    """POST /dialogue_reel/render (a custom node on the ComfyUI server) launches the whole Rick and
+    Morty render: a subprocess that queues VibeVoice-Large prompts to ComfyUI's own loopback
+    /prompt, which never passes the gate. Left ungated it starts GPU work without residency."""
+    ps = next(s for p in registry.plugins if p.id == "comfyui" for s in p.services
+              if s.name == "comfyui")
+    assert "/dialogue_reel/render" in ps.gpu_arbitration.gate.submit_paths
+
+
+# --- topology: the gate is the ONLY route to a gated upstream ------------------------------------
+
+# The operator's plugin set is a subset of this; rendering EVERY registered plugin is what proves a
+# future plugin cannot quietly join the gated upstream's network or address it directly.
+@pytest.fixture(scope="module")
+def rendered_everything():
+    registry = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
+    every_plugin = [p.id for p in registry.plugins]
+    return render(_src(plugins=every_plugin), CATALOG, registry)
+
+
+def _gated(rc):
+    claims = gpu.gated_claims(rc.gpu_inventory())
+    assert claims, "the fixture must render at least one gate-enforced service"
+    return claims
+
+
+def test_a_gated_upstream_shares_its_network_only_with_its_gate(rendered_everything):
+    """An env redirect only moves the callers someone remembered. Topology moves all of them:
+    if the upstream is not on any network but its gate's, `<service>:<port>` does not resolve for
+    anything else, so a stale default or a hand-typed URL fails closed instead of reaching the GPU."""
+    c = rendered_everything.compose_dict()
+    svcs = c["services"]
+    stack_net = f"{c['name']}-net"
+    for claim in _gated(rendered_everything):
+        gate_name = gpu.gate_service_name(claim.service)
+        private = compose.gated_upstream_net(c["name"], claim.service)
+        assert svcs[claim.service]["networks"] == [private], (
+            f"{claim.service} must sit ONLY on its private network, got "
+            f"{svcs[claim.service]['networks']}")
+        assert set(svcs[gate_name]["networks"]) == {stack_net, private}, (
+            "the gate bridges the stack network (its callers) and the private one (its upstream)")
+        others = sorted(n for n, s in svcs.items()
+                        if n not in (claim.service, gate_name) and private in (s.get("networks") or []))
+        assert not others, f"{others} can reach {claim.service} around its gate"
+        # A plain bridge, NOT internal: ComfyUI still needs egress for model and custom-node pulls.
+        assert c["networks"][private] == {"name": private}
+
+
+def test_no_rendered_service_or_env_addresses_a_gated_upstream_directly(rendered_everything):
+    """The gate's own GATE_UPSTREAM is the one legitimate direct reference. Anything else (an env
+    value, a `${VAR:-http://comfyui:8188}` fallback, a healthcheck, a command) is a bypass that
+    only works until the topology test above makes it fail at runtime; catch it at render."""
+    rc = rendered_everything
+    svcs = rc.compose_dict()["services"]
+    for claim in _gated(rc):
+        port = next(ps.gpu_arbitration.gate.upstream_port for _p, ps in rc.plugin_services
+                    if ps.name == claim.service)
+        direct = f"{claim.service}:{port}"
+        gate_name = gpu.gate_service_name(claim.service)
+        offenders = []
+        for name, svc in svcs.items():
+            svc = dict(svc)
+            if name == gate_name:
+                env = dict(svc["environment"])
+                assert env.pop("GATE_UPSTREAM") == f"http://{direct}"
+                svc["environment"] = env
+            if name == claim.service:
+                svc.pop("healthcheck", None)   # probes its own localhost, not the service name
+            if direct in json.dumps(svc):
+                offenders.append(name)
+        assert not offenders, f"{offenders} address {direct} directly instead of through the gate"
+        env_hits = sorted(k for k, v in rc.env.items() if direct in str(v))
+        assert not env_hits, f".env keys {env_hits} point at {direct} instead of the gate"
+
+
+_SOURCE_SUFFIXES = {".py", ".yaml", ".yml", ".json", ".sh", ".toml"}
+_SOURCE_NAMES = {"Dockerfile", "Caddyfile"}
+_SKIP_DIRS = {"node_modules", "dist", "__pycache__", ".venv", "venv"}
+
+
+def test_no_source_defaults_to_a_gated_upstream_directly(rendered_everything):
+    """Code, manifests, image ENV and dashboard cards must not carry `http://comfyui:8188` as a
+    fallback. Such a default is fail-open by design: whenever the gate URL is missing it silently
+    routes GPU work around arbitration. With the upstream isolated it would only fail at runtime;
+    this catches it in review. (Prose in *.md may still name the address to warn against it.)"""
+    for claim in _gated(rendered_everything):
+        port = next(ps.gpu_arbitration.gate.upstream_port
+                    for _p, ps in rendered_everything.plugin_services if ps.name == claim.service)
+        direct = f"http://{claim.service}:{port}"
+        offenders = []
+        for top in ("services", "ordo", "auth", "scripts", "assets"):
+            for path in (ROOT / top).rglob("*"):
+                if not path.is_file() or _SKIP_DIRS.intersection(path.parts):
+                    continue
+                if path.suffix not in _SOURCE_SUFFIXES and path.name not in _SOURCE_NAMES:
+                    continue
+                if direct in path.read_text(encoding="utf-8", errors="replace"):
+                    offenders.append(str(path.relative_to(ROOT)))
+        assert not offenders, f"{direct} is hardcoded (a fail-open route around the gate) in {offenders}"
+
+
+def test_a_gated_service_cannot_share_another_network_namespace(rendered):
+    """`network_mode: service:x` would put the upstream inside x's namespace, reachable by every
+    peer of x: the isolation would be silently void. Refuse the render instead."""
+    plugin, ps = next((p, s) for p, s in rendered.plugin_services if s.name == "comfyui")
+    in_caddys_netns = dataclasses.replace(ps, network_mode="service:caddy")
+    with pytest.raises(ValueError, match="network_mode"):
+        compose.render_compose(has_gpu=True, compose_profiles=["media"],
+                               plugin_services=[(plugin, in_caddys_netns)],
+                               gpu_claims={c.service: c for c in rendered.gpu_inventory()})
 
 
 def test_gate_image_has_a_resolvable_build_context():

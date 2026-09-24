@@ -25,7 +25,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["console"])
 
 GGUF_DIR = Path(os.environ.get("GGUF_MODELS_DIR", "/gguf-models"))
-COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://comfyui:8188").rstrip("/")
+# The ComfyUI GPU admission gate; empty when comfyui is not enabled (then ComfyUI reads as unavailable).
+COMFYUI_URL = os.environ.get("COMFYUI_URL", "").rstrip("/")
 PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090").rstrip("/")
 GRAFANA_URL = os.environ.get("GRAFANA_URL", "http://grafana:3000").rstrip("/")
 LLAMACPP_URL = os.environ.get("LLAMACPP_URL", "http://llamacpp:8080").rstrip("/")
@@ -74,6 +75,8 @@ async def _get_json(url: str, timeout: float = 10.0) -> dict | None:
 
 
 async def _comfy_json(path: str) -> dict | None:
+    if not COMFYUI_URL:
+        return None
     return await _get_json(f"{COMFYUI_URL}{path}", timeout=10.0)
 
 
@@ -84,6 +87,8 @@ _PASSTHROUGH_HEADERS = ("content-type", "content-length", "content-range", "acce
 async def _comfy_stream(filename: str, subfolder: str, kind: str, byte_range: str | None):
     """Open ComfyUI's /view as a stream: (status, headers, body chunks), or None. A video is
     never buffered whole, and a Range request is forwarded so the browser can seek."""
+    if not COMFYUI_URL:
+        return None
     from dashboard.app import _get_http_client
 
     client = _get_http_client()

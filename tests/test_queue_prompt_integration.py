@@ -29,7 +29,7 @@ def test_queue_prompt_registered_in_system_tools():
     assert "queue_prompt" in tool_names, f"queue_prompt not found in: {tool_names}"
 
 
-def test_queue_prompt_minimal_flux_workflow():
+def test_queue_prompt_minimal_flux_workflow(monkeypatch):
     """A minimal Flux txt2img workflow structure passes validation."""
     mcp_root = Path("services/comfyui-mcp")
     if str(mcp_root) not in sys.path:
@@ -38,6 +38,8 @@ def test_queue_prompt_minimal_flux_workflow():
     from mcp.server.fastmcp import FastMCP
     from tools.system import register_system_tools
 
+    # compose points COMFYUI_URL at the GPU admission gate; the tools have no direct default
+    monkeypatch.setattr("tools.system.COMFYUI_URL", "http://comfyui-gate:8188")
     mcp = FastMCP("integration-test")
     register_system_tools(mcp)
 

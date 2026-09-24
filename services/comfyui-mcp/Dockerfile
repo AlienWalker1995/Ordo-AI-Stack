@@ -75,7 +75,7 @@ t = t.replace(
 p.write_text(t, encoding="utf-8")
 PY
 
-# Streamable HTTP on 0.0.0.0:9000 (/mcp), stateless. ComfyUI at COMFYUI_URL (compose sets it).
-ENV COMFYUI_URL=http://comfyui:8188
+# Streamable HTTP on 0.0.0.0:9000 (/mcp), stateless. ComfyUI at COMFYUI_URL, which compose sets
+# to the GPU admission gate. No image default: comfyui is reachable only through its gate.
 EXPOSE 9000
 CMD ["python", "server.py"]

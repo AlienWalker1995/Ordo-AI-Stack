@@ -94,8 +94,15 @@ Every one of these is deliberate, and each has a test in `tests/test_gpu_gate.py
 
 The backstop (acquire late if the upstream is busy while the gate holds nothing) **narrows** the
 bypass window; it cannot close it, because by then the work has started. Only routing every
-caller through the gate closes it. The render pins `COMFYUI_URL` at the gate for mcp-comfyui
-and the dashboard, and the Caddy edge enters through the gate, those are
-the known callers, and `tests/substrate/test_gpu_arbitration.py` asserts they stay pointed at it.
-A caller that reaches the container directly on the project network is still a bypass, and shows
-up as `bypass_detected` in `/_gpu_gate/status`.
+caller through the gate closes it, and the render enforces that with topology: a gated upstream
+sits on a private network (`<project>-<service>-net`, `ordo.compose.gated_upstream_net`) that
+only its gate joins, so `comfyui:8188` does not resolve for any other service. Callers use
+`COMFYUI_URL` (the gate), and `tests/substrate/test_gpu_arbitration.py` asserts both the
+isolation and that nothing renders or hardcodes the direct address.
+
+What topology cannot see is work started from INSIDE the upstream container. A custom node that
+launches a render (ComfyUI's `/dialogue_reel/render`, whose subprocess queues prompts on the
+loopback `/prompt`) must be declared in `submit_paths` so the launch itself takes residency.
+Residency is still released on the queue signal, so GPU work such a subprocess runs outside
+ComfyUI's queue after its last prompt drains is not covered once `GATE_DRAIN_SECONDS` elapses.
+Anything the backstop does catch shows up as `bypass_detected` in `/_gpu_gate/status`.

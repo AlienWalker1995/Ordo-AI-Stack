@@ -139,10 +139,33 @@ class StubUpstream:
         async def view(request):
             return web.Response(body=b"x" * 200_000, content_type="image/png")
 
+        async def history(request):
+            return web.json_response({request.match_info["pid"]: {"status": {"completed": True}}})
+
+        async def ws(request):
+            # ComfyUI pushes execution progress here; echo stands in for that stream.
+            sock = web.WebSocketResponse()
+            await sock.prepare(request)
+            await sock.send_str(json.dumps({"type": "status", "data": {"sid": "s1"}}))
+            async for msg in sock:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    await sock.send_str(f"echo:{msg.data}")
+            return sock
+
+        async def dialogue_reel(request):
+            # A custom-node endpoint that starts GPU work outside /prompt (services/comfyui
+            # declares it as a submit path); it returns at once and renders afterwards.
+            self.prompts.append(await request.json())
+            self.queue_depth += 1
+            return web.json_response({"ok": True, "job_id": "j1", "status": "running"})
+
         app.router.add_post("/prompt", prompt)
         app.router.add_post("/api/prompt", prompt)
+        app.router.add_post("/dialogue_reel/render", dialogue_reel)
         app.router.add_get("/queue", queue)
         app.router.add_get("/view", view)
+        app.router.add_get("/history/{pid}", history)
+        app.router.add_get("/ws", ws)
         return app
 
 
@@ -223,6 +246,40 @@ async def test_non_submit_traffic_is_proxied_without_taking_residency(harness):
         async with s.get(f"{url}/view") as r:      # large streamed body
             assert len(await r.read()) == 200_000
     assert ops.jobs == []
+
+
+@pytest.mark.asyncio
+async def test_output_fetches_and_the_progress_websocket_pass_through_ungated(harness):
+    """With ComfyUI reachable ONLY through the gate, the web UI's progress stream (/ws) and every
+    result fetch (/history, /view) must relay through it, or isolating the upstream breaks the UI."""
+    ops, upstream = StubOps(), StubUpstream()
+    url, _ = await harness(ops, upstream)
+    async with aiohttp.ClientSession() as s:
+        async with s.get(f"{url}/history/p1") as r:
+            assert r.status == 200 and (await r.json())["p1"]["status"]["completed"] is True
+        async with s.ws_connect(f"{url}/ws?clientId=c1") as sock:
+            first = await sock.receive_json(timeout=5)
+            assert first["type"] == "status"
+            await sock.send_str("ping")
+            assert (await sock.receive(timeout=5)).data == "echo:ping"
+    assert ops.jobs == [], "browsing and progress streaming must not take the GPU"
+
+
+@pytest.mark.asyncio
+async def test_a_declared_custom_submit_path_takes_residency_first(harness):
+    """Submit paths come from the manifest, not code: a custom endpoint that launches a render
+    (ComfyUI's /dialogue_reel/render) is gated exactly like /prompt once it is declared."""
+    ops, upstream = StubOps(admit_after=3), StubUpstream()
+    url, _ = await harness(ops, upstream,
+                           GATE_SUBMIT_PATHS="/prompt,/api/prompt,/dialogue_reel/render")
+    async with aiohttp.ClientSession() as s:
+        task = asyncio.create_task(s.post(f"{url}/dialogue_reel/render", json={"dialogue": {}}))
+        await asyncio.sleep(0.12)
+        assert upstream.prompts == [], "the render started before residency was granted"
+        r = await task
+        assert r.status == 200
+        r.release()
+    assert ops.jobs == ["gate-comfyui"] and upstream.prompts
 
 
 @pytest.mark.asyncio

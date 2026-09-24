@@ -11,7 +11,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://comfyui:8188").rstrip("/")
+# The ComfyUI GPU admission gate; empty when comfyui is not enabled.
+COMFYUI_URL = os.environ.get("COMFYUI_URL", "").rstrip("/")
 MODEL_GATEWAY_URL = os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435").rstrip("/")
 MODEL_GATEWAY_API_KEY = os.environ.get("MODEL_GATEWAY_API_KEY", "")
 WORKFLOWS_DIR = Path(os.environ.get("COMFYUI_WORKFLOWS_DIR", "/comfyui-workflows")).resolve()
@@ -73,7 +74,8 @@ def compute_readiness() -> dict:
     media_ok = True
     media_err: str | None = None
     if ORCHESTRATION_MEDIA_REQUIRED:
-        u_ok, u_err = _probe_get(f"{COMFYUI_URL}/")
+        u_ok, u_err = (_probe_get(f"{COMFYUI_URL}/") if COMFYUI_URL
+                       else (False, "COMFYUI_URL is not set (comfyui is not enabled)"))
         if not u_ok:
             media_ok = False
             media_err = u_err

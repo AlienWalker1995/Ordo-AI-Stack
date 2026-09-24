@@ -17,11 +17,16 @@ from mcp.server.fastmcp import FastMCP
 
 logger = logging.getLogger("MCP_Server")
 
-COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://comfyui:8188").rstrip("/")
+# The GPU admission gate (compose sets it; see plugin.yaml). No direct default: comfyui sits on a
+# network only its gate joins, and a fallback that bypassed the gate would bypass the GPU lease.
+COMFYUI_URL = os.environ.get("COMFYUI_URL", "").rstrip("/")
+_NO_URL_ERROR = "COMFYUI_URL is not set; ComfyUI is reachable only through its GPU admission gate."
 
 
 def _comfy_get(path: str, timeout: int = 30) -> dict:
     """GET from ComfyUI HTTP API."""
+    if not COMFYUI_URL:
+        return {"ok": False, "error": _NO_URL_ERROR}
     url = f"{COMFYUI_URL}{path}"
     try:
         r = requests.get(url, timeout=timeout)
@@ -45,6 +50,8 @@ def _comfy_get(path: str, timeout: int = 30) -> dict:
 
 def _comfy_post(path: str, body: dict[str, Any] | None = None, timeout: int = 30) -> dict:
     """POST to ComfyUI HTTP API."""
+    if not COMFYUI_URL:
+        return {"ok": False, "error": _NO_URL_ERROR}
     url = f"{COMFYUI_URL}{path}"
     try:
         r = requests.post(url, json=body or {}, timeout=timeout)
