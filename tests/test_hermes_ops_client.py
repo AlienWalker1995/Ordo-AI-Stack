@@ -131,3 +131,59 @@ def test_compose_verbs_without_service_raise(client):
         client.compose_up(service=None)
     with pytest.raises(OpsClientError, match="stack-wide"):
         client.compose_down(service=None)
+
+
+def test_compose_down_sends_confirm(client):
+    """compose_down used to post to /services/{id}/stop with no body at all, so
+    ops-controller's `if not body.get("confirm")` check 400'd every call. It must send
+    confirm the same way compose_up/compose_restart already do."""
+    with respx.mock(base_url=BASE_URL) as mock:
+        mock.post("/services/agent/stop").mock(return_value=Response(200, json={"ok": True}))
+        client.compose_down(service="agent", confirm=True)
+        body = mock.calls.last.request.read()
+        assert b'"confirm":true' in body or b'"confirm": true' in body
+
+
+# ── every public method must send the bearer + X-Actor (audit trail), not just the ones
+# that happen to use the client with headers on it ──
+
+
+def _cover_every_public_method(client, mock):
+    """Registers a 200 mock for every ops-controller route this client calls, then invokes
+    every public OpsClient method once. Returns the respx mock so callers can inspect calls."""
+    mock.get("/containers").mock(return_value=Response(200, json=[]))
+    mock.get("/containers/foo/logs").mock(return_value=Response(200, text="ok"))
+    mock.post("/containers/foo/restart").mock(return_value=Response(200, json={"ok": True}))
+    mock.post("/services/foo/recreate").mock(return_value=Response(200, json={"ok": True}))
+    mock.post("/services/foo/stop").mock(return_value=Response(200, json={"ok": True}))
+    mock.get("/plugins").mock(return_value=Response(200, json={"plugins": []}))
+    mock.post("/plugins/foo/enable").mock(return_value=Response(200, json={"ok": True}))
+    mock.post("/plugins/foo/disable").mock(return_value=Response(200, json={"ok": True}))
+
+    client.list_containers()
+    client.container_logs("foo")
+    client.restart_container("foo")
+    client.compose_up(service="foo", confirm=True)
+    client.compose_restart(service="foo", confirm=True)
+    client.compose_down(service="foo", confirm=True)
+    client.list_plugins()
+    client.enable_plugin("foo", confirm=True)
+    client.disable_plugin("foo", confirm=True)
+
+
+def test_every_public_method_sends_the_bearer_and_actor(client):
+    """The plugin enable/disable/list methods used a second httpx.Client built with no
+    headers at all ('ControlPlane is authless by design' — stale: ops-controller requires
+    a bearer on every path but /health, see ordo/control.py `UNAUTHENTICATED_PATHS`), so
+    they 401'd on every call. Every public method must go through the same authenticated
+    request path."""
+    with respx.mock(base_url=BASE_URL) as mock:
+        _cover_every_public_method(client, mock)
+        assert mock.calls, "no requests were made"
+        for call in mock.calls:
+            assert call.request.headers["Authorization"] == "Bearer test-token", (
+                f"{call.request.method} {call.request.url.path} sent no bearer token"
+            )
+            assert call.request.headers["X-Actor"] == "hermes", (
+                f"{call.request.method} {call.request.url.path} sent no X-Actor header"
+            )
