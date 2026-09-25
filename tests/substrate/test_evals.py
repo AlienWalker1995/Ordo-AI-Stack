@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from ordo import wizard
+from ordo import secret_store
 from ordo.catalog import Catalog
 from ordo.config import Source
 from ordo.plugins import PluginRegistry
@@ -148,7 +148,7 @@ def test_every_secret_reaches_the_container_only_as_a_reference():
             assert str(value).startswith("${"), f"{key} holds a literal instead of a ${{...}} reference"
     for secret in plugin.secrets:
         assert secret in rc.required_secrets, f"{secret} would be missing from secrets.env.example"
-    values = {key: wizard.generator_for(key)() for key in ("HERMES_API_SERVER_KEY", "LITELLM_KEY_EVALS")}
+    values = {key: secret_store.generator_for(key)() for key in ("HERMES_API_SERVER_KEY", "LITELLM_KEY_EVALS")}
     text = yaml.safe_dump(rc.compose_dict(), sort_keys=False)
     for key, value in values.items():
         assert value not in text, f"the VALUE of {key} was inlined into the rendered compose"
@@ -157,13 +157,13 @@ def test_every_secret_reaches_the_container_only_as_a_reference():
 def test_the_api_server_key_has_a_strong_generator():
     """Hermes refuses to start its API server on a key shorter than 16 characters, and a holder of
     the key can run the agent with its full toolset."""
-    assert wizard.generator_for("HERMES_API_SERVER_KEY") is not None
-    assert len(wizard.SECRET_GENERATORS["HERMES_API_SERVER_KEY"]()) >= 32
+    assert secret_store.generator_for("HERMES_API_SERVER_KEY") is not None
+    assert len(secret_store.SECRET_GENERATORS["HERMES_API_SERVER_KEY"]()) >= 32
 
 
 def test_the_api_server_key_is_rotatable():
-    script = (ROOT / "scripts" / "secrets" / "rotate-internal.sh").read_text(encoding="utf-8")
-    assert 'print "HERMES_API_SERVER_KEY"' in script
+    assert secret_store.rotation_refusal("HERMES_API_SERVER_KEY") is None
+    assert secret_store.is_internal("HERMES_API_SERVER_KEY")
 
 
 # ── Hermes API server wiring ───────────────────────────────────────────────────

@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo import compose, wizard
+from ordo import compose, secret_store, wizard
 from ordo.catalog import Catalog
 from ordo.config import Source
 from ordo.plugins import PluginRegistry, PluginService
@@ -140,7 +140,7 @@ def test_every_declared_secret_reaches_the_containers_only_as_a_reference():
     assert not unused, f"declared in `secrets:` but consumed by no service: {unused}"
 
     # (3) with real values in hand, none may be baked into the rendered compose
-    values = {key: wizard.SECRET_GENERATORS[key]() for key in plugin.secrets}
+    values = {key: secret_store.SECRET_GENERATORS[key]() for key in plugin.secrets}
     for key, value in values.items():
         assert value not in text, f"the VALUE of {key} was inlined into the rendered compose"
 
@@ -251,13 +251,13 @@ def test_every_langfuse_secret_has_a_generator():
     """All ten are internal (no external authority issues them), so the wizard must mint all ten
     rather than prompting the operator for a value only the stack itself can know."""
     for key in LANGFUSE_SECRETS:
-        assert wizard.generator_for(key) is not None, f"{key} has no wizard generator"
+        assert secret_store.generator_for(key) is not None, f"{key} has no wizard generator"
 
 
 def test_encryption_key_is_exactly_64_hex_chars():
     """Langfuse REFUSES TO BOOT on anything else - the one generator shape that is a hard
     server-side requirement rather than a strength preference."""
-    value = wizard.SECRET_GENERATORS["LANGFUSE_ENCRYPTION_KEY"]()
+    value = secret_store.SECRET_GENERATORS["LANGFUSE_ENCRYPTION_KEY"]()
     assert len(value) == 64
     assert all(c in "0123456789abcdef" for c in value)
 
@@ -265,19 +265,20 @@ def test_encryption_key_is_exactly_64_hex_chars():
 def test_project_keys_carry_the_prefixes_langfuse_issues():
     """The Hermes plugin rejects any other shape as a leftover placeholder (it would otherwise
     build a client that silently drops every trace at flush)."""
-    assert wizard.SECRET_GENERATORS["LANGFUSE_PUBLIC_KEY"]().startswith("pk-lf-")
-    assert wizard.SECRET_GENERATORS["LANGFUSE_SECRET_KEY"]().startswith("sk-lf-")
+    assert secret_store.SECRET_GENERATORS["LANGFUSE_PUBLIC_KEY"]().startswith("pk-lf-")
+    assert secret_store.SECRET_GENERATORS["LANGFUSE_SECRET_KEY"]().startswith("sk-lf-")
 
 
 def test_salt_and_encryption_key_are_never_rotated():
-    """Rotating either makes stored API keys unmatchable and stored secrets undecryptable, so the
-    rotation script must pass them through untouched (the LITELLM_SALT_KEY rule)."""
-    script = (ROOT / "scripts" / "secrets" / "rotate-internal.sh").read_text(encoding="utf-8")
+    """Rotating either makes stored API keys unmatchable and stored secrets undecryptable, so
+    `ordo secrets rotate` refuses them (the LITELLM_SALT_KEY rule)."""
     for key in ("LANGFUSE_SALT", "LANGFUSE_ENCRYPTION_KEY"):
-        assert f"/^{key}=/" in script, f"{key} must be explicitly passed through, not fall through"
+        assert "never rotate" in secret_store.rotation_refusal(key)
+        assert not secret_store.is_internal(key)
     for key in ("LANGFUSE_DB_PASSWORD", "LANGFUSE_CLICKHOUSE_PASSWORD", "LANGFUSE_REDIS_AUTH",
                 "LANGFUSE_MINIO_SECRET", "LANGFUSE_NEXTAUTH_SECRET"):
-        assert f'print "{key}"' in script, f"{key} should be rotatable"
+        assert secret_store.rotation_refusal(key) is None and secret_store.is_internal(key), \
+            f"{key} should be rotatable"
 
 
 # ── edge + sidecar + dashboard card (the three must agree on one name/port) ────

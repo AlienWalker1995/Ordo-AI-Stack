@@ -19,6 +19,7 @@ The contract every agent image MUST honour (open standards, per the architecture
 from __future__ import annotations
 
 import dataclasses
+import re
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,23 @@ from .plugins import parse_derived_env
 # The core services an agent may declare it consumes — used to validate a manifest isn't asking
 # for something the core doesn't provide.
 KNOWN_SERVICES = frozenset({"model-gateway", "model-gateway-keys", "ops-controller", "dashboard"})
+
+
+# Where `ordo secrets materialize` writes the file-form secrets: out/secrets/ under the checkout. A
+# host path (${BASE_PATH}), because ops-controller recreates the agent with compose running in /config.
+SECRET_FILES_DIR = "${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/secrets"
+_ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
+_FILE_NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
+
+
+def _secret_file(agent_id: Any, entry: dict[str, Any]) -> dict[str, str]:
+    """One `secret_files:` entry: {key, file, target} declared, `source` derived from `file`."""
+    unknown = sorted(set(entry) - {"key", "file", "target"})
+    key, file, target = str(entry.get("key", "")), str(entry.get("file", "")), str(entry.get("target", ""))
+    if unknown or not _ENV_NAME.match(key) or not _FILE_NAME.match(file) or not target.startswith("/"):
+        raise ValueError(f"agent {agent_id!r}: secret_files entry {entry!r} must be exactly "
+                         "{key: ENV_NAME, file: plain-file-name, target: /absolute/path}")
+    return {"key": key, "file": file, "target": target, "source": f"{SECRET_FILES_DIR}/{file}"}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -50,8 +68,9 @@ class Agent:
     group_add: tuple[str, ...] = ()
     volumes: tuple[str, ...] = ()    # bind/volume specs (src:dst[:ro]); ${VAR} refs pass through
     environment: dict[str, str] = dataclasses.field(default_factory=dict)  # non-secret env
-    # File-based Docker secrets the agent reads from /run/secrets/* — [{source, target}], the SAME
-    # host files as the operator's stack; independent of secrets.env (which is env-var secrets).
+    # File-based secrets the agent reads from /run/secrets/*: [{key, file, target, source}]. `key` is
+    # the secret store key whose value `ordo secrets materialize` writes to out/secrets/<file>;
+    # `source` is that host path (derived, never declared), bind-mounted read-only at `target`.
     secret_files: tuple[dict[str, str], ...] = ()
     # Env-var secret NAMES the agent reads, rendered as `KEY: ${KEY}` (see PluginService.secrets).
     secrets: tuple[str, ...] = ()
@@ -85,10 +104,7 @@ class Agent:
             group_add=tuple(str(g) for g in (d.get("group_add", []) or [])),
             volumes=tuple(str(v) for v in (d.get("volumes", []) or [])),
             environment={str(k): str(v) for k, v in (d.get("environment", {}) or {}).items()},
-            secret_files=tuple(
-                {"source": str(s["source"]), "target": str(s["target"])}
-                for s in (d.get("secret_files", []) or [])
-            ),
+            secret_files=tuple(_secret_file(d.get("id"), s) for s in (d.get("secret_files", []) or [])),
             depends_on={str(k): str(v) for k, v in (d.get("depends_on", {}) or {}).items()},
             healthcheck=dict(d.get("healthcheck", {}) or {}),
             build=BuildSpec.from_dict(d.get("build")),

@@ -40,16 +40,17 @@ fi
 # Bridge from Docker secrets _FILE pattern to the env var the app expects.
 # discord.py / hermes read DISCORD_BOT_TOKEN directly from os.environ; the
 # compose file mounts the secret at /run/secrets/discord_token and exports
-# DISCORD_BOT_TOKEN_FILE pointing to it. If both are set, the file wins.
-if [ -n "${DISCORD_BOT_TOKEN_FILE:-}" ] && [ -f "$DISCORD_BOT_TOKEN_FILE" ]; then
+# DISCORD_BOT_TOKEN_FILE pointing to it. If both are set, a non-empty file wins (an empty file is
+# how `ordo secrets materialize` writes a secret the store does not hold).
+if [ -n "${DISCORD_BOT_TOKEN_FILE:-}" ] && [ -s "$DISCORD_BOT_TOKEN_FILE" ]; then
     DISCORD_BOT_TOKEN="$(cat "$DISCORD_BOT_TOKEN_FILE")"
     export DISCORD_BOT_TOKEN
 fi
 
-# Same bridge for the backup-repo PAT: SOPS Docker secret at
+# Same bridge for the backup-repo PAT: the file secret at
 # /run/secrets/github_backup_pat -> GITHUB_BACKUP_PAT env var that Hermes and
-# git expect. Secrets live in SOPS, never in .env; this is how they reach the env.
-if [ -n "${GITHUB_BACKUP_PAT_FILE:-}" ] && [ -f "$GITHUB_BACKUP_PAT_FILE" ]; then
+# git expect. Secrets live in the secret store, never in .env; this is how they reach the env.
+if [ -n "${GITHUB_BACKUP_PAT_FILE:-}" ] && [ -s "$GITHUB_BACKUP_PAT_FILE" ]; then
     GITHUB_BACKUP_PAT="$(cat "$GITHUB_BACKUP_PAT_FILE")"
     export GITHUB_BACKUP_PAT
 fi

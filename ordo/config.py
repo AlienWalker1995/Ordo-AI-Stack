@@ -14,6 +14,17 @@ from .hardware import GPU, HardwareProfile
 # `site:` flows verbatim into the rendered .env, so each key must be a usable env var name.
 _SITE_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
+# The site key naming the SOPS-encrypted dotenv file that holds the operator's secrets (see
+# ordo/secret_store.py). Unset: out/secrets.env itself is the store.
+SECRETS_SOURCE_KEY = "SECRETS_SOURCE"
+
+# Site keys that used to mean something: a leftover one is dead config, so it fails the load.
+_RETIRED_SITE_KEYS = {
+    "OPERATOR_SECRETS_DIR": "was retired: the agent's file secrets (discord_token, github_backup_pat) are "
+                            "materialized from the secret store into out/secrets/. Run `ordo secrets import` "
+                            "(it copies the files from this directory into the store and removes this key)",
+}
+
 # Options that used to exist: a leftover key gets a migration hint instead of a typo suggestion.
 _RETIRED_KEYS = {
     "cloud_fallback": "was removed (it routed oversized GPU jobs to a route nothing polled); "
@@ -89,6 +100,13 @@ class Source:
         for key in self.site:
             if not isinstance(key, str) or not _SITE_KEY.match(key):
                 raise ValueError(f"site: key {key!r} is not an env var name (expected {_SITE_KEY.pattern})")
+            if key in _RETIRED_SITE_KEYS:
+                raise ValueError(f"site: {key} {_RETIRED_SITE_KEYS[key]}")
+        if SECRETS_SOURCE_KEY in self.site:
+            value = self.site[SECRETS_SOURCE_KEY]
+            if not isinstance(value, str) or not value.strip().endswith(".sops"):
+                raise ValueError(f"site: {SECRETS_SOURCE_KEY} must be the path of a SOPS-encrypted dotenv file "
+                                 f"ending in '.sops' (e.g. ../ordo-personal/secrets/ordo.env.sops), got {value!r}")
         if isinstance(self.hardware, dict):
             _reject_unknown_keys("hardware", self.hardware, [f.name for f in dataclasses.fields(HardwareProfile)])
             for i, gpu in enumerate(self.hardware.get("gpus") or []):

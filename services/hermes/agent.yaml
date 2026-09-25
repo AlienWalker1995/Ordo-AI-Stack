@@ -171,12 +171,15 @@ volumes:
   # destruction. See docs/design/hermes-owns-docker.md.
   - /var/run/docker.sock:/var/run/docker.sock
 
-# File-based secrets Hermes reads from /run/secrets/* (independent of secrets.env — these are the
-# same host files V1 mounts; the entrypoint bridges the *_FILE env above to the plain vars).
+# File-based secrets Hermes reads from /run/secrets/* (kept out of `docker inspect`; the entrypoint
+# bridges the *_FILE env above to the plain vars). `key` names the value in the secret store;
+# `ordo secrets materialize` writes it to out/secrets/<file>, which the render bind-mounts read-only.
 secret_files:
-  - source: ${OPERATOR_SECRETS_DIR:-${HOME}/.ai-toolkit/runtime/secrets}/discord_token
+  - key: DISCORD_BOT_TOKEN
+    file: discord_token
     target: /run/secrets/discord_token
-  - source: ${OPERATOR_SECRETS_DIR:-${HOME}/.ai-toolkit/runtime/secrets}/github_backup_pat
+  - key: GITHUB_BACKUP_PAT
+    file: github_backup_pat
     target: /run/secrets/github_backup_pat
 
 # gateway_state.json is written by `hermes gateway` on startup (Docker mode writes no pid file).

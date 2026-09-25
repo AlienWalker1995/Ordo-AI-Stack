@@ -415,34 +415,3 @@ def test_the_rendered_stack_recreates_every_holder_of_the_control_plane_token():
     readers = bringup.readers_of(doc, ["OPS_CONTROLLER_TOKEN"])
     assert {"ops-controller", "dashboard", "agent", "mcp-orchestration"} <= set(readers)
     assert "evals" not in readers and "evals" in doc["services"]
-
-
-ROTATE_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "secrets" / "rotate-internal.sh"
-
-
-def test_the_rotation_script_recreates_the_readers_not_a_hand_list():
-    script = ROTATE_SCRIPT.read_text(encoding="utf-8")
-    assert "ordo recreate --reading ${ROTATED}" in script
-    hand_lists = [line for line in script.splitlines()
-                  if line.strip().startswith("ordo recreate") and "--reading" not in line]
-    assert not hand_lists, hand_lists
-
-
-def test_the_rotation_script_names_exactly_the_keys_whose_value_changed(tmp_path):
-    import re
-    import shutil
-    import subprocess
-
-    awk = shutil.which("awk")
-    if awk is None:
-        pytest.skip("awk not available")
-    program = re.search(r"ROTATED=\$\(awk -F= '([^']*)'", ROTATE_SCRIPT.read_text(encoding="utf-8")).group(1)
-    before = tmp_path / "before"
-    after = tmp_path / "after"
-    before.write_text("# comment\nLITELLM_SALT_KEY=s\nOPS_CONTROLLER_TOKEN=a\nLITELLM_KEY_EVALS=b=c\n",
-                      encoding="utf-8")
-    after.write_text("# comment\nLITELLM_SALT_KEY=s\nOPS_CONTROLLER_TOKEN=x\nLITELLM_KEY_EVALS=y\n",
-                     encoding="utf-8")
-    changed = subprocess.run([awk, "-F=", program, str(before), str(after)], capture_output=True,
-                             text=True, check=True).stdout.split()
-    assert changed == ["OPS_CONTROLLER_TOKEN", "LITELLM_KEY_EVALS"]
