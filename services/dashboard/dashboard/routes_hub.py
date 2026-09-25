@@ -58,8 +58,8 @@ async def services():
         # Server-owned Open link, one source of truth (no hostname guess in the browser), and
         # ONE resolver for every card rather than a per-service branch here: a card gets its
         # clean per-service tailnet name (https://chat.<domain>/ …) when the sidecar layer is
-        # enabled, else its own SSO-gated Caddy port root when it declares `sso_port`
-        # (model-gateway :8449/ui/, langfuse :8450/), else None so the frontend falls back to
+        # enabled, else its own SSO-gated Caddy port root when it carries `sso_port` (derived
+        # by the render from the owner's `edge_site`), else None so the frontend falls back to
         # its own route rather than rendering a link to a host that does not exist.
         open_url = service_open_url(svc)
         return {

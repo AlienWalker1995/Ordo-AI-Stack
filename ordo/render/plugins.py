@@ -52,6 +52,65 @@ class LocalPort:
         return f"{LOOPBACK}:{self.host}:{self.container}"
 
 
+def _port_number(value: Any, where: str, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 < value < 65536:
+        raise ValueError(f"{where}: {field} must be a port number 1-65535 (got {value!r})")
+    return value
+
+
+@dataclasses.dataclass(frozen=True)
+class EdgeSite:
+    """A UI's own SSO-gated edge port (`edge_site: {port, upstream}`), declared once by the service
+    that owns the UI.
+
+    This is the ONE place the port is written down. The render publishes it on the edge listener
+    while the owner is enabled, derives the URLs that point at it (LANGFUSE_PUBLIC_URL,
+    PROXY_BASE_URL) and the dashboard card's `sso_port` from it, and the tests hold the Caddyfile
+    site (`:<port>` proxying `upstream`) and the tailnet sidecar serve assets to it."""
+    port: int
+    upstream: str  # host:port the Caddyfile site proxies to
+
+    @classmethod
+    def from_manifest(cls, raw: Any, where: str) -> EdgeSite | None:
+        if raw is None:
+            return None
+        if not isinstance(raw, dict) or set(raw) != {"port", "upstream"}:
+            raise ValueError(f"{where}: edge_site must be a mapping with exactly `port` and `upstream` "
+                             f"(got {raw!r})")
+        port = _port_number(raw["port"], where, "edge_site.port")
+        upstream = str(raw["upstream"] or "")
+        host, _, upstream_port = upstream.rpartition(":")
+        if not host or not upstream_port.isdigit():
+            raise ValueError(f"{where}: edge_site.upstream must be `host:port` (got {upstream!r})")
+        return cls(port=port, upstream=upstream)
+
+
+@dataclasses.dataclass(frozen=True)
+class EdgeListener:
+    """The service every edge port is published on (`edge_listener: {bind, ports}`): the edge
+    plugin's Caddy. `ports` are its own (the :443 front door); the render adds each enabled UI's
+    `edge_site.port`, all on `bind`, so no UI port is listed here."""
+    bind: str
+    ports: tuple[int, ...]
+
+    @classmethod
+    def from_manifest(cls, raw: Any, where: str) -> EdgeListener | None:
+        if raw is None:
+            return None
+        if not isinstance(raw, dict) or set(raw) != {"bind", "ports"}:
+            raise ValueError(f"{where}: edge_listener must be a mapping with exactly `bind` and `ports` "
+                             f"(got {raw!r})")
+        bind = str(raw["bind"] or "")
+        if not bind:
+            raise ValueError(f"{where}: edge_listener.bind must name the host address to publish on")
+        ports = tuple(_port_number(p, where, "edge_listener.ports[]") for p in (raw["ports"] or []))
+        return cls(bind=bind, ports=ports)
+
+    def publish(self, ui_ports: list[int]) -> list[str]:
+        """Compose `ports:` for the listener: its own ports first, then each UI port, ascending."""
+        return [f"{self.bind}:{port}:{port}" for port in [*self.ports, *sorted(ui_ports)]]
+
+
 @dataclasses.dataclass(frozen=True)
 class PluginService:
     """One compose service a kind=service plugin declares — data, not code. compose.py
@@ -89,10 +148,11 @@ class PluginService:
     # service loads the whole .env (no env_file), so a render that changes one derived key changes
     # the config of exactly the services that declare it, and nothing else is recreated.
     derived_env: tuple[str, ...] = ()
-    # Host port publishes. RESERVED for the edge/front-door plugin (Caddy's :443) — core services
-    # deliberately publish none (isolation). Opt-in behind the plugin's profile, so it stays dormant
-    # until `--profile edge` unless the edge plugin is enabled.
-    ports: list[str] = dataclasses.field(default_factory=list)
+    # This service is the edge listener, the ONLY service that publishes non-loopback host ports:
+    # the render publishes its own front-door ports plus every enabled UI's `edge_site.port` on it
+    # (see EdgeListener). Opt-in behind the plugin's profile. None -> an ordinary service, which
+    # publishes nothing (isolation) beyond an optional loopback `local_port`.
+    edge_listener: EdgeListener | None = None
     # Loopback host port for a UI while the edge is off (see LocalPort). None -> no local access.
     local_port: LocalPort | None = None
     # /dev/shm size (compose `shm_size`, e.g. "1gb"). Docker defaults to 64MB, which starves
@@ -134,6 +194,11 @@ class PluginService:
             raise ValueError(
                 f"{where}: `wants_secrets` was replaced by `secrets: [NAMES]`. A service now lists the "
                 "secret names it reads, instead of receiving the whole secrets.env")
+        if "ports" in d:
+            raise ValueError(
+                f"{where}: `ports` is not supported. The edge publishes host ports through "
+                "`edge_listener: {bind, ports}`, a UI declares its edge port as the plugin's "
+                "`edge_site: {port, upstream}`, and local access is `local_port`")
         gpu_pin = str(d.get("gpu_pin", ""))
         raw_depends = d.get("depends_on", []) or []
         depends_on: list[str] | dict[str, str] = (
@@ -158,7 +223,7 @@ class PluginService:
             secret_files=parse_secret_files(where, d.get("secret_files"), env_secrets=secrets,
                                             explicit_env=d.get("env") or {}),
             derived_env=parse_derived_env(where, d),
-            ports=[str(p) for p in (d.get("ports", []) or [])],
+            edge_listener=EdgeListener.from_manifest(d.get("edge_listener"), where),
             local_port=LocalPort.from_manifest(d.get("local_port"), where),
             shm_size=str(d.get("shm_size", "")),
             network_mode=str(d.get("network_mode", "")),
@@ -349,6 +414,8 @@ class Plugin:
     # loud, `${KEY:?}`, on an empty value). `plugins: auto` skips the plugin while any is missing;
     # an explicit `plugins:` list that names it is a render error.
     site_keys: tuple[str, ...] = ()
+    # The UI's own SSO-gated edge port and the upstream it proxies (see EdgeSite). None -> no UI.
+    edge_site: EdgeSite | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Plugin:
@@ -377,6 +444,7 @@ class Plugin:
             build=BuildSpec.from_dict(d.get("build")),
             litellm_key=dict(d.get("litellm_key", {}) or {}),
             site_keys=tuple(str(k) for k in (req.get("site", []) or [])),
+            edge_site=EdgeSite.from_manifest(d.get("edge_site"), f"plugin '{d['id']}'"),
         )
 
     @property

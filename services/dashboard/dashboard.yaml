@@ -16,6 +16,11 @@ image: ordo/dashboard
 # defaults to services/<id>. METADATA only; never rendered into compose.
 build:
   context: services/dashboard/dashboard
+# The UI's own SSO-gated edge port, declared ONCE here: the render publishes it on the edge
+# listener, the dashboard card's `sso_port` is derived from it, and the tests hold the
+# Caddyfile `:<port>` site (proxying `upstream`) and the tailnet sidecar to it.
+# Grafana rides this site at /grafana/ (see the Caddyfile's :8444 block).
+edge_site: {port: 8444, upstream: dashboard:8080}
 # Local access while the edge is off: http://127.0.0.1:8444 (the port Caddy serves the dashboard on).
 # The renderer binds it to loopback only and drops it when the edge is enabled.
 local_port: {host: 8444, container: 8080}

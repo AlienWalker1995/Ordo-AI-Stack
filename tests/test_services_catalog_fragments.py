@@ -7,7 +7,8 @@ Three invariants:
      order, and the display fields the grid renders).
   2. The render-side aggregation (ordo.render.engine.aggregate_services_catalog -> the
      out/services-catalog.json the dashboard mounts) is IDENTICAL to what the dashboard's
-     in-repo fragment loader produces — the two implementations can't drift apart.
+     in-repo fragment loader produces, apart from the fields the render derives (RENDER_DERIVED)
+     so the two implementations can't drift apart.
   3. The wiring maps derived from the fragments (OPS_SERVICE_MAP / TAILNET_LABELS) match
      the exact mappings the hardcoded catalog carried before the JSON refactor, so a
      fragment edit can't silently rewire lifecycle buttons or Open links.
@@ -21,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from dashboard import services_catalog  # noqa: E402
 from dashboard.services_catalog import (  # noqa: E402
     OPS_SERVICE_MAP,
     SERVICES,
@@ -32,6 +34,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 FRAGMENTS = sorted((REPO_ROOT / "services").glob("*/catalog.json"))
 
 REQUIRED_CARD_KEYS = {"id", "name", "order", "plugin", "category", "hint", "has_gpu"}
+
+# Card fields the render adds and no fragment declares: `sso_port` comes from the owner's
+# `edge_site` (ordo.render.engine.aggregate_services_catalog).
+RENDER_DERIVED = {"sso_port"}
 
 
 def test_fragments_exist():
@@ -53,11 +59,16 @@ def test_every_card_carries_required_schema_keys():
             assert not missing, f"{frag} card {card.get('id')!r} missing keys: {sorted(missing)}"
 
 
-def test_render_aggregation_matches_dashboard_loader():
-    """out/services-catalog.json content (render side) == the dashboard's in-repo load —
-    the runtime mount and the dev/test path must serve the identical card list."""
+def test_render_aggregation_matches_dashboard_loader(monkeypatch):
+    """out/services-catalog.json content (render side) == the dashboard's in-repo fragment load,
+    apart from the render-derived fields: the runtime mount and the dev path must serve the
+    same cards in the same order."""
     agg = aggregate_services_catalog()
-    assert agg["services"] == SERVICES
+    assert agg["services"] == SERVICES, "the dashboard must load the rendered catalog it is pointed at"
+    monkeypatch.delenv(services_catalog.SERVICES_CATALOG_ENV, raising=False)
+    fallback = services_catalog._load_catalog_cards()
+    rendered = [{k: v for k, v in card.items() if k not in RENDER_DERIVED} for card in agg["services"]]
+    assert rendered == fallback
 
 
 def test_orders_are_unique():

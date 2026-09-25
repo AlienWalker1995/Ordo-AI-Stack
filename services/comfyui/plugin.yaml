@@ -9,6 +9,11 @@ requires:
   ram_gb: 8
 provides: [media]
 compose_profile: media
+# The UI's own SSO-gated edge port, declared ONCE here: the render publishes it on the edge
+# listener, the dashboard card's `sso_port` is derived from it, and the tests hold the
+# Caddyfile `:<port>` site (proxying `upstream`) and the tailnet sidecar to it.
+# The upstream is the GPU admission gate (`<service>-gate`), never comfyui:8188 directly.
+edge_site: {port: 8446, upstream: comfyui-gate:8188}
 # env this plugin contributes to the rendered .env when enabled
 env:
   COMFYUI_ENABLED: "1"
