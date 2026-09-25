@@ -15,7 +15,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-EXEMPT_FILES = {"CHANGELOG.md"}
+EXEMPT_FILES = {"CHANGELOG.md", "tests/substrate/test_module_path_references.py"}  # this file names moved paths as test input
 
 # A repo-relative `ordo/...py` path. The lookbehind skips paths that are part of a longer one
 # (`/app/ordo/x.py` inside a container, `services/ordo-foo/x.py`), which are not repo paths.
