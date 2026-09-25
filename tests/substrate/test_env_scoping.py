@@ -5,7 +5,7 @@ dependency of every one of them: a render that changed one key (a model switch, 
 `*_ENABLED` flag) changed all 43 config hashes, and the next `up` recreated the whole stack, GPU
 residents included. Now `.env` is only the compose INTERPOLATION source (`--env-file`): a service
 declares the derived NAMES it reads (`derived_env:` on a plugin service, agent or dashboard manifest,
-or the core lists in ordo/compose.py) and the renderer passes exactly those as `KEY: ${KEY?...}`.
+or the core lists in ordo/render/compose.py) and the renderer passes exactly those as `KEY: ${KEY?...}`.
 
 SPEC below is the contract, derived from what each process actually reads (entrypoints, service code,
 third-party images, the agent's skills and cron scripts). Giving a service another derived key means
@@ -18,13 +18,14 @@ from pathlib import Path
 
 import pytest
 
-from ordo import compose as compose_mod
-from ordo.agents import Agent, AgentRegistry
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.dashboards import Dashboard, DashboardRegistry
-from ordo.plugins import PluginRegistry, PluginService
-from ordo.render import GATED_SERVICE_URL_ENV, OPTIONAL_SECRET_KEYS, render
+from ordo.render import compose as compose_mod
+from ordo.render.agents import Agent, AgentRegistry
+from ordo.render.catalog import Catalog
+from ordo.render.compose import OPTIONAL_SECRET_KEYS
+from ordo.render.config import Source
+from ordo.render.dashboards import Dashboard, DashboardRegistry
+from ordo.render.engine import GATED_SERVICE_URL_ENV, render
+from ordo.render.plugins import PluginRegistry, PluginService
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")

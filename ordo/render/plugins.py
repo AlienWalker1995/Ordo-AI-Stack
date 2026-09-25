@@ -65,7 +65,7 @@ class PluginService:
     # say the container gets a device; this says what the scheduler must do about it. REQUIRED
     # for any service that renders a GPU reservation (enforced by
     # tests/substrate/test_gpu_arbitration.py), so a new GPU service cannot ship unarbitrated.
-    # See ordo/gpu.py.
+    # See ordo/render/gpu.py.
     gpu_arbitration: GpuArbitration | None = None
     env: dict[str, str] = dataclasses.field(default_factory=dict)
     command: list[str] = dataclasses.field(default_factory=list)
@@ -80,7 +80,7 @@ class PluginService:
     # compose interpolates the value from `--env-file secrets.env`, so a service holds only the
     # secrets it needs. Secret VALUES never live in the rendered config, only the reference.
     secrets: tuple[str, ...] = ()
-    # The secret NAMES this service reads from a FILE instead (ordo/secret_files.py): each is
+    # The secret NAMES this service reads from a FILE instead (ordo/render/secret_files.py): each is
     # mounted read-only at /run/secrets/<key lowercased> and only its path is in the environment
     # (`<KEY>_FILE`, or the `env:` the image reads). Preferred wherever the software supports it.
     secret_files: tuple[SecretFileRef, ...] = ()

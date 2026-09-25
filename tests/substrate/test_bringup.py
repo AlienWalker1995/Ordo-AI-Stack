@@ -14,8 +14,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo import bringup, cli
-from ordo.broker import DockerBackend
+from ordo import cli
+from ordo.control.broker import DockerBackend
+from ordo.host import bringup, cli_stack
+from ordo.render import stack
 
 COMPOSE = {
     "services": {
@@ -51,7 +53,7 @@ LEASED_NOT_SAVED = {**LEASED, "state_persisted": False}
 def host_ready(monkeypatch):
     """These tests pin the argv and the lease refusals; the host preflight `ordo up` runs first
     is tested in test_preflight_host.py."""
-    monkeypatch.setattr(cli, "_host_preflight", lambda *a, **k: True)
+    monkeypatch.setattr(cli_stack, "_host_preflight", lambda *a, **k: True)
 
 
 @pytest.fixture
@@ -75,7 +77,7 @@ def recorded(monkeypatch) -> list[list[str]]:
 
         return Result()
 
-    monkeypatch.setattr("ordo.bringup.subprocess.run", fake_run)
+    monkeypatch.setattr("ordo.host.bringup.subprocess.run", fake_run)
     return calls
 
 
@@ -95,7 +97,7 @@ def _status(monkeypatch, gpu):
             raise gpu
         return gpu
 
-    monkeypatch.setattr("ordo.bringup.read_gpu_status", fake)
+    monkeypatch.setattr("ordo.host.bringup.read_gpu_status", fake)
 
 
 def _profiles(cmd: list[str]) -> list[str]:
@@ -317,7 +319,7 @@ def _fake_docker(monkeypatch, ps: _Proc, exec_: _Proc | None = None) -> list[lis
             return exec_
         raise AssertionError(f"unexpected command {cmd}")
 
-    monkeypatch.setattr("ordo.bringup.subprocess.run", fake_run)
+    monkeypatch.setattr("ordo.host.bringup.subprocess.run", fake_run)
     return calls
 
 
@@ -376,10 +378,10 @@ READERS_COMPOSE = {
 
 
 def test_readers_are_every_long_running_service_that_interpolates_a_key():
-    assert bringup.readers_of(READERS_COMPOSE, ["OPS_CONTROLLER_TOKEN"]) == ["mcp-orchestration", "ops-controller"]
-    assert bringup.readers_of(READERS_COMPOSE, ["LANGFUSE_PUBLIC_KEY", "LANGFUSE_REDIS_AUTH"]) == [
+    assert stack.readers_of(READERS_COMPOSE, ["OPS_CONTROLLER_TOKEN"]) == ["mcp-orchestration", "ops-controller"]
+    assert stack.readers_of(READERS_COMPOSE, ["LANGFUSE_PUBLIC_KEY", "LANGFUSE_REDIS_AUTH"]) == [
         "agent", "langfuse-redis"]
-    assert bringup.readers_of(READERS_COMPOSE, ["NOT_READ_BY_ANYONE"]) == []
+    assert stack.readers_of(READERS_COMPOSE, ["NOT_READ_BY_ANYONE"]) == []
 
 
 def test_recreate_reading_recreates_exactly_the_readers(monkeypatch, tmp_path, recorded):
@@ -405,10 +407,10 @@ def test_recreate_reading_a_key_nothing_reads_does_nothing(monkeypatch, out_dir,
 def test_the_rendered_stack_recreates_every_holder_of_the_control_plane_token():
     """The rotation script's hand list missed mcp-orchestration (it holds the token via `secrets:`).
     Derived from the render, it cannot: every long-running reader is found, the evals one-shot is not."""
-    from ordo.catalog import Catalog
-    from ordo.config import Source
-    from ordo.plugins import PluginRegistry
-    from ordo.render import render
+    from ordo.render.catalog import Catalog
+    from ordo.render.config import Source
+    from ordo.render.engine import render
+    from ordo.render.plugins import PluginRegistry
 
     root = Path(__file__).resolve().parents[2]
     source = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128}, "model": "auto",
@@ -416,6 +418,6 @@ def test_the_rendered_stack_recreates_every_holder_of_the_control_plane_token():
                                "site": {"MEMORY_VAULT_PATH": "/srv/vault"}})
     doc = render(source, Catalog.load(root / "catalog" / "models.yaml"),
                  PluginRegistry.load(root / "services")).compose_dict()
-    readers = bringup.readers_of(doc, ["OPS_CONTROLLER_TOKEN"])
+    readers = stack.readers_of(doc, ["OPS_CONTROLLER_TOKEN"])
     assert {"ops-controller", "dashboard", "agent", "mcp-orchestration"} <= set(readers)
     assert "evals" not in readers and "evals" in doc["services"]

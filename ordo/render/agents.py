@@ -51,7 +51,7 @@ class Agent:
     group_add: tuple[str, ...] = ()
     volumes: tuple[str, ...] = ()    # bind/volume specs (src:dst[:ro]); ${VAR} refs pass through
     environment: dict[str, str] = dataclasses.field(default_factory=dict)  # non-secret env
-    # Secrets the agent reads from a file under /run/secrets (ordo/secret_files.py), the same
+    # Secrets the agent reads from a file under /run/secrets (ordo/render/secret_files.py), the same
     # declaration every service manifest uses.
     secret_files: tuple[SecretFileRef, ...] = ()
     # Env-var secret NAMES the agent reads, rendered as `KEY: ${KEY}` (see PluginService.secrets).

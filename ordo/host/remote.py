@@ -5,7 +5,7 @@ Google account. Enabling remote access writes three things and re-renders:
 
   - the edge's `site:` keys in the operator source (CADDY_TAILNET_HOSTNAME / _DOMAIN, CADDY_BIND),
     plus `edge` in an explicit `plugins:` list (`plugins: auto` enables it from the keys alone),
-  - the Google OAuth client id + secret in the secret store (ordo/secret_store.py), and any internal
+  - the Google OAuth client id + secret in the secret store (ordo/host/secret_store.py), and any internal
     secret the edge adds (its cookie secret, its gateway key), generated,
   - the SSO allowlist file oauth2-proxy mounts.
 
@@ -20,14 +20,14 @@ from pathlib import Path
 
 import yaml
 
+from ..render.catalog import Catalog
+from ..render.config import Source
+from ..render.engine import EDGE_PLUGIN, RenderedConfig, render
+from ..render.plugins import PluginRegistry
+from ..render.source_edit import edit_plugins_list, edit_site_keys
 from . import secret_store, wizard
-from .catalog import Catalog
-from .config import Source
-from .plugins import PluginRegistry
-from .render import EDGE_PLUGIN, RenderedConfig, render
-from .source_edit import edit_plugins_list, edit_site_keys
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 # The allowlist oauth2-proxy mounts (services/edge/plugin.yaml) and its committed placeholder.
 ALLOWLIST_PATH = REPO_ROOT / "auth" / "oauth2-proxy" / "emails.txt"
 ALLOWLIST_PLACEHOLDER = "YOUR_ALLOWLIST_EMAIL"

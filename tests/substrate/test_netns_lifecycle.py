@@ -14,7 +14,7 @@ tailnet sidecars without a network interface. Reproduced in a throwaway compose 
                                                    running member is a no-op, so start must restart it)
     `compose down owner`                        -> member left running, orphaned
 
-The members are derived from the rendered compose by `bringup.lifecycle_group`, the same function
+The members are derived from the rendered compose by `stack.lifecycle_group`, the same function
 the host's `ordo up` / `ordo recreate` plan with, so the control plane and the host cannot disagree
 about who follows whom.
 """
@@ -26,10 +26,11 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
-from ordo import bringup
-from ordo.broker import Broker, DockerBackend, MockBackend
-from ordo.control import ControlPlane
-from ordo.scheduler import Job, Scheduler
+from ordo.control.api import ControlPlane
+from ordo.control.broker import Broker, DockerBackend, MockBackend
+from ordo.control.scheduler import Job, Scheduler
+from ordo.host import bringup
+from ordo.render import stack
 
 CONFIRM = {"confirm": True}
 MEMBERS = ["hermes-dashboard", "tailnet-chat"]
@@ -54,17 +55,17 @@ COMPOSE = {
 
 
 def test_lifecycle_group_is_the_owner_then_its_members_sorted():
-    assert bringup.lifecycle_group(COMPOSE, "caddy") == ["caddy", *MEMBERS]
+    assert stack.lifecycle_group(COMPOSE, "caddy") == ["caddy", *MEMBERS]
 
 
 def test_lifecycle_group_derives_any_owner_not_just_caddy():
-    assert bringup.lifecycle_group(COMPOSE, "vpn") == ["vpn", "gpu-sidecar", "torrent"]
+    assert stack.lifecycle_group(COMPOSE, "vpn") == ["vpn", "gpu-sidecar", "torrent"]
 
 
 @pytest.mark.parametrize("service", ["tailnet-chat", "llamacpp", "open-webui", "not-rendered"])
 def test_a_member_or_a_plain_service_is_its_own_group(service):
     # Acting on a member acts on the member only; `network_mode: host` is not a netns owner.
-    assert bringup.lifecycle_group(COMPOSE, service) == [service]
+    assert stack.lifecycle_group(COMPOSE, service) == [service]
 
 
 def test_plan_named_expands_every_named_owner():
@@ -226,7 +227,7 @@ def docker_backend(tmp_path, monkeypatch) -> tuple[DockerBackend, list[list[str]
         calls.append(list(cmd))
         return MagicMock(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr("ordo.broker.subprocess.run", fake_run)
+    monkeypatch.setattr("ordo.control.broker.subprocess.run", fake_run)
     b = DockerBackend("ordo")
     b.COMPOSE_DIR = Path(tmp_path).as_posix()
     return b, calls

@@ -5,7 +5,7 @@ auto-picked model for the detected hardware → pick a feature preset → (in th
 Internal secrets are generated; nothing asks for an account. It writes ``ordo.yaml`` (the
 declarative source) and the operator secrets: into the SOPS file ``site: SECRETS_SOURCE`` names,
 materialized to ``secrets.env``, or (no SOPS file configured) into ``secrets.env`` itself (see
-``ordo/secret_store.py``). Remote access (Tailscale + Google SSO) is a later opt-in: ``ordo remote
+``ordo/host/secret_store.py``). Remote access (Tailscale + Google SSO) is a later opt-in: ``ordo remote
 enable`` reuses the prompts and validators defined here. Everything downstream renders from
 ``ordo.yaml``; compose interpolates each service's declared secrets from ``secrets.env``
 (``--env-file``), which is NEVER committed.
@@ -26,12 +26,12 @@ from typing import Any
 
 import yaml
 
+from ..render.catalog import Catalog
+from ..render.config import Source
+from ..render.engine import render
+from ..render.hardware import HardwareProfile, detect
+from ..render.plugins import PluginRegistry
 from . import secret_store
-from .catalog import Catalog
-from .config import Source
-from .hardware import HardwareProfile, detect
-from .plugins import PluginRegistry
-from .render import render
 from .secret_store import generator_for
 
 

@@ -34,14 +34,10 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from . import infisical, secret_files
-from .config import SECRETS_SOURCE_KEY, secret_backend
-from .render import OPTIONAL_SECRET_KEYS
-
-# The site key naming the SOPS file, and the documented place for it: a private repo checked out
-# beside this one. A relative value resolves against the checkout, so the same ordo.yaml works on
-# any host that keeps the two repos side by side.
-DEFAULT_SECRETS_SOURCE = "../ordo-secrets/secrets.env.sops"
+from ..render import secret_files
+from ..render.compose import OPTIONAL_SECRET_KEYS
+from ..render.config import SECRETS_SOURCE_KEY, secret_backend
+from . import infisical
 
 # Where sops looks for the age private key when SOPS_AGE_KEY_FILE is unset. sops's own default
 # differs per OS (%AppData% on Windows); this one path is what the runbook documents everywhere.
@@ -420,7 +416,7 @@ class SopsStore:
 
 
 class InfisicalStore:
-    """An Infisical project environment as the store, through the client in ordo/infisical.py.
+    """An Infisical project environment as the store, through the client in ordo/host/infisical.py.
 
     Reads use the read-only identity (READER_KEYS). A write (`write_text`, the one path every writer
     takes) is applied as per-key create/update/delete calls with the optional writer identity
@@ -577,7 +573,7 @@ def sops_file_of(store: Store) -> SopsStore | None:
 @dataclasses.dataclass(frozen=True)
 class SecretFile:
     """A file-delivered secret one service mounts: the store key whose value is written to
-    out/secrets/<file> (ordo/secret_files.py). Services that read the same key share the file."""
+    out/secrets/<file> (ordo/render/secret_files.py). Services that read the same key share the file."""
     key: str
     file: str
     service: str

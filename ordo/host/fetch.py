@@ -12,7 +12,7 @@ The hashing + planning + verify-and-reject logic is pure and fully tested; only 
 download shells out (injected, so tests exercise the whole fetch/verify/reject path with a fake).
 
 Where the weights land: llama.cpp reads them from the `models-gguf` named volume (the 9p bind is
-retired, see ordo/compose.py), so the default target is that volume, not a host directory. A
+retired, see ordo/render/compose.py), so the default target is that volume, not a host directory. A
 short-lived helper container (`HELPER_IMAGE`, digest-pinned) mounts ONLY the volume, downloads with
 resume into a hidden `.<file>.part`, verifies the sha256 and renames the file into place, so a
 service never sees a partial or unverified file. `ordo up` runs the same helper for every file the
@@ -25,14 +25,24 @@ import dataclasses
 import hashlib
 import os
 import shlex
-import subprocess
 import sys
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
-from .catalog import Catalog, Model
+from ..render.catalog import Catalog, Model
+from ..render.models_volume import (
+    HELPER_IMAGE,
+    MODEL_VOLUME,
+    VOLUME_MOUNT,
+    DockerRunner,
+    files_in_volume,
+    required_model_files,
+    volume_exists,
+    volume_name,
+)
+from .parity import load_env
 
 # action codes a plan can produce
 OK = "ok"                       # present + verified — nothing to do (offline-ready)
@@ -132,17 +142,11 @@ def fetch_one(model: Model, models_dir: str | Path, allow_unverified: bool = Fal
 
 
 # ── Fetching into the models-gguf volume (what llama.cpp actually reads) ──────
+# The volume's identity, its listing and which files the stack reads: ordo/render/models_volume.py.
 
-# curl + busybox (sha256sum, mv) and nothing else. Pinned by version AND digest.
-HELPER_IMAGE = ("curlimages/curl:8.22.0"
-                "@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777")
-MODEL_VOLUME = "models-gguf"            # the compose volume the llama.cpp services mount
-VOLUME_MOUNT = "/models"                # where the helper mounts it
-CHAT_SERVICE = "llamacpp"               # its launcher reads LLAMACPP_MODEL / LLAMACPP_MMPROJ from .env
 TOKEN_KEY = "HF_TOKEN"
 # Labels on the helper containers: they say what a stray container is, and tell the runs apart.
 FETCH_MARKER = "ordo.model-fetch=download"
-LIST_MARKER = "ordo.model-fetch=list"
 EXIT_DOWNLOAD_FAILED = 2
 EXIT_CHECKSUM_MISMATCH = 3
 
@@ -204,32 +208,6 @@ echo "installed: $file"
 """
 
 
-@dataclasses.dataclass(frozen=True)
-class RunResult:
-    returncode: int
-    stdout: str
-
-
-class DockerRunner:  # pragma: no cover - shells to docker
-    """The docker CLI. `env` None inherits this process's environment; `capture` returns stdout
-    instead of streaming it (the download progress streams to the terminal)."""
-
-    def run(self, argv: Sequence[str], *, env: Mapping[str, str] | None = None,
-            capture: bool = False) -> RunResult:
-        try:
-            proc = subprocess.run(list(argv), env=dict(env) if env is not None else None,
-                                  capture_output=capture, text=True)
-        except (OSError, subprocess.SubprocessError) as e:
-            print(f"cannot run docker: {e}", file=sys.stderr)
-            return RunResult(127, "")
-        return RunResult(proc.returncode, proc.stdout or "")
-
-
-def volume_name(project: str) -> str:
-    """The Docker name compose gives the project's models-gguf volume."""
-    return f"{project}_{MODEL_VOLUME}"
-
-
 def _check_file_name(file: str) -> None:
     """The file lands at <volume>/<file>: a plain name only, so nothing can leave the volume."""
     if not file or file.startswith(".") or "/" in file or "\\" in file:
@@ -253,15 +231,6 @@ def helper_argv(volume: str, model: Model) -> list[str]:
     return argv + ["--entrypoint", "sh", HELPER_IMAGE, "-c", HELPER_SCRIPT]
 
 
-def _list_argv(volume: str) -> list[str]:
-    return ["docker", "run", "--rm", "--label", LIST_MARKER, "-v", f"{volume}:{VOLUME_MOUNT}:ro",
-            "--entrypoint", "ls", HELPER_IMAGE, "-1A", VOLUME_MOUNT]
-
-
-def volume_exists(runner, volume: str) -> bool:
-    return runner.run(["docker", "volume", "inspect", volume], capture=True).returncode == 0
-
-
 def create_volume(runner, volume: str, project: str) -> bool:
     """Create the volume with the labels compose gives its own, so `docker compose up` adopts it."""
     argv = ["docker", "volume", "create",
@@ -269,71 +238,6 @@ def create_volume(runner, volume: str, project: str) -> bool:
             "--label", f"com.docker.compose.volume={MODEL_VOLUME}",
             volume]
     return runner.run(argv, capture=True).returncode == 0
-
-
-def files_in_volume(runner, volume: str) -> set[str] | None:
-    """The file names in the volume, or None when it could not be listed."""
-    result = runner.run(_list_argv(volume), capture=True)
-    if result.returncode != 0:
-        return None
-    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
-
-
-def volume_files(runner, project: str) -> set[str] | None:
-    """The file names in the project's models volume: empty when the volume does not exist yet,
-    None when it could not be listed. Checks first, because listing a missing volume with `docker
-    run -v` would create it without the labels compose needs to adopt it."""
-    volume = volume_name(project)
-    if not volume_exists(runner, volume):
-        return set()
-    return files_in_volume(runner, volume)
-
-
-@dataclasses.dataclass(frozen=True)
-class NeededFile:
-    file: str
-    service: str
-    optional: bool = False       # the service runs without it (a vision projector)
-
-
-def _model_mount(spec: dict) -> str | None:
-    """Where the service mounts the models volume, or None when it does not."""
-    for volume in spec.get("volumes") or []:
-        if isinstance(volume, str) and volume.split(":")[0] == MODEL_VOLUME:
-            return volume.split(":")[1]
-    return None
-
-
-def required_model_files(doc: dict, env: Mapping[str, str], services: Sequence[str]) -> list[NeededFile]:
-    """Every file in the models volume that `services` load, read from the rendered compose + .env.
-
-    The chat service's launcher takes its file from LLAMACPP_MODEL (and the optional projector from
-    LLAMACPP_MMPROJ); every other service names `<mount>/<file>` in its command."""
-    from .preflight import _expand
-
-    found: dict[str, NeededFile] = {}
-    defined = doc.get("services") or {}
-    for name in services:
-        spec = defined.get(name) or {}
-        mount = _model_mount(spec)
-        if mount is None:
-            continue
-        prefix = mount.rstrip("/") + "/"
-        candidates: list[tuple[str, bool]] = []
-        if name == CHAT_SERVICE:
-            candidates.append((prefix + env.get("LLAMACPP_MODEL", ""), False))
-            candidates.append((env.get("LLAMACPP_MMPROJ", ""), True))
-        command = spec.get("command") or []
-        for arg in command.split() if isinstance(command, str) else command:
-            candidates.append((_expand(str(arg), dict(env)), False))
-        for path, optional in candidates:
-            file = path[len(prefix):] if path.startswith(prefix) else ""
-            if not file:
-                continue
-            known = found.get(file)
-            if known is None or (known.optional and not optional):
-                found[file] = NeededFile(file, name, optional)
-    return list(found.values())
 
 
 def refusal(model: Model, allow_unverified: bool = False) -> str | None:
@@ -443,8 +347,6 @@ def ensure_models(doc: dict, env: Mapping[str, str], services: Sequence[str], *,
 def ensure_models_for_render(out_dir: str | Path, doc: dict, services: Sequence[str], *, project: str,
                              catalog_path: str | Path, dry_run: bool) -> int:  # pragma: no cover - docker
     """`ensure_models` wired to the rendered stack in `out_dir` and the real docker CLI."""
-    from .parity import load_env
-
     out = Path(out_dir)
     env = load_env(str(out / ".env")) if (out / ".env").exists() else {}
     secrets = load_env(str(out / "secrets.env")) if (out / "secrets.env").exists() else {}

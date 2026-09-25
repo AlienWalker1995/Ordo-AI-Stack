@@ -9,8 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from ordo import cli, preflight
-from ordo.preflight import HostFacts
+from ordo import cli
+from ordo.host import preflight
+from ordo.host.preflight import HostFacts
 
 READY = HostFacts(docker_error=None, compose_version="2.39.1", runtimes=frozenset({"runc", "nvidia"}),
                   busy_ports=frozenset(), disk_path="/var/lib/docker", disk_free_gb=500.0)
@@ -114,10 +115,10 @@ def test_a_volume_that_could_not_be_listed_counts_every_file(tmp_path):
 
 
 def test_model_files_are_every_file_the_render_loads_sized_from_the_catalog():
-    from ordo.catalog import Catalog
-    from ordo.config import Source
-    from ordo.plugins import PluginRegistry
-    from ordo.render import render
+    from ordo.render.catalog import Catalog
+    from ordo.render.config import Source
+    from ordo.render.engine import render
+    from ordo.render.plugins import PluginRegistry
 
     root = Path(__file__).resolve().parents[2]
     catalog = Catalog.load(root / "catalog" / "models.yaml")
@@ -194,7 +195,7 @@ def test_up_refuses_before_compose_when_preflight_fails(tmp_path, monkeypatch, c
     _rendered(out)
     monkeypatch.setattr(preflight, "gather_host_facts", lambda *a, **k: READY)
     ran = []
-    monkeypatch.setattr("ordo.bringup.bring_up", lambda *a, **k: ran.append(a) or 0)
+    monkeypatch.setattr("ordo.host.bringup.bring_up", lambda *a, **k: ran.append(a) or 0)
     assert cli.main(["up", "--all", "--out", str(out)]) == 1
     assert ran == []
     printed = capsys.readouterr().out
@@ -207,7 +208,7 @@ def test_up_proceeds_when_preflight_passes(tmp_path, monkeypatch):
     (out / "secrets.env").write_text("LITELLM_MASTER_KEY=sk-1\n", encoding="utf-8")
     monkeypatch.setattr(preflight, "gather_host_facts", lambda *a, **k: READY)
     ran = []
-    monkeypatch.setattr("ordo.bringup.bring_up", lambda *a, **k: ran.append(a) or 0)
+    monkeypatch.setattr("ordo.host.bringup.bring_up", lambda *a, **k: ran.append(a) or 0)
     assert cli.main(["up", "--all", "--out", str(out)]) == 0
     assert ran
 
@@ -220,7 +221,7 @@ def test_up_no_preflight_skips_it(tmp_path, monkeypatch):
         raise AssertionError("preflight ran")
 
     monkeypatch.setattr(preflight, "gather_host_facts", boom)
-    monkeypatch.setattr("ordo.bringup.bring_up", lambda *a, **k: 0)
+    monkeypatch.setattr("ordo.host.bringup.bring_up", lambda *a, **k: 0)
     assert cli.main(["up", "--all", "--no-preflight", "--out", str(out)]) == 0
 
 
@@ -228,10 +229,10 @@ def test_up_no_preflight_skips_it(tmp_path, monkeypatch):
 
 
 def test_optional_secrets_are_declared_by_the_plugins_that_read_them():
-    from ordo.catalog import Catalog
-    from ordo.config import Source
-    from ordo.plugins import PluginRegistry
-    from ordo.render import render
+    from ordo.render.catalog import Catalog
+    from ordo.render.config import Source
+    from ordo.render.engine import render
+    from ordo.render.plugins import PluginRegistry
 
     root = Path(__file__).resolve().parents[2]
     source = Source.from_dict({"hardware": {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128},
@@ -246,6 +247,6 @@ def test_optional_secrets_are_declared_by_the_plugins_that_read_them():
 
 
 def test_an_optional_secret_must_be_one_the_plugin_declares():
-    from ordo.plugins import Plugin
+    from ordo.render.plugins import Plugin
     with pytest.raises(ValueError):
         Plugin.from_dict({"id": "p", "secrets": ["A"], "optional_secrets": ["B"]})

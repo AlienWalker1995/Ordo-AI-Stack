@@ -12,11 +12,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo.broker import Broker, MockBackend
-from ordo.catalog import Catalog
-from ordo.control import ControlPlane
-from ordo.plugins import PluginRegistry
-from ordo.scheduler import Scheduler
+from ordo.control.api import ControlPlane
+from ordo.control.broker import Broker, MockBackend
+from ordo.control.scheduler import Scheduler
+from ordo.render.catalog import Catalog
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
@@ -26,8 +26,8 @@ REGISTRY = PluginRegistry.load(ROOT / "services")
 @pytest.fixture
 def cp(tmp_path, monkeypatch):
     """A control plane whose audit log and custom_nodes dir live under tmp_path."""
-    monkeypatch.setattr("ordo.control.AUDIT_LOG_PATH", tmp_path / "audit.jsonl")
-    monkeypatch.setattr("ordo.control.COMFYUI_CUSTOM_NODES_DIR", tmp_path / "custom_nodes")
+    monkeypatch.setattr("ordo.control.api.AUDIT_LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.setattr("ordo.control.api.COMFYUI_CUSTOM_NODES_DIR", tmp_path / "custom_nodes")
 
     src = tmp_path / "ordo.yaml"
     src.write_text(yaml.safe_dump(

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 
-from ordo.broker import DockerBackend
+from ordo.control.broker import DockerBackend
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 

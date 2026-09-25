@@ -1,7 +1,7 @@
 """Our own services read a file-delivered secret from `<NAME>_FILE` (the rendered delivery).
 
 The render mounts each secret at /run/secrets/<key lowercased> and sets `<NAME>_FILE` to it
-(ordo/secret_files.py); every Python reader goes through the one helper, secret_env.read_secret.
+(ordo/render/secret_files.py); every Python reader goes through the one helper, secret_env.read_secret.
 These tests point `<NAME>_FILE` at a temp file with the plain variable unset, as in the container.
 """
 from __future__ import annotations

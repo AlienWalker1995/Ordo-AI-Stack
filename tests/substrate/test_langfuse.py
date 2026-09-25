@@ -22,11 +22,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo import compose, secret_store, wizard
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.plugins import PluginRegistry, PluginService
-from ordo.render import render
+from ordo.host import secret_store, wizard
+from ordo.render import compose
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
+from ordo.render.plugins import PluginRegistry, PluginService
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
@@ -159,7 +160,7 @@ def test_every_declared_secret_reaches_the_containers_only_as_a_reference():
 
 def test_langfuse_db_reuses_the_substrate_postgres_pin():
     """One Postgres version across the stack. The manifest schema has no image-alias mechanism,
-    so langfuse-db copies ordo.compose.POSTGRES_IMAGE - and this test is what stops the copy
+    so langfuse-db copies ordo.render.compose.POSTGRES_IMAGE - and this test is what stops the copy
     drifting: bumping litellm-db's pin without bumping this one fails here, not in production."""
     svcs = _compose(render(_src(), CATALOG, REGISTRY))
     assert svcs["langfuse-db"]["image"] == compose.POSTGRES_IMAGE

@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from ordo import fetch
-from ordo.catalog import Catalog, Model
+from ordo.host import fetch
+from ordo.render.catalog import Catalog, Model
 
 HELLO = b"hello world"
 HELLO_SHA = hashlib.sha256(HELLO).hexdigest()

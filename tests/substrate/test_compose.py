@@ -4,12 +4,12 @@ from pathlib import Path
 
 import yaml
 
-from ordo import compose
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.llamacpp_backend import CPU, CUDA
-from ordo.plugins import PluginRegistry
-from ordo.render import render
+from ordo.render import compose
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
+from ordo.render.llamacpp_backend import CPU, CUDA
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
@@ -111,7 +111,7 @@ def test_ops_controller_reserves_a_utility_gpu(tmp_path):
     admission sees a CPU-only host, drops every GPU plugin as 'not available', and the dashboard's
     GPU widgets report "No GPUs returned from registry". `count: all` so it reads BOTH cards, and
     `utility` rather than `gpu` so no compute is reserved."""
-    from ordo.dashboards import DashboardRegistry
+    from ordo.render.dashboards import DashboardRegistry
     dashboards = DashboardRegistry.load(ROOT / "services")
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                             "model": "auto", "plugins": "auto"})
@@ -122,7 +122,7 @@ def test_ops_controller_reserves_a_utility_gpu(tmp_path):
 
 def test_the_dashboard_itself_also_reserves_a_utility_gpu(tmp_path):
     """Its hardware_stats() shells to nvidia-smi for the hw-stat bar's GPU widgets."""
-    from ordo.dashboards import DashboardRegistry
+    from ordo.render.dashboards import DashboardRegistry
     dashboards = DashboardRegistry.load(ROOT / "services")
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                             "model": "auto", "plugins": "auto"})
@@ -142,7 +142,7 @@ def test_a_cpu_only_render_reserves_no_devices():
     the `utility` capability unconditionally, and the agent depends on both, so the whole stack
     was dead on CPU-only, Mac, AMD and arm64 hosts. Every plugin is requested so the check covers
     each service the registry can render (gpu-exporter included)."""
-    from ordo.dashboards import DashboardRegistry
+    from ordo.render.dashboards import DashboardRegistry
     dashboards = DashboardRegistry.load(ROOT / "services")
     every_plugin = [p.id for p in REGISTRY.plugins]
     for plugins in ("auto", every_plugin):
@@ -154,7 +154,7 @@ def test_a_cpu_only_render_reserves_no_devices():
 
 def test_an_nvidia_render_keeps_the_control_plane_utility_reservations():
     """The CPU-only gate must not cost an NVIDIA host its read-only GPU visibility."""
-    from ordo.dashboards import DashboardRegistry
+    from ordo.render.dashboards import DashboardRegistry
     dashboards = DashboardRegistry.load(ROOT / "services")
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                             "model": "auto", "plugins": "auto"})
@@ -296,7 +296,7 @@ def test_mcp_healthcheck_defaults_to_the_renderer_probe_unless_overridden():
     Any HTTP status counts as healthy (an MCP endpoint answers a bare GET with 4xx/405), so the
     probe catches HTTPError and lets URLError/socket errors fail the container.
     """
-    from ordo.compose import default_mcp_healthcheck
+    from ordo.render.compose import default_mcp_healthcheck
 
     c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
     expected = default_mcp_healthcheck(9000, "/mcp")
@@ -499,7 +499,7 @@ def test_gguf_models_on_named_volume():
     # 9p client in D-state (third casualty 2026-08-07 — after the Hermes brain
     # and the ComfyUI app tree). dashboard mounts RW (the pull target lands where the
     # servers read); everything else RO.
-    from ordo.dashboards import DashboardRegistry
+    from ordo.render.dashboards import DashboardRegistry
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                             "model": "auto", "plugins": ["llamacpp-cpu", "rag"]})
     c = render(src, CATALOG, REGISTRY,
@@ -551,7 +551,7 @@ def test_comfyui_models_on_named_volume():
     # state mount; it wedged --enable-assets and rode the same doomed bridge.
     # comfyui reads RO; dashboard RW (model-pack pull UI lands downloads where
     # ComfyUI reads); the control plane lists the same tree.
-    from ordo.dashboards import DashboardRegistry
+    from ordo.render.dashboards import DashboardRegistry
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                             "model": "auto", "plugins": ["comfyui"]})
     c = render(src, CATALOG, REGISTRY,
@@ -663,9 +663,9 @@ def test_services_the_control_plane_recreates_have_no_project_relative_binds():
     # `${VAR:-./x}` default is the same bug waiting for an unset VAR, and a relative VALUE
     # rendered into .env is the same bug today; host binds are `${VAR:?...}` (fail loud).
     # Rendered with EVERY plugin, the real dashboard and agent, so no manifest escapes the check.
-    from ordo.agents import AgentRegistry
-    from ordo.broker import DockerBackend
-    from ordo.dashboards import DashboardRegistry
+    from ordo.control.broker import DockerBackend
+    from ordo.render.agents import AgentRegistry
+    from ordo.render.dashboards import DashboardRegistry
 
     every_plugin = [p.id for p in REGISTRY.plugins]
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}, {"vram_gb": 8}], "ram_gb": 128},

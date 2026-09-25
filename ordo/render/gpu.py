@@ -338,7 +338,7 @@ class GpuClaim:
 
 # --- core (substrate) services -------------------------------------------------------------
 # The core services have no plugin.yaml — their images, env and GPU reservations are rendered by
-# ordo/compose.py, so their arbitration is declared here, next to them. Same one-source-of-truth
+# ordo/render/compose.py, so their arbitration is declared here, next to them. Same one-source-of-truth
 # rule the manifests follow, applied to the services that ARE the substrate. A core service that
 # renders a GPU reservation and is missing from this table fails
 # tests/substrate/test_gpu_arbitration.py.

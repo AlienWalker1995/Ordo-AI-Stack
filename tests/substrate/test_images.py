@@ -15,13 +15,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo import bringup, buildspec, images
-from ordo.agents import AgentRegistry
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.dashboards import DashboardRegistry
-from ordo.plugins import PluginRegistry
-from ordo.render import render
+from ordo.host import bringup, images
+from ordo.render import buildspec, image_tags
+from ordo.render.agents import AgentRegistry
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.dashboards import DashboardRegistry
+from ordo.render.engine import render
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 SERVICES = ROOT / "services"
@@ -295,9 +296,9 @@ def test_every_rendered_first_party_ref_is_current_or_recorded(tmp_path):
 
 def test_ops_controller_render_reads_the_same_record(tmp_path):
     """A model switch inside ops-controller re-renders into /config (= out/) and must keep the pins."""
-    from ordo.broker import Broker, MockBackend
-    from ordo.control import ControlPlane
-    from ordo.scheduler import Scheduler
+    from ordo.control.api import ControlPlane
+    from ordo.control.broker import Broker, MockBackend
+    from ordo.control.scheduler import Scheduler
 
     src = tmp_path / "ordo.yaml"
     src.write_text(yaml.safe_dump({"hardware": PROFILE_5090, "model": "auto", "plugins": "auto"}))
@@ -394,13 +395,13 @@ IDLE = {"state": "idle", "leased": False, "running": [], "queued": [], "evicted_
 
 @pytest.fixture
 def no_docker(monkeypatch):
-    monkeypatch.setattr("ordo.bringup.read_gpu_status", lambda project: IDLE)
+    monkeypatch.setattr("ordo.host.bringup.read_gpu_status", lambda project: IDLE)
     ran: list[list[str]] = []
 
     class Result:
         returncode = 0
 
-    monkeypatch.setattr("ordo.bringup.subprocess.run", lambda cmd, *a, **kw: ran.append(list(cmd)) or Result())
+    monkeypatch.setattr("ordo.host.bringup.subprocess.run", lambda cmd, *a, **kw: ran.append(list(cmd)) or Result())
     return ran
 
 
@@ -411,7 +412,7 @@ def _capture_ensure(monkeypatch) -> list[set[str]]:
         seen.append(set(services))
         return 0
 
-    monkeypatch.setattr("ordo.images.ensure_images", fake)
+    monkeypatch.setattr("ordo.host.images.ensure_images", fake)
     return seen
 
 
@@ -444,7 +445,7 @@ def test_no_build_skips_the_check(monkeypatch, tmp_path, no_docker):
 
 
 def test_a_failed_build_stops_the_bring_up(monkeypatch, tmp_path, no_docker):
-    monkeypatch.setattr("ordo.images.ensure_images", lambda *a, **kw: 1)
+    monkeypatch.setattr("ordo.host.images.ensure_images", lambda *a, **kw: 1)
     assert bringup.bring_up(str(_out(tmp_path)), "ordo", [], whole_stack=True, with_profiles=True,
                             force_recreate=False, dry_run=False, build=True) == 1
     assert no_docker == []                                            # compose never ran
@@ -452,8 +453,9 @@ def test_a_failed_build_stops_the_bring_up(monkeypatch, tmp_path, no_docker):
 
 def test_cli_up_builds_by_default_and_no_build_turns_it_off(monkeypatch, tmp_path, no_docker):
     from ordo import cli
+    from ordo.host import cli_stack
 
-    monkeypatch.setattr(cli, "_host_preflight", lambda *a, **k: True)  # tested in test_preflight_host.py
+    monkeypatch.setattr(cli_stack, "_host_preflight", lambda *a, **k: True)  # tested in test_preflight_host.py
     seen = _capture_ensure(monkeypatch)
     out = str(_out(tmp_path))
     assert cli.main(["up", "--all", "--out", out]) == 0
@@ -503,5 +505,5 @@ def test_every_catalog_backend_image_is_a_first_party_build():
     special = {m.id: m.backend_image for m in CATALOG.models if m.backend_image}
     assert special
     for model_id, ref in special.items():
-        assert not images.has_tag(ref), f"{model_id}: {ref} carries its own tag; render owns it"
+        assert not image_tags.has_tag(ref), f"{model_id}: {ref} carries its own tag; render owns it"
         assert ref in FIRST_PARTY, f"{model_id}: {ref} is not an image `ordo build` manages"

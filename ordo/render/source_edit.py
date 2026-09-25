@@ -1,8 +1,8 @@
 """Surgical, safe edits to the declarative source (`ordo.yaml`) — pure text → text.
 
 The ONE `plugins:` list editor and the ONE `site:` editor. The control plane's plugin enable/disable
-(`ordo/control.py`, which also backs the dashboard's MCP toggle) edits `plugins:`; the host command
-`ordo remote enable/disable` (`ordo/remote.py`) edits both. Keeping them in the `ordo` package lets
+(`ordo/control/api.py`, which also backs the dashboard's MCP toggle) edits `plugins:`; the host command
+`ordo remote enable/disable` (`ordo/host/remote.py`) edits both. Keeping them in the `ordo` package lets
 the substrate tests exercise them directly (pyyaml-only, no server).
 
 Each editor preserves every other line, comment, and the exact formatting, and REFUSES (raises

@@ -14,8 +14,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .fetch import CHAT_SERVICE, NeededFile, required_model_files
 from .gpu import GpuClaim
+from .models_volume import CHAT_SERVICE, NeededFile, required_model_files
 
 # The compose services that serve a model, and the id clients address it by. The chat ids are the
 # model-gateway's stable aliases (`local-chat`, `local-chat-cpu`, `local-embed`).

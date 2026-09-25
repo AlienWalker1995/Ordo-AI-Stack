@@ -22,7 +22,7 @@
 | 2 | **Open WebUI `OPENAI_API_BASE`:** Does `open-webui` (running `v0.10.1`) support this env? | Resolved — uses `OPENAI_API_BASE_URL`; working |
 | 3 | **MCP policy scoping:** How is per-consumer tool access enforced? | Resolved (2026-09): LiteLLM virtual-key `object_permission.mcp_servers` grants with `require_key_mcp_access_defined: true` |
 | 5 | **llama.cpp host port:** Remove to reduce attack surface? | Resolved — backend-only; no host port |
-| 6 | **Audit log rotation** | Resolved — size-based rotation in `ordo/audit.py` (10 MB, five generations kept) |
+| 6 | **Audit log rotation** | Resolved — size-based rotation in `ordo/control/audit.py` (10 MB, five generations kept) |
 | 8 | **ComfyUI non-root** | Open — `yanwk/comfyui-boot` runs as root; image limitation |
 | 9 | **Smoke test in CI** | Resolved — see `.github/workflows/ci.yml` |
 | 10 | **N8N LLM node** | Open — use OpenAI-compat node with `baseURL: http://model-gateway:11435/v1`; needs example workflow doc |

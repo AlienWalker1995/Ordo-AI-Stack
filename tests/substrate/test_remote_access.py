@@ -12,17 +12,18 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo import cli, remote, wizard
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.hardware import HardwareProfile
-from ordo.plugins import PluginRegistry
-from ordo.render import render
+from ordo import cli
+from ordo.host import remote, wizard
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
+from ordo.render.hardware import HardwareProfile
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
-RENDER_MODULE = sys.modules["ordo.render"]
+RENDER_MODULE = sys.modules["ordo.render.engine"]
 HARDWARE = HardwareProfile.from_spec({"gpus": [], "ram_gb": 32, "cpu_cores": 8})
 
 CLIENT_SECRET = "GOCSPX-never-print-me"

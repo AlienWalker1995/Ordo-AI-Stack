@@ -2,7 +2,7 @@
 edge, reusing the stack's existing Google OAuth client - no new secret.
 
 Mirrors tests/substrate/test_langfuse.py's URL-derivation and credential-shape coverage: the
-mechanism (ordo/render.py::litellm_google_sso_env) is the same edge-derived-URL pattern as
+mechanism (ordo/render/engine.py::litellm_google_sso_env) is the same edge-derived-URL pattern as
 LANGFUSE_PUBLIC_URL, gated on the same two edge shapes, plus the `${OAUTH2_PROXY_CLIENT_ID}` /
 `${OAUTH2_PROXY_CLIENT_SECRET}` compose-level references that keep this a zero-new-secret change.
 """
@@ -13,10 +13,10 @@ from pathlib import Path
 
 import yaml
 
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.plugins import PluginRegistry
-from ordo.render import litellm_google_sso_env, render
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import litellm_google_sso_env, render
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")

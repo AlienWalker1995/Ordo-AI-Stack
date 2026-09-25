@@ -11,9 +11,9 @@ import json
 
 import pytest
 
-from ordo.broker import Broker, MockBackend
-from ordo.scheduler import Job, Scheduler
-from ordo.scheduler_state import RECOVERY_JOB_ID, STATE_VERSION, SchedulerStateStore, StateUnreadable
+from ordo.control.broker import Broker, MockBackend
+from ordo.control.scheduler import Job, Scheduler
+from ordo.control.scheduler_state import RECOVERY_JOB_ID, STATE_VERSION, SchedulerStateStore, StateUnreadable
 
 
 class Clock:

@@ -1,7 +1,7 @@
 """Build-context identity is a DECLARED, testable property (audit §2.1).
 
 Every PROJECT-built image (`ordo/*`) referenced by ANY manifest OR by the
-hardcoded substrate services must resolve — through the single `ordo.buildspec` resolver — to an
+hardcoded substrate services must resolve — through the single `ordo.render.buildspec` resolver — to an
 EXISTING build context + Dockerfile under `services/` (or be explicitly declared built out-of-band
 via `build: {external: true}`). So a folder rename or an image typo fails CI, not deploy.
 
@@ -11,11 +11,11 @@ images the resolver classifies as project-built.
 """
 from pathlib import Path
 
-from ordo import buildspec
-from ordo.agents import AgentRegistry
-from ordo.compose import SUBSTRATE_BUILD_CONTEXTS
-from ordo.dashboards import DashboardRegistry
-from ordo.plugins import PluginRegistry
+from ordo.render import buildspec
+from ordo.render.agents import AgentRegistry
+from ordo.render.compose import SUBSTRATE_BUILD_CONTEXTS
+from ordo.render.dashboards import DashboardRegistry
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 SERVICES = ROOT / "services"
@@ -105,9 +105,9 @@ def test_patched_llamacpp_resolves_via_substrate_not_substring():
 
 def test_build_field_is_not_rendered_into_compose():
     """`build:` is METADATA — it must never leak into a rendered compose service (which is image-only)."""
-    from ordo.catalog import Catalog
-    from ordo.config import Source
-    from ordo.render import render
+    from ordo.render.catalog import Catalog
+    from ordo.render.config import Source
+    from ordo.render.engine import render
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                             "model": "auto", "plugins": "auto"})
     cat = Catalog.load(ROOT / "catalog" / "models.yaml")

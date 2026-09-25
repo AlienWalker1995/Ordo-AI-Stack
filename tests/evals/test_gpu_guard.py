@@ -1,6 +1,6 @@
 """E15 (round-6 fix): the GPU-lease guard (ordo_evals.gpu_guard) - pure functions taking an
 ops-controller `/status` body, exercised with fixtures shaped exactly like `ControlPlane.status()`
-(ordo/control.py) and `Scheduler.status()` (ordo/scheduler.py) actually return, never a live stack."""
+(ordo/control/api.py) and `Scheduler.status()` (ordo/control/scheduler.py) actually return, never a live stack."""
 from __future__ import annotations
 
 import pytest
@@ -34,7 +34,7 @@ def test_idle_scheduler_is_not_leased():
 
 def test_no_scheduler_configured_is_not_leased():
     """A deployment with no GPU scheduler at all has nothing to guard against - see
-    ordo/control.py's ControlPlane.status(): {"state": "no-scheduler"} when self.scheduler is None."""
+    ordo/control/api.py's ControlPlane.status(): {"state": "no-scheduler"} when self.scheduler is None."""
     leased, detail = gpu_guard.gpu_lease_state(NO_SCHEDULER_STATUS)
     assert leased is False and "no GPU scheduler" in detail
 

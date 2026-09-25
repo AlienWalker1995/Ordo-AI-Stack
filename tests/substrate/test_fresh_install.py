@@ -15,18 +15,18 @@ from pathlib import Path
 
 import pytest
 
-from ordo import wizard
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.hardware import HardwareProfile
-from ordo.plugins import PluginRegistry
-from ordo.render import render
+from ordo.host import wizard
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
+from ordo.render.hardware import HardwareProfile
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
 # The module, not the `render` function the ordo package re-exports under the same name.
-RENDER_MODULE = sys.modules["ordo.render"]
+RENDER_MODULE = sys.modules["ordo.render.engine"]
 
 HARDWARE = {
     "no-gpu": {"gpus": [], "ram_gb": 16, "cpu_cores": 8},

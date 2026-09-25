@@ -97,7 +97,7 @@ def _project_containers() -> list[str]:
 
 def test_file_secrets_are_not_in_any_container_environment():
     """Every running container that mounts a file secret (its `ordo.secret-file.<file>` labels,
-    ordo/secret_files.py) has no variable of that key's name, only the path variable. The one
+    ordo/render/secret_files.py) has no variable of that key's name, only the path variable. The one
     exception is a value that is itself a path (`TS_AUTHKEY=file:/run/secrets/...`). Failures name
     the container and the key, never a value."""
     offenders = []

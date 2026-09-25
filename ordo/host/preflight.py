@@ -32,32 +32,20 @@ import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
-from . import buildspec, fetch, images, parity, served_models
-from .agents import AgentRegistry
-from .catalog import Catalog
-from .config import Source
-from .dashboards import DashboardRegistry
-from .plugins import PluginRegistry
-from .render import (
+from ..render import buildspec, models_volume, served_models
+from ..render.agents import AgentRegistry
+from ..render.catalog import Catalog
+from ..render.config import Source
+from ..render.dashboards import DashboardRegistry
+from ..render.engine import (
     DEFAULT_AGENTS_DIR,
     DEFAULT_DASHBOARDS_DIR,
     render,
 )
-
-# ${VAR}, ${VAR:-default} or ${VAR:?message}: the compose interpolation a rendered value may carry
-# (e.g. `${COMFYUI_IMAGE:-yanwk/comfyui-boot@sha256:…}`, `${CADDY_BIND:?…}:443:443`). Resolved
-# against the rendered .env (with the `:-default` fallback) so a check compares the ACTUAL value.
-_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?])([^}]*))?\}")
-
-
-def _expand(value: str, env: dict[str, str]) -> str:
-    def sub(m: re.Match[str]) -> str:
-        val = env.get(m.group(1))
-        if val not in (None, ""):
-            return val
-        is_default = (m.group(2) or "").endswith("-")
-        return (m.group(3) or "") if is_default else ""
-    return _VAR_RE.sub(sub, value)
+from ..render.image_tags import first_party_contexts
+from ..render.plugins import PluginRegistry
+from ..render.stack import COMPOSE_VAR_RE, expand_env
+from . import parity
 
 
 @dataclasses.dataclass
@@ -73,7 +61,7 @@ def required_images(rc, project: str = "ordo", image_tags: dict[str, str] | None
     ${VAR:-default} refs expanded against the rendered .env so presence-matching is accurate.
     `image_tags` is the `ordo build` record the render pins first-party images to."""
     c = rc.compose_dict(project=project, image_tags=image_tags)
-    return sorted({_expand(svc["image"], rc.env) for svc in c["services"].values()})
+    return sorted({expand_env(svc["image"], rc.env) for svc in c["services"].values()})
 
 
 def secret_checks(needed: Iterable[str], optional: Iterable[str], secrets_path: str) -> list[Check]:
@@ -122,7 +110,7 @@ def run(
     resolve_ctx = buildspec.context_resolver(registry, agents, dashboards, project=project)
     # The images `ordo build` builds. A project image outside this set carries its own tag or is built
     # out of band, so the hint must not promise that `ordo build` produces it.
-    first_party = images.first_party_contexts(registry, agents, dashboards, project=project)
+    first_party = first_party_contexts(registry, agents, dashboards, project=project)
 
     def _is_buildable(image: str) -> bool:
         return resolve_ctx(image) is not None
@@ -272,7 +260,7 @@ def published_ports(services: dict, env: dict[str, str]) -> list[tuple[str, int]
     found: list[tuple[str, int]] = []
     for spec in services.values():
         for raw in (spec or {}).get("ports") or []:
-            parts = _expand(str(raw), env).split("/")[0].split(":")
+            parts = expand_env(str(raw), env).split("/")[0].split(":")
             if len(parts) == 3:
                 address, host_port = parts[0] or "0.0.0.0", parts[1]
             elif len(parts) == 2:
@@ -299,7 +287,7 @@ def secret_refs(services: dict, secret_keys: Iterable[str]) -> list[str]:
     """The secret keys the services reference as `${KEY}` anywhere in their definition."""
     keys = set(secret_keys)
     text = json.dumps(services)
-    return sorted({m.group(1) for m in _VAR_RE.finditer(text) if m.group(1) in keys})
+    return sorted({m.group(1) for m in COMPOSE_VAR_RE.finditer(text) if m.group(1) in keys})
 
 
 def _compose_major(version: str) -> int:
@@ -436,7 +424,7 @@ def gather_host_facts(ports: list[tuple[str, int]], project: str,
 
     volume_files = None
     if docker_error is None:
-        listed = fetch.volume_files(fetch.DockerRunner(), project)
+        listed = models_volume.volume_files(models_volume.DockerRunner(), project)
         volume_files = frozenset(listed) if listed is not None else None
 
     return HostFacts(docker_error=docker_error, compose_version=compose_version,

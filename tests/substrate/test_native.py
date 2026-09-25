@@ -1,11 +1,11 @@
 """Native path builds the same llama.cpp config as the container from one rendered source."""
 from pathlib import Path
 
-from ordo import native
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.plugins import PluginRegistry
-from ordo.render import render
+from ordo.host import native
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")

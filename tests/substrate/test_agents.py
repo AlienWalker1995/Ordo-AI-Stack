@@ -3,11 +3,11 @@ from pathlib import Path
 
 import yaml
 
-from ordo.agents import AgentRegistry
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.plugins import PluginRegistry
-from ordo.render import render
+from ordo.render.agents import AgentRegistry
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
@@ -37,7 +37,7 @@ def test_unknown_agent_is_flagged_not_crashed():
 
 
 def test_unknown_declared_service_flagged():
-    from ordo.agents import Agent
+    from ordo.render.agents import Agent
     bad = Agent.from_dict({"id": "x", "consumes": ["model-gateway", "quantum-gateway"]})
     assert bad.unknown_services() == ["quantum-gateway"]
 
@@ -178,7 +178,7 @@ def test_render_agent_without_wiring_stays_minimal(tmp_path):
 def test_hermes_manifest_consumes_only_live_core_services_and_gates_on_keys():
     from pathlib import Path
 
-    from ordo.agents import KNOWN_SERVICES, AgentRegistry
+    from ordo.render.agents import KNOWN_SERVICES, AgentRegistry
     reg = AgentRegistry.load(Path(__file__).resolve().parents[2] / "services")
     hermes = reg.get("hermes")
     assert "mcp-gateway" not in KNOWN_SERVICES and "mcp-gateway" not in hermes.consumes

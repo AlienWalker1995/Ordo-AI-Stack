@@ -1,6 +1,6 @@
 """Dashboard MCP persistence: a UI enable/disable is persisted by ops-controller, the single writer of
 the operator source. The dashboard maps the toggled server id to its kind=mcp plugin and calls
-`POST /plugins/{plugin}/enable|disable`, which edits ordo.yaml surgically (ordo/source_edit.py) and
+`POST /plugins/{plugin}/enable|disable`, which edits ordo.yaml surgically (ordo/render/source_edit.py) and
 re-renders out/ in one step. The dashboard never reads or writes ordo.yaml itself."""
 import asyncio
 from pathlib import Path

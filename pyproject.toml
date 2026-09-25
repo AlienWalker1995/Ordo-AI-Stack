@@ -25,7 +25,7 @@ serve = ["fastapi>=0.141,<1", "uvicorn>=0.53,<1", "pydantic>=2.13,<3", "httpx>=0
 ordo = "ordo.cli:main"
 
 [tool.setuptools]
-packages = ["ordo"]
+packages = ["ordo", "ordo.render", "ordo.control", "ordo.host"]
 
 # Ship the curated catalog + service manifests with the package (data the CLI reads by default).
 [tool.setuptools.package-data]

@@ -36,18 +36,18 @@ from urllib.parse import urljoin, urlparse
 
 import yaml
 
-from . import substrate
+from ..render import substrate
+from ..render.catalog import Catalog
+from ..render.config import Source
+from ..render.engine import render
+from ..render.models_volume import CHAT_SERVICE
+from ..render.plugins import PluginRegistry
+from ..render.served_models import model_files, models_by_gpu, served_models
+from ..render.source_edit import edit_plugins_list
+from ..render.stack import lifecycle_group
 from .audit import AuditLog
-from .bringup import lifecycle_group
 from .broker import Broker
-from .catalog import Catalog
-from .config import Source
-from .fetch import CHAT_SERVICE
-from .plugins import PluginRegistry
-from .render import render
 from .scheduler import Job, Scheduler
-from .served_models import model_files, models_by_gpu, served_models
-from .source_edit import edit_plugins_list
 
 logger = logging.getLogger(__name__)
 
@@ -610,7 +610,7 @@ class ControlPlane:
     # every verb that gives it a new namespace must cycle them too, after it; otherwise they keep
     # running in the dead one with only `lo` (observed 2026-09-24: a caddy restart from the
     # dashboard cut off hermes-dashboard and every tailnet sidecar). The group comes from
-    # `bringup.lifecycle_group`, the planner the host's `ordo up` / `ordo recreate` use.
+    # `stack.lifecycle_group`, the planner the host's `ordo up` / `ordo recreate` use.
 
     def _rendered_compose(self, target: str) -> dict:
         try:
@@ -757,7 +757,7 @@ class ControlPlane:
             return conflict
         try:
             # One compose call recreates the whole group: the backend plans it with the same
-            # `bringup.plan_named` the host's `ordo recreate` uses.
+            # `stack.plan_named` the host's `ordo recreate` uses.
             self.broker.backend.recreate_service(service_id)
         except Exception as e:
             return self._error(500, str(e))
@@ -864,7 +864,7 @@ class ControlPlane:
         return {"ok": True, "action": "compose-restart"}
 
     # --- Registry routes ---
-    # Derived from the render on every call (ordo/served_models.py): which models the stack
+    # Derived from the render on every call (ordo/render/served_models.py): which models the stack
     # serves, from which file, on which GPU. There is no stored registry to drift from ordo.yaml.
 
     def _served_models(self) -> dict[str, dict[str, Any]]:

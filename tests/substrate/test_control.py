@@ -5,11 +5,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo.broker import Broker, MockBackend
-from ordo.catalog import Catalog
-from ordo.control import ControlPlane
-from ordo.plugins import PluginRegistry
-from ordo.scheduler import Scheduler
+from ordo.control.api import ControlPlane
+from ordo.control.broker import Broker, MockBackend
+from ordo.control.scheduler import Scheduler
+from ordo.render.catalog import Catalog
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
@@ -90,7 +90,7 @@ def test_unknown_route_404(tmp_path):
 
 def test_status_says_whether_the_lease_state_is_persisted(tmp_path):
     """The host's `ordo recreate ops-controller` recreates mid-lease only when this is true."""
-    from ordo.scheduler_state import SchedulerStateStore
+    from ordo.control.scheduler_state import SchedulerStateStore
 
     cp, _ = _cp(tmp_path)
     assert cp.route("GET", "/status")[1]["gpu"]["state_persisted"] is False
@@ -156,7 +156,7 @@ def test_heartbeat_missing_id_is_400(tmp_path):
 
 
 def test_jobs_history_route_serves_lease_records(tmp_path):
-    from ordo.lease_history import LeaseHistory
+    from ordo.control.lease_history import LeaseHistory
     hist = LeaseHistory(tmp_path / "h.jsonl", now_fn=lambda: 42.0)
     cp, _ = _cp(tmp_path)
     cp.broker.history = hist
@@ -213,7 +213,7 @@ def test_models_download_category_traversal(tmp_path):
 
 
 def test_model_download_redirect_rejects_untrusted_host():
-    from ordo.control import _validated_redirect_url
+    from ordo.control.api import _validated_redirect_url
 
     with pytest.raises(ValueError, match="not in allowed list"):
         _validated_redirect_url("https://huggingface.co/model", "https://evil.example/file")
@@ -253,7 +253,7 @@ def test_model_pack_pull_routes_are_gone(tmp_path, method, path):
 
 def test_gpu_assignments_route_is_gone(tmp_path):
     # It read the V1 overrides/gpu-assignments.yml, which no longer exists, so it always answered
-    # an empty map. GPU pins are rendered into the compose file (see ordo/compose.py).
+    # an empty map. GPU pins are rendered into the compose file (see ordo/render/compose.py).
     cp, _ = _cp(tmp_path)
     assert cp.route("GET", "/gpu/assignments", {})[0] == 404
 
@@ -281,7 +281,7 @@ def test_removed_routes_are_gone(tmp_path, method, path):
 
 
 def test_audit_route_uses_configured_file_and_limit(tmp_path, monkeypatch):
-    import ordo.control as control_mod
+    import ordo.control.api as control_mod
 
     path = tmp_path / "audit.log"
     path.write_text('\n'.join(json.dumps({"id": i}) for i in range(3)), encoding="utf-8")
@@ -297,14 +297,14 @@ def test_audit_route_uses_configured_file_and_limit(tmp_path, monkeypatch):
 # On a CPU-only host ops-controller gets no `utility` reservation, so nvidia-smi is not in its
 # container. Its GPU enumeration must come back empty, never raise.
 def test_hardware_detection_without_nvidia_smi_finds_no_gpus(monkeypatch):
-    from ordo import hardware
+    from ordo.render import hardware
     monkeypatch.setattr(hardware.shutil, "which", lambda _name: None)
     assert hardware._detect_gpus() == ()
     assert hardware.detect().has_gpu is False
 
 
 def test_hardware_detection_when_nvidia_smi_cannot_exec_finds_no_gpus(monkeypatch):
-    from ordo import hardware
+    from ordo.render import hardware
     monkeypatch.setattr(hardware.shutil, "which", lambda _name: "/usr/bin/nvidia-smi")
 
     def missing_binary(*_args, **_kwargs):

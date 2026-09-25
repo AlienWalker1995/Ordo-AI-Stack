@@ -4,7 +4,7 @@ can't guarantee."""
 import pytest
 import yaml
 
-from ordo.source_edit import edit_plugins_list
+from ordo.render.source_edit import edit_plugins_list
 
 SAMPLE = (
     "hardware: auto\n"
@@ -64,7 +64,7 @@ def test_bad_action_raises():
 
 # --- edit_site_keys: the `site:` editor `ordo remote enable/disable` uses ---
 
-from ordo.source_edit import edit_site_keys  # noqa: E402
+from ordo.render.source_edit import edit_site_keys  # noqa: E402
 
 SITE_SAMPLE = (
     "# my source\n"

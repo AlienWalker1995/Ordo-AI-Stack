@@ -279,7 +279,7 @@ def test_comfyui_is_routed_through_its_gpu_admission_gate(caddyfile_text: str) -
     The gate service name is derived from the declaration in services/comfyui/plugin.yaml, so
     assert against the renderer rather than a copied string.
     """
-    from ordo.gpu import gate_service_name
+    from ordo.render.gpu import gate_service_name
 
     assert f"import sso_service {gate_service_name('comfyui')}:8188" in caddyfile_text
     assert "import sso_service comfyui:8188" not in caddyfile_text, (

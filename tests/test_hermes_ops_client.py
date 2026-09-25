@@ -174,7 +174,7 @@ def _cover_every_public_method(client, mock):
 def test_every_public_method_sends_the_bearer_and_actor(client):
     """The plugin enable/disable/list methods used a second httpx.Client built with no
     headers at all ('ControlPlane is authless by design' — stale: ops-controller requires
-    a bearer on every path but /health, see ordo/control.py `UNAUTHENTICATED_PATHS`), so
+    a bearer on every path but /health, see ordo/control/api.py `UNAUTHENTICATED_PATHS`), so
     they 401'd on every call. Every public method must go through the same authenticated
     request path."""
     with respx.mock(base_url=BASE_URL) as mock:

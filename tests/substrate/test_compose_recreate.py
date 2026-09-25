@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo.broker import DockerBackend
+from ordo.control.broker import DockerBackend
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -45,7 +45,7 @@ def capture(tmp_path, monkeypatch):
 
         return Result()
 
-    monkeypatch.setattr("ordo.broker.subprocess.run", fake_run)
+    monkeypatch.setattr("ordo.control.broker.subprocess.run", fake_run)
     return backend, recorded
 
 

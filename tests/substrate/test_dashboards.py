@@ -10,13 +10,13 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo.agents import AgentRegistry
-from ordo.broker import DockerBackend
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.dashboards import DashboardRegistry
-from ordo.plugins import PluginRegistry
-from ordo.render import render
+from ordo.control.broker import DockerBackend
+from ordo.render.agents import AgentRegistry
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.dashboards import DashboardRegistry
+from ordo.render.engine import render
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")

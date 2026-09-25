@@ -5,12 +5,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo import compose
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.llamacpp_backend import CPU
-from ordo.plugins import McpSpec, PluginRegistry
-from ordo.render import render
+from ordo.render import compose
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
+from ordo.render.llamacpp_backend import CPU
+from ordo.render.plugins import McpSpec, PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
@@ -65,8 +65,8 @@ def test_real_mcp_images_do_not_warn():
 
 def test_placeholder_digest_still_detected():
     # the placeholder/unpinned detection itself must still fire for a bad public digest
-    from ordo.plugins import Plugin
-    from ordo.render import _render_mcp
+    from ordo.render.engine import _render_mcp
+    from ordo.render.plugins import Plugin
     bad = Plugin.from_dict({"id": "bad", "kind": "mcp",
                             "mcp": {"image": "mcp/x@sha256:" + "0" * 64, "transport": "http",
                                     "port": 9000, "healthcheck": _HC}})
@@ -119,8 +119,8 @@ def test_litellm_name_collision_is_a_hard_error():
     """`a-b` and `a_b` are distinct server_ids that render to ONE LiteLLM name. The fragment is a
     name-keyed map, so the second would overwrite the first and that server would vanish from the
     gateway: refuse the render (as the component doc promises) instead of noting it."""
-    from ordo.plugins import Plugin
-    from ordo.render import _render_mcp
+    from ordo.render.engine import _render_mcp
+    from ordo.render.plugins import Plugin
     digest = "0123456789abcdef" * 4          # varied, so the placeholder-digest note stays silent
     hyphen = Plugin.from_dict({"id": "a-b", "kind": "mcp",
                                "mcp": {"image": f"i:1@sha256:{digest}", "transport": "http",
@@ -133,8 +133,8 @@ def test_litellm_name_collision_is_a_hard_error():
 
 
 def test_fragment_carries_auth_timeout_and_explicit_defaults():
-    from ordo.plugins import Plugin
-    from ordo.render import _render_mcp, render_litellm_mcp_fragment
+    from ordo.render.engine import _render_mcp, render_litellm_mcp_fragment
+    from ordo.render.plugins import Plugin
     # No registered server currently declares upstream auth (the bridged servers listen on the
     # internal MCP network only), so drive the auth path from a synthetic manifest.
     authed = Plugin.from_dict({"id": "authed", "kind": "mcp",
@@ -151,8 +151,8 @@ def test_fragment_carries_auth_timeout_and_explicit_defaults():
 
 
 def test_hosted_server_renders_no_compose_service():
-    from ordo.plugins import Plugin
-    from ordo.render import _render_mcp, render_litellm_mcp_fragment
+    from ordo.render.engine import _render_mcp, render_litellm_mcp_fragment
+    from ordo.render.plugins import Plugin
     hosted = Plugin.from_dict({"id": "ext", "kind": "mcp", "mcp": {"url": "https://h.example/mcp", "transport": "http"}})
     servers, notes = _render_mcp([hosted])
     assert notes == [] and servers[0]["hosted"] and servers[0]["service"] == ""
@@ -263,8 +263,8 @@ def test_restored_images_do_not_warn():
 
 
 def test_server_id_collision_is_flagged():
-    from ordo.plugins import Plugin
-    from ordo.render import _render_mcp
+    from ordo.render.engine import _render_mcp
+    from ordo.render.plugins import Plugin
     a = Plugin.from_dict({"id": "a", "kind": "mcp",
                           "mcp": {"image": "ordo/x:latest", "server_id": "shared",
                                   "transport": "http", "port": 9000, "healthcheck": _HC}})

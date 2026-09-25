@@ -40,7 +40,7 @@ ops.compose_restart(service="open-webui", confirm=True) # OK
 
 `OpsClient` requires `OPS_CONTROLLER_TOKEN` to be non-empty and sends it as
 a Bearer header. `ops-controller` itself does not check it (auth is Caddy's
-job at the edge, see the `ordo/control.py` module docstring).
+job at the edge, see the `ordo/control/api.py` module docstring).
 
 ## Audit log
 
@@ -54,12 +54,12 @@ tail -f data/ops-controller/audit.log | jq
 ```
 
 Rotation: at 10 MB the file rolls to `audit.1.log`; five generations are kept
-(`ordo/audit.py`).
+(`ordo/control/audit.py`).
 
 ## Adding a new control-plane verb
 
 1. Write a failing test in `tests/substrate/` for the new route.
-2. Implement the handler on the control plane in `ordo/control.py` and add
+2. Implement the handler on the control plane in `ordo/control/api.py` and add
    it to `ControlPlane.route()`. A `POST` is audited automatically; add its
    `(action, target)` mapping to `_AUDIT_PATH_VERBS` or `_AUDIT_BODY_VERBS` so
    the record names it (otherwise it is recorded as `unknown`).

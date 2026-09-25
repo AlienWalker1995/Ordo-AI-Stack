@@ -2,12 +2,12 @@
 import sys
 from pathlib import Path
 
-from ordo import secret_store, wizard
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.hardware import HardwareProfile
-from ordo.plugins import PluginRegistry
-from ordo.render import render
+from ordo.host import secret_store, wizard
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
+from ordo.render.hardware import HardwareProfile
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
@@ -240,7 +240,7 @@ def _scripted_input(monkeypatch, answers):
 def test_interactive_init_asks_three_questions_and_nothing_about_accounts(tmp_path, monkeypatch, capsys):
     from ordo import cli
     monkeypatch.setattr(wizard, "detect", lambda: HW_CPU)
-    monkeypatch.setattr(sys.modules["ordo.render"], "detect", lambda: HW_CPU)
+    monkeypatch.setattr(sys.modules["ordo.render.engine"], "detect", lambda: HW_CPU)
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     prompts = _scripted_input(monkeypatch, ["", "", "n"])   # Enter, Enter, "not now"
     assert cli.main(["init", "--out", str(tmp_path / "out")]) == 0
@@ -254,7 +254,7 @@ def test_interactive_init_asks_three_questions_and_nothing_about_accounts(tmp_pa
 
 def test_interactive_features_choice_is_applied(tmp_path, monkeypatch):
     monkeypatch.setattr(wizard, "detect", lambda: HW_CPU)
-    monkeypatch.setattr(sys.modules["ordo.render"], "detect", lambda: HW_CPU)
+    monkeypatch.setattr(sys.modules["ordo.render.engine"], "detect", lambda: HW_CPU)
     _scripted_input(monkeypatch, ["", "1"])                  # keep the model, "Chat only"
     result = wizard.run(CATALOG, REGISTRY, tmp_path / "out", interactive=True, host_root=tmp_path / "repo")
     assert "open-webui" in result.plugins_enabled and "automation" not in result.plugins_enabled

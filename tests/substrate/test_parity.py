@@ -1,10 +1,10 @@
 """Parity check — the render engine reproduces a reference .env (merge-gate a)."""
 from pathlib import Path
 
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.parity import diff, load_env, report
-from ordo.render import render
+from ordo.host.parity import diff, load_env, report
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")

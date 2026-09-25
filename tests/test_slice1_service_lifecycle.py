@@ -7,9 +7,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ordo.broker import Broker, MockBackend
-from ordo.control import ControlPlane
-from ordo.scheduler import Scheduler
+from ordo.control.api import ControlPlane
+from ordo.control.broker import Broker, MockBackend
+from ordo.control.scheduler import Scheduler
 
 
 @pytest.fixture

@@ -27,112 +27,26 @@ is not first-party here and is never retagged.
 from __future__ import annotations
 
 import dataclasses
-import json
-import os
-import re
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
-from . import buildspec
-from .compose import SUBSTRATE_BUILD_CONTEXTS, SUBSTRATE_IMAGES
+from ..render import buildspec
+from ..render.agents import AgentRegistry
+from ..render.dashboards import DashboardRegistry
+from ..render.engine import DEFAULT_AGENTS_DIR, DEFAULT_DASHBOARDS_DIR, DEFAULT_PLUGINS_DIR
+from ..render.image_tags import FALLBACK_TAG, RECORD_FILE, first_party_contexts, load_record, save_record
+from ..render.plugins import PluginRegistry
+from ..render.stack import COMPOSE_FILE, load_compose
 
-if TYPE_CHECKING:
-    from .agents import AgentRegistry
-    from .dashboards import DashboardRegistry
-    from .plugins import PluginRegistry
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-RECORD_FILE = "images.json"
-# The tag render uses for a first-party image `ordo build` has not recorded yet. `ordo build`
-# moves it to every image it builds, so a render made before the first build still resolves.
-FALLBACK_TAG = "current"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 REVISION_LABEL = "org.opencontainers.image.revision"
 SHORT_SHA_LENGTH = 12
-# Docker's tag grammar.
-_TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 # The images built with the repo ROOT as their context (ops-controller ships ordo/, catalog/ and
 # services/). Their identity is the path set the root .dockerignore allowlists.
 ROOT_CONTEXT_IMAGES = frozenset({"ordo/ops-controller"})
-
-
-# --- the record (out/images.json) ---
-
-
-def load_record(out_dir: str | Path) -> dict[str, str]:
-    """`{image: tag}` from out/images.json; {} when the file does not exist.
-
-    A present but unreadable record is an error, not an empty record: silently rendering `current`
-    over a real record would move every service off the build it runs."""
-    path = Path(out_dir) / RECORD_FILE
-    if not path.exists():
-        return {}
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
-        raise ValueError(f"cannot read {path} ({e}); fix or delete it, then run `ordo build`") from e
-    recorded = doc.get("images") if isinstance(doc, dict) else None
-    if not isinstance(recorded, dict):
-        raise ValueError(f"{path} has no `images` map; fix or delete it, then run `ordo build`")
-    for image, tag in recorded.items():
-        if not isinstance(image, str) or not isinstance(tag, str) or not _TAG_RE.match(tag):
-            raise ValueError(f"{path}: {image!r} has an invalid tag {tag!r}")
-    return dict(recorded)
-
-
-def save_record(out_dir: str | Path, record: dict[str, str]) -> None:
-    """Write the record atomically, so a render never reads half a file."""
-    out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    path = out / RECORD_FILE
-    tmp = path.with_name(RECORD_FILE + ".tmp")
-    tmp.write_text(json.dumps({"version": 1, "images": dict(sorted(record.items()))}, indent=2) + "\n",
-                   encoding="utf-8")
-    os.replace(tmp, path)
-
-
-# --- which images are first-party ---
-
-
-def has_tag(ref: str) -> bool:
-    """True when the ref names its own tag or digest (`repo:tag`, `repo@sha256:...`)."""
-    return "@" in ref or ":" in ref.rsplit("/", 1)[-1]
-
-
-def _declares_own_version(ref: str) -> bool:
-    """A declaration render must leave alone: a tag, a digest, or a `${VAR:-default}` override."""
-    return ref.startswith("${") or has_tag(ref)
-
-
-def first_party_contexts(plugins: PluginRegistry, agents: AgentRegistry, dashboards: DashboardRegistry,
-                         *, project: str = "ordo") -> dict[str, str]:
-    """`{image: build context}` for every image `ordo build` owns and render tags.
-
-    That is every project image with an in-repo build context whose declaration carries no tag of
-    its own: the substrate images (compose.py's, and the catalog's patched llama.cpp build), plus
-    each manifest image built in the repo."""
-    contexts = buildspec.manifest_image_contexts(plugins, agents, dashboards, project=project)
-    declared = [a.image_for(project) for a in agents.agents]
-    declared += [d.image_for(project) for d in dashboards.dashboards]
-    declared += [str(ref) for p in plugins.plugins for ref in buildspec._plugin_images(p)]
-    self_versioned = {buildspec.image_ident(ref) for ref in declared if _declares_own_version(ref)}
-    first_party = {image: ctx for image, ctx in contexts.items()
-                   if ctx != buildspec.EXTERNAL and image not in self_versioned}
-    for name in SUBSTRATE_IMAGES:
-        first_party[f"{project}/{name}"] = SUBSTRATE_BUILD_CONTEXTS[name]
-    return first_party
-
-
-def pin_first_party(services: dict[str, Any], first_party: Iterable[str], tags: dict[str, str]) -> None:
-    """Give every untagged first-party `image:` its recorded tag (FALLBACK_TAG when unrecorded)."""
-    owned = set(first_party)
-    for spec in services.values():
-        ref = str((spec or {}).get("image") or "")
-        if not ref or _declares_own_version(ref) or ref not in owned:
-            continue
-        spec["image"] = f"{ref}:{tags.get(ref, FALLBACK_TAG)}"
 
 
 def select_images(doc: dict[str, Any], first_party: dict[str, str], services: Sequence[str] | None) -> list[str]:
@@ -357,11 +271,6 @@ def ensure_built(doc: dict[str, Any], services: Iterable[str], *, first_party: d
 
 
 def _registries() -> tuple[PluginRegistry, AgentRegistry, DashboardRegistry]:
-    from .agents import AgentRegistry
-    from .dashboards import DashboardRegistry
-    from .plugins import PluginRegistry
-    from .render import DEFAULT_AGENTS_DIR, DEFAULT_DASHBOARDS_DIR, DEFAULT_PLUGINS_DIR
-
     return (PluginRegistry.load(DEFAULT_PLUGINS_DIR), AgentRegistry.load(DEFAULT_AGENTS_DIR),
             DashboardRegistry.load(DEFAULT_DASHBOARDS_DIR))
 
@@ -394,8 +303,6 @@ def build_targets(doc: dict[str, Any], services: Sequence[str] | None, *, projec
 
 def run_build(out_dir: str | Path, services: Sequence[str] | None, *, project: str, dry_run: bool) -> int:
     """`ordo build`: build the first-party images the rendered compose in `out_dir` runs."""
-    from .bringup import COMPOSE_FILE, load_compose
-
     try:
         doc = load_compose(Path(out_dir).as_posix())
     except OSError as e:

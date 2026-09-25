@@ -18,7 +18,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo import apply, bringup, cli, doctor, images
+from ordo import cli
+from ordo.host import apply, bringup, doctor, images
 
 OPS = bringup.OPS_CONTROLLER_SERVICE
 COMPOSE_VERSION = "5.1.0"

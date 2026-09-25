@@ -24,15 +24,15 @@ A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`
 | `X-Request-ID` forwarded by the dashboard to ops-controller | Partial (ops-controller does not record it yet) | `services/dashboard/dashboard/app.py`, `services/dashboard/dashboard/routes_orchestration.py` |
 | Responses API (`/v1/responses`) | Live | `services/model-gateway/` |
 | Completions compat (`/v1/completions`) | Live | `services/model-gateway/` |
-| MCP tool aggregation on the model gateway | Live | `services/model-gateway/`, `ordo/compose.py::_mcp_service`, `out/docker-compose.yml` |
+| MCP tool aggregation on the model gateway | Live | `services/model-gateway/`, `ordo/render/compose.py::_mcp_service`, `out/docker-compose.yml` |
 | MCP server manifests (`kind: mcp`) rendered to LiteLLM + dashboard | Live | `services/*/plugin.yaml`, `out/model-gateway/mcp_servers.yaml`, `out/mcp/servers.json` |
 | MCP health endpoint + UI badges (Settings drawer) | Live | `services/dashboard/dashboard/app.py` |
-| Container lifecycle API (start/stop/restart/recreate/logs/pull) | Live | `ordo/control.py`, `ordo/broker.py` |
-| Append-only JSONL audit log | Live | `ordo/audit.py`, `ordo/control.py` |
+| Container lifecycle API (start/stop/restart/recreate/logs/pull) | Live | `ordo/control/api.py`, `ordo/control/broker.py` |
+| Append-only JSONL audit log | Live | `ordo/control/audit.py`, `ordo/control/api.py` |
 | Dashboard auth via Caddy edge SSO (oauth2-proxy + Google + allowlist); optional dormant per-service Bearer token in code, unused in deployment | Live | `services/dashboard/dashboard/app.py` |
 | Dashboard throughput stats + benchmark | Live | `services/dashboard/dashboard/app.py` |
 | Dashboard hardware stats | Live | `services/dashboard/dashboard/app.py` |
-| Dashboard model switch (catalog id -> render -> recreate llama.cpp + model-gateway) | Live | `services/dashboard/dashboard/routes_console.py`, `ordo/control.py` |
+| Dashboard model switch (catalog id -> render -> recreate llama.cpp + model-gateway) | Live | `services/dashboard/dashboard/routes_console.py`, `ordo/control/api.py` |
 | RAG pipeline (Qdrant + rag-ingestion) | Live | `services/rag/`, `out/docker-compose.yml` |
 | Open WebUI → Qdrant vector DB | Live | `out/docker-compose.yml` |
 | RAG status endpoint | Live | `services/dashboard/dashboard/app.py` |
