@@ -70,7 +70,7 @@ CAPABILITY when it does. Not all preemptible services are alike:
   - A burst render has no degraded path — reclaiming it means the work stops. ``strategy: stop``.
   - The resident LLM does: it MIGRATES rather than dies. ``llamacpp-cpu`` runs its own CPU
     chat model at the same context window, and the model-gateway (LiteLLM) already carries
-    ``fallbacks: [{local-chat: [<cpu pin alias>]}]`` with a 30s cooldown that routes back to
+    ``fallbacks: [{local-chat: [<cpu pin alias>]}]`` with the router's cooldown (`cooldown_time` in services/model-gateway/litellm_config.yaml) that routes back to
     the GPU model as soon as it is healthy again. So llama.cpp yielding the 5090 is a
     GPU→CPU migration: availability is preserved, only throughput degrades. That is declared as
     ``strategy: failover`` with the degraded target and the component that reroutes named as
@@ -353,7 +353,7 @@ CORE_GPU_ARBITRATION: dict[str, GpuArbitration] = {
     #
     # It does NOT die when it yields — it migrates to CPU. `llamacpp-cpu` runs the same Qwen3.6
     # A3B at the same 131072 window and the model-gateway's LiteLLM config already fails
-    # `local-chat` over to it, then routes back on a 30s cooldown once the GPU model is healthy.
+    # `local-chat` over to it, then routes back after the router's `cooldown_time` (litellm_config.yaml) once the GPU model is healthy.
     # `failover` records exactly that, and no more: today the reroute is error-driven (the Broker
     # stops the container, LiteLLM discovers it unhealthy), so completions streaming at that
     # instant are lost. The clean `handover` is the next change — see SUPPORTED_YIELD_STRATEGIES.

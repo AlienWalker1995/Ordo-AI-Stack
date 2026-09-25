@@ -56,13 +56,18 @@ UNKNOWN_BACKEND = "unknown (gpu status unavailable)"
 
 def gpu_lease_state(status: dict[str, Any]) -> tuple[bool, str]:
     """(leased, detail) from an ops-controller `/status` body (`checks.Probes.ops_status()`).
-    `leased` is True when the scheduler shows a running or queued job, or a resident has been
-    evicted to free VRAM for one - any of these can mean llama.cpp is stopped or about to be.
+    `leased` is the scheduler's own verdict (#230: running or queued work, or an evicted resident),
+    the one definition of a leased card; the lists only explain it in `detail`. A status without the
+    verdict comes from a control plane too old to report it and is treated as leased (fail closed).
     `state: "no-scheduler"` (no GPU on this deployment, or the control plane started without one) is
     not a lease - there is no GPU contention to guard against."""
     gpu = status.get("gpu") or {}
     if gpu.get("state") == "no-scheduler":
         return False, "no GPU scheduler configured"
+    if "leased" not in gpu:
+        return True, "ops-controller reports no `leased` verdict (image too old); treating the GPU as leased"
+    if not gpu["leased"]:
+        return False, "idle"
     evicted = gpu.get("evicted_residents") or {}
     if evicted:
         return True, f"resident(s) evicted to free VRAM: {sorted(evicted)}"
@@ -72,7 +77,7 @@ def gpu_lease_state(status: dict[str, Any]) -> tuple[bool, str]:
     queued = gpu.get("queued") or []
     if queued:
         return True, f"{len(queued)} GPU job(s) queued: {[j.get('id') for j in queued]}"
-    return False, "idle"
+    return True, "leased"
 
 
 def served_model_for_item(probes: Any, *, gpu_served_model: str) -> tuple[str, str | None]:

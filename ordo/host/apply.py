@@ -214,7 +214,11 @@ class Plan:
 def _lease_line(gpu: dict | None) -> str:
     if gpu is None:
         return "no ops-controller running (no lease to honor)"
-    if not bringup.is_leased(gpu):
+    try:
+        leased = bringup.is_leased(gpu)
+    except bringup.LeaseUnknown as e:
+        return f"UNKNOWN: {e}"
+    if not leased:
         return "not held"
     running = ", ".join(str(job.get("id")) for job in gpu.get("running") or []) or "none"
     evicted = ", ".join(sorted(gpu.get("evicted_residents") or {})) or "none"

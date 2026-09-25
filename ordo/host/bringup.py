@@ -43,8 +43,13 @@ class LeaseUnknown(Exception):
 
 
 def is_leased(gpu: dict) -> bool:
-    """`leased` is the scheduler's own verdict; older images only expose the raw lists."""
-    return bool(gpu.get("leased") or gpu.get("running") or gpu.get("evicted_residents"))
+    """The scheduler's own `leased` verdict, the one definition of a leased card. A status without
+    it comes from an ops-controller older than that field: refuse rather than rebuild the verdict
+    here from the raw lists."""
+    if "leased" not in gpu:
+        raise LeaseUnknown("ops-controller reports no `leased` verdict (its image predates it); "
+                           "rebuild it with `ordo apply` before bringing services up")
+    return bool(gpu["leased"])
 
 
 def _holders(gpu: dict) -> str:
@@ -67,16 +72,19 @@ def lease_refusal(gpu: dict | None, *, whole_stack: bool, starts: set[str],
     """Why this bring-up must not run now, or None when it is safe.
 
     ops-controller may be recreated mid-lease only when the lease survives it: the running one
-    reports its state saved to disk (`state_persisted`, false after a failed write and absent on
-    older images), and the replacement is rendered to load it (`replacement_loads_state`).
+    reports its state saved to disk (`state_persisted`, false after a failed write), and the replacement is rendered to load it (`replacement_loads_state`).
     """
     if gpu is None:
         return None  # no ops-controller running (fresh install): there is no lease to honor
-    if whole_stack and is_leased(gpu):
+    try:
+        leased = is_leased(gpu)
+    except LeaseUnknown as e:
+        return f"refusing: {e}"
+    if whole_stack and leased:
         return (f"refusing a whole-stack bring-up while the GPU is leased ({_holders(gpu)}). "
                 f"It would start the evicted residents beside the running GPU work. "
                 f"Wait for the lease to end, or name the services you need.")
-    if OPS_CONTROLLER_SERVICE in starts and is_leased(gpu):
+    if OPS_CONTROLLER_SERVICE in starts and leased:
         if gpu.get("state_persisted") is not True:
             return (f"refusing to recreate {OPS_CONTROLLER_SERVICE} while the GPU is leased ({_holders(gpu)}). "
                     f"The running {OPS_CONTROLLER_SERVICE} has not saved its lease state to disk (an older "
