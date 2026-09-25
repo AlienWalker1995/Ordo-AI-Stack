@@ -23,7 +23,7 @@ Every UI serves at its origin **root** behind a plain SSO reverse_proxy (`import
 
 This repo is public. **Never commit**:
 
-- **`out/secrets.env`** — operator secret values (rendered from `secrets.env.example`). Gitignored.
+- **`out/secrets.env`**: operator secret values (materialized from the secret store by `ordo secrets materialize`). Gitignored.
 - **`ordo.yaml`** — operator-real source (host paths, tailnet hostname/IP). Only `ordo.example.yaml` is tracked. Gitignored.
 - **`data/`** — user-specific runtime state (Hermes session data, Discord guild/user IDs, MCP config). Gitignored.
 - **`models/`** — model files. Gitignored.

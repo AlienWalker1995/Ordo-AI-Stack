@@ -18,7 +18,7 @@ services/hermes/skill-overlays/** text eol=lf
 # SOPS-encrypted files must keep LF endings or `sops` chokes parsing the
 # embedded timestamp metadata. The failure surfaces as
 #   parsing time "2026-XX-XX...Z\x0d": extra text: "\x0d"
-# when scripts/secrets/decrypt.sh runs on a Windows-mangled .sops file.
+# when sops decrypts a Windows-mangled .sops file (the private secret store needs the same line).
 *.sops text eol=lf
 
 # Bind-mounted into Linux containers as an executable (the trainer venv-python

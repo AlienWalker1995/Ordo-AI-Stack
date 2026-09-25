@@ -23,7 +23,7 @@ iOS / Mac / PC  --Self-hosted LiveSync plugin-->  CouchDB  <--livesync-bridge-->
 ## 1. Enable it on the stack
 
 `ordo init`'s default features preset includes **Notes sync**; it mints `COUCHDB_PASSWORD` +
-`LIVESYNC_E2EE_PASSPHRASE` into `out/secrets.env`. Then:
+`LIVESYNC_E2EE_PASSPHRASE` into the secret store (materialized into `out/secrets.env`). Then:
 
 ```bash
 # create the vault notes/ folder (CouchDB data lives in the couchdb-data named volume)
@@ -74,8 +74,8 @@ ACL (admin console -> Access controls):
 ```
 
 Then enable the opt-in plugin (`plugins: auto` never enables it: public exposure is a deliberate
-flip). Add `obsidian-livesync-funnel` to `plugins:` in `ordo.yaml` (with `TS_AUTHKEY` set in
-`out/secrets.env`), re-render, and start it:
+flip). Add `obsidian-livesync-funnel` to `plugins:` in `ordo.yaml` (with `TS_AUTHKEY` set:
+`ordo secrets set TS_AUTHKEY --from-stdin`), re-render, and start it:
 
 ```bash
 python -m ordo --source out/ordo.yaml render --out out

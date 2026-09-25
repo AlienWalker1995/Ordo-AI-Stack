@@ -121,7 +121,7 @@ Every UI is published only through the SSO front door; APIs are exposed on authe
 
 - **Front door:** Caddy + oauth2-proxy gates every browser-reachable UI at the network edge. One sign-in covers the whole stack — no per-service re-auth. The email allowlist is operator-controlled (and never committed). See [docs/runbooks/auth.md](docs/runbooks/auth.md).
 - **No host ports on services:** only the edge proxy publishes host ports; everything else lives on the project network.
-- **Secret management:** SOPS + age. Only encrypted `secrets/*.sops` blobs and config are committed; plaintext is decrypted **on the host only**, outside every container's reach, and never enters the repo or a log. Never synthesize placeholder secret values to clear an error — decrypt on the host. Full notes: [SECURITY.md](SECURITY.md) · [docs/runbooks/secrets.md](docs/runbooks/secrets.md).
+- **Secret management:** SOPS + age. One encrypted store in a private repo (`site: SECRETS_SOURCE`); `ordo secrets materialize` decrypts it **on the host only** into the gitignored `out/secrets.env`, and `ordo secrets set|rotate` change it. Plaintext never enters this repo or a log. Never synthesize placeholder secret values to clear an error: `ordo secrets list` names what is missing. Full notes: [SECURITY.md](SECURITY.md) · [docs/runbooks/secrets.md](docs/runbooks/secrets.md).
 
 ## Architecture
 

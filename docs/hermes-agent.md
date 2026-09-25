@@ -66,7 +66,7 @@ site:
   DISCORD_REQUIRE_MENTION: false
 ```
 
-The Discord bot token is loaded via Docker secrets (`/run/secrets/discord_token`), sourced as a file-based secret per `services/hermes/agent.yaml`'s `secret_files` entry: drop the token at `${OPERATOR_SECRETS_DIR:-$HOME/.ai-toolkit/runtime/secrets}/discord_token` (set `OPERATOR_SECRETS_DIR` under `site:` to relocate it). This is a plain-value token bind mount, not the SOPS/`secrets/*.sops` flow — that root secrets path was retired with the rest of V1.
+The Discord bot token is a file-based secret (`/run/secrets/discord_token`, per `services/hermes/agent.yaml`'s `secret_files` entry): its value is the `DISCORD_BOT_TOKEN` key in the secret store, and `ordo secrets materialize` writes it to `out/secrets/discord_token`, which the render bind-mounts read-only. Set it with `ordo secrets set DISCORD_BOT_TOKEN --from-stdin`, then `ordo recreate agent` (see [secrets runbook](runbooks/secrets.md)).
 
 After editing `ordo.yaml`:
 

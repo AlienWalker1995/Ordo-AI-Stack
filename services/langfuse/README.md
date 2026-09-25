@@ -216,13 +216,13 @@ Add `-e LANGFUSE_RETENTION_DAYS=<n>` to try a different cutoff without changing 
 
 ## Secrets and rotation
 
-All ten keys live in `out/secrets.env` and are minted by `ordo init` / the wizard generators.
+All ten keys live in the secret store (materialized into `out/secrets.env`) and are minted by `ordo init` / the store's generators. See [the secrets runbook](../../docs/runbooks/secrets.md).
 
 | Key | Rotatable? |
 |---|---|
-| `LANGFUSE_DB_PASSWORD`, `LANGFUSE_CLICKHOUSE_PASSWORD`, `LANGFUSE_REDIS_AUTH`, `LANGFUSE_MINIO_SECRET`, `LANGFUSE_NEXTAUTH_SECRET` | Yes, via `scripts/secrets/rotate-internal.sh` (the two databases also need an `ALTER USER` first; the script prints the steps). |
+| `LANGFUSE_DB_PASSWORD`, `LANGFUSE_CLICKHOUSE_PASSWORD`, `LANGFUSE_REDIS_AUTH`, `LANGFUSE_MINIO_SECRET`, `LANGFUSE_NEXTAUTH_SECRET` | Yes, via `ordo secrets rotate --internal` (the two databases also need an `ALTER USER` first; the command prints the steps). |
 | `LANGFUSE_SALT`, `LANGFUSE_ENCRYPTION_KEY` | **Never.** `SALT` hashes the API keys Langfuse stores, `ENCRYPTION_KEY` encrypts its at-rest secrets. Rotating either makes stored keys unmatchable and stored data unreadable (the same rule as `LITELLM_SALT_KEY`). `ENCRYPTION_KEY` must also be exactly 64 hex characters or Langfuse refuses to boot. |
-| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | Not from the file. Langfuse stores its own copy, so editing `secrets.env` only stops the writers authenticating. Rotate in the UI (project settings, API keys), then copy the new pair in and recreate `agent`, `model-gateway` and `langfuse-retention`. |
+| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | Not from the file. Langfuse stores its own copy, so editing `secrets.env` only stops the writers authenticating. Rotate in the UI (project settings, API keys), then `ordo secrets set` each half and run the `ordo recreate --reading` it prints. |
 | `LANGFUSE_ADMIN_PASSWORD` | Not from the file. It seeds the login only on the first boot against an empty database; afterwards the password lives hashed in Postgres. Change it in the UI. |
 
 ## Reading traces programmatically

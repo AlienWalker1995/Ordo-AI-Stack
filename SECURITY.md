@@ -24,7 +24,7 @@ We will acknowledge receipt and aim to respond within a reasonable timeframe.
 
 ## Security Considerations
 
-> **Secrets (production, since the 2026-07-09 cutover):** operator secret **values** live in a gitignored **`out/secrets.env`**, rendered from the keys-only `out/secrets.env.example` and kept **separate from derived config** (`.env` stays config-only). No service loads it as an `env_file`: each service declares the secret names it reads, and compose interpolates just those from `--env-file secrets.env`. Verify with `ordo preflight --secrets out/secrets.env`. **Never commit `out/secrets.env`** (nor the operator-real `ordo.yaml`, which carries host paths + tailnet identity). The SOPS + age at-rest model under `secrets/` still backs the encrypted material. The `.env` / `runtime/.env` notes below describe the legacy V1 secret flow.
+> **Secrets (production, since the 2026-07-09 cutover):** operator secret **values** live in one SOPS (age) file in a private repo (`site: SECRETS_SOURCE`) and are materialized into a gitignored **`out/secrets.env`** by `ordo secrets materialize` (a fresh local install without one keeps `out/secrets.env` as the store), kept **separate from derived config** (`.env` stays config-only). No service loads it as an `env_file`: each service declares the secret names it reads, and compose interpolates just those from `--env-file secrets.env`. Verify with `ordo preflight --secrets out/secrets.env`. **Never commit `out/secrets.env`** (nor the operator-real `ordo.yaml`, which carries host paths + tailnet identity). See `docs/runbooks/secrets.md`. The `.env` / `runtime/.env` notes below describe the legacy V1 secret flow.
 
 ### Authentication
 
@@ -39,8 +39,8 @@ Only Caddy publishes host ports — **nine** in the port-per-service model (2026
 ### Secrets
 
 - **Never commit** `out/.env` or `out/secrets.env`. They are gitignored, along with the operator-real `ordo.yaml`.
-- Use `ordo.example.yaml` and `out/secrets.env.example` as templates; copy to `ordo.yaml` / `out/secrets.env`, fill in values locally, then run `ordo render` to produce `out/.env` and `out/docker-compose.yml`.
-- API keys (OpenAI, Anthropic, etc.) and tokens should only live in `out/secrets.env`, never in the repository.
+- Start from `ordo init` (or `ordo.example.yaml`); `ordo render` produces `out/.env` and `out/docker-compose.yml`. Secret values go through `ordo secrets set KEY --from-stdin`, never a hand edit of `out/secrets.env`.
+- API keys (OpenAI, Anthropic, etc.) and tokens live only in the secret store (materialized into `out/secrets.env`), never in this repository.
 - **Never commit** `data/` — it is gitignored and contains user-specific runtime state (Hermes session data, Discord guild/user IDs, etc.). All secrets and setup-specific values belong in `data/` or `out/secrets.env`, not in shared code.
 
 ### Data

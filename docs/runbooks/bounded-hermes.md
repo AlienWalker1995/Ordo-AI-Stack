@@ -79,7 +79,7 @@ ordo recreate ops-controller
 ## Recovery: ops_client misconfigured
 
 Symptom: every ops-router tool fails with `OPS_CONTROLLER_TOKEN env var is
-empty`. Fix: fill `OPS_CONTROLLER_TOKEN` in `out/secrets.env` (see
-[secrets.md](secrets.md)), then from the repo root: `ordo recreate agent`. It is
+empty`. Fix: `ordo secrets list` shows whether the store holds `OPS_CONTROLLER_TOKEN`;
+`ordo secrets materialize` writes it into `out/secrets.env` (see [secrets.md](secrets.md)), then from the repo root: `ordo recreate agent`. It is
 `--no-deps` and lease-checked: the agent's dependency closure contains `llamacpp`, so a
 bare compose `up -d agent` would start the evicted GPU resident beside a leased render.

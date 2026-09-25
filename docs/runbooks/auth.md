@@ -15,7 +15,8 @@
    ordo remote enable
    ```
    It writes the `CADDY_*` keys under `site:` in `out/ordo.yaml`, the
-   client pair into `out/secrets.env` (the cookie secret is generated),
+   client pair into the secret store (the cookie secret is generated) and
+   materializes `out/secrets.env` ([secrets runbook](secrets.md)),
    the allowlist into `auth/oauth2-proxy/emails.txt`, re-renders, and
    offers to issue the Tailscale cert into `auth/caddy/certs/`. Use your
    tailnet IP (`tailscale ip -4`) as the bind to restrict Caddy to the
@@ -33,7 +34,7 @@
 With the edge off there is no SSO identity, so the dashboard
 (`http://127.0.0.1:8444`) takes a local sign-in instead. The render
 passes `DASHBOARD_LOCAL_LOGIN_TOKEN` to the dashboard only (and requires
-it in `out/secrets.env`, where `ordo init` generates it); with the edge
+it in the secret store, where `ordo init` generates it); with the edge
 on, no service receives it and the sign-in route answers 404.
 
 - `ordo up` prints `http://127.0.0.1:8444/#sign-in=<token>`. The token
@@ -42,7 +43,7 @@ on, no service receives it and the sign-in route answers 404.
   (30 days). Or paste the token into the page's sign-in prompt.
 - An install made before this secret existed gets it minted by its next
   `ordo up`.
-- Revoke every session: replace the value in `out/secrets.env`, then
+- Revoke every session: `ordo secrets rotate DASHBOARD_LOCAL_LOGIN_TOKEN`, then
   `ordo recreate dashboard`. Sessions are signed with a key derived from
   the token, so old cookies stop working.
 - Other containers on the stack network cannot use it: they hold neither
@@ -59,9 +60,8 @@ expiry (24h max); to force-invalidate, rotate the cookie secret (below).
 ## Cookie / session rotation
 
 ```
-NEW_SECRET=$(LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 32)
-# set OAUTH2_PROXY_COOKIE_SECRET in out/secrets.env to $NEW_SECRET
-ordo recreate oauth2-proxy
+ordo secrets rotate OAUTH2_PROXY_COOKIE_SECRET    # writes the store, materializes out/secrets.env
+ordo recreate --reading OAUTH2_PROXY_COOKIE_SECRET
 ```
 A plain container restart keeps the old environment, so the new secret only loads on a recreate.
 Rotating the secret invalidates every session: everyone re-authenticates.

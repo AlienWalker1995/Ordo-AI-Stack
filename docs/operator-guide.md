@@ -40,7 +40,8 @@ wizard that configures the whole stack.
 3. **Start now?**: render, run the host checks, and `ordo up --all`.
 
 It writes `out/ordo.yaml` + `out/secrets.env` (chmod 600, never committed; internal secrets
-generated) and prints the model and plugins it chose, also under `--yes`. With the edge off, the
+generated; with `--secrets-source FILE` they go to that SOPS file and `out/secrets.env` is
+materialized from it, see [secrets runbook](runbooks/secrets.md)) and prints the model and plugins it chose, also under `--yes`. With the edge off, the
 chat UI and dashboard publish on `127.0.0.1:8443` / `:8444` only. Remote access (Tailscale + Google
 SSO) is `ordo remote enable`, any time later ([auth runbook](runbooks/auth.md)).
 
@@ -69,7 +70,7 @@ render enabled). `ordo up <svc>...` / `ordo recreate <svc>...` touch only the na
 (`--no-deps`; a caddy bring-up also names its netns members, so they are recreated with it), and
 refuse to start a resident the GPU scheduler evicted for a running render.
 `ordo recreate --reading KEY...` recreates every long-running service whose rendered definition
-reads one of those keys (after rotating secrets; `scripts/secrets/rotate-internal.sh` prints it).
+reads one of those keys (after changing secrets; `ordo secrets set` / `ordo secrets rotate` print it).
 
 ### First-party images: `ordo build`
 
@@ -240,8 +241,9 @@ working, and n8n's public webhook base (`N8N_WEBHOOK_URL=https://<host>/n8n`) is
 retires the subpath-rewrite class of workaround (Open WebUI root-catchall, Hermes header-based
 base injection, n8n `strip_prefix`, codebase-memory nginx rewrites) in favor of giving every
 prebuilt SPA the root it was actually compiled for. One data root at
-`C:\dev\ordo-ai-stack\data` (Hermes brain at `data\hermes`). Secrets live in gitignored
-`out\secrets.env` (a second compose `--env-file`).
+`C:\dev\ordo-ai-stack\data` (Hermes brain at `data\hermes`). Secrets live in one SOPS file in a
+private repo (`site: SECRETS_SOURCE`), materialized into gitignored `out\secrets.env` (a second
+compose `--env-file`) by `ordo secrets materialize`.
 
 This Tailscale front door is the **default of three swappable access layers** — the edge
 (`services/edge`) and clean-URL names (`services/tailnet-names`) are plugins, so the same rendered stack

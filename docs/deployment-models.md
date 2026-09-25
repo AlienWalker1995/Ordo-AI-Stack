@@ -71,7 +71,8 @@ tailnet; there is no public DNS record and no port open to the internet.
 
 - A Tailscale tailnet, with the host and every client device joined.
 - A **reusable auth key tagged `tag:ordo-edge`** (with a matching `tagOwners` entry in the tailnet
-  ACL) in `TS_AUTHKEY`, SOPS-backed in `out/secrets.env` (this repo is public — never inline it). Each
+  ACL) in `TS_AUTHKEY`, held in the secret store and materialized into `out/secrets.env` (this repo is
+  public: never inline it). Each
   sidecar consumes ~1 of the plan's 50 free tagged resources.
 - A Google OAuth 2.0 Web client with **exactly one** redirect URI —
   `https://host.tailnet.ts.net/oauth2/callback` on `:443`. One domain-scoped oauth2-proxy cookie plus
