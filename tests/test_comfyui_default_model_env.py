@@ -20,22 +20,11 @@ class _WorkflowParameter:
     bindings: list[tuple[str, str]] = field(default_factory=list)
 
 
-@dataclass
-class _WorkflowToolDefinition:
-    workflow_id: str
-    tool_name: str
-    description: str
-    template: dict
-    parameters: dict
-    output_preferences: tuple[str, ...]
-
-
 def _load_module(env_override: dict | None = None):
     """Load workflow_manager module with optional env overrides."""
     models_pkg = type(sys)("models")
     workflow_mod = type(sys)("models.workflow")
     workflow_mod.WorkflowParameter = _WorkflowParameter
-    workflow_mod.WorkflowToolDefinition = _WorkflowToolDefinition
     sys.modules["models"] = models_pkg
     sys.modules["models.workflow"] = workflow_mod
 
