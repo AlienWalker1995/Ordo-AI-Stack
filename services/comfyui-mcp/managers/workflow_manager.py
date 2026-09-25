@@ -18,7 +18,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Protocol
 
-from models.workflow import WorkflowParameter, WorkflowToolDefinition
+from models.workflow import WorkflowParameter
 
 logger = logging.getLogger("MCP_Server")
 
@@ -84,10 +84,8 @@ VIDEO_OUTPUT_KEYS = ("videos", "video", "mp4", "mov", "webm")
 class WorkflowManager:
     def __init__(self, workflows_dir: Path):
         self.workflows_dir = Path(workflows_dir).resolve()
-        self._tool_names: set[str] = set()
         self._workflow_cache: dict[str, dict[str, Any]] = {}
         self._workflow_mtime: dict[str, float] = {}  # Track file modification times for cache invalidation
-        self.tool_definitions = self._load_workflows()
 
     @staticmethod
     def is_ui_workflow_export(workflow: dict[str, Any]) -> bool:
@@ -355,67 +353,6 @@ class WorkflowManager:
 
         return workflow
 
-    def _load_workflows(self):
-        definitions: list[WorkflowToolDefinition] = []
-        if not self.workflows_dir.exists():
-            logger.info("Workflow directory %s does not exist yet", self.workflows_dir)
-            return definitions
-
-        for workflow_path in sorted(self.workflows_dir.rglob("*.json")):
-            if workflow_path.name.endswith(".meta.json"):
-                continue
-            try:
-                with open(workflow_path, encoding="utf-8") as handle:
-                    workflow = json.load(handle)
-            except json.JSONDecodeError as exc:
-                logger.error("Skipping workflow %s due to JSON error: %s", workflow_path.name, exc)
-                continue
-
-            if not isinstance(workflow, dict):
-                logger.error("Skipping workflow %s: root JSON must be an object", workflow_path.name)
-                continue
-            if WorkflowManager.is_ui_workflow_export(workflow):
-                logger.info(
-                    "Skipping workflow %s: UI/editor export (use API-format JSON for MCP)",
-                    workflow_path.name,
-                )
-                continue
-
-            parameters = self._extract_parameters(workflow)
-            parameters = self._merge_metadata_parameters(parameters, self._load_workflow_metadata(workflow_path))
-            if not parameters:
-                logger.info(
-                    "Workflow %s has no %s placeholders; skipping auto-tool registration",
-                    workflow_path.name,
-                    PLACEHOLDER_PREFIX,
-                )
-                continue
-
-            rel = workflow_path.relative_to(self.workflows_dir)
-            nested_id = str(rel.with_suffix("")).replace("\\", "/")
-            tool_name = self._dedupe_tool_name(self._derive_tool_name(workflow_path.stem))
-            definition = WorkflowToolDefinition(
-                workflow_id=nested_id,
-                tool_name=tool_name,
-                description=self._derive_description(workflow_path.stem),
-                template=workflow,
-                parameters=parameters,
-                output_preferences=self._guess_output_preferences(workflow),
-            )
-            try:
-                self._workflow_mtime[nested_id] = workflow_path.stat().st_mtime
-            except OSError:
-                pass
-            logger.info(
-                "Prepared workflow tool '%s' from %s with params %s",
-                tool_name,
-                workflow_path.name,
-                list(parameters.keys()),
-            )
-            definitions.append(definition)
-
-        return definitions
-
     def _extract_parameters(self, workflow: dict[str, Any]):
         parameters: OrderedDict[str, WorkflowParameter] = OrderedDict()
         for node_id, node in workflow.items():
@@ -480,26 +417,6 @@ class WorkflowManager:
         ]
         normalized = re.sub(r"_+", "_", "".join(cleaned)).strip("_")
         return normalized or "param"
-
-    def _derive_tool_name(self, stem: str):
-        return self._normalize_name(stem)
-
-    def _dedupe_tool_name(self, base_name: str):
-        name = base_name or "workflow_tool"
-        if name not in self._tool_names:
-            self._tool_names.add(name)
-            return name
-        suffix = 2
-        while f"{name}_{suffix}" in self._tool_names:
-            suffix += 1
-        deduped = f"{name}_{suffix}"
-        self._tool_names.add(deduped)
-        return deduped
-
-    def _derive_description(self, stem: str):
-        readable = stem.replace("_", " ").replace("-", " ").strip()
-        readable = readable if readable else stem
-        return f"Execute the '{readable}' ComfyUI workflow."
 
     def _determine_namespace(self, workflow_id: str) -> str:
         """Determine namespace based on workflow ID."""
