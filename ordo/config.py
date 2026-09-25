@@ -18,6 +18,73 @@ _SITE_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
 # ordo/secret_store.py). Unset: out/secrets.env itself is the store.
 SECRETS_SOURCE_KEY = "SECRETS_SOURCE"
 
+# Where the secret VALUES come from (ordo/secret_store.py). `sops` (the default when SECRETS_SOURCE is
+# set) reads that file; `infisical` reads an Infisical project environment, and SECRETS_SOURCE, when
+# set, is then its offline backup and where the machine identity's bootstrap credentials live.
+SECRETS_BACKEND_KEY = "SECRETS_BACKEND"
+SECRETS_BACKENDS = ("sops", "infisical")
+INFISICAL_URL_KEY = "INFISICAL_URL"
+INFISICAL_PROJECT_KEY = "INFISICAL_PROJECT"
+INFISICAL_ENVIRONMENT_KEY = "INFISICAL_ENVIRONMENT"
+DEFAULT_INFISICAL_ENVIRONMENT = "prod"
+# The machine identities' Universal Auth credentials: read from the SOPS file or the environment,
+# never from ordo.yaml (whose site keys are rendered into out/.env).
+INFISICAL_CREDENTIAL_KEYS = ("INFISICAL_ORDO_CLIENT_ID", "INFISICAL_ORDO_CLIENT_SECRET",
+                             "INFISICAL_ORDO_WRITER_CLIENT_ID", "INFISICAL_ORDO_WRITER_CLIENT_SECRET")
+_INFISICAL_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_HTTP_URL = re.compile(r"^https?://[^\s/?#]+(:\d+)?(/[^\s?#]*)?$")
+
+
+@dataclasses.dataclass(frozen=True)
+class SecretBackend:
+    """Which store holds the secret values: `local` (out/secrets.env), `sops` or `infisical`."""
+    kind: str
+    sops_path: str = ""          # SECRETS_SOURCE as written (sops: the store; infisical: the backup)
+    url: str = ""
+    project: str = ""
+    environment: str = ""
+
+
+def secret_backend(site: dict[str, Any]) -> SecretBackend:
+    """The secret backend a `site:` mapping selects. Raises ValueError naming the key at fault."""
+    site = site or {}
+    sops_path = ""
+    if SECRETS_SOURCE_KEY in site:
+        value = site[SECRETS_SOURCE_KEY]
+        if not isinstance(value, str) or not value.strip().endswith(".sops"):
+            raise ValueError(f"site: {SECRETS_SOURCE_KEY} must be the path of a SOPS-encrypted dotenv file "
+                             f"ending in '.sops' (e.g. ../ordo-personal/secrets/ordo.env.sops), got {value!r}")
+        sops_path = value.strip()
+    for key in INFISICAL_CREDENTIAL_KEYS:
+        if key in site:
+            raise ValueError(f"site: {key} is a credential: it belongs in the SOPS file (or the environment), "
+                             "never in ordo.yaml, whose site keys are rendered into out/.env")
+    infisical_keys = [k for k in (INFISICAL_URL_KEY, INFISICAL_PROJECT_KEY, INFISICAL_ENVIRONMENT_KEY) if k in site]
+    kind = str(site.get(SECRETS_BACKEND_KEY, "") or "").strip()
+    if SECRETS_BACKEND_KEY in site and kind not in SECRETS_BACKENDS:
+        raise ValueError(f"site: {SECRETS_BACKEND_KEY} must be one of {list(SECRETS_BACKENDS)}, got {kind!r}")
+    if kind != "infisical" and infisical_keys:
+        raise ValueError(f"site: {', '.join(infisical_keys)} set without {SECRETS_BACKEND_KEY}: infisical "
+                         "(dead config: set the backend, or remove them)")
+    if kind == "sops" and not sops_path:
+        raise ValueError(f"site: {SECRETS_BACKEND_KEY}: sops needs {SECRETS_SOURCE_KEY} (the SOPS file)")
+    if kind != "infisical":
+        return SecretBackend("sops" if sops_path else "local", sops_path=sops_path)
+    url = str(site.get(INFISICAL_URL_KEY, "") or "").strip()
+    if not _HTTP_URL.match(url):
+        raise ValueError(f"site: {SECRETS_BACKEND_KEY}: infisical needs {INFISICAL_URL_KEY}, the server's "
+                         f"http(s) base URL (e.g. https://infisical.example.lan), got {url!r}")
+    project = str(site.get(INFISICAL_PROJECT_KEY, "") or "").strip()
+    if not _INFISICAL_SLUG.match(project):
+        raise ValueError(f"site: {SECRETS_BACKEND_KEY}: infisical needs {INFISICAL_PROJECT_KEY}, the project "
+                         f"slug (lowercase letters, digits, '-', '_'), got {project!r}")
+    environment = str(site.get(INFISICAL_ENVIRONMENT_KEY, DEFAULT_INFISICAL_ENVIRONMENT) or "").strip()
+    if not _INFISICAL_SLUG.match(environment):
+        raise ValueError(f"site: {INFISICAL_ENVIRONMENT_KEY} must be an environment slug (e.g. prod), "
+                         f"got {environment!r}")
+    return SecretBackend("infisical", sops_path=sops_path, url=url, project=project, environment=environment)
+
+
 # Site keys that used to mean something: a leftover one is dead config, so it fails the load.
 _RETIRED_SITE_KEYS = {
     "OPERATOR_SECRETS_DIR": "was retired: the agent's file secrets (discord_token, github_backup_pat) are "
@@ -102,11 +169,7 @@ class Source:
                 raise ValueError(f"site: key {key!r} is not an env var name (expected {_SITE_KEY.pattern})")
             if key in _RETIRED_SITE_KEYS:
                 raise ValueError(f"site: {key} {_RETIRED_SITE_KEYS[key]}")
-        if SECRETS_SOURCE_KEY in self.site:
-            value = self.site[SECRETS_SOURCE_KEY]
-            if not isinstance(value, str) or not value.strip().endswith(".sops"):
-                raise ValueError(f"site: {SECRETS_SOURCE_KEY} must be the path of a SOPS-encrypted dotenv file "
-                                 f"ending in '.sops' (e.g. ../ordo-personal/secrets/ordo.env.sops), got {value!r}")
+        secret_backend(self.site)
         if isinstance(self.hardware, dict):
             _reject_unknown_keys("hardware", self.hardware, [f.name for f in dataclasses.fields(HardwareProfile)])
             for i, gpu in enumerate(self.hardware.get("gpus") or []):

@@ -40,7 +40,7 @@ from . import (
     wizard,
 )
 from .catalog import Catalog
-from .config import Source
+from .config import SECRETS_BACKEND_KEY, Source
 from .hardware import detect
 from .plugins import PluginRegistry
 from .render import DEFAULT_AGENTS_DIR, DEFAULT_PLUGINS_DIR, render
@@ -202,8 +202,8 @@ def _prepare_secrets(args: argparse.Namespace, out: Path) -> int:
     manifest = _manifest(out)
     if manifest is None:
         return 0   # nothing rendered yet: bring_up reports that
-    store = _secret_store(args)
     try:
+        store = _secret_store(args)
         if _ensure_local_sign_in_secret(out, store):
             print(f"generated the dashboard's local sign-in secret in {store.description}")
         secret_store.materialize(store, secret_store.SecretNeeds.from_manifest(manifest), out, strict=False)
@@ -362,8 +362,8 @@ def cmd_remote(args: argparse.Namespace) -> int:
     cat = Catalog.load(Path(args.catalog))
     reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
     interactive = not args.yes and sys.stdin.isatty()
-    store = secret_store.store_for(_site_of(source), out, repo_root=HERE)
     try:
+        store = secret_store.store_for(_site_of(source), out, repo_root=HERE)
         if args.action == "enable":
             answers = wizard.ask_remote_access() if interactive else _remote_answers_from_flags(args)
             change = remote.enable(source, store, answers, cat, reg)
@@ -423,7 +423,7 @@ def _materialize_after_edit(store: secret_store.Store, needs: secret_store.Secre
     except secret_store.SecretStoreError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    if store.is_sops:
+    if store.materializes:
         print(f"materialized {result.secrets_env} and {len(result.files)} file secret(s) from {store.description}")
     if result.blank_required:
         print(f"  ! still blank (required): {', '.join(result.blank_required)}")
@@ -444,10 +444,19 @@ def _print_recreate(keys: list[str], needs: secret_store.SecretNeeds, out: Path)
 
 def _secrets_list(args: argparse.Namespace) -> int:
     store = _secret_store(args)
-    if store.is_sops:
-        print(f"secret store: {store.path} (SOPS, site: SECRETS_SOURCE); out/secrets.env is materialized from it")
+    backup_values: dict[str, str] | None = None
+    if isinstance(store, secret_store.InfisicalStore):
+        print(f"backend: infisical (site: SECRETS_BACKEND): {store.description}; "
+              "out/secrets.env is materialized from it")
+        if store.backup is None:
+            print("  offline backup: none (set site: SECRETS_SOURCE to a SOPS file, then `ordo secrets backup`)")
+        else:
+            print(f"  offline backup: {store.backup.description} (`ordo secrets backup` refreshes it)")
+            backup_values = secret_store.parse_dotenv(store.backup.read_text()) if store.backup.exists() else {}
+    elif store.is_sops:
+        print(f"backend: sops (site: SECRETS_SOURCE): {store.path}; out/secrets.env is materialized from it")
     else:
-        print(f"secret store: {store.path} (no SECRETS_SOURCE configured: out/secrets.env is the store)")
+        print(f"backend: local file: {store.path} (no SECRETS_SOURCE configured: out/secrets.env is the store)")
     values = secret_store.parse_dotenv(store.read_text())   # a missing SOPS file raises: run import
     manifest = _manifest(Path(args.out))
     needs = secret_store.SecretNeeds.from_manifest(manifest) if manifest else secret_store.SecretNeeds(())
@@ -466,7 +475,10 @@ def _secrets_list(args: argparse.Namespace) -> int:
             role = "required"
         else:
             role = "not read by this render"
-        print(f"  {key:<{width}}  {state:<6}  {role}")
+        line = f"  {key:<{width}}  {state:<6}  {role}"
+        if backup_values is not None and values.get(key):
+            line += "; " + secret_store.backup_status(values[key], backup_values.get(key, ""))
+        print(line)
     return 0
 
 
@@ -485,7 +497,7 @@ def _secrets_materialize(args: argparse.Namespace) -> int:
     except secret_store.SecretStoreError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    if store.is_sops:
+    if store.materializes:
         print(f"materialized {len(needs.required)} key(s) into {result.secrets_env} from {store.description}")
     else:
         print(f"{result.secrets_env} is the store (no SECRETS_SOURCE configured): all required keys are set")
@@ -502,6 +514,15 @@ def _secrets_set(args: argparse.Namespace) -> int:
     if needs is None:
         return 1
     store = _secret_store(args)
+    if key in secret_store.BOOTSTRAP_KEYS:
+        # The Infisical identities' own credentials unlock the store, so they live in the SOPS file.
+        bootstrap = secret_store.sops_file_of(store)
+        if bootstrap is None:
+            print(f"error: {key} is an Infisical bootstrap credential: it lives in the SOPS file "
+                  "(site: SECRETS_SOURCE), and none is configured. Set it as an environment variable instead.",
+                  file=sys.stderr)
+            return 1
+        store = bootstrap
     try:
         current = secret_store.parse_dotenv(store.read_text()).get(key, "")
         if args.generate:
@@ -524,9 +545,13 @@ def _secrets_set(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 1
     print(f"set {key} in {store.description}")
+    if key in secret_store.BOOTSTRAP_KEYS:
+        print(f"Commit {store.path.name} in its repo. Nothing to materialize: the stack does not read {key}.")
+        return 0
     if _materialize_after_edit(store, needs, out) != 0:
         return 1
     _print_recreate([key], needs, out)
+    _print_after_store_edit(store)
     return 0
 
 
@@ -559,15 +584,28 @@ def _secrets_rotate(args: argparse.Namespace) -> int:
     for key in rotated:
         if key in secret_store.ROTATION_EFFECTS:
             print(f"  then: {secret_store.ROTATION_EFFECTS[key]}")
-    if store.is_sops:
-        print(f"Then commit {store.path.name} in its repo.")
+    _print_after_store_edit(store)
     return 0
+
+
+def _print_after_store_edit(store: secret_store.Store) -> None:
+    """What keeps the durable copy in step after an edit: commit the SOPS file, or back Infisical up."""
+    if isinstance(store, secret_store.InfisicalStore):
+        if store.backup is not None:
+            print("Then refresh the offline copy: ordo secrets backup")
+    elif store.is_sops:
+        print(f"Then commit {store.path.name} in its repo.")
 
 
 def _secrets_import(args: argparse.Namespace) -> int:
     out = Path(args.out)
     source = _source_path(args)
     site = _site_of(source)
+    if str(site.get(SECRETS_BACKEND_KEY, "")).strip() == "infisical":
+        print("error: the secret source is Infisical (site: SECRETS_BACKEND: infisical): `import` would write the "
+              "SOPS file from out/secrets.env. Refresh the offline copy with `ordo secrets backup` instead.",
+              file=sys.stderr)
+        return 1
     live = Path(args.from_path) if args.from_path else out / "secrets.env"
     if args.to:
         target = Path(args.to).resolve()
@@ -627,9 +665,35 @@ def _secrets_import(args: argparse.Namespace) -> int:
     return 0
 
 
+def _secrets_backup(args: argparse.Namespace) -> int:
+    store = _secret_store(args)
+    if not isinstance(store, secret_store.InfisicalStore):
+        print("error: `backup` copies an Infisical project into the SOPS file: it needs site: "
+              "SECRETS_BACKEND: infisical (the active store is the SOPS file or out/secrets.env itself)",
+              file=sys.stderr)
+        return 1
+    if store.backup is None:
+        print("error: no offline copy configured: set site: SECRETS_SOURCE to the SOPS file to back up into",
+              file=sys.stderr)
+        return 1
+    result = secret_store.backup(store, store.backup)
+    print(f"backup of {store.label} into {store.backup.description}:")
+    if not (result.added or result.updated):
+        print("  the SOPS file already matches: nothing written")
+    if result.added:
+        print(f"  added: {', '.join(result.added)}")
+    if result.updated:
+        print(f"  updated: {', '.join(result.updated)}")
+    if result.only_in_backup:
+        print(f"  only in the SOPS file (kept): {', '.join(result.only_in_backup)}")
+    if result.added or result.updated:
+        print(f"Commit {store.backup.path.name} in its repo.")
+    return 0
+
+
 def cmd_secrets(args: argparse.Namespace) -> int:
     handlers = {"list": _secrets_list, "materialize": _secrets_materialize, "set": _secrets_set,
-                "rotate": _secrets_rotate, "import": _secrets_import}
+                "rotate": _secrets_rotate, "import": _secrets_import, "backup": _secrets_backup}
     try:
         return handlers[args.action](args)
     except secret_store.SecretStoreError as e:
@@ -1057,9 +1121,11 @@ def main(argv: list[str] | None = None) -> int:
                      help="Google OAuth client secret (prefer env OAUTH2_PROXY_CLIENT_SECRET: flags land in history)")
     prm.add_argument("--emails", help="allowlisted Google accounts, comma-separated")
     prm.set_defaults(func=cmd_remote)
-    # `secrets`: the secret store. With `site: SECRETS_SOURCE` it is a SOPS file (a private repo) and
-    # out/secrets.env is materialized from it; without, out/secrets.env is the store.
-    psec = sub.add_parser("secrets", help="list, materialize, set, rotate or import the operator's secrets")
+    # `secrets`: the secret store. With `site: SECRETS_BACKEND: infisical` it is an Infisical project,
+    # with `site: SECRETS_SOURCE` alone a SOPS file (a private repo); out/secrets.env is materialized from
+    # either. Without both, out/secrets.env is the store.
+    psec = sub.add_parser("secrets",
+                          help="list, materialize, set, rotate, import or back up the operator's secrets")
     psec_sub = psec.add_subparsers(dest="action", required=True)
     psl = psec_sub.add_parser("list", help="key names, whether each is set, and what the render needs")
     psm = psec_sub.add_parser("materialize", help="write out/secrets.env and out/secrets/* from the store")
@@ -1081,7 +1147,8 @@ def main(argv: list[str] | None = None) -> int:
                                           "(default: the retired site OPERATOR_SECRETS_DIR, when set)")
     psi.add_argument("--overwrite", action="store_true",
                      help="take the live value for a key the store holds with a different one")
-    for sp in (psl, psm, pss, psr, psi):
+    psb = psec_sub.add_parser("backup", help="copy the Infisical project into the SOPS file (the offline copy)")
+    for sp in (psl, psm, pss, psr, psi, psb):
         sp.add_argument("--out", default="out", help="the config + rendered stack directory (default: out)")
         sp.set_defaults(func=cmd_secrets)
     pp = sub.add_parser("parity")

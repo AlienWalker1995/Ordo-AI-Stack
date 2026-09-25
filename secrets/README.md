@@ -8,15 +8,21 @@ materialize` writes `out/secrets.env` and the agent's file secrets
 (`out/secrets/*`) from it; nothing is filled in by hand. Without a configured
 SOPS file (a fresh local install), `out/secrets.env` itself is the store.
 
+Optionally, a self-hosted Infisical project can be the source instead
+(`site: SECRETS_BACKEND: infisical`, with `INFISICAL_URL`, `INFISICAL_PROJECT`
+and `INFISICAL_ENVIRONMENT`). The SOPS file then stays as the offline backup
+(`ordo secrets backup`) and holds the machine identity's credentials.
+
 The single flow, every command, migration and rotation:
 [`docs/runbooks/secrets.md`](../docs/runbooks/secrets.md).
 
 ```
-ordo secrets list                          # key names, set/blank, what the render needs
+ordo secrets list                          # the backend, key names, set/blank, what the render needs
 ordo secrets set KEY --from-stdin          # change one value, then run the recreate it prints
 ordo secrets rotate --internal             # fresh internal tokens (salts and issued keys refused)
 ordo secrets import                        # one-time: live out/secrets.env -> the SOPS file
 ordo secrets materialize                   # out/secrets.env + out/secrets/* from the store
+ordo secrets backup                        # Infisical backend: copy the project into the SOPS file
 ```
 
 ## What is committed here
