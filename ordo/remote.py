@@ -5,8 +5,8 @@ Google account. Enabling remote access writes three things and re-renders:
 
   - the edge's `site:` keys in the operator source (CADDY_TAILNET_HOSTNAME / _DOMAIN, CADDY_BIND),
     plus `edge` in an explicit `plugins:` list (`plugins: auto` enables it from the keys alone),
-  - the Google OAuth client id + secret in secrets.env, and any internal secret the edge adds
-    (its cookie secret, its gateway key), generated,
+  - the Google OAuth client id + secret in the secret store (ordo/secret_store.py), and any internal
+    secret the edge adds (its cookie secret, its gateway key), generated,
   - the SSO allowlist file oauth2-proxy mounts.
 
 With the edge enabled the render drops the loopback UI ports: Caddy becomes the one front door.
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import yaml
 
-from . import wizard
+from . import secret_store, wizard
 from .catalog import Catalog
 from .config import Source
 from .plugins import PluginRegistry
@@ -74,7 +74,7 @@ def _plugins_edit(text: str, action: str) -> str:
     return edit_plugins_list(text, EDGE_PLUGIN, action)
 
 
-def enable(source_path: Path, secrets_path: Path, answers: wizard.RemoteAnswers,
+def enable(source_path: Path, store: secret_store.Store, answers: wizard.RemoteAnswers,
            catalog: Catalog, registry: PluginRegistry) -> Change:
     """Turn remote access on. Raises ValueError (nothing written) on invalid answers or a source
     the editors cannot change safely."""
@@ -86,22 +86,28 @@ def enable(source_path: Path, secrets_path: Path, answers: wizard.RemoteAnswers,
     rendered = render(Source.from_dict(yaml.safe_load(new_text)), catalog, registry)
     if EDGE_PLUGIN not in rendered.plugins_enabled:
         raise ValueError(f"the edge would still be off after this change: {'; '.join(rendered.warnings)}")
-    source_path.write_text(new_text, encoding="utf-8")
-    generated, blank = wizard.update_secrets(
-        secrets_path, rendered.required_secrets,
+    secrets_now = store.read_text()   # read (a SOPS file: decrypt) before anything is written
+    secrets_new, generated, blank = secret_store.update_dotenv(
+        secrets_now, rendered.required_secrets,
         provided={"OAUTH2_PROXY_CLIENT_ID": answers.client_id, "OAUTH2_PROXY_CLIENT_SECRET": answers.client_secret})
+    source_path.write_text(new_text, encoding="utf-8")
+    if secrets_new != secrets_now:
+        store.write_text(secrets_new)
     wizard.write_emails(answers.emails, ALLOWLIST_PATH)
     return Change(rendered, generated, [k for k in blank if k not in rendered.optional_secrets])
 
 
-def disable(source_path: Path, secrets_path: Path, catalog: Catalog, registry: PluginRegistry) -> Change:
+def disable(source_path: Path, store: secret_store.Store, catalog: Catalog, registry: PluginRegistry) -> Change:
     """Turn remote access off: the edge's site keys, its entry in an explicit plugins list, the
     OAuth client pair and the allowlist entries go; the UIs publish their loopback ports again."""
     text = source_path.read_text(encoding="utf-8")
     new_text = _plugins_edit(edit_site_keys(text, {}, list(edge_site_keys(registry))), "remove")
     rendered = render(Source.from_dict(yaml.safe_load(new_text)), catalog, registry)
+    secrets_now = store.read_text()
+    secrets_new, generated, blank = secret_store.update_dotenv(
+        secrets_now, rendered.required_secrets, remove=list(OAUTH_CLIENT_KEYS))
     source_path.write_text(new_text, encoding="utf-8")
-    generated, blank = wizard.update_secrets(secrets_path, rendered.required_secrets,
-                                             remove=list(OAUTH_CLIENT_KEYS))
+    if secrets_new != secrets_now:
+        store.write_text(secrets_new)
     wizard.write_emails([ALLOWLIST_PLACEHOLDER], ALLOWLIST_PATH)
     return Change(rendered, generated, [k for k in blank if k not in rendered.optional_secrets])

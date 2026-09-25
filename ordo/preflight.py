@@ -84,14 +84,14 @@ def secret_checks(needed: Iterable[str], optional: Iterable[str], secrets_path: 
     optional_set = set(optional)
     if not Path(secrets_path).exists():
         return [Check("required secrets set", False,
-                      f"{secrets_path} is missing: run `ordo init` (it writes one) or copy secrets.env.example")]
+                      f"{secrets_path} is missing: run `ordo secrets materialize` (a fresh install: `ordo init`)")]
     present = {k for k, v in parity.load_env(secrets_path).items() if v}
     blank = [k for k in dict.fromkeys(needed) if k not in present]
     blank_required = [k for k in blank if k not in optional_set]
     blank_optional = [k for k in blank if k in optional_set]
     checks = [Check("required secrets set", not blank_required,
                     "all set" if not blank_required
-                    else f"blank in {secrets_path}: {', '.join(blank_required)} (fill them in, then re-run)")]
+                    else f"blank in {secrets_path}: {', '.join(blank_required)} (`ordo secrets set KEY`, then re-run)")]
     if blank_optional:
         checks.append(Check("optional secrets", False,
                             f"blank (features that need them stay limited): {', '.join(blank_optional)}",

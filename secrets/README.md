@@ -1,58 +1,31 @@
 # secrets/
 
-> **Note.** The SOPS + age **at-rest** model here (encrypted `*.sops` blobs, safe to commit) is unchanged. Runtime materialization is owned by the render substrate: `ordo render` writes a keys-only `out/secrets.env.example`; the operator fills real values into a gitignored **`out/secrets.env`** (SOPS-decrypt or hand-set) from which compose interpolates each service's declared secrets (`--env-file secrets.env`; no service loads it whole). The old V1 `make decrypt-secrets` → `~/.ai-toolkit/runtime/` + `make up` two-`--env-file` flow was removed along with the rest of the V1 tree (2026-07-24, commit `62540bf`).
+**This directory is not the secret store.** The operator's secrets live in one
+SOPS (age) encrypted dotenv file in a private repo, named by
+`site: SECRETS_SOURCE` in `ordo.yaml` (documented default:
+`../ordo-personal/secrets/ordo.env.sops`, beside this checkout). `ordo secrets
+materialize` writes `out/secrets.env` and the agent's file secrets
+(`out/secrets/*`) from it; nothing is filled in by hand. Without a configured
+SOPS file (a fresh local install), `out/secrets.env` itself is the store.
 
-Encrypted-at-rest secrets for the Ordo AI stack. **All `*.sops` files in
-this directory are safe to commit to a public repo** — they decrypt only
-with the age private key at `~/.config/sops/age/keys.txt`.
+The single flow, every command, migration and rotation:
+[`docs/runbooks/secrets.md`](../docs/runbooks/secrets.md).
 
-## Inventory
+```
+ordo secrets list                          # key names, set/blank, what the render needs
+ordo secrets set KEY --from-stdin          # change one value, then run the recreate it prints
+ordo secrets rotate --internal             # fresh internal tokens (salts and issued keys refused)
+ordo secrets import                        # one-time: live out/secrets.env -> the SOPS file
+ordo secrets materialize                   # out/secrets.env + out/secrets/* from the store
+```
 
-- `.sops.yaml` — SOPS recipient config (your age public key only).
-- `.env.sops` — env-form internal tokens (`LITELLM_MASTER_KEY`,
-  `OPS_CONTROLLER_TOKEN`, `OAUTH2_PROXY_CLIENT_ID`,
-  `OAUTH2_PROXY_CLIENT_SECRET`, `OAUTH2_PROXY_COOKIE_SECRET`).
-- `discord_token.sops` — Discord bot token. Mounted as
-  `/run/secrets/discord_token` on `agent`.
-- `github_pat.sops` — GitHub fine-grained PAT. Decrypted to
-  `~/.ai-toolkit/runtime/secrets/github_pat` by `scripts/secrets/decrypt.sh`;
-  no compose service mounts the file. The same token is what
-  `GITHUB_PERSONAL_ACCESS_TOKEN` in `out/secrets.env` carries (`comfyui`
-  receives it as `GITHUB_TOKEN` for ComfyUI-Manager).
-- `github_backup_pat.sops` — classic GitHub PAT for `git push` to the
-  `ordo-hermes-backup` private repo. Mounted on `agent`; the
-  entrypoint bridges it to the `GITHUB_BACKUP_PAT` env var, and the backup
-  repo's credential helper reads it. Not used by the stack services themselves.
-- `hf_token.sops`, HuggingFace token (gated model downloads). Decrypted to
-  a file by `scripts/secrets/decrypt.sh`; no compose service mounts the file.
-  The same token is `HF_TOKEN` in `out/secrets.env` (`comfyui` receives it).
-- `civitai_token.sops`, Civitai token (LoRA downloads). Decrypted to a file
-  by `scripts/secrets/decrypt.sh`; no compose service mounts it.
-- `n8n_api_key.sops` — n8n API key (n8n MCP server + gateway wiring; `N8N_API_KEY` in `out/secrets.env`).
-- `tailscale_authkey.sops` — reusable tagged `TS_AUTHKEY` for the tailnet-names and
-  notes-funnel sidecars (env-form; consumed via `out/secrets.env`).
+## What is committed here
 
-## Working with these files
+- `.sops.yaml`: a SOPS recipient config (an age public key).
+- `*.sops` (`.env.sops`, `discord_token.sops`, `github_pat.sops`, ...): older
+  encrypted blobs from before the private store. Nothing reads them and they
+  are not the source of any value the stack runs with. They stay untouched
+  until the operator decides their fate; do not edit them or add new ones.
 
-- Edit: `sops secrets/<file>.sops` opens decrypted in `$EDITOR`,
-  re-encrypts on save.
-- Decrypt for runtime: `ordo render` (run from the repo root) writes
-  `out/secrets.env.example` — the secret KEYS the enabled stack needs,
-  values empty. Copy it to `out/secrets.env` and fill in real values
-  (SOPS-decrypt the relevant `secrets/<name>.sops` file, or hand-set).
-  `out/secrets.env` is gitignored, never committed.
-- Bring up the stack: from the repo root, `ordo up --all`
-  (compose interpolates each service's declared secrets from
-  `--env-file secrets.env`, and its declared derived keys from
-  `--env-file .env`; no service loads either file whole, so derived
-  config and operator secrets stay in separate files).
-- A service recreate through `ops-controller` (`POST /services/{id}/recreate`)
-  replays the rendered `out/` tree, both `.env` and `secrets.env`, so a
-  secret-dependent service it recreates comes up with real values. It
-  never holds the age key. See `docs/runbooks/secrets.md`.
-- Add a new secret: `echo -n "$VALUE" | sops --encrypt --age age1...
-  --input-type=binary --output-type=binary /dev/stdin >
-  secrets/<name>.sops`.
-
-See `docs/runbooks/secrets.md` for the full lifecycle, recovery
-procedures, and rotation runbooks.
+`scripts/secrets/audit-git-history.sh` checks this public repo's history for
+plaintext secrets.

@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Added
+- **One secret store: `ordo secrets`.** Every secret value lives in one SOPS (age) encrypted
+  dotenv file in a private repo, named by `site: SECRETS_SOURCE` (documented default
+  `../ordo-personal/secrets/ordo.env.sops`). `ordo secrets materialize` writes `out/secrets.env`
+  (exactly the keys the render needs) and the agent's file secrets (`out/secrets/*`) from it;
+  `set KEY --from-stdin|--generate`, `rotate KEY...|--internal`, `list` and a one-time `import` edit
+  or show it by key name only, and print the `ordo recreate --reading` that applies a change.
+  `ordo init`, `ordo remote enable|disable` and `ordo up` (the local sign-in secret) write to the
+  store and then materialize. Without `SECRETS_SOURCE`, `out/secrets.env` stays the store.
+  `scripts/secrets/decrypt.sh` (the V1 runtime dir) and `scripts/secrets/rotate-internal.sh` are
+  removed, and `site: OPERATOR_SECRETS_DIR` is retired (a render refuses it; `import` migrates it).
+  See `docs/runbooks/secrets.md`.
 - **`ordo build`: first-party images tagged by commit.** The stack's own images (`ordo/<name>`)
   no longer float on `:latest`. `ordo build` tags each one with the short sha of the last commit
   that changed its build context (`-dirty` for uncommitted changes), skips tags that already exist,

@@ -58,9 +58,9 @@ LANGFUSE_DEFAULT_ADMIN_EMAIL = "admin@ordo.local"
 LITELLM_EDGE_PORT = 8449
 LITELLM_TAILNET_LABEL = "llm"
 
-# Secret env KEYS the CORE services need at runtime (values operator-managed in secrets.env, never
-# rendered). model-gateway/model-gateway-keys/ops-controller/dashboard/agent read these; plugins add more
-# via their manifest `secrets:` list. Mirrors the V1 SOPS-decrypted runtime/.env surface.
+# Secret env KEYS the CORE services need at runtime (values held in the secret store and materialized
+# into secrets.env, never rendered). model-gateway/model-gateway-keys/ops-controller/dashboard/agent read
+# these; plugins add more via their manifest `secrets:` list.
 CORE_SECRET_KEYS: tuple[str, ...] = (
     "LITELLM_MASTER_KEY",         # model-gateway master key (LiteLLM admin + UI login)
     "LITELLM_SALT_KEY",           # LiteLLM DB credential-encryption salt. NEVER rotate (stored creds unreadable)
@@ -69,12 +69,10 @@ CORE_SECRET_KEYS: tuple[str, ...] = (
     # NB: no DASHBOARD_AUTH_TOKEN. Operators reach the dashboard through the Caddy edge SSO;
     # internal callers of its protected routes send OPS_CONTROLLER_TOKEN (dashboard/auth.py).
     # Without the edge, the dashboard manifest's `local_login_secret` is added by render() below.
-    # NB: THROUGHPUT_RECORD_TOKEN is intentionally NOT required. There is no SOPS source that can
-    # supply it, and the dashboard only enforces it "when set" (dashboard/app.py) — the /api/
-    # throughput/record route is open when the var is empty. Demanding a key nothing can provide
-    # would make secrets.env.example (and any preflight secrets-completeness check) list an
-    # unfulfillable key. It stays an OPTIONAL var: set it to harden the internal route, or leave
-    # it unset. (2026-07-24 hardening audit.)
+    # NB: THROUGHPUT_RECORD_TOKEN is intentionally NOT required. The dashboard only enforces it
+    # "when set" (dashboard/app.py): the /api/throughput/record route is open when the var is empty.
+    # It stays an OPTIONAL var: `ordo secrets set THROUGHPUT_RECORD_TOKEN --generate` hardens the
+    # internal route, and materialize carries it into secrets.env whenever the store holds it.
     "HF_TOKEN",                   # Hugging Face (gated model pulls)
     "GITHUB_PERSONAL_ACCESS_TOKEN",  # ComfyUI-Manager (git-based node installs)
 )
@@ -84,8 +82,9 @@ CORE_SECRET_KEYS: tuple[str, ...] = (
 CORE_OPTIONAL_SECRET_KEYS: tuple[str, ...] = ("HF_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN")
 
 # Secrets a service may read that are deliberately NOT required (not in secrets.env.example):
-# THROUGHPUT_RECORD_TOKEN has no SOPS source and the dashboard only enforces it "when set" (see the
-# note in CORE_SECRET_KEYS). A service passes these as ${KEY:-} so an absent value is simply empty.
+# the dashboard only enforces THROUGHPUT_RECORD_TOKEN "when set" (see the note in CORE_SECRET_KEYS).
+# A service passes these as ${KEY:-} so an absent value is simply empty; materialize writes one
+# into secrets.env only when the store holds it.
 OPTIONAL_SECRET_KEYS: tuple[str, ...] = ("THROUGHPUT_RECORD_TOKEN",)
 
 # The SSO edge plugin (services/edge). Whether it is enabled is THE switch between the two access
@@ -279,7 +278,7 @@ class RenderedConfig:
     # (plugin, service) pairs for every enabled kind=service plugin — compose builds from these
     plugin_services: list[Any] = dataclasses.field(default_factory=list)
     # secret env KEYS the enabled services need (core + plugins). Values are NEVER rendered — they
-    # live in an operator-managed secrets.env; write() emits secrets.env.example (keys only).
+    # live in the secret store (ordo/secret_store.py); write() emits secrets.env.example (keys only).
     required_secrets: list[str] = dataclasses.field(default_factory=list)
     # The subset of required_secrets the stack runs without: every enabled plugin that reads the
     # key declares it `optional_secrets:`. Preflight notes a blank one instead of blocking.
@@ -339,6 +338,9 @@ class RenderedConfig:
             # Secret NAMES (never values): what `ordo up`'s preflight checks secrets.env against.
             "required_secrets": self.required_secrets,
             "optional_secrets": self.optional_secrets,
+            # File-form secrets: the store key `ordo secrets materialize` writes to out/secrets/<file>.
+            "secret_files": [{"key": s["key"], "file": s["file"], "service": "agent"}
+                             for s in self.hermes.get("agent_secret_files") or []],
             "warnings": self.warnings,
             **self._dashboard_sign_in(),
             # What this render was made from. ops-controller refuses to re-render over a render made
@@ -425,13 +427,14 @@ class RenderedConfig:
         # manifest; services_catalog.py loads it (SERVICES_CATALOG_PATH) and React renders it.
         (out / "services-catalog.json").write_text(
             json.dumps(aggregate_services_catalog(), indent=2) + "\n", encoding="utf-8")
-        # secrets.env.example — the KEYS the enabled stack needs, values EMPTY. The operator copies
-        # this to secrets.env and fills real values (SOPS-decrypted / hand-set). Derived config
-        # (.env) and secrets stay in separate files; secrets.env is NOT rendered/overwritten.
+        # secrets.env.example: the KEYS the enabled stack needs, values EMPTY. A reference, never
+        # copied by hand. `ordo secrets materialize` writes secrets.env from the secret store (the SOPS
+        # file `site: SECRETS_SOURCE` names, or secrets.env itself without one). Derived config (.env)
+        # and secrets stay in separate files; a render never writes secrets.env.
         sec_lines = [
             "# GENERATED by ordo render — secret KEYS the enabled stack needs (values EMPTY).",
-            "# Copy to `secrets.env` and fill real values (never commit secrets.env). Each service",
-            "# gets only the keys it declares, interpolated by compose from `--env-file secrets.env`.",
+            "# Values come from the secret store: `ordo secrets list` shows it, `ordo secrets set KEY`",
+            "# changes one. Each service gets only the keys it declares, from `--env-file secrets.env`.",
         ]
         sec_lines += [f"{k}=" for k in self.required_secrets]
         (out / "secrets.env.example").write_text("\n".join(sec_lines) + "\n", encoding="utf-8")

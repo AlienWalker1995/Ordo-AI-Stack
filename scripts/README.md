@@ -11,7 +11,7 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 | `llamacpp/run-llama-server.sh` | **Bind-mounted entrypoint** of the llamacpp container (`${BASE_PATH}/scripts/llamacpp:/llamacpp-scripts:ro` in the rendered compose). Deleting it takes the LLM down on next restart. |
 | `stack_monitor.py` | Daily image/pin audit — invoked by Hermes cron via the `/c/dev` mirror mount; tested by `tests/test_stack_monitor_*.py`. |
 | `storage_purge.py` | Weekly storage purge — invoked by Hermes cron (`cd /c/dev/ordo-ai-stack && python3 scripts/storage_purge.py`); tested by `tests/test_storage_purge.py`. |
-| `secrets/decrypt.sh`, `secrets/rotate-internal.sh`, `secrets/audit-git-history.sh` | The documented secrets flow (`docs/runbooks/secrets.md`); decrypt materializes the host files Docker secrets mount from. |
+| `secrets/audit-git-history.sh` | Scans this public repo's history for plaintext secrets. Everything else in the secrets flow is `ordo secrets` (`docs/runbooks/secrets.md`). |
 | `comfyui/boot.sh` | **Bind-mounted command** of the comfyui container (`/comfyui-scripts/boot.sh`, `services/comfyui/plugin.yaml`): reconciles the ComfyUI checkout on the `comfyui-app` volume to the pinned `COMFYUI_APP_REF` on every start. |
 | `evals/run.sh` | Canonical way to invoke `python -m ordo_evals` (the `evals` plugin, `services/evals`): computes git provenance (`GIT_COMMIT`/`GIT_DIRTY`, real host git, the image has none) and runs `docker compose -p ordo --profile evals run --rm evals "$@"` from `out/`. See `services/evals/README.md`'s "Git provenance and the dirty-tree gate (E7)". |
 

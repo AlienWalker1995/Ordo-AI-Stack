@@ -3,10 +3,12 @@
 Takes a fresh operator from nothing to a written config in at most three questions: confirm the
 auto-picked model for the detected hardware → pick a feature preset → (in the CLI) start now.
 Internal secrets are generated; nothing asks for an account. It writes ``ordo.yaml`` (the
-declarative source) and ``secrets.env`` (operator secrets). Remote access (Tailscale + Google
-SSO) is a later opt-in: ``ordo remote enable`` reuses the prompts and validators defined here.
-Everything downstream renders from ``ordo.yaml``; compose interpolates each service's declared
-secrets from ``secrets.env`` (``--env-file``), which is NEVER committed.
+declarative source) and the operator secrets: into the SOPS file ``site: SECRETS_SOURCE`` names,
+materialized to ``secrets.env``, or (no SOPS file configured) into ``secrets.env`` itself (see
+``ordo/secret_store.py``). Remote access (Tailscale + Google SSO) is a later opt-in: ``ordo remote
+enable`` reuses the prompts and validators defined here. Everything downstream renders from
+``ordo.yaml``; compose interpolates each service's declared secrets from ``secrets.env``
+(``--env-file``), which is NEVER committed.
 
 The *logic* (plan / build_source / capability + secret mapping) is deliberately separated from
 *I/O* (prompts + file writes) so it is testable without a TTY — that separation is also how a
@@ -14,11 +16,9 @@ headless/CI install works: feed an ``answers`` dict, get a valid source + a secr
 """
 from __future__ import annotations
 
-import base64
 import dataclasses
 import os
 import re
-import secrets as _secrets
 import shutil
 import subprocess
 from pathlib import Path
@@ -26,11 +26,13 @@ from typing import Any
 
 import yaml
 
+from . import secret_store
 from .catalog import Catalog
 from .config import Source
 from .hardware import HardwareProfile, detect
 from .plugins import PluginRegistry
 from .render import render
+from .secret_store import generator_for
 
 
 class SetupCancelled(Exception):
@@ -100,88 +102,6 @@ def plugins_from_features(preset: str, all_plugin_ids: list[str]) -> Any:
     if preset not in FEATURE_PRESETS:
         raise ValueError(f"unknown feature preset {preset!r} (choose one of {', '.join(FEATURE_PRESETS)})")
     return plugins_from_capabilities(FEATURE_PRESETS[preset]["capabilities"], all_plugin_ids)
-
-
-# ── Secrets: what the wizard generates vs. prompts for ────────────────────────
-# GENERATED keys are internal shared secrets with no external authority — the wizard mints a
-# strong random value so the operator never has to. Everything else in a render's
-# `required_secrets` is EXTERNAL (issued by Google / Hugging Face / Tailscale / GitHub): `ordo init`
-# leaves it blank for later (a manifest-declared optional one never blocks a bring-up), and
-# `ordo remote enable` collects the Google OAuth pair when remote access is turned on.
-def _cookie_secret() -> str:
-    # oauth2-proxy requires a cookie secret of EXACTLY 16, 24, or 32 bytes (AES-SIV); a urlsafe
-    # base64 of 32 random bytes decodes back to 32 bytes and is what oauth2-proxy's docs recommend.
-    return base64.urlsafe_b64encode(_secrets.token_bytes(32)).decode("ascii")
-
-
-def _sk_key(nbytes: int = 24) -> str:
-    # LiteLLM requires its master key and every virtual key to start with `sk-`.
-    return "sk-" + _secrets.token_hex(nbytes)
-
-
-SECRET_GENERATORS: dict[str, Any] = {
-    "LITELLM_MASTER_KEY": _sk_key,
-    # DB credential-encryption salt. Generated ONCE per install and never rotated: changing it makes
-    # every credential LiteLLM stored in Postgres unreadable. rotate-internal.sh skips it on purpose.
-    "LITELLM_SALT_KEY": lambda: _sk_key(32),
-    "LITELLM_DB_PASSWORD": lambda: _secrets.token_urlsafe(32),
-    "OPS_CONTROLLER_TOKEN": lambda: _secrets.token_urlsafe(32),
-    # The local operator's dashboard sign-in while the edge is off (services/dashboard/dashboard.yaml).
-    "DASHBOARD_LOCAL_LOGIN_TOKEN": lambda: _secrets.token_urlsafe(32),
-    "OAUTH2_PROXY_COOKIE_SECRET": _cookie_secret,
-    "SEARXNG_SECRET": lambda: _secrets.token_hex(32),
-    "N8N_API_KEY": lambda: _secrets.token_urlsafe(32),
-    # Obsidian notes sync (CouchDB LiveSync). token_urlsafe is base64url - JSON-safe for the
-    # bridge's generated config, and shell-safe. The E2EE passphrase encrypts note content at rest
-    # in CouchDB; the operator enters the SAME value in every Obsidian LiveSync client.
-    "COUCHDB_PASSWORD": lambda: _secrets.token_urlsafe(24),
-    "LIVESYNC_E2EE_PASSPHRASE": lambda: _secrets.token_urlsafe(32),
-    # ── Langfuse (self-hosted tracing) ──
-    # Infra credentials for the four backing stores. token_urlsafe is base64url, so these stay
-    # safe inside the DATABASE_URL / requirepass / S3-credential shapes that carry them.
-    "LANGFUSE_DB_PASSWORD": lambda: _secrets.token_urlsafe(32),
-    "LANGFUSE_CLICKHOUSE_PASSWORD": lambda: _secrets.token_urlsafe(32),
-    "LANGFUSE_REDIS_AUTH": lambda: _secrets.token_urlsafe(32),
-    "LANGFUSE_MINIO_SECRET": lambda: _secrets.token_urlsafe(32),
-    "LANGFUSE_NEXTAUTH_SECRET": lambda: _secrets.token_urlsafe(32),
-    # SALT hashes the API keys Langfuse stores; ENCRYPTION_KEY encrypts the secrets in its DB, and
-    # Langfuse REQUIRES exactly 64 hex characters for it (`openssl rand -hex 32` upstream) - it
-    # refuses to boot otherwise. Both are generated ONCE and never rotated, for the same reason as
-    # LITELLM_SALT_KEY: rotating makes the stored keys unmatchable and the stored data unreadable.
-    "LANGFUSE_SALT": lambda: _secrets.token_hex(32),
-    "LANGFUSE_ENCRYPTION_KEY": lambda: _secrets.token_hex(32),
-    # Seeded first-login password for the headless-init admin user (LANGFUSE_ADMIN_EMAIL).
-    "LANGFUSE_ADMIN_PASSWORD": lambda: _secrets.token_urlsafe(24),
-    # The project API keys the headless init CREATES and Hermes then presents. The `pk-lf-` /
-    # `sk-lf-` prefixes are not cosmetic: Langfuse issues keys with them, and the Hermes plugin
-    # rejects anything else as a leftover placeholder (it would otherwise construct a client that
-    # silently drops every trace at flush time).
-    "LANGFUSE_PUBLIC_KEY": lambda: "pk-lf-" + _secrets.token_hex(16),
-    "LANGFUSE_SECRET_KEY": lambda: "sk-lf-" + _secrets.token_hex(16),
-    # ── Evals ──
-    # The bearer for Hermes's OpenAI-compatible API server, which the evals runner drives. Hermes
-    # refuses to start that listener on a key under 16 characters (its own startup guard), and a
-    # holder of this key can run Hermes with its full toolset - so it is minted strong here and
-    # stays internal to the project network. Rotatable (scripts/secrets/rotate-internal.sh).
-    "HERMES_API_SERVER_KEY": lambda: _secrets.token_urlsafe(32),
-}
-
-# Prefix-matched generators: every `LITELLM_KEY_<CONSUMER>` a render requires (one per manifest
-# that declares `litellm_key:`) is an internal secret minted here, so adding a consumer needs no
-# wizard edit.
-SECRET_PREFIX_GENERATORS: dict[str, Any] = {
-    "LITELLM_KEY_": _sk_key,
-}
-
-
-def generator_for(key: str) -> Any | None:
-    gen = SECRET_GENERATORS.get(key)
-    if gen is not None:
-        return gen
-    for prefix, pgen in SECRET_PREFIX_GENERATORS.items():
-        if key.startswith(prefix):
-            return pgen
-    return None
 
 
 @dataclasses.dataclass
@@ -349,53 +269,6 @@ def write_secrets(values: dict[str, str], path: str | Path) -> Path:
     return p
 
 
-def update_secrets(path: str | Path, required_keys: list[str], provided: dict[str, str] | None = None,
-                   remove: list[str] | None = None) -> tuple[list[str], list[str]]:
-    """Bring an existing secrets.env up to a render's required keys, line by line.
-
-    A provided value replaces the key's value; a required key that is absent or blank gets a
-    generated value when it is an internal secret, else an empty line; a key in `remove` is
-    dropped. Every other line (existing values, comments) is kept as is. Returns
-    (generated keys, keys left blank). Values are never printed."""
-    p = Path(path)
-    provided = {k: str(v).strip() for k, v in (provided or {}).items() if str(v or "").strip()}
-    drop = set(remove or [])
-    lines = p.read_text(encoding="utf-8").splitlines() if p.exists() else []
-    existing: dict[str, str] = {}
-    kept: list[str] = []
-    for line in lines:
-        key, sep, value = line.partition("=")
-        key = key.strip()
-        if sep and key and not line.lstrip().startswith("#"):
-            if key in drop:
-                continue
-            existing[key] = value.strip()
-            if key in provided:
-                line = f"{key}={provided[key]}"
-        kept.append(line)
-    generated: list[str] = []
-    blank: list[str] = []
-    for key in list(dict.fromkeys([*required_keys, *provided])):
-        if key in provided or existing.get(key):
-            if key in provided and key not in existing:
-                kept.append(f"{key}={provided[key]}")
-            continue
-        gen = generator_for(key)
-        value = gen() if gen is not None else ""
-        (generated if value else blank).append(key)
-        if key in existing:   # present but blank: fill that line in place
-            kept = [f"{key}={value}" if ln.partition("=")[0].strip() == key else ln for ln in kept]
-        else:
-            kept.append(f"{key}={value}")
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text("\n".join(kept) + "\n", encoding="utf-8")
-    try:
-        os.chmod(p, 0o600)
-    except OSError:
-        pass
-    return generated, blank
-
-
 def write_emails(emails: list[str], path: str | Path) -> Path:
     """Write the oauth2-proxy allowlist (one email per line). This is a TRACKED repo file the
     edge mounts read-only; only written when the operator supplies at least one address."""
@@ -420,6 +293,7 @@ class WizardResult:
     plugins_enabled: list[str] = dataclasses.field(default_factory=list)   # service plugins
     mcp_servers: list[str] = dataclasses.field(default_factory=list)       # tool servers
     optional_blank_secret_keys: list[str] = dataclasses.field(default_factory=list)
+    secrets_store: str = ""                # where the values live: the SOPS file, or secrets.env itself
 
 
 # ── Input validation (pure — unit-tested without a TTY) ──────────────────────
@@ -626,12 +500,16 @@ def ask_remote_access() -> RemoteAnswers:  # pragma: no cover - interactive only
 
 def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
         interactive: bool = True, answers: dict[str, Any] | None = None,
-        host_root: str | Path | None = None) -> WizardResult:
+        host_root: str | Path | None = None, secrets_source: str | None = None) -> WizardResult:
     """Run the wizard. Non-interactive (`interactive=False`) is the headless/CI path: it consumes
     `answers` (`features` picks a preset, `secrets` supplies values) and writes config only.
 
-    Writes ``<out_dir>/ordo.yaml`` and ``<out_dir>/secrets.env``. Returns a WizardResult
+    Writes ``<out_dir>/ordo.yaml`` and ``<out_dir>/secrets.env`` (materialized from the SOPS file when
+    one is configured). Returns a WizardResult
     describing what was written and chosen.
+
+    ``secrets_source`` (``site: SECRETS_SOURCE``) names a SOPS file to keep the secrets in; without
+    it ``secrets.env`` is the store.
 
     ``host_root`` is the repo checkout on the host. Every host bind is ``${BASE_PATH:?}`` /
     ``${DATA_PATH:?}`` (fail loud: a relative path resolves to a host path that does not exist
@@ -661,6 +539,11 @@ def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
         site.setdefault("MEMORY_VAULT_PATH", f"{site['DATA_PATH']}/memory-vault")
         a["site"] = site
 
+    if secrets_source:
+        # The operator keeps secrets in a SOPS file (a private repo): record it, so every later writer
+        # edits that file and materializes secrets.env from it.
+        a["site"] = {**dict(a.get("site") or {}), "SECRETS_SOURCE": secrets_source}
+
     source = build_source(a)
     site_notes: list[str] = []
     if isinstance(source["plugins"], list):
@@ -671,8 +554,18 @@ def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
     # Render in-memory (writes NOTHING) purely to learn the exact secret KEY set the selected
     # stack needs + its compose profiles — data-driven, so the wizard never hardcodes a key list.
     rc = render(Source.from_dict(source), catalog, registry)
-    values, gen, _given, blank = resolve_secrets(rc.required_secrets, provided)
-    secrets_path = write_secrets(values, out / "secrets.env")
+    store = secret_store.store_for(source.get("site") or {}, out,
+                                   repo_root=Path(host_root) if host_root is not None else Path.cwd())
+    if store.is_sops:
+        # The private repo's SOPS file is the store: add what it lacks (an existing value is never
+        # replaced, so a re-init keeps every generate-once secret), then materialize out/secrets.env.
+        gen, blank = secret_store.update(store, rc.required_secrets, provided)
+        secrets_path = secret_store.materialize(store, secret_store.SecretNeeds.from_render(rc), out,
+                                                strict=False).secrets_env
+    else:
+        values, gen, _given, blank = resolve_secrets(rc.required_secrets, provided)
+        secrets_path = write_secrets(values, out / "secrets.env")
+        secret_store.materialize(store, secret_store.SecretNeeds.from_render(rc), out, strict=False)
 
     # The edge and what depends on it are off because remote access is off: that is the local
     # install working as intended, and `ordo remote enable` (which the CLI points to) turns it on.
@@ -681,7 +574,7 @@ def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
     notes = [w for w in site_notes + rc.warnings if not any(w.startswith(f"'{pid}' ") for pid in remote_only)]
 
     return WizardResult(
-        source_path=source_path, secrets_path=secrets_path,
+        source_path=source_path, secrets_path=secrets_path, secrets_store=store.description,
         generated_secret_keys=gen,
         blank_secret_keys=[k for k in blank if k not in rc.optional_secrets],
         optional_blank_secret_keys=[k for k in blank if k in rc.optional_secrets],

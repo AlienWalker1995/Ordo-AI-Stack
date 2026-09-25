@@ -45,7 +45,7 @@ secrets:
   - LANGFUSE_MINIO_SECRET
   # Web session signing.
   - LANGFUSE_NEXTAUTH_SECRET
-  # NEVER rotated (see scripts/secrets/rotate-internal.sh): SALT hashes the API keys Langfuse
+  # NEVER rotated (`ordo secrets rotate` refuses them): SALT hashes the API keys Langfuse
   # stores and ENCRYPTION_KEY encrypts its at-rest secrets. Changing either makes stored keys
   # unmatchable and stored data unreadable - the same rule as LITELLM_SALT_KEY.
   - LANGFUSE_SALT

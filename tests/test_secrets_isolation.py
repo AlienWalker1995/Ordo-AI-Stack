@@ -38,9 +38,9 @@ def hermes_gateway() -> str:
 
 
 def test_runtime_env_not_visible_in_workspace(hermes_gateway: str):
-    """From inside hermes-gateway, /workspace/.env (the runtime decrypted .env)
-    must NOT exist. The runtime file lives at ~/.ai-toolkit/runtime/.env on the
-    host, outside any bind-mount Hermes can see."""
+    """From inside hermes-gateway, /workspace/.env must NOT exist: /workspace/data is the
+    data root, and no secret file is materialized there (secrets live in the SOPS store and
+    out/, see docs/runbooks/secrets.md)."""
     r = _docker_exec(hermes_gateway, "test", "-f", "/workspace/.env")
     assert r.returncode != 0, (
         "FAIL: /workspace/.env exists inside Hermes — secret leakage path open"

@@ -8,6 +8,7 @@
     ordo fetch [MODEL]          # download model files into the models volume, checksum-verified
     ordo up [--all|--core|SVC…] # build missing images, fetch missing models, bring the stack up (GPU-lease checked)
     ordo recreate SVC…          # force-recreate services from the host (GPU-lease checked)
+    ordo secrets list|materialize|set|rotate|import   # the secret store (ordo/secret_store.py)
 
 `render` writes to an output dir only (it starts nothing), and `serve`'s Docker backend is
 hard-scoped to the ordo project prefix so it only ever touches its own project's containers.
@@ -23,12 +24,27 @@ from pathlib import Path
 
 import yaml
 
-from . import bringup, doctor, fetch, gpu, images, native, parity, preflight, remote, served_models, wizard
+from . import (
+    agents,
+    bringup,
+    doctor,
+    fetch,
+    gpu,
+    images,
+    native,
+    parity,
+    preflight,
+    remote,
+    secret_store,
+    served_models,
+    wizard,
+)
 from .catalog import Catalog
 from .config import Source
 from .hardware import detect
 from .plugins import PluginRegistry
-from .render import DEFAULT_PLUGINS_DIR, render
+from .render import DEFAULT_AGENTS_DIR, DEFAULT_PLUGINS_DIR, render
+from .source_edit import edit_site_keys
 
 HERE = Path(__file__).resolve().parent.parent
 DEFAULT_SOURCE = HERE / "ordo.example.yaml"
@@ -141,18 +157,60 @@ def _dashboard_sign_in(out: Path) -> dict | None:
     return json.loads(manifest_path.read_text(encoding="utf-8")).get("dashboard_sign_in")
 
 
-def _ensure_local_sign_in_secret(out: Path) -> bool:
-    """Mint the dashboard's local sign-in secret when the render needs it and secrets.env lacks it
-    (a local install made before the secret existed). True when a value was written; an existing
-    value is never replaced."""
+def _ensure_local_sign_in_secret(out: Path, store: secret_store.Store | None = None) -> bool:
+    """Mint the dashboard's local sign-in secret in the secret store when the render needs it and the
+    store lacks it (a local install made before the secret existed). True when a value was written;
+    an existing value is never replaced. Materializing it into secrets.env is the caller's step."""
     sign_in = _dashboard_sign_in(out)
-    secrets_path = out / "secrets.env"
-    if sign_in is None or not secrets_path.exists():
+    store = store if store is not None else secret_store.PlainStore(out / "secrets.env")
+    if sign_in is None or not store.exists():
         return False
-    if parity.load_env(str(secrets_path)).get(sign_in["secret"]):
+    if secret_store.parse_dotenv(store.read_text()).get(sign_in["secret"]):
         return False
-    generated, _ = wizard.update_secrets(secrets_path, [sign_in["secret"]])
+    generated, _ = secret_store.update(store, [sign_in["secret"]])
     return sign_in["secret"] in generated
+
+
+def _manifest(out: Path) -> dict | None:
+    """The render's out/manifest.json, or None before the first render."""
+    path = Path(out) / "manifest.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+def _source_path(args: argparse.Namespace) -> Path:
+    """The operator source a host command edits: --source when given, else <out>/ordo.yaml."""
+    return Path(args.source) if args.source_explicit else Path(args.out) / "ordo.yaml"
+
+
+def _site_of(source_path: Path) -> dict:
+    """The source's raw `site:` mapping. Read without validation, so `ordo secrets import` still runs
+    on a source that carries a retired key it is about to remove."""
+    if not source_path.exists():
+        return {}
+    site = (yaml.safe_load(source_path.read_text(encoding="utf-8")) or {}).get("site") or {}
+    return site if isinstance(site, dict) else {}
+
+
+def _secret_store(args: argparse.Namespace) -> secret_store.Store:
+    """The store the source names (`site: SECRETS_SOURCE`), or <out>/secrets.env without one."""
+    return secret_store.store_for(_site_of(_source_path(args)), Path(args.out), repo_root=HERE)
+
+
+def _prepare_secrets(args: argparse.Namespace, out: Path) -> int:
+    """Before a bring-up: mint the local sign-in secret if the store lacks it, then materialize
+    secrets.env and the file secrets from the store. Blank keys are left to the preflight."""
+    manifest = _manifest(out)
+    if manifest is None:
+        return 0   # nothing rendered yet: bring_up reports that
+    store = _secret_store(args)
+    try:
+        if _ensure_local_sign_in_secret(out, store):
+            print(f"generated the dashboard's local sign-in secret in {store.description}")
+        secret_store.materialize(store, secret_store.SecretNeeds.from_manifest(manifest), out, strict=False)
+    except secret_store.SecretStoreError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def _dashboard_sign_in_link(out: Path) -> str | None:
@@ -194,14 +252,20 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     try:
         result = wizard.run(cat, reg, out, interactive=interactive,
-                            answers={} if not interactive else None, host_root=HERE)
+                            answers={} if not interactive else None, host_root=HERE,
+                            secrets_source=args.secrets_source)
     except wizard.SetupCancelled:
         # Operator aborted (Ctrl-C). Nothing was written: the files are written after the questions.
         print("\nSetup cancelled - nothing was written.")
         return 130
+    except secret_store.SecretStoreError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
 
     print(f"\nWrote {result.source_path}")
     print(f"Wrote {result.secrets_path}  (chmod 600)")
+    if result.secrets_store and result.secrets_store != str(result.secrets_path):
+        print(f"  secrets are kept in {result.secrets_store}; secrets.env is materialized from it")
     print(f"  Model   : {result.model_name} ({result.model_id})")
     print(f"  Plugins : {', '.join(result.plugins_enabled) or '(none)'}")
     print(f"  Tools   : {', '.join(result.mcp_servers) or '(none)'}")
@@ -210,7 +274,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     if result.optional_blank_secret_keys:
         print(f"  optional, blank until you need them: {', '.join(result.optional_blank_secret_keys)}")
     if result.blank_secret_keys:
-        print(f"  ! required secret(s) left BLANK (fill in {result.secrets_path} before bring-up): "
+        print(f"  ! required secret(s) left BLANK (set each before bring-up: ordo secrets set KEY --from-stdin): "
               f"{', '.join(result.blank_secret_keys)}")
     for w in result.warnings:
         print(f"  ! {w}")
@@ -298,26 +362,35 @@ def cmd_remote(args: argparse.Namespace) -> int:
     cat = Catalog.load(Path(args.catalog))
     reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
     interactive = not args.yes and sys.stdin.isatty()
+    store = secret_store.store_for(_site_of(source), out, repo_root=HERE)
     try:
         if args.action == "enable":
             answers = wizard.ask_remote_access() if interactive else _remote_answers_from_flags(args)
-            change = remote.enable(source, out / "secrets.env", answers, cat, reg)
+            change = remote.enable(source, store, answers, cat, reg)
         else:
             if interactive and not _prompt_yn("Turn remote access off (UIs go back to this machine only)?"):
                 return 1
-            change = remote.disable(source, out / "secrets.env", cat, reg)
+            change = remote.disable(source, store, cat, reg)
     except wizard.SetupCancelled:
         print("\ncancelled - nothing was written.")
         return 130
-    except ValueError as e:
+    except (ValueError, secret_store.SecretStoreError) as e:
         print(f"error: {e}\nnothing was written.", file=sys.stderr)
         return 1
     change.rendered.write(out)
-    print(f"Updated {source} and {out / 'secrets.env'}; rendered -> {out}/")
+    removed = remote.OAUTH_CLIENT_KEYS if args.action == "disable" else ()
+    try:
+        secret_store.materialize(store, secret_store.SecretNeeds.from_render(change.rendered), out,
+                                 strict=False, removed=removed)
+    except secret_store.SecretStoreError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"Updated {source} and {store.description}; rendered -> {out}/")
     if change.generated_secret_keys:
         print(f"  generated: {', '.join(change.generated_secret_keys)}")
     if change.blank_secret_keys:
-        print(f"  ! still blank in {out / 'secrets.env'}: {', '.join(change.blank_secret_keys)}")
+        print(f"  ! still blank in {store.description}: {', '.join(change.blank_secret_keys)} "
+              "(ordo secrets set KEY --from-stdin)")
     if args.action == "enable":
         print(f"Remote access on: https://{answers.hostname}/  "
               f"({len(answers.emails)} allowlisted address(es) in {remote.ALLOWLIST_PATH})")
@@ -326,6 +399,242 @@ def cmd_remote(args: argparse.Namespace) -> int:
         print("Remote access off: the UIs publish on 127.0.0.1 again.")
     print(f"Apply it: ordo up --all --out {out}")
     return 0
+
+
+# --------------------------------------------------------------------------- #
+# `ordo secrets`: the one secret store (ordo/secret_store.py). Names only, never values.
+# --------------------------------------------------------------------------- #
+
+
+def _secret_needs(out: Path) -> secret_store.SecretNeeds | None:
+    manifest = _manifest(out)
+    if manifest is None:
+        print(f"no render in {out}: run `ordo --source {out / 'ordo.yaml'} render --out {out}` first",
+              file=sys.stderr)
+        return None
+    return secret_store.SecretNeeds.from_manifest(manifest)
+
+
+def _materialize_after_edit(store: secret_store.Store, needs: secret_store.SecretNeeds, out: Path) -> int:
+    """The materialize every store edit ends with. Blank required keys are reported, not fatal: the
+    edit itself succeeded, and the preflight blocks a bring-up that needs them."""
+    try:
+        result = secret_store.materialize(store, needs, out, strict=False)
+    except secret_store.SecretStoreError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    if store.is_sops:
+        print(f"materialized {result.secrets_env} and {len(result.files)} file secret(s) from {store.description}")
+    if result.blank_required:
+        print(f"  ! still blank (required): {', '.join(result.blank_required)}")
+    return 0
+
+
+def _print_recreate(keys: list[str], needs: secret_store.SecretNeeds, out: Path) -> None:
+    """The command that applies changed keys: recreate their readers (a restart keeps the old env)."""
+    file_services = sorted({f.service for f in needs.files if f.key in keys})
+    env_keys = [k for k in keys if k not in {f.key for f in needs.files}]
+    out_flag = "" if str(out) == "out" else f" --out {out}"
+    print("Apply it, from the repo root, outside a GPU lease:")
+    if env_keys:
+        print(f"  ordo recreate --reading {' '.join(env_keys)}{out_flag}")
+    if file_services:
+        print(f"  ordo recreate {' '.join(file_services)}{out_flag}")
+
+
+def _secrets_list(args: argparse.Namespace) -> int:
+    store = _secret_store(args)
+    if store.is_sops:
+        print(f"secret store: {store.path} (SOPS, site: SECRETS_SOURCE); out/secrets.env is materialized from it")
+    else:
+        print(f"secret store: {store.path} (no SECRETS_SOURCE configured: out/secrets.env is the store)")
+    values = secret_store.parse_dotenv(store.read_text())   # a missing SOPS file raises: run import
+    manifest = _manifest(Path(args.out))
+    needs = secret_store.SecretNeeds.from_manifest(manifest) if manifest else secret_store.SecretNeeds(())
+    if manifest is None:
+        print(f"  (no render in {args.out}: every key shows as unused)")
+    files = {f.key: f for f in needs.files}
+    keys = list(dict.fromkeys([*needs.required, *files, *values]))
+    width = max((len(k) for k in keys), default=0)
+    for key in keys:
+        state = "set" if values.get(key) else ("blank" if key in values else "absent")
+        if key in files:
+            role = f"file secret ({files[key].service}: out/secrets/{files[key].file})"
+        elif key in needs.optional:
+            role = "optional"
+        elif key in needs.required:
+            role = "required"
+        else:
+            role = "not read by this render"
+        print(f"  {key:<{width}}  {state:<6}  {role}")
+    return 0
+
+
+def _secrets_materialize(args: argparse.Namespace) -> int:
+    out = Path(args.out)
+    needs = _secret_needs(out)
+    if needs is None:
+        return 1
+    store = secret_store.SopsStore(Path(args.from_path).resolve()) if args.from_path else _secret_store(args)
+    try:
+        result = secret_store.materialize(store, needs, out)
+    except secret_store.MissingSecrets as e:
+        print(f"error: {e}\n  set each: ordo secrets set KEY --from-stdin (an internal one: --generate)",
+              file=sys.stderr)
+        return 1
+    except secret_store.SecretStoreError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    if store.is_sops:
+        print(f"materialized {len(needs.required)} key(s) into {result.secrets_env} from {store.description}")
+    else:
+        print(f"{result.secrets_env} is the store (no SECRETS_SOURCE configured): all required keys are set")
+    print(f"  file secrets: {len(result.files)} in {out / 'secrets'}")
+    if result.blank_optional:
+        print(f"  optional, blank: {', '.join(result.blank_optional)}")
+    return 0
+
+
+def _secrets_set(args: argparse.Namespace) -> int:
+    out = Path(args.out)
+    key = args.key
+    needs = _secret_needs(out)
+    if needs is None:
+        return 1
+    store = _secret_store(args)
+    try:
+        current = secret_store.parse_dotenv(store.read_text()).get(key, "")
+        if args.generate:
+            generator = secret_store.generator_for(key)
+            if generator is None:
+                print(f"error: {key} is issued by an outside service: use --from-stdin", file=sys.stderr)
+                return 1
+            refusal = secret_store.rotation_refusal(key) if current else None   # a new value is a rotation
+            if refusal:
+                print(f"error: {refusal}", file=sys.stderr)
+                return 1
+            value = generator()
+        else:
+            value = sys.stdin.read().strip()
+            if not value:
+                print(f"error: no value for {key} on stdin", file=sys.stderr)
+                return 1
+        secret_store.update(store, [], provided={key: value})
+    except secret_store.SecretStoreError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"set {key} in {store.description}")
+    if _materialize_after_edit(store, needs, out) != 0:
+        return 1
+    _print_recreate([key], needs, out)
+    return 0
+
+
+def _secrets_rotate(args: argparse.Namespace) -> int:
+    if bool(args.keys) == bool(args.internal):
+        print("ordo secrets rotate: give exactly one of KEY... or --internal", file=sys.stderr)
+        return 1
+    out = Path(args.out)
+    needs = _secret_needs(out)
+    if needs is None:
+        return 1
+    store = _secret_store(args)
+    try:
+        keys = list(args.keys) or secret_store.internal_keys(store)
+        if not keys:
+            print(f"error: {store.description} holds no internal key to rotate", file=sys.stderr)
+            return 1
+        rotated = secret_store.rotate(store, keys)
+    except secret_store.SecretStoreError as e:
+        print(f"error: {e}\nnothing was rotated.", file=sys.stderr)
+        return 1
+    print(f"rotated in {store.description}: {' '.join(rotated)}")
+    if _materialize_after_edit(store, needs, out) != 0:
+        return 1
+    steps = [f"  {key}: {secret_store.ROTATION_STEPS[key]}" for key in rotated if key in secret_store.ROTATION_STEPS]
+    if steps:
+        print("Before recreating (the new value is in out/secrets.env; the stores keep their own copy):")
+        print("\n".join(steps))
+    _print_recreate(rotated, needs, out)
+    for key in rotated:
+        if key in secret_store.ROTATION_EFFECTS:
+            print(f"  then: {secret_store.ROTATION_EFFECTS[key]}")
+    if store.is_sops:
+        print(f"Then commit {store.path.name} in its repo.")
+    return 0
+
+
+def _secrets_import(args: argparse.Namespace) -> int:
+    out = Path(args.out)
+    source = _source_path(args)
+    site = _site_of(source)
+    live = Path(args.from_path) if args.from_path else out / "secrets.env"
+    if args.to:
+        target = Path(args.to).resolve()
+    else:
+        target = secret_store.resolve_source_path(
+            str(site.get(secret_store.SECRETS_SOURCE_KEY) or secret_store.DEFAULT_SECRETS_SOURCE), HERE)
+    files_dir = args.files_from or site.get("OPERATOR_SECRETS_DIR")
+    agent_id = str((yaml.safe_load(source.read_text(encoding="utf-8")) or {}).get("agent", "hermes")
+                   if source.exists() else "hermes")
+    agent = agents.AgentRegistry.load(DEFAULT_AGENTS_DIR).get(agent_id)
+    files = [secret_store.SecretFile(key=s["key"], file=s["file"], service="agent")
+             for s in (agent.secret_files if agent else ())]
+    if not live.exists() and not files_dir:
+        print(f"error: nothing to import: {live} does not exist", file=sys.stderr)
+        return 1
+    store = secret_store.SopsStore(target)
+    try:
+        result = secret_store.import_values(store, live, files=files,
+                                            files_dir=Path(files_dir) if files_dir else None,
+                                            overwrite=args.overwrite)
+    except secret_store.SecretStoreError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"imported into {store.description}:")
+    print(f"  added from {live}: {', '.join(result.added) or '(nothing new)'}")
+    if files_dir:
+        print(f"  added from {files_dir}: {', '.join(result.files_added) or '(nothing new)'}")
+    if result.differing:
+        verb = ("replaced with the live value" if args.overwrite
+                else "kept the store's value (--overwrite takes the live one)")
+        print(f"  different in the store, {verb}: {', '.join(result.differing)}")
+    # Point the source at the store (the portable relative default when that is where it went), and
+    # drop the retired OPERATOR_SECRETS_DIR: its files are in the store now.
+    default = secret_store.resolve_source_path(secret_store.DEFAULT_SECRETS_SOURCE, HERE)
+    wanted = secret_store.DEFAULT_SECRETS_SOURCE if target == default else target.as_posix()
+    if not source.exists():
+        print(f"  add to your source's site: block: SECRETS_SOURCE: {wanted}")
+    else:
+        configured = site.get(secret_store.SECRETS_SOURCE_KEY)
+        already_set = bool(configured) and secret_store.resolve_source_path(str(configured), HERE) == target
+        set_values = {} if already_set else {secret_store.SECRETS_SOURCE_KEY: wanted}
+        remove = ["OPERATOR_SECRETS_DIR"] if "OPERATOR_SECRETS_DIR" in site else []
+        if set_values or remove:
+            try:
+                source.write_text(edit_site_keys(source.read_text(encoding="utf-8"), set_values, remove),
+                                  encoding="utf-8")
+            except ValueError as e:
+                print(f"error: could not edit {source}: {e}. Set site: SECRETS_SOURCE: {wanted} by hand",
+                      file=sys.stderr)
+                return 1
+            changes = [f"removed {key}" for key in remove]
+            if set_values:
+                changes.insert(0, f"SECRETS_SOURCE: {wanted}")
+            print(f"  {source}: {'; '.join(changes)}")
+    print(f"Next: ordo --source {source} render --out {out}, then ordo secrets materialize --out {out}. "
+          f"Commit {target.name} in its repo.")
+    return 0
+
+
+def cmd_secrets(args: argparse.Namespace) -> int:
+    handlers = {"list": _secrets_list, "materialize": _secrets_materialize, "set": _secrets_set,
+                "rotate": _secrets_rotate, "import": _secrets_import}
+    try:
+        return handlers[args.action](args)
+    except secret_store.SecretStoreError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
 
 
 def cmd_parity(args: argparse.Namespace) -> int:
@@ -547,8 +856,8 @@ def cmd_up(args: argparse.Namespace) -> int:
         return 1
     whole_stack = args.all or args.core
     out = Path(args.out)
-    if not args.dry_run and _ensure_local_sign_in_secret(out):
-        print(f"generated the dashboard's local sign-in secret in {out / 'secrets.env'}")
+    if not args.dry_run and _prepare_secrets(args, out) != 0:
+        return 1
     if not args.dry_run and not args.no_preflight:
         if not _host_preflight(args.out, args.project, args.services, whole_stack=whole_stack,
                                with_profiles=not args.core, catalog_path=args.catalog):
@@ -715,6 +1024,9 @@ def main(argv: list[str] | None = None) -> int:
         # overrides the global default so `ordo init --catalog X` works as written.
         pi.add_argument("--catalog", default=None,
                         help="model catalog to size against (defaults to the bundled catalog)")
+        pi.add_argument("--secrets-source", default=None,
+                        help="keep the secrets in this SOPS file (site SECRETS_SOURCE, e.g. "
+                             f"{secret_store.DEFAULT_SECRETS_SOURCE}); default: out/secrets.env is the store")
         pi.set_defaults(func=cmd_init)
     # `remote enable|disable`: the opt-in remote access (Tailscale HTTPS + Google SSO edge).
     prm = sub.add_parser("remote", help="turn remote access (Tailscale + Google sign-in) on or off")
@@ -728,6 +1040,33 @@ def main(argv: list[str] | None = None) -> int:
                      help="Google OAuth client secret (prefer env OAUTH2_PROXY_CLIENT_SECRET: flags land in history)")
     prm.add_argument("--emails", help="allowlisted Google accounts, comma-separated")
     prm.set_defaults(func=cmd_remote)
+    # `secrets`: the secret store. With `site: SECRETS_SOURCE` it is a SOPS file (a private repo) and
+    # out/secrets.env is materialized from it; without, out/secrets.env is the store.
+    psec = sub.add_parser("secrets", help="list, materialize, set, rotate or import the operator's secrets")
+    psec_sub = psec.add_subparsers(dest="action", required=True)
+    psl = psec_sub.add_parser("list", help="key names, whether each is set, and what the render needs")
+    psm = psec_sub.add_parser("materialize", help="write out/secrets.env and out/secrets/* from the store")
+    psm.add_argument("--from", dest="from_path", help="the SOPS file to read (default: site SECRETS_SOURCE)")
+    pss = psec_sub.add_parser("set", help="set one key in the store, then materialize")
+    pss.add_argument("key", metavar="KEY")
+    how = pss.add_mutually_exclusive_group(required=True)
+    how.add_argument("--from-stdin", action="store_true", help="read the value from stdin (never from argv)")
+    how.add_argument("--generate", action="store_true", help="mint a value (internal secrets only)")
+    psr = psec_sub.add_parser("rotate", help="give keys fresh generated values, then materialize")
+    psr.add_argument("keys", nargs="*", metavar="KEY")
+    psr.add_argument("--internal", action="store_true",
+                     help="every internal token the store holds (salts and issued keys excluded)")
+    psi = psec_sub.add_parser("import", help="one-time: add every value the store lacks from the live secrets.env")
+    psi.add_argument("--from", dest="from_path", help="the live file to read (default: <out>/secrets.env)")
+    psi.add_argument("--to", help="the SOPS file to create or extend (default: site SECRETS_SOURCE, else "
+                                  f"{secret_store.DEFAULT_SECRETS_SOURCE} beside the checkout)")
+    psi.add_argument("--files-from", help="directory holding the agent's file secrets "
+                                          "(default: the retired site OPERATOR_SECRETS_DIR, when set)")
+    psi.add_argument("--overwrite", action="store_true",
+                     help="take the live value for a key the store holds with a different one")
+    for sp in (psl, psm, pss, psr, psi):
+        sp.add_argument("--out", default="out", help="the config + rendered stack directory (default: out)")
+        sp.set_defaults(func=cmd_secrets)
     pp = sub.add_parser("parity")
     pp.add_argument("--ref", required=True, help="reference .env to compare the render against")
     pp.set_defaults(func=cmd_parity)
@@ -808,7 +1147,7 @@ def main(argv: list[str] | None = None) -> int:
     pv.set_defaults(func=cmd_serve)
     # Accept --source after the subcommand too (`ordo render --source X`, the form `ordo init`
     # prints). SUPPRESS leaves a global `ordo --source X render` untouched when it is absent here.
-    for subparser in sub.choices.values():
+    for subparser in [*sub.choices.values(), *psec_sub.choices.values()]:
         if "--source" not in subparser._option_string_actions:
             subparser.add_argument("--source", default=argparse.SUPPRESS,
                                    help="the operator source (same as the global --source)")

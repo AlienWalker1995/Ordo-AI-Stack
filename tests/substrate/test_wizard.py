@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 
-from ordo import wizard
+from ordo import secret_store, wizard
 from ordo.catalog import Catalog
 from ordo.config import Source
 from ordo.hardware import HardwareProfile
@@ -74,7 +74,7 @@ def test_resolve_secrets_generates_internal_and_blanks_external():
     # LiteLLM keys (master, salt, every LITELLM_KEY_*) must carry the sk- prefix LiteLLM requires
     for k in ("LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "LITELLM_KEY_HERMES"):
         assert values[k].startswith("sk-") and len(values[k]) >= 35
-    assert "MCP_GATEWAY_TOKEN" not in wizard.SECRET_GENERATORS
+    assert "MCP_GATEWAY_TOKEN" not in secret_store.SECRET_GENERATORS
     assert "HF_TOKEN" in blank and values["HF_TOKEN"] == ""
     assert not provided
     import base64
@@ -258,24 +258,3 @@ def test_interactive_features_choice_is_applied(tmp_path, monkeypatch):
     _scripted_input(monkeypatch, ["", "1"])                  # keep the model, "Chat only"
     result = wizard.run(CATALOG, REGISTRY, tmp_path / "out", interactive=True, host_root=tmp_path / "repo")
     assert "open-webui" in result.plugins_enabled and "automation" not in result.plugins_enabled
-
-
-def test_update_secrets_keeps_existing_values_and_mints_missing_ones(tmp_path):
-    path = tmp_path / "secrets.env"
-    path.write_text("LITELLM_MASTER_KEY=sk-keep\nOLD_UNRELATED=x\n", encoding="utf-8")
-    generated, blank = wizard.update_secrets(
-        path, ["LITELLM_MASTER_KEY", "OAUTH2_PROXY_COOKIE_SECRET", "OAUTH2_PROXY_CLIENT_ID"],
-        provided={"OAUTH2_PROXY_CLIENT_ID": "cid"})
-    values = dict(ln.split("=", 1) for ln in path.read_text(encoding="utf-8").splitlines()
-                  if ln and not ln.startswith("#"))
-    assert values["LITELLM_MASTER_KEY"] == "sk-keep"
-    assert values["OAUTH2_PROXY_CLIENT_ID"] == "cid"
-    assert values["OAUTH2_PROXY_COOKIE_SECRET"] and generated == ["OAUTH2_PROXY_COOKIE_SECRET"]
-    assert values["OLD_UNRELATED"] == "x" and blank == []
-
-
-def test_update_secrets_removes_keys(tmp_path):
-    path = tmp_path / "secrets.env"
-    path.write_text("A=1\nB=2\n", encoding="utf-8")
-    wizard.update_secrets(path, [], remove=["B"])
-    assert "B=" not in path.read_text(encoding="utf-8")
