@@ -53,7 +53,7 @@ site:
   # DATA_PATH: /srv/ordo/data           # where mutable data (agent brain, qdrant, …) is bind-mounted
   # BASE_PATH: /srv/ordo                 # the repo checkout: tracked config, scripts, rendered out/
   # CODE_ROOT: /home/me/dev              # what the codebase-memory UI indexes + the agent /c/dev mirror
-  # SECRETS_SOURCE: ../ordo-personal/secrets/ordo.env.sops  # the SOPS (age) file holding every secret,
+  # SECRETS_SOURCE: ../ordo-secrets/secrets.env.sops  # the SOPS (age) file holding every secret,
   #                                   # in a private repo (relative = beside this checkout). Unset:
   #                                   # out/secrets.env is the store. See docs/runbooks/secrets.md.
   # SECRETS_BACKEND: infisical          # optional: read the secrets from a (self-hosted) Infisical

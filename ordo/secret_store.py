@@ -41,7 +41,7 @@ from .render import OPTIONAL_SECRET_KEYS
 # The site key naming the SOPS file, and the documented place for it: a private repo checked out
 # beside this one. A relative value resolves against the checkout, so the same ordo.yaml works on
 # any host that keeps the two repos side by side.
-DEFAULT_SECRETS_SOURCE = "../ordo-personal/secrets/ordo.env.sops"
+DEFAULT_SECRETS_SOURCE = "../ordo-secrets/secrets.env.sops"
 
 # Where sops looks for the age private key when SOPS_AGE_KEY_FILE is unset. sops's own default
 # differs per OS (%AppData% on Windows); this one path is what the runbook documents everywhere.

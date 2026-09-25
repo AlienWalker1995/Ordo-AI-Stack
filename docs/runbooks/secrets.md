@@ -5,7 +5,7 @@
 - **One store.** Every secret value lives in one SOPS (age) encrypted dotenv
   file in a **private** repo, named by `site: SECRETS_SOURCE` in your
   `ordo.yaml`. The documented place is a private repo checked out beside this
-  one: `SECRETS_SOURCE: ../ordo-personal/secrets/ordo.env.sops` (a relative
+  one: `SECRETS_SOURCE: ../ordo-secrets/secrets.env.sops` (a relative
   path resolves against this checkout; any path works).
 - **Everything else is materialized.** `ordo secrets materialize` decrypts the
   store in memory and writes, mode 600:
@@ -81,9 +81,9 @@ returns; nothing else holds plaintext outside `out/`.
    chmod 600 ~/.config/sops/age/keys.txt
    ```
 3. Create the private repo beside this checkout (for example
-   `../ordo-personal`) with a `secrets/` folder and a `.gitattributes` line
+   `../ordo-secrets`) with a `secrets/` folder and a `.gitattributes` line
    `*.sops text eol=lf` (a CRLF checkout breaks sops's metadata parsing).
-4. Fresh install: `ordo init --secrets-source ../ordo-personal/secrets/ordo.env.sops`.
+4. Fresh install: `ordo init --secrets-source ../ordo-secrets/secrets.env.sops`.
    It generates the internal secrets into the SOPS file and materializes
    `out/secrets.env`. Existing install: see "Migrate an existing install".
 5. `ordo --source out/ordo.yaml render --out out`, then `ordo up --all`.
@@ -120,7 +120,7 @@ site:
   INFISICAL_URL: https://infisical.example.lan    # the server's base URL
   INFISICAL_PROJECT: ordo-stack                   # the project slug
   INFISICAL_ENVIRONMENT: prod                     # optional, default prod
-  SECRETS_SOURCE: ../ordo-personal/secrets/ordo.env.sops   # optional: the offline backup
+  SECRETS_SOURCE: ../ordo-secrets/secrets.env.sops   # optional: the offline backup
 ```
 
 Identity credentials are never site keys (the load refuses them: site keys
