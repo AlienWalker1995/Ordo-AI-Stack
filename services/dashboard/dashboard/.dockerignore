@@ -15,6 +15,10 @@ frontend/dist
 .env.*
 *.pem
 *.key
-*secret*
-*credential*
+# Secret MATERIAL only, never source: `*secret*` once dropped secret_env.py (the _FILE
+# reader) and the dashboard crash-looped (tests/substrate/test_dockerignore_keeps_source.py).
+secrets.env
+secrets/
+*.secret
+*credentials.json
 id_rsa*
