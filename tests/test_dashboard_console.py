@@ -440,7 +440,7 @@ def test_a_running_container_whose_probe_fails_is_unhealthy_not_up():
 
 
 def test_the_dashboard_hides_exactly_the_buttons_the_control_plane_refuses():
-    from ordo.broker import DockerBackend
+    from ordo.control.broker import DockerBackend
     assert console.NOT_CONTROLLABLE == DockerBackend.SELF_REFERENTIAL
 
 

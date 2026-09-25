@@ -15,11 +15,12 @@ from pathlib import Path
 
 import pytest
 
-from ordo import cli, doctor
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.plugins import PluginRegistry
-from ordo.render import render
+from ordo import cli
+from ordo.host import doctor
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")

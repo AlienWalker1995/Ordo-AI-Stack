@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.plugins import Plugin, PluginRegistry
-from ordo.render import litellm_model_names, render, render_litellm_keys
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import litellm_model_names, render, render_litellm_keys
+from ordo.render.plugins import Plugin, PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")

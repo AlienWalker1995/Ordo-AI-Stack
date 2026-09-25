@@ -1,6 +1,6 @@
 """Broker reconciles scheduler decisions into container start/stop; Docker backend is scoped."""
-from ordo.broker import Broker, DockerBackend, MockBackend
-from ordo.scheduler import Job, Scheduler
+from ordo.control.broker import Broker, DockerBackend, MockBackend
+from ordo.control.scheduler import Job, Scheduler
 
 
 def _broker(vram=32):
@@ -158,7 +158,7 @@ def test_broker_heartbeat_passes_through_without_reconcile():
 
 
 def test_broker_records_lease_history_lifecycle(tmp_path):
-    from ordo.lease_history import LeaseHistory
+    from ordo.control.lease_history import LeaseHistory
     hist = LeaseHistory(tmp_path / "h.jsonl", now_fn=lambda: 42.0)
     sched = Scheduler(32)
     sched.cache_idle("llamacpp", 25)
@@ -173,7 +173,7 @@ def test_broker_records_lease_history_lifecycle(tmp_path):
 
 
 def test_broker_records_swept_lease(tmp_path):
-    from ordo.lease_history import LeaseHistory
+    from ordo.control.lease_history import LeaseHistory
     hist = LeaseHistory(tmp_path / "h.jsonl", now_fn=lambda: 42.0)
     sched = Scheduler(32)
     b = Broker(sched, MockBackend(), history=hist)
@@ -186,7 +186,7 @@ def test_broker_records_swept_lease(tmp_path):
 def test_service_rows_carry_docker_status_so_exit_codes_and_uptime_survive():
     """The dashboard tells a finished one-shot job ("Exited (0)") from a crash ("Exited (1)") and
     shows uptime ("Up 3 hours"), and both live only in docker's Status text."""
-    from ordo.broker import DockerBackend
+    from ordo.control.broker import DockerBackend
 
     row = DockerBackend._service_row(
         {"service": "evals", "name": "ordo-evals-1", "state": "exited", "status": "Exited (0) 2 hours ago"}

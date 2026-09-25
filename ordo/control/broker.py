@@ -24,7 +24,7 @@ import sys
 import threading
 from typing import Protocol
 
-from .bringup import compose_argv, lifecycle_group, load_compose, plan_named, profiles_in
+from ..render.stack import compose_argv, lifecycle_group, load_compose, plan_named, profiles_in
 from .scheduler import Job, Scheduler
 from .scheduler_state import RECOVERY_JOB_ID, SchedulerStateStore, StateUnreadable
 
@@ -51,7 +51,7 @@ class ContainerBackend(Protocol):
     def service_stats(self) -> dict: ...
 
     # The rendered compose this backend acts on. The control plane derives a service's netns
-    # members from it (`bringup.lifecycle_group`), so it reads the same file the compose verbs run.
+    # members from it (`stack.lifecycle_group`), so it reads the same file the compose verbs run.
     def rendered_compose(self) -> dict: ...
 
     # Compose verbs take an OPTIONAL service: no argument means the whole project, which for
@@ -253,7 +253,7 @@ class DockerBackend:
     #
     # Everything below stays in this class's existing style: the docker CLI over subprocess,
     # scoped to THIS compose project by label, no third-party SDK. `_compose()` builds its argv with
-    # `bringup.compose_argv`, the same builder the host's `ordo up` uses, so both env files and the
+    # `stack.compose_argv`, the same builder the host's `ordo up` uses, so both env files and the
     # profile set are identical whether the control plane or the operator runs compose.
 
     COMPOSE_DIR = "/config"
@@ -378,7 +378,7 @@ class DockerBackend:
         picks up an edited .env value. No render step: the rendered compose, with llamacpp's 5090
         uuid pin baked into its environment/deploy blocks, is replayed as it stands.
 
-        The args come from `bringup.plan_named`, the planner `ordo recreate` uses on the host: a
+        The args come from `stack.plan_named`, the planner `ordo recreate` uses on the host: a
         netns owner (caddy) is recreated in the same call as its members, which would otherwise
         keep the destroyed namespace.
         """
@@ -407,7 +407,7 @@ class DockerBackend:
         return proc.returncode, output
 
     def compose_up(self, service: str | None = None) -> None:
-        # A named up is the host's `ordo up <service>`: `bringup.plan_named`, so `--no-deps` (else
+        # A named up is the host's `ordo up <service>`: `stack.plan_named`, so `--no-deps` (else
         # compose also starts the service's dependencies, and during a GPU lease that includes the
         # evicted llamacpp; the lease guard in control.py checks only the group) plus the netns
         # members, with every profile so a profiled dependency resolves.

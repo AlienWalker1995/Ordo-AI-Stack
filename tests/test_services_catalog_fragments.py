@@ -5,7 +5,7 @@ Three invariants:
   1. Every fragment parses and every card carries the required schema keys (an explicit
      `plugin` gate, an explicit `order` so the curated grid order never depends on glob
      order, and the display fields the grid renders).
-  2. The render-side aggregation (ordo.render.aggregate_services_catalog -> the
+  2. The render-side aggregation (ordo.render.engine.aggregate_services_catalog -> the
      out/services-catalog.json the dashboard mounts) is IDENTICAL to what the dashboard's
      in-repo fragment loader produces — the two implementations can't drift apart.
   3. The wiring maps derived from the fragments (OPS_SERVICE_MAP / TAILNET_LABELS) match
@@ -26,7 +26,7 @@ from dashboard.services_catalog import (  # noqa: E402
     SERVICES,
     TAILNET_LABELS,
 )
-from ordo.render import aggregate_services_catalog  # noqa: E402
+from ordo.render.engine import aggregate_services_catalog  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FRAGMENTS = sorted((REPO_ROOT / "services").glob("*/catalog.json"))

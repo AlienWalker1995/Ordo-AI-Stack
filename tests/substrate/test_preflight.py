@@ -1,11 +1,11 @@
 """Preflight is a read-only GO/NO-GO gate: drift, checksums, GPU, parity, images."""
 from pathlib import Path
 
-from ordo import preflight
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.plugins import PluginRegistry
-from ordo.render import render
+from ordo.host import preflight
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")

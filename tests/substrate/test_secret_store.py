@@ -17,16 +17,18 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo import cli, remote, secret_files, secret_store, wizard
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.hardware import HardwareProfile
-from ordo.plugins import PluginRegistry
+from ordo import cli
+from ordo.host import cli_secrets, remote, secret_store, wizard
+from ordo.render import secret_files
+from ordo.render.catalog import Catalog
+from ordo.render.config import DEFAULT_SECRETS_SOURCE, Source
+from ordo.render.hardware import HardwareProfile
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
-RENDER_MODULE = sys.modules["ordo.render"]
+RENDER_MODULE = sys.modules["ordo.render.engine"]
 HARDWARE = HardwareProfile.from_spec({"gpus": [], "ram_gb": 32, "cpu_cores": 8})
 
 HAVE_SOPS = shutil.which("sops") is not None and shutil.which("age-keygen") is not None
@@ -94,7 +96,7 @@ def test_an_explicit_secrets_source_wins_over_the_default(tmp_path):
     # The operator's live install sets site: SECRETS_SOURCE explicitly, so changing
     # DEFAULT_SECRETS_SOURCE must never change where an explicit value resolves.
     explicit = "../elsewhere/mine.env.sops"
-    assert explicit != secret_store.DEFAULT_SECRETS_SOURCE
+    assert explicit != DEFAULT_SECRETS_SOURCE
     store = secret_store.store_for({"SECRETS_SOURCE": explicit}, tmp_path / "out", repo_root=tmp_path / "repo")
     assert isinstance(store, secret_store.SopsStore)
     assert store.path == (tmp_path / "elsewhere" / "mine.env.sops").resolve()
@@ -166,7 +168,7 @@ def test_the_agent_entrypoint_treats_an_empty_file_secret_as_unset():
 
 
 def test_the_agent_file_secrets_name_their_store_key_and_live_under_out():
-    from ordo.agents import AgentRegistry
+    from ordo.render.agents import AgentRegistry
 
     hermes = AgentRegistry.load(ROOT / "services").get("hermes")
     assert {s.key for s in hermes.secret_files} == {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT"}
@@ -319,12 +321,12 @@ def test_rotate_internal_rotates_every_internal_key_present(stack, capsys):
 
 
 def test_up_mints_the_local_sign_in_secret_through_the_store(stack):
-    sign_in = cli._dashboard_sign_in(stack)
+    sign_in = cli_secrets._dashboard_sign_in(stack)
     lines = [ln for ln in (stack / "secrets.env").read_text(encoding="utf-8").splitlines()
              if not ln.startswith(sign_in["secret"] + "=")]
     (stack / "secrets.env").write_text("\n".join(lines) + "\n", encoding="utf-8")
     store = secret_store.PlainStore(stack / "secrets.env")
-    assert cli._ensure_local_sign_in_secret(stack, store) is True
+    assert cli_secrets._ensure_local_sign_in_secret(stack, store) is True
     assert _values(stack / "secrets.env")[sign_in["secret"]]
 
 
@@ -382,7 +384,7 @@ def test_import_then_materialize_carries_every_live_value_over(stack, tmp_path, 
     (stack / "secrets.env").unlink()
     assert _ordo(stack, "materialize") == 0
     materialized = _values(stack / "secrets.env")
-    manifest = cli._manifest(stack)
+    manifest = cli_secrets._manifest(stack)
     assert list(materialized) == manifest["required_secrets"]
     assert all(materialized[k] == live[k] for k in materialized)
 
@@ -407,7 +409,7 @@ def test_import_takes_the_file_secrets_and_drops_the_retired_site_key(stack, tmp
     legacy.mkdir()
     (legacy / "discord_token").write_text("discord-value\n", encoding="utf-8")
     text = (stack / "ordo.yaml").read_text(encoding="utf-8")
-    from ordo.source_edit import edit_site_keys
+    from ordo.render.source_edit import edit_site_keys
     (stack / "ordo.yaml").write_text(edit_site_keys(text, {"OPERATOR_SECRETS_DIR": str(legacy)}, []),
                                      encoding="utf-8")
     target = tmp_path / "ordo.env.sops"
@@ -506,8 +508,8 @@ def test_up_materializes_from_the_sops_store(stack, tmp_path, age_key):
     stored = secret_store.parse_dotenv(secret_store.SopsStore(target).read_text())
     (stack / "secrets.env").unlink()
     args = argparse.Namespace(source=str(stack / "ordo.yaml"), source_explicit=True, out=str(stack))
-    assert cli._prepare_secrets(args, stack) == 0
+    assert cli_secrets._prepare_secrets(args, stack) == 0
     materialized = _values(stack / "secrets.env")
-    assert list(materialized) == cli._manifest(stack)["required_secrets"]
+    assert list(materialized) == cli_secrets._manifest(stack)["required_secrets"]
     assert all(materialized[k] == stored.get(k, "") for k in materialized)
     assert (stack / "secrets" / "discord_bot_token").exists()

@@ -18,7 +18,7 @@ The structural bug: Hermes is asked to operate its own host but has no hands.
 
 ## The load-bearing constraint
 
-The GPU lease is **cooperative**, not enforced (`ordo/scheduler.py`, `ordo/broker.py`): a lease
+The GPU lease is **cooperative**, not enforced (`ordo/control/scheduler.py`, `ordo/control/broker.py`): a lease
 STOPS the resident llama.cpp to free VRAM, runs the client workload, then restores it — but the
 broker only governs jobs it is told about. A raw `docker run --gpus all` **bypasses the broker
 entirely**: llama.cpp is never evicted, two CUDA tenants co-saturate the 5090, and the box

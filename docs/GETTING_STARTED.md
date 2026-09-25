@@ -50,7 +50,7 @@ Env knobs (optional): `EMBED_MODEL`, `RAG_COLLECTION`, `RAG_CHUNK_SIZE`, `RAG_CH
 
 ### Host tools (Cursor, CLI on the host machine)
 
-`model-gateway` has no host port publish (core services publish nothing — see `ordo/compose.py`). Host and tailnet tools reach it through the Caddy front door at `/llm/`, which bypasses SSO for programmatic clients and instead requires the LiteLLM bearer key:
+`model-gateway` has no host port publish (core services publish nothing — see `ordo/render/compose.py`). Host and tailnet tools reach it through the Caddy front door at `/llm/`, which bypasses SSO for programmatic clients and instead requires the LiteLLM bearer key:
 
 - Point Cursor or any OpenAI-compatible client at `https://${CADDY_TAILNET_HOSTNAME}/llm/v1` with `Authorization: Bearer ${LITELLM_MASTER_KEY}`.
 - This works from the host and from any tailnet device — there is no `127.0.0.1:11435` shortcut. Publishing the port directly to the host requires a deliberate `ordo.yaml` override (a `services.model-gateway.ports` entry re-rendered through `ordo render`), which is not the shipped default.

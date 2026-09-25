@@ -18,12 +18,12 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from ordo.audit import AuditLog
-from ordo.broker import Broker, MockBackend
-from ordo.catalog import Catalog
-from ordo.control import ControlPlane
-from ordo.plugins import PluginRegistry
-from ordo.scheduler import Scheduler
+from ordo.control.api import ControlPlane
+from ordo.control.audit import AuditLog
+from ordo.control.broker import Broker, MockBackend
+from ordo.control.scheduler import Scheduler
+from ordo.render.catalog import Catalog
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
@@ -35,8 +35,8 @@ AUTH = {"Authorization": f"Bearer {TOKEN}", "X-Actor": "dashboard"}
 @pytest.fixture
 def plane(tmp_path, monkeypatch):
     audit_path = tmp_path / "data" / "audit.log"
-    monkeypatch.setattr("ordo.control.AUDIT_LOG_PATH", audit_path)
-    monkeypatch.setattr("ordo.control.COMFYUI_CUSTOM_NODES_DIR", tmp_path / "custom_nodes")
+    monkeypatch.setattr("ordo.control.api.AUDIT_LOG_PATH", audit_path)
+    monkeypatch.setattr("ordo.control.api.COMFYUI_CUSTOM_NODES_DIR", tmp_path / "custom_nodes")
     src = tmp_path / "ordo.yaml"
     src.write_text(yaml.safe_dump(
         {"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128}, "model": "auto", "plugins": "auto"}

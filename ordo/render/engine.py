@@ -15,12 +15,13 @@ from typing import Any
 
 import yaml
 
-from . import compose, gpu, images, secret_files, substrate
+from . import compose, gpu, secret_files, substrate
 from .agents import AgentRegistry
 from .catalog import DEFAULT_VRAM_RESERVE_GB, Catalog, Model
 from .config import Source
 from .dashboards import DashboardRegistry
 from .hardware import HardwareProfile, detect
+from .image_tags import first_party_contexts, load_record, pin_first_party
 from .llamacpp_backend import CPU as CPU_BACKEND
 from .llamacpp_backend import LlamaCppBackend
 from .llamacpp_backend import select as select_backend
@@ -28,13 +29,18 @@ from .plugins import LOOPBACK, Plugin, PluginRegistry
 
 # Render data now lives co-located under services/<id>/ (plugin.yaml / agent.yaml / dashboard.yaml
 # / catalog.json); each registry globs its own manifest kind out of the shared services/ root.
-DEFAULT_PLUGINS_DIR = Path(__file__).resolve().parent.parent / "services"
-DEFAULT_AGENTS_DIR = Path(__file__).resolve().parent.parent / "services"
-DEFAULT_DASHBOARDS_DIR = Path(__file__).resolve().parent.parent / "services"
+DEFAULT_PLUGINS_DIR = Path(__file__).resolve().parents[2] / "services"
+DEFAULT_AGENTS_DIR = Path(__file__).resolve().parents[2] / "services"
+DEFAULT_DASHBOARDS_DIR = Path(__file__).resolve().parents[2] / "services"
 
 # The LiteLLM proxy config the model-gateway image bakes in. Its `model_list` is the ONE place
 # model names exist, so a `litellm_key.models` grant is validated against it rather than a copy.
-LITELLM_CONFIG_TEMPLATE = Path(__file__).resolve().parent.parent / "services" / "model-gateway" / "litellm_config.yaml"
+LITELLM_CONFIG_TEMPLATE = Path(__file__).resolve().parents[2] / "services" / "model-gateway" / "litellm_config.yaml"
+
+# The operator source and model catalog a command reads when none is named: the tracked public example
+# and the bundled catalog, beside this checkout.
+DEFAULT_SOURCE = Path(__file__).resolve().parents[2] / "ordo.example.yaml"
+DEFAULT_CATALOG = Path(__file__).resolve().parents[2] / "catalog" / "models.yaml"
 
 # Gate-enforced service -> the .env key its in-stack consumers already use for its base URL.
 # When the service is gated, render points that key at the gate so mcp-comfyui, the
@@ -80,12 +86,6 @@ CORE_SECRET_KEYS: tuple[str, ...] = (
 # The core keys above the stack runs WITHOUT (they only unlock gated downloads). Listed so a blank
 # one is a preflight note, not a blocker; a plugin that reads one declares it in `optional_secrets:`.
 CORE_OPTIONAL_SECRET_KEYS: tuple[str, ...] = ("HF_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN")
-
-# Secrets a service may read that are deliberately NOT required (not in secrets.env.example):
-# the dashboard only enforces THROUGHPUT_RECORD_TOKEN "when set" (see the note in CORE_SECRET_KEYS).
-# A service passes these as ${KEY:-} so an absent value is simply empty; materialize writes one
-# into secrets.env only when the store holds it.
-OPTIONAL_SECRET_KEYS: tuple[str, ...] = ("THROUGHPUT_RECORD_TOKEN",)
 
 # The SSO edge plugin (services/edge). Whether it is enabled is THE switch between the two access
 # modes; nothing else (no flag, no env var) selects the mode.
@@ -278,7 +278,7 @@ class RenderedConfig:
     # (plugin, service) pairs for every enabled kind=service plugin — compose builds from these
     plugin_services: list[Any] = dataclasses.field(default_factory=list)
     # secret env KEYS the enabled services need (core + plugins). Values are NEVER rendered — they
-    # live in the secret store (ordo/secret_store.py); write() emits secrets.env.example (keys only).
+    # live in the secret store (ordo/host/secret_store.py); write() emits secrets.env.example (keys only).
     required_secrets: list[str] = dataclasses.field(default_factory=list)
     # The subset of required_secrets the stack runs without: every enabled plugin that reads the
     # key declares it `optional_secrets:`. Preflight notes a blank one instead of blocking.
@@ -287,12 +287,12 @@ class RenderedConfig:
     # (`litellm_key:`). Rendered to out/model-gateway/keys.json, which the model-gateway-keys
     # one-shot reads to provision the keys against the running LiteLLM proxy.
     litellm_keys: list[dict[str, Any]] = dataclasses.field(default_factory=list)
-    # The llama.cpp build this host runs (ordo/llamacpp_backend.py). Its image is the default for
+    # The llama.cpp build this host runs (ordo/render/llamacpp_backend.py). Its image is the default for
     # the chat service (a model's `backend_image` or an override still wins, via LLAMACPP_IMAGE);
     # its device wiring is what compose gives that service.
     llamacpp_backend: LlamaCppBackend = CPU_BACKEND
     # The first-party images (`ordo/<name>`, untagged) whose tag render fills in from the
-    # out/images.json record `ordo build` writes. See ordo/images.py.
+    # out/images.json record `ordo build` writes. See ordo/render/image_tags.py.
     first_party_images: tuple[str, ...] = ()
 
     def resident_vram_gb(self) -> float:
@@ -373,7 +373,7 @@ class RenderedConfig:
         compose has, and a request for it on a host without it stops the container starting.
 
         `image_tags` is the `ordo build` record ({image: tag}); a first-party image it does not
-        name renders at `images.FALLBACK_TAG`."""
+        name renders at `FALLBACK_TAG` (ordo/render/image_tags.py)."""
         nvidia = self.hardware.primary_is_nvidia
         pri = self.hardware.primary_gpu if nvidia else None
         sec = self.hardware.secondary_gpu if nvidia else None
@@ -412,7 +412,7 @@ class RenderedConfig:
             # The keys this render wrote to .env: a service's declared derived key renders as a
             # `${KEY?}` reference only when the render produced it.
             available_env=frozenset(self.env))
-        images.pin_first_party(doc["services"], self.first_party_images, image_tags or {})
+        pin_first_party(doc["services"], self.first_party_images, image_tags or {})
         return doc
 
     def write(self, out_dir: str | Path) -> None:
@@ -440,7 +440,7 @@ class RenderedConfig:
         ]
         sec_lines += [f"{k}=" for k in self.required_secrets]
         (out / "secrets.env.example").write_text("\n".join(sec_lines) + "\n", encoding="utf-8")
-        # Every compose call loads the file-secret digests (bringup.compose_argv), and compose refuses
+        # Every compose call loads the file-secret digests (stack.compose_argv), and compose refuses
         # a missing --env-file. `ordo secrets materialize` owns the content; a render only makes sure
         # the file exists, so a render with nothing materialized yet still has a runnable compose.
         digests = out / secret_files.DIGESTS_ENV_FILE
@@ -467,7 +467,7 @@ class RenderedConfig:
         # first-party image tags come from the record `ordo build` keeps in this same directory, so
         # the host render and ops-controller's render (out/ is its /config) pin the same builds.
         (out / "docker-compose.yml").write_text(
-            yaml.safe_dump(self.compose_dict(image_tags=images.load_record(out)), sort_keys=False),
+            yaml.safe_dump(self.compose_dict(image_tags=load_record(out)), sort_keys=False),
             encoding="utf-8")
         for retired in RETIRED_OUTPUTS:
             (out / retired).unlink(missing_ok=True)
@@ -798,7 +798,7 @@ def render(source: Source, catalog: Catalog,
         optional_secrets=optional_secrets,
         litellm_keys=litellm_keys,
         llamacpp_backend=backend,
-        first_party_images=tuple(sorted(images.first_party_contexts(plugins, agents, dashboards))),
+        first_party_images=tuple(sorted(first_party_contexts(plugins, agents, dashboards))),
     )
 
 

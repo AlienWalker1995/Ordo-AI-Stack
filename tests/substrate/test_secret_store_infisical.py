@@ -22,16 +22,17 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo import cli, infisical, remote, secret_store, wizard
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.hardware import HardwareProfile
-from ordo.plugins import PluginRegistry
+from ordo import cli
+from ordo.host import cli_secrets, infisical, remote, secret_store, wizard
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.hardware import HardwareProfile
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
-RENDER_MODULE = sys.modules["ordo.render"]
+RENDER_MODULE = sys.modules["ordo.render.engine"]
 HARDWARE = HardwareProfile.from_spec({"gpus": [], "ram_gb": 32, "cpu_cores": 8})
 BASE = {"hardware": {"gpus": [], "ram_gb": 32, "cpu_cores": 8}}
 
@@ -439,10 +440,10 @@ def test_up_materializes_from_infisical(stack, fake, reader_env):
     _point_at_infisical(stack)
     (stack / "secrets.env").unlink()
     args = argparse.Namespace(source=str(stack / "ordo.yaml"), source_explicit=True, out=str(stack))
-    assert cli._prepare_secrets(args, stack) == 0
+    assert cli_secrets._prepare_secrets(args, stack) == 0
     materialized = _values(stack / "secrets.env")
-    assert list(materialized)[: len(cli._manifest(stack)["required_secrets"])] == \
-        cli._manifest(stack)["required_secrets"]
+    assert list(materialized)[: len(cli_secrets._manifest(stack)["required_secrets"])] == \
+        cli_secrets._manifest(stack)["required_secrets"]
     assert all(materialized[k] == fake.secrets.get(k, "") for k in materialized)
 
 

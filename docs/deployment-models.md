@@ -238,7 +238,7 @@ that posture. The difference is exposure, and the public models (2 and 3) *add* 
   the wildcard wins — see [auth runbook troubleshooting](runbooks/auth.md#troubleshooting)).
 - **No UI service ever publishes its own host port.** Caddy is the *only* publisher, in every model.
   A service that publishes its own port bypasses the SSO gate entirely — this invariant is guarded by
-  `tests/test_caddyfile_invariants.py` and the `ordo/compose.py` no-host-port rule, and it must hold
+  `tests/test_caddyfile_invariants.py` and the `ordo/render/compose.py` no-host-port rule, and it must hold
   on a public deployment above all.
 - **The `CADDY_BIND` lesson.** The rendered compose uses `${CADDY_BIND:?…}`, which refuses an
   **empty/unset** value — catching the historical case where an empty bind silently degraded to

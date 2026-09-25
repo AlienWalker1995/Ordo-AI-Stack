@@ -6,7 +6,7 @@ Two rot classes the 2026-08-05 spring-clean audit found, now closed mechanically
    note + silent fallback — so a bad id in the tracked example config or the wizard's
    CAPABILITIES table "works" while quietly doing the wrong thing. Shipped instances:
    `ordo.example.yaml` said `dashboard: v2-native` (not a registered id — the prose
-   name from ordo/dashboards.py won over the real id `native`), and wizard
+   name from ordo/render/dashboards.py won over the real id `native`), and wizard
    CAPABILITIES emitted the retired `worker` plugin id, silently dropped on render.
 
 2. Nothing checked prose: docs accumulated links to deleted files (docs/architecture/,
@@ -23,10 +23,10 @@ from pathlib import Path
 
 import yaml
 
-from ordo.agents import AgentRegistry
-from ordo.dashboards import DashboardRegistry
-from ordo.plugins import PluginRegistry
-from ordo.wizard import CAPABILITIES
+from ordo.host.wizard import CAPABILITIES
+from ordo.render.agents import AgentRegistry
+from ordo.render.dashboards import DashboardRegistry
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGINS = PluginRegistry.load(ROOT / "services")

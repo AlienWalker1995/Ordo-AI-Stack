@@ -1,7 +1,7 @@
 """File-delivered secrets: a service that lists a key under `secret_files:` gets a read-only file at
 /run/secrets/<key lowercased> and `<ENV>=<that path>`, never the value in its environment.
 
-The mechanism (ordo/secret_files.py) is one declaration for every manifest kind; `ordo secrets
+The mechanism (ordo/render/secret_files.py) is one declaration for every manifest kind; `ordo secrets
 materialize` writes the files and a digest per key that the mount's label interpolates, so a rotated
 value changes the service's compose config hash like an env secret does.
 """
@@ -16,11 +16,12 @@ from pathlib import Path
 
 import pytest
 
-from ordo import bringup, secret_files, secret_store
-from ordo.agents import Agent
-from ordo.compose import render_compose
-from ordo.llamacpp_backend import CPU as CPU_BACKEND
-from ordo.plugins import McpSpec, Plugin, PluginService
+from ordo.host import bringup, secret_store
+from ordo.render import secret_files, stack
+from ordo.render.agents import Agent
+from ordo.render.compose import render_compose
+from ordo.render.llamacpp_backend import CPU as CPU_BACKEND
+from ordo.render.plugins import McpSpec, Plugin, PluginService
 
 ROOT = Path(__file__).resolve().parents[2]
 SECRETS_DIR = "${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/secrets"
@@ -123,7 +124,7 @@ def test_readers_of_a_key_include_the_services_that_mount_it():
         "file-reader": {"labels": {"ordo.secret-file.token": "${ORDO_SECRET_FILE_SHA256_TOKEN:-}"}},
         "other": {"environment": {"TOKEN_OTHER": "${TOKEN_OTHER}"}},
     }}
-    assert bringup.readers_of(doc, ["TOKEN"]) == ["env-reader", "file-reader"]
+    assert stack.readers_of(doc, ["TOKEN"]) == ["env-reader", "file-reader"]
 
 
 def test_every_compose_call_loads_the_digests():
@@ -201,10 +202,10 @@ def test_file_secrets_are_readable_by_the_container_user_inside_an_owner_only_di
 
 
 def test_render_creates_an_empty_digests_file_and_never_overwrites_one(tmp_path):
-    from ordo.catalog import Catalog
-    from ordo.config import Source
-    from ordo.plugins import PluginRegistry
-    from ordo.render import render
+    from ordo.render.catalog import Catalog
+    from ordo.render.config import Source
+    from ordo.render.engine import render
+    from ordo.render.plugins import PluginRegistry
 
     rc = render(Source.from_dict({"hardware": {"gpus": [], "ram_gb": 32, "cpu_cores": 8}}),
                 Catalog.load(ROOT / "catalog" / "models.yaml"), PluginRegistry.load(ROOT / "services"))
@@ -315,7 +316,7 @@ def test_an_apply_dry_run_hashes_against_the_digests_out_holds_now(tmp_path):
     them every file-secret reader would hash differently from the running container."""
     import yaml
 
-    from ordo.apply import RealHost
+    from ordo.host.apply import RealHost
 
     out = tmp_path / "out"
     out.mkdir()

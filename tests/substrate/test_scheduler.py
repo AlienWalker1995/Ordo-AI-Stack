@@ -1,7 +1,7 @@
 """Scheduler decision-engine behavior."""
 import pytest
 
-from ordo.scheduler import Job, Scheduler
+from ordo.control.scheduler import Job, Scheduler
 
 
 def test_chat_co_runs_beside_media_when_it_fits():
@@ -85,7 +85,7 @@ def test_too_big_job_does_not_starve_smaller_jobs():
 
 
 def test_broker_does_not_start_a_rejected_job():
-    from ordo.broker import Broker, MockBackend
+    from ordo.control.broker import Broker, MockBackend
     s = Scheduler(32)
     b = Broker(s, MockBackend())
     b.request(Job("huge", 100, "media"))       # too big: rejected, never started

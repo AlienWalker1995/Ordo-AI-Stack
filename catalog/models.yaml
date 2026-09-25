@@ -12,7 +12,7 @@
 # saturation → RAM-spill → 2.4 tok/s incident).
 #
 # backend_image pins a special llama.cpp build instead of the per-host upstream one
-# (ordo/llamacpp_backend.py). Such an entry MUST declare requires.min_compute_cap, the lowest
+# (ordo/render/llamacpp_backend.py). Such an entry MUST declare requires.min_compute_cap, the lowest
 # NVIDIA compute capability that build has kernels for, so the sizer never hands it to a GPU it
 # cannot run on. The patched build is compiled for sm_120 only (services/llamacpp-patched).
 # A special build is a first-party image, named UNTAGGED (`ordo/llamacpp-patched`): `ordo build`

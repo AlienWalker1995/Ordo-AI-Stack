@@ -22,13 +22,13 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo import compose, gpu
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.hardware import GPU, HardwareProfile
-from ordo.llamacpp_backend import CUDA
-from ordo.plugins import PluginRegistry
-from ordo.render import DEFAULT_PLUGINS_DIR, GATED_SERVICE_URL_ENV, render
+from ordo.render import compose, gpu
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import DEFAULT_PLUGINS_DIR, GATED_SERVICE_URL_ENV, render
+from ordo.render.hardware import GPU, HardwareProfile
+from ordo.render.llamacpp_backend import CUDA
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
@@ -147,8 +147,8 @@ def test_exclusive_resolves_to_the_whole_card_not_a_magic_number():
 
 def test_an_exclusive_burst_request_evicts_every_primary_resident(rendered):
     """End-to-end through the real Scheduler: the declarations produce an actual eviction."""
-    from ordo.broker import Broker, MockBackend
-    from ordo.scheduler import Job, Scheduler
+    from ordo.control.broker import Broker, MockBackend
+    from ordo.control.scheduler import Job, Scheduler
 
     claims = rendered.gpu_inventory()
     sched = Scheduler(rendered.hardware.primary_vram_gb)
@@ -465,8 +465,8 @@ def test_prompts_queued_behind_a_held_lease_never_strand_the_resident(rendered):
       * withdrawing works on a QUEUED request, not just a running one, so a client that gave up
         takes its request with it.
     """
-    from ordo.broker import Broker, MockBackend
-    from ordo.scheduler import Job, Scheduler
+    from ordo.control.broker import Broker, MockBackend
+    from ordo.control.scheduler import Job, Scheduler
 
     claims = rendered.gpu_inventory()
     sched = Scheduler(rendered.hardware.primary_vram_gb)
@@ -505,7 +505,7 @@ def test_a_long_holder_can_see_its_heartbeat_obligation(rendered):
     """A real batch is ~80-90 minutes, well past LEASE_TTL_MAX (3600s), so heartbeating is a
     normal obligation and not an edge case. The arbiter must therefore TELL a holder how long
     its grant is good for, rather than each client hardcoding an assumption about the TTL."""
-    from ordo.scheduler import Job, Scheduler
+    from ordo.control.scheduler import Job, Scheduler
 
     sched = Scheduler(rendered.hardware.primary_vram_gb)
     sched.submit(Job(id="long-batch", vram_gb=20.0, kind="media", est_seconds=5400))

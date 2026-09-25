@@ -20,10 +20,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo import bringup, cli, fetch
-from ordo.catalog import Catalog, Model
-from ordo.config import Source
-from ordo.render import render
+from ordo import cli
+from ordo.host import bringup, cli_stack, fetch
+from ordo.render import models_volume
+from ordo.render.catalog import Catalog, Model
+from ordo.render.config import Source
+from ordo.render.engine import render
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG_PATH = ROOT / "catalog" / "models.yaml"
@@ -58,13 +60,13 @@ class FakeRunner:
     def run(self, argv, *, env=None, capture=False):
         self.calls.append((list(argv), env))
         if argv[:3] == ["docker", "volume", "inspect"]:
-            return fetch.RunResult(0 if self.volume_exists else 1, "")
+            return models_volume.RunResult(0 if self.volume_exists else 1, "")
         if argv[:3] == ["docker", "volume", "create"]:
             self.volume_exists = True
-            return fetch.RunResult(0, "")
-        if fetch.LIST_MARKER in argv:
-            return fetch.RunResult(0, "\n".join(sorted(self.files)) + "\n")
-        return fetch.RunResult(self.helper_exit, "")
+            return models_volume.RunResult(0, "")
+        if models_volume.LIST_MARKER in argv:
+            return models_volume.RunResult(0, "\n".join(sorted(self.files)) + "\n")
+        return models_volume.RunResult(self.helper_exit, "")
 
     def helper_runs(self):
         return [(argv, env) for argv, env in self.calls if fetch.FETCH_MARKER in argv]
@@ -82,7 +84,7 @@ def _doc(out: Path) -> dict:
 
 
 def _env(out: Path) -> dict[str, str]:
-    from ordo import parity
+    from ordo.host import parity
     return parity.load_env(str(out / ".env"))
 
 
@@ -289,14 +291,14 @@ IDLE = {"state": "idle", "leased": False, "running": [], "queued": [], "evicted_
 
 @pytest.fixture
 def no_docker(monkeypatch):
-    monkeypatch.setattr("ordo.bringup.read_gpu_status", lambda project: IDLE)
-    monkeypatch.setattr("ordo.images.ensure_images", lambda *a, **k: 0)
+    monkeypatch.setattr("ordo.host.bringup.read_gpu_status", lambda project: IDLE)
+    monkeypatch.setattr("ordo.host.images.ensure_images", lambda *a, **k: 0)
     ran: list[list[str]] = []
 
     class Result:
         returncode = 0
 
-    monkeypatch.setattr("ordo.bringup.subprocess.run", lambda cmd, *a, **kw: ran.append(list(cmd)) or Result())
+    monkeypatch.setattr("ordo.host.bringup.subprocess.run", lambda cmd, *a, **kw: ran.append(list(cmd)) or Result())
     return ran
 
 
@@ -307,7 +309,7 @@ def _capture_fetch(monkeypatch, code=0) -> list[set[str]]:
         seen.append(set(services))
         return code
 
-    monkeypatch.setattr("ordo.fetch.ensure_models_for_render", fake)
+    monkeypatch.setattr("ordo.host.fetch.ensure_models_for_render", fake)
     return seen
 
 
@@ -339,15 +341,15 @@ def test_a_failed_fetch_stops_the_bring_up(monkeypatch, tmp_path, no_docker):
 def test_the_fetch_runs_after_the_image_build(monkeypatch, tmp_path, no_docker):
     out = _write_out(tmp_path)
     order: list[str] = []
-    monkeypatch.setattr("ordo.images.ensure_images", lambda *a, **k: order.append("build") or 0)
-    monkeypatch.setattr("ordo.fetch.ensure_models_for_render", lambda *a, **k: order.append("fetch") or 0)
+    monkeypatch.setattr("ordo.host.images.ensure_images", lambda *a, **k: order.append("build") or 0)
+    monkeypatch.setattr("ordo.host.fetch.ensure_models_for_render", lambda *a, **k: order.append("fetch") or 0)
     bringup.bring_up(str(out), "ordo", [], whole_stack=True, with_profiles=True, force_recreate=False,
                      dry_run=False, build=True, models_catalog=CATALOG_PATH)
     assert order == ["build", "fetch"]
 
 
 def test_cli_up_fetches_by_default_and_no_fetch_turns_it_off(monkeypatch, tmp_path, no_docker):
-    monkeypatch.setattr(cli, "_host_preflight", lambda *a, **k: True)
+    monkeypatch.setattr(cli_stack, "_host_preflight", lambda *a, **k: True)
     out = str(_write_out(tmp_path))
     seen = _capture_fetch(monkeypatch)
     assert cli.main(["up", "--all", "--out", out, "--no-build"]) == 0
@@ -527,7 +529,7 @@ def test_every_file_a_default_render_loads_has_a_catalog_source(tmp_path, hardwa
 
 def test_fetch_by_id_also_fetches_the_models_projector(tmp_path):
     args = argparse.Namespace(all=False, model=LIVE_MODEL, out=str(tmp_path))
-    targets = cli._volume_fetch_targets(args, CATALOG)
+    targets = cli_stack._volume_fetch_targets(args, CATALOG)
     assert [m.file for m in targets] == [CATALOG.get(LIVE_MODEL).file, LIVE_PROJECTOR]
 
 
@@ -539,6 +541,6 @@ def test_the_native_plan_includes_the_projector(tmp_path):
 def test_volume_files_never_creates_the_volume_it_lists():
     # `docker run -v <name>:...` would create an unlabeled volume that compose then refuses to adopt.
     absent = FakeRunner(volume_exists=False)
-    assert fetch.volume_files(absent, "ordo") == set()
-    assert not any(fetch.LIST_MARKER in argv for argv, _ in absent.calls)
-    assert fetch.volume_files(FakeRunner(files={"a.gguf"}), "ordo") == {"a.gguf"}
+    assert models_volume.volume_files(absent, "ordo") == set()
+    assert not any(models_volume.LIST_MARKER in argv for argv, _ in absent.calls)
+    assert models_volume.volume_files(FakeRunner(files={"a.gguf"}), "ordo") == {"a.gguf"}

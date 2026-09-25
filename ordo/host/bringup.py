@@ -1,19 +1,14 @@
 """`ordo up` / `ordo recreate`: the one sanctioned way to bring the stack up from the host.
 
-Two things live here:
-
-- `compose_argv`, the ONE builder of a `docker compose` invocation against the rendered stack.
-  ops-controller's `DockerBackend._compose` and the host CLI both call it, so the env files and
-  the profile set cannot diverge between the control plane and the operator's shell.
-- The GPU lease check that runs before any host bring-up. A whole-stack `up -d` during a render
-  starts the llama.cpp the scheduler evicted to make room, and two tenants on one card have
-  crashed the host. So the command asks ops-controller's `/status` first and refuses when the
-  bring-up would start an evicted resident.
+It runs the compose invocation `compose_argv` builds (ordo/render/stack.py, the ONE builder, shared
+with ops-controller's `DockerBackend._compose`), after the GPU lease check that runs before any host
+bring-up. A whole-stack `up -d` during a render starts the llama.cpp the scheduler evicted to make
+room, and two tenants on one card have crashed the host. So the command asks ops-controller's
+`/status` first and refuses when the bring-up would start an evicted resident.
 """
 from __future__ import annotations
 
 import json
-import re
 import shlex
 import subprocess
 import sys
@@ -22,11 +17,11 @@ from pathlib import Path
 
 import yaml
 
-from . import fetch, images, secret_files
+from ..render.stack import COMPOSE_FILE, compose_argv, load_compose, plan_named, profiles_in, services_of
+from . import fetch, images
 
-COMPOSE_FILE = "docker-compose.yml"
 OPS_CONTROLLER_SERVICE = "ops-controller"
-# The ops-controller environment key naming its scheduler state file (ordo/compose.py sets it).
+# The ops-controller environment key naming its scheduler state file (ordo/render/compose.py sets it).
 SCHEDULER_STATE_KEY = "SCHEDULER_STATE_PATH"
 
 # Runs inside the ops-controller container, which holds its own token and serves on loopback. The
@@ -47,127 +42,6 @@ class LeaseUnknown(Exception):
     """ops-controller exists but its lease state could not be read. Callers must refuse."""
 
 
-def compose_argv(compose_dir: str, project: str, *args: str, profiles: Sequence[str] = ()) -> list[str]:
-    """`docker compose` against the rendered stack in `compose_dir`, followed by `args`.
-
-    `profiles` widens the resolvable set so a target whose `depends_on:` names a profiled service
-    resolves (without it `docker compose ... open-webui` aborts with "no such service: qdrant").
-    Widening is safe; `--no-deps` is what limits a start to the named services.
-
-    Every env file, always. Passing any --env-file disables compose's implicit .env auto-load, so
-    .env must be listed too; without secrets.env every ${LITELLM_MASTER_KEY} style reference goes
-    UNSET and secret-dependent services crash-loop (the 2026-06-26 oauth2-proxy 11-byte-cookie
-    outage). secret-files.env holds the digest each file-secret mount is labelled with, so a
-    rotated file secret changes its readers' config hash (ordo/secret_files.py). Order matters:
-    derived first, secrets second.
-    """
-    cmd = ["docker", "compose", "-p", project, "-f", f"{compose_dir}/{COMPOSE_FILE}"]
-    for profile in profiles:
-        cmd += ["--profile", profile]
-    cmd += [
-        "--env-file", f"{compose_dir}/.env",
-        "--env-file", f"{compose_dir}/secrets.env",
-        "--env-file", f"{compose_dir}/{secret_files.DIGESTS_ENV_FILE}",
-    ]
-    return cmd + list(args)
-
-
-def load_compose(compose_dir: str) -> dict:
-    """The rendered compose file as a dict. Raises OSError / yaml.YAMLError when unreadable."""
-    with open(f"{compose_dir}/{COMPOSE_FILE}", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
-
-
-def profiles_in(doc: dict) -> list[str]:
-    """Every profile named anywhere in the rendered compose, sorted for determinism."""
-    found: set[str] = set()
-    for service in (doc.get("services") or {}).values():
-        for profile in (service or {}).get("profiles") or []:
-            found.add(str(profile))
-    return sorted(found)
-
-
-def _services(doc: dict) -> dict:
-    return doc.get("services") or {}
-
-
-def netns_members(doc: dict, owner: str) -> list[str]:
-    """Services declared with `network_mode: service:<owner>`, sorted."""
-    return sorted(
-        name for name, spec in _services(doc).items()
-        if (spec or {}).get("network_mode") == f"service:{owner}"
-    )
-
-
-def lifecycle_group(doc: dict, service: str) -> list[str]:
-    """`service` followed by the services living in its network namespace.
-
-    The ONE place that knows which services follow which. A member shares its owner's network
-    namespace, and anything that gives the owner a new one (restart, stop and start, a `--no-deps`
-    recreate, a named down) leaves the member attached to the dead namespace: still running,
-    still "healthy", with only `lo`. So every verb that cycles the owner cycles the group, owner
-    first. A member (or any service nothing joins) is a group of one: acting on a member acts on
-    the member only. The host CLI (`plan_named`) and ops-controller's lifecycle verbs both expand
-    through here, so they cannot disagree about who follows whom.
-    """
-    return [service] + [m for m in netns_members(doc, service) if m != service]
-
-
-def _strings(node: object) -> list[str]:
-    """Every string in a compose service definition (keys and values, at any depth)."""
-    if isinstance(node, str):
-        return [node]
-    if isinstance(node, dict):
-        return [s for key, value in node.items() for s in _strings(key) + _strings(value)]
-    if isinstance(node, list):
-        return [s for item in node for s in _strings(item)]
-    return []
-
-
-def readers_of(doc: dict, keys: Sequence[str]) -> list[str]:
-    """The long-running services whose rendered definition interpolates any of `keys`, sorted.
-
-    Read from the rendered compose, so it covers every way a service reads a key: a declared
-    `secrets:` entry (`KEY: ${KEY}`), a key mapped onto another name (`X: ${KEY:-}`), a command
-    line (`--requirepass ${KEY}`), or a file secret (its mount's digest label,
-    `${ORDO_SECRET_FILE_SHA256_KEY:-}`). A one-shot job (`restart: "no"`, the evals runner) is left
-    out: it reads its environment on each run, and recreating it would start one.
-    """
-    names = [*keys, *(secret_files.digest_var(key) for key in keys)]
-    refs = [re.compile(r"\$\{" + re.escape(name) + r"[}:?-]") for name in names]
-    readers = []
-    for name, spec in _services(doc).items():
-        if str((spec or {}).get("restart")) == "no":
-            continue
-        if any(ref.search(text) for text in _strings(spec) for ref in refs):
-            readers.append(name)
-    return sorted(readers)
-
-
-def plan_named(doc: dict, services: Sequence[str], *, force_recreate: bool) -> tuple[list[str], set[str]]:
-    """(compose args, services compose will start) for a named-service bring-up.
-
-    Named services are started alone (`--no-deps`), each with its `lifecycle_group`: the netns
-    members are listed by name so compose recreates them after their owner (it still orders named
-    services by `depends_on` under `--no-deps`), while the owner's own dependencies are left alone.
-    """
-    targets: list[str] = []
-    for service in services:
-        targets += [name for name in lifecycle_group(doc, service) if name not in targets]
-    args = ["up", "-d", "--no-deps"] + (["--force-recreate"] if force_recreate else []) + targets
-    return args, set(targets)
-
-
-def starting_services(doc: dict, services: Sequence[str], *, whole_stack: bool, with_profiles: bool) -> dict:
-    """The compose definitions of the services this bring-up starts (what preflight checks)."""
-    defined = _services(doc)
-    if whole_stack:
-        return {name: spec for name, spec in defined.items()
-                if with_profiles or not (spec or {}).get("profiles")}
-    _args, targets = plan_named(doc, services, force_recreate=False)
-    return {name: defined[name] for name in sorted(targets) if name in defined}
-
-
 def is_leased(gpu: dict) -> bool:
     """`leased` is the scheduler's own verdict; older images only expose the raw lists."""
     return bool(gpu.get("leased") or gpu.get("running") or gpu.get("evicted_residents"))
@@ -181,8 +55,8 @@ def _holders(gpu: dict) -> str:
 
 def loads_scheduler_state(doc: dict) -> bool:
     """Whether the rendered ops-controller declares where its scheduler state lives, so a
-    recreated one adopts the lease its predecessor saved (see ordo/scheduler_state.py)."""
-    environment = (_services(doc).get(OPS_CONTROLLER_SERVICE) or {}).get("environment") or {}
+    recreated one adopts the lease its predecessor saved (see ordo/control/scheduler_state.py)."""
+    environment = (services_of(doc).get(OPS_CONTROLLER_SERVICE) or {}).get("environment") or {}
     if isinstance(environment, list):  # compose's `KEY=value` list form
         environment = dict(item.split("=", 1) for item in environment if "=" in item)
     return bool(str(environment.get(SCHEDULER_STATE_KEY) or "").strip())
@@ -297,13 +171,13 @@ def bring_up(out_dir: str, project: str, services: Sequence[str], *, whole_stack
         print(f"cannot read {compose_dir}/{COMPOSE_FILE} ({e}); render first: "
               f"ordo --source out/ordo.yaml render --out out", file=sys.stderr)
         return 1
-    unknown = [s for s in services if s not in _services(doc)]
+    unknown = [s for s in services if s not in services_of(doc)]
     if unknown:
         print(f"no such service in the rendered stack: {', '.join(unknown)}", file=sys.stderr)
         return 1
 
     if whole_stack:
-        args, starts = ["up", "-d"], set(_services(doc))
+        args, starts = ["up", "-d"], set(services_of(doc))
     else:
         args, starts = plan_named(doc, services, force_recreate=force_recreate)
     profiles = profiles_in(doc) if with_profiles else []
@@ -324,7 +198,7 @@ def bring_up(out_dir: str, project: str, services: Sequence[str], *, whole_stack
     # Only what this bring-up starts: a --core up leaves profiled services down, so their images
     # and model files are not needed yet.
     needed = starts if with_profiles or not whole_stack else {
-        name for name in starts if not (_services(doc)[name] or {}).get("profiles")}
+        name for name in starts if not (services_of(doc)[name] or {}).get("profiles")}
     if build:
         # Read by module attribute at call time, so tests can replace the build step.
         code = images.ensure_images(compose_dir, doc, sorted(needed), project=project, dry_run=dry_run)

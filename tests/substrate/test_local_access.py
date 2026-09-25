@@ -10,11 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.dashboards import Dashboard
-from ordo.plugins import PluginRegistry, PluginService
-from ordo.render import render
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.dashboards import Dashboard
+from ordo.render.engine import render
+from ordo.render.plugins import PluginRegistry, PluginService
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
@@ -136,7 +136,7 @@ def test_a_local_sign_in_secret_needs_a_local_port():
 
 
 def test_the_local_sign_in_secret_is_generated_not_asked_for():
-    from ordo import wizard
+    from ordo.host import wizard
 
     value = wizard.generator_for(LOCAL_LOGIN_SECRET)()
     assert len(value) >= 32
@@ -162,36 +162,36 @@ def _out_dir(tmp_path: Path, site: dict, secrets: str) -> Path:
 
 
 def test_up_mints_a_missing_local_sign_in_secret_and_keeps_the_rest(tmp_path):
-    from ordo import cli, parity
+    from ordo.host import cli_secrets, parity
 
     out = _out_dir(tmp_path, HOST_PATHS, "OPS_CONTROLLER_TOKEN=keep-me\n")
-    assert cli._ensure_local_sign_in_secret(out) is True
+    assert cli_secrets._ensure_local_sign_in_secret(out) is True
     values = parity.load_env(str(out / "secrets.env"))
     assert values["OPS_CONTROLLER_TOKEN"] == "keep-me"
     assert len(values[LOCAL_LOGIN_SECRET]) >= 32
     minted = values[LOCAL_LOGIN_SECRET]
-    assert cli._ensure_local_sign_in_secret(out) is False    # idempotent: an existing value stays
+    assert cli_secrets._ensure_local_sign_in_secret(out) is False    # idempotent: an existing value stays
     assert parity.load_env(str(out / "secrets.env"))[LOCAL_LOGIN_SECRET] == minted
 
 
 def test_up_leaves_secrets_alone_with_the_edge(tmp_path):
-    from ordo import cli
+    from ordo.host import cli_secrets
 
     out = _out_dir(tmp_path, {**HOST_PATHS, **EDGE_KEYS}, "OPS_CONTROLLER_TOKEN=keep-me\n")
-    assert cli._ensure_local_sign_in_secret(out) is False
+    assert cli_secrets._ensure_local_sign_in_secret(out) is False
     assert (out / "secrets.env").read_text(encoding="utf-8") == "OPS_CONTROLLER_TOKEN=keep-me\n"
 
 
 def test_the_sign_in_link_carries_the_token_in_the_fragment(tmp_path):
-    from ordo import cli
+    from ordo.host import cli_secrets
 
     out = _out_dir(tmp_path, HOST_PATHS, f"{LOCAL_LOGIN_SECRET}=tok-123\n")
     # The fragment never reaches the server (no access log, no Referer); the SPA posts it once.
-    assert cli._dashboard_sign_in_link(out) == "http://127.0.0.1:8444/#sign-in=tok-123"
+    assert cli_secrets._dashboard_sign_in_link(out) == "http://127.0.0.1:8444/#sign-in=tok-123"
 
 
 def test_no_sign_in_link_with_the_edge(tmp_path):
-    from ordo import cli
+    from ordo.host import cli_secrets
 
     out = _out_dir(tmp_path, {**HOST_PATHS, **EDGE_KEYS}, f"{LOCAL_LOGIN_SECRET}=tok-123\n")
-    assert cli._dashboard_sign_in_link(out) is None
+    assert cli_secrets._dashboard_sign_in_link(out) is None

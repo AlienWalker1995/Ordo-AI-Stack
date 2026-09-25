@@ -71,7 +71,7 @@ Rendered into `.env` (the last two are DEFAULTS an operator may override from `s
 | `LANGFUSE_RETENTION_DAYS` | `90` (compose default on the two retention services) | Trace retention: `langfuse-retention` deletes traces older than this through the public API (daily at 04:45 UTC) and `langfuse-minio-lifecycle` expires the `langfuse` bucket's objects after the same number of days. A positive whole number; set it with `site:` in `ordo.yaml`. The default is a compose default scoped to its two consumers (`services/langfuse/plugin.yaml`), so changing it recreates only those two |
 
 Set on the `model-gateway` service by the renderer only while the plugin is enabled
-(`ordo/compose.py::GATEWAY_LANGFUSE_ENV`; not `.env` keys, never hand-set):
+(`ordo/render/compose.py::GATEWAY_LANGFUSE_ENV`; not `.env` keys, never hand-set):
 
 | Variable | Value | Purpose |
 |---|---|---|
@@ -114,7 +114,7 @@ full sign-in flow and the one manual Google Cloud Console step.
 | `LITELLM_ADMIN_IDENTITY` | `PROXY_ADMIN_ID` | Optional. The Google identity (the account's OpenID `sub`, not its email) LiteLLM promotes to `proxy_admin` on sign-in. Unset means every Google sign-in lands as `internal_user_view_only`. |
 
 Set on the `model-gateway` service by the renderer only while `edge` is enabled AND an
-operator-facing URL is known (`ordo/render.py::litellm_google_sso_env`; not `.env` keys, never
+operator-facing URL is known (`ordo/render/engine.py::litellm_google_sso_env`; not `.env` keys, never
 hand-set). With `edge` disabled, none of these render and the master-key login is unchanged:
 
 | Variable | Value | Purpose |
@@ -226,7 +226,7 @@ The `LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION` / `LLAMACPP_KV_CACHE_TYPE_K` / `LLAM
 
 ### Rollback to stock upstream
 
-In `ordo.yaml`, point the chat service at the pinned upstream CUDA build (the `CUDA` image in `ordo/llamacpp_backend.py`):
+In `ordo.yaml`, point the chat service at the pinned upstream CUDA build (the `CUDA` image in `ordo/render/llamacpp_backend.py`):
 ```yaml
 overrides:
   llamacpp:
@@ -268,7 +268,7 @@ response header mean something instead of always reading $0.
 Leaving `cost:` unset (or `{}`) keeps every local model at $0/token, same as before this existed.
 When set, all four keys are required and must be positive numbers; a missing, zero, negative, or
 unrecognized key fails the render with a `ValueError` naming it (see
-`ordo/render.py::local_token_costs`). The render engine computes:
+`ordo/render/engine.py::local_token_costs`). The render engine computes:
 
 ```
 usd_per_second = inference_watts / 1000 * usd_per_kwh / 3600
@@ -319,7 +319,7 @@ hardware:
 
 `vendor` is `nvidia` (the default), `amd`, `intel` or `apple`. `compute_cap` is NVIDIA only (`nvidia-smi --query-gpu=compute_cap --format=csv`); without it, models that need a specific build (the patched sm_120 image) are skipped with a warning. `arch` is `x86_64` or `arm64` and defaults to this machine's.
 
-**llama.cpp backend.** `ordo/llamacpp_backend.py` maps the primary GPU to one upstream llama.cpp server image, all pinned to one build by tag and digest:
+**llama.cpp backend.** `ordo/render/llamacpp_backend.py` maps the primary GPU to one upstream llama.cpp server image, all pinned to one build by tag and digest:
 
 | Primary GPU | Backend | Device wiring |
 |---|---|---|

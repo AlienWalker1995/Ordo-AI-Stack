@@ -18,12 +18,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo import cli, doctor, substrate
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.control import ControlPlane
-from ordo.plugins import PluginRegistry
-from ordo.render import render
+from ordo import cli
+from ordo.control.api import ControlPlane
+from ordo.host import doctor
+from ordo.render import substrate
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
@@ -50,7 +52,7 @@ def test_digest_is_stable_across_runs_and_checkouts(tmp_path):
 
 def test_digest_covers_code_catalog_and_every_manifest_kind():
     names = {p.relative_to(ROOT).as_posix() for p in substrate.substrate_files(ROOT)}
-    assert "ordo/render.py" in names
+    assert "ordo/render/engine.py" in names
     assert "catalog/models.yaml" in names
     assert "services/edge/plugin.yaml" in names
     assert "services/hermes/agent.yaml" in names

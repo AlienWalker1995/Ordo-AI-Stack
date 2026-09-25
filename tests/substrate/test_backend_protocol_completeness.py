@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import inspect
 
-from ordo.broker import ContainerBackend, DockerBackend, MockBackend
+from ordo.control.broker import ContainerBackend, DockerBackend, MockBackend
 
 
 def _public_methods(cls) -> set[str]:

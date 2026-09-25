@@ -6,12 +6,12 @@ vault's notes/ folder and waits on CouchDB, live-watch polling is on (Docker Des
 inotify events), and the two secrets are wizard-generated (not left blank)."""
 from pathlib import Path
 
-from ordo import wizard
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.hardware import HardwareProfile
-from ordo.plugins import PluginRegistry
-from ordo.render import render
+from ordo.host import wizard
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
+from ordo.render.hardware import HardwareProfile
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")

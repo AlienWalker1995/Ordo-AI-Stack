@@ -12,11 +12,11 @@ from pathlib import Path
 
 import yaml
 
-from ordo import secret_store
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.plugins import PluginRegistry
-from ordo.render import render
+from ordo.host import secret_store
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
@@ -56,7 +56,7 @@ def test_evals_enables_when_listed_and_rides_its_own_profile():
 def test_the_runner_is_a_one_shot_container_not_a_daemon():
     """`restart: no`. Under the default unless-stopped a finished run would be restarted into the
     same run forever, and a `COMPOSE_PROFILES='*' up -d` would loop it against the local model.
-    (The policy itself is validated in ordo/plugins.py, tested in test_langfuse.py.)"""
+    (The policy itself is validated in ordo/render/plugins.py, tested in test_langfuse.py.)"""
     assert _evals_service(render(_src(), CATALOG, REGISTRY))["restart"] == "no"
 
 

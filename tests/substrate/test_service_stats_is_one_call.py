@@ -14,7 +14,7 @@ import inspect
 import re
 import textwrap
 
-from ordo.broker import DockerBackend
+from ordo.control.broker import DockerBackend
 
 
 def test_service_stats_issues_a_single_docker_stats_call():

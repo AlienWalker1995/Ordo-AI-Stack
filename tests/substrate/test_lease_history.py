@@ -1,7 +1,7 @@
 """LeaseHistory sink: lifecycle, outcomes, torn lines, trim, tail order."""
 import json
 
-from ordo.lease_history import LeaseHistory
+from ordo.control.lease_history import LeaseHistory
 
 
 class _Clock:

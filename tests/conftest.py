@@ -1,6 +1,6 @@
 """Top-level conftest for the ``tests/`` suite.
 
-Constructing the control plane (``ordo/control.py``) opens its audit log at
+Constructing the control plane (``ordo/control/api.py``) opens its audit log at
 ``AUDIT_LOG_PATH``, default ``/data/audit.jsonl`` (the production volume mount),
 and creates the parent directory, which fails with ``PermissionError`` on a clean
 CI runner where ``/data`` doesn't exist and isn't writable.

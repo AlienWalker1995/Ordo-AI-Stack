@@ -65,7 +65,7 @@
 | MCP servers → backend only | `ordo-mcp-net` (`internal: true`), reachable only by `model-gateway`; no host port published (edge-only publish model) |
 | Per-consumer MCP scoping | LiteLLM virtual-key `object_permission.mcp_servers` grants with `require_key_mcp_access_defined: true` |
 | CI pipeline | `.github/workflows/ci.yml` |
-| Audit log rotation | ops-controller `ordo/audit.py`: rotates at 10 MB, keeps five generations |
+| Audit log rotation | ops-controller `ordo/control/audit.py`: rotates at 10 MB, keeps five generations |
 
 ### Still Open / Deferred
 

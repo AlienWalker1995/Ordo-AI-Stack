@@ -57,7 +57,7 @@ SUBSTRATE_BUILD_CONTEXTS: dict[str, str] = {
 }
 # The substrate images `ordo build` builds and render tags. Each is declared UNTAGGED (by compose.py,
 # or for llamacpp-patched by a model's catalog `backend_image`): render fills in the tag `ordo build`
-# recorded (ordo/images.py).
+# recorded (ordo/render/image_tags.py).
 SUBSTRATE_IMAGES: tuple[str, ...] = ("model-gateway", "ops-controller", "gpu-gate", "llamacpp-patched")
 
 # --metrics turns on llama-server's native Prometheus endpoint at /metrics:8080 (token rates,
@@ -134,9 +134,16 @@ def _depends_on(peers: dict[str, str] | list[str] | None) -> Any:
     return list(peers)
 
 
+# Secrets a service may read that are deliberately NOT required (not in secrets.env.example):
+# the dashboard only enforces THROUGHPUT_RECORD_TOKEN "when set" (see the note in engine.py's CORE_SECRET_KEYS).
+# A service passes these as ${KEY:-} so an absent value is simply empty; materialize writes one
+# into secrets.env only when the store holds it.
+OPTIONAL_SECRET_KEYS: tuple[str, ...] = ("THROUGHPUT_RECORD_TOKEN",)
+
+
 # Operator-managed secrets live in secrets.env (SOPS-decrypted / hand-filled), NEVER in the rendered
 # .env, and no service loads that file whole. Each service lists the secret NAMES it reads. Where the
-# software can read a file, the secret is file-delivered (`secret_files:`, ordo/secret_files.py): a
+# software can read a file, the secret is file-delivered (`secret_files:`, ordo/render/secret_files.py): a
 # read-only /run/secrets mount and only its path in the environment. Otherwise it renders as
 # `KEY: ${KEY}` and compose interpolates the value from `--env-file secrets.env`. Either way a
 # service holds only the secrets it declares.
@@ -144,7 +151,6 @@ def _secret_env(names) -> dict[str, str]:
     """`KEY: ${KEY}` per secret name. An optional one (OPTIONAL_SECRET_KEYS) becomes ${KEY:-} so an
     absent value is empty rather than a compose warning; a required one stays ${KEY}, so a missing
     value is reported."""
-    from .render import OPTIONAL_SECRET_KEYS
     return {n: (f"${{{n}:-}}" if n in OPTIONAL_SECRET_KEYS else f"${{{n}}}") for n in names}
 
 
@@ -264,7 +270,7 @@ def _ops_controller(project: str, net: str, nvidia_gpu: bool) -> dict[str, Any]:
     if nvidia_gpu:
         s.update(_utility_gpu_reservation())
         s["environment"]["NVIDIA_DRIVER_CAPABILITIES"] = "utility"
-    # Its own bearer token only, as a file (ordo/cli.py `serve` reads it with ordo.secret_env).
+    # Its own bearer token only, as a file (ordo/control/serve.py reads it with ordo.secret_env).
     _add_secret_files(s, [SecretFileRef("OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN_FILE")])
     return s
 
@@ -561,7 +567,7 @@ def _apply_agent_runtime(svc: dict[str, Any], *, user: str | None, group_add: li
                          depends_on: dict[str, str] | None,
                          healthcheck: dict[str, Any] | None) -> None:
     """Layer the agent manifest's runtime wiring onto the base agent service (in place). File
-    secrets render as read-only mounts of the materialized out/secrets/* files (ordo/secret_files.py).
+    secrets render as read-only mounts of the materialized out/secrets/* files (ordo/render/secret_files.py).
     depends_on with conditions overrides the plain start-order list so V1's service_healthy gates
     are mirrored."""
     if user:
@@ -633,7 +639,7 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str,
         # owner atomically, replacing the manual `docker restart ordo-tailnet-*` after every caddy
         # recreate. (A BARE `docker restart <owner>` bypasses compose and still won't cascade. The
         # `--no-deps` paths, `ordo up/recreate` and ops-controller's lifecycle verbs, name the
-        # members explicitly through `bringup.lifecycle_group`.) depends_on must be all-or-nothing
+        # members explicitly through `stack.lifecycle_group`.) depends_on must be all-or-nothing
         # long form, so peers keep the default service_started condition and only the owner
         # carries restart.
         owner = ps.network_mode.split("service:", 1)[1]
@@ -751,9 +757,9 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     derived key renders only when the render produced it. None emits every declared key."""
     net = f"{project}-net"
     # the agent is swappable (Hermes is the default); a registry manifest may pin any image,
-    # else fall back to the <project>/agent-<id> convention (render tags it, see ordo/images.py).
+    # else fall back to the <project>/agent-<id> convention (render tags it, see ordo/host/images.py).
     agent_img = agent_image or f"{project}/agent-{agent}"
-    # The llama.cpp build is the host's backend (ordo/llamacpp_backend.py: CPU, CUDA, ROCm or
+    # The llama.cpp build is the host's backend (ordo/render/llamacpp_backend.py: CPU, CUDA, ROCm or
     # Vulkan upstream server image) unless the chosen model pins its own build (e.g. the patched
     # Qwen3.6/3.8 image) via its catalog `backend_image`. render resolves which and passes it in
     # as llamacpp_image; the backend alone decides how the service reaches the GPU.
@@ -789,7 +795,7 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
         # eventually crashing the whole Docker VM. Third 9p casualty after the Hermes
         # brain (#143) and comfyui-storage (#156). `ordo fetch` (and `ordo up`, for any
         # file missing) downloads straight into this volume through a helper container
-        # (ordo/fetch.py); models/gguf is retired from every hot path.
+        # (ordo/host/fetch.py); models/gguf is retired from every hot path.
         "models-gguf:/models:ro",
         "${BASE_PATH:?BASE_PATH must be set (non-empty)}/scripts/llamacpp:/llamacpp-scripts:ro",
     ]

@@ -8,12 +8,12 @@ from pathlib import Path
 import yaml
 from fastapi.testclient import TestClient
 
-from ordo.broker import Broker, MockBackend
-from ordo.catalog import Catalog
-from ordo.control import ControlPlane
-from ordo.lease_history import LeaseHistory
-from ordo.plugins import PluginRegistry
-from ordo.scheduler import Scheduler
+from ordo.control.api import ControlPlane
+from ordo.control.broker import Broker, MockBackend
+from ordo.control.lease_history import LeaseHistory
+from ordo.control.scheduler import Scheduler
+from ordo.render.catalog import Catalog
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")

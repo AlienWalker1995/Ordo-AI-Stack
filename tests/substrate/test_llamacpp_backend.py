@@ -1,9 +1,9 @@
 """The chat backend runs on the llama.cpp build the host's compute can actually run.
 
 Three layers, each tested here against the compute targets of the 2026-09 portability audit:
-  - detection (ordo.hardware): GPU vendor, NVIDIA compute capability and CPU arch, degrading to
+  - detection (ordo.render.hardware): GPU vendor, NVIDIA compute capability and CPU arch, degrading to
     none/unknown when nvidia-smi / rocm-smi are absent or fail;
-  - backend selection (ordo.llamacpp_backend): (vendor, compute capability, arch) -> one pinned
+  - backend selection (ordo.render.llamacpp_backend): (vendor, compute capability, arch) -> one pinned
     upstream llama.cpp server image;
   - sizing + render: a model whose `backend_image` is a special build is only picked on a GPU with
     the compute capability that build targets, and compose wires each backend's devices (NVIDIA
@@ -21,17 +21,18 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from ordo import hardware, llamacpp_backend, wizard
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.hardware import GPU, HardwareProfile
-from ordo.plugins import PluginRegistry
-from ordo.render import render
+from ordo.host import wizard
+from ordo.render import hardware, llamacpp_backend
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
+from ordo.render.hardware import GPU, HardwareProfile
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
-RENDER_MODULE = sys.modules["ordo.render"]
+RENDER_MODULE = sys.modules["ordo.render.engine"]
 
 UPSTREAM_IMAGE = re.compile(r"^ghcr\.io/ggml-org/llama\.cpp:server(-[a-z0-9]+)?-b(\d+)@sha256:[0-9a-f]{64}$")
 PATCHED_IMAGE = "ordo/llamacpp-patched"

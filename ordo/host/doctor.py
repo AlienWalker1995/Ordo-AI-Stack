@@ -12,11 +12,12 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from . import bringup, substrate
-from .catalog import Catalog
-from .config import Source
-from .plugins import PluginRegistry
-from .render import render
+from ..render import substrate
+from ..render.catalog import Catalog
+from ..render.config import Source
+from ..render.engine import render
+from ..render.plugins import PluginRegistry
+from . import bringup
 
 _SECRET_KEY = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)", re.IGNORECASE)
 

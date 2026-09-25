@@ -1,11 +1,11 @@
 """Scheduler status contract + doctor support bundle."""
 from pathlib import Path
 
-from ordo import doctor
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.plugins import PluginRegistry
-from ordo.scheduler import Job, Scheduler
+from ordo.control.scheduler import Job, Scheduler
+from ordo.host import doctor
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")

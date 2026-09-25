@@ -1,6 +1,6 @@
 """The thin client for a (self-hosted) Infisical server: the one file that knows its HTTP API.
 
-`ordo/secret_store.py` uses it when `site: SECRETS_BACKEND: infisical`. It speaks four calls:
+`ordo/host/secret_store.py` uses it when `site: SECRETS_BACKEND: infisical`. It speaks four calls:
 
 - Universal Auth login: `POST /api/v1/auth/universal-auth/login` ({clientId, clientSecret} -> accessToken)
 - project by slug:      `GET /api/v1/projects/slug/{slug}` (-> the project, whose `id` the secret calls take)

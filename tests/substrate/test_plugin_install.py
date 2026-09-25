@@ -12,9 +12,9 @@ from pathlib import Path
 
 import yaml
 
-from ordo.catalog import Catalog
-from ordo.control import INSTALLABLE_PLUGINS, ControlPlane
-from ordo.plugins import PluginRegistry
+from ordo.control.api import INSTALLABLE_PLUGINS, ControlPlane
+from ordo.render.catalog import Catalog
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")

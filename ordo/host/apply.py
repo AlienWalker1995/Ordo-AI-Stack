@@ -49,7 +49,8 @@ from typing import Any
 
 import yaml
 
-from . import bringup, doctor, images, secret_files, substrate
+from ..render import image_tags, secret_files, stack, substrate
+from . import bringup, doctor, images
 
 OPS_CONTROLLER = bringup.OPS_CONTROLLER_SERVICE
 PROJECT_LABEL = "com.docker.compose.project"
@@ -162,7 +163,7 @@ def shared_namespace_overrides(services: dict[str, Any],
     Resolving against the owner's current container also catches the real drift: a member created
     against an older owner container (the owner was recreated without it) hashes differently.
     An owner with no container is left unresolved: the owner is itself "not created", and its
-    members are recreated with it (`bringup.lifecycle_group`).
+    members are recreated with it (`stack.lifecycle_group`).
     """
     overrides: dict[str, dict[str, str]] = {}
     for name, spec in sorted(services.items()):
@@ -233,7 +234,7 @@ class DockerState:
         same argv builder as every bring-up, against the directory the containers were created from.
         `containers` (the running side) resolves the namespace references compose resolves."""
         def compose(*args: str) -> list[str]:
-            return bringup.compose_argv(staged.compose_dir, project, "--project-directory",
+            return stack.compose_argv(staged.compose_dir, project, "--project-directory",
                                        staged.project_directory, *args, profiles=profiles)
 
         try:
@@ -315,9 +316,9 @@ class RealHost:
     def _render(self):
         """The render of the operator source, computed once (it reads the checkout, not docker)."""
         if self._rendered_config is None:
-            from .catalog import Catalog
-            from .config import Source
-            from .render import render
+            from ..render.catalog import Catalog
+            from ..render.config import Source
+            from ..render.engine import render
 
             rendered = render(Source.load(self.source_path), Catalog.load(self.catalog_path))
             # The invariant `ordo render` checks on every render: one context size everywhere.
@@ -332,7 +333,7 @@ class RealHost:
         return bringup.read_gpu_status(self.project)
 
     def rendered_doc(self) -> dict[str, Any]:
-        return self._render().compose_dict(project=self.project, image_tags=images.load_record(self.out))
+        return self._render().compose_dict(project=self.project, image_tags=image_tags.load_record(self.out))
 
     def planned_builds(self, only: Sequence[str] | None) -> list[images.PlannedBuild]:
         scope = None if only is None else sorted({OPS_CONTROLLER, *only})
@@ -345,14 +346,14 @@ class RealHost:
         if not dry_run:
             self._render().write(self.out)
             print(f"rendered -> {self.out}/ from {self.source_path}")
-            yield Staged(compose_dir=out, project_directory=out, doc=bringup.load_compose(out))
+            yield Staged(compose_dir=out, project_directory=out, doc=stack.load_compose(out))
             return
         # The dry run renders what this apply would write into a temporary directory: the tags the
         # builds would record, and the secrets.env and file-secret digests out/ holds now (the
         # materialize step is skipped).
         planned = {b.target.image: b.tag for b in builds}
         with tempfile.TemporaryDirectory(prefix="ordo-apply-") as tmp:
-            images.save_record(tmp, {**images.load_record(self.out), **planned})
+            image_tags.save_record(tmp, {**image_tags.load_record(self.out), **planned})
             self._render().write(tmp)
             for name in ("secrets.env", secret_files.DIGESTS_ENV_FILE):
                 current = self.out / name
@@ -361,11 +362,11 @@ class RealHost:
                 else:
                     (Path(tmp) / name).write_text("", encoding="utf-8")
             staged_dir = Path(tmp).as_posix()
-            yield Staged(compose_dir=staged_dir, project_directory=out, doc=bringup.load_compose(staged_dir))
+            yield Staged(compose_dir=staged_dir, project_directory=out, doc=stack.load_compose(staged_dir))
 
     def rendered_services(self, staged: Staged,
                           containers: dict[str, RunningContainer]) -> dict[str, RenderedService]:
-        return self.docker.rendered(staged, project=self.project, profiles=bringup.profiles_in(staged.doc),
+        return self.docker.rendered(staged, project=self.project, profiles=stack.profiles_in(staged.doc),
                                     containers=containers)
 
     def running_containers(self) -> dict[str, RunningContainer]:
@@ -505,7 +506,7 @@ def _plan(host: Any, staged: Staged, builds: list[images.PlannedBuild], only: Se
     scope = None if only is None else {OPS_CONTROLLER, *only}
     selected = [c for c in changes if scope is None or c.service in scope]
     left_out = [c.service for c in changes if c not in selected]
-    args, targets = bringup.plan_named(staged.doc, [c.service for c in selected], force_recreate=True)
+    args, targets = stack.plan_named(staged.doc, [c.service for c in selected], force_recreate=True)
     starts = [arg for arg in args if arg in targets]
     refusal = bringup.lease_refusal(gpu, whole_stack=False, starts=set(starts),
                                     replacement_loads_state=bringup.loads_scheduler_state(staged.doc))

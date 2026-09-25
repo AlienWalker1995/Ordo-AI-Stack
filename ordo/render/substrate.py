@@ -17,7 +17,7 @@ import hashlib
 from pathlib import Path
 
 # The repo root this package was loaded from (the checkout on the host, /app in the image).
-PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 
 # Per-service files render reads: the three manifest kinds and the dashboard card fragment.
 SERVICE_MANIFEST_NAMES = ("plugin.yaml", "agent.yaml", "dashboard.yaml", "catalog.json")

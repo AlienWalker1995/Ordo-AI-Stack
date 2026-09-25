@@ -1,6 +1,6 @@
 """Local-mode sign-in: the operator's way into the dashboard when there is no SSO edge.
 
-With the edge off (ordo/render.py), the render publishes the dashboard on 127.0.0.1:8444 and hands
+With the edge off (ordo/render/engine.py), the render publishes the dashboard on 127.0.0.1:8444 and hands
 it DASHBOARD_LOCAL_LOGIN_TOKEN, a secret only the operator (secrets.env, printed by `ordo up`) and
 the dashboard hold. The browser exchanges it once for a signed, HttpOnly, SameSite=Strict session
 cookie. Every other container on the stack network still has no principal: it holds neither the

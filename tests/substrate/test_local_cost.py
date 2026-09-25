@@ -17,9 +17,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.render import local_token_costs, render
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import local_token_costs, render
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")

@@ -13,11 +13,11 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from ordo.broker import Broker, MockBackend
-from ordo.catalog import Catalog
-from ordo.control import ControlPlane
-from ordo.plugins import PluginRegistry
-from ordo.scheduler import Scheduler
+from ordo.control.api import ControlPlane
+from ordo.control.broker import Broker, MockBackend
+from ordo.control.scheduler import Scheduler
+from ordo.render.catalog import Catalog
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
@@ -89,7 +89,7 @@ def test_the_app_refuses_to_start_without_a_token(tmp_path):
 
 
 def test_a_refusal_is_logged_without_the_presented_token(client, caplog):
-    with caplog.at_level(logging.WARNING, logger="ordo.control"):
+    with caplog.at_level(logging.WARNING, logger="ordo.control.api"):
         client.get("/status", headers={"Authorization": "Bearer leaked-guess-123"})
     text = caplog.text
     assert "401" in text or "refused" in text

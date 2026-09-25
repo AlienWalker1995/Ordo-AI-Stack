@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from ordo import wizard
-from ordo.config import Source
+from ordo.host import wizard
+from ordo.render.config import Source
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 

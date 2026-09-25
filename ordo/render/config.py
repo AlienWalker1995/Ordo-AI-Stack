@@ -15,10 +15,14 @@ from .hardware import GPU, HardwareProfile
 _SITE_KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
 # The site key naming the SOPS-encrypted dotenv file that holds the operator's secrets (see
-# ordo/secret_store.py). Unset: out/secrets.env itself is the store.
+# ordo/host/secret_store.py). Unset: out/secrets.env itself is the store.
 SECRETS_SOURCE_KEY = "SECRETS_SOURCE"
+# The documented place for the SOPS file SECRETS_SOURCE names: a private repo checked out beside this
+# one. A relative value resolves against the checkout, so the same ordo.yaml works on any host that
+# keeps the two repos side by side.
+DEFAULT_SECRETS_SOURCE = "../ordo-secrets/secrets.env.sops"
 
-# Where the secret VALUES come from (ordo/secret_store.py). `sops` (the default when SECRETS_SOURCE is
+# Where the secret VALUES come from (ordo/host/secret_store.py). `sops` (the default when SECRETS_SOURCE is
 # set) reads that file; `infisical` reads an Infisical project environment, and SECRETS_SOURCE, when
 # set, is then its offline backup and where the machine identity's bootstrap credentials live.
 SECRETS_BACKEND_KEY = "SECRETS_BACKEND"

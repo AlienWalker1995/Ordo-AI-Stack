@@ -12,14 +12,14 @@ from pathlib import Path
 
 import yaml
 
-from ordo.broker import Broker, MockBackend
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.control import ControlPlane
-from ordo.plugins import PluginRegistry
-from ordo.render import render
-from ordo.scheduler import Scheduler
-from ordo.served_models import model_files, served_models
+from ordo.control.api import ControlPlane
+from ordo.control.broker import Broker, MockBackend
+from ordo.control.scheduler import Scheduler
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
+from ordo.render.plugins import PluginRegistry
+from ordo.render.served_models import model_files, served_models
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")

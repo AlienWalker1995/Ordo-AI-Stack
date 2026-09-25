@@ -6,7 +6,7 @@ ruff==0.8.6
 # pydantic is FastAPI's model layer (below). Pinned to the same version the ops-controller image
 # installs, so CI resolves the same pair that ships rather than whatever pip picks.
 pydantic==2.13.4
-# The control plane's transport is FastAPI (ordo/control.py ControlPlane.app), and the ASGI tests
+# The control plane's transport is FastAPI (ordo/control/api.py ControlPlane.app), and the ASGI tests
 # build the real app and drive it through starlette's TestClient, which needs httpx. Same versions
 # as the ops-controller image installs.
 fastapi==0.141.1

@@ -2,19 +2,19 @@
 
 ## Purpose
 
-The Ordo control plane (`ordo serve`, `ordo/control.py`). Drives the GPU/job broker and
+The Ordo control plane (`ordo serve`, `ordo/control/api.py`). Drives the GPU/job broker and
 scheduler, performs the drift-safe model switch (writes the declarative `ordo.yaml`
 source, then re-renders `.env` + compose + Hermes ctx in one pass so they can never
 disagree), and owns the compose-lifecycle API the dashboard and agent call (start, stop,
 restart, recreate, logs, image pulls, audit). It holds `docker.sock`, and the
-`DockerBackend` guard (`ordo/broker.py`) scopes every container call to the `<project>-*`
+`DockerBackend` guard (`ordo/control/broker.py`) scopes every container call to the `<project>-*`
 prefix, so it cannot reach containers outside this compose project.
 
 ## API Reference
 
 **Base URL:** `http://ops-controller:9000` (internal network; no host port)
 
-**Auth:** None enforced by ops-controller itself (`ordo/control.py` has no auth check). It
+**Auth:** None enforced by ops-controller itself (`ordo/control/api.py` has no auth check). It
 publishes no host port and is reachable only on the internal network; callers (dashboard,
 agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>` from
 `out/secrets.env` by convention.
@@ -61,12 +61,12 @@ agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>
 | `/audit` | GET | Audit log tail (`limit`, default 50) |
 
 **Safety:** Every mutating lifecycle, compose and pip call requires `{"confirm": true}`.
-Plugin enable/disable is limited to the `INSTALLABLE_PLUGINS` allowlist in `ordo/control.py`;
+Plugin enable/disable is limited to the `INSTALLABLE_PLUGINS` allowlist in `ordo/control/api.py`;
 core substrate services cannot be added or removed through it.
 
 ## Audit Log
 
-`ordo/audit.py` writes one fsync'd JSONL line to `AUDIT_LOG_PATH` (`/data/audit.log` in the
+`ordo/control/audit.py` writes one fsync'd JSONL line to `AUDIT_LOG_PATH` (`/data/audit.log` in the
 container, `data/ops-controller/audit.log` on the host) for every state-changing call, whatever
 its outcome: success, dry run, `401`/`409`/`400` refusal or failure. Reads are not recorded. The
 one writer is `ControlPlane.handle()`, which wraps `route()`, so a new route is audited without

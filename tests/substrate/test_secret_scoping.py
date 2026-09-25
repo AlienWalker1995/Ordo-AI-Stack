@@ -3,7 +3,7 @@
 Secrets used to reach 21 services through a shared `env_file: secrets.env`, so every one of them,
 tailnet sidecars included, held every credential. Now a service declares the secret NAMES it reads
 (`secrets:` on a plugin service, agent or dashboard manifest, or the core service's own list in
-ordo/compose.py) and the renderer passes exactly those as `KEY: ${KEY}`; compose interpolates the
+ordo/render/compose.py) and the renderer passes exactly those as `KEY: ${KEY}`; compose interpolates the
 values from `--env-file secrets.env`.
 
 FILE_SPEC and ENV_SPEC below are the security contract, derived from what each process actually
@@ -17,11 +17,12 @@ from pathlib import Path
 
 import pytest
 
-from ordo import secret_files
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.plugins import PluginRegistry, PluginService
-from ordo.render import CORE_SECRET_KEYS, OPTIONAL_SECRET_KEYS, render
+from ordo.render import secret_files
+from ordo.render.catalog import Catalog
+from ordo.render.compose import OPTIONAL_SECRET_KEYS
+from ordo.render.config import Source
+from ordo.render.engine import CORE_SECRET_KEYS, render
+from ordo.render.plugins import PluginRegistry, PluginService
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
@@ -39,7 +40,7 @@ PLUGINS = ["comfyui", "song-gen", "voice", "rag", "qdrant-rag", "llamacpp-cpu", 
 
 TAILNET = {"TS_AUTHKEY"}
 LANGFUSE_PAIR = {"LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"}
-# Secrets a service reads from a FILE (`secret_files:`, ordo/secret_files.py): mounted read-only at
+# Secrets a service reads from a FILE (`secret_files:`, ordo/render/secret_files.py): mounted read-only at
 # /run/secrets/<key lowercased>, with only the path in the environment. Every secret whose software
 # can read a file is here; the evidence per image is in the manifest comment next to each entry.
 FILE_SPEC: dict[str, set[str]] = {
@@ -171,8 +172,8 @@ def test_the_ops_token_reaches_only_its_callers(rendered):
 def test_declared_secrets_are_provisioned(rendered):
     # Every secret a manifest declares must be listed in secrets.env.example (or be a known optional
     # one), or the operator is never asked for it and the service starts with an empty value.
-    from ordo.agents import AgentRegistry
-    from ordo.dashboards import DashboardRegistry
+    from ordo.render.agents import AgentRegistry
+    from ordo.render.dashboards import DashboardRegistry
 
     rc, _ = rendered
     names = _secret_names(rc)

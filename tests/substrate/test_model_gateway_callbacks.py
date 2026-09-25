@@ -11,11 +11,11 @@ from pathlib import Path
 
 import yaml
 
-from ordo import compose
-from ordo.catalog import Catalog
-from ordo.config import Source
-from ordo.plugins import PluginRegistry
-from ordo.render import render
+from ordo.render import compose
+from ordo.render.catalog import Catalog
+from ordo.render.config import Source
+from ordo.render.engine import render
+from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services" / "model-gateway"))

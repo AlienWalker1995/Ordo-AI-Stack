@@ -15,7 +15,7 @@
     (`--env-file secrets.env`); no service loads it whole.
   - `out/secrets/<key lowercased>`: every file-delivered secret the render
     declares (`secret_files:` in a service manifest, and the core services in
-    `ordo/compose.py`; `out/manifest.json` lists them per service). Each is
+    `ordo/render/compose.py`; `out/manifest.json` lists them per service). Each is
     bind-mounted read-only at `/run/secrets/<key lowercased>` and the service
     gets only the path (`<KEY>_FILE`, or the name its image reads, such as
     `POSTGRES_PASSWORD_FILE`), so the value stays out of `docker inspect`. The
