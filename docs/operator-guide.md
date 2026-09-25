@@ -89,19 +89,42 @@ model-gateway, gpu-gate, the dashboard, the agent, the MCP adapters) are built f
   compose `image:` field, or `current` for an image not built yet. The compose therefore names the
   exact build each service runs, and `docker inspect` on a container shows its commit.
 
-Deploying a new checkout:
+### Deploying: `ordo apply`
+
+Deploying a new checkout, or a change to `out/ordo.yaml`, is one command:
 
 ```bash
-ordo build --all                              # builds only the images whose inputs changed
-ordo --source out/ordo.yaml render --out out  # pins the compose to the new tags
-ordo up --all                                 # recreates only the services whose image changed
+ordo apply --dry-run                          # the plan: builds, changed services and why, lease state
+ordo apply                                    # run it
 ```
 
-Rolling back is the same three commands on older code. Check out the older commit and run them:
-its tags are still in the local image cache, so `ordo build` records them without rebuilding, the
-render points the compose back at them, and `ordo up` recreates only what changed. (A `git revert`
-works too; it is a new commit, so it gets a new tag, built mostly from Docker's layer cache.)
-Nothing is retagged by hand.
+`ordo apply` runs the steps in the one order that works, so none of them is remembered by hand:
+
+1. `ordo build` for the first-party images whose inputs changed (an existing clean tag is skipped).
+2. Render from `out/ordo.yaml` (never the example), pinning the compose to the tags step 1 recorded.
+3. Materialize `secrets.env` and the file secrets from the secret store.
+4. Compute the changed set: every long-running service whose rendered compose config hash or image
+   id differs from its container's. The host's compose computes the hashes and does the recreate; a
+   container another compose version created is recreated, not compared (versions hash differently).
+   One-shot jobs (`restart: "no"`, the evals runner) are reported, never started.
+5. Refuse, before recreating anything, when the GPU lease would be violated (an evicted resident in
+   the set, or ops-controller mid-lease without saved lease state) or when docker, the lease or
+   ops-controller's substrate digest cannot be read.
+6. The host preflight for the services that start.
+7. ops-controller first when its image, config or substrate digest changed, then a wait until it
+   answers `/status` (every later step reads the lease through it).
+8. The rest of the changed set, `--no-deps --force-recreate` (caddy with its netns members),
+   fetching the model files they load that the models volume lacks.
+9. `ordo doctor`.
+
+Nothing changed means nothing is recreated. `--only SVC...` recreates only those of the changed
+services (a changed ops-controller still goes first). `ordo build`, `ordo up` and `ordo recreate`
+remain for single steps; a deploy is `ordo apply`.
+
+Rolling back is `ordo apply` on older code. Check out the older commit and run it: its tags are
+still in the local image cache, so the build step records them without rebuilding, the render points
+the compose back at them, and only what changed is recreated. (A `git revert` works too; it is a new
+commit, so it gets a new tag, built mostly from Docker's layer cache.) Nothing is retagged by hand.
 
 Everything below is the reference for *how* that render engine works and *why* it's built this way.
 
@@ -254,8 +277,9 @@ gate). Only the Tailscale model is wired today; the others' required pieces are 
 **Render discipline** (the drift cure, in daily operation):
 - Change config by editing the source `ordo.yaml`, then **re-render** — never hand-edit `out/.env`.
 - Always render from the real source: `ordo render --source out/ordo.yaml`.
-- Image changes go through `ordo build`, then a render (see "First-party images" above).
-- Apply with `ordo recreate <svc>` (per-service, no cascade). The dashboard's
+- Deploy source and image changes with `ordo apply` (see "Deploying" above); it builds, renders and
+  recreates exactly the changed services, ops-controller first.
+- Recreate a single service with `ordo recreate <svc>` (per-service, no cascade). The dashboard's
   per-service recreate button does exactly this against the existing `out/` compose (no re-render).
 
 ## What the cutover produced

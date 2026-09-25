@@ -252,6 +252,35 @@ def _identity(git: GitLike, inputs: Sequence[str]) -> tuple[str, str, bool]:
     return commit, tag, dirty
 
 
+@dataclasses.dataclass(frozen=True)
+class PlannedBuild:
+    """One target at its content tag, and whether `ordo build` has to build it."""
+    target: BuildTarget
+    commit: str
+    tag: str
+    dirty: bool
+    exists: bool                 # the tag is already in the local image cache
+
+    @property
+    def ref(self) -> str:
+        return f"{self.target.image}:{self.tag}"
+
+    @property
+    def needs_build(self) -> bool:
+        """A clean tag that exists is not rebuilt; a `-dirty` tag names no single content, so it is."""
+        return self.dirty or not self.exists
+
+
+def plan_builds(targets: Sequence[BuildTarget], *, git: GitLike, docker: DockerLike) -> list[PlannedBuild]:
+    """Each target's content tag and whether it needs building. Reads git and the image cache only."""
+    planned = []
+    for target in targets:
+        commit, tag, dirty = _identity(git, target.inputs)
+        exists = False if dirty else docker.image_exists(f"{target.image}:{tag}")
+        planned.append(PlannedBuild(target=target, commit=commit, tag=tag, dirty=dirty, exists=exists))
+    return planned
+
+
 # --- building ---
 
 
@@ -263,15 +292,14 @@ def build_images(targets: Sequence[BuildTarget], *, git: GitLike, docker: Docker
     single content, so it is always rebuilt. Each success is recorded as it lands, so one failed
     image does not lose the others. Returns 0 when every target is available, else 1."""
     failed: list[str] = []
-    for target in targets:
-        commit, tag, dirty = _identity(git, target.inputs)
-        ref = f"{target.image}:{tag}"
-        if not dirty and docker.image_exists(ref):
+    for planned in plan_builds(targets, git=git, docker=docker):
+        target, ref = planned.target, planned.ref
+        if not planned.needs_build:
             action = "up to date"
         elif dry_run:
             print(f"  would build {ref}  (-f {target.dockerfile}, context {target.context})")
             continue
-        elif docker.build(target, ref, {REVISION_LABEL: commit}):
+        elif docker.build(target, ref, {REVISION_LABEL: planned.commit}):
             action = "built"
         else:
             print(f"  FAILED {ref}", file=sys.stderr)
@@ -284,7 +312,7 @@ def build_images(targets: Sequence[BuildTarget], *, git: GitLike, docker: Docker
             print(f"  FAILED to tag {ref} as :{FALLBACK_TAG}", file=sys.stderr)
             failed.append(target.image)
             continue
-        save_record(out_dir, {**load_record(out_dir), target.image: tag})
+        save_record(out_dir, {**load_record(out_dir), target.image: planned.tag})
         print(f"  {action:<10} {ref}")
     if failed:
         print(f"{len(failed)} image(s) failed: {', '.join(failed)}", file=sys.stderr)
@@ -350,6 +378,20 @@ def ensure_images(out_dir: str | Path, doc: dict[str, Any], services: Iterable[s
         return 1
 
 
+def build_targets(doc: dict[str, Any], services: Sequence[str] | None, *, project: str,
+                  skip_upstream: bool = False) -> list[BuildTarget]:
+    """The build targets of the first-party images `doc` runs, for the named services or (None) all.
+
+    Raises ValueError for a named service that is unknown or, unless `skip_upstream`, runs an image
+    `ordo build` does not manage (with `skip_upstream` such a service simply has nothing to build)."""
+    first_party = first_party_contexts(*_registries(), project=project)
+    if services is not None and skip_upstream:
+        rendered = doc.get("services") or {}
+        services = [name for name in services if name not in rendered
+                    or buildspec.image_ident(str((rendered[name] or {}).get("image") or "")) in first_party]
+    return [build_target(image, first_party[image]) for image in select_images(doc, first_party, services)]
+
+
 def run_build(out_dir: str | Path, services: Sequence[str] | None, *, project: str, dry_run: bool) -> int:
     """`ordo build`: build the first-party images the rendered compose in `out_dir` runs."""
     from .bringup import COMPOSE_FILE, load_compose
@@ -361,14 +403,12 @@ def run_build(out_dir: str | Path, services: Sequence[str] | None, *, project: s
               "ordo --source out/ordo.yaml render --out out", file=sys.stderr)
         return 1
     try:
-        first_party = first_party_contexts(*_registries(), project=project)
-        selected = select_images(doc, first_party, services)
-        targets = [build_target(image, first_party[image]) for image in selected]
+        targets = build_targets(doc, services, project=project)
         code = build_images(targets, git=Git(), docker=Docker(), out_dir=out_dir, dry_run=dry_run)
     except (RuntimeError, ValueError) as e:
         print(f"ordo build: {e}", file=sys.stderr)
         return 1
     if code == 0 and not dry_run:
-        print(f"recorded in {Path(out_dir) / RECORD_FILE}. Render to pin the compose to these tags, then "
-              "bring the changed services up: ordo --source out/ordo.yaml render --out out && ordo up --all")
+        print(f"recorded in {Path(out_dir) / RECORD_FILE}. Deploy them (render, then recreate exactly the "
+              "services that changed): ordo apply")
     return code
