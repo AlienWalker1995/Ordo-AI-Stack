@@ -12,6 +12,22 @@ RUN git init -q && git remote add origin https://github.com/ggml-org/llama.cpp \
     && git checkout -q FETCH_HEAD \
     && git submodule update --init --recursive --depth 1
 
+# The server embeds a web UI whose required files change between releases. Left to itself the
+# build fetches it from a Hugging Face bucket named after the build number, which a shallow clone
+# reports as 1 ("b1" does not exist), so it falls back to the floating "latest" UI; once that UI
+# moved past this commit the embed step failed ("missing required asset(s): loading.html").
+# Pin the UI to the release built from the pinned commit (b9843), verified by sha256. Assets in
+# tools/ui/dist take priority, and LLAMA_USE_PREBUILT_UI=OFF below removes the network fallback.
+ARG LLAMA_UI_RELEASE=b9843
+ARG LLAMA_UI_SHA256=43882c4e5c729ec0a0bb5065e102039c4c19ee6c73b1e759c23c29619758fd6d
+RUN curl -fsSL -o /tmp/llama-ui.tar.gz \
+        "https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_UI_RELEASE}/llama-${LLAMA_UI_RELEASE}-ui.tar.gz" \
+    && echo "${LLAMA_UI_SHA256}  /tmp/llama-ui.tar.gz" | sha256sum -c - \
+    && mkdir -p tools/ui/dist \
+    && tar -xzf /tmp/llama-ui.tar.gz -C tools/ui/dist --strip-components=1 \
+    && test -f tools/ui/dist/index.html && test -f tools/ui/dist/loading.html \
+    && rm /tmp/llama-ui.tar.gz
+
 # =============================================================================
 # PATCH 1: fix checkpoint search for hybrid/recurrent models
 #   upstream issues: #22384, #20225, #24055
@@ -66,6 +82,7 @@ RUN cmake -B build \
     -DLLAMA_BUILD_SERVER=ON \
     -DLLAMA_BUILD_EXAMPLES=OFF \
     -DLLAMA_CURL=ON \
+    -DLLAMA_USE_PREBUILT_UI=OFF \
     -DGGML_NATIVE=ON \
     -DCMAKE_EXE_LINKER_FLAGS="-L/usr/local/cuda/lib64/stubs -Wl,-rpath-link,/usr/local/cuda/lib64/stubs"
 RUN cmake --build build --config Release --target llama-server llama-quantize -j $(nproc)
