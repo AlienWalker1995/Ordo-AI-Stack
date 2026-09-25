@@ -67,7 +67,7 @@ class Dashboard:
     gpu_capabilities: tuple[str, ...] = ()
     # Build-context identity (METADATA; NEVER rendered). Absent -> the dashboard's own
     # `services/<id>/`. The shipped dashboard's Dockerfile is nested (services/dashboard/app), so
-    # it declares an explicit `build.context`. See ordo.buildspec.
+    # it declares an explicit `build.context`. See ordo/render/buildspec.py.
     build: BuildSpec = dataclasses.field(default_factory=BuildSpec)
     # Loopback host port while the edge is off (see plugins.LocalPort). None -> no local access.
     local_port: LocalPort | None = None

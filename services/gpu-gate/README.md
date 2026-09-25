@@ -57,8 +57,8 @@ queued, individual inference calls are not.
 ## Configuration
 
 Nothing here is hand-written in practice. Every value is rendered from the upstream service's
-`gpu_arbitration:` block by `ordo/compose.py::_gpu_gate`, so the declaration and the running gate
-cannot disagree. See `ordo/gpu.py` for the schema and `services/comfyui/plugin.yaml` for the
+`gpu_arbitration:` block by `ordo/render/compose.py::_gpu_gate`, so the declaration and the running gate
+cannot disagree. See `ordo/render/gpu.py` for the schema and `services/comfyui/plugin.yaml` for the
 first consumer.
 
 | env | meaning |
@@ -95,7 +95,7 @@ Every one of these is deliberate, and each has a test in `tests/test_gpu_gate.py
 The backstop (acquire late if the upstream is busy while the gate holds nothing) **narrows** the
 bypass window; it cannot close it, because by then the work has started. Only routing every
 caller through the gate closes it, and the render enforces that with topology: a gated upstream
-sits on a private network (`<project>-<service>-net`, `ordo.compose.gated_upstream_net`) that
+sits on a private network (`<project>-<service>-net`, `ordo.render.compose.gated_upstream_net`) that
 only its gate joins, so `comfyui:8188` does not resolve for any other service. Callers use
 `COMFYUI_URL` (the gate), and `tests/substrate/test_gpu_arbitration.py` asserts both the
 isolation and that nothing renders or hardcodes the direct address.

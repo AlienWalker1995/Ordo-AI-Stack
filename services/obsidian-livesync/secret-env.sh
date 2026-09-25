@@ -1,6 +1,6 @@
 # Read a secret the way the render delivers it, for our shell entrypoints (source this file).
 #
-# A file-delivered secret (ordo/secret_files.py) reaches a container as a read-only file under
+# A file-delivered secret (ordo/render/secret_files.py) reaches a container as a read-only file under
 # /run/secrets and an env var holding its path, so the value stays out of `docker inspect`.
 # `ordo_secret_file_env NAME...` exports each NAME from the file NAME_FILE points at and unsets
 # NAME_FILE (the postgres image's file_env convention), for software that only reads NAME. The

@@ -71,7 +71,7 @@ services:
       - "2048"
       - --embeddings
     volumes:
-      # models-gguf named volume — the 9p bind wedged GGUF reads (2026-08-07); see ordo/compose.py.
+      # models-gguf named volume — the 9p bind wedged GGUF reads (2026-08-07); see ordo/render/compose.py.
       - models-gguf:/models:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]

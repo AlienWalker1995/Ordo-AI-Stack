@@ -42,7 +42,7 @@ _CORE = ["llamacpp", "litellm-db", "model-gateway", "model-gateway-keys",
 # Build contexts for the SUBSTRATE images: the project images with NO manifest (`_model_gateway`,
 # `_ops_controller`, the gpu-gate, and the patched llama.cpp build a model's catalog `backend_image`
 # names). Manifest services (plugins/agents/dashboards) declare their own context via `build:` in
-# the manifest; only these need to be declared here. `ordo.buildspec` reads this to give preflight +
+# the manifest; only these need to be declared here. `buildspec.py` reads this to give preflight +
 # the substrate test a single image→context resolver, so a rename/typo fails CI, not deploy. Keyed
 # by the image name under the project namespace. This is build METADATA, never rendered into compose.
 SUBSTRATE_BUILD_CONTEXTS: dict[str, str] = {

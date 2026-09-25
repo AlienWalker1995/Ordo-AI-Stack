@@ -1,6 +1,6 @@
 """Read a secret the way the render delivers it: from the file `<NAME>_FILE` names, else from `<NAME>`.
 
-A file-delivered secret (ordo/secret_files.py) reaches a container as a read-only file under
+A file-delivered secret (ordo/render/secret_files.py) reaches a container as a read-only file under
 /run/secrets and an env var holding its path, so the value stays out of `docker inspect`. This is
 the one reader every Python service of ours uses. The canonical copy is ordo/secret_env.py; each
 image that needs it carries a byte-identical copy in its own build context (enforced by

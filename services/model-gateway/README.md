@@ -64,7 +64,7 @@ tagged with the virtual key alias as `litellm.key_alias`) to Langfuse under the 
 `litellm_config.yaml`: the renderer sets `LITELLM_EXTRA_CALLBACKS=langfuse_otel` plus
 `LANGFUSE_OTEL_HOST`, `LANGFUSE_TRACING_ENVIRONMENT` and
 `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=no_content` on this service only while the plugin
-is enabled (`ordo/compose.py::GATEWAY_LANGFUSE_ENV`), and the entrypoint's `add_callbacks.py` step
+is enabled (`ordo/render/compose.py::GATEWAY_LANGFUSE_ENV`), and the entrypoint's `add_callbacks.py` step
 appends the callback at start. The project key pair comes from `secrets.env`. Without the plugin
 the variable is unset and the gateway boots on the template's callbacks alone; with the plugin but
 without keys the callback is skipped with a warning, never fatal. `no_content` only drops LiteLLM's
@@ -107,7 +107,7 @@ OWN login, which is one of two paths:
 1. **Google SSO** (the "Sign in with Google" button on LiteLLM's login page) - the same Google
    identity as the edge, not a second password. Works whenever `edge` is enabled and
    `PROXY_BASE_URL` can be derived (see below); the renderer maps the stack's EXISTING Google
-   OAuth client onto `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (`ordo/render.py::
+   OAuth client onto `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (`ordo/render/engine.py::
    litellm_google_sso_env`; delivered as files the entrypoint exports, see
    `compose.MODEL_GATEWAY_GOOGLE_SSO_SECRET_FILES`), so no new secret or Google app registration
    is needed.
@@ -138,7 +138,7 @@ oauth2-proxy (Google Cloud Console -> APIs & Services -> Credentials -> that OAu
 ```
 https://llm.<tailnet>.ts.net/sso/callback
 ```
-General form: `<PROXY_BASE_URL>/sso/callback` (see `ordo/render.py::litellm_google_sso_env` for
+General form: `<PROXY_BASE_URL>/sso/callback` (see `ordo/render/engine.py::litellm_google_sso_env` for
 how `PROXY_BASE_URL` is derived on a different edge shape). The edge's oauth2-proxy gate still
 runs first - a request passes Google once for the front door, then again for LiteLLM's own SSO
 handshake; these are two separate OAuth round-trips against the same client.

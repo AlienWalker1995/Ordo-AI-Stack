@@ -121,8 +121,8 @@ model_list:
 
   # A STABLE alias for the same CPU deployment. `__CPU_MODEL_NAME__` above is substituted from the
   # deployed GGUF filename at container start, so it changes on every model swap and the renderer
-  # deliberately refuses to grant a key access to it (render.py:150). That left the CPU server
-  # reachable only by an involuntary failover from local-chat.
+  # deliberately refuses to grant a key access to it (ordo/render/engine.py, litellm_model_names).
+  # That left the CPU server reachable only by an involuntary failover from local-chat.
   #
   # This alias makes it addressable ON PURPOSE. It matters because the CPU server holds no VRAM:
   # a request pinned here and a request on local-chat run genuinely in parallel against different

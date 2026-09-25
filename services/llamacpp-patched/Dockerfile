@@ -69,10 +69,13 @@ RUN cd /src && git apply --recount /tmp/pr24785-minimal.diff && echo "Minimal di
 ENV CUDAToolkit_ROOT=/usr/local/cuda
 ENV PATH=/usr/local/cuda/bin:$PATH
 RUN ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/lib/libcuda.so.1
+# Blackwell (sm_120) only: the catalog gates every model that pins this image on min_compute_cap 12.0.
+# CMAKE_CUDA_ARCHITECTURES is the variable ggml-cuda reads (ggml/src/ggml-cuda/CMakeLists.txt); unset,
+# it falls back to a ~9-architecture list. ggml rewrites "120" to "120a" for the FP4 tensor-core kernels.
 RUN cmake -B build \
     -DCMAKE_BUILD_TYPE=Release \
     -DGGML_CUDA=ON \
-    -DGGML_CUDA_ARCHITECTURES="12.0" \
+    -DCMAKE_CUDA_ARCHITECTURES="120" \
     -DGGML_LTO=ON \
     -DGGML_CUDA_FA_ALL_QUANTS=ON \
     -DGGML_SHARED=OFF \

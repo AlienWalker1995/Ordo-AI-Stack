@@ -53,7 +53,7 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
                       history=history,
                       model_volume_files=lambda: volume_files(DockerRunner(), args.project))
 
-    # Resident registration, DERIVED from the declared GPU inventory (ordo/gpu.py) rather than
+    # Resident registration, DERIVED from the declared GPU inventory (ordo/render/gpu.py) rather than
     # from a `--resident-service llamacpp` default. Every service that DECLARES it holds VRAM on
     # the primary device and may be reclaimed is registered as idle-cached, so a burst request
     # can actually evict it; an unregistered resident's VRAM looks free and the scheduler admits

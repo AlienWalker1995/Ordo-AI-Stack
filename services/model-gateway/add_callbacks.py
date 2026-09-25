@@ -5,7 +5,7 @@
 callback that only makes sense when an optional plugin is enabled (today: `langfuse_otel`, when
 the `langfuse` plugin is on) is NOT written into the template: the renderer decides, and says so by
 setting `LITELLM_EXTRA_CALLBACKS` (comma-separated) on the model-gateway service
-(ordo/compose.py::_model_gateway). The entrypoint then calls this after the template and the MCP
+(ordo/render/compose.py::_model_gateway). The entrypoint then calls this after the template and the MCP
 merge. An empty or unset value is a no-op, so a stack without the plugin boots on the template
 alone and nothing here can require the plugin.
 

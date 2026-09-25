@@ -2,7 +2,7 @@
 set -eu
 
 # Every secret arrives as a file under /run/secrets with <NAME>_FILE pointing at it (the rendered
-# delivery, ordo/compose.py MODEL_GATEWAY_SECRET_FILES), so no value is in the container config.
+# delivery, ordo/render/compose.py MODEL_GATEWAY_SECRET_FILES), so no value is in the container config.
 # Export each one for LiteLLM (and the one-shot command below) from its file. DATABASE_PASSWORD is
 # what LiteLLM builds DATABASE_URL from, with DATABASE_HOST/USERNAME/NAME. The consumer keys the
 # model-gateway-keys one-shot provisions are read by bootstrap_keys.py itself.
@@ -26,7 +26,7 @@ fi
 
 # model_info documentation values, sourced from the SAME rendered .env keys the backend llama-server
 # containers read (each service declares the keys it reads, see MODEL_GATEWAY_DERIVED_ENV in
-# ordo/compose.py), so the gateway's advertised metadata cannot drift from the running deployment.
+# ordo/render/compose.py), so the gateway's advertised metadata cannot drift from the running deployment.
 # The two context windows have no default: a missing one would advertise a window the render never
 # chose, so the gateway refuses to start instead.
 CTX_SIZE="${LLAMACPP_CTX_SIZE:?LLAMACPP_CTX_SIZE is missing: it is rendered into out/.env by ordo render}"
@@ -38,7 +38,7 @@ EMBED_WEIGHTS="${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}"
 GPU_IMAGE="${LLAMACPP_IMAGE:-llama.cpp}"
 
 # Electricity-derived per-token cost for the local models (ordo.yaml `cost:`; see
-# ordo/render.py local_token_costs). Defaults to "0" so a pre-cost .env still boots with the
+# ordo/render/engine.py local_token_costs). Defaults to "0" so a pre-cost .env still boots with the
 # historical $0/token pricing instead of failing to start.
 LOCAL_INPUT_COST_PER_TOKEN="${LOCAL_INPUT_COST_PER_TOKEN:-0}"
 LOCAL_OUTPUT_COST_PER_TOKEN="${LOCAL_OUTPUT_COST_PER_TOKEN:-0}"

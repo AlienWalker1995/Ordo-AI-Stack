@@ -12,7 +12,7 @@ fixed 2026-07-24).
 
 Every public method sends its request through `_request()`, the one place that attaches
 the bearer token and X-Actor header. ops-controller requires that bearer on every path but
-/health (`ordo/control.py`'s `UNAUTHENTICATED_PATHS`); there is no "authless" route on it,
+/health (`ordo/control/api.py`'s `UNAUTHENTICATED_PATHS`); there is no "authless" route on it,
 so no method may build its own client or call httpx directly (audit found the plugin
 enable/disable/list methods doing exactly that, on a second unauthenticated client, and
 401ing on every call).

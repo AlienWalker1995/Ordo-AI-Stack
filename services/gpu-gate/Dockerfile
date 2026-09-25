@@ -1,8 +1,8 @@
 # gpu-gate — the generic GPU admission gate.
 #
 # Build context is THIS folder:
-#   ordo build comfyui-gate   (tags ordo/gpu-gate:<commit>; see ordo/images.py)
-# Resolved for preflight + tests via compose.SUBSTRATE_BUILD_CONTEXTS (ordo/buildspec.py), like
+#   ordo build comfyui-gate   (tags ordo/gpu-gate:<commit>; see ordo/host/images.py)
+# Resolved for preflight + tests via compose.SUBSTRATE_BUILD_CONTEXTS (ordo/render/buildspec.py), like
 # the other substrate images that compose renders without a plugin manifest.
 #
 # python:3.12-slim, pinned by DIGEST — a rolling tag here is exactly the silent drift the stack

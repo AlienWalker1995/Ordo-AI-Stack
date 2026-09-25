@@ -135,7 +135,7 @@ class Source:
     site: dict[str, Any] = dataclasses.field(default_factory=dict)
     # Electricity-derived per-token cost for the local models (usd_per_kwh, inference_watts,
     # prompt_tokens_per_second, output_tokens_per_second). Optional: empty means $0/token
-    # (the historical default). See render.local_token_costs for the formula.
+    # (the historical default). See engine.local_token_costs for the formula.
     cost: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     @classmethod

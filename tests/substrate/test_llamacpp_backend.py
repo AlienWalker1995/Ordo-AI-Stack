@@ -210,10 +210,24 @@ def test_special_builds_declare_the_compute_capability_they_need():
             assert model.min_compute_cap, f"{model.id} pins {model.backend_image} without requires.min_compute_cap"
 
 
+def cmake_arch_to_compute_cap(arch: str) -> str:
+    """A CMAKE_CUDA_ARCHITECTURES entry (`120`, `120a`, `86-real`) -> its compute capability (`12.0`)."""
+    number = int(re.match(r"\d+", arch).group(0))
+    return f"{number // 10}.{number % 10}"
+
+
+def test_cmake_arch_to_compute_cap():
+    assert [cmake_arch_to_compute_cap(a) for a in ("120", "120a-real", "86-real", "75")] == \
+        ["12.0", "12.0", "8.6", "7.5"]
+
+
 def test_patched_image_requirement_matches_what_its_dockerfile_builds():
     dockerfile = (ROOT / "services" / "llamacpp-patched" / "Dockerfile").read_text(encoding="utf-8")
-    archs = re.search(r'GGML_CUDA_ARCHITECTURES="([^"]+)"', dockerfile).group(1).split(";")
-    lowest = min(archs, key=lambda a: tuple(int(p) for p in a.split(".")))
+    # CMAKE_CUDA_ARCHITECTURES is what ggml-cuda reads. GGML_CUDA_ARCHITECTURES is no llama.cpp option:
+    # CMake ignored it and the build fell back to ggml's ~9-architecture default list.
+    assert "GGML_CUDA_ARCHITECTURES" not in dockerfile
+    archs = re.search(r'-DCMAKE_CUDA_ARCHITECTURES="([^"]+)"', dockerfile).group(1).split(";")
+    lowest = min((cmake_arch_to_compute_cap(a) for a in archs), key=lambda cap: tuple(map(int, cap.split("."))))
     for model in CATALOG.models:
         if model.backend_image == PATCHED_IMAGE:
             assert model.min_compute_cap == lowest

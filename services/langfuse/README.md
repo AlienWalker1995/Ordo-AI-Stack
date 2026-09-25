@@ -35,7 +35,7 @@ otherwise `https://<CADDY_TAILNET_HOSTNAME>:8450/`. Either way it is behind the 
 as every other UI: `langfuse-web` publishes no host port, so the Caddy `:8450` listener is the only
 route in.
 
-That URL is **derived, not configured**: `ordo/render.py::langfuse_public_url` builds
+That URL is **derived, not configured**: `ordo/render/engine.py::langfuse_public_url` builds
 `LANGFUSE_PUBLIC_URL` from the edge identity already in the render, and Langfuse uses it as
 `NEXTAUTH_URL` to build its own post-login redirect. Set `site.LANGFUSE_PUBLIC_URL` in `ordo.yaml`
 only if the browser reaches Langfuse through some other front door.
@@ -91,7 +91,7 @@ metadata attribute `litellm.key_alias` (`hermes`, `open-webui`, `automation`, `e
 is filterable per consumer. Streaming calls are traced the same way.
 
 The wiring is decided by the renderer, not the gateway's config template: only while this plugin
-is enabled does `ordo/compose.py` put `GATEWAY_LANGFUSE_ENV` on the `model-gateway` service, and the
+is enabled does `ordo/render/compose.py` put `GATEWAY_LANGFUSE_ENV` on the `model-gateway` service, and the
 gateway entrypoint then appends `langfuse_otel` to LiteLLM's callbacks. Without the plugin the
 gateway renders and boots exactly as before. Tracing is fail-open here too: if the key pair is
 missing, the callback is skipped with a warning rather than failing the gateway.
