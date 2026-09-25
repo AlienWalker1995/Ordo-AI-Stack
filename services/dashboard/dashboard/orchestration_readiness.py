@@ -9,12 +9,14 @@ from pathlib import Path
 
 import httpx
 
+from dashboard.secret_env import read_secret
+
 logger = logging.getLogger(__name__)
 
 # The ComfyUI GPU admission gate; empty when comfyui is not enabled.
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "").rstrip("/")
 MODEL_GATEWAY_URL = os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435").rstrip("/")
-MODEL_GATEWAY_API_KEY = os.environ.get("MODEL_GATEWAY_API_KEY", "")
+MODEL_GATEWAY_API_KEY = read_secret("MODEL_GATEWAY_API_KEY")
 WORKFLOWS_DIR = Path(os.environ.get("COMFYUI_WORKFLOWS_DIR", "/comfyui-workflows")).resolve()
 ORCHESTRATION_MEDIA_REQUIRED = os.environ.get("ORCHESTRATION_MEDIA_REQUIRED", "0").strip().lower() in (
     "1",

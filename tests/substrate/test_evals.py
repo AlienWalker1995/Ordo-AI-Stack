@@ -136,16 +136,20 @@ def test_the_runner_gets_its_own_litellm_key_with_no_mcp_servers():
     assert "LITELLM_KEY_EVALS" in rc.required_secrets
 
 
-def test_every_secret_reaches_the_container_only_as_a_reference():
+def test_every_secret_reaches_the_container_only_as_a_file():
     rc = render(_src(), CATALOG, REGISTRY)
-    environment = _evals_service(rc)["environment"]
+    service = _evals_service(rc)
+    environment = service["environment"]
     plugin = REGISTRY.get("evals")
     interpolation = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?:[:?-][^}]*)?\}")
     referenced = {m.group(1) for value in environment.values() for m in interpolation.finditer(str(value))}
-    assert {"LITELLM_KEY_EVALS", "HERMES_API_SERVER_KEY", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"} <= referenced
+    for key in ("LITELLM_KEY_EVALS", "OPS_CONTROLLER_TOKEN", "HERMES_API_SERVER_KEY", "LANGFUSE_PUBLIC_KEY",
+                "LANGFUSE_SECRET_KEY"):
+        assert key not in referenced and key not in environment
+        assert environment[f"{key}_FILE"] == f"/run/secrets/{key.lower()}"
+        assert any(v.endswith(f"/out/secrets/{key.lower()}:/run/secrets/{key.lower()}:ro") for v in service["volumes"])
     for key, value in environment.items():
-        if re.search(r"(KEY|TOKEN|SECRET)$", key):
-            assert str(value).startswith("${"), f"{key} holds a literal instead of a ${{...}} reference"
+        assert not re.search(r"(KEY|TOKEN|SECRET)$", key), f"{key} is a secret in the environment"
     for secret in plugin.secrets:
         assert secret in rc.required_secrets, f"{secret} would be missing from secrets.env.example"
     values = {key: secret_store.generator_for(key)() for key in ("HERMES_API_SERVER_KEY", "LITELLM_KEY_EVALS")}

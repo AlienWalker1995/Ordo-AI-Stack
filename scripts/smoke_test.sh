@@ -19,7 +19,7 @@ cd "$REPO_ROOT"
 # Both env files, always: compose interpolates ${...} from them, and a call without secrets.env
 # renders blank secrets, so an `up` would recreate services with empty credentials.
 COMPOSE_ARGS=(--project-directory out -f out/docker-compose.yml -p ordo
-              --env-file out/.env --env-file out/secrets.env)
+              --env-file out/.env --env-file out/secrets.env --env-file out/secret-files.env)
 
 UP=false
 for arg in "$@"; do
@@ -56,13 +56,15 @@ check_exec() {
 }
 
 echo "==> Checking health endpoints (in-network)..."
+# model-gateway's master key is a file under /run/secrets (LITELLM_MASTER_KEY_FILE): an exec'd probe
+# does not see the entrypoint's environment, so it reads the file, as the service healthcheck does.
 check_exec "dashboard" dashboard python3 -c \
   "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')"
 check_exec "model-gateway" model-gateway python3 -c \
-  "import os, urllib.request; req = urllib.request.Request('http://localhost:11435/v1/models', headers={'Authorization': 'Bearer ' + os.environ.get('LITELLM_MASTER_KEY', 'local')}); urllib.request.urlopen(req)"
+  "import os, urllib.request; req = urllib.request.Request('http://localhost:11435/v1/models', headers={'Authorization': 'Bearer ' + open(os.environ['LITELLM_MASTER_KEY_FILE']).read().strip()}); urllib.request.urlopen(req)"
 # MCP is served by model-gateway (LiteLLM /mcp); its server list must not be empty.
 check_exec "mcp (model-gateway)" model-gateway python3 -c \
-  "import json, os, urllib.request; req = urllib.request.Request('http://localhost:11435/v1/mcp/server', headers={'Authorization': 'Bearer ' + os.environ.get('LITELLM_MASTER_KEY', 'local')}); assert json.load(urllib.request.urlopen(req)), 'no MCP servers registered'"
+  "import json, os, urllib.request; req = urllib.request.Request('http://localhost:11435/v1/mcp/server', headers={'Authorization': 'Bearer ' + open(os.environ['LITELLM_MASTER_KEY_FILE']).read().strip()}); assert json.load(urllib.request.urlopen(req)), 'no MCP servers registered'"
 
 echo "==> Service status"
 docker compose "${COMPOSE_ARGS[@]}" ps

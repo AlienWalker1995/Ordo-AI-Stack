@@ -42,6 +42,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
+# Mounted beside this script (/app/secret_env.py); the canonical copy is ordo/secret_env.py.
+from secret_env import SecretFileError, read_secret
+
 # Server-side ceilings (Langfuse v4.36): the v2/observations `limit` maximum and the DELETE /traces
 # id maximum.
 OBSERVATIONS_PAGE_LIMIT = 1000
@@ -159,10 +162,14 @@ def parse_run_at(value: str) -> tuple[int, int]:
 
 
 def settings_from_env(env: Mapping[str, str]) -> Settings:
-    public_key = str(env.get("LANGFUSE_PUBLIC_KEY", "") or "").strip()
-    secret_key = str(env.get("LANGFUSE_SECRET_KEY", "") or "").strip()
+    try:
+        # Each from the file <NAME>_FILE points at (the rendered delivery), else the env var.
+        public_key = read_secret("LANGFUSE_PUBLIC_KEY", env)
+        secret_key = read_secret("LANGFUSE_SECRET_KEY", env)
+    except SecretFileError as e:
+        raise ConfigError(str(e)) from None
     if not public_key or not secret_key:
-        raise ConfigError("LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY must be set (out/secrets.env)")
+        raise ConfigError("LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY must be set (the secret store)")
     raw_days = str(env.get("LANGFUSE_RETENTION_DAYS", "") or "").strip()
     try:
         retention_days = int(raw_days)

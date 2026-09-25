@@ -113,9 +113,6 @@ environment:
   API_SERVER_KEY: ${HERMES_API_SERVER_KEY:-}
   API_SERVER_HOST: 0.0.0.0
   API_SERVER_PORT: "8642"
-  # Docker-secret _FILE pointers the entrypoint bridges to the plain env vars the app expects.
-  DISCORD_BOT_TOKEN_FILE: /run/secrets/discord_token
-  GITHUB_BACKUP_PAT_FILE: /run/secrets/github_backup_pat
   DISCORD_ALLOWED_USERS: ${DISCORD_ALLOWED_USERS:-}
   # Discord VOICE is on the SUPPORTED surface only (an auto-join adapter patch was tried
   # and removed 2026-08-05 — see the lessons block in this dir's Dockerfile): the operator
@@ -171,16 +168,10 @@ volumes:
   # destruction. See docs/design/hermes-owns-docker.md.
   - /var/run/docker.sock:/var/run/docker.sock
 
-# File-based secrets Hermes reads from /run/secrets/* (kept out of `docker inspect`; the entrypoint
-# bridges the *_FILE env above to the plain vars). `key` names the value in the secret store;
-# `ordo secrets materialize` writes it to out/secrets/<file>, which the render bind-mounts read-only.
-secret_files:
-  - key: DISCORD_BOT_TOKEN
-    file: discord_token
-    target: /run/secrets/discord_token
-  - key: GITHUB_BACKUP_PAT
-    file: github_backup_pat
-    target: /run/secrets/github_backup_pat
+# File-delivered secrets (ordo/secret_files.py): each is mounted read-only at
+# /run/secrets/<key lowercased>, kept out of `docker inspect`, and the render sets <KEY>_FILE to that
+# path; the entrypoint bridges each *_FILE to the plain var the app reads.
+secret_files: [DISCORD_BOT_TOKEN, GITHUB_BACKUP_PAT]
 
 # gateway_state.json is written by `hermes gateway` on startup (Docker mode writes no pid file).
 #

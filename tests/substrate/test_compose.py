@@ -14,6 +14,7 @@ from ordo.render import render
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
+SECRETS_DIR = "${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/secrets"
 # The site keys the edge and memory-vault plugins require (`requires.site`), so they render.
 REQUIRED_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
                  "CADDY_TAILNET_DOMAIN": "example.ts.net", "MEMORY_VAULT_PATH": "/srv/vault"}
@@ -283,7 +284,8 @@ def test_mcp_services_rendered_with_isolation_limits_and_labels():
         assert "healthcheck" in s
     assert c["services"]["mcp-memory-vault"]["networks"] == ["ordo-mcp-net"]          # internal
     assert c["services"]["mcp-searxng"]["networks"] == ["ordo-mcp-net", "ordo-net"]    # stack
-    assert c["services"]["mcp-n8n"]["environment"]["N8N_API_KEY"] == "${N8N_API_KEY}"
+    assert c["services"]["mcp-n8n"]["environment"]["N8N_API_KEY_FILE"] == "/run/secrets/n8n_api_key"
+    assert "N8N_API_KEY" not in c["services"]["mcp-n8n"]["environment"]
     assert "codebase-memory-cache" in c["volumes"]
     assert "mcp-gateway" not in c["services"]
 
@@ -575,12 +577,14 @@ def test_litellm_db_is_core_pinned_and_healthchecked():
     c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], project="ordo")
     db = c["services"]["litellm-db"]
     assert db["image"].startswith("postgres:16-alpine@sha256:")
-    assert db["volumes"] == ["litellm-db-data:/var/lib/postgresql/data"]
+    assert db["volumes"] == ["litellm-db-data:/var/lib/postgresql/data",
+                             f"{SECRETS_DIR}/litellm_db_password:/run/secrets/litellm_db_password:ro"]
     assert "litellm-db-data" in c["volumes"]
     assert "pg_isready" in " ".join(db["healthcheck"]["test"])
     assert "ports" not in db and "env_file" not in db
-    # the only secret is interpolated at compose time; empty -> postgres refuses to start (fail loud)
-    assert db["environment"]["POSTGRES_PASSWORD"] == "${LITELLM_DB_PASSWORD}"
+    # the only secret is a file the postgres entrypoint reads (POSTGRES_PASSWORD_FILE); never a value
+    assert db["environment"]["POSTGRES_PASSWORD_FILE"] == "/run/secrets/litellm_db_password"
+    assert "POSTGRES_PASSWORD" not in db["environment"]
     assert "litellm-db" in compose.core_services()
 
 
@@ -592,15 +596,23 @@ def test_model_gateway_wired_to_db_config_mount_and_mcp_net():
     assert "${BASE_PATH:?BASE_PATH must be set}/out/model-gateway:/config:ro" in mg["volumes"]
     assert mg["networks"] == ["ordo-net", "ordo-mcp-net"]
     env = mg["environment"]
-    assert env["DATABASE_URL"] == "postgresql://litellm:${LITELLM_DB_PASSWORD}@litellm-db:5432/litellm"
+    # LiteLLM builds DATABASE_URL from these and DATABASE_PASSWORD, which the entrypoint exports
+    # from its file: the password is in no rendered value.
+    assert "DATABASE_URL" not in env
+    assert (env["DATABASE_HOST"], env["DATABASE_USERNAME"], env["DATABASE_NAME"]) == (
+        "litellm-db:5432", "litellm", "litellm")
+    assert env["DATABASE_PASSWORD_FILE"] == "/run/secrets/litellm_db_password"
     assert env["STORE_MODEL_IN_DB"] == "False"
     assert env["FORWARDED_ALLOW_IPS"] == "*"
     assert env["LITELLM_MODE"] == "PRODUCTION" and env["LITELLM_LOG"] == "ERROR"
-    # its own secrets arrive as ${KEY} references (compose interpolates them from secrets.env);
-    # the DB password only inside DATABASE_URL, never as a variable of its own
-    for k in ("LITELLM_SALT_KEY", "LITELLM_MASTER_KEY"):
-        assert env[k] == "${" + k + "}"
-    assert "LITELLM_DB_PASSWORD" not in env
+    # every secret is a read-only file; no value, and no ${KEY} reference, is in its environment
+    for k in ("LITELLM_SALT_KEY", "LITELLM_MASTER_KEY", "THROUGHPUT_RECORD_TOKEN"):
+        assert env[f"{k}_FILE"] == f"/run/secrets/{k.lower()}"
+        assert f"{SECRETS_DIR}/{k.lower()}:/run/secrets/{k.lower()}:ro" in mg["volumes"]
+        assert k not in env
+    assert not any("${" in str(v) and "SECRET" in str(v) for v in env.values())
+    # the healthcheck runs outside the entrypoint's environment, so it reads the key file itself
+    assert "LITELLM_MASTER_KEY_FILE" in " ".join(mg["healthcheck"]["test"])
     assert "env_file" not in mg or all("secrets.env" not in str(f) for f in mg["env_file"])
     assert c["networks"]["ordo-mcp-net"] == {"name": "ordo-mcp-net", "internal": True}
 
@@ -615,8 +627,9 @@ def test_model_gateway_keys_is_a_one_shot_after_gateway_health():
     assert "${BASE_PATH:?BASE_PATH must be set}/out/model-gateway:/config:ro" in k["volumes"]
     assert k["environment"]["LITELLM_KEYS_SPEC"] == "/config/keys.json"
     assert k["environment"]["MODEL_GATEWAY_URL"] == "http://model-gateway:11435"
-    # the master key plus every consumer key it provisions, as references, and nothing else secret
-    assert k["environment"]["LITELLM_MASTER_KEY"] == "${LITELLM_MASTER_KEY}"
+    # the master key plus every consumer key it provisions, as files, and nothing else secret
+    assert k["environment"]["LITELLM_MASTER_KEY_FILE"] == "/run/secrets/litellm_master_key"
+    assert "LITELLM_MASTER_KEY" not in k["environment"]
     assert all("secrets.env" not in str(f) for f in k.get("env_file", []))
     assert "model-gateway-keys" in compose.core_services()
 

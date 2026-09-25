@@ -19,7 +19,6 @@ The contract every agent image MUST honour (open standards, per the architecture
 from __future__ import annotations
 
 import dataclasses
-import re
 from pathlib import Path
 from typing import Any
 
@@ -27,27 +26,11 @@ import yaml
 
 from .buildspec import BuildSpec
 from .plugins import parse_derived_env
+from .secret_files import SecretFileRef, parse_secret_files
 
 # The core services an agent may declare it consumes — used to validate a manifest isn't asking
 # for something the core doesn't provide.
 KNOWN_SERVICES = frozenset({"model-gateway", "model-gateway-keys", "ops-controller", "dashboard"})
-
-
-# Where `ordo secrets materialize` writes the file-form secrets: out/secrets/ under the checkout. A
-# host path (${BASE_PATH}), because ops-controller recreates the agent with compose running in /config.
-SECRET_FILES_DIR = "${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/secrets"
-_ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
-_FILE_NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
-
-
-def _secret_file(agent_id: Any, entry: dict[str, Any]) -> dict[str, str]:
-    """One `secret_files:` entry: {key, file, target} declared, `source` derived from `file`."""
-    unknown = sorted(set(entry) - {"key", "file", "target"})
-    key, file, target = str(entry.get("key", "")), str(entry.get("file", "")), str(entry.get("target", ""))
-    if unknown or not _ENV_NAME.match(key) or not _FILE_NAME.match(file) or not target.startswith("/"):
-        raise ValueError(f"agent {agent_id!r}: secret_files entry {entry!r} must be exactly "
-                         "{key: ENV_NAME, file: plain-file-name, target: /absolute/path}")
-    return {"key": key, "file": file, "target": target, "source": f"{SECRET_FILES_DIR}/{file}"}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -68,10 +51,9 @@ class Agent:
     group_add: tuple[str, ...] = ()
     volumes: tuple[str, ...] = ()    # bind/volume specs (src:dst[:ro]); ${VAR} refs pass through
     environment: dict[str, str] = dataclasses.field(default_factory=dict)  # non-secret env
-    # File-based secrets the agent reads from /run/secrets/*: [{key, file, target, source}]. `key` is
-    # the secret store key whose value `ordo secrets materialize` writes to out/secrets/<file>;
-    # `source` is that host path (derived, never declared), bind-mounted read-only at `target`.
-    secret_files: tuple[dict[str, str], ...] = ()
+    # Secrets the agent reads from a file under /run/secrets (ordo/secret_files.py), the same
+    # declaration every service manifest uses.
+    secret_files: tuple[SecretFileRef, ...] = ()
     # Env-var secret NAMES the agent reads, rendered as `KEY: ${KEY}` (see PluginService.secrets).
     secrets: tuple[str, ...] = ()
     # Derived-config NAMES (keys of the rendered .env) the agent reads, rendered as
@@ -92,6 +74,7 @@ class Agent:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Agent:
+        secrets = tuple(str(k) for k in (d.get("secrets", []) or []))
         return cls(
             id=str(d["id"]), name=str(d.get("name", d["id"])),
             description=str(d.get("description", "")),
@@ -104,12 +87,13 @@ class Agent:
             group_add=tuple(str(g) for g in (d.get("group_add", []) or [])),
             volumes=tuple(str(v) for v in (d.get("volumes", []) or [])),
             environment={str(k): str(v) for k, v in (d.get("environment", {}) or {}).items()},
-            secret_files=tuple(_secret_file(d.get("id"), s) for s in (d.get("secret_files", []) or [])),
+            secret_files=parse_secret_files(f"agent {d.get('id')!r}", d.get("secret_files"), env_secrets=secrets,
+                                            explicit_env=d.get("environment") or {}),
             depends_on={str(k): str(v) for k, v in (d.get("depends_on", {}) or {}).items()},
             healthcheck=dict(d.get("healthcheck", {}) or {}),
             build=BuildSpec.from_dict(d.get("build")),
             litellm_key=dict(d.get("litellm_key", {}) or {}),
-            secrets=tuple(str(k) for k in (d.get("secrets", []) or [])),
+            secrets=secrets,
             derived_env=parse_derived_env(f"agent {d.get('id')!r}", d),
         )
 

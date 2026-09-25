@@ -27,8 +27,12 @@ services:
   - name: oauth2-proxy
     # alpine variant ships wget for the healthcheck (the distroless :latest has no shell).
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.4-alpine
-    # oauth2-proxy maps every flag to OAUTH2_PROXY_<FLAG>; these three are passed only by env.
-    secrets: [OAUTH2_PROXY_CLIENT_ID, OAUTH2_PROXY_CLIENT_SECRET, OAUTH2_PROXY_COOKIE_SECRET]
+    # oauth2-proxy maps every flag to OAUTH2_PROXY_<FLAG>. The client secret and the cookie secret are
+    # read from files (--client-secret-file / --cookie-secret-file, v7.15.4 legacy_options.go and
+    # cookie.go); oauth2-proxy uses the file bytes untrimmed, and materialize writes no trailing
+    # newline. The client id has no file flag, and is not a secret (it is in every login redirect).
+    secrets: [OAUTH2_PROXY_CLIENT_ID]
+    secret_files: [OAUTH2_PROXY_CLIENT_SECRET, OAUTH2_PROXY_COOKIE_SECRET]
     command:
       - --provider=google
       - --http-address=0.0.0.0:4180

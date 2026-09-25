@@ -34,7 +34,7 @@ services:
     # emulated or not at all on the other arch. Verify: docker buildx imagetools inspect <ref>
     image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
     network_mode: service:couchdb
-    secrets: [TS_AUTHKEY]
+    secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [couchdb]
     env:
       TS_HOSTNAME: notes

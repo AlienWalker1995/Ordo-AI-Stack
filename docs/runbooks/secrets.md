@@ -13,11 +13,20 @@
     (`required_secrets` in `out/manifest.json`), plus optional ones the store
     holds. Compose interpolates each service's own keys from it
     (`--env-file secrets.env`); no service loads it whole.
-  - `out/secrets/<file>`: the agent's file-form secrets (`secret_files:` in
-    `services/hermes/agent.yaml`: `DISCORD_BOT_TOKEN` -> `discord_token`,
-    `GITHUB_BACKUP_PAT` -> `github_backup_pat`), bind-mounted read-only at
-    `/run/secrets/<file>` so they stay out of `docker inspect`. A key the store
-    lacks materializes as an empty file (the entrypoint treats it as unset).
+  - `out/secrets/<key lowercased>`: every file-delivered secret the render
+    declares (`secret_files:` in a service manifest, and the core services in
+    `ordo/compose.py`; `out/manifest.json` lists them per service). Each is
+    bind-mounted read-only at `/run/secrets/<key lowercased>` and the service
+    gets only the path (`<KEY>_FILE`, or the name its image reads, such as
+    `POSTGRES_PASSWORD_FILE`), so the value stays out of `docker inspect`. The
+    directory is owner-only (700); each file is 644, because the container
+    reads it as its own uid. A key the store lacks materializes as an empty
+    file. `ordo secrets materialize` names files no render declares any more
+    and keeps them: delete one after recreating the services that mounted it.
+  - `out/secret-files.env`: a short digest of each file secret (never the
+    value), loaded by every compose call. Each mount's label interpolates it,
+    so a changed value changes its readers' config hash and `ordo apply`
+    recreates them, as it does for an env secret.
 - **One thing to safeguard:** the age private key,
   `~/.config/sops/age/keys.txt` (`SOPS_AGE_KEY_FILE` overrides it). Without it
   the store does not decrypt.

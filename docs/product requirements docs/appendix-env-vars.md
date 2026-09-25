@@ -11,7 +11,7 @@
 | `OPS_CONTROLLER_TOKEN` | dashboard, agent, hermes-dashboard, comfyui-mcp, orchestration, gpu gates | Bearer the clients send to ops-controller; the dashboard also accepts it on its protected routes (from `out/secrets.env`) | *(required)* |
 | `OPEN_WEBUI_DEFAULT_MODEL` | open-webui | Default model shown in Open WebUI chat (rendered into `DEFAULT_MODELS`) | `local-chat` |
 | `HERMES_DASHBOARD_PORT` | hermes-dashboard | Not wired to anything — the dashboard's listen port is hardcoded via `--port 9119` in `services/hermes-dashboard/plugin.yaml`; documented here for reference only | `9119` |
-| `DISCORD_BOT_TOKEN_FILE` | agent | Docker secret file path for the Discord bot token; the entrypoint reads it into `DISCORD_BOT_TOKEN` inside the container. Plaintext `DISCORD_BOT_TOKEN` env is never set — `tests/test_secrets_isolation.py` asserts it's absent | `/run/secrets/discord_token` |
+| `DISCORD_BOT_TOKEN_FILE` | agent | Docker secret file path for the Discord bot token; the entrypoint reads it into `DISCORD_BOT_TOKEN` inside the container. Plaintext `DISCORD_BOT_TOKEN` env is never set; `tests/test_secrets_isolation.py` asserts it's absent | `/run/secrets/discord_bot_token` |
 | `DISCORD_ALLOWED_USERS` | agent | Comma-separated Discord user IDs authorized to DM/invoke | *(required for Discord use)* |
 | `MCP_SERVERS_PATH` | dashboard | Rendered MCP server list read by the dashboard (`./mcp:/mcp-config:ro`) | `/mcp-config/servers.json` |
 | `MODEL_GATEWAY_PORT` | model-gateway | Not wired to anything — `services/model-gateway/entrypoint.sh` hardcodes `--port 11435`; documented here for reference only | `11435` |
@@ -27,9 +27,9 @@
 | `GITHUB_PERSONAL_ACCESS_TOKEN` | comfyui | GitHub token for ComfyUI-Manager custom-node fetches | *(optional)* |
 | `LITELLM_MASTER_KEY` | model-gateway, model-gateway-keys, dashboard | LiteLLM master key; the entrypoint refuses to start unless it matches `^sk-[A-Za-z0-9_-]{32,}$` | *(required)* |
 | `LITELLM_SALT_KEY` | model-gateway | Encrypts provider credentials stored in `litellm-db`. NEVER rotate | *(required)* |
-| `LITELLM_DB_PASSWORD` | model-gateway, litellm-db | Postgres password, interpolated into `DATABASE_URL` | *(required)* |
+| `LITELLM_DB_PASSWORD` | model-gateway, litellm-db | Postgres password, a file for both (`POSTGRES_PASSWORD_FILE`, `DATABASE_PASSWORD_FILE`) | *(required)* |
 | `LITELLM_KEY_HERMES` / `_OPEN_WEBUI` / `_AUTOMATION` / `_EDGE` | agent, open-webui, n8n, external clients | Per-consumer LiteLLM virtual keys, provisioned by `model-gateway-keys` | *(generated)* |
 | `LITELLM_KEYS_SPEC` | model-gateway-keys | Rendered key/grant spec read by the bootstrap one-shot | `/config/keys.json` |
 | `LITELLM_MODE` | model-gateway | LiteLLM run mode | `PRODUCTION` |
 | `STORE_MODEL_IN_DB` | model-gateway | Models and MCP servers stay in the rendered config, never in the DB | `False` |
-| `DATABASE_URL` | model-gateway | Postgres DSN for `litellm-db` (`postgresql://litellm:${LITELLM_DB_PASSWORD}@litellm-db:5432/litellm`) | *(rendered)* |
+| `DATABASE_HOST` / `DATABASE_USERNAME` / `DATABASE_NAME` | model-gateway | LiteLLM builds its Postgres DSN from these and `DATABASE_PASSWORD` (exported from its file by the entrypoint) | *(rendered)* |

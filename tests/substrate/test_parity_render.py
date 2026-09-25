@@ -149,12 +149,14 @@ def test_secrets_scoped_to_enabled_plugins():
 
 def test_services_get_secret_references_not_the_secrets_file():
     # Per-service scoping is specified in test_secret_scoping.py; here only the parity shape: the
-    # services that need secrets carry ${KEY} references and none loads secrets.env whole.
+    # services that need secrets carry files or ${KEY} references and none loads secrets.env whole.
     c = _dual().compose_dict()
     for svc in c["services"].values():
         assert all("secrets.env" not in str(f) for f in svc.get("env_file", []))
-    assert c["services"]["ops-controller"]["environment"]["OPS_CONTROLLER_TOKEN"] == "${OPS_CONTROLLER_TOKEN}"
-    assert c["services"]["oauth2-proxy"]["environment"]["OAUTH2_PROXY_COOKIE_SECRET"] == "${OAUTH2_PROXY_COOKIE_SECRET}"
+    assert c["services"]["ops-controller"]["environment"]["OPS_CONTROLLER_TOKEN_FILE"] == "/run/secrets/ops_controller_token"
+    proxy = c["services"]["oauth2-proxy"]["environment"]
+    assert proxy["OAUTH2_PROXY_COOKIE_SECRET_FILE"] == "/run/secrets/oauth2_proxy_cookie_secret"
+    assert proxy["OAUTH2_PROXY_CLIENT_ID"] == "${OAUTH2_PROXY_CLIENT_ID}"   # no file flag; not a secret
     assert "OPS_CONTROLLER_TOKEN" not in (c["services"]["qdrant"].get("environment") or {})
 
 

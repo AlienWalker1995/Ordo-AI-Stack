@@ -6,8 +6,9 @@ tailnet sidecars included, held every credential. Now a service declares the sec
 ordo/compose.py) and the renderer passes exactly those as `KEY: ${KEY}`; compose interpolates the
 values from `--env-file secrets.env`.
 
-SPEC below is the security contract, derived from what each process actually reads (code, image
-entrypoints, the agent's skills). Giving a service another secret means changing SPEC on purpose.
+FILE_SPEC and ENV_SPEC below are the security contract, derived from what each process actually
+reads (code, image entrypoints, the agent's skills) and how it can read it. Giving a service another
+secret, or moving one between the two, means changing them on purpose.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from ordo import secret_files
 from ordo.catalog import Catalog
 from ordo.config import Source
 from ordo.plugins import PluginRegistry, PluginService
@@ -37,9 +39,12 @@ PLUGINS = ["comfyui", "song-gen", "voice", "rag", "qdrant-rag", "llamacpp-cpu", 
 
 TAILNET = {"TS_AUTHKEY"}
 LANGFUSE_PAIR = {"LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"}
-SPEC: dict[str, set[str]] = {
-    # + GOOGLE_CLIENT_ID/SECRET <- OAUTH2_PROXY_CLIENT_*: the edge requires a site hostname, which
-    # turns on LiteLLM SSO (that wiring has its own tests in test_litellm_google_sso.py)
+# Secrets a service reads from a FILE (`secret_files:`, ordo/secret_files.py): mounted read-only at
+# /run/secrets/<key lowercased>, with only the path in the environment. Every secret whose software
+# can read a file is here; the evidence per image is in the manifest comment next to each entry.
+FILE_SPEC: dict[str, set[str]] = {
+    # + OAUTH2_PROXY_CLIENT_* as GOOGLE_CLIENT_*: the edge requires a site hostname, which turns on
+    # LiteLLM SSO (that wiring has its own tests in test_litellm_google_sso.py)
     "model-gateway": {"LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "LITELLM_DB_PASSWORD",
                       "THROUGHPUT_RECORD_TOKEN", "OAUTH2_PROXY_CLIENT_ID", "OAUTH2_PROXY_CLIENT_SECRET"}
                      | LANGFUSE_PAIR,
@@ -48,32 +53,41 @@ SPEC: dict[str, set[str]] = {
     "litellm-db": {"LITELLM_DB_PASSWORD"},
     "ops-controller": {"OPS_CONTROLLER_TOKEN"},
     "dashboard": {"OPS_CONTROLLER_TOKEN", "THROUGHPUT_RECORD_TOKEN", "LITELLM_MASTER_KEY"},
-    "agent": {"LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN", "HERMES_API_SERVER_KEY"} | LANGFUSE_PAIR,
-    "hermes-dashboard": {"LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN"} | LANGFUSE_PAIR,
-    "comfyui": {"OPS_CONTROLLER_TOKEN", "LITELLM_MASTER_KEY", "HF_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"},
+    "agent": {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT"},
     "comfyui-gate": {"OPS_CONTROLLER_TOKEN"},
     "mcp-comfyui": {"OPS_CONTROLLER_TOKEN"},
     "mcp-orchestration": {"OPS_CONTROLLER_TOKEN"},
     "mcp-n8n": {"N8N_API_KEY"},
-    "n8n": {"LITELLM_KEY_AUTOMATION"},
-    "open-webui": {"LITELLM_KEY_OPEN_WEBUI"},
     "evals": {"OPS_CONTROLLER_TOKEN", "LITELLM_KEY_EVALS", "HERMES_API_SERVER_KEY"} | LANGFUSE_PAIR,
-    "couchdb": {"COUCHDB_PASSWORD"},
     "livesync-bridge": {"COUCHDB_PASSWORD", "LIVESYNC_E2EE_PASSPHRASE"},
-    "oauth2-proxy": {"OAUTH2_PROXY_CLIENT_ID", "OAUTH2_PROXY_CLIENT_SECRET", "OAUTH2_PROXY_COOKIE_SECRET"},
-    "searxng": {"SEARXNG_SECRET"},
+    "oauth2-proxy": {"OAUTH2_PROXY_CLIENT_SECRET", "OAUTH2_PROXY_COOKIE_SECRET"},
     "langfuse-db": {"LANGFUSE_DB_PASSWORD"},
-    "langfuse-redis": {"LANGFUSE_REDIS_AUTH"},
     "langfuse-clickhouse": {"LANGFUSE_CLICKHOUSE_PASSWORD"},
     "langfuse-minio": {"LANGFUSE_MINIO_SECRET"},
     "langfuse-minio-lifecycle": {"LANGFUSE_MINIO_SECRET"},
     "langfuse-retention": LANGFUSE_PAIR,
+    **{f"tailnet-{n}": TAILNET for n in ("chat", "comfy", "dash", "graph", "hermes", "langfuse", "llm", "n8n")},
+}
+# Secrets still delivered in the environment (`KEY: ${KEY}`), each for a stated reason: the
+# software has no file variant (langfuse, couchdb, searxng, open-webui, n8n's workflow env, the
+# oauth2-proxy client id), or the reader is the agent's image, which holds the Docker socket and
+# the /c/dev mirror (so a file would hide nothing from it) and whose docker-exec'd CLI and skills
+# read these by name. Moving one to FILE_SPEC is the goal; adding one here needs a reason.
+ENV_SPEC: dict[str, set[str]] = {
+    "agent": {"LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN", "HERMES_API_SERVER_KEY"} | LANGFUSE_PAIR,
+    "hermes-dashboard": {"LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN"} | LANGFUSE_PAIR,
+    "comfyui": {"OPS_CONTROLLER_TOKEN", "LITELLM_MASTER_KEY", "HF_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"},
+    "n8n": {"LITELLM_KEY_AUTOMATION"},
+    "open-webui": {"LITELLM_KEY_OPEN_WEBUI"},
+    "couchdb": {"COUCHDB_PASSWORD"},
+    "oauth2-proxy": {"OAUTH2_PROXY_CLIENT_ID"},
+    "searxng": {"SEARXNG_SECRET"},
+    "langfuse-redis": {"LANGFUSE_REDIS_AUTH"},
     "langfuse-web": {"LANGFUSE_CLICKHOUSE_PASSWORD", "LANGFUSE_DB_PASSWORD", "LANGFUSE_ENCRYPTION_KEY",
                      "LANGFUSE_ADMIN_PASSWORD", "LANGFUSE_MINIO_SECRET", "LANGFUSE_NEXTAUTH_SECRET",
                      "LANGFUSE_REDIS_AUTH", "LANGFUSE_SALT"} | LANGFUSE_PAIR,
     "langfuse-worker": {"LANGFUSE_CLICKHOUSE_PASSWORD", "LANGFUSE_DB_PASSWORD", "LANGFUSE_ENCRYPTION_KEY",
                         "LANGFUSE_MINIO_SECRET", "LANGFUSE_REDIS_AUTH", "LANGFUSE_SALT"},
-    **{f"tailnet-{n}": TAILNET for n in ("chat", "comfy", "dash", "graph", "hermes", "langfuse", "llm", "n8n")},
 }
 
 
@@ -105,17 +119,51 @@ def test_no_service_loads_the_whole_secrets_file(rendered):
         assert "secrets.env" not in files, f"{name} still loads every secret"
 
 
-def test_each_service_receives_exactly_its_secrets(rendered):
+def _files(compose) -> dict[str, set[str]]:
+    found: dict[str, set[str]] = {}
+    for service, key in secret_files.secret_files_in(compose):
+        found.setdefault(service, set()).add(key)
+    return found
+
+
+def test_each_service_receives_exactly_its_env_secrets(rendered):
     rc, compose = rendered
     names = _secret_names(rc)
     got = {name: _delivered(svc, names) for name, svc in compose["services"].items()}
     got = {k: v for k, v in got.items() if v}
-    assert got == SPEC
+    assert got == ENV_SPEC
+
+
+def test_each_service_receives_exactly_its_file_secrets(rendered):
+    _, compose = rendered
+    assert _files(compose) == FILE_SPEC
+
+
+def test_no_file_secret_is_also_in_its_readers_environment(rendered):
+    """A converted secret must not ride along as a value too: no `${KEY}` reference and no variable
+    named KEY on a service that mounts it (a prefixed path like tailscale's `file:` is the exception)."""
+    rc, compose = rendered
+    for name, keys in _files(compose).items():
+        svc = compose["services"][name]
+        assert not keys & _delivered(svc, keys), f"{name} gets {sorted(keys & _delivered(svc, keys))} as a value"
+        for key, value in (svc.get("environment") or {}).items():
+            if key in keys:
+                assert str(value).startswith("file:/run/secrets/"), f"{name}: {key}={value!r}"
+
+
+def test_file_secret_mounts_are_read_only_and_from_the_materialized_dir(rendered):
+    _, compose = rendered
+    for name, keys in _files(compose).items():
+        mounts = [v for v in compose["services"][name]["volumes"] if ":/run/secrets/" in v]
+        assert sorted(mounts) == sorted(f"{secret_files.SECRET_FILES_DIR}/{k.lower()}:/run/secrets/{k.lower()}:ro"
+                                        for k in keys), name
 
 
 def test_the_ops_token_reaches_only_its_callers(rendered):
     rc, compose = rendered
-    holders = {n for n, svc in compose["services"].items() if "OPS_CONTROLLER_TOKEN" in _delivered(svc, {"OPS_CONTROLLER_TOKEN"})}
+    by_file = {n for n, keys in _files(compose).items() if "OPS_CONTROLLER_TOKEN" in keys}
+    holders = by_file | {n for n, svc in compose["services"].items()
+                         if "OPS_CONTROLLER_TOKEN" in _delivered(svc, {"OPS_CONTROLLER_TOKEN"})}
     assert holders == {"ops-controller", "dashboard", "agent", "hermes-dashboard", "comfyui", "comfyui-gate",
                        "mcp-comfyui", "mcp-orchestration", "evals"}
 
@@ -130,10 +178,13 @@ def test_declared_secrets_are_provisioned(rendered):
     names = _secret_names(rc)
     services_dir = ROOT / "services"
     enabled = set(PLUGINS)
-    declared = {f"{p.id}/{ps.name}": set(ps.secrets)
+    declared = {f"{p.id}/{ps.name}": set(ps.secrets) | {r.key for r in ps.secret_files}
                 for p in REGISTRY.plugins if p.id in enabled for ps in p.services}
+    declared |= {f"mcp/{p.id}": {r.key for r in p.mcp.secret_files}
+                 for p in REGISTRY.plugins if p.id in enabled and p.mcp is not None}
     declared |= {f"agent/{a.id}": set(a.secrets) for a in [AgentRegistry.load(services_dir).default_agent()]}
-    declared |= {f"dashboard/{d.id}": set(d.secrets) for d in [DashboardRegistry.load(services_dir).default_dashboard()]}
+    declared |= {f"dashboard/{d.id}": set(d.secrets) | {r.key for r in d.secret_files}
+                 for d in [DashboardRegistry.load(services_dir).default_dashboard()]}
     for where, keys in declared.items():
         assert keys <= names, f"{where} declares {sorted(keys - names)}, which secrets.env.example does not list"
 

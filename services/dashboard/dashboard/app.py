@@ -30,6 +30,7 @@ from dashboard.routes_auth import router as auth_router
 from dashboard.routes_console import router as console_router
 from dashboard.routes_hub import router as hub_router
 from dashboard.routes_orchestration import router as orchestration_router
+from dashboard.secret_env import read_secret
 from dashboard.services_catalog import OPS_SERVICE_MAP
 
 # Persistent httpx client — connection pooling avoids per-request TCP handshake overhead.
@@ -98,7 +99,7 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     # /api/throughput/record: requires THROUGHPUT_RECORD_TOKEN when set (model-gateway internal; PRD §3.E)
     if path == "/api/throughput/record":
-        token = os.environ.get("THROUGHPUT_RECORD_TOKEN", "").strip()
+        token = read_secret("THROUGHPUT_RECORD_TOKEN")
         if token and not hmac.compare_digest(request.headers.get("X-Throughput-Token", ""), token):
             return JSONResponse(status_code=401, content={"detail": "Invalid or missing X-Throughput-Token"})
         return await call_next(request)
@@ -127,7 +128,7 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
 MODEL_GATEWAY_URL = os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435").rstrip("/")
-MODEL_GATEWAY_API_KEY = (os.environ.get("MODEL_GATEWAY_API_KEY") or os.environ.get("LITELLM_MASTER_KEY", "")).strip()
+MODEL_GATEWAY_API_KEY = read_secret("MODEL_GATEWAY_API_KEY") or read_secret("LITELLM_MASTER_KEY")
 MODELS_DIR = Path(os.environ.get("MODELS_DIR", "/models"))
 
 
@@ -833,7 +834,7 @@ async def throughput_benchmark(req: ThroughputBenchmarkRequest):
 # --- Ops Controller proxy ---
 
 OPS_CONTROLLER_URL = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000")
-OPS_CONTROLLER_TOKEN = os.environ.get("OPS_CONTROLLER_TOKEN", "")
+OPS_CONTROLLER_TOKEN = read_secret("OPS_CONTROLLER_TOKEN")
 
 
 async def _ops_request(
@@ -1109,7 +1110,7 @@ async def service_pressure():
     from dashboard.services_catalog import OPS_SERVICE_MAP, SERVICES
 
     ops_url = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000").rstrip("/")
-    token = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
+    token = read_secret("OPS_CONTROLLER_TOKEN")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     host_info = {

@@ -25,6 +25,8 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=src /src /app
 COPY entrypoint.sh /usr/local/bin/livesync-bridge-entrypoint
+# The secret reader the entrypoint sources (the canonical copy is ordo/secret-env.sh).
+COPY secret-env.sh /usr/local/lib/ordo-secret-env.sh
 # Resilience patch for the vendored LiveSync core: guard the per-document getByMeta() inside the
 # watch try/catch so one corrupted/oversized doc can't stall the whole changes feed (see the script
 # header). Self-verifying — fails the build if the upstream pattern is gone.

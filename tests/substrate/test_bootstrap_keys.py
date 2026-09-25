@@ -103,6 +103,13 @@ def test_desired_payload_uses_explicit_key_value_and_no_mcp_sentinel():
     assert desired_payload(SPEC[0], ENV)["object_permission"]["mcp_servers"] == ["memory_vault", "searxng"]
 
 
+def test_desired_payload_reads_the_consumer_key_from_its_file(tmp_path):
+    """The rendered delivery: LITELLM_KEY_<ID>_FILE points at /run/secrets/litellm_key_<id>."""
+    (tmp_path / "litellm_key_open_webui").write_text(ENV["LITELLM_KEY_OPEN_WEBUI"], encoding="utf-8")
+    p = desired_payload(SPEC[1], {"LITELLM_KEY_OPEN_WEBUI_FILE": str(tmp_path / "litellm_key_open_webui")})
+    assert p["key"] == ENV["LITELLM_KEY_OPEN_WEBUI"]
+
+
 def test_desired_payload_fails_loud_on_missing_secret():
     with pytest.raises(ValueError, match="LITELLM_KEY_HERMES"):
         desired_payload(SPEC[0], {"LITELLM_KEY_HERMES": ""})

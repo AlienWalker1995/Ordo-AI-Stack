@@ -84,7 +84,9 @@ services:
     env:
       POSTGRES_USER: langfuse
       POSTGRES_DB: langfuse
-      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD}
+    # The entrypoint reads POSTGRES_PASSWORD_FILE (docker-entrypoint.sh `file_env`), only at initdb.
+    secret_files:
+      - {key: LANGFUSE_DB_PASSWORD, env: POSTGRES_PASSWORD_FILE}
     # named volume: DB state never rides the 9p bind (same rule as litellm-db / qdrant)
     volumes:
       - langfuse-db-data:/var/lib/postgresql/data
@@ -101,7 +103,11 @@ services:
     env:
       CLICKHOUSE_DB: default
       CLICKHOUSE_USER: clickhouse
-      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD}
+    # The entrypoint reads CLICKHOUSE_PASSWORD_FILE when the file exists (entrypoint.sh), and writes
+    # the user XML from it on every start. materialize always writes the file (a blank required key
+    # refuses to materialize), so it is never silently absent.
+    secret_files:
+      - {key: LANGFUSE_CLICKHOUSE_PASSWORD, env: CLICKHOUSE_PASSWORD_FILE}
     volumes:
       - langfuse-clickhouse-data:/var/lib/clickhouse
       - langfuse-clickhouse-logs:/var/log/clickhouse-server
@@ -149,7 +155,11 @@ services:
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     env:
       MINIO_ROOT_USER: langfuse
-      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_SECRET}
+    # MinIO reads MINIO_ROOT_PASSWORD_FILE itself (cmd/common-main.go readFromSecret, a full path or a
+    # name under /run/secrets, trimmed). A missing file is ignored rather than refused, so this relies
+    # on materialize always writing it (a blank required key refuses to materialize).
+    secret_files:
+      - {key: LANGFUSE_MINIO_SECRET, env: MINIO_ROOT_PASSWORD_FILE}
     # ENTRYPOINT, not command: the `langfuse` bucket must exist before the server accepts the first
     # event upload, and MinIO has no "create bucket on start" flag. Upstream's compose does the
     # same mkdir-then-serve one-liner; MinIO reads a top-level directory under the data root as a
@@ -327,8 +337,6 @@ services:
     command: ["python", "/app/langfuse_retention.py", "--daemon"]
     env:
       LANGFUSE_BASE_URL: http://langfuse-web:3000
-      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
-      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
       # RETENTION POLICY: 90 days unless `site: {LANGFUSE_RETENTION_DAYS: <n>}` in ordo.yaml puts a
       # value in .env. The default lives HERE, as a compose default scoped to its two consumers, so a
       # change to it recreates nothing else. langfuse-minio-lifecycle below carries the SAME default;
@@ -340,6 +348,9 @@ services:
     volumes:
       # ${BASE_PATH} (not ./): a TRACKED repo file, same rule as the monitoring plugin's scrape config.
       - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/services/langfuse/langfuse_retention.py:/app/langfuse_retention.py:ro
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/services/langfuse/secret_env.py:/app/secret_env.py:ro
+    # The project key pair, read by langfuse_retention.py with secret_env.read_secret.
+    secret_files: [LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY]
     security_opt: ["no-new-privileges:true"]
     resources: {cpus: "0.5", memory: "256m"}
     healthcheck:
@@ -361,19 +372,21 @@ services:
     restart: on-failure
     depends_on:
       langfuse-minio: service_healthy
+    # Read from its file by the script below, so it is on neither a command line nor the env.
+    secret_files: [LANGFUSE_MINIO_SECRET]
     env:
-      LANGFUSE_MINIO_SECRET: ${LANGFUSE_MINIO_SECRET}
       # Same default as langfuse-retention (see the comment there).
       LANGFUSE_RETENTION_DAYS: ${LANGFUSE_RETENTION_DAYS:-90}
     # `$$` is a literal `$` for the shell (compose would otherwise interpolate it). The alias is
-    # built from the environment inside the container, so the secret never appears on a command line.
+    # built inside the container from the secret's file, so the secret never appears on a command line.
     entrypoint:
       - sh
       - -c
       - >-
         set -eu;
         case "$$LANGFUSE_RETENTION_DAYS" in ''|*[!0-9]*|0*) echo "LANGFUSE_RETENTION_DAYS must be a positive whole number of days without leading zeros" >&2; exit 2;; esac;
-        export MC_HOST_langfuse="http://langfuse:$$LANGFUSE_MINIO_SECRET@langfuse-minio:9000";
+        minio_secret="$$(cat "$$LANGFUSE_MINIO_SECRET_FILE")";
+        export MC_HOST_langfuse="http://langfuse:$$minio_secret@langfuse-minio:9000";
         printf '{"Rules":[{"ID":"ordo-langfuse-retention","Status":"Enabled","Filter":{"Prefix":""},"Expiration":{"Days":%s}}]}' "$$LANGFUSE_RETENTION_DAYS" | mc ilm import langfuse/langfuse;
         mc ilm rule ls langfuse/langfuse
     security_opt: ["no-new-privileges:true"]

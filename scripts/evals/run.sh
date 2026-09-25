@@ -49,4 +49,4 @@ fi
 export GIT_COMMIT GIT_DIRTY
 
 cd "$OUT_DIR"
-exec docker compose -p ordo --profile evals --env-file .env --env-file secrets.env run --rm evals "$@"
+exec docker compose -p ordo --profile evals --env-file .env --env-file secrets.env --env-file secret-files.env run --rm evals "$@"

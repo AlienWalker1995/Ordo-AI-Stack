@@ -22,18 +22,23 @@ from pathlib import Path
 
 import yaml
 
-from . import fetch, images
+from . import fetch, images, secret_files
 
 COMPOSE_FILE = "docker-compose.yml"
 OPS_CONTROLLER_SERVICE = "ops-controller"
 # The ops-controller environment key naming its scheduler state file (ordo/compose.py sets it).
 SCHEDULER_STATE_KEY = "SCHEDULER_STATE_PATH"
 
-# Runs inside the ops-controller container, which holds its own token and serves on loopback.
+# Runs inside the ops-controller container, which holds its own token and serves on loopback. The
+# token is a file (OPS_CONTROLLER_TOKEN_FILE, the rendered delivery): a `docker exec` does not see the
+# serving process's environment, so the script reads the file itself, or the env var that an
+# ops-controller created before file delivery still carries.
 _STATUS_SCRIPT = (
     "import json, os, urllib.request\n"
+    "path = os.environ.get('OPS_CONTROLLER_TOKEN_FILE', '')\n"
+    "token = open(path).read().strip() if path else os.environ['OPS_CONTROLLER_TOKEN']\n"
     "req = urllib.request.Request('http://127.0.0.1:9000/status',\n"
-    "    headers={'Authorization': 'Bearer ' + os.environ['OPS_CONTROLLER_TOKEN']})\n"
+    "    headers={'Authorization': 'Bearer ' + token})\n"
     "print(json.dumps(json.load(urllib.request.urlopen(req, timeout=15))['gpu']))\n"
 )
 
@@ -49,10 +54,12 @@ def compose_argv(compose_dir: str, project: str, *args: str, profiles: Sequence[
     resolves (without it `docker compose ... open-webui` aborts with "no such service: qdrant").
     Widening is safe; `--no-deps` is what limits a start to the named services.
 
-    BOTH env files, always. Passing any --env-file disables compose's implicit .env auto-load, so
+    Every env file, always. Passing any --env-file disables compose's implicit .env auto-load, so
     .env must be listed too; without secrets.env every ${LITELLM_MASTER_KEY} style reference goes
     UNSET and secret-dependent services crash-loop (the 2026-06-26 oauth2-proxy 11-byte-cookie
-    outage). Order matters: derived first, secrets second.
+    outage). secret-files.env holds the digest each file-secret mount is labelled with, so a
+    rotated file secret changes its readers' config hash (ordo/secret_files.py). Order matters:
+    derived first, secrets second.
     """
     cmd = ["docker", "compose", "-p", project, "-f", f"{compose_dir}/{COMPOSE_FILE}"]
     for profile in profiles:
@@ -60,6 +67,7 @@ def compose_argv(compose_dir: str, project: str, *args: str, profiles: Sequence[
     cmd += [
         "--env-file", f"{compose_dir}/.env",
         "--env-file", f"{compose_dir}/secrets.env",
+        "--env-file", f"{compose_dir}/{secret_files.DIGESTS_ENV_FILE}",
     ]
     return cmd + list(args)
 
@@ -120,11 +128,13 @@ def readers_of(doc: dict, keys: Sequence[str]) -> list[str]:
     """The long-running services whose rendered definition interpolates any of `keys`, sorted.
 
     Read from the rendered compose, so it covers every way a service reads a key: a declared
-    `secrets:` entry (`KEY: ${KEY}`), a key mapped onto another name (`X: ${KEY:-}`), or a command
-    line (`--requirepass ${KEY}`). A one-shot job (`restart: "no"`, the evals runner) is left out:
-    it reads its environment on each run, and recreating it would start one.
+    `secrets:` entry (`KEY: ${KEY}`), a key mapped onto another name (`X: ${KEY:-}`), a command
+    line (`--requirepass ${KEY}`), or a file secret (its mount's digest label,
+    `${ORDO_SECRET_FILE_SHA256_KEY:-}`). A one-shot job (`restart: "no"`, the evals runner) is left
+    out: it reads its environment on each run, and recreating it would start one.
     """
-    refs = [re.compile(r"\$\{" + re.escape(key) + r"[}:?-]") for key in keys]
+    names = [*keys, *(secret_files.digest_var(key) for key in keys)]
+    refs = [re.compile(r"\$\{" + re.escape(name) + r"[}:?-]") for name in names]
     readers = []
     for name, spec in _services(doc).items():
         if str((spec or {}).get("restart")) == "no":

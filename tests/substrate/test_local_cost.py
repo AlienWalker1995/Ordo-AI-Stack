@@ -160,6 +160,10 @@ def test_entrypoint_substitutes_cost_placeholders_into_valid_yaml(tmp_path):
     # tests/test_llamacpp_kv_cache_args.py's wrapper redirection.
     script = script.replace("/app/config.template.yaml", template_posix)
     script = script.replace("/tmp/config.yaml", out_posix)
+    script = script.replace("/app/secret-env.sh", (ENTRYPOINT.parent / "secret-env.sh").resolve().as_posix())
+    # The master key arrives as a file, as the render delivers it: the entrypoint exports it first.
+    master_key_file = tmp_path / "litellm_master_key"
+    master_key_file.write_text("sk-" + "a" * 32, encoding="utf-8")
     # Stop right after the sed pipeline - everything after it (copying the throughput
     # callback, merging MCP servers, exec'ing litellm) needs container-only files this test
     # doesn't have, and isn't what's under test here.
@@ -168,8 +172,8 @@ def test_entrypoint_substitutes_cost_placeholders_into_valid_yaml(tmp_path):
     script = script[: script.index(marker)]
 
     env = {
-        **os.environ,
-        "LITELLM_MASTER_KEY": "sk-" + "a" * 32,
+        **{k: v for k, v in os.environ.items() if k != "LITELLM_MASTER_KEY"},
+        "LITELLM_MASTER_KEY_FILE": master_key_file.as_posix(),
         "LLAMACPP_CTX_SIZE": "131072",
         "LLAMACPP_N_PREDICT": "65536",
         "LLAMACPP_CPU_CTX": "131072",

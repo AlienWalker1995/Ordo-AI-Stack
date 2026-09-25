@@ -94,6 +94,8 @@ from typing import Any
 import aiohttp
 from aiohttp import web
 
+from secret_env import read_secret
+
 LOG = logging.getLogger("gpu-gate")
 
 # Typed application keys (aiohttp's supported way to stash per-app state; bare string keys are
@@ -166,7 +168,8 @@ class Config:
         self.max_hold_seconds = _env_f("GATE_MAX_HOLD_SECONDS", 3600.0)
         self.poll_seconds = _env_f("GATE_POLL_SECONDS", 5.0)
         self.ops_url = _env("OPS_CONTROLLER_URL").rstrip("/")
-        self.ops_token = _env("OPS_CONTROLLER_TOKEN")
+        # A file under /run/secrets (OPS_CONTROLLER_TOKEN_FILE, the rendered delivery), else the env var.
+        self.ops_token = read_secret("OPS_CONTROLLER_TOKEN")
         # The compose service behind GATE_UPSTREAM: what the gate asks ops-controller to restart
         # when the upstream wedges, so the card is never released under a render still holding VRAM.
         self.upstream_service = _env("GATE_UPSTREAM_SERVICE")

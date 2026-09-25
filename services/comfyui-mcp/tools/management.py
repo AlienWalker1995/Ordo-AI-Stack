@@ -13,10 +13,13 @@ from typing import Any
 import requests
 from mcp.server.fastmcp import FastMCP
 
+from secret_env import read_secret
+
 logger = logging.getLogger("MCP_Server")
 
 OPS_CONTROLLER_URL = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000").rstrip("/")
-OPS_CONTROLLER_TOKEN = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
+# A file under /run/secrets (OPS_CONTROLLER_TOKEN_FILE, the rendered delivery), else the env var.
+OPS_CONTROLLER_TOKEN = read_secret("OPS_CONTROLLER_TOKEN")
 
 
 def _ops_get(path: str, timeout: int = 60) -> dict:

@@ -27,9 +27,10 @@ mcp:
   transport: http
   port: 9000
   network: stack           # reaches n8n:5678
+  # The image's CMD exports it from /run/secrets before mcp-proxy starts (services/n8n/Dockerfile).
+  secret_files: [N8N_API_KEY]
   env:
     N8N_API_URL: http://n8n:5678
-    N8N_API_KEY: ${N8N_API_KEY}
     # Load-bearing again under the stdio bridge: the upstream server speaks JSON-RPC on stdout, so
     # a stray banner or INFO byte corrupts the channel mcp-proxy is reading. These also keep the
     # tool set at the full 28 rather than the docs-only subset.

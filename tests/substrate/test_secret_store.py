@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ordo import cli, remote, secret_store, wizard
+from ordo import cli, remote, secret_files, secret_store, wizard
 from ordo.catalog import Catalog
 from ordo.config import Source
 from ordo.hardware import HardwareProfile
@@ -35,7 +35,7 @@ needs_sops = pytest.mark.skipif(not HAVE_SOPS, reason="sops and age-keygen are n
 NEEDS = secret_store.SecretNeeds(
     required=("OPS_CONTROLLER_TOKEN", "LITELLM_MASTER_KEY", "HF_TOKEN"),
     optional=("HF_TOKEN",),
-    files=(secret_store.SecretFile(key="DISCORD_BOT_TOKEN", file="discord_token", service="agent"),),
+    files=(secret_store.SecretFile(key="DISCORD_BOT_TOKEN", file="discord_bot_token", service="agent"),),
 )
 
 
@@ -130,7 +130,7 @@ def test_plain_materialize_writes_the_file_secrets_and_leaves_secrets_env_alone(
     store = secret_store.PlainStore(out / "secrets.env")
     result = secret_store.materialize(store, NEEDS, out)
     assert (out / "secrets.env").read_text(encoding="utf-8") == text
-    assert (out / "secrets" / "discord_token").read_text(encoding="utf-8") == "d"
+    assert (out / "secrets" / "discord_bot_token").read_text(encoding="utf-8") == "d"
     assert result.blank_required == []
 
 
@@ -151,7 +151,7 @@ def test_an_absent_file_secret_materializes_as_an_empty_file(tmp_path):
     out.mkdir()
     (out / "secrets.env").write_text("OPS_CONTROLLER_TOKEN=o\nLITELLM_MASTER_KEY=m\n", encoding="utf-8")
     secret_store.materialize(secret_store.PlainStore(out / "secrets.env"), NEEDS, out)
-    assert (out / "secrets" / "discord_token").read_text(encoding="utf-8") == ""
+    assert (out / "secrets" / "discord_bot_token").read_text(encoding="utf-8") == ""
 
 
 def test_the_agent_entrypoint_treats_an_empty_file_secret_as_unset():
@@ -169,9 +169,9 @@ def test_the_agent_file_secrets_name_their_store_key_and_live_under_out():
     from ordo.agents import AgentRegistry
 
     hermes = AgentRegistry.load(ROOT / "services").get("hermes")
-    assert {s["key"] for s in hermes.secret_files} == {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT"}
+    assert {s.key for s in hermes.secret_files} == {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT"}
     for entry in hermes.secret_files:
-        assert entry["source"] == "${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/secrets/" + entry["file"]
+        assert entry.source == "${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/secrets/" + entry.key.lower()
 
 
 def test_the_manifest_lists_the_file_secrets_by_key():
@@ -179,7 +179,10 @@ def test_the_manifest_lists_the_file_secrets_by_key():
                                "site": {"BASE_PATH": "/srv/ordo", "DATA_PATH": "/srv/ordo/data",
                                         "MEMORY_VAULT_PATH": "/srv/ordo/data/vault"}})
     manifest = RENDER_MODULE.render(source, CATALOG, REGISTRY).manifest()
-    assert {"key": "DISCORD_BOT_TOKEN", "file": "discord_token", "service": "agent"} in manifest["secret_files"]
+    assert {"key": "DISCORD_BOT_TOKEN", "file": "discord_bot_token", "service": "agent"} in manifest["secret_files"]
+    # every core file secret is listed too, per service that mounts it
+    assert {"key": "OPS_CONTROLLER_TOKEN", "file": "ops_controller_token", "service": "ops-controller"} \
+        in manifest["secret_files"]
 
 
 def test_no_v1_secret_path_is_left():
@@ -259,6 +262,9 @@ def test_list_says_out_secrets_env_is_the_store_and_prints_names_only(stack, cap
     printed = capsys.readouterr().out
     assert "no SECRETS_SOURCE" in printed
     assert "OPS_CONTROLLER_TOKEN" in printed
+    # a file-delivered key says so, with every service that mounts it, and stays `required`
+    ops_line = next(line for line in printed.splitlines() if line.strip().startswith("OPS_CONTROLLER_TOKEN"))
+    assert "required; file out/secrets/ops_controller_token (" in ops_line and "ops-controller" in ops_line
     for value in _values(stack / "secrets.env").values():
         if value:
             assert value not in printed
@@ -288,6 +294,10 @@ def test_rotate_changes_the_value_and_names_the_readers_command(stack, capsys):
     assert after and after != before
     assert before not in printed and after not in printed
     assert "ordo recreate --reading OPS_CONTROLLER_TOKEN" in printed
+    # its file readers get the new value, and a new digest that changes their config hash
+    assert (stack / "secrets" / "ops_controller_token").read_text(encoding="utf-8") == after
+    digests = _values(stack / "secret-files.env")
+    assert digests["ORDO_SECRET_FILE_SHA256_OPS_CONTROLLER_TOKEN"] == secret_files.digest(after)
 
 
 def test_rotate_refuses_a_salt_and_writes_nothing(stack, capsys):
@@ -477,11 +487,14 @@ def test_init_with_a_secrets_source_writes_generated_secrets_to_sops(tmp_path, a
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
 def test_materialized_files_are_owner_only(tmp_path):
+    """secrets.env is owner-only. A file secret is readable by the container's own uid, inside an
+    owner-only directory (see test_secret_files.py)."""
     out = tmp_path / "out"
     out.mkdir()
     (out / "secrets.env").write_text("OPS_CONTROLLER_TOKEN=o\nLITELLM_MASTER_KEY=m\n", encoding="utf-8")
     secret_store.materialize(secret_store.PlainStore(out / "secrets.env"), NEEDS, out)
-    assert (out / "secrets" / "discord_token").stat().st_mode & 0o777 == 0o600
+    assert (out / "secrets").stat().st_mode & 0o777 == 0o700
+    assert (out / "secrets" / "discord_bot_token").stat().st_mode & 0o777 == 0o644
 
 
 @needs_sops
@@ -497,4 +510,4 @@ def test_up_materializes_from_the_sops_store(stack, tmp_path, age_key):
     materialized = _values(stack / "secrets.env")
     assert list(materialized) == cli._manifest(stack)["required_secrets"]
     assert all(materialized[k] == stored.get(k, "") for k in materialized)
-    assert (stack / "secrets" / "discord_token").exists()
+    assert (stack / "secrets" / "discord_bot_token").exists()

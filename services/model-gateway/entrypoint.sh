@@ -1,6 +1,15 @@
 #!/bin/sh
 set -eu
 
+# Every secret arrives as a file under /run/secrets with <NAME>_FILE pointing at it (the rendered
+# delivery, ordo/compose.py MODEL_GATEWAY_SECRET_FILES), so no value is in the container config.
+# Export each one for LiteLLM (and the one-shot command below) from its file. DATABASE_PASSWORD is
+# what LiteLLM builds DATABASE_URL from, with DATABASE_HOST/USERNAME/NAME. The consumer keys the
+# model-gateway-keys one-shot provisions are read by bootstrap_keys.py itself.
+. /app/secret-env.sh
+ordo_secret_file_env LITELLM_MASTER_KEY LITELLM_SALT_KEY DATABASE_PASSWORD THROUGHPUT_RECORD_TOKEN \
+    LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
+
 # Fail loud: LITELLM_MASTER_KEY is the ONLY auth on the SSO-bypassing /llm + /mcp edge routes.
 # Refuse a missing OR weak key (`local` ran for months). Shape: sk- followed by >= 32 chars.
 : "${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY must be set (SOPS/secrets.env) - refusing to start with a guessable default}"

@@ -46,6 +46,7 @@ from .config import SECRETS_BACKEND_KEY, Source
 from .hardware import detect
 from .plugins import PluginRegistry
 from .render import DEFAULT_AGENTS_DIR, DEFAULT_PLUGINS_DIR, render
+from .secret_env import SecretFileError, read_secret
 from .source_edit import edit_site_keys
 
 HERE = Path(__file__).resolve().parent.parent
@@ -433,15 +434,11 @@ def _materialize_after_edit(store: secret_store.Store, needs: secret_store.Secre
 
 
 def _print_recreate(keys: list[str], needs: secret_store.SecretNeeds, out: Path) -> None:
-    """The command that applies changed keys: recreate their readers (a restart keeps the old env)."""
-    file_services = sorted({f.service for f in needs.files if f.key in keys})
-    env_keys = [k for k in keys if k not in {f.key for f in needs.files}]
+    """The command that applies changed keys: recreate their readers (a restart keeps the old env,
+    and a file secret's bind mount keeps the replaced file). `--reading` finds env and file readers."""
     out_flag = "" if str(out) == "out" else f" --out {out}"
     print("Apply it, from the repo root, outside a GPU lease:")
-    if env_keys:
-        print(f"  ordo recreate --reading {' '.join(env_keys)}{out_flag}")
-    if file_services:
-        print(f"  ordo recreate {' '.join(file_services)}{out_flag}")
+    print(f"  ordo recreate --reading {' '.join(keys)}{out_flag}")
 
 
 def _secrets_list(args: argparse.Namespace) -> int:
@@ -464,19 +461,24 @@ def _secrets_list(args: argparse.Namespace) -> int:
     needs = secret_store.SecretNeeds.from_manifest(manifest) if manifest else secret_store.SecretNeeds(())
     if manifest is None:
         print(f"  (no render in {args.out}: every key shows as unused)")
-    files = {f.key: f for f in needs.files}
+    files: dict[str, list[secret_store.SecretFile]] = {}
+    for secret_file in needs.files:
+        files.setdefault(secret_file.key, []).append(secret_file)
     keys = list(dict.fromkeys([*needs.required, *files, *values]))
     width = max((len(k) for k in keys), default=0)
     for key in keys:
         state = "set" if values.get(key) else ("blank" if key in values else "absent")
-        if key in files:
-            role = f"file secret ({files[key].service}: out/secrets/{files[key].file})"
-        elif key in needs.optional:
+        if key in needs.optional:
             role = "optional"
         elif key in needs.required:
             role = "required"
+        elif key in files:
+            role = "read as a file"
         else:
             role = "not read by this render"
+        if key in files:
+            readers = ", ".join(f.service for f in files[key])
+            role += f"; file out/secrets/{files[key][0].file} ({readers})"
         line = f"  {key:<{width}}  {state:<6}  {role}"
         if backup_values is not None and values.get(key):
             line += "; " + secret_store.backup_status(values[key], backup_values.get(key, ""))
@@ -504,6 +506,9 @@ def _secrets_materialize(args: argparse.Namespace) -> int:
     else:
         print(f"{result.secrets_env} is the store (no SECRETS_SOURCE configured): all required keys are set")
     print(f"  file secrets: {len(result.files)} in {out / 'secrets'}")
+    if result.stale_files:
+        print(f"  stale file secret(s) no render declares (kept: remove after recreating the services "
+              f"that mounted them): {', '.join(p.name for p in result.stale_files)}")
     if result.blank_optional:
         print(f"  optional, blank: {', '.join(result.blank_optional)}")
     return 0
@@ -599,6 +604,11 @@ def _print_after_store_edit(store: secret_store.Store) -> None:
         print(f"Then commit {store.path.name} in its repo.")
 
 
+# The file names the retired OPERATOR_SECRETS_DIR used for the agent's file secrets. Only
+# `ordo secrets import` reads that directory; everything else uses the key lowercased.
+RETIRED_OPERATOR_SECRET_FILES = {"DISCORD_BOT_TOKEN": "discord_token", "GITHUB_BACKUP_PAT": "github_backup_pat"}
+
+
 def _secrets_import(args: argparse.Namespace) -> int:
     out = Path(args.out)
     source = _source_path(args)
@@ -618,8 +628,10 @@ def _secrets_import(args: argparse.Namespace) -> int:
     agent_id = str((yaml.safe_load(source.read_text(encoding="utf-8")) or {}).get("agent", "hermes")
                    if source.exists() else "hermes")
     agent = agents.AgentRegistry.load(DEFAULT_AGENTS_DIR).get(agent_id)
-    files = [secret_store.SecretFile(key=s["key"], file=s["file"], service="agent")
-             for s in (agent.secret_files if agent else ())]
+    # The retired OPERATOR_SECRETS_DIR held the agent's file secrets under their V1 names.
+    files = [secret_store.SecretFile(key=ref.key, file=RETIRED_OPERATOR_SECRET_FILES.get(ref.key, ref.file),
+                                     service="agent")
+             for ref in (agent.secret_files if agent else ())]
     if not live.exists() and not files_dir:
         print(f"error: nothing to import: {live} does not exist", file=sys.stderr)
         return 1
@@ -1078,10 +1090,15 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
 
     threading.Thread(target=_lease_loop, daemon=True, name="lease-sweep").start()
 
-    token = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
+    try:
+        # A file under /run/secrets (OPS_CONTROLLER_TOKEN_FILE, the rendered delivery), else the env var.
+        token = read_secret("OPS_CONTROLLER_TOKEN")
+    except SecretFileError as e:
+        print(f"ops-controller: {e}; refusing to serve", file=sys.stderr, flush=True)
+        return 2
     if not token:
         print("ops-controller: OPS_CONTROLLER_TOKEN is not set; refusing to serve an unauthenticated "
-              "control plane (it is provisioned in secrets.env)", file=sys.stderr, flush=True)
+              "control plane (it is provisioned in the secret store)", file=sys.stderr, flush=True)
         return 2
     print(f"ops-controller on {args.host}:{args.port} (project={args.project}, "
           f"{sched.total_vram_gb:.0f}GB GPU) — Ctrl-C to stop")

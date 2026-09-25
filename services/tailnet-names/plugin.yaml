@@ -31,6 +31,8 @@ env:
   # so they link to https://<svc>.<domain>/ instead of a :844x port. Mirrors every
   # other plugin's <ID>_ENABLED flag; the domain itself is CADDY_TAILNET_DOMAIN.
   TAILNET_NAMES_ENABLED: "1"
+# Each sidecar reads it from a file: containerboot treats a TS_AUTHKEY value starting with `file:` as
+# a path (cmd/containerboot/main.go, v1.98.4), so the key is never in a container's environment.
 secrets:
   - TS_AUTHKEY
 services:
@@ -39,7 +41,7 @@ services:
     # emulated or not at all on the other arch. Verify: docker buildx imagetools inspect <ref>
     image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
     network_mode: service:caddy
-    secrets: [TS_AUTHKEY]        # used on first login (TS_AUTH_ONCE); state persists after
+    secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]  # used on first login (TS_AUTH_ONCE); state persists after
     depends_on: [caddy]
     env:
       TS_HOSTNAME: chat
@@ -59,7 +61,7 @@ services:
   - name: tailnet-dash
     image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
     network_mode: service:caddy
-    secrets: [TS_AUTHKEY]
+    secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
     env:
       TS_HOSTNAME: dash
@@ -79,7 +81,7 @@ services:
   - name: tailnet-n8n
     image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
     network_mode: service:caddy
-    secrets: [TS_AUTHKEY]
+    secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
     env:
       TS_HOSTNAME: n8n
@@ -99,7 +101,7 @@ services:
   - name: tailnet-comfy
     image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
     network_mode: service:caddy
-    secrets: [TS_AUTHKEY]
+    secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
     env:
       TS_HOSTNAME: comfy
@@ -119,7 +121,7 @@ services:
   - name: tailnet-hermes
     image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
     network_mode: service:caddy
-    secrets: [TS_AUTHKEY]
+    secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
     env:
       TS_HOSTNAME: hermes
@@ -139,7 +141,7 @@ services:
   - name: tailnet-graph
     image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
     network_mode: service:caddy
-    secrets: [TS_AUTHKEY]
+    secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
     env:
       TS_HOSTNAME: graph
@@ -167,7 +169,7 @@ services:
   - name: tailnet-llm
     image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
     network_mode: service:caddy
-    secrets: [TS_AUTHKEY]
+    secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
     env:
       TS_HOSTNAME: llm
@@ -195,7 +197,7 @@ services:
   - name: tailnet-langfuse
     image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
     network_mode: service:caddy
-    secrets: [TS_AUTHKEY]
+    secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
     env:
       TS_HOSTNAME: langfuse

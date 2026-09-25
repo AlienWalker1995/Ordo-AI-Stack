@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir aiohttp==3.14.3
 
 WORKDIR /app
 COPY gate.py /app/gate.py
+COPY secret_env.py /app/secret_env.py
 
 # Unprivileged: the gate holds no secrets beyond a bearer token, touches no Docker socket, and
 # reserves no GPU. It is an HTTP proxy that talks to the arbiter.

@@ -17,8 +17,7 @@ requires:
 provides: [tools]
 depends_on: [comfyui]      # queries the comfyui service (kind=service plugin) + ops-controller
 # OPS_CONTROLLER_TOKEN is an operator secret. Declaring it here emits the key into
-# secrets.env.example and a scoped ${OPS_CONTROLLER_TOKEN} ref into this service's environment,
-# which compose interpolates from `--env-file secrets.env`.
+# secrets.env.example; the server reads it from a file (mcp.secret_files below).
 secrets:
   - OPS_CONTROLLER_TOKEN
 mcp:
@@ -33,6 +32,8 @@ mcp:
   network: stack           # comfyui (via the admission gate) + ops-controller
   # Renders may run for many minutes: LiteLLM's per-server tool timeout must cover a queue+wait.
   timeout: 1800
+  # tools/management.py reads it with secret_env.read_secret (OPS_CONTROLLER_TOKEN_FILE).
+  secret_files: [OPS_CONTROLLER_TOKEN]
   env:
     # Compose interpolation: render points COMFYUI_URL at the GPU admission gate
     # (render.GATED_SERVICE_URL_ENV), so agent-submitted prompts take residency by the same path a
@@ -40,7 +41,6 @@ mcp:
     # its gate joins (compose.gated_upstream_net), so an unset value stops compose here.
     COMFYUI_URL: ${COMFYUI_URL:?COMFYUI_URL must point at the comfyui GPU admission gate}
     OPS_CONTROLLER_URL: http://ops-controller:9000
-    OPS_CONTROLLER_TOKEN: ${OPS_CONTROLLER_TOKEN}
     COMFY_MCP_DEFAULT_MODEL: ${COMFY_MCP_DEFAULT_MODEL:-flux1-schnell-fp8.safetensors}
   # Representative subset of the 34 tools the image registers (verified against the built image);
   # LiteLLM advertises the full set at runtime.
