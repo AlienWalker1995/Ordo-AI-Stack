@@ -8,6 +8,7 @@
     ordo fetch [MODEL]          # download model files into the models volume, checksum-verified
     ordo up [--all|--core|SVC…] # build missing images, fetch missing models, bring the stack up (GPU-lease checked)
     ordo recreate SVC…          # force-recreate services from the host (GPU-lease checked)
+    ordo apply [--dry-run]      # the deploy: build, render, secrets, then recreate exactly what changed
     ordo secrets list|materialize|set|rotate|import   # the secret store (ordo/secret_store.py)
 
 `render` writes to an output dir only (it starts nothing), and `serve`'s Docker backend is
@@ -26,6 +27,7 @@ import yaml
 
 from . import (
     agents,
+    apply,
     bringup,
     doctor,
     fetch,
@@ -895,6 +897,23 @@ def cmd_recreate(args: argparse.Namespace) -> int:
                             build=not args.no_build)
 
 
+def cmd_apply(args: argparse.Namespace) -> int:
+    """`ordo apply`: the deploy, in its one correct order (ordo/apply.py)."""
+    out = Path(args.out)
+    source = _source_path(args)
+    if not source.exists():
+        print(f"no operator source at {source}: run `ordo init`, or pass --source", file=sys.stderr)
+        return 1
+    host = apply.RealHost(
+        source_path=source, catalog_path=Path(args.catalog), out=out, project=args.project,
+        preflight=lambda services: _host_preflight(args.out, args.project, services, whole_stack=False,
+                                                   with_profiles=True, catalog_path=args.catalog),
+        materialize_secrets=lambda: _prepare_secrets(args, out),
+        doctor=lambda: cmd_doctor(argparse.Namespace(source=str(source), catalog=args.catalog, bundle=None,
+                                                     project=args.project)))
+    return apply.run(host, only=args.only, dry_run=args.dry_run)
+
+
 def cmd_build(args: argparse.Namespace) -> int:
     if int(args.all) + int(bool(args.services)) != 1:
         print("ordo build: give exactly one of --all or SERVICE...", file=sys.stderr)
@@ -1154,6 +1173,16 @@ def main(argv: list[str] | None = None) -> int:
     pb.add_argument("--project", default="ordo", help="compose project name (default: ordo)")
     pb.add_argument("--dry-run", action="store_true", help="print what would be built, build nothing")
     pb.set_defaults(func=cmd_build)
+    # `apply`: the deploy. Builds what changed, renders, materializes secrets, then recreates
+    # exactly the services whose config or image changed, ops-controller first (ordo/apply.py).
+    pa = sub.add_parser("apply", help="deploy the checkout and the source: recreate exactly what changed")
+    pa.add_argument("--out", default="out", help="the config + rendered stack directory (default: out)")
+    pa.add_argument("--project", default="ordo", help="compose project name (default: ordo)")
+    pa.add_argument("--dry-run", action="store_true",
+                    help="print the plan (builds, changed services and why, lease state); change nothing")
+    pa.add_argument("--only", nargs="+", metavar="SERVICE", default=None,
+                    help="recreate only these of the changed services (a changed ops-controller still goes first)")
+    pa.set_defaults(func=cmd_apply)
     pv = sub.add_parser("serve")
     pv.add_argument("--host", default="0.0.0.0")
     pv.add_argument("--port", type=int, default=9000)
