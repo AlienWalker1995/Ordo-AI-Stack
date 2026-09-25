@@ -156,9 +156,9 @@ def _values(path: Path) -> dict[str, str]:
 def test_the_infisical_backend_site_keys_validate():
     Source.from_dict({**BASE, "site": dict(SITE)})
     Source.from_dict({**BASE, "site": {**SITE, "INFISICAL_ENVIRONMENT": "staging",
-                                       "SECRETS_SOURCE": "../ordo-personal/secrets/ordo.env.sops"}})
+                                       "SECRETS_SOURCE": "../ordo-secrets/secrets.env.sops"}})
     Source.from_dict({**BASE, "site": {"SECRETS_BACKEND": "sops",
-                                       "SECRETS_SOURCE": "../ordo-personal/secrets/ordo.env.sops"}})
+                                       "SECRETS_SOURCE": "../ordo-secrets/secrets.env.sops"}})
 
 
 @pytest.mark.parametrize("site, match", [

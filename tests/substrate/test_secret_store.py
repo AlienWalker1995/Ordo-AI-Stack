@@ -84,15 +84,27 @@ def test_without_a_secrets_source_out_secrets_env_is_the_store(tmp_path):
 
 
 def test_a_relative_secrets_source_resolves_against_the_checkout(tmp_path):
-    store = secret_store.store_for({"SECRETS_SOURCE": "../ordo-personal/secrets/ordo.env.sops"},
+    store = secret_store.store_for({"SECRETS_SOURCE": "../ordo-secrets/secrets.env.sops"},
                                    tmp_path / "out", repo_root=tmp_path / "repo")
     assert isinstance(store, secret_store.SopsStore)
-    assert store.path == (tmp_path / "ordo-personal" / "secrets" / "ordo.env.sops").resolve()
+    assert store.path == (tmp_path / "ordo-secrets" / "secrets.env.sops").resolve()
+
+
+def test_an_explicit_secrets_source_wins_over_the_default(tmp_path):
+    # The operator's live install sets site: SECRETS_SOURCE explicitly, so changing
+    # DEFAULT_SECRETS_SOURCE must never change where an explicit value resolves.
+    explicit = "../elsewhere/mine.env.sops"
+    assert explicit != secret_store.DEFAULT_SECRETS_SOURCE
+    store = secret_store.store_for({"SECRETS_SOURCE": explicit}, tmp_path / "out", repo_root=tmp_path / "repo")
+    assert isinstance(store, secret_store.SopsStore)
+    assert store.path == (tmp_path / "elsewhere" / "mine.env.sops").resolve()
+    default_store = secret_store.store_for({}, tmp_path / "out", repo_root=tmp_path / "repo")
+    assert store.path != default_store.path
 
 
 def test_secrets_source_is_validated_by_the_source_schema():
     base = {"hardware": {"gpus": [], "ram_gb": 32, "cpu_cores": 8}}
-    Source.from_dict({**base, "site": {"SECRETS_SOURCE": "../ordo-personal/secrets/ordo.env.sops"}})
+    Source.from_dict({**base, "site": {"SECRETS_SOURCE": "../ordo-secrets/secrets.env.sops"}})
     with pytest.raises(ValueError, match="SECRETS_SOURCE"):
         Source.from_dict({**base, "site": {"SECRETS_SOURCE": ""}})
     with pytest.raises(ValueError, match="SECRETS_SOURCE"):

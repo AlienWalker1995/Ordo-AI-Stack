@@ -3,7 +3,7 @@
 **This directory is not the secret store.** The operator's secrets live in one
 SOPS (age) encrypted dotenv file in a private repo, named by
 `site: SECRETS_SOURCE` in `ordo.yaml` (documented default:
-`../ordo-personal/secrets/ordo.env.sops`, beside this checkout). `ordo secrets
+`../ordo-secrets/secrets.env.sops`, beside this checkout). `ordo secrets
 materialize` writes `out/secrets.env` and the agent's file secrets
 (`out/secrets/*`) from it; nothing is filled in by hand. Without a configured
 SOPS file (a fresh local install), `out/secrets.env` itself is the store.

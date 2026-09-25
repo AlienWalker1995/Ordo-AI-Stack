@@ -53,7 +53,7 @@ def secret_backend(site: dict[str, Any]) -> SecretBackend:
         value = site[SECRETS_SOURCE_KEY]
         if not isinstance(value, str) or not value.strip().endswith(".sops"):
             raise ValueError(f"site: {SECRETS_SOURCE_KEY} must be the path of a SOPS-encrypted dotenv file "
-                             f"ending in '.sops' (e.g. ../ordo-personal/secrets/ordo.env.sops), got {value!r}")
+                             f"ending in '.sops' (e.g. ../ordo-secrets/secrets.env.sops), got {value!r}")
         sops_path = value.strip()
     for key in INFISICAL_CREDENTIAL_KEYS:
         if key in site:

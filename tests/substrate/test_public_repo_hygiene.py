@@ -1,8 +1,9 @@
-"""The Ordo repo is public: no tracked file may name the operator's tailnet or host.
+"""The Ordo repo is public: no tracked file may name the operator's tailnet, host, or private repo.
 
-A concrete tailnet id (`tail1a2b3c.ts.net`) or the host's name in a README or a test fixture
-tells anyone reading the repo where the stack lives. Docs and fixtures use placeholders instead:
-`<tailnet>.ts.net` in prose, `example.ts.net` in tests.
+A concrete tailnet id (`tail1a2b3c.ts.net`), the host's name, or the operator's private secrets
+repo name in a README or a test fixture tells anyone reading the repo where the stack lives, or
+what to go looking for. Docs and fixtures use placeholders instead: `<tailnet>.ts.net` in prose,
+`example.ts.net` in tests, `../ordo-secrets/secrets.env.sops` for the SOPS file's documented default.
 """
 from __future__ import annotations
 
@@ -15,11 +16,13 @@ ROOT = Path(__file__).resolve().parents[2]
 FORBIDDEN = {
     "a concrete tailnet id": re.compile(r"\btail[0-9a-f]{6,}\b"),
     "the operator's host name": re.compile(r"(?i)\bultracam\b"),
+    "the operator's private secrets repo name": re.compile(r"\bordo-personal\b"),
 }
 
 # Files allowed to spell a forbidden shape: the privacy guards themselves, which have to write
-# the pattern down to search for it.
-ALLOWED = {"tests/evals/test_datasets.py", "tests/substrate/test_public_repo_hygiene.py"}
+# the pattern down to search for it, and CHANGELOG.md, an append-only history of already-published
+# entries (rewriting past entries would falsify the record; the name only ever named an example path).
+ALLOWED = {"tests/evals/test_datasets.py", "tests/substrate/test_public_repo_hygiene.py", "CHANGELOG.md"}
 
 
 def _tracked_text_files() -> list[Path]:
