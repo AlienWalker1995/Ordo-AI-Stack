@@ -12,6 +12,7 @@ Individual tests that need to inspect the audit file still override
 """
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -33,6 +34,24 @@ os.environ.setdefault(
     "DASHBOARD_DATA_PATH",
     tempfile.mkdtemp(prefix="ordo-test-dashboard-"),
 )
+
+
+def _rendered_services_catalog() -> str:
+    """Write the service catalog `ordo render` would write, and return its path.
+
+    The dashboard runs against the RENDERED catalog (out/services-catalog.json, mounted at
+    SERVICES_CATALOG_PATH), which carries fields the render derives rather than the fragments
+    declare: a card's `sso_port` comes from its owner's `edge_site`. Point the dashboard's
+    catalog loader at the same document before any test imports it, so the tests exercise what
+    production serves. tests/test_services_catalog_fragments.py checks the fragment fallback."""
+    from ordo.render.engine import aggregate_services_catalog
+
+    path = Path(tempfile.mkdtemp(prefix="ordo-test-catalog-")) / "services-catalog.json"
+    path.write_text(json.dumps(aggregate_services_catalog(), indent=2) + "\n", encoding="utf-8")
+    return str(path)
+
+
+os.environ.setdefault("SERVICES_CATALOG_PATH", _rendered_services_catalog())
 
 
 # The dashboard refuses anonymous callers on its state-changing and ops-forwarding routes

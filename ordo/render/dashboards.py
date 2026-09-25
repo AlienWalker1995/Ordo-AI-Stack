@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .buildspec import BuildSpec
-from .plugins import LocalPort, parse_derived_env
+from .plugins import EdgeSite, LocalPort, parse_derived_env
 from .secret_files import SecretFileRef, parse_secret_files
 
 
@@ -75,6 +75,8 @@ class Dashboard:
     # Passed to the dashboard, and required in secrets.env, only while `local_port` is published.
     # Always delivered as a file: the dashboard reads `<KEY>_FILE` (/run/secrets/<key lowercased>).
     local_login_secret: str = ""
+    # The dashboard's own SSO-gated edge port and upstream (see plugins.EdgeSite). None -> none.
+    edge_site: EdgeSite | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Dashboard:
@@ -105,6 +107,7 @@ class Dashboard:
             build=BuildSpec.from_dict(d.get("build")),
             local_port=local_port,
             local_login_secret=local_login_secret,
+            edge_site=EdgeSite.from_manifest(d.get("edge_site"), where),
         )
 
     def image_for(self, project: str) -> str:

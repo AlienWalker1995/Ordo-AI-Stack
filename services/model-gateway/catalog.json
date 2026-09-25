@@ -12,10 +12,9 @@
       "category": "inference",
       "ops_service": "model-gateway",
       "tailnet_label": "llm",
-      "sso_port": 8449,
       "sso_path": "/ui/",
       "hint": "OpenAI-compatible proxy (LiteLLM). Routes inference to llama.cpp.",
-      "notes": "User-facing Open link = the LiteLLM admin UI at /ui/ (swagger at /), which must be served from an origin ROOT (root-absolute asset paths) - hence the `llm` subdomain, not a /llm/ subpath. `sso_port`/`sso_path` are the sidecar-off fallback (https://<host>:8449/ui/); see services_catalog.service_open_url()."
+      "notes": "User-facing Open link = the LiteLLM admin UI at /ui/ (swagger at /), which must be served from an origin ROOT (root-absolute asset paths) - hence the `llm` subdomain, not a /llm/ subpath. `sso_path` plus the render-derived `sso_port` (MODEL_GATEWAY_EDGE_SITE in ordo/render/engine.py) are the sidecar-off fallback (https://<host>:<sso_port>/ui/); see services_catalog.service_open_url()."
     }
   ]
 }

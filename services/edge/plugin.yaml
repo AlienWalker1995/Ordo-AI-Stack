@@ -97,16 +97,13 @@ services:
     # ending the subpath-rewrite bandaid class (webui root-catchall, hermes header
     # base, n8n strip_prefix, cbm nginx rewrites). :443 = front door (landing, OAuth
     # callback, /llm + /mcp APIs, n8n webhook passthroughs, legacy-path 302s).
-    ports:
-      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:443:443"
-      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8443:8443"   # chat (Open WebUI)
-      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8444:8444"   # dashboard (+ /grafana/)
-      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8445:8445"   # n8n UI
-      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8446:8446"   # ComfyUI
-      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8447:8447"   # Hermes
-      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8448:8448"   # codebase-memory
-      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8449:8449"   # LiteLLM admin UI (model-gateway)
-      - "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}:8450:8450"   # Langfuse
+    # Only :443 is listed here. Each UI declares its own port once, as `edge_site:` in its
+    # manifest (model-gateway's in ordo/render/engine.py); the render publishes the port of
+    # every ENABLED UI on this bind, and tests/substrate/test_edge_sites.py holds the Caddyfile
+    # sites and the tailnet sidecars to the same declarations.
+    edge_listener:
+      bind: "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}"
+      ports: [443]
     env:
       CADDY_TAILNET_HOSTNAME: ${CADDY_TAILNET_HOSTNAME}
       CADDY_TAILNET_DOMAIN: ${CADDY_TAILNET_DOMAIN}

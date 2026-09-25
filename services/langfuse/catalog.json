@@ -11,9 +11,8 @@
       "plugin": "langfuse",
       "category": "observability",
       "tailnet_label": "langfuse",
-      "sso_port": 8450,
       "hint": "Agent traces, datasets and evals (self-hosted)",
-      "notes": "`port`/`url` are explicitly null (the portless-card convention): langfuse-web publishes no host port, so a host:port link would point at nothing - and the obvious pair (3000 / http://localhost:3000) is already open-webui's, so the frontend fallback would have resolved to a colliding dead link. `sso_port` gives the card the only address that exists for a browser: the SSO-gated Caddy port root, used when the tailnet sidecar layer is off. No `ops_service`: the card is a link + health probe, not a lifecycle control. Restarting Langfuse means recreating six coupled containers (the app services gate on service_healthy datastores), which a single dashboard start/stop button cannot express - a half-applied restart would leave web up against a stopped ClickHouse. Use the compose profile instead. `check` is the public health endpoint langfuse-web serves without auth; it is the same probe the container healthcheck runs."
+      "notes": "`port`/`url` are explicitly null (the portless-card convention): langfuse-web publishes no host port, so a host:port link would point at nothing - and the obvious pair (3000 / http://localhost:3000) is already open-webui's, so the frontend fallback would have resolved to a colliding dead link. The render adds `sso_port` from langfuse's `edge_site` (services/langfuse/plugin.yaml): the only address that exists for a browser, the SSO-gated Caddy port root, used when the tailnet sidecar layer is off. No `ops_service`: the card is a link + health probe, not a lifecycle control. Restarting Langfuse means recreating six coupled containers (the app services gate on service_healthy datastores), which a single dashboard start/stop button cannot express - a half-applied restart would leave web up against a stopped ClickHouse. Use the compose profile instead. `check` is the public health endpoint langfuse-web serves without auth; it is the same probe the container healthcheck runs."
     }
   ]
 }

@@ -4,8 +4,9 @@ The catalog is DATA, not code: every service declares its dashboard card(s) in a
 `services/<id>/catalog.json` fragment co-located with its other manifests (plugin.yaml /
 agent.yaml / dashboard.yaml). `ordo render` aggregates the fragments into
 out/services-catalog.json, which the dashboard container mounts read-only
-(SERVICES_CATALOG_PATH — same pattern as the manifest mount). In-repo (tests / dev) the
-fragments are read directly, so both paths serve the identical card list.
+(SERVICES_CATALOG_PATH, same pattern as the manifest mount). In-repo (dev) the fragments are
+read directly, so both paths serve the same card list, minus what the render derives: a card's
+`sso_port` comes from its owner's `edge_site` declaration, so the fragment fallback has none.
 
 Feeds two surfaces, both derived from the one loaded `SERVICES` catalog:
   * the service grid: routes_hub.services(), GET /api/health (visible_services())
@@ -40,7 +41,7 @@ def service_open_url(card: dict) -> str | None:
       1. the clean per-service tailnet name (`https://<label>.<domain>/`) when the sidecar
          layer is enabled - the same answer every service gets;
       2. the service's own SSO-gated Caddy PORT ROOT (`https://<host>:<sso_port>/`) when the
-         card declares `sso_port` and the sidecars are off;
+         card carries `sso_port` and the sidecars are off;
       3. None when no edge hostname is configured, so the frontend falls back to its own route
          rather than rendering a link to a host that does not exist.
 
@@ -85,13 +86,14 @@ def tailnet_open_url(service_id: str) -> str | None:
 # by the card's lifecycle buttons -> OPS_SERVICE_MAP), `tailnet_label` (clean
 # subdomain -> TAILNET_LABELS) and `sso_port` / `sso_path` (the service's own SSO-gated
 # Caddy port root, used by service_open_url() as the Open link when the sidecar layer is
-# off), plus `order` (curated grid order - aggregation sorts by it so glob order never
+# off; `sso_port` is added by `ordo render` from the owner's `edge_site`, never declared in a
+# fragment), plus `order` (curated grid order - aggregation sorts by it so glob order never
 # reshuffles the UI). `notes` is rationale for humans reading the fragment; the
 # API/frontend ignore it.
 #
 # `port`/`url` are the FRONTEND's last-resort direct-link fallback and only make sense for a
 # service that actually publishes a host port. A service reached solely through the edge
-# (langfuse) declares `sso_port` and omits them: a host:port link would point at nothing, and
+# (langfuse) gets `sso_port` and omits them: a host:port link would point at nothing, and
 # a container port copied in "for completeness" can collide with another card's (3000 is
 # open-webui's) and render a confidently wrong link.
 SERVICES_CATALOG_ENV = "SERVICES_CATALOG_PATH"

@@ -12,6 +12,7 @@ security guarantee — not a refactor opportunity.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -103,21 +104,48 @@ def test_no_ai_toolkit_references(caddyfile_text: str) -> None:
 # losing its forward_auth gate (exposes the UI to the tailnet with no SSO), and
 # the rd= redirect using {host} instead of {hostport} (strands sign-ins on :443).
 
-SERVICE_PORTS = {
-    "8443": "open-webui:8080",
-    "8444": "dashboard:8080",
-    "8445": "n8n:5678",
-    # NOT comfyui:8188 — the edge must enter through the GPU admission gate (see below).
-    "8446": "comfyui-gate:8188",
-    "8447": "hermes-dashboard:9119",
-    "8448": "codebase-memory-ui:9750",
-}
+def _declared_sites():
+    """Every UI's edge site, from its ONE declaration (the owner's `edge_site` manifest field; the
+    core model-gateway's in ordo/render/engine.py). The Caddyfile is checked against these."""
+    from ordo.render.dashboards import DashboardRegistry
+    from ordo.render.engine import declared_edge_sites
+    from ordo.render.plugins import PluginRegistry
+
+    services = REPO_ROOT / "services"
+    return declared_edge_sites(PluginRegistry.load(services), DashboardRegistry.load(services))
+
+
+SERVICE_PORTS = {str(site.port): site.upstream for site in _declared_sites().values()}
+
+# A numbered site that is not a UI: plain-HTTP healthz for the container healthcheck.
+NON_UI_PORT_SITES = {"80"}
+
+
+def _port_sites(text: str) -> list[str]:
+    """The port of every `:<port> {` site block, in file order (duplicates kept)."""
+    return re.findall(r"^:(\d+) \{", text, flags=re.MULTILINE)
 
 
 def test_every_service_port_has_a_site(caddyfile_text: str) -> None:
     for port, upstream in SERVICE_PORTS.items():
         assert f":{port} {{" in caddyfile_text, f"missing site block for :{port}"
         assert upstream in caddyfile_text, f"missing upstream {upstream}"
+
+
+def test_each_declared_port_has_exactly_one_site_proxying_its_upstream(caddyfile_text: str) -> None:
+    """The declaration and the Caddyfile agree in both directions: one site per declared port,
+    routing to the declared upstream, and no UI port site that no service declares."""
+    sites = _port_sites(caddyfile_text)
+    for port, upstream in SERVICE_PORTS.items():
+        assert sites.count(port) == 1, f":{port} must have exactly one site block (found {sites.count(port)})"
+        block = _site_block(caddyfile_text, port)
+        routes = (f"import sso_service {upstream}", f"import sso_service_loopback {upstream}",
+                  f"reverse_proxy {upstream}")
+        assert any(route in block for route in routes), (
+            f":{port} must proxy its declared upstream {upstream}")
+    undeclared = sorted(set(sites) - set(SERVICE_PORTS) - NON_UI_PORT_SITES)
+    assert not undeclared, (
+        f"Caddyfile sites {undeclared} are declared by no service; add an `edge_site` to the owner")
 
 
 def test_sso_gate_is_shared_and_host_based(caddyfile_text: str) -> None:
@@ -222,11 +250,13 @@ def test_formerly_divergent_ports_serve_at_root(caddyfile_text: str) -> None:
     it gets a port root for the same reason. It is the ONLY route into langfuse-web (the
     service publishes no host port), so losing the SSO gate here exposes the trace store.
     """
-    for port, snippet, upstream in (("8445", "sso_service", "n8n:5678"),
-                                    ("8447", "sso_service_loopback", "127.0.0.1:9119"),
-                                    ("8448", "sso_service", "codebase-memory-ui:9750"),
-                                    ("8449", "sso_service", "model-gateway:11435"),
-                                    ("8450", "sso_service", "langfuse-web:3000")):
+    port_of = {upstream: port for port, upstream in SERVICE_PORTS.items()}
+    for snippet, upstream in (("sso_service", "n8n:5678"),
+                              ("sso_service_loopback", "127.0.0.1:9119"),
+                              ("sso_service", "codebase-memory-ui:9750"),
+                              ("sso_service", "model-gateway:11435"),
+                              ("sso_service", "langfuse-web:3000")):
+        port = port_of[upstream]
         block = _site_block(caddyfile_text, port)
         assert f"import {snippet} {upstream}" in block, (
             f":{port} must serve {upstream} via `import {snippet}` at root")

@@ -10,6 +10,11 @@ requires:
   ram_gb: 1
 provides: [hermes-dashboard]
 compose_profile: hermes-ui
+# The UI's own SSO-gated edge port, declared ONCE here: the render publishes it on the edge
+# listener, the dashboard card's `sso_port` is derived from it, and the tests hold the
+# Caddyfile `:<port>` site (proxying `upstream`) and the tailnet sidecar to it.
+# Loopback: the service lives in caddy's network namespace (network_mode: service:caddy).
+edge_site: {port: 8447, upstream: "127.0.0.1:9119"}
 # HARD dependency on the edge (Caddy + oauth2-proxy), same gate tailnet-names uses.
 # Caddy/oauth2-proxy/Tailscale are all OPTIONAL layers a user may not enable, so this
 # must be declared rather than assumed:

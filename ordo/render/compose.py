@@ -589,10 +589,12 @@ def _apply_agent_runtime(svc: dict[str, Any], *, user: str | None, group_add: li
 def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str,
                     nvidia_gpu: bool, primary_uuid: str | None, secondary_uuid: str | None,
                     project: str, publish_local_ports: bool = False,
-                    available_env=None) -> dict[str, Any]:
+                    available_env=None, edge_ports: list[int] | None = None) -> dict[str, Any]:
     """Render ONE compose service from a plugin's declared PluginService — data-driven, so
     adding a service is a manifest edit, not a code change here. `${...}` / `./...` refs and
-    named volumes pass straight through to compose (project-scoped, no live-stack collision)."""
+    named volumes pass straight through to compose (project-scoped, no live-stack collision).
+
+    `edge_ports` are the enabled UIs' declared `edge_site` ports; the edge listener publishes them."""
     s: dict[str, Any] = {"image": ps.image, "restart": ps.restart or "unless-stopped", "networks": [net]}
     if ps.network_mode:
         # compose forbids networks: alongside network_mode: — the service lives in the
@@ -651,8 +653,8 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str,
         s["depends_on"] = dep_map
     elif dep:
         s["depends_on"] = dep
-    if ps.ports:  # edge/front-door only (Caddy :443); gated behind the plugin's opt-in profile
-        s["ports"] = list(ps.ports)
+    if ps.edge_listener is not None:  # the edge (Caddy): its front door plus every enabled UI's port
+        s["ports"] = ps.edge_listener.publish(list(edge_ports or []))
     if publish_local_ports and ps.local_port is not None:  # loopback-only, and only without the edge
         s["ports"] = s.get("ports", []) + [ps.local_port.publish()]
     if ps.shm_size:  # bump /dev/shm past docker's 64MB default (Electron/Selkies streaming needs it)
@@ -752,9 +754,13 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
                    langfuse_tracing: bool = False,
                    litellm_google_sso_env: dict[str, str] | None = None,
                    publish_local_ports: bool = False,
-                   available_env: frozenset[str] | None = None) -> dict[str, Any]:
+                   available_env: frozenset[str] | None = None,
+                   edge_ports: list[int] | None = None) -> dict[str, Any]:
     """`available_env` is the set of keys in the rendered .env (RenderedConfig.env): a declared
-    derived key renders only when the render produced it. None emits every declared key."""
+    derived key renders only when the render produced it. None emits every declared key.
+
+    `edge_ports` are the enabled UIs' declared `edge_site` ports (RenderedConfig.edge_sites),
+    published on the one service that declares `edge_listener`."""
     net = f"{project}-net"
     # the agent is swappable (Hermes is the default); a registry manifest may pin any image,
     # else fall back to the <project>/agent-<id> convention (render tags it, see ordo/host/images.py).
@@ -840,12 +846,16 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     # the per-service `profiles:` keeps them dormant until `--profile <p>` is used too.
     claims = gpu_claims or {}
     gated_nets: list[str] = []
+    listeners = [f"{plugin.id}/{ps.name}" for plugin, ps in (plugin_services or []) if ps.edge_listener]
+    if len(listeners) > 1:
+        raise ValueError(f"more than one edge_listener is enabled ({', '.join(listeners)}); the UI ports "
+                         "can be published on one service only")
     for plugin, ps in (plugin_services or []):
         svcs[ps.name] = _plugin_service(ps, plugin, net=net,
                                         nvidia_gpu=nvidia_gpu, primary_uuid=primary_gpu_uuid,
                                         secondary_uuid=secondary_gpu_uuid,
                                         project=project, publish_local_ports=publish_local_ports,
-                                        available_env=available_env)
+                                        available_env=available_env, edge_ports=edge_ports)
         # A service whose GPU use is gate-enforced gets its gate rendered WITH it, from the same
         # declaration. Not opt-in and not a separate manifest entry: the two cannot disagree, and
         # an enabled gated service can never come up without the thing that arbitrates it.

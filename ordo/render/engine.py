@@ -25,7 +25,7 @@ from .image_tags import first_party_contexts, load_record, pin_first_party
 from .llamacpp_backend import CPU as CPU_BACKEND
 from .llamacpp_backend import LlamaCppBackend
 from .llamacpp_backend import select as select_backend
-from .plugins import LOOPBACK, Plugin, PluginRegistry
+from .plugins import LOOPBACK, EdgeSite, Plugin, PluginRegistry
 
 # Render data now lives co-located under services/<id>/ (plugin.yaml / agent.yaml / dashboard.yaml
 # / catalog.json); each registry globs its own manifest kind out of the shared services/ root.
@@ -49,19 +49,20 @@ DEFAULT_CATALOG = Path(__file__).resolve().parents[2] / "catalog" / "models.yaml
 # would silently keep the direct route).
 GATED_SERVICE_URL_ENV: dict[str, str] = {"comfyui": "COMFYUI_URL"}
 
-# Langfuse's edge port (auth/caddy/Caddyfile's `:8450` site, published by the edge plugin) and the
-# clean tailnet label its sidecar registers. Both are facts about the edge wiring, kept here so the
-# derived LANGFUSE_PUBLIC_URL below cannot disagree with the Caddyfile / sidecar that serve it.
-LANGFUSE_EDGE_PORT = 8450
+# The clean tailnet label Langfuse's sidecar registers (services/tailnet-names). Its edge PORT is
+# not here: it is langfuse's `edge_site` (services/langfuse/plugin.yaml), read by render().
 LANGFUSE_TAILNET_LABEL = "langfuse"
 # Fallback login identity for the headless Langfuse init. A site `LANGFUSE_ADMIN_EMAIL` overrides it.
 LANGFUSE_DEFAULT_ADMIN_EMAIL = "admin@ordo.local"
 
-# model-gateway's edge port (Caddyfile's `:8449` site) and tailnet sidecar label - the same two
-# facts LANGFUSE_EDGE_PORT/LANGFUSE_TAILNET_LABEL record for Langfuse, sourced from
-# services/model-gateway/catalog.json's `sso_port`/`tailnet_label` (the dashboard Open link uses
-# the same two values via services_catalog.service_open_url()).
-LITELLM_EDGE_PORT = 8449
+# model-gateway's edge site: the LiteLLM admin UI's own SSO-gated port. model-gateway is a core
+# service with no manifest (ordo/render/compose.py renders it), so this is its `edge_site`
+# declaration, the one place the port is written down, exactly like a plugin's `edge_site:`.
+MODEL_GATEWAY_EDGE_SITE = EdgeSite(port=8449, upstream="model-gateway:11435")
+# Edge sites of the core services, keyed by owner. Always enabled: core services always render.
+CORE_EDGE_SITES: dict[str, EdgeSite] = {"model-gateway": MODEL_GATEWAY_EDGE_SITE}
+# model-gateway's clean tailnet label (its services/tailnet-names sidecar, and the card's
+# `tailnet_label` in services/model-gateway/catalog.json).
 LITELLM_TAILNET_LABEL = "llm"
 
 # Secret env KEYS the CORE services need at runtime (values held in the secret store and materialized
@@ -294,6 +295,9 @@ class RenderedConfig:
     # The first-party images (`ordo/<name>`, untagged) whose tag render fills in from the
     # out/images.json record `ordo build` writes. See ordo/render/image_tags.py.
     first_party_images: tuple[str, ...] = ()
+    # The edge sites of every ENABLED UI, keyed by owner (core services, the selected dashboard,
+    # the enabled plugins). compose publishes their ports on the edge listener.
+    edge_sites: dict[str, EdgeSite] = dataclasses.field(default_factory=dict)
 
     def resident_vram_gb(self) -> float:
         """The GPU footprint the resident LLM actually holds while cached: weights + KV at the
@@ -407,6 +411,8 @@ class RenderedConfig:
             # With the edge on, Caddy is the one front door; without it, each UI that declares a
             # `local_port` publishes it on loopback so a local-only install can reach it.
             publish_local_ports=local_access(self.plugins_enabled),
+            # Every enabled UI's declared edge port, published on the edge listener (Caddy).
+            edge_ports=[site.port for site in self.edge_sites.values()],
             # {} when the edge wiring can't produce a PROXY_BASE_URL (see litellm_google_sso_env).
             litellm_google_sso_env=self.model_gateway.get("google_sso_env") or {},
             # The keys this render wrote to .env: a service's declared derived key renders as a
@@ -473,6 +479,34 @@ class RenderedConfig:
             (out / retired).unlink(missing_ok=True)
 
 
+def declared_edge_sites(plugins: PluginRegistry, dashboards: DashboardRegistry) -> dict[str, EdgeSite]:
+    """Every edge site any service declares, enabled or not, keyed by owner: the core services
+    (CORE_EDGE_SITES), then each dashboard and plugin manifest's `edge_site:`.
+
+    Raises ValueError when two owners claim one port: the edge would publish it once and the
+    Caddyfile can hold one site for it, so one of the two UIs would be unreachable."""
+    sites: dict[str, EdgeSite] = dict(CORE_EDGE_SITES)
+    for owner in [*dashboards.dashboards, *plugins.plugins]:
+        if owner.edge_site is None:
+            continue
+        if owner.id in sites:
+            raise ValueError(f"edge site owner id '{owner.id}' is declared twice")
+        sites[owner.id] = owner.edge_site
+    _refuse_shared_edge_ports(sites)
+    return sites
+
+
+def _refuse_shared_edge_ports(sites: dict[str, EdgeSite]) -> None:
+    owners_by_port: dict[int, list[str]] = {}
+    for owner, site in sites.items():
+        owners_by_port.setdefault(site.port, []).append(owner)
+    shared = {port: owners for port, owners in owners_by_port.items() if len(owners) > 1}
+    if shared:
+        problems = "; ".join(f":{port} by {', '.join(owners)}" for port, owners in sorted(shared.items()))
+        raise ValueError(f"edge ports claimed by more than one service: {problems}. Each UI needs its own "
+                         "`edge_site.port`")
+
+
 def aggregate_services_catalog(services_dir: str | Path = DEFAULT_PLUGINS_DIR) -> dict[str, Any]:
     """Aggregate the per-service dashboard-card fragments (services/<id>/catalog.json) into
     the single catalog document the dashboard consumes (out/services-catalog.json).
@@ -481,16 +515,31 @@ def aggregate_services_catalog(services_dir: str | Path = DEFAULT_PLUGINS_DIR) -
     grid order is deterministic regardless of glob order (id is the tiebreak). The dashboard's
     services_catalog._load_catalog_cards() applies the SAME ordering to raw fragments in its
     in-repo dev/test path — tests/test_services_catalog_fragments locks the two together.
+
+    A card's `sso_port` (its SSO-gated Caddy port root, the Open link while the tailnet sidecars
+    are off) is DERIVED here from the edge site its owner declares: the card's `plugin`, or for a
+    core card (`plugin: null`) its own id. A fragment that writes `sso_port` itself is refused,
+    so the port has one declaration.
     """
+    services = Path(services_dir)
+    sites = declared_edge_sites(PluginRegistry.load(services), DashboardRegistry.load(services))
     cards: list[dict[str, Any]] = []
-    for frag in sorted(Path(services_dir).glob("*/catalog.json")):
+    for frag in sorted(services.glob("*/catalog.json")):
         data = json.loads(frag.read_text(encoding="utf-8"))
-        cards.extend(dict(c) for c in (data.get("cards") or []))
+        for raw_card in data.get("cards") or []:
+            card = dict(raw_card)
+            if "sso_port" in card:
+                raise ValueError(f"{frag}: card {card.get('id')!r} declares `sso_port`; it is derived from "
+                                 "its owner's `edge_site`, so declare the port there")
+            site = sites.get(card.get("plugin") or card.get("id", ""))
+            if site is not None:
+                card["sso_port"] = site.port
+            cards.append(card)
     cards.sort(key=lambda c: (int(c.get("order", 1000)), str(c.get("id", ""))))
     return {"version": 1, "services": cards}
 
 
-def langfuse_public_url(env: dict[str, str], plugins_enabled: list[str]) -> str:
+def langfuse_public_url(env: dict[str, str], plugins_enabled: list[str], edge_port: int | None) -> str:
     """The browser-facing origin Langfuse must be told about (it becomes NEXTAUTH_URL).
 
     Langfuse builds its sign-in redirect and every emitted link from this value, so it has to be
@@ -499,11 +548,14 @@ def langfuse_public_url(env: dict[str, str], plugins_enabled: list[str]) -> str:
     derived rather than hand-set, exactly like the rest of the edge wiring:
 
       tailnet-names enabled -> the clean sidecar name   https://langfuse.<CADDY_TAILNET_DOMAIN>
-      edge enabled          -> the SSO-gated port root  https://<CADDY_TAILNET_HOSTNAME>:8450
+      edge enabled          -> the SSO-gated port root  https://<CADDY_TAILNET_HOSTNAME>:<edge_port>
       neither               -> "" (a local install)
 
+    `edge_port` is langfuse's declared `edge_site.port` (services/langfuse/plugin.yaml); None when
+    it declares none, which leaves no port root to point at.
+
     BOTH branches are gated on the plugin that actually serves the URL, not merely on the
-    hostname being set. `:8450` exists only because the edge plugin publishes it and the
+    hostname being set. The port exists only because the edge plugin publishes it and the
     Caddyfile has a site for it; a stack that sets CADDY_TAILNET_HOSTNAME with the edge
     disabled would otherwise be handed a port nothing listens on. Same reason the sidecar
     branch checks `tailnet-names` rather than just the domain.
@@ -515,8 +567,8 @@ def langfuse_public_url(env: dict[str, str], plugins_enabled: list[str]) -> str:
     hostname = str(env.get("CADDY_TAILNET_HOSTNAME", "") or "").strip()
     if "tailnet-names" in plugins_enabled and domain:
         return f"https://{LANGFUSE_TAILNET_LABEL}.{domain}"
-    if "edge" in plugins_enabled and hostname:
-        return f"https://{hostname}:{LANGFUSE_EDGE_PORT}"
+    if "edge" in plugins_enabled and hostname and edge_port is not None:
+        return f"https://{hostname}:{edge_port}"
     return ""
 
 
@@ -540,7 +592,8 @@ def litellm_google_sso_env(env: dict[str, str], plugins_enabled: list[str], admi
     `depends_on: [edge]`, so it can't be enabled without edge):
 
       tailnet-names enabled -> the clean sidecar name   https://llm.<CADDY_TAILNET_DOMAIN>
-      edge enabled          -> the SSO-gated port root  https://<CADDY_TAILNET_HOSTNAME>:8449
+      edge enabled          -> the SSO-gated port root  https://<CADDY_TAILNET_HOSTNAME>:<port>
+                               (the port is MODEL_GATEWAY_EDGE_SITE's)
       neither               -> {} (no SSO vars at all; the admin/master-key login is unaffected)
 
     PROXY_ADMIN_ID is included only when `admin_identity` (the site `LITELLM_ADMIN_IDENTITY`
@@ -556,7 +609,7 @@ def litellm_google_sso_env(env: dict[str, str], plugins_enabled: list[str], admi
     if "tailnet-names" in plugins_enabled and domain:
         base_url = f"https://{LITELLM_TAILNET_LABEL}.{domain}"
     elif "edge" in plugins_enabled and hostname:
-        base_url = f"https://{hostname}:{LITELLM_EDGE_PORT}"
+        base_url = f"https://{hostname}:{MODEL_GATEWAY_EDGE_SITE.port}"
     if not base_url:
         return {}
     sso_env = {"PROXY_BASE_URL": base_url}
@@ -699,6 +752,13 @@ def render(source: Source, catalog: Catalog,
     mcps = [p for p in enabled if p.kind == "mcp"]
     for p in services:
         env.update(p.env)  # plugin-level env fragment goes to the rendered .env
+    # The edge sites of the enabled UIs: always the core services and the selected dashboard, and
+    # each enabled plugin that declares one. Their ports are what the edge listener publishes.
+    edge_sites: dict[str, EdgeSite] = dict(CORE_EDGE_SITES)
+    if dash is not None and dash.edge_site is not None:
+        edge_sites[dash.id] = dash.edge_site
+    edge_sites.update({p.id: p.edge_site for p in services if p.edge_site is not None})
+    _refuse_shared_edge_ports(edge_sites)
     compose_profiles = sorted({p.compose_profile for p in services if p.compose_profile})
     # flatten to (plugin, service) pairs — compose builds each declared service from data
     plugin_services = [(p, ps) for p in services for ps in p.services]
@@ -740,7 +800,9 @@ def render(source: Source, catalog: Catalog,
     # above, these are DEFAULTS an operator may deliberately override from `site:` (a Langfuse
     # reached through a different front door, or a real admin address for the seeded login).
     if "langfuse" in [p.id for p in services]:
-        env.setdefault("LANGFUSE_PUBLIC_URL", langfuse_public_url(env, [p.id for p in services]))
+        langfuse_site = edge_sites.get("langfuse")
+        env.setdefault("LANGFUSE_PUBLIC_URL", langfuse_public_url(
+            env, [p.id for p in services], langfuse_site.port if langfuse_site else None))
         env.setdefault("LANGFUSE_ADMIN_EMAIL", LANGFUSE_DEFAULT_ADMIN_EMAIL)
 
     # LiteLLM admin UI Google SSO: model-gateway is core (always rendered), so - unlike Langfuse -
@@ -799,6 +861,7 @@ def render(source: Source, catalog: Catalog,
         litellm_keys=litellm_keys,
         llamacpp_backend=backend,
         first_party_images=tuple(sorted(first_party_contexts(plugins, agents, dashboards))),
+        edge_sites=edge_sites,
     )
 
 
