@@ -218,7 +218,7 @@ def test_missing_render_is_refused(monkeypatch, tmp_path, recorded):
 # --- the GPU lease ---
 
 
-@pytest.mark.parametrize("gpu", [LEASED, LEASED_OLD_IMAGE, LEASED_NOT_SAVED])
+@pytest.mark.parametrize("gpu", [LEASED, LEASED_NOT_SAVED])
 @pytest.mark.parametrize("argv", [["recreate", "ops-controller"], ["up", "ops-controller"],
                                   ["recreate", "ops-controller", "agent"]])
 def test_ops_controller_is_refused_during_a_lease_without_persisted_state(
@@ -421,3 +421,18 @@ def test_the_rendered_stack_recreates_every_holder_of_the_control_plane_token():
     readers = stack.readers_of(doc, ["OPS_CONTROLLER_TOKEN"])
     assert {"ops-controller", "dashboard", "agent", "mcp-orchestration"} <= set(readers)
     assert "evals" not in readers and "evals" in doc["services"]
+
+
+def test_a_status_without_the_leased_verdict_is_refused_not_guessed():
+    """Every ops-controller since #230 reports the scheduler's own `leased` verdict. A status
+    without it comes from an image older than that; the host no longer reconstructs the verdict
+    from the raw lists (a second definition of "leased"), it refuses and says to rebuild."""
+    with pytest.raises(bringup.LeaseUnknown, match="leased"):
+        bringup.is_leased(LEASED_OLD_IMAGE)
+    reason = bringup.lease_refusal(LEASED_OLD_IMAGE, whole_stack=True, starts=set())
+    assert reason and "rebuild" in reason
+
+
+def test_the_leased_verdict_alone_decides():
+    assert bringup.is_leased({**IDLE, "leased": True}) is True
+    assert bringup.is_leased({**LEASED, "leased": False}) is False

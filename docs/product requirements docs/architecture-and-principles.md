@@ -244,7 +244,7 @@ dashboard iframe expects that prefix), and n8n's external
 | Healthchecks | All long-running services |
 | Resource limits | `qdrant` (512M), `rag-ingestion` (256M), plus per-service limits on model-gateway / dashboard / comfyui |
 | Log rotation | All services |
-| Pinned images | `llama.cpp` (by digest), `open-webui:v0.10.1`, `qdrant:v1.18.2`, etc. |
+| Pinned images | Every image is pinned to an exact version tag and/or digest in its `services/<id>/plugin.yaml` (the one place a version is declared). |
 | Explicit networks | Single `ordo-net` declared; every service attaches to it; only Caddy publishes host ports |
 | `restart: unless-stopped` | All long-running services |
 | One-shot `restart: "no"` | pullers, sync services |

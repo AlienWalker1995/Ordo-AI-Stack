@@ -9,7 +9,7 @@ from ordo_evals.checks import ProbeError
 
 IDLE_STATUS = {
     "manifest": {"model": {"id": "qwen3.8-27b-uncensored-q6"}},
-    "gpu": {"state": "idle", "total_vram_gb": 32.0, "free_vram_gb": 32.0, "running": [], "queued": [],
+    "gpu": {"state": "idle", "leased": False, "total_vram_gb": 32.0, "free_vram_gb": 32.0, "running": [], "queued": [],
            "waiting_on_vram": False, "eta_seconds": 0.0, "idle_cached": {"llamacpp": 20.0},
            "evicted_residents": {}, "rejected": []},
 }
@@ -18,7 +18,7 @@ NO_SCHEDULER_STATUS = {"manifest": {"model": {"id": "qwen3.8-27b-uncensored-q6"}
 
 
 def _busy_status(**gpu_overrides):
-    gpu = {"state": "busy", "total_vram_gb": 32.0, "free_vram_gb": 4.0, "running": [], "queued": [],
+    gpu = {"state": "busy", "leased": True, "total_vram_gb": 32.0, "free_vram_gb": 4.0, "running": [], "queued": [],
           "waiting_on_vram": False, "eta_seconds": None, "idle_cached": {}, "evicted_residents": {},
           "rejected": []}
     gpu.update(gpu_overrides)
@@ -97,3 +97,18 @@ def test_served_model_is_unknown_with_a_note_when_ops_controller_is_unreachable(
 def test_served_model_round_trips_whatever_the_run_declared(gpu_served_model):
     served, _ = gpu_guard.served_model_for_item(_FakeProbes(IDLE_STATUS), gpu_served_model=gpu_served_model)
     assert served == gpu_served_model
+
+
+def test_the_schedulers_leased_verdict_decides():
+    """ops-controller's `leased` is the one definition of a leased card (#230); the guard reads it
+    rather than re-deriving it from the lists."""
+    leased, _ = gpu_guard.gpu_lease_state(_busy_status(leased=False, running=[{"id": "x"}]))
+    assert leased is False
+
+
+def test_a_status_without_the_verdict_is_treated_as_leased():
+    """Fail closed: an ops-controller too old to report `leased` cannot prove the card is free."""
+    status = _busy_status()
+    del status["gpu"]["leased"]
+    leased, detail = gpu_guard.gpu_lease_state(status)
+    assert leased is True and "no `leased` verdict" in detail

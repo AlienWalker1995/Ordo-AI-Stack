@@ -233,8 +233,8 @@ def test_an_infra_error_is_never_judgeable():
 
 # ── E15 (round-6 fix): per-item served_model via gpu_guard ──────────────────────────────────────
 
-IDLE_STATUS = {"manifest": {}, "gpu": {"state": "idle", "running": [], "queued": [], "evicted_residents": {}}}
-LEASED_STATUS = {"manifest": {}, "gpu": {"state": "busy", "running": [{"id": "gate-comfyui"}], "queued": [],
+IDLE_STATUS = {"manifest": {}, "gpu": {"state": "idle", "leased": False, "running": [], "queued": [], "evicted_residents": {}}}
+LEASED_STATUS = {"manifest": {}, "gpu": {"state": "busy", "leased": True, "running": [{"id": "gate-comfyui"}], "queued": [],
                                         "evicted_residents": {}}}
 
 

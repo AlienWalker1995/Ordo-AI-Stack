@@ -100,9 +100,9 @@ def test_a_refused_run_writes_nothing_to_disk(tmp_path, monkeypatch):
 # ── E15 (round-6 fix): the GPU-lease preflight gate ─────────────────────────────
 
 IDLE_STATUS = {"manifest": {"model": {"id": "declared-gpu-model"}},
-              "gpu": {"state": "idle", "running": [], "queued": [], "evicted_residents": {}}}
+              "gpu": {"state": "idle", "leased": False, "running": [], "queued": [], "evicted_residents": {}}}
 LEASED_STATUS = {"manifest": {"model": {"id": "declared-gpu-model"}},
-                 "gpu": {"state": "busy", "running": [{"id": "gate-comfyui"}], "queued": [], "evicted_residents": {}}}
+                 "gpu": {"state": "busy", "leased": True, "running": [{"id": "gate-comfyui"}], "queued": [], "evicted_residents": {}}}
 
 
 class _FakeProbesForRun:
