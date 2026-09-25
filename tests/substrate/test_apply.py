@@ -20,6 +20,7 @@ import yaml
 
 from ordo import cli
 from ordo.host import apply, bringup, doctor, images
+from ordo.render import changed_set
 
 OPS = bringup.OPS_CONTROLLER_SERVICE
 COMPOSE_VERSION = "5.1.0"
@@ -44,14 +45,14 @@ LEASED = {"state": "busy", "leased": True, "running": [{"id": "gate-comfyui", "k
 
 
 def rendered(name: str, config_hash: str = "h", image_id: str | None = "sha256:img", *,
-             image_ref: str | None = None, one_shot: bool = False) -> apply.RenderedService:
-    return apply.RenderedService(service=name, config_hash=config_hash,
+             image_ref: str | None = None, one_shot: bool = False) -> changed_set.RenderedService:
+    return changed_set.RenderedService(service=name, config_hash=config_hash,
                                  image_ref=image_ref or f"{name}:ref", image_id=image_id, one_shot=one_shot)
 
 
 def running(name: str, config_hash: str = "h", image_id: str = "sha256:img",
-            compose_version: str = COMPOSE_VERSION) -> apply.RunningContainer:
-    return apply.RunningContainer(service=name, config_hash=config_hash, image_id=image_id,
+            compose_version: str = COMPOSE_VERSION) -> changed_set.RunningContainer:
+    return changed_set.RunningContainer(service=name, config_hash=config_hash, image_id=image_id,
                                   compose_version=compose_version)
 
 
@@ -69,13 +70,13 @@ def in_sync() -> tuple[dict, dict]:
 
 def test_an_unchanged_stack_has_no_changes():
     want, have = in_sync()
-    assert apply.diff_services(want, have, compose_version=COMPOSE_VERSION) == []
+    assert changed_set.diff_services(want, have, compose_version=COMPOSE_VERSION) == []
 
 
 def test_a_changed_config_hash_is_a_change():
     want, have = in_sync()
     want["dashboard"] = rendered("dashboard", config_hash="h2")
-    changes = apply.diff_services(want, have, compose_version=COMPOSE_VERSION)
+    changes = changed_set.diff_services(want, have, compose_version=COMPOSE_VERSION)
     assert [c.service for c in changes] == ["dashboard"]
     assert "config" in changes[0].reasons[0]
 
@@ -84,7 +85,7 @@ def test_a_changed_image_id_under_the_same_ref_is_a_change():
     """A rebuilt `-dirty` tag or a moved upstream tag keeps the compose (and its hash) identical."""
     want, have = in_sync()
     want["caddy"] = rendered("caddy", image_id="sha256:other")
-    changes = apply.diff_services(want, have, compose_version=COMPOSE_VERSION)
+    changes = changed_set.diff_services(want, have, compose_version=COMPOSE_VERSION)
     assert [c.service for c in changes] == ["caddy"]
     assert "image" in changes[0].reasons[0]
 
@@ -92,7 +93,7 @@ def test_a_changed_image_id_under_the_same_ref_is_a_change():
 def test_an_image_this_apply_builds_is_a_change():
     want, have = in_sync()
     want["dashboard"] = rendered("dashboard", image_id=None, image_ref="ordo/dashboard:new")
-    changes = apply.diff_services(want, have, compose_version=COMPOSE_VERSION,
+    changes = changed_set.diff_services(want, have, compose_version=COMPOSE_VERSION,
                                   built_refs={"ordo/dashboard:new"})
     assert [c.service for c in changes] == ["dashboard"]
     assert "built by this apply" in changes[0].reasons[0]
@@ -101,7 +102,7 @@ def test_an_image_this_apply_builds_is_a_change():
 def test_a_service_with_no_container_is_a_change():
     want, have = in_sync()
     del have["dashboard"]
-    changes = apply.diff_services(want, have, compose_version=COMPOSE_VERSION)
+    changes = changed_set.diff_services(want, have, compose_version=COMPOSE_VERSION)
     assert [(c.service, c.reasons) for c in changes] == [("dashboard", ("not created",))]
 
 
@@ -110,7 +111,7 @@ def test_a_container_made_by_another_compose_version_is_a_change():
     not comparable: the container is recreated by this host's compose, never compared across."""
     want, have = in_sync()
     have["dashboard"] = running("dashboard", compose_version="2.33.0")
-    changes = apply.diff_services(want, have, compose_version=COMPOSE_VERSION)
+    changes = changed_set.diff_services(want, have, compose_version=COMPOSE_VERSION)
     assert [c.service for c in changes] == ["dashboard"]
     assert "2.33.0" in changes[0].reasons[0] and COMPOSE_VERSION in changes[0].reasons[0]
 
@@ -119,20 +120,20 @@ def test_a_one_shot_job_is_never_started():
     """`restart: "no"` (the evals runner): recreating it with `up -d` would start a run."""
     want, have = in_sync()
     want["evals"] = rendered("evals", config_hash="h2", one_shot=True)
-    assert apply.diff_services(want, have, compose_version=COMPOSE_VERSION) == []
+    assert changed_set.diff_services(want, have, compose_version=COMPOSE_VERSION) == []
 
 
 def test_ops_controller_is_ordered_first():
     want, have = in_sync()
     for name in ("caddy", "dashboard", OPS):
         want[name] = rendered(name, config_hash="h2")
-    changes = apply.diff_services(want, have, compose_version=COMPOSE_VERSION)
+    changes = changed_set.diff_services(want, have, compose_version=COMPOSE_VERSION)
     assert [c.service for c in changes] == [OPS, "caddy", "dashboard"]
 
 
 def test_a_substrate_digest_mismatch_alone_recreates_ops_controller():
     want, have = in_sync()
-    changes = apply.diff_services(want, have, compose_version=COMPOSE_VERSION,
+    changes = changed_set.diff_services(want, have, compose_version=COMPOSE_VERSION,
                                   running_substrate="a" * 64, checkout_substrate=CHECKOUT_DIGEST)
     assert [c.service for c in changes] == [OPS]
     assert "substrate" in changes[0].reasons[0]
@@ -140,7 +141,7 @@ def test_a_substrate_digest_mismatch_alone_recreates_ops_controller():
 
 def test_a_matching_substrate_digest_changes_nothing():
     want, have = in_sync()
-    assert apply.diff_services(want, have, compose_version=COMPOSE_VERSION,
+    assert changed_set.diff_services(want, have, compose_version=COMPOSE_VERSION,
                                running_substrate=CHECKOUT_DIGEST, checkout_substrate=CHECKOUT_DIGEST) == []
 
 
@@ -196,11 +197,11 @@ def test_rendered_reads_hashes_and_image_ids_with_the_shared_compose_argv(tmp_pa
         config={"services": {"dashboard": {"image": "ordo/dashboard:new", "restart": "unless-stopped"},
                              "evals": {"image": "ordo/evals:new", "restart": "no"}}},
         images={"ordo/dashboard:new": "sha256:d1"})
-    state = apply.DockerState(run=cli_)
-    got = state.rendered(apply.Staged(compose_dir=tmp_path.as_posix(), project_directory="C:/out", doc=DOC),
+    state = changed_set.DockerState(run=cli_)
+    got = state.rendered(changed_set.Staged(compose_dir=tmp_path.as_posix(), project_directory="C:/out", doc=DOC),
                          project="ordo", profiles=["edge", "evals"], containers={})
-    assert got["dashboard"] == apply.RenderedService("dashboard", "aaa", "ordo/dashboard:new", "sha256:d1", False)
-    assert got["evals"] == apply.RenderedService("evals", "bbb", "ordo/evals:new", None, True)
+    assert got["dashboard"] == changed_set.RenderedService("dashboard", "aaa", "ordo/dashboard:new", "sha256:d1", False)
+    assert got["evals"] == changed_set.RenderedService("evals", "bbb", "ordo/evals:new", None, True)
     hash_call = next(c for c in cli_.calls if "--hash" in c)
     # The same builder as every bring-up (both env files, every profile), plus the project directory
     # the running containers were created against (their relative binds resolve from it).
@@ -215,10 +216,10 @@ def test_running_reads_labels_and_image_ids_and_skips_one_off_runs():
         _container("ops-controller", "ccc", "sha256:o1", version="2.33.0"),
         _container("evals", "eee", "sha256:e1", oneoff="True"),
     ])
-    got = apply.DockerState(run=cli_).running(project="ordo")
-    assert got == {"dashboard": apply.RunningContainer("dashboard", "aaa", "sha256:d1", COMPOSE_VERSION,
+    got = changed_set.DockerState(run=cli_).running(project="ordo")
+    assert got == {"dashboard": changed_set.RunningContainer("dashboard", "aaa", "sha256:d1", COMPOSE_VERSION,
                                                        "dashboard-id"),
-                   "ops-controller": apply.RunningContainer("ops-controller", "ccc", "sha256:o1", "2.33.0",
+                   "ops-controller": changed_set.RunningContainer("ops-controller", "ccc", "sha256:o1", "2.33.0",
                                                             "ops-controller-id")}
     ps = next(c for c in cli_.calls if c[:2] == ["docker", "ps"])
     assert "label=com.docker.compose.project=ordo" in ps and "-a" in ps
@@ -226,7 +227,7 @@ def test_running_reads_labels_and_image_ids_and_skips_one_off_runs():
 
 def test_no_containers_is_an_empty_running_set_without_an_inspect():
     cli_ = FakeDockerCli(ps="")
-    assert apply.DockerState(run=cli_).running(project="ordo") == {}
+    assert changed_set.DockerState(run=cli_).running(project="ordo") == {}
     assert not any(c[:2] == ["docker", "inspect"] for c in cli_.calls)
 
 
@@ -240,15 +241,15 @@ def test_no_containers_is_an_empty_running_set_without_an_inspect():
 def test_unreadable_docker_state_fails_closed(tmp_path, failing, read):
     cli_ = FakeDockerCli(hashes="dashboard aaa\n",
                          config={"services": {"dashboard": {"image": "ordo/dashboard:new"}}}, fail=failing)
-    staged = apply.Staged(tmp_path.as_posix(), tmp_path.as_posix(), DOC)
-    with pytest.raises(apply.StateUnknown):
-        read(apply.DockerState(run=cli_), staged)
+    staged = changed_set.Staged(tmp_path.as_posix(), tmp_path.as_posix(), DOC)
+    with pytest.raises(changed_set.StateUnknown):
+        read(changed_set.DockerState(run=cli_), staged)
 
 
 def test_a_hashed_service_missing_from_the_config_fails_closed(tmp_path):
     cli_ = FakeDockerCli(hashes="dashboard aaa\n", config={"services": {}})
-    with pytest.raises(apply.StateUnknown):
-        apply.DockerState(run=cli_).rendered(apply.Staged(tmp_path.as_posix(), tmp_path.as_posix(), DOC),
+    with pytest.raises(changed_set.StateUnknown):
+        changed_set.DockerState(run=cli_).rendered(changed_set.Staged(tmp_path.as_posix(), tmp_path.as_posix(), DOC),
                                              project="ordo", profiles=[], containers={})
 
 
@@ -269,8 +270,8 @@ def test_a_namespace_reference_resolves_to_the_owners_container_id():
         "pinned": {"network_mode": "container:abc"},
         "plain": {"network_mode": "bridge"},
     }
-    containers = {"caddy": apply.RunningContainer("caddy", "h", "sha256:c", COMPOSE_VERSION, CADDY_ID)}
-    assert apply.shared_namespace_overrides(services, containers) == {
+    containers = {"caddy": changed_set.RunningContainer("caddy", "h", "sha256:c", COMPOSE_VERSION, CADDY_ID)}
+    assert changed_set.shared_namespace_overrides(services, containers) == {
         "tailnet-chat": {"network_mode": f"container:{CADDY_ID}"},
         "sidecar": {"ipc": f"container:{CADDY_ID}", "pid": f"container:{CADDY_ID}"},
     }
@@ -279,7 +280,7 @@ def test_a_namespace_reference_resolves_to_the_owners_container_id():
 def test_a_reference_to_an_owner_with_no_container_is_left_unresolved():
     """No owner container: the owner is itself "not created", and its members follow it."""
     services = {"caddy": {}, "tailnet-chat": {"network_mode": "service:caddy"}}
-    assert apply.shared_namespace_overrides(services, {}) == {}
+    assert changed_set.shared_namespace_overrides(services, {}) == {}
 
 
 class HashingComposeCli(FakeDockerCli):
@@ -320,12 +321,12 @@ def test_an_unchanged_netns_member_is_not_a_change(tmp_path):
         ps="id1\nid2\n",
         inspect=[_container("caddy", "ccc", "sha256:c", container_id=CADDY_ID),
                  _container("tailnet-chat", HashingComposeCli.LABEL_HASH, "sha256:t", container_id="d" * 64)])
-    state = apply.DockerState(run=cli_)
+    state = changed_set.DockerState(run=cli_)
     have = state.running(project="ordo")
-    want = state.rendered(apply.Staged(tmp_path.as_posix(), tmp_path.as_posix(), DOC), project="ordo",
+    want = state.rendered(changed_set.Staged(tmp_path.as_posix(), tmp_path.as_posix(), DOC), project="ordo",
                           profiles=["edge"], containers=have)
     assert cli_.overrides_seen == [{"tailnet-chat": {"network_mode": f"container:{CADDY_ID}"}}]
-    assert apply.diff_services(want, have, compose_version=COMPOSE_VERSION) == []
+    assert changed_set.diff_services(want, have, compose_version=COMPOSE_VERSION) == []
 
 
 def test_a_member_created_against_an_older_owner_container_is_a_change(tmp_path):
@@ -338,19 +339,19 @@ def test_a_member_created_against_an_older_owner_container_is_a_change(tmp_path)
         ps="id1\nid2\n",
         inspect=[_container("caddy", "ccc", "sha256:c", container_id="e" * 64),
                  _container("tailnet-chat", HashingComposeCli.LABEL_HASH, "sha256:t", container_id="d" * 64)])
-    state = apply.DockerState(run=cli_)
+    state = changed_set.DockerState(run=cli_)
     have = state.running(project="ordo")
-    want = state.rendered(apply.Staged(tmp_path.as_posix(), tmp_path.as_posix(), DOC), project="ordo",
+    want = state.rendered(changed_set.Staged(tmp_path.as_posix(), tmp_path.as_posix(), DOC), project="ordo",
                           profiles=["edge"], containers=have)
-    changes = apply.diff_services(want, have, compose_version=COMPOSE_VERSION)
+    changes = changed_set.diff_services(want, have, compose_version=COMPOSE_VERSION)
     assert [(c.service, c.reasons) for c in changes] == [("tailnet-chat", ("config changed",))]
 
 
 def test_an_image_inspect_error_other_than_missing_fails_closed():
     def run(argv):
         return subprocess.CompletedProcess(argv, 1, "", "permission denied while trying to connect")
-    with pytest.raises(apply.StateUnknown):
-        apply.DockerState(run=run).image_id("ordo/dashboard:new")
+    with pytest.raises(changed_set.StateUnknown):
+        changed_set.DockerState(run=run).image_id("ordo/dashboard:new")
 
 
 # --------------------------------------------------------------------------- #
@@ -399,14 +400,14 @@ class FakeHost:
         self.calls.append(("staged_render", dry_run))
         if not dry_run:
             self.calls.append(("write_render",))
-        yield apply.Staged(compose_dir="stage", project_directory="out", doc=self.doc)
+        yield changed_set.Staged(compose_dir="stage", project_directory="out", doc=self.doc)
 
     def rendered_services(self, staged, containers):
         return self.want
 
     def running_containers(self):
         if self.state_error:
-            raise apply.StateUnknown("docker ps failed")
+            raise changed_set.StateUnknown("docker ps failed")
         return self.have
 
     def compose_version(self):

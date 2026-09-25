@@ -165,15 +165,15 @@ def test_post_plugin_enable_unknown_returns_403(tmp_path):
 
 # --- POST /plugins/{id}/disable ---
 
-def test_post_plugin_disable_valid_returns_200(tmp_path):
+def test_post_plugin_disable_under_plugins_auto_returns_409(tmp_path):
+    # `plugins: auto` has no list item to remove, so a disable could not persist.
     cp, _ = _cp(tmp_path)
     client = _client(cp)
     resp = client.post("/plugins/comfyui/disable", json={})
-    assert resp.status_code == 200
+    assert resp.status_code == 409
     body = resp.json()
-    assert body["ok"] is True
     assert body["plugin"] == "comfyui"
-    assert "services" in body
+    assert "explicit `plugins:` list" in body["error"]
 
 
 def test_post_plugin_disable_not_installable_returns_403(tmp_path):

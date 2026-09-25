@@ -117,14 +117,18 @@ def test_mcp_health_gateway_down_marks_everything_down():
     assert all(s["ok"] is False for s in d["servers"])
 
 
-def test_mcp_add_persists_to_ordo_yaml_and_reports_render_needed(dashboard_operator_headers):
+def test_mcp_add_persists_to_ordo_yaml_and_reports_what_was_applied(dashboard_operator_headers):
     with patch("dashboard.app._read_servers_json", return_value=SERVERS_JSON), \
          patch("dashboard.app._persist_mcp_toggle",
-               new=AsyncMock(return_value={"persistent": True, "plugin": "n8n", "note": None})) as p:
+               new=AsyncMock(return_value={"persistent": True, "plugin": "n8n", "note": None,
+                                           "recreated": ["mcp-n8n", "model-gateway"], "stopped": [],
+                                           "restart_required_on_host": [], "host_command": None})) as p:
         r = client.post("/api/mcp/add", json={"server": "n8n"}, headers=dashboard_operator_headers)
     d = r.json()
     p.assert_awaited_once_with("n8n", "add")
-    assert d["status"] == "added" and d["applied"] is False and "model-gateway" in d["next"]
+    # ops-controller applied the render: no "recreate model-gateway yourself" hint any more.
+    assert d["status"] == "added" and d["recreated"] == ["mcp-n8n", "model-gateway"]
+    assert "applied" not in d and "next" not in d
     assert d["servers"] == ["searxng", "comfyui", "memory-vault", "n8n"]
 
 
@@ -134,9 +138,12 @@ def test_mcp_add_rejects_a_server_that_is_not_a_registered_plugin(dashboard_oper
     assert r.status_code == 400 and "not a registered" in r.json()["detail"]
 
 
-def test_mcp_remove_persists_and_reports_render_needed(dashboard_operator_headers):
+def test_mcp_remove_persists_and_reports_what_was_applied(dashboard_operator_headers):
     with patch("dashboard.app._read_servers_json", return_value=SERVERS_JSON), \
          patch("dashboard.app._persist_mcp_toggle",
-               new=AsyncMock(return_value={"persistent": True, "plugin": "searxng", "note": None})):
+               new=AsyncMock(return_value={"persistent": True, "plugin": "searxng", "note": None,
+                                           "recreated": ["model-gateway"], "stopped": ["mcp-searxng"],
+                                           "restart_required_on_host": [], "host_command": None})):
         d = client.post("/api/mcp/remove", json={"server": "searxng"}, headers=dashboard_operator_headers).json()
-    assert d["status"] == "removed" and d["applied"] is False and d["servers"] == ["comfyui", "memory-vault"]
+    assert d["status"] == "removed" and d["servers"] == ["comfyui", "memory-vault"]
+    assert d["stopped"] == ["mcp-searxng"] and "applied" not in d

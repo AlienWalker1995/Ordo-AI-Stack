@@ -374,3 +374,30 @@ def test_all_registered_mcp_manifests_validate_and_declare_http():
         if p.kind == "mcp":
             assert p.mcp is not None and p.mcp.transport == "http", p.id
             assert p.mcp.hosted or p.mcp.port > 0, p.id
+
+
+def _gateway_config_labels(plugins):
+    services = render(_src(hardware=P_5090, plugins=plugins), CATALOG, REGISTRY).compose_dict()["services"]
+    return {name: (services[name].get("labels") or {}).get(compose.RENDERED_CONFIG_LABEL)
+            for name in ("model-gateway", "model-gateway-keys")}
+
+
+def test_an_mcp_toggle_changes_the_gateway_definition_so_the_changed_set_recreates_it():
+    # LiteLLM reads out/model-gateway/ (the MCP fragment, the key grants) at startup only, from a
+    # bind mount compose does not hash. The rendered definition carries a digest of that content,
+    # so a render that changes it changes the gateway's config hash, and `ordo apply` and
+    # ops-controller's post-render step recreate the gateway (and re-run the key bootstrap).
+    without = _gateway_config_labels(["searxng-web"])
+    with_mcp = _gateway_config_labels(["searxng-web", "searxng"])
+    assert all(without.values()) and all(with_mcp.values())
+    assert without["model-gateway"] != with_mcp["model-gateway"]
+    assert _gateway_config_labels(["searxng-web", "searxng"]) == with_mcp      # deterministic
+
+
+def test_the_gateway_config_digest_is_the_digest_of_what_write_puts_in_its_config_dir(tmp_path):
+    rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
+    rc.write(tmp_path)
+    written = {path.name: path.read_text(encoding="utf-8") for path in (tmp_path / "model-gateway").iterdir()}
+    services = rc.compose_dict()["services"]
+    for reader in ("model-gateway", "model-gateway-keys"):
+        assert services[reader]["labels"][compose.RENDERED_CONFIG_LABEL] == compose.rendered_config_digest(written)

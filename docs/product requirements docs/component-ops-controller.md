@@ -26,9 +26,10 @@ agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>
 | `/health`, `/healthz` | GET | Liveness |
 | `/status` | GET | GPU/scheduler state + the current rendered manifest |
 | `/model-config` | GET | Source model, resolved active model, its file and projector, every file the render loads (`model_files`), tier, ctx size, catalog |
-| `/model-config` | POST | Switch active model (`{"model": "<id>"|"auto"}`); rewrites `ordo.yaml` and re-renders |
+| `/model-config` | POST | Switch active model (`{"model": "<id>"|"auto"}`); rewrites `ordo.yaml`, re-renders and applies (`apply` in the response); a failed apply rolls the source back |
+| `/apply` | POST | Recreate the changed set of the current render (`{"dry_run": true}` returns the plan; else `confirm: true`): `recreated`, `stopped`, `changes`, `restart_required_on_host`, `host_reasons`, `host_command` |
 | `/plugins` | GET | Installable plugins and their state |
-| `/plugins/{id}/enable`, `/plugins/{id}/disable` | POST | Add/remove an allowlisted plugin in `ordo.yaml` |
+| `/plugins/{id}/enable`, `/plugins/{id}/disable` | POST | Add/remove an allowlisted plugin in `ordo.yaml`, re-render and apply; a disable under `plugins: auto` is refused (409) |
 | `/jobs` | POST | Request GPU capacity for a job (`id`, `vram_gb`) |
 | `/jobs/complete` | POST | Release a completed job (`id`) |
 | `/jobs/heartbeat` | POST | Heartbeat a running job (`id`) |

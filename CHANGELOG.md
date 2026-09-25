@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Added
+- **ops-controller applies every source change it makes.** A model switch, a plugin enable or
+  disable and the dashboard's MCP toggle now write `ordo.yaml`, render, and recreate exactly the
+  changed set (`ordo/render/changed_set.py`, shared with `ordo apply`), GPU-lease checked; a failed
+  apply restores the previous source and re-applies it. What ops-controller cannot restart (itself,
+  the agent, a service missing its secrets) is returned as `restart_required_on_host` with the
+  `ordo apply --only ...` command. New `POST /apply` (dry run supported, audited). The dashboard's
+  hardcoded switch list and `hermes_restart_needed`, and the MCP toggle's "recreate model-gateway"
+  hint, are gone. model-gateway and model-gateway-keys carry a digest of `out/model-gateway/`, so an
+  MCP change is in the changed set. A disable under `plugins: auto` is refused (it could not persist).
 - **Secrets as files.** A service reads a secret from a read-only file whenever its software can:
   its manifest lists the key under `secret_files:` (a key name, or `{key, env, prefix}` for the name
   the image reads), `ordo secrets materialize` writes every declared file to `out/secrets/` plus a

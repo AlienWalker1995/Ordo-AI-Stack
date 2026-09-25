@@ -24,18 +24,36 @@ def _persist(monkeypatch, server, action, ops_reply):
     return asyncio.run(_persist_mcp_toggle(server, action)), ops
 
 
+APPLIED = {"recreated": ["mcp-comfyui", "model-gateway", "model-gateway-keys"], "stopped": [],
+           "restart_required_on_host": [], "host_command": None}
+
+
 def test_enable_calls_ops_plugin_enable_for_the_mapped_plugin(monkeypatch):
-    res, ops = _persist(monkeypatch, "comfyui", "add", (200, {"ok": True, "plugin": "comfyui-mcp"}))
+    res, ops = _persist(monkeypatch, "comfyui", "add",
+                        (200, {"ok": True, "plugin": "comfyui-mcp", "apply": APPLIED}))
     assert ops.await_count == 1
     method, path = ops.await_args.args
     assert (method, path) == ("POST", "/plugins/comfyui-mcp/enable")
-    assert res == {"persistent": True, "plugin": "comfyui-mcp", "note": None}
+    # ops-controller applied the render itself: the toggle reports what it recreated.
+    assert res == {"persistent": True, "plugin": "comfyui-mcp", "note": None,
+                   "recreated": ["mcp-comfyui", "model-gateway", "model-gateway-keys"], "stopped": [],
+                   "restart_required_on_host": [], "host_command": None}
 
 
 def test_disable_calls_ops_plugin_disable_for_the_mapped_plugin(monkeypatch):
-    res, ops = _persist(monkeypatch, "searxng", "remove", (200, {"ok": True, "plugin": "searxng"}))
+    res, ops = _persist(monkeypatch, "searxng", "remove", (200, {"ok": True, "plugin": "searxng", "apply": {
+        "recreated": ["model-gateway", "model-gateway-keys"], "stopped": ["mcp-searxng"],
+        "restart_required_on_host": [], "host_command": None}}))
     assert ops.await_args.args == ("POST", "/plugins/searxng/disable")
     assert res["persistent"] is True and res["plugin"] == "searxng"
+    assert res["stopped"] == ["mcp-searxng"] and res["recreated"] == ["model-gateway", "model-gateway-keys"]
+
+
+def test_a_render_ops_controller_did_not_apply_is_not_reported_as_applied(monkeypatch):
+    # An ops-controller older than the post-render step writes the source and stops there.
+    res, _ = _persist(monkeypatch, "comfyui", "add", (200, {"ok": True, "plugin": "comfyui-mcp"}))
+    assert res["persistent"] is True and res["recreated"] == []
+    assert "ordo apply" in res["note"]
 
 
 def test_server_not_in_map_is_flagged_without_calling_ops(monkeypatch):
@@ -56,10 +74,11 @@ def test_ops_unreachable_is_not_persistent(monkeypatch):
     assert res["persistent"] is False and "OPS_CONTROLLER_TOKEN" in res["note"]
 
 
-def test_transient_disable_under_plugins_auto_is_not_persistent(monkeypatch):
+def test_a_disable_under_plugins_auto_is_refused_and_not_persistent(monkeypatch):
     res, _ = _persist(monkeypatch, "comfyui", "remove",
-                      (200, {"ok": True, "transient": True, "note": "plugins is 'auto'; set an explicit list"}))
-    assert res["persistent"] is False and "explicit list" in res["note"]
+                      (409, {"error": "ordo.yaml has `plugins: auto` ... without an explicit `plugins:` list"}))
+    assert res["persistent"] is False and "explicit `plugins:` list" in res["note"]
+    assert res["recreated"] == [] and res["host_command"] is None
 
 
 def test_dashboard_has_no_writer_of_the_operator_source():

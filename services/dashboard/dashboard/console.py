@@ -385,20 +385,6 @@ def model_slots(model_config: dict, served: dict, disk_files: list[dict], throug
     }
 
 
-def switch_plan(current_ctx: int | None, new_ctx: int | None) -> dict:
-    """What has to restart after the source now names a different model.
-
-    llama.cpp loads the new file and the gateway re-templates its aliases. The CPU fallback's
-    context mirrors the GPU window, so it restarts only when the window changed; Hermes reads
-    the window at start and the control plane will not restart it, so that is reported instead.
-    """
-    recreate = ["llamacpp", "model-gateway"]
-    ctx_changed = current_ctx != new_ctx
-    if ctx_changed:
-        recreate.append("llamacpp-cpu")
-    return {"recreate": recreate, "hermes_restart_needed": ctx_changed}
-
-
 # ---------------------------------------------------------------------------------------------
 # services table
 # ---------------------------------------------------------------------------------------------

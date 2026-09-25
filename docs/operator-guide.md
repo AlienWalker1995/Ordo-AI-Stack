@@ -106,7 +106,9 @@ ordo apply                                    # run it
 4. Compute the changed set: every long-running service whose rendered compose config hash or image
    id differs from its container's. The host's compose computes the hashes and does the recreate; a
    container another compose version created is recreated, not compared (versions hash differently).
-   One-shot jobs (`restart: "no"`, the evals runner) are reported, never started.
+   One-shot jobs (`restart: "no"`, the evals runner) are reported, never started. The computation
+   is `ordo/render/changed_set.py`, the same one ops-controller runs after a model switch or a
+   plugin enable/disable (see "Changes made through the control plane" below).
 5. Refuse, before recreating anything, when the GPU lease would be violated (an evicted resident in
    the set, or ops-controller mid-lease without saved lease state) or when docker, the lease or
    ops-controller's substrate digest cannot be read.
@@ -120,6 +122,22 @@ ordo apply                                    # run it
 Nothing changed means nothing is recreated. `--only SVC...` recreates only those of the changed
 services (a changed ops-controller still goes first). `ordo build`, `ordo up` and `ordo recreate`
 remain for single steps; a deploy is `ordo apply`.
+
+### Changes made through the control plane
+
+A model switch (the dashboard's Models page, `set_active_model`, `POST /model-config`) and a plugin
+enable or disable (Hermes' `enable_service`, the dashboard's MCP toggle, `POST /plugins/{id}/...`)
+write `ordo.yaml`, render, and then apply the render from ops-controller: it recreates exactly the
+changed set (`--no-deps --force-recreate`, netns members with their owner, refused while it would
+start a GPU-evicted resident) and stops the services the render dropped. It cannot recreate itself or
+the agent calling it, a container another compose version created, or a service whose secrets
+`out/secrets.env` lacks: those come back as `restart_required_on_host` with the command that
+finishes the job (for example `ordo apply --only agent` after a context-window change, since the
+agent reads `LLAMACPP_CTX_SIZE`). A failed apply restores the previous `ordo.yaml`, re-renders and
+re-applies it. `POST /apply` (`{"dry_run": true}` for the plan, else `{"confirm": true}`) applies
+whatever `out/` holds now. model-gateway and model-gateway-keys carry a digest of the
+`out/model-gateway/` files they read at startup (`ordo.rendered-config`), so an MCP toggle changes
+their config hash and is in the changed set.
 
 Rolling back is `ordo apply` on older code. Check out the older commit and run it: its tags are
 still in the local image cache, so the build step records them without rebuilding, the render points
@@ -174,7 +192,7 @@ current split: today there is only Ordo.
 7. **MCP as `kind=mcp` plugins** — an MCP server is a manifest (pinned image + env + tools); the renderer composes enabled ones into a compose service `mcp-<server_id>` plus `out/model-gateway/mcp_servers.yaml` and `out/mcp/servers.json` (drift-free) and flags un-pinned images. Runs on CPU. ✅
 8. **Compose rendering** — `ordo render` emits an **isolated, runnable** `docker-compose.yml` (own project/network, no host-port clashes, GPU-gated, profile-gated plugins). ✅ The rendered compose is validated by the **real `docker compose config`** engine (both CPU-core and GPU+media shapes), and that check is a CI gate — not just a well-shaped Python dict.
 9. **Process broker** — turns scheduler decisions into real container start/stop; the Docker backend is **hard-scoped to the `ordo-` prefix so it can never touch the live stack**. ✅
-10. **Control-plane service (`ordo serve` = the `ops-controller` image)** — the substrate over HTTP: `GET /status` (live GPU/scheduler + manifest), `GET/POST /model-config` (drift-safe model switch), `POST /jobs[/complete]` (drive the broker). A real `services/ops-controller/Dockerfile` (built + smoke-tested) makes the compose ref concrete. ✅
+10. **Control-plane service (`ordo serve` = the `ops-controller` image)** — the substrate over HTTP: `GET /status` (live GPU/scheduler + manifest), `GET/POST /model-config` (drift-safe model switch, applied to the stack), `POST /apply` (recreate the changed set of the current render), `POST /jobs[/complete]` (drive the broker). A real `services/ops-controller/Dockerfile` (built + smoke-tested) makes the compose ref concrete. ✅
     **Validated live in a container:** switching the model over HTTP rewrote `ordo.yaml` **and** regenerated `.env` in one pass (`LLAMACPP_MODEL` + `LLAMACPP_CTX_SIZE` moved together — the drift bug is structurally impossible); unknown model → 404, source untouched. The socket it mounts to drive the broker is guard-scoped to `ordo-*`, so it still can't touch the live stack.
 11. **`ordo preflight` GO/NO-GO gate + cutover runbook** — a read-only readiness check for the migration: ctx consistency (drift gate), model/MCP checksums, GPU-present-for-enabled-plugins, **parity vs the live `.env`**, and image readiness (project images blocking, upstream pull-able). Blocking failure → non-zero exit. The runbook is the operator's atomic-cutover procedure (build → preflight → up-beside → validate parity + restore personal backup → flip → rollback-ready). ✅
     **Validated live:** `ordo preflight --ref <live .env>` → **GO**, `parity vs live .env: 15 keys, 0 mismatch`; the unpinned 27b sha256 correctly surfaced as a non-blocking warning.

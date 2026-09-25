@@ -28,7 +28,7 @@ A web-based control plane that provides a single pane of glass for:
 | `/api/ops/services/{id}/restart` | POST | Y | Restart service |
 | `/api/ops/services/{id}/logs` | GET | Y | Tail service logs |
 | `/api/models` | GET | None | Chat server slots (gpu, cpu, embed), catalog, GGUF files on disk (Models page) |
-| `/api/models/switch` | POST | Y | Switch the GPU model: catalog id -> ops-controller `POST /model-config` (renders) -> recreate `llamacpp` + `model-gateway`; refused while a GPU render lease is held |
+| `/api/models/switch` | POST | Y | Switch the GPU model: catalog id -> ops-controller `POST /model-config` (renders and recreates what the render changed; `restart_required_on_host` + `host_command` for what only the host can restart); refused while a GPU render lease is held |
 | `/api/models/delete` | POST | Y | Delete a GGUF file; refuses a file any server depends on |
 | `/api/throughput/record` | POST | `X-Throughput-Token` when `THROUGHPUT_RECORD_TOKEN` is set | Record a model call (called by model-gateway) |
 | `/api/throughput/benchmark` | POST | Y | Short generation against `local-chat` |
@@ -54,7 +54,7 @@ To add a ComfyUI model, use the ComfyUI MCP tool `download_comfyui_model` (url +
 ## Core Responsibilities
 
 - **Docker Lifecycle** – Calls the Ops Controller API (`/services/{id}/start|stop|restart|recreate`) with `OPS_CONTROLLER_TOKEN` (from `out/secrets.env`) as a Bearer header. The UI never mounts `docker.sock`; it uses the controller as a proxy.
-- **Model Management** – The Models page lists what each chat server runs and the GGUF files on disk. A switch names a catalog entry; ops-controller rewrites `ordo.yaml` and re-renders, then the dashboard recreates `llamacpp` and `model-gateway` (one switch at a time, rolled back on a failed recreate). Dashboard state lives in `data/dashboard/`, mounted as `/data/dashboard`.
+- **Model Management** – The Models page lists what each chat server runs and the GGUF files on disk. A switch names a catalog entry; ops-controller rewrites `ordo.yaml`, re-renders and recreates what the render changed (one switch at a time; ops-controller rolls the source back on a failed apply). Dashboard state lives in `data/dashboard/`, mounted as `/data/dashboard`.
 - **MCP settings** – The Settings drawer lists the registered MCP servers with per-server health and tool counts from LiteLLM. Tools are namespaced `<litellm_name>-<tool>` (Hermes adds its own prefix, e.g. `gateway__memory_vault-read_note`).
 
 ## Security Model
@@ -76,7 +76,7 @@ To add a ComfyUI model, use the ComfyUI MCP tool `download_comfyui_model` (url +
 2. The SSO front door (Caddy + oauth2-proxy) signs you in; the dashboard trusts the identity Caddy forwards for its operator actions.
 3. Use the Services page to stop or restart a service if an issue is suspected.
 4. Switch the GPU chat model on the Models page (the model must already be on disk).
-5. In Settings (or Ctrl/Cmd K, then Settings), enable a registered MCP server. The change is saved to `ordo.yaml`'s `plugins:` list and applies on the next `ordo render` + `model-gateway` recreate.
+5. In Settings (or Ctrl/Cmd K, then Settings), enable a registered MCP server. The change is saved to `ordo.yaml`'s `plugins:` list and applied by ops-controller (the toast names what restarted).
 
 ---
 

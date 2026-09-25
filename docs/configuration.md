@@ -249,7 +249,7 @@ projector:
 
 The dashboard proxies the first two as `/api/orchestration/registry/*`, and the `orchestration` MCP server exposes them as `list_models` and `gpu_status`. The dashboard's model-file delete refuses every file in `model_files` and every file a server has loaded. GPU pins are baked in at `ordo render` time, so `POST /gpu/assign` and `POST /registry/models/{id}/assign-gpu` answer 410.
 
-The active chat model is the `model:` key in `ordo.yaml`, and its projector is the catalog entry's `mmproj`: switch it from the dashboard's Models page or the `set_active_model` MCP tool. Both call the dashboard's `POST /api/models/switch`, which calls `ops-controller` `POST /model-config` (writes `ordo.yaml`, re-renders) and then recreates `llamacpp` and `model-gateway`. A switch is refused while a GPU render lease is held.
+The active chat model is the `model:` key in `ordo.yaml`, and its projector is the catalog entry's `mmproj`: switch it from the dashboard's Models page or the `set_active_model` MCP tool. Both call the dashboard's `POST /api/models/switch`, which calls `ops-controller` `POST /model-config`: it writes `ordo.yaml`, re-renders, and recreates exactly the services the render changed (`llamacpp` and `model-gateway`; `llamacpp-cpu` too when the context window changed). The agent reads the window as well but is never cycled from the control plane: the response names it in `restart_required_on_host` with the host command (`ordo apply --only agent`). A switch is refused while a GPU render lease is held, and a failed apply rolls `ordo.yaml` back.
 
 ## Local Model Cost
 
@@ -299,8 +299,9 @@ The registered servers are `comfyui`, `orchestration`, `qdrant-rag`, `n8n`, `sea
 `codebase-memory`, and `memory-vault`: there are no `duckduckgo` or `playwright` defaults.
 
 Enable or disable a server by editing `ordo.yaml`'s `plugins:` list (or via MCP servers in the
-dashboard's Settings drawer, which edits the same file). Changes apply after `ordo render` plus a `model-gateway`
-recreate: LiteLLM reads config-file MCP servers at startup, so there is no hot reload.
+dashboard's Settings drawer, which edits the same file through ops-controller). A toggle is applied by ops-controller:
+LiteLLM reads config-file MCP servers at startup, and model-gateway's definition carries a digest of that config,
+so the render's changed set recreates it. After a hand edit, `ordo apply` does the same.
 
 ## Compute Configuration
 

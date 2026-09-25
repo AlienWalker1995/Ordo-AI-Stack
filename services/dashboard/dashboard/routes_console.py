@@ -42,6 +42,8 @@ GRAFANA_EMBED_PATH = "/grafana/d/ordo-llm-gpu/ordo-performance?orgId=1&kiosk&the
 _TOKEN_RATE_QUERY = "sum by (job) (rate(llamacpp:tokens_predicted_total[5m]))"
 
 _SEGMENT = re.compile(r"^[A-Za-z0-9._ -]{1,128}$")
+# A switch is one ops-controller call that renders and recreates the changed set in one compose
+# call (600s at most there, DockerBackend.recreate_services), so this outlasts it.
 _RECREATE_TIMEOUT = 660.0
 
 
@@ -263,9 +265,10 @@ _switch_lock = asyncio.Lock()
 
 @router.post("/models/switch")
 async def switch_model(body: SwitchBody) -> dict:
-    """Switch the GPU chat model the one safe way: name a catalog entry in the source, let the
-    control plane render, then recreate what the plan names. Never an .env edit, which the next
-    render would silently undo and which skips the entry's sampler, projector and context."""
+    """Switch the GPU chat model the one safe way: name a catalog entry in the source, and let the
+    control plane render it and recreate exactly what the render changed (ops-controller
+    `POST /model-config`). Never an .env edit, which the next render would silently undo and which
+    skips the entry's sampler, projector and context."""
     if _switch_lock.locked():
         raise HTTPException(status_code=409, detail="A model switch is already in progress")
     async with _switch_lock:
@@ -283,45 +286,33 @@ async def _switch(body: SwitchBody) -> dict:
         raise HTTPException(status_code=409, detail=f"'{body.model}' is not downloaded: "
                                                     f"{entry.get('file')} is not on disk")
     # Recreating llama.cpp while a render holds the GPU would load the model onto the leased
-    # card: two tenants on one GPU is how the host crashed on 2026-08-08. Unknown is refused too.
+    # card: two tenants on one GPU is how the host crashed on 2026-08-08. The control plane's apply
+    # refuses that too (and rolls the source back); refusing here first leaves the source untouched.
+    # Unknown is refused as well.
     status = await _ops_json("/status")
     if status is None:
         raise HTTPException(status_code=503, detail="The control plane did not report GPU state; not switching")
     gpu = status.get("gpu") or {}
     if gpu.get("running") or gpu.get("evicted_residents"):
         raise HTTPException(status_code=409, detail="A render has the GPU right now; switch after it finishes")
-    code, rendered = await _ops_call("POST", "/model-config", {"model": body.model})
+    # One call: the control plane writes the source, renders, and recreates the changed set. When
+    # the apply fails it restores the previous source and re-applies it, and says so in the error.
+    code, result = await _ops_call("POST", "/model-config", {"model": body.model})
     if code != 200:
         # A 409 is the control plane refusing the switch (a model file missing from the volume, a
-        # substrate mismatch): the operator's to resolve, so it reaches the page as a refusal.
+        # GPU lease, a substrate mismatch): the operator's to resolve, so it reaches the page as a
+        # refusal.
         raise HTTPException(status_code=409 if code == 409 else 502,
-                            detail=rendered.get("error") or rendered.get("detail") or f"render failed ({code})")
-    plan = console.switch_plan(model_config.get("ctx_size"), rendered.get("ctx_size"))
-    recreated = []
-    for service in plan["recreate"]:
-        # The operator already confirmed the switch in the page; the control plane wants that
-        # confirmation carried on every destructive call.
-        rc, data = await _ops_call("POST", f"/services/{service}/recreate", {"confirm": True})
-        if rc != 200:
-            reason = data.get("error") or data.get("detail") or rc
-            rollback = await _roll_back(model_config.get("source_model"), recreated)
-            raise HTTPException(status_code=502, detail=f"recreating {service} failed: {reason}; {rollback}")
-        recreated.append(service)
-    return {"ok": True, "active_model": rendered.get("active_model"), "ctx_size": rendered.get("ctx_size"),
-            "recreated": recreated, "hermes_restart_needed": plan["hermes_restart_needed"]}
-
-
-async def _roll_back(previous: str | None, recreated: list[str]) -> str:
-    """Put the source back on the previous model after a failed recreate, and return what was
-    already recreated to it, so the declared config never names a model nothing is running."""
-    if not previous:
-        return "the previous model is unknown, so the source still names the new one"
-    code, _ = await _ops_call("POST", "/model-config", {"model": previous})
-    if code != 200:
-        return f"rolling the source back to {previous} also failed; it still names the new model"
-    for service in recreated:
-        await _ops_call("POST", f"/services/{service}/recreate", {"confirm": True})
-    return f"rolled back the source to {previous}"
+                            detail=result.get("error") or result.get("detail") or f"switch failed ({code})")
+    applied = result.get("apply")
+    if not isinstance(applied, dict):
+        raise HTTPException(status_code=502, detail="The control plane rendered the switch but did not apply it "
+                                                    "(an ops-controller older than this dashboard): run "
+                                                    "`ordo apply` on the host")
+    return {"ok": True, "active_model": result.get("active_model"), "ctx_size": result.get("ctx_size"),
+            "recreated": applied.get("recreated") or [],
+            "restart_required_on_host": applied.get("restart_required_on_host") or [],
+            "host_command": applied.get("host_command")}
 
 
 class DeleteBody(BaseModel):

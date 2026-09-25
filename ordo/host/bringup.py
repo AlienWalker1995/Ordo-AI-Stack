@@ -17,10 +17,10 @@ from pathlib import Path
 
 import yaml
 
+from ..render.changed_set import OPS_CONTROLLER_SERVICE
 from ..render.stack import COMPOSE_FILE, compose_argv, load_compose, plan_named, profiles_in, services_of
 from . import fetch, images
 
-OPS_CONTROLLER_SERVICE = "ops-controller"
 # The ops-controller environment key naming its scheduler state file (ordo/render/compose.py sets it).
 SCHEDULER_STATE_KEY = "SCHEDULER_STATE_PATH"
 

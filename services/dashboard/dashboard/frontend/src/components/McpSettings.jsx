@@ -6,10 +6,11 @@
 //     (green ok / yellow degraded / red fail) and a remove (×) button,
 //   - enable a registered, not-yet-enabled server from the dropdown,
 //   - poll health every 15s (paused when hidden).
-// Add/remove surface the backend's persist result as a toast: success with the "applies
-// after a model-gateway recreate" hint when {persistent:true}, otherwise an error toast with the
-// {note} explaining why the change wasn't saved. When {dynamic:false} the add/remove
-// controls are disabled with a hint that the control plane isn't configured.
+// Add/remove surface the backend's result as a toast: ops-controller saves the change to ordo.yaml,
+// re-renders and restarts what the render changed, so a {persistent:true} success names what it
+// restarted (plus the host command when something can only restart there); otherwise an error
+// toast carries the {note} explaining why the change wasn't saved. When {dynamic:false} the
+// add/remove controls are disabled with a hint that the control plane isn't configured.
 import { useState } from 'react'
 import { api, usePolling } from '../api.js'
 import { useToast } from './Toast.jsx'
@@ -58,12 +59,16 @@ export default function McpSettings() {
   })
   const addable = configured.filter((s) => !enabled.includes(s))
 
-  // Toast helper: turn the backend's {status, persistent, note} into the right message.
+  // Toast helper: turn the backend's {status, persistent, note, recreated, host_command} into the
+  // right message.
   const surfaceToggle = (verb, server, res) => {
     if (res.status === 'already_enabled') { toast(`${server} already enabled`); return }
     if (res.status === 'already_removed') { toast(`${server} already removed`); return }
     if (res.persistent) {
-      toast(`${server} ${verb} - ${res.next || 'saved to ordo.yaml'}`, 'success')
+      const restarted = (res.recreated || []).join(', ')
+      toast(`${server} ${verb}${restarted ? ` - restarted ${restarted}` : ''}`, 'success')
+      if (res.note) toast(res.note, 'error')
+      if (res.host_command) toast(`Finish on the host: ${res.host_command}`, 'error')
     } else {
       toast(res.note || `${server} ${verb} - not saved (config is read-only)`, 'error')
     }

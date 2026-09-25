@@ -22,6 +22,7 @@ process broker starts/stops these against the scheduler.
 """
 from __future__ import annotations
 
+import hashlib
 from typing import TYPE_CHECKING, Any
 
 from . import gpu
@@ -239,7 +240,10 @@ def _ops_controller(project: str, net: str, nvidia_gpu: bool) -> dict[str, Any]:
     s = _svc(f"{project}/ops-controller", net=net)
     s["volumes"] = [
         "/var/run/docker.sock:/var/run/docker.sock",  # broker start/stop (guard-scoped)
-        "./:/config",                                 # ordo.yaml + rendered out/ (single write path)
+        # ordo.yaml + rendered out/ (single write path), by HOST path like every other bind: the
+        # post-render step hashes every service from in here with /config as the project directory,
+        # and a "./" bind would hash differently there than on the host (read as changed forever).
+        "${BASE_PATH:?BASE_PATH must be set (non-empty)}/out:/config",
         "${DATA_PATH:?DATA_PATH must be set (non-empty)}/ops-controller:/data",  # audit log, scheduler state
         "comfyui-models:/models/comfyui",             # shared ComfyUI model store (same as ops-api)
         # ComfyUI's app tree, read-only: /comfyui/install-node-requirements has to see whether a
@@ -332,6 +336,22 @@ GATEWAY_LANGFUSE_ENV: dict[str, str] = {
 # ":?" fails the compose call loudly if BASE_PATH is unset, instead of binding an empty
 # /out/model-gateway that Docker would create and the gateway would start without config.
 _MODEL_GATEWAY_CONFIG_BIND = "${BASE_PATH:?BASE_PATH must be set}/out/model-gateway:/config:ro"
+
+# model-gateway (LiteLLM, the MCP fragment) and model-gateway-keys (the key grants) read the rendered
+# out/model-gateway/ files at startup only, through a bind whose content compose does not hash. Both
+# carry the digest of that content as a label, so a render that changes the files (an MCP toggle, a
+# new key grant) changes their config hash and the changed set (ordo/render/changed_set.py) recreates
+# them, from the host's `ordo apply` and from ops-controller's post-render step alike.
+RENDERED_CONFIG_LABEL = "ordo.rendered-config"
+MODEL_GATEWAY_CONFIG_READERS = ("model-gateway", "model-gateway-keys")
+
+
+def rendered_config_digest(files: dict[str, str]) -> str:
+    """The sha256 of a rendered config directory: each file's name and text, in name order."""
+    digest = hashlib.sha256()
+    for name in sorted(files):
+        digest.update(name.encode("utf-8") + b"\0" + files[name].encode("utf-8") + b"\0")
+    return digest.hexdigest()
 
 
 # The secrets model-gateway reads, all as files: its entrypoint exports each one from its file
@@ -755,12 +775,16 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
                    litellm_google_sso_env: dict[str, str] | None = None,
                    publish_local_ports: bool = False,
                    available_env: frozenset[str] | None = None,
-                   edge_ports: list[int] | None = None) -> dict[str, Any]:
+                   edge_ports: list[int] | None = None,
+                   model_gateway_config_digest: str | None = None) -> dict[str, Any]:
     """`available_env` is the set of keys in the rendered .env (RenderedConfig.env): a declared
     derived key renders only when the render produced it. None emits every declared key.
 
     `edge_ports` are the enabled UIs' declared `edge_site` ports (RenderedConfig.edge_sites),
-    published on the one service that declares `edge_listener`."""
+    published on the one service that declares `edge_listener`.
+
+    `model_gateway_config_digest` (`rendered_config_digest` of out/model-gateway/) is stamped on
+    MODEL_GATEWAY_CONFIG_READERS; None leaves the label off."""
     net = f"{project}-net"
     # the agent is swappable (Hermes is the default); a registry manifest may pin any image,
     # else fall back to the <project>/agent-<id> convention (render tags it, see ordo/host/images.py).
@@ -881,6 +905,10 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     for server in (mcp_servers or []):
         if not server["hosted"]:
             svcs[server["service"]] = _mcp_service(server, net=net, mcp_net=_mcp_net(project))
+
+    if model_gateway_config_digest:
+        for reader in MODEL_GATEWAY_CONFIG_READERS:
+            svcs[reader].setdefault("labels", {})[RENDERED_CONFIG_LABEL] = model_gateway_config_digest
 
     out: dict[str, Any] = {
         "name": project,

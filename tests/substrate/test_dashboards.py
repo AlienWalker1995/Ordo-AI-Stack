@@ -98,7 +98,7 @@ def test_control_plane_mounts_the_rendered_tree_so_render_and_recreate_share_one
     mount that tree RW so a model switch's re-render and the recreate replay share one .env."""
     c = _compose("dashboard", tmp_path)
     ctrl = c["services"]["ops-controller"]
-    assert "./:/config" in ctrl["volumes"]
+    assert "${BASE_PATH:?BASE_PATH must be set (non-empty)}/out:/config" in ctrl["volumes"]
 
 
 def test_the_control_plane_does_not_mount_the_gguf_weights(tmp_path):

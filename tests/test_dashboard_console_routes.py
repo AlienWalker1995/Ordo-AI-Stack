@@ -2,8 +2,8 @@
 /api/models (+ switch, delete), /api/media (+ view) and /api/perf/*.
 
 The fetchers are patched with payloads in the live shapes, so these pin the wiring and the
-safety rules at the HTTP boundary: a model switch goes through the catalog and then recreates
-exactly the services the plan names; a file a server is using cannot be deleted; the media
+safety rules at the HTTP boundary: a model switch goes through the catalog, and the control plane
+recreates what the render changed; a file a server is using cannot be deleted; the media
 proxy only fetches output files; and a down dependency reads as unavailable, never as zeros.
 """
 from __future__ import annotations
@@ -171,24 +171,40 @@ def test_models_page_lists_slots_catalog_and_files(live):
     assert files["vision.gguf"] is True and files["spare.gguf"] is False
 
 
-def test_switch_goes_through_the_catalog_then_recreates_what_the_plan_names(live):
+APPLIED = {"dry_run": False, "recreated": ["llamacpp", "llamacpp-cpu", "model-gateway"], "stopped": [],
+           "restart_required_on_host": ["agent"], "host_command": "ordo apply --only agent",
+           "host_reasons": {"agent": "agent runs the control plane"}}
+
+
+def test_the_switch_is_one_control_plane_call_that_reports_what_the_render_changed(live):
+    # The control plane writes the source, renders, and recreates exactly the changed set itself
+    # (ordo/control/api.py apply_render): the dashboard keeps no list of its own.
     calls = []
 
     async def ops_call(method, path, json=None):
         calls.append((method, path, json))
-        if path == "/model-config":
-            return 200, {"ok": True, "active_model": "turbo", "ctx_size": 106496}
-        # the control plane refuses a recreate that does not carry confirm (ordo/control/api.py)
-        if not (json or {}).get("confirm"):
-            return 400, {"error": "Destructive operation requires confirmation."}
-        return 200, {"ok": True}
+        return 200, {"ok": True, "active_model": "turbo", "ctx_size": 131072, "apply": APPLIED}
 
     with gpu_idle(), patch.object(routes_console, "_ops_call", side_effect=ops_call):
         r = live.post("/api/models/switch", json={"model": "turbo"})
     assert r.status_code == 200, r.text
-    assert calls[0] == ("POST", "/model-config", {"model": "turbo"})
-    assert [c[1] for c in calls[1:]] == ["/services/llamacpp/recreate", "/services/model-gateway/recreate"]
-    assert r.json()["hermes_restart_needed"] is False
+    assert calls == [("POST", "/model-config", {"model": "turbo"})]
+    body = r.json()
+    assert body["recreated"] == ["llamacpp", "llamacpp-cpu", "model-gateway"]
+    assert body["restart_required_on_host"] == ["agent"]
+    assert body["host_command"] == "ordo apply --only agent"
+    assert "hermes_restart_needed" not in body
+
+
+def test_a_control_plane_that_did_not_apply_the_render_is_a_failure(live):
+    # An ops-controller older than the post-render step renders and stops: nothing was recreated.
+    async def ops_call(method, path, json=None):
+        return 200, {"ok": True, "active_model": "turbo", "ctx_size": 131072}
+
+    with gpu_idle(), patch.object(routes_console, "_ops_call", side_effect=ops_call):
+        r = live.post("/api/models/switch", json={"model": "turbo"})
+    assert r.status_code == 502
+    assert "ordo apply" in r.json()["detail"]
 
 
 def test_switch_refuses_a_model_whose_file_is_not_downloaded(live):
@@ -271,20 +287,32 @@ def test_switch_is_refused_when_the_gpu_state_is_unknown(live):
     ops_call.assert_not_called()
 
 
-def test_a_failed_recreate_rolls_the_render_back(live):
+def test_a_failed_apply_reports_the_control_planes_rollback(live):
+    # The control plane restores the previous source and re-applies it when the apply fails; the
+    # dashboard passes that through and makes no second call of its own.
     calls = []
 
     async def ops_call(method, path, json=None):
-        calls.append((path, json))
-        if path == "/model-config":
-            return 200, {"ok": True, "active_model": (json or {}).get("model"), "ctx_size": 106496}
-        return 500, {"error": "docker said no"}
+        calls.append(path)
+        return 500, {"error": "applying the render failed: docker said no; ordo.yaml and out/ were rolled "
+                              "back and the previous render re-applied", "rolled_back": True}
 
     with gpu_idle(), patch.object(routes_console, "_ops_call", side_effect=ops_call):
         r = live.post("/api/models/switch", json={"model": "turbo"})
     assert r.status_code == 502
     assert "rolled back" in r.json()["detail"]
-    assert calls[-1] == ("/model-config", {"model": "auto"})  # the source is back where it was
+    assert calls == ["/model-config"]
+
+
+def test_a_lease_refusal_from_the_apply_passes_through_as_409(live):
+    async def ops_call(method, path, json=None):
+        return 409, {"error": "'llamacpp' is evicted for a GPU lease held by ['gate-comfyui']; ordo.yaml and "
+                              "out/ were rolled back and the previous render re-applied", "rolled_back": True}
+
+    with gpu_idle(), patch.object(routes_console, "_ops_call", side_effect=ops_call):
+        r = live.post("/api/models/switch", json={"model": "turbo"})
+    assert r.status_code == 409
+    assert "evicted" in r.json()["detail"]
 
 
 def test_delete_refuses_while_the_control_plane_is_unreadable(live, tmp_path):
@@ -462,7 +490,7 @@ def test_a_second_switch_while_one_is_running_is_refused(live, dashboard_operato
         if path == "/model-config":
             started.set()
             await release.wait()
-            return 200, {"active_model": "turbo", "ctx_size": 106496}
+            return 200, {"active_model": "turbo", "ctx_size": 106496, "apply": APPLIED}
         return 200, {"ok": True}
 
     async def scenario():

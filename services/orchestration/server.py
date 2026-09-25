@@ -229,9 +229,10 @@ def list_model_catalog() -> dict:
 @mcp.tool()
 def set_active_model(model_id: str, confirm: bool = False) -> dict:
     """Switch the GPU chat model to a catalog entry (an `id` from list_model_catalog whose
-    `installed` is true). The source is updated and re-rendered, then llama.cpp and the gateway
-    are recreated, so the switch survives the next render and carries the entry's sampler,
-    projector and context settings. Chat is unavailable on the GPU for about a minute while the
+    `installed` is true). The source is updated and re-rendered, then the control plane recreates
+    what the render changed (llama.cpp and the gateway, the CPU fallback on a context change), so
+    the switch survives the next render and carries the entry's sampler, projector and context
+    settings. `restart_required_on_host` and `host_command` name what only the host can restart. Chat is unavailable on the GPU for about a minute while the
     new model loads. confirm=true required."""
     if not confirm:
         return {"error": "Set confirm=true to switch the chat model (restarts llama.cpp and the gateway)."}

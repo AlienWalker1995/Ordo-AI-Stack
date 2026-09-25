@@ -136,33 +136,32 @@ def _list_installable(args: dict, **kwargs) -> str:
         return _err(f"unexpected error: {exc}")
 
 
+def _applied(r: dict) -> dict:
+    """What ops-controller's post-render step did after the source write: it recreates exactly the
+    services the render changed, and names what only the host can finish (itself, this agent, a
+    service whose secrets are missing) with the `ordo apply --only ...` command to run there."""
+    applied = r.get("apply") or {}
+    return {"recreated": applied.get("recreated", []), "stopped": applied.get("stopped", []),
+            "restart_required_on_host": applied.get("restart_required_on_host", []),
+            "host_reasons": applied.get("host_reasons", {}), "host_command": applied.get("host_command")}
+
+
 def _enable_service(args: dict, **kwargs) -> str:
-    """Install/enable an optional service: render authority (ops-controller /plugins/{id}/enable)
-    to add + re-render it, then bring each of its services up via the ops-controller recreate executor.
-    Secret-dependent services that lack their secrets are rendered but NOT started — escalated to a
-    host `make up`, never started broken."""
+    """Install/enable an optional service: ops-controller (/plugins/{id}/enable) adds it to the
+    source, re-renders and recreates what the render changed, its services included. A service
+    whose secrets are missing is rendered but NOT started: it comes back in
+    restart_required_on_host, for the operator to supply on the HOST (never fake secrets)."""
     plugin_id = (args.get("plugin_id") or "").strip()
     if not plugin_id:
         return _err("plugin_id is required")
     if not bool(args.get("confirm")):
         return _err("enable_service requires confirm=true")
     try:
-        client = _get_client()
-        r = client.enable_plugin(plugin_id, confirm=True)  # render authority (may raise 403/404/409)
-        missing = r.get("missing_secrets") or []
-        if missing:
-            return json.dumps({
-                "ok": True, "plugin": plugin_id, "rendered": True, "brought_up": False,
-                "missing_secrets": missing,
-                "escalate": ("secret-dependent service — run `cd /c/dev/ordo-ai-stack && make up` on "
-                             f"the HOST to supply {missing}, then it will start. Do not fake secrets."),
-            })
-        started = [client.compose_up(service=svc, confirm=True) for svc in r.get("services", [])]
+        r = _get_client().enable_plugin(plugin_id, confirm=True)  # may raise 403/404/409
         return json.dumps({
-            "ok": True, "plugin": plugin_id, "rendered": True, "brought_up": True,
-            "already_rendered": r.get("already_rendered"),
-            "services": r.get("services", []), "compose_profile": r.get("compose_profile"),
-            "started": started, "warnings": r.get("warnings", []),
+            "ok": True, "plugin": plugin_id, "already_rendered": r.get("already_rendered"),
+            "services": r.get("services", []), "missing_secrets": r.get("missing_secrets") or [],
+            "warnings": r.get("warnings", []), **_applied(r),
         })
     except OpsClientError as exc:
         return _err(str(exc))
@@ -172,22 +171,17 @@ def _enable_service(args: dict, **kwargs) -> str:
 
 
 def _disable_service(args: dict, **kwargs) -> str:
+    """Disable an optional service: ops-controller removes it from the explicit plugin list,
+    re-renders, stops its services and recreates what else the render changed. Refused (409) under
+    `plugins: auto`, where a disable cannot persist."""
     plugin_id = (args.get("plugin_id") or "").strip()
     if not plugin_id:
         return _err("plugin_id is required")
     if not bool(args.get("confirm")):
         return _err("disable_service requires confirm=true")
     try:
-        client = _get_client()
-        r = client.disable_plugin(plugin_id, confirm=True)
-        stopped = []
-        for svc in r.get("services", []):
-            try:
-                stopped.append(client.compose_down(service=svc, confirm=True))
-            except OpsClientError as exc:
-                stopped.append({"service": svc, "error": str(exc)})
-        return json.dumps({"ok": True, "plugin": plugin_id, "stopped": stopped,
-                           "transient": r.get("transient", False), "note": r.get("note")})
+        r = _get_client().disable_plugin(plugin_id, confirm=True)
+        return json.dumps({"ok": True, "plugin": plugin_id, **_applied(r)})
     except OpsClientError as exc:
         return _err(str(exc))
     except Exception as exc:
@@ -336,10 +330,11 @@ ENABLE_SERVICE_SCHEMA = {
         "Install / enable an OPTIONAL Ordo stack service that is NOT yet running (open-webui, "
         "comfyui, rag, voice, automation, searxng-web, monitoring, obsidian-livesync, llamacpp-cpu). "
         "This RE-RENDERS the stack to include the service (adding it to ordo.yaml when needed) and "
-        "brings it up with its compose profile — the correct verb when the service isn't rendered/"
-        "running yet. If a service already exists but is stopped, use compose_up instead. Core, edge/"
-        "front-door, and the agent are refused. A secret-dependent service missing its secrets is "
-        "rendered but NOT started — you must tell the operator to run `make up` on the host (never "
+        "ops-controller recreates exactly what the render changed, the new service included: the "
+        "correct verb when the service isn't rendered/running yet. If a service already exists but is "
+        "stopped, use compose_up instead. Core, edge/front-door, and the agent are refused. A service "
+        "missing its secrets is rendered but NOT started: it is listed in restart_required_on_host, "
+        "and you must tell the operator to set the secret and run host_command on the host (never "
         "fabricate secrets). Requires confirm=true."
     ),
     "parameters": {
@@ -361,9 +356,10 @@ ENABLE_SERVICE_SCHEMA = {
 DISABLE_SERVICE_SCHEMA = {
     "name": "disable_service",
     "description": (
-        "Disable / turn off an optional Ordo service: removes it from an explicit plugin list + "
-        "re-renders, then stops its container(s). Under `plugins: auto` the container is stopped but "
-        "returns on the next render (this is reported). Requires confirm=true."
+        "Disable / turn off an optional Ordo service: removes it from the explicit plugin list, "
+        "re-renders, and ops-controller stops its container(s) and recreates what else the render "
+        "changed. Refused under `plugins: auto` (a disable cannot persist there; the operator must set "
+        "an explicit plugins list in ordo.yaml). Requires confirm=true."
     ),
     "parameters": {
         "type": "object",
@@ -484,7 +480,7 @@ def register(ctx) -> None:
         toolset="ops-router",
         schema=ENABLE_SERVICE_SCHEMA,
         handler=_enable_service,
-        description="Install/enable a not-yet-running optional service: re-render + bring it up.",
+        description="Install/enable a not-yet-running optional service: re-render + apply.",
         emoji="➕",
     )
     ctx.register_tool(
@@ -492,7 +488,7 @@ def register(ctx) -> None:
         toolset="ops-router",
         schema=DISABLE_SERVICE_SCHEMA,
         handler=_disable_service,
-        description="Disable an optional service: remove from the plugin list + stop it.",
+        description="Disable an optional service: remove from the plugin list + apply.",
         emoji="➖",
     )
     ctx.register_hook("pre_llm_call", _intent_nudge)

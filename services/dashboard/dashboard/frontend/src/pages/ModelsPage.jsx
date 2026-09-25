@@ -1,7 +1,7 @@
 // Models: what each chat server is running, switching the GPU model the one safe way, and the
 // model files on disk.
 //   GET  /api/models                slots (gpu, cpu, embed), catalog (installed, active), files (in_use)
-//   POST /api/models/switch         catalog id -> render -> recreate llama.cpp + gateway
+//   POST /api/models/switch         catalog id -> render -> recreate what the render changed
 //   POST /api/models/delete         refuses a file any server depends on
 //   POST /api/throughput/benchmark  a short generation against local-chat
 import { useState } from 'react'
@@ -37,13 +37,13 @@ function SwitchModel({ data, onSwitched }) {
 
   const run = async () => {
     if (!target) return
-    if (!window.confirm(`Switch the GPU chat model to ${target.id}?\n\nllama.cpp and the model gateway restart; chat runs on the CPU fallback for about a minute while the new model loads.`)) return
+    if (!window.confirm(`Switch the GPU chat model to ${target.id}?\n\nllama.cpp, the model gateway and whatever else the new model changes restart; chat runs on the CPU fallback for about a minute while the new model loads.`)) return
     setBusy(true)
     try {
       const r = await api.post('/api/models/switch', { model: target.id })
-      toast(`Switched to ${r.active_model}. Restarted ${r.recreated.join(', ')}.`, 'success')
-      if (r.hermes_restart_needed) {
-        toast('The context window changed: restart Hermes so it picks up the new size.', 'error')
+      toast(`Switched to ${r.active_model}. Restarted ${r.recreated.join(', ') || 'nothing'}.`, 'success')
+      if (r.host_command) {
+        toast(`${r.restart_required_on_host.join(', ')} cannot restart from here: run ${r.host_command} on the host.`, 'error')
       }
       setChoice('')
       onSwitched()
