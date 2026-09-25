@@ -23,6 +23,8 @@ the one correct order:
 Config hashes are compared with one compose version: the host's compose computes the rendered
 hashes and recreates the changed set, and a container another compose version created is
 recreated rather than compared, because versions normalise the config differently (#237).
+A netns member (`network_mode: service:caddy`) is hashed the way compose labels it: with the
+reference resolved to the owner's container id (see `shared_namespace_overrides`).
 
 Every read that decides what to recreate fails closed: an unreadable lease, container list,
 compose config or substrate digest refuses the apply. `--dry-run` computes the same plan against a
@@ -45,6 +47,8 @@ from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from . import bringup, doctor, images, substrate
 
 OPS_CONTROLLER = bringup.OPS_CONTROLLER_SERVICE
@@ -53,6 +57,10 @@ SERVICE_LABEL = "com.docker.compose.service"
 CONFIG_HASH_LABEL = "com.docker.compose.config-hash"
 COMPOSE_VERSION_LABEL = "com.docker.compose.version"
 ONEOFF_LABEL = "com.docker.compose.oneoff"
+# The compose keys whose `service:<owner>` value compose resolves to `container:<owner id>` before
+# it hashes the service (compose's convergence.resolveSharedNamespaces).
+SHARED_NAMESPACE_KEYS = ("network_mode", "ipc", "pid")
+SERVICE_REFERENCE_PREFIX = "service:"
 # How long to wait for a recreated ops-controller to answer /status before the rest is recreated
 # (every later bring-up reads the lease through it, and refuses while it cannot).
 OPS_CONTROLLER_READY_SECONDS = 120.0
@@ -78,6 +86,7 @@ class RunningContainer:
     config_hash: str
     image_id: str
     compose_version: str         # the compose that created it (its label)
+    container_id: str = ""       # the full container id (a netns member's hash names its owner's)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -143,6 +152,30 @@ def _reasons(service: RenderedService, container: RunningContainer | None, compo
     return reasons
 
 
+def shared_namespace_overrides(services: dict[str, Any],
+                               containers: dict[str, RunningContainer]) -> dict[str, dict[str, str]]:
+    """The compose overrides that make `config --hash` hash a namespace member the way compose does.
+
+    When compose creates a member (`network_mode: service:caddy`), it first rewrites the reference
+    to `container:<caddy container id>` and hashes (and labels) THAT config. `config --hash` hashes
+    the unresolved `service:caddy`, so without this every member looks changed on every apply.
+    Resolving against the owner's current container also catches the real drift: a member created
+    against an older owner container (the owner was recreated without it) hashes differently.
+    An owner with no container is left unresolved: the owner is itself "not created", and its
+    members are recreated with it (`bringup.lifecycle_group`).
+    """
+    overrides: dict[str, dict[str, str]] = {}
+    for name, spec in sorted(services.items()):
+        for key in SHARED_NAMESPACE_KEYS:
+            value = str((spec or {}).get(key) or "")
+            if not value.startswith(SERVICE_REFERENCE_PREFIX):
+                continue
+            owner = containers.get(value[len(SERVICE_REFERENCE_PREFIX):])
+            if owner is not None and owner.container_id:
+                overrides.setdefault(name, {})[key] = f"container:{owner.container_id}"
+    return overrides
+
+
 # --------------------------------------------------------------------------- #
 # Reading docker.
 # --------------------------------------------------------------------------- #
@@ -194,23 +227,34 @@ class DockerState:
                 raise StateUnknown(f"`docker image inspect {ref}` failed: {(proc.stderr or '').strip()}")
         return self._image_ids[ref]
 
-    def rendered(self, staged: Staged, *, project: str, profiles: Sequence[str]) -> dict[str, RenderedService]:
+    def rendered(self, staged: Staged, *, project: str, profiles: Sequence[str],
+                 containers: dict[str, RunningContainer]) -> dict[str, RenderedService]:
         """Each rendered service's config hash and image, computed by this host's compose through the
-        same argv builder as every bring-up, against the directory the containers were created from."""
+        same argv builder as every bring-up, against the directory the containers were created from.
+        `containers` (the running side) resolves the namespace references compose resolves."""
         def compose(*args: str) -> list[str]:
             return bringup.compose_argv(staged.compose_dir, project, "--project-directory",
                                        staged.project_directory, *args, profiles=profiles)
 
-        hashes = {}
-        for line in self._ok(compose("config", "--hash", "*")).splitlines():
-            parts = line.split()
-            if len(parts) == 2:
-                hashes[parts[0]] = parts[1]
         try:
             config = json.loads(self._ok(compose("config", "--format", "json")))
         except ValueError as e:
             raise StateUnknown(f"`docker compose config --format json` printed unreadable output: {e}") from e
         services = config.get("services") or {}
+        overrides = shared_namespace_overrides(services, containers)
+        with tempfile.TemporaryDirectory(prefix="ordo-apply-hash-") as tmp:
+            override_args: list[str] = []
+            if overrides:
+                override_file = Path(tmp) / "namespace-overrides.yml"
+                override_file.write_text(yaml.safe_dump({"services": overrides}, sort_keys=True),
+                                         encoding="utf-8")
+                override_args = ["-f", override_file.as_posix()]
+            hash_output = self._ok(compose(*override_args, "config", "--hash", "*"))
+        hashes = {}
+        for line in hash_output.splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                hashes[parts[0]] = parts[1]
         rendered = {}
         for name, config_hash in hashes.items():
             if name not in services:
@@ -241,7 +285,8 @@ class DockerState:
                 continue
             found[service] = RunningContainer(service=service, config_hash=labels.get(CONFIG_HASH_LABEL, ""),
                                               image_id=str(container.get("Image") or ""),
-                                              compose_version=labels.get(COMPOSE_VERSION_LABEL, "").lstrip("v"))
+                                              compose_version=labels.get(COMPOSE_VERSION_LABEL, "").lstrip("v"),
+                                              container_id=str(container.get("Id") or ""))
         return found
 
 
@@ -316,8 +361,10 @@ class RealHost:
             staged_dir = Path(tmp).as_posix()
             yield Staged(compose_dir=staged_dir, project_directory=out, doc=bringup.load_compose(staged_dir))
 
-    def rendered_services(self, staged: Staged) -> dict[str, RenderedService]:
-        return self.docker.rendered(staged, project=self.project, profiles=bringup.profiles_in(staged.doc))
+    def rendered_services(self, staged: Staged,
+                          containers: dict[str, RunningContainer]) -> dict[str, RenderedService]:
+        return self.docker.rendered(staged, project=self.project, profiles=bringup.profiles_in(staged.doc),
+                                    containers=containers)
 
     def running_containers(self) -> dict[str, RunningContainer]:
         return self.docker.running(project=self.project)
@@ -443,8 +490,8 @@ def describe(plan: Plan, *, host: Any, dry_run: bool) -> str:
 def _plan(host: Any, staged: Staged, builds: list[images.PlannedBuild], only: Sequence[str] | None,
           gpu: dict | None) -> Plan:
     """Read the rendered and running state and decide. Raises StateUnknown / SubstrateUnreadable."""
-    rendered = host.rendered_services(staged)
     running = host.running_containers()
+    rendered = host.rendered_services(staged, running)
     version = host.compose_version()
     running_substrate = host.running_substrate()
     built_refs = {b.ref for b in builds if b.needs_build}
