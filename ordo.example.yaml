@@ -56,6 +56,10 @@ site:
   # SECRETS_SOURCE: ../ordo-personal/secrets/ordo.env.sops  # the SOPS (age) file holding every secret,
   #                                   # in a private repo (relative = beside this checkout). Unset:
   #                                   # out/secrets.env is the store. See docs/runbooks/secrets.md.
+  # SECRETS_BACKEND: infisical          # optional: read the secrets from a (self-hosted) Infisical
+  # INFISICAL_URL: https://infisical.example.lan   # project instead; SECRETS_SOURCE is then its
+  # INFISICAL_PROJECT: ordo-stack       # offline backup (`ordo secrets backup`) and holds the
+  # INFISICAL_ENVIRONMENT: prod         # machine identity's credentials. Default environment: prod.
   # CADDY_TAILNET_HOSTNAME: host.tailnet.ts.net   # edge front door (profile edge)
   # CADDY_TAILNET_DOMAIN: tailnet.ts.net
   # CADDY_BIND: 100.x.y.z                # host tailnet IP Caddy binds :443 to (restricts to the

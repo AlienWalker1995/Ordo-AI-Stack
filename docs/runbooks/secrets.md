@@ -25,6 +25,10 @@
   `--secrets-source`) keeps today's behaviour: `out/secrets.env` itself is the
   store. `ordo secrets list` says which one you have. Every command below
   works the same on either.
+- **Optional: Infisical as the source.** With `site: SECRETS_BACKEND:
+  infisical` the values come from a (self-hosted) Infisical project
+  environment instead, and the SOPS file becomes its offline backup. See
+  "Backend: Infisical" below. The materialize contract is the same.
 - `out/` is inside the checkout the `agent` container mirror-mounts, so treat
   `out/secrets.env` and `out/secrets/` like any working-copy secret. Hermes
   already holds the file-form tokens as env vars (its entrypoint bridges them).
@@ -46,11 +50,12 @@ Run from the repo root. Each takes `--out DIR` (default `out`) and `--source`
 
 | Command | What it does |
 |---|---|
-| `ordo secrets list` | The store, then every key name: `set` / `blank` / `absent`, and whether the render needs it (required, optional, file secret, unused). |
+| `ordo secrets list` | The backend and store, then every key name: `set` / `blank` / `absent`, and whether the render needs it (required, optional, file secret, unused). With Infisical and a backup, also whether each value is `backed up`, `stale in backup` or `not in backup`. |
 | `ordo secrets materialize [--from FILE]` | Writes `out/secrets.env` and `out/secrets/*` from the store. Fails naming the required keys with no value, and writes nothing. Refuses to drop a value that is in `out/secrets.env` but not in the store (run `import` first). `--from` reads another SOPS file. |
 | `ordo secrets set KEY --from-stdin` | Sets one key from stdin (never argv), materializes, prints the `ordo recreate` that applies it. |
 | `ordo secrets set KEY --generate` | Mints an internal secret. Refused for an issued key (HF, GitHub, Google, Tailscale). On a key that already has a value it is a rotation, so the rotation rules below apply. |
 | `ordo secrets rotate KEY...` / `--internal` | Fresh generated values, then materialize; prints the store-side steps (`ALTER USER ...`) and the `ordo recreate --reading KEY...` to run. |
+| `ordo secrets backup` | Infisical backend only: copies every value of the project environment into the SOPS file (`SECRETS_SOURCE`), adding and updating keys and printing their names. Keys only the SOPS file holds (the identity credentials) are kept. A no-op writes nothing. |
 | `ordo secrets import [--from FILE] [--to FILE]` | One-time migration: adds every non-empty value in `out/secrets.env` that the SOPS file lacks (and the agent's file secrets from the retired `OPERATOR_SECRETS_DIR`), sets `site: SECRETS_SOURCE`, removes `OPERATOR_SECRETS_DIR`. A key the store holds with a different value is named and kept (`--overwrite` takes the live one). |
 
 `ordo up` materializes too (after minting the dashboard's local sign-in secret
@@ -99,6 +104,73 @@ returns; nothing else holds plaintext outside `out/`.
 
 A render refuses a leftover `site: OPERATOR_SECRETS_DIR` and names `ordo
 secrets import` as the fix.
+
+## Backend: Infisical (optional)
+
+A self-hosted Infisical can be the source of truth instead of the SOPS file.
+Ordo reads one project environment (the root folder `/`, shared secrets;
+secret imports are not followed) through a **read-only machine identity**
+(Universal Auth), and writes the same `out/secrets.env` + `out/secrets/*`.
+
+Site keys (in `ordo.yaml`; the load refuses a bad or half-set combination):
+
+```yaml
+site:
+  SECRETS_BACKEND: infisical                      # sops | infisical (default: sops with SECRETS_SOURCE)
+  INFISICAL_URL: https://infisical.example.lan    # the server's base URL
+  INFISICAL_PROJECT: ordo-stack                   # the project slug
+  INFISICAL_ENVIRONMENT: prod                     # optional, default prod
+  SECRETS_SOURCE: ../ordo-personal/secrets/ordo.env.sops   # optional: the offline backup
+```
+
+Identity credentials are never site keys (the load refuses them: site keys
+are rendered into `out/.env`). Each is read from an environment variable of
+the same name, else from the SOPS file:
+
+| Key | Identity | Needed |
+|---|---|---|
+| `INFISICAL_ORDO_CLIENT_ID` / `INFISICAL_ORDO_CLIENT_SECRET` | reader (read on the environment, including secret values) | always |
+| `INFISICAL_ORDO_WRITER_CLIENT_ID` / `INFISICAL_ORDO_WRITER_CLIENT_SECRET` | writer (create, edit, delete secrets) | optional |
+
+How each command behaves:
+
+- `materialize`, `ordo up`, `list`: read with the reader identity. A missing
+  required key fails naming the key. A value in `out/secrets.env` that
+  Infisical lacks is refused, as with SOPS (add it to Infisical first).
+- `set`, `rotate`, `ordo remote enable|disable`, the dashboard sign-in mint:
+  with a writer identity they create, update or delete the changed keys in
+  Infisical, then materialize. **Without one they are refused**, naming the
+  keys to change in the Infisical UI. They never write the SOPS file instead.
+- `set` of one of the four credential keys above writes the SOPS file (they
+  unlock Infisical, so they cannot live in it).
+- `backup`: copies the project into the SOPS file. Run it after changes in
+  Infisical, then commit the `.sops` file. `list` shows keys that drifted.
+- `import`: refused (it would write the SOPS file from `out/secrets.env`); use
+  `backup`.
+
+Errors name the server and the cause, never a value: `identity credentials
+rejected` (HTTP 401: wrong client id or secret), `identity lacks read on
+project` (HTTP 403: the identity's project role), `values are hidden` (the
+role may list but not read values), `cannot reach Infisical` (network or TLS).
+A multi-line value is refused by name (a dotenv line cannot hold it).
+
+### Switch an install from SOPS to Infisical
+
+1. In Infisical: create the project and environment, add every key the SOPS
+   file holds (its UI imports a `.env`), and create the read-only machine
+   identity (Universal Auth) with read access on that environment.
+2. While the backend is still SOPS, store the identity's credentials:
+   `ordo secrets set INFISICAL_ORDO_CLIENT_ID --from-stdin`, then the same for
+   `INFISICAL_ORDO_CLIENT_SECRET` (and the writer pair, if you made one).
+3. Add the site keys above to `ordo.yaml`.
+4. `ordo secrets list`: every required key shows `set` and `backed up`.
+5. `ordo secrets materialize`: it refuses if Infisical lacks a value the live
+   file holds, naming the key.
+6. Render and deploy as usual. Nothing in the running stack reads Infisical:
+   services still get `out/secrets.env`.
+
+Rolling back is removing `SECRETS_BACKEND` and the `INFISICAL_*` site keys
+(after an `ordo secrets backup`), then `ordo secrets materialize`.
 
 ## Change a secret
 

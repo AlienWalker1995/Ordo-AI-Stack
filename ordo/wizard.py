@@ -556,9 +556,10 @@ def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,
     rc = render(Source.from_dict(source), catalog, registry)
     store = secret_store.store_for(source.get("site") or {}, out,
                                    repo_root=Path(host_root) if host_root is not None else Path.cwd())
-    if store.is_sops:
-        # The private repo's SOPS file is the store: add what it lacks (an existing value is never
-        # replaced, so a re-init keeps every generate-once secret), then materialize out/secrets.env.
+    if store.materializes:
+        # The private repo's SOPS file (or an Infisical project) is the store: add what it lacks (an
+        # existing value is never replaced, so a re-init keeps every generate-once secret), then
+        # materialize out/secrets.env.
         gen, blank = secret_store.update(store, rc.required_secrets, provided)
         secrets_path = secret_store.materialize(store, secret_store.SecretNeeds.from_render(rc), out,
                                                 strict=False).secrets_env

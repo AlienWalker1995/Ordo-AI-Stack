@@ -1,9 +1,17 @@
 """The operator's secret store, and what `ordo secrets` materializes from it.
 
-There is one store. With `SECRETS_SOURCE` set under the source's `site:`, it is a SOPS (age)
-encrypted dotenv file, normally in a private repo next to the checkout; `out/secrets.env` is then
-an artifact, rewritten by `materialize` to hold exactly the keys the render needs. Without it (a fresh
-local install with no private repo) `out/secrets.env` itself is the store, as it always was.
+There is one store, and the source's `site:` names it (see `config.secret_backend`):
+
+- `SECRETS_SOURCE` alone (or with `SECRETS_BACKEND: sops`): a SOPS (age) encrypted dotenv file,
+  normally in a private repo next to the checkout.
+- `SECRETS_BACKEND: infisical`: an Infisical project environment (`INFISICAL_URL`, `INFISICAL_PROJECT`,
+  `INFISICAL_ENVIRONMENT`), read through a read-only machine identity. The SOPS file, when
+  `SECRETS_SOURCE` is also set, is its offline backup (`ordo secrets backup`) and holds the identities'
+  bootstrap credentials (BOOTSTRAP_KEYS; an environment variable of the same name wins).
+- neither (a fresh local install with no private repo): `out/secrets.env` itself is the store.
+
+With a SOPS or Infisical store `out/secrets.env` is an artifact, rewritten by `materialize` to hold
+exactly the keys the render needs.
 
 Every writer (the wizard's generated secrets, `ordo remote`, the dashboard's local sign-in secret,
 `ordo secrets set|rotate|import`) edits the store and then materializes. Values are never printed:
@@ -26,7 +34,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from .config import SECRETS_SOURCE_KEY
+from . import infisical
+from .config import SECRETS_SOURCE_KEY, secret_backend
 from .render import OPTIONAL_SECRET_KEYS
 
 # The site key naming the SOPS file, and the documented place for it: a private repo checked out
@@ -167,6 +176,12 @@ def generator_for(key: str) -> Any | None:
     return None
 
 
+# The Infisical machine identities' Universal Auth credentials. They live in the SOPS file (or the
+# environment) because they are what unlocks Infisical: they cannot be stored in it.
+READER_KEYS = ("INFISICAL_ORDO_CLIENT_ID", "INFISICAL_ORDO_CLIENT_SECRET")
+WRITER_KEYS = ("INFISICAL_ORDO_WRITER_CLIENT_ID", "INFISICAL_ORDO_WRITER_CLIENT_SECRET")
+BOOTSTRAP_KEYS = READER_KEYS + WRITER_KEYS
+
 _RECIPIENT_RE = re.compile(r"^sops_age__list_\d+__map_recipient=(\S+)$", re.MULTILINE)
 _OTHER_KEY_GROUP_RE = re.compile(r"^sops_(pgp|kms|gcp_kms|azure_kv|hc_vault)__", re.MULTILINE)
 
@@ -186,11 +201,12 @@ class MissingSecrets(SecretStoreError):
 class LiveOnlySecrets(SecretStoreError):
     """out/secrets.env holds values the store does not: materializing would lose them."""
 
-    def __init__(self, keys: Sequence[str], store: str):
+    def __init__(self, keys: Sequence[str], store: str,
+                 fix: str = "Run `ordo secrets import` first (it adds them to the store), then materialize."):
         self.keys = list(keys)
         super().__init__(
             f"out/secrets.env has value(s) that {store} lacks: {', '.join(self.keys)}. Materializing would "
-            "lose them. Run `ordo secrets import` first (it adds them to the store), then materialize.")
+            f"lose them. {fix}")
 
 
 # --------------------------------------------------------------------------- #
@@ -280,7 +296,10 @@ def _write_owner_only(path: Path, text: str) -> None:
 class PlainStore:
     """out/secrets.env as the store: the local install without a private repo."""
 
+    kind = "local"
     is_sops = False
+    # A plain store IS out/secrets.env: materialize leaves it alone.
+    materializes = False
 
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -316,7 +335,10 @@ class SopsStore:
     recipients the file already has (a new file: SOPS_AGE_RECIPIENTS, else the key file's own
     public key)."""
 
+    kind = "sops"
     is_sops = True
+    materializes = True
+    live_only_fix = "Run `ordo secrets import` first (it adds them to the store), then materialize."
 
     def __init__(self, path: Path, sops_bin: str = "sops"):
         self.path = Path(path)
@@ -325,6 +347,10 @@ class SopsStore:
     @property
     def description(self) -> str:
         return f"{self.path} (SOPS)"
+
+    @property
+    def label(self) -> str:
+        return self.path.name
 
     def exists(self) -> bool:
         return self.path.exists()
@@ -392,7 +418,123 @@ class SopsStore:
             raise
 
 
-Store = PlainStore | SopsStore
+class InfisicalStore:
+    """An Infisical project environment as the store, through the client in ordo/infisical.py.
+
+    Reads use the read-only identity (READER_KEYS). A write (`write_text`, the one path every writer
+    takes) is applied as per-key create/update/delete calls with the optional writer identity
+    (WRITER_KEYS); without one it is refused, naming the keys to change in the Infisical UI. It never
+    falls back to the SOPS file. Each credential is read from the environment first, then from the
+    `backup` store (the SOPS file `SECRETS_SOURCE` names), decrypted at most once."""
+
+    kind = "infisical"
+    is_sops = False
+    materializes = True
+
+    def __init__(self, url: str, project: str, environment: str, *, backup: PlainStore | SopsStore | None = None,
+                 environ: Mapping[str, str] | None = None, transport: infisical.Transport | None = None):
+        self.url = url.rstrip("/")
+        self.project = project
+        self.environment = environment
+        self.backup = backup
+        self._environ = environ if environ is not None else os.environ
+        self._transport = transport
+        self._backup_values: dict[str, str] | None = None
+        self._clients: dict[str, infisical.InfisicalClient] = {}
+
+    @property
+    def description(self) -> str:
+        return f"Infisical project '{self.project}' environment '{self.environment}' at {self.url}"
+
+    @property
+    def label(self) -> str:
+        return f"Infisical project '{self.project}' environment '{self.environment}'"
+
+    @property
+    def live_only_fix(self) -> str:
+        return (f"Add them to {self.label} first (the Infisical UI, or `ordo secrets set KEY --from-stdin` "
+                "with a writer identity), then materialize.")
+
+    def exists(self) -> bool:
+        return True
+
+    def _credential(self, name: str) -> str:
+        """The environment variable `name`, else the backup store's value for it."""
+        value = str(self._environ.get(name, "") or "").strip()
+        if value or self.backup is None:
+            return value
+        if self._backup_values is None:
+            self._backup_values = parse_dotenv(self.backup.read_text()) if self.backup.exists() else {}
+        return self._backup_values.get(name, "")
+
+    def _client(self, role: str) -> infisical.InfisicalClient | None:
+        """The `reader` or `writer` client; None when that identity has no credentials."""
+        if role not in self._clients:
+            id_key, secret_key = READER_KEYS if role == "reader" else WRITER_KEYS
+            client_id, client_secret = self._credential(id_key), self._credential(secret_key)
+            if not (client_id and client_secret):
+                return None
+            self._clients[role] = infisical.InfisicalClient(
+                self.url, client_id, client_secret, identity=role, id_names=f"{id_key} / {secret_key}",
+                transport=self._transport)
+        return self._clients[role]
+
+    def _where_credentials_live(self) -> str:
+        where = f"the SOPS file {self.backup.path}" if isinstance(self.backup, SopsStore) else "the SOPS file"
+        return f"{where} (site {SECRETS_SOURCE_KEY}) or the environment"
+
+    def values(self) -> dict[str, str]:
+        """{KEY: value} of the environment, read with the reader identity."""
+        client = self._client("reader")
+        if client is None:
+            raise SecretStoreError(f"no Infisical reader identity: set {READER_KEYS[0]} and {READER_KEYS[1]} in "
+                                   f"{self._where_credentials_live()}")
+        try:
+            values = client.read_secrets(self.project, self.environment)
+        except infisical.InfisicalError as e:
+            raise SecretStoreError(str(e)) from None
+        multi_line = [k for k, v in values.items() if "\n" in v or "\r" in v]
+        if multi_line:
+            raise SecretStoreError(f"{self.label}: multi-line value(s) cannot be materialized into a dotenv "
+                                   f"file: {', '.join(multi_line)}")
+        return values
+
+    def read_text(self) -> str:
+        return "".join(f"{key}={value}\n" for key, value in self.values().items())
+
+    def write_text(self, text: str) -> None:
+        """Make the environment hold exactly the entries of dotenv `text` (the diff against a fresh read)."""
+        wanted = parse_dotenv(text)
+        current = self.values()
+        creates = [k for k in wanted if k not in current]
+        updates = [k for k in wanted if k in current and wanted[k] != current[k]]
+        deletes = [k for k in current if k not in wanted]
+        changed = creates + updates + deletes
+        if not changed:
+            return
+        writer = self._client("writer")
+        if writer is None:
+            raise SecretStoreError(
+                f"{self.label} is the secret source and no writer identity is configured ({WRITER_KEYS[0]} / "
+                f"{WRITER_KEYS[1]} in {self._where_credentials_live()}): nothing was written. Change "
+                f"{', '.join(changed)} in the Infisical UI, then run `ordo secrets materialize`")
+        done: list[str] = []
+        try:
+            for key in creates:
+                writer.write_secret(self.project, self.environment, "POST", key, wanted[key])
+                done.append(key)
+            for key in updates:
+                writer.write_secret(self.project, self.environment, "PATCH", key, wanted[key])
+                done.append(key)
+            for key in deletes:
+                writer.write_secret(self.project, self.environment, "DELETE", key)
+                done.append(key)
+        except infisical.InfisicalError as e:
+            written = f" (already written: {', '.join(done)})" if done else " (nothing was written)"
+            raise SecretStoreError(f"{e}{written}") from None
+
+
+Store = PlainStore | SopsStore | InfisicalStore
 
 
 def resolve_source_path(value: str, repo_root: Path) -> Path:
@@ -400,12 +542,30 @@ def resolve_source_path(value: str, repo_root: Path) -> Path:
     return (path if path.is_absolute() else Path(repo_root) / path).resolve()
 
 
-def store_for(site: Mapping[str, Any], out_dir: Path, repo_root: Path) -> Store:
-    """The store a source's `site:` names: its SOPS file, or out/secrets.env when none is set."""
-    value = str((site or {}).get(SECRETS_SOURCE_KEY, "") or "").strip()
-    if value:
-        return SopsStore(resolve_source_path(value, repo_root))
+def store_for(site: Mapping[str, Any], out_dir: Path, repo_root: Path, *,
+              environ: Mapping[str, str] | None = None, transport: infisical.Transport | None = None) -> Store:
+    """The store a source's `site:` names: an Infisical project (SECRETS_BACKEND: infisical), its SOPS
+    file (SECRETS_SOURCE), or out/secrets.env when neither is set."""
+    try:
+        backend = secret_backend(dict(site or {}))
+    except ValueError as e:
+        raise SecretStoreError(str(e)) from None
+    sops = SopsStore(resolve_source_path(backend.sops_path, repo_root)) if backend.sops_path else None
+    if backend.kind == "infisical":
+        return InfisicalStore(backend.url, backend.project, backend.environment, backup=sops,
+                              environ=environ, transport=transport)
+    if sops is not None:
+        return sops
     return PlainStore(Path(out_dir) / "secrets.env")
+
+
+def sops_file_of(store: Store) -> SopsStore | None:
+    """The SOPS file behind a store: the store itself, an Infisical store's backup, or None."""
+    if isinstance(store, SopsStore):
+        return store
+    if isinstance(store, InfisicalStore) and isinstance(store.backup, SopsStore):
+        return store.backup
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -464,20 +624,20 @@ def materialize(store: Store, needs: SecretNeeds, out_dir: Path, *, strict: bool
     if strict and blank_required:
         raise MissingSecrets(blank_required, store.description)
     secrets_env = out / "secrets.env"
-    if store.is_sops:
+    if store.materializes:
         live = parse_dotenv(secrets_env.read_text(encoding="utf-8")) if secrets_env.exists() else {}
         skip = set(removed)
         lost = [k for k, v in live.items() if v and not values.get(k) and k not in skip]
         if lost:
-            raise LiveOnlySecrets(lost, store.description)
+            raise LiveOnlySecrets(lost, store.description, store.live_only_fix)
     files = []
     for secret in needs.files:
         path = out / "secrets" / secret.file
         _write_owner_only(path, values.get(secret.key, ""))
         files.append(path)
-    if store.is_sops:
+    if store.materializes:
         lines = [
-            f"# GENERATED by `ordo secrets materialize` from {store.path.name}. Do not edit: the next",
+            f"# GENERATED by `ordo secrets materialize` from {store.label}. Do not edit: the next",
             "# materialize replaces this file. Change a value with `ordo secrets set KEY`.",
         ]
         lines += [f"{k}={values.get(k, '')}" for k in needs.required]
@@ -581,3 +741,38 @@ def import_values(store: Store, live_path: Path, *, files: Sequence[SecretFile] 
         new_text, _, _ = update_dotenv(text, [], provided=provided)
         store.write_text(new_text)
     return Imported(added, differing, files_added)
+
+
+# --------------------------------------------------------------------------- #
+# the offline copy of an Infisical store
+# --------------------------------------------------------------------------- #
+
+
+@dataclasses.dataclass
+class BackedUp:
+    added: list[str]
+    updated: list[str]
+    only_in_backup: list[str]
+
+
+def backup(source: InfisicalStore, target: SopsStore) -> BackedUp:
+    """Copy every value of the Infisical environment into the SOPS file: keys it lacks are added, keys
+    with a different value updated. Keys only the SOPS file holds (the bootstrap credentials, anything
+    removed from Infisical) are kept and named; the file is re-encrypted only when something changed."""
+    values = {k: v for k, v in source.values().items() if v and k not in BOOTSTRAP_KEYS}
+    text = target.read_text() if target.exists() else ""
+    stored = parse_dotenv(text)
+    added = [k for k in values if not stored.get(k)]
+    updated = [k for k in values if stored.get(k) and stored[k] != values[k]]
+    only_in_backup = [k for k, v in stored.items() if v and k not in values and k not in BOOTSTRAP_KEYS]
+    if added or updated:
+        new_text, _, _ = update_dotenv(text, [], provided={k: values[k] for k in added + updated})
+        target.write_text(new_text)
+    return BackedUp(added, updated, only_in_backup)
+
+
+def backup_status(value: str, backup_value: str) -> str:
+    """How the SOPS backup holds a key the active store has a value for."""
+    if backup_value == value:
+        return "backed up"
+    return "stale in backup" if backup_value else "not in backup"
