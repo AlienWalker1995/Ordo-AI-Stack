@@ -26,6 +26,8 @@ from . import fetch, images
 
 COMPOSE_FILE = "docker-compose.yml"
 OPS_CONTROLLER_SERVICE = "ops-controller"
+# The ops-controller environment key naming its scheduler state file (ordo/compose.py sets it).
+SCHEDULER_STATE_KEY = "SCHEDULER_STATE_PATH"
 
 # Runs inside the ops-controller container, which holds its own token and serves on loopback.
 _STATUS_SCRIPT = (
@@ -167,8 +169,23 @@ def _holders(gpu: dict) -> str:
     return f"lease held by: {running}; evicted residents: {evicted}"
 
 
-def lease_refusal(gpu: dict | None, *, whole_stack: bool, starts: set[str]) -> str | None:
-    """Why this bring-up must not run now, or None when it is safe."""
+def loads_scheduler_state(doc: dict) -> bool:
+    """Whether the rendered ops-controller declares where its scheduler state lives, so a
+    recreated one adopts the lease its predecessor saved (see ordo/scheduler_state.py)."""
+    environment = (_services(doc).get(OPS_CONTROLLER_SERVICE) or {}).get("environment") or {}
+    if isinstance(environment, list):  # compose's `KEY=value` list form
+        environment = dict(item.split("=", 1) for item in environment if "=" in item)
+    return bool(str(environment.get(SCHEDULER_STATE_KEY) or "").strip())
+
+
+def lease_refusal(gpu: dict | None, *, whole_stack: bool, starts: set[str],
+                  replacement_loads_state: bool = False) -> str | None:
+    """Why this bring-up must not run now, or None when it is safe.
+
+    ops-controller may be recreated mid-lease only when the lease survives it: the running one
+    reports its state saved to disk (`state_persisted`, false after a failed write and absent on
+    older images), and the replacement is rendered to load it (`replacement_loads_state`).
+    """
     if gpu is None:
         return None  # no ops-controller running (fresh install): there is no lease to honor
     if whole_stack and is_leased(gpu):
@@ -176,10 +193,15 @@ def lease_refusal(gpu: dict | None, *, whole_stack: bool, starts: set[str]) -> s
                 f"It would start the evicted residents beside the running GPU work. "
                 f"Wait for the lease to end, or name the services you need.")
     if OPS_CONTROLLER_SERVICE in starts and is_leased(gpu):
-        return (f"refusing to recreate {OPS_CONTROLLER_SERVICE} while the GPU is leased ({_holders(gpu)}). "
-                f"The scheduler's lease and eviction state live in its memory: a restart loses them, so "
-                f"the evicted residents are never restored, or are restored beside the running GPU work. "
-                f"Wait for the lease to end.")
+        if gpu.get("state_persisted") is not True:
+            return (f"refusing to recreate {OPS_CONTROLLER_SERVICE} while the GPU is leased ({_holders(gpu)}). "
+                    f"The running {OPS_CONTROLLER_SERVICE} has not saved its lease state to disk (an older "
+                    f"image, or its last write failed): a restart loses it, so the evicted residents are "
+                    f"never restored, or are restored beside the running GPU work. Wait for the lease to end.")
+        if not replacement_loads_state:
+            return (f"refusing to recreate {OPS_CONTROLLER_SERVICE} while the GPU is leased ({_holders(gpu)}). "
+                    f"The rendered {OPS_CONTROLLER_SERVICE} sets no {SCHEDULER_STATE_KEY}, so the new one "
+                    f"would start without the saved lease state. Re-render, or wait for the lease to end.")
     evicted = sorted(starts & set(gpu.get("evicted_residents") or {}))
     if evicted:
         return (f"refusing to start {', '.join(evicted)}: evicted by the GPU scheduler to make room "
@@ -275,7 +297,8 @@ def bring_up(out_dir: str, project: str, services: Sequence[str], *, whole_stack
         print(f"refusing: {e}. The GPU lease state is unknown, so a bring-up could start an "
               f"evicted resident beside running GPU work.", file=sys.stderr)
         return 2
-    refusal = lease_refusal(gpu, whole_stack=whole_stack, starts=starts)
+    refusal = lease_refusal(gpu, whole_stack=whole_stack, starts=starts,
+                            replacement_loads_state=loads_scheduler_state(doc))
     if refusal:
         print(refusal, file=sys.stderr)
         return 2

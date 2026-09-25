@@ -385,6 +385,15 @@ def test_ops_controller_serve_out_matches_deployed_layout():
     assert "./:/config" in c["services"]["ops-controller"]["volumes"]
 
 
+
+def test_ops_controller_persists_scheduler_state_on_its_data_bind():
+    """The lease state must outlive the container, so it lives on the /data bind (host
+    DATA_PATH), not in /config (re-rendered) or the container layer (lost on recreate)."""
+    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], project="ordo")
+    ops = c["services"]["ops-controller"]
+    assert ops["environment"]["SCHEDULER_STATE_PATH"] == "/data/scheduler-state.json"
+    assert any(v.endswith("/ops-controller:/data") for v in ops["volumes"])
+
 # ── netns members must not outlive the namespace they join ──────────────────────
 # Caddy / oauth2-proxy / Tailscale are OPTIONAL layers an operator may never enable.
 # A `network_mode: service:X` whose X is not rendered is NOT a degraded mode — compose

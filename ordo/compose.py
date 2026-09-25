@@ -230,7 +230,7 @@ def _ops_controller(project: str, net: str, nvidia_gpu: bool) -> dict[str, Any]:
     s["volumes"] = [
         "/var/run/docker.sock:/var/run/docker.sock",  # broker start/stop (guard-scoped)
         "./:/config",                                 # ordo.yaml + rendered out/ (single write path)
-        "${DATA_PATH:?DATA_PATH must be set (non-empty)}/ops-controller:/data",  # audit log
+        "${DATA_PATH:?DATA_PATH must be set (non-empty)}/ops-controller:/data",  # audit log, scheduler state
         "comfyui-models:/models/comfyui",             # shared ComfyUI model store (same as ops-api)
         # ComfyUI's app tree, read-only: /comfyui/install-node-requirements has to see whether a
         # custom-node pack ships a requirements.txt before it runs pip inside the comfyui
@@ -245,6 +245,9 @@ def _ops_controller(project: str, net: str, nvidia_gpu: bool) -> dict[str, Any]:
         "COMFYUI_CUSTOM_NODES_DIR": "/comfyui-app/ComfyUI/custom_nodes",
         "COMFYUI_CONTAINER_NAME": f"{project}-comfyui-1",
         "AUDIT_LOG_PATH": "/data/audit.log",
+        # The GPU lease and eviction state, written on every transition so a recreate mid-lease
+        # adopts it instead of forgetting it. `ordo recreate ops-controller` checks for this key.
+        "SCHEDULER_STATE_PATH": "/data/scheduler-state.json",
     }
     # --source/--catalog are global (pre-subcommand) flags; --project/--out belong to `serve`.
     # --out is /config ITSELF: the deployment mounts the dir holding ordo.yaml AND the rendered

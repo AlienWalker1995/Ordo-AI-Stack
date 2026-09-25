@@ -923,7 +923,13 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
     from .lease_history import LeaseHistory
 
     history = LeaseHistory(Path(args.out) / "lease-history.jsonl")
-    broker = Broker(sched, DockerBackend(project=args.project), history=history)
+    # The scheduler's live lease and eviction state, on the /data bind (SCHEDULER_STATE_PATH, set
+    # by the rendered compose). Unset (a hand-run `ordo serve`) means it is kept in memory only.
+    from .scheduler_state import SchedulerStateStore
+
+    state_path = os.environ.get("SCHEDULER_STATE_PATH", "").strip()
+    state_store = SchedulerStateStore(Path(state_path)) if state_path else None
+    broker = Broker(sched, DockerBackend(project=args.project), history=history, state_store=state_store)
     cp = ControlPlane(Path(args.source), cat, reg, args.out, scheduler=sched, broker=broker,
                       history=history,
                       model_volume_files=lambda: fetch.volume_files(fetch.DockerRunner(), args.project))
@@ -953,6 +959,17 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
             print(f"[scheduler] gpu claim: {c.service:<16} mode={c.mode:<8} "
                   f"enforcement={c.enforcement:<7} device={c.device:<9} "
                   f"vram={c.vram_gb:>6.1f}GB yield={c.yield_strategy}{degraded}", flush=True)
+
+    # Adopt the previous process's lease state BEFORE the lease loop or the API run: a lease held
+    # across this restart keeps its resident evicted, and one that expired while down is swept.
+    if state_store is not None:
+        broker.restore_state()
+        print(f"[scheduler] lease state persisted at {state_path}; adopted "
+              f"running={sched.running_ids} queued={sched.queued_ids} "
+              f"evicted={sorted(sched.evicted_residents)}", flush=True)
+    else:
+        print("[scheduler] SCHEDULER_STATE_PATH is not set: the lease state is in memory only, and "
+              "a restart mid-lease loses it", flush=True)
 
     # Lease clock + self-heal sweep: advance the scheduler's clock by the poll interval and force-
     # complete any lease whose TTL has elapsed (a crashed client can never strand the resident down).

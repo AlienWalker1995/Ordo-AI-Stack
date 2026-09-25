@@ -24,6 +24,7 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 | Sink | Description | Format |
 |---|---|---|
 | `data/ops-controller/audit.log` | Privileged-action audit log | JSONL (append-only) |
+| `data/ops-controller/scheduler-state.json` | GPU scheduler lease and eviction state (running leases with wall-clock deadlines, queue, evicted residents), rewritten atomically on every transition and adopted by the next ops-controller at startup (`SCHEDULER_STATE_PATH`) | JSON (versioned) |
 | `qdrant-data` named volume | Vector DB storage (RAG profile) | Qdrant native |
 | `data/dashboard/` | Throughput samples, benchmarks, job tracking | JSON |
 | `hermes-home` named volume | Hermes agent brain (sessions, config, skills, cron) | JSON / SQLite / YAML |

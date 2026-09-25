@@ -88,6 +88,17 @@ def test_unknown_route_404(tmp_path):
 
 # ── media-lease exposed over the control plane (backward-compatible, additive fields) ────────────
 
+def test_status_says_whether_the_lease_state_is_persisted(tmp_path):
+    """The host's `ordo recreate ops-controller` recreates mid-lease only when this is true."""
+    from ordo.scheduler_state import SchedulerStateStore
+
+    cp, _ = _cp(tmp_path)
+    assert cp.route("GET", "/status")[1]["gpu"]["state_persisted"] is False
+    cp.broker.state_store = SchedulerStateStore(tmp_path / "data" / "scheduler-state.json")
+    cp.route("POST", "/jobs", {"id": "render", "vram_gb": 18, "kind": "media"})
+    assert cp.route("GET", "/status")[1]["gpu"]["state_persisted"] is True
+
+
 def _cp_with_resident(tmp_path, resident_gb=25):
     """A control plane whose scheduler has the resident LLM registered (the serve-startup wiring)."""
     cp, src = _cp(tmp_path)

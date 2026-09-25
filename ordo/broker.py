@@ -20,10 +20,13 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
+import threading
 from typing import Protocol
 
 from .bringup import compose_argv, lifecycle_group, load_compose, plan_named, profiles_in
 from .scheduler import Job, Scheduler
+from .scheduler_state import RECOVERY_JOB_ID, SchedulerStateStore, StateUnreadable
 
 
 class ContainerBackend(Protocol):
@@ -487,14 +490,88 @@ def _to_gb(value: str) -> float:
     return round(n * {"B": 1e-9, "KB": 1e-6, "MB": 1e-3, "GB": 1.0, "TB": 1000.0}.get(unit, 0.0), 3)
 
 class Broker:
-    def __init__(self, scheduler: Scheduler, backend: ContainerBackend, history=None):
+    def __init__(self, scheduler: Scheduler, backend: ContainerBackend, history=None,
+                 state_store: SchedulerStateStore | None = None):
         self.scheduler = scheduler
         self.backend = backend
         # Optional LeaseHistory sink — the durable record of lease outcomes (the pure scheduler
         # keeps only live state). Wall clocks are stamped by the sink, here in the shell.
         self.history = history
+        # Optional durable copy of the scheduler's live state, written on every transition so a
+        # restarted ops-controller adopts the lease instead of forgetting it (restore_state).
+        self.state_store = state_store
+        self._state_saved = False
+        # API threads and the lease loop both persist: the snapshot and the write are taken under
+        # one lock so an older snapshot can never land on disk after a newer one.
+        self._persist_lock = threading.Lock()
 
-    def reconcile(self) -> None:
+    @property
+    def state_persisted(self) -> bool:
+        """True when the state on disk matches the scheduler: a restart would lose nothing.
+
+        False without a store, and after a failed write (the file is then stale). The host's
+        `ordo recreate ops-controller` reads this, through /status, before recreating mid-lease.
+        """
+        return self.state_store is not None and self._state_saved
+
+    def _persist(self) -> None:
+        """Write the scheduler state. Called after every transition, never on a timer."""
+        if self.state_store is None:
+            return
+        with self._persist_lock:
+            try:
+                self.state_store.save(self.scheduler.snapshot())
+            except (OSError, RuntimeError) as e:
+                # RuntimeError: another thread changed the scheduler mid-snapshot. Either way the
+                # file is now behind, so stop claiming it is current; the lease loop retries.
+                self._state_saved = False
+                print(f"[scheduler] ERROR: cannot write the scheduler state to {self.state_store.path} "
+                      f"({e}); a restart now would lose the GPU lease state", file=sys.stderr, flush=True)
+                return
+            self._state_saved = True
+
+    def restore_state(self) -> None:
+        """Adopt the previous process's lease state, then reconcile it. Call before serving.
+
+        A saved lease keeps its deadline: a live holder's heartbeat renews it, and one that ran
+        out while the controller was down is swept here, which restores the resident once
+        nothing else needs its VRAM. An evicted resident stays evicted while any lease is live.
+
+        An unreadable file is the dangerous case: it may have been hiding a live render. A
+        resident that is running was not evicted and is left alone. A resident that is stopped
+        (or whose state docker cannot report) may have been evicted for a render still on the
+        card, so it stays evicted under a recovery lease that expires after one heartbeat TTL.
+        Live holders learn of the loss when their heartbeat is refused and re-file, which keeps
+        the resident down until they finish. The cost of a false alarm is chat on the CPU
+        fallback for up to that TTL; the cost of guessing wrong the other way is a crashed host.
+        """
+        if self.state_store is None:
+            return
+        try:
+            snapshot = self.state_store.load()
+        except StateUnreadable as e:
+            running = self._running_services()
+            residents = [name for name in self.scheduler.idle_cached if running is None or name not in running]
+            print(f"[scheduler] ERROR: the saved scheduler state is unreadable ({e}). Starting "
+                  f"conservatively: {residents or 'no resident'} held evicted under "
+                  f"'{RECOVERY_JOB_ID}' for {self.scheduler.heartbeat_ttl:.0f}s so none is restored "
+                  f"beside GPU work this process cannot see", file=sys.stderr, flush=True)
+            self.scheduler.hold_residents_for_recovery(residents, RECOVERY_JOB_ID, self.scheduler.heartbeat_ttl)
+        else:
+            if snapshot is not None:
+                self.scheduler.load_snapshot(snapshot)
+        self.sweep_leases()  # reconciles, and writes the adopted state back (it is not yet saved)
+
+    def _running_services(self) -> set[str] | None:
+        """The compose services running now, or None when docker cannot say."""
+        try:
+            listing = self.backend.list_services() or {}
+        except Exception:  # noqa: BLE001 - any failure here means "unknown", handled by the caller
+            return None
+        return {row.get("id") for row in listing.get("services", []) if row.get("state") == "running"}
+
+    def reconcile(self) -> bool:
+        """Apply the scheduler's decisions. True when anything was admitted, evicted or restored."""
         admitted, evicted = self.scheduler.pump()
         for name in evicted:      # stop LRU-evicted idle residents first to free VRAM
             self.backend.stop(name)
@@ -505,14 +582,17 @@ class Broker:
         # Finally, restore any evicted resident whose GPU-heavy work has drained (the second half of
         # the media-lease contract). take_restorable() only returns residents that fit now with an
         # empty queue, so this never thrashes the LLM between back-to-back renders.
-        for name in self.scheduler.take_restorable():
+        restored = self.scheduler.take_restorable()
+        for name in restored:
             self.backend.start(name)
+        return bool(admitted or evicted or restored)
 
     def request(self, job: Job) -> None:
         if self.history:
             self.history.submitted(job.id, job.kind, job.vram_gb)
         self.scheduler.submit(job)
         self.reconcile()
+        self._persist()
         if self.history and job.id in self.scheduler.status()["rejected"]:
             self.history.rejected(job.id)
 
@@ -522,10 +602,14 @@ class Broker:
         self.scheduler.complete(job_id)
         self.backend.stop(job_id)
         self.reconcile()
+        self._persist()
 
     def heartbeat(self, job_id: str) -> bool:
         """Renew a running job's lease (liveness-based). No reconcile — nothing starts or stops."""
-        return self.scheduler.heartbeat(job_id)
+        renewed = self.scheduler.heartbeat(job_id)
+        if renewed:
+            self._persist()  # the deadline moved
+        return renewed
 
     def enforce_evictions(self) -> list[str]:
         """Stop any evicted resident that is running anyway, and return their names.
@@ -557,5 +641,7 @@ class Broker:
             self.backend.stop(job_id)  # best-effort: ensure the stranded job's container is down
             if self.history:
                 self.history.ended(job_id, "swept")
-        self.reconcile()
+        changed = self.reconcile()
+        if expired or changed or not self._state_saved:
+            self._persist()  # a transition, or a retry after a failed write
         return expired

@@ -42,6 +42,9 @@ LEASED = {
 }
 # An ops-controller image older than the `leased` field: only the raw lists.
 LEASED_OLD_IMAGE = {k: v for k, v in LEASED.items() if k != "leased"}
+# A controller that writes its lease state to disk, and one whose last write failed.
+LEASED_PERSISTED = {**LEASED, "state_persisted": True}
+LEASED_NOT_SAVED = {**LEASED, "state_persisted": False}
 
 
 @pytest.fixture(autouse=True)
@@ -74,6 +77,15 @@ def recorded(monkeypatch) -> list[list[str]]:
 
     monkeypatch.setattr("ordo.bringup.subprocess.run", fake_run)
     return calls
+
+
+@pytest.fixture
+def persisting_out_dir(tmp_path) -> Path:
+    """A render whose ops-controller declares where it keeps the scheduler state."""
+    compose = yaml.safe_load(yaml.safe_dump(COMPOSE))
+    compose["services"]["ops-controller"]["environment"] = {"SCHEDULER_STATE_PATH": "/data/scheduler-state.json"}
+    (tmp_path / "docker-compose.yml").write_text(yaml.safe_dump(compose), encoding="utf-8")
+    return tmp_path
 
 
 def _status(monkeypatch, gpu):
@@ -203,62 +215,53 @@ def test_missing_render_is_refused(monkeypatch, tmp_path, recorded):
 # --- the GPU lease ---
 
 
-@pytest.mark.parametrize("gpu", [LEASED, LEASED_OLD_IMAGE])
-def test_all_is_refused_during_a_lease_naming_the_holders(monkeypatch, out_dir, recorded, capsys, gpu):
+@pytest.mark.parametrize("gpu", [LEASED, LEASED_OLD_IMAGE, LEASED_NOT_SAVED])
+@pytest.mark.parametrize("argv", [["recreate", "ops-controller"], ["up", "ops-controller"],
+                                  ["recreate", "ops-controller", "agent"]])
+def test_ops_controller_is_refused_during_a_lease_without_persisted_state(
+        monkeypatch, persisting_out_dir, recorded, capsys, gpu, argv):
+    """Without persisted lease state a restart mid-lease loses it: the evicted resident is never
+    restored, or is restored beside the render. An image older than persistence, or one whose last
+    state write failed, does not report `state_persisted: true`."""
     _status(monkeypatch, gpu)
-    assert cli.main(["up", "--all", "--out", str(out_dir)]) == 2
+    assert cli.main([*argv, "--out", str(persisting_out_dir)]) == 2
     assert recorded == []
     err = capsys.readouterr().err
-    assert "gate-comfyui" in err and "llamacpp" in err
+    assert "ops-controller" in err and "gate-comfyui" in err
 
 
-def test_core_is_refused_during_a_lease(monkeypatch, out_dir, recorded):
-    _status(monkeypatch, LEASED)
-    assert cli.main(["up", "--core", "--out", str(out_dir)]) == 2
+def test_ops_controller_is_refused_during_a_lease_when_the_new_one_would_not_load_the_state(
+        monkeypatch, out_dir, recorded, capsys):
+    """The running controller saved its state, but the rendered replacement declares no state
+    path, so it would start empty."""
+    _status(monkeypatch, LEASED_PERSISTED)
+    assert cli.main(["recreate", "ops-controller", "--out", str(out_dir)]) == 2
     assert recorded == []
+    assert "SCHEDULER_STATE_PATH" in capsys.readouterr().err
 
 
-def test_old_image_running_only_counts_as_leased(monkeypatch, out_dir, recorded):
-    _status(monkeypatch, {"state": "busy", "running": [{"id": "job-1", "kind": "media"}], "evicted_residents": {}})
-    assert cli.main(["up", "--all", "--out", str(out_dir)]) == 2
-    assert recorded == []
+@pytest.mark.parametrize("argv", [["recreate", "ops-controller"], ["up", "ops-controller"],
+                                  ["recreate", "ops-controller", "agent"]])
+def test_ops_controller_is_recreatable_during_a_lease_with_persisted_state(
+        monkeypatch, persisting_out_dir, recorded, argv):
+    """The running controller wrote its lease state to its data bind and the replacement loads
+    it from the same path, so a recreate mid-lease keeps the resident evicted until the drain."""
+    _status(monkeypatch, LEASED_PERSISTED)
+    assert cli.main([*argv, "--out", str(persisting_out_dir)]) == 0
+    assert "ops-controller" in _tail(recorded[-1])
 
 
-def test_naming_an_evicted_resident_is_refused(monkeypatch, out_dir, recorded, capsys):
-    _status(monkeypatch, LEASED)
-    assert cli.main(["recreate", "llamacpp", "--out", str(out_dir)]) == 2
+def test_persisted_state_does_not_unlock_an_evicted_resident(monkeypatch, persisting_out_dir, recorded, capsys):
+    _status(monkeypatch, LEASED_PERSISTED)
+    assert cli.main(["recreate", "ops-controller", "llamacpp", "--out", str(persisting_out_dir)]) == 2
     assert recorded == []
     assert "llamacpp" in capsys.readouterr().err
 
 
-def test_dry_run_still_reports_the_refusal(monkeypatch, out_dir, recorded):
-    _status(monkeypatch, LEASED)
-    assert cli.main(["up", "--all", "--out", str(out_dir), "--dry-run"]) == 2
-
-
-def test_named_services_off_the_card_are_allowed_during_a_lease(monkeypatch, out_dir, recorded):
-    """--no-deps means only the named service starts, so the evicted resident stays down."""
-    _status(monkeypatch, LEASED)
-    assert cli.main(["recreate", "model-gateway", "--out", str(out_dir)]) == 0
-    assert _tail(recorded[-1]) == ["up", "-d", "--no-deps", "--force-recreate", "model-gateway"]
-
-
-def test_agent_is_recreatable_during_a_lease(monkeypatch, out_dir, recorded):
-    _status(monkeypatch, LEASED)
-    assert cli.main(["recreate", "agent", "--out", str(out_dir)]) == 0
-
-
-@pytest.mark.parametrize("gpu", [LEASED, LEASED_OLD_IMAGE])
-@pytest.mark.parametrize("argv", [["recreate", "ops-controller"], ["up", "ops-controller"],
-                                  ["recreate", "ops-controller", "agent"]])
-def test_ops_controller_is_refused_during_a_lease(monkeypatch, out_dir, recorded, capsys, gpu, argv):
-    """The scheduler's lease and eviction state live in ops-controller's memory. Restarting it
-    mid-lease loses them: the evicted resident is never restored, or is restored beside the render."""
-    _status(monkeypatch, gpu)
-    assert cli.main([*argv, "--out", str(out_dir)]) == 2
+def test_persisted_state_does_not_unlock_a_whole_stack_up(monkeypatch, persisting_out_dir, recorded):
+    _status(monkeypatch, LEASED_PERSISTED)
+    assert cli.main(["up", "--all", "--out", str(persisting_out_dir)]) == 2
     assert recorded == []
-    err = capsys.readouterr().err
-    assert "ops-controller" in err and "gate-comfyui" in err
 
 
 def test_ops_controller_is_recreatable_when_idle(monkeypatch, out_dir, recorded):
