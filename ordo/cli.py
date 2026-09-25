@@ -728,10 +728,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
               f"--allow-unverified): {', '.join(unpinned)}")
     substrate_ok, substrate_line = doctor.substrate_check(args.project)
     print(substrate_line)
+    open_webui_ok, open_webui_line = doctor.open_webui_check(args.project)
+    print(open_webui_line)
     if args.bundle:
         doctor.write_bundle(bundle, args.bundle)
         print(f"support bundle -> {args.bundle} (secrets redacted)")
-    return 0 if substrate_ok else 1
+    return 0 if substrate_ok and open_webui_ok else 1
 
 
 def _local_images() -> set[str]:  # pragma: no cover - shells to docker

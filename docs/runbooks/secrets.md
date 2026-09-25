@@ -269,4 +269,5 @@ decision; do not edit them.
 | `materialize` refuses: `out/secrets.env has value(s) that ... lacks` | A value exists only in the live file | `ordo secrets import`, then materialize again |
 | `required secret(s) with no value` | The store lacks a key the render needs | `ordo secrets set KEY --from-stdin` (an internal one: `--generate`) |
 | Container exits with `cookie_secret must be 16, 24, or 32 bytes` | A hand-made `OAUTH2_PROXY_COOKIE_SECRET` | `ordo secrets rotate OAUTH2_PROXY_COOKIE_SECRET`, then the printed recreate |
+| Open WebUI lists no models, or documents fail to embed | The running container predates `ENABLE_PERSISTENT_CONFIG=false`, so webui.db still holds an old key | `ordo apply --only open-webui`, then `ordo doctor` prints `open-webui: env-authoritative config`. Settings changed in its admin UI reset on restart: declare them in `services/open-webui/plugin.yaml` |
 | The agent's Discord or backup token is missing | `out/secrets/<file>` is empty | `ordo secrets set DISCORD_BOT_TOKEN --from-stdin`, then `ordo recreate agent` |
