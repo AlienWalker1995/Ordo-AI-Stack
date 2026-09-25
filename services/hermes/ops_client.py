@@ -114,8 +114,8 @@ class OpsClient:
         return r.json()
 
     # --- service-plugin install/enable: the render authority. These edit ordo.yaml's plugin
-    # list + re-render out/. They do NOT start containers; the caller then brings each service
-    # up via compose_up() (ops-controller recreate).
+    # list, re-render out/ and apply it: ops-controller recreates exactly what the render changed
+    # and returns it under "apply" (with what only the host can finish). Nothing to recreate after.
     def list_plugins(self) -> dict[str, Any]:
         return self._request("GET", "/plugins").json()
 

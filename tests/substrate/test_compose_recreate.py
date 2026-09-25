@@ -151,3 +151,39 @@ def test_a_whole_stack_compose_up_is_unchanged(capture):
     backend, recorded = capture
     backend.compose_up()
     assert recorded[-1][-2:] == ["up", "-d"]
+
+
+def test_the_post_render_step_recreates_its_changed_set_in_one_compose_call(capture):
+    backend, recorded = capture
+    backend.recreate_services(["llamacpp", "open-webui"])
+    assert len(recorded) == 1
+    cmd = recorded[0]
+    tail = cmd[cmd.index("up"):]
+    assert tail == ["up", "-d", "--no-deps", "--force-recreate", "llamacpp", "open-webui"]
+
+
+@pytest.mark.parametrize("service", ["agent", "ops-controller"])
+def test_the_post_render_step_never_recreates_the_control_plane(capture, service):
+    backend, recorded = capture
+    with pytest.raises(ValueError, match="control plane"):
+        backend.recreate_services(["llamacpp", service])
+    assert recorded == []
+
+
+def test_stack_state_reads_the_render_in_its_own_compose_dir(capture, monkeypatch):
+    # The changed set is read against /config (the out/ ops-controller renders into), with /config
+    # as the project directory: the directory every container it recreates is created against.
+    from ordo.render import changed_set
+
+    backend, _ = capture
+    seen = {}
+
+    def fake_read(self, staged, *, project):
+        seen.update(compose_dir=staged.compose_dir, project_directory=staged.project_directory,
+                    services=sorted(staged.doc["services"]), project=project)
+        return changed_set.StackState(rendered={}, running={}, compose_version="5.1.0")
+
+    monkeypatch.setattr(changed_set.DockerState, "read", fake_read)
+    assert backend.stack_state().compose_version == "5.1.0"
+    assert seen == {"compose_dir": backend.COMPOSE_DIR, "project_directory": backend.COMPOSE_DIR,
+                    "services": ["llamacpp", "open-webui", "prometheus", "qdrant"], "project": "ordo"}

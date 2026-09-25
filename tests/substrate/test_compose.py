@@ -384,7 +384,7 @@ def test_ops_controller_serve_out_matches_deployed_layout():
     c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[], project="ordo")
     cmd = c["services"]["ops-controller"]["command"]
     assert cmd[cmd.index("--out") + 1] == "/config"
-    assert "./:/config" in c["services"]["ops-controller"]["volumes"]
+    assert "${BASE_PATH:?BASE_PATH must be set (non-empty)}/out:/config" in c["services"]["ops-controller"]["volumes"]
 
 
 
@@ -659,11 +659,13 @@ def _host_source(volume: str) -> str:
 def test_services_the_control_plane_recreates_have_no_project_relative_binds():
     # ops-controller runs compose with the project directory at its own /config mount, so a
     # "./x" bind it recreates resolves to /config/x on the HOST: a path that does not exist.
-    # A dashboard model switch recreated model-gateway that way and it crash-looped. A
+    # A dashboard model switch recreated model-gateway that way and it crash-looped. It also
+    # hashes EVERY service (its post-render step's changed set, ordo/render/changed_set.py) with
+    # that project directory, while the host hashes with out/: a "./x" bind, even on a service
+    # it never recreates (itself), would read as changed on every apply. No exemptions. A
     # `${VAR:-./x}` default is the same bug waiting for an unset VAR, and a relative VALUE
     # rendered into .env is the same bug today; host binds are `${VAR:?...}` (fail loud).
     # Rendered with EVERY plugin, the real dashboard and agent, so no manifest escapes the check.
-    from ordo.control.broker import DockerBackend
     from ordo.render.agents import AgentRegistry
     from ordo.render.dashboards import DashboardRegistry
 
@@ -679,7 +681,7 @@ def test_services_the_control_plane_recreates_have_no_project_relative_binds():
             if not isinstance(volume, str):
                 continue
             source = _host_source(volume)
-            literal_relative = source.startswith("./") and name not in DockerBackend.SELF_REFERENTIAL
+            literal_relative = source.startswith("./")
             if literal_relative or re.search(r":-.(/|})", source):
                 offenders.append(f"{name}: {volume}")
     relative_env = [f"{k}={v}" for k, v in rc.env.items() if isinstance(v, str) and v.startswith("./")]

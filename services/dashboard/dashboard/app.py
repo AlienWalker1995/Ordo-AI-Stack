@@ -249,8 +249,9 @@ async def comfyui_install_node_requirements_api(
 # The enabled server set is RENDER-OWNED: `ordo render` emits out/mcp/servers.json (mounted read-only
 # at /mcp-config) from the enabled kind=mcp plugins in out/ordo.yaml. Health comes from LiteLLM
 # (/v1/mcp/server/health + the per-server outcomes tools/list returns), never inferred. A UI toggle
-# asks ops-controller to edit ordo.yaml's `plugins:` list (the single source of truth) and re-render,
-# then tells the operator to recreate model-gateway: config-file MCP servers reload only on restart.
+# asks ops-controller to edit ordo.yaml's `plugins:` list (the single source of truth), re-render and
+# apply: ops-controller recreates what the render changed (the MCP server, and model-gateway, whose
+# definition carries a digest of the MCP config it reads at startup) and reports it.
 # MODEL_GATEWAY_URL / MODEL_GATEWAY_API_KEY are the module-level constants defined near the top.
 MCP_SERVERS_PATH = os.environ.get("MCP_SERVERS_PATH")
 _MCP_HEADERS = {
@@ -258,8 +259,6 @@ _MCP_HEADERS = {
     "Accept": "application/json, text/event-stream",
     "x-litellm-api-key": f"Bearer {MODEL_GATEWAY_API_KEY}",
 }
-MCP_APPLY_HINT = ("saved to ordo.yaml and rendered; apply with a model-gateway recreate "
-                  "(LiteLLM reads config-file MCP servers at startup only)")
 
 
 def _read_servers_json() -> dict:
@@ -401,34 +400,46 @@ async def _litellm_mcp_outcomes() -> tuple[bool, dict[str, dict], str | None]:
 # ops-controller to enable/disable that plugin, which edits ordo.yaml surgically and re-renders out/.
 
 
-async def _persist_mcp_toggle(server: str, action: str) -> dict:
-    """Persist an enable(action='add')/disable(action='remove') of MCP `server` through ops-controller
-    (`POST /plugins/{plugin}/enable|disable`). Never raises, it returns a status the endpoint attaches
-    to its response:
+def _toggle_result(persistent: bool, plugin: str | None, note: str | None, applied: dict | None = None) -> dict:
+    """The toggle's answer: whether ordo.yaml changed, and what ops-controller's apply did."""
+    applied = applied or {}
+    return {"persistent": persistent, "plugin": plugin, "note": note,
+            "recreated": list(applied.get("recreated") or []), "stopped": list(applied.get("stopped") or []),
+            "restart_required_on_host": list(applied.get("restart_required_on_host") or []),
+            "host_command": applied.get("host_command")}
 
-      {persistent: bool, plugin: str|None, note: str|None}
+
+async def _persist_mcp_toggle(server: str, action: str) -> dict:
+    """Persist and apply an enable(action='add')/disable(action='remove') of MCP `server` through
+    ops-controller (`POST /plugins/{plugin}/enable|disable`), which writes ordo.yaml, re-renders and
+    recreates what the render changed. Never raises, it returns what the endpoint attaches to its
+    response (`_toggle_result`):
+
+      {persistent, plugin, note, recreated, stopped, restart_required_on_host, host_command}
 
     Not persistent when: the server isn't a registered mcp plugin (adding a brand-new non-plugin MCP
-    to ordo.yaml is OUT OF SCOPE, flagged rather than faked); ops-controller refuses or is unreachable;
-    or a disable under `plugins: auto`, which has no list item to remove.
+    to ordo.yaml is OUT OF SCOPE, flagged rather than faked); or ops-controller refuses (a disable
+    under `plugins: auto`, a GPU lease, a failed apply it rolled back) or is unreachable.
     """
     plugin = _read_server_plugin_map().get(server)
     if not plugin:
-        return {"persistent": False, "plugin": None,
-                "note": f"'{server}' is not a registered mcp plugin - change not persisted; ordo.yaml "
-                        "left untouched. Adding a brand-new non-plugin MCP to ordo.yaml is out of "
-                        "scope."}
+        return _toggle_result(False, None,
+                              f"'{server}' is not a registered mcp plugin - change not persisted; ordo.yaml "
+                              "left untouched. Adding a brand-new non-plugin MCP to ordo.yaml is out of scope.")
     verb = "enable" if action == "add" else "disable"
-    code, data = await _ops_request("POST", f"/plugins/{plugin}/{verb}", timeout=120.0)
+    code, data = await _ops_request("POST", f"/plugins/{plugin}/{verb}", timeout=660.0)
     if code != 200 or not data.get("ok"):
         reason = data.get("error") or data.get("detail") or f"HTTP {code}"
         logger.warning("MCP toggle persist failed for server=%s plugin=%s action=%s: %s",
                        server, plugin, action, reason)
-        return {"persistent": False, "plugin": plugin,
-                "note": f"ops-controller could not {verb} {plugin} ({reason}) - change not persisted."}
-    if data.get("transient"):
-        return {"persistent": False, "plugin": plugin, "note": data.get("note")}
-    return {"persistent": True, "plugin": plugin, "note": None}
+        return _toggle_result(False, plugin, f"ops-controller could not {verb} {plugin} ({reason}) - "
+                                             "change not persisted.")
+    applied = data.get("apply")
+    if not isinstance(applied, dict):
+        return _toggle_result(True, plugin, "saved to ordo.yaml, but ops-controller did not apply it (an "
+                                            "ops-controller older than this dashboard): run `ordo apply` on "
+                                            "the host.")
+    return _toggle_result(True, plugin, None, applied)
 
 
 @app.get("/api/mcp/servers")
@@ -490,7 +501,7 @@ def _valid_mcp_server_name(name: str) -> bool:
 
 @app.post("/api/mcp/add")
 async def mcp_add(req: McpAddRequest):
-    """Enable a REGISTERED MCP plugin: ops-controller persists + renders; applied on a model-gateway recreate."""
+    """Enable a REGISTERED MCP plugin: ops-controller persists, renders and applies it."""
     server = req.server.strip()
     if not _valid_mcp_server_name(server):
         raise HTTPException(status_code=400, detail="Invalid server id.")
@@ -501,25 +512,24 @@ async def mcp_add(req: McpAddRequest):
             "(kind: mcp), not from a catalog."))
     enabled = [str(s["id"]) for s in data["servers"] if s.get("id")]
     if server in enabled:
-        return {"status": "already_enabled", "servers": enabled, "applied": False, "next": None}
+        return {"status": "already_enabled", "servers": enabled}
     persist = await _persist_mcp_toggle(server, "add")
     logger.info("MCP_SERVER_ADDED server=%s persistent=%s plugin=%s", server, persist["persistent"], persist["plugin"])
-    return {"status": "added", "servers": enabled + [server], "applied": False, "next": MCP_APPLY_HINT, **persist}
+    return {"status": "added", "servers": enabled + [server], **persist}
 
 
 @app.post("/api/mcp/remove")
 async def mcp_remove(req: McpRemoveRequest):
-    """Disable an enabled MCP plugin: ops-controller persists + renders; applied on a model-gateway recreate."""
+    """Disable an enabled MCP plugin: ops-controller persists, renders and applies it."""
     server = req.server.strip()
     if not _valid_mcp_server_name(server):
         raise HTTPException(status_code=400, detail="Invalid server id.")
     enabled = _read_mcp_servers()
     if server not in enabled:
-        return {"status": "already_removed", "servers": enabled, "applied": False, "next": None}
+        return {"status": "already_removed", "servers": enabled}
     persist = await _persist_mcp_toggle(server, "remove")
     logger.info("MCP_SERVER_REMOVED server=%s persistent=%s plugin=%s", server, persist["persistent"], persist["plugin"])
-    return {"status": "removed", "servers": [s for s in enabled if s != server], "applied": False,
-            "next": MCP_APPLY_HINT, **persist}
+    return {"status": "removed", "servers": [s for s in enabled if s != server], **persist}
 
 
 # --- Token Throughput ---

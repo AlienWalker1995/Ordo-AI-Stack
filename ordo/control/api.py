@@ -1,8 +1,8 @@
 """Control plane — the ops-controller service, as pure request handlers.
 
 This is what the rendered compose's `ops-controller` service runs. It exposes the substrate
-over HTTP: the live GPU/scheduler status the dashboard and agents poll, a re-render endpoint,
-and the drift-safe model switch.
+over HTTP: the live GPU/scheduler status the dashboard and agents poll, the drift-safe model
+switch, plugin enable/disable, and `POST /apply`.
 
 Design constraints (from the architecture decisions + the drift lessons):
   - ONE write path. Changing the active model does NOT hand-edit `.env` or a separate registry;
@@ -14,6 +14,13 @@ Design constraints (from the architecture decisions + the drift lessons):
     probe is open. This API can stop services, re-render the stack and hand out GPU leases, so
     network isolation alone is not enough: any compromised container on ordo-net could drive it.
     The check lives in the HTTP layer (`app()`); `route()` itself stays pure.
+  - ONE post-render step. Every source write (model switch, plugin enable/disable, and so the
+    dashboard's MCP toggle) is followed by `apply_render`: recreate exactly the services whose
+    rendered config hash or image differs from their container's (ordo/render/changed_set.py, the
+    computation the host's `ordo apply` makes), GPU-lease checked, netns members with their owner.
+    What this process cannot recreate (itself, the agent calling it, a service missing its
+    secrets) is returned as `restart_required_on_host` with the `ordo apply --only ...` command. A
+    failed apply restores the previous source and re-applies it. No caller keeps its own list.
   - Every state-changing call (POST/PUT/PATCH/DELETE) leaves one audit record, whatever its
     outcome, refusals included. It is written in one place, `handle()` (plus the 401 and bad-JSON
     refusals in `app()`, which never reach it), so a new route is audited without opting in.
@@ -38,15 +45,16 @@ import yaml
 
 from ..render import substrate
 from ..render.catalog import Catalog
+from ..render.changed_set import Change, diff_services
 from ..render.config import Source
 from ..render.engine import render
 from ..render.models_volume import CHAT_SERVICE
 from ..render.plugins import PluginRegistry
 from ..render.served_models import model_files, models_by_gpu, served_models
 from ..render.source_edit import edit_plugins_list
-from ..render.stack import lifecycle_group
+from ..render.stack import lifecycle_group, load_compose, plan_named
 from .audit import AuditLog
-from .broker import Broker
+from .broker import SELF_REFERENTIAL_SERVICES, Broker
 from .scheduler import Job, Scheduler
 
 logger = logging.getLogger(__name__)
@@ -123,6 +131,10 @@ _AUDIT_BODY_VERBS = {
     "/comfyui/install-node-requirements": ("comfyui_pip_install", "node_path"),
     "/gpu/assign": ("gpu_assign", "service"),
 }
+# path: (action, target) for a call that acts on the whole rendered stack.
+_AUDIT_FIXED_VERBS = {
+    "/apply": ("apply", "stack"),
+}
 
 
 def _clip(value: Any, limit: int = _AUDIT_FIELD_MAX) -> str:
@@ -141,6 +153,8 @@ def audit_subject(path: str, body: Any) -> tuple[str, str]:
     for prefix, suffix, action in _AUDIT_PATH_VERBS:
         if path.startswith(prefix) and path.endswith(suffix) and len(path) > len(prefix) + len(suffix):
             return action, _clip(path[len(prefix):-len(suffix)])
+    if path in _AUDIT_FIXED_VERBS:
+        return _AUDIT_FIXED_VERBS[path]
     if path not in _AUDIT_BODY_VERBS:
         return "unknown", ""
     action, field = _AUDIT_BODY_VERBS[path]
@@ -313,10 +327,13 @@ class ControlPlane:
         }
 
     def set_model_config(self, body: dict[str, Any]) -> dict[str, Any]:
-        """Switch the active model the drift-safe way: write the SOURCE, then re-render.
+        """Switch the active model the drift-safe way: write the SOURCE, re-render, then apply.
 
         `.env`, Hermes context, and model-gateway ctx are all regenerated from the new source in
         one pass — they cannot end up disagreeing. `model: "auto"` hands control back to best-fit.
+        The render decides what restarts (`apply_render`): llama.cpp and the gateway, the CPU
+        fallback and the agent when the context window changed, whatever else the render touched.
+        The response's `apply` says what was recreated and what the host must finish.
         """
         model_id = str(body.get("model", "")).strip()
         if not model_id:
@@ -331,21 +348,21 @@ class ControlPlane:
         # ONE write path: mutate only the model key of the raw source, preserving everything else.
         raw = yaml.safe_load(self.source_path.read_text(encoding="utf-8")) or {}
         raw["model"] = model_id
-        missing = self._missing_model_files(render(Source.from_dict(raw), self.catalog, self.registry))
+        rc = render(Source.from_dict(raw), self.catalog, self.registry)
+        missing = self._missing_model_files(rc)
         if missing:
             return missing
-        self.source_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
-
-        rc = self._render()
-        rc.write(self.out_dir)  # regenerate .env + compose + hermes ctx + manifest from the source
+        applied, failure = self._commit_source(yaml.safe_dump(raw, sort_keys=False), rc)
+        if failure:
+            return failure
         return {"ok": True, "active_model": rc.model.id, "ctx_size": rc.ctx_size,
-                "warnings": rc.warnings, "wrote": str(self.out_dir)}
+                "warnings": rc.warnings, "wrote": str(self.out_dir), "apply": applied}
 
     def _missing_model_files(self, target: Any) -> dict[str, Any] | None:
         """A refusal when the chat service would load a file the models volume lacks, else None.
 
-        Checked before the source is written: the caller recreates llama.cpp right after a switch,
-        and onto a missing weights file it crash-loops (a missing projector leaves it running
+        Checked before the source is written: the post-render step recreates llama.cpp right after
+        a switch, and onto a missing weights file it crash-loops (a missing projector leaves it running
         without vision while model-gateway advertises vision). The fix is deliberately NOT a
         download from here: tens of GB is the host's `ordo fetch` (resumable, preflighted for
         disk), and a download inside this process would die with every ops-controller recreate."""
@@ -438,10 +455,11 @@ class ControlPlane:
 
     def enable_plugin(self, plugin_id: str, body: dict[str, Any]) -> dict[str, Any]:
         """Enable a service plugin the drift-safe way (same one-write-path as set_model_config): add
-        it (+ any unmet deps) to ordo.yaml's `plugins:` list, re-render, regenerate out/. Under
-        `plugins: auto` a fitting plugin is ALREADY rendered (dormant behind its profile), so this is
-        a no-op edit and the caller just recreates the service. Refuses anything not in
-        installable (`_installable`), and anything that doesn't fit the hardware."""
+        it (+ any unmet deps) to ordo.yaml's `plugins:` list, re-render, regenerate out/, then apply
+        (`apply_render`), which creates its services. Under `plugins: auto` a fitting plugin is
+        ALREADY rendered, so nothing is written and the apply alone creates whatever of it is not
+        running. A service whose secrets out/secrets.env lacks is rendered but left to the host.
+        Refuses anything not installable (`_installable`), and anything that doesn't fit the hardware."""
         if not self._installable(plugin_id):
             return self._error(403, f"'{plugin_id}' is not an installable service (core, edge/"
                                "front-door, and the agent are refused)",
@@ -456,12 +474,15 @@ class ControlPlane:
         present = self._secrets_present()
 
         if plugin_id in self._enabled_ids(rc):
-            # already rendered (the common case under plugins: auto) — no source edit; recreate only
+            # Already rendered (the common case under plugins: auto): no source edit, only the apply.
+            applied = self.apply_render() if self.broker else None
+            if applied is not None and "_status" in applied:
+                return applied
             return {"ok": True, "already_rendered": True, "plugin": plugin_id,
                     "services": services, "compose_profile": plugin.compose_profile,
                     "wants_secrets": bool(plugin.secrets),
                     "missing_secrets": [k for k in plugin.secrets if k not in present],
-                    "warnings": []}
+                    "warnings": [], "apply": applied}
 
         if not plugin.fits(hw):
             _, notes = self.registry.resolve([plugin_id], hw)
@@ -500,19 +521,22 @@ class ControlPlane:
         conflict = self._substrate_conflict()
         if conflict:
             return conflict
-        # commit: ONE write path — the source text, then regenerate every derived output.
-        self.source_path.write_text(text, encoding="utf-8")
-        rc2.write(self.out_dir)
+        # commit: ONE write path: the source text, then every derived output, then the apply.
+        applied, failure = self._commit_source(text, rc2)
+        if failure:
+            return failure
         return {"ok": True, "already_rendered": False, "plugin": plugin_id,
                 "services": services, "compose_profile": plugin.compose_profile,
                 "wants_secrets": bool(plugin.secrets),
                 "missing_secrets": [k for k in plugin.secrets if k not in self._secrets_present()],
-                "added": to_add, "warnings": rc2.warnings, "wrote": str(self.out_dir)}
+                "added": to_add, "warnings": rc2.warnings, "wrote": str(self.out_dir), "apply": applied}
 
     def disable_plugin(self, plugin_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Remove a service plugin from an EXPLICIT plugins list + re-render (symmetric to enable).
-        Under `plugins: auto` there's no list item to remove — the caller stops the container, but it
-        returns on the next render unless the operator sets an explicit list; that is reported."""
+        """Remove a service plugin from an EXPLICIT plugins list, re-render, then apply (symmetric to
+        enable): the plugin's services, which the render no longer defines, are stopped, and whatever
+        the render changed for the rest (the gateway, for an MCP server) is recreated. Under
+        `plugins: auto` there is no list item to remove, so a disable could not persist: it is
+        refused with the fix (an explicit list) and nothing is stopped."""
         if not self._installable(plugin_id):
             return self._error(403, f"'{plugin_id}' is not an installable service")
         plugin = self.registry.get(plugin_id)
@@ -521,9 +545,9 @@ class ControlPlane:
         services = [s.name for s in plugin.services]
         src = Source.load(self.source_path)
         if src.plugins == "auto" or src.plugins is None:
-            return {"ok": True, "transient": True, "plugin": plugin_id, "services": services,
-                    "note": "plugins is 'auto'; the container is stopped but returns on the next "
-                            "render — set an explicit plugin list to persist a disable"}
+            return self._error(409, "ordo.yaml has `plugins: auto`, which enables every fitting plugin: "
+                                    f"'{plugin_id}' cannot be disabled without an explicit `plugins:` list "
+                                    "there. Nothing was changed.", plugin=plugin_id)
         text = self.source_path.read_text(encoding="utf-8")
         try:
             new_text = edit_plugins_list(text, plugin_id, "remove")
@@ -536,9 +560,153 @@ class ControlPlane:
             return conflict
         edited = Source.from_dict(yaml.safe_load(new_text))
         rc2 = render(edited, self.catalog, self.registry)
-        self.source_path.write_text(new_text, encoding="utf-8")
-        rc2.write(self.out_dir)
-        return {"ok": True, "plugin": plugin_id, "services": services, "wrote": str(self.out_dir)}
+        applied, failure = self._commit_source(new_text, rc2)
+        if failure:
+            return failure
+        return {"ok": True, "plugin": plugin_id, "services": services, "wrote": str(self.out_dir),
+                "apply": applied}
+
+    # --- the post-render step: recreate exactly what a render changed ---
+
+    def _out_services(self) -> set[str]:
+        """The services out/docker-compose.yml defines now (empty before the first render)."""
+        if not (self.out_dir / "docker-compose.yml").exists():
+            return set()
+        return set(load_compose(str(self.out_dir)).get("services") or {})
+
+    def _commit_source(self, text: str, rendered: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Write `text` as the operator source, write its render to out/, then apply it.
+
+        Returns (the apply result, None), or (None, a failure payload) when the apply refused or
+        failed: the previous source is then written back, re-rendered and re-applied, so the source
+        never names a config the stack is not running. The apply result is None when this control
+        plane has no container backend (a hand-run or test instance): nothing is recreated then.
+        """
+        previous_text = self.source_path.read_text(encoding="utf-8")
+        previous_services = self._out_services()
+        self.source_path.write_text(text, encoding="utf-8")
+        rendered.write(self.out_dir)
+        if not self.broker:
+            return None, None
+        # A service the new render no longer defines (a disabled plugin's) is stopped.
+        removed = sorted(previous_services - self._out_services())
+        applied = self.apply_render(removed=removed)
+        if "_status" not in applied:
+            return applied, None
+        self.source_path.write_text(previous_text, encoding="utf-8")
+        self._render().write(self.out_dir)
+        rollback = self.apply_render()
+        if rollback.pop("_status", None) is None:
+            outcome = "ordo.yaml and out/ were rolled back and the previous render re-applied"
+        else:
+            outcome = (f"ordo.yaml and out/ were rolled back, but re-applying the previous render failed "
+                       f"too ({rollback.get('error')}); run `ordo apply` on the host")
+        applied["error"] = f"{applied['error']}; {outcome}"
+        applied["rolled_back"] = True
+        applied["rollback"] = rollback
+        return None, applied
+
+    def _secret_holds(self, rc: Any) -> dict[str, list[str]]:
+        """service -> the required secrets out/secrets.env lacks, for each enabled plugin's services
+        (its compose services and its MCP server's). Started without them they crash-loop, so the
+        post-render step leaves them to the host (`ordo secrets set`, then `ordo apply`)."""
+        present = self._secrets_present()
+        holds: dict[str, list[str]] = {}
+        for plugin_id in sorted(self._enabled_ids(rc)):
+            plugin = self.registry.get(plugin_id)
+            if plugin is None:
+                continue
+            missing = [key for key in plugin.secrets if key not in plugin.optional_secrets and key not in present]
+            if not missing:
+                continue
+            names = [service.name for service in plugin.services]
+            names += [server["service"] for server in rc.mcp_servers
+                      if server.get("plugin_id") == plugin_id and not server.get("hosted")]
+            for name in names:
+                held = holds.setdefault(name, [])
+                held += [key for key in missing if key not in held]
+        return holds
+
+    def _host_reasons(self, changes: list[Change], doc: dict[str, Any], rc: Any) -> dict[str, str]:
+        """Why each changed service this process must not recreate is left to the host."""
+        secret_holds = self._secret_holds(rc)
+        reasons: dict[str, str] = {}
+        for change in changes:
+            name = change.service
+            if name in SELF_REFERENTIAL_SERVICES:
+                reasons[name] = (f"{name} runs the control plane (or is the agent calling it) and cannot be "
+                                 f"recreated through it ({'; '.join(change.reasons)})")
+            elif change.incomparable:
+                reasons[name] = "; ".join(change.reasons)
+            elif name in secret_holds:
+                reasons[name] = (f"needs secret(s) {', '.join(secret_holds[name])}, which out/secrets.env does "
+                                 "not hold: `ordo secrets set <KEY>` on the host first")
+            else:
+                members = [m for m in lifecycle_group(doc, name)[1:] if m in SELF_REFERENTIAL_SERVICES]
+                if members:
+                    reasons[name] = f"its netns member(s) {', '.join(members)} run the control plane"
+        return reasons
+
+    def apply_render(self, *, dry_run: bool = False, removed: list[str] | tuple[str, ...] = ()) -> dict[str, Any]:
+        """Bring the stack to the current render: recreate exactly the changed set.
+
+        The changed set is every long-running rendered service whose config hash or image differs
+        from its container's, or that has none (ordo/render/changed_set.py, what the host's `ordo
+        apply` computes). It is recreated in one `up -d --no-deps --force-recreate` call with each
+        owner's netns members, after the GPU-lease check every lifecycle verb makes (an evicted
+        resident is refused, 409). `removed` are services the caller's render dropped: their
+        containers are stopped. Left to the host, and named with the command that finishes the job:
+        the control plane itself and the agent calling it, a container another compose version
+        created (its hash is not comparable), and a service whose secrets are missing. Fails closed:
+        a state that cannot be read refuses (503) and recreates nothing.
+        """
+        if not self.broker:
+            return self._error(503, "no container backend: this control plane cannot read or recreate containers")
+        try:
+            state = self.broker.backend.stack_state()
+            doc = self.broker.backend.rendered_compose()
+        except Exception as e:  # noqa: BLE001 - any unreadable side means the changed set is unknown
+            return self._error(503, f"cannot read what is rendered and what is running ({e}); "
+                                    "nothing was recreated")
+        changes = diff_services(state.rendered, state.running, compose_version=state.compose_version)
+        host_reasons = self._host_reasons(changes, doc, self._render())
+        to_recreate = [change.service for change in changes if change.service not in host_reasons]
+        _args, targets = plan_named(doc, to_recreate, force_recreate=True)
+        stopped = sorted(name for name in removed if name in state.running)
+        host = sorted(host_reasons)
+        plan: dict[str, Any] = {
+            "dry_run": dry_run,
+            "changes": [{"service": change.service, "reasons": list(change.reasons)} for change in changes],
+            "recreated": sorted(targets),
+            "stopped": stopped,
+            "restart_required_on_host": host,
+            "host_reasons": host_reasons,
+            "host_command": f"ordo apply --only {' '.join(host)}" if host else None,
+            # Containers the render no longer defines, left alone (as the host's `ordo apply` does).
+            "orphans": sorted(set(state.running) - set(state.rendered) - set(stopped)),
+        }
+        conflict = self._group_lease_conflict(sorted(targets))
+        if conflict:
+            return {**conflict, "changes": plan["changes"]}
+        if dry_run:
+            return {"ok": True, **plan}
+        try:
+            for name in stopped:
+                self.broker.backend.stop(name)
+            if to_recreate:
+                self.broker.backend.recreate_services(to_recreate)
+        except Exception as e:  # noqa: BLE001 - reported with the plan it was executing
+            return self._error(500, f"applying the render failed: {e}", changes=plan["changes"])
+        return {"ok": True, **plan}
+
+    def apply(self, body: dict[str, Any]) -> dict[str, Any]:
+        """`POST /apply`: bring the stack to out/ as it is rendered now (after a host render, say).
+        `{"dry_run": true}` returns the plan and changes nothing; otherwise `confirm` is required."""
+        dry_run = bool(body.get("dry_run"))
+        if not dry_run and not body.get("confirm"):
+            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the "
+                                    "request body to proceed, or {\"dry_run\": true} for the plan.")
+        return self.apply_render(dry_run=dry_run)
 
     def request_job(self, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
@@ -1272,6 +1440,8 @@ class ControlPlane:
             return 200, self.get_model_config()
         if m == "POST" and path == "/model-config":
             return self._as_response(self.set_model_config(body))
+        if m == "POST" and path == "/apply":
+            return self._as_response(self.apply(body))
         if m == "GET" and path == "/plugins":
             return 200, self.list_plugins()
         if m == "POST" and path.startswith("/plugins/") and path.endswith("/enable"):

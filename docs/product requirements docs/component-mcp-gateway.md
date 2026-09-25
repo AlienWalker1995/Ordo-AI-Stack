@@ -166,15 +166,16 @@ CMD ["mcp-proxy", "--host", "0.0.0.0", "--port", "9000", "--stateless", "--pass-
    `apt-get`, since its base image is Alpine).
 
 In all three cases, finish by adding the plugin id to `ordo.yaml`'s `plugins:` list, then
-`ordo render` and recreate `model-gateway`.
+`ordo apply` (it recreates `model-gateway`, whose definition carries a digest of its MCP config).
 
 ## Operations
 
 - **Enable or disable a server:** edit `ordo.yaml`'s `plugins:` list, directly or through the
-  MCP section of the dashboard's Settings drawer (which performs the same comment-preserving edit). The dashboard response
-  carries `{"applied": false, "next": "ordo render + recreate model-gateway"}`.
+  MCP section of the dashboard's Settings drawer (which performs the same comment-preserving edit
+  through ops-controller, then applies it: the response lists what was `recreated` and `stopped`).
 - **No hot reload.** LiteLLM reads config-file MCP servers at startup, so a change takes effect
-  only after `ordo render` plus a `model-gateway` recreate.
+  when `model-gateway` is recreated. Its definition carries the digest of `out/model-gateway/`
+  (`ordo.rendered-config`), so any render that changes the MCP set puts it in the changed set.
 - **Long-running tools** get a per-server `timeout:` in the manifest (`comfyui` renders 1800s); the
   default is 60s.
 - **A down server** degrades to a shorter tool list with an explicit `unreachable` outcome and a red

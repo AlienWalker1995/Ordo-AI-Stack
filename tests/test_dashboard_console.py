@@ -370,15 +370,9 @@ def test_served_file_is_the_basename_of_what_llama_server_reports():
     assert console.served_file(None) is None
 
 
-def test_a_switch_with_the_same_context_recreates_the_gpu_server_and_gateway():
-    plan = console.switch_plan(106496, 106496)
-    assert plan == {"recreate": ["llamacpp", "model-gateway"], "hermes_restart_needed": False}
-
-
-def test_a_switch_that_changes_the_context_also_resizes_the_cpu_fallback_and_flags_hermes():
-    plan = console.switch_plan(106496, 131072)
-    assert plan["recreate"] == ["llamacpp", "model-gateway", "llamacpp-cpu"]
-    assert plan["hermes_restart_needed"] is True
+def test_the_dashboard_keeps_no_list_of_what_a_switch_restarts():
+    # The control plane recreates exactly what the render changed (ordo/control/api.py apply_render).
+    assert not hasattr(console, "switch_plan")
 
 
 # --- services table ---

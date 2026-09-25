@@ -52,7 +52,7 @@ Every state-changing call to ops-controller (every `POST`, whatever the route) l
 |---|---|---|
 | `ts` | float | Unix timestamp |
 | `caller` | string | The caller's `X-Actor` header (`dashboard`, `orchestration`, `hermes`, `gpu-gate`, `comfyui-mcp`), reduced to `[A-Za-z0-9_.:@-]`, at most 64 characters; `unknown` when absent. Self-declared: every caller holds the same bearer token |
-| `action` | string | `start`, `stop`, `restart`, `recreate`, `container.restart`, `compose.up`, `compose.down`, `compose.restart`, `model_config`, `plugin.enable`, `plugin.disable`, `lease.request`, `lease.heartbeat`, `lease.release`, `models.download`, `comfyui_pip_install`, `gpu_assign`; `unknown` for a path that is no route |
+| `action` | string | `start`, `stop`, `restart`, `recreate`, `container.restart`, `compose.up`, `compose.down`, `compose.restart`, `model_config`, `apply`, `plugin.enable`, `plugin.disable`, `lease.request`, `lease.heartbeat`, `lease.release`, `models.download`, `comfyui_pip_install`, `gpu_assign`; `unknown` for a path that is no route |
 | `target` | string | The service, container, plugin, model id, lease id or file the call names (empty for a whole-stack compose verb) |
 | `result` | string | `ok` (2xx/3xx), `refused` (4xx) or `error` (5xx) |
 | `method`, `path`, `status` | string, string, int | The request line and the HTTP status answered |

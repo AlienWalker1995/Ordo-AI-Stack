@@ -3,7 +3,9 @@
 The render authority: enable/disable a service plugin the drift-safe way (edit ordo.yaml's plugins
 list -> re-render -> regenerate out/), the SAME one-write-path as the model switch. Under
 `plugins: auto` a fitting plugin is already rendered (dormant behind its profile), so enable is a
-no-op edit; on an explicit list it edits + re-renders. Core/edge/agent are refused (allowlist);
+no-op edit; on an explicit list it edits + re-renders (a disable under auto is refused: there is
+no list item to remove). What the render changed is then applied by ops-controller itself
+(tests/substrate/test_control_apply.py). Core/edge/agent are refused (allowlist);
 unfittable plugins are refused with the resolve note. Every kind=mcp plugin is installable too: the
 dashboard's MCP toggle goes through this same write path instead of editing the source itself.
 """
@@ -84,10 +86,12 @@ def test_disable_on_explicit_list_removes_and_rerenders(tmp_path):
     assert "rag" not in yaml.safe_load(src.read_text())["plugins"]
 
 
-def test_disable_under_auto_is_transient(tmp_path):
-    cp, _ = _cp(tmp_path, plugins="auto")
+def test_disable_under_auto_is_refused_and_writes_nothing(tmp_path):
+    cp, src = _cp(tmp_path, plugins="auto")
+    before = src.read_text()
     code, body = cp.route("POST", "/plugins/comfyui/disable", {"confirm": True})
-    assert code == 200 and body.get("transient") is True
+    assert code == 409 and "explicit `plugins:` list" in body["error"]
+    assert src.read_text() == before
 
 
 def test_enable_mcp_plugin_edits_source_and_renders_servers_json(tmp_path):

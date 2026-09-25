@@ -24,9 +24,25 @@ import sys
 import threading
 from typing import Protocol
 
+from ..render.changed_set import DockerState, StackState, Staged
 from ..render.stack import compose_argv, lifecycle_group, load_compose, plan_named, profiles_in
 from .scheduler import Job, Scheduler
 from .scheduler_state import RECOVERY_JOB_ID, SchedulerStateStore, StateUnreadable
+
+# Services the control plane must never cycle, because they are the ones serving the request.
+#
+# `agent` is the Hermes gateway. Hermes reaches these verbs through its own ops-router tools, so an
+# unguarded restart is a process killing itself mid-tool-call: the request never returns, the tool
+# call is recorded as failed, and the retry restarts it again. The retired ops-api encoded this by
+# leaving `agent` out of a 25-name ALLOWED_SERVICES literal; a denylist states the actual rule
+# instead, and does not need an edit every time a plugin is added.
+#
+# `ops-controller` is this process. A self-recreate orphans the compose call it is running.
+#
+# Everything else in the project is legitimately operator-controllable from the dashboard. When a
+# render changes one of these, the post-render step (ControlPlane.apply_render) names it for the
+# host's `ordo apply --only ...` instead.
+SELF_REFERENTIAL_SERVICES = frozenset({"agent", "ops-controller"})
 
 
 class ContainerBackend(Protocol):
@@ -40,6 +56,9 @@ class ContainerBackend(Protocol):
     def restart(self, service: str) -> None: ...
     def logs(self, service: str, tail: int = 100) -> str: ...
     def recreate_service(self, service: str) -> None: ...
+    # Recreate the named services and their netns members in ONE compose call (`stack.plan_named`,
+    # `--no-deps --force-recreate`): the post-render step's changed set.
+    def recreate_services(self, services: list[str]) -> None: ...
     def container_logs(self, name: str, tail: int = 100) -> str: ...
     def container_restart(self, name: str) -> None: ...
 
@@ -53,6 +72,10 @@ class ContainerBackend(Protocol):
     # The rendered compose this backend acts on. The control plane derives a service's netns
     # members from it (`stack.lifecycle_group`), so it reads the same file the compose verbs run.
     def rendered_compose(self) -> dict: ...
+
+    # Both sides of the changed set (ordo/render/changed_set.py): every rendered service's config
+    # hash and image, and every container of the project. Raises when either cannot be read.
+    def stack_state(self) -> StackState: ...
 
     # Compose verbs take an OPTIONAL service: no argument means the whole project, which for
     # compose_down means the entire stack including the agent and the GPU scheduler. A named
@@ -72,6 +95,8 @@ class MockBackend:
         self.log_requests: list[tuple[str, int]] = []
         self.list_services_calls: list = []
         self.recreate_calls: list[str] = []
+        self.recreate_batches: list[list[str]] = []
+        self.state = StackState(rendered={}, running={}, compose_version="")
         self.list_containers_calls: list = []
         self.container_log_requests: list[tuple[str, int]] = []
         self.container_restart_calls: list[str] = []
@@ -107,6 +132,12 @@ class MockBackend:
 
     def recreate_service(self, service: str) -> None:
         self.recreate_calls.append(service)
+
+    def recreate_services(self, services: list[str]) -> None:
+        self.recreate_batches.append(list(services))
+
+    def stack_state(self) -> StackState:
+        return self.state
 
     def list_containers(self) -> list[dict]:
         self.list_containers_calls.append(None)
@@ -169,18 +200,8 @@ class DockerBackend:
     def __init__(self, project: str = "ordo"):
         self.project = project
 
-    # Services the control plane must never cycle, because they are the ones serving the request.
-    #
-    # `agent` is the Hermes gateway. Hermes reaches these verbs through its own ops-router tools,
-    # so an unguarded restart is a process killing itself mid-tool-call: the request never returns,
-    # the tool call is recorded as failed, and the retry restarts it again. The retired ops-api
-    # encoded this by leaving `agent` out of a 25-name ALLOWED_SERVICES literal; a denylist states
-    # the actual rule instead, and does not need an edit every time a plugin is added.
-    #
-    # `ops-controller` is this process. A self-recreate orphans the compose call it is running.
-    #
-    # Everything else in the project is legitimately operator-controllable from the dashboard.
-    SELF_REFERENTIAL = frozenset({"agent", "ops-controller"})
+    # See SELF_REFERENTIAL_SERVICES: the services serving the request, never cycled from here.
+    SELF_REFERENTIAL = SELF_REFERENTIAL_SERVICES
 
     def _lifecycle_guard(self, service: str) -> str:
         """`_guard`, plus the refusal to act on whatever is serving this request."""
@@ -382,10 +403,26 @@ class DockerBackend:
         netns owner (caddy) is recreated in the same call as its members, which would otherwise
         keep the destroyed namespace.
         """
-        args, starts = plan_named(self.rendered_compose(), [self._lifecycle_guard(service)], force_recreate=True)
+        self.recreate_services([service])
+
+    def recreate_services(self, services: list[str]) -> None:
+        """`recreate_service` for several services in one compose call: the post-render step's
+        changed set. Every target (members included) is refused if it is the control plane."""
+        args, starts = plan_named(self.rendered_compose(), [self._lifecycle_guard(s) for s in services],
+                                  force_recreate=True)
         for name in starts:
             self._lifecycle_guard(name)  # a member cannot be the control plane either
         subprocess.run(self._compose(*args, all_profiles=True), check=True, timeout=600)
+
+    def stack_state(self) -> StackState:
+        """The changed set's two sides, read the way the host's `ordo apply` reads them: this
+        process's compose (pinned to the host's version, services/ops-controller/Dockerfile) hashes
+        the render in /config with /config as the project directory, the directory every container
+        this process recreates is created against. No service binds a project-relative path
+        (tests/substrate/test_compose.py), so these hashes equal the host's, made against out/."""
+        doc = self.rendered_compose()
+        staged = Staged(compose_dir=self.COMPOSE_DIR, project_directory=self.COMPOSE_DIR, doc=doc)
+        return DockerState().read(staged, project=self.project)
 
     def exec_in(self, container: str, command: list[str]) -> tuple[int, str]:  # pragma: no cover - needs real docker
         """Run a command inside one container of THIS project; returns (exit_code, combined output).

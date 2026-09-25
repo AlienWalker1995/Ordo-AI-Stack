@@ -370,6 +370,16 @@ class RenderedConfig:
             return {}
         return {"dashboard_sign_in": {"url": f"http://{LOOPBACK}:{local_port.host}", "secret": secret}}
 
+    def model_gateway_config_files(self) -> dict[str, str]:
+        """out/model-gateway/, file name -> text: the per-consumer key grants model-gateway-keys
+        provisions (keys.json) and the MCP fragment the gateway's entrypoint merges into LiteLLM's
+        config (mcp_servers.yaml). Both are read at startup only, so compose_dict labels their
+        readers with the digest of this content (compose.RENDERED_CONFIG_LABEL)."""
+        return {
+            "keys.json": json.dumps({"keys": self.litellm_keys}, indent=2) + "\n",
+            "mcp_servers.yaml": render_litellm_mcp_fragment(self.mcp_servers),
+        }
+
     def compose_dict(self, project: str = "ordo", image_tags: dict[str, str] | None = None) -> dict[str, Any]:
         """The isolated, runnable compose for the stack — built from the resolved plugin
         services (data-driven), with the primary- AND secondary-GPU uuids resolved for the pins.
@@ -417,7 +427,8 @@ class RenderedConfig:
             litellm_google_sso_env=self.model_gateway.get("google_sso_env") or {},
             # The keys this render wrote to .env: a service's declared derived key renders as a
             # `${KEY?}` reference only when the render produced it.
-            available_env=frozenset(self.env))
+            available_env=frozenset(self.env),
+            model_gateway_config_digest=compose.rendered_config_digest(self.model_gateway_config_files()))
         pin_first_party(doc["services"], self.first_party_images, image_tags or {})
         return doc
 
@@ -455,10 +466,8 @@ class RenderedConfig:
         # model-gateway/ - mounted read-only into model-gateway + model-gateway-keys at /config.
         mg_dir = out / "model-gateway"
         mg_dir.mkdir(parents=True, exist_ok=True)
-        (mg_dir / "keys.json").write_text(
-            json.dumps({"keys": self.litellm_keys}, indent=2) + "\n", encoding="utf-8")
-        (mg_dir / "mcp_servers.yaml").write_text(
-            render_litellm_mcp_fragment(self.mcp_servers), encoding="utf-8")
+        for name, text in self.model_gateway_config_files().items():
+            (mg_dir / name).write_text(text, encoding="utf-8")
         # mcp/servers.json: the dashboard's read-only view (enabled servers + server_id->plugin_id map
         # for the enable/disable toggle that edits ordo.yaml). Mounted at /mcp-config.
         mcp_dir = out / "mcp"
