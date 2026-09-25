@@ -260,6 +260,76 @@ class Scheduler:
             self.complete(jid)
         return expired
 
+    # --- durable state (the shell writes it to disk; see scheduler_state.py) ---
+    def snapshot(self) -> dict:
+        """The lease and eviction state a restart must not lose.
+
+        Times are relative to this scheduler's clock ("expires in N seconds", "held for N
+        seconds"): the scheduler has no wall clock, so the shell converts them to wall-clock
+        instants when it writes the file and back when it reads it. Idle-cached residents are
+        not included: the next process registers them from the render it runs.
+        """
+        return {
+            "running": [
+                {"id": job.id, "vram_gb": job.vram_gb, "kind": job.kind, "est_seconds": job.est_seconds,
+                 "lease_remaining_s": self._deadline.get(job.id, self._clock) - self._clock,
+                 "held_s": self._clock - self._started.get(job.id, self._clock)}
+                for job in self._running.values()
+            ],
+            "queued": [
+                {"id": job.id, "vram_gb": job.vram_gb, "kind": job.kind, "est_seconds": job.est_seconds}
+                for job in self._queue
+            ],
+            "evicted": dict(self._evicted),
+            "rejected": list(self._rejected),
+        }
+
+    def load_snapshot(self, snap: dict) -> None:
+        """Adopt the state a previous process saved. Call once, at startup, after the residents
+        are registered and before anything is served.
+
+        An evicted resident leaves the idle-cached set (it is stopped, so it holds no VRAM) and
+        waits for the usual restore-on-drain. A running lease keeps its remaining TTL; one that
+        ran out while the process was down has a deadline in the past, and the next sweep
+        completes it.
+        """
+        for resident, vram in snap["evicted"].items():
+            self._idle_cached.pop(resident, None)
+            self._lru_order.pop(resident, None)
+            self._evicted[resident] = float(vram)
+        for item in snap["running"]:
+            job = Job(item["id"], float(item["vram_gb"]), item["kind"], float(item["est_seconds"]))
+            held = max(0.0, float(item["held_s"]))
+            self._running[job.id] = job
+            self._elapsed[job.id] = held
+            self._started[job.id] = self._clock - held
+            self._deadline[job.id] = self._clock + float(item["lease_remaining_s"])
+        for item in snap["queued"]:
+            self.submit(Job(item["id"], float(item["vram_gb"]), item["kind"], float(item["est_seconds"])))
+        self._rejected = list(snap["rejected"])[-50:]
+
+    def hold_residents_for_recovery(self, residents: list[str], job_id: str, ttl_seconds: float) -> None:
+        """Mark `residents` evicted and hold their VRAM under a synthetic lease `job_id`.
+
+        Used when the saved state is unreadable: a stopped resident may have been evicted for a
+        render that is still running, so restoring it could put two tenants on one card. The
+        synthetic lease reserves the resident's footprint, which is what blocks the restore; it
+        needs no client, and it expires after `ttl_seconds` like any stranded lease. A live
+        holder whose heartbeat is refused re-files its request and keeps the resident evicted
+        past that point.
+        """
+        moved = [resident for resident in residents if resident in self._idle_cached]
+        if not moved:
+            return
+        for resident in moved:
+            self._lru_order.pop(resident, None)
+            self._evicted[resident] = self._idle_cached.pop(resident)
+        job = Job(job_id, sum(self._evicted[resident] for resident in moved), "recovery")
+        self._running[job.id] = job
+        self._elapsed[job.id] = 0.0
+        self._started[job.id] = self._clock
+        self._deadline[job.id] = self._clock + float(ttl_seconds)
+
     def tick(self, dt_seconds: float) -> None:
         """Advance elapsed time for running jobs (drives the ETA) and the lease clock."""
         self._clock += dt_seconds

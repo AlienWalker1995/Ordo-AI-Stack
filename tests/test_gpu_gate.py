@@ -406,6 +406,20 @@ async def test_startup_clears_a_lease_stranded_by_a_previous_incarnation(harness
 
 
 @pytest.mark.asyncio
+async def test_startup_adopts_the_lease_when_the_upstream_is_still_rendering(harness):
+    """A gate restarted mid-render must not release the card: the render still holds VRAM, and
+    the release would restore the resident LLM beside it. It re-files instead, which the
+    scheduler treats as the same request (idempotent on the job id), and holds residency."""
+    ops, upstream = StubOps(), StubUpstream()
+    upstream.queue_depth = 1
+    _url, app = await harness(ops, upstream)
+    await asyncio.sleep(0.05)
+    assert ops.completes == []
+    assert ops.jobs[:1] == ["gate-comfyui"]
+    assert app[gate.RESIDENCY].held
+
+
+@pytest.mark.asyncio
 async def test_clean_shutdown_releases_residency(harness):
     ops, upstream = StubOps(), StubUpstream()
     url, app = await harness(ops, upstream)

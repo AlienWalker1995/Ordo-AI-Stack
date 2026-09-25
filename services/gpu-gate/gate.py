@@ -45,11 +45,13 @@ FAILURE BEHAVIOUR (all deliberate)
     * Gate crashes or is killed mid-render -> it stops heartbeating, and the scheduler's lease
       TTL sweep force-completes the job and restores the evicted resident. No lease is leaked and
       llama.cpp cannot be stranded off the card. Worst-case downtime is one heartbeat TTL.
-    * Gate restarts -> it uses a STABLE job id (`ORDO_LEASE_JOB_ID`) and unconditionally releases
-      that id at startup, so a lease stranded by its previous incarnation is cleared immediately
-      rather than waiting out the TTL.
-    * Arbiter restarts and forgets the lease -> a heartbeat 404s, and the gate re-acquires rather
-      than letting the resident be restored into VRAM the render is still using.
+    * Gate restarts -> it uses a STABLE job id (`ORDO_LEASE_JOB_ID`). With the upstream idle it
+      releases that id at startup, so a lease stranded by its previous incarnation is cleared
+      immediately rather than waiting out the TTL; with the upstream still rendering it re-files
+      the same id and holds residency, because the work outlived the gate.
+    * Arbiter restarts -> it adopts the leases it saved to disk, so heartbeats keep succeeding.
+      If it lost the lease anyway, a heartbeat 404s and the gate re-acquires rather than letting
+      the resident be restored into VRAM the render is still using.
     * Upstream unreachable while polling -> treated as NOT busy, so a dead upstream drains and
       releases the card instead of pinning it.
     * Upstream WEDGED (alive, still reports outstanding work, making no progress) -> the one case
@@ -265,13 +267,26 @@ class Residency:
 
     # --- lifecycle ----------------------------------------------------------------------
     async def clear_stranded(self) -> None:
-        """Release this gate's stable job id at startup.
+        """Reconcile this gate's stable job id with the upstream at startup.
 
         If a previous incarnation died holding residency, its lease is still charged to this id
-        and the resident it evicted is still down. Completing it here reclaims that immediately
-        instead of waiting out the scheduler's TTL. Harmless when nothing is stranded — the
-        scheduler pops an unknown id and returns its status unchanged.
+        and the resident it evicted is still down. When the upstream is idle (or unreachable),
+        completing it here reclaims that immediately instead of waiting out the scheduler's TTL.
+        Harmless when nothing is stranded: the scheduler pops an unknown id and returns its
+        status unchanged.
+
+        When the upstream is still rendering, the lease is NOT stranded: the work outlived the
+        gate process. Releasing it would restore the resident LLM beside a render that holds
+        VRAM, so the gate re-files instead. The scheduler treats that as the same request
+        (idempotent on the job id): a lease it still holds (it persists leases across its own
+        restarts) is adopted as-is, and one it lost is filed again.
         """
+        if await self.upstream_busy():
+            LOG.warning("startup: %s is still busy; adopting residency for job id %r instead of "
+                        "releasing it beside the running work", self.cfg.upstream, self.cfg.job_id)
+            with contextlib.suppress(LeaseDenied):
+                await self.acquire(reason="startup: upstream already busy")
+            return
         try:
             await self._ops("POST", "/jobs/complete", {"id": self.cfg.job_id})
             LOG.info("startup: cleared any stranded residency for job id %r", self.cfg.job_id)

@@ -282,6 +282,10 @@ class ControlPlane:
         rc = self._render()
         out: dict[str, Any] = {"manifest": rc.manifest()}
         out["gpu"] = self.scheduler.status() if self.scheduler else {"state": "no-scheduler"}
+        if self.scheduler:
+            # Whether a restart would keep the lease: the host's `ordo recreate ops-controller`
+            # refuses a mid-lease recreate unless this is true.
+            out["gpu"]["state_persisted"] = bool(self.broker and self.broker.state_persisted)
         return out
 
     def get_model_config(self) -> dict[str, Any]:
