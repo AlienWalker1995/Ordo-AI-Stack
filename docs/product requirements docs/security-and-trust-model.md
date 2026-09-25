@@ -35,7 +35,7 @@
 - `out/secrets.env`: gitignored, host-only, materialized by `ordo secrets materialize` from the one secret store (a SOPS file in a private repo, `site: SECRETS_SOURCE`); not committed
 - Scoped delivery: no service loads `out/secrets.env` as an `env_file`. Each service's manifest lists the secret names it reads (`secrets:`), the renderer emits `KEY: ${KEY}` into that service's `environment:`, and compose interpolates the values from `--env-file secrets.env` (which `ordo up` / `ordo recreate` and ops-controller always pass). A service holds only the secrets it reads; `tests/substrate/test_secret_scoping.py` pins the contract.
 - MCP tool secrets (e.g. `N8N_API_KEY`): same `out/secrets.env`, same scoped interpolation
-- Agent runtime state under `data/hermes/`: gitignored; Discord bot token is supplied as a file secret (`/run/secrets/discord_token`, materialized from the secret store into `out/secrets/discord_token`); per-user allowlists are runtime state inside `data/hermes/`.
+- Agent runtime state under `data/hermes/`: gitignored; Discord bot token is supplied as a file secret (`/run/secrets/discord_bot_token`, materialized from the secret store into `out/secrets/discord_bot_token`); per-user allowlists are runtime state inside `data/hermes/`.
 - Gateway tokens: in `out/secrets.env`, interpolated per service as above
 - **Secret rotation:** `ordo secrets rotate KEY...` (or `set KEY --from-stdin` for an issued token) writes the store and materializes `out/secrets.env`, then prints the `ordo recreate --reading KEY...` that recreates every reader (a `restart` keeps the old environment). See `docs/runbooks/secrets.md`.
 
@@ -48,7 +48,7 @@
 | `LITELLM_DB_PASSWORD` | `out/secrets.env` | Per-service `KEY: ${KEY}`, interpolated from `secrets.env` | Postgres password for `litellm-db` |
 | `LITELLM_KEY_HERMES` / `_OPEN_WEBUI` / `_AUTOMATION` / `_EDGE` | `out/secrets.env` | Per-service `KEY: ${KEY}`, interpolated from `secrets.env` | Per-consumer virtual keys, provisioned by `model-gateway-keys` |
 | `OPS_CONTROLLER_TOKEN` | `out/secrets.env` | Per-service `KEY: ${KEY}`, interpolated from `secrets.env` | Bearer the dashboard, agent and MCP clients send to ops-controller |
-| `DISCORD_BOT_TOKEN` | `secrets/discord_token.sops` | Docker secret → agent (`/run/secrets/discord_token`) | Optional, only when Discord channel is used |
+| `DISCORD_BOT_TOKEN` | `secrets/discord_token.sops` | Docker secret → agent (`/run/secrets/discord_bot_token`) | Optional, only when Discord channel is used |
 | `HF_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN` | `out/secrets.env` | Per-service `KEY: ${KEY}`, interpolated from `secrets.env` | Optional, for gated HF model pulls and ComfyUI-Manager custom-node fetches |
 
 ## SSRF Defenses (MCP)

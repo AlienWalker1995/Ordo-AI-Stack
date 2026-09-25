@@ -115,6 +115,20 @@ def test_healthcheck_is_healthy_before_any_run(tmp_path):
 
 # ── configuration ──────────────────────────────────────────────────────────────
 
+def test_settings_read_the_key_pair_from_its_files(tmp_path):
+    """The rendered delivery: LANGFUSE_*_KEY_FILE point at files under /run/secrets."""
+    (tmp_path / "pk").write_text("pk-lf-file\n", encoding="utf-8")
+    (tmp_path / "sk").write_text("sk-lf-file\n", encoding="utf-8")
+    s = lr.settings_from_env({"LANGFUSE_PUBLIC_KEY_FILE": str(tmp_path / "pk"),
+                              "LANGFUSE_SECRET_KEY_FILE": str(tmp_path / "sk"), "LANGFUSE_RETENTION_DAYS": "90"})
+    assert (s.public_key, s.secret_key) == ("pk-lf-file", "sk-lf-file")
+
+
+def test_a_declared_key_file_that_is_missing_is_a_config_error(tmp_path):
+    with pytest.raises(lr.ConfigError, match="LANGFUSE_PUBLIC_KEY_FILE"):
+        lr.settings_from_env({**ENV, "LANGFUSE_PUBLIC_KEY": "", "LANGFUSE_PUBLIC_KEY_FILE": str(tmp_path / "absent")})
+
+
 def test_settings_from_env_defaults():
     s = lr.settings_from_env(ENV)
     assert (s.base_url, s.retention_days, s.run_at) == ("http://langfuse-web:3000", 90, (4, 45))

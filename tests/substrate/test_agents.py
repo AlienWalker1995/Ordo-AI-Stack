@@ -95,7 +95,7 @@ def test_render_unknown_agent_warns_and_falls_back(tmp_path):
 def test_hermes_manifest_declares_runtime_wiring():
     h = AGENTS.get("hermes")
     assert h.user == "root"
-    assert h.secret_files and all("target" in s and "source" in s for s in h.secret_files)
+    assert {s.key for s in h.secret_files} == {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT"}
     assert h.depends_on.get("model-gateway") == "service_healthy"
     assert h.healthcheck  # gateway_state.json check
 
@@ -125,9 +125,12 @@ def test_render_agent_mounts_brain_workspace_and_mirror(tmp_path):
 def test_render_agent_mounts_file_secrets_readonly(tmp_path):
     render(_src("hermes"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
-    vols = c["services"]["agent"]["volumes"]
-    assert any(v.endswith(":/run/secrets/discord_token:ro") for v in vols)
-    assert any(v.endswith(":/run/secrets/github_backup_pat:ro") for v in vols)
+    agent = c["services"]["agent"]
+    assert any(v.endswith("/out/secrets/discord_bot_token:/run/secrets/discord_bot_token:ro") for v in agent["volumes"])
+    assert any(v.endswith("/out/secrets/github_backup_pat:/run/secrets/github_backup_pat:ro") for v in agent["volumes"])
+    # The entrypoint bridges each *_FILE to the plain var (services/hermes/entrypoint.sh).
+    assert agent["environment"]["DISCORD_BOT_TOKEN_FILE"] == "/run/secrets/discord_bot_token"
+    assert agent["environment"]["GITHUB_BACKUP_PAT_FILE"] == "/run/secrets/github_backup_pat"
 
 
 def test_render_agent_has_user_env_and_healthcheck(tmp_path):

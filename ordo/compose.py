@@ -25,6 +25,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from . import gpu
+from .secret_files import SecretFileRef
+from .secret_files import add_to_service as _add_secret_files
 
 if TYPE_CHECKING:
     from .llamacpp_backend import LlamaCppBackend
@@ -133,9 +135,11 @@ def _depends_on(peers: dict[str, str] | list[str] | None) -> Any:
 
 
 # Operator-managed secrets live in secrets.env (SOPS-decrypted / hand-filled), NEVER in the rendered
-# .env, and no service loads that file whole. Each service lists the secret NAMES it reads; they
-# render as `KEY: ${KEY}` and compose interpolates the values from `--env-file secrets.env` (every
-# compose call passes both env files). So a tailnet sidecar holds TS_AUTHKEY and nothing else.
+# .env, and no service loads that file whole. Each service lists the secret NAMES it reads. Where the
+# software can read a file, the secret is file-delivered (`secret_files:`, ordo/secret_files.py): a
+# read-only /run/secrets mount and only its path in the environment. Otherwise it renders as
+# `KEY: ${KEY}` and compose interpolates the value from `--env-file secrets.env`. Either way a
+# service holds only the secrets it declares.
 def _secret_env(names) -> dict[str, str]:
     """`KEY: ${KEY}` per secret name. An optional one (OPTIONAL_SECRET_KEYS) becomes ${KEY:-} so an
     absent value is empty rather than a compose warning; a required one stays ${KEY}, so a missing
@@ -260,25 +264,24 @@ def _ops_controller(project: str, net: str, nvidia_gpu: bool) -> dict[str, Any]:
     if nvidia_gpu:
         s.update(_utility_gpu_reservation())
         s["environment"]["NVIDIA_DRIVER_CAPABILITIES"] = "utility"
-    # Its own bearer token only. It reads secrets.env as a FILE for compose interpolation, never
-    # from its env, so a rotated secret is interpolated fresh on the next recreate.
-    _add_secrets(s, ["OPS_CONTROLLER_TOKEN"])
+    # Its own bearer token only, as a file (ordo/cli.py `serve` reads it with ordo.secret_env).
+    _add_secret_files(s, [SecretFileRef("OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN_FILE")])
     return s
 
 
 def _litellm_db(net: str) -> dict[str, Any]:
     """Postgres for LiteLLM's virtual keys, teams and spend. Models and MCP servers stay in the
     rendered config (STORE_MODEL_IN_DB=False), so this holds only what the admin UI/keys need.
-    No env_file: its single secret is interpolated by compose from secrets.env (--env-file), and
-    an EMPTY password makes postgres refuse to start, which is the fail-loud we want."""
-    return {
+    Its password is a file: the postgres entrypoint reads POSTGRES_PASSWORD_FILE (docker-entrypoint.sh
+    `file_env`), and only on the first start of an empty data directory (initdb). An EMPTY password
+    makes that first start refuse, which is the fail-loud we want."""
+    s = {
         "image": POSTGRES_IMAGE,
         "restart": "unless-stopped",
         "networks": [net],
         "environment": {
             "POSTGRES_USER": "litellm",
             "POSTGRES_DB": "litellm",
-            "POSTGRES_PASSWORD": "${LITELLM_DB_PASSWORD}",
         },
         # named volume: DB state never rides the 9p bind (see the rag/qdrant notes)
         "volumes": ["litellm-db-data:/var/lib/postgresql/data"],
@@ -287,6 +290,8 @@ def _litellm_db(net: str) -> dict[str, Any]:
             "interval": "10s", "timeout": "5s", "retries": 5, "start_period": "20s",
         },
     }
+    _add_secret_files(s, [SecretFileRef("LITELLM_DB_PASSWORD", "POSTGRES_PASSWORD_FILE")])
+    return s
 
 
 # Gateway-wide Langfuse tracing: the env model-gateway gets ONLY when the langfuse plugin is enabled
@@ -306,7 +311,7 @@ def _litellm_db(net: str) -> dict[str, Any]:
 # LITELLM_OTEL_V2 is deliberately NOT set: on 1.100.1 the V2 path ignores LANGFUSE_TRACING_ENVIRONMENT
 # (traces land in `default`), makes the root observation a proxy span with a NULL input, and exports
 # every Postgres auth/spend call as its own observation. The project key pair (LANGFUSE_PUBLIC_KEY /
-# LANGFUSE_SECRET_KEY) is a scoped `KEY: ${KEY}` secret ref, like every other secret here.
+# LANGFUSE_SECRET_KEY) is a file secret, like every other model-gateway secret (see _model_gateway).
 GATEWAY_LANGFUSE_ENV: dict[str, str] = {
     "LITELLM_EXTRA_CALLBACKS": "langfuse_otel",
     "LANGFUSE_OTEL_HOST": "http://langfuse-web:3000",
@@ -323,6 +328,39 @@ GATEWAY_LANGFUSE_ENV: dict[str, str] = {
 _MODEL_GATEWAY_CONFIG_BIND = "${BASE_PATH:?BASE_PATH must be set}/out/model-gateway:/config:ro"
 
 
+# The secrets model-gateway reads, all as files: its entrypoint exports each one from its file
+# (services/model-gateway/secret-env.sh) before LiteLLM starts, so the values live in the LiteLLM
+# process environment and never in the container config. DATABASE_PASSWORD is LiteLLM's own name:
+# with DATABASE_HOST/USERNAME/NAME it builds DATABASE_URL itself (litellm/proxy/utils.py
+# construct_database_url_from_env_vars, quote_plus-escaped), so the password is never part of a
+# rendered URL.
+MODEL_GATEWAY_SECRET_FILES: tuple[SecretFileRef, ...] = (
+    SecretFileRef("LITELLM_MASTER_KEY", "LITELLM_MASTER_KEY_FILE"),
+    SecretFileRef("LITELLM_SALT_KEY", "LITELLM_SALT_KEY_FILE"),
+    SecretFileRef("LITELLM_DB_PASSWORD", "DATABASE_PASSWORD_FILE"),
+    SecretFileRef("THROUGHPUT_RECORD_TOKEN", "THROUGHPUT_RECORD_TOKEN_FILE"),
+)
+MODEL_GATEWAY_LANGFUSE_SECRET_FILES: tuple[SecretFileRef, ...] = (
+    SecretFileRef("LANGFUSE_PUBLIC_KEY", "LANGFUSE_PUBLIC_KEY_FILE"),
+    SecretFileRef("LANGFUSE_SECRET_KEY", "LANGFUSE_SECRET_KEY_FILE"),
+)
+# The admin UI's Google SSO reuses the edge's OAuth client (see ordo.render.litellm_google_sso_env).
+MODEL_GATEWAY_GOOGLE_SSO_SECRET_FILES: tuple[SecretFileRef, ...] = (
+    SecretFileRef("OAUTH2_PROXY_CLIENT_ID", "GOOGLE_CLIENT_ID_FILE"),
+    SecretFileRef("OAUTH2_PROXY_CLIENT_SECRET", "GOOGLE_CLIENT_SECRET_FILE"),
+)
+
+# The healthcheck runs as a fresh `docker exec`, outside the entrypoint's environment, so it reads
+# the master key from its file itself.
+MODEL_GATEWAY_HEALTHCHECK = (
+    "python3 -c \"import os, urllib.request; "
+    "key = open(os.environ['LITELLM_MASTER_KEY_FILE']).read().strip(); "
+    "req = urllib.request.Request('http://localhost:11435/v1/models', "
+    "headers={'Authorization': 'Bearer ' + key}); "
+    "urllib.request.urlopen(req)\""
+)
+
+
 def _model_gateway(project: str, net: str, langfuse_tracing: bool = False,
                     google_sso_env: dict[str, str] | None = None,
                     available_env=None) -> dict[str, Any]:
@@ -332,19 +370,17 @@ def _model_gateway(project: str, net: str, langfuse_tracing: bool = False,
 
     Mounts the rendered out/model-gateway dir read-only: mcp_servers.yaml (the entrypoint merges it
     into the LiteLLM config) and keys.json (read by model-gateway-keys). Joins the internal MCP
-    network so it can reach the mcp-* services. Secrets (LITELLM_MASTER_KEY, LITELLM_SALT_KEY,
-    THROUGHPUT_RECORD_TOKEN) are scoped `KEY: ${KEY}` refs added by _add_secrets below.
+    network so it can reach the mcp-* services. Every secret is a file (MODEL_GATEWAY_SECRET_FILES).
 
     `langfuse_tracing` (the langfuse plugin is enabled) adds GATEWAY_LANGFUSE_ENV; without it the
     service renders exactly as before and the gateway boots on the template's callbacks alone.
 
     `google_sso_env` (from ordo.render.litellm_google_sso_env) lets the admin UI's own login be
-    the same Google identity as the edge: PROXY_BASE_URL/PROXY_ADMIN_ID are plain values, while
-    GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET are `${OAUTH2_PROXY_CLIENT_ID}`/`${OAUTH2_PROXY_CLIENT_
-    SECRET}` - compose-level references resolved from secrets.env at `docker compose` time, the
-    same mechanism CADDY_TAILNET_HOSTNAME below uses, so no secret VALUE is ever set here. Empty
-    when the edge wiring can't produce a PROXY_BASE_URL; the admin/master-key login is unaffected
-    either way (see services/model-gateway/README.md)."""
+    the same Google identity as the edge: PROXY_BASE_URL/PROXY_ADMIN_ID are plain values, and the
+    edge's OAuth client pair reaches LiteLLM as GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET through the
+    files in MODEL_GATEWAY_GOOGLE_SSO_SECRET_FILES. Empty when the edge wiring can't produce a
+    PROXY_BASE_URL; the admin/master-key login is unaffected either way (see
+    services/model-gateway/README.md)."""
     s = _svc(f"{project}/model-gateway", net=net)
     s["networks"] = [net, _mcp_net(project)]
     s["depends_on"] = _depends_on({"llamacpp": "service_started", "litellm-db": "service_healthy"})
@@ -352,7 +388,10 @@ def _model_gateway(project: str, net: str, langfuse_tracing: bool = False,
     s["environment"] = {
         "LITELLM_MODE": "PRODUCTION",   # no load_dotenv(): a stray .env cannot inject credentials
         "LITELLM_LOG": "ERROR",
-        "DATABASE_URL": "postgresql://litellm:${LITELLM_DB_PASSWORD}@litellm-db:5432/litellm",
+        # LiteLLM builds DATABASE_URL from these and DATABASE_PASSWORD (a file, see above).
+        "DATABASE_HOST": "litellm-db:5432",
+        "DATABASE_USERNAME": "litellm",
+        "DATABASE_NAME": "litellm",
         "STORE_MODEL_IN_DB": "False",   # config.yaml is the single source of truth for models + MCP
         # uvicorn only trusts X-Forwarded-Proto/Host from loopback by default; caddy connects from
         # a 172.x address on the project network, so without this the /ui slash redirect and the
@@ -365,17 +404,14 @@ def _model_gateway(project: str, net: str, langfuse_tracing: bool = False,
     if google_sso_env:
         s["environment"].update(google_sso_env)
     _add_derived_env(s, MODEL_GATEWAY_DERIVED_ENV, available_env)
-    # Master key (admin API + healthcheck), the DB-credential salt, the throughput-record token the
-    # dashboard checks, and the Langfuse pair only while its callback is on.
-    _add_secrets(s, ["LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "THROUGHPUT_RECORD_TOKEN",
-                     *(["LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"] if langfuse_tracing else [])])
+    # Master key (admin API + healthcheck), the DB-credential salt and password, the throughput-record
+    # token the dashboard checks, the Langfuse pair only while its callback is on, and the Google
+    # client pair only while the admin UI signs in with Google.
+    _add_secret_files(s, [*MODEL_GATEWAY_SECRET_FILES,
+                          *(MODEL_GATEWAY_LANGFUSE_SECRET_FILES if langfuse_tracing else ()),
+                          *(MODEL_GATEWAY_GOOGLE_SSO_SECRET_FILES if google_sso_env else ())])
     s["healthcheck"] = {
-        "test": ["CMD-SHELL", (
-            "python3 -c \"import os, urllib.request; "
-            "req = urllib.request.Request('http://localhost:11435/v1/models', "
-            "headers={'Authorization': 'Bearer ' + os.environ['LITELLM_MASTER_KEY']}); "
-            "urllib.request.urlopen(req)\""
-        )],
+        "test": ["CMD-SHELL", MODEL_GATEWAY_HEALTHCHECK],
         "interval": "30s", "timeout": "10s", "retries": 3, "start_period": "60s",
     }
     return s
@@ -387,8 +423,10 @@ def _model_gateway_keys(project: str, net: str,
     (bootstrap_keys.py, idempotent). Same image as the gateway (no second build), runs after the
     gateway is healthy, exits 0 when the desired state holds; `on-failure` retries transient API
     errors. The agent depends on `service_completed_successfully` so Hermes never starts keyless."""
-    # The master key to call the admin API, plus every consumer key it provisions (keys.json). No
-    # derived env: the entrypoint execs this command before it reads any LLAMACPP_* key.
+    # The master key to call the admin API, plus every consumer key it provisions (keys.json), all
+    # as files: the entrypoint exports the master key, bootstrap_keys.py reads each consumer key with
+    # secret_env.read_secret. No derived env: the entrypoint execs this command before it reads any
+    # LLAMACPP_* key.
     s = _svc(f"{project}/model-gateway", net=net)
     s["restart"] = "on-failure"
     s["command"] = ["python3", "/app/bootstrap_keys.py"]
@@ -397,7 +435,7 @@ def _model_gateway_keys(project: str, net: str,
         "MODEL_GATEWAY_URL": "http://model-gateway:11435",
         "LITELLM_KEYS_SPEC": "/config/keys.json",
     }
-    _add_secrets(s, ["LITELLM_MASTER_KEY", *(key_envs or [])])
+    _add_secret_files(s, [SecretFileRef(key, f"{key}_FILE") for key in ["LITELLM_MASTER_KEY", *(key_envs or [])]])
     s["depends_on"] = _depends_on({"model-gateway": "service_healthy"})
     return s
 
@@ -441,13 +479,16 @@ def _dashboard(project: str, net: str, nvidia_gpu: bool,
         "interval": "30s", "timeout": "10s", "retries": 3, "start_period": "30s",
     }
     _add_secrets(s, secrets)
+    file_secrets = list(dashboard.get("secret_files", ()))
     local_port = dashboard.get("local_port")
     if publish_local_ports and local_port is not None:
         s["ports"] = [local_port.publish()]
         # No SSO edge means no operator identity: the local operator signs in with this secret
         # (dashboard/auth.py). Only rendered with the port, so an edge render never carries it.
         if dashboard.get("local_login_secret"):
-            _add_secrets(s, [dashboard["local_login_secret"]])
+            key = dashboard["local_login_secret"]
+            file_secrets.append(SecretFileRef(key, f"{key}_FILE"))
+    _add_secret_files(s, file_secrets)
     _add_derived_env(s, dashboard.get("derived_env", ()), available_env)
     return s
 
@@ -509,30 +550,29 @@ def _mcp_service(server: dict[str, Any], *, net: str, mcp_net: str) -> dict[str,
         s["volumes"] = list(server["volumes"])
     if server["depends_on"]:
         s["depends_on"] = list(server["depends_on"])
+    _add_secret_files(s, server.get("secret_files", ()))
     return s
 
 
 def _apply_agent_runtime(svc: dict[str, Any], *, user: str | None, group_add: list[str] | None,
                          volumes: list[str] | None,
                          environment: dict[str, str] | None,
-                         secret_files: list[dict[str, str]] | None,
+                         secret_files: list[SecretFileRef] | None,
                          depends_on: dict[str, str] | None,
                          healthcheck: dict[str, Any] | None) -> None:
     """Layer the agent manifest's runtime wiring onto the base agent service (in place). File
-    secrets render as read-only bind mounts of the operator's host secret files into /run/secrets/*
-    (the same files V1 mounts; independent of secrets.env). depends_on with conditions overrides the
-    plain start-order list so V1's service_healthy gates are mirrored."""
+    secrets render as read-only mounts of the materialized out/secrets/* files (ordo/secret_files.py).
+    depends_on with conditions overrides the plain start-order list so V1's service_healthy gates
+    are mirrored."""
     if user:
         svc["user"] = user
     if group_add:
         svc["group_add"] = list(group_add)
-    vols = list(volumes or [])
-    for sf in (secret_files or []):
-        vols.append(f"{sf['source']}:{sf['target']}:ro")
-    if vols:
-        svc["volumes"] = vols
+    if volumes:
+        svc["volumes"] = list(volumes)
     if environment:
         svc["environment"] = dict(environment)
+    _add_secret_files(svc, secret_files or ())
     dep = _depends_on(depends_on)
     if dep:
         svc["depends_on"] = dep  # long-form conditions replace the base plain list
@@ -622,6 +662,7 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str,
         # the pin above, and overwriting `deploy` here would silently drop its device reservation.
         resources = s.setdefault("deploy", {}).setdefault("resources", {})
         resources["limits"] = dict(ps.resources)
+    _add_secret_files(s, ps.secret_files)
     return s
 
 
@@ -675,7 +716,8 @@ def _gpu_gate(ps: PluginService, plugin: Plugin, claim: Any, *, net: str, upstre
         # The gate rides its upstream's profile: a dormant service must not get a live gate, and
         # an enabled service must never come up without one.
         s["profiles"] = [plugin.compose_profile]
-    _add_secrets(s, ["OPS_CONTROLLER_TOKEN"])  # it takes GPU leases from ops-controller
+    # It takes GPU leases from ops-controller; gate.py reads the token with secret_env.read_secret.
+    _add_secret_files(s, [SecretFileRef("OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN_FILE")])
     return name, s
 
 
@@ -688,7 +730,7 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
                    agent_group_add: list[str] | None = None,
                    agent_volumes: list[str] | None = None,
                    agent_environment: dict[str, str] | None = None,
-                   agent_secret_files: list[dict[str, str]] | None = None,
+                   agent_secret_files: list[SecretFileRef] | None = None,
                    agent_secrets: list[str] | None = None,
                    agent_derived_env: list[str] | None = None,
                    litellm_key_envs: list[str] | None = None,

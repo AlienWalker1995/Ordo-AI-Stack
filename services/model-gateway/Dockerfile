@@ -13,6 +13,9 @@ COPY throughput_callback.py /app/throughput_callback.py
 COPY merge_mcp_config.py /app/merge_mcp_config.py
 COPY add_callbacks.py /app/add_callbacks.py
 COPY bootstrap_keys.py /app/bootstrap_keys.py
+# The secret readers (canonical copies: ordo/secret_env.py, ordo/secret-env.sh).
+COPY secret_env.py /app/secret_env.py
+COPY secret-env.sh /app/secret-env.sh
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 

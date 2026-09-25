@@ -108,7 +108,9 @@ OWN login, which is one of two paths:
    identity as the edge, not a second password. Works whenever `edge` is enabled and
    `PROXY_BASE_URL` can be derived (see below); the renderer maps the stack's EXISTING Google
    OAuth client onto `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (`ordo/render.py::
-   litellm_google_sso_env`), so no new secret or Google app registration is needed.
+   litellm_google_sso_env`; delivered as files the entrypoint exports, see
+   `compose.MODEL_GATEWAY_GOOGLE_SSO_SECRET_FILES`), so no new secret or Google app registration
+   is needed.
    - LiteLLM promotes exactly one identity to `proxy_admin`: the one matching the optional
      `site.LITELLM_ADMIN_IDENTITY` key, rendered as `PROXY_ADMIN_ID`
      (`check_and_update_if_proxy_admin_id`). **That value is the Google account's OpenID `sub`,

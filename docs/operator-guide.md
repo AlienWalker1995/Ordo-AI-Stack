@@ -59,7 +59,7 @@ ordo init                                     # re-run the wizard in an existing
 # …or step through it by hand:
 ordo --source out/ordo.yaml render --out out  # regenerate out/ from the source (NEVER bare `ordo render`)
 ordo preflight --ref out/.env                 # read-only GO/NO-GO gate, host checks included
-# bring up: every rendered profile, both env files; refuses while a GPU lease holds the card.
+# bring up: every rendered profile, every env file; refuses while a GPU lease holds the card.
 # Builds any missing first-party image first (--no-build skips that), then fetches missing model
 # files into the models-gguf volume (--no-fetch skips that; `ordo fetch` alone re-verifies them).
 ordo up --all                                 # --dry-run prints the docker compose argv instead

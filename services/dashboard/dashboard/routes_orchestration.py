@@ -23,6 +23,7 @@ from dashboard.orchestration_db import (
     save_workflow_version,
 )
 from dashboard.orchestration_readiness import compute_readiness
+from dashboard.secret_env import read_secret
 from dashboard.text_sanitizers import sanitize_workflow_id
 from dashboard.workflow_boundary import assert_api_workflow
 from dashboard.workflow_templates import compile_template, list_template_ids, load_template
@@ -34,7 +35,7 @@ router = APIRouter(prefix="/api/orchestration", tags=["orchestration"])
 DATA_DIR = Path(os.environ.get("DASHBOARD_DATA_PATH", "./data/dashboard")).resolve()
 WORKFLOWS_DIR = Path(os.environ.get("COMFYUI_WORKFLOWS_DIR", "/comfyui-workflows")).resolve()
 OPS_CONTROLLER_URL = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000").rstrip("/")
-OPS_CONTROLLER_TOKEN = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
+OPS_CONTROLLER_TOKEN = read_secret("OPS_CONTROLLER_TOKEN")
 # The ComfyUI GPU admission gate; empty when comfyui is not enabled.
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "").rstrip("/")
 

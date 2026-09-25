@@ -39,9 +39,13 @@ def test_notes_services_render_with_expected_wiring():
     assert bridge["image"] == "ordo/livesync-bridge:current"
     # live-watch on Docker Desktop bind mounts needs polling (no inotify events)
     assert bridge["environment"]["CHOKIDAR_USEPOLLING"] == "1"
-    # exactly its two secrets, as references (the passphrase must never silently default to empty)
-    assert bridge["environment"]["COUCHDB_PASSWORD"] == "${COUCHDB_PASSWORD}"
-    assert bridge["environment"]["LIVESYNC_E2EE_PASSPHRASE"] == "${LIVESYNC_E2EE_PASSPHRASE}"
+    # exactly its two secrets, as files its entrypoint exports (the passphrase must never silently
+    # default to empty: a missing file fails the entrypoint)
+    assert bridge["environment"]["COUCHDB_PASSWORD_FILE"] == "/run/secrets/couchdb_password"
+    assert bridge["environment"]["LIVESYNC_E2EE_PASSPHRASE_FILE"] == "/run/secrets/livesync_e2ee_passphrase"
+    assert "COUCHDB_PASSWORD" not in bridge["environment"]
+    assert "LIVESYNC_E2EE_PASSPHRASE" not in bridge["environment"]
+    # the couchdb image has no file variant (docker-entrypoint.sh reads COUCHDB_PASSWORD only)
     assert couch["environment"]["COUCHDB_PASSWORD"] == "${COUCHDB_PASSWORD}"
     # mirrors the vault's notes/ subfolder — the ONE shared vault the MCP + RAG use
     assert any("/memory-vault}/notes:/app/data/notes" in v or "/notes:/app/data/notes" in v

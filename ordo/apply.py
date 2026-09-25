@@ -49,7 +49,7 @@ from typing import Any
 
 import yaml
 
-from . import bringup, doctor, images, substrate
+from . import bringup, doctor, images, secret_files, substrate
 
 OPS_CONTROLLER = bringup.OPS_CONTROLLER_SERVICE
 PROJECT_LABEL = "com.docker.compose.project"
@@ -348,16 +348,18 @@ class RealHost:
             yield Staged(compose_dir=out, project_directory=out, doc=bringup.load_compose(out))
             return
         # The dry run renders what this apply would write into a temporary directory: the tags the
-        # builds would record, and the secrets.env out/ holds now (the materialize step is skipped).
+        # builds would record, and the secrets.env and file-secret digests out/ holds now (the
+        # materialize step is skipped).
         planned = {b.target.image: b.tag for b in builds}
         with tempfile.TemporaryDirectory(prefix="ordo-apply-") as tmp:
             images.save_record(tmp, {**images.load_record(self.out), **planned})
             self._render().write(tmp)
-            secrets = self.out / "secrets.env"
-            if secrets.exists():
-                shutil.copyfile(secrets, Path(tmp) / "secrets.env")
-            else:
-                (Path(tmp) / "secrets.env").write_text("", encoding="utf-8")
+            for name in ("secrets.env", secret_files.DIGESTS_ENV_FILE):
+                current = self.out / name
+                if current.exists():
+                    shutil.copyfile(current, Path(tmp) / name)
+                else:
+                    (Path(tmp) / name).write_text("", encoding="utf-8")
             staged_dir = Path(tmp).as_posix()
             yield Staged(compose_dir=staged_dir, project_directory=out, doc=bringup.load_compose(staged_dir))
 

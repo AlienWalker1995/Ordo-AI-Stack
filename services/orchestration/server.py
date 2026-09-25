@@ -18,10 +18,13 @@ from typing import Any
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+from secret_env import read_secret
+
 BASE = os.environ.get("ORCHESTRATION_DASHBOARD_URL", "http://dashboard:8080").rstrip("/")
 # The dashboard refuses anonymous internal callers on /api/orchestration/* and every mutation;
 # this adapter authenticates with the ops-controller bearer it is scoped to (plugin.yaml secrets).
-TOKEN = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
+# A file under /run/secrets (OPS_CONTROLLER_TOKEN_FILE, the rendered delivery), else the env var.
+TOKEN = read_secret("OPS_CONTROLLER_TOKEN")
 
 
 def _clean_gemma_special_tokens(text: str) -> str:

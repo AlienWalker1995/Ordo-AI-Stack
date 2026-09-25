@@ -78,16 +78,12 @@ services:
       EVALS_RESULTS_DIR: /results
       EVALS_VAULT_DIR: /vault
       EVALS_HERMES_STATE_DB: /hermes-home/state.db
-      # Secrets: `${VAR}` references only, resolved from secrets.env at compose time. The two
-      # credentials the runner cannot work without have no fallback (an unset key fails loudly);
-      # the Langfuse pair falls back to "" so `--no-langfuse` runs work on a stack without langfuse,
-      # and the runner refuses to post with an empty pair.
-      LITELLM_KEY_EVALS: ${LITELLM_KEY_EVALS}
-      # ops-controller authenticates every call but its health probe (the GPU-lease guards read /status).
-      OPS_CONTROLLER_TOKEN: ${OPS_CONTROLLER_TOKEN}
-      HERMES_API_SERVER_KEY: ${HERMES_API_SERVER_KEY}
-      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
-      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+    # Secrets, each a file under /run/secrets read by ordo_evals/settings.py (secret_env.read_secret).
+    # An empty Langfuse pair (a stack without langfuse) reads as "", so `--no-langfuse` runs work and
+    # the runner refuses to post with an empty pair. ops-controller authenticates every call but its
+    # health probe (the GPU-lease guards read /status).
+    secret_files: [LITELLM_KEY_EVALS, OPS_CONTROLLER_TOKEN, HERMES_API_SERVER_KEY, LANGFUSE_PUBLIC_KEY,
+                   LANGFUSE_SECRET_KEY]
     volumes:
       # ${VAR:?} (not :-.): tracked repo code must never resolve against a wrong/empty root.
       - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/services/evals:/app:ro

@@ -44,5 +44,6 @@ def test_dashboard_calls_carry_the_ops_controller_bearer():
     """The dashboard refuses anonymous internal callers on /api/orchestration/* and every
     mutation; this adapter authenticates with the ops-controller token it is scoped to."""
     text = SERVER.read_text(encoding="utf-8")
-    assert 'os.environ.get("OPS_CONTROLLER_TOKEN"' in text
+    # from its file under /run/secrets (OPS_CONTROLLER_TOKEN_FILE), else the env var
+    assert 'read_secret("OPS_CONTROLLER_TOKEN")' in text
     assert "DASHBOARD_AUTH_TOKEN" not in text

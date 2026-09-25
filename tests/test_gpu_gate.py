@@ -29,6 +29,8 @@ GATE_PY = Path(__file__).resolve().parents[1] / "services" / "gpu-gate" / "gate.
 
 
 def _load_gate():
+    # gate.py imports its sibling secret_env.py, as it does from /app in the image.
+    sys.path.insert(0, str(GATE_PY.parent))
     spec = importlib.util.spec_from_file_location("ordo_gpu_gate", GATE_PY)
     module = importlib.util.module_from_spec(spec)
     sys.modules["ordo_gpu_gate"] = module

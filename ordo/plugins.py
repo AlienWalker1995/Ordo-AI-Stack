@@ -17,6 +17,7 @@ import yaml
 from .buildspec import BuildSpec
 from .gpu import GpuArbitration
 from .hardware import HardwareProfile
+from .secret_files import SecretFileRef, parse_secret_files
 
 # The only address a local port binds to. Not manifest-configurable: a manifest names a port, and
 # the renderer decides the address, so no manifest can publish a UI past this machine.
@@ -79,6 +80,10 @@ class PluginService:
     # compose interpolates the value from `--env-file secrets.env`, so a service holds only the
     # secrets it needs. Secret VALUES never live in the rendered config, only the reference.
     secrets: tuple[str, ...] = ()
+    # The secret NAMES this service reads from a FILE instead (ordo/secret_files.py): each is
+    # mounted read-only at /run/secrets/<key lowercased> and only its path is in the environment
+    # (`<KEY>_FILE`, or the `env:` the image reads). Preferred wherever the software supports it.
+    secret_files: tuple[SecretFileRef, ...] = ()
     # The DERIVED config NAMES (keys of the rendered out/.env) this service reads at runtime. Each
     # renders as `KEY: ${KEY?...}` and compose interpolates the value from `--env-file .env`. No
     # service loads the whole .env (no env_file), so a render that changes one derived key changes
@@ -135,6 +140,7 @@ class PluginService:
             {str(k): str(v) for k, v in raw_depends.items()} if isinstance(raw_depends, dict)
             else [str(x) for x in raw_depends]
         )
+        secrets = tuple(str(k) for k in (d.get("secrets", []) or []))
         return cls(
             name=name, image=str(d["image"]),
             gpu=bool(d.get("gpu", False)), gpu_pin=gpu_pin,
@@ -148,7 +154,9 @@ class PluginService:
             volumes=[str(v) for v in (d.get("volumes", []) or [])],
             healthcheck=dict(d.get("healthcheck", {}) or {}),
             depends_on=depends_on,
-            secrets=tuple(str(k) for k in (d.get("secrets", []) or [])),
+            secrets=secrets,
+            secret_files=parse_secret_files(where, d.get("secret_files"), env_secrets=secrets,
+                                            explicit_env=d.get("env") or {}),
             derived_env=parse_derived_env(where, d),
             ports=[str(p) for p in (d.get("ports", []) or [])],
             local_port=LocalPort.from_manifest(d.get("local_port"), where),
@@ -193,7 +201,7 @@ def _restart_policy(service: str, raw: Any) -> str:
 
 _MCP_ALLOWED_KEYS = frozenset({
     "server_id", "image", "url", "transport", "port", "path", "network", "command", "env", "volumes",
-    "depends_on", "timeout", "auth", "allowed_tools", "tools", "healthcheck",
+    "depends_on", "timeout", "auth", "allowed_tools", "tools", "healthcheck", "secret_files",
 })
 
 
@@ -221,6 +229,8 @@ class McpSpec:
     allowed_tools: tuple[str, ...] = ()
     tools: tuple[str, ...] = ()      # informational + parity-test expectation
     healthcheck: dict[str, Any] = dataclasses.field(default_factory=dict)
+    # Secrets the server reads from a file (see PluginService.secret_files).
+    secret_files: tuple[SecretFileRef, ...] = ()
 
     @classmethod
     def from_dict(cls, d: dict[str, Any], plugin_id: str) -> McpSpec:
@@ -254,6 +264,8 @@ class McpSpec:
             raise ValueError(f"{prefix}: auth.type must be bearer_token or api_key (got {auth_type!r})")
         if auth_type and not auth_secret:
             raise ValueError(f"{prefix}: auth.secret (the secrets.env var NAME) is required with auth.type")
+        if url and d.get("secret_files"):
+            raise ValueError(f"{prefix}: a hosted (`url`) server has no container to mount `secret_files` into")
         timeout = int(d.get("timeout", 60) or 60)
         if timeout <= 0:
             raise ValueError(f"{prefix}: timeout must be a positive number of seconds")
@@ -269,6 +281,7 @@ class McpSpec:
             allowed_tools=tuple(str(t) for t in (d.get("allowed_tools", []) or [])),
             tools=tuple(str(t) for t in (d.get("tools", []) or [])),
             healthcheck=healthcheck,
+            secret_files=parse_secret_files(prefix, d.get("secret_files"), explicit_env=d.get("env") or {}),
         )
 
     @property

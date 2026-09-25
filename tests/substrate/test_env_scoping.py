@@ -105,8 +105,8 @@ def test_each_service_receives_exactly_its_derived_keys(rendered):
 
 
 def test_every_env_name_is_declared(rendered):
-    """A service's environment is its own env block + its declared derived keys + its secrets, and
-    nothing else. Any rendered .env key that appears in a service's environment is either one it
+    """A service's environment is its own env block + its declared derived keys + its secrets (and
+    the path variables of its file secrets), and nothing else. Any rendered .env key that appears in a service's environment is either one it
     declared in derived_env or one its env block sets explicitly, never one that arrived by accident."""
     rc, services = rendered
     agent = AgentRegistry.load(ROOT / "services").default_agent()
@@ -114,12 +114,15 @@ def test_every_env_name_is_declared(rendered):
     declared: dict[str, set[str]] = {
         "llamacpp": set(compose_mod.LLAMACPP_DERIVED_ENV),
         "model-gateway": set(compose_mod.MODEL_GATEWAY_DERIVED_ENV),
-        "agent": set(agent.environment) | set(agent.derived_env) | set(agent.secrets),
-        "dashboard": set(dashboard.environment) | set(dashboard.derived_env) | set(dashboard.secrets),
+        "agent": (set(agent.environment) | set(agent.derived_env) | set(agent.secrets)
+                  | {ref.env for ref in agent.secret_files}),
+        "dashboard": (set(dashboard.environment) | set(dashboard.derived_env) | set(dashboard.secrets)
+                      | {ref.env for ref in dashboard.secret_files}),
     }
     for plugin in REGISTRY.plugins:
         for ps in plugin.services:
-            declared[ps.name] = set(ps.env) | set(ps.derived_env) | set(ps.secrets)
+            declared[ps.name] = (set(ps.env) | set(ps.derived_env) | set(ps.secrets)
+                                 | {ref.env for ref in ps.secret_files})
     secret_names = set(rc.required_secrets) | set(OPTIONAL_SECRET_KEYS)
     for name, svc in services.items():
         env_names = set(svc.get("environment") or {})

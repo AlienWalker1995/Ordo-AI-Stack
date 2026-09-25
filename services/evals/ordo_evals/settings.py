@@ -8,6 +8,8 @@ import dataclasses
 import os
 from pathlib import Path
 
+from .secret_env import read_secret
+
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent  # services/evals (mounted at /app)
 
 
@@ -47,15 +49,16 @@ class Settings:
         return cls(
             model_base_url=_env("MODEL_BASE_URL", "http://model-gateway:11435/v1"),
             model_name=_env("MODEL_NAME", "local-chat"),
-            litellm_key=_env("LITELLM_KEY_EVALS"),
+            # Secrets: a file under /run/secrets (<NAME>_FILE, the rendered delivery), else the env var.
+            litellm_key=read_secret("LITELLM_KEY_EVALS"),
             hermes_api_url=_env("HERMES_API_URL", "http://agent:8642/v1"),
-            hermes_api_key=_env("HERMES_API_SERVER_KEY"),
+            hermes_api_key=read_secret("HERMES_API_SERVER_KEY"),
             langfuse_host=_env("LANGFUSE_HOST", "http://langfuse-web:3000"),
-            langfuse_public_key=_env("LANGFUSE_PUBLIC_KEY"),
-            langfuse_secret_key=_env("LANGFUSE_SECRET_KEY"),
+            langfuse_public_key=read_secret("LANGFUSE_PUBLIC_KEY"),
+            langfuse_secret_key=read_secret("LANGFUSE_SECRET_KEY"),
             ops_controller_url=_env("OPS_CONTROLLER_URL", "http://ops-controller:9000"),
             # ops-controller authenticates every call except its health probe.
-            ops_controller_token=_env("OPS_CONTROLLER_TOKEN"),
+            ops_controller_token=read_secret("OPS_CONTROLLER_TOKEN"),
             n8n_url=_env("N8N_URL", "http://n8n:5678"),
             qdrant_url=_env("QDRANT_URL", "http://qdrant:6333"),
             # Same var rag-ingestion reads (services/rag/plugin.yaml: QDRANT_COLLECTION from

@@ -194,7 +194,8 @@ def test_comfyui_server_id_decoupled_from_plugin_id():
     # MCP server that cannot reach ComfyUI.
     assert cm["env"]["COMFYUI_URL"].startswith("${COMFYUI_URL:?")
     assert "comfyui:8188" not in cm["env"]["COMFYUI_URL"]
-    assert cm["env"]["OPS_CONTROLLER_TOKEN"] == "${OPS_CONTROLLER_TOKEN}"
+    assert "OPS_CONTROLLER_TOKEN" not in cm["env"]
+    assert [ref.key for ref in cm["secret_files"]] == ["OPS_CONTROLLER_TOKEN"]
     assert cm["env"]["COMFY_MCP_DEFAULT_MODEL"] == "${COMFY_MCP_DEFAULT_MODEL:-flux1-schnell-fp8.safetensors}"
     # renders can take many minutes: the per-server LiteLLM tool timeout must cover a queue+wait
     assert cm["timeout"] == 1800
@@ -230,7 +231,9 @@ def test_n8n_bridged_and_banner_suppressed():
     assert n8["env"]["LOG_LEVEL"] == "error"
     assert n8["env"]["N8N_DIAGNOSTICS_ENABLED"] == "false"
     assert n8["env"]["DISABLE_TELEMETRY"] == "true"
-    assert n8["env"]["N8N_API_KEY"] == "${N8N_API_KEY}"
+    # a file the image's CMD exports before the bridge starts (services/n8n/Dockerfile)
+    assert "N8N_API_KEY" not in n8["env"]
+    assert [ref.key for ref in n8["secret_files"]] == ["N8N_API_KEY"]
 
 
 def test_n8n_api_key_is_a_required_secret():
@@ -243,8 +246,9 @@ def test_orchestration_wiring():
     orc = next(s for s in rc.mcp_servers if s["id"] == "orchestration")
     assert orc["env"]["ORCHESTRATION_DASHBOARD_URL"] == "http://dashboard:8080"
     # The dashboard refuses anonymous internal callers on its ops-forwarding routes, so the adapter
-    # sends the ops-controller bearer it is scoped to (declared in the manifest's `secrets:`).
-    assert orc["env"]["OPS_CONTROLLER_TOKEN"] == "${OPS_CONTROLLER_TOKEN}"
+    # sends the ops-controller bearer it is scoped to, read from a file (the manifest's `secret_files:`).
+    assert "OPS_CONTROLLER_TOKEN" not in orc["env"]
+    assert [ref.key for ref in orc["secret_files"]] == ["OPS_CONTROLLER_TOKEN"]
     assert "OPS_CONTROLLER_TOKEN" in rc.required_secrets
     assert "DASHBOARD_AUTH_TOKEN" not in orc["env"]
     # it must reach dashboard:8080, so it joins the stack network as well as the internal MCP one

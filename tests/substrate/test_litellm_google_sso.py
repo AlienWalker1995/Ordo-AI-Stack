@@ -41,7 +41,7 @@ def _gateway_env(plugins, site=None):
     return rc.compose_dict()["services"]["model-gateway"]["environment"]
 
 
-SSO_KEYS = ("PROXY_BASE_URL", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET")
+SSO_KEYS = ("PROXY_BASE_URL", "GOOGLE_CLIENT_ID_FILE", "GOOGLE_CLIENT_SECRET_FILE")
 
 
 # ── litellm_google_sso_env() unit coverage ──────────────────────────────────────
@@ -69,11 +69,11 @@ def test_empty_when_hostname_known_but_edge_not_enabled():
     assert litellm_google_sso_env(env, [], "") == {}
 
 
-def test_google_client_vars_are_compose_references_not_values():
+def test_the_sso_env_holds_no_client_credential():
+    """The Google client pair is mounted as files by compose (MODEL_GATEWAY_GOOGLE_SSO_SECRET_FILES)."""
     env = {"CADDY_TAILNET_HOSTNAME": "host.example.ts.net"}
     out = litellm_google_sso_env(env, ["edge"], "")
-    assert out["GOOGLE_CLIENT_ID"] == "${OAUTH2_PROXY_CLIENT_ID}"
-    assert out["GOOGLE_CLIENT_SECRET"] == "${OAUTH2_PROXY_CLIENT_SECRET}"
+    assert set(out) == {"PROXY_BASE_URL"}
 
 
 def test_admin_id_present_only_when_identity_given():
@@ -101,8 +101,10 @@ def test_fresh_install_without_a_hostname_renders_none_of_the_sso_vars():
 def test_edge_on_with_hostname_renders_the_port_fallback():
     env = _gateway_env(["edge"], site=EDGE_SITE)
     assert env["PROXY_BASE_URL"] == "https://host.example.ts.net:8449"
-    assert env["GOOGLE_CLIENT_ID"] == "${OAUTH2_PROXY_CLIENT_ID}"
-    assert env["GOOGLE_CLIENT_SECRET"] == "${OAUTH2_PROXY_CLIENT_SECRET}"
+    # the edge's own OAuth client, as files the entrypoint exports as GOOGLE_CLIENT_ID/SECRET
+    assert env["GOOGLE_CLIENT_ID_FILE"] == "/run/secrets/oauth2_proxy_client_id"
+    assert env["GOOGLE_CLIENT_SECRET_FILE"] == "/run/secrets/oauth2_proxy_client_secret"
+    assert "GOOGLE_CLIENT_ID" not in env and "GOOGLE_CLIENT_SECRET" not in env
     assert "PROXY_ADMIN_ID" not in env
 
 

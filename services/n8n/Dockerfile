@@ -34,6 +34,9 @@ RUN apk add --no-cache python3 py3-pip \
 # stdio is the image default; pinned here so the mode cannot drift with an upstream bump.
 ENV MCP_MODE=stdio
 
+# The secret reader the CMD sources (the canonical copy is ordo/secret-env.sh).
+COPY secret-env.sh /opt/ordo/secret-env.sh
+
 # ENTRYPOINT is cleared deliberately. The upstream /usr/local/bin/docker-entrypoint.sh ends in a
 # branch on MCP_MODE, and its stdio branch runs `exec node /app/dist/mcp/stdio-wrapper.js` WITHOUT
 # forwarding "$@" - it would silently discard the mcp-proxy command below and we would get a bare
@@ -50,4 +53,6 @@ EXPOSE 9000
 # --pass-environment is load-bearing: mcp-proxy spawns the stdio child with an EMPTY environment
 # unless told otherwise, and without N8N_API_URL / N8N_API_KEY the server registers only its 7
 # documentation tools instead of the full 28 (the 21 n8n_* instance verbs disappear).
-CMD ["mcp-proxy", "--host", "0.0.0.0", "--port", "9000", "--stateless", "--pass-environment", "--", "node", "dist/mcp/index.js"]
+# N8N_API_KEY arrives as a file under /run/secrets (N8N_API_KEY_FILE, the rendered delivery): the
+# shell exports it for this process tree only, then execs the bridge.
+CMD ["sh", "-c", ". /opt/ordo/secret-env.sh && ordo_secret_file_env N8N_API_KEY && exec mcp-proxy --host 0.0.0.0 --port 9000 --stateless --pass-environment -- node dist/mcp/index.js"]

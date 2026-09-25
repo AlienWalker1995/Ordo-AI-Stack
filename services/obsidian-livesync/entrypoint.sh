@@ -7,6 +7,11 @@
 # 3. Exec the headless sync daemon.
 set -eu
 
+# The two secrets arrive as files under /run/secrets (COUCHDB_PASSWORD_FILE /
+# LIVESYNC_E2EE_PASSPHRASE_FILE, the rendered delivery): export them for this process tree only.
+. /usr/local/lib/ordo-secret-env.sh
+ordo_secret_file_env COUCHDB_PASSWORD LIVESYNC_E2EE_PASSPHRASE
+
 : "${COUCHDB_INTERNAL_URL:?COUCHDB_INTERNAL_URL must be set}"
 : "${COUCHDB_USER:?COUCHDB_USER must be set}"
 : "${COUCHDB_PASSWORD:?COUCHDB_PASSWORD must be set}"

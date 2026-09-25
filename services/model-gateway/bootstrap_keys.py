@@ -3,7 +3,8 @@
 
 Runs as the one-shot `model-gateway-keys` compose service after model-gateway is healthy.
 For every entry in /config/keys.json ({"env", "alias", "models", "mcp_servers"}) the key VALUE
-comes from the environment variable named by `env` (secrets.env).
+comes from the secret named by `env`: the file `<env>_FILE` points at (the rendered delivery,
+/run/secrets/*), else the environment variable (secret_env.read_secret).
 
 The reconcile is keyed on the ALIAS, not on the key value, because the alias is the stable
 identity of a consumer and the value is what rotates. Per entry we look the alias up with
@@ -37,6 +38,9 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol
+
+# Beside this script in the image (/app/secret_env.py); the canonical copy is ordo/secret_env.py.
+from secret_env import read_secret
 
 # LiteLLM's sentinel: a key whose mcp_servers is exactly this list can reach NO MCP server, even
 # if a team/org grant would otherwise apply. Used for keys that declare `mcp_servers: []`.
@@ -133,9 +137,9 @@ class HttpKeyApi:
 
 
 def desired_payload(entry: dict[str, Any], env: Mapping[str, str]) -> dict[str, Any]:
-    value = str(env.get(entry["env"], "") or "").strip()
+    value = read_secret(entry["env"], env)
     if not value:
-        raise ValueError(f"{entry['env']} is empty or unset (fill it in secrets.env; the wizard generates it)")
+        raise ValueError(f"{entry['env']} is empty or unset (set it in the secret store; the wizard generates it)")
     models = [str(m) for m in (entry.get("models") or [])]
     # Belt and braces with ordo.render.render_litellm_keys: LiteLLM reads `models: []` as ALL
     # models, so an empty list is a silent privilege escalation, never an empty grant.
@@ -239,7 +243,7 @@ def reconcile(
 def main() -> int:
     base_url = os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435")
     spec_path = os.environ.get("LITELLM_KEYS_SPEC", "/config/keys.json")
-    master = os.environ.get("LITELLM_MASTER_KEY", "")
+    master = read_secret("LITELLM_MASTER_KEY")
     if not master:
         print("bootstrap_keys: LITELLM_MASTER_KEY is unset", file=sys.stderr)
         return 1

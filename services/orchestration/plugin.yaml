@@ -15,7 +15,7 @@ requires:
 provides: [tools]
 # The dashboard refuses anonymous internal callers on /api/orchestration/* and every mutation, so
 # this adapter sends the ops-controller bearer (it grants nothing the token's holder could not do
-# at ops-controller directly). Declared here, the key is scoped to this service's environment.
+# at ops-controller directly). Declared here, the key reaches only this service, as a file.
 secrets:
   - OPS_CONTROLLER_TOKEN
 # No plugin-level depends_on: the target is the CORE `dashboard` service (always present, not a
@@ -29,7 +29,8 @@ mcp:
   port: 9000
   # Reaches dashboard:8080 on the stack network (plus the internal MCP network LiteLLM dials).
   network: stack
+  # server.py reads it with secret_env.read_secret (OPS_CONTROLLER_TOKEN_FILE).
+  secret_files: [OPS_CONTROLLER_TOKEN]
   env:
     ORCHESTRATION_DASHBOARD_URL: http://dashboard:8080
-    OPS_CONTROLLER_TOKEN: ${OPS_CONTROLLER_TOKEN}
   tools: [orchestration_readiness, list_templates, comfyui_status, list_models, gpu_status]

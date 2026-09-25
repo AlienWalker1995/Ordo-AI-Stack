@@ -20,7 +20,7 @@ build:
 # The renderer binds it to loopback only and drops it when the edge is enabled.
 local_port: {host: 8444, container: 8080}
 # Without the edge there is no SSO identity, so the local operator signs in with this secret
-# (dashboard/auth.py exchanges it for a session cookie). The renderer passes it to the dashboard,
+# (dashboard/auth.py exchanges it for a session cookie). The renderer passes it to the dashboard as a file,
 # and requires it in secrets.env, only while local_port is published; `ordo up` prints the link.
 local_login_secret: DASHBOARD_LOCAL_LOGIN_TOKEN
 # Read-only GPU visibility for the dashboard SERVICE ITSELF. Its `hardware_stats()` (the
@@ -40,10 +40,14 @@ healthcheck:
   timeout: 10s
   retries: 3
   start_period: 30s
-# Env secrets it reads: the control-plane token (sent to ops-controller, and accepted from internal
-# callers on the dashboard's protected routes), and the throughput token it checks on
-# /api/throughput/record (must match model-gateway's). LITELLM_MASTER_KEY is mapped in environment.
-secrets: [OPS_CONTROLLER_TOKEN, THROUGHPUT_RECORD_TOKEN]
+# Secrets it reads, each a file under /run/secrets read with secret_env.read_secret: the control-plane
+# token (sent to ops-controller, and accepted from internal callers on the dashboard's protected
+# routes), the throughput token it checks on /api/throughput/record (must match model-gateway's),
+# and the LiteLLM master key under MODEL_GATEWAY_API_KEY, the name the code reads.
+secret_files:
+  - OPS_CONTROLLER_TOKEN
+  - THROUGHPUT_RECORD_TOKEN
+  - {key: LITELLM_MASTER_KEY, env: MODEL_GATEWAY_API_KEY_FILE}
 # Derived keys it reads from the rendered .env (rendered `KEY: ${KEY?...}`; it never loads the whole
 # file). services_catalog.py builds the service cards' Open links from the edge hostname and, while
 # the tailnet-names plugin is on, its per-app domain. COMFYUI_URL is the ComfyUI GPU admission gate
@@ -58,7 +62,6 @@ environment:
   # Backend service URLs the dashboard reads at runtime (all V2 service names).
   LLAMACPP_URL: http://llamacpp:8080
   MODEL_GATEWAY_URL: http://model-gateway:11435
-  MODEL_GATEWAY_API_KEY: ${LITELLM_MASTER_KEY}
   # LiteLLM's MCP gateway is the model-gateway itself (MODEL_GATEWAY_URL above). The enabled server
   # set is the render-emitted out/mcp/servers.json (mounted read-only at /mcp-config); health comes
   # from LiteLLM (/v1/mcp/server/health + tools/list outcomes), so a crashed server shows red. A UI
@@ -75,7 +78,7 @@ environment:
   DASHBOARD_DATA_PATH: /data/dashboard
   # No dashboard-specific auth config: its protected routes (dashboard/auth.py) trust the SSO
   # identity only from the `caddy` peer, resolved by name (no subnet to drift), or the
-  # OPS_CONTROLLER_TOKEN bearer declared in `secrets:` above.
+  # OPS_CONTROLLER_TOKEN bearer declared in `secret_files:` above.
   # The rendered manifest (out/manifest.json) — the machine-readable enabled-plugin set.
   # The service grid gates its cards on manifest.plugins_enabled (services_catalog.visible_services)
   # so it reflects what THIS render actually enabled and can't silently omit an enabled service.

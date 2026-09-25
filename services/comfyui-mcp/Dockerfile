@@ -44,6 +44,8 @@ COPY tools/workflow.py tools/workflow.py
 COPY managers/workflow_manager.py managers/workflow_manager.py
 # Ordo AI Stack: MCP tools for custom-node pip + comfyui restart (ops-controller)
 COPY tools/management.py tools/management.py
+# The secret reader management.py imports (the canonical copy is ordo/secret_env.py)
+COPY secret_env.py secret_env.py
 # Ordo AI Stack: MCP tools for ComfyUI system state (GPU, queue, models, nodes, extensions)
 COPY tools/system.py tools/system.py
 RUN python3 <<'PY'

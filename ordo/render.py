@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from . import compose, gpu, images, substrate
+from . import compose, gpu, images, secret_files, substrate
 from .agents import AgentRegistry
 from .catalog import DEFAULT_VRAM_RESERVE_GB, Catalog, Model
 from .config import Source
@@ -338,9 +338,11 @@ class RenderedConfig:
             # Secret NAMES (never values): what `ordo up`'s preflight checks secrets.env against.
             "required_secrets": self.required_secrets,
             "optional_secrets": self.optional_secrets,
-            # File-form secrets: the store key `ordo secrets materialize` writes to out/secrets/<file>.
-            "secret_files": [{"key": s["key"], "file": s["file"], "service": "agent"}
-                             for s in self.hermes.get("agent_secret_files") or []],
+            # File-delivered secrets: the store key `ordo secrets materialize` writes to
+            # out/secrets/<file>, per service that mounts it. Read off the rendered compose, the one
+            # place every declaration (manifests and the core services) ends up.
+            "secret_files": [{"key": key, "file": key.lower(), "service": service}
+                             for service, key in secret_files.secret_files_in(self.compose_dict())],
             "warnings": self.warnings,
             **self._dashboard_sign_in(),
             # What this render was made from. ops-controller refuses to re-render over a render made
@@ -438,6 +440,12 @@ class RenderedConfig:
         ]
         sec_lines += [f"{k}=" for k in self.required_secrets]
         (out / "secrets.env.example").write_text("\n".join(sec_lines) + "\n", encoding="utf-8")
+        # Every compose call loads the file-secret digests (bringup.compose_argv), and compose refuses
+        # a missing --env-file. `ordo secrets materialize` owns the content; a render only makes sure
+        # the file exists, so a render with nothing materialized yet still has a runnable compose.
+        digests = out / secret_files.DIGESTS_ENV_FILE
+        if not digests.exists():
+            digests.write_text("", encoding="utf-8")
         # model-gateway/ - mounted read-only into model-gateway + model-gateway-keys at /config.
         mg_dir = out / "model-gateway"
         mg_dir.mkdir(parents=True, exist_ok=True)
@@ -517,10 +525,10 @@ def litellm_google_sso_env(env: dict[str, str], plugins_enabled: list[str], admi
 
     Lets the operator sign into the LiteLLM admin UI with the SAME Google identity the edge
     already gates, instead of a second admin/LITELLM_MASTER_KEY login. Reuses the stack's
-    existing Google OAuth client - GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET are compose-level
-    `${...}` references to the edge's own OAUTH2_PROXY_CLIENT_ID/OAUTH2_PROXY_CLIENT_SECRET
-    (resolved from secrets.env at `docker compose` time, same as CADDY_TAILNET_HOSTNAME below),
-    so this introduces no new secret and this function never handles a secret value.
+    existing Google OAuth client: a non-empty result makes compose mount the edge's own
+    OAUTH2_PROXY_CLIENT_ID/OAUTH2_PROXY_CLIENT_SECRET as GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET
+    files (compose.MODEL_GATEWAY_GOOGLE_SSO_SECRET_FILES), so this introduces no new secret and
+    this function never handles a secret value. It returns only the non-secret settings.
 
     PROXY_BASE_URL must be the ORIGIN the browser actually used: LiteLLM appends
     "/sso/callback" to it verbatim, both to build the redirect it sends Google and as the value
@@ -551,11 +559,7 @@ def litellm_google_sso_env(env: dict[str, str], plugins_enabled: list[str], admi
         base_url = f"https://{hostname}:{LITELLM_EDGE_PORT}"
     if not base_url:
         return {}
-    sso_env = {
-        "PROXY_BASE_URL": base_url,
-        "GOOGLE_CLIENT_ID": "${OAUTH2_PROXY_CLIENT_ID}",
-        "GOOGLE_CLIENT_SECRET": "${OAUTH2_PROXY_CLIENT_SECRET}",
-    }
+    sso_env = {"PROXY_BASE_URL": base_url}
     if admin_identity:
         sso_env["PROXY_ADMIN_ID"] = admin_identity
     return sso_env
@@ -658,7 +662,7 @@ def render(source: Source, catalog: Catalog,
         "agent_group_add": (list(agent.group_add) if agent else []),
         "agent_volumes": (list(agent.volumes) if agent else []),
         "agent_environment": (dict(agent.environment) if agent else {}),
-        "agent_secret_files": ([dict(s) for s in agent.secret_files] if agent else []),
+        "agent_secret_files": (list(agent.secret_files) if agent else []),
         "agent_secrets": (list(agent.secrets) if agent else []),
         "agent_derived_env": (list(agent.derived_env) if agent else []),
         "agent_depends_on": (dict(agent.depends_on) if agent else {}),
@@ -681,6 +685,7 @@ def render(source: Source, catalog: Catalog,
             "depends_on": dict(dash.depends_on),
             "healthcheck": dict(dash.healthcheck),
             "secrets": list(dash.secrets),
+            "secret_files": list(dash.secret_files),
             "derived_env": list(dash.derived_env),
             "gpu_capabilities": list(dash.gpu_capabilities),
             "local_port": dash.local_port,
@@ -884,5 +889,6 @@ def _render_mcp(mcps: list, project: str = "ordo") -> tuple[list[dict[str, Any]]
             "auth_type": spec.auth_type, "auth_secret": spec.auth_secret,
             "allowed_tools": list(spec.allowed_tools), "tools": list(spec.tools),
             "healthcheck": dict(spec.healthcheck),
+            "secret_files": list(spec.secret_files),
         })
     return servers, notes

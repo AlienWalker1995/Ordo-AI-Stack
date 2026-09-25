@@ -66,7 +66,7 @@ site:
   DISCORD_REQUIRE_MENTION: false
 ```
 
-The Discord bot token is a file-based secret (`/run/secrets/discord_token`, per `services/hermes/agent.yaml`'s `secret_files` entry): its value is the `DISCORD_BOT_TOKEN` key in the secret store, and `ordo secrets materialize` writes it to `out/secrets/discord_token`, which the render bind-mounts read-only. Set it with `ordo secrets set DISCORD_BOT_TOKEN --from-stdin`, then `ordo recreate agent` (see [secrets runbook](runbooks/secrets.md)).
+The Discord bot token is a file-based secret (`/run/secrets/discord_bot_token`, per `services/hermes/agent.yaml`'s `secret_files` entry): its value is the `DISCORD_BOT_TOKEN` key in the secret store, and `ordo secrets materialize` writes it to `out/secrets/discord_bot_token`, which the render bind-mounts read-only. Set it with `ordo secrets set DISCORD_BOT_TOKEN --from-stdin`, then `ordo recreate agent` (see [secrets runbook](runbooks/secrets.md)).
 
 After editing `ordo.yaml`:
 

@@ -100,14 +100,19 @@ def _rendered(site: dict):
 
 
 def _services_reading(compose: dict, key: str) -> list[str]:
-    return sorted(name for name, svc in compose["services"].items() if key in (svc.get("environment") or {}))
+    """Services that get `key` in their environment, as a value or as a file (`<key>_FILE`)."""
+    return sorted(name for name, svc in compose["services"].items()
+                  if {key, f"{key}_FILE"} & set(svc.get("environment") or {}))
 
 
 def test_without_the_edge_only_the_dashboard_gets_the_local_sign_in_secret():
     rc = _rendered(HOST_PATHS)
     compose = rc.compose_dict()
     assert _services_reading(compose, LOCAL_LOGIN_SECRET) == ["dashboard"]
-    assert compose["services"]["dashboard"]["environment"][LOCAL_LOGIN_SECRET] == "${" + LOCAL_LOGIN_SECRET + "}"
+    # a file under /run/secrets, never the value
+    dashboard = compose["services"]["dashboard"]
+    assert dashboard["environment"][f"{LOCAL_LOGIN_SECRET}_FILE"] == f"/run/secrets/{LOCAL_LOGIN_SECRET.lower()}"
+    assert LOCAL_LOGIN_SECRET not in dashboard["environment"]
     assert LOCAL_LOGIN_SECRET in rc.required_secrets
     assert LOCAL_LOGIN_SECRET not in rc.optional_secrets
 

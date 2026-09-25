@@ -60,7 +60,8 @@ services:
     # folder (uid 1000, vault-aligned) so the AI reads them with no desktop Obsidian running.
     image: ordo/livesync-bridge
     # The passphrase must be declared: an empty one would silently change end-to-end encryption.
-    secrets: [COUCHDB_PASSWORD, LIVESYNC_E2EE_PASSPHRASE]
+    # Both are files: the entrypoint exports them from /run/secrets (secret-env.sh).
+    secret_files: [COUCHDB_PASSWORD, LIVESYNC_E2EE_PASSPHRASE]
     # The entrypoint's `:?` guards: the CouchDB coordinates, from the plugin env block above (.env).
     derived_env: [COUCHDB_USER, COUCHDB_INTERNAL_URL, LIVESYNC_DATABASE]
     env:

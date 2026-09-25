@@ -22,6 +22,7 @@ from typing import Any
 
 from .buildspec import BuildSpec
 from .plugins import LocalPort, parse_derived_env
+from .secret_files import SecretFileRef, parse_secret_files
 
 
 def _gpu_caps(b: dict[str, Any]) -> tuple[str, ...]:
@@ -53,6 +54,8 @@ class Dashboard:
     healthcheck: dict[str, Any] = dataclasses.field(default_factory=dict)
     # Secret NAMES the dashboard reads, rendered as `KEY: ${KEY}` (see PluginService.secrets).
     secrets: tuple[str, ...] = ()
+    # Secrets it reads from a file under /run/secrets (see PluginService.secret_files).
+    secret_files: tuple[SecretFileRef, ...] = ()
     # Derived-config NAMES (keys of the rendered .env) the dashboard reads, rendered as
     # `KEY: ${KEY?...}` (see PluginService.derived_env). The dashboard never loads the whole .env.
     derived_env: tuple[str, ...] = ()
@@ -70,6 +73,7 @@ class Dashboard:
     local_port: LocalPort | None = None
     # The secret the local operator signs in with while the edge is off (no SSO identity exists).
     # Passed to the dashboard, and required in secrets.env, only while `local_port` is published.
+    # Always delivered as a file: the dashboard reads `<KEY>_FILE` (/run/secrets/<key lowercased>).
     local_login_secret: str = ""
 
     @classmethod
@@ -83,6 +87,7 @@ class Dashboard:
         local_login_secret = str(d.get("local_login_secret", "") or "")
         if local_login_secret and local_port is None:
             raise ValueError(f"{where}: `local_login_secret` needs a `local_port`: it is the sign-in for that port")
+        secrets = tuple(str(k) for k in (d.get("secrets", []) or []))
         return cls(
             id=str(d["id"]), name=str(d.get("name", d["id"])),
             description=str(d.get("description", "")),
@@ -92,7 +97,9 @@ class Dashboard:
             volumes=tuple(str(v) for v in (d.get("volumes", []) or [])),
             depends_on={str(k): str(v) for k, v in (d.get("depends_on", {}) or {}).items()},
             healthcheck=dict(d.get("healthcheck", {}) or {}),
-            secrets=tuple(str(k) for k in (d.get("secrets", []) or [])),
+            secrets=secrets,
+            secret_files=parse_secret_files(where, d.get("secret_files"), env_secrets=secrets,
+                                            explicit_env=d.get("environment") or {}),
             derived_env=parse_derived_env(where, d),
             gpu_capabilities=_gpu_caps(d),
             build=BuildSpec.from_dict(d.get("build")),

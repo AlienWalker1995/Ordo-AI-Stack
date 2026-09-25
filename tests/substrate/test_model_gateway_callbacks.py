@@ -110,10 +110,11 @@ def test_gateway_langfuse_env_values():
 
 
 def test_gateway_never_carries_a_langfuse_key_literal():
-    """The key pair reaches the gateway only as ${...} references, interpolated from secrets.env."""
+    """The key pair reaches the gateway only as files; the entrypoint exports them for LiteLLM."""
     env = _gateway_env(["langfuse"])
-    assert env["LANGFUSE_PUBLIC_KEY"] == "${LANGFUSE_PUBLIC_KEY}"
-    assert env["LANGFUSE_SECRET_KEY"] == "${LANGFUSE_SECRET_KEY}"
+    assert env["LANGFUSE_PUBLIC_KEY_FILE"] == "/run/secrets/langfuse_public_key"
+    assert env["LANGFUSE_SECRET_KEY_FILE"] == "/run/secrets/langfuse_secret_key"
+    assert "LANGFUSE_PUBLIC_KEY" not in env and "LANGFUSE_SECRET_KEY" not in env
 
 
 # ── add_callbacks.py ───────────────────────────────────────────────────────────

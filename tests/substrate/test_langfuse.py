@@ -404,8 +404,11 @@ def test_retention_job_runs_the_tracked_module_on_a_daily_schedule():
     assert svc["restart"] == "unless-stopped"
     assert svc["depends_on"]["langfuse-web"] == {"condition": "service_healthy"}
     assert svc["environment"]["LANGFUSE_BASE_URL"] == "http://langfuse-web:3000"
-    assert svc["environment"]["LANGFUSE_PUBLIC_KEY"] == "${LANGFUSE_PUBLIC_KEY}"
-    assert svc["environment"]["LANGFUSE_SECRET_KEY"] == "${LANGFUSE_SECRET_KEY}"
+    # the key pair is two files, read by the script with its mounted secret_env.py
+    assert svc["environment"]["LANGFUSE_PUBLIC_KEY_FILE"] == "/run/secrets/langfuse_public_key"
+    assert svc["environment"]["LANGFUSE_SECRET_KEY_FILE"] == "/run/secrets/langfuse_secret_key"
+    assert "LANGFUSE_PUBLIC_KEY" not in svc["environment"] and "LANGFUSE_SECRET_KEY" not in svc["environment"]
+    assert any(v.endswith("/services/langfuse/secret_env.py:/app/secret_env.py:ro") for v in svc["volumes"])
     assert svc["healthcheck"]["test"] == ["CMD", "python", "/app/langfuse_retention.py", "--healthcheck"]
     mount = svc["volumes"][0]
     assert mount.endswith("/services/langfuse/langfuse_retention.py:/app/langfuse_retention.py:ro")
@@ -431,9 +434,10 @@ def test_minio_lifecycle_is_an_idempotent_one_shot_on_the_minio_pin():
     assert "mc ilm import langfuse/langfuse" in script and "rule add" not in script
     assert '"ID":"ordo-langfuse-retention"' in script and '"Days":%s' in script
     assert "mc ilm rule ls langfuse/langfuse" in script
-    # the secret reaches mc through the environment, never a command-line argument
-    assert svc["environment"]["LANGFUSE_MINIO_SECRET"] == "${LANGFUSE_MINIO_SECRET}"
-    assert "$$LANGFUSE_MINIO_SECRET" in script
+    # the secret reaches mc from its file, never the environment or a command-line argument
+    assert svc["environment"]["LANGFUSE_MINIO_SECRET_FILE"] == "/run/secrets/langfuse_minio_secret"
+    assert "LANGFUSE_MINIO_SECRET" not in svc["environment"]
+    assert '$$(cat "$$LANGFUSE_MINIO_SECRET_FILE")' in script
 
 
 def test_plugin_service_restart_policy_is_validated():

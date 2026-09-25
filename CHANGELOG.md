@@ -5,6 +5,21 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Added
+- **Secrets as files.** A service reads a secret from a read-only file whenever its software can:
+  its manifest lists the key under `secret_files:` (a key name, or `{key, env, prefix}` for the name
+  the image reads), `ordo secrets materialize` writes every declared file to `out/secrets/` plus a
+  digest per key to `out/secret-files.env`, and the render mounts it at
+  `/run/secrets/<key lowercased>` with only the path in the environment. `docker inspect` of those
+  containers no longer shows the value. Converted: ops-controller, dashboard, the ComfyUI gate,
+  mcp-comfyui, mcp-orchestration, mcp-n8n, model-gateway and model-gateway-keys (the LiteLLM
+  master key, salt, DB password, consumer keys, Langfuse pair and Google client), litellm-db and
+  langfuse-db (`POSTGRES_PASSWORD_FILE`), oauth2-proxy (client secret and cookie secret),
+  langfuse-clickhouse, langfuse-minio, langfuse-minio-lifecycle, langfuse-retention, evals,
+  livesync-bridge and the tailnet sidecars (`TS_AUTHKEY=file:`). Our services read secrets with one
+  helper per language (`ordo/secret_env.py`, `ordo/secret-env.sh`). The agent's two file secrets
+  move to the same declaration, so their files are renamed `discord_bot_token` and
+  `github_backup_pat`. Software with no file option keeps `KEY: ${KEY}` (see
+  `tests/substrate/test_secret_scoping.py` ENV_SPEC).
 - **One secret store: `ordo secrets`.** Every secret value lives in one SOPS (age) encrypted
   dotenv file in a private repo, named by `site: SECRETS_SOURCE` (documented default
   `../ordo-personal/secrets/ordo.env.sops`). `ordo secrets materialize` writes `out/secrets.env`
