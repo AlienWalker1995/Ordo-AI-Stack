@@ -218,6 +218,25 @@ def test_patched_image_requirement_matches_what_its_dockerfile_builds():
             assert model.min_compute_cap == lowest
 
 
+def test_patched_build_context_is_lf_only():
+    # The Dockerfile's python heredoc and the git-applied diff run on Linux: a CRLF checkout on
+    # Windows made the diff stop applying. .gitattributes keeps the whole context LF.
+    context = ROOT / "services" / "llamacpp-patched"
+    for path in sorted(p for p in context.rglob("*") if p.is_file()):
+        assert b"\r" not in path.read_bytes(), f"{path.relative_to(ROOT)} has CR line endings"
+
+
+def test_patched_build_pins_its_web_ui_instead_of_downloading_latest():
+    # Left alone, llama.cpp's build fetches the embedded web UI for build "b<commit count>", which a
+    # shallow clone reports as b1, so it silently used the floating "latest" UI; a newer UI broke
+    # the pinned commit's embed step. The UI must come from a pinned, checksummed release.
+    dockerfile = (ROOT / "services" / "llamacpp-patched" / "Dockerfile").read_text(encoding="utf-8")
+    assert re.search(r"^ARG LLAMA_UI_RELEASE=b\d+$", dockerfile, re.M)
+    assert re.search(r"^ARG LLAMA_UI_SHA256=[0-9a-f]{64}$", dockerfile, re.M)
+    assert "sha256sum -c" in dockerfile
+    assert "-DLLAMA_USE_PREBUILT_UI=OFF" in dockerfile
+
+
 # ── the audit's compute targets, end to end ─────────────────────────────────
 
 def _gpu(name, vram_gb, uuid, compute_cap=None, vendor=None):

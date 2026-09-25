@@ -38,3 +38,7 @@ assets/* text eol=lf
 # longer byte-match the LF upstream sources. Keep them LF on both directions.
 *.diff text eol=lf
 *.patch text eol=lf
+
+# The patched llama.cpp Dockerfile carries a python heredoc (PATCH 1) that is fed verbatim to the
+# Linux builder; keep the whole build context LF so a Windows checkout cannot alter what it runs.
+services/llamacpp-patched/** text eol=lf

@@ -10,6 +10,11 @@ build is reproducible, not a floating `:server` tag. Like every first-party imag
 with the commit that last changed this folder, recorded in `out/images.json`, and render pins
 the compose to that tag.
 
+The embedded web UI is pinned the same way: the release built from that commit (`b9843`),
+downloaded by sha256. Upstream's default fetch resolves a shallow clone to build `b1`, which does
+not exist, and falls back to the floating `latest` UI; a newer UI broke the embed step of this
+commit. Bump `LLAMA_UI_RELEASE`/`LLAMA_UI_SHA256` together with the pinned commit.
+
 ## What's patched
 - **PATCH 1** — hybrid/recurrent checkpoint-search fix (upstream ggml-org#22384, #20225, #24055).
 - **PATCH 2** — `recurrent_shrink/expand` prompt-cache API (upstream PR #24785, minimal diff in
