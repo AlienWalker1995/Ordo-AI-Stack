@@ -13,7 +13,7 @@
       "background": true,
       "ops_service": "llamacpp",
       "hint": "Backend-only; use model-gateway :11435 from host. Run: ordo up llamacpp (refused while a GPU lease has evicted it)",
-      "notes": "Core service (plugin null = always visible). The compose service is defined by the substrate (ordo/compose.py); this dir exists to carry its dashboard card."
+      "notes": "Core service (plugin null = always visible). The compose service is defined by the substrate (ordo/render/compose.py); this dir exists to carry its dashboard card."
     }
   ]
 }

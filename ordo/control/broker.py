@@ -409,7 +409,7 @@ class DockerBackend:
     def compose_up(self, service: str | None = None) -> None:
         # A named up is the host's `ordo up <service>`: `stack.plan_named`, so `--no-deps` (else
         # compose also starts the service's dependencies, and during a GPU lease that includes the
-        # evicted llamacpp; the lease guard in control.py checks only the group) plus the netns
+        # evicted llamacpp; the lease guard in api.py checks only the group) plus the netns
         # members, with every profile so a profiled dependency resolves.
         if service is None:
             subprocess.run(self._compose("up", "-d"), check=True, timeout=900)

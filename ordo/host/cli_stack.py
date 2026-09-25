@@ -240,7 +240,7 @@ def cmd_recreate(args: argparse.Namespace) -> int:
 
 
 def cmd_apply(args: argparse.Namespace) -> int:
-    """`ordo apply`: the deploy, in its one correct order (ordo/apply.py)."""
+    """`ordo apply`: the deploy, in its one correct order (ordo/host/apply.py)."""
     out = Path(args.out)
     source = cli_secrets._source_path(args)
     if not source.exists():

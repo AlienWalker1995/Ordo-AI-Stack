@@ -339,7 +339,7 @@ class Plugin:
     optional_secrets: tuple[str, ...] = ()
     # Build-context identity (METADATA for preflight/tests; NEVER rendered into compose). Absent ->
     # the plugin's own `services/<id>/` + `Dockerfile`. Declared only when the context isn't the
-    # plugin's own dir. See ordo.buildspec.
+    # plugin's own dir. See ordo/render/buildspec.py.
     build: BuildSpec = dataclasses.field(default_factory=BuildSpec)
     # Optional per-consumer LiteLLM virtual key: {models: [group,...], mcp_servers: all|[server_id,...]}.
     # render derives the env var LITELLM_KEY_<ID>, adds it to required secrets, and emits the grant

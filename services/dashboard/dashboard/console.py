@@ -13,7 +13,7 @@ import re
 from pathlib import PurePosixPath
 
 # Services the control plane refuses to cycle because they serve the request itself. Mirrors
-# ordo.broker.DockerBackend.SELF_REFERENTIAL (a repo test keeps the two equal); the dashboard
+# ordo.control.broker.DockerBackend.SELF_REFERENTIAL (a repo test keeps the two equal); the dashboard
 # only uses it to hide buttons that would always be refused.
 NOT_CONTROLLABLE = frozenset({"agent", "ops-controller"})
 

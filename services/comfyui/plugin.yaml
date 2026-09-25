@@ -38,7 +38,7 @@ services:
     # `gpu: true` alone renders `count: all`, which on a dual-GPU WSL2 box lets ComfyUI also see the
     # 1070; the uuid pin (CUDA_VISIBLE_DEVICES + device_ids) is the only thing WSL2 actually honors.
     gpu_pin: primary      # rides the primary (compute) GPU — the same card llama.cpp lives on
-    # --- GPU arbitration (ordo/gpu.py) ------------------------------------------------------
+    # --- GPU arbitration (ordo/render/gpu.py) ------------------------------------------------------
     # ComfyUI is the canonical `burst` consumer: idle most of the time, and GPU-hungry the
     # instant something is queued — by Hermes, by the MCP, or by a human pressing Queue Prompt
     # in the node-graph web UI. It cannot take residency at start (it would hold the card

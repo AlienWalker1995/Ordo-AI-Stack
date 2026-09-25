@@ -188,7 +188,7 @@ services:
       retries: 3
   # langfuse.<tailnet> - the self-hosted Langfuse web app (agent traces/datasets/evals),
   # fronting caddy :8450. This sidecar is what makes LANGFUSE_PUBLIC_URL the clean subdomain
-  # rather than the :8450 port root (ordo/render.py::langfuse_public_url reads the same
+  # rather than the :8450 port root (ordo/render/engine.py::langfuse_public_url reads the same
   # TAILNET_NAMES_ENABLED signal), and Langfuse's own post-login redirect is built from that
   # value - so the name here and the derived URL must stay the same word: `langfuse`.
   # Harmless when the langfuse plugin is disabled: the sidecar rides the edge profile and

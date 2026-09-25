@@ -7,7 +7,7 @@
 # WHAT SENDS TRACES: two writers, told apart by Langfuse `environment`.
 #   * `gateway`: model-gateway's LiteLLM `langfuse_otel` callback, one generation per LLM call for
 #     EVERY consumer (Hermes, Open WebUI, n8n, edge clients, health probes), tagged with the virtual
-#     key alias. Wired by the renderer only while this plugin is enabled (ordo/compose.py
+#     key alias. Wired by the renderer only while this plugin is enabled (ordo/render/compose.py
 #     GATEWAY_LANGFUSE_ENV).
 #   * `hermes`: the Hermes agent's bundled `observability/langfuse` plugin (turn, LLM-call and tool
 #     spans; services/hermes/{Dockerfile,agent.yaml,entrypoint.sh}).
@@ -35,7 +35,7 @@ compose_profile: langfuse
 env:
   LANGFUSE_ENABLED: "1"
 # LANGFUSE_PUBLIC_URL and LANGFUSE_ADMIN_EMAIL are NOT declared here: they are emitted by
-# ordo/render.py AFTER the `site:` merge, so an operator can override either from `site:`. A plugin
+# ordo/render/engine.py AFTER the `site:` merge, so an operator can override either from `site:`. A plugin
 # `env:` entry wins over site and would have made them unoverridable. See render.langfuse_public_url.
 secrets:
   # Infra credentials for the four backing stores.
@@ -62,7 +62,7 @@ secrets:
 #   clickhouse-server           25.12.11.4
 #   redis                       7.4.11
 #   minio                       RELEASE.2025-09-07T16-13-09Z
-#   postgres                    16-alpine (the SAME pin as ordo.compose.POSTGRES_IMAGE, enforced
+#   postgres                    16-alpine (the SAME pin as ordo.render.compose.POSTGRES_IMAGE, enforced
 #                               by a substrate test - see the langfuse-db comment below)
 #   python (langfuse-retention) 3.11.15-slim-trixie, the same index digest ops-controller and rag
 #                               build FROM (one Python base to audit)
@@ -75,7 +75,7 @@ secrets:
 # start rather than come up with a guessable default. Same reasoning as litellm-db.
 services:
   - name: langfuse-db
-    # This MUST stay byte-identical to ordo.compose.POSTGRES_IMAGE (litellm-db's pin): one Postgres
+    # This MUST stay byte-identical to ordo.render.compose.POSTGRES_IMAGE (litellm-db's pin): one Postgres
     # version across the stack, one digest to audit and bump. The manifest schema has no image-alias
     # mechanism, so the copy is enforced rather than avoided -
     # tests/substrate/test_langfuse.py::test_langfuse_db_reuses_the_substrate_postgres_pin fails if

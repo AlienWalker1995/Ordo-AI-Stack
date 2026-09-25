@@ -77,7 +77,7 @@ mcp:
   `network: internal` renders `[ordo-mcp-net]`; `network: stack` renders
   `[ordo-mcp-net, ordo-net]`. `model-gateway` is the only other member, so nothing else in the
   stack can call an MCP server directly.
-- A default healthcheck from `ordo.compose.default_mcp_healthcheck(port, path)`, unless the
+- A default healthcheck from `ordo.render.compose.default_mcp_healthcheck(port, path)`, unless the
   manifest supplies its own: `["CMD", "python3", "-c", ...]` running
   `urllib.request.urlopen('http://localhost:<port><path>', timeout=5)` where an `HTTPError` (any
   HTTP status) counts as healthy, because the MCP endpoint answers a bare GET with an error status

@@ -2,7 +2,7 @@
 per-item served-backend classification, all built on the SAME ground truth - ops-controller's
 `/status` scheduler block (`checks.Probes.ops_status()`, already used by `runner._served_model` and
 by `checks._check_ops_model`). `services/evals/plugin.yaml` points `OPS_CONTROLLER_URL` at the
-control plane (`ordo/control.py`'s `ControlPlane`, compose service `ops-controller`) and passes
+control plane (`ordo/control/api.py`'s `ControlPlane`, compose service `ops-controller`) and passes
 `OPS_CONTROLLER_TOKEN`, which `probes.LiveProbes` sends as a Bearer token: the control plane
 authenticates every call except its health probe.
 

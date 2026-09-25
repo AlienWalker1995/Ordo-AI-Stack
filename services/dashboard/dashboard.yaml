@@ -94,7 +94,7 @@ environment:
 # comfyui models via MODELS_DIR; its own state lives in the staged V2 data tree.
 volumes:
   # RW view of the SAME models-gguf volume the llama.cpp services read, so the Models page's
-  # delete removes the file the backends load; 9p bind retired 2026-08-07 (see ordo/compose.py).
+  # delete removes the file the backends load; 9p bind retired 2026-08-07 (see ordo/render/compose.py).
   - models-gguf:/gguf-models
   # RW view of the SAME comfyui-models volume ComfyUI reads, so the Media page's model
   # delete removes the file ComfyUI loads; 9p bind retired 2026-08-07 (Stage 2, see

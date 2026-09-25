@@ -168,7 +168,7 @@ volumes:
   # destruction. See docs/design/hermes-owns-docker.md.
   - /var/run/docker.sock:/var/run/docker.sock
 
-# File-delivered secrets (ordo/secret_files.py): each is mounted read-only at
+# File-delivered secrets (ordo/render/secret_files.py): each is mounted read-only at
 # /run/secrets/<key lowercased>, kept out of `docker inspect`, and the render sets <KEY>_FILE to that
 # path; the entrypoint bridges each *_FILE to the plain var the app reads.
 secret_files: [DISCORD_BOT_TOKEN, GITHUB_BACKUP_PAT]
