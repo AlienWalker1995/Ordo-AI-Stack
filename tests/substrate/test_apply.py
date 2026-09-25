@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+import yaml
 
 from ordo import apply, bringup, cli, doctor, images
 
@@ -181,8 +182,8 @@ class FakeDockerCli:
 
 
 def _container(service: str, config_hash: str, image_id: str, *, version: str = COMPOSE_VERSION,
-               oneoff: str = "False") -> dict:
-    return {"Image": image_id, "Config": {"Labels": {
+               oneoff: str = "False", container_id: str = "") -> dict:
+    return {"Id": container_id or f"{service}-id", "Image": image_id, "Config": {"Labels": {
         "com.docker.compose.project": "ordo", "com.docker.compose.service": service,
         "com.docker.compose.config-hash": config_hash, "com.docker.compose.version": version,
         "com.docker.compose.oneoff": oneoff}}}
@@ -196,7 +197,7 @@ def test_rendered_reads_hashes_and_image_ids_with_the_shared_compose_argv(tmp_pa
         images={"ordo/dashboard:new": "sha256:d1"})
     state = apply.DockerState(run=cli_)
     got = state.rendered(apply.Staged(compose_dir=tmp_path.as_posix(), project_directory="C:/out", doc=DOC),
-                         project="ordo", profiles=["edge", "evals"])
+                         project="ordo", profiles=["edge", "evals"], containers={})
     assert got["dashboard"] == apply.RenderedService("dashboard", "aaa", "ordo/dashboard:new", "sha256:d1", False)
     assert got["evals"] == apply.RenderedService("evals", "bbb", "ordo/evals:new", None, True)
     hash_call = next(c for c in cli_.calls if "--hash" in c)
@@ -214,8 +215,10 @@ def test_running_reads_labels_and_image_ids_and_skips_one_off_runs():
         _container("evals", "eee", "sha256:e1", oneoff="True"),
     ])
     got = apply.DockerState(run=cli_).running(project="ordo")
-    assert got == {"dashboard": apply.RunningContainer("dashboard", "aaa", "sha256:d1", COMPOSE_VERSION),
-                   "ops-controller": apply.RunningContainer("ops-controller", "ccc", "sha256:o1", "2.33.0")}
+    assert got == {"dashboard": apply.RunningContainer("dashboard", "aaa", "sha256:d1", COMPOSE_VERSION,
+                                                       "dashboard-id"),
+                   "ops-controller": apply.RunningContainer("ops-controller", "ccc", "sha256:o1", "2.33.0",
+                                                            "ops-controller-id")}
     ps = next(c for c in cli_.calls if c[:2] == ["docker", "ps"])
     assert "label=com.docker.compose.project=ordo" in ps and "-a" in ps
 
@@ -228,8 +231,9 @@ def test_no_containers_is_an_empty_running_set_without_an_inspect():
 
 @pytest.mark.parametrize("failing, read", [
     ("docker ps", lambda state, staged: state.running(project="ordo")),
-    ("config --hash", lambda state, staged: state.rendered(staged, project="ordo", profiles=[])),
-    ("config --format json", lambda state, staged: state.rendered(staged, project="ordo", profiles=[])),
+    ("config --hash", lambda state, staged: state.rendered(staged, project="ordo", profiles=[], containers={})),
+    ("config --format json",
+     lambda state, staged: state.rendered(staged, project="ordo", profiles=[], containers={})),
     ("compose version", lambda state, staged: state.compose_version()),
 ])
 def test_unreadable_docker_state_fails_closed(tmp_path, failing, read):
@@ -244,7 +248,101 @@ def test_a_hashed_service_missing_from_the_config_fails_closed(tmp_path):
     cli_ = FakeDockerCli(hashes="dashboard aaa\n", config={"services": {}})
     with pytest.raises(apply.StateUnknown):
         apply.DockerState(run=cli_).rendered(apply.Staged(tmp_path.as_posix(), tmp_path.as_posix(), DOC),
-                                             project="ordo", profiles=[])
+                                             project="ordo", profiles=[], containers={})
+
+
+# --------------------------------------------------------------------------- #
+# Shared namespaces: compose hashes a member with its owner's container id.
+# --------------------------------------------------------------------------- #
+
+CADDY_ID = "f87d0664f98bb2cc73340d3c9c15a01637bb58abbb175271fbfd336a15aa92d5"
+
+
+def test_a_namespace_reference_resolves_to_the_owners_container_id():
+    """compose's convergence (resolveSharedNamespaces) rewrites `service:<owner>` in network_mode,
+    ipc and pid to `container:<owner container id>` before it hashes and labels the member."""
+    services = {
+        "caddy": {"image": "caddy:2"},
+        "tailnet-chat": {"network_mode": "service:caddy"},
+        "sidecar": {"ipc": "service:caddy", "pid": "service:caddy"},
+        "pinned": {"network_mode": "container:abc"},
+        "plain": {"network_mode": "bridge"},
+    }
+    containers = {"caddy": apply.RunningContainer("caddy", "h", "sha256:c", COMPOSE_VERSION, CADDY_ID)}
+    assert apply.shared_namespace_overrides(services, containers) == {
+        "tailnet-chat": {"network_mode": f"container:{CADDY_ID}"},
+        "sidecar": {"ipc": f"container:{CADDY_ID}", "pid": f"container:{CADDY_ID}"},
+    }
+
+
+def test_a_reference_to_an_owner_with_no_container_is_left_unresolved():
+    """No owner container: the owner is itself "not created", and its members follow it."""
+    services = {"caddy": {}, "tailnet-chat": {"network_mode": "service:caddy"}}
+    assert apply.shared_namespace_overrides(services, {}) == {}
+
+
+class HashingComposeCli(FakeDockerCli):
+    """`config --hash` answers like compose 5.1.0 did on the live stack (2026-09-25): a member's
+    hash is the one on its container's label only when its network_mode is resolved to the owner's
+    container id (the override file on the argv); with `service:caddy` it is a different hash."""
+
+    LABEL_HASH = "746a33129e436b6094d38f0becd6ba0813daeeb30a6741e0c1be312fa67a7cdc"
+    UNRESOLVED_HASH = "464df342ec3a5dbad5eecc1a65257ce58d0b41becea9ed04b623ca6fec6933a8"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.overrides_seen: list[dict] = []
+
+    def __call__(self, argv):
+        if "--hash" in argv:
+            files = [argv[i + 1] for i, arg in enumerate(argv) if arg == "-f"][1:]
+            override = {}
+            for path in files:
+                override |= (yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}).get("services") or {}
+            self.overrides_seen.append(override)
+            member = override.get("tailnet-chat") or {}
+            chat = self.LABEL_HASH if member.get("network_mode") == f"container:{CADDY_ID}" else self.UNRESOLVED_HASH
+            self.calls.append(list(argv))
+            return subprocess.CompletedProcess(argv, 0, f"caddy ccc\ntailnet-chat {chat}\n", "")
+        return super().__call__(argv)
+
+
+def test_an_unchanged_netns_member_is_not_a_change(tmp_path):
+    """Reproduction of the 2026-09-25 bug: every apply listed caddy's netns members as "config
+    changed", because `config --hash` hashes `network_mode: service:caddy` while compose labels the
+    container with the hash of `container:<caddy id>`. Fixture: tailnet-chat's real running labels."""
+    cli_ = HashingComposeCli(
+        config={"services": {"caddy": {"image": "caddy:2", "restart": "unless-stopped"},
+                             "tailnet-chat": {"image": "tailscale/tailscale:1", "restart": "unless-stopped",
+                                              "network_mode": "service:caddy"}}},
+        images={"caddy:2": "sha256:c", "tailscale/tailscale:1": "sha256:t"},
+        ps="id1\nid2\n",
+        inspect=[_container("caddy", "ccc", "sha256:c", container_id=CADDY_ID),
+                 _container("tailnet-chat", HashingComposeCli.LABEL_HASH, "sha256:t", container_id="d" * 64)])
+    state = apply.DockerState(run=cli_)
+    have = state.running(project="ordo")
+    want = state.rendered(apply.Staged(tmp_path.as_posix(), tmp_path.as_posix(), DOC), project="ordo",
+                          profiles=["edge"], containers=have)
+    assert cli_.overrides_seen == [{"tailnet-chat": {"network_mode": f"container:{CADDY_ID}"}}]
+    assert apply.diff_services(want, have, compose_version=COMPOSE_VERSION) == []
+
+
+def test_a_member_created_against_an_older_owner_container_is_a_change(tmp_path):
+    """The owner was recreated without its member (the member sits in a dead namespace): compose
+    hashes the member against the owner's CURRENT id, which no longer matches its label."""
+    cli_ = HashingComposeCli(
+        config={"services": {"caddy": {"image": "caddy:2"},
+                             "tailnet-chat": {"image": "tailscale/tailscale:1", "network_mode": "service:caddy"}}},
+        images={"caddy:2": "sha256:c", "tailscale/tailscale:1": "sha256:t"},
+        ps="id1\nid2\n",
+        inspect=[_container("caddy", "ccc", "sha256:c", container_id="e" * 64),
+                 _container("tailnet-chat", HashingComposeCli.LABEL_HASH, "sha256:t", container_id="d" * 64)])
+    state = apply.DockerState(run=cli_)
+    have = state.running(project="ordo")
+    want = state.rendered(apply.Staged(tmp_path.as_posix(), tmp_path.as_posix(), DOC), project="ordo",
+                          profiles=["edge"], containers=have)
+    changes = apply.diff_services(want, have, compose_version=COMPOSE_VERSION)
+    assert [(c.service, c.reasons) for c in changes] == [("tailnet-chat", ("config changed",))]
 
 
 def test_an_image_inspect_error_other_than_missing_fails_closed():
@@ -302,7 +400,7 @@ class FakeHost:
             self.calls.append(("write_render",))
         yield apply.Staged(compose_dir="stage", project_directory="out", doc=self.doc)
 
-    def rendered_services(self, staged):
+    def rendered_services(self, staged, containers):
         return self.want
 
     def running_containers(self):
