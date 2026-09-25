@@ -209,8 +209,8 @@ def lease_refusal(gpu: dict | None, *, whole_stack: bool, starts: set[str],
     return None
 
 
-def find_ops_controller(project: str) -> str | None:
-    """The running ops-controller container's name, or None when there is none.
+def find_running_container(project: str, service: str) -> str | None:
+    """The running container's name for a compose service, or None when there is none.
 
     Raises LeaseUnknown when docker cannot be queried.
     """
@@ -218,17 +218,25 @@ def find_ops_controller(project: str) -> str | None:
         ps = subprocess.run(
             ["docker", "ps",
              "--filter", f"label=com.docker.compose.project={project}",
-             "--filter", f"label=com.docker.compose.service={OPS_CONTROLLER_SERVICE}",
+             "--filter", f"label=com.docker.compose.service={service}",
              "--filter", "status=running",
              "--format", "{{.Names}}"],
             capture_output=True, text=True, timeout=30,
         )
     except (OSError, subprocess.SubprocessError) as e:
-        raise LeaseUnknown(f"cannot query docker for the ops-controller container: {e}") from e
+        raise LeaseUnknown(f"cannot query docker for the {service} container: {e}") from e
     if ps.returncode != 0:
-        raise LeaseUnknown(f"cannot query docker for the ops-controller container: {ps.stderr.strip()}")
+        raise LeaseUnknown(f"cannot query docker for the {service} container: {ps.stderr.strip()}")
     names = ps.stdout.split()
     return names[0] if names else None
+
+
+def find_ops_controller(project: str) -> str | None:
+    """The running ops-controller container's name, or None when there is none.
+
+    Raises LeaseUnknown when docker cannot be queried.
+    """
+    return find_running_container(project, OPS_CONTROLLER_SERVICE)
 
 
 def read_gpu_status(project: str) -> dict | None:

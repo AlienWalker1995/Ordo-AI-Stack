@@ -88,6 +88,17 @@ All notable changes to this project are documented here. The format is loosely b
   existing placeholder-substitution mechanism. Leave `cost:` unset for the unchanged $0/token
   default.
 
+### Fixed
+- **Open WebUI uses the declared connection on every start.** With persistent config on (the
+  image default) Open WebUI read env only on first launch, so a first-launch placeholder key in
+  webui.db outlived every scoped key the render declared: LiteLLM refused it and the chat UI listed
+  no models. The manifest now sets `ENABLE_PERSISTENT_CONFIG=false` (v0.11.3 has no per-setting
+  override), embeds through the `local-embed` alias its scoped key may use (the GGUF filename got a
+  403), and declares the settings that lived only in webui.db (SearXNG web search when
+  `searxng-web` is enabled, the TTS engine, user webhooks). Admin-UI changes now last until the
+  next restart. `ordo doctor` checks that the running container's key lists the default chat and
+  embedding models on model-gateway.
+
 ### Changed
 - **ops-controller audits every state-changing call.** The audit log recorded two actions
   (ComfyUI pip installs and the GPU-assign 410s), so lifecycle and compose verbs, model switches,

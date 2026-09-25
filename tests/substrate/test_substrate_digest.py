@@ -206,6 +206,7 @@ def _doctor(monkeypatch, capsys, running):
         return running
 
     monkeypatch.setattr(doctor, "read_running_substrate_digest", fake_read)
+    monkeypatch.setattr(doctor, "read_open_webui_probe", lambda project: None)
     code = cli.main(["doctor"])
     return code, capsys.readouterr().out
 

@@ -25,6 +25,12 @@ services:
     # The renderer binds it to loopback only and drops it when the edge is enabled.
     local_port: {host: 8443, container: 8080}
     env:
+      # Env is the only source of Open WebUI's settings. With persistence on (the image default) it
+      # reads env on first launch only and webui.db wins after that, so a rotated or corrected key
+      # never arrives (a first-launch placeholder key emptied the model list, 2026-09-25). v0.11.3
+      # has no per-setting override (only oauth.* has its own switch), so persistence is off and a
+      # setting changed in the admin UI lasts until the next restart: declare it here instead.
+      ENABLE_PERSISTENT_CONFIG: "false"
       ENABLE_OLLAMA_API: "false"
       OPENAI_API_BASE_URL: ${OPENAI_API_BASE:-http://model-gateway:11435/v1}
       OPENAI_API_KEY: ${LITELLM_KEY_OPEN_WEBUI}
@@ -36,7 +42,16 @@ services:
       RAG_EMBEDDING_ENGINE: openai
       RAG_OPENAI_API_BASE_URL: http://model-gateway:11435/v1
       RAG_OPENAI_API_KEY: ${LITELLM_KEY_OPEN_WEBUI}
-      RAG_EMBEDDING_MODEL: ${EMBED_MODEL:-${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}}
+      # The gateway alias, not a GGUF filename: the scoped key may only use local-chat and local-embed.
+      RAG_EMBEDDING_MODEL: local-embed
+      # Operator settings formerly held only in webui.db. Web search needs the searxng-web plugin.
+      ENABLE_WEB_SEARCH: ${SEARXNG_ENABLED:+true}
+      WEB_SEARCH_ENGINE: searxng
+      SEARXNG_QUERY_URL: http://searxng:8080/search
+      WEB_SEARCH_RESULT_COUNT: "3000"
+      WEB_SEARCH_CONCURRENT_REQUESTS: "5"
+      AUDIO_TTS_ENGINE: transformers
+      ENABLE_USER_WEBHOOKS: "true"
     volumes:
       # NAMED VOLUME (ext4) — open-webui keeps its SQLite DB + uploads here; DB state
       # never rides the wedge-prone 9p bridge (see services/rag/plugin.yaml note).
