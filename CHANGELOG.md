@@ -113,6 +113,11 @@ All notable changes to this project are documented here. The format is loosely b
   default.
 
 ### Fixed
+- **ops-controller no longer recreates a service onto an unbuilt first-party image.** A plugin
+  enabled from the dashboard or Hermes (rag's `rag-ingestion`) names an image built from this
+  checkout; before any `ordo build` compose tried to pull it and the apply failed. Such a service is
+  now left to the host (`ordo apply --only <service>`, which builds it first); a missing third-party
+  image is still pulled.
 - **ops-controller no longer starts a service onto a missing model file.** Only a model switch
   checked the models volume, and only for the chat model; enabling a plugin (rag's llamacpp-embed)
   or any other post-render recreate could start a model server whose file was never fetched, and
