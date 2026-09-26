@@ -115,8 +115,9 @@ All notable changes to this project are documented here. The format is loosely b
 ### Fixed
 - **Removing a plugin stops its services on every apply path.** ops-controller's disable stopped
   them, but a plugin removed from `ordo.yaml` followed by `ordo apply` (or `POST /apply`) left its
-  containers running indefinitely. Both executors now stop every running service the render no
-  longer defines (stopped, not removed: its volumes stay); `--only` leaves them as they are.
+  containers running indefinitely. Both executors now stop every service the render no longer
+  defines that is not already stopped, crash loops included (stopped, not removed: its volumes
+  stay); `--only` leaves them as they are.
 - **ops-controller now checks Open WebUI's model connection after recreating it.** Only the host's
   `ordo apply` (through `ordo doctor`) probed whether Open WebUI's scoped key can list the default
   chat and embedding models, so enabling the open-webui plugin, or any control-plane apply that
