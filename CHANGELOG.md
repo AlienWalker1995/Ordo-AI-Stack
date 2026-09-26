@@ -113,6 +113,10 @@ All notable changes to this project are documented here. The format is loosely b
   default.
 
 ### Fixed
+- **Removing a plugin stops its services on every apply path.** ops-controller's disable stopped
+  them, but a plugin removed from `ordo.yaml` followed by `ordo apply` (or `POST /apply`) left its
+  containers running indefinitely. Both executors now stop every running service the render no
+  longer defines (stopped, not removed: its volumes stay); `--only` leaves them as they are.
 - **ops-controller no longer recreates a service onto an unbuilt first-party image.** A plugin
   enabled from the dashboard or Hermes (rag's `rag-ingestion`) names an image built from this
   checkout; before any `ordo build` compose tried to pull it and the apply failed. Such a service is

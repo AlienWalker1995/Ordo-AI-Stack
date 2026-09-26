@@ -81,7 +81,7 @@ class RenderedStackBackend(MockBackend):
     def _create(self, service: RenderedService) -> None:
         self.containers[service.service] = RunningContainer(
             service=service.service, config_hash=service.config_hash, image_id=service.image_id or "",
-            compose_version=COMPOSE_VERSION, container_id=f"cid-{service.service}")
+            compose_version=COMPOSE_VERSION, container_id=f"cid-{service.service}", state="running")
 
     def create_all(self) -> None:
         for service in self._rendered().values():
@@ -533,3 +533,27 @@ def test_an_uncached_third_party_image_is_pulled_as_before(tmp_path):
     status, body = cp.route("POST", "/plugins/rag/enable", {"confirm": True})
     assert status == 200, body
     assert "qdrant" in body["apply"]["recreated"]
+
+
+def test_apply_stops_a_running_service_the_render_no_longer_defines(stack):
+    """Audit F11-02: a plugin removed from ordo.yaml on the host, then `POST /apply`, stops its
+    services, as the host's `ordo apply` and this control plane's own disable do."""
+    cp, backend, _, _ = stack
+    backend.containers["searxng-web"] = RunningContainer(
+        service="searxng-web", config_hash="h", image_id="id:x", compose_version=COMPOSE_VERSION,
+        container_id="cid-searxng-web", state="running")
+    status, body = cp.route("POST", "/apply", {"confirm": True})
+    assert status == 200, body
+    assert body["stopped"] == ["searxng-web"] and backend.stopped == ["searxng-web"]
+    assert body["orphans"] == []
+
+
+def test_apply_leaves_an_already_stopped_unrendered_container_as_an_orphan(stack):
+    cp, backend, _, _ = stack
+    backend.containers["searxng-web"] = RunningContainer(
+        service="searxng-web", config_hash="h", image_id="id:x", compose_version=COMPOSE_VERSION,
+        container_id="cid-searxng-web", state="exited")
+    status, body = cp.route("POST", "/apply", {"confirm": True})
+    assert status == 200, body
+    assert body["stopped"] == [] and backend.stopped == []
+    assert body["orphans"] == ["searxng-web"]

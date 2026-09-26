@@ -419,7 +419,7 @@ class FakeHost:
     """Records every step `apply.run` takes. The read methods answer from the fields."""
 
     MUTATING = {"build", "write_render", "materialize_secrets", "preflight", "bring_up",
-                "wait_for_ops_controller", "remove_job_containers", "doctor"}
+                "wait_for_ops_controller", "remove_job_containers", "stop_containers", "doctor"}
 
     def __init__(self, *, want: dict | None = None, have: dict | None = None, gpu: dict | None = None,
                  builds: list | None = None, substrate: str | None = CHECKOUT_DIGEST, bring_up_code: int = 0,
@@ -501,6 +501,10 @@ class FakeHost:
 
     def remove_job_containers(self, services):
         self.calls.append(("remove_job_containers", tuple(services)))
+        return 0
+
+    def stop_containers(self, containers):
+        self.calls.append(("stop_containers", tuple(containers)))
         return 0
 
     def doctor(self):
@@ -765,3 +769,46 @@ def test_cli_apply_parses_and_hands_off(monkeypatch, tmp_path):
 def test_cli_apply_without_a_source_in_out_refuses(tmp_path, capsys):
     assert cli.main(["apply", "--out", str(tmp_path), "--dry-run"]) == 1
     assert "ordo.yaml" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- #
+# A service the render no longer defines (a plugin removed from ordo.yaml) is stopped, as
+# ops-controller's disable does. Audit F11-02.
+# --------------------------------------------------------------------------- #
+
+
+def _with_orphan(state: str = "running") -> dict:
+    have = in_sync()[1]
+    have["searxng"] = changed_set.RunningContainer(service="searxng", config_hash="h", image_id="sha256:img",
+                                                   compose_version=COMPOSE_VERSION, container_id="cid-searxng",
+                                                   state=state)
+    return have
+
+
+def test_a_running_service_the_render_dropped_is_stopped_before_the_doctor(capsys):
+    host = FakeHost(have=_with_orphan())
+    assert apply.run(host, only=None, dry_run=False) == 0
+    assert [c for c in host.mutations() if c[0] != "doctor"][-1] == ("stop_containers", ("cid-searxng",))
+    assert host.mutations()[-1] == ("doctor",)
+    assert "stop services the render no longer defines: searxng" in capsys.readouterr().out
+
+
+def test_dry_run_lists_a_dropped_service_and_stops_nothing(capsys):
+    host = FakeHost(have=_with_orphan())
+    assert apply.run(host, only=None, dry_run=True) == 0
+    assert host.mutations() == []
+    assert "stop services the render no longer defines: searxng" in capsys.readouterr().out
+
+
+def test_an_already_stopped_dropped_service_is_only_noted(capsys):
+    host = FakeHost(have=_with_orphan(state="exited"))
+    assert apply.run(host, only=None, dry_run=False) == 0
+    assert not any(c[0] == "stop_containers" for c in host.calls)
+    assert "containers the render no longer defines (already stopped): searxng" in capsys.readouterr().out
+
+
+def test_only_leaves_a_dropped_service_running(capsys):
+    host = FakeHost(want=_changed("dashboard"), have=_with_orphan())
+    assert apply.run(host, only=["dashboard"], dry_run=False) == 0
+    assert not any(c[0] == "stop_containers" for c in host.calls)
+    assert "outside --only" in capsys.readouterr().out
