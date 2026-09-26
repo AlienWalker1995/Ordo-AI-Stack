@@ -121,7 +121,10 @@ ordo apply                                    # run it
    moved past: `docker compose rm`, never a start. `run --rm` never reuses such a container, so
    nothing is lost, and the next run creates a fresh one from the current render. A job container
    that is running (an eval in progress) is left alone and reported.
-10. `ordo doctor`.
+10. Stop every service the render no longer defines (a plugin removed from `ordo.yaml`) that is
+    not already stopped, crash loops included: stopped, not removed, so its volumes stay. ops-controller's
+    apply does the same. `--only` leaves them as they are.
+11. `ordo doctor`.
 
 Nothing changed means nothing is recreated. `--only SVC...` recreates only those of the changed
 services (a changed ops-controller still goes first). `ordo build`, `ordo up` and `ordo recreate`

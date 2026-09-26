@@ -693,7 +693,7 @@ class ControlPlane:
         from its container's, or that has none (ordo/render/changed_set.py, what the host's `ordo
         apply` computes). It is recreated in one `up -d --no-deps --force-recreate` call with each
         owner's netns members, after the GPU-lease check every lifecycle verb makes (an evicted
-        resident is refused, 409). A running service the render no longer defines is stopped
+        resident is refused, 409). A service the render no longer defines that is not already stopped is stopped
         (`stopped`) unless it is already stopped (`orphans`). A one-shot job's stopped container the render moved past is removed,
         never started (`removed_jobs`; `run --rm` creates a fresh one), and a running one is left
         alone (`running_jobs`), as the host's `ordo apply` does. Left to the host, and named with the

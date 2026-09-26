@@ -20,8 +20,8 @@ the one correct order:
      members), fetching the model files they load that the models volume lacks
   9. remove the stopped one-shot job containers (evals) the render moved past; a running job is
      left alone, and apply never starts a job (`run --rm` creates a fresh container)
- 10. stop the running services the render no longer defines (a plugin removed from ordo.yaml), as
-     ops-controller's disable does; stopped, not removed, so their volumes stay
+ 10. stop the services the render no longer defines (a plugin removed from ordo.yaml) that are not
+     already stopped, as ops-controller's apply does; stopped, not removed, so their volumes stay
  11. `ordo doctor`
 
 The changed set itself (step 4) is ordo/render/changed_set.py, shared with ops-controller's
@@ -316,8 +316,9 @@ def _plan(host: Any, staged: Staged, builds: list[images.PlannedBuild], only: Se
     stale_jobs = [job for job in jobs if job.removable and (scope is None or job.service in scope)]
     left_out = [c.service for c in changes if c not in selected]
     left_out += [job.service for job in jobs if job.removable and job not in stale_jobs]
-    # A running service the render no longer defines (a plugin removed from ordo.yaml) is stopped,
-    # as ops-controller's disable stops it, so what runs is what the source declares. Every such
+    # A service the render no longer defines (a plugin removed from ordo.yaml) that is not already
+    # stopped (running, restarting, paused) is stopped, as ops-controller's apply stops it, so what
+    # runs is what the source declares. Every such
     # container carries this project's label, so it can only be a service this stack rendered.
     dropped = {name: running[name] for name in sorted(set(running) - set(rendered))}
     live = {name: c.container_id for name, c in dropped.items() if c.state not in STOPPED_STATES}
