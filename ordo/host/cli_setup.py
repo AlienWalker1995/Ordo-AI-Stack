@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ..render import stack
 from ..render.catalog import Catalog
-from ..render.engine import DEFAULT_CATALOG, DEFAULT_PLUGINS_DIR
+from ..render.engine import DEFAULT_CATALOG, DEFAULT_PLUGINS_DIR, SSO_ALLOWLIST_KEY
 from ..render.plugins import PluginRegistry
 from . import bringup, cli_render, cli_secrets, cli_stack, remote, secret_store, wizard
 
@@ -205,7 +205,7 @@ def cmd_remote(args: argparse.Namespace) -> int:
               "(ordo secrets set KEY --from-stdin)")
     if args.action == "enable":
         print(f"Remote access on: https://{answers.hostname}/  "
-              f"({len(answers.emails)} allowlisted address(es) in {remote.ALLOWLIST_PATH})")
+              f"({len(answers.emails)} allowlisted address(es) in site: {SSO_ALLOWLIST_KEY})")
         _offer_tailscale_cert(answers.hostname, interactive)
     else:
         print("Remote access off: the UIs publish on 127.0.0.1 again.")

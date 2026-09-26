@@ -25,7 +25,7 @@ REGISTRY = PluginRegistry.load(ROOT / "services")
 P_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128, "cpu_cores": 32}
 
 EDGE_SITE = {"CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
-             "CADDY_TAILNET_DOMAIN": "example.ts.net",
+             "CADDY_TAILNET_DOMAIN": "example.ts.net", "SSO_ALLOWED_EMAILS": "me@example.com",
              "CADDY_BIND": "0.0.0.0"}
 
 
@@ -48,7 +48,7 @@ SSO_KEYS = ("PROXY_BASE_URL", "GOOGLE_CLIENT_ID_FILE", "GOOGLE_CLIENT_SECRET_FIL
 
 def test_uses_the_sidecar_name_when_tailnet_names_is_enabled():
     env = {"CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
-           "CADDY_TAILNET_DOMAIN": "example.ts.net"}
+           "CADDY_TAILNET_DOMAIN": "example.ts.net", "SSO_ALLOWED_EMAILS": "me@example.com"}
     out = litellm_google_sso_env(env, ["edge", "tailnet-names"], "")
     assert out["PROXY_BASE_URL"] == "https://llm.example.ts.net"
 

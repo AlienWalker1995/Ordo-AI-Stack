@@ -14,7 +14,7 @@ CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
 # The site keys the edge and memory-vault plugins require (`requires.site`), so they render.
 REQUIRED_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
-                 "CADDY_TAILNET_DOMAIN": "example.ts.net", "MEMORY_VAULT_PATH": "/srv/vault"}
+                 "CADDY_TAILNET_DOMAIN": "example.ts.net", "SSO_ALLOWED_EMAILS": "me@example.com", "MEMORY_VAULT_PATH": "/srv/vault"}
 
 UUID_5090 = "GPU-97fe65ee-5e2d-8c9b-32d0-362f510ceb96"
 UUID_1070 = "GPU-20fac13a-5e5b-1818-581f-63901612fd84"
@@ -175,7 +175,7 @@ def test_edge_mounts_tracked_config_not_copies():
     assert ("${BASE_PATH:?BASE_PATH must be set (non-empty)}/auth/caddy/Caddyfile:/etc/caddy/Caddyfile:ro"
             in c["services"]["caddy"]["volumes"])
     assert (
-        "${BASE_PATH:?BASE_PATH must be set (non-empty)}/auth/oauth2-proxy/emails.txt:/etc/oauth2-proxy/emails.txt:ro"
+        "${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/oauth2-proxy:/etc/oauth2-proxy:ro"
         in c["services"]["oauth2-proxy"]["volumes"]
     )
 

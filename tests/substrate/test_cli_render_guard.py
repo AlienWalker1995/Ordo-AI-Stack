@@ -31,6 +31,7 @@ site:
   CADDY_BIND: 127.0.0.1
   CADDY_TAILNET_HOSTNAME: host.example.ts.net
   CADDY_TAILNET_DOMAIN: example.ts.net
+  SSO_ALLOWED_EMAILS: me@example.com
 """
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +92,8 @@ CORE_OPTIONAL_SECRET_KEYS: tuple[str, ...] = ("HF_TOKEN", "GITHUB_PERSONAL_ACCES
 # The SSO edge plugin (services/edge). Whether it is enabled is THE switch between the two access
 # modes; nothing else (no flag, no env var) selects the mode.
 EDGE_PLUGIN = "edge"
+# The edge's `site:` key holding the SSO allowlist (comma-separated Google-account emails).
+SSO_ALLOWLIST_KEY = "SSO_ALLOWED_EMAILS"
 
 
 def local_access(enabled_plugin_ids) -> bool:
@@ -380,6 +383,15 @@ class RenderedConfig:
             "mcp_servers.yaml": render_litellm_mcp_fragment(self.mcp_servers),
         }
 
+    def sso_allowlist_files(self) -> dict[str, str]:
+        """out/oauth2-proxy/, file name -> text: the edge's Google-account allowlist, one address per
+        line, from `site: SSO_ALLOWED_EMAILS`. Empty when the edge is off. oauth2-proxy reads it
+        through a bind compose does not hash, so compose_dict labels it with this content's digest."""
+        if EDGE_PLUGIN not in self.plugins_enabled:
+            return {}
+        emails = [e.strip() for e in self.env[SSO_ALLOWLIST_KEY].split(",") if e.strip()]
+        return {"emails.txt": "\n".join(emails) + "\n"}
+
     def compose_dict(self, project: str = "ordo", image_tags: dict[str, str] | None = None) -> dict[str, Any]:
         """The isolated, runnable compose for the stack — built from the resolved plugin
         services (data-driven), with the primary- AND secondary-GPU uuids resolved for the pins.
@@ -430,6 +442,11 @@ class RenderedConfig:
             available_env=frozenset(self.env),
             model_gateway_config_digest=compose.rendered_config_digest(self.model_gateway_config_files()))
         pin_first_party(doc["services"], self.first_party_images, image_tags or {})
+        allowlist = self.sso_allowlist_files()
+        if allowlist:
+            oauth2_proxy = doc["services"]["oauth2-proxy"]
+            oauth2_proxy.setdefault("labels", {})[compose.RENDERED_CONFIG_LABEL] = \
+                compose.rendered_config_digest(allowlist)
         return doc
 
     def write(self, out_dir: str | Path) -> None:
@@ -470,6 +487,16 @@ class RenderedConfig:
             (mg_dir / name).write_text(text, encoding="utf-8")
         # mcp/servers.json: the dashboard's read-only view (enabled servers + server_id->plugin_id map
         # for the enable/disable toggle that edits ordo.yaml). Mounted at /mcp-config.
+        # oauth2-proxy/ - the edge's allowlist, mounted read-only into oauth2-proxy; gone when the
+        # edge is off.
+        allowlist_dir = out / "oauth2-proxy"
+        allowlist = self.sso_allowlist_files()
+        if allowlist:
+            allowlist_dir.mkdir(parents=True, exist_ok=True)
+            for name, text in allowlist.items():
+                (allowlist_dir / name).write_text(text, encoding="utf-8")
+        elif allowlist_dir.exists():
+            shutil.rmtree(allowlist_dir)
         mcp_dir = out / "mcp"
         mcp_dir.mkdir(parents=True, exist_ok=True)
         (mcp_dir / "servers.json").write_text(json.dumps({

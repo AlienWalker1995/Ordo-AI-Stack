@@ -24,7 +24,7 @@ HARDWARE = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128, "cpu_c
 HOST_PATHS = {"BASE_PATH": "/srv/ordo", "DATA_PATH": "/srv/ordo/data",
               "MEMORY_VAULT_PATH": "/srv/ordo/data/memory-vault"}
 EDGE_KEYS = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "ordo.example.ts.net",
-             "CADDY_TAILNET_DOMAIN": "example.ts.net"}
+             "CADDY_TAILNET_DOMAIN": "example.ts.net", "SSO_ALLOWED_EMAILS": "me@example.com"}
 
 # The UIs a local-only user reaches, and the loopback address each one publishes.
 LOCAL_UIS = {"open-webui": "127.0.0.1:8443:8080", "dashboard": "127.0.0.1:8444:8080"}

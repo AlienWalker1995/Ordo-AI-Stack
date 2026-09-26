@@ -14,16 +14,14 @@
    ```
    ordo remote enable
    ```
-   It writes the `CADDY_*` keys under `site:` in `out/ordo.yaml`, the
-   client pair into the secret store (the cookie secret is generated) and
-   materializes `out/secrets.env` ([secrets runbook](secrets.md)),
-   the allowlist into `auth/oauth2-proxy/emails.txt`, re-renders, and
-   offers to issue the Tailscale cert into `auth/caddy/certs/`. Use your
-   tailnet IP (`tailscale ip -4`) as the bind to restrict Caddy to the
-   tailnet, or `0.0.0.0` for all interfaces (LAN included). The allowlist
-   file is tracked with the placeholder `YOUR_ALLOWLIST_EMAIL`: run
-   `git update-index --skip-worktree auth/oauth2-proxy/emails.txt` so
-   real addresses are never staged.
+   It writes the `CADDY_*` keys and the allowlist (`SSO_ALLOWED_EMAILS`)
+   under `site:` in `out/ordo.yaml`, the client pair into the secret
+   store (the cookie secret is generated) and materializes
+   `out/secrets.env` ([secrets runbook](secrets.md)), re-renders (which
+   writes `out/oauth2-proxy/emails.txt`), and offers to issue the
+   Tailscale cert into `auth/caddy/certs/`. Use your tailnet IP
+   (`tailscale ip -4`) as the bind to restrict Caddy to the tailnet, or
+   `0.0.0.0` for all interfaces (LAN included).
 3. `ordo up --all` (from the repo root). The loopback UI ports close and
    Caddy becomes the one front door.
 
@@ -52,9 +50,10 @@ on, no service receives it and the sign-in route answers 404.
 
 ## Edit the allowlist
 
-Edit `auth/oauth2-proxy/emails.txt` (or run `ordo remote enable`), then
-`ordo recreate oauth2-proxy` from the repo root (the file is bind-mounted and
-read at start). Sessions for removed emails stay valid until cookie
+Edit `SSO_ALLOWED_EMAILS` (comma-separated) under `site:` in
+`out/ordo.yaml` (or run `ordo remote enable`), then `ordo apply`: the
+render rewrites `out/oauth2-proxy/emails.txt` and, because oauth2-proxy
+carries the list's digest, recreates it. Sessions for removed emails stay valid until cookie
 expiry (24h max); to force-invalidate, rotate the cookie secret (below).
 
 ## Cookie / session rotation

@@ -50,7 +50,7 @@ services:
       # ${BASE_PATH} (not ./): the scrape config is a TRACKED repo file. A ./-relative mount
       # resolves against the compose project dir (out/), and nothing re-renders out/monitoring,
       # so it served a stale July copy without the model-gateway job (found 2026-09-13). Same
-      # rule as the edge plugin's emails.txt / Caddyfile mounts.
+      # rule as the edge plugin's Caddyfile mount.
       - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     healthcheck:
