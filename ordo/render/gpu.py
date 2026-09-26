@@ -362,10 +362,10 @@ CORE_GPU_ARBITRATION: dict[str, GpuArbitration] = {
                                yields=YieldSpec(strategy="failover",
                                                 degraded_service="llamacpp-cpu",
                                                 degraded_via="model-gateway")),
-    # Read-only `utility` capability only (nvidia-smi/NVML for VRAM detection and the dashboard's
-    # GPU widgets) — no compute context, no meaningful VRAM. See compose._utility_gpu_reservation.
+    # Read-only `utility` capability only (nvidia-smi/NVML for VRAM detection and the live GPU
+    # reader, ordo/render/gpu_live.py, that the dashboard's GPU widgets read through `GET /gpus`):
+    # no compute context, no meaningful VRAM. See compose._utility_gpu_reservation.
     "ops-controller": GpuArbitration(mode="exempt", enforcement="none", device="primary"),
-    "dashboard": GpuArbitration(mode="exempt", enforcement="none", device="primary"),
 }
 
 

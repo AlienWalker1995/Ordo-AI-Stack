@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.gzip import GZipMiddleware
 
-from dashboard import auth, gpu_stats
+from dashboard import auth
 from dashboard.routes_auth import router as auth_router
 from dashboard.routes_console import router as console_router
 from dashboard.routes_hub import router as hub_router
@@ -963,121 +963,50 @@ async def rag_status():
 BASE_PATH_ENV = os.environ.get("BASE_PATH", "/data/dashboard")
 
 
-def _nvml_vram_to_gpu_dict(
-    name: str,
-    used_b: int,
-    total_b: int,
-    util_pct: int,
-) -> dict | None:
-    """Build gpu payload with decimal GB only (UI shows these strings — no client-side byte math)."""
-    total_b = int(total_b)
-    if total_b <= 0:
+def _mib_to_gb(mib: int | None) -> float | None:
+    """MiB -> the decimal GB the UI shows (no client-side byte math)."""
+    if mib is None:
         return None
-    used_b = max(0, int(used_b))
-    if used_b > total_b:
-        used_b = total_b
+    return round(mib * 1024 * 1024 / 1e9, 1)
+
+
+async def _live_gpus() -> list[dict]:
+    """ops-controller `GET /gpus`, the stack's one live GPU reader (ordo/render/gpu_live.py), in
+    the /api/hardware `gpus` shape. The dashboard reserves no GPU and never probes one itself.
+    ops-controller unreachable or answering garbage -> [] (the GPU widgets show none)."""
+    code, data = await _ops_request("GET", "/gpus", timeout=15.0)
+    if code != 200 or not isinstance(data, dict):
+        logger.debug("ops-controller /gpus answered %s: %s", code, data)
+        return []
+    gpus = []
+    for card in data.get("gpus") or []:
+        gpus.append({
+            "index": card.get("index"),
+            "uuid": card.get("uuid"),
+            "name": card.get("name"),
+            "vram_total_gb": _mib_to_gb(card.get("vram_total_mib")),
+            "vram_used_gb": _mib_to_gb(card.get("vram_used_mib")),
+            "vram_total_mib": card.get("vram_total_mib"),
+            "utilization_pct": card.get("utilization_pct"),
+            "temp_c": card.get("temp_c"),
+        })
+    return gpus
+
+
+def _primary_gpu(gpus: list[dict]) -> dict | None:
+    """The hw-stat bar's single `gpu`: card index 0 (the first card when none is numbered 0)."""
+    if not gpus:
+        return None
+    card = next((g for g in gpus if g["index"] == 0), gpus[0])
     return {
-        "name": name or "GPU",
-        "vram_used_gb": round(used_b / 1e9, 1),
-        "vram_total_gb": round(total_b / 1e9, 1),
-        "utilization_pct": int(util_pct),
+        "name": card["name"] or "GPU",
+        "vram_used_gb": card["vram_used_gb"],
+        "vram_total_gb": card["vram_total_gb"],
+        "utilization_pct": card["utilization_pct"],
+        # False: the used reading was not credible (see gpu_live), so the UI shows N/A, not 100%.
+        "memory_reading_reliable": card["vram_used_gb"] is not None,
+        "source": "ops-controller",
     }
-
-
-def _probe_gpu() -> dict | None:
-    """Best-effort GPU stats with multi-source fallback.
-
-    NVML (pynvml) is the preferred path BUT on Windows Docker Desktop with
-    recent CUDA drivers, `nvmlDeviceGetMemoryInfo` returns garbage for free /
-    used (memory.free reports ~4.4 TB, memory.used overflows to ~1.8e19 GB).
-    We detect that and fall back to `nvidia-smi --query-gpu=memory.free,memory.total --format=csv`
-    which has internal sanity-checking and returns correct values.
-    """
-    name = "GPU"
-    util_pct = 0
-    total_b: int | None = None
-    used_b: int | None = None
-    source = "nvml"
-
-    # Layer 1: NVML
-    try:
-        import pynvml
-        pynvml.nvmlInit()
-        try:
-            h = pynvml.nvmlDeviceGetHandleByIndex(0)
-            mi = pynvml.nvmlDeviceGetMemoryInfo(h)
-            ut = pynvml.nvmlDeviceGetUtilizationRates(h)
-            nm = pynvml.nvmlDeviceGetName(h)
-            if isinstance(nm, bytes):
-                name = nm.decode("utf-8", errors="replace").strip()
-            else:
-                name = str(nm).strip()
-            util_pct = int(ut.gpu)
-            t = int(mi.total)
-            f = int(mi.free)
-            u = int(mi.used)
-            if t > 0:
-                total_b = t
-            # Sanity-check NVML's memory fields. On this driver they wrap to
-            # values > total — discard those.
-            if total_b is not None and 0 <= u <= total_b:
-                used_b = u
-            elif total_b is not None and 0 <= f <= total_b:
-                used_b = total_b - f
-            # else: leave used_b unset; fall through to nvidia-smi
-        finally:
-            pynvml.nvmlShutdown()
-    except Exception as e:
-        logger.debug("NVML probe failed: %s", e)
-
-    # Layer 2: nvidia-smi shell fallback
-    if total_b is None or used_b is None:
-        try:
-            import subprocess
-            cmd = [
-                "nvidia-smi",
-                "--query-gpu=name,memory.total,memory.free,memory.used,utilization.gpu",
-                "--format=csv,noheader,nounits",
-            ]
-            out = subprocess.check_output(cmd, text=True, timeout=4).strip().splitlines()[0]
-            parts = [p.strip() for p in out.split(",")]
-            if len(parts) >= 5:
-                if name == "GPU" and parts[0]:
-                    name = parts[0]
-                t = int(float(parts[1])) * 1024 * 1024     # MiB -> bytes
-                f = int(float(parts[2])) * 1024 * 1024
-                u_raw = int(float(parts[3])) * 1024 * 1024
-                util_pct = int(float(parts[4])) if parts[4] else util_pct
-                total_b = t
-                # nvidia-smi memory.used can wrap; prefer total-free unless
-                # used looks sensible.
-                if 0 <= u_raw <= t:
-                    used_b = u_raw
-                elif 0 <= f <= t:
-                    used_b = t - f
-                source = "nvidia-smi"
-        except Exception as e:
-            logger.debug("nvidia-smi probe failed: %s", e)
-
-    if total_b is None:
-        return None
-    if used_b is None:
-        # Memory reading came back garbage from BOTH sources (NVML wrap + nvidia-smi
-        # under heavy load). Return total + util but flag the used field as unknown
-        # so the UI can render "N/A" instead of confidently misleading "100%".
-        return {
-            "name": name or "GPU",
-            "vram_used_gb": None,
-            "vram_total_gb": round(total_b / 1e9, 1),
-            "utilization_pct": int(util_pct),
-            "memory_reading_reliable": False,
-            "source": source,
-        }
-    gpu = _nvml_vram_to_gpu_dict(name, used_b, total_b, util_pct)
-    if gpu is not None:
-        gpu["source"] = source
-        gpu["memory_reading_reliable"] = True
-    return gpu
 
 
 async def hardware_stats():
@@ -1095,12 +1024,8 @@ async def hardware_stats():
         disk_total_gb = None
         disk_pct = None
 
-    gpu = await asyncio.to_thread(_probe_gpu)
-    try:
-        gpus = (await asyncio.to_thread(gpu_stats.list_gpus)).get("gpus", [])
-    except Exception as e:
-        logger.debug("multi-GPU enumeration failed: %s", e)
-        gpus = []
+    gpus = await _live_gpus()
+    gpu = _primary_gpu(gpus)
 
     return {
         "cpu_pct": cpu_pct,

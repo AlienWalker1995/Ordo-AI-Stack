@@ -120,15 +120,27 @@ def test_ops_controller_reserves_a_utility_gpu(tmp_path):
     assert any(d.get("capabilities") == ["utility"] and d.get("count") == "all" for d in devs)
 
 
-def test_the_dashboard_itself_also_reserves_a_utility_gpu(tmp_path):
-    """Its hardware_stats() shells to nvidia-smi for the hw-stat bar's GPU widgets."""
+def test_the_shipped_dashboard_reserves_no_gpu(tmp_path):
+    """Its GPU widgets read ops-controller `GET /gpus` (ordo/render/gpu_live.py); it probes no GPU."""
     from ordo.render.dashboards import DashboardRegistry
     dashboards = DashboardRegistry.load(ROOT / "services")
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                             "model": "auto", "plugins": "auto"})
     c = render(src, CATALOG, REGISTRY, dashboards=dashboards).compose_dict()
+    assert "deploy" not in c["services"]["dashboard"]
+
+
+def test_a_dashboard_manifest_can_still_declare_gpu_visibility():
+    """The generic `gpu_capabilities` mechanism outlives the shipped dashboard's use of it: a
+    dashboard that declares a capability gets it on NVIDIA hosts, and nothing on a CPU-only host."""
+    dashboard = {"id": "gpu-dash", "gpu_capabilities": ["utility"]}
+    c = compose.render_compose(nvidia_gpu=True, llamacpp_backend=CUDA, compose_profiles=[],
+                               dashboard=dashboard)
     devs = c["services"]["dashboard"]["deploy"]["resources"]["reservations"]["devices"]
-    assert any(d.get("capabilities") == ["utility"] for d in devs)
+    assert any(d.get("capabilities") == ["utility"] and d.get("count") == "all" for d in devs)
+    c = compose.render_compose(nvidia_gpu=False, llamacpp_backend=CPU, compose_profiles=[],
+                               dashboard=dashboard)
+    assert "deploy" not in c["services"]["dashboard"]
 
 
 def _reserved_device_services(c: dict) -> list[str]:
@@ -160,7 +172,8 @@ def test_an_nvidia_render_keeps_the_control_plane_utility_reservations():
                             "model": "auto", "plugins": "auto"})
     c = render(src, CATALOG, REGISTRY, dashboards=dashboards).compose_dict()
     reserved = _reserved_device_services(c)
-    assert {"ops-controller", "dashboard", "llamacpp"} <= set(reserved)
+    assert {"ops-controller", "llamacpp"} <= set(reserved)
+    assert "dashboard" not in reserved
     assert c["services"]["ops-controller"]["environment"]["NVIDIA_DRIVER_CAPABILITIES"] == "utility"
 
 

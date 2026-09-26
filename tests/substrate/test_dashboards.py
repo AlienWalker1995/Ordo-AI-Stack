@@ -132,13 +132,19 @@ def test_dashboard_has_a_healthcheck(tmp_path):
     assert "healthcheck" in c["services"]["dashboard"]
 
 
-def test_dashboard_reserves_a_utility_gpu(tmp_path):
-    """`hardware_stats()`'s GPU widgets shell to nvidia-smi + gpu_stats.list_gpus, which the NVIDIA
-    runtime only injects with a `utility` reservation on the dashboard SERVICE itself. Without it
-    the hw-stat bar goes blank (gpu:null + gpus:[])."""
+def test_dashboard_reserves_no_gpu(tmp_path):
+    """`hardware_stats()`'s GPU widgets read ops-controller `GET /gpus` (ordo/render/gpu_live.py),
+    so the dashboard needs no GPU visibility of its own: no reservation, on any vendor."""
     c = _compose("dashboard", tmp_path)
-    devs = c["services"]["dashboard"]["deploy"]["resources"]["reservations"]["devices"]
-    assert any(d.get("capabilities") == ["utility"] and d.get("count") == "all" for d in devs)
+    assert "deploy" not in c["services"]["dashboard"]
+    assert DASHBOARDS.default_dashboard().gpu_capabilities == ()
+
+
+def test_a_dashboard_manifest_declares_gpu_visibility_as_data():
+    """The generic mechanism stays: `gpu: <cap>` shorthand or a `gpu_capabilities:` list."""
+    from ordo.render.dashboards import Dashboard
+    assert Dashboard.from_dict({"id": "x", "gpu": "utility"}).gpu_capabilities == ("utility",)
+    assert Dashboard.from_dict({"id": "x", "gpu_capabilities": ["utility"]}).gpu_capabilities == ("utility",)
 
 
 def test_the_host_base_path_does_not_reach_the_dashboard(tmp_path):

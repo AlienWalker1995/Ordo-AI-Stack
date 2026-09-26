@@ -143,6 +143,27 @@ def test_registry_gpus_list_the_models_the_render_pins_to_each_card(tmp_path, mo
     assert gpus[UUID_BIG]["name"] == "RTX 5090"
 
 
+def test_get_gpus_serves_the_one_live_reader(tmp_path, monkeypatch):
+    from ordo.render import gpu_live
+    cards = [{"index": 0, "uuid": UUID_BIG, "name": "Radeon RX 7900 XTX", "vendor": "amd",
+              "vram_total_mib": 24576, "vram_used_mib": None, "utilization_pct": 37, "temp_c": 52}]
+    monkeypatch.setattr(gpu_live, "live_gpus", lambda: cards)
+    assert _cp(tmp_path).route("GET", "/gpus") == (200, {"gpus": cards})
+
+
+def test_registry_gpus_keep_their_gib_shape_from_the_live_reader(tmp_path, monkeypatch):
+    from ordo.render import gpu_live
+    cards = [{"index": 0, "uuid": UUID_BIG, "name": "RTX 5090", "vendor": "nvidia",
+              "vram_total_mib": 32607, "vram_used_mib": 20426, "utilization_pct": 1, "temp_c": 41},
+             {"index": 1, "uuid": UUID_SMALL, "name": "GTX 1070", "vendor": "nvidia",
+              "vram_total_mib": 8192, "vram_used_mib": None, "utilization_pct": 0, "temp_c": 50}]
+    monkeypatch.setattr(gpu_live, "live_gpus", lambda: cards)
+    gpus = _cp(tmp_path).route("GET", "/registry/gpus")[1]["gpus"]
+    big = {k: v for k, v in gpus[UUID_BIG].items() if k != "models"}
+    assert big == {"name": "RTX 5090", "total_gb": 31.8, "used_gb": 19.9, "util": 1}
+    assert gpus[UUID_SMALL]["used_gb"] is None
+
+
 def test_ops_controller_carries_no_registry_path():
     rc = render(Source.from_dict(_source(MODEL_A)), CATALOG, PLUGINS)
     env = rc.compose_dict()["services"]["ops-controller"]["environment"]

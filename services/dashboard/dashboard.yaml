@@ -28,13 +28,6 @@ local_port: {host: 8444, container: 8080}
 # (dashboard/auth.py exchanges it for a session cookie). The renderer passes it to the dashboard as a file,
 # and requires it in secrets.env, only while local_port is published; `ordo up` prints the link.
 local_login_secret: DASHBOARD_LOCAL_LOGIN_TOKEN
-# Read-only GPU visibility for the dashboard SERVICE ITSELF. Its `hardware_stats()` (the
-# hw-stat bar's GPU widgets) shells to nvidia-smi (_probe_gpu) and enumerates cards
-# (gpu_stats.list_gpus), which the NVIDIA runtime only injects when the service reserves a GPU
-# with the `utility` cap. Without it `hardware_stats()` returns gpu:null + gpus:[] and the GPU
-# widgets go blank. `count: all` so it reads BOTH cards. Compute is NOT reserved.
-# Rendered on NVIDIA hosts only: a CPU-only host has no NVIDIA runtime to satisfy it.
-gpu: utility
 depends_on:
   ops-controller: service_started
 # The /api/health probe keeps the agent's `dashboard: service_healthy` gate satisfiable. The
