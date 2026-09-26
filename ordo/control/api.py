@@ -45,7 +45,7 @@ import yaml
 
 from ..render import gpu_live, substrate
 from ..render.catalog import Catalog
-from ..render.changed_set import Change, diff_services
+from ..render.changed_set import Change, diff_services, stale_one_shot_jobs
 from ..render.config import Source
 from ..render.engine import render
 from ..render.models_volume import CHAT_SERVICE
@@ -655,8 +655,10 @@ class ControlPlane:
         apply` computes). It is recreated in one `up -d --no-deps --force-recreate` call with each
         owner's netns members, after the GPU-lease check every lifecycle verb makes (an evicted
         resident is refused, 409). `removed` are services the caller's render dropped: their
-        containers are stopped. Left to the host, and named with the command that finishes the job:
-        the control plane itself and the agent calling it, a container another compose version
+        containers are stopped. A one-shot job's stopped container the render moved past is removed,
+        never started (`removed_jobs`; `run --rm` creates a fresh one), and a running one is left
+        alone (`running_jobs`), as the host's `ordo apply` does. Left to the host, and named with the
+        command that finishes the job: the control plane itself and the agent calling it, a container another compose version
         created (its hash is not comparable), and a service whose secrets are missing. Fails closed:
         a state that cannot be read refuses (503) and recreates nothing.
         """
@@ -669,6 +671,8 @@ class ControlPlane:
             return self._error(503, f"cannot read what is rendered and what is running ({e}); "
                                     "nothing was recreated")
         changes = diff_services(state.rendered, state.running, compose_version=state.compose_version)
+        jobs = stale_one_shot_jobs(state.rendered, state.running, compose_version=state.compose_version)
+        removed_jobs = [job.service for job in jobs if job.removable]
         host_reasons = self._host_reasons(changes, doc, self._render())
         to_recreate = [change.service for change in changes if change.service not in host_reasons]
         _args, targets = plan_named(doc, to_recreate, force_recreate=True)
@@ -679,6 +683,8 @@ class ControlPlane:
             "changes": [{"service": change.service, "reasons": list(change.reasons)} for change in changes],
             "recreated": sorted(targets),
             "stopped": stopped,
+            "removed_jobs": removed_jobs,
+            "running_jobs": [job.service for job in jobs if not job.removable],
             "restart_required_on_host": host,
             "host_reasons": host_reasons,
             "host_command": f"ordo apply --only {' '.join(host)}" if host else None,
@@ -695,6 +701,8 @@ class ControlPlane:
                 self.broker.backend.stop(name)
             if to_recreate:
                 self.broker.backend.recreate_services(to_recreate)
+            if removed_jobs:
+                self.broker.backend.remove_stopped_containers(removed_jobs)
         except Exception as e:  # noqa: BLE001 - reported with the plan it was executing
             return self._error(500, f"applying the render failed: {e}", changes=plan["changes"])
         return {"ok": True, **plan}

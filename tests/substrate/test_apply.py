@@ -51,9 +51,9 @@ def rendered(name: str, config_hash: str = "h", image_id: str | None = "sha256:i
 
 
 def running(name: str, config_hash: str = "h", image_id: str = "sha256:img",
-            compose_version: str = COMPOSE_VERSION) -> changed_set.RunningContainer:
+            compose_version: str = COMPOSE_VERSION, state: str = "running") -> changed_set.RunningContainer:
     return changed_set.RunningContainer(service=name, config_hash=config_hash, image_id=image_id,
-                                  compose_version=compose_version)
+                                  compose_version=compose_version, state=state)
 
 
 def in_sync() -> tuple[dict, dict]:
@@ -121,6 +121,53 @@ def test_a_one_shot_job_is_never_started():
     want, have = in_sync()
     want["evals"] = rendered("evals", config_hash="h2", one_shot=True)
     assert changed_set.diff_services(want, have, compose_version=COMPOSE_VERSION) == []
+
+
+# --------------------------------------------------------------------------- #
+# Stale one-shot job containers (audit D8-1): the render moved on, the job's container did not.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_stopped_job_container_that_differs_from_the_render_is_stale():
+    want, have = in_sync()
+    want["evals"] = rendered("evals", image_id="sha256:new", one_shot=True)
+    have["evals"] = running("evals", image_id="sha256:old", state="created")
+    [job] = changed_set.stale_one_shot_jobs(want, have, compose_version=COMPOSE_VERSION)
+    assert (job.service, job.removable) == ("evals", True)
+    assert "image" in job.reasons[0]
+
+
+@pytest.mark.parametrize("state", ["created", "exited", "dead"])
+def test_a_job_container_that_is_not_running_is_removable(state):
+    want, have = in_sync()
+    want["evals"] = rendered("evals", config_hash="h2", one_shot=True)
+    have["evals"] = running("evals", state=state)
+    jobs = changed_set.stale_one_shot_jobs(want, have, compose_version=COMPOSE_VERSION)
+    assert [job.removable for job in jobs] == [True]
+
+
+@pytest.mark.parametrize("state", ["running", "restarting", "paused", ""])
+def test_a_job_container_in_use_or_of_unknown_state_is_never_removable(state):
+    """An eval in progress (or a state docker did not report) is reported, never removed."""
+    want, have = in_sync()
+    want["evals"] = rendered("evals", config_hash="h2", one_shot=True)
+    have["evals"] = running("evals", state=state)
+    [job] = changed_set.stale_one_shot_jobs(want, have, compose_version=COMPOSE_VERSION)
+    assert job.removable is False
+
+
+def test_an_unchanged_or_absent_job_container_is_not_stale():
+    want, have = in_sync()
+    assert changed_set.stale_one_shot_jobs(want, have, compose_version=COMPOSE_VERSION) == []
+    have["evals"] = running("evals", state="exited")
+    assert changed_set.stale_one_shot_jobs(want, have, compose_version=COMPOSE_VERSION) == []
+
+
+def test_long_running_services_are_never_stale_jobs():
+    want, have = in_sync()
+    want["dashboard"] = rendered("dashboard", config_hash="h2")
+    have["dashboard"] = running("dashboard", state="exited")
+    assert changed_set.stale_one_shot_jobs(want, have, compose_version=COMPOSE_VERSION) == []
 
 
 def test_ops_controller_is_ordered_first():
@@ -223,6 +270,15 @@ def test_running_reads_labels_and_image_ids_and_skips_one_off_runs():
                                                             "ops-controller-id")}
     ps = next(c for c in cli_.calls if c[:2] == ["docker", "ps"])
     assert "label=com.docker.compose.project=ordo" in ps and "-a" in ps
+
+
+def test_running_reads_the_container_state():
+    created = _container("evals", "eee", "sha256:e1")
+    created["State"] = {"Status": "created"}
+    cli_ = FakeDockerCli(ps="id1 id2", inspect=[created, _container("dashboard", "aaa", "sha256:d1")])
+    got = changed_set.DockerState(run=cli_).running(project="ordo")
+    assert got["evals"].state == "created"
+    assert got["dashboard"].state == ""      # no State block reported: unknown, never removable
 
 
 def test_no_containers_is_an_empty_running_set_without_an_inspect():
@@ -363,7 +419,7 @@ class FakeHost:
     """Records every step `apply.run` takes. The read methods answer from the fields."""
 
     MUTATING = {"build", "write_render", "materialize_secrets", "preflight", "bring_up",
-                "wait_for_ops_controller", "doctor"}
+                "wait_for_ops_controller", "remove_job_containers", "doctor"}
 
     def __init__(self, *, want: dict | None = None, have: dict | None = None, gpu: dict | None = None,
                  builds: list | None = None, substrate: str | None = CHECKOUT_DIGEST, bring_up_code: int = 0,
@@ -442,6 +498,10 @@ class FakeHost:
     def wait_for_ops_controller(self):
         self.calls.append(("wait_for_ops_controller",))
         return True
+
+    def remove_job_containers(self, services):
+        self.calls.append(("remove_job_containers", tuple(services)))
+        return 0
 
     def doctor(self):
         self.calls.append(("doctor",))
@@ -572,6 +632,70 @@ def test_only_limits_the_bring_up_but_keeps_a_changed_ops_controller_first(capsy
     assert [c for c in host.calls if c[0] == "bring_up"] == [
         ("bring_up", (OPS,), False), ("bring_up", ("dashboard",), True)]
     assert "caddy" in capsys.readouterr().out   # reported as changed but left out
+
+
+def _stale_evals(state: str) -> tuple[dict, dict]:
+    want, have = in_sync()
+    want["evals"] = rendered("evals", image_id="sha256:new", image_ref="ordo/evals:new", one_shot=True)
+    have["evals"] = running("evals", image_id="sha256:old", state=state)
+    return want, have
+
+
+def test_a_stale_stopped_job_container_is_removed_after_the_recreates_and_never_started(capsys):
+    """Audit D8-1: `ordo-evals-1` sat in `Created` on an old image after every apply."""
+    want, have = _stale_evals("created")
+    want["dashboard"] = rendered("dashboard", config_hash="h2")
+    host = FakeHost(want=want, have=have)
+    assert apply.run(host, only=None, dry_run=False) == 0
+    steps = [c[0] for c in host.mutations()]
+    assert steps[-3:] == ["bring_up", "remove_job_containers", "doctor"]
+    assert ("remove_job_containers", ("evals",)) in host.calls
+    assert not any(c[0] == "bring_up" and "evals" in c[1] for c in host.calls)
+    out = capsys.readouterr().out
+    assert "remove stale one-shot job containers: evals (image ordo/evals:new changed)" in out
+    assert "the next run creates a fresh one" in out
+
+
+def test_a_stale_job_container_alone_is_removed_without_a_recreate():
+    want, have = _stale_evals("exited")
+    host = FakeHost(want=want, have=have)
+    assert apply.run(host, only=None, dry_run=False) == 0
+    assert [c[0] for c in host.mutations()][-2:] == ["remove_job_containers", "doctor"]
+    assert "bring_up" not in [c[0] for c in host.calls]
+
+
+def test_a_running_job_container_is_not_removed_and_is_noted(capsys):
+    want, have = _stale_evals("running")
+    host = FakeHost(want=want, have=have)
+    assert apply.run(host, only=None, dry_run=False) == 0
+    assert not any(c[0] == "remove_job_containers" for c in host.calls)
+    out = capsys.readouterr().out
+    assert "changed one-shot jobs (apply never starts a job): evals" in out
+    assert "remove stale" not in out
+
+
+def test_an_unchanged_job_container_is_left_alone(capsys):
+    host = FakeHost(have={**in_sync()[1], "evals": running("evals", state="exited")})
+    assert apply.run(host, only=None, dry_run=False) == 0
+    assert not any(c[0] == "remove_job_containers" for c in host.calls)
+    assert "one-shot" not in capsys.readouterr().out
+
+
+def test_dry_run_lists_a_stale_job_container_and_removes_nothing(capsys):
+    want, have = _stale_evals("created")
+    host = FakeHost(want=want, have=have)
+    assert apply.run(host, only=None, dry_run=True) == 0
+    assert host.mutations() == []
+    assert "remove stale one-shot job containers: evals" in capsys.readouterr().out
+
+
+def test_only_leaves_a_stale_job_container_outside_it_alone(capsys):
+    want, have = _stale_evals("created")
+    want["dashboard"] = rendered("dashboard", config_hash="h2")
+    host = FakeHost(want=want, have=have)
+    assert apply.run(host, only=["dashboard"], dry_run=False) == 0
+    assert not any(c[0] == "remove_job_containers" for c in host.calls)
+    assert "outside --only" in capsys.readouterr().out
 
 
 def test_only_an_unknown_service_is_an_error():

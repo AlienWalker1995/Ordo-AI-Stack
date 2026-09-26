@@ -18,7 +18,9 @@ the one correct order:
      wait until it answers /status again
   8. recreate the rest of the changed set (`--no-deps --force-recreate`, caddy with its netns
      members), fetching the model files they load that the models volume lacks
-  9. `ordo doctor`
+  9. remove the stopped one-shot job containers (evals) the render moved past; a running job is
+     left alone, and apply never starts a job (`run --rm` creates a fresh container)
+ 10. `ordo doctor`
 
 The changed set itself (step 4) is ordo/render/changed_set.py, shared with ops-controller's
 post-render step. Config hashes are compared with one compose version: the host's compose computes
@@ -37,6 +39,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -52,8 +55,10 @@ from ..render.changed_set import (
     RenderedService,
     RunningContainer,
     Staged,
+    StaleJob,
     StateUnknown,
     diff_services,
+    stale_one_shot_jobs,
 )
 from . import bringup, doctor, images
 
@@ -170,6 +175,14 @@ class RealHost:
                                 with_profiles=True, force_recreate=True, dry_run=False, build=True,
                                 models_catalog=self.catalog_path if fetch_models else None)
 
+    def remove_job_containers(self, services: Sequence[str]) -> int:  # pragma: no cover - shells out
+        """Remove stopped one-shot job containers. `rm` without `--stop` never touches a running
+        one, so a job started since the plan was read keeps running (compose skips it)."""
+        out = self.out.resolve().as_posix()
+        argv = stack.compose_argv(out, self.project, "rm", "--force", *services,
+                                  profiles=stack.profiles_in(stack.load_compose(out)))
+        return subprocess.run(argv, timeout=120).returncode
+
     def wait_for_ops_controller(self) -> bool:  # pragma: no cover - polls docker
         deadline = time.monotonic() + OPS_CONTROLLER_READY_SECONDS
         while True:
@@ -196,8 +209,9 @@ class Plan:
     builds: list[images.PlannedBuild]
     changes: list[Change]              # what this apply recreates, ops-controller first
     starts: list[str]                  # the changes plus the netns members that follow them
-    left_out: list[str]                # changed, but outside --only
-    one_shots: list[str]               # changed one-shot jobs, never started by apply
+    left_out: list[str]                # changed (or a stale job container), but outside --only
+    stale_jobs: list[StaleJob]         # stopped one-shot job containers the render moved past: removed
+    one_shots: list[str]               # changed one-shot jobs running now: noted, never touched
     orphans: list[str]                 # containers the render no longer defines (left alone)
     gpu: dict | None
     refusal: str | None
@@ -236,11 +250,11 @@ def describe(plan: Plan, *, host: Any, dry_run: bool) -> str:
                  + ("  (staged in a temporary directory)" if dry_run else ""))
     lines.append("  3. secrets    materialize secrets.env and the file secrets from the secret store"
                  + ("  (compared with the secrets.env out/ holds now)" if dry_run else ""))
+    step = 5
     if not plan.changes:
         lines.append("  4. nothing to recreate: every rendered service matches its container")
     else:
         lines.append(f"  4. preflight  host checks for the {len(plan.starts)} service(s) that start")
-        step = 5
         if plan.ops_controller:
             lines.append(f"  {step}. recreate {OPS_CONTROLLER} first: {'; '.join(plan.ops_controller.reasons)}; "
                          "then wait for its /status")
@@ -253,12 +267,16 @@ def describe(plan: Plan, *, host: Any, dry_run: bool) -> str:
                 lines.append(f"       + netns members recreated with their owner: {', '.join(followers)}")
             lines.append("       fetching the model files they load that the models volume lacks")
             step += 1
+    if plan.stale_jobs:
+        stale = ", ".join(job.describe() for job in plan.stale_jobs)
+        lines.append(f"  {step}. remove stale one-shot job containers: {stale}; the next run creates a fresh one")
     lines.append("  last: ordo doctor")
     notes = []
     if plan.left_out:
         notes.append(f"changed but outside --only (not recreated): {', '.join(plan.left_out)}")
     if plan.one_shots:
-        notes.append(f"changed one-shot jobs (apply never starts a job): {', '.join(plan.one_shots)}")
+        notes.append(f"changed one-shot jobs (apply never starts a job): {', '.join(plan.one_shots)}; "
+                     "running now, so their containers are left alone until the next apply")
     if plan.orphans:
         notes.append(f"containers the render no longer defines (left alone): {', '.join(plan.orphans)}")
     if notes:
@@ -277,17 +295,19 @@ def _plan(host: Any, staged: Staged, builds: list[images.PlannedBuild], only: Se
     built_refs = {b.ref for b in builds if b.needs_build}
     changes = diff_services(rendered, running, compose_version=version, built_refs=built_refs,
                             running_substrate=running_substrate, checkout_substrate=host.checkout_substrate())
-    # One-shot jobs are compared as if long-running, only to report them.
-    jobs = {name: dataclasses.replace(s, one_shot=False) for name, s in rendered.items() if s.one_shot}
-    one_shots = [c.service for c in diff_services(jobs, running, compose_version=version, built_refs=built_refs)]
+    jobs = stale_one_shot_jobs(rendered, running, compose_version=version, built_refs=built_refs)
+    one_shots = [job.service for job in jobs if not job.removable]
     scope = None if only is None else {OPS_CONTROLLER, *only}
     selected = [c for c in changes if scope is None or c.service in scope]
+    stale_jobs = [job for job in jobs if job.removable and (scope is None or job.service in scope)]
     left_out = [c.service for c in changes if c not in selected]
+    left_out += [job.service for job in jobs if job.removable and job not in stale_jobs]
     args, targets = stack.plan_named(staged.doc, [c.service for c in selected], force_recreate=True)
     starts = [arg for arg in args if arg in targets]
     refusal = bringup.lease_refusal(gpu, whole_stack=False, starts=set(starts),
                                     replacement_loads_state=bringup.loads_scheduler_state(staged.doc))
-    return Plan(builds=builds, changes=selected, starts=starts, left_out=left_out, one_shots=one_shots,
+    return Plan(builds=builds, changes=selected, starts=starts, left_out=left_out, stale_jobs=stale_jobs,
+                one_shots=one_shots,
                 orphans=sorted(set(running) - set(rendered)), gpu=gpu, refusal=refusal)
 
 
@@ -349,4 +369,9 @@ def run(host: Any, *, only: Sequence[str] | None, dry_run: bool) -> int:
             code = host.bring_up([c.service for c in plan.others], fetch_models=True)
             if code:
                 return code
+    if plan.stale_jobs:
+        # Removed, never started: `run --rm` creates a fresh container from the current render.
+        code = host.remove_job_containers([job.service for job in plan.stale_jobs])
+        if code:
+            return code
     return host.doctor()

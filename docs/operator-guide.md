@@ -106,7 +106,7 @@ ordo apply                                    # run it
 4. Compute the changed set: every long-running service whose rendered compose config hash or image
    id differs from its container's. The host's compose computes the hashes and does the recreate; a
    container another compose version created is recreated, not compared (versions hash differently).
-   One-shot jobs (`restart: "no"`, the evals runner) are reported, never started. The computation
+   One-shot jobs (`restart: "no"`, the evals runner) are never started (see step 9). The computation
    is `ordo/render/changed_set.py`, the same one ops-controller runs after a model switch or a
    plugin enable/disable (see "Changes made through the control plane" below).
 5. Refuse, before recreating anything, when the GPU lease would be violated (an evicted resident in
@@ -117,7 +117,11 @@ ordo apply                                    # run it
    answers `/status` (every later step reads the lease through it).
 8. The rest of the changed set, `--no-deps --force-recreate` (caddy with its netns members),
    fetching the model files they load that the models volume lacks.
-9. `ordo doctor`.
+9. Remove the stopped one-shot job containers (created or exited) whose config or image the render
+   moved past: `docker compose rm`, never a start. `run --rm` never reuses such a container, so
+   nothing is lost, and the next run creates a fresh one from the current render. A job container
+   that is running (an eval in progress) is left alone and reported.
+10. `ordo doctor`.
 
 Nothing changed means nothing is recreated. `--only SVC...` recreates only those of the changed
 services (a changed ops-controller still goes first). `ordo build`, `ordo up` and `ordo recreate`
@@ -134,8 +138,9 @@ the agent calling it, a container another compose version created, or a service 
 `out/secrets.env` lacks: those come back as `restart_required_on_host` with the command that
 finishes the job (for example `ordo apply --only agent` after a context-window change, since the
 agent reads `LLAMACPP_CTX_SIZE`). A failed apply restores the previous `ordo.yaml`, re-renders and
-re-applies it. `POST /apply` (`{"dry_run": true}` for the plan, else `{"confirm": true}`) applies
-whatever `out/` holds now. model-gateway and model-gateway-keys carry a digest of the
+re-applies it. Like `ordo apply`, it removes the stopped one-shot job containers the render moved
+past (`removed_jobs`) and leaves a running one alone (`running_jobs`). `POST /apply`
+(`{"dry_run": true}` for the plan, else `{"confirm": true}`) applies whatever `out/` holds now. model-gateway and model-gateway-keys carry a digest of the
 `out/model-gateway/` files they read at startup (`ordo.rendered-config`), so an MCP toggle changes
 their config hash and is in the changed set.
 

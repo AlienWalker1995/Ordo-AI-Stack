@@ -108,6 +108,11 @@ class RenderedStackBackend(MockBackend):
         super().stop(service)
         self.containers.pop(service, None)
 
+    def remove_stopped_containers(self, services: list[str]) -> None:
+        super().remove_stopped_containers(services)
+        for name in services:
+            self.containers.pop(name, None)
+
 
 def _write_source(path: Path, **fields) -> None:
     path.write_text(yaml.safe_dump({"hardware": HARDWARE, "plugins": "auto", **fields}, sort_keys=False),
@@ -351,6 +356,58 @@ def test_apply_recreates_the_changed_set_of_the_current_render(stack):
     assert body["dry_run"] is False
     assert _recreated(backend) == ["llamacpp", "llamacpp-cpu", "model-gateway"]
     assert body["restart_required_on_host"] == ["agent"]
+
+
+@pytest.fixture
+def evals_stack(tmp_path):
+    """A stack that runs the evals plugin (a one-shot job, `restart: "no"`)."""
+    source = tmp_path / "ordo.yaml"
+    out = tmp_path / "out"
+    _write_source(source, model=SMALL_CTX_MODEL, plugins=["evals"], site={"MEMORY_VAULT_PATH": "/srv/vault"})
+    backend = RenderedStackBackend(out)
+    scheduler = Scheduler(32)
+    cp = ControlPlane(source, CATALOG, REGISTRY, out, scheduler=scheduler, broker=Broker(scheduler, backend))
+    cp._render().write(out)
+    backend.create_all()
+    return cp, backend
+
+
+def _stale_evals_container(backend: RenderedStackBackend, state: str) -> None:
+    """An evals container created from an earlier render: its image moved on since."""
+    evals = backend._rendered()["evals"]
+    backend.containers["evals"] = RunningContainer(
+        service="evals", config_hash=evals.config_hash, image_id="id:ordo/evals:older",
+        compose_version=COMPOSE_VERSION, container_id="cid-evals", state=state)
+
+
+def test_apply_removes_a_stale_stopped_job_container_and_reports_it(evals_stack):
+    """Audit D8-1: after a render the evals container sat in `Created` on the old image."""
+    cp, backend = evals_stack
+    _stale_evals_container(backend, "created")
+    status, body = cp.route("POST", "/apply", {"confirm": True})
+    assert status == 200, body
+    assert body["removed_jobs"] == ["evals"] and body["running_jobs"] == []
+    assert backend.removed_containers == [["evals"]]
+    assert "evals" not in backend.containers
+    assert "evals" not in _recreated(backend) and "evals" not in backend.started
+
+
+def test_apply_dry_run_lists_a_stale_job_container_and_removes_nothing(evals_stack):
+    cp, backend = evals_stack
+    _stale_evals_container(backend, "exited")
+    status, body = cp.route("POST", "/apply", {"dry_run": True})
+    assert status == 200, body
+    assert body["removed_jobs"] == ["evals"]
+    assert backend.removed_containers == [] and "evals" in backend.containers
+
+
+def test_apply_never_removes_a_running_job_container(evals_stack):
+    cp, backend = evals_stack
+    _stale_evals_container(backend, "running")
+    status, body = cp.route("POST", "/apply", {"confirm": True})
+    assert status == 200, body
+    assert body["removed_jobs"] == [] and body["running_jobs"] == ["evals"]
+    assert backend.removed_containers == [] and "evals" in backend.containers
 
 
 def test_apply_is_bearer_protected_and_audited(stack, monkeypatch, tmp_path):
