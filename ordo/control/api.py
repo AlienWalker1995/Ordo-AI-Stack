@@ -48,7 +48,7 @@ from ..render.catalog import Catalog
 from ..render.changed_set import Change, diff_services, stale_one_shot_jobs
 from ..render.config import Source
 from ..render.engine import render
-from ..render.models_volume import CHAT_SERVICE
+from ..render.models_volume import CHAT_SERVICE, required_model_files
 from ..render.plugins import PluginRegistry
 from ..render.served_models import model_files, models_by_gpu, served_models
 from ..render.source_edit import edit_plugins_list
@@ -627,9 +627,31 @@ class ControlPlane:
                 held += [key for key in missing if key not in held]
         return holds
 
+    def _model_file_holds(self, services: list[str], doc: dict[str, Any], rc: Any) -> dict[str, str]:
+        """service -> why it waits for the host, for each of `services` that loads a model file the
+        models volume lacks. Recreated onto a missing file it crash-loops; the host's `ordo apply
+        --only <service>` fetches the file first (a download of that size does not belong in this
+        process, see _missing_model_files). A volume that cannot be listed holds every loader."""
+        if self.model_volume_files is None:
+            return {}
+        needed = [need for need in required_model_files(doc, rc.env, services) if not need.optional]
+        if not needed:
+            return {}
+        present = self.model_volume_files()
+        holds: dict[str, list[str]] = {}
+        for need in needed:
+            if present is None or need.file not in present:
+                holds.setdefault(need.service, []).append(need.file)
+        if present is None:
+            return {name: "cannot list the models volume to confirm its model files are in place"
+                    for name in holds}
+        return {name: (f"loads {', '.join(files)}, which the models volume lacks: `ordo apply --only "
+                       f"{name}` on the host fetches it first") for name, files in holds.items()}
+
     def _host_reasons(self, changes: list[Change], doc: dict[str, Any], rc: Any) -> dict[str, str]:
         """Why each changed service this process must not recreate is left to the host."""
         secret_holds = self._secret_holds(rc)
+        file_holds = self._model_file_holds([change.service for change in changes], doc, rc)
         reasons: dict[str, str] = {}
         for change in changes:
             name = change.service
@@ -641,6 +663,8 @@ class ControlPlane:
             elif name in secret_holds:
                 reasons[name] = (f"needs secret(s) {', '.join(secret_holds[name])}, which out/secrets.env does "
                                  "not hold: `ordo secrets set <KEY>` on the host first")
+            elif name in file_holds:
+                reasons[name] = file_holds[name]
             else:
                 members = [m for m in lifecycle_group(doc, name)[1:] if m in SELF_REFERENTIAL_SERVICES]
                 if members:
@@ -659,7 +683,8 @@ class ControlPlane:
         never started (`removed_jobs`; `run --rm` creates a fresh one), and a running one is left
         alone (`running_jobs`), as the host's `ordo apply` does. Left to the host, and named with the
         command that finishes the job: the control plane itself and the agent calling it, a container another compose version
-        created (its hash is not comparable), and a service whose secrets are missing. Fails closed:
+        created (its hash is not comparable), a service whose secrets are missing, and one that would
+        load a model file the models volume lacks (the host's apply fetches it). Fails closed:
         a state that cannot be read refuses (503) and recreates nothing.
         """
         if not self.broker:

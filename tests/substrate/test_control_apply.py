@@ -431,3 +431,63 @@ def test_apply_without_a_container_backend_is_unavailable(tmp_path):
     cp = ControlPlane(source, CATALOG, REGISTRY, tmp_path / "out")
     status, _ = cp.route("POST", "/apply", {"dry_run": True})
     assert status == 503
+
+
+# --------------------------------------------------------------------------- #
+# A service recreated onto a model file the models volume lacks crash-loops; the host fetches.
+# --------------------------------------------------------------------------- #
+
+
+def _listed_with_volume(tmp_path, files):
+    """The `listed` stack, with a models volume that holds `files` (None: it cannot be listed)."""
+    source = tmp_path / "ordo.yaml"
+    out = tmp_path / "out"
+    _write_source(source, model=SMALL_CTX_MODEL, plugins=["searxng-web"])
+    backend = RenderedStackBackend(out)
+    scheduler = Scheduler(32)
+    cp = ControlPlane(source, CATALOG, REGISTRY, out, scheduler=scheduler, broker=Broker(scheduler, backend),
+                      model_volume_files=lambda: files)
+    cp._render().write(out)
+    backend.create_all()
+    return cp, backend
+
+
+def _embed_file(cp) -> str:
+    from ordo.render.models_volume import required_model_files
+    rc = cp._render()
+    return next(f.file for f in required_model_files(rc.compose_dict(), rc.env, ["llamacpp-embed"]))
+
+
+def test_a_plugin_whose_model_file_is_missing_is_left_to_the_host_to_fetch(tmp_path):
+    cp, backend = _listed_with_volume(tmp_path, set())
+    status, body = cp.route("POST", "/plugins/rag/enable", {"confirm": True})
+    assert status == 200, body
+    applied = body["apply"]
+    assert "llamacpp-embed" not in applied["recreated"] and "llamacpp-embed" not in backend.containers
+    assert "llamacpp-embed" in applied["restart_required_on_host"]
+    assert _embed_file(cp) in applied["host_reasons"]["llamacpp-embed"]
+    assert "llamacpp-embed" in applied["host_command"]
+
+
+def test_a_plugin_whose_model_file_is_present_is_started(tmp_path):
+    files: set[str] = set()
+    cp, backend = _listed_with_volume(tmp_path, files)
+    source = yaml.safe_load(cp.source_path.read_text(encoding="utf-8"))
+    source["plugins"] = ["searxng-web", "rag"]
+    from ordo.render.config import Source
+    from ordo.render.engine import render
+    rc = render(Source.from_dict(source), CATALOG, REGISTRY)
+    from ordo.render.models_volume import required_model_files
+    files.update(f.file for f in required_model_files(rc.compose_dict(), rc.env, ["llamacpp-embed"]))
+    status, body = cp.route("POST", "/plugins/rag/enable", {"confirm": True})
+    assert status == 200, body
+    assert "llamacpp-embed" in body["apply"]["recreated"] and "llamacpp-embed" in backend.containers
+
+
+def test_an_unlistable_models_volume_leaves_model_loaders_to_the_host(tmp_path):
+    cp, backend = _listed_with_volume(tmp_path, None)
+    status, body = cp.route("POST", "/plugins/rag/enable", {"confirm": True})
+    assert status == 200, body
+    applied = body["apply"]
+    assert "llamacpp-embed" not in backend.containers
+    assert "cannot list the models volume" in applied["host_reasons"]["llamacpp-embed"]

@@ -113,6 +113,11 @@ All notable changes to this project are documented here. The format is loosely b
   default.
 
 ### Fixed
+- **ops-controller no longer starts a service onto a missing model file.** Only a model switch
+  checked the models volume, and only for the chat model; enabling a plugin (rag's llamacpp-embed)
+  or any other post-render recreate could start a model server whose file was never fetched, and
+  it crash-looped. Every changed service that loads a model file the volume lacks is now left to
+  the host (`restart_required_on_host`, `ordo apply --only <service>`, which fetches it first).
 - **Apply no longer leaves stale one-shot job containers behind.** A changed one-shot job (the
   evals runner, `restart: "no"`) was only reported, so its `Created` container kept the old image
   after every apply and declared config and containers disagreed (`ordo-evals-1` on an older
