@@ -118,10 +118,11 @@ def diff_services(rendered: dict[str, RenderedService], running: dict[str, Runni
     return sorted(changes, key=lambda change: (change.service != OPS_CONTROLLER_SERVICE, change.service))
 
 
-# The container states in which a one-shot job is not running: its container can be removed without
-# interrupting anything. Anything else (running, restarting, paused, or a state docker did not
-# report) might be an eval in progress, and is never removed.
-REMOVABLE_JOB_STATES = frozenset({"created", "exited", "dead"})
+# The container states in which nothing runs. A one-shot job's container in one of them can be
+# removed without interrupting anything; anything else (running, restarting, paused, or a state
+# docker did not report) might be an eval in progress, and is never removed. A service the render no
+# longer defines is stopped unless it is already in one of them (a crash loop, `restarting`, is not).
+STOPPED_STATES = frozenset({"created", "exited", "dead"})
 
 
 @dataclasses.dataclass(frozen=True)
@@ -133,7 +134,7 @@ class StaleJob:
 
     @property
     def removable(self) -> bool:
-        return self.state in REMOVABLE_JOB_STATES
+        return self.state in STOPPED_STATES
 
     def describe(self) -> str:
         return f"{self.service} ({'; '.join(self.reasons)})"

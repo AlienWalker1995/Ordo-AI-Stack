@@ -45,7 +45,7 @@ import yaml
 
 from ..render import gpu_live, substrate
 from ..render.catalog import Catalog
-from ..render.changed_set import Change, diff_services, stale_one_shot_jobs
+from ..render.changed_set import STOPPED_STATES, Change, diff_services, stale_one_shot_jobs
 from ..render.config import Source
 from ..render.engine import render
 from ..render.models_volume import CHAT_SERVICE, required_model_files
@@ -53,7 +53,7 @@ from ..render.open_webui_probe import OPEN_WEBUI_PROBE, OPEN_WEBUI_SERVICE, open
 from ..render.plugins import PluginRegistry
 from ..render.served_models import model_files, models_by_gpu, served_models
 from ..render.source_edit import edit_plugins_list
-from ..render.stack import lifecycle_group, load_compose, plan_named
+from ..render.stack import lifecycle_group, plan_named
 from .audit import AuditLog
 from .broker import SELF_REFERENTIAL_SERVICES, Broker
 from .scheduler import Job, Scheduler
@@ -569,12 +569,6 @@ class ControlPlane:
 
     # --- the post-render step: recreate exactly what a render changed ---
 
-    def _out_services(self) -> set[str]:
-        """The services out/docker-compose.yml defines now (empty before the first render)."""
-        if not (self.out_dir / "docker-compose.yml").exists():
-            return set()
-        return set(load_compose(str(self.out_dir)).get("services") or {})
-
     def _commit_source(self, text: str, rendered: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         """Write `text` as the operator source, write its render to out/, then apply it.
 
@@ -584,14 +578,12 @@ class ControlPlane:
         plane has no container backend (a hand-run or test instance): nothing is recreated then.
         """
         previous_text = self.source_path.read_text(encoding="utf-8")
-        previous_services = self._out_services()
         self.source_path.write_text(text, encoding="utf-8")
         rendered.write(self.out_dir)
         if not self.broker:
             return None, None
-        # A service the new render no longer defines (a disabled plugin's) is stopped.
-        removed = sorted(previous_services - self._out_services())
-        applied = self.apply_render(removed=removed)
+        # A service the new render no longer defines (a disabled plugin's) is stopped by the apply.
+        applied = self.apply_render()
         if "_status" not in applied:
             return applied, None
         self.source_path.write_text(previous_text, encoding="utf-8")
@@ -694,7 +686,7 @@ class ControlPlane:
                     reasons[name] = f"its netns member(s) {', '.join(members)} run the control plane"
         return reasons
 
-    def apply_render(self, *, dry_run: bool = False, removed: list[str] | tuple[str, ...] = ()) -> dict[str, Any]:
+    def apply_render(self, *, dry_run: bool = False) -> dict[str, Any]:
         """Bring the stack to the current render: recreate exactly the changed set.
 
         The changed set is every long-running rendered service whose config hash or image differs
@@ -702,7 +694,7 @@ class ControlPlane:
         apply` computes). It is recreated in one `up -d --no-deps --force-recreate` call with each
         owner's netns members, after the GPU-lease check every lifecycle verb makes (an evicted
         resident is refused, 409). A running service the render no longer defines is stopped
-        (`stopped`), and so is each of `removed`, the services the caller's render dropped. A one-shot job's stopped container the render moved past is removed,
+        (`stopped`) unless it is already stopped (`orphans`). A one-shot job's stopped container the render moved past is removed,
         never started (`removed_jobs`; `run --rm` creates a fresh one), and a running one is left
         alone (`running_jobs`), as the host's `ordo apply` does. Left to the host, and named with the
         command that finishes the job: the control plane itself and the agent calling it, a container another compose version
@@ -729,11 +721,10 @@ class ControlPlane:
         host_reasons = self._host_reasons(changes, doc, self._render(), state.rendered)
         to_recreate = [change.service for change in changes if change.service not in host_reasons]
         _args, targets = plan_named(doc, to_recreate, force_recreate=True)
-        # Every running service the render no longer defines is stopped (the host's `ordo apply`
-        # does the same), plus `removed`, the services the caller's own render just dropped.
+        # Every service the render no longer defines that is not already stopped is stopped (the host's `ordo apply`
+        # does the same); one already stopped is left as an orphan.
         unrendered = set(state.running) - set(state.rendered)
-        stopped = sorted(name for name in unrendered
-                         if state.running[name].state == "running" or name in removed)
+        stopped = sorted(name for name in unrendered if state.running[name].state not in STOPPED_STATES)
         host = sorted(host_reasons)
         plan: dict[str, Any] = {
             "dry_run": dry_run,

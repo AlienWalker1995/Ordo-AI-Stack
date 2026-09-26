@@ -645,3 +645,13 @@ def test_a_dry_run_never_probes_open_webui(webui_stack):
     status, body = cp.route("POST", "/apply", {"dry_run": True})
     assert status == 200, body
     assert "open-webui" in body["recreated"] and backend.execs == []
+
+
+def test_apply_stops_a_crash_looping_service_the_render_no_longer_defines(stack):
+    cp, backend, _, _ = stack
+    backend.containers["searxng-web"] = RunningContainer(
+        service="searxng-web", config_hash="h", image_id="id:x", compose_version=COMPOSE_VERSION,
+        container_id="cid-searxng-web", state="restarting")
+    status, body = cp.route("POST", "/apply", {"confirm": True})
+    assert status == 200, body
+    assert body["stopped"] == ["searxng-web"] and backend.stopped == ["searxng-web"]
