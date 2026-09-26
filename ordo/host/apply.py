@@ -20,7 +20,9 @@ the one correct order:
      members), fetching the model files they load that the models volume lacks
   9. remove the stopped one-shot job containers (evals) the render moved past; a running job is
      left alone, and apply never starts a job (`run --rm` creates a fresh container)
- 10. `ordo doctor`
+ 10. stop the running services the render no longer defines (a plugin removed from ordo.yaml), as
+     ops-controller's disable does; stopped, not removed, so their volumes stay
+ 11. `ordo doctor`
 
 The changed set itself (step 4) is ordo/render/changed_set.py, shared with ops-controller's
 post-render step. Config hashes are compared with one compose version: the host's compose computes
@@ -183,6 +185,12 @@ class RealHost:
                                   profiles=stack.profiles_in(stack.load_compose(out)))
         return subprocess.run(argv, timeout=120).returncode
 
+    def stop_containers(self, containers: Sequence[str]) -> int:  # pragma: no cover - shells out
+        """`docker stop` by container id: a service the render no longer defines is not in the
+        rendered compose, so compose cannot name it. Stopped, not removed, as ops-controller's
+        disable does; its volumes and the container itself stay."""
+        return subprocess.run(["docker", "stop", *containers], timeout=120).returncode
+
     def wait_for_ops_controller(self) -> bool:  # pragma: no cover - polls docker
         deadline = time.monotonic() + OPS_CONTROLLER_READY_SECONDS
         while True:
@@ -212,7 +220,8 @@ class Plan:
     left_out: list[str]                # changed (or a stale job container), but outside --only
     stale_jobs: list[StaleJob]         # stopped one-shot job containers the render moved past: removed
     one_shots: list[str]               # changed one-shot jobs running now: noted, never touched
-    orphans: list[str]                 # containers the render no longer defines (left alone)
+    to_stop: dict[str, str]            # service -> container id: running, the render no longer defines them
+    orphans: list[str]                 # containers the render no longer defines, already stopped
     gpu: dict | None
     refusal: str | None
 
@@ -270,15 +279,19 @@ def describe(plan: Plan, *, host: Any, dry_run: bool) -> str:
     if plan.stale_jobs:
         stale = ", ".join(job.describe() for job in plan.stale_jobs)
         lines.append(f"  {step}. remove stale one-shot job containers: {stale}; the next run creates a fresh one")
+        step += 1
+    if plan.to_stop:
+        lines.append(f"  {step}. stop services the render no longer defines: {', '.join(plan.to_stop)} "
+                     "(stopped, not removed; their volumes stay)")
     lines.append("  last: ordo doctor")
     notes = []
     if plan.left_out:
-        notes.append(f"changed but outside --only (not recreated): {', '.join(plan.left_out)}")
+        notes.append(f"changed but outside --only (left as is): {', '.join(plan.left_out)}")
     if plan.one_shots:
         notes.append(f"changed one-shot jobs (apply never starts a job): {', '.join(plan.one_shots)}; "
                      "running now, so their containers are left alone until the next apply")
     if plan.orphans:
-        notes.append(f"containers the render no longer defines (left alone): {', '.join(plan.orphans)}")
+        notes.append(f"containers the render no longer defines (already stopped): {', '.join(plan.orphans)}")
     if notes:
         lines.append("  notes:")
         lines += [f"    {note}" for note in notes]
@@ -302,13 +315,20 @@ def _plan(host: Any, staged: Staged, builds: list[images.PlannedBuild], only: Se
     stale_jobs = [job for job in jobs if job.removable and (scope is None or job.service in scope)]
     left_out = [c.service for c in changes if c not in selected]
     left_out += [job.service for job in jobs if job.removable and job not in stale_jobs]
+    # A running service the render no longer defines (a plugin removed from ordo.yaml) is stopped,
+    # as ops-controller's disable stops it, so what runs is what the source declares. Every such
+    # container carries this project's label, so it can only be a service this stack rendered.
+    dropped = {name: running[name] for name in sorted(set(running) - set(rendered))}
+    live = {name: c.container_id for name, c in dropped.items() if c.state == "running"}
+    to_stop = live if scope is None else {}
+    left_out += [name for name in live if name not in to_stop]
     args, targets = stack.plan_named(staged.doc, [c.service for c in selected], force_recreate=True)
     starts = [arg for arg in args if arg in targets]
     refusal = bringup.lease_refusal(gpu, whole_stack=False, starts=set(starts),
                                     replacement_loads_state=bringup.loads_scheduler_state(staged.doc))
     return Plan(builds=builds, changes=selected, starts=starts, left_out=left_out, stale_jobs=stale_jobs,
-                one_shots=one_shots,
-                orphans=sorted(set(running) - set(rendered)), gpu=gpu, refusal=refusal)
+                one_shots=one_shots, to_stop=to_stop,
+                orphans=[name for name in dropped if name not in live], gpu=gpu, refusal=refusal)
 
 
 def run(host: Any, *, only: Sequence[str] | None, dry_run: bool) -> int:
@@ -372,6 +392,10 @@ def run(host: Any, *, only: Sequence[str] | None, dry_run: bool) -> int:
     if plan.stale_jobs:
         # Removed, never started: `run --rm` creates a fresh container from the current render.
         code = host.remove_job_containers([job.service for job in plan.stale_jobs])
+        if code:
+            return code
+    if plan.to_stop:
+        code = host.stop_containers(list(plan.to_stop.values()))
         if code:
             return code
     return host.doctor()

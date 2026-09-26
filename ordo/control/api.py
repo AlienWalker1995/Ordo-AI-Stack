@@ -700,8 +700,8 @@ class ControlPlane:
         from its container's, or that has none (ordo/render/changed_set.py, what the host's `ordo
         apply` computes). It is recreated in one `up -d --no-deps --force-recreate` call with each
         owner's netns members, after the GPU-lease check every lifecycle verb makes (an evicted
-        resident is refused, 409). `removed` are services the caller's render dropped: their
-        containers are stopped. A one-shot job's stopped container the render moved past is removed,
+        resident is refused, 409). A running service the render no longer defines is stopped
+        (`stopped`), and so is each of `removed`, the services the caller's render dropped. A one-shot job's stopped container the render moved past is removed,
         never started (`removed_jobs`; `run --rm` creates a fresh one), and a running one is left
         alone (`running_jobs`), as the host's `ordo apply` does. Left to the host, and named with the
         command that finishes the job: the control plane itself and the agent calling it, a container another compose version
@@ -724,7 +724,11 @@ class ControlPlane:
         host_reasons = self._host_reasons(changes, doc, self._render(), state.rendered)
         to_recreate = [change.service for change in changes if change.service not in host_reasons]
         _args, targets = plan_named(doc, to_recreate, force_recreate=True)
-        stopped = sorted(name for name in removed if name in state.running)
+        # Every running service the render no longer defines is stopped (the host's `ordo apply`
+        # does the same), plus `removed`, the services the caller's own render just dropped.
+        unrendered = set(state.running) - set(state.rendered)
+        stopped = sorted(name for name in unrendered
+                         if state.running[name].state == "running" or name in removed)
         host = sorted(host_reasons)
         plan: dict[str, Any] = {
             "dry_run": dry_run,
@@ -736,8 +740,8 @@ class ControlPlane:
             "restart_required_on_host": host,
             "host_reasons": host_reasons,
             "host_command": f"ordo apply --only {' '.join(host)}" if host else None,
-            # Containers the render no longer defines, left alone (as the host's `ordo apply` does).
-            "orphans": sorted(set(state.running) - set(state.rendered) - set(stopped)),
+            # Containers the render no longer defines that were already stopped.
+            "orphans": sorted(unrendered - set(stopped)),
         }
         conflict = self._group_lease_conflict(sorted(targets))
         if conflict:
