@@ -49,6 +49,7 @@ from ..render.changed_set import Change, diff_services, stale_one_shot_jobs
 from ..render.config import Source
 from ..render.engine import render
 from ..render.models_volume import CHAT_SERVICE, required_model_files
+from ..render.open_webui_probe import OPEN_WEBUI_PROBE, OPEN_WEBUI_SERVICE, open_webui_verdict
 from ..render.plugins import PluginRegistry
 from ..render.served_models import model_files, models_by_gpu, served_models
 from ..render.source_edit import edit_plugins_list
@@ -709,6 +710,10 @@ class ControlPlane:
         first-party image is not built yet, and one that would load a model file the models volume
         lacks (the host's apply builds and fetches them). Fails closed:
         a state that cannot be read refuses (503) and recreates nothing.
+
+        `warnings` lists what the apply could not vouch for, without undoing it: when open-webui was
+        recreated, the probe `ordo doctor` runs after the host's apply (ordo/render/open_webui_probe.py)
+        runs in it once, and a failing verdict, or a probe that could not run, is one entry.
         """
         if not self.broker:
             return self._error(503, "no container backend: this control plane cannot read or recreate containers")
@@ -742,6 +747,7 @@ class ControlPlane:
             "host_command": f"ordo apply --only {' '.join(host)}" if host else None,
             # Containers the render no longer defines that were already stopped.
             "orphans": sorted(unrendered - set(stopped)),
+            "warnings": [],
         }
         conflict = self._group_lease_conflict(sorted(targets))
         if conflict:
@@ -757,7 +763,31 @@ class ControlPlane:
                 self.broker.backend.remove_stopped_containers(removed_jobs)
         except Exception as e:  # noqa: BLE001 - reported with the plan it was executing
             return self._error(500, f"applying the render failed: {e}", changes=plan["changes"])
+        if OPEN_WEBUI_SERVICE in targets:
+            ok, line = self._open_webui_verdict()
+            if not ok:
+                plan["warnings"].append(line)
         return {"ok": True, **plan}
+
+    def _open_webui_verdict(self) -> tuple[bool, str]:
+        """(ok, one-line report) from the probe run inside the open-webui container, once, with no
+        wait or retry (as `ordo doctor` runs it). A probe that cannot run is a failed verdict."""
+        try:
+            exit_code, output = self.broker.backend.exec_in(OPEN_WEBUI_SERVICE, ["python", "-c", OPEN_WEBUI_PROBE])
+        except Exception as e:  # noqa: BLE001 - the container is already recreated; this only reports
+            return False, f"! open-webui: could not verify its model-gateway connection ({type(e).__name__}: {e})"
+        lines = output.strip().splitlines()
+        if exit_code != 0:
+            detail = lines[-1] if lines else f"exit {exit_code}"
+            return False, f"! open-webui: could not verify its model-gateway connection (probe failed: {detail})"
+        try:
+            report = json.loads(lines[0]) if lines else None
+        except ValueError:
+            report = None
+        if not isinstance(report, dict):
+            return False, (f"! open-webui: could not verify its model-gateway connection "
+                           f"(unreadable probe output: {output.strip()[:200]})")
+        return open_webui_verdict(report)
 
     def apply(self, body: dict[str, Any]) -> dict[str, Any]:
         """`POST /apply`: bring the stack to out/ as it is rendered now (after a host render, say).
