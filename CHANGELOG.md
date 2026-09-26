@@ -124,6 +124,15 @@ All notable changes to this project are documented here. The format is loosely b
   embedding models on model-gateway.
 
 ### Changed
+- **One live GPU reader, NVIDIA and AMD.** Live GPU telemetry was read twice, NVIDIA only:
+  ops-controller's `/registry/gpus` and the dashboard's own NVML + nvidia-smi probes, so on an AMD
+  host every live GPU view said "no GPU". `ordo/render/gpu_live.py` now reads every card (nvidia-smi,
+  or the amdgpu sysfs files, which containers see without rocm-smi; the AMD path has not run on real
+  AMD hardware) and reports used VRAM as unknown when the driver's reading is not credible.
+  ops-controller serves it at the new `GET /gpus` and derives `/registry/gpus` from it (same shape).
+  The dashboard's `/api/hardware` GPU fields come from `GET /gpus` (same shape, `source:
+  "ops-controller"`); its `_probe_gpu`, `gpu_stats.py` and `nvidia-ml-py` are gone, and it no longer
+  reserves a `utility` GPU.
 - **The SSO allowlist lives in the operator source.** It was a tracked file
   (`auth/oauth2-proxy/emails.txt`) that the operator edited under `skip-worktree`, so a stash or a
   fresh clone put back the deny-everyone placeholder. It is now `site: SSO_ALLOWED_EMAILS`

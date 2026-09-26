@@ -34,7 +34,8 @@ Python 3.11+ (the ops-controller image that ships `ordo/` runs 3.11, and ruff ta
 
 ## Dashboard (`services/dashboard/dashboard/`)
 - **Backend:** FastAPI. `routes_console.py` serves the five pages (`/api/overview`, `/api/activity`, `/api/services/table`, `/api/models` + `/switch` + `/delete`, `/api/media` + `/view`, `/api/perf/*`); it fetches concurrently and hands plain dicts to `console.py`, which holds the pure logic (verdicts, attention items, model slots). Keep that split: logic in `console.py`, I/O in the routes.
-- Blocking I/O (pynvml, psutil, subprocess) goes through `asyncio.to_thread`; shared in-process state is guarded by `_state_lock`.
+- Blocking I/O (psutil, subprocess) goes through `asyncio.to_thread`; shared in-process state is guarded by `_state_lock`.
+- Live GPU numbers come from ops-controller `GET /gpus` (`ordo/render/gpu_live.py`, NVIDIA and AMD). The dashboard reserves no GPU and never probes one itself.
 - Degrade, don't 500: an unreachable dependency becomes "unavailable" data, logged at `DEBUG`.
 - Auth (`dashboard/auth.py`): every state-changing `/api/*` route, and everything under `/api/ops/` and `/api/orchestration/` (except `/readiness`), needs a principal: the edge SSO identity (`X-Forwarded-Email`, trusted only when the TCP peer is `caddy`) or `Authorization: Bearer <OPS_CONTROLLER_TOKEN>` for internal callers. With the edge off (the render decides, never a flag) the local operator signs in instead: `DASHBOARD_LOCAL_LOGIN_TOKEN` (rendered to the dashboard only) buys a signed session cookie (`routes_auth.py`). Health and read-only views stay open. Don't add per-service tokens.
 - A model switch goes only through `/api/models/switch`: one ops-controller call (catalog id, render, then ops-controller recreates the changed set). Never write `.env` directly; the next render undoes it. Never keep a list of what to restart after a source change: ops-controller's post-render step (`ControlPlane.apply_render`, from `ordo/render/changed_set.py`) decides, and names what only the host can restart.
@@ -45,7 +46,7 @@ Python 3.11+ (the ops-controller image that ships `ordo/` runs 3.11, and ruff ta
 Every GPU render goes through the gate (`$COMFYUI_URL`, `http://comfyui-gate:8188`), which takes the scheduler lease first. Never submit to ComfyUI directly.
 
 ## Testing
-Add or update `pytest` coverage for every behavior change. Use `fastapi.testclient.TestClient` for endpoints, and mock external dependencies (pynvml, httpx, docker) with `unittest.mock.patch` or `monkeypatch`.
+Add or update `pytest` coverage for every behavior change. Use `fastapi.testclient.TestClient` for endpoints, and mock external dependencies (httpx, docker, subprocess) with `unittest.mock.patch` or `monkeypatch`.
 
 ## Commits and pull requests
 Conventional prefixes (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`), with a service scope when the change is isolated to one (`feat(dashboard):`). `main` is protected: work on a branch and open a PR. PRs describe the user-visible change and the validation performed; include screenshots when the dashboard UI changes.

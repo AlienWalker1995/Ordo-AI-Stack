@@ -43,7 +43,7 @@ from urllib.parse import urljoin, urlparse
 
 import yaml
 
-from ..render import substrate
+from ..render import gpu_live, substrate
 from ..render.catalog import Catalog
 from ..render.changed_set import Change, diff_services
 from ..render.config import Source
@@ -1043,8 +1043,12 @@ class ControlPlane:
         """Every model the current render serves, keyed by model id."""
         return {"models": self._served_models()}
 
+    def live_gpus(self) -> dict[str, Any]:
+        """Every card's live VRAM, utilization and temperature (ordo/render/gpu_live.py)."""
+        return {"gpus": gpu_live.live_gpus()}
+
     def registry_gpus(self) -> dict[str, Any]:
-        """Live GPU info (nvidia-smi) with the models the render pins to each card."""
+        """Live GPU info (gpu_live) with the models the render pins to each card."""
         live = self._live_gpus()
         uuid_to_models = models_by_gpu(self._served_models())
         result: dict[str, Any] = {}
@@ -1394,34 +1398,17 @@ class ControlPlane:
             return {"entries": [], "error": f"failed to read audit log: {e}"}
 
     def _live_gpus(self) -> dict[str, dict[str, Any]]:
-        """Query nvidia-smi for live GPU info — same as ops-api's _live_gpus()."""
-        import subprocess
-        try:
-            result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=gpu_uuid,name,memory.total,memory.used,utilization.gpu",
-                 "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=10
-            )
-            if result.returncode != 0 or not result.stdout.strip():
-                return {}
-            out: dict[str, dict[str, Any]] = {}
-            for line in result.stdout.strip().splitlines():
-                parts = [p.strip() for p in line.split(",")]
-                if len(parts) < 5:
-                    continue
-                uuid, name, total_mib, used_mib, util = parts[:5]
-                try:
-                    out[uuid] = {
-                        "name": name,
-                        "total_gb": round(float(total_mib) / 1024.0, 1),
-                        "used_gb": round(float(used_mib) / 1024.0, 1),
-                        "util": int(float(util)),
-                    }
-                except (ValueError, TypeError):
-                    continue
-            return out
-        except Exception:
-            return {}
+        """The live GPU reader's cards keyed by uuid, in the GiB units /registry/gpus has always used."""
+        out: dict[str, dict[str, Any]] = {}
+        for card in gpu_live.live_gpus():
+            used_mib = card["vram_used_mib"]
+            out[card["uuid"]] = {
+                "name": card["name"],
+                "total_gb": round(card["vram_total_mib"] / 1024.0, 1),
+                "used_gb": round(used_mib / 1024.0, 1) if used_mib is not None else None,
+                "util": card["utilization_pct"],
+            }
+        return out
 
     # --- routing (also pure) ---
     def route(
@@ -1499,6 +1486,8 @@ class ControlPlane:
             return 200, self.registry_models()
         if m == "GET" and path == "/registry/gpus":
             return 200, self.registry_gpus()
+        if m == "GET" and path == "/gpus":
+            return 200, self.live_gpus()
         # Slice 3: model download/pull routes
         if m == "POST" and path == "/models/download":
             return self._as_response(self.models_download(body))

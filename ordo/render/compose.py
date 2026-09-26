@@ -489,12 +489,10 @@ def _dashboard(project: str, net: str, nvidia_gpu: bool,
     env = dashboard.get("environment") or {}
     if env:
         s["environment"] = dict(env)
-    # GPU visibility for the dashboard SERVICE: the dashboard's `hardware_stats()` shells to
-    # nvidia-smi (_probe_gpu) + enumerates cards (gpu_stats.list_gpus) for the hw-stat bar's GPU
-    # widgets, which the NVIDIA runtime only injects when the service reserves a GPU with the
-    # `utility` cap. Without it `hardware_stats()` returns gpu:null + gpus:[] (both GPU widgets blank).
-    # V1's dashboard container has exactly caps=[[utility]]; mirror it. `count: all` -> reads BOTH cards.
-    # NVIDIA hosts only (see _ops_controller): the probes already degrade to gpu:null + gpus:[].
+    # GPU visibility for a dashboard that declares it (`gpu_capabilities`): the NVIDIA runtime only
+    # injects nvidia-smi/NVML when the service reserves a GPU with that cap. `count: all` -> every
+    # card. NVIDIA hosts only (see _ops_controller). The shipped dashboard declares none: its GPU
+    # widgets read ops-controller `GET /gpus` (ordo/render/gpu_live.py).
     gpu_caps = dashboard.get("gpu_capabilities") or []
     if gpu_caps and nvidia_gpu:
         s.update(_capability_gpu_reservation(list(gpu_caps)))

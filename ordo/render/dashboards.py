@@ -59,11 +59,10 @@ class Dashboard:
     # Derived-config NAMES (keys of the rendered .env) the dashboard reads, rendered as
     # `KEY: ${KEY?...}` (see PluginService.derived_env). The dashboard never loads the whole .env.
     derived_env: tuple[str, ...] = ()
-    # GPU visibility for the dashboard service. `hardware_stats()` shells to nvidia-smi (_probe_gpu)
-    # and enumerates cards via gpu_stats.list_gpus for the hw-stat bar's GPU widgets — the NVIDIA
-    # runtime only injects nvidia-smi/NVML when the service reserves a GPU with the `utility` cap.
-    # Without it `hardware_stats()` returns gpu:null + gpus:[]. Declared via `gpu: utility` (or
-    # `gpu_capabilities: [utility]`); `count: all` (empty device_ids) so it reads BOTH cards.
+    # GPU visibility for a dashboard that probes a GPU itself: the NVIDIA runtime only injects
+    # nvidia-smi/NVML when the service reserves a GPU with the `utility` cap. Declared via
+    # `gpu: utility` (or `gpu_capabilities: [utility]`); `count: all` (empty device_ids) so it reads
+    # every card. The shipped dashboard declares none: it reads ops-controller `GET /gpus`.
     gpu_capabilities: tuple[str, ...] = ()
     # Build-context identity (METADATA; NEVER rendered). Absent -> the dashboard's own
     # `services/<id>/`. The shipped dashboard's Dockerfile is nested (services/dashboard/app), so

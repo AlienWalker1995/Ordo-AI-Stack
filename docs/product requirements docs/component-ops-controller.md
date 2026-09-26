@@ -53,7 +53,8 @@ agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/registry/models` | GET | Every model the current render serves (file, GPU pin, ctx, projector), derived on each call |
-| `/registry/gpus` | GET | GPUs seen by nvidia-smi, with the models the render pins to each |
+| `/gpus` | GET | Live per-card VRAM (MiB), utilization and temperature: NVIDIA via nvidia-smi, AMD via sysfs (`ordo/render/gpu_live.py`); the dashboard's GPU widgets read this |
+| `/registry/gpus` | GET | The same live cards (GiB), with the models the render pins to each |
 | `/gpu/assignments` | GET | Current GPU pins |
 | `/gpu/assign`, `/registry/models/{id}/assign-gpu` | POST | 410: GPU pins are render-time (`ordo.yaml`) |
 | `/models/download`, `/models/download/status` | POST, GET | Resumable download of one allowlisted-host URL into the ComfyUI models volume |
