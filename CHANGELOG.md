@@ -113,6 +113,12 @@ All notable changes to this project are documented here. The format is loosely b
   default.
 
 ### Fixed
+- **Rotating OPS_CONTROLLER_TOKEN no longer locks the host out of its own deploy.** The token is
+  a file under /run/secrets, bind-mounted from the host; `ordo secrets rotate` rewrote it, but
+  ops-controller kept the value it read at startup. The host's lease probe (which reads the
+  same file) then got 401, so `ordo apply` and `ordo recreate --reading` both refused as lease
+  unknown. ops-controller now re-reads the file on every request (keeping the last good value if
+  a read fails or is empty), so a rotation takes effect at once.
 - **Removing a plugin stops its services on every apply path.** ops-controller's disable stopped
   them, but a plugin removed from `ordo.yaml` followed by `ordo apply` (or `POST /apply`) left its
   containers running indefinitely. Both executors now stop every service the render no longer

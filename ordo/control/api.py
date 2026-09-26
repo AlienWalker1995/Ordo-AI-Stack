@@ -1605,18 +1605,31 @@ class ControlPlane:
         status = int(payload.pop("_status", 200)) if isinstance(payload, dict) else 200
         return status, payload
 
-    def app(self, auth_token: str | None):
+    def app(self, auth_token: str | Callable[[], str] | None):
         """Build the FastAPI application that delegates every authenticated request to route().
 
         `auth_token` is required: without one the API would be open to every container on the
-        network, so an empty token is refused here rather than silently served.
+        network, so an empty token is refused here rather than silently served. It may be a function
+        that reads the token (serve passes one reading the /run/secrets file): each request then
+        checks against the current value, so a rotated file takes effect without a restart. A read
+        that fails or comes back empty (a torn write) keeps the last good token, never an open API.
         """
         from fastapi import FastAPI, Request
         from fastapi.responses import JSONResponse
 
-        if not auth_token or not auth_token.strip():
+        read_token = auth_token if callable(auth_token) else (lambda: auth_token or "")
+        current = {"token": read_token().strip()}
+        if not current["token"]:
             raise ValueError("ops-controller needs OPS_CONTROLLER_TOKEN: refusing to serve an unauthenticated API")
-        expected = f"bearer {auth_token.strip()}".encode()
+
+        def _expected() -> bytes:
+            try:
+                token = read_token().strip()
+            except Exception:  # noqa: BLE001 - an unreadable file keeps the last good token
+                token = ""
+            if token:
+                current["token"] = token
+            return f"bearer {current['token']}".encode()
 
         cp = self
         app = FastAPI(title="ops-controller")
@@ -1625,7 +1638,7 @@ class ControlPlane:
             # Normalise only the scheme's case; the token itself is compared exactly, in constant time.
             scheme, _, token = header.partition(" ")
             presented = f"{scheme.lower()} {token.strip()}".encode()
-            return hmac.compare_digest(presented, expected)
+            return hmac.compare_digest(presented, _expected())
 
         @app.middleware("http")
         async def dispatch(request: Request, call_next):
@@ -1660,7 +1673,8 @@ class ControlPlane:
 
         return app
 
-    def serve(self, auth_token: str | None, host: str = "0.0.0.0", port: int = 9000) -> None:  # pragma: no cover - needs a socket
+    def serve(self, auth_token: str | Callable[[], str] | None, host: str = "0.0.0.0",
+              port: int = 9000) -> None:  # pragma: no cover - needs a socket
         """Thin FastAPI binding around route().
 
         The binding is deliberately thin: every request is dispatched through route(), which stays a pure
