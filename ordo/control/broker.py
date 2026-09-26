@@ -84,6 +84,9 @@ class ContainerBackend(Protocol):
     # compose_down means the entire stack including the agent and the GPU scheduler. A named
     # service is expanded to its `lifecycle_group` (itself plus its netns members) in one call.
     def exec_in(self, container: str, command: list[str]) -> tuple[int, str]: ...
+    # exec_in by compose service name: the backend finds the service's container (`-1` suffix and
+    # all), so a caller never hardcodes a container name. FileNotFoundError when it has none.
+    def exec_in_service(self, service: str, command: list[str]) -> tuple[int, str]: ...
     def compose_up(self, service: str | None = None) -> None: ...
     def compose_down(self, service: str | None = None) -> None: ...
     def compose_restart(self, service: str | None = None) -> None: ...
@@ -177,6 +180,9 @@ class MockBackend:
     def exec_in(self, container: str, command: list[str]) -> tuple[int, str]:
         self.execs.append((container, list(command)))
         return self.exec_result
+
+    def exec_in_service(self, service: str, command: list[str]) -> tuple[int, str]:
+        return self.exec_in(service, command)
 
     def compose_up(self, service: str | None = None) -> None:
         self.compose_up_calls.append(service)
@@ -456,6 +462,12 @@ class DockerBackend:
         if proc.returncode != 0 and "No such container" in output:
             raise FileNotFoundError(name)
         return proc.returncode, output
+
+    def exec_in_service(self, service: str, command: list[str]) -> tuple[int, str]:  # pragma: no cover - needs real docker
+        container = self._resolve(service)
+        if container is None:
+            raise FileNotFoundError(service)
+        return self.exec_in(container, command)
 
     def compose_up(self, service: str | None = None) -> None:
         # A named up is the host's `ordo up <service>`: `stack.plan_named`, so `--no-deps` (else

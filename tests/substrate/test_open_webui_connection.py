@@ -20,6 +20,7 @@ from ordo.host import doctor
 from ordo.render.catalog import Catalog
 from ordo.render.config import Source
 from ordo.render.engine import render
+from ordo.render.open_webui_probe import OPEN_WEBUI_PROBE, open_webui_verdict
 from ordo.render.plugins import PluginRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -117,46 +118,46 @@ def _probe(**overrides) -> dict:
 
 
 def test_doctor_passes_a_healthy_open_webui():
-    ok, line = doctor.open_webui_verdict(_probe())
+    ok, line = open_webui_verdict(_probe())
     assert ok and line.startswith("open-webui:") and "local-chat" in line
 
 
 def test_doctor_passes_when_open_webui_is_not_running():
-    ok, line = doctor.open_webui_verdict(None)
+    ok, line = open_webui_verdict(None)
     assert ok and "not running" in line
 
 
 def test_doctor_flags_persistent_config_left_on():
-    ok, line = doctor.open_webui_verdict(_probe(persistent_config="true"))
+    ok, line = open_webui_verdict(_probe(persistent_config="true"))
     assert not ok and "ENABLE_PERSISTENT_CONFIG" in line and "ordo apply --only open-webui" in line
 
 
 def test_doctor_flags_a_key_the_gateway_rejects():
-    ok, line = doctor.open_webui_verdict(_probe(chat={"status": 401, "models": []}))
+    ok, line = open_webui_verdict(_probe(chat={"status": 401, "models": []}))
     assert not ok and "401" in line and "chat" in line
 
 
 def test_doctor_flags_a_default_model_the_key_cannot_list():
-    ok, line = doctor.open_webui_verdict(_probe(default_model="gone"))
+    ok, line = open_webui_verdict(_probe(default_model="gone"))
     assert not ok and "gone" in line
 
 
 def test_doctor_flags_an_embedding_model_the_key_cannot_use():
-    ok, line = doctor.open_webui_verdict(_probe(embed_model="nomic-embed-text-v1.5.Q4_K_M.gguf"))
+    ok, line = open_webui_verdict(_probe(embed_model="nomic-embed-text-v1.5.Q4_K_M.gguf"))
     assert not ok and "nomic-embed-text-v1.5.Q4_K_M.gguf" in line
 
 
 def test_doctor_flags_an_unreachable_gateway():
-    ok, line = doctor.open_webui_verdict(_probe(rag={"status": 0, "error": "URLError: refused", "models": []}))
+    ok, line = open_webui_verdict(_probe(rag={"status": 0, "error": "URLError: refused", "models": []}))
     assert not ok and "refused" in line
 
 
 def test_the_probe_never_prints_the_key():
     """The key stays inside the container: the probe reads it from its own env and prints only
     status codes and model ids."""
-    assert "print" in doctor.OPEN_WEBUI_PROBE
-    assert "OPENAI_API_KEY" in doctor.OPEN_WEBUI_PROBE
-    printed = doctor.OPEN_WEBUI_PROBE.split("print(", 1)[1]
+    assert "print" in OPEN_WEBUI_PROBE
+    assert "OPENAI_API_KEY" in OPEN_WEBUI_PROBE
+    printed = OPEN_WEBUI_PROBE.split("print(", 1)[1]
     assert "KEY" not in printed
 
 

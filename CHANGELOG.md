@@ -117,6 +117,12 @@ All notable changes to this project are documented here. The format is loosely b
   them, but a plugin removed from `ordo.yaml` followed by `ordo apply` (or `POST /apply`) left its
   containers running indefinitely. Both executors now stop every running service the render no
   longer defines (stopped, not removed: its volumes stay); `--only` leaves them as they are.
+- **ops-controller now checks Open WebUI's model connection after recreating it.** Only the host's
+  `ordo apply` (through `ordo doctor`) probed whether Open WebUI's scoped key can list the default
+  chat and embedding models, so enabling the open-webui plugin, or any control-plane apply that
+  recreated it, reported ok with a chat UI that listed no models. The same probe (now
+  `ordo/render/open_webui_probe.py`) runs after such an apply, and a failure, or a probe that could
+  not run, is reported in the response's `warnings` (the recreate itself stands).
 - **ops-controller no longer recreates a service onto an unbuilt first-party image.** A plugin
   enabled from the dashboard or Hermes (rag's `rag-ingestion`) names an image built from this
   checkout; before any `ordo build` compose tried to pull it and the apply failed. Such a service is

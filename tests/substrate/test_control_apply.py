@@ -557,3 +557,91 @@ def test_apply_leaves_an_already_stopped_unrendered_container_as_an_orphan(stack
     assert status == 200, body
     assert body["stopped"] == [] and backend.stopped == []
     assert body["orphans"] == ["searxng-web"]
+
+
+# --------------------------------------------------------------------------- #
+# A recreated open-webui is probed the way `ordo doctor` probes it after the host's apply.
+# --------------------------------------------------------------------------- #
+
+
+def _healthy_probe(**overrides) -> dict:
+    probe = {"persistent_config": "false", "default_model": "local-chat", "embed_model": "local-embed",
+             "chat": {"status": 200, "models": ["local-chat", "local-embed"]},
+             "rag": {"status": 200, "models": ["local-chat", "local-embed"]}}
+    probe.update(overrides)
+    return probe
+
+
+@pytest.fixture
+def webui_stack(stack):
+    """The `stack`, with open-webui's key materialized and its container made from an older render."""
+    cp, backend, _, out = stack
+    (out / "secrets.env").write_text("LITELLM_KEY_OPEN_WEBUI=sk-test\n", encoding="utf-8")
+    old = backend.containers["open-webui"]
+    backend.containers["open-webui"] = RunningContainer(
+        service=old.service, config_hash="stale", image_id=old.image_id,
+        compose_version=COMPOSE_VERSION, container_id=old.container_id)
+    return cp, backend
+
+
+def _probes(backend: RenderedStackBackend) -> list[tuple[str, list[str]]]:
+    from ordo.render.open_webui_probe import OPEN_WEBUI_PROBE
+    return [(container, command) for container, command in backend.execs if OPEN_WEBUI_PROBE in command]
+
+
+def test_apply_that_recreates_open_webui_warns_when_its_key_cannot_list_the_models(webui_stack):
+    cp, backend = webui_stack
+    backend.exec_result = (0, json.dumps(_healthy_probe(chat={"status": 401, "models": []})) + "\n")
+    status, body = cp.route("POST", "/apply", {"confirm": True})
+    assert status == 200, body
+    assert "open-webui" in body["recreated"]
+    assert [container for container, _ in _probes(backend)] == ["open-webui"]
+    assert len(body["warnings"]) == 1
+    assert body["warnings"][0].startswith("! open-webui:") and "401" in body["warnings"][0]
+
+
+def test_apply_that_recreates_a_healthy_open_webui_has_no_warning(webui_stack):
+    cp, backend = webui_stack
+    backend.exec_result = (0, json.dumps(_healthy_probe()) + "\n")
+    status, body = cp.route("POST", "/apply", {"confirm": True})
+    assert status == 200, body
+    assert len(_probes(backend)) == 1
+    assert body["warnings"] == []
+
+
+def test_apply_reports_an_open_webui_it_could_not_probe(webui_stack):
+    cp, backend = webui_stack
+
+    def exec_fails(container, command):
+        raise FileNotFoundError(container)
+
+    backend.exec_in_service = exec_fails
+    status, body = cp.route("POST", "/apply", {"confirm": True})
+    assert status == 200, body
+    assert len(body["warnings"]) == 1 and "could not verify" in body["warnings"][0]
+
+
+def test_apply_reports_a_probe_that_exits_non_zero(webui_stack):
+    cp, backend = webui_stack
+    backend.exec_result = (1, "Traceback ...\nModuleNotFoundError: no json\n")
+    status, body = cp.route("POST", "/apply", {"confirm": True})
+    assert status == 200, body
+    assert len(body["warnings"]) == 1
+    assert "could not verify" in body["warnings"][0] and "ModuleNotFoundError" in body["warnings"][0]
+
+
+def test_apply_that_leaves_open_webui_alone_does_not_probe_it(stack):
+    cp, backend, source, out = stack
+    _write_source(source, model=LARGE_CTX_MODEL)
+    cp._render().write(out)
+    status, body = cp.route("POST", "/apply", {"confirm": True})
+    assert status == 200, body
+    assert "open-webui" not in body["recreated"]
+    assert backend.execs == [] and body["warnings"] == []
+
+
+def test_a_dry_run_never_probes_open_webui(webui_stack):
+    cp, backend = webui_stack
+    status, body = cp.route("POST", "/apply", {"dry_run": True})
+    assert status == 200, body
+    assert "open-webui" in body["recreated"] and backend.execs == []
