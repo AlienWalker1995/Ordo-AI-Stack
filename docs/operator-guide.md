@@ -216,8 +216,8 @@ current split: today there is only Ordo.
     **`codebase-memory-ui`**, **`hermes-dashboard`**, and the opt-in **`edge`** (Caddy + oauth2-proxy,
     the *only* host-port publish, profile `edge`) — and 4 obsolete-by-design (model pullers → `ordo
     fetch`; the manager-setup shim → image build; the reactive guardian → the V2 scheduler). Each
-    ported service preserves V1's **exact image pins** (qdrant `v1.18.2`, n8n `2.28.3`, open-webui
-    `v0.10.1`), floating `:latest` tags are **digest-pinned** (searxng), and env keys / volumes
+    ported service kept V1's **exact image pins** at the time of the port (current pins live in each
+    `services/<id>/plugin.yaml`), floating `:latest` tags are **digest-pinned** (searxng), and env keys / volumes
     (bind + named) / healthchecks / profiles / depends_on carry over verbatim.
     **Image parity fixed:** `model-gateway` now references V1's custom config-wrapper build as a
     **project buildable image** (`ordo/model-gateway:latest`,
