@@ -94,3 +94,36 @@ def test_a_refusal_is_logged_without_the_presented_token(client, caplog):
     text = caplog.text
     assert "401" in text or "refused" in text
     assert "leaked-guess-123" not in text and TOKEN not in text
+
+
+# --------------------------------------------------------------------------- #
+# The token is a file (/run/secrets): a rotation rewrites it, and the running API takes the new
+# value on its next request. Holding the startup value refused the host's own lease probe (which
+# reads the same file) until a recreate the lease check itself blocked.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_rotated_token_file_takes_effect_without_a_restart(tmp_path):
+    token_file = tmp_path / "ops_controller_token"
+    token_file.write_text(TOKEN + "\n", encoding="utf-8")
+    client = TestClient(_cp(tmp_path).app(auth_token=lambda: token_file.read_text(encoding="utf-8")))
+    assert client.get("/status", headers={"Authorization": f"Bearer {TOKEN}"}).status_code == 200
+    token_file.write_text("rotated-token-91ab\n", encoding="utf-8")
+    assert client.get("/status", headers={"Authorization": "Bearer rotated-token-91ab"}).status_code == 200
+    assert client.get("/status", headers={"Authorization": f"Bearer {TOKEN}"}).status_code == 401
+
+
+def test_an_empty_or_unreadable_token_file_keeps_the_last_good_token(tmp_path):
+    token_file = tmp_path / "ops_controller_token"
+    token_file.write_text(TOKEN, encoding="utf-8")
+    client = TestClient(_cp(tmp_path).app(auth_token=lambda: token_file.read_text(encoding="utf-8")))
+    token_file.write_text("", encoding="utf-8")              # a torn write
+    assert client.get("/status").status_code == 401           # never open
+    assert client.get("/status", headers={"Authorization": f"Bearer {TOKEN}"}).status_code == 200
+    token_file.unlink()
+    assert client.get("/status", headers={"Authorization": f"Bearer {TOKEN}"}).status_code == 200
+
+
+def test_a_token_source_that_is_empty_at_start_is_refused(tmp_path):
+    with pytest.raises(ValueError):
+        _cp(tmp_path).app(auth_token=lambda: "")

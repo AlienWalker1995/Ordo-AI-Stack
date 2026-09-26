@@ -124,5 +124,6 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
         return 2
     print(f"ops-controller on {args.host}:{args.port} (project={args.project}, "
           f"{sched.total_vram_gb:.0f}GB GPU) — Ctrl-C to stop")
-    cp.serve(token, host=args.host, port=args.port)
+    # Re-read on every request, so a rotated token file takes effect without a restart.
+    cp.serve(lambda: read_secret("OPS_CONTROLLER_TOKEN"), host=args.host, port=args.port)
     return 0
