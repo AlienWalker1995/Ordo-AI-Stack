@@ -52,6 +52,7 @@ from typing import Any
 from ..render import image_tags, secret_files, stack, substrate
 from ..render.changed_set import (
     OPS_CONTROLLER_SERVICE,
+    STOPPED_STATES,
     Change,
     DockerState,
     RenderedService,
@@ -319,7 +320,7 @@ def _plan(host: Any, staged: Staged, builds: list[images.PlannedBuild], only: Se
     # as ops-controller's disable stops it, so what runs is what the source declares. Every such
     # container carries this project's label, so it can only be a service this stack rendered.
     dropped = {name: running[name] for name in sorted(set(running) - set(rendered))}
-    live = {name: c.container_id for name, c in dropped.items() if c.state == "running"}
+    live = {name: c.container_id for name, c in dropped.items() if c.state not in STOPPED_STATES}
     to_stop = live if scope is None else {}
     left_out += [name for name in live if name not in to_stop]
     args, targets = stack.plan_named(staged.doc, [c.service for c in selected], force_recreate=True)

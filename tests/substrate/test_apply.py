@@ -812,3 +812,10 @@ def test_only_leaves_a_dropped_service_running(capsys):
     assert apply.run(host, only=["dashboard"], dry_run=False) == 0
     assert not any(c[0] == "stop_containers" for c in host.calls)
     assert "outside --only" in capsys.readouterr().out
+
+
+def test_a_crash_looping_service_the_render_dropped_is_stopped_too():
+    """`restarting` is not stopped: a dropped plugin's crash-looping container must not keep looping."""
+    host = FakeHost(have=_with_orphan(state="restarting"))
+    assert apply.run(host, only=None, dry_run=False) == 0
+    assert ("stop_containers", ("cid-searxng",)) in host.calls
