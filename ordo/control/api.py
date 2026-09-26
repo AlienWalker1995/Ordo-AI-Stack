@@ -773,7 +773,8 @@ class ControlPlane:
         """(ok, one-line report) from the probe run inside the open-webui container, once, with no
         wait or retry (as `ordo doctor` runs it). A probe that cannot run is a failed verdict."""
         try:
-            exit_code, output = self.broker.backend.exec_in(OPEN_WEBUI_SERVICE, ["python", "-c", OPEN_WEBUI_PROBE])
+            exit_code, output = self.broker.backend.exec_in_service(OPEN_WEBUI_SERVICE,
+                                                                 ["python", "-c", OPEN_WEBUI_PROBE])
         except Exception as e:  # noqa: BLE001 - the container is already recreated; this only reports
             return False, f"! open-webui: could not verify its model-gateway connection ({type(e).__name__}: {e})"
         lines = output.strip().splitlines()

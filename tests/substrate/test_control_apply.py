@@ -615,7 +615,7 @@ def test_apply_reports_an_open_webui_it_could_not_probe(webui_stack):
     def exec_fails(container, command):
         raise FileNotFoundError(container)
 
-    backend.exec_in = exec_fails
+    backend.exec_in_service = exec_fails
     status, body = cp.route("POST", "/apply", {"confirm": True})
     assert status == 200, body
     assert len(body["warnings"]) == 1 and "could not verify" in body["warnings"][0]
