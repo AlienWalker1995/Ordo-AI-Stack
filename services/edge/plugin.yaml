@@ -8,7 +8,10 @@ description: TLS front door + Google SSO forward-auth for remote (Tailscale) acc
 requires:
   nvidia: false
   ram_gb: 1
-  site: [CADDY_BIND, CADDY_TAILNET_HOSTNAME, CADDY_TAILNET_DOMAIN]   # off until the operator sets them
+  # Off until the operator sets them. SSO_ALLOWED_EMAILS (comma-separated) is the Google-account
+  # allowlist: the render writes it to out/oauth2-proxy/emails.txt, and without it oauth2-proxy
+  # would deny everyone.
+  site: [CADDY_BIND, CADDY_TAILNET_HOSTNAME, CADDY_TAILNET_DOMAIN, SSO_ALLOWED_EMAILS]
 provides: [edge]
 compose_profile: edge
 env:
@@ -59,12 +62,12 @@ services:
       - --authenticated-emails-file=/etc/oauth2-proxy/emails.txt
       - --skip-provider-button=true
     volumes:
-      # ${BASE_PATH} (not ./): the allowlist is a TRACKED repo file; a ./-relative mount
-      # resolves against the compose project dir (out) and serves a stale copy.
-      # ${VAR:?} (not :-.): fail-loud like CADDY_BIND below. An EMPTY/unset BASE_PATH makes
-      # Docker fabricate an empty dir at the emails.txt mount → zero-email allowlist → deny-all
-      # outage (this happened). Reject an empty value rather than silently mount a directory.
-      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/auth/oauth2-proxy/emails.txt:/etc/oauth2-proxy/emails.txt:ro
+      # The allowlist the render writes from `site: SSO_ALLOWED_EMAILS`. The DIRECTORY is
+      # mounted, not the file: a render that replaces the file would leave a single-file bind
+      # pointing at the old inode. ${VAR:?} (not :-.): fail-loud like CADDY_BIND below. An
+      # EMPTY/unset BASE_PATH would make Docker fabricate an empty dir at the mount → zero-email
+      # allowlist → deny-all outage (this happened). Reject an empty value instead.
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/oauth2-proxy:/etc/oauth2-proxy:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:4180/ping"]
       interval: 30s

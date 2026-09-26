@@ -215,7 +215,7 @@ dashboard iframe expects that prefix), and n8n's external
 | Service | Host port | Notes |
 |---------|-----------|-------|
 | caddy | `${CADDY_BIND}:443`, `:8443`–`:8450` | The only host-published ports in the stack (nine total: the `:443` front door plus one per UI service). Bound to `0.0.0.0` (operator-approved 2026-07-17 for LAN reachability on an internet-dark network — see `docs/runbooks/auth.md`); the `${CADDY_BIND:?...}` failsafe only rejects an empty/unset value, it does not distinguish a tailnet IP from `0.0.0.0`. Reverse-proxies everything else with forward_auth → oauth2-proxy |
-| oauth2-proxy | — | Internal; sits behind Caddy; Google SSO with email allowlist (`auth/oauth2-proxy/emails.txt`); one domain-scoped session covers all nine Caddy ports |
+| oauth2-proxy | — | Internal; sits behind Caddy; Google SSO with email allowlist (`site: SSO_ALLOWED_EMAILS`); one domain-scoped session covers all nine Caddy ports |
 | open-webui | — | Reached at `https://<tailnet>:8443/` (its own port, served at its compiled root); needs model-gateway, qdrant |
 | dashboard | — | Reached at `https://<tailnet>:8444/` (Grafana embed at `.../grafana/` on the same port); needs llamacpp, ops-controller, model-gateway |
 | n8n | — | UI reached at `https://<tailnet>:8445/`; public webhook base and OAuth-callback URL stay on `:443` (`https://<tailnet>/n8n/webhook/*`, `.../n8n/rest/oauth2-credential/callback*`, unchanged so nothing external needs re-registration) |

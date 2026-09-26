@@ -33,7 +33,7 @@ REGISTRY = PluginRegistry.load(ROOT / "services")
 # The site keys the edge and memory-vault plugins require, plus every optional `site:` knob a service
 # reads at runtime, so every derived key a service can read is present in this render.
 SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
-        "CADDY_TAILNET_DOMAIN": "example.ts.net", "MEMORY_VAULT_PATH": "/srv/vault",
+        "CADDY_TAILNET_DOMAIN": "example.ts.net", "SSO_ALLOWED_EMAILS": "me@example.com", "MEMORY_VAULT_PATH": "/srv/vault",
         "N8N_WEBHOOK_URL": "https://n8n.example.ts.net/", "HERMES_MAX_TOKENS": "32768",
         "HERMES_COMPRESSION_THRESHOLD_PERCENT": "0.8", "LLAMACPP_OVERRIDE_KV": "x=int:1",
         "LLAMACPP_CPU_MODEL": "cpu.gguf", "LLAMACPP_EMBED_MODEL": "embed.gguf"}

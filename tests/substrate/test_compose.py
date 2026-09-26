@@ -17,7 +17,7 @@ REGISTRY = PluginRegistry.load(ROOT / "services")
 SECRETS_DIR = "${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/secrets"
 # The site keys the edge and memory-vault plugins require (`requires.site`), so they render.
 REQUIRED_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
-                 "CADDY_TAILNET_DOMAIN": "example.ts.net", "MEMORY_VAULT_PATH": "/srv/vault"}
+                 "CADDY_TAILNET_DOMAIN": "example.ts.net", "SSO_ALLOWED_EMAILS": "me@example.com", "MEMORY_VAULT_PATH": "/srv/vault"}
 
 
 def test_core_services_present():
@@ -336,7 +336,7 @@ def test_model_without_backend_image_runs_the_hosts_cuda_build(tmp_path):
 
 
 def test_edge_security_mounts_fail_loud_on_empty_base_path():
-    """The oauth2-proxy allowlist (emails.txt) and the Caddyfile are SECURITY-CRITICAL host
+    """The oauth2-proxy allowlist directory and the Caddyfile are SECURITY-CRITICAL host
     binds. They MUST use the `${BASE_PATH:?...}` fail-loud form, not `${BASE_PATH:-.}`: an
     empty/unset BASE_PATH with `:-.` makes Docker fabricate an empty directory at the mount
     → zero-email allowlist → deny-all outage (this happened). `:?` makes `docker compose config`
@@ -345,11 +345,11 @@ def test_edge_security_mounts_fail_loud_on_empty_base_path():
                             "model": "auto", "plugins": ["edge"], "site": REQUIRED_SITE})
     c = render(src, CATALOG, REGISTRY).compose_dict()
 
-    emails_mounts = [v for v in c["services"]["oauth2-proxy"]["volumes"] if "emails.txt" in v]
-    assert emails_mounts, "oauth2-proxy has no emails.txt allowlist mount"
+    emails_mounts = [v for v in c["services"]["oauth2-proxy"]["volumes"] if v.endswith(":/etc/oauth2-proxy:ro")]
+    assert emails_mounts, "oauth2-proxy has no allowlist mount"
     for v in emails_mounts:
-        assert "${BASE_PATH:?" in v, f"emails.txt mount not fail-loud on empty BASE_PATH: {v}"
-        assert "${BASE_PATH:-" not in v, f"emails.txt mount still uses the clobber-prone :- form: {v}"
+        assert "${BASE_PATH:?" in v, f"allowlist mount not fail-loud on empty BASE_PATH: {v}"
+        assert "${BASE_PATH:-" not in v, f"allowlist mount still uses the clobber-prone :- form: {v}"
 
     caddyfile_mounts = [v for v in c["services"]["caddy"]["volumes"] if "/Caddyfile" in v]
     assert caddyfile_mounts, "caddy has no Caddyfile mount"

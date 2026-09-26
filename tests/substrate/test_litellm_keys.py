@@ -15,7 +15,7 @@ CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
 # The site keys the edge and memory-vault plugins require (`requires.site`), so they render.
 REQUIRED_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
-                 "CADDY_TAILNET_DOMAIN": "example.ts.net", "MEMORY_VAULT_PATH": "/srv/vault"}
+                 "CADDY_TAILNET_DOMAIN": "example.ts.net", "SSO_ALLOWED_EMAILS": "me@example.com", "MEMORY_VAULT_PATH": "/srv/vault"}
 P_DUAL = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": "GPU-A"},
                    {"name": "GTX 1070", "vram_gb": 8, "uuid": "GPU-B"}], "ram_gb": 128}
 

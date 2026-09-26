@@ -2,7 +2,8 @@
 
 `ordo init` asks nothing about Tailscale or Google. `ordo remote enable` collects the tailnet
 hostname, the Caddy bind, the Google OAuth client and the allowlist, writes them to the source's
-`site:`, to secrets.env and to the allowlist file, and re-renders; `ordo remote disable` undoes it.
+`site:` (the allowlist too, as SSO_ALLOWED_EMAILS) and to secrets.env, and re-renders; the render
+writes the allowlist file oauth2-proxy mounts into out/. `ordo remote disable` undoes it.
 """
 from __future__ import annotations
 
@@ -34,12 +35,9 @@ ENABLE_FLAGS = ["--yes", "--hostname", "ordo.tail1234.ts.net", "--bind", "100.64
 
 @pytest.fixture
 def stack(tmp_path, monkeypatch):
-    """A fresh `ordo init --yes` config in tmp_path/out, with the allowlist redirected to tmp."""
+    """A fresh `ordo init --yes` config in tmp_path/out."""
     monkeypatch.setattr(wizard, "detect", lambda: HARDWARE)
     monkeypatch.setattr(RENDER_MODULE, "detect", lambda: HARDWARE)
-    emails = tmp_path / "emails.txt"
-    emails.write_text(remote.ALLOWLIST_PLACEHOLDER + "\n", encoding="utf-8")
-    monkeypatch.setattr(remote, "ALLOWLIST_PATH", emails)
     monkeypatch.setattr(remote, "CERT_DIR", tmp_path / "certs")
     out = tmp_path / "out"
     wizard.run(CATALOG, REGISTRY, out, interactive=False, answers={}, host_root=tmp_path / "repo")
@@ -55,7 +53,7 @@ def _compose(out: Path) -> dict:
     return yaml.safe_load((out / "docker-compose.yml").read_text(encoding="utf-8"))
 
 
-def test_enable_writes_site_secrets_allowlist_and_renders_the_edge(stack, capsys):
+def test_enable_writes_site_secrets_and_renders_the_edge_with_its_allowlist(stack, capsys):
     assert cli.main(["remote", "enable", "--out", str(stack), *ENABLE_FLAGS]) == 0
     site = Source.load(stack / "ordo.yaml").site
     assert site["CADDY_TAILNET_HOSTNAME"] == "ordo.tail1234.ts.net"
@@ -66,7 +64,9 @@ def test_enable_writes_site_secrets_allowlist_and_renders_the_edge(stack, capsys
     assert secrets["OAUTH2_PROXY_CLIENT_SECRET"] == CLIENT_SECRET
     assert secrets["OAUTH2_PROXY_COOKIE_SECRET"]              # generated, not asked
     assert secrets["LITELLM_KEY_EDGE"]                        # the edge's own gateway key, generated
-    assert remote.ALLOWLIST_PATH.read_text(encoding="utf-8") == "me@example.com\nyou@example.com\n"
+    assert site["SSO_ALLOWED_EMAILS"] == "me@example.com,you@example.com"
+    allowlist = stack / "oauth2-proxy" / "emails.txt"
+    assert allowlist.read_text(encoding="utf-8") == "me@example.com\nyou@example.com\n"
     services = _compose(stack)["services"]
     assert "caddy" in services and "ports" not in services["dashboard"]
     printed = capsys.readouterr().out
@@ -88,7 +88,7 @@ def test_disable_restores_local_access(stack):
     assert (stack / "ordo.yaml").read_text(encoding="utf-8") == source_before
     secrets = _secrets(stack)
     assert "OAUTH2_PROXY_CLIENT_ID" not in secrets and "OAUTH2_PROXY_CLIENT_SECRET" not in secrets
-    assert remote.ALLOWLIST_PATH.read_text(encoding="utf-8") == remote.ALLOWLIST_PLACEHOLDER + "\n"
+    assert not (stack / "oauth2-proxy").exists()
     services = _compose(stack)["services"]
     assert "caddy" not in services and services["dashboard"]["ports"] == ["127.0.0.1:8444:8080"]
 
@@ -146,3 +146,30 @@ def test_init_yes_prints_the_choice_and_the_remote_command(tmp_path, monkeypatch
     assert "Model" in printed and "Plugins" in printed and "open-webui" in printed
     assert "ordo remote enable" in printed
     assert "ordo up --all" in printed
+
+
+def test_the_edge_stays_off_without_an_allowlist():
+    """oauth2-proxy with no allowlisted address denies everyone, so the edge needs the list."""
+    site = {"CADDY_BIND": "100.64.0.1", "CADDY_TAILNET_HOSTNAME": "ordo.tail1234.ts.net",
+            "CADDY_TAILNET_DOMAIN": "tail1234.ts.net"}
+    source = {"hardware": {"gpus": [], "ram_gb": 32, "cpu_cores": 8}, "model": "auto", "site": site}
+    rc = render(Source.from_dict(source), CATALOG, REGISTRY)
+    assert "edge" not in rc.plugins_enabled
+    assert any("SSO_ALLOWED_EMAILS" in w for w in rc.warnings)
+
+
+def test_an_allowlist_change_recreates_oauth2_proxy():
+    """oauth2-proxy reads the allowlist through a bind compose does not hash, so the rendered
+    service carries the allowlist's digest: a changed list changes its config and `ordo apply`
+    recreates it."""
+    from ordo.render import compose
+
+    def label(emails: str) -> str:
+        site = {"CADDY_BIND": "100.64.0.1", "CADDY_TAILNET_HOSTNAME": "ordo.tail1234.ts.net",
+                "CADDY_TAILNET_DOMAIN": "tail1234.ts.net", "SSO_ALLOWED_EMAILS": emails}
+        source = {"hardware": {"gpus": [], "ram_gb": 32, "cpu_cores": 8}, "model": "auto", "site": site}
+        services = render(Source.from_dict(source), CATALOG, REGISTRY).compose_dict()["services"]
+        return services["oauth2-proxy"]["labels"][compose.RENDERED_CONFIG_LABEL]
+
+    assert label("me@example.com") == label("me@example.com")
+    assert label("me@example.com") != label("me@example.com,you@example.com")

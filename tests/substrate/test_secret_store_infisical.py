@@ -355,9 +355,6 @@ def test_a_writer_without_write_permission_says_so(tmp_path, fake, writer_env):
 def stack(tmp_path, monkeypatch, fake):
     monkeypatch.setattr(wizard, "detect", lambda: HARDWARE)
     monkeypatch.setattr(RENDER_MODULE, "detect", lambda: HARDWARE)
-    emails = tmp_path / "emails.txt"
-    emails.write_text(remote.ALLOWLIST_PLACEHOLDER + "\n", encoding="utf-8")
-    monkeypatch.setattr(remote, "ALLOWLIST_PATH", emails)
     monkeypatch.setattr(remote, "CERT_DIR", tmp_path / "certs")
     out = tmp_path / "out"
     wizard.run(CATALOG, REGISTRY, out, interactive=False, answers={}, host_root=tmp_path / "repo")

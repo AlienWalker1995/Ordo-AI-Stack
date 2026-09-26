@@ -42,7 +42,7 @@ DASHBOARDS = DashboardRegistry.load(SERVICES)
 
 P_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128, "cpu_cores": 32}
 EDGE_SITE = {"CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
-             "CADDY_TAILNET_DOMAIN": "example.ts.net",
+             "CADDY_TAILNET_DOMAIN": "example.ts.net", "SSO_ALLOWED_EMAILS": "me@example.com",
              "CADDY_BIND": "0.0.0.0"}
 BIND = "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}"
 

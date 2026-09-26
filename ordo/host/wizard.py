@@ -269,16 +269,6 @@ def write_secrets(values: dict[str, str], path: str | Path) -> Path:
     return p
 
 
-def write_emails(emails: list[str], path: str | Path) -> Path:
-    """Write the oauth2-proxy allowlist (one email per line). This is a TRACKED repo file the
-    edge mounts read-only; only written when the operator supplies at least one address."""
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    clean = [e.strip() for e in emails if e.strip()]
-    p.write_text("\n".join(clean) + "\n", encoding="utf-8")
-    return p
-
-
 @dataclasses.dataclass
 class WizardResult:
     """Structured outcome: the CLI prints what was chosen and turns this into the "start now" offer."""

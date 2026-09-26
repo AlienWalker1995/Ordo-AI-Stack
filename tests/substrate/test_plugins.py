@@ -23,7 +23,7 @@ P_DUAL = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": UUID_5090},
 
 # Every site key a plugin requires, so the hardware-gating tests below see only the hardware gate.
 FULL_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
-             "CADDY_TAILNET_DOMAIN": "example.ts.net", "MEMORY_VAULT_PATH": "/srv/vault"}
+             "CADDY_TAILNET_DOMAIN": "example.ts.net", "SSO_ALLOWED_EMAILS": "me@example.com", "MEMORY_VAULT_PATH": "/srv/vault"}
 
 
 def _src(**kw):
@@ -156,7 +156,7 @@ def test_ltx_trainer_manifest_invariants():
 
 
 # ── requires.site: the site keys a plugin cannot run without ─────────────────────────────────────
-EDGE_SITE_KEYS = ("CADDY_BIND", "CADDY_TAILNET_HOSTNAME", "CADDY_TAILNET_DOMAIN")
+EDGE_SITE_KEYS = ("CADDY_BIND", "CADDY_TAILNET_HOSTNAME", "CADDY_TAILNET_DOMAIN", "SSO_ALLOWED_EMAILS")
 # Keys a manifest may reference as ${KEY:?} without declaring them in requires.site: the host
 # roots every render carries (ordo init records them), and COMFYUI_URL, which the render derives.
 _NOT_SITE_KEYS = {"BASE_PATH", "DATA_PATH", "COMFYUI_URL"}
@@ -206,7 +206,7 @@ def test_auto_enables_plugin_once_site_keys_are_set():
 
 def test_auto_treats_blank_site_key_as_missing():
     site = {"CADDY_BIND": " ", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
-            "CADDY_TAILNET_DOMAIN": "example.ts.net"}
+            "CADDY_TAILNET_DOMAIN": "example.ts.net", "SSO_ALLOWED_EMAILS": "me@example.com"}
     rc = render(Source.from_dict({"hardware": P_CPU, "plugins": "auto", "site": site}), CATALOG, REGISTRY)
     assert "edge" not in rc.plugins_enabled
     assert any("'edge'" in w and "CADDY_BIND" in w for w in rc.warnings)

@@ -124,6 +124,13 @@ All notable changes to this project are documented here. The format is loosely b
   embedding models on model-gateway.
 
 ### Changed
+- **The SSO allowlist lives in the operator source.** It was a tracked file
+  (`auth/oauth2-proxy/emails.txt`) that the operator edited under `skip-worktree`, so a stash or a
+  fresh clone put back the deny-everyone placeholder. It is now `site: SSO_ALLOWED_EMAILS`
+  (comma-separated, set by `ordo remote enable`); the render writes `out/oauth2-proxy/emails.txt` and
+  labels oauth2-proxy with its digest, so an edit plus `ordo apply` recreates it. The edge stays off
+  until the key is set. Upgrading: copy the addresses from the old file into that key before
+  `ordo apply`.
 - **ops-controller audits every state-changing call.** The audit log recorded two actions
   (ComfyUI pip installs and the GPU-assign 410s), so lifecycle and compose verbs, model switches,
   plugin changes and GPU leases left no trace. Every `POST` now leaves exactly one record, written

@@ -6,11 +6,13 @@ Google account. Enabling remote access writes three things and re-renders:
   - the edge's `site:` keys in the operator source (CADDY_TAILNET_HOSTNAME / _DOMAIN, CADDY_BIND),
     plus `edge` in an explicit `plugins:` list (`plugins: auto` enables it from the keys alone),
   - the Google OAuth client id + secret in the secret store (ordo/host/secret_store.py), and any internal
-    secret the edge adds (its cookie secret, its gateway key), generated,
-  - the SSO allowlist file oauth2-proxy mounts.
+    secret the edge adds (its cookie secret, its gateway key), generated.
+
+The SSO allowlist is a `site:` key too (SSO_ALLOWED_EMAILS); the render writes the file oauth2-proxy
+mounts from it.
 
 With the edge enabled the render drops the loopback UI ports: Caddy becomes the one front door.
-Disabling removes the keys, the OAuth pair and the allowlist entries again. Every file is computed
+Disabling removes the keys and the OAuth pair again. Every file is computed
 before any is written, so invalid input or a refused source edit leaves everything untouched.
 """
 from __future__ import annotations
@@ -22,15 +24,12 @@ import yaml
 
 from ..render.catalog import Catalog
 from ..render.config import Source
-from ..render.engine import EDGE_PLUGIN, RenderedConfig, render
+from ..render.engine import EDGE_PLUGIN, SSO_ALLOWLIST_KEY, RenderedConfig, render
 from ..render.plugins import PluginRegistry
 from ..render.source_edit import edit_plugins_list, edit_site_keys
 from . import secret_store, wizard
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-# The allowlist oauth2-proxy mounts (services/edge/plugin.yaml) and its committed placeholder.
-ALLOWLIST_PATH = REPO_ROOT / "auth" / "oauth2-proxy" / "emails.txt"
-ALLOWLIST_PLACEHOLDER = "YOUR_ALLOWLIST_EMAIL"
 # Where Caddy reads its TLS pair (auth/caddy/Caddyfile `tls_tailnet`, mounted from here).
 CERT_DIR = REPO_ROOT / "auth" / "caddy" / "certs"
 
@@ -48,7 +47,8 @@ def edge_site_keys(registry: PluginRegistry) -> tuple[str, ...]:
 def site_values(answers: wizard.RemoteAnswers) -> dict[str, str]:
     host = answers.hostname.strip().strip(".")
     return {"CADDY_BIND": answers.bind.strip(), "CADDY_TAILNET_HOSTNAME": host,
-            "CADDY_TAILNET_DOMAIN": wizard.tailnet_domain(host)}
+            "CADDY_TAILNET_DOMAIN": wizard.tailnet_domain(host),
+            SSO_ALLOWLIST_KEY: ",".join(e.strip() for e in answers.emails if e.strip())}
 
 
 def tailscale_cert_argv(hostname: str) -> list[str]:
@@ -93,13 +93,12 @@ def enable(source_path: Path, store: secret_store.Store, answers: wizard.RemoteA
     source_path.write_text(new_text, encoding="utf-8")
     if secrets_new != secrets_now:
         store.write_text(secrets_new)
-    wizard.write_emails(answers.emails, ALLOWLIST_PATH)
     return Change(rendered, generated, [k for k in blank if k not in rendered.optional_secrets])
 
 
 def disable(source_path: Path, store: secret_store.Store, catalog: Catalog, registry: PluginRegistry) -> Change:
     """Turn remote access off: the edge's site keys, its entry in an explicit plugins list, the
-    OAuth client pair and the allowlist entries go; the UIs publish their loopback ports again."""
+    OAuth client pair go; the UIs publish their loopback ports again."""
     text = source_path.read_text(encoding="utf-8")
     new_text = _plugins_edit(edit_site_keys(text, {}, list(edge_site_keys(registry))), "remove")
     rendered = render(Source.from_dict(yaml.safe_load(new_text)), catalog, registry)
@@ -109,5 +108,4 @@ def disable(source_path: Path, store: secret_store.Store, catalog: Catalog, regi
     source_path.write_text(new_text, encoding="utf-8")
     if secrets_new != secrets_now:
         store.write_text(secrets_new)
-    wizard.write_emails([ALLOWLIST_PLACEHOLDER], ALLOWLIST_PATH)
     return Change(rendered, generated, [k for k in blank if k not in rendered.optional_secrets])

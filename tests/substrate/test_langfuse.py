@@ -44,7 +44,7 @@ LANGFUSE_SECRETS = ("LANGFUSE_DB_PASSWORD", "LANGFUSE_CLICKHOUSE_PASSWORD", "LAN
                     "LANGFUSE_SECRET_KEY")
 
 EDGE_SITE = {"CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
-             "CADDY_TAILNET_DOMAIN": "example.ts.net",
+             "CADDY_TAILNET_DOMAIN": "example.ts.net", "SSO_ALLOWED_EMAILS": "me@example.com",
              "CADDY_BIND": "0.0.0.0"}
 
 

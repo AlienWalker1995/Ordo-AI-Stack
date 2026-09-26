@@ -17,7 +17,7 @@ between deployments is only **the front door in front of them**. Two facts make 
   below.
 
 All three models keep the **same security spine**: Google SSO (oauth2-proxy forward-auth) at the
-edge, gating every browser-reachable UI against the `auth/oauth2-proxy/emails.txt` allowlist. What
+edge, gating every browser-reachable UI against the SSO allowlist (`site: SSO_ALLOWED_EMAILS`). What
 differs between them is **exposure** — and public exposure *adds* hardening requirements, it never
 removes the SSO gate. See [Security note](#security-note) below.
 
@@ -233,7 +233,7 @@ All three models keep **Google SSO at the edge** as the sole browser-auth gate; 
 that posture. The difference is exposure, and the public models (2 and 3) *add* obligations:
 
 - **The SSO gate must fail closed.** oauth2-proxy forward-auth returning anything but a clean 2xx must
-  deny, never fall through. The email allowlist (`auth/oauth2-proxy/emails.txt`) is the authorization
+  deny, never fall through. The email allowlist (`site: SSO_ALLOWED_EMAILS`) is the authorization
   boundary — never widen it with `--email-domain=*` (a documented footgun: it ORs with the file and
   the wildcard wins — see [auth runbook troubleshooting](runbooks/auth.md#troubleshooting)).
 - **No UI service ever publishes its own host port.** Caddy is the *only* publisher, in every model.

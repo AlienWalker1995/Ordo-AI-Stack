@@ -21,7 +21,7 @@ def _oauth2_proxy_command() -> list[str]:
                             "model": "auto", "plugins": ["edge"],
                             "site": {"BASE_PATH": "/srv/ordo", "DATA_PATH": "/srv/ordo/data",
                                      "CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
-                                     "CADDY_TAILNET_DOMAIN": "example.ts.net"}})
+                                     "CADDY_TAILNET_DOMAIN": "example.ts.net", "SSO_ALLOWED_EMAILS": "me@example.com"}})
     rc = render(src, Catalog.load(ROOT / "catalog" / "models.yaml"), PluginRegistry.load(ROOT / "services"))
     return rc.compose_dict()["services"]["oauth2-proxy"]["command"]
 
