@@ -59,6 +59,9 @@ class ContainerBackend(Protocol):
     # Recreate the named services and their netns members in ONE compose call (`stack.plan_named`,
     # `--no-deps --force-recreate`): the post-render step's changed set.
     def recreate_services(self, services: list[str]) -> None: ...
+    # Remove the named services' STOPPED containers (`compose rm --force`, never `--stop`): the
+    # post-render step's stale one-shot job containers. A running container is left alone.
+    def remove_stopped_containers(self, services: list[str]) -> None: ...
     def container_logs(self, name: str, tail: int = 100) -> str: ...
     def container_restart(self, name: str) -> None: ...
 
@@ -96,6 +99,7 @@ class MockBackend:
         self.list_services_calls: list = []
         self.recreate_calls: list[str] = []
         self.recreate_batches: list[list[str]] = []
+        self.removed_containers: list[list[str]] = []
         self.state = StackState(rendered={}, running={}, compose_version="")
         self.list_containers_calls: list = []
         self.container_log_requests: list[tuple[str, int]] = []
@@ -135,6 +139,9 @@ class MockBackend:
 
     def recreate_services(self, services: list[str]) -> None:
         self.recreate_batches.append(list(services))
+
+    def remove_stopped_containers(self, services: list[str]) -> None:
+        self.removed_containers.append(list(services))
 
     def stack_state(self) -> StackState:
         return self.state
@@ -413,6 +420,13 @@ class DockerBackend:
         for name in starts:
             self._lifecycle_guard(name)  # a member cannot be the control plane either
         subprocess.run(self._compose(*args, all_profiles=True), check=True, timeout=600)
+
+    def remove_stopped_containers(self, services: list[str]) -> None:
+        """`docker compose rm --force` for the named services. Without `--stop`, compose removes
+        only stopped containers, so a job started since the changed set was read keeps running.
+        Every profile, so a profiled job (evals) resolves."""
+        names = [self._lifecycle_guard(s) for s in services]
+        subprocess.run(self._compose("rm", "--force", *names, all_profiles=True), check=True, timeout=120)
 
     def stack_state(self) -> StackState:
         """The changed set's two sides, read the way the host's `ordo apply` reads them: this

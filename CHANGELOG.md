@@ -113,6 +113,13 @@ All notable changes to this project are documented here. The format is loosely b
   default.
 
 ### Fixed
+- **Apply no longer leaves stale one-shot job containers behind.** A changed one-shot job (the
+  evals runner, `restart: "no"`) was only reported, so its `Created` container kept the old image
+  after every apply and declared config and containers disagreed (`ordo-evals-1` on an older
+  `ordo/evals` tag). `ordo apply` and ops-controller's post-render apply now share
+  `changed_set.stale_one_shot_jobs` and remove each stopped job container whose config or image the
+  render moved past (`docker compose rm`, never a start; `run --rm` creates a fresh one). A running
+  job is left alone and reported. ops-controller returns them as `removed_jobs` / `running_jobs`.
 - **Open WebUI uses the declared connection on every start.** With persistent config on (the
   image default) Open WebUI read env only on first launch, so a first-launch placeholder key in
   webui.db outlived every scoped key the render declared: LiteLLM refused it and the chat UI listed

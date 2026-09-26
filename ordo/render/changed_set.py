@@ -4,7 +4,8 @@ A service is in the changed set when its rendered config hash (`docker compose c
 compose labels a container with) or its image id differs from its container's, or when it has no
 container yet. The host's `ordo apply` (ordo/host/apply.py) and ops-controller's post-render step
 (`ControlPlane.apply_render`, ordo/control/api.py) both decide what to recreate from here, so the
-host and the control plane cannot disagree about what a render changed.
+host and the control plane cannot disagree about what a render changed. The same holds for the
+stale one-shot job containers both remove (`stale_one_shot_jobs`).
 
 Config hashes are compared with one compose version: the compose that computes the rendered hashes
 is the one that recreates the changed set, and a container another compose version created is
@@ -61,6 +62,7 @@ class RunningContainer:
     image_id: str
     compose_version: str         # the compose that created it (its label)
     container_id: str = ""       # the full container id (a netns member's hash names its owner's)
+    state: str = ""              # `State.Status` (created, running, exited, ...); "" when unreported
 
 
 @dataclasses.dataclass(frozen=True)
@@ -114,6 +116,50 @@ def diff_services(rendered: dict[str, RenderedService], running: dict[str, Runni
             incomparable = container is not None and container.compose_version != compose_version
             changes.append(Change(name, tuple(reasons), incomparable=incomparable))
     return sorted(changes, key=lambda change: (change.service != OPS_CONTROLLER_SERVICE, change.service))
+
+
+# The container states in which a one-shot job is not running: its container can be removed without
+# interrupting anything. Anything else (running, restarting, paused, or a state docker did not
+# report) might be an eval in progress, and is never removed.
+REMOVABLE_JOB_STATES = frozenset({"created", "exited", "dead"})
+
+
+@dataclasses.dataclass(frozen=True)
+class StaleJob:
+    """A one-shot job whose existing container differs from the render."""
+    service: str
+    reasons: tuple[str, ...]
+    state: str                   # its container's state
+
+    @property
+    def removable(self) -> bool:
+        return self.state in REMOVABLE_JOB_STATES
+
+    def describe(self) -> str:
+        return f"{self.service} ({'; '.join(self.reasons)})"
+
+
+def stale_one_shot_jobs(rendered: dict[str, RenderedService], running: dict[str, RunningContainer], *,
+                        compose_version: str,
+                        built_refs: frozenset[str] | set[str] = frozenset()) -> list[StaleJob]:
+    """Every one-shot job (`restart: "no"`) whose existing container differs from the render,
+    compared the way a long-running service is. A job with no container is not stale: there is
+    nothing to remove, and apply never creates or starts a job.
+
+    Both executors (the host's `ordo apply` and ops-controller's `apply_render`) remove the
+    removable ones, so declared config and existing containers agree after an apply. Removing a
+    created or exited job container loses nothing: `docker compose run --rm` never reuses it, and
+    the next run creates a fresh one from the current render."""
+    stale = []
+    for name in sorted(rendered):
+        service = rendered[name]
+        container = running.get(name)
+        if not service.one_shot or container is None:
+            continue
+        reasons = _reasons(service, container, compose_version, built_refs)
+        if reasons:
+            stale.append(StaleJob(name, tuple(reasons), container.state))
+    return stale
 
 
 def _reasons(service: RenderedService, container: RunningContainer | None, compose_version: str,
@@ -269,7 +315,8 @@ class DockerState:
             found[service] = RunningContainer(service=service, config_hash=labels.get(CONFIG_HASH_LABEL, ""),
                                               image_id=str(container.get("Image") or ""),
                                               compose_version=labels.get(COMPOSE_VERSION_LABEL, "").lstrip("v"),
-                                              container_id=str(container.get("Id") or ""))
+                                              container_id=str(container.get("Id") or ""),
+                                              state=str((container.get("State") or {}).get("Status") or ""))
         return found
 
     def read(self, staged: Staged, *, project: str) -> StackState:
