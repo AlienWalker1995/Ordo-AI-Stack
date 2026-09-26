@@ -648,10 +648,30 @@ class ControlPlane:
         return {name: (f"loads {', '.join(files)}, which the models volume lacks: `ordo apply --only "
                        f"{name}` on the host fetches it first") for name, files in holds.items()}
 
-    def _host_reasons(self, changes: list[Change], doc: dict[str, Any], rc: Any) -> dict[str, str]:
+    def _unbuilt_image_holds(self, services: list[str], rendered: dict[str, Any], rc: Any) -> dict[str, str]:
+        """service -> why it waits for the host, for each of `services` whose first-party image (built
+        from this checkout by `ordo build`, never published to a registry) is not in the local image
+        cache. Compose would try to pull it and fail; the host's `ordo apply --only <service>` builds
+        it first. A third-party image the cache lacks is left to compose, which pulls it."""
+        owned = set(rc.first_party_images)
+        holds: dict[str, str] = {}
+        for name in services:
+            service = rendered.get(name)
+            if service is None or service.image_id is not None:
+                continue
+            repo = service.image_ref.rsplit(":", 1)[0]
+            if repo in owned:
+                holds[name] = (f"image {service.image_ref} is built from this checkout and is not in the "
+                               f"local image cache: `ordo apply --only {name}` on the host builds it first")
+        return holds
+
+    def _host_reasons(self, changes: list[Change], doc: dict[str, Any], rc: Any,
+                      rendered: dict[str, Any]) -> dict[str, str]:
         """Why each changed service this process must not recreate is left to the host."""
         secret_holds = self._secret_holds(rc)
-        file_holds = self._model_file_holds([change.service for change in changes], doc, rc)
+        changed = [change.service for change in changes]
+        file_holds = self._model_file_holds(changed, doc, rc)
+        image_holds = self._unbuilt_image_holds(changed, rendered, rc)
         reasons: dict[str, str] = {}
         for change in changes:
             name = change.service
@@ -663,6 +683,8 @@ class ControlPlane:
             elif name in secret_holds:
                 reasons[name] = (f"needs secret(s) {', '.join(secret_holds[name])}, which out/secrets.env does "
                                  "not hold: `ordo secrets set <KEY>` on the host first")
+            elif name in image_holds:
+                reasons[name] = image_holds[name]
             elif name in file_holds:
                 reasons[name] = file_holds[name]
             else:
@@ -683,8 +705,9 @@ class ControlPlane:
         never started (`removed_jobs`; `run --rm` creates a fresh one), and a running one is left
         alone (`running_jobs`), as the host's `ordo apply` does. Left to the host, and named with the
         command that finishes the job: the control plane itself and the agent calling it, a container another compose version
-        created (its hash is not comparable), a service whose secrets are missing, and one that would
-        load a model file the models volume lacks (the host's apply fetches it). Fails closed:
+        created (its hash is not comparable), a service whose secrets are missing, one whose
+        first-party image is not built yet, and one that would load a model file the models volume
+        lacks (the host's apply builds and fetches them). Fails closed:
         a state that cannot be read refuses (503) and recreates nothing.
         """
         if not self.broker:
@@ -698,7 +721,7 @@ class ControlPlane:
         changes = diff_services(state.rendered, state.running, compose_version=state.compose_version)
         jobs = stale_one_shot_jobs(state.rendered, state.running, compose_version=state.compose_version)
         removed_jobs = [job.service for job in jobs if job.removable]
-        host_reasons = self._host_reasons(changes, doc, self._render())
+        host_reasons = self._host_reasons(changes, doc, self._render(), state.rendered)
         to_recreate = [change.service for change in changes if change.service not in host_reasons]
         _args, targets = plan_named(doc, to_recreate, force_recreate=True)
         stopped = sorted(name for name in removed if name in state.running)

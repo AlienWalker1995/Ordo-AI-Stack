@@ -63,6 +63,7 @@ class RenderedStackBackend(MockBackend):
         self.containers: dict[str, RunningContainer] = {}
         self.fail_recreate_after: int | None = None     # recreate this many, then raise
         self.state_error: Exception | None = None
+        self.uncached_repos: set[str] = set()           # image repos the local cache lacks
 
     def _rendered(self) -> dict[str, RenderedService]:
         env = _env(self.out)
@@ -71,7 +72,9 @@ class RenderedStackBackend(MockBackend):
             text = expand_env(json.dumps(spec, sort_keys=True), env)
             image = expand_env(str(spec.get("image") or ""), env)
             rendered[name] = RenderedService(service=name, config_hash=hashlib.sha256(text.encode()).hexdigest(),
-                                             image_ref=image, image_id=f"id:{image}",
+                                             image_ref=image,
+                                             image_id=None if image.rsplit(":", 1)[0] in self.uncached_repos
+                                             else f"id:{image}",
                                              one_shot=str(spec.get("restart")) == "no")
         return rendered
 
@@ -491,3 +494,42 @@ def test_an_unlistable_models_volume_leaves_model_loaders_to_the_host(tmp_path):
     applied = body["apply"]
     assert "llamacpp-embed" not in backend.containers
     assert "cannot list the models volume" in applied["host_reasons"]["llamacpp-embed"]
+
+
+# --------------------------------------------------------------------------- #
+# A first-party image is built from this checkout, never pulled: an unbuilt one waits for the host.
+# --------------------------------------------------------------------------- #
+
+
+def _rag_ready(tmp_path):
+    """The `listed` stack with every model file present, so only images decide what rag's enable does."""
+    files: set[str] = set()
+    cp, backend = _listed_with_volume(tmp_path, files)
+    source = yaml.safe_load(cp.source_path.read_text(encoding="utf-8"))
+    source["plugins"] = ["searxng-web", "rag"]
+    from ordo.render.config import Source
+    from ordo.render.engine import render
+    from ordo.render.models_volume import required_model_files
+    rc = render(Source.from_dict(source), CATALOG, REGISTRY)
+    files.update(f.file for f in required_model_files(rc.compose_dict(), rc.env, list(rc.compose_dict()["services"])))
+    return cp, backend
+
+
+def test_an_unbuilt_first_party_image_is_left_to_the_host_to_build(tmp_path):
+    cp, backend = _rag_ready(tmp_path)
+    backend.uncached_repos.add("ordo/rag-ingestion")
+    status, body = cp.route("POST", "/plugins/rag/enable", {"confirm": True})
+    assert status == 200, body
+    applied = body["apply"]
+    assert "rag-ingestion" not in applied["recreated"] and "rag-ingestion" not in backend.containers
+    assert "ordo/rag-ingestion" in applied["host_reasons"]["rag-ingestion"]
+    assert "rag-ingestion" in applied["host_command"]
+    assert "qdrant" in applied["recreated"]          # the rest of the plugin still starts
+
+
+def test_an_uncached_third_party_image_is_pulled_as_before(tmp_path):
+    cp, backend = _rag_ready(tmp_path)
+    backend.uncached_repos.add("qdrant/qdrant")
+    status, body = cp.route("POST", "/plugins/rag/enable", {"confirm": True})
+    assert status == 200, body
+    assert "qdrant" in body["apply"]["recreated"]
