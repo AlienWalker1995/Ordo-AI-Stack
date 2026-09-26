@@ -35,10 +35,15 @@ export function timeAgo(epochSeconds, now = Date.now()) {
   return `${days} d ago`
 }
 
-// "13:45" from an epoch in SECONDS, local time.
-export function clock(epochSeconds) {
+// "13:45" from an epoch in SECONDS, local time; "Sep 23" when it is not today, so an old event
+// never reads as one from this morning.
+export function clock(epochSeconds, now = Date.now()) {
   if (!epochSeconds) return ''
-  return new Date(epochSeconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+  const when = new Date(epochSeconds * 1000)
+  if (when.toDateString() !== new Date(now).toDateString()) {
+    return when.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  }
+  return when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 export function pct(used, total) {

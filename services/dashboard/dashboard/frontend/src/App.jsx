@@ -102,8 +102,9 @@ export default function App() {
 
   return (
     <ToastProvider>
-      <div className="mx-auto max-w-container px-6 pb-10 max-md:px-4">
-        <header className="sticky top-0 z-30 -mx-6 mb-5 flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-border-subtle bg-bg/95 px-6 py-3 backdrop-blur max-md:-mx-4 max-md:px-4">
+      {/* The band and its rule span the viewport; only the contents keep the page's width. */}
+      <header className="sticky top-0 z-30 mb-5 border-b border-border-subtle bg-bg/95 backdrop-blur">
+        <div className="mx-auto flex max-w-container flex-wrap items-center gap-x-6 gap-y-2 px-6 py-3 max-md:px-4">
           <span className="text-title font-bold tracking-[-0.01em] text-fg">Ordo</span>
           <nav role="tablist" aria-label="Pages" onKeyDown={onTabKeyDown}
                className="flex gap-1 max-md:order-last max-md:w-full max-md:overflow-x-auto max-md:[scrollbar-width:none]">
@@ -132,8 +133,10 @@ export default function App() {
               Settings
             </button>
           </div>
-        </header>
+        </div>
+      </header>
 
+      <div className="mx-auto max-w-container px-6 pb-10 max-md:px-4">
         <LocalSignIn />
 
         <main id="page" role="tabpanel" aria-labelledby={`tab-${active}`} tabIndex={-1}>
