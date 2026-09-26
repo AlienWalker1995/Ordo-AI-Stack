@@ -19,7 +19,7 @@
 | # | Question | Status |
 |---|----------|--------|
 | 1 | **Ops-controller docker GID:** `user: "1000:<gid>"` value depends on host docker GID | Resolved — ops-controller runs without explicit user |
-| 2 | **Open WebUI `OPENAI_API_BASE`:** Does `open-webui` (running `v0.10.1`) support this env? | Resolved — uses `OPENAI_API_BASE_URL`; working |
+| 2 | **Open WebUI `OPENAI_API_BASE`:** Does `open-webui` support this env? | Resolved — uses `OPENAI_API_BASE_URL`; working |
 | 3 | **MCP policy scoping:** How is per-consumer tool access enforced? | Resolved (2026-09): LiteLLM virtual-key `object_permission.mcp_servers` grants with `require_key_mcp_access_defined: true` |
 | 5 | **llama.cpp host port:** Remove to reduce attack surface? | Resolved — backend-only; no host port |
 | 6 | **Audit log rotation** | Resolved — size-based rotation in `ordo/control/audit.py` (10 MB, five generations kept) |
