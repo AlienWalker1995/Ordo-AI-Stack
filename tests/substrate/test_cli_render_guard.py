@@ -1,14 +1,14 @@
 """The bare-`ordo render` anti-clobber guard.
 
-Root cause of the 2026-07-15 SSO outage: `--source` defaults to `ordo.example.yaml`, so a bare
+Root cause of the 2026-07-15 SSO outage: `--source` defaulted to `ordo.example.yaml`, so a bare
 `ordo render` on the operator box rendered the PUBLIC EXAMPLE into `./out` and stripped the
 operator's host-paths (BASE_PATH/DATA_PATH/…) out of `.env` → the oauth2-proxy allowlist mount
 resolved to an empty fabricated dir → zero-email allowlist → deny-all.
 
-The guard: when `--source` is NOT passed explicitly AND the target `--out` already holds an
-`ordo.yaml` that DIFFERS from the example, render from that existing file (the operator's real
-source), not the example — unless `--force` is given. An explicit `--source` is always honoured
-(CI passes `--source ordo.example.yaml`).
+The guarantee: when `--source` is NOT passed explicitly AND the target `--out` already holds an
+`ordo.yaml`, render from that file (the operator's real source), not the example, unless `--force`
+is given. An explicit `--source` is always honoured (CI passes `--source ordo.example.yaml`). Every
+other command resolves an absent `--source` the same way (test_cli_default_source.py).
 """
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def test_bare_render_into_populated_outdir_does_not_clobber_with_example(tmp_pat
     env = _read_env(out)
     assert env.get("BASE_PATH") == "/srv/operator/ordo", (
         "bare render clobbered the operator source with the example — BASE_PATH lost")
-    assert "differs from the example" in capsys.readouterr().out
+    assert f"source: {out / 'ordo.yaml'} (--source not given)" in capsys.readouterr().err
 
 
 def test_explicit_example_source_still_renders(tmp_path):

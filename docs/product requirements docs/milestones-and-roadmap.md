@@ -105,7 +105,7 @@
 python -m pytest tests/ -v
 
 # Compose smoke (render, then bring up from out/)
-python -m ordo --source out/ordo.yaml render --out out
+python -m ordo render
 ordo up --all
 docker ps --filter label=com.docker.compose.project=ordo   # all services healthy within 3 min
 # model-gateway publishes NO host port (only Caddy publishes host ports): reach it in-network from another container:

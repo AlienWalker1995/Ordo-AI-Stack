@@ -29,7 +29,7 @@ iOS / Mac / PC  --Self-hosted LiveSync plugin-->  CouchDB  <--livesync-bridge-->
 # create the vault notes/ folder (CouchDB data lives in the couchdb-data named volume)
 mkdir -p data/memory-vault/notes         # or under your MEMORY_VAULT_PATH
 # render, then bring it up; `ordo up` builds the bridge image (from pinned source) on first run
-ordo --source out/ordo.yaml render --out out
+ordo render
 ordo up couchdb livesync-bridge
 ```
 
@@ -78,7 +78,7 @@ flip). Add `obsidian-livesync-funnel` to `plugins:` in `ordo.yaml` (with `TS_AUT
 `ordo secrets set TS_AUTHKEY --from-stdin`), re-render, and start it:
 
 ```bash
-python -m ordo --source out/ordo.yaml render --out out
+python -m ordo render
 ordo up notes-funnel
 docker exec ordo-notes-funnel-1 tailscale funnel status    # confirm it's public
 ```

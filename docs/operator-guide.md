@@ -57,7 +57,7 @@ the embedder when those are enabled) that the `models-gguf` volume lacks, checks
 ```bash
 ordo init                                     # re-run the wizard in an existing checkout
 # …or step through it by hand:
-ordo --source out/ordo.yaml render --out out  # regenerate out/ from the source (NEVER bare `ordo render`)
+ordo render                                   # regenerate out/ from the source, out/ordo.yaml
 ordo preflight --ref out/.env                 # read-only GO/NO-GO gate, host checks included
 # bring up: every rendered profile, every env file; refuses while a GPU lease holds the card.
 # Builds any missing first-party image first (--no-build skips that), then fetches missing model
@@ -302,7 +302,7 @@ gate). Only the Tailscale model is wired today; the others' required pieces are 
 
 **Render discipline** (the drift cure, in daily operation):
 - Change config by editing the source `ordo.yaml`, then **re-render** — never hand-edit `out/.env`.
-- Always render from the real source: `ordo render --source out/ordo.yaml`.
+- `ordo render` (like every command) reads the real source, `out/ordo.yaml`, when `--source` is not given.
 - Deploy source and image changes with `ordo apply` (see "Deploying" above); it builds, renders and
   recreates exactly the changed services, ops-controller first.
 - Recreate a single service with `ordo recreate <svc>` (per-service, no cascade). The dashboard's

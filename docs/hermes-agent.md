@@ -139,7 +139,7 @@ The Hermes upstream SHA is pinned in `services/hermes/Dockerfile` as `ARG HERMES
 1. Check recent commits: `git ls-remote https://github.com/NousResearch/hermes-agent.git main` — pick a SHA.
 2. Edit `services/hermes/Dockerfile`, change the `ARG HERMES_PINNED_SHA` default.
 3. Rebuild the image from the `services/hermes/` build context: `ordo build agent` (run from the repo root).
-4. Re-render (`ordo --source out/ordo.yaml render --out out`) so the compose names the new tag, then `ordo recreate agent hermes-dashboard`.
+4. Re-render (`ordo render`) so the compose names the new tag, then `ordo recreate agent hermes-dashboard`.
 
 `ordo build` tags the image with the commit that last changed `services/hermes/`, so commit the bump: an uncommitted edit builds a `-dirty` tag, and a `--build-arg` override would run code no commit describes.
 

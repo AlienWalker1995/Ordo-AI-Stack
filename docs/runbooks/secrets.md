@@ -95,7 +95,7 @@ returns; nothing else holds plaintext outside `out/`.
 4. Fresh install: `ordo init --secrets-source ../ordo-secrets/secrets.env.sops`.
    It generates the internal secrets into the SOPS file and materializes
    `out/secrets.env`. Existing install: see "Migrate an existing install".
-5. `ordo --source out/ordo.yaml render --out out`, then `ordo up --all`.
+5. `ordo render`, then `ordo up --all`.
 6. Commit the `.sops` file in the private repo.
 
 ## Migrate an existing install (live `out/secrets.env` -> SOPS)
@@ -103,7 +103,7 @@ returns; nothing else holds plaintext outside `out/`.
 1. `ordo secrets import` (or `--to PATH` for a non-default location). It
    creates the SOPS file, adds every live value, copies the file secrets from
    `OPERATOR_SECRETS_DIR` when that site key is set, and edits the source.
-2. `ordo --source out/ordo.yaml render --out out`.
+2. `ordo render`.
 3. `ordo secrets list`: every required key shows `set`.
 4. `ordo secrets materialize`.
 5. Deploy the code that moved the agent's file secrets (`ordo build --all`,

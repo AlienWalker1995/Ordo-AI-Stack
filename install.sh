@@ -104,7 +104,7 @@ else
 Config written to $TARGET/out/. To finish interactively:
   cd "$TARGET" && . .venv/bin/activate && ordo init --out out --force
 Or continue manually:
-  ordo --source out/ordo.yaml render --out out
+  ordo render --out out
   ordo up --all --out out
 Remote access, any time later: ordo remote enable --out out
 EOF

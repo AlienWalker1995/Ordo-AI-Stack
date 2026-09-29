@@ -12,7 +12,7 @@ Thanks for contributing to Ordo.
     sh -c "pip install -q -r requirements-dev.txt && PYTHONPATH=. python -m pytest -q tests/substrate"
   ```
   (or `pip install -r requirements-dev.txt` then `PYTHONPATH=. python -m pytest tests/substrate` from the repo root). The main suite is `pip install -r tests/requirements.txt`, then `python -m pytest tests/ -q --ignore=tests/substrate`. CI runs both, the substrate job path-gated; see `.github/workflows/ci.yml`.
-- **Render + deploy:** edit the declarative source (`out/ordo.yaml`), then `python -m ordo --source out/ordo.yaml render --out out` and `ordo up --all` from the repo root (never a hand-assembled compose bring-up). Never hand-edit `out/*`: it's regenerated. See [`docs/operator-guide.md`](docs/operator-guide.md).
+- **Render + deploy:** edit the declarative source (`out/ordo.yaml`), then `python -m ordo render` and `ordo up --all` from the repo root (never a hand-assembled compose bring-up). Never hand-edit `out/*`: it's regenerated. See [`docs/operator-guide.md`](docs/operator-guide.md).
 - **Service images** (`ordo/<name>`) are built by `ordo build <svc>` (or `ordo build --all`), which tags each with the commit that last changed its build context; never by hand.
 
 ## Edge serving contract

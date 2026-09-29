@@ -38,10 +38,17 @@ DEFAULT_DASHBOARDS_DIR = Path(__file__).resolve().parents[2] / "services"
 # model names exist, so a `litellm_key.models` grant is validated against it rather than a copy.
 LITELLM_CONFIG_TEMPLATE = Path(__file__).resolve().parents[2] / "services" / "model-gateway" / "litellm_config.yaml"
 
-# The operator source and model catalog a command reads when none is named: the tracked public example
-# and the bundled catalog, beside this checkout.
+# The tracked public example source (what a fresh checkout reads before `ordo init`) and the bundled
+# model catalog, beside this checkout.
 DEFAULT_SOURCE = Path(__file__).resolve().parents[2] / "ordo.example.yaml"
 DEFAULT_CATALOG = Path(__file__).resolve().parents[2] / "catalog" / "models.yaml"
+
+
+def implicit_source(out_dir: str | Path) -> Path:
+    """The source a command reads when none is named: the operator's live `<out_dir>/ordo.yaml` once
+    `ordo init` has written it, else the public example (a fresh checkout)."""
+    live = Path(out_dir) / "ordo.yaml"
+    return live if live.is_file() else DEFAULT_SOURCE
 
 # Gate-enforced service -> the .env key its in-stack consumers already use for its base URL.
 # When the service is gated, render points that key at the gate so mcp-comfyui, the

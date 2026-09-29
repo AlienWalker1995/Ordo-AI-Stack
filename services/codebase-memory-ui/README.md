@@ -63,7 +63,7 @@ plugins: [codebase-memory-ui]   # or: auto
 ```
 Then re-render and bring the stack up:
 ```
-ordo --source out/ordo.yaml render --out out
+ordo render
 ordo up --all
 ```
 Then browse **`https://<CADDY_TAILNET_HOSTNAME>:8448/`** (Google SSO). Index a

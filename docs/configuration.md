@@ -391,7 +391,7 @@ To move ComfyUI versions:
 
 ```bash
 # 1. edit COMFYUI_APP_REF in services/comfyui/plugin.yaml to the new commit SHA
-ordo --source out/ordo.yaml render --out out
+ordo render
 ordo up --all
 # 2. confirm declared == running
 docker compose -p ordo exec comfyui git -C /root/ComfyUI rev-parse HEAD

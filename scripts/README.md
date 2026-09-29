@@ -28,7 +28,7 @@ There is no MCP-server-editing script any more. An MCP server is a `kind: mcp` p
 enabled or disabled by editing `ordo.yaml`'s `plugins:` list (or the MCP servers section of the
 dashboard's Settings drawer, which edits the same file). LiteLLM reads its MCP server list from
 the rendered config at startup, so there is no hot reload: apply a change with
-`ordo --source out/ordo.yaml render --out out` and then recreate `model-gateway`.
+`ordo render` and then recreate `model-gateway`.
 
 ## Security
 

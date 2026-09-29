@@ -15,7 +15,7 @@ No GPU required for chat (llama.cpp runs on CPU, slower but works).
 
 ### I want to generate images (LTX-2)
 
-1. Render the stack (`python -m ordo --source out/ordo.yaml render --out out` from the repo root; hardware, including NVIDIA/AMD/Intel/CPU, is auto-detected), then `ordo up --all` (brings up every rendered profile, ComfyUI included)
+1. Render the stack (`python -m ordo render` from the repo root; hardware, including NVIDIA/AMD/Intel/CPU, is auto-detected), then `ordo up --all` (brings up every rendered profile, ComfyUI included)
 2. Pull LTX-2 models via the dashboard (~60 GB, first run takes a while)
 3. Open `https://${CADDY_TAILNET_HOSTNAME}:8446/` — ComfyUI
 
