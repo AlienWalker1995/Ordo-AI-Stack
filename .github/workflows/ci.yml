@@ -199,6 +199,9 @@ jobs:
   docker:
     name: docker (real containers)
     runs-on: ubuntu-24.04
+    # Observed ~5 min (contract ~1 min, the Hermes image build most of the rest); a hung bring-up
+    # or a wedged container must fail the job, not hold a runner for the 6-hour default.
+    timeout-minutes: 30
     env:
       ORDO_REQUIRE_DOCKER: "1"
     steps:
