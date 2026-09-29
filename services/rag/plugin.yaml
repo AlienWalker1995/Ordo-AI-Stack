@@ -16,7 +16,7 @@ services:
   - name: qdrant
     # Vector DB — pinned to the exact version V1 runs. No host port in V2 (reached at qdrant:6333
     # on the project network; V1's 127.0.0.1 publish was host-debug only).
-    image: qdrant/qdrant:v1.19.1
+    image: qdrant/qdrant:v1.19.1@sha256:12364fe851b9f17356fc88189fc06d1b521262e04659ec7345975b00c9246a10
     volumes:
       # NAMED VOLUME, not a ${DATA_PATH} 9p bind: qdrant mmaps its segments, and on
       # Docker Desktop every 9p metadata op (stat during path walk) can wedge in
