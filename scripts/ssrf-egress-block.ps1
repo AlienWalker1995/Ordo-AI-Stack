@@ -1,7 +1,8 @@
 # Optional: document SSRF egress blocking on Windows.
-# On Windows (Docker Desktop), the DOCKER-USER iptables chain is not directly
-# accessible from the host. This script prints guidance; actual blocking
-# would require WSL2 iptables, a proxy container, or Docker Desktop network policies.
+# This script BLOCKS NOTHING. On Docker Desktop (WSL2 backend) the engine runs in
+# Docker Desktop's own docker-desktop distro: its DOCKER-USER chain is not reachable
+# from Windows, and iptables run in a separate user WSL distro land in that distro's
+# network namespace, not the engine's. Egress-capable MCP servers are unfiltered here.
 #
 # See the "SSRF Defenses (MCP)" section of
 # docs/product requirements docs/security-and-trust-model.md.
@@ -13,15 +14,19 @@ SSRF egress blocking (Windows / Docker Desktop)
 Docker Desktop on Windows does not expose the DOCKER-USER iptables chain from
 the host. Options:
 
-1. WSL2: If you run Docker via WSL2, run the Linux script from inside WSL:
-   wsl -e bash -c 'cd /c/dev/ordo-ai-stack && ./scripts/ssrf-egress-block.sh --dry-run'
-   Then apply from a WSL shell with sudo.
+Nothing is blocked on this host. MCP servers declaring network: stack
+(searxng, qdrant-rag, n8n, orchestration, comfyui-mcp) can reach every stack
+service, the LAN, the tailnet and the internet.
 
-2. Docker Desktop network policies: Enterprise feature; see Docker docs.
+Running scripts/ssrf-egress-block.sh from a user WSL distro does NOT help: its
+iptables are that distro's, not Docker Desktop's engine.
 
-3. Accept default posture: For local-only use, the risk is lower; ensure
-   MCP tools are from trusted sources and only enable what you need.
+What you can do today:
+1. Drop MCP plugins you do not use from plugins: in ordo.yaml, then ordo apply.
+2. Keep the tailnet ACLs and LAN firewall tight: they are the only filter.
 
-Full details: docs/product requirements docs/security-and-trust-model.md
+The platform-independent fix (per-server internal networks, an egress proxy
+for searxng) is tracked in the "SSRF Defenses (MCP)" section of
+docs/product requirements docs/security-and-trust-model.md
 "@
 Write-Host $doc

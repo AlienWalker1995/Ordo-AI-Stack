@@ -5,10 +5,10 @@
 | Asset | Threat | Current State | Mitigation |
 |-------|--------|---------------|------------|
 | `docker.sock` (ops-controller, Hermes agent) | Container escape → host RCE | Mounted | ops-controller: no host port; the `DockerBackend` guard scopes every call to `<project>-*` containers; destructive verbs require `confirm: true`; every state-changing call audited, refusals included. Hermes: guardrails in its prompt, see [Hermes owns Docker](../design/hermes-owns-docker.md) |
-| MCP server containers | MCP server compromise → lateral movement | No Docker socket anywhere in the tool path; each server is a long-lived service on `ordo-mcp-net` (`internal: true`) | `no-new-privileges`, 1 CPU / 2 GB, no `env_file` (only its own declared env and secrets), reachable only by `model-gateway`, no host port |
+| MCP server containers | MCP server compromise → lateral movement | No Docker socket anywhere in the tool path; each server is a long-lived service on `ordo-mcp-net` (`internal: true`); `network: stack` servers also join `ordo-net` and have full egress (see the next rows) | `no-new-privileges`, 1 CPU / 2 GB, no `env_file` (only its own declared env and secrets), reachable only by `model-gateway`, no host port |
 | Ops controller token | Token theft → privileged ops | Token in `out/secrets.env`; no default | Generate with `openssl rand -hex 32`; never expose controller port to host |
 | MCP tools (filesystem) | Data exfiltration via tool | Enabled as a `kind: mcp` plugin in `ordo.yaml`; each declares its own mounts (code root read-only) | Drop the plugin from `plugins:`, `ordo render`, recreate `model-gateway`; grant it to no key otherwise |
-| MCP tools with egress (`searxng`) | SSRF → RFC1918/metadata | Only servers declaring `network: stack` reach anything beyond `ordo-mcp-net` | Add `DOCKER-USER` iptables egress block; document in runbooks |
+| MCP tools with egress (`network: stack`: `searxng`, `qdrant-rag`, `n8n`, `orchestration`, `comfyui-mcp`) | SSRF → RFC1918/tailnet/metadata/stack services | Unmitigated on Docker Desktop; on a Linux engine only if the operator runs `ssrf-egress-block.sh` by hand | See [SSRF Defenses (MCP)](#ssrf-defenses-mcp): per-server internal networks, then an egress proxy for `searxng` |
 | Tool output → model | Prompt injection via tool output | No sandbox; tool output passed to model | Allowlists; structured tool calls (`<tool_result>` tags); validate tool schemas |
 | Dashboard auth | Unauthenticated admin | Gated by the Caddy edge (oauth2-proxy + Google SSO + email allowlist) on its dedicated SSO-gated port under the port-per-service model (`:8444`, plus `/grafana/` embed); the dashboard container itself publishes no host port. Its state-changing and ops-forwarding routes need the edge SSO identity (trusted only from the `caddy` peer) or the `OPS_CONTROLLER_TOKEN` bearer, so other `ordo-net` containers cannot borrow its ops-controller token | Edge SSO for operators; internal callers reuse the ops-controller bearer, no dashboard-specific token |
 | WEBUI_AUTH=False | Open WebUI accessible without auth | Explicit in compose env | Change default to `WEBUI_AUTH=${WEBUI_AUTH:-True}`; opt-out, not opt-in |
@@ -70,7 +70,25 @@ A server declaring `network: internal` has no route off `ordo-mcp-net` at all (`
 
 > **Warning:** `ordo-net` is the whole stack network. With the default target the rules apply to every container on it, not only the MCP servers, so they also cut the agent's LAN and tailnet access. Scoping them to MCP servers alone would need a dedicated egress network (or per-container source IPs) for `network: stack` servers, which the stack does not have today.
 
-SSRF scripts live at `scripts/ssrf-egress-block.sh` (Linux/WSL2) and `scripts/ssrf-egress-block.ps1` (Windows guidance).
+SSRF scripts live at `scripts/ssrf-egress-block.sh` (Linux engine only) and `scripts/ssrf-egress-block.ps1` (prints advice, blocks nothing).
+
+### Where the block applies today
+
+| Engine | Enforced? | Why |
+|--------|-----------|-----|
+| Docker Engine on Linux | Only if the operator runs `ssrf-egress-block.sh` as root | No bring-up step (`ordo up`, `ordo apply`, `ordo preflight`) applies or checks it, and the rules do not survive a reboot without `iptables-persistent` |
+| Docker Desktop on Windows (WSL2 backend) | No | The engine runs in Docker Desktop's own `docker-desktop` distro. Its `DOCKER-USER` chain is not reachable from Windows, and rules set in a separate user WSL distro land in that distro's network namespace, not the engine's. The `docker-desktop` distro ships no `iptables` binary |
+| Docker Desktop on macOS | No | The engine runs in Docker Desktop's VM |
+
+So on the Windows host the stack runs on, every `network: stack` MCP server has unfiltered egress: the rest of `ordo-net` (including the read-only dashboard views), the LAN, the tailnet and the internet. `tests/substrate/test_mcp.py` pins that set and fails when a new server joins it without `SECURITY.md` naming it.
+
+### Follow-up: a platform-independent fix
+
+Docker networks, unlike iptables, behave the same on every engine. The plan, in order:
+
+1. **Per-server internal networks for the servers that need no internet.** `qdrant-rag` (reaches `qdrant`, `llamacpp-embed`), `n8n` (`n8n`), `orchestration` (`dashboard`) and `comfyui-mcp` (`comfyui-gate`, `ops-controller`; model downloads go through ops-controller's allowlisted `/models/download`) only talk to named stack services. Replace `network: stack` with a manifest list of the services each one reaches; the renderer puts the server and exactly those services on a `<project>-mcp-<id>-net` with `internal: true`, the way `gated_upstream_net` isolates ComfyUI. Adds a network to each target, so `ordo apply` recreates them (ops-controller and dashboard included). Before merging, confirm on a throwaway project that `n8n-mcp`'s template tools need no internet.
+2. **An egress proxy for `searxng`.** `web_url_read` must reach the internet, so an internal network alone breaks it. Put `mcp-searxng` on an internal network with `searxng` and a pinned forward proxy that denies private, CGNAT, link-local and metadata destinations after DNS resolution (so rebinding cannot bypass it), and point the server at it with `HTTP_PROXY`/`HTTPS_PROXY` (`NO_PROXY=searxng`). The `searxng` web service itself also egresses and is a follow-on candidate for the same proxy.
+3. **Retire or scope the iptables script** once 1 and 2 land: it targets the whole `ordo-net`, so on Linux it also cuts the agent's LAN and tailnet access (warning above).
 
 ### Browser-Tier Egress Control
 
