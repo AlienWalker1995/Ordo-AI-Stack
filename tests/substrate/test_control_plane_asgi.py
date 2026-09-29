@@ -5,6 +5,7 @@ responses that test_control_plane_routes.py asserts against route() directly.
 """
 from pathlib import Path
 
+import pytest
 import yaml
 from fastapi.testclient import TestClient
 
@@ -131,7 +132,7 @@ def test_get_plugins_returns_200_with_plugins_list(tmp_path):
 def test_post_plugin_enable_valid_returns_200(tmp_path):
     cp, _ = _cp(tmp_path)
     client = _client(cp)
-    resp = client.post("/plugins/comfyui/enable", json={})
+    resp = client.post("/plugins/comfyui/enable", json={"confirm": True})
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is True
@@ -146,7 +147,7 @@ def test_post_plugin_enable_valid_returns_200(tmp_path):
 def test_post_plugin_enable_not_installable_returns_403(tmp_path):
     cp, _ = _cp(tmp_path)
     client = _client(cp)
-    resp = client.post("/plugins/llamacpp/enable", json={})
+    resp = client.post("/plugins/llamacpp/enable", json={"confirm": True})
     assert resp.status_code == 403
     body = resp.json()
     assert "error" in body
@@ -156,7 +157,7 @@ def test_post_plugin_enable_not_installable_returns_403(tmp_path):
 def test_post_plugin_enable_unknown_returns_403(tmp_path):
     cp, _ = _cp(tmp_path)
     client = _client(cp)
-    resp = client.post("/plugins/does-not-exist/enable", json={})
+    resp = client.post("/plugins/does-not-exist/enable", json={"confirm": True})
     assert resp.status_code == 403
     body = resp.json()
     assert "error" in body
@@ -169,7 +170,7 @@ def test_post_plugin_disable_under_plugins_auto_returns_409(tmp_path):
     # `plugins: auto` has no list item to remove, so a disable could not persist.
     cp, _ = _cp(tmp_path)
     client = _client(cp)
-    resp = client.post("/plugins/comfyui/disable", json={})
+    resp = client.post("/plugins/comfyui/disable", json={"confirm": True})
     assert resp.status_code == 409
     body = resp.json()
     assert body["plugin"] == "comfyui"
@@ -179,7 +180,7 @@ def test_post_plugin_disable_under_plugins_auto_returns_409(tmp_path):
 def test_post_plugin_disable_not_installable_returns_403(tmp_path):
     cp, _ = _cp(tmp_path)
     client = _client(cp)
-    resp = client.post("/plugins/llamacpp/disable", json={})
+    resp = client.post("/plugins/llamacpp/disable", json={"confirm": True})
     assert resp.status_code == 403
     assert "error" in resp.json()
 
@@ -187,7 +188,7 @@ def test_post_plugin_disable_not_installable_returns_403(tmp_path):
 def test_post_plugin_disable_unknown_returns_403(tmp_path):
     cp, _ = _cp(tmp_path)
     client = _client(cp)
-    resp = client.post("/plugins/does-not-exist/disable", json={})
+    resp = client.post("/plugins/does-not-exist/disable", json={"confirm": True})
     assert resp.status_code == 403
     assert "error" in resp.json()
 
@@ -339,3 +340,77 @@ def test_unknown_path_returns_404(tmp_path):
     body = resp.json()
     assert "error" in body
     assert "no route" in body["error"]
+
+
+# --- Destructive routes confirm with JSON true only ---
+
+# Every route that refuses to act without {"confirm": true}.
+CONFIRM_GATED_ROUTES = [
+    "/apply",
+    "/services/llamacpp/start",
+    "/services/llamacpp/stop",
+    "/services/llamacpp/restart",
+    "/services/llamacpp/recreate",
+    "/containers/ordo-llamacpp-1/restart",
+    "/compose/up",
+    "/compose/down",
+    "/compose/restart",
+    "/comfyui/install-node-requirements",
+    "/plugins/searxng/enable",
+    "/plugins/searxng/disable",
+]
+
+
+@pytest.mark.parametrize("path", CONFIRM_GATED_ROUTES)
+@pytest.mark.parametrize("confirm", ["no", "false", "true", 1, "yes", [True], {"ok": True}])
+def test_a_truthy_confirm_that_is_not_json_true_is_refused(tmp_path, path, confirm):
+    cp, _ = _cp(tmp_path)
+    resp = _client(cp).post(path, json={"confirm": confirm})
+    assert resp.status_code == 400
+    assert "requires confirmation" in resp.json()["error"]
+    backend = cp.broker.backend
+    acted = (backend.started, backend.stopped, backend.restarted, backend.recreate_calls,
+             backend.recreate_batches, backend.container_restart_calls, backend.compose_up_calls,
+             backend.compose_down_calls, backend.compose_restart_calls, backend.execs)
+    assert all(calls == [] for calls in acted)
+
+
+@pytest.mark.parametrize("verb", ["enable", "disable"])
+def test_a_plugin_change_without_confirm_is_refused_and_writes_nothing(tmp_path, verb):
+    cp, src = _cp(tmp_path)
+    before = src.read_text(encoding="utf-8")
+    resp = _client(cp).post(f"/plugins/searxng/{verb}", json={})
+    assert resp.status_code == 400
+    assert "requires confirmation" in resp.json()["error"]
+    assert src.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize("verb", ["enable", "disable"])
+def test_a_plugin_dry_run_names_the_change_and_writes_nothing(tmp_path, verb):
+    cp, src = _cp(tmp_path)
+    before = src.read_text(encoding="utf-8")
+    resp = _client(cp).post(f"/plugins/searxng/{verb}", json={"dry_run": True})
+    assert resp.status_code == 200
+    assert resp.json() == {"would": verb, "plugin": "searxng"}
+    assert src.read_text(encoding="utf-8") == before
+    assert cp.broker.backend.recreate_batches == []
+
+
+def test_confirm_true_passes_the_gate(tmp_path):
+    cp, _ = _cp(tmp_path)
+    resp = _client(cp).post("/services/llamacpp/stop", json={"confirm": True})
+    assert resp.status_code == 200
+    assert cp.broker.backend.stopped == ["llamacpp"]
+
+
+# --- A JSON body that is not an object ---
+
+@pytest.mark.parametrize("raw", [b"[]", b'[{"confirm": true}]', b'"confirm"', b"42", b"true", b"null"])
+def test_a_json_body_that_is_not_an_object_is_a_400(tmp_path, raw):
+    cp, _ = _cp(tmp_path)
+    client = TestClient(cp.app(auth_token=TOKEN), raise_server_exceptions=False,
+                        headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"})
+    resp = client.post("/services/llamacpp/stop", content=raw)
+    assert resp.status_code == 400
+    assert resp.json() == {"error": "JSON body must be an object"}
+    assert cp.broker.backend.stopped == []

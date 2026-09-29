@@ -12,7 +12,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 
 from dashboard.orchestration_db import (
     get_workflow_version,
@@ -241,7 +241,8 @@ async def list_outputs():
 # ── ComfyUI ops ───────────────────────────────────────────────────────────────
 
 class RestartBody(BaseModel):
-    confirm: bool = False
+    # StrictBool: only JSON true confirms. A plain bool would coerce "true", 1, "yes" and "on".
+    confirm: StrictBool = False
 
 
 @router.post("/comfyui/restart")

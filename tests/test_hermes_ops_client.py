@@ -19,6 +19,7 @@ respx mocks the HTTPX transport so no network or live control plane is required.
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -162,7 +163,7 @@ def _cover_every_public_method(client, mock):
 
     client.list_containers()
     client.container_logs("foo")
-    client.restart_container("foo")
+    client.restart_container("foo", confirm=True)
     client.compose_up(service="foo", confirm=True)
     client.compose_restart(service="foo", confirm=True)
     client.compose_down(service="foo", confirm=True)
@@ -187,3 +188,27 @@ def test_every_public_method_sends_the_bearer_and_actor(client):
             assert call.request.headers["X-Actor"] == "hermes", (
                 f"{call.request.method} {call.request.url.path} sent no X-Actor header"
             )
+
+
+def test_restart_container_sends_confirm(client):
+    """restart_container posted to /containers/{name}/restart with no body, so ops-controller's
+    confirm gate answered every call with 400."""
+    with respx.mock(base_url=BASE_URL) as mock:
+        mock.post("/containers/foo/restart").mock(return_value=Response(200, json={"ok": True}))
+        client.restart_container("foo", confirm=True)
+        assert json.loads(mock.calls.last.request.read()) == {"confirm": True}
+        client.restart_container("foo")
+        assert json.loads(mock.calls.last.request.read()) == {"confirm": False}
+
+
+def test_every_post_sends_a_confirm(client):
+    """Every POST this client makes hits a confirm-gated ops-controller route, so every one must
+    carry `confirm` in a JSON body. A bodyless POST is always a 400."""
+    with respx.mock(base_url=BASE_URL) as mock:
+        _cover_every_public_method(client, mock)
+        posts = [call.request for call in mock.calls if call.request.method == "POST"]
+        assert posts
+        for request in posts:
+            raw = request.read()
+            assert raw, f"POST {request.url.path} sent no body"
+            assert json.loads(raw).get("confirm") is True, f"POST {request.url.path} sent no confirm"

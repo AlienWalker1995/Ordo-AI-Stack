@@ -125,7 +125,7 @@ def test_get_plugins_returns_200_with_plugins_list(tmp_path):
 
 def test_post_plugin_enable_valid_returns_200(tmp_path):
     cp, _ = _cp(tmp_path)
-    code, body = cp.route("POST", "/plugins/comfyui/enable", {})
+    code, body = cp.route("POST", "/plugins/comfyui/enable", {"confirm": True})
     assert code == 200
     assert body["ok"] is True
     assert body["plugin"] == "comfyui"
@@ -138,7 +138,7 @@ def test_post_plugin_enable_valid_returns_200(tmp_path):
 
 def test_post_plugin_enable_not_installable_returns_403(tmp_path):
     cp, _ = _cp(tmp_path)
-    code, body = cp.route("POST", "/plugins/llamacpp/enable", {})
+    code, body = cp.route("POST", "/plugins/llamacpp/enable", {"confirm": True})
     assert code == 403
     assert "error" in body
     assert "installable" in body
@@ -148,7 +148,7 @@ def test_post_plugin_enable_unknown_returns_403(tmp_path):
     # The installability check (403) comes before the registry lookup (404).
     # An unknown plugin not in INSTALLABLE_PLUGINS returns 403.
     cp, _ = _cp(tmp_path)
-    code, body = cp.route("POST", "/plugins/does-not-exist/enable", {})
+    code, body = cp.route("POST", "/plugins/does-not-exist/enable", {"confirm": True})
     assert code == 403
     assert "error" in body
     assert "installable" in body
@@ -159,7 +159,7 @@ def test_post_plugin_enable_unknown_returns_403(tmp_path):
 def test_post_plugin_disable_under_plugins_auto_returns_409(tmp_path):
     # `plugins: auto` has no list item to remove, so a disable could not persist.
     cp, _ = _cp(tmp_path)
-    code, body = cp.route("POST", "/plugins/comfyui/disable", {})
+    code, body = cp.route("POST", "/plugins/comfyui/disable", {"confirm": True})
     assert code == 409
     assert body["plugin"] == "comfyui"
     assert "explicit `plugins:` list" in body["error"]
@@ -167,7 +167,7 @@ def test_post_plugin_disable_under_plugins_auto_returns_409(tmp_path):
 
 def test_post_plugin_disable_not_installable_returns_403(tmp_path):
     cp, _ = _cp(tmp_path)
-    code, body = cp.route("POST", "/plugins/llamacpp/disable", {})
+    code, body = cp.route("POST", "/plugins/llamacpp/disable", {"confirm": True})
     assert code == 403
     assert "error" in body
 
@@ -175,7 +175,7 @@ def test_post_plugin_disable_not_installable_returns_403(tmp_path):
 def test_post_plugin_disable_unknown_returns_403(tmp_path):
     # The installability check (403) comes before the registry lookup (404).
     cp, _ = _cp(tmp_path)
-    code, body = cp.route("POST", "/plugins/does-not-exist/disable", {})
+    code, body = cp.route("POST", "/plugins/does-not-exist/disable", {"confirm": True})
     assert code == 403
     assert "error" in body
 
@@ -323,7 +323,7 @@ def test_post_plugin_enable_missing_site_key_explicit_list_returns_409(tmp_path)
     # memory-vault needs site.MEMORY_VAULT_PATH: the render refuses, so nothing is written.
     cp, src = _cp_explicit(tmp_path, ["rag"])
     before = src.read_text()
-    code, body = cp.route("POST", "/plugins/memory-vault/enable", {})
+    code, body = cp.route("POST", "/plugins/memory-vault/enable", {"confirm": True})
     assert code == 409
     assert "MEMORY_VAULT_PATH" in body["error"]
     assert src.read_text() == before
@@ -331,6 +331,6 @@ def test_post_plugin_enable_missing_site_key_explicit_list_returns_409(tmp_path)
 
 def test_post_plugin_enable_missing_site_key_auto_returns_409_naming_key(tmp_path):
     cp, _ = _cp(tmp_path)
-    code, body = cp.route("POST", "/plugins/memory-vault/enable", {})
+    code, body = cp.route("POST", "/plugins/memory-vault/enable", {"confirm": True})
     assert code == 409
     assert "MEMORY_VAULT_PATH" in body["error"]

@@ -34,6 +34,7 @@ def test_enable_calls_ops_plugin_enable_for_the_mapped_plugin(monkeypatch):
     assert ops.await_count == 1
     method, path = ops.await_args.args
     assert (method, path) == ("POST", "/plugins/comfyui-mcp/enable")
+    assert ops.await_args.kwargs["json"] == {"confirm": True}
     # ops-controller applied the render itself: the toggle reports what it recreated.
     assert res == {"persistent": True, "plugin": "comfyui-mcp", "note": None,
                    "recreated": ["mcp-comfyui", "model-gateway", "model-gateway-keys"], "stopped": [],
@@ -45,6 +46,7 @@ def test_disable_calls_ops_plugin_disable_for_the_mapped_plugin(monkeypatch):
         "recreated": ["model-gateway", "model-gateway-keys"], "stopped": ["mcp-searxng"],
         "restart_required_on_host": [], "host_command": None}}))
     assert ops.await_args.args == ("POST", "/plugins/searxng/disable")
+    assert ops.await_args.kwargs["json"] == {"confirm": True}
     assert res["persistent"] is True and res["plugin"] == "searxng"
     assert res["stopped"] == ["mcp-searxng"] and res["recreated"] == ["model-gateway", "model-gateway-keys"]
 

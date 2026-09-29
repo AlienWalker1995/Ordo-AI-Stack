@@ -29,7 +29,7 @@ agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>
 | `/model-config` | POST | Switch active model (`{"model": "<id>"|"auto"}`); rewrites `ordo.yaml`, re-renders and applies (`apply` in the response); a failed apply rolls the source back |
 | `/apply` | POST | Recreate the changed set of the current render (`{"dry_run": true}` returns the plan; else `confirm: true`): `recreated`, `stopped` (services the render no longer defines that were not already stopped), `orphans` (the same, already stopped: left as they are), `removed_jobs` (stopped one-shot job containers the render moved past, removed, never started), `running_jobs` (the same, running: left alone), `changes`, `restart_required_on_host`, `host_reasons`, `host_command`, `warnings` (when open-webui was recreated, `ordo doctor`'s model-gateway probe failed or could not run; the recreate stands) |
 | `/plugins` | GET | Installable plugins and their state |
-| `/plugins/{id}/enable`, `/plugins/{id}/disable` | POST | Add/remove an allowlisted plugin in `ordo.yaml`, re-render and apply; a disable under `plugins: auto` is refused (409) |
+| `/plugins/{id}/enable`, `/plugins/{id}/disable` | POST | Add/remove an allowlisted plugin in `ordo.yaml`, re-render and apply (`confirm: true` required; `dry_run: true` returns the planned change); a disable under `plugins: auto` is refused (409) |
 | `/jobs` | POST | Request GPU capacity for a job (`id`, `vram_gb`) |
 | `/jobs/complete` | POST | Release a completed job (`id`) |
 | `/jobs/heartbeat` | POST | Heartbeat a running job (`id`) |
@@ -62,7 +62,7 @@ agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>
 | `/diagnostics/dstate` | GET | Processes stuck in uninterruptible sleep |
 | `/audit` | GET | Audit log tail (`limit`, default 50) |
 
-**Safety:** Every mutating lifecycle, compose and pip call requires `{"confirm": true}`.
+**Safety:** Every mutating lifecycle, compose, plugin and pip call requires `{"confirm": true}` (JSON true: `"true"`, `1` or `"yes"` is refused).
 Plugin enable/disable is limited to the `INSTALLABLE_PLUGINS` allowlist in `ordo/control/api.py`;
 core substrate services cannot be added or removed through it.
 

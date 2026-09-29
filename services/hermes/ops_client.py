@@ -82,8 +82,8 @@ class OpsClient:
             params["since"] = since
         return self._request("GET", f"/containers/{name}/logs", params=params).text
 
-    def restart_container(self, name: str) -> dict[str, Any]:
-        return self._request("POST", f"/containers/{name}/restart").json()
+    def restart_container(self, name: str, *, confirm: bool = False) -> dict[str, Any]:
+        return self._request("POST", f"/containers/{name}/restart", json={"confirm": confirm}).json()
 
     def compose_up(self, *, service: str | None = None, confirm: bool = False) -> dict[str, Any]:
         return self._compose("up", service, confirm)

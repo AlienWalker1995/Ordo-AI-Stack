@@ -32,8 +32,8 @@ The docker socket IS mounted: `docker` and `docker compose` work directly from `
 
 - `list_containers()`: every container the host daemon sees (any compose project)
 - `container_logs(name, tail=100)`: tail any container's logs by name
-- `restart_container(name)`: restart any container by name
+- `restart_container(name, confirm=true)`: restart any container by name
 
-For Ordo services, prefer the control plane (`compose_up(service)` after .env / volume / image changes, `enable_service(plugin_id, confirm=true)` to install a service); follow the `devops/ops-controller-api` skill. When asked to deploy or bring something up, actually do it; never narrate commands for the operator to run.
+For Ordo services, prefer the control plane (`compose_up(service, confirm=true)` after .env / volume / image changes, `enable_service(plugin_id, confirm=true)` to install a service); follow the `devops/ops-controller-api` skill. When asked to deploy or bring something up, actually do it; never narrate commands for the operator to run.
 
 GPU work is the exception: never start a GPU container or submit a ComfyUI render outside the scheduler lease (renders go through `$COMFYUI_URL`, the gate).

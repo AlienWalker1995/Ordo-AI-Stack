@@ -32,6 +32,12 @@ from .ops_client import OpsClient, OpsClientError
 
 logger = logging.getLogger(__name__)
 
+
+def _confirmed(args: dict) -> bool:
+    """True only for `confirm: true` (JSON true), never a truthy string such as "false". The same
+    rule as ops-controller's `confirmed()` in ordo/control/api.py; this image does not ship `ordo`."""
+    return args.get("confirm") is True
+
 # Lazy singleton — constructed on first tool call. If OPS_CONTROLLER_TOKEN
 # is unset the constructor raises; we surface that as a tool-result error
 # instead of crashing the plugin at register time.
@@ -86,8 +92,10 @@ def _restart_container(args: dict, **kwargs) -> str:
     name = (args.get("name") or "").strip()
     if not name:
         return _err("name is required")
+    if not _confirmed(args):
+        return _err("restart_container requires confirm=true")
     try:
-        result = _get_client().restart_container(name)
+        result = _get_client().restart_container(name, confirm=True)
         return json.dumps({"ok": True, **result})
     except OpsClientError as exc:
         return _err(str(exc))
@@ -98,7 +106,7 @@ def _restart_container(args: dict, **kwargs) -> str:
 
 def _compose_restart(args: dict, **kwargs) -> str:
     service = (args.get("service") or "").strip() or None
-    confirm = bool(args.get("confirm"))
+    confirm = _confirmed(args)
     if service is None and not confirm:
         return _err("whole-stack restart requires confirm=true; pass a service name to scope")
     try:
@@ -113,7 +121,7 @@ def _compose_restart(args: dict, **kwargs) -> str:
 
 def _compose_up(args: dict, **kwargs) -> str:
     service = (args.get("service") or "").strip() or None
-    confirm = bool(args.get("confirm"))
+    confirm = _confirmed(args)
     if service is None and not confirm:
         return _err("whole-stack up requires confirm=true; pass a service name to scope")
     try:
@@ -154,7 +162,7 @@ def _enable_service(args: dict, **kwargs) -> str:
     plugin_id = (args.get("plugin_id") or "").strip()
     if not plugin_id:
         return _err("plugin_id is required")
-    if not bool(args.get("confirm")):
+    if not _confirmed(args):
         return _err("enable_service requires confirm=true")
     try:
         r = _get_client().enable_plugin(plugin_id, confirm=True)  # may raise 403/404/409
@@ -177,7 +185,7 @@ def _disable_service(args: dict, **kwargs) -> str:
     plugin_id = (args.get("plugin_id") or "").strip()
     if not plugin_id:
         return _err("plugin_id is required")
-    if not bool(args.get("confirm")):
+    if not _confirmed(args):
         return _err("disable_service requires confirm=true")
     try:
         r = _get_client().disable_plugin(plugin_id, confirm=True)
@@ -248,8 +256,12 @@ RESTART_CONTAINER_SCHEMA = {
                 "type": "string",
                 "description": "Container name to restart.",
             },
+            "confirm": {
+                "type": "boolean",
+                "description": "Required (true): ops-controller refuses a restart without it.",
+            },
         },
-        "required": ["name"],
+        "required": ["name", "confirm"],
     },
 }
 
@@ -274,7 +286,7 @@ COMPOSE_RESTART_SCHEMA = {
             },
             "confirm": {
                 "type": "boolean",
-                "description": "Required (true) when service is omitted. Guards against prompt-injected stack-wide restarts.",
+                "description": "Required (true): ops-controller refuses the call without it.",
             },
         },
         "required": [],
@@ -306,7 +318,7 @@ COMPOSE_UP_SCHEMA = {
             },
             "confirm": {
                 "type": "boolean",
-                "description": "Required (true) when service is omitted. Guards against prompt-injected stack-wide recreates.",
+                "description": "Required (true): ops-controller refuses the call without it.",
             },
         },
         "required": [],
@@ -398,7 +410,8 @@ _DOCKER_INTENT = re.compile(
 _NUDGE = (
     "Routing note: this turn looks like a docker/container op. For Ordo services prefer "
     "the control-plane tools (direct `docker` also works for anything else): `list_containers`, `container_logs(name, tail)`, "
-    "`restart_container(name)`, `compose_restart(service)`, `compose_up(service)`. "
+    "`restart_container(name, confirm=true)`, `compose_restart(service, confirm=true)`, "
+    "`compose_up(service, confirm=true)`. "
     "Picking the right verb: if .env / environment / volumes changed, use "
     "`compose_up(service=...)` (recreate) — `restart_container` and "
     "`compose_restart` only bounce the existing container and will NOT pick up "
