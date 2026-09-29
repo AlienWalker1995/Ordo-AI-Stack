@@ -21,6 +21,27 @@ the socket is being removed, and until then the seeded `SOUL.md` and the
 `ops-router` tools tell Hermes to use the control plane only. The live
 `SOUL.md` sits in the `hermes-home` volume and is not re-seeded; edit it there.
 
+## What Hermes can read and write under /c/dev
+
+The agent mirror-mounts the operator's code root (`CODE_ROOT`, default `/c/dev`)
+read-write. Paths that give another container's privileges to whoever can write
+them are overlaid inside the agent (`ordo/render/compose.py`
+`agent_readonly_overlays`, derived from the rendered compose, so a new plugin's
+mount is covered without a list):
+
+| Overlay | Why |
+|---|---|
+| `out/` read-only | ops-controller composes from it (`/config`) |
+| `out/secrets/` empty, `out/secrets.env` `/dev/null` | the materialized secret store, admin token included |
+| every other `${BASE_PATH}/...` bind of every other service, read-only | boot scripts (`scripts/comfyui`, `scripts/llamacpp`), the Caddyfile and certs, Grafana and Prometheus config, the evals runner's code, the Langfuse and SearXNG config files, the tailnet serve configs, `docs/` |
+| `data/ops-controller` read-only (at `/workspace/data` and through the mirror) | the audit log and the saved GPU lease state |
+| ordo.yaml `agent_readonly:` paths, read-only | other projects' executed paths the render cannot see, e.g. nas-stack's `custom-cont-init.d` |
+
+Shared data directories (`${DATA_PATH}` binds of other services, such as the
+memory vault and ComfyUI output) stay writable: Hermes works in them on purpose.
+Anything else under the code root is still writable to Hermes; the rw mount itself
+is a later step.
+
 ## First-class ops tools (the `ops-router` plugin)
 
 `services/hermes/plugins/ops-router/` exposes the control plane's container

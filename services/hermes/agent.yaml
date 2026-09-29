@@ -30,7 +30,12 @@ litellm_key:
   # queueing on one llama.cpp slot. Without it the key returns 403 and the only way onto that
   # model is an involuntary failover.
   models: [local-chat, local-embed, local-chat-cpu]
-  mcp_servers: all
+  # Every enabled MCP server EXCEPT the two that call ops-controller with the admin token on the
+  # caller's behalf (comfyui: node installs, model downloads; orchestration: workflow runs). Through
+  # them Hermes' key would reach routes its own `hermes` principal is refused (hostile audit SEC-1,
+  # #310 review F3). Hermes renders through the ComfyUI gate and its skills instead.
+  mcp_servers:
+    all_except: [comfyui, orchestration]
 
 # ── Runtime wiring (data, mirroring V1's hermes-gateway — see the phase-5.5 parity audit) ──
 # Peers Hermes needs HEALTHY before it starts, else it spams 5xx while they warm (V1 uses

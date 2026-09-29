@@ -37,10 +37,10 @@ def _host_posix(path: str) -> PurePosixPath | None:
     return PurePosixPath(text.rstrip("/") or "/")
 
 
-def checkout_in_agent(base_path: str, code_root: str) -> str:
-    """The Ordo checkout's path inside the agent, or NOT_MIRRORED when the mirror mount does not
+def in_agent(host_path: str, code_root: str) -> str:
+    """A host path's location inside the agent, or NOT_MIRRORED when the mirror mount does not
     expose it. An empty CODE_ROOT means the manifest's default, MIRROR_ROOT itself."""
-    base = _host_posix(base_path)
+    base = _host_posix(host_path)
     root = _host_posix(code_root) or PurePosixPath(MIRROR_ROOT)
     if base is None:
         return NOT_MIRRORED
@@ -49,3 +49,8 @@ def checkout_in_agent(base_path: str, code_root: str) -> str:
     except ValueError:
         return NOT_MIRRORED
     return str(PurePosixPath(MIRROR_ROOT) / relative)
+
+
+def checkout_in_agent(base_path: str, code_root: str) -> str:
+    """The Ordo checkout's path inside the agent (AGENT_CHECKOUT_PATH)."""
+    return in_agent(base_path, code_root)

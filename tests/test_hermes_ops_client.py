@@ -116,13 +116,6 @@ def test_compose_restart_maps_to_recreate(client):
         assert mock.calls.last.request.url.path == "/services/agent/recreate"
 
 
-def test_compose_down_maps_to_stop(client):
-    with respx.mock(base_url=BASE_URL) as mock:
-        mock.post("/services/agent/stop").mock(return_value=Response(200, json={"ok": True}))
-        client.compose_down(service="agent")
-        assert mock.calls.last.request.url.path == "/services/agent/stop"
-
-
 def test_compose_verbs_without_service_raise(client):
     """Stack-wide /compose/* is a deliberate 501; OpsClient refuses
     client-side rather than hitting a route that always fails."""
@@ -130,19 +123,6 @@ def test_compose_verbs_without_service_raise(client):
         client.compose_restart(service=None)
     with pytest.raises(OpsClientError, match="stack-wide"):
         client.compose_up(service=None)
-    with pytest.raises(OpsClientError, match="stack-wide"):
-        client.compose_down(service=None)
-
-
-def test_compose_down_sends_confirm(client):
-    """compose_down used to post to /services/{id}/stop with no body at all, so
-    ops-controller's `if not body.get("confirm")` check 400'd every call. It must send
-    confirm the same way compose_up/compose_restart already do."""
-    with respx.mock(base_url=BASE_URL) as mock:
-        mock.post("/services/agent/stop").mock(return_value=Response(200, json={"ok": True}))
-        client.compose_down(service="agent", confirm=True)
-        body = mock.calls.last.request.read()
-        assert b'"confirm":true' in body or b'"confirm": true' in body
 
 
 # ── every public method must send the bearer + X-Actor (audit trail), not just the ones
@@ -156,7 +136,6 @@ def _cover_every_public_method(client, mock):
     mock.get("/containers/foo/logs").mock(return_value=Response(200, text="ok"))
     mock.post("/containers/foo/restart").mock(return_value=Response(200, json={"ok": True}))
     mock.post("/services/foo/recreate").mock(return_value=Response(200, json={"ok": True}))
-    mock.post("/services/foo/stop").mock(return_value=Response(200, json={"ok": True}))
     mock.get("/plugins").mock(return_value=Response(200, json={"plugins": []}))
     mock.post("/plugins/foo/enable").mock(return_value=Response(200, json={"ok": True}))
     mock.post("/plugins/foo/disable").mock(return_value=Response(200, json={"ok": True}))
@@ -166,7 +145,6 @@ def _cover_every_public_method(client, mock):
     client.restart_container("foo", confirm=True)
     client.compose_up(service="foo", confirm=True)
     client.compose_restart(service="foo", confirm=True)
-    client.compose_down(service="foo", confirm=True)
     client.list_plugins()
     client.enable_plugin("foo", confirm=True)
     client.disable_plugin("foo", confirm=True)

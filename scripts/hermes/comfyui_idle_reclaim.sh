@@ -8,6 +8,11 @@
 # ops-controller, the one sanctioned path for container lifecycle. Silent unless it acts.
 set -o pipefail
 OPS="${OPS_CONTROLLER_URL:-http://ops-controller:9000}"
+# The gateway's env carries the token; a `docker exec` session skips the entrypoint, so fall back
+# to the file the render mounts (Hermes' scoped token, the `hermes` principal).
+if [ -z "${OPS_CONTROLLER_TOKEN:-}" ] && [ -n "${OPS_CONTROLLER_TOKEN_FILE:-}" ] && [ -s "$OPS_CONTROLLER_TOKEN_FILE" ]; then
+  OPS_CONTROLLER_TOKEN="$(tr -d '\r\n' < "$OPS_CONTROLLER_TOKEN_FILE")"
+fi
 [ -n "$COMFYUI_URL" ] || { echo "ComfyUI idle reclaim: COMFYUI_URL is not set; cannot read the queue"; exit 1; }
 
 # ComfyUI's memory, from ops-controller's GET /stats/services (docker stats, read by the control

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -34,9 +35,14 @@ HERMES = ROOT / "services" / "hermes"
 SITE = {"BASE_PATH": "C:/dev/ordo-ai-stack", "CODE_ROOT": "C:/dev", "DATA_PATH": "C:/dev/ordo-ai-stack/data"}
 
 
-def _rendered(tmp_path, site=SITE):
+# Every plugin whose mounts or credentials matter here.
+PLUGINS = ["comfyui", "comfyui-mcp", "orchestration", "evals", "hermes-dashboard", "edge", "monitoring",
+           "langfuse", "searxng-web", "open-webui", "rag", "automation", "voice", "searxng", "memory-vault"]
+
+
+def _rendered(tmp_path, site=SITE, **extra):
     rc = render(Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128}, "model": "auto",
-                                  "plugins": "auto", "agent": "hermes", "site": site}),
+                                  "plugins": "auto", "agent": "hermes", "site": site, **extra}),
                 CATALOG, REGISTRY, agents=AGENTS)
     rc.write(tmp_path)
     compose = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
@@ -175,3 +181,177 @@ def test_the_seed_soul_explains_the_scoped_token():
     soul = (HERMES / "seed" / "SOUL.md").read_text(encoding="utf-8")
     assert "scoped" in soul and "403" in soul
     assert "secrets.env" in soul        # it says not to go looking for another token
+
+
+
+# --------------------------------------------------------------------------- #
+# Review of #310. F1: out/ is read-only to the agent (ops-controller composes from it).
+# F2: every path another service executes or reads config from is read-only to the agent.
+# --------------------------------------------------------------------------- #
+
+_ROOT_VAR = re.compile(r"^\$\{(BASE_PATH|DATA_PATH)(?::[?-][^}]*)?\}(/[^:]*)?:")
+
+
+def _explicit_plugins_render(tmp_path, **extra):
+    site = {**SITE, "CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
+            "CADDY_TAILNET_DOMAIN": "example.ts.net",
+            "MEMORY_VAULT_PATH": "C:/dev/ordo-ai-stack/data/memory-vault", "SSO_ALLOWED_EMAILS": "a@example.com"}
+    rc = render(Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128}, "model": "auto",
+                                  "plugins": PLUGINS, "agent": "hermes", "site": site, **extra}),
+                CATALOG, REGISTRY, agents=AGENTS)
+    return rc, rc.compose_dict()
+
+
+def test_out_is_read_only_inside_the_agent(tmp_path):
+    _, compose = _explicit_plugins_render(tmp_path)
+    assert "${BASE_PATH:?BASE_PATH must be set (non-empty)}/out:${AGENT_CHECKOUT_PATH}/out:ro" \
+        in compose["services"]["agent"]["volumes"]
+
+
+def test_every_checkout_path_another_service_mounts_is_read_only_to_the_agent(tmp_path):
+    """Derived from the render, so a new plugin's config or code mount is covered without a list."""
+    _, compose = _explicit_plugins_render(tmp_path)
+    agent = compose["services"]["agent"]["volumes"]
+    wanted = set()
+    for name, svc in compose["services"].items():
+        if name == "agent":
+            continue
+        for vol in svc.get("volumes") or []:
+            m = _ROOT_VAR.match(vol) if isinstance(vol, str) else None
+            if m and m.group(1) == "BASE_PATH" and not (m.group(2) or "").startswith("/out"):
+                wanted.add(m.group(2))
+    assert {"/scripts/comfyui", "/scripts/llamacpp", "/auth/caddy/Caddyfile", "/services/evals"} <= wanted
+    for rel in wanted:
+        assert f"${{BASE_PATH:?BASE_PATH must be set (non-empty)}}{rel}:${{AGENT_CHECKOUT_PATH}}{rel}:ro" in agent, rel
+
+
+def test_the_control_planes_state_is_read_only_to_the_agent(tmp_path):
+    """ops-controller's audit log and saved lease state live in data/ops-controller, which the
+    agent sees twice: at /workspace/data and through the /c/dev mirror."""
+    _, compose = _explicit_plugins_render(tmp_path)
+    agent = compose["services"]["agent"]["volumes"]
+    src = "${DATA_PATH:?DATA_PATH must be set (non-empty)}/ops-controller"
+    assert f"{src}:/workspace/data/ops-controller:ro" in agent
+    assert f"{src}:${{AGENT_DATA_PATH}}/ops-controller:ro" in agent
+
+
+def test_the_data_path_inside_the_agent_is_derived(tmp_path):
+    _, _, env = _rendered(tmp_path)
+    assert env["AGENT_DATA_PATH"] == "/c/dev/ordo-ai-stack/data"
+
+
+def test_declared_foreign_paths_are_read_only_to_the_agent(tmp_path):
+    """Paths other projects execute (nas-stack's custom-cont-init.d) cannot be derived from Ordo's
+    render: the operator declares them in ordo.yaml `agent_readonly:`."""
+    _, compose = _explicit_plugins_render(tmp_path, agent_readonly=["C:/dev/nas-stack/jellyfin/custom-cont-init.d"])
+    assert "C:/dev/nas-stack/jellyfin/custom-cont-init.d:/c/dev/nas-stack/jellyfin/custom-cont-init.d:ro" \
+        in compose["services"]["agent"]["volumes"]
+
+
+@pytest.mark.parametrize("paths, why", [
+    ("C:/dev/x", "list"),
+    (["relative/path"], "absolute"),
+    (["D:/elsewhere/x"], "CODE_ROOT"),
+    (["C:/dev/a", "C:/dev/a"], "twice"),
+])
+def test_a_bad_agent_readonly_list_is_refused(paths, why):
+    with pytest.raises(ValueError, match=why):
+        render(Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128}, "model": "auto",
+                                 "plugins": "auto", "agent": "hermes", "site": SITE, "agent_readonly": paths}),
+               CATALOG, REGISTRY, agents=AGENTS)
+
+
+# --------------------------------------------------------------------------- #
+# F2: admin-token holders the agent can reach
+# --------------------------------------------------------------------------- #
+
+def test_comfyui_holds_no_ops_controller_token(tmp_path):
+    """ComfyUI's only reader was a retired no-op node parameter; it runs code from the checkout."""
+    _, compose = _explicit_plugins_render(tmp_path)
+    assert "OPS_CONTROLLER_TOKEN" not in json.dumps(compose["services"]["comfyui"])
+
+
+def test_the_hermes_dashboard_presents_the_scoped_token(tmp_path):
+    """Same image and brain volume as the agent: it gets the same scoped credential, never the admin."""
+    _, compose = _explicit_plugins_render(tmp_path)
+    dash = compose["services"]["hermes-dashboard"]
+    assert dash["environment"]["OPS_CONTROLLER_TOKEN_FILE"] == "/run/secrets/ops_controller_token_hermes"
+    assert "OPS_CONTROLLER_TOKEN" not in dash["environment"]
+    assert "${OPS_CONTROLLER_TOKEN}" not in json.dumps(dash)
+
+
+# --------------------------------------------------------------------------- #
+# F3: MCP servers that call ops-controller with the admin token are not in Hermes' key
+# --------------------------------------------------------------------------- #
+
+def _grant(rc, alias):
+    return next(k for k in rc.litellm_keys if k["alias"] == alias)["mcp_servers"]
+
+
+def test_hermes_key_excludes_the_admin_powered_mcp_servers(tmp_path):
+    rc, _ = _explicit_plugins_render(tmp_path)
+    granted = _grant(rc, "hermes")
+    assert "comfyui" not in granted and "orchestration" not in granted
+    assert {"searxng", "memory_vault"} <= set(granted)                         # the rest is still granted
+
+
+def test_all_except_names_must_be_known_servers():
+    from ordo.render.engine import render_litellm_keys
+    with pytest.raises(ValueError, match="unknown MCP servers"):
+        render_litellm_keys([("x", {"models": ["local-chat"], "mcp_servers": {"all_except": ["comfyiu"]}})],
+                            ["comfyui", "searxng"], model_names=["local-chat"], all_server_names=["comfyui", "searxng"])
+
+
+def test_all_except_may_name_a_disabled_server():
+    from ordo.render.engine import render_litellm_keys
+    [key] = render_litellm_keys([("x", {"models": ["local-chat"], "mcp_servers": {"all_except": ["orchestration"]}})],
+                                ["searxng"], model_names=["local-chat"], all_server_names=["searxng", "orchestration"])
+    assert key["mcp_servers"] == ["searxng"]
+
+
+# --------------------------------------------------------------------------- #
+# F4, F5: the skills Hermes loads for ops work, shipped read-only in the image
+# --------------------------------------------------------------------------- #
+
+SHIPPED = HERMES / "skills"
+
+
+def _frontmatter_name(path: Path) -> str:
+    text = path.read_text(encoding="utf-8")
+    return yaml.safe_load(text.split("---", 2)[1])["name"]
+
+
+def test_the_ops_skills_are_shipped_and_copied_into_the_image():
+    names = {_frontmatter_name(p) for p in SHIPPED.rglob("SKILL.md")}
+    assert {"ops-controller-api", "stack-image-updates", "docker-isolated-deployment"} <= names
+    assert "COPY skills/ /opt/ordo-skills/" in (HERMES / "Dockerfile").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("skill", sorted(SHIPPED.rglob("SKILL.md")), ids=lambda p: p.parent.name)
+def test_no_shipped_skill_teaches_a_refused_route_or_the_secret_store(skill):
+    text = skill.read_text(encoding="utf-8")
+    hermes = principals.hermes(lambda: "t")
+    for method, path in re.findall(r"\b(GET|POST) (/[A-Za-z0-9_/{}.-]+)", text):
+        concrete = re.sub(r"\{[^}]+\}", "x", path.rstrip(".,;:"))
+        assert hermes.allows(method, concrete), f"{skill.parent.name} teaches {method} {path}"
+    assert "--env-file secrets.env" not in text
+    assert "docker compose" not in text
+
+
+# --------------------------------------------------------------------------- #
+# F6, F7
+# --------------------------------------------------------------------------- #
+
+def test_the_client_has_no_stop_verb():
+    assert not hasattr(_ops_client().OpsClient, "compose_down")
+
+
+def test_stack_monitor_reads_the_token_file_when_the_env_is_empty(tmp_path, monkeypatch):
+    token_file = tmp_path / "t"
+    token_file.write_text("from-file\n", encoding="utf-8")
+    monkeypatch.delenv("OPS_CONTROLLER_TOKEN", raising=False)
+    monkeypatch.setenv("OPS_CONTROLLER_TOKEN_FILE", str(token_file))
+    spec = importlib.util.spec_from_file_location("stack_monitor_t", ROOT / "scripts" / "stack_monitor.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.ops_controller_token() == "from-file"

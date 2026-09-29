@@ -217,7 +217,8 @@ def litellm_model_names(config_path: Path | None = None) -> list[str]:
 
 def render_litellm_keys(consumers: list[tuple[str, dict[str, Any]]],
                         server_names: list[str],
-                        model_names: list[str] | None = None) -> list[dict[str, Any]]:
+                        model_names: list[str] | None = None,
+                        all_server_names: list[str] | None = None) -> list[dict[str, Any]]:
     """Turn each consumer's `litellm_key:` declaration into a key grant for bootstrap_keys.py.
 
     The grant names servers by their LITELLM name (McpSpec.litellm_name: hyphen-free), because
@@ -226,7 +227,9 @@ def render_litellm_keys(consumers: list[tuple[str, dict[str, Any]]],
     entry would therefore revoke that server from the key in silence.
 
     `mcp_servers: all` expands to every ENABLED server name (sorted); a list may name only enabled
-    servers, else the render fails (a typo must not silently grant nothing).
+    servers, else the render fails (a typo must not silently grant nothing). `{all_except: [...]}`
+    is `all` minus the named servers; each name must be a server some plugin declares
+    (`all_server_names`, enabled or not), because a typo there would silently grant the server.
 
     `models:` is validated the same way and is fail-closed: LiteLLM reads an EMPTY `models` list as
     access to every model, so an absent or empty list is a privilege escalation, not an empty
@@ -249,6 +252,17 @@ def render_litellm_keys(consumers: list[tuple[str, dict[str, Any]]],
         raw = spec.get("mcp_servers", [])
         if raw == "all":
             granted = list(known)
+        elif isinstance(raw, dict):
+            if set(raw) != {"all_except"}:
+                raise ValueError(f"litellm_key for '{consumer_id}': mcp_servers mapping takes only "
+                                 f"`all_except`, got {sorted(raw)}")
+            excluded = [str(s) for s in (raw.get("all_except") or [])]
+            declared = set(all_server_names if all_server_names is not None else known)
+            unknown = [s for s in excluded if s not in declared]
+            if unknown:
+                raise ValueError(f"litellm_key for '{consumer_id}' excludes unknown MCP servers: {unknown} "
+                                 f"(declared: {sorted(declared)})")
+            granted = [s for s in known if s not in excluded]
         else:
             granted = sorted(str(s) for s in (raw or []))
             unknown = [s for s in granted if s not in known]
@@ -257,6 +271,20 @@ def render_litellm_keys(consumers: list[tuple[str, dict[str, Any]]],
         keys.append({"env": key_env_name(consumer_id), "alias": consumer_id,
                      "models": models, "mcp_servers": granted})
     return keys
+
+
+def _agent_readonly_overlays(source: Source) -> list[str]:
+    """ordo.yaml `agent_readonly:` as read-only overlays on the agent's /c/dev mirror. A path the
+    mirror does not expose is refused: it protects nothing and is almost surely a typo."""
+    code_root = str((source.site or {}).get("CODE_ROOT", ""))
+    overlays = []
+    for host_path in source.agent_readonly:
+        inside = agent_mirror.in_agent(host_path, code_root)
+        if inside == agent_mirror.NOT_MIRRORED:
+            raise ValueError(f"agent_readonly: {host_path!r} is not under CODE_ROOT ({code_root or agent_mirror.MIRROR_ROOT}), "
+                             "so the agent cannot see it; list only paths inside the code root")
+        overlays.append(f"{host_path}:{inside}:ro")
+    return overlays
 
 
 def _max_ctx_for_vram(model: Model, hw: HardwareProfile, reserve_gb: float,
@@ -454,6 +482,7 @@ class RenderedConfig:
             agent_user=self.hermes.get("agent_user") or None,
             agent_group_add=self.hermes.get("agent_group_add") or None,
             agent_volumes=self.hermes.get("agent_volumes") or None,
+            agent_readonly=self.hermes.get("agent_readonly") or None,
             agent_environment=self.hermes.get("agent_environment") or None,
             agent_secret_files=self.hermes.get("agent_secret_files") or None,
             agent_secrets=self.hermes.get("agent_secrets") or None,
@@ -791,6 +820,8 @@ def render(source: Source, catalog: Catalog,
         "agent_user": (agent.user if agent else ""),
         "agent_group_add": (list(agent.group_add) if agent else []),
         "agent_volumes": (list(agent.volumes) if agent else []),
+        # ordo.yaml `agent_readonly:` as `host:agent-path:ro` overlays (other projects' paths).
+        "agent_readonly": _agent_readonly_overlays(source),
         "agent_environment": (dict(agent.environment) if agent else {}),
         "agent_secret_files": (list(agent.secret_files) if agent else []),
         "agent_secrets": (list(agent.secrets) if agent else []),
@@ -851,7 +882,9 @@ def render(source: Source, catalog: Catalog,
     if agent is not None and agent.litellm_key:
         key_consumers.append((agent.id, dict(agent.litellm_key)))
     key_consumers += [(p.id, dict(p.litellm_key)) for p in enabled if p.litellm_key]
-    litellm_keys = render_litellm_keys(key_consumers, [s["litellm_name"] for s in mcp_servers])
+    all_mcp_names = [p.mcp.litellm_name for p in plugins.plugins if p.kind == "mcp" and p.mcp]
+    litellm_keys = render_litellm_keys(key_consumers, [s["litellm_name"] for s in mcp_servers],
+                                       all_server_names=all_mcp_names)
 
     # Internal base URLs for gate-enforced services. A gate is a drop-in on the upstream's port,
     # so redirecting every in-stack consumer through it is a hostname change — but it must be ONE
@@ -872,6 +905,8 @@ def render(source: Source, catalog: Catalog,
     site_paths = source.site or {}
     env["AGENT_CHECKOUT_PATH"] = agent_mirror.checkout_in_agent(str(site_paths.get("BASE_PATH", "")),
                                                                 str(site_paths.get("CODE_ROOT", "")))
+    env["AGENT_DATA_PATH"] = agent_mirror.in_agent(str(site_paths.get("DATA_PATH", "")),
+                                                   str(site_paths.get("CODE_ROOT", "")))
 
     # Host/site config (DATA_PATH/BASE_PATH/CODE_ROOT, edge hostnames, COMFYUI_IMAGE, …) flows
     # verbatim into .env so plugin `${VAR}` refs resolve deterministically. Derived keys WIN over

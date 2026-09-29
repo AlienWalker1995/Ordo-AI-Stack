@@ -119,7 +119,10 @@ services:
       # overridable via ${PYTORCH_CUDA_ALLOC_CONF}.
       PYTORCH_CUDA_ALLOC_CONF: ${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,pinned_use_cuda_host_register:True}
       OPS_CONTROLLER_URL: http://ops-controller:9000
-      OPS_CONTROLLER_TOKEN: ${OPS_CONTROLLER_TOKEN:-}
+      # No OPS_CONTROLLER_TOKEN: nothing in ComfyUI calls ops-controller (the one custom node that
+      # read it, Ordo_last_mile_video's LLMRefine wake, is a retired no-op), and this container runs
+      # a boot script from the checkout, so an admin token here was one edit from anyone who can
+      # write the checkout (hostile audit SEC-1, #310 review).
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       HF_TOKEN: ${HF_TOKEN:-}
       GITHUB_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}

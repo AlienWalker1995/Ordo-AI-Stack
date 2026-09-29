@@ -122,9 +122,6 @@ class OpsClient:
     def compose_up(self, *, service: str | None = None, confirm: bool = False) -> dict[str, Any]:
         return self._compose("up", service, confirm)
 
-    def compose_down(self, *, service: str | None = None, confirm: bool = False) -> dict[str, Any]:
-        return self._compose("down", service, confirm)
-
     def compose_restart(self, *, service: str | None = None, confirm: bool = False) -> dict[str, Any]:
         return self._compose("restart", service, confirm)
 
@@ -139,12 +136,9 @@ class OpsClient:
                 "stack-wide compose verbs are refused by this client (ops-controller would run "
                 "them on the whole project); pass a service name for a per-service recreate"
             )
-        # up / down / restart all take {"confirm": ...} the same way: ops-controller's
-        # service_stop/service_start/service_restart each refuse a missing confirm with 400.
-        if verb == "down":
-            r = self._request("POST", f"/services/{service}/stop", json={"confirm": confirm})
-        else:  # up / restart -> recreate (picks up new .env / volumes / network)
-            r = self._request("POST", f"/services/{service}/recreate", json={"confirm": confirm})
+        # up and restart both recreate (picks up new .env / volumes / network). There is no stop
+        # verb: the `hermes` principal is refused /services/{id}/stop.
+        r = self._request("POST", f"/services/{service}/recreate", json={"confirm": confirm})
         return r.json()
 
     # --- service-plugin install/enable: the render authority. These edit ordo.yaml's plugin

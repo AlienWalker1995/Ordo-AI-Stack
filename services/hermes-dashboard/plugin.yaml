@@ -33,13 +33,18 @@ depends_on: [edge]
 env:
   HERMES_DASHBOARD_ENABLED: "1"
 secrets:
-  - OPS_CONTROLLER_TOKEN    # required for Hermes to reach ops-controller
+  - OPS_CONTROLLER_TOKEN_HERMES    # Hermes' scoped ops-controller token (the `hermes` principal)
 services:
   - name: hermes-dashboard
     # Same image as the Hermes agent (V1 builds one hermes image, runs it as gateway + dashboard).
     image: ordo/agent-hermes
-    # Its Chat tab runs full agent sessions, so the same env secrets as the agent.
-    secrets: [LITELLM_KEY_HERMES, OPS_CONTROLLER_TOKEN]
+    # Its Chat tab runs full agent sessions, so the same credentials as the agent: its LiteLLM key,
+    # and the SCOPED ops-controller token as a file the image entrypoint bridges to
+    # OPS_CONTROLLER_TOKEN (never the admin token: it shares the agent's brain volume, and anything
+    # the agent writes there this container loads too; hostile audit SEC-1).
+    secrets: [LITELLM_KEY_HERMES]
+    secret_files:
+      - {key: OPS_CONTROLLER_TOKEN_HERMES, env: OPS_CONTROLLER_TOKEN_FILE}
     # Binds LOOPBACK, inside caddy's network namespace. This is what keeps the whole
     # stack on ONE auth model — oauth2-proxy at the edge, nothing per-service.
     #
