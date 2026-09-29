@@ -30,7 +30,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import subprocess
 import threading
 from collections.abc import Callable, Sequence
@@ -56,6 +55,7 @@ from . import principals as auth
 from .broker import SELF_REFERENTIAL_SERVICES, Broker
 from .call_audit import ACTOR_HEADER, AUDITED_METHODS, CallAuditor, audit_actor, audited_read, lease_detail
 from .comfyui import ModelDownloads, NodeRequirements
+from .lifecycle import LeaseGuard, Lifecycle
 from .responses import CONFIRM_REQUIRED, as_response, confirmed, error
 from .scheduler import Job, Scheduler
 
@@ -85,10 +85,6 @@ COMFYUI_CONTAINER_NAME = os.environ.get("COMFYUI_CONTAINER_NAME", "ordo-comfyui-
 def _project_rows(containers: list[dict]) -> list[dict]:
     """Each managed-project row reduced to managed.ROW_FIELDS: no field a backend adds leaks."""
     return [{field: row.get(field) for field in managed.ROW_FIELDS} for row in containers]
-
-
-class LifecycleGroupUnknown(Exception):
-    """The rendered compose could not be read, so a service's netns members are unknown."""
 
 
 class ControlPlane:
@@ -136,6 +132,9 @@ class ControlPlane:
         # one a GPU lease transition takes, so a lease cannot evict a resident mid-verb either. A
         # control plane without a broker only needs its source writes kept apart.
         self._operation_lock = broker.operation_lock if broker else threading.RLock()
+        # The lifecycle verbs, and the GPU-lease check they and the post-render apply make.
+        self.lease = LeaseGuard(scheduler)
+        self.lifecycle = Lifecycle(broker, self.lease)
         # Restarts of managed-project containers: at most 3 per container per hour (managed.py).
         self._restart_budget = managed.RestartBudget()
 
@@ -684,7 +683,7 @@ class ControlPlane:
             "orphans": sorted(unrendered - set(stopped)),
             "warnings": [],
         }
-        conflict = self._group_lease_conflict(sorted(targets))
+        conflict = self.lease.group_conflict(sorted(targets))
         if conflict:
             return {**conflict, "changes": plan["changes"]}
         if dry_run:
@@ -765,227 +764,49 @@ class ControlPlane:
             return self._error(404, f"no running job '{job_id}'")
         return self.scheduler.status()
 
-    # --- Service lifecycle routes (ported from ops-api) ---
-
-    # The lifecycle verbs live in the same process as the GPU scheduler, so they ask it before
-    # starting anything. Starting an evicted resident during a lease (directly, by container
-    # name, or through a whole-stack compose up) puts two tenants on one card: the 2026-08-08
-    # host crash. Refusing here, once, replaces a "not during a lease" check in every caller.
-    # Stop is never refused, and a lease tenant (comfyui) may still be cycled by its own gate.
-
-    def _lease_conflict(self, service: str | None) -> dict[str, Any] | None:
-        """A 409 payload when starting `service` (None = the whole stack) would share the card."""
-        if not self.scheduler:
-            return None
-        status = self.scheduler.status()
-        holders = [job["id"] for job in status["running"]] + [job["id"] for job in status["queued"]]
-        evicted = status["evicted_residents"]
-        if service is None and status["leased"]:
-            return self._error(409, f"a GPU lease is active (held by {holders}, evicted {sorted(evicted)}); "
-                                    "a whole-stack start would restart the evicted residents beside it. "
-                                    "Name a service, or retry once the lease is released.",
-                               lease_holders=holders)
-        if service is not None and service in evicted:
-            return self._error(409, f"{service!r} is evicted for a GPU lease held by {holders}; starting it "
-                                    "would put two tenants on one card. The scheduler restores it when "
-                                    "the lease is released.", lease_holders=holders)
-        return None
-
-    def _container_lease_conflict(self, container: str) -> dict[str, Any] | None:
-        """`_lease_conflict` for a raw container name (`<project>-<service>-<n>`)."""
-        if not self.scheduler:
-            return None
-        for service in self.scheduler.evicted_residents:
-            if re.fullmatch(rf"[\w.-]+-{re.escape(service)}-\d+", container):
-                return self._lease_conflict(service)
-        return None
-
-    # A service's netns members (`network_mode: service:<it>`) share its network namespace, so
-    # every verb that gives it a new namespace must cycle them too, after it; otherwise they keep
-    # running in the dead one with only `lo` (observed 2026-09-24: a caddy restart from the
-    # dashboard cut off hermes-dashboard and every tailnet sidecar). The group comes from
-    # `stack.lifecycle_group`, the planner the host's `ordo up` / `ordo recreate` use.
-
-    def _rendered_compose(self, target: str) -> dict:
-        try:
-            return self.broker.backend.rendered_compose()
-        except Exception as e:
-            raise LifecycleGroupUnknown(
-                f"cannot read the rendered compose to find {target!r}'s netns members ({e}); "
-                "refusing rather than orphaning them") from e
-
-    def _lifecycle_group(self, service: str) -> list[str]:
-        """[service, *its netns members]. Raises LifecycleGroupUnknown when the render is unreadable."""
-        return lifecycle_group(self._rendered_compose(service), service)
-
-    def _container_members(self, container: str) -> list[str]:
-        """The netns members that follow a raw container (`<project>-<service>-<n>`), or []."""
-        doc = self._rendered_compose(container)
-        # Longest name first, so `ordo-tailnet-chat-1` is tailnet-chat even if a `chat` exists.
-        for service in sorted(doc.get("services") or {}, key=len, reverse=True):
-            if re.fullmatch(rf"[\w.-]+-{re.escape(service)}-\d+", container):
-                return lifecycle_group(doc, service)[1:]
-        return []
-
-    def _compose_service(self, body: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
-        """(service, error) for a compose verb's body. No `service` key, or null, means the whole
-        stack. Anything else must be a non-empty string: `""` must never widen a named verb into a
-        whole-stack down."""
-        service = body.get("service")
-        if service is None:
-            return None, None
-        if not isinstance(service, str) or not service.strip():
-            return None, self._error(400, f"service must be a non-empty compose service name, got {service!r}; "
-                                          "omit it to act on the whole stack")
-        return service, None
-
-    def _group_lease_conflict(self, group: list[str]) -> dict[str, Any] | None:
-        """`_lease_conflict` for each service a verb would start."""
-        for service in group:
-            conflict = self._lease_conflict(service)
-            if conflict:
-                return conflict
-        return None
-
-    def _restart_members(self, members: list[str]) -> None:
-        """Restart each member, after its owner has its new namespace. A restart, not a start:
-        a member left running while the owner was down is still in the dead namespace, and
-        `docker start` of a running container does nothing."""
-        for member in members:
-            try:
-                self.broker.backend.restart(member)
-            except Exception as e:
-                raise RuntimeError(f"netns member {member!r} was not restarted and has no network "
-                                   f"until it is: {e}") from e
-
-    @staticmethod
-    def _with_members(payload: dict[str, Any], members: list[str]) -> dict[str, Any]:
-        if members:
-            payload["members"] = members
-        return payload
+    # --- Service lifecycle (ordo/control/lifecycle.py) ---
 
     def service_start(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        if body.get("dry_run"):
-            return {"would": "start", "service": service_id}
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        try:
-            group = self._lifecycle_group(service_id)
-        except LifecycleGroupUnknown as e:
-            return self._error(500, str(e))
-        conflict = self._group_lease_conflict(group)
-        if conflict:
-            return conflict
-        try:
-            self.broker.backend.start(service_id)
-            self._restart_members(group[1:])
-        except Exception as e:
-            return self._error(500, str(e))
-        return self._with_members({"ok": True, "service": service_id, "action": "started"}, group[1:])
+        return self.lifecycle.service_start(service_id, body)
 
     def service_stop(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        if body.get("dry_run"):
-            return {"would": "stop", "service": service_id}
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        try:
-            group = self._lifecycle_group(service_id)
-        except LifecycleGroupUnknown as e:
-            return self._error(500, str(e))
-        try:
-            # Members first: stopping only the owner leaves them running in a dead namespace.
-            for member in group[1:]:
-                self.broker.backend.stop(member)
-            self.broker.backend.stop(service_id)
-        except Exception as e:
-            return self._error(500, str(e))
-        return self._with_members({"ok": True, "service": service_id, "action": "stopped"}, group[1:])
+        return self.lifecycle.service_stop(service_id, body)
 
     def service_restart(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        if body.get("dry_run"):
-            return {"would": "restart", "service": service_id}
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        try:
-            group = self._lifecycle_group(service_id)
-        except LifecycleGroupUnknown as e:
-            return self._error(500, str(e))
-        conflict = self._group_lease_conflict(group)
-        if conflict:
-            return conflict
-        try:
-            self.broker.backend.restart(service_id)
-            self._restart_members(group[1:])
-        except Exception as e:
-            return self._error(500, str(e))
-        return self._with_members({"ok": True, "service": service_id, "action": "restarted"}, group[1:])
-
-    def service_logs(self, service_id: str, tail: int = 100) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            logs = self.broker.backend.logs(service_id, tail=tail)
-        except Exception as e:
-            return self._error(500, str(e))
-        return {"logs": logs, "service": service_id}
-
-    def list_services(self) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            services = self.broker.backend.list_services()
-        except Exception as e:
-            return self._error(500, str(e))
-        # The backend returns the ops-api payload already ({"services": [...]}), the same as
-        # list_containers below. Wrapping it again here produced
-        # {"services": {"services": [...]}}, which the dashboard would read as an empty grid.
-        return services
+        return self.lifecycle.service_restart(service_id, body)
 
     def service_recreate(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        if body.get("dry_run"):
-            return {"would": "recreate", "service": service_id}
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        try:
-            group = self._lifecycle_group(service_id)
-        except LifecycleGroupUnknown as e:
-            return self._error(500, str(e))
-        conflict = self._group_lease_conflict(group)
-        if conflict:
-            return conflict
-        try:
-            # One compose call recreates the whole group: the backend plans it with the same
-            # `stack.plan_named` the host's `ordo recreate` uses.
-            self.broker.backend.recreate_service(service_id)
-        except Exception as e:
-            return self._error(500, str(e))
-        return self._with_members({"ok": True, "service": service_id, "action": "recreated"}, group[1:])
+        return self.lifecycle.service_recreate(service_id, body)
+
+    def service_logs(self, service_id: str, tail: int = 100) -> dict[str, Any]:
+        return self.lifecycle.service_logs(service_id, tail)
+
+    def list_services(self) -> dict[str, Any]:
+        return self.lifecycle.list_services()
 
     def list_containers(self) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            containers = self.broker.backend.list_containers()
-        except Exception as e:
-            return self._error(500, str(e))
-        return containers
+        return self.lifecycle.list_containers()
 
     def container_logs(self, name: str, tail: int = 100) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            logs = self.broker.backend.container_logs(name, tail=tail)
-        except Exception as e:
-            return self._error(500, str(e))
-        return logs
+        return self.lifecycle.container_logs(name, tail)
+
+    def container_inspect(self, name: str) -> dict[str, Any]:
+        return self.lifecycle.container_inspect(name)
+
+    def container_restart(self, name: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self.lifecycle.container_restart(name, body)
+
+    def service_stats(self) -> dict[str, Any]:
+        return self.lifecycle.service_stats()
+
+    def compose_up(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.lifecycle.compose_up(body)
+
+    def compose_down(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.lifecycle.compose_down(body)
+
+    def compose_restart(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.lifecycle.compose_restart(body)
 
     # --- Managed projects: OTHER compose projects Hermes may maintain (ordo/control/managed.py) ---
     # Status, logs and a confirmed, rate-limited restart; nothing else. The list is the source's
@@ -1102,115 +923,6 @@ class ControlPlane:
         except Exception as e:
             return self._error(500, str(e))
         return {"ok": True, "project": project, "container": name, "action": "restarted"}
-
-    def container_inspect(self, name: str) -> dict[str, Any]:
-        """One Ordo container through `broker.summarize_inspect`'s field allowlist: never its
-        environment or labels. 404 for a name that is not a container of this project."""
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            return self.broker.backend.container_inspect(name)
-        except ValueError as e:
-            return self._error(404, str(e))
-        except Exception as e:
-            return self._error(500, str(e))
-
-    def container_restart(self, name: str, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        try:
-            members = self._container_members(name)
-        except LifecycleGroupUnknown as e:
-            return self._error(500, str(e))
-        conflict = self._container_lease_conflict(name) or self._group_lease_conflict(members)
-        if conflict:
-            return conflict
-        try:
-            self.broker.backend.container_restart(name)
-            self._restart_members(members)
-        except Exception as e:
-            return self._error(500, str(e))
-        return self._with_members({"ok": True, "container": name, "action": "restarted"}, members)
-
-    def service_stats(self) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            stats = self.broker.backend.service_stats()
-        except Exception as e:
-            return self._error(500, str(e))
-        return stats
-
-    def compose_up(self, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        service, invalid = self._compose_service(body)
-        if invalid:
-            return invalid
-        try:
-            # A named compose verb acts on the service's whole lifecycle group (the backend
-            # expands it through `bringup`), so every member is lease-checked too.
-            conflict = (self._group_lease_conflict(self._lifecycle_group(service)) if service
-                        else self._lease_conflict(None))
-        except LifecycleGroupUnknown as e:
-            return self._error(500, str(e))
-        if conflict:
-            return conflict
-        try:
-            self.broker.backend.compose_up(service)
-        except Exception as e:
-            return self._error(500, str(e))
-        return {"ok": True, "action": "compose-up"}
-
-    def compose_down(self, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        service, invalid = self._compose_service(body)
-        if invalid:
-            return invalid
-        try:
-            # Down REMOVES containers: an evicted resident taken down has nothing left for the
-            # scheduler to restore, and a whole-stack down ends the lease holder's work too.
-            conflict = (self._group_lease_conflict(self._lifecycle_group(service)) if service
-                        else self._lease_conflict(None))
-        except LifecycleGroupUnknown as e:
-            return self._error(500, str(e))
-        if conflict:
-            return conflict
-        try:
-            self.broker.backend.compose_down(service)
-        except Exception as e:
-            return self._error(500, str(e))
-        return {"ok": True, "action": "compose-down"}
-
-    def compose_restart(self, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        service, invalid = self._compose_service(body)
-        if invalid:
-            return invalid
-        try:
-            # A named compose verb acts on the service's whole lifecycle group (the backend
-            # expands it through `bringup`), so every member is lease-checked too.
-            conflict = (self._group_lease_conflict(self._lifecycle_group(service)) if service
-                        else self._lease_conflict(None))
-        except LifecycleGroupUnknown as e:
-            return self._error(500, str(e))
-        if conflict:
-            return conflict
-        try:
-            self.broker.backend.compose_restart(service)
-        except Exception as e:
-            return self._error(500, str(e))
-        return {"ok": True, "action": "compose-restart"}
 
     # --- Registry routes ---
     # Derived from the render on every call (ordo/render/served_models.py): which models the stack
