@@ -24,6 +24,7 @@ from typing import Any
 
 import yaml
 
+from . import backup_policy
 from .buildspec import BuildSpec
 from .plugins import parse_derived_env
 from .secret_files import SecretFileRef, parse_secret_files
@@ -71,6 +72,9 @@ class Agent:
     # render derives the env var LITELLM_KEY_<ID>, adds it to required secrets, and emits the grant
     # into out/model-gateway/keys.json for bootstrap_keys.py. Empty -> this agent gets no key.
     litellm_key: dict[str, Any] = dataclasses.field(default_factory=dict)
+    # How `ordo backup` saves each named volume the agent writes: {volume: method}
+    # (ordo/render/backup_policy.py).
+    backup: dict[str, str] = dataclasses.field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Agent:
@@ -95,6 +99,7 @@ class Agent:
             litellm_key=dict(d.get("litellm_key", {}) or {}),
             secrets=secrets,
             derived_env=parse_derived_env(f"agent {d.get('id')!r}", d),
+            backup=backup_policy.parse(f"agent {d.get('id')!r}", d.get("backup"), d.get("volumes") or []),
         )
 
     def image_for(self, project: str) -> str:

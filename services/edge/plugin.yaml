@@ -126,3 +126,8 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+# How `ordo backup` saves this manifest's named volumes (ordo/render/backup_policy.py).
+backup:
+  caddy_data: live             # TLS certificates and keys; written atomically
+  caddy_config: live           # Caddy's autosaved config

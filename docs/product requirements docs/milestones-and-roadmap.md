@@ -92,7 +92,7 @@
 
 **Phase 2 (degradation & recovery):** Provider fallback chains; per-tool / per-server circuit breakers; cold/warm model state; standardized timeout & retry budgets; auto-disable/quarantine unhealthy tools; ops-controller restart hooks; browser bridge session health / recycle.
 
-**Phase 3 (operator-grade):** SLO dashboard; version-pinned bundles; rollback; `BASE_PATH` backup/restore; config migration engine; expanded integration test matrix.
+**Phase 3 (operator-grade):** SLO dashboard; version-pinned bundles; rollback; `BASE_PATH` backup/restore (shipped: `ordo backup` / `ordo restore`, [data.md](../data.md#backup-and-recovery)); config migration engine; expanded integration test matrix.
 
 **Explicit non-goals:** Dashboard as required runtime dependency; ops-controller in hot path; new services before contracts harden; "restart fixes it" as primary strategy.
 

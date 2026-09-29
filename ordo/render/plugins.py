@@ -14,6 +14,7 @@ from typing import Any
 
 import yaml
 
+from . import backup_policy
 from .buildspec import BuildSpec
 from .gpu import GpuArbitration
 from .hardware import HardwareProfile
@@ -416,6 +417,9 @@ class Plugin:
     site_keys: tuple[str, ...] = ()
     # The UI's own SSO-gated edge port and the upstream it proxies (see EdgeSite). None -> no UI.
     edge_site: EdgeSite | None = None
+    # How `ordo backup` saves each named volume this plugin's services write: {volume: method}
+    # (ordo/render/backup_policy.py). Only volumes its own services mount.
+    backup: dict[str, str] = dataclasses.field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Plugin:
@@ -425,6 +429,10 @@ class Plugin:
         undeclared = [key for key in optional_secrets if key not in secrets]
         if undeclared:
             raise ValueError(f"plugin '{d['id']}': optional_secrets {undeclared} are not in its `secrets:` list")
+        kind = str(d.get("kind", "service"))
+        mcp = McpSpec.from_dict(dict(d.get("mcp", {}) or {}), plugin_id=str(d["id"])) if kind == "mcp" else None
+        services = tuple(PluginService.from_dict(s) for s in (d.get("services", []) or []))
+        mounts = [*(v for s in services for v in s.volumes), *(mcp.volumes if mcp else ())]
         return cls(
             id=str(d["id"]), name=str(d.get("name", d["id"])),
             description=str(d.get("description", "")),
@@ -435,16 +443,16 @@ class Plugin:
             compose_profile=str(d.get("compose_profile", "")),
             env={str(k): str(v) for k, v in (d.get("env", {}) or {}).items()},
             default=bool(d.get("default", True)),
-            kind=str(d.get("kind", "service")),
-            mcp=(McpSpec.from_dict(dict(d.get("mcp", {}) or {}), plugin_id=str(d["id"]))
-                 if str(d.get("kind", "service")) == "mcp" else None),
-            services=tuple(PluginService.from_dict(s) for s in (d.get("services", []) or [])),
+            kind=kind,
+            mcp=mcp,
+            services=services,
             secrets=secrets,
             optional_secrets=optional_secrets,
             build=BuildSpec.from_dict(d.get("build")),
             litellm_key=dict(d.get("litellm_key", {}) or {}),
             site_keys=tuple(str(k) for k in (req.get("site", []) or [])),
             edge_site=EdgeSite.from_manifest(d.get("edge_site"), f"plugin '{d['id']}'"),
+            backup=backup_policy.parse(f"plugin '{d['id']}'", d.get("backup"), mounts),
         )
 
     @property

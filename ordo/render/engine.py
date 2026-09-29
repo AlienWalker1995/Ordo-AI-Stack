@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-from . import compose, gpu, secret_files, substrate
+from . import backup_policy, compose, gpu, secret_files, substrate
 from .agents import AgentRegistry
 from .catalog import DEFAULT_VRAM_RESERVE_GB, Catalog, Model
 from .config import Source
@@ -308,6 +308,9 @@ class RenderedConfig:
     # The edge sites of every ENABLED UI, keyed by owner (core services, the selected dashboard,
     # the enabled plugins). compose publishes their ports on the edge listener.
     edge_sites: dict[str, EdgeSite] = dataclasses.field(default_factory=dict)
+    # {volume: method}: how `ordo backup` saves each named volume, as the core, the agent and the
+    # enabled plugins declare it (ordo/render/backup_policy.py).
+    backup: dict[str, str] = dataclasses.field(default_factory=dict)
 
     def resident_vram_gb(self) -> float:
         """The GPU footprint the resident LLM actually holds while cached: weights + KV at the
@@ -333,6 +336,7 @@ class RenderedConfig:
                              resident_vram_gb=self.resident_vram_gb())
 
     def manifest(self) -> dict[str, Any]:
+        doc = self.compose_dict()
         return {
             "hardware": self.hardware.summary(),
             "tier": self.tier,
@@ -356,7 +360,11 @@ class RenderedConfig:
             # out/secrets/<file>, per service that mounts it. Read off the rendered compose, the one
             # place every declaration (manifests and the core services) ends up.
             "secret_files": [{"key": key, "file": key.lower(), "service": service}
-                             for service, key in secret_files.secret_files_in(self.compose_dict())],
+                             for service, key in secret_files.secret_files_in(doc)],
+            # How `ordo backup` saves each named volume the rendered compose declares. A volume no
+            # manifest declares is left out, and the backup takes it with backup_policy.UNDECLARED_DEFAULT.
+            "backup": {volume: self.backup[volume] for volume in (doc.get("volumes") or {})
+                       if volume in self.backup},
             "warnings": self.warnings,
             **self._dashboard_sign_in(),
             # What this render was made from. ops-controller refuses to re-render over a render made
@@ -905,6 +913,11 @@ def render(source: Source, catalog: Catalog,
         llamacpp_backend=backend,
         first_party_images=tuple(sorted(first_party_contexts(plugins, agents, dashboards))),
         edge_sites=edge_sites,
+        backup=backup_policy.collect([
+            ("core", compose.CORE_BACKUP),
+            *([(f"agent {agent.id}", agent.backup)] if agent is not None else []),
+            *((f"plugin {p.id}", p.backup) for p in enabled),
+        ]),
     )
 
 

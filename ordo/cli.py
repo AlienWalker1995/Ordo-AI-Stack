@@ -10,6 +10,8 @@
     ordo recreate SVC…          # force-recreate services from the host (GPU-lease checked)
     ordo apply [--dry-run]      # the deploy: build, render, secrets, then recreate exactly what changed
     ordo secrets list|materialize|set|rotate|import   # the secret store (ordo/host/secret_store.py)
+    ordo backup [--out DIR]     # the config + every stateful volume, to one archive (ordo/host/backup.py)
+    ordo restore ARCHIVE        # put a backup back (refuses during a GPU lease)
 
 `render` writes to an output dir only (it starts nothing), and `serve`'s Docker backend is
 hard-scoped to the ordo project prefix so it only ever touches its own project's containers.
@@ -205,6 +207,24 @@ def main(argv: list[str] | None = None) -> int:
     pa.add_argument("--only", nargs="+", metavar="SERVICE", default=None,
                     help="recreate only these of the changed services (a changed ops-controller still goes first)")
     pa.set_defaults(func=_handler("ordo.host.cli_stack", "cmd_apply"))
+    # `backup` / `restore`: the stack's state (config + named volumes) to one archive and back. Each
+    # volume's method comes from its manifest's `backup:` declaration (ordo/render/backup_policy.py).
+    # `--out` is where the archive goes, so the rendered stack directory is `--stack` here.
+    pbk = sub.add_parser("backup", help="save the config and the stateful volumes to one archive")
+    pbk.add_argument("--out", dest="backup_dir", default=None,
+                     help="directory the archive is written to, outside the checkout (default: ~/ordo-backups)")
+    prs = sub.add_parser("restore", help="put a backup archive back (refuses during a GPU lease)")
+    prs.add_argument("archive", help="the .tar `ordo backup` wrote")
+    prs.add_argument("--allow-image-change", action="store_true",
+                     help="restore a file snapshot even though the rendered image differs from the one that wrote it")
+    for sp, func in ((pbk, _handler("ordo.host.cli_stack", "cmd_backup")),
+                     (prs, _handler("ordo.host.cli_stack", "cmd_restore"))):
+        sp.add_argument("--only", nargs="+", metavar="SERVICE", default=None,
+                        help="only the volumes these services mount (the config files are left out)")
+        sp.add_argument("--stack", default="out", help="the rendered stack directory (default: out)")
+        sp.add_argument("--project", default="ordo", help="compose project name (default: ordo)")
+        sp.add_argument("--dry-run", action="store_true", help="print the plan, change nothing")
+        sp.set_defaults(func=func)
     pv = sub.add_parser("serve")
     pv.add_argument("--host", default="0.0.0.0")
     pv.add_argument("--port", type=int, default=9000)

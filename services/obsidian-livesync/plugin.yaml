@@ -90,3 +90,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
+
+# How `ordo backup` saves this manifest's named volumes (ordo/render/backup_policy.py).
+backup:
+  couchdb-data: stopped        # CouchDB shards: snapshot with CouchDB stopped

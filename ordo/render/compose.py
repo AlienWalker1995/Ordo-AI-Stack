@@ -40,6 +40,17 @@ if TYPE_CHECKING:
 _CORE = ["llamacpp", "litellm-db", "model-gateway", "model-gateway-keys",
          "ops-controller", "dashboard"]
 
+# How `ordo backup` saves the named volumes the core services own (ordo/render/backup_policy.py);
+# the plugin and agent manifests declare theirs under `backup:`. The model stores are re-derivable
+# (`ordo fetch`, `download_comfyui_model`) and far larger than everything else put together. The
+# ComfyUI app tree holds the operator's custom nodes and has no database in it.
+CORE_BACKUP: dict[str, str] = {
+    "litellm-db-data": "pg_dump",
+    "models-gguf": "skip",
+    "comfyui-models": "skip",
+    "comfyui-app": "live",
+}
+
 # Build contexts for the SUBSTRATE images: the project images with NO manifest (`_model_gateway`,
 # `_ops_controller`, the gpu-gate, and the patched llama.cpp build a model's catalog `backend_image`
 # names). Manifest services (plugins/agents/dashboards) declare their own context via `build:` in

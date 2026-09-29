@@ -112,3 +112,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+# How `ordo backup` saves this manifest's named volumes (ordo/render/backup_policy.py).
+backup:
+  qdrant-data: stopped         # Qdrant segments: snapshot with Qdrant stopped
