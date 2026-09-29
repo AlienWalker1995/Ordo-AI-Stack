@@ -12,16 +12,23 @@ expiry time. The route is unauthenticated for that reason (Prometheus scrapes wi
 the same as /health.
 
 `render()` is pure (plain data in, text out) so it is tested without a scheduler, docker or a
-filesystem; `ControlPlane.metrics_text()` (ordo/control/api.py) gathers the inputs.
+filesystem; `MetricsCollector` gathers the inputs, and `ControlPlane.metrics_text()` serves them.
 """
 from __future__ import annotations
 
 import dataclasses
+import logging
 import os
 import ssl
 import subprocess
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .broker import Broker
+    from .scheduler import Scheduler
+
+logger = logging.getLogger(__name__)
 
 CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 
@@ -192,3 +199,45 @@ def read_cert_not_after(path: str) -> float:
         raise ValueError(f"openssl could not read {path}: {(proc.stderr or line).strip()[:200]}")
     # ssl.cert_time_to_seconds parses exactly openssl's "Dec 22 23:18:03 2026 GMT" form.
     return float(ssl.cert_time_to_seconds(line.removeprefix("notAfter=")))
+
+
+class MetricsCollector:
+    """Gathers one scrape's inputs. Each source is read on its own; one that fails is reported as a
+    failed collector and the rest are still served."""
+
+    def __init__(self, scheduler: Scheduler | None, broker: Broker | None, disk_paths: Mapping[str, str],
+                 tls_cert_files: Mapping[str, str]):
+        self.scheduler = scheduler
+        self.broker = broker
+        self.disk_paths = dict(disk_paths)
+        self.tls_cert_files = dict(tls_cert_files)
+
+    def text(self) -> str:
+        """The lease, container, disk and certificate state in the Prometheus text format."""
+        containers = restarts = None
+        if self.broker:
+            try:
+                containers = self.broker.backend.list_services().get("services", [])
+            except Exception as e:  # noqa: BLE001 - an unreadable docker is a failed collector, not a 500
+                logger.warning("metrics: cannot list the services: %s", e)
+            try:
+                restarts = self.broker.backend.service_restarts()
+            except Exception as e:  # noqa: BLE001 - same
+                logger.warning("metrics: cannot read the restart counts: %s", e)
+        disks: dict[str, DiskUsage | None] = {}
+        for mount, path in self.disk_paths.items():
+            try:
+                disks[mount] = DiskUsage.of(path)
+            except OSError as e:
+                logger.warning("metrics: cannot stat %s (%s): %s", path, mount, e)
+                disks[mount] = None
+        certs: dict[str, float | None] = {}
+        for name, path in self.tls_cert_files.items():
+            try:
+                certs[name] = read_cert_not_after(path)
+            except (OSError, ValueError) as e:
+                logger.warning("metrics: cannot read the %s certificate: %s", name, e)
+                certs[name] = None
+        return render(Inputs(
+            scheduler=self.scheduler.status() if self.scheduler else None,
+            containers=containers, restarts=restarts, disks=disks, tls_certs=certs))

@@ -24,41 +24,56 @@ Design constraints (from the architecture decisions + the drift lessons):
   - Every state-changing call (POST/PUT/PATCH/DELETE) leaves one audit record, whatever its
     outcome, refusals included. It is written in one place, `handle()` (plus the 401 and bad-JSON
     refusals in `app()`, which never reach it), so a new route is audited without opting in.
+
+`ControlPlane` is a facade. Each concern lives in its own module and is handed exactly the shared
+state it uses (the broker, the scheduler, the source, the GPU-lease check); `ControlPlane` builds
+them once and keeps one method per route handler, a one-line delegate, so the route table and
+every caller see one stable surface:
+
+  routes.py            the route table `route()` dispatches through
+  source.py            the operator source and out/: render, atomic write, substrate check
+  apply.py             the post-render step, and the source commit that rolls back on failure
+  model_config.py      GET/POST /model-config
+  plugin_install.py    GET /plugins, plugin enable and disable
+  doctor.py            GET /doctor: the drift `ordo doctor` reports, seen from here
+  lifecycle.py         the service, container and compose verbs, and the GPU-lease check they make
+  gpus.py              the GPU lease routes and the GPU views
+  managed_projects.py  OTHER compose projects: status, logs and a budgeted restart
+  comfyui.py           ComfyUI model downloads and custom-node requirements
+  diagnostics.py       the D-state scan
+  metrics.py           GET /metrics (served by `app()` as plain text, outside the route table)
+  call_audit.py        what an audit record says, and writing it
+  responses.py         the payload conventions: error(), as_response(), confirmed()
 """
 from __future__ import annotations
 
-import ipaddress
 import json
 import logging
 import os
-import re
-import socket
-import subprocess
 import threading
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
 
-import yaml
-
-from ..render import alerting, gpu_live, substrate
+from ..render import substrate
 from ..render.catalog import Catalog
-from ..render.changed_set import STOPPED_STATES, Change, diff_services, stale_one_shot_jobs
-from ..render.config import Source
-from ..render.engine import render
-from ..render.models_volume import CHAT_SERVICE, required_model_files
-from ..render.open_webui_probe import OPEN_WEBUI_PROBE, OPEN_WEBUI_SERVICE, open_webui_verdict
 from ..render.plugins import PluginRegistry
-from ..render.served_models import model_files, models_by_gpu, served_models
-from ..render.source_edit import edit_plugins_list
-from ..render.stack import lifecycle_group, plan_named
-from . import managed
+from . import diagnostics, gpus, routes
 from . import metrics as prom
 from . import principals as auth
-from .audit import AuditLog
-from .broker import SELF_REFERENTIAL_SERVICES, Broker
-from .scheduler import Job, Scheduler
+from .apply import RenderApply
+from .broker import Broker
+from .call_audit import ACTOR_HEADER, AUDITED_METHODS, CallAuditor, audit_actor, audited_read, lease_detail
+from .comfyui import ModelDownloads, NodeRequirements
+from .doctor import DriftReport
+from .gpus import LeaseJobs
+from .lifecycle import LeaseGuard, Lifecycle
+from .managed_projects import ManagedProjects
+from .model_config import ModelConfig
+from .plugin_install import PluginInstaller
+from .responses import as_response, error
+from .scheduler import Scheduler
+from .source import StackSource
 
 logger = logging.getLogger(__name__)
 
@@ -67,206 +82,10 @@ logger = logging.getLogger(__name__)
 METRICS_PATH = "/metrics"
 UNAUTHENTICATED_PATHS = frozenset({"/health", "/healthz", METRICS_PATH})
 
-# Service plugins Hermes may install/enable on request (kind=service, profile-gated). The core
-# substrate (llamacpp, litellm-db, model-gateway, model-gateway-keys, ops-controller, dashboard,
-# agent), the edge / front-door (edge, tailnet-names — secret-dependent, host `make up` only), and
-# the agent itself are NOT here, so they can never be created/removed via this path — the
-# allowlist is the security gate. Every kind=mcp plugin (an agent tool server) is installable as
-# well, derived from its manifest kind (see `_installable`): the dashboard's MCP toggle persists
-# through this same write path.
-INSTALLABLE_PLUGINS = frozenset({
-    "comfyui", "song-gen", "voice", "rag", "open-webui", "monitoring",
-    "automation", "searxng-web", "codebase-memory-ui", "obsidian-livesync", "llamacpp-cpu",
-})
-
-# Model download validation (matches ops-api)
-COMFYUI_CATEGORIES = (
-    "checkpoints", "loras", "text_encoders", "latent_upscale_models",
-    "vae", "unet", "clip", "clip_vision", "controlnet", "embeddings",
-    "upscale_models", "diffusion_models", "vae_approx",
-)
-
-_MODEL_DOWNLOAD_ALLOWED_HOSTS = {
-    "huggingface.co", "hf-mirror.com", "cdn-lfs.huggingface.co",
-    "cdn-lfs-us-1.huggingface.co", "cdn-lfs-eu-1.huggingface.co",
-    "civitai.com", "github.com", "objects.githubusercontent.com",
-}
-
 COMFYUI_MODELS_DIR = Path(os.environ.get("COMFYUI_MODELS_DIR", "/models/comfyui"))
 AUDIT_LOG_PATH = Path(os.environ.get("AUDIT_LOG_PATH", "/data/audit.jsonl"))
 COMFYUI_CUSTOM_NODES_DIR = Path(os.environ.get("COMFYUI_CUSTOM_NODES_DIR", "/comfyui-app/ComfyUI/custom_nodes"))
 COMFYUI_CONTAINER_NAME = os.environ.get("COMFYUI_CONTAINER_NAME", "ordo-comfyui-1")
-# One path segment of a ComfyUI custom-node pack. Deliberately narrower than the filesystem
-# allows: the segment is interpolated into a container path that a pip invocation then reads.
-_NODE_PATH_SEGMENT = re.compile(r"[A-Za-z0-9._-]{1,64}")
-
-# --- confirmation ---
-CONFIRM_REQUIRED = ('Destructive operation requires confirmation. Set {"confirm": true} in the request body '
-                    "to proceed.")
-
-
-def confirmed(body: dict[str, Any]) -> bool:
-    """True only when the body says `"confirm": true` (JSON true). Any other value, "no" and "false"
-    included, is not a confirmation: a truthiness check would let those run a destructive action."""
-    return body.get("confirm") is True
-
-
-# --- audit ---
-# Every call with one of these methods changes state (or asks to), so it leaves one audit record
-# whatever its outcome. GET/HEAD never do; a read would flood the log (Hermes polls).
-AUDITED_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-AUDIT_READ_LIMIT_MAX = 1000
-# Who asked, as the caller names itself. Unauthenticated callers can send anything, so the value
-# is reduced to a short, safe token before it is written.
-ACTOR_HEADER = "x-actor"
-_ACTOR_UNSAFE = re.compile(r"[^A-Za-z0-9_.:@-]")
-_ACTOR_MAX = 64
-_AUDIT_FIELD_MAX = 200
-_AUDIT_ERROR_MAX = 300
-# (path prefix, path suffix, action): the target is the path segment between them.
-_AUDIT_PATH_VERBS = (
-    ("/services/", "/start", "start"),
-    ("/services/", "/stop", "stop"),
-    ("/services/", "/restart", "restart"),
-    ("/services/", "/recreate", "recreate"),
-    ("/containers/", "/restart", "container.restart"),
-    ("/plugins/", "/enable", "plugin.enable"),
-    ("/plugins/", "/disable", "plugin.disable"),
-    ("/registry/models/", "/assign-gpu", "gpu_assign"),
-)
-# path: (action, the one body field that names the target).
-_AUDIT_BODY_VERBS = {
-    "/model-config": ("model_config", "model"),
-    "/jobs": ("lease.request", "id"),
-    "/jobs/complete": ("lease.release", "id"),
-    "/jobs/heartbeat": ("lease.heartbeat", "id"),
-    "/compose/up": ("compose.up", "service"),
-    "/compose/down": ("compose.down", "service"),
-    "/compose/restart": ("compose.restart", "service"),
-    "/models/download": ("models.download", "filename"),
-    "/comfyui/install-node-requirements": ("comfyui_pip_install", "node_path"),
-    "/gpu/assign": ("gpu_assign", "service"),
-}
-# path: (action, target) for a call that acts on the whole rendered stack.
-_AUDIT_FIXED_VERBS = {
-    "/apply": ("apply", "stack"),
-}
-
-
-def _clip(value: Any, limit: int = _AUDIT_FIELD_MAX) -> str:
-    return str(value)[:limit]
-
-
-def audit_actor(header: str | None) -> str:
-    """The caller's self-declared name from `X-Actor`, made safe to log; 'unknown' when absent."""
-    actor = _ACTOR_UNSAFE.sub("", (header or "").strip())[:_ACTOR_MAX]
-    return actor or "unknown"
-
-
-# POST /projects/{project}/containers/{name}/restart: a managed project's container (managed.py).
-_PROJECT_RESTART = re.compile(r"^/projects/([^/]+)/containers/([^/]+)/restart$")
-# GET /projects/{project}/containers/{name}/logs: another project's logs. The one READ that is
-# audited: log output is that project's data, so every read of it leaves a record.
-_PROJECT_LOGS = re.compile(r"^/projects/([^/]+)/containers/([^/]+)/logs$")
-
-
-def audited_read(method: str, path: str) -> bool:
-    return method.upper() == "GET" and _PROJECT_LOGS.match(path) is not None
-
-
-def audit_subject(path: str, body: Any) -> tuple[str, str]:
-    """(action, target) for a state-changing call. Reads only the one body field that names the
-    target, so nothing else a caller sends (a URL's query string, a credential) reaches the log."""
-    project_restart = _PROJECT_RESTART.match(path)
-    if project_restart:
-        return "project.restart", _clip(f"{project_restart.group(1)}/{project_restart.group(2)}")
-    project_logs = _PROJECT_LOGS.match(path)
-    if project_logs:
-        return "project.logs", _clip(f"{project_logs.group(1)}/{project_logs.group(2)}")
-    for prefix, suffix, action in _AUDIT_PATH_VERBS:
-        if path.startswith(prefix) and path.endswith(suffix) and len(path) > len(prefix) + len(suffix):
-            return action, _clip(path[len(prefix):-len(suffix)])
-    if path in _AUDIT_FIXED_VERBS:
-        return _AUDIT_FIXED_VERBS[path]
-    if path not in _AUDIT_BODY_VERBS:
-        return "unknown", ""
-    action, field = _AUDIT_BODY_VERBS[path]
-    fields = body if isinstance(body, dict) else {}
-    target = str(fields.get(field) or "").strip()
-    if action == "models.download" and not target:
-        # The file name the download would use: the URL's last path segment, never its query.
-        target = urlparse(str(fields.get("url") or "")).path.rsplit("/", 1)[-1]
-    return action, _clip(target)
-
-
-# /projects/{project}/containers[/{name}/{verb}]: one segment each, so a name never carries a slash.
-_MANAGED_ROUTE = re.compile(r"^/projects/(?P<project>[^/]+)/containers(?:/(?P<name>[^/]+)/(?P<verb>[^/]+))?$")
-
-
-def _project_rows(containers: list[dict]) -> list[dict]:
-    """Each managed-project row reduced to managed.ROW_FIELDS: no field a backend adds leaks."""
-    return [{field: row.get(field) for field in managed.ROW_FIELDS} for row in containers]
-
-
-def audit_result(status: int) -> str:
-    if status < 400:
-        return "ok"
-    return "refused" if status < 500 else "error"
-
-
-def _validate_download_url(url: str) -> None:
-    """Block SSRF: only allow HTTPS to known model-hosting domains, reject private IPs."""
-    parsed = urlparse(url)
-    if parsed.scheme != "https" or parsed.port not in (None, 443):
-        raise ValueError("URL must use HTTPS on the standard port")
-    host = (parsed.hostname or "").lower()
-    if not host:
-        raise ValueError("Cannot parse hostname from URL")
-    if host not in _MODEL_DOWNLOAD_ALLOWED_HOSTS:
-        raise ValueError(
-            f"Host {host!r} not in allowed list. "
-            f"Allowed: {', '.join(sorted(_MODEL_DOWNLOAD_ALLOWED_HOSTS))}"
-        )
-    try:
-        for info in socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM):
-            addr = ipaddress.ip_address(info[4][0])
-            if addr.is_private or addr.is_reserved or addr.is_loopback or addr.is_link_local:
-                raise ValueError(f"Host {host!r} resolves to private/reserved IP {addr}")
-    except socket.gaierror as exc:
-        raise ValueError(f"Cannot resolve host {host!r}: {exc}") from exc
-
-
-def _validated_redirect_url(current_url: str, location: str) -> str:
-    redirect_url = urljoin(current_url, location)
-    _validate_download_url(redirect_url)
-    return redirect_url
-
-
-def _auto_detect_category(url: str, filename: str) -> str:
-    """Auto-detect ComfyUI model category from URL/filename."""
-    url_lower = url.lower()
-    name_lower = filename.lower()
-    for cat in sorted(COMFYUI_CATEGORIES, key=len, reverse=True):
-        if cat in url_lower or cat in name_lower:
-            return cat
-    combined = f"{url_lower} {name_lower}"
-    for keyword, category in (
-        ("lora", "loras"),
-        ("text_encoder", "text_encoders"),
-        ("clip", "text_encoders"),
-        ("vae", "vae"),
-        ("unet", "unet"),
-        ("controlnet", "controlnet"),
-        ("upscale", "upscale_models"),
-        ("embedding", "embeddings"),
-    ):
-        if keyword in combined:
-            return category
-    return "checkpoints"
-
-
-class LifecycleGroupUnknown(Exception):
-    """The rendered compose could not be read, so a service's netns members are unknown."""
 
 
 class ControlPlane:
@@ -283,121 +102,54 @@ class ControlPlane:
         disk_paths: dict[str, str] | None = None,
         tls_cert_files: dict[str, str] | None = None,
     ):
-        self.source_path = Path(source_path)
-        # What GET /metrics reports beyond the scheduler and the containers: {mount label: a path on
-        # that filesystem} and {cert name: a PEM file}. Empty = not reported (ordo/control/serve.py
-        # wires the real ones).
-        self.disk_paths = dict(disk_paths or {})
-        self.tls_cert_files = dict(tls_cert_files or {})
-        # Lists the file names in the models volume (None: it could not be listed). A model switch
-        # checks the target's files against it before writing anything. None = no volume to check
-        # (a control plane without the Docker socket, and the unit tests that do not wire one).
-        self.model_volume_files = model_volume_files
-        self.catalog = catalog
-        self.registry = registry
-        self.out_dir = Path(out_dir)
+        # The source and out/, and what this process renders them with. `model_volume_files` lists
+        # the file names in the models volume (None: it could not be listed); None = no volume to
+        # check (a control plane without the Docker socket, and the unit tests that do not wire one).
+        self.source = StackSource(Path(source_path), catalog, registry, Path(out_dir), substrate.current_digest())
         self.scheduler = scheduler
         self.broker = broker
-        self.history = history  # LeaseHistory sink (shared with the broker) — /jobs/history
-        # The digest of the render inputs this process ships (its baked copy, in the image).
-        self.substrate_digest = substrate.current_digest()
-        # Slice 3: model download/pull state (in-process, not persisted)
-        self._dl_lock = threading.Lock()
-        self._dl_status = {"running": False, "output": "", "done": True, "success": None, "progress": 0, "filename": "", "category": ""}
-        # The audit sink: `handle()` writes one record per state-changing call. Built on first use
-        # from AUDIT_LOG_PATH (read then, so tests can point it elsewhere); it creates its
-        # directory on the first write only.
-        self._audit_log: AuditLog | None = None
-        self._audit_init_lock = threading.Lock()
+        self.history = history  # LeaseHistory sink (shared with the broker): /jobs/history
         # Requests run concurrently on worker threads (see app()), so the verbs that change the
         # stack take this lock, one at a time (`_exclusive`). It is the broker's operation lock, the
         # one a GPU lease transition takes, so a lease cannot evict a resident mid-verb either. A
         # control plane without a broker only needs its source writes kept apart.
         self._operation_lock = broker.operation_lock if broker else threading.RLock()
-        # Restarts of managed-project containers: at most 3 per container per hour (managed.py).
-        self._restart_budget = managed.RestartBudget()
+        # `handle()` writes one audit record per state-changing call. AUDIT_LOG_PATH is read when
+        # the log is first used, so a test can point it elsewhere after construction.
+        self.auditor = CallAuditor(lambda: AUDIT_LOG_PATH)
+        # One object per concern, each handed exactly the shared state it uses. The GPU-lease check
+        # is shared by the lifecycle verbs and the post-render apply.
+        self.lease = LeaseGuard(scheduler)
+        self.lifecycle = Lifecycle(broker, self.lease)
+        self.applier = RenderApply(self.source, broker, self.lease, model_volume_files)
+        self.model_config = ModelConfig(self.source, self.applier, model_volume_files)
+        self.plugins = PluginInstaller(self.source, self.applier)
+        self.drift = DriftReport(self.source, self.applier, broker)
+        self.lease_jobs = LeaseJobs(broker, scheduler)
+        # What GET /metrics reports beyond the scheduler and the containers: {mount label: a path on
+        # that filesystem} and {cert name: a PEM file}. Empty = not reported (ordo/control/serve.py
+        # wires the real ones).
+        self.metrics = prom.MetricsCollector(scheduler, broker, disk_paths or {}, tls_cert_files or {})
+        self.managed_projects = ManagedProjects(broker, self.source.path)
+        # ComfyUI's files. Their locations are read from this module's settings when used, so a test
+        # can repoint them after construction.
+        self.downloads = ModelDownloads(lambda: COMFYUI_MODELS_DIR)
+        self.node_requirements = NodeRequirements(broker, lambda: COMFYUI_CUSTOM_NODES_DIR,
+                                                  lambda: COMFYUI_CONTAINER_NAME)
 
+    @property
+    def source_path(self) -> Path:
+        return self.source.path
 
-    # --- core operations (pure, testable) ---
+    @property
+    def substrate_digest(self) -> str:
+        return self.source.substrate_digest
+
+    # --- Status, the model switch, plugins, the post-render apply and the drift report (source.py,
+    # model_config.py, plugin_install.py, apply.py, doctor.py) ---
+
     def _render(self) -> Any:
-        return render(Source.load(self.source_path), self.catalog, self.registry)
-
-    def _substrate_conflict(self) -> dict[str, Any] | None:
-        """A 409 payload when out/ was last rendered from different inputs than this process ships.
-
-        Rendering over it would silently revert whatever the newer side changed (the image renders
-        from its own baked copy of ordo/, catalog/ and the manifests). No manifest, or one written
-        before renders recorded a digest, is allowed: this render then records ours.
-        """
-        try:
-            recorded = self._recorded_substrate_digest()
-        except (OSError, ValueError, AttributeError) as e:
-            return self._error(409, f"cannot read {self.out_dir / 'manifest.json'} to check the render substrate "
-                               f"({e}); re-render from the host checkout, then retry")
-        if recorded is None or recorded == self.substrate_digest:
-            return None
-        return self._error(
-            409,
-            f"ops-controller's render substrate ({self.substrate_digest[:12]}) differs from the last "
-            f"host render's ({str(recorded)[:12]}): the image is older or newer than the checkout that "
-            "rendered out/, and a render here would silently change what that checkout rendered. "
-            "Rebuild ordo/ops-controller from the checkout that rendered out/ (`ordo build "
-            "ops-controller`), re-render, then `ordo recreate ops-controller`.",
-            substrate_digest=self.substrate_digest, rendered_substrate_digest=recorded)
-
-    def _recorded_substrate_digest(self) -> str | None:
-        """The substrate digest the last render recorded in out/manifest.json. None when there is
-        no manifest or it was written before renders recorded one. Raises OSError, ValueError or
-        AttributeError when the manifest cannot be read."""
-        manifest_path = self.out_dir / "manifest.json"
-        if not manifest_path.exists():
-            return None
-        recorded = json.loads(manifest_path.read_text(encoding="utf-8")).get("substrate_digest")
-        return str(recorded) if recorded else None
-
-    def doctor(self) -> dict[str, Any]:
-        """`GET /doctor`: the drift `ordo doctor` reports, seen from the control plane. Read-only.
-
-        Each check is judged by the function `ordo doctor` uses, never a copy: this process's
-        substrate digest against the one the last render recorded in out/manifest.json
-        (`substrate.substrate_verdict`; the host compares the running ops-controller with its
-        checkout, which this process cannot see), and the open-webui probe (`open_webui_verdict`),
-        run once in its container when it is running. `detail` is the CLI's report line without
-        its "! " finding marker. The dashboard's Overview shows the failed checks.
-        """
-        checks = [("substrate", *self._substrate_drift()), (OPEN_WEBUI_SERVICE, *self._open_webui_drift()),
-                  ("alerting", *self._alerting_drift())]
-        rows = [{"check": name, "ok": ok, "detail": line.removeprefix("! ")} for name, ok, line in checks]
-        return {"ok": all(row["ok"] for row in rows), "checks": rows}
-
-    def _substrate_drift(self) -> tuple[bool, str]:
-        try:
-            recorded = self._recorded_substrate_digest()
-        except (OSError, ValueError, AttributeError) as e:
-            return False, f"! substrate: cannot read {self.out_dir / 'manifest.json'} ({e})"
-        if recorded is None:
-            return True, f"substrate: ops-controller {self.substrate_digest[:12]}; out/ records no digest yet"
-        return substrate.substrate_verdict(self.substrate_digest, recorded, reference_name="the last render",
-                                           rebuild_from="the checkout that rendered out/")
-
-    def _alerting_drift(self) -> tuple[bool, str]:
-        """The alert-delivery verdict `ordo doctor` gives, from the secret files materialized in out/."""
-        try:
-            compose = self._render().compose_dict()
-        except Exception as e:  # noqa: BLE001 - an unrenderable source is reported, not raised
-            return False, f"! alerting: cannot render the source to check alert delivery ({type(e).__name__}: {e})"
-        return alerting.check(compose, self.out_dir)
-
-    def _open_webui_drift(self) -> tuple[bool, str]:
-        """The open-webui verdict `ordo doctor` gives: "not running" is fine, a failed probe is not."""
-        if not self.broker:
-            return False, "! open-webui: cannot be checked: this control plane has no container backend"
-        try:
-            rows = self.broker.backend.list_services().get("services", [])
-        except Exception as e:  # noqa: BLE001 - an unreadable stack is reported, not raised
-            return False, f"! open-webui: cannot read the running services ({type(e).__name__}: {e})"
-        running = any(row.get("id") == OPEN_WEBUI_SERVICE and row.get("state") == "running" for row in rows)
-        return self._open_webui_verdict() if running else open_webui_verdict(None)
+        return self.source.render()
 
     def status(self) -> dict[str, Any]:
         """Live status: GPU/scheduler state + the current rendered manifest."""
@@ -410,1201 +162,161 @@ class ControlPlane:
             out["gpu"]["state_persisted"] = bool(self.broker and self.broker.state_persisted)
         return out
 
+    def health(self) -> dict[str, Any]:
+        """The container healthcheck. The digest is not secret; `ordo doctor` reads it here to compare
+        with the checkout."""
+        return {"ok": True, "substrate_digest": self.substrate_digest}
+
     def get_model_config(self) -> dict[str, Any]:
-        src = Source.load(self.source_path)
-        rc = self._render()
-        mmproj = rc.env.get("LLAMACPP_MMPROJ") or ""
-        return {
-            "source_model": src.model,           # what the source asks for ("auto" or an id)
-            "active_model": rc.model.id,          # what best-fit/override actually resolved to
-            # The GGUF the resolved model serves. Consumers that key by file (throughput
-            # attribution, the dashboard's installed check) need this, not the catalog id.
-            "active_file": rc.model.file,
-            # The vision projector llama.cpp loads beside it (a bare file name, like active_file).
-            "active_mmproj": mmproj.rsplit("/", 1)[-1] or None,
-            # Every file a rendered service loads (chat model + projector, CPU fallback, embed):
-            # the dashboard's delete guard protects exactly these.
-            "model_files": [{"file": f.file, "service": f.service, "optional": f.optional}
-                            for f in model_files(rc.compose_dict(), rc.env)],
-            "tier": rc.tier,
-            "ctx_size": rc.ctx_size,
-            "available": [
-                {"id": m.id, "tier": m.tier, "vram_gb": m.vram_gb, "file": m.file}
-                for m in self.catalog.models
-            ],
-        }
+        return self.model_config.get()
 
     def set_model_config(self, body: dict[str, Any]) -> dict[str, Any]:
-        """Switch the active model the drift-safe way: write the SOURCE, re-render, then apply.
-
-        `.env`, Hermes context, and model-gateway ctx are all regenerated from the new source in
-        one pass — they cannot end up disagreeing. `model: "auto"` hands control back to best-fit.
-        The render decides what restarts (`apply_render`): llama.cpp and the gateway, the CPU
-        fallback and the agent when the context window changed, whatever else the render touched.
-        The response's `apply` says what was recreated and what the host must finish.
-        """
-        model_id = str(body.get("model", "")).strip()
-        if not model_id:
-            return self._error(400, "body must include 'model' (a catalog id or 'auto')")
-        if model_id != "auto" and self.catalog.get(model_id) is None:
-            ids = [m.id for m in self.catalog.models]
-            return self._error(404, f"model '{model_id}' not in catalog", available=ids)
-        conflict = self._substrate_conflict()
-        if conflict:
-            return conflict
-
-        # ONE write path: mutate only the model key of the raw source, preserving everything else.
-        raw = yaml.safe_load(self.source_path.read_text(encoding="utf-8")) or {}
-        raw["model"] = model_id
-        rc = render(Source.from_dict(raw), self.catalog, self.registry)
-        missing = self._missing_model_files(rc)
-        if missing:
-            return missing
-        applied, failure = self._commit_source(yaml.safe_dump(raw, sort_keys=False), rc)
-        if failure:
-            return failure
-        return {"ok": True, "active_model": rc.model.id, "ctx_size": rc.ctx_size,
-                "warnings": rc.warnings, "wrote": str(self.out_dir), "apply": applied}
-
-    def _missing_model_files(self, target: Any) -> dict[str, Any] | None:
-        """A refusal when the chat service would load a file the models volume lacks, else None.
-
-        Checked before the source is written: the post-render step recreates llama.cpp right after
-        a switch, and onto a missing weights file it crash-loops (a missing projector leaves it running
-        without vision while model-gateway advertises vision). The fix is deliberately NOT a
-        download from here: tens of GB is the host's `ordo fetch` (resumable, preflighted for
-        disk), and a download inside this process would die with every ops-controller recreate."""
-        if self.model_volume_files is None:
-            return None
-        present = self.model_volume_files()
-        if present is None:
-            return self._error(503, "cannot list the models volume to confirm the model's files are in "
-                                    "place; not switching")
-        needed = [f for f in model_files(target.compose_dict(), target.env) if f.service == CHAT_SERVICE]
-        missing = [need.file for need in needed if need.file not in present]
-        if not missing:
-            return None
-        command = f"ordo fetch {target.model.id}"
-        verb = "is" if len(missing) == 1 else "are"
-        return self._error(409, f"{', '.join(missing)} {verb} not in the models volume: run `{command}` on "
-                                "the host, then switch again", missing_files=missing, fetch_command=command)
-
-    # --- service-plugin install/enable (render authority for Hermes-driven onboarding) ---
-    def _secrets_present(self) -> set[str]:
-        """Secret KEYS with a non-empty value in out/secrets.env (empty if the file is absent). Lets an
-        enable request tell whether a service's secrets are provisioned, so a secret-dependent service
-        is escalated to a host `make up` rather than started broken."""
-        p = self.out_dir / "secrets.env"
-        present: set[str] = set()
-        if p.exists():
-            for line in p.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, _, v = line.partition("=")
-                if v.strip().strip('"').strip("'"):
-                    present.add(k.strip())
-        return present
-
-    def _deps_closure(self, plugin_id: str, already: set[str]) -> list[str]:
-        """`plugin_id` + its transitive `depends_on` not already enabled — the set that must be added
-        to the plugins list so the target resolves (the dep gate drops a plugin whose deps are off)."""
-        need: list[str] = []
-        seen = set(already)
-        stack = [plugin_id]
-        while stack:
-            pid = stack.pop()
-            if pid in seen:
-                continue
-            seen.add(pid)
-            need.append(pid)
-            p = self.registry.get(pid)
-            if p:
-                stack.extend(d for d in p.depends_on if d not in seen)
-        return need
-
-    def _installable(self, plugin_id: str) -> bool:
-        """The allowlisted service plugins plus every kind=mcp plugin in the registry."""
-        if plugin_id in INSTALLABLE_PLUGINS:
-            return True
-        plugin = self.registry.get(plugin_id)
-        return plugin is not None and plugin.kind == "mcp"
-
-    def _installable_ids(self) -> list[str]:
-        return sorted(p.id for p in self.registry.plugins if self._installable(p.id))
-
-    @staticmethod
-    def _enabled_ids(rc: Any) -> set[str]:
-        """Every plugin a render enabled. `plugins_enabled` lists only kind=service plugins; the
-        enabled kind=mcp plugins are the ones behind its MCP servers."""
-        return set(rc.plugins_enabled) | {s["plugin_id"] for s in rc.mcp_servers}
-
-    def _plugin_view(self, p: Any, enabled: set[str], present: set[str], hw: Any) -> dict[str, Any]:
-        return {
-            "id": p.id, "name": p.name, "description": p.description,
-            "services": [s.name for s in p.services],
-            "compose_profile": p.compose_profile,
-            "secrets": list(p.secrets),
-            "missing_secrets": [k for k in p.secrets if k not in present],
-            "fits": p.fits(hw),
-            "enabled": p.id in enabled,
-        }
+        return self.model_config.set(body)
 
     def list_plugins(self) -> dict[str, Any]:
-        """The installable-service catalog for the agent skill: each allowlisted plugin with its
-        services, compose profile, secret keys, hardware fit, and whether it's already enabled."""
-        rc = self._render()
-        enabled = self._enabled_ids(rc)
-        present = self._secrets_present()
-        return {"plugins": [
-            self._plugin_view(p, enabled, present, rc.hardware)
-            for p in self.registry.plugins if self._installable(p.id)
-        ]}
+        return self.plugins.list_plugins()
 
     def enable_plugin(self, plugin_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Enable a service plugin the drift-safe way (same one-write-path as set_model_config): add
-        it (+ any unmet deps) to ordo.yaml's `plugins:` list, re-render, regenerate out/, then apply
-        (`apply_render`), which creates its services. Under `plugins: auto` a fitting plugin is
-        ALREADY rendered, so nothing is written and the apply alone creates whatever of it is not
-        running. A service whose secrets out/secrets.env lacks is rendered but left to the host.
-        Refuses anything not installable (`_installable`), and anything that doesn't fit the hardware."""
-        if not self._installable(plugin_id):
-            return self._error(403, f"'{plugin_id}' is not an installable service (core, edge/"
-                               "front-door, and the agent are refused)",
-                               installable=self._installable_ids())
-        plugin = self.registry.get(plugin_id)
-        if plugin is None:
-            return self._error(404, f"plugin '{plugin_id}' is not in the registry")
-        if body.get("dry_run"):
-            return {"would": "enable", "plugin": plugin_id}
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        src = Source.load(self.source_path)
-        rc = self._render()
-        hw = rc.hardware
-        services = [s.name for s in plugin.services]
-        present = self._secrets_present()
-
-        if plugin_id in self._enabled_ids(rc):
-            # Already rendered (the common case under plugins: auto): no source edit, only the apply.
-            applied = self.apply_render() if self.broker else None
-            if applied is not None and "_status" in applied:
-                return applied
-            return {"ok": True, "already_rendered": True, "plugin": plugin_id,
-                    "services": services, "compose_profile": plugin.compose_profile,
-                    "wants_secrets": bool(plugin.secrets),
-                    "missing_secrets": [k for k in plugin.secrets if k not in present],
-                    "warnings": [], "apply": applied}
-
-        if not plugin.fits(hw):
-            _, notes = self.registry.resolve([plugin_id], hw)
-            reason = next((n for n in notes if plugin_id in n),
-                          f"'{plugin_id}' does not fit this hardware")
-            return self._error(409, reason)
-
-        missing_site_keys = plugin.missing_site_keys(src.site)
-        if missing_site_keys:
-            return self._error(409, f"'{plugin_id}' needs site key(s) {', '.join(missing_site_keys)}: "
-                               "set them under `site:` in ordo.yaml, then render")
-
-        if src.plugins == "auto" or src.plugins is None:
-            # fits + auto but not enabled -> a dependency was gated off (dropped by the dep fixpoint)
-            _, notes = self.registry.resolve([plugin_id], hw)
-            reason = next((n for n in notes if plugin_id in n),
-                          f"'{plugin_id}' could not be enabled (an unmet dependency)")
-            return self._error(409, reason)
-
-        # explicit plugin list: add the plugin + any unmet deps, VALIDATE the render, then persist.
-        to_add = self._deps_closure(plugin_id, self._enabled_ids(rc))
-        blocked = [pid for pid in to_add if not self._installable(pid)]
-        if blocked:
-            return self._error(409, f"'{plugin_id}' requires {blocked}, which are not installable")
-        text = self.source_path.read_text(encoding="utf-8")
-        try:
-            for pid in to_add:
-                text = edit_plugins_list(text, pid, "add")
-        except ValueError as e:
-            return self._error(422, f"cannot safely edit ordo.yaml plugins list: {e}")
-        edited = Source.from_dict(yaml.safe_load(text))
-        rc2 = render(edited, self.catalog, self.registry)
-        if plugin_id not in self._enabled_ids(rc2):
-            return self._error(409, f"'{plugin_id}' still not enabled after the edit (unmet "
-                               "dependency or fit) — nothing written")
-        conflict = self._substrate_conflict()
-        if conflict:
-            return conflict
-        # commit: ONE write path: the source text, then every derived output, then the apply.
-        applied, failure = self._commit_source(text, rc2)
-        if failure:
-            return failure
-        return {"ok": True, "already_rendered": False, "plugin": plugin_id,
-                "services": services, "compose_profile": plugin.compose_profile,
-                "wants_secrets": bool(plugin.secrets),
-                "missing_secrets": [k for k in plugin.secrets if k not in self._secrets_present()],
-                "added": to_add, "warnings": rc2.warnings, "wrote": str(self.out_dir), "apply": applied}
+        return self.plugins.enable(plugin_id, body)
 
     def disable_plugin(self, plugin_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Remove a service plugin from an EXPLICIT plugins list, re-render, then apply (symmetric to
-        enable): the plugin's services, which the render no longer defines, are stopped, and whatever
-        the render changed for the rest (the gateway, for an MCP server) is recreated. Under
-        `plugins: auto` there is no list item to remove, so a disable could not persist: it is
-        refused with the fix (an explicit list) and nothing is stopped."""
-        if not self._installable(plugin_id):
-            return self._error(403, f"'{plugin_id}' is not an installable service")
-        plugin = self.registry.get(plugin_id)
-        if plugin is None:
-            return self._error(404, f"plugin '{plugin_id}' is not in the registry")
-        if body.get("dry_run"):
-            return {"would": "disable", "plugin": plugin_id}
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        services = [s.name for s in plugin.services]
-        src = Source.load(self.source_path)
-        if src.plugins == "auto" or src.plugins is None:
-            return self._error(409, "ordo.yaml has `plugins: auto`, which enables every fitting plugin: "
-                                    f"'{plugin_id}' cannot be disabled without an explicit `plugins:` list "
-                                    "there. Nothing was changed.", plugin=plugin_id)
-        text = self.source_path.read_text(encoding="utf-8")
-        try:
-            new_text = edit_plugins_list(text, plugin_id, "remove")
-        except ValueError as e:
-            return self._error(422, f"cannot safely edit ordo.yaml plugins list: {e}")
-        if new_text == text:
-            return {"ok": True, "already_absent": True, "plugin": plugin_id, "services": services}
-        conflict = self._substrate_conflict()
-        if conflict:
-            return conflict
-        edited = Source.from_dict(yaml.safe_load(new_text))
-        rc2 = render(edited, self.catalog, self.registry)
-        applied, failure = self._commit_source(new_text, rc2)
-        if failure:
-            return failure
-        return {"ok": True, "plugin": plugin_id, "services": services, "wrote": str(self.out_dir),
-                "apply": applied}
-
-    # --- the post-render step: recreate exactly what a render changed ---
-
-    def _commit_source(self, text: str, rendered: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        """Write `text` as the operator source, write its render to out/, then apply it.
-
-        Returns (the apply result, None), or (None, a failure payload) when the apply refused or
-        failed: the previous source is then written back, re-rendered and re-applied, so the source
-        never names a config the stack is not running. The apply result is None when this control
-        plane has no container backend (a hand-run or test instance): nothing is recreated then.
-        """
-        previous_text = self.source_path.read_text(encoding="utf-8")
-        self._write_source(text)
-        rendered.write(self.out_dir)
-        if not self.broker:
-            return None, None
-        # A service the new render no longer defines (a disabled plugin's) is stopped by the apply.
-        applied = self.apply_render()
-        if "_status" not in applied:
-            return applied, None
-        self._write_source(previous_text)
-        self._render().write(self.out_dir)
-        rollback = self.apply_render()
-        if rollback.pop("_status", None) is None:
-            outcome = "ordo.yaml and out/ were rolled back and the previous render re-applied"
-        else:
-            outcome = (f"ordo.yaml and out/ were rolled back, but re-applying the previous render failed "
-                       f"too ({rollback.get('error')}); run `ordo apply` on the host")
-        applied["error"] = f"{applied['error']}; {outcome}"
-        applied["rolled_back"] = True
-        applied["rollback"] = rollback
-        return None, applied
-
-    def _write_source(self, text: str) -> None:
-        """Replace the operator source atomically (a temp file, then a rename): a read-only request
-        rendering it on another thread (GET /status) sees the old file or the new one, never half."""
-        temp = self.source_path.with_name(self.source_path.name + ".tmp")
-        temp.write_text(text, encoding="utf-8")
-        os.replace(temp, self.source_path)
-
-    def _secret_holds(self, rc: Any) -> dict[str, list[str]]:
-        """service -> the required secrets out/secrets.env lacks, for each enabled plugin's services
-        (its compose services and its MCP server's). Started without them they crash-loop, so the
-        post-render step leaves them to the host (`ordo secrets set`, then `ordo apply`)."""
-        present = self._secrets_present()
-        holds: dict[str, list[str]] = {}
-        for plugin_id in sorted(self._enabled_ids(rc)):
-            plugin = self.registry.get(plugin_id)
-            if plugin is None:
-                continue
-            missing = [key for key in plugin.secrets if key not in plugin.optional_secrets and key not in present]
-            if not missing:
-                continue
-            names = [service.name for service in plugin.services]
-            names += [server["service"] for server in rc.mcp_servers
-                      if server.get("plugin_id") == plugin_id and not server.get("hosted")]
-            for name in names:
-                held = holds.setdefault(name, [])
-                held += [key for key in missing if key not in held]
-        return holds
-
-    def _model_file_holds(self, services: list[str], doc: dict[str, Any], rc: Any) -> dict[str, str]:
-        """service -> why it waits for the host, for each of `services` that loads a model file the
-        models volume lacks. Recreated onto a missing file it crash-loops; the host's `ordo apply
-        --only <service>` fetches the file first (a download of that size does not belong in this
-        process, see _missing_model_files). A volume that cannot be listed holds every loader."""
-        if self.model_volume_files is None:
-            return {}
-        needed = [need for need in required_model_files(doc, rc.env, services) if not need.optional]
-        if not needed:
-            return {}
-        present = self.model_volume_files()
-        holds: dict[str, list[str]] = {}
-        for need in needed:
-            if present is None or need.file not in present:
-                holds.setdefault(need.service, []).append(need.file)
-        if present is None:
-            return {name: "cannot list the models volume to confirm its model files are in place"
-                    for name in holds}
-        return {name: (f"loads {', '.join(files)}, which the models volume lacks: `ordo apply --only "
-                       f"{name}` on the host fetches it first") for name, files in holds.items()}
-
-    def _unbuilt_image_holds(self, services: list[str], rendered: dict[str, Any], rc: Any) -> dict[str, str]:
-        """service -> why it waits for the host, for each of `services` whose first-party image (built
-        from this checkout by `ordo build`, never published to a registry) is not in the local image
-        cache. Compose would try to pull it and fail; the host's `ordo apply --only <service>` builds
-        it first. A third-party image the cache lacks is left to compose, which pulls it."""
-        owned = set(rc.first_party_images)
-        holds: dict[str, str] = {}
-        for name in services:
-            service = rendered.get(name)
-            if service is None or service.image_id is not None:
-                continue
-            repo = service.image_ref.rsplit(":", 1)[0]
-            if repo in owned:
-                holds[name] = (f"image {service.image_ref} is built from this checkout and is not in the "
-                               f"local image cache: `ordo apply --only {name}` on the host builds it first")
-        return holds
-
-    def _host_reasons(self, changes: list[Change], doc: dict[str, Any], rc: Any,
-                      rendered: dict[str, Any]) -> dict[str, str]:
-        """Why each changed service this process must not recreate is left to the host."""
-        secret_holds = self._secret_holds(rc)
-        changed = [change.service for change in changes]
-        file_holds = self._model_file_holds(changed, doc, rc)
-        image_holds = self._unbuilt_image_holds(changed, rendered, rc)
-        reasons: dict[str, str] = {}
-        for change in changes:
-            name = change.service
-            if name in SELF_REFERENTIAL_SERVICES:
-                reasons[name] = (f"{name} runs the control plane (or is the agent calling it) and cannot be "
-                                 f"recreated through it ({'; '.join(change.reasons)})")
-            elif change.incomparable:
-                reasons[name] = "; ".join(change.reasons)
-            elif name in secret_holds:
-                reasons[name] = (f"needs secret(s) {', '.join(secret_holds[name])}, which out/secrets.env does "
-                                 "not hold: `ordo secrets set <KEY>` on the host first")
-            elif name in image_holds:
-                reasons[name] = image_holds[name]
-            elif name in file_holds:
-                reasons[name] = file_holds[name]
-            else:
-                members = [m for m in lifecycle_group(doc, name)[1:] if m in SELF_REFERENTIAL_SERVICES]
-                if members:
-                    reasons[name] = f"its netns member(s) {', '.join(members)} run the control plane"
-        return reasons
+        return self.plugins.disable(plugin_id, body)
 
     def apply_render(self, *, dry_run: bool = False) -> dict[str, Any]:
-        """Bring the stack to the current render: recreate exactly the changed set.
-
-        The changed set is every long-running rendered service whose config hash or image differs
-        from its container's, or that has none (ordo/render/changed_set.py, what the host's `ordo
-        apply` computes). It is recreated in one `up -d --no-deps --force-recreate` call with each
-        owner's netns members, after the GPU-lease check every lifecycle verb makes (an evicted
-        resident is refused, 409). A service the render no longer defines that is not already stopped is stopped
-        (`stopped`) unless it is already stopped (`orphans`). A one-shot job's stopped container the render moved past is removed,
-        never started (`removed_jobs`; `run --rm` creates a fresh one), and a running one is left
-        alone (`running_jobs`), as the host's `ordo apply` does. Left to the host, and named with the
-        command that finishes the job: the control plane itself and the agent calling it, a container another compose version
-        created (its hash is not comparable), a service whose secrets are missing, one whose
-        first-party image is not built yet, and one that would load a model file the models volume
-        lacks (the host's apply builds and fetches them). Fails closed:
-        a state that cannot be read refuses (503) and recreates nothing.
-
-        `warnings` lists what the apply could not vouch for, without undoing it: when open-webui was
-        recreated, the probe `ordo doctor` runs after the host's apply (ordo/render/open_webui_probe.py)
-        runs in it once, and a failing verdict, or a probe that could not run, is one entry.
-        """
-        if not self.broker:
-            return self._error(503, "no container backend: this control plane cannot read or recreate containers")
-        try:
-            state = self.broker.backend.stack_state()
-            doc = self.broker.backend.rendered_compose()
-        except Exception as e:  # noqa: BLE001 - any unreadable side means the changed set is unknown
-            return self._error(503, f"cannot read what is rendered and what is running ({e}); "
-                                    "nothing was recreated")
-        changes = diff_services(state.rendered, state.running, compose_version=state.compose_version)
-        jobs = stale_one_shot_jobs(state.rendered, state.running, compose_version=state.compose_version)
-        removed_jobs = [job.service for job in jobs if job.removable]
-        host_reasons = self._host_reasons(changes, doc, self._render(), state.rendered)
-        to_recreate = [change.service for change in changes if change.service not in host_reasons]
-        _args, targets = plan_named(doc, to_recreate, force_recreate=True)
-        # Every service the render no longer defines that is not already stopped is stopped (the host's `ordo apply`
-        # does the same); one already stopped is left as an orphan.
-        unrendered = set(state.running) - set(state.rendered)
-        stopped = sorted(name for name in unrendered if state.running[name].state not in STOPPED_STATES)
-        host = sorted(host_reasons)
-        plan: dict[str, Any] = {
-            "dry_run": dry_run,
-            "changes": [{"service": change.service, "reasons": list(change.reasons)} for change in changes],
-            "recreated": sorted(targets),
-            "stopped": stopped,
-            "removed_jobs": removed_jobs,
-            "running_jobs": [job.service for job in jobs if not job.removable],
-            "restart_required_on_host": host,
-            "host_reasons": host_reasons,
-            "host_command": f"ordo apply --only {' '.join(host)}" if host else None,
-            # Containers the render no longer defines that were already stopped.
-            "orphans": sorted(unrendered - set(stopped)),
-            "warnings": [],
-        }
-        conflict = self._group_lease_conflict(sorted(targets))
-        if conflict:
-            return {**conflict, "changes": plan["changes"]}
-        if dry_run:
-            return {"ok": True, **plan}
-        try:
-            for name in stopped:
-                self.broker.backend.stop(name)
-            if to_recreate:
-                self.broker.backend.recreate_services(to_recreate)
-            if removed_jobs:
-                self.broker.backend.remove_stopped_containers(removed_jobs)
-        except Exception as e:  # noqa: BLE001 - reported with the plan it was executing
-            return self._error(500, f"applying the render failed: {e}", changes=plan["changes"])
-        if OPEN_WEBUI_SERVICE in targets:
-            ok, line = self._open_webui_verdict()
-            if not ok:
-                plan["warnings"].append(line)
-        return {"ok": True, **plan}
-
-    def _open_webui_verdict(self) -> tuple[bool, str]:
-        """(ok, one-line report) from the probe run inside the open-webui container, once, with no
-        wait or retry (as `ordo doctor` runs it). A probe that cannot run is a failed verdict."""
-        try:
-            exit_code, output = self.broker.backend.exec_in_service(OPEN_WEBUI_SERVICE,
-                                                                 ["python", "-c", OPEN_WEBUI_PROBE])
-        except Exception as e:  # noqa: BLE001 - the container is already recreated; this only reports
-            return False, f"! open-webui: could not verify its model-gateway connection ({type(e).__name__}: {e})"
-        lines = output.strip().splitlines()
-        if exit_code != 0:
-            detail = lines[-1] if lines else f"exit {exit_code}"
-            return False, f"! open-webui: could not verify its model-gateway connection (probe failed: {detail})"
-        try:
-            report = json.loads(lines[0]) if lines else None
-        except ValueError:
-            report = None
-        if not isinstance(report, dict):
-            return False, (f"! open-webui: could not verify its model-gateway connection "
-                           f"(unreadable probe output: {output.strip()[:200]})")
-        return open_webui_verdict(report)
+        """Bring the stack to the current render: recreate exactly the changed set (apply.py)."""
+        return self.applier.apply_render(dry_run=dry_run)
 
     def apply(self, body: dict[str, Any]) -> dict[str, Any]:
-        """`POST /apply`: bring the stack to out/ as it is rendered now (after a host render, say).
-        `{"dry_run": true}` returns the plan and changes nothing; otherwise `confirm` is required."""
-        dry_run = bool(body.get("dry_run"))
-        if not dry_run and not confirmed(body):
-            return self._error(400, 'Destructive operation requires confirmation. Set {"confirm": true} in the '
-                                    'request body to proceed, or {"dry_run": true} for the plan.')
-        return self.apply_render(dry_run=dry_run)
+        return self.applier.apply(body)
+
+    def doctor(self) -> dict[str, Any]:
+        """`GET /doctor`: the drift `ordo doctor` reports, seen from here (doctor.py)."""
+        return self.drift.report()
+
+    # --- The GPU lease and the GPU views (gpus.py) ---
 
     def request_job(self, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            job = Job(id=str(body["id"]), vram_gb=float(body["vram_gb"]),
-                      kind=str(body.get("kind", "generic")),
-                      est_seconds=float(body.get("est_seconds", 0.0)))
-        except (KeyError, ValueError, TypeError):
-            return self._error(400, "job needs 'id' and numeric 'vram_gb'")
-        self.broker.request(job)
-        return self.scheduler.status()
+        return self.lease_jobs.request(body)
 
     def complete_job(self, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        job_id = str(body.get("id", "")).strip()
-        if not job_id:
-            return self._error(400, "body must include 'id'")
-        self.broker.complete(job_id)
-        return self.scheduler.status()
+        return self.lease_jobs.complete(body)
 
     def heartbeat_job(self, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        job_id = str(body.get("id", "")).strip()
-        if not job_id:
-            return self._error(400, "body must include 'id'")
-        if not self.broker.heartbeat(job_id):
-            return self._error(404, f"no running job '{job_id}'")
-        return self.scheduler.status()
+        return self.lease_jobs.heartbeat(body)
 
-    # --- Service lifecycle routes (ported from ops-api) ---
-
-    # The lifecycle verbs live in the same process as the GPU scheduler, so they ask it before
-    # starting anything. Starting an evicted resident during a lease (directly, by container
-    # name, or through a whole-stack compose up) puts two tenants on one card: the 2026-08-08
-    # host crash. Refusing here, once, replaces a "not during a lease" check in every caller.
-    # Stop is never refused, and a lease tenant (comfyui) may still be cycled by its own gate.
-
-    def _lease_conflict(self, service: str | None) -> dict[str, Any] | None:
-        """A 409 payload when starting `service` (None = the whole stack) would share the card."""
-        if not self.scheduler:
-            return None
-        status = self.scheduler.status()
-        holders = [job["id"] for job in status["running"]] + [job["id"] for job in status["queued"]]
-        evicted = status["evicted_residents"]
-        if service is None and status["leased"]:
-            return self._error(409, f"a GPU lease is active (held by {holders}, evicted {sorted(evicted)}); "
-                                    "a whole-stack start would restart the evicted residents beside it. "
-                                    "Name a service, or retry once the lease is released.",
-                               lease_holders=holders)
-        if service is not None and service in evicted:
-            return self._error(409, f"{service!r} is evicted for a GPU lease held by {holders}; starting it "
-                                    "would put two tenants on one card. The scheduler restores it when "
-                                    "the lease is released.", lease_holders=holders)
-        return None
-
-    def _container_lease_conflict(self, container: str) -> dict[str, Any] | None:
-        """`_lease_conflict` for a raw container name (`<project>-<service>-<n>`)."""
-        if not self.scheduler:
-            return None
-        for service in self.scheduler.evicted_residents:
-            if re.fullmatch(rf"[\w.-]+-{re.escape(service)}-\d+", container):
-                return self._lease_conflict(service)
-        return None
-
-    # A service's netns members (`network_mode: service:<it>`) share its network namespace, so
-    # every verb that gives it a new namespace must cycle them too, after it; otherwise they keep
-    # running in the dead one with only `lo` (observed 2026-09-24: a caddy restart from the
-    # dashboard cut off hermes-dashboard and every tailnet sidecar). The group comes from
-    # `stack.lifecycle_group`, the planner the host's `ordo up` / `ordo recreate` use.
-
-    def _rendered_compose(self, target: str) -> dict:
-        try:
-            return self.broker.backend.rendered_compose()
-        except Exception as e:
-            raise LifecycleGroupUnknown(
-                f"cannot read the rendered compose to find {target!r}'s netns members ({e}); "
-                "refusing rather than orphaning them") from e
-
-    def _lifecycle_group(self, service: str) -> list[str]:
-        """[service, *its netns members]. Raises LifecycleGroupUnknown when the render is unreadable."""
-        return lifecycle_group(self._rendered_compose(service), service)
-
-    def _container_members(self, container: str) -> list[str]:
-        """The netns members that follow a raw container (`<project>-<service>-<n>`), or []."""
-        doc = self._rendered_compose(container)
-        # Longest name first, so `ordo-tailnet-chat-1` is tailnet-chat even if a `chat` exists.
-        for service in sorted(doc.get("services") or {}, key=len, reverse=True):
-            if re.fullmatch(rf"[\w.-]+-{re.escape(service)}-\d+", container):
-                return lifecycle_group(doc, service)[1:]
-        return []
-
-    def _compose_service(self, body: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
-        """(service, error) for a compose verb's body. No `service` key, or null, means the whole
-        stack. Anything else must be a non-empty string: `""` must never widen a named verb into a
-        whole-stack down."""
-        service = body.get("service")
-        if service is None:
-            return None, None
-        if not isinstance(service, str) or not service.strip():
-            return None, self._error(400, f"service must be a non-empty compose service name, got {service!r}; "
-                                          "omit it to act on the whole stack")
-        return service, None
-
-    def _group_lease_conflict(self, group: list[str]) -> dict[str, Any] | None:
-        """`_lease_conflict` for each service a verb would start."""
-        for service in group:
-            conflict = self._lease_conflict(service)
-            if conflict:
-                return conflict
-        return None
-
-    def _restart_members(self, members: list[str]) -> None:
-        """Restart each member, after its owner has its new namespace. A restart, not a start:
-        a member left running while the owner was down is still in the dead namespace, and
-        `docker start` of a running container does nothing."""
-        for member in members:
-            try:
-                self.broker.backend.restart(member)
-            except Exception as e:
-                raise RuntimeError(f"netns member {member!r} was not restarted and has no network "
-                                   f"until it is: {e}") from e
-
-    @staticmethod
-    def _with_members(payload: dict[str, Any], members: list[str]) -> dict[str, Any]:
-        if members:
-            payload["members"] = members
-        return payload
-
-    def service_start(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        if body.get("dry_run"):
-            return {"would": "start", "service": service_id}
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        try:
-            group = self._lifecycle_group(service_id)
-        except LifecycleGroupUnknown as e:
-            return self._error(500, str(e))
-        conflict = self._group_lease_conflict(group)
-        if conflict:
-            return conflict
-        try:
-            self.broker.backend.start(service_id)
-            self._restart_members(group[1:])
-        except Exception as e:
-            return self._error(500, str(e))
-        return self._with_members({"ok": True, "service": service_id, "action": "started"}, group[1:])
-
-    def service_stop(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        if body.get("dry_run"):
-            return {"would": "stop", "service": service_id}
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        try:
-            group = self._lifecycle_group(service_id)
-        except LifecycleGroupUnknown as e:
-            return self._error(500, str(e))
-        try:
-            # Members first: stopping only the owner leaves them running in a dead namespace.
-            for member in group[1:]:
-                self.broker.backend.stop(member)
-            self.broker.backend.stop(service_id)
-        except Exception as e:
-            return self._error(500, str(e))
-        return self._with_members({"ok": True, "service": service_id, "action": "stopped"}, group[1:])
-
-    def service_restart(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        if body.get("dry_run"):
-            return {"would": "restart", "service": service_id}
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        try:
-            group = self._lifecycle_group(service_id)
-        except LifecycleGroupUnknown as e:
-            return self._error(500, str(e))
-        conflict = self._group_lease_conflict(group)
-        if conflict:
-            return conflict
-        try:
-            self.broker.backend.restart(service_id)
-            self._restart_members(group[1:])
-        except Exception as e:
-            return self._error(500, str(e))
-        return self._with_members({"ok": True, "service": service_id, "action": "restarted"}, group[1:])
-
-    def service_logs(self, service_id: str, tail: int = 100) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            logs = self.broker.backend.logs(service_id, tail=tail)
-        except Exception as e:
-            return self._error(500, str(e))
-        return {"logs": logs, "service": service_id}
-
-    def list_services(self) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            services = self.broker.backend.list_services()
-        except Exception as e:
-            return self._error(500, str(e))
-        # The backend returns the ops-api payload already ({"services": [...]}), the same as
-        # list_containers below. Wrapping it again here produced
-        # {"services": {"services": [...]}}, which the dashboard would read as an empty grid.
-        return services
-
-    def service_recreate(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        if body.get("dry_run"):
-            return {"would": "recreate", "service": service_id}
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        try:
-            group = self._lifecycle_group(service_id)
-        except LifecycleGroupUnknown as e:
-            return self._error(500, str(e))
-        conflict = self._group_lease_conflict(group)
-        if conflict:
-            return conflict
-        try:
-            # One compose call recreates the whole group: the backend plans it with the same
-            # `stack.plan_named` the host's `ordo recreate` uses.
-            self.broker.backend.recreate_service(service_id)
-        except Exception as e:
-            return self._error(500, str(e))
-        return self._with_members({"ok": True, "service": service_id, "action": "recreated"}, group[1:])
-
-    def list_containers(self) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            containers = self.broker.backend.list_containers()
-        except Exception as e:
-            return self._error(500, str(e))
-        return containers
-
-    def container_logs(self, name: str, tail: int = 100) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            logs = self.broker.backend.container_logs(name, tail=tail)
-        except Exception as e:
-            return self._error(500, str(e))
-        return logs
-
-    # --- Managed projects: OTHER compose projects Hermes may maintain (ordo/control/managed.py) ---
-    # Status, logs and a confirmed, rate-limited restart; nothing else. The list is the source's
-    # `managed_projects:`, read per call so an edit takes effect without a restart. Ordo's own
-    # project is refused by the source validation and again by the backend, so no Ordo service, and
-    # so no lease-managed resident, is reachable here.
-
-    def _managed_project(self, project: str) -> dict[str, Any] | None:
-        """A 404 payload unless `project` is listed in the source's `managed_projects:`."""
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            listed = Source.load(self.source_path).managed_projects
-        except Exception as e:  # noqa: BLE001 - an unreadable source manages nothing
-            return self._error(500, f"cannot read managed_projects from the source: {e}")
-        if project not in listed:
-            return self._error(404, f"{project!r} is not a managed project (ordo.yaml managed_projects: {listed})")
-        return None
-
-    def _leased_gpu_uuid(self) -> str | None:
-        """The uuid of the card the scheduler leases (the primary card), or None when unknown."""
-        try:
-            gpu = self._render().hardware.primary_gpu
-        except Exception:  # noqa: BLE001 - unknown means managed.gpu_refusal fails closed
-            return None
-        return getattr(gpu, "uuid", None) or None
-
-    @staticmethod
-    def _gpu_indexes() -> dict[str, str]:
-        """nvidia-smi index -> uuid for every card on the host (ordo/render/gpu_live.py), so a device
-        named by index resolves to one card. Empty when unreadable: an index then proves nothing."""
-        try:
-            return {str(card["index"]): str(card["uuid"]) for card in gpu_live.live_gpus()
-                    if card.get("uuid") and card.get("index") is not None}
-        except Exception:  # noqa: BLE001 - unknown means managed.gpu_refusal fails closed on indexes
-            return {}
-
-    def managed_projects_overview(self) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            listed = Source.load(self.source_path).managed_projects
-        except Exception as e:  # noqa: BLE001
-            return self._error(500, f"cannot read managed_projects from the source: {e}")
-        projects = []
-        for project in listed:
-            try:
-                containers = self.broker.backend.foreign_containers(project)
-                projects.append({"project": project, "containers": _project_rows(containers)})
-            except Exception as e:  # noqa: BLE001 - one unreadable project does not hide the others
-                projects.append({"project": project, "containers": [], "error": str(e)})
-        return {"projects": projects}
-
-    def managed_project_containers(self, project: str) -> dict[str, Any]:
-        refusal = self._managed_project(project)
-        if refusal:
-            return refusal
-        try:
-            containers = self.broker.backend.foreign_containers(project)
-        except ValueError as e:
-            return self._error(404, str(e))
-        except Exception as e:
-            return self._error(500, str(e))
-        return {"project": project, "containers": _project_rows(containers)}
-
-    def managed_container_logs(self, project: str, name: str, query: dict[str, str]) -> dict[str, Any]:
-        refusal = self._managed_project(project)
-        if refusal:
-            return refusal
-        try:
-            tail = int(query.get("tail", managed.LOG_TAIL_DEFAULT))
-        except ValueError:
-            return self._error(422, "tail must be an integer")
-        tail = max(1, min(tail, managed.LOG_TAIL_MAX))
-        try:
-            logs = self.broker.backend.foreign_logs(project, name, tail)
-        except ValueError as e:
-            return self._error(404, str(e))
-        except Exception as e:
-            return self._error(500, str(e))
-        return {"project": project, "container": name, "tail": tail, "logs": logs}
-
-    def managed_container_restart(self, project: str, name: str, body: dict[str, Any]) -> dict[str, Any]:
-        refusal = self._managed_project(project)
-        if refusal:
-            return refusal
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        key = f"{project}/{name}"
-        try:
-            raw = self.broker.backend.foreign_inspect(project, name)
-        except ValueError as e:
-            return self._error(404, str(e))
-        except Exception as e:
-            return self._error(500, str(e))
-        gpu_refusal = managed.gpu_refusal(raw, self._leased_gpu_uuid(), self._gpu_indexes())
-        if gpu_refusal:
-            return self._error(409, f"refusing to restart {key}: {gpu_refusal}")
-        # Reserve the slot BEFORE restarting (one lock: parallel callers cannot all pass the check).
-        # Give it back ONLY when the backend's guard refused (ValueError, raised before docker ran).
-        # Any other failure may come after the container already restarted (`docker restart` timing
-        # out waiting for it, or exiting non-zero), so the slot stays spent: better one restart
-        # under-allowed than restarts nobody counted.
-        wait = self._restart_budget.reserve(key)
-        if wait is not None:
-            return self._error(429, f"{key} was restarted {self._restart_budget.limit} times in the last hour; "
-                                    "a restart loop needs a diagnosis, not another restart",
-                               retry_after_seconds=wait)
-        try:
-            self.broker.backend.foreign_restart(project, name)
-        except ValueError as e:
-            self._restart_budget.refund(key)
-            return self._error(404, str(e))
-        except Exception as e:
-            return self._error(500, str(e))
-        return {"ok": True, "project": project, "container": name, "action": "restarted"}
-
-    def container_inspect(self, name: str) -> dict[str, Any]:
-        """One Ordo container through `broker.summarize_inspect`'s field allowlist: never its
-        environment or labels. 404 for a name that is not a container of this project."""
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            return self.broker.backend.container_inspect(name)
-        except ValueError as e:
-            return self._error(404, str(e))
-        except Exception as e:
-            return self._error(500, str(e))
-
-    def container_restart(self, name: str, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        try:
-            members = self._container_members(name)
-        except LifecycleGroupUnknown as e:
-            return self._error(500, str(e))
-        conflict = self._container_lease_conflict(name) or self._group_lease_conflict(members)
-        if conflict:
-            return conflict
-        try:
-            self.broker.backend.container_restart(name)
-            self._restart_members(members)
-        except Exception as e:
-            return self._error(500, str(e))
-        return self._with_members({"ok": True, "container": name, "action": "restarted"}, members)
-
-    def service_stats(self) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            stats = self.broker.backend.service_stats()
-        except Exception as e:
-            return self._error(500, str(e))
-        return stats
-
-    def compose_up(self, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        service, invalid = self._compose_service(body)
-        if invalid:
-            return invalid
-        try:
-            # A named compose verb acts on the service's whole lifecycle group (the backend
-            # expands it through `bringup`), so every member is lease-checked too.
-            conflict = (self._group_lease_conflict(self._lifecycle_group(service)) if service
-                        else self._lease_conflict(None))
-        except LifecycleGroupUnknown as e:
-            return self._error(500, str(e))
-        if conflict:
-            return conflict
-        try:
-            self.broker.backend.compose_up(service)
-        except Exception as e:
-            return self._error(500, str(e))
-        return {"ok": True, "action": "compose-up"}
-
-    def compose_down(self, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        service, invalid = self._compose_service(body)
-        if invalid:
-            return invalid
-        try:
-            # Down REMOVES containers: an evicted resident taken down has nothing left for the
-            # scheduler to restore, and a whole-stack down ends the lease holder's work too.
-            conflict = (self._group_lease_conflict(self._lifecycle_group(service)) if service
-                        else self._lease_conflict(None))
-        except LifecycleGroupUnknown as e:
-            return self._error(500, str(e))
-        if conflict:
-            return conflict
-        try:
-            self.broker.backend.compose_down(service)
-        except Exception as e:
-            return self._error(500, str(e))
-        return {"ok": True, "action": "compose-down"}
-
-    def compose_restart(self, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        service, invalid = self._compose_service(body)
-        if invalid:
-            return invalid
-        try:
-            # A named compose verb acts on the service's whole lifecycle group (the backend
-            # expands it through `bringup`), so every member is lease-checked too.
-            conflict = (self._group_lease_conflict(self._lifecycle_group(service)) if service
-                        else self._lease_conflict(None))
-        except LifecycleGroupUnknown as e:
-            return self._error(500, str(e))
-        if conflict:
-            return conflict
-        try:
-            self.broker.backend.compose_restart(service)
-        except Exception as e:
-            return self._error(500, str(e))
-        return {"ok": True, "action": "compose-restart"}
-
-    # --- Registry routes ---
-    # Derived from the render on every call (ordo/render/served_models.py): which models the stack
-    # serves, from which file, on which GPU. There is no stored registry to drift from ordo.yaml.
-
-    def _served_models(self) -> dict[str, dict[str, Any]]:
-        rc = self._render()
-        return served_models(rc.compose_dict(), rc.env, rc.gpu_inventory())
+    def jobs_history(self) -> dict[str, Any]:
+        """Finished leases, newest first: what the orchestration tab's history table shows."""
+        return {"history": self.history.tail(100) if self.history else []}
 
     def registry_models(self) -> dict[str, Any]:
         """Every model the current render serves, keyed by model id."""
         return {"models": self._served_models()}
 
-    def live_gpus(self) -> dict[str, Any]:
-        """Every card's live VRAM, utilization and temperature (ordo/render/gpu_live.py)."""
-        return {"gpus": gpu_live.live_gpus()}
-
     def registry_gpus(self) -> dict[str, Any]:
         """Live GPU info (gpu_live) with the models the render pins to each card."""
-        live = self._live_gpus()
-        uuid_to_models = models_by_gpu(self._served_models())
-        result: dict[str, Any] = {}
-        for uuid, info in live.items():
-            result[uuid] = {**info, "models": uuid_to_models.get(uuid, [])}
-        return {"gpus": result}
+        return gpus.registry_gpus(self._live_gpus(), self._served_models())
 
-    # --- Slice 3: model download/pull routes ---
+    def live_gpus(self) -> dict[str, Any]:
+        return gpus.live_cards()
+
+    def gpu_assign_gone(self, target: str = "") -> dict[str, Any]:
+        return gpus.assign_gone()
+
+    def _served_models(self) -> dict[str, dict[str, Any]]:
+        return gpus.served_by(self._render())
+
+    def _live_gpus(self) -> dict[str, dict[str, Any]]:
+        return gpus.live_by_uuid()
+
+    def _leased_gpu_uuid(self) -> str | None:
+        return gpus.leased_gpu_uuid(self._render)
+
+    _gpu_indexes = staticmethod(gpus.gpu_indexes)
+
+    # --- Service lifecycle (lifecycle.py) ---
+
+    def service_start(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self.lifecycle.service_start(service_id, body)
+
+    def service_stop(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self.lifecycle.service_stop(service_id, body)
+
+    def service_restart(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self.lifecycle.service_restart(service_id, body)
+
+    def service_recreate(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self.lifecycle.service_recreate(service_id, body)
+
+    def service_logs(self, service_id: str, tail: int = 100) -> dict[str, Any]:
+        return self.lifecycle.service_logs(service_id, tail)
+
+    def list_services(self) -> dict[str, Any]:
+        return self.lifecycle.list_services()
+
+    def list_containers(self) -> dict[str, Any]:
+        return self.lifecycle.list_containers()
+
+    def container_logs(self, name: str, tail: int = 100) -> dict[str, Any]:
+        return self.lifecycle.container_logs(name, tail)
+
+    def container_inspect(self, name: str) -> dict[str, Any]:
+        return self.lifecycle.container_inspect(name)
+
+    def container_restart(self, name: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self.lifecycle.container_restart(name, body)
+
+    def service_stats(self) -> dict[str, Any]:
+        return self.lifecycle.service_stats()
+
+    def compose_up(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.lifecycle.compose_up(body)
+
+    def compose_down(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.lifecycle.compose_down(body)
+
+    def compose_restart(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.lifecycle.compose_restart(body)
+
+    # --- Managed projects: OTHER compose projects (managed_projects.py) ---
+
+    def managed_projects_overview(self) -> dict[str, Any]:
+        return self.managed_projects.overview()
+
+    def managed_project_containers(self, project: str) -> dict[str, Any]:
+        return self.managed_projects.containers(project)
+
+    def managed_container_logs(self, project: str, name: str, query: dict[str, str]) -> dict[str, Any]:
+        return self.managed_projects.container_logs(project, name, query)
+
+    def managed_container_restart(self, project: str, name: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self.managed_projects.container_restart(project, name, body, leased_gpu_uuid=self._leased_gpu_uuid,
+                                                       gpu_indexes=self._gpu_indexes)
+
+    # --- ComfyUI model downloads and node requirements (comfyui.py) ---
 
     def models_download(self, body: dict[str, Any]) -> dict[str, Any]:
         """Start a resumable file download to the ComfyUI models directory."""
-        url = str(body.get("url", "")).strip()
-        if not url.startswith("https://"):
-            return self._error(400, "URL must start with https://")
-        try:
-            _validate_download_url(url)
-        except ValueError as e:
-            return self._error(400, str(e))
-        filename = str(body.get("filename", "")).strip() or url.split("/")[-1].split("?")[0]
-        if not filename or ".." in filename or "/" in filename or "\\" in filename:
-            return self._error(400, "Invalid or undetectable filename")
-        category = str(body.get("category", "")).strip()
-        if category and category not in COMFYUI_CATEGORIES:
-            return self._error(400, f"Invalid category. Must be one of: {COMFYUI_CATEGORIES}")
-        if not category:
-            category = _auto_detect_category(url, filename)
-        with self._dl_lock:
-            # Checked and claimed under one lock: two concurrent requests cannot both start.
-            if self._dl_status.get("running"):
-                return self._error(409, "A download is already in progress")
-            self._dl_status["running"] = True
-        # Start download in background thread
-        thread = threading.Thread(
-            target=self._run_model_download,
-            args=(url, category, filename),
-            daemon=True,
-        )
-        thread.start()
-        return {"status": "started", "category": category, "filename": filename}
+        return self.downloads.start(body, worker=self._run_model_download)
 
     def models_download_status(self) -> dict[str, Any]:
-        """Poll active download progress."""
-        with self._dl_lock:
-            return dict(self._dl_status)
+        return self.downloads.status()
 
     def _run_model_download(self, url: str, category: str, filename: str) -> None:
-        """Background download worker."""
-        with self._dl_lock:
-            self._dl_status.update({
-                "running": True, "output": f"Starting: {filename}", "done": False,
-                "success": None, "progress": 0, "filename": filename, "category": category,
-            })
-        dest_dir = COMFYUI_MODELS_DIR / category
-        try:
-            dest_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as e:
-            with self._dl_lock:
-                self._dl_status.update({
-                    "output": f"Cannot create dir: {e}", "success": False,
-                    "running": False, "done": True,
-                })
-            return
+        self.downloads.run(url, category, filename)
 
-        dest = dest_dir / filename
-        temp_path = dest.with_suffix(dest.suffix + ".tmp")
-        try:
-            import httpx
-            start_byte = temp_path.stat().st_size if temp_path.exists() else 0
-            req_headers = {"User-Agent": "ordo-ai-stack/1.0"}
-            if start_byte > 0:
-                req_headers["Range"] = f"bytes={start_byte}-"
-            with httpx.Client(timeout=60.0, follow_redirects=False) as client:
-                current_url = url
-                for _ in range(10):
-                    _validate_download_url(current_url)
-                    response = client.send(
-                        client.build_request("GET", current_url, headers=req_headers),
-                        stream=True,
-                    )
-                    if response.status_code not in (301, 302, 303, 307, 308):
-                        break
-                    location = response.headers.get("location")
-                    response.close()
-                    if not location:
-                        raise ValueError("Redirect response did not include a location")
-                    current_url = _validated_redirect_url(current_url, location)
-                else:
-                    raise ValueError("Too many redirects while downloading model")
-                with response:
-                    r = response
-                    r.raise_for_status()
-                    total = 0
-                    total_header = r.headers.get("Content-Range") or r.headers.get("Content-Length")
-                    if total_header and "/" in str(total_header):
-                        total = int(str(total_header).split("/")[-1].strip())
-                    elif r.headers.get("Content-Length"):
-                        total = int(r.headers["Content-Length"]) + (start_byte or 0)
-                    total_mb = total / (1024 * 1024) if total else 0
-                    downloaded = start_byte
-                    append = start_byte > 0 and r.status_code == 206
-                    with open(temp_path, "ab" if append else "wb") as f:
-                        for chunk in r.iter_bytes(chunk_size=1024 * 1024):
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            dl_mb = downloaded / (1024 * 1024)
-                            pct = int(downloaded * 100 / total) if total else 0
-                            msg = f"Downloading {filename} → {category}/\n"
-                            msg += f"{dl_mb:.0f} / {total_mb:.0f} MB ({pct}%)" if total else f"{dl_mb:.0f} MB downloaded"
-                            with self._dl_lock:
-                                self._dl_status["output"] = msg
-                                self._dl_status["progress"] = pct
-            temp_path.rename(dest)
-            with self._dl_lock:
-                self._dl_status["success"] = True
-                self._dl_status["output"] += f"\nDone — saved to {category}/{filename}"
-        except Exception as e:
-            with self._dl_lock:
-                self._dl_status["output"] += f"\nError: {e}"
-                self._dl_status["success"] = False
-            if temp_path.exists():
-                try:
-                    temp_path.unlink()
-                except OSError:
-                    pass
-        finally:
-            with self._dl_lock:
-                self._dl_status["running"] = False
-                self._dl_status["done"] = True
+    def comfyui_install_node_requirements(self, body: dict[str, Any] | None) -> dict[str, Any]:
+        return self.node_requirements.install(body)
 
-    # --- Slice 3: diagnostics routes ---
+    # --- Diagnostics (diagnostics.py) and Prometheus metrics (metrics.py) ---
 
     def diagnostics_dstate(self) -> dict[str, Any]:
-        """Report uninterruptible-sleep (D-state) processes across running containers."""
-        wedged = []
-        scanned = 0
-        errors = []
-        try:
-            proc = subprocess.run(
-                ["docker", "ps", "-a", "--format", "{{.Names}}"],
-                capture_output=True, text=True, timeout=30,
-            )
-            container_names = [n.strip() for n in proc.stdout.splitlines() if n.strip()]
-            for name in container_names:
-                scanned += 1
-                try:
-                    top = subprocess.run(
-                        ["docker", "top", name, "-eo", "pid,stat,wchan:40,comm"],
-                        capture_output=True, text=True, timeout=10,
-                    )
-                    lines = top.stdout.strip().splitlines()
-                    if len(lines) < 2:
-                        continue
-                    # Parse header to find column indices
-                    header = lines[0].split()
-                    try:
-                        pid_idx = header.index("PID")
-                        stat_idx = header.index("STAT")
-                        wchan_idx = header.index("WCHAN")
-                        comm_idx = header.index("COMMAND")
-                    except ValueError:
-                        errors.append(f"{name}: unexpected ps columns {header}")
-                        continue
-                    for line in lines[1:]:
-                        parts = line.split()
-                        if len(parts) < len(header):
-                            continue
-                        stat = parts[stat_idx]
-                        if not stat.startswith("D"):
-                            continue
-                        wchan = parts[wchan_idx]
-                        wedged.append({
-                            "container": name,
-                            "pid": parts[pid_idx],
-                            "stat": stat,
-                            "wchan": wchan,
-                            "comm": parts[comm_idx],
-                            "p9": "p9" in wchan,
-                        })
-                except Exception as exc:
-                    errors.append(f"{name}: {exc}")
-        except Exception as exc:
-            errors.append(f"docker ps failed: {exc}")
-        return {
-            "scanned": scanned,
-            "wedged": wedged,
-            "p9_wedged": [w for w in wedged if w["p9"]],
-            "errors": errors,
-        }
+        return diagnostics.dstate()
 
-    # --- Audit ---
+    def metrics_text(self) -> str:
+        """GET /metrics, in the Prometheus text format (metrics.py). Read-only."""
+        return self.metrics.text()
 
-    def _audit_sink(self) -> AuditLog:
-        # Built once, under a lock: two instances would each hold their own write lock on one file.
-        with self._audit_init_lock:
-            if self._audit_log is None:
-                self._audit_log = AuditLog(AUDIT_LOG_PATH)
-            return self._audit_log
+    # --- The audit log (call_audit.py) ---
 
     def audit_call(
         self,
@@ -1617,47 +329,17 @@ class ControlPlane:
         detail: str | None = None,
         principal: str | None = None,
     ) -> None:
-        """Write the one record for a state-changing call.
+        """Write the one audit record for a state-changing call (call_audit.CallAuditor.record)."""
+        self.auditor.record(method, path, body, actor, status, error, detail, principal)
 
-        The record holds only named fields (see `audit_subject`): never the request body, the
-        headers or a credential. `actor` is the caller's own X-Actor claim; `principal` is what its
-        token proved (ordo/control/principals.py), set by the HTTP binding on every record it
-        writes. Never raises: an audit failure must not fail the action, but it is logged so a
-        broken log does not go unnoticed.
-        """
-        fields = body if isinstance(body, dict) else {}
-        action, target = audit_subject(path, body)
-        extra: dict[str, Any] = {
-            "method": method.upper(),
-            "path": _clip(path),
-            "status": status,
-            "dry_run": bool(fields.get("dry_run")),
-            "confirm": confirmed(fields),
-        }
-        if error:
-            extra["error"] = _clip(error, _AUDIT_ERROR_MAX)
-        if detail:
-            extra["detail"] = _clip(detail)
-        if principal:
-            extra["principal"] = principal
-        try:
-            self._audit_sink().record(action=action, target=target, result=audit_result(status),
-                                      caller=actor, **extra)
-        except Exception:
-            logger.exception("ops-controller could not write the audit record for %s %s", method, path)
+    def audit_log(self, limit: int = 50) -> dict[str, Any]:
+        """The newest `limit` audit records, newest first, across the rotated generations."""
+        return self.auditor.tail(limit)
 
-    def _lease_detail(self, path: str, body: Any, status: int, payload: Any) -> str | None:
-        """How the scheduler answered a lease request: 'granted', 'queued', or 'rejected' (a job
-        the card can never hold)."""
-        if path != "/jobs" or status != 200 or not isinstance(payload, dict) or not isinstance(body, dict):
-            return None
-        job_id = str(body.get("id"))
-        running = {str(job.get("id")) for job in payload.get("running") or [] if isinstance(job, dict)}
-        if job_id in running:
-            return "granted"
-        if job_id in {str(rejected) for rejected in payload.get("rejected") or []}:
-            return "rejected"
-        return "queued"
+    def read_audit(self, query: dict[str, str]) -> dict[str, Any]:
+        return self.auditor.read(query)
+
+    # --- Routing: the audited entry point, the route table (routes.py) and the operation lock ---
 
     def handle(
         self,
@@ -1683,130 +365,29 @@ class ControlPlane:
             raise
         error = payload.get("error") if isinstance(payload, dict) else None
         self.audit_call(method, path, body, actor, status, str(error) if error else None,
-                        self._lease_detail(path, body, status, payload), principal=principal)
+                        lease_detail(path, body, status, payload), principal=principal)
         return status, payload
 
-    @staticmethod
-    def _validate_custom_node_path(node_path: str) -> str | None:
-        """Relative path under ComfyUI custom_nodes. Returns None if it is not one."""
-        cleaned = (node_path or "").strip().strip("/").replace("\\", "/")
-        if not cleaned or len(cleaned) > 240 or ".." in cleaned:
-            return None
-        for segment in cleaned.split("/"):
-            if not segment or not _NODE_PATH_SEGMENT.fullmatch(segment):
-                return None
-        return cleaned
-
-    def comfyui_install_node_requirements(self, body: dict[str, Any] | None) -> dict[str, Any]:
-        """pip install -r a custom node pack's requirements INSIDE the running comfyui container.
-
-        Installing on the host would put the packages somewhere ComfyUI never imports from.
-        """
-        body = body or {}
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        node_path = self._validate_custom_node_path(body.get("node_path") or "")
-        if node_path is None:
-            return self._error(400, "Invalid node_path")
-        requirements_on_host = COMFYUI_CUSTOM_NODES_DIR / node_path / "requirements.txt"
-        if not requirements_on_host.is_file():
-            return self._error(
-                404, f"No requirements.txt at custom_nodes/{node_path}/requirements.txt"
-            )
-        if not self.broker:
-            return self._error(503, "no container backend")
-        requirements_in_container = f"/root/ComfyUI/custom_nodes/{node_path}/requirements.txt"
-        try:
-            exit_code, output = self.broker.backend.exec_in(
-                COMFYUI_CONTAINER_NAME,
-                ["python3", "-m", "pip", "install", "-r", requirements_in_container],
-            )
-        except FileNotFoundError:
-            return self._error(
-                503, f"Container {COMFYUI_CONTAINER_NAME!r} not found - start comfyui first"
-            )
-        except Exception as exc:
-            return self._error(500, f"exec failed: {exc}")
-        if len(output) > 12000:
-            output = output[:12000] + "\n... [truncated]"
-        ok = exit_code == 0
-        result: dict[str, Any] = {
-            "ok": ok,
-            "exit_code": exit_code,
-            "output": output,
-            "node_path": node_path,
-        }
-        if not ok:
-            result["_status"] = 500
-            result["error"] = f"pip install exited {exit_code}"
-        return result
-
-    def gpu_assign_gone(self, target: str = "") -> dict[str, Any]:
-        """410 GONE. GPU pins are baked at `ordo render` time, not at runtime.
-
-        The v1 flow wrote overrides/gpu-assignments.yml and recreated the service. Under the render
-        substrate nothing reads that file back and a recreate replays the already-rendered compose
-        byte for byte, so the endpoint answered {"ok": true} while changing nothing. This mirrors
-        the /guardian/* retirement: an honest 410 beats a silent no-op.
-        """
-        return self._error(
-            410,
-            "GPU reassignment moved to the render pipeline: set the service's `gpu_pin:` in its "
-            "manifest and re-render (`ordo render`), then recreate the service. "
-            "Runtime reassignment was a silent no-op and has been retired.",
-        )
-
-    def audit_log(self, limit: int = 50) -> dict[str, Any]:
-        """The newest `limit` audit records, newest first, across the rotated generations."""
-        try:
-            return {"entries": self._audit_sink().tail(limit)}
-        except OSError as e:
-            return {"entries": [], "error": f"failed to read audit log: {e}"}
-
-    def metrics_text(self) -> str:
-        """GET /metrics: the lease, container, disk and certificate state in the Prometheus text
-        format (ordo/control/metrics.py). Each source is read on its own; one that fails is reported
-        as a failed collector and the rest are still served. Read-only."""
-        containers = restarts = None
-        if self.broker:
-            try:
-                containers = self.broker.backend.list_services().get("services", [])
-            except Exception as e:  # noqa: BLE001 - an unreadable docker is a failed collector, not a 500
-                logger.warning("metrics: cannot list the services: %s", e)
-            try:
-                restarts = self.broker.backend.service_restarts()
-            except Exception as e:  # noqa: BLE001 - same
-                logger.warning("metrics: cannot read the restart counts: %s", e)
-        disks: dict[str, prom.DiskUsage | None] = {}
-        for mount, path in self.disk_paths.items():
-            try:
-                disks[mount] = prom.DiskUsage.of(path)
-            except OSError as e:
-                logger.warning("metrics: cannot stat %s (%s): %s", path, mount, e)
-                disks[mount] = None
-        certs: dict[str, float | None] = {}
-        for name, path in self.tls_cert_files.items():
-            try:
-                certs[name] = prom.read_cert_not_after(path)
-            except (OSError, ValueError) as e:
-                logger.warning("metrics: cannot read the %s certificate: %s", name, e)
-                certs[name] = None
-        return prom.render(prom.Inputs(
-            scheduler=self.scheduler.status() if self.scheduler else None,
-            containers=containers, restarts=restarts, disks=disks, tls_certs=certs))
-
-    def _live_gpus(self) -> dict[str, dict[str, Any]]:
-        """The live GPU reader's cards keyed by uuid, in the GiB units /registry/gpus has always used."""
-        out: dict[str, dict[str, Any]] = {}
-        for card in gpu_live.live_gpus():
-            used_mib = card["vram_used_mib"]
-            out[card["uuid"]] = {
-                "name": card["name"],
-                "total_gb": round(card["vram_total_mib"] / 1024.0, 1),
-                "used_gb": round(used_mib / 1024.0, 1) if used_mib is not None else None,
-                "util": card["utilization_pct"],
-            }
-        return out
+    def route(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        query: dict[str, str] | None = None,
+    ) -> tuple[int, dict]:
+        """(status, payload) for one call, from the route table (ordo/control/routes.py)."""
+        found = routes.find(method, path)
+        if found is None:
+            return 404, {"error": f"no route {method} {path}"}
+        entry, params = found
+        request = routes.Request(path=path, body=body or {}, query=query or {}, params=params)
+        if entry.exclusive:
+            payload = self._exclusive(lambda: entry.handler(self, request))
+        else:
+            payload = entry.handler(self, request)
+        if entry.always_ok:
+            return 200, payload
+        return self._as_response(payload)
 
     def _exclusive(self, verb: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         """Run a stack-changing verb holding the operation lock, or refuse it with 409 while
@@ -1821,136 +402,8 @@ class ControlPlane:
         finally:
             self._operation_lock.release()
 
-    # --- routing (also pure) ---
-    def route(
-        self,
-        method: str,
-        path: str,
-        body: dict[str, Any] | None = None,
-        query: dict[str, str] | None = None,
-    ) -> tuple[int, dict]:
-        body = body or {}
-        query = query or {}
-        m = method.upper()
-        if m == "GET" and path == "/status":
-            return 200, self.status()
-        if m == "GET" and path == "/model-config":
-            return 200, self.get_model_config()
-        if m == "POST" and path == "/model-config":
-            return self._as_response(self._exclusive(lambda: self.set_model_config(body)))
-        if m == "POST" and path == "/apply":
-            return self._as_response(self._exclusive(lambda: self.apply(body)))
-        if m == "GET" and path == "/plugins":
-            return 200, self.list_plugins()
-        if m == "POST" and path.startswith("/plugins/") and path.endswith("/enable"):
-            plugin_id = path[len("/plugins/"):-len("/enable")]
-            return self._as_response(self._exclusive(lambda: self.enable_plugin(plugin_id, body)))
-        if m == "POST" and path.startswith("/plugins/") and path.endswith("/disable"):
-            plugin_id = path[len("/plugins/"):-len("/disable")]
-            return self._as_response(self._exclusive(lambda: self.disable_plugin(plugin_id, body)))
-        if m == "POST" and path == "/jobs":
-            return self._as_response(self.request_job(body))
-        if m == "POST" and path == "/jobs/complete":
-            return self._as_response(self.complete_job(body))
-        if m == "POST" and path == "/jobs/heartbeat":
-            return self._as_response(self.heartbeat_job(body))
-        if m == "GET" and path == "/jobs/history":
-            # Finished leases, newest first — what the orchestration tab's history table shows.
-            return 200, {"history": self.history.tail(100) if self.history else []}
-        if m == "GET" and path == "/doctor":
-            return 200, self.doctor()
-        if m == "GET" and path in ("/health", "/healthz"):
-            # The digest is not secret; `ordo doctor` reads it here to compare with the checkout.
-            return 200, {"ok": True, "substrate_digest": self.substrate_digest}
-        # Service lifecycle routes (ported from ops-api)
-        if m == "POST" and path.startswith("/services/") and path.endswith("/start"):
-            service_id = path[len("/services/"):-len("/start")]
-            return self._as_response(self._exclusive(lambda: self.service_start(service_id, body)))
-        if m == "POST" and path.startswith("/services/") and path.endswith("/stop"):
-            service_id = path[len("/services/"):-len("/stop")]
-            return self._as_response(self._exclusive(lambda: self.service_stop(service_id, body)))
-        if m == "POST" and path.startswith("/services/") and path.endswith("/restart"):
-            service_id = path[len("/services/"):-len("/restart")]
-            return self._as_response(self._exclusive(lambda: self.service_restart(service_id, body)))
-        if m == "GET" and path.startswith("/services/") and path.endswith("/logs"):
-            service_id = path[len("/services/"):-len("/logs")]
-            return self._as_response(self.service_logs(service_id))
-        if m == "GET" and path == "/services":
-            return self._as_response(self.list_services())
-        if m == "POST" and path.startswith("/services/") and path.endswith("/recreate"):
-            service_id = path[len("/services/"):-len("/recreate")]
-            return self._as_response(self._exclusive(lambda: self.service_recreate(service_id, body)))
-        if m == "GET" and path == "/containers":
-            return self._as_response(self.list_containers())
-        if m == "GET" and path.startswith("/containers/") and path.endswith("/logs"):
-            name = path[len("/containers/"):-len("/logs")]
-            return self._as_response(self.container_logs(name))
-        if m == "POST" and path.startswith("/containers/") and path.endswith("/restart"):
-            name = path[len("/containers/"):-len("/restart")]
-            return self._as_response(self._exclusive(lambda: self.container_restart(name, body)))
-        if m == "GET" and path.startswith("/containers/") and "/" not in path[len("/containers/"):]:
-            return self._as_response(self.container_inspect(path[len("/containers/"):]))
-        if m == "GET" and path == "/stats/services":
-            return self._as_response(self.service_stats())
-        if m == "POST" and path == "/compose/up":
-            return self._as_response(self._exclusive(lambda: self.compose_up(body)))
-        if m == "POST" and path == "/compose/down":
-            return self._as_response(self._exclusive(lambda: self.compose_down(body)))
-        if m == "POST" and path == "/compose/restart":
-            return self._as_response(self._exclusive(lambda: self.compose_restart(body)))
-        # Registry routes (ported from ops-api, slice 2)
-        if m == "GET" and path == "/registry/models":
-            return 200, self.registry_models()
-        if m == "GET" and path == "/registry/gpus":
-            return 200, self.registry_gpus()
-        if m == "GET" and path == "/gpus":
-            return 200, self.live_gpus()
-        # Slice 3: model download/pull routes
-        if m == "POST" and path == "/models/download":
-            return self._as_response(self.models_download(body))
-        if m == "GET" and path == "/models/download/status":
-            return 200, self.models_download_status()
-        # Slice 3: diagnostics routes
-        if m == "GET" and path == "/diagnostics/dstate":
-            return 200, self.diagnostics_dstate()
-        # Slice 3: audit route
-        if m == "GET" and path == "/audit":
-            try:
-                limit = int(query.get("limit", "50"))
-            except ValueError:
-                return 422, {"error": "limit must be an integer"}
-            if not 1 <= limit <= AUDIT_READ_LIMIT_MAX:
-                return 422, {"error": f"limit must be between 1 and {AUDIT_READ_LIMIT_MAX}"}
-            return 200, self.audit_log(limit)
-        # Slice 4: ComfyUI node requirements, plus the two honest 410s
-        if m == "POST" and path == "/comfyui/install-node-requirements":
-            return self._as_response(self._exclusive(lambda: self.comfyui_install_node_requirements(body)))
-        if m == "POST" and path == "/gpu/assign":
-            return self._as_response(self.gpu_assign_gone((body or {}).get("service", "")))
-        if m == "POST" and path.startswith("/registry/models/") and path.endswith("/assign-gpu"):
-            return self._as_response(self.gpu_assign_gone(path.split("/")[3]))
-        # Managed projects: status, logs and a confirmed restart of OTHER compose projects.
-        if m == "GET" and path == "/projects":
-            return self._as_response(self.managed_projects_overview())
-        managed_route = _MANAGED_ROUTE.match(path)
-        if managed_route:
-            project, name, verb = managed_route.group("project", "name", "verb")
-            if m == "GET" and name is None:
-                return self._as_response(self.managed_project_containers(project))
-            if m == "GET" and verb == "logs":
-                return self._as_response(self.managed_container_logs(project, name, query))
-            if m == "POST" and verb == "restart":
-                return self._as_response(self.managed_container_restart(project, name, body))
-        return 404, {"error": f"no route {method} {path}"}
-
-    @staticmethod
-    def _error(status: int, message: str, **extra: Any) -> dict[str, Any]:
-        return {"_status": status, "error": message, **extra}
-
-    @staticmethod
-    def _as_response(payload: dict[str, Any]) -> tuple[int, dict]:
-        status = int(payload.pop("_status", 200)) if isinstance(payload, dict) else 200
-        return status, payload
+    _error = staticmethod(error)
+    _as_response = staticmethod(as_response)
 
     def app(self, auth_token: str | Callable[[], str] | None, scoped: Sequence[auth.Principal] = ()):
         """Build the FastAPI application that delegates every authenticated request to route().

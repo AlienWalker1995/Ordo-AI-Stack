@@ -1,7 +1,7 @@
 """Open WebUI's post-apply probe: does its declared connection authenticate against model-gateway?
 
 Both the host's `ordo doctor` (after `ordo apply`) and ops-controller's post-render apply
-(`ControlPlane.apply_render`, whenever it recreates open-webui) run this same probe inside the
+(`RenderApply.apply_render`, whenever it recreates open-webui) run this same probe inside the
 open-webui container and judge its report with `open_webui_verdict`. It lives in the render layer
 so the control plane can use it without importing the host.
 

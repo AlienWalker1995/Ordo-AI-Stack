@@ -3,7 +3,7 @@
 A service is in the changed set when its rendered config hash (`docker compose config --hash`, what
 compose labels a container with) or its image id differs from its container's, or when it has no
 container yet. The host's `ordo apply` (ordo/host/apply.py) and ops-controller's post-render step
-(`ControlPlane.apply_render`, ordo/control/api.py) both decide what to recreate from here, so the
+(`RenderApply.apply_render`, ordo/control/apply.py) both decide what to recreate from here, so the
 host and the control plane cannot disagree about what a render changed. The same holds for the
 stale one-shot job containers both remove (`stale_one_shot_jobs`).
 

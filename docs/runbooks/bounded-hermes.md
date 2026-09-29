@@ -69,10 +69,14 @@ Rotation: at 10 MB the file rolls to `audit.1.log`; five generations are kept
 ## Adding a new control-plane verb
 
 1. Write a failing test in `tests/substrate/` for the new route.
-2. Implement the handler on the control plane in `ordo/control/api.py` and add
-   it to `ControlPlane.route()`. A `POST` is audited automatically; add its
-   `(action, target)` mapping to `_AUDIT_PATH_VERBS` or `_AUDIT_BODY_VERBS` so
-   the record names it (otherwise it is recorded as `unknown`).
+2. Implement the handler in the concern module that owns it under
+   `ordo/control/` (the map is in `ordo/control/api.py`'s docstring), give
+   `ControlPlane` a one-line delegate, and add a `Route` to `ROUTES` in
+   `ordo/control/routes.py` (`exclusive=True` for a verb that changes the
+   stack). A `POST` is audited automatically; add its `(action, target)`
+   mapping to `_AUDIT_PATH_VERBS` or `_AUDIT_BODY_VERBS` in
+   `ordo/control/call_audit.py` so the record names it (otherwise it is
+   recorded as `unknown`).
 3. If Hermes should call it, add the route to `HERMES_ROUTES` in
    `ordo/control/principals.py` (a privilege grant: the `hermes` token is
    refused with 403 on anything else), then

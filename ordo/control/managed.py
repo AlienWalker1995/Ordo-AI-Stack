@@ -2,7 +2,7 @@
 
 The operator lists the projects Hermes may maintain as `managed_projects:` in ordo.yaml (the
 source of truth; `Source.validate` refuses Ordo's own project). ops-controller serves them under
-`/projects/...` (ordo/control/api.py). This module holds the pure policy those routes apply:
+`/projects/...` (ordo/control/managed_projects.py). This module holds the pure policy those routes apply:
 
 - `gpu_refusal`: a restart must never put a second tenant on the GPU the scheduler leases. Ordo's
   lease-managed residents are out of reach by construction (Ordo's project cannot be listed); this
