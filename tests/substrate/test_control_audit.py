@@ -96,7 +96,7 @@ def test_each_privileged_call_leaves_exactly_one_record(plane, client, path, bod
     assert rec["method"] == "POST"
     assert rec["path"] == path
     assert rec["status"] == r.status_code
-    assert rec["confirm"] is bool(body.get("confirm"))
+    assert rec["confirm"] is (body.get("confirm") is True)
     assert rec["dry_run"] is False
     assert isinstance(rec["ts"], float)
     expected_result = "ok" if r.status_code < 400 else ("refused" if r.status_code < 500 else "error")
@@ -184,6 +184,24 @@ def test_an_invalid_json_body_is_recorded(plane, client):
     assert r.status_code == 400
     [rec] = _records(audit_path)
     assert (rec["action"], rec["status"], rec["result"]) == ("stop", 400, "refused")
+
+
+def test_a_json_body_that_is_not_an_object_is_recorded(plane, client):
+    _, audit_path = plane
+    r = client.post("/services/llamacpp/stop", content=b'["confirm"]',
+                    headers={**AUTH, "Content-Type": "application/json"})
+    assert r.status_code == 400
+    [rec] = _records(audit_path)
+    assert (rec["action"], rec["status"], rec["result"]) == ("stop", 400, "refused")
+    assert rec["error"] == "JSON body must be an object"
+
+
+def test_a_confirm_that_is_not_json_true_is_recorded_as_unconfirmed(plane, client):
+    _, audit_path = plane
+    r = client.post("/services/llamacpp/stop", json={"confirm": "yes"}, headers=AUTH)
+    assert r.status_code == 400
+    [rec] = _records(audit_path)
+    assert (rec["confirm"], rec["status"], rec["result"]) == (False, 400, "refused")
 
 
 def test_an_unknown_write_route_is_recorded(plane, client):

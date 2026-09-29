@@ -22,7 +22,7 @@ import httpx as _httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 from starlette.middleware.gzip import GZipMiddleware
 
 from dashboard import auth
@@ -219,7 +219,8 @@ async def comfyui_models():
 
 class ComfyuiInstallNodeRequirementsRequest(BaseModel):
     node_path: str
-    confirm: bool = False
+    # StrictBool: only JSON true confirms. A plain bool would coerce "true", 1, "yes" and "on".
+    confirm: StrictBool = False
 
 
 @app.post("/api/comfyui/install-node-requirements")

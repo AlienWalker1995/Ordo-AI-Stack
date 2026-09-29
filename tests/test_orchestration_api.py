@@ -322,3 +322,61 @@ def test_gpu_history_authenticates_to_the_control_plane(client, monkeypatch):
     assert url == f"{routes_orchestration.OPS_CONTROLLER_URL}/jobs/history"
     assert headers.get("Authorization") == "Bearer test-token"
     assert headers.get("X-Actor") == "orchestration"   # the caller ops-controller's audit log records
+
+
+# ── Destructive routes confirm with JSON true only ───────────────────────────────────────
+
+
+@pytest.fixture
+def ops_calls(monkeypatch):
+    """Record every call the dashboard would forward to ops-controller, and forward none."""
+    import dashboard.app as dashboard_app
+    import dashboard.routes_orchestration as ro
+
+    calls: list[str] = []
+
+    async def _ops_request(method, path, **_kwargs):
+        calls.append(path)
+        return 200, {"ok": True}
+
+    class _RecordingClient:
+        def __init__(self, *_a, **_k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        async def post(self, url, **_kwargs):
+            calls.append(url)
+            response = _FakeResp({"ok": True})
+            response.status_code = 200
+            return response
+
+    monkeypatch.setattr(dashboard_app, "_ops_request", _ops_request)
+    monkeypatch.setattr(ro, "OPS_CONTROLLER_TOKEN", "tok")
+    monkeypatch.setattr(ro.httpx, "AsyncClient", _RecordingClient)
+    return calls
+
+
+CONFIRM_GATED_DASHBOARD_ROUTES = [
+    ("/api/orchestration/comfyui/restart", {}),
+    ("/api/comfyui/install-node-requirements", {"node_path": "some-pack"}),
+]
+
+
+@pytest.mark.parametrize("path, extra", CONFIRM_GATED_DASHBOARD_ROUTES)
+@pytest.mark.parametrize("confirm", ["no", "false", "true", 1, "yes", "on"])
+def test_dashboard_refuses_a_confirm_that_is_not_json_true(client, ops_calls, path, extra, confirm):
+    r = client.post(path, json={**extra, "confirm": confirm})
+    assert r.status_code in (400, 422)
+    assert ops_calls == []
+
+
+@pytest.mark.parametrize("path, extra", CONFIRM_GATED_DASHBOARD_ROUTES)
+def test_dashboard_forwards_a_confirm_of_json_true(client, ops_calls, path, extra):
+    r = client.post(path, json={**extra, "confirm": True})
+    assert r.status_code == 200
+    assert len(ops_calls) == 1

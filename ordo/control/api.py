@@ -96,6 +96,17 @@ COMFYUI_CONTAINER_NAME = os.environ.get("COMFYUI_CONTAINER_NAME", "ordo-comfyui-
 # allows: the segment is interpolated into a container path that a pip invocation then reads.
 _NODE_PATH_SEGMENT = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
+# --- confirmation ---
+CONFIRM_REQUIRED = ('Destructive operation requires confirmation. Set {"confirm": true} in the request body '
+                    "to proceed.")
+
+
+def confirmed(body: dict[str, Any]) -> bool:
+    """True only when the body says `"confirm": true` (JSON true). Any other value, "no" and "false"
+    included, is not a confirmation: a truthiness check would let those run a destructive action."""
+    return body.get("confirm") is True
+
+
 # --- audit ---
 # Every call with one of these methods changes state (or asks to), so it leaves one audit record
 # whatever its outcome. GET/HEAD never do; a read would flood the log (Hermes polls).
@@ -785,9 +796,9 @@ class ControlPlane:
         """`POST /apply`: bring the stack to out/ as it is rendered now (after a host render, say).
         `{"dry_run": true}` returns the plan and changes nothing; otherwise `confirm` is required."""
         dry_run = bool(body.get("dry_run"))
-        if not dry_run and not body.get("confirm"):
-            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the "
-                                    "request body to proceed, or {\"dry_run\": true} for the plan.")
+        if not dry_run and not confirmed(body):
+            return self._error(400, 'Destructive operation requires confirmation. Set {"confirm": true} in the '
+                                    'request body to proceed, or {"dry_run": true} for the plan.')
         return self.apply_render(dry_run=dry_run)
 
     def request_job(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -913,8 +924,8 @@ class ControlPlane:
             return self._error(503, "no broker configured")
         if body.get("dry_run"):
             return {"would": "start", "service": service_id}
-        if not body.get("confirm"):
-            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        if not confirmed(body):
+            return self._error(400, CONFIRM_REQUIRED)
         try:
             group = self._lifecycle_group(service_id)
         except LifecycleGroupUnknown as e:
@@ -934,8 +945,8 @@ class ControlPlane:
             return self._error(503, "no broker configured")
         if body.get("dry_run"):
             return {"would": "stop", "service": service_id}
-        if not body.get("confirm"):
-            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        if not confirmed(body):
+            return self._error(400, CONFIRM_REQUIRED)
         try:
             group = self._lifecycle_group(service_id)
         except LifecycleGroupUnknown as e:
@@ -954,8 +965,8 @@ class ControlPlane:
             return self._error(503, "no broker configured")
         if body.get("dry_run"):
             return {"would": "restart", "service": service_id}
-        if not body.get("confirm"):
-            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        if not confirmed(body):
+            return self._error(400, CONFIRM_REQUIRED)
         try:
             group = self._lifecycle_group(service_id)
         except LifecycleGroupUnknown as e:
@@ -996,8 +1007,8 @@ class ControlPlane:
             return self._error(503, "no broker configured")
         if body.get("dry_run"):
             return {"would": "recreate", "service": service_id}
-        if not body.get("confirm"):
-            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        if not confirmed(body):
+            return self._error(400, CONFIRM_REQUIRED)
         try:
             group = self._lifecycle_group(service_id)
         except LifecycleGroupUnknown as e:
@@ -1034,8 +1045,8 @@ class ControlPlane:
     def container_restart(self, name: str, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
             return self._error(503, "no broker configured")
-        if not body.get("confirm"):
-            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        if not confirmed(body):
+            return self._error(400, CONFIRM_REQUIRED)
         try:
             members = self._container_members(name)
         except LifecycleGroupUnknown as e:
@@ -1062,8 +1073,8 @@ class ControlPlane:
     def compose_up(self, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
             return self._error(503, "no broker configured")
-        if not body.get("confirm"):
-            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        if not confirmed(body):
+            return self._error(400, CONFIRM_REQUIRED)
         service = body.get("service") or None
         try:
             # A named compose verb acts on the service's whole lifecycle group (the backend
@@ -1083,8 +1094,8 @@ class ControlPlane:
     def compose_down(self, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
             return self._error(503, "no broker configured")
-        if not body.get("confirm"):
-            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        if not confirmed(body):
+            return self._error(400, CONFIRM_REQUIRED)
         service = body.get("service") or None
         try:
             self.broker.backend.compose_down(service)
@@ -1095,8 +1106,8 @@ class ControlPlane:
     def compose_restart(self, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
             return self._error(503, "no broker configured")
-        if not body.get("confirm"):
-            return self._error(400, "Destructive operation requires confirmation. Set {\"confirm\": true} in the request body to proceed.")
+        if not confirmed(body):
+            return self._error(400, CONFIRM_REQUIRED)
         service = body.get("service") or None
         try:
             # A named compose verb acts on the service's whole lifecycle group (the backend
@@ -1348,7 +1359,7 @@ class ControlPlane:
             "path": _clip(path),
             "status": status,
             "dry_run": bool(fields.get("dry_run")),
-            "confirm": bool(fields.get("confirm")),
+            "confirm": confirmed(fields),
         }
         if error:
             extra["error"] = _clip(error, _AUDIT_ERROR_MAX)
@@ -1415,12 +1426,8 @@ class ControlPlane:
         Installing on the host would put the packages somewhere ComfyUI never imports from.
         """
         body = body or {}
-        if not body.get("confirm"):
-            return self._error(
-                400,
-                "Destructive operation requires confirmation. "
-                'Set {"confirm": true} in the request body to proceed.',
-            )
+        if not confirmed(body):
+            return self._error(400, CONFIRM_REQUIRED)
         node_path = self._validate_custom_node_path(body.get("node_path") or "")
         if node_path is None:
             return self._error(400, "Invalid node_path")
@@ -1660,14 +1667,20 @@ class ControlPlane:
                                     headers={"WWW-Authenticate": "Bearer"})
             body = None
             if method in ("POST", "PUT", "PATCH"):
-                try:
-                    raw = await request.body()
-                    if raw:
+                raw = await request.body()
+                if raw:
+                    try:
                         body = json.loads(raw)
-                except json.JSONDecodeError:
-                    error = "invalid JSON body"
-                    cp.audit_call(method, path, None, actor, 400, error)
-                    return JSONResponse(content={"error": error}, status_code=400)
+                    except json.JSONDecodeError:
+                        error = "invalid JSON body"
+                        cp.audit_call(method, path, None, actor, 400, error)
+                        return JSONResponse(content={"error": error}, status_code=400)
+                    # Every route reads its body as an object; an array, string, number or null
+                    # would otherwise fail inside a handler as a bare 500.
+                    if not isinstance(body, dict):
+                        error = "JSON body must be an object"
+                        cp.audit_call(method, path, None, actor, 400, error)
+                        return JSONResponse(content={"error": error}, status_code=400)
             status, payload = cp.handle(method, path, body, dict(request.query_params), actor)
             return JSONResponse(content=payload, status_code=status)
 
