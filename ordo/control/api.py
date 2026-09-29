@@ -1499,8 +1499,8 @@ class ControlPlane:
         """
         return self._error(
             410,
-            "GPU reassignment moved to the render pipeline: set the pin in ordo.yaml "
-            "(overrides:) and re-render (`ordo render`), then recreate the service. "
+            "GPU reassignment moved to the render pipeline: set the service's `gpu_pin:` in its "
+            "manifest and re-render (`ordo render`), then recreate the service. "
             "Runtime reassignment was a silent no-op and has been retired.",
         )
 

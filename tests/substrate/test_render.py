@@ -90,6 +90,50 @@ def test_override_survives_regeneration_and_stays_consistent():
             == str(d["env.LLAMACPP_CPU_CTX"]) == "65536")
 
 
+# `overrides:` reaches only the llama.cpp tuning keys the renderer reads. Anything else used to be
+# merged into a dict nothing read: the operator saw no effect and no error. It is now a render error.
+_LLAMACPP_OVERRIDE_KEYS = (
+    "ctx_size", "model", "gpu_layers", "kv_cache_type", "parallel", "flash_attn", "rope_scaling",
+    "rope_scale", "yarn_orig_ctx", "n_predict", "reasoning_budget", "enable_kv_quant", "mmproj",
+    "extra_args", "image",
+)
+
+
+def test_override_for_a_service_other_than_llamacpp_is_a_render_error():
+    src = _src(hardware=PROFILE_5090, overrides={"comfyui": {"cap_add": ["SYS_NICE"]}})
+    with pytest.raises(ValueError) as err:
+        render(src, CATALOG)
+    message = str(err.value)
+    assert "'comfyui'" in message and "'llamacpp'" in message
+
+
+def test_unknown_llamacpp_override_key_is_a_render_error_naming_the_supported_keys():
+    src = _src(hardware=PROFILE_5090, overrides={"llamacpp": {"environment": {"FOO": "1"}}})
+    with pytest.raises(ValueError) as err:
+        render(src, CATALOG)
+    message = str(err.value)
+    assert "'environment'" in message and "llamacpp" in message
+    for key in _LLAMACPP_OVERRIDE_KEYS:
+        assert key in message
+
+
+def test_llamacpp_override_must_be_a_mapping():
+    src = _src(hardware=PROFILE_5090, overrides={"llamacpp": "ctx_size=65536"})
+    with pytest.raises(ValueError, match="llamacpp"):
+        render(src, CATALOG)
+
+
+def test_every_supported_llamacpp_override_key_renders():
+    for key in _LLAMACPP_OVERRIDE_KEYS:
+        baseline = render(_src(hardware=PROFILE_5090), CATALOG)
+        pinned = {"ctx_size": 65536, "gpu_layers": 12, "parallel": 2, "rope_scale": 2,
+                  "yarn_orig_ctx": 4096, "n_predict": 1024, "reasoning_budget": 1024,
+                  "enable_kv_quant": 0}.get(key, "override-probe")
+        rc = render(_src(hardware=PROFILE_5090, overrides={"llamacpp": {key: pinned}}), CATALOG)
+        # every honoured key changes what the render writes, so none is a silent no-op
+        assert rc.env != baseline.env, key
+
+
 def test_forced_model_too_big_warns_but_allows():
     src = _src(hardware=PROFILE_8GB, model="huihui-qwen3.6-27b-q6")
     rc = render(src, CATALOG)
