@@ -213,7 +213,7 @@ def test_models_download_category_traversal(tmp_path):
 
 
 def test_model_download_redirect_rejects_untrusted_host():
-    from ordo.control.api import _validated_redirect_url
+    from ordo.control.comfyui import _validated_redirect_url
 
     with pytest.raises(ValueError, match="not in allowed list"):
         _validated_redirect_url("https://huggingface.co/model", "https://evil.example/file")
