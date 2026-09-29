@@ -23,3 +23,9 @@ port 9000. Its manifest sets `network: stack` because it must reach the ComfyUI 
 `ops-controller`. ComfyUI itself is on a network only its gate joins. `COMFYUI_URL`, `COMFY_MCP_DEFAULT_MODEL` and
 `OPS_CONTROLLER_TOKEN` come from the manifest's `env:` block, compose-interpolated from the
 rendered `.env` and `secrets.env`.
+
+The image starts through [`start.py`](start.py), not upstream `server.py` directly. Upstream
+checks ComfyUI five times (about 30 s) and exits, and ComfyUI takes minutes to boot, so the
+container crash-looped whenever both started together. `start.py` waits for ComfyUI with no
+deadline, then execs `server.py`. A compose `depends_on` condition would not cover this: `ordo
+apply` / `ordo recreate` use `--no-deps`, and Docker's own restarts ignore `depends_on`.
