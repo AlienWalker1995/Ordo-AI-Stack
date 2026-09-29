@@ -115,6 +115,9 @@ services:
     volumes:
       - langfuse-clickhouse-data:/var/lib/clickhouse
       - langfuse-clickhouse-logs:/var/log/clickhouse-server
+      # Caps ClickHouse's own diagnostic logs; unbounded, they filled the 1 TB Docker disk on
+      # 2026-09-28. Rationale in the file.
+      - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/services/langfuse/clickhouse-system-logs.xml:/etc/clickhouse-server/config.d/zz-system-logs.xml:ro
     # ClickHouse opens a file per data part; docker's default 1024-descriptor ceiling makes it log
     # "Too many open files" and fail merges once the traces table has any history.
     ulimits:
