@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 def _confirmed(args: dict) -> bool:
     """True only for `confirm: true` (JSON true), never a truthy string such as "false". The same
-    rule as ops-controller's `confirmed()` in ordo/control/api.py; this image does not ship `ordo`."""
+    rule as ops-controller's `confirmed()` in ordo/control/responses.py; this image does not ship `ordo`."""
     return args.get("confirm") is True
 
 # Lazy singleton — constructed on first tool call. If OPS_CONTROLLER_TOKEN

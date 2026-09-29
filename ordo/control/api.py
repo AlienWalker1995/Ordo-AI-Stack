@@ -58,6 +58,7 @@ from . import metrics as prom
 from . import principals as auth
 from .audit import AuditLog
 from .broker import SELF_REFERENTIAL_SERVICES, Broker
+from .responses import CONFIRM_REQUIRED, as_response, confirmed, error
 from .scheduler import Job, Scheduler
 
 logger = logging.getLogger(__name__)
@@ -99,17 +100,6 @@ COMFYUI_CONTAINER_NAME = os.environ.get("COMFYUI_CONTAINER_NAME", "ordo-comfyui-
 # One path segment of a ComfyUI custom-node pack. Deliberately narrower than the filesystem
 # allows: the segment is interpolated into a container path that a pip invocation then reads.
 _NODE_PATH_SEGMENT = re.compile(r"[A-Za-z0-9._-]{1,64}")
-
-# --- confirmation ---
-CONFIRM_REQUIRED = ('Destructive operation requires confirmation. Set {"confirm": true} in the request body '
-                    "to proceed.")
-
-
-def confirmed(body: dict[str, Any]) -> bool:
-    """True only when the body says `"confirm": true` (JSON true). Any other value, "no" and "false"
-    included, is not a confirmation: a truthiness check would let those run a destructive action."""
-    return body.get("confirm") is True
-
 
 # --- audit ---
 # Every call with one of these methods changes state (or asks to), so it leaves one audit record
@@ -1858,14 +1848,8 @@ class ControlPlane:
             return 200, payload
         return self._as_response(payload)
 
-    @staticmethod
-    def _error(status: int, message: str, **extra: Any) -> dict[str, Any]:
-        return {"_status": status, "error": message, **extra}
-
-    @staticmethod
-    def _as_response(payload: dict[str, Any]) -> tuple[int, dict]:
-        status = int(payload.pop("_status", 200)) if isinstance(payload, dict) else 200
-        return status, payload
+    _error = staticmethod(error)
+    _as_response = staticmethod(as_response)
 
     def app(self, auth_token: str | Callable[[], str] | None, scoped: Sequence[auth.Principal] = ()):
         """Build the FastAPI application that delegates every authenticated request to route().
