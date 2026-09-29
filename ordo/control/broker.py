@@ -115,6 +115,14 @@ class ContainerBackend(Protocol):
     # container of this project.
     def container_inspect(self, name: str) -> dict: ...
 
+    # OTHER compose projects (ordo/control/managed.py): the control plane decides which projects
+    # may be asked about; each method acts only on a container that carries that project's label,
+    # and raises ValueError for any other name.
+    def foreign_containers(self, project: str) -> list[dict]: ...
+    def foreign_logs(self, project: str, name: str, tail: int) -> str: ...
+    def foreign_inspect(self, project: str, name: str) -> dict: ...   # raw; never returned to a caller
+    def foreign_restart(self, project: str, name: str) -> None: ...
+
     # The read methods return the ops-api PAYLOAD, not a bare list, because the dashboard consumes
     # these shapes directly: {"services": [...]}, {"containers": [...]}. Returning a list here and
     # wrapping it at the route would put the shape in two places and let them drift.
@@ -159,6 +167,10 @@ class MockBackend:
         self.container_restart_calls: list[str] = []
         self.inspect_requests: list[str] = []
         self.inspect_result: dict | None = None
+        # project -> {container name: (row, raw inspect)}; see ordo/control/managed.py
+        self.foreign: dict[str, dict[str, tuple[dict, dict]]] = {}
+        self.foreign_log_requests: list[tuple[str, str, int]] = []
+        self.foreign_restarts: list[tuple[str, str]] = []
         self.service_stats_calls: list = []
         self.compose_up_calls: list = []
         self.compose_down_calls: list = []
@@ -218,6 +230,27 @@ class MockBackend:
     def container_inspect(self, name: str) -> dict:
         self.inspect_requests.append(name)
         return self.inspect_result or {"name": name}
+
+    def _foreign(self, project: str, name: str) -> tuple[dict, dict]:
+        entry = self.foreign.get(project, {}).get(name)
+        if entry is None:
+            raise ValueError(f"container {name!r} is not in project {project!r}")
+        return entry
+
+    def foreign_containers(self, project: str) -> list[dict]:
+        return [row for row, _raw in self.foreign.get(project, {}).values()]
+
+    def foreign_logs(self, project: str, name: str, tail: int) -> str:
+        self._foreign(project, name)
+        self.foreign_log_requests.append((project, name, tail))
+        return f"[mock logs for {project}/{name}, tail={tail}]"
+
+    def foreign_inspect(self, project: str, name: str) -> dict:
+        return self._foreign(project, name)[1]
+
+    def foreign_restart(self, project: str, name: str) -> None:
+        self._foreign(project, name)
+        self.foreign_restarts.append((project, name))
 
     def service_stats(self) -> dict:
         self.service_stats_calls.append(None)
@@ -367,20 +400,56 @@ class DockerBackend:
         that cannot see the netns members must refuse rather than orphan them."""
         return load_compose(self.COMPOSE_DIR)
 
-    def _project_ps(self) -> list[dict]:  # pragma: no cover - needs real docker
-        """Every container in this project as {service, name, state, status}."""
+    def _project_ps(self, project: str | None = None) -> list[dict]:  # pragma: no cover - needs real docker
+        """Every container of a compose project (this one by default) as {service, name, state,
+        status, image}."""
         proc = subprocess.run(
             ["docker", "ps", "-a",
-             "--filter", f"label=com.docker.compose.project={self.project}",
-             "--format", "{{.Label \"com.docker.compose.service\"}}\t{{.Names}}\t{{.State}}\t{{.Status}}"],
+             "--filter", f"label=com.docker.compose.project={project or self.project}",
+             "--format",
+             "{{.Label \"com.docker.compose.service\"}}\t{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Image}}"],
             capture_output=True, text=True, timeout=30,
         )
         rows = []
         for line in proc.stdout.splitlines():
             parts = line.split("\t")
-            if len(parts) == 4 and parts[0]:
-                rows.append({"service": parts[0], "name": parts[1], "state": parts[2], "status": parts[3]})
+            if len(parts) == 5 and parts[0]:
+                rows.append({"service": parts[0], "name": parts[1], "state": parts[2], "status": parts[3],
+                             "image": parts[4]})
         return rows
+
+    # --- OTHER compose projects (ordo/control/managed.py) ---
+    # The control plane only asks about projects the operator listed. These methods add the
+    # structural half: each acts only on a container that carries that project's compose label.
+
+    def _foreign_guard(self, project: str, name: str) -> str:
+        if project == self.project:
+            raise ValueError(f"'{project}' is this stack's own project; its own verbs maintain it")
+        if "/" in name or name.strip() != name or not name:
+            raise ValueError(f"not a valid container name: {name!r}")
+        if name not in {r["name"] for r in self._project_ps(project)}:
+            raise ValueError(f"container {name!r} is not in project {project!r}")
+        return name
+
+    def foreign_containers(self, project: str) -> list[dict]:  # pragma: no cover - needs real docker
+        if project == self.project:
+            raise ValueError(f"'{project}' is this stack's own project; its own verbs maintain it")
+        return [{"name": r["name"], "service": r["service"], "state": r["state"],
+                 "health": self._health_from_status(r["status"]), "status": r["status"], "image": r["image"]}
+                for r in self._project_ps(project)]
+
+    def foreign_logs(self, project: str, name: str, tail: int) -> str:  # pragma: no cover - needs real docker
+        proc = subprocess.run(["docker", "logs", "--tail", str(tail), self._foreign_guard(project, name)],
+                              capture_output=True, text=True, timeout=30)
+        return proc.stdout + proc.stderr
+
+    def foreign_inspect(self, project: str, name: str) -> dict:  # pragma: no cover - needs real docker
+        proc = subprocess.run(["docker", "inspect", "--type", "container", self._foreign_guard(project, name)],
+                              capture_output=True, text=True, timeout=30, check=True)
+        return json.loads(proc.stdout)[0]
+
+    def foreign_restart(self, project: str, name: str) -> None:  # pragma: no cover - needs real docker
+        subprocess.run(["docker", "restart", self._foreign_guard(project, name)], check=True, timeout=120)
 
     @staticmethod
     def _health_from_status(status: str) -> str | None:

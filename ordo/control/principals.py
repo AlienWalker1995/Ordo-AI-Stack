@@ -81,6 +81,12 @@ HERMES_ROUTES: tuple[Route, ...] = (
     Route("POST", "/plugins/{id}/disable"),
     Route("POST", "/model-config"),
     Route("POST", "/models/download"),
+    # OTHER compose projects the operator listed in `managed_projects:` (ordo/control/managed.py):
+    # status, logs and a confirmed, rate-limited, GPU-guarded restart. Nothing else.
+    Route("GET", "/projects"),
+    Route("GET", "/projects/{project}/containers"),
+    Route("GET", "/projects/{project}/containers/{name}/logs"),
+    Route("POST", "/projects/{project}/containers/{name}/restart"),
 )
 
 

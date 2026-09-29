@@ -8,6 +8,9 @@ provides_tools:
   - container_logs
   - inspect_container
   - restart_container
+  - project_containers
+  - project_logs
+  - restart_project_container
   - compose_restart
   - compose_up
 provides_hooks:

@@ -92,3 +92,10 @@ site:
 overrides: {}
   # llamacpp:
   #   ctx_size: 131072
+
+# OTHER compose projects on this host that the agent may maintain through ops-controller: status,
+# logs and a confirmed restart of their containers (at most 3 restarts per container per hour; a
+# container that could use the GPU the scheduler leases is refused). Every call is audited under the
+# caller's principal. Nothing else (no stop, start, exec, compose) and never Ordo's own project.
+# List compose project names, e.g. [media-stack, game-server]. Empty: none.
+managed_projects: []

@@ -103,6 +103,29 @@ _RETIRED_KEYS = {
 }
 
 
+# A compose project name (compose's rule): the only shape a managed project may take.
+_COMPOSE_PROJECT = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+# Ordo's own compose project. Its services (the GPU lease's residents among them) are maintained by
+# ops-controller's own verbs, never through the managed-project routes.
+ORDO_PROJECT = "ordo"
+
+
+def _validate_managed_projects(projects: Any) -> None:
+    if not isinstance(projects, list):
+        raise ValueError("managed_projects must be a list of compose project names")
+    seen: set[str] = set()
+    for name in projects:
+        if not isinstance(name, str) or not _COMPOSE_PROJECT.match(name):
+            raise ValueError(f"managed_projects: {name!r} is not a compose project name "
+                             f"(expected {_COMPOSE_PROJECT.pattern})")
+        if name == ORDO_PROJECT:
+            raise ValueError("managed_projects: 'ordo' is Ordo's own project; ops-controller's own verbs "
+                             "maintain it, lease-checked")
+        if name in seen:
+            raise ValueError(f"managed_projects: {name!r} is listed twice")
+        seen.add(name)
+
+
 def _reject_unknown_keys(where: str, keys: Any, valid: list[str]) -> None:
     """Raise ValueError naming the first key not in `valid`, with the closest valid key as a hint."""
     for key in keys:
@@ -137,6 +160,10 @@ class Source:
     # prompt_tokens_per_second, output_tokens_per_second). Optional: empty means $0/token
     # (the historical default). See engine.local_token_costs for the formula.
     cost: dict[str, Any] = dataclasses.field(default_factory=dict)
+    # OTHER compose projects on this host that Hermes may maintain through ops-controller: status,
+    # logs and a confirmed, rate-limited restart of their containers (ordo/control/managed.py).
+    # Empty (the default) means none. Ordo's own project can never be listed.
+    managed_projects: list[str] = dataclasses.field(default_factory=list)
 
     @classmethod
     def load(cls, path: str | Path) -> Source:
@@ -156,6 +183,7 @@ class Source:
             overrides=data.get("overrides") or {},
             site=data.get("site") or {},
             cost=data.get("cost") or {},
+            managed_projects=data.get("managed_projects") or [],
         )
         s.validate()
         return s
@@ -174,6 +202,7 @@ class Source:
             if key in _RETIRED_SITE_KEYS:
                 raise ValueError(f"site: {key} {_RETIRED_SITE_KEYS[key]}")
         secret_backend(self.site)
+        _validate_managed_projects(self.managed_projects)
         if isinstance(self.hardware, dict):
             _reject_unknown_keys("hardware", self.hardware, [f.name for f in dataclasses.fields(HardwareProfile)])
             for i, gpu in enumerate(self.hardware.get("gpus") or []):

@@ -87,6 +87,20 @@ class OpsClient:
         environment or labels: ops-controller's field-allowlisted inspect."""
         return self._request("GET", f"/containers/{name}").json()
 
+    # --- OTHER compose projects listed in ordo.yaml `managed_projects:` (status, logs, restart) ---
+    def list_projects(self) -> dict[str, Any]:
+        return self._request("GET", "/projects").json()
+
+    def project_containers(self, project: str) -> dict[str, Any]:
+        return self._request("GET", f"/projects/{project}/containers").json()
+
+    def project_logs(self, project: str, name: str, *, tail: int = 100) -> dict[str, Any]:
+        return self._request("GET", f"/projects/{project}/containers/{name}/logs", params={"tail": tail}).json()
+
+    def restart_project_container(self, project: str, name: str, *, confirm: bool = False) -> dict[str, Any]:
+        return self._request("POST", f"/projects/{project}/containers/{name}/restart",
+                             json={"confirm": confirm}).json()
+
     def restart_container(self, name: str, *, confirm: bool = False) -> dict[str, Any]:
         return self._request("POST", f"/containers/{name}/restart", json={"confirm": confirm}).json()
 
