@@ -64,6 +64,7 @@ VOLUME_MOUNT = "/volume"
 # A restore unpacks into SWAP_STAGING_DIR inside the volume, moves the current entries into
 # SWAP_PREVIOUS_DIR, moves the staged entries up, then deletes the previous ones. Every step before
 # the last is a rename on one filesystem, so nothing is deleted until the new contents are in place.
+# The volume root itself cannot be renamed, so it takes the snapshot root's owner and mode instead.
 SWAP_STAGING_DIR = ".ordo-restore-staging"
 SWAP_PREVIOUS_DIR = ".ordo-restore-previous"
 SWAP_LEFTOVER = 3        # a crashed restore left SWAP_PREVIOUS_DIR: refused, the volume is unchanged
@@ -87,11 +88,16 @@ rm -rf "$S" && mkdir "$S" || exit {SWAP_UNCHANGED}
 if ! tar -xzpf - -C "$S"; then
   rm -rf "$S"; echo "the unpack failed; the volume is unchanged"; exit {SWAP_UNCHANGED}
 fi
+# The snapshot's `.` entry set the staging directory's owner and mode; the volume root takes them, so
+# a non-root service (n8n, CouchDB) can still write at its data root, even in a newly created volume.
+OLD_OWNER=$(stat -c %u:%g "$V") && OLD_MODE=$(stat -c %a "$V") \
+  && NEW_OWNER=$(stat -c %u:%g "$S") && NEW_MODE=$(stat -c %a "$S") || {{ rm -rf "$S"; exit {SWAP_UNCHANGED}; }}
+put_root_back() {{ chown "$OLD_OWNER" "$V"; chmod "$OLD_MODE" "$V"; }}
 mkdir "$P" || {{ rm -rf "$S"; exit {SWAP_UNCHANGED}; }}
-if move_all "$V" "$P" && move_all "$S" "$V"; then
+if chown "$NEW_OWNER" "$V" && chmod "$NEW_MODE" "$V" && move_all "$V" "$P" && move_all "$S" "$V"; then
   rmdir "$S" && rm -rf "$P"; exit 0
 fi
-if move_all "$V" "$S" && move_all "$P" "$V"; then
+if move_all "$V" "$S" && move_all "$P" "$V" && put_root_back; then
   rmdir "$P"; rm -rf "$S"; echo "a rename failed and was rolled back; the volume is unchanged"; exit {SWAP_UNCHANGED}
 fi
 echo "a rename failed and so did the rollback: the previous contents are in $P, the restored ones in $S"

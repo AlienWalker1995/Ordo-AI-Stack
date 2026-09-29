@@ -645,3 +645,27 @@ def test_the_swap_refuses_a_volume_a_crashed_restore_left_behind(tmp_path, volum
     proc = _run_swap(tmp_path, _snapshot({"restored.txt": b"r"}))
     assert proc.returncode == backup.SWAP_LEFTOVER
     assert _contents(volume) == before
+
+
+def _snapshot_with_root(mode: int) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        root = tarfile.TarInfo(".")
+        root.type, root.mode = tarfile.DIRTYPE, mode
+        tar.addfile(root)
+        info = tarfile.TarInfo("./restored.txt")
+        info.size = 1
+        tar.addfile(info, io.BytesIO(b"r"))
+    return buffer.getvalue()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="NTFS has no POSIX mode to check")
+def test_the_swap_gives_the_volume_root_the_snapshot_root_mode(tmp_path, volume):
+    """The snapshot's `.` entry lands on the staging directory; the volume root must take its mode
+    (and owner), or a non-root service loses write access to its data root after a restore. The
+    owner half needs root and is proven against a real container (PR evidence)."""
+    volume.chmod(0o755)
+    proc = _run_swap(tmp_path, _snapshot_with_root(0o700))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert volume.stat().st_mode & 0o7777 == 0o700
+    assert _contents(volume) == {"restored.txt": b"r"}
