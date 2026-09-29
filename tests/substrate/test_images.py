@@ -9,6 +9,7 @@ Docker is never touched here: the Docker seam is replaced with a fake.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -16,9 +17,10 @@ import pytest
 import yaml
 
 from ordo.host import bringup, images
-from ordo.render import buildspec, image_tags
+from ordo.render import buildspec, image_tags, llamacpp_backend, models_volume
 from ordo.render.agents import AgentRegistry
 from ordo.render.catalog import Catalog
+from ordo.render.compose import POSTGRES_IMAGE
 from ordo.render.config import Source
 from ordo.render.dashboards import DashboardRegistry
 from ordo.render.engine import render
@@ -253,6 +255,57 @@ def test_no_manifest_declares_a_first_party_image_on_a_rolling_tag():
     rolling = [ref for ref in declared
                if ref.endswith(":latest") and resolve(ref) not in (None, buildspec.EXTERNAL)]
     assert not rolling, rolling
+
+
+# --- upstream images are pinned by digest ---
+
+# `name[:tag]@sha256:<64 hex>`: the digest makes the pull reproducible (a registry can repoint a tag; it
+# cannot repoint a digest). New pins keep the tag too, so a reader can see which release it is.
+_DIGEST_PINNED = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
+# A manifest may let the operator swap an image (`${COMFYUI_IMAGE:-<default>}`); the default must be pinned.
+_ENV_DEFAULT = re.compile(r"^\$\{[A-Z0-9_]+:-(?P<default>.+)\}$")
+
+
+def _is_digest_pinned(ref: str) -> bool:
+    env = _ENV_DEFAULT.match(ref)
+    return bool(_DIGEST_PINNED.match(env.group("default") if env else ref))
+
+
+def _upstream_images() -> dict[str, str]:
+    """Every image Docker pulls from a registry, by where it is declared: each manifest's images that are
+    not project images, plus the ones the render and host code name themselves."""
+    resolve = buildspec.context_resolver(PLUGINS, AGENTS, DASHBOARDS, project="ordo")
+    found = {}
+    for p in PLUGINS.plugins:
+        for i, ref in enumerate(buildspec._plugin_images(p)):
+            found[f"services/{p.id}[{i}]"] = ref
+    found = {where: ref for where, ref in found.items() if resolve(ref) is None}
+    found["compose.POSTGRES_IMAGE"] = POSTGRES_IMAGE
+    found["models_volume.HELPER_IMAGE"] = models_volume.HELPER_IMAGE
+    for name, backend in llamacpp_backend.BACKENDS.items():
+        found[f"llamacpp_backend.{name}"] = backend.image
+    return found
+
+
+def test_every_upstream_image_is_pinned_by_tag_and_digest():
+    unpinned = {where: ref for where, ref in _upstream_images().items() if not _is_digest_pinned(ref)}
+    assert not unpinned, unpinned
+
+
+def test_the_upstream_image_set_includes_the_edge_images():
+    """Guards the collector: the edge proxy and its SSO sidecar are upstream images and must be checked."""
+    refs = list(_upstream_images().values())
+    assert any(r.startswith("caddy:") for r in refs), refs
+    assert any(r.startswith("quay.io/oauth2-proxy/oauth2-proxy:") for r in refs), refs
+
+
+def test_every_rendered_image_is_a_project_image_or_digest_pinned(tmp_path):
+    """Backstop for an upstream image named somewhere the collector above does not look."""
+    resolve = buildspec.context_resolver(PLUGINS, AGENTS, DASHBOARDS, project="ordo")
+    _rc().write(tmp_path)
+    for name, ref in _compose_images(tmp_path).items():
+        if resolve(ref) is None:
+            assert _is_digest_pinned(ref), (name, ref)
 
 
 # --- render pins the recorded tag ---

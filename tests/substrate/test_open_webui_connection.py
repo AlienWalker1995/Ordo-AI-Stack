@@ -30,7 +30,8 @@ HARDWARE = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128, "cpu_c
 SITE = {"BASE_PATH": "/srv/ordo", "DATA_PATH": "/srv/ordo/data"}
 # The image whose PersistentConfig semantics this contract was verified against. A bump must re-check
 # open_webui/models/config.py (Config.persistent_enabled_for) before this pin moves.
-VERIFIED_IMAGE = "ghcr.io/open-webui/open-webui:v0.11.3"
+VERIFIED_IMAGE = ("ghcr.io/open-webui/open-webui:v0.11.3"
+                  "@sha256:41daa0cf2561a5d4c8d1ff31ee2a98d93ab4d3ac2605cac69366ff6a3374a933")
 
 
 def _render(plugins: list[str]):

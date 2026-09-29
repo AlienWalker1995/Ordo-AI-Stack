@@ -29,7 +29,7 @@ litellm_key:
 services:
   - name: oauth2-proxy
     # alpine variant ships wget for the healthcheck (the distroless :latest has no shell).
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.4-alpine
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.4-alpine@sha256:77a608f6da587bda7fe1371c503dc89b39d0fb9d78dc3d47c1ef253abfc9d2bd
     # oauth2-proxy maps every flag to OAUTH2_PROXY_<FLAG>. The client secret and the cookie secret are
     # read from files (--client-secret-file / --cookie-secret-file, v7.15.4 legacy_options.go and
     # cookie.go); oauth2-proxy uses the file bytes untrimmed, and materialize writes no trailing
@@ -74,7 +74,7 @@ services:
       timeout: 5s
       retries: 3
   - name: caddy
-    image: caddy:2.11.4-alpine
+    image: caddy:2.11.4-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
     # no secrets: the /mcp and /llm routes delegate auth to LiteLLM
     # --watch: reload the Caddyfile in-process whenever its content changes. The Caddyfile is a
     # bind-mounted file (line 90), and `docker compose up` CANNOT detect a bind-mount's content
