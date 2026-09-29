@@ -71,3 +71,8 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
+
+# How `ordo backup` saves this manifest's named volumes (ordo/render/backup_policy.py).
+backup:
+  ltx-models: skip             # base weights, re-downloadable
+  hf-hub-cache: skip           # download cache

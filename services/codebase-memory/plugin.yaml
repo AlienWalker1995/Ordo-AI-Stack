@@ -34,3 +34,7 @@ mcp:
     # Keep logs off stdout so they can't corrupt the bridged stdio JSON-RPC channel.
     CBM_LOG_LEVEL: error
   tools: [index_repository, list_projects, index_status, search_graph, trace_path, query_graph, get_graph_schema, get_code_snippet, get_architecture, search_code, detect_changes, manage_adr, ingest_traces, delete_project]
+
+# How `ordo backup` saves this manifest's named volumes (ordo/render/backup_policy.py).
+backup:
+  codebase-memory-cache: skip  # the code index, rebuilt from the source tree

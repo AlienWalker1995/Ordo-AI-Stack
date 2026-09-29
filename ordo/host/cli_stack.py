@@ -1,4 +1,4 @@
-"""`ordo preflight | fetch | up | recreate | apply | build`: the commands that act on the rendered stack
+"""`ordo preflight | fetch | up | recreate | apply | build | backup | restore`: the commands that act on the rendered stack
 from the host. Argument parsing lives in ordo/cli.py.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from ..render.config import Source
 from ..render.engine import DEFAULT_PLUGINS_DIR, render
 from ..render.image_tags import load_record
 from ..render.plugins import PluginRegistry
-from . import apply, bringup, cli_render, cli_secrets, fetch, images, parity, preflight
+from . import apply, backup, bringup, cli_render, cli_secrets, fetch, images, parity, preflight
 
 
 def _local_images() -> set[str]:  # pragma: no cover - shells to docker
@@ -263,3 +263,26 @@ def cmd_build(args: argparse.Namespace) -> int:
         return 1
     return images.run_build(args.out, None if args.all else args.services, project=args.project,
                             dry_run=args.dry_run)
+
+
+def cmd_backup(args: argparse.Namespace) -> int:
+    """`ordo backup`: the config and every stateful volume to one archive (ordo/host/backup.py)."""
+    dest = Path(args.backup_dir).expanduser() if args.backup_dir else backup.DEFAULT_BACKUP_DIR
+    try:
+        backup.run_backup(stack_dir=Path(args.stack), project=args.project, dest=dest, only=args.only,
+                          dry_run=args.dry_run)
+    except backup.BackupError as e:
+        print(f"ordo backup: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_restore(args: argparse.Namespace) -> int:
+    """`ordo restore ARCHIVE`: put a backup back (ordo/host/backup.py)."""
+    try:
+        return backup.run_restore(archive=Path(args.archive), stack_dir=Path(args.stack), project=args.project,
+                                  only=args.only, dry_run=args.dry_run,
+                                  allow_image_change=args.allow_image_change)
+    except backup.BackupError as e:
+        print(f"ordo restore: {e}", file=sys.stderr)
+        return 1

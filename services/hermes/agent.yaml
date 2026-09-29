@@ -191,3 +191,7 @@ healthcheck:
   interval: 30s
   timeout: 10s
   retries: 3
+
+# How `ordo backup` saves the named volumes this agent writes (ordo/render/backup_policy.py).
+backup:
+  hermes-home: stopped         # SQLite state.db + sessions: snapshot with the agent stopped

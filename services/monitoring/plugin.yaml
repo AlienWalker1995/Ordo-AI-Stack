@@ -88,3 +88,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+
+# How `ordo backup` saves this manifest's named volumes (ordo/render/backup_policy.py).
+backup:
+  prometheus-data: skip        # metrics history; the scrape targets regenerate it
+  grafana-data: stopped        # SQLite (users, preferences); dashboards are provisioned from the repo

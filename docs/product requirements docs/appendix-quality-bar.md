@@ -42,7 +42,7 @@ CI (`.github/workflows/ci.yml`): `secret-scan` (TruffleHog), `pytest` (`tests/`,
 ## Break-Glass Procedures
 
 1. Reset admin token: see [Rollback Procedures](appendix-rollback.md) #5
-2. Restore data: `rsync -a <backup>/data/ data/`; `ordo up --all`
+2. Restore data: `ordo restore <archive>` (the config and every volume `ordo backup` saved; see [data.md](../data.md#backup-and-recovery))
 3. Disable all tools: remove the `kind: mcp` plugins from `ordo.yaml`'s `plugins:` list, then `ordo render` and recreate `model-gateway`
 4. Invalidate model cache (model-gateway has no host port — go in-network or via the Caddy `/llm` edge): `docker compose -p ordo exec dashboard curl -X DELETE http://model-gateway:11435/v1/cache` (or `curl -X DELETE -H "Authorization: Bearer $LITELLM_MASTER_KEY" https://<host>/llm/v1/cache`)
 5. Disable unsafe services (from `out/`): `docker compose -p ordo stop $(docker compose -p ordo config --services | grep '^mcp-') agent comfyui rag-ingestion`

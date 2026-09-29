@@ -18,7 +18,7 @@ Ordo is defined and operated from the repo root. Config is rendered from `ordo.y
   |---|---|---|---|
   | `ordo/render/` | the render engine (`engine.py`) and the contracts of what it renders: the compose file and its argv builder (`stack.py`), the changed set (`changed_set.py`: rendered vs running, what `ordo apply` and ops-controller recreate), the image record (`image_tags.py`), the models volume (`models_volume.py`), the substrate digest | the host and ops-controller | nothing above it |
   | `ordo/control/` | the control plane: `ordo serve` (`serve.py`), the HTTP API (`api.py`), the GPU lease arbiter (`scheduler.py`), the broker, the audit log, the lease state | ops-controller | `render` |
-  | `ordo/host/` | the operator's commands (`cli_*.py` handlers): init, remote, secrets, up, recreate, apply, build, fetch, preflight, doctor | the operator's host | `render`; the control plane only over HTTP |
+  | `ordo/host/` | the operator's commands (`cli_*.py` handlers): init, remote, secrets, up, recreate, apply, build, fetch, preflight, doctor, backup, restore | the operator's host | `render`; the control plane only over HTTP |
 - `services/<id>/`: one directory per service, holding its render manifest (`plugin.yaml` / `agent.yaml` / `dashboard.yaml`), an optional `catalog.json` dashboard card, and its build context (`Dockerfile` + sources). Agents are manifests (`services/<id>/agent.yaml`); Hermes is `default: true` (see `docs/agents.md`).
 - `catalog/models.yaml`: the model catalog a model switch picks from.
 - `tests/` (with `tests/substrate/` for the render engine), `scripts/` (operational scripts), `docs/`, `monitoring/` (Prometheus + Grafana provisioning). `data/`, `models/` and `out/` are runtime state, never committed.

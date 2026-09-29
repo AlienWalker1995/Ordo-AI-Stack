@@ -198,37 +198,69 @@ Hermes keeps its own state in the `hermes-home` named volume (mounted at `/home/
 
 ## Backup and Recovery
 
-### What to back up
+`ordo backup` writes the stack's state to one archive; `ordo restore` puts it back. Both read the
+rendered stack in `out/` (`--stack DIR` for another), so render first.
 
-1. `hermes-home` volume — agent brain (state, config, skills, cron)
-2. `qdrant-data`, `couchdb-data`, `n8n-data`, `open-webui-data` volumes — service state
-3. `data/ops-controller/audit*.log` — audit history
-4. `ordo.yaml` and `out/secrets.env` — declarative source + operator secrets (**do not commit**)
-5. Model volumes (`models-gguf`, `comfyui-models`) are usually skipped — weights are
-   re-downloadable (`ordo fetch` / `download_comfyui_model`), just expensive.
+### What is saved, and how
 
-### Host-side dirs
+- **Config:** `out/ordo.yaml`, `out/secrets.env` and `out/images.json`.
+- **Named volumes:** every volume the rendered compose declares, each by the method its manifest
+  declares under `backup:` (`ordo/render/backup_policy.py`; a plugin's `plugin.yaml`, an agent's
+  `agent.yaml`, `CORE_BACKUP` in `ordo/render/compose.py` for the core). The render copies the
+  declarations into `out/manifest.json` (`backup:`); a volume nothing declares is taken `stopped`.
+
+| Method | Used for | Backup | Restore |
+|---|---|---|---|
+| `pg_dump` | `litellm-db-data`, `langfuse-db-data` | `pg_dump -Fc` in the running server, online | stops the database's clients, drops the database, `pg_restore --create`, starts the clients |
+| `stopped` | `hermes-home`, `qdrant-data`, `couchdb-data`, `n8n-data`, `open-webui-data`, `grafana-data`, the Langfuse ClickHouse, Redis and MinIO volumes | stops the services writing the volume, snapshots its files, starts them again | stops the writers, empties the volume, unpacks the snapshot, starts them |
+| `live` | `caddy_data`, `caddy_config`, the Tailscale `ts-state-*` volumes, `comfyui-app` | snapshot with the services running (no database in them) | as `stopped` |
+| `skip` | `models-gguf`, `comfyui-models`, `ltx-models`, `hf-hub-cache`, `codebase-memory-cache`, `prometheus-data`, `langfuse-clickhouse-logs` | not saved: re-derivable (`ordo fetch`, `download_comfyui_model`), a cache, or metrics and logs | nothing |
+
+A raw copy of a running database's files is not a backup, so every database is either dumped with
+its own tool or copied with its server stopped. Services are stopped and started with
+`docker compose stop|start` (never recreated), together with the services in their network
+namespace; read-only mounters keep running, and ops-controller is never stopped.
+
+### Back up
 
 ```bash
-tar -czf ordo-ai-stack-host-$(date +%Y%m%d).tar.gz \
-  data/ops-controller/ data/dashboard/ ordo.yaml out/secrets.env
+ordo backup --dry-run                  # the plan: each volume, its method, what it stops
+ordo backup                            # -> ~/ordo-backups/ordo-backup-ordo-<UTC time>.tar
+ordo backup --out /mnt/offsite/ordo    # elsewhere (never inside the checkout: refused)
+ordo backup --only agent qdrant        # only the volumes these services mount, no config
 ```
 
-### Named volumes (state lives on ext4 inside the Docker VM — back up via a helper container)
+The archive holds `manifest.json` (every
+member with its sha256, each volume's method, and the image and image id of the services that wrote
+it), `config/`, `volumes/<volume>.tar.gz` and `databases/<volume>.pgdump`. **It contains every
+secret:** it is written outside the checkout and readable by its owner only (mode 600, or an NTFS
+ACL granting the current user alone on Windows). Keep a copy off the machine.
 
-```bash
-for v in hermes-home qdrant-data couchdb-data n8n-data open-webui-data litellm-db-data; do
-  docker run --rm -v ordo_$v:/src:ro -v "$(pwd)/backups:/backup" alpine \
-    tar -czf /backup/$v-$(date +%Y%m%d).tar.gz -C /src .
-done
-```
+Host directories under `data/` are plain files on the host disk and are not in the archive: copy
+them with your host backup (`data/ops-controller/audit*.log`, `data/dashboard/`, `data/comfyui-output/`).
+Never restore `data/ops-controller/scheduler-state.json`: it is the live GPU lease state.
 
 ### Restore
 
 ```bash
-(cd out && docker compose -p ordo down)
-tar -xzf ordo-ai-stack-backup-<date>.tar.gz
-ordo up --all
+ordo restore ~/ordo-backups/ordo-backup-ordo-<time>.tar --dry-run   # verify checksums, print the plan
+ordo restore ~/ordo-backups/ordo-backup-ordo-<time>.tar             # everything
+ordo restore <archive> --only agent                                 # just the volumes agent mounts
+```
+
+A restore verifies every checksum before it changes anything, refuses while a GPU lease is held (or
+its state cannot be read), stops only the services it restores and starts only those that were
+running. A config file is written only where it is absent; a present one that differs is kept and
+reported. A file snapshot whose rendered image differs from the one that wrote it is refused
+(`--allow-image-change` overrides, when that software reads older files). Running it twice gives the
+same result.
+
+**On a new machine:** clone the checkout, then
+
+```bash
+ordo restore <archive>      # writes out/ordo.yaml, out/secrets.env, out/images.json; asks for a render
+ordo apply                  # build, render and start the stack (empty volumes)
+ordo restore <archive>      # now restores every volume and database into it
 ```
 
 ## Data Migration

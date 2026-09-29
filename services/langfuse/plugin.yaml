@@ -395,3 +395,11 @@ services:
         mc ilm rule ls langfuse/langfuse
     security_opt: ["no-new-privileges:true"]
     resources: {cpus: "0.5", memory: "256m"}
+
+# How `ordo backup` saves this manifest's named volumes (ordo/render/backup_policy.py).
+backup:
+  langfuse-db-data: pg_dump
+  langfuse-clickhouse-data: stopped   # no backup tool in the image: snapshot with ClickHouse stopped
+  langfuse-clickhouse-logs: skip      # server logs
+  langfuse-redis-data: stopped
+  langfuse-minio-data: stopped        # event and media blobs

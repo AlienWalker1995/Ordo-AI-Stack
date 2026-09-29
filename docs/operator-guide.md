@@ -308,6 +308,10 @@ gate). Only the Tailscale model is wired today; the others' required pieces are 
 - Recreate a single service with `ordo recreate <svc>` (per-service, no cascade). The dashboard's
   per-service recreate button does exactly this against the existing `out/` compose (no re-render).
 
+**Backups:** `ordo backup` saves `out/ordo.yaml`, `out/secrets.env`, `out/images.json` and every stateful
+volume (databases dumped, or copied with their writers stopped) to one owner-only archive outside the
+checkout; `ordo restore <archive>` puts it back. See [data.md](data.md#backup-and-recovery).
+
 ## What the cutover produced
 The 2026-07-09 cutover took this substrate to production: 3 flip attempts (2 clean ~7-min rollbacks
 that each converted a live defect into a test-guarded fix; success at ~3.75-min core downtime),
