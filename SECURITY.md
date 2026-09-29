@@ -60,7 +60,7 @@ All runtime data is stored under `BASE_PATH/data/` via bind mounts. Ensure appro
 |--------|-------|
 | docker.sock exposure | Only the control plane mounts it (`ops-controller`, guard-scoped to this project, and refusing to cycle the services running the request); MCP servers and the dashboard UI do not |
 | Controller compromise | No host port; reachable only on `ordo-net`; every call but `/health` needs the `OPS_CONTROLLER_TOKEN` bearer token |
-| MCP SSRF (egress-capable servers, e.g. `searxng`) | Egress blocks for 100.64/10, RFC1918, 169.254.169.254: `./scripts/ssrf-egress-block.sh` (auto-detects the `ordo-net` subnet) |
+| MCP SSRF (egress-capable servers) | **Partial, not enforced on Docker Desktop.** `memory-vault` and `codebase-memory` sit only on `ordo-mcp-net` (`internal: true`, no route out). `searxng`, `qdrant-rag`, `n8n`, `orchestration` and `comfyui-mcp` also join `ordo-net`, so they can reach every stack service, the LAN, the tailnet and the internet; `searxng`'s `web_url_read` fetches any URL a prompt names. `./scripts/ssrf-egress-block.sh` (iptables `DOCKER-USER` drops for RFC1918, 100.64/10, metadata) is a manual, Linux-engine-only step: nothing applies it at bring-up, and on Docker Desktop (Windows, macOS) the engine's iptables are out of reach, so `scripts/ssrf-egress-block.ps1` only prints advice. See [SSRF defenses](docs/product%20requirements%20docs/security-and-trust-model.md#ssrf-defenses-mcp) for the follow-up plan |
 | Secret exfiltration (general) | Controller-only API keys; dashboard `/api/services` strips tokens from returned URLs |
 | Unauthenticated admin | Dashboard reached only via the Caddy edge (oauth2-proxy + Google SSO); no host port |
 

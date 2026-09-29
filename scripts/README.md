@@ -40,8 +40,8 @@ the rendered config at startup, so there is no hot reload: apply a change with
 
 | Script | Purpose |
 |--------|---------|
-| `ssrf-egress-block.sh` | iptables rules blocking SSRF from MCP / agent containers to private ranges and cloud metadata. Linux only. |
-| `ssrf-egress-block.ps1` | Windows guidance (prints options; actual blocking requires WSL iptables). |
+| `ssrf-egress-block.sh` | iptables rules blocking SSRF from MCP / agent containers to private ranges and cloud metadata. Linux engine only, run by hand (no bring-up step applies it). |
+| `ssrf-egress-block.ps1` | Prints advice only; blocks nothing. Docker Desktop's engine iptables are not reachable from Windows or a user WSL distro. |
 
 ## ComfyUI
 

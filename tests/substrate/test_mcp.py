@@ -401,3 +401,19 @@ def test_the_gateway_config_digest_is_the_digest_of_what_write_puts_in_its_confi
     services = rc.compose_dict()["services"]
     for reader in ("model-gateway", "model-gateway-keys"):
         assert services[reader]["labels"][compose.RENDERED_CONFIG_LABEL] == compose.rendered_config_digest(written)
+
+
+# MCP servers that join the stack network (`mcp.network: stack`) and so have a default route: every
+# other ordo-net container, the LAN, the tailnet and the internet. No egress filter applies to them
+# on Docker Desktop (SECURITY.md, "MCP SSRF"), so adding one widens the SSRF surface: justify it,
+# add it here and name it in that SECURITY.md row.
+STACK_NETWORK_MCP = {"comfyui-mcp", "n8n", "orchestration", "qdrant-rag", "searxng"}
+
+
+def test_stack_network_mcp_servers_are_the_documented_set():
+    on_stack = {p.id for p in REGISTRY.plugins if p.kind == "mcp" and p.mcp.network == "stack"}
+    assert on_stack == STACK_NETWORK_MCP
+    security = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+    ssrf_row = next(line for line in security.splitlines() if line.startswith("| MCP SSRF"))
+    undocumented = sorted(p for p in on_stack if f"`{p}`" not in ssrf_row)
+    assert not undocumented, f"SECURITY.md's MCP SSRF row does not name {undocumented}"

@@ -39,7 +39,7 @@ A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`
 | Docker hardening (cap_drop, read_only, networks) | Live | `out/docker-compose.yml` |
 | Single `ordo-net` Docker network (edge-only host-port publish) | Live | `out/docker-compose.yml` |
 | llama.cpp backend-only (no host port) | Live | `out/docker-compose.yml` |
-| SSRF egress block scripts | Live | `scripts/ssrf-egress-block.sh`, `.ps1` |
+| SSRF egress block scripts | Linux engine only, manual; not enforced on Docker Desktop | `scripts/ssrf-egress-block.sh`, `.ps1` (advice only) |
 | Hermes agent (gateway + dashboard) | Live | `out/docker-compose.yml`, `services/hermes/` |
 | Contract + smoke tests | Live | `tests/` |
 
