@@ -27,7 +27,11 @@ import sys
 from collections.abc import Callable
 
 from .render.config import DEFAULT_SECRETS_SOURCE
-from .render.engine import DEFAULT_CATALOG, DEFAULT_SOURCE
+from .render.engine import DEFAULT_CATALOG, implicit_source
+
+# The directory a command without its own --out reads the live source from: the same default every
+# --out takes.
+DEFAULT_OUT = "out"
 
 
 def _handler(module: str, name: str) -> Callable[[argparse.Namespace], int]:
@@ -46,8 +50,8 @@ def main(argv: list[str] | None = None) -> int:
         except (AttributeError, ValueError):
             pass  # not a reconfigurable TextIOWrapper (redirected/wrapped) — fine, leave as-is
     p = argparse.ArgumentParser(prog="ordo", description="Ordo config render engine")
-    # Default is a SENTINEL (None), resolved to DEFAULT_SOURCE below, so cmd_render can tell an
-    # explicit `--source ordo.example.yaml` apart from the implicit default (see _guard_render_source).
+    # Default is a SENTINEL (None), resolved below, so a handler can tell an explicit `--source` apart
+    # from the implicit default.
     p.add_argument("--source", default=None)
     p.add_argument("--catalog", default=str(DEFAULT_CATALOG))
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -55,8 +59,8 @@ def main(argv: list[str] | None = None) -> int:
     pr = sub.add_parser("render")
     pr.add_argument("--out", default="out")
     pr.add_argument("--force", action="store_true",
-                    help="render the default/example source even if --out holds a differing ordo.yaml "
-                         "(overrides the anti-clobber guard)")
+                    help="without --source, render the example source even though --out holds the "
+                         "operator's ordo.yaml (replaces the rendered stack with the example's)")
     pr.set_defaults(func=_handler("ordo.host.cli_render", "cmd_render"))
     # `init` = the one-command install wizard: at most three questions (model, features, start
     # now), local-only, no accounts. `setup` is a backwards-compatible alias. Both write a
@@ -216,11 +220,11 @@ def main(argv: list[str] | None = None) -> int:
             subparser.add_argument("--source", default=argparse.SUPPRESS,
                                    help="the operator source (same as the global --source)")
     args = p.parse_args(argv)
-    # Distinguish an explicit `--source` from the implicit default, then resolve the sentinel so
-    # every command still sees a concrete path (unchanged behaviour for all but cmd_render's guard).
+    # Distinguish an explicit `--source` from the implicit default, then resolve the sentinel so every
+    # command sees a concrete path: the operator's live <out>/ordo.yaml when it exists, else the example.
     args.source_explicit = args.source is not None
     if args.source is None:
-        args.source = str(DEFAULT_SOURCE)
+        args.source = str(implicit_source(getattr(args, "out", DEFAULT_OUT)))
     return args.func(args)
 
 

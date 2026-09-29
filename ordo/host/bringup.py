@@ -177,7 +177,7 @@ def bring_up(out_dir: str, project: str, services: Sequence[str], *, whole_stack
         doc = load_compose(compose_dir)
     except (OSError, yaml.YAMLError) as e:
         print(f"cannot read {compose_dir}/{COMPOSE_FILE} ({e}); render first: "
-              f"ordo --source out/ordo.yaml render --out out", file=sys.stderr)
+              f"ordo render --out {compose_dir}", file=sys.stderr)
         return 1
     unknown = [s for s in services if s not in services_of(doc)]
     if unknown:

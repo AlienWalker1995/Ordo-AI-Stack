@@ -25,7 +25,7 @@ commit. Bump `LLAMA_UI_RELEASE`/`LLAMA_UI_SHA256` together with the pinned commi
 From the repo root, while the active model uses this build:
 ```
 ordo build llamacpp
-python -m ordo --source out/ordo.yaml render --out out
+python -m ordo render
 ordo recreate llamacpp        # outside a GPU lease; it refuses during one
 ```
 `ordo up` also builds it when Docker lacks the tag the compose names. It is a CUDA compile, so

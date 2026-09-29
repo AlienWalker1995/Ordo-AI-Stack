@@ -5,6 +5,7 @@ Argument parsing lives in ordo/cli.py; these are the handlers it dispatches to.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from ..render.catalog import Catalog
@@ -18,8 +19,22 @@ def _load(source_path: Path, catalog_path: Path) -> tuple[Source, Catalog]:
     return Source.load(source_path), Catalog.load(catalog_path)
 
 
+def announce_implicit_source(args: argparse.Namespace) -> None:
+    """Say on stderr which source a command read when the operator did not name one (ordo/cli.py
+    resolves it: the live <out>/ordo.yaml, else the example). stdout stays the command's own output."""
+    # Absent source_explicit (a hand-built namespace, not the main() path): the caller chose the source.
+    if not getattr(args, "source_explicit", True):
+        print(f"source: {args.source} (--source not given)", file=sys.stderr)
+
+
+def load_args(args: argparse.Namespace) -> tuple[Source, Catalog]:
+    """The source and catalog a command's arguments name, announcing an implicit source."""
+    announce_implicit_source(args)
+    return _load(Path(args.source), Path(args.catalog))
+
+
 def cmd_detect(args: argparse.Namespace) -> int:
-    src, cat = _load(Path(args.source), Path(args.catalog))
+    src, cat = load_args(args)
     rc = render(src, cat)
     print(f"Hardware : {rc.hardware.summary()}")
     print(f"Tier     : {rc.tier}")
@@ -31,41 +46,16 @@ def cmd_detect(args: argparse.Namespace) -> int:
     return 0
 
 
-def _guard_render_source(args: argparse.Namespace) -> None:
-    """Refuse to silently render the PUBLIC EXAMPLE over an operator's live out-dir.
-
-    Root cause of the SSO outage: `--source` defaults to ordo.example.yaml, so a bare
-    `ordo render` on the operator box rendered the example into ./out and stripped the
-    operator's host-paths (BASE_PATH/DATA_PATH/…) out of .env → empty allowlist mount → deny-all.
-
-    When `--source` was NOT given explicitly AND the target --out already holds an `ordo.yaml`
-    that DIFFERS from the example, that existing file is the operator's real source. Prefer it
-    (render from it, no clobber) unless the caller forces the example with --force. An explicit
-    `--source ordo.example.yaml` (what CI passes) is untouched — source_explicit short-circuits.
-    """
-    # Absent source_explicit (a hand-built namespace, not the main() path) → treat as explicit and
-    # skip the guard: such a caller set args.source deliberately.
-    if getattr(args, "source_explicit", True) or getattr(args, "force", False):
-        return
-    existing = Path(args.out) / "ordo.yaml"
-    if not existing.exists():
-        return
-    try:
-        existing_text = existing.read_text(encoding="utf-8")
-        example_text = DEFAULT_SOURCE.read_text(encoding="utf-8") if DEFAULT_SOURCE.exists() else ""
-    except OSError:
-        return
-    if existing_text == example_text:
-        return  # out/ordo.yaml IS the example — rendering the example changes nothing
-    # The out-dir carries a real, non-example source. Use it instead of clobbering with the example.
-    print(f"note: --source not given and {existing} differs from the example — rendering from it "
-          f"(operator config preserved). Pass --source explicitly or --force to override.")
-    args.source = str(existing)
+def _force_example_source(args: argparse.Namespace) -> None:
+    """`ordo render --force` without --source renders the public example even though --out holds the
+    operator's ordo.yaml (which ordo/cli.py would otherwise have resolved). An explicit --source wins."""
+    if getattr(args, "force", False) and not getattr(args, "source_explicit", True):
+        args.source = str(DEFAULT_SOURCE)
 
 
 def cmd_render(args: argparse.Namespace) -> int:
-    _guard_render_source(args)
-    src, cat = _load(Path(args.source), Path(args.catalog))
+    _force_example_source(args)
+    src, cat = load_args(args)
     try:
         rc = render(src, cat)
     except ValueError as e:
@@ -86,7 +76,7 @@ def cmd_render(args: argparse.Namespace) -> int:
 
 
 def cmd_parity(args: argparse.Namespace) -> int:
-    src, cat = _load(Path(args.source), Path(args.catalog))
+    src, cat = load_args(args)
     rc = render(src, cat)
     ok, mism, compared = parity.report(rc.env, args.ref)
     print(f"parity vs {args.ref}: compared {len(compared)} key(s)")
@@ -97,7 +87,7 @@ def cmd_parity(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    src, cat = _load(Path(args.source), Path(args.catalog))
+    src, cat = load_args(args)
     reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
     bundle = doctor.collect_bundle(src, cat, reg)
     print(f"source '{args.source}': valid")
@@ -119,7 +109,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_native(args: argparse.Namespace) -> int:
-    src, cat = _load(Path(args.source), Path(args.catalog))
+    src, cat = load_args(args)
     rc = render(src, cat)
     print(native.plan(rc, models_dir=args.models_dir).as_text())
     return 0

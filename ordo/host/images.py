@@ -265,7 +265,7 @@ def ensure_built(doc: dict[str, Any], services: Iterable[str], *, first_party: d
     if still_missing:
         print(f"the rendered compose names {', '.join(still_missing)}, which this checkout does not "
               "build (its inputs changed since that render). Re-render so the compose names the new "
-              "build: ordo --source out/ordo.yaml render --out out", file=sys.stderr)
+              f"build: ordo render --out {out_dir}", file=sys.stderr)
         return 1
     return 0
 
@@ -307,7 +307,7 @@ def run_build(out_dir: str | Path, services: Sequence[str] | None, *, project: s
         doc = load_compose(Path(out_dir).as_posix())
     except OSError as e:
         print(f"cannot read {out_dir}/{COMPOSE_FILE} ({e}); render first: "
-              "ordo --source out/ordo.yaml render --out out", file=sys.stderr)
+              f"ordo render --out {out_dir}", file=sys.stderr)
         return 1
     try:
         targets = build_targets(doc, services, project=project)

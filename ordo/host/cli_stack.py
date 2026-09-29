@@ -43,7 +43,7 @@ def _local_images() -> set[str]:  # pragma: no cover - shells to docker
 
 
 def cmd_preflight(args: argparse.Namespace) -> int:
-    src, cat = cli_render._load(Path(args.source), Path(args.catalog))
+    src, cat = cli_render.load_args(args)
     reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
     present = None if args.no_images else _local_images()
     image_tags = load_record(args.out)
@@ -104,6 +104,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     wanted = None if args.all else ([args.model] if args.model else None)
     if not args.all and not args.model:
         # default target: the model the current source resolves to
+        cli_render.announce_implicit_source(args)
         wanted = [render(Source.load(Path(args.source)), cat).model.id]
     actions = fetch.plan(cat, wanted, args.models_dir, allow_unverified=args.allow_unverified)
     for a in actions:
@@ -227,7 +228,7 @@ def cmd_recreate(args: argparse.Namespace) -> int:
             doc = stack.load_compose(Path(args.out).resolve().as_posix())
         except (OSError, yaml.YAMLError) as e:
             print(f"cannot read {args.out}/{stack.COMPOSE_FILE} ({e}); render first: "
-                  "ordo --source out/ordo.yaml render --out out", file=sys.stderr)
+                  f"ordo render --out {args.out}", file=sys.stderr)
             return 1
         services = stack.readers_of(doc, args.reading)
         if not services:
