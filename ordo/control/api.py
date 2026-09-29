@@ -86,11 +86,6 @@ class ControlPlane:
         # the file names in the models volume (None: it could not be listed); None = no volume to
         # check (a control plane without the Docker socket, and the unit tests that do not wire one).
         self.source = StackSource(Path(source_path), catalog, registry, Path(out_dir), substrate.current_digest())
-        # What GET /metrics reports beyond the scheduler and the containers: {mount label: a path on
-        # that filesystem} and {cert name: a PEM file}. Empty = not reported (ordo/control/serve.py
-        # wires the real ones).
-        self.disk_paths = dict(disk_paths or {})
-        self.tls_cert_files = dict(tls_cert_files or {})
         self.scheduler = scheduler
         self.broker = broker
         self.history = history  # LeaseHistory sink (shared with the broker): /jobs/history
@@ -111,6 +106,10 @@ class ControlPlane:
         self.plugins = PluginInstaller(self.source, self.applier)
         self.drift = DriftReport(self.source, self.applier, broker)
         self.lease_jobs = LeaseJobs(broker, scheduler)
+        # What GET /metrics reports beyond the scheduler and the containers: {mount label: a path on
+        # that filesystem} and {cert name: a PEM file}. Empty = not reported (ordo/control/serve.py
+        # wires the real ones).
+        self.metrics = prom.MetricsCollector(scheduler, broker, disk_paths or {}, tls_cert_files or {})
         self.managed_projects = ManagedProjects(broker, self.source.path)
         # ComfyUI's files. Their locations are read from this module's settings when used, so a test
         # can repoint them after construction.
@@ -336,36 +335,8 @@ class ControlPlane:
         return self.auditor.tail(limit)
 
     def metrics_text(self) -> str:
-        """GET /metrics: the lease, container, disk and certificate state in the Prometheus text
-        format (ordo/control/metrics.py). Each source is read on its own; one that fails is reported
-        as a failed collector and the rest are still served. Read-only."""
-        containers = restarts = None
-        if self.broker:
-            try:
-                containers = self.broker.backend.list_services().get("services", [])
-            except Exception as e:  # noqa: BLE001 - an unreadable docker is a failed collector, not a 500
-                logger.warning("metrics: cannot list the services: %s", e)
-            try:
-                restarts = self.broker.backend.service_restarts()
-            except Exception as e:  # noqa: BLE001 - same
-                logger.warning("metrics: cannot read the restart counts: %s", e)
-        disks: dict[str, prom.DiskUsage | None] = {}
-        for mount, path in self.disk_paths.items():
-            try:
-                disks[mount] = prom.DiskUsage.of(path)
-            except OSError as e:
-                logger.warning("metrics: cannot stat %s (%s): %s", path, mount, e)
-                disks[mount] = None
-        certs: dict[str, float | None] = {}
-        for name, path in self.tls_cert_files.items():
-            try:
-                certs[name] = prom.read_cert_not_after(path)
-            except (OSError, ValueError) as e:
-                logger.warning("metrics: cannot read the %s certificate: %s", name, e)
-                certs[name] = None
-        return prom.render(prom.Inputs(
-            scheduler=self.scheduler.status() if self.scheduler else None,
-            containers=containers, restarts=restarts, disks=disks, tls_certs=certs))
+        """GET /metrics, in the Prometheus text format (metrics.py). Read-only."""
+        return self.metrics.text()
 
     def _exclusive(self, verb: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         """Run a stack-changing verb holding the operation lock, or refuse it with 409 while
