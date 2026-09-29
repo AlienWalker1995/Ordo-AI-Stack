@@ -16,15 +16,16 @@ import { useState } from 'react'
 import { api, usePolling } from '../api.js'
 import { useHostSteps } from './HostSteps.jsx'
 import { useToast } from './Toast.jsx'
+import { BTN, Chip, Dot, INPUT, Unavailable } from './ui.jsx'
 
-// Per-server dot: green when running, yellow when degraded (reachable-but-not-ok),
-// red when hard-failed/unreachable. Mirrors the legacy chip-status logic exactly.
-function serverDotClass(info) {
-  if (!info) return ''
+// Per-server Dot tone: green when running, yellow when degraded (reachable-but-not-ok),
+// red when hard-failed/unreachable, grey with no health data.
+function serverTone(info) {
+  if (!info) return 'unknown'
   if (info.ok) return 'ok'
   const status = info.status || info.error || 'unknown'
   const degraded = status !== 'unknown' && status !== 'unreachable'
-  return degraded ? 'pending' : 'fail'
+  return degraded ? 'warning' : 'failed'
 }
 
 function serverTitle(info) {
@@ -119,59 +120,47 @@ export default function McpSettings() {
   }
 
   const gatewayBadge = (() => {
-    if (!health) return { cls: 'border-border text-muted', label: '—', title: 'Gateway status unknown' }
-    if (health.ok) return { cls: 'border-success/30 bg-success/[0.08] text-success', label: 'gateway ok', title: 'Gateway reachable' }
-    return { cls: 'border-danger/30 bg-danger/10 text-danger', label: 'gateway unreachable', title: health.gateway_error || 'Gateway unreachable' }
+    if (!health) return { tone: 'neutral', label: 'gateway unknown', title: 'Gateway status unknown' }
+    if (health.ok) return { tone: 'success', label: 'gateway ok', title: 'Gateway reachable' }
+    return { tone: 'danger', label: 'gateway unreachable', title: health.gateway_error || 'Gateway unreachable' }
   })()
 
-  const INPUT =
-    'h-9 rounded-sm border border-border bg-bg px-3 text-[0.8125rem] text-fg outline-none transition-colors focus:border-accent/50 disabled:cursor-not-allowed disabled:opacity-40'
-  const BTN =
-    'inline-flex h-9 items-center justify-center whitespace-nowrap rounded-sm border border-border bg-surface px-4 text-[0.8125rem] font-medium tracking-[0.02em] text-fg transition-all hover:border-accent/30 hover:bg-accent/[0.07] hover:text-accent disabled:cursor-not-allowed disabled:opacity-40'
   const LABEL = 'mb-2 block text-label text-muted'
 
   return (
     <div>
-      <p className="mb-4 text-[0.8125rem] leading-[1.5] text-muted">
+      <p className="mb-4 text-body text-muted">
         Tools every agent and MCP client gets through the model-gateway at /mcp. Enable or
         disable a registered server below: the control plane saves the change to ordo.yaml and
         re-renders, and it applies on the next model-gateway recreate.
       </p>
 
       {error && !data ? (
-        <div className="flex items-center gap-2 rounded-sm border border-border-subtle border-l-[3px] border-l-warning bg-warning/[0.04] px-4 py-3 text-[0.8125rem] font-medium" role="status">
-          Could not load MCP servers — check that the dashboard API is up.
-        </div>
+        <Unavailable>Could not load MCP servers: check that the dashboard API is up.</Unavailable>
       ) : (
         <>
           {/* Enabled servers + gateway status */}
           <div className="mb-6">
             <div className={LABEL + ' flex items-center gap-2'}>
               <span>Enabled tools</span>
-              <span
-                className={'inline-flex items-center rounded-full border px-2 py-0.5 text-[0.65rem] font-semibold normal-case tracking-normal ' + gatewayBadge.cls}
-                title={gatewayBadge.title}
-              >
-                {gatewayBadge.label}
-              </span>
+              <Chip tone={gatewayBadge.tone} title={gatewayBadge.title}>{gatewayBadge.label}</Chip>
             </div>
             <div className="flex min-h-10 flex-wrap items-center gap-2">
               {enabled.length === 0 && !data ? (
                 <span className="skeleton h-6 w-40" />
               ) : enabled.length === 0 ? (
-                <span className="text-[0.8125rem] italic text-muted">None enabled - pick a registered server below</span>
+                <span className="text-body italic text-muted">None enabled - pick a registered server below</span>
               ) : (
                   enabled.map((s) => {
                     const info = healthById[s] || healthById[s.split('/').pop()]
                     return (
                       <span
                         key={s}
-                        className="inline-flex items-center gap-2 rounded-sm border border-border bg-surface py-1 pl-2.5 pr-1.5 text-[0.8125rem] text-fg transition-colors hover:border-accent/30"
-                        title={s}
+                        className="inline-flex items-center gap-2 rounded-sm border border-border bg-surface py-1 pl-2.5 pr-1.5 text-body text-fg transition-colors hover:border-accent/30"
+                        title={`${s}: ${serverTitle(info)}`}
                       >
-                        <span className={`status-dot ${serverDotClass(info)}`.trim()} aria-hidden="true" title={serverTitle(info)} />
-                        {/* Health as accessible text, not just a hover tooltip on an aria-hidden dot. */}
-                        <span className="sr-only">health: {serverTitle(info)}. </span>
+                        {/* Health as accessible text, not just a colour. */}
+                        <Dot tone={serverTone(info)} label={`health: ${serverTitle(info)}. `} />
                         <span className="max-w-[16rem] truncate">{s}</span>
                         <button
                           type="button"
@@ -224,15 +213,15 @@ export default function McpSettings() {
             </div>
           ) : (
             <div className="border-t border-border-subtle pt-5">
-              <div className="rounded-sm border border-border-subtle border-l-[3px] border-l-warning bg-warning/[0.04] px-4 py-3 text-[0.8125rem] leading-[1.5] text-fg-muted">
+              <Unavailable>
                 The control plane isn't configured (OPS_CONTROLLER_TOKEN is unset), so enable/disable
                 is disabled here. Edit the plugins: list in ordo.yaml, then ordo render + recreate
                 model-gateway.
-              </div>
+              </Unavailable>
             </div>
           )}
 
-          <div className="mt-6 border-t border-border-subtle pt-4 text-[0.8125rem] leading-[1.6] text-muted">
+          <div className="mt-6 border-t border-border-subtle pt-4 text-body text-muted">
             <p>
               Connect an external MCP client at https://&lt;your tailnet host&gt;/mcp with an{' '}
               Authorization: Bearer &lt;LiteLLM key&gt; header (LITELLM_KEY_EDGE in secrets.env).
