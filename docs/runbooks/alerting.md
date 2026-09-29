@@ -99,5 +99,5 @@ same alert on the same target (the 95% disk alert replaces the 85% one).
   `bash scripts/ci/check-monitoring-config.sh` (CI runs it too). Prometheus reads its config and rules
   at start, so apply a change with `ordo apply`: both declare these binds under `config_mounts:`, and the
   host's render labels them with their content digest (`ordo/render/bind_configs.py`), so an edited
-  rule recreates prometheus (and `alertmanager.yml` alertmanager). A dashboard model switch does not
-  pick up an edit the host has not applied.
+  rule recreates prometheus (and `alertmanager.yml` alertmanager). A dashboard model switch never
+  recreates a service for an edit the host has not applied.

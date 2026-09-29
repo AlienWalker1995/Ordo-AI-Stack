@@ -511,6 +511,13 @@ class FakeHost:
         self.calls.append(("doctor",))
         return 0
 
+    def read_bind_configs(self):
+        self.calls.append(("read_bind_configs",))
+        return "BEFORE"
+
+    def restore_bind_configs(self, text):
+        self.calls.append(("restore_bind_configs", text))
+
     def mutations(self) -> list[tuple]:
         return [c for c in self.calls if c[0] in self.MUTATING]
 
@@ -819,3 +826,57 @@ def test_a_crash_looping_service_the_render_dropped_is_stopped_too():
     host = FakeHost(have=_with_orphan(state="restarting"))
     assert apply.run(host, only=None, dry_run=False) == 0
     assert ("stop_containers", ("cid-searxng",)) in host.calls
+
+
+# --------------------------------------------------------------------------- #
+# out/bind-configs.env: the render writes new digests, and an apply that recreates nothing puts the
+# previous ones back, so a later control-plane apply cannot deploy the checkout edits it refused.
+# --------------------------------------------------------------------------- #
+
+
+RESTORED = ("restore_bind_configs", "BEFORE")
+
+
+def test_a_lease_refusal_puts_the_previous_bind_config_digests_back():
+    host = FakeHost(gpu=LEASED, want=_changed("llamacpp"))
+    assert apply.run(host, only=None, dry_run=False) == 2
+    assert host.calls.index(("read_bind_configs",)) < host.calls.index(("staged_render", False))
+    assert RESTORED in host.calls
+
+
+def test_a_failed_preflight_puts_the_previous_bind_config_digests_back():
+    class Host(FakeHost):
+        def preflight(self, services):
+            super().preflight(services)
+            return False
+    host = Host(want=_changed("prometheus"))
+    assert apply.run(host, only=None, dry_run=False) == 1
+    assert RESTORED in host.calls
+
+
+def test_unreadable_state_puts_the_previous_bind_config_digests_back():
+    host = FakeHost(state_error=True, want=_changed("prometheus"))
+    assert apply.run(host, only=None, dry_run=False) == 2
+    assert RESTORED in host.calls
+
+
+def test_a_failed_ops_controller_recreate_puts_the_previous_bind_config_digests_back():
+    """ops-controller mounts no declared config, so nothing runs with the new digests yet."""
+    host = FakeHost(want=_changed("prometheus", OPS), bring_up_code=1)
+    assert apply.run(host, only=None, dry_run=False) == 1
+    assert RESTORED in host.calls
+
+
+def test_a_recreate_that_ran_keeps_the_new_bind_config_digests():
+    """Once the changed set was brought up (even with a failure), services may run with the new
+    digests, so the values file stays what they were created from."""
+    for code in (0, 1):
+        host = FakeHost(want=_changed("prometheus"), bring_up_code=code)
+        apply.run(host, only=None, dry_run=False)
+        assert not any(c[0] == "restore_bind_configs" for c in host.calls)
+
+
+def test_a_dry_run_never_touches_the_bind_config_digests():
+    host = FakeHost(gpu=LEASED, want=_changed("llamacpp"))
+    apply.run(host, only=None, dry_run=True)
+    assert not any(c[0] in ("read_bind_configs", "restore_bind_configs") for c in host.calls)

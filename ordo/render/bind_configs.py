@@ -19,10 +19,19 @@ digested, so no heuristic decides what counts as config.
 
 The values are written by the HOST only (`write_values`, from `ordo render`, `ordo apply` and the
 CLI's source edits), from the checkout at BASE_PATH. A control-plane render (a dashboard model
-switch) never reads the checkout: it keeps out/bind-configs.env as the host last wrote it, so it
-re-applies the config the host deployed and never deploys an uncommitted checkout edit. A file's
-digest is of its bytes; a directory's is of each file's relative path and bytes, skipping Python
-caches. A source that does not exist is labelled ABSENT, so its arrival is a change too.
+switch) never reads the checkout: it keeps out/bind-configs.env as the host last wrote it, so a
+checkout edit never makes it recreate a service. Precisely:
+  - `ordo apply` puts the previous values back when it recreates nothing (refused at the GPU lease,
+    a failed preflight, unreadable state), so a later model switch does not deploy what it refused.
+    Once it has brought the changed set up (even with a failure), the new values stay.
+  - A plain `ordo render` or `ordo remote` writes new values without recreating anything, like the
+    rest of out/ it writes; the next apply of out/, host or control plane, deploys them.
+  - A bind is live: a service the control plane recreates for its own reason mounts the checkout as
+    it is now, while its label keeps the host's digest. So when a declared file changed since the
+    host's last apply, a model switch (which recreates llamacpp) starts llamacpp on the edited
+    /llamacpp-scripts, and the next `ordo apply` recreates llamacpp once more to record the digest.
+A file's digest is of its bytes; a directory's is of each file's relative path and bytes, skipping
+Python caches. A source that does not exist is labelled ABSENT, so its arrival is a change too.
 """
 from __future__ import annotations
 

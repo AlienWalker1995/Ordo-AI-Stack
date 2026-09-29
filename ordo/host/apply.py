@@ -50,7 +50,7 @@ from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
-from ..render import image_tags, secret_files, stack, substrate
+from ..render import bind_configs, image_tags, secret_files, stack, substrate
 from ..render.changed_set import (
     OPS_CONTROLLER_SERVICE,
     STOPPED_STATES,
@@ -208,6 +208,14 @@ class RealHost:
     def doctor(self) -> int:
         return self._doctor()
 
+    def read_bind_configs(self) -> str:
+        """out/bind-configs.env as it is before this apply renders ("" when there is none yet)."""
+        path = self.out / bind_configs.VALUES_ENV_FILE
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    def restore_bind_configs(self, text: str) -> None:
+        (self.out / bind_configs.VALUES_ENV_FILE).write_text(text, encoding="utf-8")
+
 
 # --------------------------------------------------------------------------- #
 # The plan and its execution.
@@ -354,40 +362,54 @@ def run(host: Any, *, only: Sequence[str] | None, dry_run: bool) -> int:
         print(f"ordo apply: {e}", file=sys.stderr)
         return 1
 
-    if not dry_run:
+    if dry_run:
+        previous_bind_configs = None
+    else:
         code = host.build(builds)
         if code:
             return code
+        previous_bind_configs = host.read_bind_configs()
+
+    def recreated_nothing(code: int) -> int:
+        """The render wrote the checkout's config digests to out/bind-configs.env, but no service
+        with a declared config bind was recreated: put the previous digests back, so a later
+        control-plane apply (a model switch) does not deploy the checkout edits this apply did not."""
+        if previous_bind_configs is not None:
+            host.restore_bind_configs(previous_bind_configs)
+        return code
+
     with host.staged_render(builds, dry_run=dry_run) as staged:
         if not dry_run:
             code = host.materialize_secrets()
             if code:
-                return code
+                return recreated_nothing(code)
         try:
             plan = _plan(host, staged, builds, only, gpu)
         except (StateUnknown, doctor.SubstrateUnreadable) as e:
             print(f"refusing: {e}. What is running is unknown, so the changed set cannot be computed.",
                   file=sys.stderr)
-            return 2
+            return recreated_nothing(2)
 
     print(describe(plan, host=host, dry_run=dry_run))
     if plan.refusal:
         print(plan.refusal, file=sys.stderr)
-        return 2
+        return recreated_nothing(2)
     if dry_run:
         return 0
     if plan.changes:
         if not host.preflight(plan.starts):
-            return 1
+            return recreated_nothing(1)
         if plan.ops_controller:
+            # ops-controller mounts no declared config bind, so until the rest is brought up nothing
+            # runs with the new digests.
             code = host.bring_up([OPS_CONTROLLER], fetch_models=False)
             if code:
-                return code
+                return recreated_nothing(code)
             if not host.wait_for_ops_controller():
                 print(f"{OPS_CONTROLLER} did not answer /status within {OPS_CONTROLLER_READY_SECONDS:.0f}s; "
                       "the rest of the changed set was not recreated. Check `docker logs` for it, then "
                       "re-run ordo apply.", file=sys.stderr)
-                return 1
+                return recreated_nothing(1)
         if plan.others:
             code = host.bring_up([c.service for c in plan.others], fetch_models=True)
             if code:
