@@ -14,7 +14,8 @@ from pathlib import Path
 
 import yaml
 
-from ordo.control.api import INSTALLABLE_PLUGINS, ControlPlane
+from ordo.control.api import ControlPlane
+from ordo.control.plugin_install import INSTALLABLE_PLUGINS
 from ordo.render.catalog import Catalog
 from ordo.render.plugins import PluginRegistry
 
