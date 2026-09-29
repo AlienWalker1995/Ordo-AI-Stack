@@ -302,3 +302,50 @@ def test_the_store_mints_and_rotates_the_hermes_token():
     assert len(value) >= 40
     assert secret_store.is_internal("OPS_CONTROLLER_TOKEN_HERMES")
     assert secret_store.rotation_refusal("OPS_CONTROLLER_TOKEN_HERMES") is None
+
+
+# --------------------------------------------------------------------------- #
+# revocation (security review of #298, finding F1)
+# --------------------------------------------------------------------------- #
+
+def test_emptying_the_hermes_token_file_revokes_it_at_once(plane, tmp_path):
+    """An empty file is how an operator turns the principal off (a store without the key
+    materializes one). It must stop matching on the next request, not keep the old value."""
+    cp, _ = plane
+    token_file = tmp_path / "ops_controller_token_hermes"
+    token_file.write_text(HERMES_TOKEN, encoding="utf-8")
+    client = _client(cp, hermes_token=lambda: token_file.read_text(encoding="utf-8"))
+    assert client.get("/status", headers=HERMES).status_code == 200
+    token_file.write_text("", encoding="utf-8")
+    assert client.get("/status", headers=HERMES).status_code == 401
+    assert client.get("/status", headers=ADMIN).status_code == 200
+
+
+def test_a_revoked_hermes_token_can_be_turned_back_on(plane, tmp_path):
+    cp, _ = plane
+    token_file = tmp_path / "ops_controller_token_hermes"
+    token_file.write_text("", encoding="utf-8")
+    client = _client(cp, hermes_token=lambda: token_file.read_text(encoding="utf-8"))
+    assert client.get("/status", headers=HERMES).status_code == 401
+    token_file.write_text(HERMES_TOKEN, encoding="utf-8")
+    assert client.get("/status", headers=HERMES).status_code == 200
+
+
+def test_an_unreadable_hermes_token_file_keeps_the_last_good_value(plane, tmp_path):
+    """A read ERROR (a file mid-replace, a transient mount hiccup) is not a revocation."""
+    cp, _ = plane
+    token_file = tmp_path / "ops_controller_token_hermes"
+    token_file.write_text(HERMES_TOKEN, encoding="utf-8")
+    client = _client(cp, hermes_token=lambda: token_file.read_text(encoding="utf-8"))
+    assert client.get("/status", headers=HERMES).status_code == 200
+    token_file.unlink()
+    assert client.get("/status", headers=HERMES).status_code == 200
+
+
+def test_the_admin_token_still_survives_a_torn_empty_read():
+    """Unchanged for the admin: an empty read keeps the last good value, so a torn write can
+    never lock every caller out (#290). Only scoped principals treat empty as off."""
+    values = iter(["admin-token", ""])
+    admin = principals.admin(lambda: next(values))
+    assert admin.token.current() == "admin-token"
+    assert admin.token.current() == "admin-token"

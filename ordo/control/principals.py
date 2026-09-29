@@ -84,20 +84,28 @@ HERMES_ROUTES: tuple[Route, ...] = (
 
 
 class TokenSource:
-    """A token read on every use, so a rotated file takes effect without a restart. A read that
-    fails or comes back empty (a torn write, a removed file) keeps the last good value; a source
-    that has never produced a value yields "" and matches nothing."""
+    """A token read on every use, so a rotated file takes effect without a restart.
 
-    def __init__(self, read: Callable[[], str]):
+    A read that FAILS (a file mid-replace, a transient mount error) keeps the last good value.
+    A read that succeeds EMPTY depends on who the token is for:
+    - the admin token keeps the last good value (`empty_revokes=False`): a torn write must never
+      lock every caller out of the control plane (#290);
+    - a scoped token is revoked at once (`empty_revokes=True`): emptying its file is how an
+      operator turns the principal off, and a store without the key materializes an empty file.
+      A torn write then fails closed for one request, never open.
+    A source that has never produced a value yields "" and matches nothing."""
+
+    def __init__(self, read: Callable[[], str], *, empty_revokes: bool = False):
         self._read = read
+        self._empty_revokes = empty_revokes
         self._last_good = ""
 
     def current(self) -> str:
         try:
             token = (self._read() or "").strip()
         except Exception:  # noqa: BLE001 - an unreadable file keeps the last good token
-            token = ""
-        if token:
+            return self._last_good
+        if token or self._empty_revokes:
             self._last_good = token
         return self._last_good
 
@@ -120,7 +128,7 @@ def admin(read_token: Callable[[], str]) -> Principal:
 
 
 def hermes(read_token: Callable[[], str]) -> Principal:
-    return Principal(HERMES, TokenSource(read_token), HERMES_ROUTES)
+    return Principal(HERMES, TokenSource(read_token, empty_revokes=True), HERMES_ROUTES)
 
 
 def authenticate(principals: Sequence[Principal], authorization: str) -> Principal | None:
