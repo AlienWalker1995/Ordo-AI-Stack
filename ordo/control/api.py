@@ -39,19 +39,17 @@ import yaml
 
 from ..render import alerting, substrate
 from ..render.catalog import Catalog
-from ..render.changed_set import STOPPED_STATES, Change, diff_services, stale_one_shot_jobs
 from ..render.config import Source
-from ..render.engine import render
-from ..render.models_volume import CHAT_SERVICE, required_model_files
-from ..render.open_webui_probe import OPEN_WEBUI_PROBE, OPEN_WEBUI_SERVICE, open_webui_verdict
+from ..render.models_volume import CHAT_SERVICE
+from ..render.open_webui_probe import OPEN_WEBUI_SERVICE, open_webui_verdict
 from ..render.plugins import PluginRegistry
 from ..render.served_models import model_files
 from ..render.source_edit import edit_plugins_list
-from ..render.stack import lifecycle_group, plan_named
 from . import diagnostics, gpus, routes
 from . import metrics as prom
 from . import principals as auth
-from .broker import SELF_REFERENTIAL_SERVICES, Broker
+from .apply import RenderApply
+from .broker import Broker
 from .call_audit import ACTOR_HEADER, AUDITED_METHODS, CallAuditor, audit_actor, audited_read, lease_detail
 from .comfyui import ModelDownloads, NodeRequirements
 from .gpus import LeaseJobs
@@ -59,6 +57,7 @@ from .lifecycle import LeaseGuard, Lifecycle
 from .managed_projects import ManagedProjects
 from .responses import CONFIRM_REQUIRED, as_response, confirmed, error
 from .scheduler import Scheduler
+from .source import StackSource, enabled_ids
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +65,12 @@ logger = logging.getLogger(__name__)
 # and Prometheus scrapes /metrics without one (it holds no secret: ordo/control/metrics.py).
 METRICS_PATH = "/metrics"
 UNAUTHENTICATED_PATHS = frozenset({"/health", "/healthz", METRICS_PATH})
+
+COMFYUI_MODELS_DIR = Path(os.environ.get("COMFYUI_MODELS_DIR", "/models/comfyui"))
+AUDIT_LOG_PATH = Path(os.environ.get("AUDIT_LOG_PATH", "/data/audit.jsonl"))
+COMFYUI_CUSTOM_NODES_DIR = Path(os.environ.get("COMFYUI_CUSTOM_NODES_DIR", "/comfyui-app/ComfyUI/custom_nodes"))
+COMFYUI_CONTAINER_NAME = os.environ.get("COMFYUI_CONTAINER_NAME", "ordo-comfyui-1")
+
 
 # Service plugins Hermes may install/enable on request (kind=service, profile-gated). The core
 # substrate (llamacpp, litellm-db, model-gateway, model-gateway-keys, ops-controller, dashboard,
@@ -79,10 +84,7 @@ INSTALLABLE_PLUGINS = frozenset({
     "automation", "searxng-web", "codebase-memory-ui", "obsidian-livesync", "llamacpp-cpu",
 })
 
-COMFYUI_MODELS_DIR = Path(os.environ.get("COMFYUI_MODELS_DIR", "/models/comfyui"))
-AUDIT_LOG_PATH = Path(os.environ.get("AUDIT_LOG_PATH", "/data/audit.jsonl"))
-COMFYUI_CUSTOM_NODES_DIR = Path(os.environ.get("COMFYUI_CUSTOM_NODES_DIR", "/comfyui-app/ComfyUI/custom_nodes"))
-COMFYUI_CONTAINER_NAME = os.environ.get("COMFYUI_CONTAINER_NAME", "ordo-comfyui-1")
+
 class ControlPlane:
     def __init__(
         self,
@@ -97,80 +99,52 @@ class ControlPlane:
         disk_paths: dict[str, str] | None = None,
         tls_cert_files: dict[str, str] | None = None,
     ):
-        self.source_path = Path(source_path)
+        # The source and out/, and what this process renders them with. `model_volume_files` lists
+        # the file names in the models volume (None: it could not be listed); None = no volume to
+        # check (a control plane without the Docker socket, and the unit tests that do not wire one).
+        self.source = StackSource(Path(source_path), catalog, registry, Path(out_dir), substrate.current_digest())
         # What GET /metrics reports beyond the scheduler and the containers: {mount label: a path on
         # that filesystem} and {cert name: a PEM file}. Empty = not reported (ordo/control/serve.py
         # wires the real ones).
         self.disk_paths = dict(disk_paths or {})
         self.tls_cert_files = dict(tls_cert_files or {})
-        # Lists the file names in the models volume (None: it could not be listed). A model switch
-        # checks the target's files against it before writing anything. None = no volume to check
-        # (a control plane without the Docker socket, and the unit tests that do not wire one).
-        self.model_volume_files = model_volume_files
-        self.catalog = catalog
-        self.registry = registry
-        self.out_dir = Path(out_dir)
         self.scheduler = scheduler
         self.broker = broker
-        self.history = history  # LeaseHistory sink (shared with the broker) — /jobs/history
-        # The digest of the render inputs this process ships (its baked copy, in the image).
-        self.substrate_digest = substrate.current_digest()
-        # ComfyUI's files. Their locations are read from this module's settings when used, so a test
-        # can repoint them after construction.
-        self.downloads = ModelDownloads(lambda: COMFYUI_MODELS_DIR)
-        self.node_requirements = NodeRequirements(broker, lambda: COMFYUI_CUSTOM_NODES_DIR,
-                                                  lambda: COMFYUI_CONTAINER_NAME)
-        # `handle()` writes one audit record per state-changing call. AUDIT_LOG_PATH is read when
-        # the log is first used, so a test can point it elsewhere after construction.
-        self.auditor = CallAuditor(lambda: AUDIT_LOG_PATH)
+        self.history = history  # LeaseHistory sink (shared with the broker): /jobs/history
         # Requests run concurrently on worker threads (see app()), so the verbs that change the
         # stack take this lock, one at a time (`_exclusive`). It is the broker's operation lock, the
         # one a GPU lease transition takes, so a lease cannot evict a resident mid-verb either. A
         # control plane without a broker only needs its source writes kept apart.
         self._operation_lock = broker.operation_lock if broker else threading.RLock()
-        # The lifecycle verbs, and the GPU-lease check they and the post-render apply make.
+        # `handle()` writes one audit record per state-changing call. AUDIT_LOG_PATH is read when
+        # the log is first used, so a test can point it elsewhere after construction.
+        self.auditor = CallAuditor(lambda: AUDIT_LOG_PATH)
+        # One object per concern, each handed exactly the shared state it uses. The GPU-lease check
+        # is shared by the lifecycle verbs and the post-render apply.
         self.lease = LeaseGuard(scheduler)
         self.lifecycle = Lifecycle(broker, self.lease)
-        self.managed_projects = ManagedProjects(broker, self.source_path)
+        self.applier = RenderApply(self.source, broker, self.lease, model_volume_files)
+        self.model_volume_files = model_volume_files
         self.lease_jobs = LeaseJobs(broker, scheduler)
+        self.managed_projects = ManagedProjects(broker, self.source.path)
+        # ComfyUI's files. Their locations are read from this module's settings when used, so a test
+        # can repoint them after construction.
+        self.downloads = ModelDownloads(lambda: COMFYUI_MODELS_DIR)
+        self.node_requirements = NodeRequirements(broker, lambda: COMFYUI_CUSTOM_NODES_DIR,
+                                                  lambda: COMFYUI_CONTAINER_NAME)
 
+    @property
+    def source_path(self) -> Path:
+        return self.source.path
 
-    # --- core operations (pure, testable) ---
+    @property
+    def substrate_digest(self) -> str:
+        return self.source.substrate_digest
+
+    # --- Status, the model, plugins and the post-render apply (source.py, apply.py) ---
+
     def _render(self) -> Any:
-        return render(Source.load(self.source_path), self.catalog, self.registry)
-
-    def _substrate_conflict(self) -> dict[str, Any] | None:
-        """A 409 payload when out/ was last rendered from different inputs than this process ships.
-
-        Rendering over it would silently revert whatever the newer side changed (the image renders
-        from its own baked copy of ordo/, catalog/ and the manifests). No manifest, or one written
-        before renders recorded a digest, is allowed: this render then records ours.
-        """
-        try:
-            recorded = self._recorded_substrate_digest()
-        except (OSError, ValueError, AttributeError) as e:
-            return self._error(409, f"cannot read {self.out_dir / 'manifest.json'} to check the render substrate "
-                               f"({e}); re-render from the host checkout, then retry")
-        if recorded is None or recorded == self.substrate_digest:
-            return None
-        return self._error(
-            409,
-            f"ops-controller's render substrate ({self.substrate_digest[:12]}) differs from the last "
-            f"host render's ({str(recorded)[:12]}): the image is older or newer than the checkout that "
-            "rendered out/, and a render here would silently change what that checkout rendered. "
-            "Rebuild ordo/ops-controller from the checkout that rendered out/ (`ordo build "
-            "ops-controller`), re-render, then `ordo recreate ops-controller`.",
-            substrate_digest=self.substrate_digest, rendered_substrate_digest=recorded)
-
-    def _recorded_substrate_digest(self) -> str | None:
-        """The substrate digest the last render recorded in out/manifest.json. None when there is
-        no manifest or it was written before renders recorded one. Raises OSError, ValueError or
-        AttributeError when the manifest cannot be read."""
-        manifest_path = self.out_dir / "manifest.json"
-        if not manifest_path.exists():
-            return None
-        recorded = json.loads(manifest_path.read_text(encoding="utf-8")).get("substrate_digest")
-        return str(recorded) if recorded else None
+        return self.source.render()
 
     def doctor(self) -> dict[str, Any]:
         """`GET /doctor`: the drift `ordo doctor` reports, seen from the control plane. Read-only.
@@ -189,9 +163,9 @@ class ControlPlane:
 
     def _substrate_drift(self) -> tuple[bool, str]:
         try:
-            recorded = self._recorded_substrate_digest()
+            recorded = self.source.recorded_substrate_digest()
         except (OSError, ValueError, AttributeError) as e:
-            return False, f"! substrate: cannot read {self.out_dir / 'manifest.json'} ({e})"
+            return False, f"! substrate: cannot read {self.source.out_dir / 'manifest.json'} ({e})"
         if recorded is None:
             return True, f"substrate: ops-controller {self.substrate_digest[:12]}; out/ records no digest yet"
         return substrate.substrate_verdict(self.substrate_digest, recorded, reference_name="the last render",
@@ -203,7 +177,7 @@ class ControlPlane:
             compose = self._render().compose_dict()
         except Exception as e:  # noqa: BLE001 - an unrenderable source is reported, not raised
             return False, f"! alerting: cannot render the source to check alert delivery ({type(e).__name__}: {e})"
-        return alerting.check(compose, self.out_dir)
+        return alerting.check(compose, self.source.out_dir)
 
     def _open_webui_drift(self) -> tuple[bool, str]:
         """The open-webui verdict `ordo doctor` gives: "not running" is fine, a failed probe is not."""
@@ -214,7 +188,7 @@ class ControlPlane:
         except Exception as e:  # noqa: BLE001 - an unreadable stack is reported, not raised
             return False, f"! open-webui: cannot read the running services ({type(e).__name__}: {e})"
         running = any(row.get("id") == OPEN_WEBUI_SERVICE and row.get("state") == "running" for row in rows)
-        return self._open_webui_verdict() if running else open_webui_verdict(None)
+        return self.applier.open_webui_verdict() if running else open_webui_verdict(None)
 
     def status(self) -> dict[str, Any]:
         """Live status: GPU/scheduler state + the current rendered manifest."""
@@ -228,8 +202,8 @@ class ControlPlane:
         return out
 
     def get_model_config(self) -> dict[str, Any]:
-        src = Source.load(self.source_path)
-        rc = self._render()
+        src = Source.load(self.source.path)
+        rc = self.source.render()
         mmproj = rc.env.get("LLAMACPP_MMPROJ") or ""
         return {
             "source_model": src.model,           # what the source asks for ("auto" or an id)
@@ -247,7 +221,7 @@ class ControlPlane:
             "ctx_size": rc.ctx_size,
             "available": [
                 {"id": m.id, "tier": m.tier, "vram_gb": m.vram_gb, "file": m.file}
-                for m in self.catalog.models
+                for m in self.source.catalog.models
             ],
         }
 
@@ -256,32 +230,32 @@ class ControlPlane:
 
         `.env`, Hermes context, and model-gateway ctx are all regenerated from the new source in
         one pass — they cannot end up disagreeing. `model: "auto"` hands control back to best-fit.
-        The render decides what restarts (`apply_render`): llama.cpp and the gateway, the CPU
+        The render decides what restarts (`RenderApply.apply_render`): llama.cpp and the gateway, the CPU
         fallback and the agent when the context window changed, whatever else the render touched.
         The response's `apply` says what was recreated and what the host must finish.
         """
         model_id = str(body.get("model", "")).strip()
         if not model_id:
-            return self._error(400, "body must include 'model' (a catalog id or 'auto')")
-        if model_id != "auto" and self.catalog.get(model_id) is None:
-            ids = [m.id for m in self.catalog.models]
-            return self._error(404, f"model '{model_id}' not in catalog", available=ids)
-        conflict = self._substrate_conflict()
+            return error(400, "body must include 'model' (a catalog id or 'auto')")
+        if model_id != "auto" and self.source.catalog.get(model_id) is None:
+            ids = [m.id for m in self.source.catalog.models]
+            return error(404, f"model '{model_id}' not in catalog", available=ids)
+        conflict = self.source.substrate_conflict()
         if conflict:
             return conflict
 
         # ONE write path: mutate only the model key of the raw source, preserving everything else.
-        raw = yaml.safe_load(self.source_path.read_text(encoding="utf-8")) or {}
+        raw = yaml.safe_load(self.source.read_text()) or {}
         raw["model"] = model_id
-        rc = render(Source.from_dict(raw), self.catalog, self.registry)
+        rc = self.source.render_source(Source.from_dict(raw))
         missing = self._missing_model_files(rc)
         if missing:
             return missing
-        applied, failure = self._commit_source(yaml.safe_dump(raw, sort_keys=False), rc)
+        applied, failure = self.applier.commit(yaml.safe_dump(raw, sort_keys=False), rc)
         if failure:
             return failure
         return {"ok": True, "active_model": rc.model.id, "ctx_size": rc.ctx_size,
-                "warnings": rc.warnings, "wrote": str(self.out_dir), "apply": applied}
+                "warnings": rc.warnings, "wrote": str(self.source.out_dir), "apply": applied}
 
     def _missing_model_files(self, target: Any) -> dict[str, Any] | None:
         """A refusal when the chat service would load a file the models volume lacks, else None.
@@ -295,33 +269,26 @@ class ControlPlane:
             return None
         present = self.model_volume_files()
         if present is None:
-            return self._error(503, "cannot list the models volume to confirm the model's files are in "
-                                    "place; not switching")
+            return error(503, "cannot list the models volume to confirm the model's files are in "
+                              "place; not switching")
         needed = [f for f in model_files(target.compose_dict(), target.env) if f.service == CHAT_SERVICE]
         missing = [need.file for need in needed if need.file not in present]
         if not missing:
             return None
         command = f"ordo fetch {target.model.id}"
         verb = "is" if len(missing) == 1 else "are"
-        return self._error(409, f"{', '.join(missing)} {verb} not in the models volume: run `{command}` on "
-                                "the host, then switch again", missing_files=missing, fetch_command=command)
+        return error(409, f"{', '.join(missing)} {verb} not in the models volume: run `{command}` on "
+                          "the host, then switch again", missing_files=missing, fetch_command=command)
 
-    # --- service-plugin install/enable (render authority for Hermes-driven onboarding) ---
-    def _secrets_present(self) -> set[str]:
-        """Secret KEYS with a non-empty value in out/secrets.env (empty if the file is absent). Lets an
-        enable request tell whether a service's secrets are provisioned, so a secret-dependent service
-        is escalated to a host `make up` rather than started broken."""
-        p = self.out_dir / "secrets.env"
-        present: set[str] = set()
-        if p.exists():
-            for line in p.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, _, v = line.partition("=")
-                if v.strip().strip('"').strip("'"):
-                    present.add(k.strip())
-        return present
+    def _installable(self, plugin_id: str) -> bool:
+        """The allowlisted service plugins plus every kind=mcp plugin in the registry."""
+        if plugin_id in INSTALLABLE_PLUGINS:
+            return True
+        plugin = self.source.registry.get(plugin_id)
+        return plugin is not None and plugin.kind == "mcp"
+
+    def _installable_ids(self) -> list[str]:
+        return sorted(p.id for p in self.source.registry.plugins if self._installable(p.id))
 
     def _deps_closure(self, plugin_id: str, already: set[str]) -> list[str]:
         """`plugin_id` + its transitive `depends_on` not already enabled — the set that must be added
@@ -335,26 +302,10 @@ class ControlPlane:
                 continue
             seen.add(pid)
             need.append(pid)
-            p = self.registry.get(pid)
+            p = self.source.registry.get(pid)
             if p:
                 stack.extend(d for d in p.depends_on if d not in seen)
         return need
-
-    def _installable(self, plugin_id: str) -> bool:
-        """The allowlisted service plugins plus every kind=mcp plugin in the registry."""
-        if plugin_id in INSTALLABLE_PLUGINS:
-            return True
-        plugin = self.registry.get(plugin_id)
-        return plugin is not None and plugin.kind == "mcp"
-
-    def _installable_ids(self) -> list[str]:
-        return sorted(p.id for p in self.registry.plugins if self._installable(p.id))
-
-    @staticmethod
-    def _enabled_ids(rc: Any) -> set[str]:
-        """Every plugin a render enabled. `plugins_enabled` lists only kind=service plugins; the
-        enabled kind=mcp plugins are the ones behind its MCP servers."""
-        return set(rc.plugins_enabled) | {s["plugin_id"] for s in rc.mcp_servers}
 
     def _plugin_view(self, p: Any, enabled: set[str], present: set[str], hw: Any) -> dict[str, Any]:
         return {
@@ -370,41 +321,41 @@ class ControlPlane:
     def list_plugins(self) -> dict[str, Any]:
         """The installable-service catalog for the agent skill: each allowlisted plugin with its
         services, compose profile, secret keys, hardware fit, and whether it's already enabled."""
-        rc = self._render()
-        enabled = self._enabled_ids(rc)
-        present = self._secrets_present()
+        rc = self.source.render()
+        enabled = enabled_ids(rc)
+        present = self.source.secrets_present()
         return {"plugins": [
             self._plugin_view(p, enabled, present, rc.hardware)
-            for p in self.registry.plugins if self._installable(p.id)
+            for p in self.source.registry.plugins if self._installable(p.id)
         ]}
 
     def enable_plugin(self, plugin_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Enable a service plugin the drift-safe way (same one-write-path as set_model_config): add
+        """Enable a service plugin the drift-safe way (same one-write-path as a model switch): add
         it (+ any unmet deps) to ordo.yaml's `plugins:` list, re-render, regenerate out/, then apply
-        (`apply_render`), which creates its services. Under `plugins: auto` a fitting plugin is
+        (`RenderApply.apply_render`), which creates its services. Under `plugins: auto` a fitting plugin is
         ALREADY rendered, so nothing is written and the apply alone creates whatever of it is not
         running. A service whose secrets out/secrets.env lacks is rendered but left to the host.
         Refuses anything not installable (`_installable`), and anything that doesn't fit the hardware."""
         if not self._installable(plugin_id):
-            return self._error(403, f"'{plugin_id}' is not an installable service (core, edge/"
-                               "front-door, and the agent are refused)",
-                               installable=self._installable_ids())
-        plugin = self.registry.get(plugin_id)
+            return error(403, f"'{plugin_id}' is not an installable service (core, edge/"
+                         "front-door, and the agent are refused)",
+                         installable=self._installable_ids())
+        plugin = self.source.registry.get(plugin_id)
         if plugin is None:
-            return self._error(404, f"plugin '{plugin_id}' is not in the registry")
+            return error(404, f"plugin '{plugin_id}' is not in the registry")
         if body.get("dry_run"):
             return {"would": "enable", "plugin": plugin_id}
         if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        src = Source.load(self.source_path)
-        rc = self._render()
+            return error(400, CONFIRM_REQUIRED)
+        src = Source.load(self.source.path)
+        rc = self.source.render()
         hw = rc.hardware
         services = [s.name for s in plugin.services]
-        present = self._secrets_present()
+        present = self.source.secrets_present()
 
-        if plugin_id in self._enabled_ids(rc):
+        if plugin_id in enabled_ids(rc):
             # Already rendered (the common case under plugins: auto): no source edit, only the apply.
-            applied = self.apply_render() if self.broker else None
+            applied = self.applier.apply_render() if self.applier.broker else None
             if applied is not None and "_status" in applied:
                 return applied
             return {"ok": True, "already_rendered": True, "plugin": plugin_id,
@@ -414,51 +365,51 @@ class ControlPlane:
                     "warnings": [], "apply": applied}
 
         if not plugin.fits(hw):
-            _, notes = self.registry.resolve([plugin_id], hw)
+            _, notes = self.source.registry.resolve([plugin_id], hw)
             reason = next((n for n in notes if plugin_id in n),
                           f"'{plugin_id}' does not fit this hardware")
-            return self._error(409, reason)
+            return error(409, reason)
 
         missing_site_keys = plugin.missing_site_keys(src.site)
         if missing_site_keys:
-            return self._error(409, f"'{plugin_id}' needs site key(s) {', '.join(missing_site_keys)}: "
-                               "set them under `site:` in ordo.yaml, then render")
+            return error(409, f"'{plugin_id}' needs site key(s) {', '.join(missing_site_keys)}: "
+                         "set them under `site:` in ordo.yaml, then render")
 
         if src.plugins == "auto" or src.plugins is None:
             # fits + auto but not enabled -> a dependency was gated off (dropped by the dep fixpoint)
-            _, notes = self.registry.resolve([plugin_id], hw)
+            _, notes = self.source.registry.resolve([plugin_id], hw)
             reason = next((n for n in notes if plugin_id in n),
                           f"'{plugin_id}' could not be enabled (an unmet dependency)")
-            return self._error(409, reason)
+            return error(409, reason)
 
         # explicit plugin list: add the plugin + any unmet deps, VALIDATE the render, then persist.
-        to_add = self._deps_closure(plugin_id, self._enabled_ids(rc))
+        to_add = self._deps_closure(plugin_id, enabled_ids(rc))
         blocked = [pid for pid in to_add if not self._installable(pid)]
         if blocked:
-            return self._error(409, f"'{plugin_id}' requires {blocked}, which are not installable")
-        text = self.source_path.read_text(encoding="utf-8")
+            return error(409, f"'{plugin_id}' requires {blocked}, which are not installable")
+        text = self.source.read_text()
         try:
             for pid in to_add:
                 text = edit_plugins_list(text, pid, "add")
         except ValueError as e:
-            return self._error(422, f"cannot safely edit ordo.yaml plugins list: {e}")
+            return error(422, f"cannot safely edit ordo.yaml plugins list: {e}")
         edited = Source.from_dict(yaml.safe_load(text))
-        rc2 = render(edited, self.catalog, self.registry)
-        if plugin_id not in self._enabled_ids(rc2):
-            return self._error(409, f"'{plugin_id}' still not enabled after the edit (unmet "
-                               "dependency or fit) — nothing written")
-        conflict = self._substrate_conflict()
+        rc2 = self.source.render_source(edited)
+        if plugin_id not in enabled_ids(rc2):
+            return error(409, f"'{plugin_id}' still not enabled after the edit (unmet "
+                         "dependency or fit) — nothing written")
+        conflict = self.source.substrate_conflict()
         if conflict:
             return conflict
         # commit: ONE write path: the source text, then every derived output, then the apply.
-        applied, failure = self._commit_source(text, rc2)
+        applied, failure = self.applier.commit(text, rc2)
         if failure:
             return failure
         return {"ok": True, "already_rendered": False, "plugin": plugin_id,
                 "services": services, "compose_profile": plugin.compose_profile,
                 "wants_secrets": bool(plugin.secrets),
-                "missing_secrets": [k for k in plugin.secrets if k not in self._secrets_present()],
-                "added": to_add, "warnings": rc2.warnings, "wrote": str(self.out_dir), "apply": applied}
+                "missing_secrets": [k for k in plugin.secrets if k not in self.source.secrets_present()],
+                "added": to_add, "warnings": rc2.warnings, "wrote": str(self.source.out_dir), "apply": applied}
 
     def disable_plugin(self, plugin_id: str, body: dict[str, Any]) -> dict[str, Any]:
         """Remove a service plugin from an EXPLICIT plugins list, re-render, then apply (symmetric to
@@ -467,267 +418,44 @@ class ControlPlane:
         `plugins: auto` there is no list item to remove, so a disable could not persist: it is
         refused with the fix (an explicit list) and nothing is stopped."""
         if not self._installable(plugin_id):
-            return self._error(403, f"'{plugin_id}' is not an installable service")
-        plugin = self.registry.get(plugin_id)
+            return error(403, f"'{plugin_id}' is not an installable service")
+        plugin = self.source.registry.get(plugin_id)
         if plugin is None:
-            return self._error(404, f"plugin '{plugin_id}' is not in the registry")
+            return error(404, f"plugin '{plugin_id}' is not in the registry")
         if body.get("dry_run"):
             return {"would": "disable", "plugin": plugin_id}
         if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
+            return error(400, CONFIRM_REQUIRED)
         services = [s.name for s in plugin.services]
-        src = Source.load(self.source_path)
+        src = Source.load(self.source.path)
         if src.plugins == "auto" or src.plugins is None:
-            return self._error(409, "ordo.yaml has `plugins: auto`, which enables every fitting plugin: "
-                                    f"'{plugin_id}' cannot be disabled without an explicit `plugins:` list "
-                                    "there. Nothing was changed.", plugin=plugin_id)
-        text = self.source_path.read_text(encoding="utf-8")
+            return error(409, "ordo.yaml has `plugins: auto`, which enables every fitting plugin: "
+                              f"'{plugin_id}' cannot be disabled without an explicit `plugins:` list "
+                              "there. Nothing was changed.", plugin=plugin_id)
+        text = self.source.read_text()
         try:
             new_text = edit_plugins_list(text, plugin_id, "remove")
         except ValueError as e:
-            return self._error(422, f"cannot safely edit ordo.yaml plugins list: {e}")
+            return error(422, f"cannot safely edit ordo.yaml plugins list: {e}")
         if new_text == text:
             return {"ok": True, "already_absent": True, "plugin": plugin_id, "services": services}
-        conflict = self._substrate_conflict()
+        conflict = self.source.substrate_conflict()
         if conflict:
             return conflict
         edited = Source.from_dict(yaml.safe_load(new_text))
-        rc2 = render(edited, self.catalog, self.registry)
-        applied, failure = self._commit_source(new_text, rc2)
+        rc2 = self.source.render_source(edited)
+        applied, failure = self.applier.commit(new_text, rc2)
         if failure:
             return failure
-        return {"ok": True, "plugin": plugin_id, "services": services, "wrote": str(self.out_dir),
+        return {"ok": True, "plugin": plugin_id, "services": services, "wrote": str(self.source.out_dir),
                 "apply": applied}
 
-    # --- the post-render step: recreate exactly what a render changed ---
-
-    def _commit_source(self, text: str, rendered: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        """Write `text` as the operator source, write its render to out/, then apply it.
-
-        Returns (the apply result, None), or (None, a failure payload) when the apply refused or
-        failed: the previous source is then written back, re-rendered and re-applied, so the source
-        never names a config the stack is not running. The apply result is None when this control
-        plane has no container backend (a hand-run or test instance): nothing is recreated then.
-        """
-        previous_text = self.source_path.read_text(encoding="utf-8")
-        self._write_source(text)
-        rendered.write(self.out_dir)
-        if not self.broker:
-            return None, None
-        # A service the new render no longer defines (a disabled plugin's) is stopped by the apply.
-        applied = self.apply_render()
-        if "_status" not in applied:
-            return applied, None
-        self._write_source(previous_text)
-        self._render().write(self.out_dir)
-        rollback = self.apply_render()
-        if rollback.pop("_status", None) is None:
-            outcome = "ordo.yaml and out/ were rolled back and the previous render re-applied"
-        else:
-            outcome = (f"ordo.yaml and out/ were rolled back, but re-applying the previous render failed "
-                       f"too ({rollback.get('error')}); run `ordo apply` on the host")
-        applied["error"] = f"{applied['error']}; {outcome}"
-        applied["rolled_back"] = True
-        applied["rollback"] = rollback
-        return None, applied
-
-    def _write_source(self, text: str) -> None:
-        """Replace the operator source atomically (a temp file, then a rename): a read-only request
-        rendering it on another thread (GET /status) sees the old file or the new one, never half."""
-        temp = self.source_path.with_name(self.source_path.name + ".tmp")
-        temp.write_text(text, encoding="utf-8")
-        os.replace(temp, self.source_path)
-
-    def _secret_holds(self, rc: Any) -> dict[str, list[str]]:
-        """service -> the required secrets out/secrets.env lacks, for each enabled plugin's services
-        (its compose services and its MCP server's). Started without them they crash-loop, so the
-        post-render step leaves them to the host (`ordo secrets set`, then `ordo apply`)."""
-        present = self._secrets_present()
-        holds: dict[str, list[str]] = {}
-        for plugin_id in sorted(self._enabled_ids(rc)):
-            plugin = self.registry.get(plugin_id)
-            if plugin is None:
-                continue
-            missing = [key for key in plugin.secrets if key not in plugin.optional_secrets and key not in present]
-            if not missing:
-                continue
-            names = [service.name for service in plugin.services]
-            names += [server["service"] for server in rc.mcp_servers
-                      if server.get("plugin_id") == plugin_id and not server.get("hosted")]
-            for name in names:
-                held = holds.setdefault(name, [])
-                held += [key for key in missing if key not in held]
-        return holds
-
-    def _model_file_holds(self, services: list[str], doc: dict[str, Any], rc: Any) -> dict[str, str]:
-        """service -> why it waits for the host, for each of `services` that loads a model file the
-        models volume lacks. Recreated onto a missing file it crash-loops; the host's `ordo apply
-        --only <service>` fetches the file first (a download of that size does not belong in this
-        process, see _missing_model_files). A volume that cannot be listed holds every loader."""
-        if self.model_volume_files is None:
-            return {}
-        needed = [need for need in required_model_files(doc, rc.env, services) if not need.optional]
-        if not needed:
-            return {}
-        present = self.model_volume_files()
-        holds: dict[str, list[str]] = {}
-        for need in needed:
-            if present is None or need.file not in present:
-                holds.setdefault(need.service, []).append(need.file)
-        if present is None:
-            return {name: "cannot list the models volume to confirm its model files are in place"
-                    for name in holds}
-        return {name: (f"loads {', '.join(files)}, which the models volume lacks: `ordo apply --only "
-                       f"{name}` on the host fetches it first") for name, files in holds.items()}
-
-    def _unbuilt_image_holds(self, services: list[str], rendered: dict[str, Any], rc: Any) -> dict[str, str]:
-        """service -> why it waits for the host, for each of `services` whose first-party image (built
-        from this checkout by `ordo build`, never published to a registry) is not in the local image
-        cache. Compose would try to pull it and fail; the host's `ordo apply --only <service>` builds
-        it first. A third-party image the cache lacks is left to compose, which pulls it."""
-        owned = set(rc.first_party_images)
-        holds: dict[str, str] = {}
-        for name in services:
-            service = rendered.get(name)
-            if service is None or service.image_id is not None:
-                continue
-            repo = service.image_ref.rsplit(":", 1)[0]
-            if repo in owned:
-                holds[name] = (f"image {service.image_ref} is built from this checkout and is not in the "
-                               f"local image cache: `ordo apply --only {name}` on the host builds it first")
-        return holds
-
-    def _host_reasons(self, changes: list[Change], doc: dict[str, Any], rc: Any,
-                      rendered: dict[str, Any]) -> dict[str, str]:
-        """Why each changed service this process must not recreate is left to the host."""
-        secret_holds = self._secret_holds(rc)
-        changed = [change.service for change in changes]
-        file_holds = self._model_file_holds(changed, doc, rc)
-        image_holds = self._unbuilt_image_holds(changed, rendered, rc)
-        reasons: dict[str, str] = {}
-        for change in changes:
-            name = change.service
-            if name in SELF_REFERENTIAL_SERVICES:
-                reasons[name] = (f"{name} runs the control plane (or is the agent calling it) and cannot be "
-                                 f"recreated through it ({'; '.join(change.reasons)})")
-            elif change.incomparable:
-                reasons[name] = "; ".join(change.reasons)
-            elif name in secret_holds:
-                reasons[name] = (f"needs secret(s) {', '.join(secret_holds[name])}, which out/secrets.env does "
-                                 "not hold: `ordo secrets set <KEY>` on the host first")
-            elif name in image_holds:
-                reasons[name] = image_holds[name]
-            elif name in file_holds:
-                reasons[name] = file_holds[name]
-            else:
-                members = [m for m in lifecycle_group(doc, name)[1:] if m in SELF_REFERENTIAL_SERVICES]
-                if members:
-                    reasons[name] = f"its netns member(s) {', '.join(members)} run the control plane"
-        return reasons
-
     def apply_render(self, *, dry_run: bool = False) -> dict[str, Any]:
-        """Bring the stack to the current render: recreate exactly the changed set.
-
-        The changed set is every long-running rendered service whose config hash or image differs
-        from its container's, or that has none (ordo/render/changed_set.py, what the host's `ordo
-        apply` computes). It is recreated in one `up -d --no-deps --force-recreate` call with each
-        owner's netns members, after the GPU-lease check every lifecycle verb makes (an evicted
-        resident is refused, 409). A service the render no longer defines that is not already stopped is stopped
-        (`stopped`) unless it is already stopped (`orphans`). A one-shot job's stopped container the render moved past is removed,
-        never started (`removed_jobs`; `run --rm` creates a fresh one), and a running one is left
-        alone (`running_jobs`), as the host's `ordo apply` does. Left to the host, and named with the
-        command that finishes the job: the control plane itself and the agent calling it, a container another compose version
-        created (its hash is not comparable), a service whose secrets are missing, one whose
-        first-party image is not built yet, and one that would load a model file the models volume
-        lacks (the host's apply builds and fetches them). Fails closed:
-        a state that cannot be read refuses (503) and recreates nothing.
-
-        `warnings` lists what the apply could not vouch for, without undoing it: when open-webui was
-        recreated, the probe `ordo doctor` runs after the host's apply (ordo/render/open_webui_probe.py)
-        runs in it once, and a failing verdict, or a probe that could not run, is one entry.
-        """
-        if not self.broker:
-            return self._error(503, "no container backend: this control plane cannot read or recreate containers")
-        try:
-            state = self.broker.backend.stack_state()
-            doc = self.broker.backend.rendered_compose()
-        except Exception as e:  # noqa: BLE001 - any unreadable side means the changed set is unknown
-            return self._error(503, f"cannot read what is rendered and what is running ({e}); "
-                                    "nothing was recreated")
-        changes = diff_services(state.rendered, state.running, compose_version=state.compose_version)
-        jobs = stale_one_shot_jobs(state.rendered, state.running, compose_version=state.compose_version)
-        removed_jobs = [job.service for job in jobs if job.removable]
-        host_reasons = self._host_reasons(changes, doc, self._render(), state.rendered)
-        to_recreate = [change.service for change in changes if change.service not in host_reasons]
-        _args, targets = plan_named(doc, to_recreate, force_recreate=True)
-        # Every service the render no longer defines that is not already stopped is stopped (the host's `ordo apply`
-        # does the same); one already stopped is left as an orphan.
-        unrendered = set(state.running) - set(state.rendered)
-        stopped = sorted(name for name in unrendered if state.running[name].state not in STOPPED_STATES)
-        host = sorted(host_reasons)
-        plan: dict[str, Any] = {
-            "dry_run": dry_run,
-            "changes": [{"service": change.service, "reasons": list(change.reasons)} for change in changes],
-            "recreated": sorted(targets),
-            "stopped": stopped,
-            "removed_jobs": removed_jobs,
-            "running_jobs": [job.service for job in jobs if not job.removable],
-            "restart_required_on_host": host,
-            "host_reasons": host_reasons,
-            "host_command": f"ordo apply --only {' '.join(host)}" if host else None,
-            # Containers the render no longer defines that were already stopped.
-            "orphans": sorted(unrendered - set(stopped)),
-            "warnings": [],
-        }
-        conflict = self.lease.group_conflict(sorted(targets))
-        if conflict:
-            return {**conflict, "changes": plan["changes"]}
-        if dry_run:
-            return {"ok": True, **plan}
-        try:
-            for name in stopped:
-                self.broker.backend.stop(name)
-            if to_recreate:
-                self.broker.backend.recreate_services(to_recreate)
-            if removed_jobs:
-                self.broker.backend.remove_stopped_containers(removed_jobs)
-        except Exception as e:  # noqa: BLE001 - reported with the plan it was executing
-            return self._error(500, f"applying the render failed: {e}", changes=plan["changes"])
-        if OPEN_WEBUI_SERVICE in targets:
-            ok, line = self._open_webui_verdict()
-            if not ok:
-                plan["warnings"].append(line)
-        return {"ok": True, **plan}
-
-    def _open_webui_verdict(self) -> tuple[bool, str]:
-        """(ok, one-line report) from the probe run inside the open-webui container, once, with no
-        wait or retry (as `ordo doctor` runs it). A probe that cannot run is a failed verdict."""
-        try:
-            exit_code, output = self.broker.backend.exec_in_service(OPEN_WEBUI_SERVICE,
-                                                                 ["python", "-c", OPEN_WEBUI_PROBE])
-        except Exception as e:  # noqa: BLE001 - the container is already recreated; this only reports
-            return False, f"! open-webui: could not verify its model-gateway connection ({type(e).__name__}: {e})"
-        lines = output.strip().splitlines()
-        if exit_code != 0:
-            detail = lines[-1] if lines else f"exit {exit_code}"
-            return False, f"! open-webui: could not verify its model-gateway connection (probe failed: {detail})"
-        try:
-            report = json.loads(lines[0]) if lines else None
-        except ValueError:
-            report = None
-        if not isinstance(report, dict):
-            return False, (f"! open-webui: could not verify its model-gateway connection "
-                           f"(unreadable probe output: {output.strip()[:200]})")
-        return open_webui_verdict(report)
+        """Bring the stack to the current render: recreate exactly the changed set (apply.py)."""
+        return self.applier.apply_render(dry_run=dry_run)
 
     def apply(self, body: dict[str, Any]) -> dict[str, Any]:
-        """`POST /apply`: bring the stack to out/ as it is rendered now (after a host render, say).
-        `{"dry_run": true}` returns the plan and changes nothing; otherwise `confirm` is required."""
-        dry_run = bool(body.get("dry_run"))
-        if not dry_run and not confirmed(body):
-            return self._error(400, 'Destructive operation requires confirmation. Set {"confirm": true} in the '
-                                    'request body to proceed, or {"dry_run": true} for the plan.')
-        return self.apply_render(dry_run=dry_run)
+        return self.applier.apply(body)
 
     # --- The GPU lease and the GPU views (ordo/control/gpus.py) ---
 
