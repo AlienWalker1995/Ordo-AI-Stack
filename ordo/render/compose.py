@@ -274,8 +274,10 @@ def _ops_controller(project: str, net: str, nvidia_gpu: bool) -> dict[str, Any]:
     if nvidia_gpu:
         s.update(_utility_gpu_reservation())
         s["environment"]["NVIDIA_DRIVER_CAPABILITIES"] = "utility"
-    # Its own bearer token only, as a file (ordo/control/serve.py reads it with ordo.secret_env).
-    _add_secret_files(s, [SecretFileRef("OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN_FILE")])
+    # Its bearer tokens, as files (ordo/control/serve.py reads them with ordo.secret_env): the admin
+    # token, and Hermes' scoped one (ordo/control/principals.py; an empty file turns it off).
+    _add_secret_files(s, [SecretFileRef("OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN_FILE"),
+                          SecretFileRef("OPS_CONTROLLER_TOKEN_HERMES", "OPS_CONTROLLER_TOKEN_HERMES_FILE")])
     return s
 
 

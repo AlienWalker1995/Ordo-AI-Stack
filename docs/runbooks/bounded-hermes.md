@@ -63,7 +63,10 @@ Rotation: at 10 MB the file rolls to `audit.1.log`; five generations are kept
    it to `ControlPlane.route()`. A `POST` is audited automatically; add its
    `(action, target)` mapping to `_AUDIT_PATH_VERBS` or `_AUDIT_BODY_VERBS` so
    the record names it (otherwise it is recorded as `unknown`).
-3. Add a method on `OpsClient` in `services/hermes/ops_client.py` and, if
+3. If Hermes should call it, add the route to `HERMES_ROUTES` in
+   `ordo/control/principals.py` (a privilege grant: the `hermes` token is
+   refused with 403 on anything else), then
+   add a method on `OpsClient` in `services/hermes/ops_client.py` and, if
    Hermes should call it as a tool, register it in the `ops-router` plugin.
 4. Rebuild the `ops-controller` and `agent-hermes` images, then recreate
    both services.

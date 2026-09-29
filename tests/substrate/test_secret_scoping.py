@@ -52,7 +52,7 @@ FILE_SPEC: dict[str, set[str]] = {
     "model-gateway-keys": {"LITELLM_MASTER_KEY", "LITELLM_KEY_HERMES", "LITELLM_KEY_AUTOMATION", "LITELLM_KEY_EDGE",
                            "LITELLM_KEY_EVALS", "LITELLM_KEY_OPEN_WEBUI"},
     "litellm-db": {"LITELLM_DB_PASSWORD"},
-    "ops-controller": {"OPS_CONTROLLER_TOKEN"},
+    "ops-controller": {"OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN_HERMES"},
     "dashboard": {"OPS_CONTROLLER_TOKEN", "THROUGHPUT_RECORD_TOKEN", "LITELLM_MASTER_KEY"},
     "agent": {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT"},
     "comfyui-gate": {"OPS_CONTROLLER_TOKEN"},

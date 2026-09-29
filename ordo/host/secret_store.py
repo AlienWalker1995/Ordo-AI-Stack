@@ -65,7 +65,8 @@ ISSUED_ELSEWHERE: dict[str, str] = {
 # per-consumer LiteLLM key. Other generated keys (COUCHDB_PASSWORD, SEARXNG_SECRET, N8N_API_KEY, the
 # local sign-in token) can be rotated by name.
 INTERNAL_ROTATION: tuple[str, ...] = (
-    "LITELLM_MASTER_KEY", "LITELLM_DB_PASSWORD", "OPS_CONTROLLER_TOKEN", "THROUGHPUT_RECORD_TOKEN",
+    "LITELLM_MASTER_KEY", "LITELLM_DB_PASSWORD", "OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN_HERMES",
+    "THROUGHPUT_RECORD_TOKEN",
     "OAUTH2_PROXY_COOKIE_SECRET", "HERMES_API_SERVER_KEY",
     "LANGFUSE_DB_PASSWORD", "LANGFUSE_CLICKHOUSE_PASSWORD", "LANGFUSE_REDIS_AUTH",
     "LANGFUSE_MINIO_SECRET", "LANGFUSE_NEXTAUTH_SECRET",
@@ -111,6 +112,9 @@ SECRET_GENERATORS: dict[str, Any] = {
     "LITELLM_SALT_KEY": lambda: _sk_key(32),
     "LITELLM_DB_PASSWORD": lambda: _secrets.token_urlsafe(32),
     "OPS_CONTROLLER_TOKEN": lambda: _secrets.token_urlsafe(32),
+    # Hermes' own ops-controller token: the `hermes` principal, a route allowlist
+    # (ordo/control/principals.py). Rotatable (`ordo secrets rotate --internal`).
+    "OPS_CONTROLLER_TOKEN_HERMES": lambda: _secrets.token_urlsafe(32),
     # The local operator's dashboard sign-in while the edge is off (services/dashboard/dashboard.yaml).
     "DASHBOARD_LOCAL_LOGIN_TOKEN": lambda: _secrets.token_urlsafe(32),
     "OAUTH2_PROXY_COOKIE_SECRET": _cookie_secret,

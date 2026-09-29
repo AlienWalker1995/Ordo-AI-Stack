@@ -40,7 +40,7 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 
 **Location:** `data/ops-controller/audit.log` (`AUDIT_LOG_PATH=/data/audit.log` in the container). Append-only JSONL, one fsync'd line per record.
 
-Every state-changing call to ops-controller (every `POST`, whatever the route) leaves exactly one record, whatever its outcome: success, dry run, refusal (`401` without the bearer, `409` during a GPU lease, `400` without `confirm`) or failure. Reads (`GET`) leave none. The records are written in one place, `ControlPlane.handle()` in `ordo/control/api.py`, so a new route is audited without opting in.
+Every state-changing call to ops-controller (every `POST`, whatever the route) leaves exactly one record, whatever its outcome: success, dry run, refusal (`401` without the bearer, `403` outside the principal's allowlist, `409` during a GPU lease, `400` without `confirm`) or failure. Reads (`GET`) leave none, except a read the caller's principal is not granted (`403`), which is recorded like a write. The records are written in one place, `ControlPlane.handle()` in `ordo/control/api.py`, so a new route is audited without opting in.
 
 ```json
 {"ts":1790281806.1,"caller":"dashboard","action":"restart","target":"n8n","result":"ok","method":"POST","path":"/services/n8n/restart","status":200,"dry_run":false,"confirm":true}
@@ -51,7 +51,8 @@ Every state-changing call to ops-controller (every `POST`, whatever the route) l
 | Field | Type | Description |
 |---|---|---|
 | `ts` | float | Unix timestamp |
-| `caller` | string | The caller's `X-Actor` header (`dashboard`, `orchestration`, `hermes`, `gpu-gate`, `comfyui-mcp`), reduced to `[A-Za-z0-9_.:@-]`, at most 64 characters; `unknown` when absent. Self-declared: every caller holds the same bearer token |
+| `principal` | string | What the bearer token proved (`ordo/control/principals.py`): `admin` (`OPS_CONTROLLER_TOKEN`), `hermes` (`OPS_CONTROLLER_TOKEN_HERMES`, a route allowlist) or `unauthenticated` (no token, or a wrong one). The evidence of who called. Absent from records written before principals existed |
+| `caller` | string | The caller's `X-Actor` header (`dashboard`, `orchestration`, `hermes`, `gpu-gate`, `comfyui-mcp`, or a finer name such as `hermes:cron:<job-id>`), reduced to `[A-Za-z0-9_.:@-]`, at most 64 characters; `unknown` when absent. Self-declared: a claim, useful for attribution within one principal, never proof |
 | `action` | string | `start`, `stop`, `restart`, `recreate`, `container.restart`, `compose.up`, `compose.down`, `compose.restart`, `model_config`, `apply`, `plugin.enable`, `plugin.disable`, `lease.request`, `lease.heartbeat`, `lease.release`, `models.download`, `comfyui_pip_install`, `gpu_assign`; `unknown` for a path that is no route |
 | `target` | string | The service, container, plugin, model id, lease id or file the call names (empty for a whole-stack compose verb) |
 | `result` | string | `ok` (2xx/3xx), `refused` (4xx) or `error` (5xx) |

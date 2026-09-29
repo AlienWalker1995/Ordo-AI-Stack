@@ -249,7 +249,7 @@ def test_no_secret_or_body_field_beyond_the_named_ones_is_recorded(plane, client
     for secret in (TOKEN, "wrong-sekrit-token", "hf_sekrit_query", "sk-sekrit-body", "sekrit-pw", "token="):
         assert secret not in raw
     allowed = {"ts", "caller", "action", "target", "result", "method", "path", "status",
-               "dry_run", "confirm", "error", "detail"}
+               "dry_run", "confirm", "error", "detail", "principal"}
     for rec in _records(audit_path):
         assert set(rec) <= allowed
 
