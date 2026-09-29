@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from ..render import substrate
+from ..render import alerting, substrate
 from ..render.catalog import Catalog
 from ..render.config import Source
 from ..render.engine import render
@@ -42,8 +42,9 @@ def _sanitize_env(env: dict[str, str]) -> dict[str, str]:
 
 
 def collect_bundle(source: Source, catalog: Catalog,
-                   registry: PluginRegistry | None = None) -> dict[str, Any]:
-    rc = render(source, catalog, registry)
+                   registry: PluginRegistry | None = None, rendered: Any = None) -> dict[str, Any]:
+    """`rendered`: the render of `source` when the caller already has it (it detects hardware)."""
+    rc = rendered if rendered is not None else render(source, catalog, registry)
     return {
         "hardware": rc.hardware.summary(),
         "sizing": {
@@ -133,6 +134,12 @@ def read_open_webui_probe(project: str) -> dict | None:
     if not isinstance(report, dict):
         raise ContainerUnreadable(f"{container}: unexpected probe output: {str(report)[:200]}")
     return report
+
+
+def alerting_check(compose: dict[str, Any], out_dir: str | Path) -> tuple[bool, str]:
+    """(ok, one-line report): whether the rendered Alertmanager can deliver (ordo/render/alerting.py),
+    judged from the materialized secret files under `out_dir`."""
+    return alerting.check(compose, out_dir)
 
 
 def open_webui_check(project: str) -> tuple[bool, str]:

@@ -89,7 +89,8 @@ def cmd_parity(args: argparse.Namespace) -> int:
 def cmd_doctor(args: argparse.Namespace) -> int:
     src, cat = load_args(args)
     reg = PluginRegistry.load(DEFAULT_PLUGINS_DIR)
-    bundle = doctor.collect_bundle(src, cat, reg)
+    rc = render(src, cat, reg)
+    bundle = doctor.collect_bundle(src, cat, reg, rendered=rc)
     print(f"source '{args.source}': valid")
     print(f"detected: {bundle['hardware']}")
     print(f"sizing  : tier={bundle['sizing']['tier']} model={bundle['sizing']['model']} "
@@ -102,10 +103,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(substrate_line)
     open_webui_ok, open_webui_line = doctor.open_webui_check(args.project)
     print(open_webui_line)
+    alerting_ok, alerting_line = doctor.alerting_check(rc.compose_dict(), args.out)
+    print(alerting_line)
     if args.bundle:
         doctor.write_bundle(bundle, args.bundle)
         print(f"support bundle -> {args.bundle} (secrets redacted)")
-    return 0 if substrate_ok and open_webui_ok else 1
+    return 0 if substrate_ok and open_webui_ok and alerting_ok else 1
 
 
 def cmd_native(args: argparse.Namespace) -> int:

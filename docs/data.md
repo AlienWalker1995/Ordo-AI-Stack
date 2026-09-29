@@ -215,7 +215,7 @@ rendered stack in `out/` (`--stack DIR` for another), so render first.
 | `pg_dump` | `litellm-db-data`, `langfuse-db-data` | `pg_dump -Fc` in the running server, online | loads the dump into a temporary database beside the live one, then (clients stopped) renames it over the live one in one transaction and drops the old copy |
 | `stopped` | `hermes-home`, `qdrant-data`, `couchdb-data`, `n8n-data`, `open-webui-data`, `grafana-data`, the Langfuse ClickHouse, Redis and MinIO volumes | stops the services writing the volume, snapshots its files, starts them again | stops the writers, unpacks into a staging directory in the volume, swaps it in by renames, starts them |
 | `live` | `caddy_data`, `caddy_config`, the Tailscale `ts-state-*` volumes, `comfyui-app` | snapshot with the services running (no database in them) | as `stopped` |
-| `skip` | `models-gguf`, `comfyui-models`, `ltx-models`, `hf-hub-cache`, `codebase-memory-cache`, `prometheus-data`, `langfuse-clickhouse-logs` | not saved: re-derivable (`ordo fetch`, `download_comfyui_model`), a cache, or metrics and logs | nothing |
+| `skip` | `models-gguf`, `comfyui-models`, `ltx-models`, `hf-hub-cache`, `codebase-memory-cache`, `prometheus-data`, `alertmanager-data`, `langfuse-clickhouse-logs` | not saved: re-derivable (`ordo fetch`, `download_comfyui_model`), a cache, or metrics and logs | nothing |
 
 A raw copy of a running database's files is not a backup, so every database is either dumped with
 its own tool or copied with its server stopped. Services are stopped and started with

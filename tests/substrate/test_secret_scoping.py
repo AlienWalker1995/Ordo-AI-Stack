@@ -62,6 +62,7 @@ FILE_SPEC: dict[str, set[str]] = {
     "evals": {"OPS_CONTROLLER_TOKEN", "LITELLM_KEY_EVALS", "HERMES_API_SERVER_KEY"} | LANGFUSE_PAIR,
     "livesync-bridge": {"COUCHDB_PASSWORD", "LIVESYNC_E2EE_PASSPHRASE"},
     "oauth2-proxy": {"OAUTH2_PROXY_CLIENT_SECRET", "OAUTH2_PROXY_COOKIE_SECRET"},
+    "alertmanager": {"ALERTMANAGER_DISCORD_WEBHOOK_URL", "ALERTMANAGER_HEARTBEAT_URL"},
     "langfuse-db": {"LANGFUSE_DB_PASSWORD"},
     "langfuse-clickhouse": {"LANGFUSE_CLICKHOUSE_PASSWORD"},
     "langfuse-minio": {"LANGFUSE_MINIO_SECRET"},

@@ -132,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     pd = sub.add_parser("doctor")
     pd.add_argument("--bundle", help="write a sanitized support bundle to this path")
     pd.add_argument("--project", default="ordo", help="compose project name (default: ordo)")
+    pd.add_argument("--out", default="out", help="the config + rendered stack directory (default: out)")
     pd.set_defaults(func=_handler("ordo.host.cli_render", "cmd_doctor"))
     pget = sub.add_parser("fetch", help="download catalog models into the models volume, checksum-verified")
     pget.add_argument("model", nargs="?",

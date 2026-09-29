@@ -260,6 +260,17 @@ def test_service_stats_covers_every_project_service(unchanged):
         assert row["running"] is (service != "job")
 
 
+def test_service_restarts_counts_every_project_container_from_zero(unchanged):
+    """GET /metrics's restart-loop input: docker's RestartCount, one per service of the project."""
+    assert unchanged.backend.service_restarts() == {service: 0 for service in SERVICES}
+
+
+def test_a_manual_restart_is_not_a_restart_policy_restart(harness):
+    """Only the restart POLICY counts (a crash loop); an operator's `docker restart` does not."""
+    harness.backend.restart("web")
+    assert harness.backend.service_restarts()["web"] == 0
+
+
 def test_rendered_compose_is_the_file_the_verbs_run(unchanged):
     assert unchanged.backend.rendered_compose() == COMPOSE
 

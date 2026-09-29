@@ -209,6 +209,8 @@ def _doctor(monkeypatch, capsys, running):
 
     monkeypatch.setattr(doctor, "read_running_substrate_digest", fake_read)
     monkeypatch.setattr(doctor, "read_open_webui_probe", lambda project: None)
+    # The alert-delivery check reads out/secrets/; this file tests the substrate check alone.
+    monkeypatch.setattr(doctor, "alerting_check", lambda compose, out_dir: (True, "alerting: stubbed"))
     code = cli.main(["doctor"])
     return code, capsys.readouterr().out
 

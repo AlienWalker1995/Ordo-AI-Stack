@@ -115,7 +115,7 @@ Every UI is published only through the SSO front door; APIs are exposed on authe
 - **Unified dashboard**: five pages (Overview, Services, Models, Media, Performance) covering stack health, per-container actions and logs, one safe GPU model switch, ComfyUI renders and model files, and an embedded Grafana performance view; plus a Settings drawer and a Ctrl/Cmd K command palette.
 - **Ops controller** — the render/scheduler control plane (internal, token-auth).
 - **Agent tracing**: optional self-hosted [Langfuse](services/langfuse/README.md): every agent turn, LLM call and tool call as a searchable trace, plus datasets and evals, with unattended first-boot setup. Opt-in; the agent fails open when it is off or down.
-- **Optional, hardware-gated plugins** — voice (STT + TTS), RAG (Qdrant retrieval), and monitoring (Grafana + Prometheus + GPU exporter) enable when your hardware supports them.
+- **Optional, hardware-gated plugins** — voice (STT + TTS), RAG (Qdrant retrieval), and monitoring (Grafana + Prometheus + GPU exporter, with Alertmanager alerting to Discord) enable when your hardware supports them.
 
 ## Security
 
@@ -171,7 +171,7 @@ ones add exposure and hardening requirements. See [docs/deployment-models.md](do
 
 ## Docs
 
-[Operator guide (`docs/operator-guide.md`)](docs/operator-guide.md) · [Access & deployment models](docs/deployment-models.md) · [Auth front door](docs/runbooks/auth.md) · [Secrets](docs/runbooks/secrets.md) · [Notes sync (Obsidian)](docs/runbooks/notes-sync.md) · [Data](docs/data.md) · [Hermes agent](docs/hermes-agent.md) · [PRD index](docs/product%20requirements%20docs/index.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
+[Operator guide (`docs/operator-guide.md`)](docs/operator-guide.md) · [Access & deployment models](docs/deployment-models.md) · [Auth front door](docs/runbooks/auth.md) · [Secrets](docs/runbooks/secrets.md) · [Alerting](docs/runbooks/alerting.md) · [Notes sync (Obsidian)](docs/runbooks/notes-sync.md) · [Data](docs/data.md) · [Hermes agent](docs/hermes-agent.md) · [PRD index](docs/product%20requirements%20docs/index.md) · [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md)
 
 ## License
 

@@ -193,6 +193,45 @@ jobs:
         if: steps.filter.outputs.substrate != 'true'
         run: echo "Skipping substrate — no changes under the render-engine paths."
 
+  # The Prometheus, alert-rule and Alertmanager configs, checked by promtool and amtool from the images
+  # services/monitoring/plugin.yaml pins: syntax, and every alert replayed against its test series.
+  monitoring-config:
+    name: Monitoring config (promtool, amtool)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            monitoring:
+              - 'monitoring/**'
+              - 'services/monitoring/**'
+              - 'scripts/ci/check-monitoring-config.sh'
+              - '.github/workflows/ci.yml'
+
+      - name: Set up Python
+        if: steps.filter.outputs.monitoring == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      # The script reads the pinned images from the manifest with PyYAML.
+      - name: Install pinned deps
+        if: steps.filter.outputs.monitoring == 'true'
+        run: pip install -r requirements-dev.txt
+
+      - name: promtool check + test, amtool check-config
+        if: steps.filter.outputs.monitoring == 'true'
+        run: bash scripts/ci/check-monitoring-config.sh
+
+      - name: Skip (no monitoring changes)
+        if: steps.filter.outputs.monitoring != 'true'
+        run: echo "Skipping the monitoring config check - no changes under its paths."
+
   # Every test marked `docker` (pyproject.toml): they skip wherever no daemon or no live container
   # answers, so the jobs above never run them. Here docker is real and ORDO_REQUIRE_DOCKER=1 turns
   # any such skip into a failure (tests/conftest.py).

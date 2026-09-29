@@ -239,6 +239,22 @@ def _svc(image: str, *, net: str, gpu: bool = False,
     return s
 
 
+# The host directory the edge's Caddy serves its TLS certificate from (services/edge/plugin.yaml
+# mounts it at /etc/caddy/certs, and auth/caddy/Caddyfile names tailnet.crt in it). With the edge
+# enabled, ops-controller mounts it read-only too and reports the certificate's expiry on GET
+# /metrics, so an expiring certificate alerts before the edge stops serving (2026-07-24). The
+# directory also holds the key; ops-controller already holds the Docker socket, so reading it
+# grants nothing the control plane could not reach before.
+EDGE_TLS_CERT_DIR = "${BASE_PATH:?BASE_PATH must be set (non-empty)}/auth/caddy/certs"
+EDGE_TLS_CERT_TARGET = "/edge-certs"
+EDGE_TLS_CERT_FILE = "tailnet.crt"
+
+
+def _mount_edge_cert(ops_controller: dict[str, Any]) -> None:
+    ops_controller["volumes"].append(f"{EDGE_TLS_CERT_DIR}:{EDGE_TLS_CERT_TARGET}:ro")
+    ops_controller["environment"]["EDGE_TLS_CERT_FILE"] = f"{EDGE_TLS_CERT_TARGET}/{EDGE_TLS_CERT_FILE}"
+
+
 def _ops_controller(project: str, net: str, nvidia_gpu: bool) -> dict[str, Any]:
     """The control plane. It drives the broker, so it needs the Docker socket — but the
     DockerBackend guard scopes every start/stop to `<project>-*`, so socket access can NOT
@@ -885,6 +901,8 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     if len(listeners) > 1:
         raise ValueError(f"more than one edge_listener is enabled ({', '.join(listeners)}); the UI ports "
                          "can be published on one service only")
+    if listeners:
+        _mount_edge_cert(svcs["ops-controller"])
     for plugin, ps in (plugin_services or []):
         svcs[ps.name] = _plugin_service(ps, plugin, net=net,
                                         nvidia_gpu=nvidia_gpu, primary_uuid=primary_gpu_uuid,

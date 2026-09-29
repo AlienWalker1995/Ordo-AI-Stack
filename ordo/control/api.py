@@ -42,7 +42,7 @@ from urllib.parse import urljoin, urlparse
 
 import yaml
 
-from ..render import gpu_live, substrate
+from ..render import alerting, gpu_live, substrate
 from ..render.catalog import Catalog
 from ..render.changed_set import STOPPED_STATES, Change, diff_services, stale_one_shot_jobs
 from ..render.config import Source
@@ -54,6 +54,7 @@ from ..render.served_models import model_files, models_by_gpu, served_models
 from ..render.source_edit import edit_plugins_list
 from ..render.stack import lifecycle_group, plan_named
 from . import managed
+from . import metrics as prom
 from . import principals as auth
 from .audit import AuditLog
 from .broker import SELF_REFERENTIAL_SERVICES, Broker
@@ -61,8 +62,10 @@ from .scheduler import Job, Scheduler
 
 logger = logging.getLogger(__name__)
 
-# The only paths reachable without the bearer token: container healthchecks carry no credentials.
-UNAUTHENTICATED_PATHS = frozenset({"/health", "/healthz"})
+# The only paths reachable without the bearer token: container healthchecks carry no credentials,
+# and Prometheus scrapes /metrics without one (it holds no secret: ordo/control/metrics.py).
+METRICS_PATH = "/metrics"
+UNAUTHENTICATED_PATHS = frozenset({"/health", "/healthz", METRICS_PATH})
 
 # Service plugins Hermes may install/enable on request (kind=service, profile-gated). The core
 # substrate (llamacpp, litellm-db, model-gateway, model-gateway-keys, ops-controller, dashboard,
@@ -277,8 +280,15 @@ class ControlPlane:
         broker: Broker | None = None,
         history=None,
         model_volume_files: Callable[[], set[str] | None] | None = None,
+        disk_paths: dict[str, str] | None = None,
+        tls_cert_files: dict[str, str] | None = None,
     ):
         self.source_path = Path(source_path)
+        # What GET /metrics reports beyond the scheduler and the containers: {mount label: a path on
+        # that filesystem} and {cert name: a PEM file}. Empty = not reported (ordo/control/serve.py
+        # wires the real ones).
+        self.disk_paths = dict(disk_paths or {})
+        self.tls_cert_files = dict(tls_cert_files or {})
         # Lists the file names in the models volume (None: it could not be listed). A model switch
         # checks the target's files against it before writing anything. None = no volume to check
         # (a control plane without the Docker socket, and the unit tests that do not wire one).
@@ -355,7 +365,8 @@ class ControlPlane:
         run once in its container when it is running. `detail` is the CLI's report line without
         its "! " finding marker. The dashboard's Overview shows the failed checks.
         """
-        checks = [("substrate", *self._substrate_drift()), (OPEN_WEBUI_SERVICE, *self._open_webui_drift())]
+        checks = [("substrate", *self._substrate_drift()), (OPEN_WEBUI_SERVICE, *self._open_webui_drift()),
+                  ("alerting", *self._alerting_drift())]
         rows = [{"check": name, "ok": ok, "detail": line.removeprefix("! ")} for name, ok, line in checks]
         return {"ok": all(row["ok"] for row in rows), "checks": rows}
 
@@ -368,6 +379,14 @@ class ControlPlane:
             return True, f"substrate: ops-controller {self.substrate_digest[:12]}; out/ records no digest yet"
         return substrate.substrate_verdict(self.substrate_digest, recorded, reference_name="the last render",
                                            rebuild_from="the checkout that rendered out/")
+
+    def _alerting_drift(self) -> tuple[bool, str]:
+        """The alert-delivery verdict `ordo doctor` gives, from the secret files materialized in out/."""
+        try:
+            compose = self._render().compose_dict()
+        except Exception as e:  # noqa: BLE001 - an unrenderable source is reported, not raised
+            return False, f"! alerting: cannot render the source to check alert delivery ({type(e).__name__}: {e})"
+        return alerting.check(compose, self.out_dir)
 
     def _open_webui_drift(self) -> tuple[bool, str]:
         """The open-webui verdict `ordo doctor` gives: "not running" is fine, a failed probe is not."""
@@ -1744,6 +1763,38 @@ class ControlPlane:
         except OSError as e:
             return {"entries": [], "error": f"failed to read audit log: {e}"}
 
+    def metrics_text(self) -> str:
+        """GET /metrics: the lease, container, disk and certificate state in the Prometheus text
+        format (ordo/control/metrics.py). Each source is read on its own; one that fails is reported
+        as a failed collector and the rest are still served. Read-only."""
+        containers = restarts = None
+        if self.broker:
+            try:
+                containers = self.broker.backend.list_services().get("services", [])
+            except Exception as e:  # noqa: BLE001 - an unreadable docker is a failed collector, not a 500
+                logger.warning("metrics: cannot list the services: %s", e)
+            try:
+                restarts = self.broker.backend.service_restarts()
+            except Exception as e:  # noqa: BLE001 - same
+                logger.warning("metrics: cannot read the restart counts: %s", e)
+        disks: dict[str, prom.DiskUsage | None] = {}
+        for mount, path in self.disk_paths.items():
+            try:
+                disks[mount] = prom.DiskUsage.of(path)
+            except OSError as e:
+                logger.warning("metrics: cannot stat %s (%s): %s", path, mount, e)
+                disks[mount] = None
+        certs: dict[str, float | None] = {}
+        for name, path in self.tls_cert_files.items():
+            try:
+                certs[name] = prom.read_cert_not_after(path)
+            except (OSError, ValueError) as e:
+                logger.warning("metrics: cannot read the %s certificate: %s", name, e)
+                certs[name] = None
+        return prom.render(prom.Inputs(
+            scheduler=self.scheduler.status() if self.scheduler else None,
+            containers=containers, restarts=restarts, disks=disks, tls_certs=certs))
+
     def _live_gpus(self) -> dict[str, dict[str, Any]]:
         """The live GPU reader's cards keyed by uuid, in the GiB units /registry/gpus has always used."""
         out: dict[str, dict[str, Any]] = {}
@@ -1917,7 +1968,7 @@ class ControlPlane:
         principal's token file revokes it on the next request (TokenSource `empty_revokes`).
         """
         from fastapi import FastAPI, Request
-        from fastapi.responses import JSONResponse
+        from fastapi.responses import JSONResponse, Response
         from starlette.concurrency import run_in_threadpool
 
         read_token = auth_token if callable(auth_token) else (lambda: auth_token or "")
@@ -1957,6 +2008,13 @@ class ControlPlane:
                 cp.audit_call(method, path, None, actor, 403, error, principal=principal.name)
                 return JSONResponse(content={"error": error}, status_code=403)
             principal_name = principal.name if principal else auth.UNAUTHENTICATED
+            if path == METRICS_PATH:
+                # Plain text, not route()'s JSON. A read, so never audited. It runs docker and
+                # statvfs, so it goes to a worker thread like every other request.
+                if method.upper() != "GET":
+                    return JSONResponse(content={"error": f"no route {method} {path}"}, status_code=404)
+                text = await run_in_threadpool(cp.metrics_text)
+                return Response(content=text, media_type=prom.CONTENT_TYPE)
             body = None
             if method in ("POST", "PUT", "PATCH"):
                 raw = await request.body()
