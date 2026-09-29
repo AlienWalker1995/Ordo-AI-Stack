@@ -1,0 +1,25 @@
+{
+  "models": [
+    {
+      "name": "flux2-dev-fp8.safetensors",
+      "category": "checkpoints",
+      "size_mb": 16842.3
+    },
+    {
+      "name": "ltx-2.3-distilled-fp8.safetensors",
+      "category": "diffusion_models",
+      "size_mb": 21504.0
+    },
+    {
+      "name": "detail-tweaker-xl.safetensors",
+      "category": "loras",
+      "size_mb": 217.9
+    },
+    {
+      "name": "ae.safetensors",
+      "category": "vae",
+      "size_mb": 319.8
+    }
+  ],
+  "ok": true
+}

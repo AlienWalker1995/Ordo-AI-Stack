@@ -1,0 +1,49 @@
+{
+  "running": {
+    "prompt_id": "8f14e45f-ceea-467a-9575-1b0f3a1d5d2c"
+  },
+  "pending": 2,
+  "recent": [
+    {
+      "prompt_id": "c9f0f895-fb98-4b9e-9f3b-8e2a6d1c7b10",
+      "ok": true,
+      "ts": 1790679880.0,
+      "kind": "image",
+      "outputs": [
+        {
+          "filename": "ordo_00042_.png",
+          "subfolder": "",
+          "type": "output",
+          "media": "image"
+        },
+        {
+          "filename": "ordo_00043_.png",
+          "subfolder": "",
+          "type": "output",
+          "media": "image"
+        }
+      ]
+    },
+    {
+      "prompt_id": "45c48cce-2e2d-4fbd-8b3a-0c1f2e3d4a5b",
+      "ok": true,
+      "ts": 1790678200.0,
+      "kind": "audio",
+      "outputs": [
+        {
+          "filename": "podcast_intro_00007_.mp3",
+          "subfolder": "audio",
+          "type": "output",
+          "media": "audio"
+        }
+      ]
+    },
+    {
+      "prompt_id": "d3d94468-02a4-4b1c-9e5f-6a7b8c9d0e1f",
+      "ok": false,
+      "ts": 1790676400.0,
+      "kind": "unknown",
+      "outputs": []
+    }
+  ]
+}

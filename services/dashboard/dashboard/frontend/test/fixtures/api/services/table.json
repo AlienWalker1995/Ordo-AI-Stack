@@ -1,0 +1,237 @@
+{
+  "groups": [
+    {
+      "group": "Apps",
+      "services": [
+        {
+          "compose": "open-webui",
+          "card_id": "webui",
+          "name": "Open WebUI",
+          "group": "Apps",
+          "verdict": "up",
+          "uptime": "2 days",
+          "status": "Up 2 days (healthy)",
+          "open_url": "https://chat.example.test/",
+          "error": null,
+          "controllable": true,
+          "lent": false,
+          "actions": [
+            "restart",
+            "stop"
+          ]
+        },
+        {
+          "compose": "n8n",
+          "card_id": "n8n",
+          "name": "N8N",
+          "group": "Apps",
+          "verdict": "up",
+          "uptime": "15 minutes",
+          "status": "Up 15 minutes (healthy)",
+          "open_url": "https://n8n.example.test/",
+          "error": null,
+          "controllable": true,
+          "lent": false,
+          "actions": [
+            "restart",
+            "stop"
+          ]
+        },
+        {
+          "compose": null,
+          "card_id": "codebase-memory",
+          "name": "Codebase Memory",
+          "group": "Apps",
+          "verdict": "unhealthy",
+          "uptime": null,
+          "status": null,
+          "open_url": "https://graph.example.test/",
+          "error": "HTTP 502",
+          "controllable": false,
+          "lent": false,
+          "actions": []
+        }
+      ]
+    },
+    {
+      "group": "Inference",
+      "services": [
+        {
+          "compose": "llamacpp",
+          "card_id": "llamacpp",
+          "name": "llama.cpp (GPU)",
+          "group": "Inference",
+          "verdict": "up",
+          "uptime": "3 hours",
+          "status": "Up 3 hours (healthy)",
+          "open_url": null,
+          "error": null,
+          "controllable": true,
+          "lent": false,
+          "actions": [
+            "restart",
+            "stop"
+          ]
+        },
+        {
+          "compose": "llamacpp-cpu",
+          "card_id": "llamacpp-cpu",
+          "name": "llama.cpp (CPU fallback)",
+          "group": "Inference",
+          "verdict": "up",
+          "uptime": "3 hours",
+          "status": "Up 3 hours (healthy)",
+          "open_url": null,
+          "error": null,
+          "controllable": true,
+          "lent": false,
+          "actions": [
+            "restart",
+            "stop"
+          ]
+        },
+        {
+          "compose": "comfyui",
+          "card_id": "comfyui",
+          "name": "ComfyUI",
+          "group": "Inference",
+          "verdict": "up",
+          "uptime": "5 hours",
+          "status": "Up 5 hours",
+          "open_url": "https://comfy.example.test/",
+          "error": null,
+          "controllable": true,
+          "lent": false,
+          "actions": [
+            "restart",
+            "stop"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "Data",
+      "services": [
+        {
+          "compose": "qdrant",
+          "card_id": "qdrant",
+          "name": "Qdrant",
+          "group": "Data",
+          "verdict": "up",
+          "uptime": "2 days",
+          "status": "Up 2 days",
+          "open_url": null,
+          "error": null,
+          "controllable": true,
+          "lent": false,
+          "actions": [
+            "restart",
+            "stop"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "Platform",
+      "services": [
+        {
+          "compose": "model-gateway",
+          "card_id": null,
+          "name": "model-gateway",
+          "group": "Platform",
+          "verdict": "up",
+          "uptime": "3 hours",
+          "status": "Up 3 hours (healthy)",
+          "open_url": null,
+          "error": null,
+          "controllable": true,
+          "lent": false,
+          "actions": [
+            "restart",
+            "stop"
+          ]
+        },
+        {
+          "compose": "ops-controller",
+          "card_id": null,
+          "name": "ops-controller",
+          "group": "Platform",
+          "verdict": "up",
+          "uptime": "2 days",
+          "status": "Up 2 days (healthy)",
+          "open_url": null,
+          "error": null,
+          "controllable": false,
+          "lent": false,
+          "actions": []
+        }
+      ]
+    },
+    {
+      "group": "Tools (MCP)",
+      "services": [
+        {
+          "compose": "mcp-searxng",
+          "card_id": null,
+          "name": "mcp-searxng",
+          "group": "Tools (MCP)",
+          "verdict": "up",
+          "uptime": "2 days",
+          "status": "Up 2 days",
+          "open_url": null,
+          "error": null,
+          "controllable": true,
+          "lent": false,
+          "actions": [
+            "restart",
+            "stop"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "Network",
+      "services": [
+        {
+          "compose": "caddy",
+          "card_id": null,
+          "name": "caddy",
+          "group": "Network",
+          "verdict": "up",
+          "uptime": "2 days",
+          "status": "Up 2 days",
+          "open_url": null,
+          "error": null,
+          "controllable": true,
+          "lent": false,
+          "actions": [
+            "restart",
+            "stop"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "Jobs",
+      "services": [
+        {
+          "compose": "evals",
+          "card_id": null,
+          "name": "evals",
+          "group": "Jobs",
+          "verdict": "done",
+          "uptime": null,
+          "status": "Exited (0) 3 hours ago",
+          "open_url": null,
+          "error": null,
+          "controllable": true,
+          "lent": false,
+          "actions": [
+            "start"
+          ]
+        }
+      ]
+    }
+  ],
+  "control_plane": true
+}

@@ -12,6 +12,7 @@ export const INPUT =
   'h-8 rounded-sm border border-border bg-bg px-3 text-body text-fg outline-none transition-colors focus:border-accent/60 disabled:cursor-not-allowed disabled:opacity-40'
 
 // A titled block. `level` separates page sections (panel) from cards inside them.
+/** @param {{ title?: string, action?: import('react').ReactNode, children?: import('react').ReactNode, className?: string }} props */
 export function Panel({ title, action, children, className = '' }) {
   return (
     <section className={'min-w-0 rounded-md border border-border-subtle bg-bg-elevated p-4 ' + className}>
@@ -40,6 +41,7 @@ const DOT_CLASS = {
   unknown: 'bg-muted/60',
 }
 
+/** @param {{ tone?: string, label?: string }} props */
 export function Dot({ tone = 'unknown', label }) {
   return (
     <span className="inline-flex items-center">
@@ -57,6 +59,7 @@ const CHIP_CLASS = {
   success: 'border-success/40 bg-success/[0.08] text-success',
 }
 
+/** @param {{ tone?: string, children?: import('react').ReactNode, title?: string }} props */
 export function Chip({ tone = 'neutral', children, title }) {
   return (
     <span title={title} className={'inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-caption font-semibold ' + (CHIP_CLASS[tone] || CHIP_CLASS.neutral)}>
@@ -90,6 +93,7 @@ export function Unavailable({ children }) {
 // the title (a Dismiss button, for one).
 const BANNER_EDGE = { accent: 'border-l-accent', warning: 'border-l-warning' }
 
+/** @param {{ id: string, tone?: string, title: string, action?: import('react').ReactNode, children?: import('react').ReactNode }} props */
 export function Banner({ id, tone = 'accent', title, action, children }) {
   return (
     <section aria-labelledby={id}

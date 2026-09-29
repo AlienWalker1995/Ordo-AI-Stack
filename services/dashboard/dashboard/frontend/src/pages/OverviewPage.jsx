@@ -129,6 +129,7 @@ function Activity({ items }) {
 
 function Host({ host, knowledge }) {
   const disk = host.disk_pct
+  /** @type {Array<[label: string, value: string, warn?: boolean]>} */
   const facts = [
     ['CPU', host.cpu_pct != null ? `${Math.round(host.cpu_pct)}%` : '—'],
     ['Memory', host.ram_used_gb != null ? `${formatGb(host.ram_used_gb)} / ${formatGb(host.ram_total_gb)} GB` : '—'],

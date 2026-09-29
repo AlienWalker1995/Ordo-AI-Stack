@@ -1,0 +1,64 @@
+{
+  "gpu": {
+    "catalog_id": "qwen3.8-27b-turbo",
+    "file": "Qwen3.8-27B-TurboFCFusion-Q6_K.gguf",
+    "loaded": true,
+    "ctx": 106496,
+    "p50": 48.6
+  },
+  "cpu": {
+    "file": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+    "p50": 9.2
+  },
+  "embed": {
+    "file": "nomic-embed-text-v1.5.Q4_K_M.gguf"
+  },
+  "catalog": [
+    {
+      "id": "qwen3.8-27b-turbo",
+      "tier": "ultra",
+      "vram_gb": 24,
+      "file": "Qwen3.8-27B-TurboFCFusion-Q6_K.gguf",
+      "installed": true,
+      "active": true
+    },
+    {
+      "id": "gemma4-31b",
+      "tier": "ultra",
+      "vram_gb": 26,
+      "file": "gemma-4-31B-it-Q5_K_M.gguf",
+      "installed": true,
+      "active": false
+    },
+    {
+      "id": "qwen3.6-35b-a3b",
+      "tier": "high",
+      "vram_gb": 22,
+      "file": "Qwen3.6-35B-A3B-UD-Q4_K_M-gpu.gguf",
+      "installed": false,
+      "active": false
+    }
+  ],
+  "files": [
+    {
+      "name": "Qwen3.8-27B-TurboFCFusion-Q6_K.gguf",
+      "size": 22400000000,
+      "in_use": true
+    },
+    {
+      "name": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+      "size": 21200000000,
+      "in_use": true
+    },
+    {
+      "name": "nomic-embed-text-v1.5.Q4_K_M.gguf",
+      "size": 84100000,
+      "in_use": true
+    },
+    {
+      "name": "gemma-4-31B-it-Q5_K_M.gguf",
+      "size": 21800000000,
+      "in_use": false
+    }
+  ]
+}

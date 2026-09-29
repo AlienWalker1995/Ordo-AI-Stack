@@ -8,7 +8,16 @@ import { Banner, BTN } from './ui.jsx'
 
 const STORAGE_KEY = 'ordo.hostSteps'
 
-const HostStepsContext = createContext({ steps: [], addHostStep: () => {}, dismissHostStep: () => {} })
+/** @typedef {{ id: string, reason?: string, command: string }} HostStep */
+/**
+ * @typedef {object} HostStepsValue
+ * @property {HostStep[]} steps
+ * @property {(step: { reason?: string, command?: string | null }) => void} addHostStep
+ * @property {(id: string) => void} dismissHostStep
+ */
+
+/** @type {import('react').Context<HostStepsValue>} */
+const HostStepsContext = createContext(/** @type {HostStepsValue} */ ({ steps: [], addHostStep: () => {}, dismissHostStep: () => {} }))
 
 function readStoredSteps() {
   try {

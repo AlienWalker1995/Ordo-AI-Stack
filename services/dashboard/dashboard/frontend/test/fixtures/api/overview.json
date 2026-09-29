@@ -1,0 +1,79 @@
+{
+  "status": {
+    "level": "warning",
+    "text": "1 thing needs you"
+  },
+  "services": {
+    "up": 14,
+    "total": 16
+  },
+  "gpus": [
+    {
+      "uuid": "GPU-5a1f0c2e-8b7d-4e21-9f3a-2c6d1e0b7a44",
+      "name": "RTX 5090",
+      "vram_used_gb": 27.9,
+      "vram_total_gb": 34.2,
+      "util_pct": 41,
+      "temp_c": 58,
+      "tenants": [
+        "llama.cpp",
+        "ComfyUI"
+      ],
+      "borrowed_by": []
+    },
+    {
+      "uuid": "GPU-0d3e9b71-44c2-4f8e-a1b6-7e5c2f9d1034",
+      "name": "GTX 1070",
+      "vram_used_gb": 3.1,
+      "vram_total_gb": 8.6,
+      "util_pct": 2,
+      "temp_c": 44,
+      "tenants": [
+        "Whisper",
+        "Kokoro"
+      ],
+      "borrowed_by": []
+    }
+  ],
+  "chat": {
+    "engine": "gpu",
+    "reason": "",
+    "gpu_p50": 48.6,
+    "cpu_p50": 9.2
+  },
+  "attention": [
+    {
+      "severity": "warning",
+      "title": "Disk 82% full",
+      "detail": "1,640.3 of 1,999.8 GB",
+      "service": null
+    }
+  ],
+  "host": {
+    "cpu_pct": 18,
+    "ram_used_gb": 46.8,
+    "ram_total_gb": 109.7,
+    "ram_pct": 43,
+    "disk_used_gb": 1640.3,
+    "disk_total_gb": 1999.8,
+    "disk_pct": 82.0
+  },
+  "knowledge": {
+    "documents": 2483
+  },
+  "links": [
+    {
+      "name": "Open WebUI",
+      "url": "https://chat.example.test/"
+    },
+    {
+      "name": "N8N",
+      "url": "https://n8n.example.test/"
+    },
+    {
+      "name": "ComfyUI",
+      "url": "https://comfy.example.test/"
+    }
+  ],
+  "generated_at": 1790680000.25
+}

@@ -1,0 +1,44 @@
+{
+  "enabled": [
+    "searxng",
+    "codebase-memory"
+  ],
+  "configured": [
+    "codebase-memory",
+    "github",
+    "searxng"
+  ],
+  "dynamic": true,
+  "registry": {
+    "servers": {
+      "searxng": {
+        "id": "searxng",
+        "litellm_name": "searxng",
+        "plugin_id": "mcp-searxng",
+        "name": "SearXNG",
+        "service": "mcp-searxng",
+        "url": "http://mcp-searxng:8080/mcp",
+        "network": true,
+        "tools": [
+          "search"
+        ],
+        "hosted": false
+      },
+      "codebase-memory": {
+        "id": "codebase-memory",
+        "litellm_name": "codebase_memory",
+        "plugin_id": "mcp-codebase-memory",
+        "name": "Codebase Memory",
+        "service": "mcp-codebase-memory",
+        "url": "http://mcp-codebase-memory:8080/mcp",
+        "network": true,
+        "tools": [
+          "search_graph",
+          "trace_path"
+        ],
+        "hosted": false
+      }
+    }
+  },
+  "ok": true
+}
