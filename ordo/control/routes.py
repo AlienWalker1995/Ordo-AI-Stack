@@ -54,7 +54,11 @@ _PLACEHOLDER = re.compile(r"\{[^}]*\}")
 
 @dataclass(frozen=True)
 class Template:
-    """A path whose `{name}` placeholders each match exactly one non-empty segment."""
+    """A path whose `{name}` placeholders each match exactly one non-empty segment.
+
+    Matched with `fullmatch`, so a trailing newline is not accepted (the regex the managed-project
+    routes used before, ending in `$`, accepted one); unreachable over HTTP, where the path arrives
+    with no raw newline in it."""
 
     path: str
     regex: re.Pattern[str] = field(init=False, repr=False, compare=False)
