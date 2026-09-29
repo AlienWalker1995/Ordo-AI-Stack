@@ -8,6 +8,7 @@ timestamps are stamped HERE (the broker layer), keeping the decision core clock-
 from __future__ import annotations
 
 import json
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -29,29 +30,35 @@ class LeaseHistory:
         self.max_records = int(max_records)
         self.trim_threshold = int(trim_threshold)
         self._pending: dict[str, dict] = {}  # id -> in-flight record (submitted, maybe started)
+        # API worker threads and the lease-sweep thread record outcomes concurrently; one lock keeps
+        # the pending records and the file's append/trim from interleaving.
+        self._lock = threading.RLock()
 
     # --- lifecycle (driven by the Broker) ---
     def submitted(self, job_id: str, kind: str, vram_gb: float) -> None:
-        self._pending[job_id] = {
-            "id": job_id,
-            "kind": kind,
-            "vram_gb": float(vram_gb),
-            "submitted": self.now_fn(),
-            "started": None,
-        }
+        with self._lock:
+            self._pending[job_id] = {
+                "id": job_id,
+                "kind": kind,
+                "vram_gb": float(vram_gb),
+                "submitted": self.now_fn(),
+                "started": None,
+            }
 
     def started(self, job_id: str) -> None:
-        rec = self._pending.get(job_id)
-        if rec and rec["started"] is None:
-            rec["started"] = self.now_fn()
+        with self._lock:
+            rec = self._pending.get(job_id)
+            if rec and rec["started"] is None:
+                rec["started"] = self.now_fn()
 
     def ended(self, job_id: str, outcome: str) -> None:
-        rec = self._pending.pop(job_id, None)
-        if rec is None:
-            return  # unknown lease (e.g. controller restarted mid-flight) — nothing to record
-        rec["ended"] = self.now_fn()
-        rec["outcome"] = outcome
-        self._append(rec)
+        with self._lock:
+            rec = self._pending.pop(job_id, None)
+            if rec is None:
+                return  # unknown lease (e.g. controller restarted mid-flight) — nothing to record
+            rec["ended"] = self.now_fn()
+            rec["outcome"] = outcome
+            self._append(rec)
 
     def rejected(self, job_id: str) -> None:
         self.ended(job_id, "rejected")
@@ -97,4 +104,5 @@ class LeaseHistory:
 
     def tail(self, limit: int = 100) -> list[dict]:
         """Finished leases, newest first."""
-        return list(reversed(self._read_all()[-int(limit) :]))
+        with self._lock:
+            return list(reversed(self._read_all()[-int(limit) :]))

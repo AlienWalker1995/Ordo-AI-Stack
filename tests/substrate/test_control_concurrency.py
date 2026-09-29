@@ -16,6 +16,7 @@ import yaml
 
 from ordo.control.api import ControlPlane
 from ordo.control.broker import Broker, MockBackend
+from ordo.control.lease_history import LeaseHistory
 from ordo.control.scheduler import Job, Scheduler
 from ordo.render.catalog import Catalog
 from ordo.render.plugins import PluginRegistry
@@ -137,29 +138,70 @@ def test_a_second_stack_verb_is_refused_with_409_while_one_runs(tmp_path):
     assert first.status_code == 200
 
 
-def test_a_lease_request_waits_for_a_running_verb_before_evicting(tmp_path):
+def test_lease_calls_answer_at_once_during_a_verb_and_admit_only_after_it(tmp_path):
     # llama.cpp holds 20 of 32 GB, so a 16 GB lease evicts it. Evicting it in the middle of a verb
-    # that is (re)starting services would race compose; the lease waits for the verb instead.
+    # that is (re)starting services would race compose, so admission waits for the verb. The HTTP
+    # call must not: lease clients time out after 30 s and a recreate can hold the operation lock
+    # for 15 minutes. A call still queued on the lock after its client gave up would later admit a
+    # lease nobody holds, keeping llama.cpp evicted until the TTL sweep. So /jobs files the request
+    # and answers "queued" at once (clients already poll /status until admitted), and the lease
+    # sweep admits it once the verb is done.
     cp, backend, scheduler = _control_plane(tmp_path)
 
     async def scenario():
         async with _client(cp) as client:
             slow = asyncio.create_task(client.post("/services/slow/recreate", json=CONFIRM))
             await _wait_until_entered(backend)
-            lease = asyncio.create_task(client.post("/jobs", json={"id": "gate-comfyui", "vram_gb": 16}))
             try:
-                await asyncio.sleep(0.3)
-                evicted_mid_verb = "stop llamacpp" in backend.events
+                lease = await client.post("/jobs", json={"id": "gate-comfyui", "vram_gb": 16})
+                lease_answered_during_verb = _recreate_still_running(backend)
+                withdrawn = await client.post("/jobs/complete", json={"id": "other-client"})
+                complete_answered_during_verb = _recreate_still_running(backend)
             finally:
                 backend.release.set()
-            return evicted_mid_verb, await slow, await lease
+            return lease, lease_answered_during_verb, withdrawn, complete_answered_during_verb, await slow
 
-    evicted_mid_verb, verb, lease = asyncio.run(scenario())
+    lease, lease_in_time, withdrawn, complete_in_time, verb = asyncio.run(scenario())
 
-    assert not evicted_mid_verb
-    assert verb.status_code == 200 and lease.status_code == 200
-    assert backend.events == ["recreate slow begins", "recreate slow ends", "stop llamacpp"]
+    assert lease.status_code == 200 and lease_in_time
+    assert [job["id"] for job in lease.json()["queued"]] == ["gate-comfyui"]
+    assert lease.json()["running"] == []
+    assert withdrawn.status_code == 200 and complete_in_time
+    assert verb.status_code == 200
+    assert "stop llamacpp" not in backend.events  # nothing was evicted during the verb
+
+    cp.broker.sweep_leases()  # the lease loop's next tick
+
     assert scheduler.running_ids == ["gate-comfyui"]
+    # `stop other-client` is the withdrawn job's own container (none here, so a no-op in docker).
+    assert backend.events == ["recreate slow begins", "stop other-client", "recreate slow ends", "stop llamacpp"]
+
+
+def test_a_lease_withdrawn_during_a_verb_is_never_admitted(tmp_path):
+    # A gate whose acquire timed out withdraws with /jobs/complete. That must take effect even
+    # while a verb holds the operation lock, or the sweep would admit the abandoned request.
+    cp, backend, scheduler = _control_plane(tmp_path)
+    broker = cp.broker
+
+    with broker.operation_lock:
+        _in_other_thread(lambda: broker.request(Job("gate-comfyui", vram_gb=16.0)))
+        _in_other_thread(lambda: broker.complete("gate-comfyui"))
+    broker.sweep_leases()
+
+    assert scheduler.running_ids == [] and scheduler.queued_ids == []
+    assert "llamacpp" not in backend.stopped
+
+
+def test_a_deferred_rejection_is_still_recorded_in_the_lease_history(tmp_path):
+    cp, _, scheduler = _control_plane(tmp_path)
+    history = LeaseHistory(tmp_path / "lease-history.jsonl")
+    broker = Broker(scheduler, cp.broker.backend, history=history)
+
+    with broker.operation_lock:
+        _in_other_thread(lambda: broker.request(Job("too-big", vram_gb=64.0)))
+    broker.sweep_leases()
+
+    assert [(record["id"], record["outcome"]) for record in history.tail()] == [("too-big", "rejected")]
 
 
 def test_the_lease_sweep_skips_a_tick_while_a_verb_holds_the_operation_lock(tmp_path):

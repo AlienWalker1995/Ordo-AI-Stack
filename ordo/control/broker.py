@@ -571,9 +571,11 @@ class Broker:
         # start containers) or a lifecycle verb in ControlPlane, which takes this same lock. Without
         # it a lease admitted in the middle of a recreate could stop llama.cpp while compose brings
         # it back, putting two tenants on one card (the 2026-08-08 crash), and two reconciles could
-        # issue their stops and starts out of order. It is held across docker calls, so nothing that
-        # must stay prompt takes it: heartbeats, /status and /health only use the scheduler's own
-        # lock. Reentrant because restore_state sweeps while holding it.
+        # issue their stops and starts out of order. It is held across docker calls (a recreate can
+        # hold it for 15 minutes), so no HTTP call ever waits for it: lease calls try it and leave
+        # the reconcile to the lease sweep when it is taken (`_reconcile_unless_busy`), and
+        # heartbeats, /status and /health never touch it. Reentrant because restore_state sweeps
+        # while holding it.
         self.operation_lock = threading.RLock()
 
     @property
@@ -645,8 +647,13 @@ class Broker:
         return {row.get("id") for row in listing.get("services", []) if row.get("state") == "running"}
 
     def reconcile(self) -> bool:
-        """Apply the scheduler's decisions. True when anything was admitted, evicted or restored."""
+        """Apply the scheduler's decisions. True when anything was admitted, evicted or restored.
+        Callers hold the operation lock."""
+        rejected_before = set(self.scheduler.status()["rejected"])
         admitted, evicted = self.scheduler.pump()
+        if self.history:
+            for job_id in set(self.scheduler.status()["rejected"]) - rejected_before:
+                self.history.rejected(job_id)
         for name in evicted:      # stop LRU-evicted idle residents first to free VRAM
             self.backend.stop(name)
         for job_id in admitted:   # then start the newly-admitted jobs
@@ -661,25 +668,33 @@ class Broker:
             self.backend.start(name)
         return bool(admitted or evicted or restored)
 
-    def request(self, job: Job) -> None:
-        # Waits for a running lifecycle verb: a lease must not evict a resident that verb is starting.
-        with self.operation_lock:
-            if self.history:
-                self.history.submitted(job.id, job.kind, job.vram_gb)
-            self.scheduler.submit(job)
+    def _reconcile_unless_busy(self) -> None:
+        """Reconcile now, or, while another operation holds the operation lock, leave it to the
+        lease sweep's next tick (sweep_leases reconciles every tick). Lease calls never wait for the
+        lock: their clients time out after 30 s, and a call still queued behind a 15-minute recreate
+        after its client gave up would admit a lease nobody holds. A request left queued is safe:
+        clients poll /status until admitted, and one that gives up withdraws it (complete)."""
+        if not self.operation_lock.acquire(blocking=False):
+            return
+        try:
             self.reconcile()
-            self._persist()
-            if self.history and job.id in self.scheduler.status()["rejected"]:
-                self.history.rejected(job.id)
+        finally:
+            self.operation_lock.release()
+
+    def request(self, job: Job) -> None:
+        if self.history:
+            self.history.submitted(job.id, job.kind, job.vram_gb)
+        self.scheduler.submit(job)
+        self._reconcile_unless_busy()
+        self._persist()
 
     def complete(self, job_id: str) -> None:
-        with self.operation_lock:
-            if self.history:
-                self.history.ended(job_id, "completed")
-            self.scheduler.complete(job_id)
-            self.backend.stop(job_id)
-            self.reconcile()
-            self._persist()
+        if self.history:
+            self.history.ended(job_id, "completed")
+        self.scheduler.complete(job_id)  # takes effect at once: a withdrawn request is never admitted
+        self.backend.stop(job_id)  # the job's own container, when it has one
+        self._reconcile_unless_busy()
+        self._persist()
 
     def heartbeat(self, job_id: str) -> bool:
         """Renew a running job's lease (liveness-based). No reconcile — nothing starts or stops."""
