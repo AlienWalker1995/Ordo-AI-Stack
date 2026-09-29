@@ -211,8 +211,8 @@ rendered stack in `out/` (`--stack DIR` for another), so render first.
 
 | Method | Used for | Backup | Restore |
 |---|---|---|---|
-| `pg_dump` | `litellm-db-data`, `langfuse-db-data` | `pg_dump -Fc` in the running server, online | stops the database's clients, drops the database, `pg_restore --create`, starts the clients |
-| `stopped` | `hermes-home`, `qdrant-data`, `couchdb-data`, `n8n-data`, `open-webui-data`, `grafana-data`, the Langfuse ClickHouse, Redis and MinIO volumes | stops the services writing the volume, snapshots its files, starts them again | stops the writers, empties the volume, unpacks the snapshot, starts them |
+| `pg_dump` | `litellm-db-data`, `langfuse-db-data` | `pg_dump -Fc` in the running server, online | loads the dump into a temporary database beside the live one, then (clients stopped) renames it over the live one in one transaction and drops the old copy |
+| `stopped` | `hermes-home`, `qdrant-data`, `couchdb-data`, `n8n-data`, `open-webui-data`, `grafana-data`, the Langfuse ClickHouse, Redis and MinIO volumes | stops the services writing the volume, snapshots its files, starts them again | stops the writers, unpacks into a staging directory in the volume, swaps it in by renames, starts them |
 | `live` | `caddy_data`, `caddy_config`, the Tailscale `ts-state-*` volumes, `comfyui-app` | snapshot with the services running (no database in them) | as `stopped` |
 | `skip` | `models-gguf`, `comfyui-models`, `ltx-models`, `hf-hub-cache`, `codebase-memory-cache`, `prometheus-data`, `langfuse-clickhouse-logs` | not saved: re-derivable (`ordo fetch`, `download_comfyui_model`), a cache, or metrics and logs | nothing |
 
@@ -227,7 +227,7 @@ namespace; read-only mounters keep running, and ops-controller is never stopped.
 ordo backup --dry-run                  # the plan: each volume, its method, what it stops
 ordo backup                            # -> ~/ordo-backups/ordo-backup-ordo-<UTC time>.tar
 ordo backup --out /mnt/offsite/ordo    # elsewhere (never inside the checkout: refused)
-ordo backup --only agent qdrant        # only the volumes these services mount, no config
+ordo backup --only agent qdrant        # only the volumes these services write, no config
 ```
 
 The archive holds `manifest.json` (every
@@ -245,15 +245,25 @@ Never restore `data/ops-controller/scheduler-state.json`: it is the live GPU lea
 ```bash
 ordo restore ~/ordo-backups/ordo-backup-ordo-<time>.tar --dry-run   # verify checksums, print the plan
 ordo restore ~/ordo-backups/ordo-backup-ordo-<time>.tar             # everything
-ordo restore <archive> --only agent                                 # just the volumes agent mounts
+ordo restore <archive> --only agent                                 # just the volumes agent writes
 ```
 
 A restore verifies every checksum before it changes anything, refuses while a GPU lease is held (or
 its state cannot be read), stops only the services it restores and starts only those that were
 running. A config file is written only where it is absent; a present one that differs is kept and
-reported. A file snapshot whose rendered image differs from the one that wrote it is refused
-(`--allow-image-change` overrides, when that software reads older files). Running it twice gives the
-same result.
+reported. A snapshot or dump whose rendered image differs from the one that wrote it is refused
+(`--allow-image-change` overrides, when that software reads older data); a dump from a newer
+PostgreSQL major than the running server is refused either way. Running it twice gives the same
+result.
+
+Nothing is destroyed before its replacement is proven. A file snapshot is unpacked into
+`.ordo-restore-staging/` inside the volume and swapped in by renames; an unpack that fails part way
+(a damaged snapshot, a full disk) leaves the volume as it was. A dump is loaded into
+`<database>_ordo_restore` first; a load that fails leaves the live database as it was. When a
+restore fails, the services it stopped stay stopped and it prints what state the data is in and how
+to start them (`ordo up <service>`). If a restore was killed mid-swap, the volume holds
+`.ordo-restore-previous/` (or the server holds `<database>_ordo_previous`): the next restore refuses
+until you inspect and remove it.
 
 **On a new machine:** clone the checkout, then
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import tarfile
 from pathlib import Path
 
@@ -157,11 +158,18 @@ def test_an_undeclared_volume_is_snapshotted_stopped():
     assert plans["qdrant-data"].method == "stopped" and not plans["qdrant-data"].declared
 
 
-def test_only_keeps_the_volumes_those_services_mount():
+def test_only_keeps_the_volumes_those_services_write():
     assert set(_plans(only=["agent"])) == {"hermes-home"}
     assert set(_plans(only=["litellm-db", "qdrant"])) == {"litellm-db-data", "qdrant-data"}
     with pytest.raises(backup.BackupError, match="no such service"):
         _plans(only=["nope"])
+
+
+def test_only_never_selects_a_volume_through_a_read_only_mounter():
+    # evals mounts hermes-home read-only: `--only evals` must not wipe the agent's brain.
+    assert set(_plans(only=["evals", "agent"])) == {"hermes-home"}
+    with pytest.raises(backup.BackupError, match="write no volume"):
+        _plans(only=["evals"])
 
 
 def test_a_plan_never_stops_ops_controller():
@@ -204,6 +212,11 @@ class FakeDocker:
         self.volumes = {"ordo_qdrant-data": b"qdrant-bytes", "ordo_hermes-home": b"hermes-bytes",
                         "ordo_comfyui-app": b"app-bytes", "ordo_caddy_data": b"cert-bytes"}
         self.database = b"pg-dump-bytes"
+        self.temp_database: bytes | None = None
+        self.server_major, self.dump_major = 16, 16
+        self.fail_stop: set[str] = set()      # `compose stop <service>` fails
+        self.fail_replace: set[str] = set()   # the unpack into this volume fails (contents unchanged)
+        self.fail_temp_restore = False        # pg_restore into the temporary database fails
         self.log: list[tuple] = []
 
     def running_container(self, service):
@@ -211,6 +224,8 @@ class FakeDocker:
 
     def compose(self, verb, *services):
         self.log.append((verb, *services))
+        if verb == "stop" and self.fail_stop & set(services):
+            raise backup.BackupError(f"docker compose stop failed for {services}")
         if verb == "stop":
             self.running -= set(services)
         elif verb == "start":
@@ -232,15 +247,32 @@ class FakeDocker:
 
     def replace_volume(self, docker_volume, source):
         self.log.append(("replace", docker_volume, frozenset(self.running)))
-        self.volumes[docker_volume] = source.read()
+        data = source.read()
+        if docker_volume in self.fail_replace:
+            raise backup.BackupError(f"restore of {docker_volume} failed: the unpack failed; the volume is unchanged")
+        self.volumes[docker_volume] = data
 
     def pg_dump(self, container, user, database, dest):
         self.log.append(("pg_dump", container, user, database))
         dest.write(self.database)
 
-    def pg_restore(self, container, user, database, source):
-        self.log.append(("pg_restore", container, frozenset(self.running)))
-        self.database = source.read()
+    def pg_server_major(self, container, user):
+        return self.server_major
+
+    def pg_dump_major(self, container, user, source):
+        source.read()
+        return self.dump_major
+
+    def pg_restore_to_temp(self, container, user, database, source):
+        self.log.append(("pg_restore_to_temp", container, frozenset(self.running)))
+        data = source.read()
+        if self.fail_temp_restore:
+            raise backup.BackupError(f"pg_restore of {database} failed; {database} is unchanged")
+        self.temp_database = data
+
+    def pg_swap(self, container, user, database):
+        self.log.append(("pg_swap", container, frozenset(self.running)))
+        self.database, self.temp_database = self.temp_database, None
 
     def wait_pg_ready(self, container, user, database):
         pass
@@ -338,8 +370,10 @@ def test_restore_puts_every_volume_and_the_database_back(stack_dir, tmp_path):
     assert docker.volumes == {"ordo_qdrant-data": b"qdrant-bytes", "ordo_hermes-home": b"hermes-bytes",
                               "ordo_comfyui-app": b"app-bytes", "ordo_caddy_data": b"cert-bytes"}
     assert docker.database == b"pg-dump-bytes"
-    restore_db = next(e for e in docker.log if e[0] == "pg_restore")
-    assert "model-gateway" not in restore_db[2] and "litellm-db" in restore_db[2]
+    to_temp = next(e for e in docker.log if e[0] == "pg_restore_to_temp")
+    assert "model-gateway" in to_temp[2]  # the load into the temporary database runs beside the clients
+    swap = next(e for e in docker.log if e[0] == "pg_swap")
+    assert "model-gateway" not in swap[2] and "litellm-db" in swap[2]  # the swap runs with them stopped
     caddy = next(e for e in docker.log if e[:2] == ("replace", "ordo_caddy_data"))
     assert not {"caddy", "tailnet-chat"} & caddy[2]  # a live volume's writer (and its netns) is stopped
     app = next(e for e in docker.log if e[:2] == ("replace", "ordo_comfyui-app"))
@@ -480,3 +514,134 @@ def test_a_restore_streams_an_archive_member_into_the_process(tmp_path):
     failing = [sys.executable, "-c", "import sys; sys.stdin.close(); print('refused'); sys.exit(3)"]
     with tarfile.open(archive) as tar, pytest.raises(backup.BackupError, match="exit 3.*refused"):
         docker._stream_in(failing, tar.extractfile("member"), "count")
+
+
+# ── failures leave the data as it was, and say so ──────────────────────────────────────────────
+
+
+def test_a_failed_file_restore_leaves_its_writers_stopped(stack_dir, tmp_path, capsys):
+    archive = _backup(stack_dir, tmp_path, FakeDocker(COMPOSE, RUNNING))
+    docker = FakeDocker(COMPOSE, RUNNING)
+    docker.volumes["ordo_hermes-home"] = b"current"
+    docker.fail_replace = {"ordo_hermes-home"}
+    with pytest.raises(backup.BackupError, match="unchanged"):
+        _restore(archive, stack_dir, docker, only=["agent"])
+    assert docker.volumes["ordo_hermes-home"] == b"current"
+    assert "agent" not in docker.running and not any(e[0] == "start" for e in docker.log)
+    err = capsys.readouterr().err
+    assert "left stopped: agent" in err and "ordo up agent" in err
+
+
+def test_a_failed_backup_snapshot_still_restarts_the_writers(stack_dir, tmp_path):
+    docker = FakeDocker(COMPOSE, RUNNING)
+
+    def broken(docker_volume, dest):
+        raise backup.BackupError("snapshot failed")
+
+    docker.snapshot_volume = broken
+    with pytest.raises(backup.BackupError, match="snapshot failed"):
+        _backup(stack_dir, tmp_path, docker, only=["agent"])
+    assert "agent" in docker.running  # a backup changed nothing, so the service comes back
+
+
+def test_a_partial_stop_failure_restarts_what_it_stopped(stack_dir, tmp_path):
+    archive = _backup(stack_dir, tmp_path, FakeDocker(COMPOSE, RUNNING))
+    docker = FakeDocker(COMPOSE, RUNNING)
+    docker.fail_stop = {"tailnet-chat"}
+    with pytest.raises(backup.BackupError, match="stop failed"):
+        _restore(archive, stack_dir, docker, only=["caddy"])
+    assert ("stop", "caddy") in docker.log and ("start", "caddy") in docker.log
+    assert {"caddy", "tailnet-chat"} <= docker.running
+    assert docker.volumes["ordo_caddy_data"] == b"cert-bytes" and not any(e[0] == "replace" for e in docker.log)
+
+
+def test_a_dump_that_does_not_load_leaves_the_database_and_its_clients_alone(stack_dir, tmp_path):
+    archive = _backup(stack_dir, tmp_path, FakeDocker(COMPOSE, RUNNING))
+    docker = FakeDocker(COMPOSE, RUNNING)
+    docker.database = b"live-data"
+    docker.fail_temp_restore = True
+    with pytest.raises(backup.BackupError, match="unchanged"):
+        _restore(archive, stack_dir, docker, only=["litellm-db"])
+    assert docker.database == b"live-data" and not any(e[0] in ("pg_swap", "stop") for e in docker.log)
+    assert "model-gateway" in docker.running
+
+
+def test_a_dump_from_a_newer_postgres_is_refused_before_anything_changes(stack_dir, tmp_path):
+    archive = _backup(stack_dir, tmp_path, FakeDocker(COMPOSE, RUNNING))
+    docker = FakeDocker(COMPOSE, RUNNING)
+    docker.database = b"live-data"
+    docker.dump_major, docker.server_major = 16, 15
+    with pytest.raises(backup.BackupError, match="PostgreSQL 16.*15"):
+        _restore(archive, stack_dir, docker, only=["litellm-db"])
+    assert docker.database == b"live-data" and not any(e[0] in ("pg_restore_to_temp", "stop") for e in docker.log)
+
+
+def test_a_dump_from_a_different_image_needs_allow_image_change(stack_dir, tmp_path):
+    archive = _backup(stack_dir, tmp_path, FakeDocker(COMPOSE, RUNNING))
+    doc = yaml.safe_load(yaml.safe_dump(COMPOSE))
+    doc["services"]["litellm-db"]["image"] = "postgres:17-alpine@sha256:bb"
+    (stack_dir / "docker-compose.yml").write_text(yaml.safe_dump(doc), encoding="utf-8")
+    with pytest.raises(backup.BackupError, match="different image"):
+        _restore(archive, stack_dir, FakeDocker(doc, RUNNING), only=["litellm-db"])
+    assert _restore(archive, stack_dir, FakeDocker(doc, RUNNING), only=["litellm-db"], allow_image_change=True) == 0
+
+
+# ── the volume swap script, run by a real shell against a real directory ───────────────────────
+
+
+def _snapshot(files: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        for name, data in files.items():
+            info = tarfile.TarInfo(f"./{name}")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
+
+
+def _run_swap(tmp_path, stdin: bytes):
+    import shutil
+    import subprocess
+
+    shell = shutil.which("sh")
+    if shell is None:
+        pytest.skip("no POSIX shell")
+    # A relative path: GNU tar reads `C:/...` as a remote host on Windows.
+    return subprocess.run([shell, "-c", backup.REPLACE_VOLUME_SCRIPT, "sh", "vol"], input=stdin,
+                          capture_output=True, cwd=tmp_path, env={**os.environ, "LC_ALL": "C"})
+
+
+def _contents(root: Path) -> dict[str, bytes]:
+    return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+
+@pytest.fixture
+def volume(tmp_path) -> Path:
+    vol = tmp_path / "vol"
+    (vol / "sub").mkdir(parents=True)
+    (vol / "current.txt").write_bytes(b"current")
+    (vol / ".hidden").write_bytes(b"dot")
+    (vol / "sub" / "nested").write_bytes(b"n")
+    return vol
+
+
+def test_the_swap_replaces_every_entry_including_dotfiles(tmp_path, volume):
+    proc = _run_swap(tmp_path, _snapshot({"restored.txt": b"r", ".restored-dot": b"d"}))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _contents(volume) == {"restored.txt": b"r", ".restored-dot": b"d"}
+
+
+def test_an_unpack_that_fails_midway_leaves_the_volume_unchanged(tmp_path, volume):
+    before = _contents(volume)
+    whole = _snapshot({f"f{i}": os.urandom(200_000) for i in range(5)})
+    proc = _run_swap(tmp_path, whole[: len(whole) * 6 // 10])
+    assert proc.returncode == backup.SWAP_UNCHANGED, proc.stdout + proc.stderr
+    assert _contents(volume) == before
+
+
+def test_the_swap_refuses_a_volume_a_crashed_restore_left_behind(tmp_path, volume):
+    (volume / backup.SWAP_PREVIOUS_DIR).mkdir()
+    before = _contents(volume)
+    proc = _run_swap(tmp_path, _snapshot({"restored.txt": b"r"}))
+    assert proc.returncode == backup.SWAP_LEFTOVER
+    assert _contents(volume) == before

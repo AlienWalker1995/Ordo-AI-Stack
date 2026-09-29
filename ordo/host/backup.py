@@ -1,9 +1,17 @@
 """`ordo backup` / `ordo restore`: the stack's state, saved to one archive and put back.
 
-Everything stateful lives in two places: the operator's config in the rendered stack directory
-(`out/ordo.yaml`, `out/secrets.env`, `out/images.json`) and the project's named volumes. How each
-volume is saved is declared by the manifest that owns it (ordo/render/backup_policy.py) and read
-from the render's `out/manifest.json`, so this module holds no list of volumes.
+The archive holds the operator's config in the rendered stack directory (`out/ordo.yaml`,
+`out/secrets.env`, `out/images.json`) and the project's named volumes. It does not hold host bind
+mounts: the `DATA_PATH` directories (`data/`: audit log, dashboard samples, render outputs, the RAG
+drop zone) and the memory vault (`MEMORY_VAULT_PATH`) are plain host files for the host's own
+backup. How each volume is saved is declared by the manifest that owns it
+(ordo/render/backup_policy.py) and read from the render's `out/manifest.json`, so this module holds
+no list of volumes.
+
+A restore never destroys what it is replacing before the replacement is proven: a file snapshot is
+unpacked into a staging directory inside the volume and swapped in by renames (rolled back if a
+rename fails), and a dump is loaded into a temporary database that is renamed over the old one in
+one transaction. A restore that fails leaves the services it stopped stopped, and says what to do.
 
 The archive is an uncompressed tar holding `manifest.json` (what it holds, the method of each
 volume, the images and image ids of the services that wrote it, a sha256 per member), `config/*`,
@@ -22,6 +30,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -29,7 +38,7 @@ import sys
 import tarfile
 import tempfile
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import IO, Any
 
@@ -52,6 +61,46 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # The file-snapshot helper: busybox tar + gzip in the digest-pinned image the models volume already
 # uses (ordo/render/models_volume.py). It runs as root so it can read and restore any owner's files.
 VOLUME_MOUNT = "/volume"
+# A restore unpacks into SWAP_STAGING_DIR inside the volume, moves the current entries into
+# SWAP_PREVIOUS_DIR, moves the staged entries up, then deletes the previous ones. Every step before
+# the last is a rename on one filesystem, so nothing is deleted until the new contents are in place.
+SWAP_STAGING_DIR = ".ordo-restore-staging"
+SWAP_PREVIOUS_DIR = ".ordo-restore-previous"
+SWAP_LEFTOVER = 3        # a crashed restore left SWAP_PREVIOUS_DIR: refused, the volume is unchanged
+SWAP_UNCHANGED = 4       # the unpack or a rename failed; the volume holds its previous contents
+SWAP_ROLLBACK_FAILED = 5  # a rename failed and so did the rollback: both copies are in the volume
+# POSIX sh (busybox in the helper image); $1 is the volume's mount point.
+REPLACE_VOLUME_SCRIPT = f"""
+V="$1"; S="$V/{SWAP_STAGING_DIR}"; P="$V/{SWAP_PREVIOUS_DIR}"
+move_all() {{
+  for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    if [ ! -e "$e" ] && [ ! -L "$e" ]; then continue; fi
+    if [ "$e" = "$S" ] || [ "$e" = "$P" ]; then continue; fi
+    mv "$e" "$2"/ || return 1
+  done
+}}
+if [ -e "$P" ]; then
+  echo "$P exists: an earlier restore stopped part way. The volume's previous contents are in it; inspect it and remove it, then restore again."
+  exit {SWAP_LEFTOVER}
+fi
+rm -rf "$S" && mkdir "$S" || exit {SWAP_UNCHANGED}
+if ! tar -xzpf - -C "$S"; then
+  rm -rf "$S"; echo "the unpack failed; the volume is unchanged"; exit {SWAP_UNCHANGED}
+fi
+mkdir "$P" || {{ rm -rf "$S"; exit {SWAP_UNCHANGED}; }}
+if move_all "$V" "$P" && move_all "$S" "$V"; then
+  rmdir "$S" && rm -rf "$P"; exit 0
+fi
+if move_all "$V" "$S" && move_all "$P" "$V"; then
+  rmdir "$P"; rm -rf "$S"; echo "a rename failed and was rolled back; the volume is unchanged"; exit {SWAP_UNCHANGED}
+fi
+echo "a rename failed and so did the rollback: the previous contents are in $P, the restored ones in $S"
+exit {SWAP_ROLLBACK_FAILED}
+"""
+# A restore loads a dump into `<database>` + PG_TEMP_SUFFIX and renames the old one to
+# `<database>` + PG_PREVIOUS_SUFFIX for the length of the swap transaction.
+PG_TEMP_SUFFIX = "_ordo_restore"
+PG_PREVIOUS_SUFFIX = "_ordo_previous"
 PG_READY_TIMEOUT_SECONDS = 90
 
 
@@ -173,8 +222,13 @@ def plan(doc: Mapping[str, Any], policy: Mapping[str, str], *, project: str, env
                                 method=method, declared=volume in policy, writers=writers,
                                 readers=readers, **extra))
     if only:
+        # By writer only: a service that mounts a volume read-only (evals reads hermes-home) does not
+        # own it, and naming it must not replace the volume under the service that does.
         wanted = set(only)
-        plans = [p for p in plans if wanted & {*p.mounted_by, p.database_service}]
+        plans = [p for p in plans if wanted & set(p.writers)]
+        if not plans:
+            raise BackupError(f"{', '.join(sorted(wanted))} write no volume of the rendered stack "
+                              f"(--only selects the volumes a service writes)")
     for p in plans:
         for service in (*p.stopped_for_backup(), *p.stopped_for_restore()):
             if OPS_CONTROLLER_SERVICE in stack.lifecycle_group(doc, service):
@@ -203,7 +257,7 @@ def describe(doc: Mapping[str, Any], plans: Sequence[VolumePlan], *, restore: bo
         stops = stop_set(doc, p.stopped_for_restore() if restore else p.stopped_for_backup())
         what = {
             backup_policy.PG_DUMP: f"pg_dump of {p.database_name} in {p.database_service}"
-                                   + (" (dropped, then re-created from the dump)" if restore else ""),
+                                   + (" (loaded beside it, then swapped in)" if restore else ""),
             backup_policy.STOPPED: "file restore" if restore else "file snapshot, writers stopped",
             backup_policy.LIVE: "file restore" if restore else "file snapshot, services running",
             backup_policy.SKIP: "not backed up (re-derivable)",
@@ -390,10 +444,18 @@ class Docker:  # pragma: no cover - shells to docker; exercised end to end (see 
             raise BackupError(f"{what} failed (exit {proc.returncode}): "
                               f"{proc.stderr.decode('utf-8', 'replace').strip()[-400:]}")
 
-    def _stream_in(self, argv: Sequence[str], source: IO[bytes], what: str) -> None:
-        """Run `argv` with `source` on its stdin. `source` is usually an archive member, which has no
-        OS file handle, so it is copied through a pipe; the output goes to a temporary file so a
-        chatty process cannot block on a full stdout pipe while its stdin is still being written."""
+    def _stream_in(self, argv: Sequence[str], source: IO[bytes], what: str) -> str:
+        """Run `argv` with `source` on its stdin and return its output; a failure raises BackupError."""
+        returncode, text = self._pipe(argv, source)
+        if returncode != 0:
+            raise BackupError(f"{what} failed (exit {returncode}): {text[-400:]}")
+        return text
+
+    def _pipe(self, argv: Sequence[str], source: IO[bytes]) -> tuple[int, str]:
+        """Run `argv` with `source` on its stdin: (exit code, output). `source` is usually an archive
+        member, which has no OS file handle, so it is copied through a pipe; the output goes to a
+        temporary file so a chatty process cannot block on a full stdout pipe while its stdin is
+        still being written."""
         sys.stdout.flush()
         with tempfile.TemporaryFile() as output:
             try:
@@ -413,8 +475,7 @@ class Docker:  # pragma: no cover - shells to docker; exercised end to end (see 
             returncode = proc.wait()
             output.seek(0)
             text = output.read().decode("utf-8", "replace").strip()
-        if returncode != 0:
-            raise BackupError(f"{what} failed (exit {returncode}): {text[-400:]}")
+        return returncode, text
 
     def snapshot_volume(self, docker_volume: str, dest: IO[bytes]) -> None:
         self._stream_out(["docker", "run", "--rm", "--user", "0", "--network", "none",
@@ -422,29 +483,80 @@ class Docker:  # pragma: no cover - shells to docker; exercised end to end (see 
                           "-czf", "-", "-C", VOLUME_MOUNT, "."], dest, f"snapshot of {docker_volume}")
 
     def replace_volume(self, docker_volume: str, source: IO[bytes]) -> None:
-        """Empty the volume, then unpack the snapshot into it, in one helper container."""
-        script = (f"find {VOLUME_MOUNT} -mindepth 1 -maxdepth 1 -exec rm -rf {{}} + "
-                  f"&& tar -xzpf - -C {VOLUME_MOUNT}")
-        self._stream_in(["docker", "run", "--rm", "-i", "--user", "0", "--network", "none",
-                         "-v", f"{docker_volume}:{VOLUME_MOUNT}", "--entrypoint", "sh", HELPER_IMAGE,
-                         "-c", script], source, f"restore of {docker_volume}")
+        """Swap the snapshot in for the volume's contents (REPLACE_VOLUME_SCRIPT), in one helper container."""
+        code, text = self._pipe(["docker", "run", "--rm", "-i", "--user", "0", "--network", "none",
+                                 "-v", f"{docker_volume}:{VOLUME_MOUNT}", "--entrypoint", "sh", HELPER_IMAGE,
+                                 "-c", REPLACE_VOLUME_SCRIPT, "sh", VOLUME_MOUNT], source)
+        if code == 0:
+            return
+        # The script's own last line states the volume's state for the codes it chooses.
+        known = code in (SWAP_LEFTOVER, SWAP_UNCHANGED, SWAP_ROLLBACK_FAILED)
+        state = "" if known else "; the volume's state is unknown: inspect it before starting its services"
+        raise BackupError(f"restore of {docker_volume} failed (exit {code}): {text[-400:]}{state}")
 
     def pg_dump(self, container: str, user: str, database: str, dest: IO[bytes]) -> None:
         self._stream_out(["docker", "exec", container, "pg_dump", "-U", user, "-d", database, "-Fc"],
                          dest, f"pg_dump of {database} in {container}")
 
-    def pg_restore(self, container: str, user: str, database: str, source: IO[bytes]) -> None:
-        """Replace the database with the dump: drop it (closing any session left on it), then let
-        pg_restore re-create it from the dump. `pg_restore --clean` alone would keep every object the
-        dump does not name, so the result would not be the backup. Both steps run from template1, so
-        a database named `postgres` is handled the same way."""
-        drop = b'DROP DATABASE IF EXISTS :"target" WITH (FORCE);\n'
-        self._stream_in(["docker", "exec", "-i", container, "psql", "-U", user, "-d", "template1", "-q",
-                         "-v", "ON_ERROR_STOP=1", "-v", f"target={database}"],
-                        io.BytesIO(drop), f"dropping {database} in {container}")
-        self._stream_in(["docker", "exec", "-i", container, "pg_restore", "-U", user, "-d", "template1",
-                         "--create", "--exit-on-error"],
-                        source, f"pg_restore of {database} in {container}")
+    def _psql(self, container: str, user: str, script: str, what: str, **variables: str) -> str:
+        """Run a psql script (from stdin, so `:"name"` / `:'name'` variables are quoted by psql)
+        against template1, stopping at the first error. template1 is never a restore target."""
+        argv = ["docker", "exec", "-i", container, "psql", "-U", user, "-d", "template1", "-q", "-tA",
+                "-v", "ON_ERROR_STOP=1"]
+        for name, value in variables.items():
+            argv += ["-v", f"{name}={value}"]
+        return self._stream_in(argv, io.BytesIO(script.encode("utf-8")), what)
+
+    def pg_server_major(self, container: str, user: str) -> int:
+        text = self._psql(container, user, "SHOW server_version_num;\n", f"reading the server version of {container}")
+        return int(text.strip().splitlines()[-1]) // 10000
+
+    def pg_dump_major(self, container: str, user: str, source: IO[bytes]) -> int:
+        """The major version of the server a dump came from, read by the target's own pg_restore
+        (which also proves it can read the dump's format)."""
+        text = self._stream_in(["docker", "exec", "-i", container, "pg_restore", "--list"], source,
+                               f"reading the dump with {container}'s pg_restore")
+        match = re.search(r"Dumped from database version: (\d+)", text)
+        if match is None:
+            raise BackupError(f"{container}'s pg_restore --list names no source version for the dump")
+        return int(match.group(1))
+
+    def pg_restore_to_temp(self, container: str, user: str, database: str, source: IO[bytes]) -> None:
+        """Load the dump into a fresh `<database>_ordo_restore`, leaving `<database>` untouched. A
+        load that fails drops the temporary database again."""
+        temp, previous = database + PG_TEMP_SUFFIX, database + PG_PREVIOUS_SUFFIX
+        names = self._psql(container, user, "SELECT datname FROM pg_database;\n", "listing the databases").split()
+        if previous in names:
+            raise BackupError(f"database {previous} exists in {container}: an earlier restore stopped part way. "
+                              f"Inspect it and drop it, then restore again; {database} is unchanged")
+        self._psql(container, user, 'DROP DATABASE IF EXISTS :"temp" WITH (FORCE);\n'
+                                    'CREATE DATABASE :"temp" TEMPLATE template0;\n',
+                   f"creating {temp}", temp=temp)
+        code, text = self._pipe(["docker", "exec", "-i", container, "pg_restore", "-U", user, "-d", temp,
+                                 "--exit-on-error", "--single-transaction"], source)
+        if code != 0:
+            self._psql(container, user, 'DROP DATABASE IF EXISTS :"temp" WITH (FORCE);\n', f"dropping {temp}",
+                       temp=temp)
+            raise BackupError(f"pg_restore of {database} failed (exit {code}): {text[-400:]}; {database} is unchanged")
+
+    def pg_swap(self, container: str, user: str, database: str) -> None:
+        """Rename the loaded temporary database over `database` in one transaction, then drop the old one."""
+        temp, previous = database + PG_TEMP_SUFFIX, database + PG_PREVIOUS_SUFFIX
+        self._psql(container, user,
+                   "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                   "WHERE datname IN (:'target', :'temp') AND pid <> pg_backend_pid();\n"
+                   "BEGIN;\n"
+                   'ALTER DATABASE :"target" RENAME TO :"previous";\n'
+                   'ALTER DATABASE :"temp" RENAME TO :"target";\n'
+                   "COMMIT;\n",
+                   f"swapping {temp} in for {database} (one transaction: on failure {database} is unchanged)",
+                   target=database, temp=temp, previous=previous)
+        try:
+            self._psql(container, user, 'DROP DATABASE :"previous" WITH (FORCE);\n', f"dropping {previous}",
+                       previous=previous)
+        except BackupError as e:
+            print(f"  warning: {database} is restored, but the old copy {previous} was not dropped ({e}); "
+                  f"drop it by hand before the next restore", file=sys.stderr)
 
     def wait_pg_ready(self, container: str, user: str, database: str) -> None:
         """Wait until the server answers on TCP. The image's first start runs initdb behind a
@@ -508,25 +620,47 @@ def _start(docker: Docker, project: str, services: Sequence[str]) -> None:
 
 
 class _StoppedServices:
-    """Stop the running ones of `services` for the duration of a `with` block, then start them
-    again, whatever happened inside it."""
+    """Stop the running ones of `services` (with their netns members) for a `with` block, then
+    start them again.
 
-    def __init__(self, docker: Docker, project: str, services: Sequence[str]):
+    Each stop is recorded as it succeeds, so a stop that fails part way starts again exactly what
+    it had stopped (nothing was changed yet). When the block itself fails, `restart_on_failure`
+    decides: a backup changed nothing and restarts; a restore may have left its target in any
+    state, so the services stay stopped and the operator is told what to do."""
+
+    def __init__(self, docker: Docker, project: str, services: Sequence[str], *, restart_on_failure: bool):
         self.docker, self.project = docker, project
-        self.stopped = _running(docker, stop_set(docker.doc, services))
+        self.targets = _running(docker, stop_set(docker.doc, services))
+        self.restart_on_failure = restart_on_failure
+        self.stopped: list[str] = []
 
     def __enter__(self) -> _StoppedServices:
-        if self.stopped:
-            self.docker.compose("stop", *self.stopped)
+        try:
+            for service in self.targets:
+                self.docker.compose("stop", service)
+                self.stopped.append(service)
+        except BackupError:
+            self._start_again(failed=True)
+            raise
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        if exc_type is None or self.restart_on_failure:
+            self._start_again(failed=exc_type is not None)
+            return
+        if self.stopped:
+            names = " ".join(self.stopped)
+            print(f"left stopped: {', '.join(self.stopped)}. The restore error says what state the data is in. "
+                  f"Fix its cause and run the restore again, or start them on the data as it is: "
+                  f"ordo up {names}", file=sys.stderr)
+
+    def _start_again(self, *, failed: bool) -> None:
         try:
             _start(self.docker, self.project, self.stopped)
         except BackupError as e:
-            if exc_type is None:
+            if not failed:
                 raise
-            # The block already failed: report this too, and let its error be the one raised.
+            # Something already failed: report this too, and let the first error be the one raised.
             print(f"also: {e}", file=sys.stderr)
 
 
@@ -635,7 +769,7 @@ def _backup_volume(docker: Docker, project: str, p: VolumePlan, tar: tarfile.Tar
             print(f"  {p.docker_volume} does not exist (never started): nothing to save")
             return {**record, "status": "absent"}
         record["images"] = [docker.image_of(s) for s in p.writers]
-        with _StoppedServices(docker, project, p.stopped_for_backup()):
+        with _StoppedServices(docker, project, p.stopped_for_backup(), restart_on_failure=True):
             print(f"  saving {p.docker_volume} ...")
             with scratch.open("wb") as f:
                 docker.snapshot_volume(p.docker_volume, f)
@@ -697,10 +831,11 @@ def run_restore(*, archive: Path, stack_dir: Path, project: str, only: Sequence[
             raise BackupError(f"{entry['volume']} was saved as {entry['method']} but is declared {p.method} now; "
                               f"a dump and a file snapshot are not interchangeable")
         changes = _image_changes(entry, doc, env)
-        if changes and entry["method"] != backup_policy.PG_DUMP and not allow_image_change:
-            raise BackupError(f"{entry['volume']} is a file snapshot written by a different image than the "
-                              f"rendered one ({'; '.join(changes)}). Restore it with the image it came from, or "
-                              f"pass --allow-image-change if that software reads the older files")
+        if changes and not allow_image_change:
+            raise BackupError(f"{entry['volume']} was written by a different image than the rendered one "
+                              f"({'; '.join(changes)}). Restore it with the image it came from, or pass "
+                              f"--allow-image-change if that software reads the older data (a dump from a "
+                              f"newer PostgreSQL major is refused either way)")
         for change in changes:
             print(f"  note: {entry['volume']}: {change}")
         todo.append((entry, p))
@@ -724,13 +859,17 @@ def run_restore(*, archive: Path, stack_dir: Path, project: str, only: Sequence[
     docker = docker or Docker(stack_dir, project, doc)
     with tarfile.open(archive, "r:") as tar:
         for entry, p in todo:
-            source = tar.extractfile(entry["member"])
-            if source is None:
-                raise BackupError(f"{archive}: {entry['member']} is not a file")
+            def open_member(member: str = entry["member"]) -> IO[bytes]:
+                source = tar.extractfile(member)
+                if source is None:
+                    raise BackupError(f"{archive}: {member} is not a file")
+                return source
+
             if p.method == backup_policy.PG_DUMP:
-                _restore_database(docker, project, p, source)
+                _restore_database(docker, project, p, open_member)
             else:
-                with _StoppedServices(docker, project, p.stopped_for_restore()):
+                source = open_member()
+                with _StoppedServices(docker, project, p.stopped_for_restore(), restart_on_failure=False):
                     if not docker.volume_exists(p.docker_volume):
                         docker.create_volume(p.docker_volume, p.volume)
                     print(f"  restoring {p.docker_volume} ...")
@@ -739,9 +878,12 @@ def run_restore(*, archive: Path, stack_dir: Path, project: str, only: Sequence[
     return 0
 
 
-def _restore_database(docker: Docker, project: str, p: VolumePlan, source: IO[bytes]) -> None:
-    """Replace the database from the dump in the running server, its clients stopped meanwhile. A server that is
-    not running is started for the restore (the lease-checked `ordo up` path) and stopped after."""
+def _restore_database(docker: Docker, project: str, p: VolumePlan, open_dump: Callable[[], IO[bytes]]) -> None:
+    """Replace the database from the dump. The target's pg_restore reads the dump first (a dump
+    from a newer PostgreSQL major is refused), the dump is loaded into a temporary database beside
+    the live one while its clients keep running, and only the swap (one transaction) runs with the
+    clients stopped. A server that is not running is started for the restore (the lease-checked
+    `ordo up` path) and stopped after."""
     started_here = False
     container = docker.running_container(p.database_service)
     if container is None:
@@ -752,9 +894,19 @@ def _restore_database(docker: Docker, project: str, p: VolumePlan, source: IO[by
             raise BackupError(f"{p.database_service} did not start")
     try:
         docker.wait_pg_ready(container, p.database_user, p.database_name)
-        with _StoppedServices(docker, project, p.clients):
-            print(f"  restoring {p.database_name} into {container} ...")
-            docker.pg_restore(container, p.database_user, p.database_name, source)
+        server = docker.pg_server_major(container, p.database_user)
+        try:
+            dumped = docker.pg_dump_major(container, p.database_user, open_dump())
+        except BackupError as e:
+            raise BackupError(f"{e}; {p.database_name} is unchanged") from e
+        if dumped > server:
+            raise BackupError(f"{p.volume} is a dump from PostgreSQL {dumped}, and {p.database_service} runs "
+                              f"PostgreSQL {server}: an older server cannot load it. {p.database_name} is unchanged")
+        print(f"  loading {p.database_name} into {p.database_name}{PG_TEMP_SUFFIX} in {container} ...")
+        docker.pg_restore_to_temp(container, p.database_user, p.database_name, open_dump())
+        with _StoppedServices(docker, project, p.clients, restart_on_failure=False):
+            print(f"  swapping it in for {p.database_name} ...")
+            docker.pg_swap(container, p.database_user, p.database_name)
     finally:
         if started_here:
             docker.compose("stop", p.database_service)
