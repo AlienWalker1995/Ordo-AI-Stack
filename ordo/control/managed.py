@@ -194,8 +194,8 @@ class RestartBudget:
     """At most `limit` restarts per key (`<project>/<container>`) in any sliding `window_seconds`.
 
     `reserve` checks and takes a slot under one lock, so concurrent callers can never get more
-    than `limit` between them; a caller whose restart then fails gives the slot back with
-    `refund`. The budget lives in ops-controller's memory: an ops-controller restart resets it."""
+    than `limit` between them. `refund` gives a slot back, and only for a restart that provably
+    did not happen (the guard refused before docker ran). The budget lives in ops-controller's memory: an ops-controller restart resets it."""
 
     def __init__(self, limit: int = RESTARTS_PER_WINDOW, window_seconds: float = RESTART_WINDOW_SECONDS,
                  clock: Callable[[], float] = time.monotonic):

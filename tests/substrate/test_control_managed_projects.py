@@ -392,16 +392,43 @@ def test_parallel_restarts_cannot_beat_the_budget(plane):
     assert len(backend.foreign_restarts) == 3
 
 
-def test_a_failed_restart_refunds_its_slot(plane, client):
+@pytest.mark.parametrize("error", [
+    "timeout", "called-process-error", "runtime-error",
+])
+def test_a_restart_that_raises_after_docker_acted_still_spends_its_slot(plane, client, error):
+    """Re-review of #302: `docker restart` can restart the container and THEN raise (a timeout
+    waiting for it, a non-zero exit). The slot must stay spent, or a caller gets uncounted
+    restarts. Only the guard's refusal (ValueError, before docker acts) gives it back."""
+    import subprocess
     cp, _ = plane
+    backend = cp.broker.backend
+    original = backend.foreign_restart
+    exc = {"timeout": subprocess.TimeoutExpired(["docker", "restart", "x"], 120),
+           "called-process-error": subprocess.CalledProcessError(1, ["docker", "restart", "x"]),
+           "runtime-error": RuntimeError("docker restart failed")}[error]
 
-    def broken(project, name):
-        raise RuntimeError("docker restart failed")
+    def restarts_then_raises(project, name):
+        original(project, name)             # the container really restarted
+        raise exc
 
-    original = cp.broker.backend.foreign_restart
-    cp.broker.backend.foreign_restart = broken
+    backend.foreign_restart = restarts_then_raises
     for _ in range(3):
         assert _restart(client, "nas-stack", "janitorr").status_code == 500
+    assert _restart(client, "nas-stack", "janitorr").status_code == 429
+    assert len(backend.foreign_restarts) == 3
+
+
+def test_a_guard_refusal_gives_the_slot_back(plane, client):
+    """ValueError is the backend's guard refusing before docker acted: nothing restarted."""
+    cp, _ = plane
+    original = cp.broker.backend.foreign_restart
+
+    def refused(project, name):
+        raise ValueError(f"container {name!r} is not in project {project!r}")
+
+    cp.broker.backend.foreign_restart = refused
+    for _ in range(3):
+        assert _restart(client, "nas-stack", "janitorr").status_code == 404
     cp.broker.backend.foreign_restart = original
     assert _restart(client, "nas-stack", "janitorr").status_code == 200
 

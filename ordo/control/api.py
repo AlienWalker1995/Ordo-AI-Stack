@@ -1189,8 +1189,11 @@ class ControlPlane:
         gpu_refusal = managed.gpu_refusal(raw, self._leased_gpu_uuid(), self._gpu_indexes())
         if gpu_refusal:
             return self._error(409, f"refusing to restart {key}: {gpu_refusal}")
-        # Reserve the slot BEFORE restarting (one lock: parallel callers cannot all pass the check)
-        # and give it back if the restart does not happen.
+        # Reserve the slot BEFORE restarting (one lock: parallel callers cannot all pass the check).
+        # Give it back ONLY when the backend's guard refused (ValueError, raised before docker ran).
+        # Any other failure may come after the container already restarted (`docker restart` timing
+        # out waiting for it, or exiting non-zero), so the slot stays spent: better one restart
+        # under-allowed than restarts nobody counted.
         wait = self._restart_budget.reserve(key)
         if wait is not None:
             return self._error(429, f"{key} was restarted {self._restart_budget.limit} times in the last hour; "
@@ -1202,7 +1205,6 @@ class ControlPlane:
             self._restart_budget.refund(key)
             return self._error(404, str(e))
         except Exception as e:
-            self._restart_budget.refund(key)
             return self._error(500, str(e))
         return {"ok": True, "project": project, "container": name, "action": "restarted"}
 
