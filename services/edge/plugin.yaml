@@ -110,6 +110,10 @@ services:
     env:
       CADDY_TAILNET_HOSTNAME: ${CADDY_TAILNET_HOSTNAME}
       CADDY_TAILNET_DOMAIN: ${CADDY_TAILNET_DOMAIN}
+    # Read at start: an edit recreates caddy (and its netns members) on the next `ordo apply`
+    # (ordo/render/bind_configs.py). The certs directory counts too: a TLS certificate renewal
+    # recreates caddy, hermes-dashboard and the tailnet sidecars once.
+    config_mounts: [/etc/caddy/Caddyfile, /etc/caddy/certs]
     volumes:
       # ${BASE_PATH} (not ./): the Caddyfile is a TRACKED repo file (guarded by
       # tests/test_caddyfile_invariants.py); the ./-relative mount served a stale cutover-era

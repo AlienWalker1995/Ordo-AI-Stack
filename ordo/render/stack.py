@@ -13,7 +13,7 @@ from collections.abc import Sequence
 
 import yaml
 
-from . import secret_files
+from . import bind_configs, secret_files
 
 COMPOSE_FILE = "docker-compose.yml"
 
@@ -45,7 +45,8 @@ def compose_argv(compose_dir: str, project: str, *args: str, profiles: Sequence[
     .env must be listed too; without secrets.env every ${LITELLM_MASTER_KEY} style reference goes
     UNSET and secret-dependent services crash-loop (the 2026-06-26 oauth2-proxy 11-byte-cookie
     outage). secret-files.env holds the digest each file-secret mount is labelled with, so a
-    rotated file secret changes its readers' config hash (ordo/render/secret_files.py). Order matters:
+    rotated file secret changes its readers' config hash (ordo/render/secret_files.py), and
+    bind-configs.env the digest of each declared config bind (ordo/render/bind_configs.py). Order matters:
     derived first, secrets second.
     """
     cmd = ["docker", "compose", "-p", project, "-f", f"{compose_dir}/{COMPOSE_FILE}"]
@@ -55,6 +56,7 @@ def compose_argv(compose_dir: str, project: str, *args: str, profiles: Sequence[
         "--env-file", f"{compose_dir}/.env",
         "--env-file", f"{compose_dir}/secrets.env",
         "--env-file", f"{compose_dir}/{secret_files.DIGESTS_ENV_FILE}",
+        "--env-file", f"{compose_dir}/{bind_configs.VALUES_ENV_FILE}",
     ]
     return cmd + list(args)
 

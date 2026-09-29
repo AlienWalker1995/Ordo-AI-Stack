@@ -97,6 +97,7 @@ same alert on the same target (the 95% disk alert replaces the 85% one).
   `docker exec ordo-alertmanager-1 amtool silence add alertname=DiskUsageHigh --duration=2h --comment="cleanup" --alertmanager.url=http://localhost:9093`
 - **Change a threshold or add a rule**: edit the rules file, add a case to the test file, and run
   `bash scripts/ci/check-monitoring-config.sh` (CI runs it too). Prometheus reads its config and rules
-  at start, so apply a change with `ordo apply`: the render labels each service with the content digest
-  of the config files it bind-mounts (`ordo/render/bind_configs.py`), so an edited rule recreates
-  prometheus (and `alertmanager.yml` alertmanager).
+  at start, so apply a change with `ordo apply`: both declare these binds under `config_mounts:`, and the
+  host's render labels them with their content digest (`ordo/render/bind_configs.py`), so an edited
+  rule recreates prometheus (and `alertmanager.yml` alertmanager). A dashboard model switch does not
+  pick up an edit the host has not applied.

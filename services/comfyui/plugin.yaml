@@ -123,6 +123,8 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       HF_TOKEN: ${HF_TOKEN:-}
       GITHUB_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}
+    # Read at start: an edit recreates the service on the next `ordo apply` (ordo/render/bind_configs.py).
+    config_mounts: [/comfyui-scripts]
     volumes:
       # ComfyUI app code + custom nodes: a NAMED VOLUME (ext4 in the WSL2 VM), not the old
       # data/comfyui-storage Windows bind. ComfyUI v0.30's startup I/O deterministically

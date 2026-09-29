@@ -508,13 +508,13 @@ class RenderedConfig:
             oauth2_proxy = doc["services"]["oauth2-proxy"]
             oauth2_proxy.setdefault("labels", {})[compose.RENDERED_CONFIG_LABEL] = \
                 compose.rendered_config_digest(allowlist)
-        # Each read-only config file a service mounts from the checkout, labelled with its content
-        # digest: compose does not hash bind-mounted content, so without it an edited file is never
-        # recreated (ordo/render/bind_configs.py).
-        bind_configs.add_labels(doc["services"], self.env)
         return doc
 
-    def write(self, out_dir: str | Path) -> None:
+    def write(self, out_dir: str | Path, *, refresh_bind_configs: bool = False) -> None:
+        """Write the render to `out_dir`. `refresh_bind_configs` (the host's renders only) also writes
+        out/bind-configs.env from the checkout; a control-plane render keeps the digests the host
+        last wrote, so it never deploys a checkout edit the operator has not applied
+        (ordo/render/bind_configs.py)."""
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
         # .env (derived — regenerated every time; hand-edits here do not survive)
@@ -573,9 +573,12 @@ class RenderedConfig:
         # an isolated, runnable compose for the stack (own project/network, no port clashes). The
         # first-party image tags come from the record `ordo build` keeps in this same directory, so
         # the host render and ops-controller's render (out/ is its /config) pin the same builds.
-        (out / "docker-compose.yml").write_text(
-            yaml.safe_dump(self.compose_dict(image_tags=load_record(out)), sort_keys=False),
-            encoding="utf-8")
+        doc = self.compose_dict(image_tags=load_record(out))
+        (out / "docker-compose.yml").write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+        if refresh_bind_configs:
+            bind_configs.write_values(doc, self.env, out)
+        else:
+            bind_configs.ensure_values_file(out)
         for retired in RETIRED_OUTPUTS:
             (out / retired).unlink(missing_ok=True)
 

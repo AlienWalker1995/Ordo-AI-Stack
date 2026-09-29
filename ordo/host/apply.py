@@ -11,8 +11,8 @@ the one correct order:
   2. render out/ from the operator source (the compose pins the tags step 1 recorded)
   3. materialize secrets.env and the file secrets from the secret store
   4. compute the changed set: every long-running service whose rendered config hash or image id
-     differs from its running container's (the hash covers the config files it bind-mounts from the
-     checkout, through the content-digest labels of ordo/render/bind_configs.py)
+     differs from its running container's (the hash covers the config binds it declares, through the
+     content digests the host's render writes, ordo/render/bind_configs.py)
   5. check the GPU lease against that set (refused before anything is recreated)
   6. run the host preflight for the services that start
   7. recreate ops-controller first when it changed (its image, config or substrate digest), and
@@ -126,7 +126,7 @@ class RealHost:
     def staged_render(self, builds: Sequence[images.PlannedBuild], *, dry_run: bool) -> Iterator[Staged]:
         out = self.out.resolve().as_posix()
         if not dry_run:
-            self._render().write(self.out)
+            self._render().write(self.out, refresh_bind_configs=True)
             print(f"rendered -> {self.out}/ from {self.source_path}")
             yield Staged(compose_dir=out, project_directory=out, doc=stack.load_compose(out))
             return
@@ -136,7 +136,7 @@ class RealHost:
         planned = {b.target.image: b.tag for b in builds}
         with tempfile.TemporaryDirectory(prefix="ordo-apply-") as tmp:
             image_tags.save_record(tmp, {**image_tags.load_record(self.out), **planned})
-            self._render().write(tmp)
+            self._render().write(tmp, refresh_bind_configs=True)
             for name in ("secrets.env", secret_files.DIGESTS_ENV_FILE):
                 current = self.out / name
                 if current.exists():

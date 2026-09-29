@@ -272,9 +272,6 @@ def _ops_controller(project: str, net: str, nvidia_gpu: bool) -> dict[str, Any]:
         # and a "./" bind would hash differently there than on the host (read as changed forever).
         "${BASE_PATH:?BASE_PATH must be set (non-empty)}/out:/config",
         "${DATA_PATH:?DATA_PATH must be set (non-empty)}/ops-controller:/data",  # audit log, scheduler state
-        # The checkout, read-only: its re-render digests the config files services bind from it,
-        # which it cannot open at their host paths (ordo/render/bind_configs.py).
-        f"${{BASE_PATH:?BASE_PATH must be set (non-empty)}}:{bind_configs.OPS_CONTROLLER_CHECKOUT_DIR}:ro",
         "comfyui-models:/models/comfyui",             # shared ComfyUI model store (same as ops-api)
         # ComfyUI's app tree, read-only: /comfyui/install-node-requirements has to see whether a
         # custom-node pack ships a requirements.txt before it runs pip inside the comfyui
@@ -292,8 +289,6 @@ def _ops_controller(project: str, net: str, nvidia_gpu: bool) -> dict[str, Any]:
         # The GPU lease and eviction state, written on every transition so a recreate mid-lease
         # adopts it instead of forgetting it. `ordo recreate ops-controller` checks for this key.
         "SCHEDULER_STATE_PATH": "/data/scheduler-state.json",
-        # Where its render reads the checkout BASE_PATH names (the mount above).
-        bind_configs.CHECKOUT_DIR_ENV: bind_configs.OPS_CONTROLLER_CHECKOUT_DIR,
     }
     # --source/--catalog are global (pre-subcommand) flags; --project/--out belong to `serve`.
     # --out is /config ITSELF: the deployment mounts the dir holding ordo.yaml AND the rendered
@@ -723,6 +718,7 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str,
         resources = s.setdefault("deploy", {}).setdefault("resources", {})
         resources["limits"] = dict(ps.resources)
     _add_secret_files(s, ps.secret_files)
+    bind_configs.add_labels(ps.name, s, ps.config_mounts)
     return s
 
 
@@ -861,6 +857,8 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
         "models-gguf:/models:ro",
         "${BASE_PATH:?BASE_PATH must be set (non-empty)}/scripts/llamacpp:/llamacpp-scripts:ro",
     ]
+    # Its entrypoint script is read at start: an edit recreates it (ordo/render/bind_configs.py).
+    bind_configs.add_labels("llamacpp", llamacpp, ["/llamacpp-scripts"])
     # model-gateway is the V1 custom-built LiteLLM config wrapper (+ the MCP gateway since 2026-09);
     # a first-party BUILDABLE image (build context services/model-gateway) so preflight reports
     # 'build first' not 'Docker will pull'. The V2-native ops-controller + dashboard remain the new control plane.

@@ -129,7 +129,7 @@ def test_readers_of_a_key_include_the_services_that_mount_it():
 
 def test_every_compose_call_loads_the_digests():
     cmd = bringup.compose_argv("/d", "ordo", "up")
-    assert cmd[cmd.index("/d/secrets.env") + 1:cmd.index("up")] == ["--env-file", "/d/secret-files.env"]
+    assert cmd[cmd.index("/d/secrets.env") + 1:cmd.index("/d/secret-files.env") + 1] ==         ["--env-file", "/d/secret-files.env"]
 
 
 # --------------------------------------------------------------------------- #

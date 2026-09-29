@@ -42,6 +42,8 @@ services:
       TS_USERSPACE: "true"
       TS_AUTH_ONCE: "true"
       TS_SERVE_CONFIG: /config/serve.json
+    # Read at start: an edit recreates the service on the next `ordo apply` (ordo/render/bind_configs.py).
+    config_mounts: [/config/serve.json]
     volumes:
       - ts-state-notes:/var/lib/tailscale
       - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/assets/tailscale-serve/notes-funnel.json:/config/serve.json:ro

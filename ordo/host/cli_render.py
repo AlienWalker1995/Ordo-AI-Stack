@@ -63,7 +63,7 @@ def cmd_render(args: argparse.Namespace) -> int:
         # rather than at `docker compose` interpolation. Nothing is written.
         print(f"error: {e}")
         return 1
-    rc.write(args.out)
+    rc.write(args.out, refresh_bind_configs=True)
     print(f"Rendered -> {args.out}/  (model={rc.model.id}, ctx={rc.ctx_size:,})")
     print(f"secrets.env.example -> {len(rc.required_secrets)} required key(s): "
           f"{', '.join(rc.required_secrets)}")
