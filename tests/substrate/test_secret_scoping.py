@@ -54,7 +54,7 @@ FILE_SPEC: dict[str, set[str]] = {
     "litellm-db": {"LITELLM_DB_PASSWORD"},
     "ops-controller": {"OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN_HERMES"},
     "dashboard": {"OPS_CONTROLLER_TOKEN", "THROUGHPUT_RECORD_TOKEN", "LITELLM_MASTER_KEY"},
-    "agent": {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT"},
+    "agent": {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT", "OPS_CONTROLLER_TOKEN_HERMES"},
     "comfyui-gate": {"OPS_CONTROLLER_TOKEN"},
     "mcp-comfyui": {"OPS_CONTROLLER_TOKEN"},
     "mcp-orchestration": {"OPS_CONTROLLER_TOKEN"},
@@ -76,7 +76,7 @@ FILE_SPEC: dict[str, set[str]] = {
 # the /c/dev mirror (so a file would hide nothing from it) and whose docker-exec'd CLI and skills
 # read these by name. Moving one to FILE_SPEC is the goal; adding one here needs a reason.
 ENV_SPEC: dict[str, set[str]] = {
-    "agent": {"LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN", "HERMES_API_SERVER_KEY"} | LANGFUSE_PAIR,
+    "agent": {"LITELLM_KEY_HERMES", "HERMES_API_SERVER_KEY"} | LANGFUSE_PAIR,
     "hermes-dashboard": {"LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN"} | LANGFUSE_PAIR,
     "comfyui": {"OPS_CONTROLLER_TOKEN", "LITELLM_MASTER_KEY", "HF_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"},
     "n8n": {"LITELLM_KEY_AUTOMATION"},
@@ -166,7 +166,8 @@ def test_the_ops_token_reaches_only_its_callers(rendered):
     by_file = {n for n, keys in _files(compose).items() if "OPS_CONTROLLER_TOKEN" in keys}
     holders = by_file | {n for n, svc in compose["services"].items()
                          if "OPS_CONTROLLER_TOKEN" in _delivered(svc, {"OPS_CONTROLLER_TOKEN"})}
-    assert holders == {"ops-controller", "dashboard", "agent", "hermes-dashboard", "comfyui", "comfyui-gate",
+    # Not the agent (SEC-1): it presents its own scoped OPS_CONTROLLER_TOKEN_HERMES.
+    assert holders == {"ops-controller", "dashboard", "hermes-dashboard", "comfyui", "comfyui-gate",
                        "mcp-comfyui", "mcp-orchestration", "evals"}
 
 

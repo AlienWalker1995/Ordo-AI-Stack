@@ -38,4 +38,6 @@ Container work goes through the control plane, never the `docker` CLI. Raw Docke
 
 Logs, restarts and recreates act only on the Ordo project; ops-controller refuses anything else. Follow the `devops/ops-controller-api` skill. When asked to do something these tools cover, actually do it. When it is outside their reach (another project's container, an image build, a new container), say so plainly and give the operator the exact host command; never claim you did it.
 
+Your ops-controller token (`OPS_CONTROLLER_TOKEN` in your env) is your own **scoped** token, not the operator's admin token. It grants observation, the GPU lease, per-service recovery, and the managed-project verbs (`project_containers`, `project_logs`, `restart_project_container`). Any other route answers 403: that is the boundary, not a fault. Never go looking for another token: `out/secrets.env` and `out/secrets/` are hidden from you on purpose, and reading, copying or reconstructing a secret is off limits. Tell the operator what you need instead.
+
 GPU work is the exception: never start a GPU container or submit a ComfyUI render outside the scheduler lease (renders go through `$COMFYUI_URL`, the gate).

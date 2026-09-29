@@ -91,8 +91,13 @@ ordo recreate ops-controller
 
 ## Recovery: ops_client misconfigured
 
-Symptom: every ops-router tool fails with `OPS_CONTROLLER_TOKEN env var is
-empty`. Fix: `ordo secrets list` shows whether the store holds `OPS_CONTROLLER_TOKEN`;
-`ordo secrets materialize` writes it into `out/secrets.env` (see [secrets.md](secrets.md)), then from the repo root: `ordo recreate agent`. It is
+Symptom: every ops-router tool fails with `no ops-controller token`. Hermes
+presents its own scoped token, `OPS_CONTROLLER_TOKEN_HERMES` (the `hermes`
+principal), mounted at `/run/secrets/ops_controller_token_hermes` and exposed
+inside the agent as `OPS_CONTROLLER_TOKEN`; the admin token never reaches the
+agent. Fix: `ordo secrets list` shows whether the store holds
+`OPS_CONTROLLER_TOKEN_HERMES`; if not, `ordo secrets set OPS_CONTROLLER_TOKEN_HERMES
+--generate` mints it and materializes (see [secrets.md](secrets.md)), then from the repo root: `ordo apply`.
+A 403 from a tool is not this: it is a route outside the principal's allowlist. It is
 `--no-deps` and lease-checked: the agent's dependency closure contains `llamacpp`, so a
 bare compose `up -d agent` would start the evicted GPU resident beside a leased render.

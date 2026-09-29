@@ -38,9 +38,12 @@
   infisical` the values come from a (self-hosted) Infisical project
   environment instead, and the SOPS file becomes its offline backup. See
   "Backend: Infisical" below. The materialize contract is the same.
-- `out/` is inside the checkout the `agent` container mirror-mounts, so treat
-  `out/secrets.env` and `out/secrets/` like any working-copy secret. Hermes
-  already holds the file-form tokens as env vars (its entrypoint bridges them).
+- `out/` is inside the checkout the `agent` container mirror-mounts at `/c/dev`.
+  The agent manifest hides `out/secrets.env` and `out/secrets/` there (an empty
+  read-only volume and `/dev/null`, at the render-derived `AGENT_CHECKOUT_PATH`),
+  so Hermes sees only its own file secrets under `/run/secrets`: its scoped
+  `OPS_CONTROLLER_TOKEN_HERMES`, never the admin `OPS_CONTROLLER_TOKEN`. Anything
+  else under the mirror is still readable to it; keep secrets out of the code root.
 
 `ops-controller` mounts `out/` at `/config` and passes both `--env-file
 /config/.env` and `--env-file /config/secrets.env` on every compose call, so a

@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-from . import backup_policy, compose, gpu, secret_files, substrate
+from . import agent_mirror, backup_policy, compose, gpu, secret_files, substrate
 from .agents import AgentRegistry
 from .catalog import DEFAULT_VRAM_RESERVE_GB, Catalog, Model
 from .config import Source
@@ -81,8 +81,8 @@ CORE_SECRET_KEYS: tuple[str, ...] = (
     "LITELLM_SALT_KEY",           # LiteLLM DB credential-encryption salt. NEVER rotate (stored creds unreadable)
     "LITELLM_DB_PASSWORD",        # litellm-db postgres password (compose-interpolated into DATABASE_URL)
     "OPS_CONTROLLER_TOKEN",       # bearer between agent/dashboard/mcp <-> ops-controller
-    # Hermes' scoped ops-controller token (the `hermes` principal, ordo/control/principals.py). Only
-    # ops-controller reads it so far, and it is OPTIONAL below: without it the principal is off.
+    # Hermes' scoped ops-controller token (the `hermes` principal, ordo/control/principals.py): the
+    # agent presents it, ops-controller checks it. Required: the agent has no other credential.
     "OPS_CONTROLLER_TOKEN_HERMES",
     # NB: no DASHBOARD_AUTH_TOKEN. Operators reach the dashboard through the Caddy edge SSO;
     # internal callers of its protected routes send OPS_CONTROLLER_TOKEN (dashboard/auth.py).
@@ -97,7 +97,7 @@ CORE_SECRET_KEYS: tuple[str, ...] = (
 
 # The core keys above the stack runs WITHOUT (they only unlock gated downloads). Listed so a blank
 # one is a preflight note, not a blocker; a plugin that reads one declares it in `optional_secrets:`.
-CORE_OPTIONAL_SECRET_KEYS: tuple[str, ...] = ("HF_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN", "OPS_CONTROLLER_TOKEN_HERMES")
+CORE_OPTIONAL_SECRET_KEYS: tuple[str, ...] = ("HF_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN")
 
 # The SSO edge plugin (services/edge). Whether it is enabled is THE switch between the two access
 # modes; nothing else (no flag, no env var) selects the mode.
@@ -865,6 +865,13 @@ def render(source: Source, catalog: Catalog,
         var = GATED_SERVICE_URL_ENV.get(_ps.name)
         if arb is not None and arb.enforcement == "gate" and var:
             env[var] = f"http://{gpu.gate_service_name(_ps.name)}:{arb.gate.listen_port}"
+
+    # Where the Ordo checkout appears inside the agent's /c/dev mirror mount, so the agent manifest
+    # can hide the materialized secret store there (ordo/render/agent_mirror.py, SEC-1). Derived,
+    # so a site key cannot point the shadow somewhere harmless.
+    site_paths = source.site or {}
+    env["AGENT_CHECKOUT_PATH"] = agent_mirror.checkout_in_agent(str(site_paths.get("BASE_PATH", "")),
+                                                                str(site_paths.get("CODE_ROOT", "")))
 
     # Host/site config (DATA_PATH/BASE_PATH/CODE_ROOT, edge hostnames, COMFYUI_IMAGE, …) flows
     # verbatim into .env so plugin `${VAR}` refs resolve deterministically. Derived keys WIN over
