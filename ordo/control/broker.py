@@ -404,18 +404,18 @@ class DockerBackend:
         """Every container of a compose project (this one by default) as {service, name, state,
         status, image}."""
         proc = subprocess.run(
-            ["docker", "ps", "-a",
+            ["docker", "ps", "-a", "--no-trunc",
              "--filter", f"label=com.docker.compose.project={project or self.project}",
              "--format",
-             "{{.Label \"com.docker.compose.service\"}}\t{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Image}}"],
+             "{{.Label \"com.docker.compose.service\"}}\t{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Image}}\t{{.ID}}"],
             capture_output=True, text=True, timeout=30,
         )
         rows = []
         for line in proc.stdout.splitlines():
             parts = line.split("\t")
-            if len(parts) == 5 and parts[0]:
+            if len(parts) == 6 and parts[0]:
                 rows.append({"service": parts[0], "name": parts[1], "state": parts[2], "status": parts[3],
-                             "image": parts[4]})
+                             "image": parts[4], "id": parts[5]})
         return rows
 
     # --- OTHER compose projects (ordo/control/managed.py) ---
@@ -423,13 +423,18 @@ class DockerBackend:
     # structural half: each acts only on a container that carries that project's compose label.
 
     def _foreign_guard(self, project: str, name: str) -> str:
+        """The full container ID of the container NAMED `name` in `project`, from the
+        label-filtered `docker ps`. Every foreign verb acts on that ID, never on the name: docker
+        resolves a name-or-ID argument by ID first, so a container named after another
+        container's ID would otherwise redirect the verb to that other container."""
         if project == self.project:
             raise ValueError(f"'{project}' is this stack's own project; its own verbs maintain it")
         if "/" in name or name.strip() != name or not name:
             raise ValueError(f"not a valid container name: {name!r}")
-        if name not in {r["name"] for r in self._project_ps(project)}:
+        ids = [r["id"] for r in self._project_ps(project) if r["name"] == name and r.get("id")]
+        if len(ids) != 1:
             raise ValueError(f"container {name!r} is not in project {project!r}")
-        return name
+        return ids[0]
 
     def foreign_containers(self, project: str) -> list[dict]:  # pragma: no cover - needs real docker
         if project == self.project:

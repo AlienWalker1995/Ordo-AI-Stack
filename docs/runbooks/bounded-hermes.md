@@ -35,8 +35,8 @@ and call `ops-controller` (`OPS_CONTROLLER_URL=http://ops-controller:9000`):
 | `restart_container` | `POST /containers/{name}/restart` | `ordo` project only, lease-checked |
 | `compose_restart`, `compose_up` | `POST /services/{name}/recreate` | one `ordo` service, lease-checked |
 | `project_containers` | `GET /projects`, `GET /projects/{project}/containers` | projects in `ordo.yaml` `managed_projects:`, read-only |
-| `project_logs` | `GET /projects/{project}/containers/{name}/logs` | managed projects, at most 2000 lines |
-| `restart_project_container` | `POST /projects/{project}/containers/{name}/restart` | managed projects; confirm-gated, 3 per container per hour (then 429), refused (409) when its device requests or `NVIDIA_VISIBLE_DEVICES` expose the leased GPU, unless `CUDA_VISIBLE_DEVICES` pins it to other cards (`ordo/control/managed.py` `gpu_refusal`) |
+| `project_logs` | `GET /projects/{project}/containers/{name}/logs` | managed projects, at most 2000 lines; every read is audited (`project.logs`) |
+| `restart_project_container` | `POST /projects/{project}/containers/{name}/restart` | managed projects; confirm-gated, 3 per container per hour (then 429; the budget is in ops-controller's memory and resets when ops-controller restarts), refused (409) when its device requests or `NVIDIA_VISIBLE_DEVICES` expose the leased GPU, unless `CUDA_VISIBLE_DEVICES` pins it to other cards (`ordo/control/managed.py` `gpu_refusal`) |
 
 `OpsClient` refuses stack-wide compose verbs (`service=None`) before making
 a request; the render pipeline owns stack lifecycle:

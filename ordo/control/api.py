@@ -162,6 +162,13 @@ def audit_actor(header: str | None) -> str:
 
 # POST /projects/{project}/containers/{name}/restart: a managed project's container (managed.py).
 _PROJECT_RESTART = re.compile(r"^/projects/([^/]+)/containers/([^/]+)/restart$")
+# GET /projects/{project}/containers/{name}/logs: another project's logs. The one READ that is
+# audited: log output is that project's data, so every read of it leaves a record.
+_PROJECT_LOGS = re.compile(r"^/projects/([^/]+)/containers/([^/]+)/logs$")
+
+
+def audited_read(method: str, path: str) -> bool:
+    return method.upper() == "GET" and _PROJECT_LOGS.match(path) is not None
 
 
 def audit_subject(path: str, body: Any) -> tuple[str, str]:
@@ -170,6 +177,9 @@ def audit_subject(path: str, body: Any) -> tuple[str, str]:
     project_restart = _PROJECT_RESTART.match(path)
     if project_restart:
         return "project.restart", _clip(f"{project_restart.group(1)}/{project_restart.group(2)}")
+    project_logs = _PROJECT_LOGS.match(path)
+    if project_logs:
+        return "project.logs", _clip(f"{project_logs.group(1)}/{project_logs.group(2)}")
     for prefix, suffix, action in _AUDIT_PATH_VERBS:
         if path.startswith(prefix) and path.endswith(suffix) and len(path) > len(prefix) + len(suffix):
             return action, _clip(path[len(prefix):-len(suffix)])
@@ -1179,7 +1189,9 @@ class ControlPlane:
         gpu_refusal = managed.gpu_refusal(raw, self._leased_gpu_uuid(), self._gpu_indexes())
         if gpu_refusal:
             return self._error(409, f"refusing to restart {key}: {gpu_refusal}")
-        wait = self._restart_budget.retry_after(key)
+        # Reserve the slot BEFORE restarting (one lock: parallel callers cannot all pass the check)
+        # and give it back if the restart does not happen.
+        wait = self._restart_budget.reserve(key)
         if wait is not None:
             return self._error(429, f"{key} was restarted {self._restart_budget.limit} times in the last hour; "
                                     "a restart loop needs a diagnosis, not another restart",
@@ -1187,10 +1199,11 @@ class ControlPlane:
         try:
             self.broker.backend.foreign_restart(project, name)
         except ValueError as e:
+            self._restart_budget.refund(key)
             return self._error(404, str(e))
         except Exception as e:
+            self._restart_budget.refund(key)
             return self._error(500, str(e))
-        self._restart_budget.record(key)
         return {"ok": True, "project": project, "container": name, "action": "restarted"}
 
     def container_inspect(self, name: str) -> dict[str, Any]:
@@ -1568,9 +1581,10 @@ class ControlPlane:
         """`route()` plus the audit record: the HTTP binding's one entry point.
 
         Every call with an AUDITED_METHODS method leaves exactly one record, whatever route() does
-        with it (success, dry run, 4xx refusal, 5xx failure or an exception). Reads leave none.
+        with it (success, dry run, 4xx refusal, 5xx failure or an exception). Reads leave none,
+        except a read of another project's logs (`audited_read`).
         """
-        if method.upper() not in AUDITED_METHODS:
+        if method.upper() not in AUDITED_METHODS and not audited_read(method, path):
             return self.route(method, path, body, query)
         try:
             status, payload = self.route(method, path, body, query)

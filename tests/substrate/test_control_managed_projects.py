@@ -122,7 +122,8 @@ ALL_GPU = _raw(device_requests=ALL_GPUS)
     _raw(),                                                                          # no GPU at all
     JELLYFIN,                                                                        # live jellyfin
     CREW_LLM,                                                                        # live azerothcore-crew-llm-1
-    _raw(env=["CUDA_VISIBLE_DEVICES=0"], device_requests=ALL_GPUS),                  # CUDA pin by index
+    _raw(env=["CUDA_DEVICE_ORDER=PCI_BUS_ID", "CUDA_VISIBLE_DEVICES=0"],             # CUDA index, PCI order
+         device_requests=ALL_GPUS),
     _raw(device_requests=[{"Driver": "nvidia", "Count": 0, "DeviceIDs": [OTHER.lower()]}]),
     _raw(device_requests=[{"Driver": "nvidia", "Count": 0, "DeviceIDs": ["0"]}]),   # the 1070 by index
     _raw(env=[f"NVIDIA_VISIBLE_DEVICES={OTHER}"], runtime="nvidia"),
@@ -144,17 +145,50 @@ def test_a_container_off_the_leased_card_may_restart(raw):
     _raw(env=[f"NVIDIA_VISIBLE_DEVICES={OTHER}"],                                   # env says 1070, request adds 5090
          device_requests=[{"Driver": "nvidia", "Count": 0, "DeviceIDs": [LEASED]}]),
     _raw(runtime="nvidia"),                                                          # nvidia runtime, no pin
+    # Security review of #302:
+    # F2: CUDA accepts a uuid PREFIX; a short one can name the 5090 and must never clear.
+    _raw(env=["CUDA_VISIBLE_DEVICES=GPU-97fe65ee"], device_requests=ALL_GPUS),
+    _raw(env=["CUDA_VISIBLE_DEVICES=GPU-2"], device_requests=ALL_GPUS),
+    # F2: a full-length uuid no card on this host has proves nothing either.
+    _raw(env=["CUDA_VISIBLE_DEVICES=GPU-00000000-0000-0000-0000-000000000000"], device_requests=ALL_GPUS),
+    # F3: CUDA's default order is fastest first, so CUDA's 0 is the 5090 here.
+    _raw(env=["CUDA_VISIBLE_DEVICES=0"], device_requests=ALL_GPUS),
+    _raw(env=["CUDA_DEVICE_ORDER=FASTEST_FIRST", "CUDA_VISIBLE_DEVICES=0"], device_requests=ALL_GPUS),
+    # F4: CDI requests (`--device nvidia.com/gpu=all`) and unknown drivers are GPU requests.
+    _raw(device_requests=[{"Driver": "cdi", "Count": 0, "DeviceIDs": ["nvidia.com/gpu=all"], "Capabilities": None}]),
+    _raw(device_requests=[{"Driver": "cdi", "Count": 0, "DeviceIDs": ["nvidia.com/gpu=1"], "Capabilities": None}]),
+    _raw(device_requests=[{"Driver": "", "Count": 0, "DeviceIDs": ["nvidia.com/gpu=0"], "Capabilities": None}]),
+    _raw(device_requests=[{"Driver": "some-vendor", "Count": -1, "DeviceIDs": None, "Capabilities": None}]),
+    # F4: a raw GPU device node (`--device /dev/dxg` is the WSL2 GPU) with no CUDA pin.
+    {"Config": {"Env": []}, "HostConfig": {"Devices": [{"PathOnHost": "/dev/dxg", "PathInContainer": "/dev/dxg"}]}},
+    {"Config": {"Env": []}, "HostConfig": {"Devices": [{"PathOnHost": "/dev/nvidia1", "PathInContainer": "/dev/nvidia1"}]}},
 ], ids=["all-gpu", "nvidia-all", "cuda-leased", "cuda-both", "cuda-index-1", "cuda-all", "count-1",
-        "device-index-1", "device-index-unknown", "env-and-request", "runtime-unpinned"])
+        "device-index-1", "device-index-unknown", "env-and-request", "runtime-unpinned",
+        "cuda-uuid-prefix", "cuda-uuid-short", "cuda-uuid-unknown", "cuda-index-default-order",
+        "cuda-index-fastest-first", "cdi-all", "cdi-index", "cdi-no-driver", "unknown-driver",
+        "dev-dxg", "dev-nvidia"])
 def test_a_container_that_could_reach_the_leased_card_is_refused(raw):
     assert "leased" in managed.gpu_refusal(raw, LEASED, INVENTORY)
 
 
-def test_an_index_pin_without_an_inventory_proves_nothing():
-    """No nvidia-smi answer: an index cannot be resolved, so the CUDA pin does not count."""
-    raw = _raw(env=["CUDA_VISIBLE_DEVICES=0"], device_requests=ALL_GPUS)
+def test_without_an_inventory_no_pin_clears_a_container():
+    """No nvidia-smi answer: neither an index nor a uuid can be matched to a card on this host,
+    so no CUDA pin counts (F2: only a full uuid that matches the inventory clears)."""
+    raw = _raw(env=["CUDA_DEVICE_ORDER=PCI_BUS_ID", "CUDA_VISIBLE_DEVICES=0"], device_requests=ALL_GPUS)
     assert managed.gpu_refusal(raw, LEASED, {})
-    assert managed.gpu_refusal(CREW_LLM, LEASED, {}) is None        # a uuid pin needs no inventory
+    assert managed.gpu_refusal(CREW_LLM, LEASED, {})
+
+
+def test_a_cdi_request_for_another_card_by_full_uuid_is_allowed():
+    raw = _raw(device_requests=[{"Driver": "cdi", "Count": 0, "DeviceIDs": [f"nvidia.com/gpu={OTHER}"],
+                                 "Capabilities": None}])
+    assert managed.gpu_refusal(raw, LEASED, INVENTORY) is None
+
+
+def test_a_gpu_device_node_with_a_cuda_pin_elsewhere_is_allowed():
+    raw = {"Config": {"Env": [f"CUDA_VISIBLE_DEVICES={OTHER}"]},
+           "HostConfig": {"Devices": [{"PathOnHost": "/dev/dxg", "PathInContainer": "/dev/dxg"}]}}
+    assert managed.gpu_refusal(raw, LEASED, INVENTORY) is None
 
 
 def test_an_unknown_leased_card_refuses_every_gpu_container():
@@ -172,17 +206,44 @@ def test_the_refusal_never_quotes_the_environment():
 # the restart budget (pure)
 # --------------------------------------------------------------------------- #
 
+def test_a_reservation_is_atomic_across_threads():
+    """F1 (review of #302): check and record under one lock, so N racing callers get exactly
+    `limit` slots, never N."""
+    import threading
+    budget = managed.RestartBudget(limit=3, window_seconds=3600)
+    barrier = threading.Barrier(12)
+    granted = []
+
+    def worker():
+        barrier.wait()
+        granted.append(budget.reserve("nas-stack/janitorr") is None)
+
+    threads = [threading.Thread(target=worker) for _ in range(12)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert granted.count(True) == 3
+
+
+def test_a_refunded_reservation_frees_its_slot():
+    budget = managed.RestartBudget(limit=1, window_seconds=3600)
+    assert budget.reserve("k") is None
+    assert budget.reserve("k") is not None
+    budget.refund("k")
+    assert budget.reserve("k") is None
+
+
 def test_three_restarts_per_container_per_hour_then_refused():
     clock = [1000.0]
     budget = managed.RestartBudget(limit=3, window_seconds=3600, clock=lambda: clock[0])
     for _ in range(3):
-        assert budget.retry_after("nas-stack/janitorr") is None
-        budget.record("nas-stack/janitorr")
-    wait = budget.retry_after("nas-stack/janitorr")
+        assert budget.reserve("nas-stack/janitorr") is None
+    wait = budget.reserve("nas-stack/janitorr")
     assert wait is not None and 0 < wait <= 3600
-    assert budget.retry_after("nas-stack/jellyfin") is None     # per container
+    assert budget.reserve("nas-stack/jellyfin") is None         # per container
     clock[0] += 3601
-    assert budget.retry_after("nas-stack/janitorr") is None     # a sliding hour
+    assert budget.reserve("nas-stack/janitorr") is None         # a sliding hour
 
 
 # --------------------------------------------------------------------------- #
@@ -302,6 +363,49 @@ def test_the_fourth_restart_in_an_hour_is_429(plane, client):
     assert _restart(client, "adguard", "adguard-adguardhome-1").status_code == 200
 
 
+def test_parallel_restarts_cannot_beat_the_budget(plane):
+    """F1 (review of #302): six parallel confirmed restarts gave six 200s. Now exactly three."""
+    import threading
+    import time
+    cp, _ = plane
+    backend = cp.broker.backend
+    original = backend.foreign_restart
+
+    def slow_restart(project, name):
+        time.sleep(0.2)                     # every caller is past the check before any records
+        original(project, name)
+
+    backend.foreign_restart = slow_restart
+    barrier = threading.Barrier(6)
+    statuses = []
+
+    def worker():
+        barrier.wait()
+        statuses.append(cp.route("POST", "/projects/nas-stack/containers/janitorr/restart", {"confirm": True}, {})[0])
+
+    threads = [threading.Thread(target=worker) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(statuses) == [200, 200, 200, 429, 429, 429]
+    assert len(backend.foreign_restarts) == 3
+
+
+def test_a_failed_restart_refunds_its_slot(plane, client):
+    cp, _ = plane
+
+    def broken(project, name):
+        raise RuntimeError("docker restart failed")
+
+    original = cp.broker.backend.foreign_restart
+    cp.broker.backend.foreign_restart = broken
+    for _ in range(3):
+        assert _restart(client, "nas-stack", "janitorr").status_code == 500
+    cp.broker.backend.foreign_restart = original
+    assert _restart(client, "nas-stack", "janitorr").status_code == 200
+
+
 def test_a_refused_restart_does_not_spend_the_budget(plane, client):
     for _ in range(3):
         assert _restart(client, "nas-stack", "janitorr", confirm=False).status_code == 400
@@ -316,6 +420,23 @@ def test_every_restart_is_audited_under_the_principal(plane, client):
     assert (ok["principal"], ok["caller"], ok["action"], ok["target"], ok["status"]) == (
         "hermes", "hermes:discord", "project.restart", "nas-stack/janitorr", 200)
     assert (refused["action"], refused["target"], refused["status"]) == ("project.restart", "nas-stack/transcoder", 409)
+
+
+def test_a_foreign_log_read_is_audited_under_the_principal(plane, client):
+    """F6 (review of #302): reading another project's logs is recorded, like a write."""
+    _, audit_path = plane
+    client.get("/projects/nas-stack/containers/janitorr/logs?tail=10", headers=HERMES)
+    [rec] = _records(audit_path)
+    assert (rec["principal"], rec["caller"], rec["method"], rec["action"], rec["target"], rec["status"]) == (
+        "hermes", "hermes:discord", "GET", "project.logs", "nas-stack/janitorr", 200)
+    assert rec["path"] == "/projects/nas-stack/containers/janitorr/logs"
+
+
+def test_other_managed_reads_are_not_audited(plane, client):
+    _, audit_path = plane
+    client.get("/projects", headers=HERMES)
+    client.get("/projects/nas-stack/containers", headers=HERMES)
+    assert _records(audit_path) == []
 
 
 def test_hermes_has_status_logs_and_restart_only():
@@ -337,3 +458,58 @@ def test_no_verb_but_status_logs_and_restart_exists(plane):
                          ("POST", "/projects/nas-stack/containers/janitorr/start"),
                          ("DELETE", "/projects/nas-stack/containers/janitorr")]:
         assert cp.route(method, path, {"confirm": True}, {})[0] == 404
+
+
+# --------------------------------------------------------------------------- #
+# F5 (review of #302): a container NAMED after another container's full ID
+# --------------------------------------------------------------------------- #
+
+VICTIM_ID = "a" * 64
+DECOY_ID = "b" * 64
+
+
+class FakeDocker:
+    """`docker` as the DockerBackend sees it: nas-stack holds one container whose NAME is the
+    victim's full ID. Docker resolves a name-or-ID argument by ID first, so acting on the name
+    would act on the victim (another project's container)."""
+
+    def __init__(self):
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv, **kwargs):
+        import subprocess
+        self.calls.append(list(argv))
+        if argv[:2] == ["docker", "ps"]:
+            out = f"decoy\t{VICTIM_ID}\trunning\tUp 1 hour\talpine\t{DECOY_ID}\n"
+        elif argv[:2] == ["docker", "inspect"]:
+            out = json.dumps([{"Id": argv[-1], "Config": {"Env": []}, "HostConfig": {}}])
+        else:
+            out = ""
+        return subprocess.CompletedProcess(argv, 0, out, "")
+
+
+@pytest.fixture
+def docker_backend(monkeypatch):
+    from ordo.control import broker as broker_module
+    fake = FakeDocker()
+    monkeypatch.setattr(broker_module.subprocess, "run", fake)
+    return broker_module.DockerBackend(project="ordo"), fake
+
+
+@pytest.mark.parametrize("verb", ["foreign_restart", "foreign_logs", "foreign_inspect"])
+def test_the_backend_acts_on_the_labelled_containers_id_not_its_name(docker_backend, verb):
+    backend, fake = docker_backend
+    args = ("nas-stack", VICTIM_ID, 10) if verb == "foreign_logs" else ("nas-stack", VICTIM_ID)
+    getattr(backend, verb)(*args)
+    acted = [argv for argv in fake.calls if argv[:2] != ["docker", "ps"]]
+    assert len(acted) == 1
+    assert acted[0][-1] == DECOY_ID
+    assert VICTIM_ID not in acted[0]
+
+
+def test_the_ps_query_is_label_filtered_and_untruncated(docker_backend):
+    backend, fake = docker_backend
+    backend.foreign_restart("nas-stack", VICTIM_ID)
+    ps = next(argv for argv in fake.calls if argv[:2] == ["docker", "ps"])
+    assert "label=com.docker.compose.project=nas-stack" in ps
+    assert "--no-trunc" in ps
