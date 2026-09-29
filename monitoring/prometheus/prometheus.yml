@@ -1,11 +1,22 @@
 # Prometheus scrape config for the Ordo stack (monitoring profile).
 # Scrapes llama.cpp's native /metrics (enabled by --metrics in
 # scripts/llamacpp/run-llama-server.sh), LiteLLM's /metrics (model-gateway),
-# and the nvidia GPU exporter. All targets are on the internal `ordo-net` network, no host exposure.
+# the nvidia GPU exporter, ops-controller (GPU lease, containers, disks, the edge certificate) and
+# Alertmanager. All targets are on the internal `ordo-net` network, no host exposure.
 global:
   scrape_interval: 15s
   scrape_timeout: 10s
   evaluation_interval: 15s
+
+# Alert rules (tracked, mounted read-only from monitoring/prometheus/rules/), delivered by the
+# monitoring plugin's Alertmanager (monitoring/alertmanager/alertmanager.yml).
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
 
 scrape_configs:
   - job_name: prometheus
@@ -50,3 +61,22 @@ scrape_configs:
       - targets: ['model-gateway:11435']
         labels:
           service: model-gateway
+
+  # ops-controller's GET /metrics (ordo/control/metrics.py): GPU lease and eviction state, container
+  # running/unhealthy/restart counts, the Docker VM and host disks, the edge TLS certificate. No
+  # token: the route is unauthenticated and holds no secret. Every 60s with a 30s timeout: a scrape
+  # runs `docker ps` + `docker inspect`, and `docker ps` hit its 30s timeout during the 2026-09-27 crash recovery.
+  - job_name: ops-controller
+    metrics_path: /metrics
+    scrape_interval: 60s
+    scrape_timeout: 30s
+    static_configs:
+      - targets: ['ops-controller:9000']
+        labels:
+          service: ops-controller
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ['alertmanager:9093']
+        labels:
+          service: alertmanager

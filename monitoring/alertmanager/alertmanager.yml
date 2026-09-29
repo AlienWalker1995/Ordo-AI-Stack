@@ -1,0 +1,45 @@
+# Alertmanager for the Ordo stack (monitoring plugin, services/monitoring/plugin.yaml).
+#
+# Two receivers, each reading its URL from a file-delivered secret (never a value in this public
+# file): the operator's Discord channel for every alert, and an off-box heartbeat check that
+# receives only Watchdog. Set them with `ordo secrets set ALERTMANAGER_DISCORD_WEBHOOK_URL` and
+# `ordo secrets set ALERTMANAGER_HEARTBEAT_URL` (docs/runbooks/alerting.md). A key left blank
+# materializes as an empty file: Alertmanager still runs, every delivery to that receiver fails
+# (logged, counted in alertmanager_notifications_failed_total), and `ordo doctor` fails naming it.
+route:
+  receiver: discord
+  # One notification per alert name, listing every target it fires for (a disk alert for both
+  # disks, a restart loop for three services) instead of one message each.
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h
+  routes:
+    # The dead-man switch: pinged every minute while the pipeline works. The off-box check alerts
+    # when the pings stop. `continue: false` (the default) keeps it out of Discord.
+    - matchers: ['alertname="Watchdog"']
+      receiver: heartbeat
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 1m
+    - matchers: ['severity="critical"']
+      receiver: discord
+      repeat_interval: 4h
+
+# A critical alert silences the warning of the same alertname on the same target (the 95% disk alert
+# replaces the 85% one; the 88 C GPU alert replaces the 80 C one). A label absent from both alerts
+# counts as equal, so each alert is matched on whichever of these it carries.
+inhibit_rules:
+  - source_matchers: ['severity="critical"']
+    target_matchers: ['severity="warning"']
+    equal: [alertname, mount, service, uuid, cert, resident, lease, job]
+
+receivers:
+  - name: discord
+    discord_configs:
+      - webhook_url_file: /run/secrets/alertmanager_discord_webhook_url
+        send_resolved: true
+  - name: heartbeat
+    webhook_configs:
+      - url_file: /run/secrets/alertmanager_heartbeat_url
+        send_resolved: false

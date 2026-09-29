@@ -1,0 +1,298 @@
+# `promtool test rules` for monitoring/prometheus/rules/ordo-alerts.yml (CI: the monitoring-config
+# job, with the Prometheus image services/monitoring/plugin.yaml pins). Each case replays a shape
+# observed on the live stack (2026-09-29) or one of the incidents the rules exist for, and states
+# whether it must fire. promtool's clock starts at 0, so time() is the eval time.
+rule_files:
+  - ../rules/ordo-alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Watchdog always fires; nothing else fires on a healthy stack.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="llamacpp"}'
+        values: '1x30'
+      - series: 'ordo_gpu_resident_evicted{resident="llamacpp"}'
+        values: '0x30'
+      - series: 'ordo_gpu_leases_running'
+        values: '0x30'
+      - series: 'ordo_gpu_leases_queued'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: Watchdog
+        exp_alerts:
+          - exp_labels: {severity: none}
+            exp_annotations: {summary: Alerting pipeline heartbeat (always firing)}
+      - eval_time: 30m
+        alertname: LlamaCppDown
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: GpuResidentEvictedWithoutLease
+        exp_alerts: []
+
+  # Disk: the live Docker VM disk at 87% warns (not critical); a disk at 96% is critical too.
+  - interval: 1m
+    input_series:
+      # 1000 GB, 870 GB used, 0 reserved: 87%.
+      - series: 'ordo_filesystem_size_bytes{mount="docker"}'
+        values: '1000000000000x30'
+      - series: 'ordo_filesystem_free_bytes{mount="docker"}'
+        values: '130000000000x30'
+      - series: 'ordo_filesystem_avail_bytes{mount="docker"}'
+        values: '130000000000x30'
+      - series: 'ordo_filesystem_size_bytes{mount="host"}'
+        values: '1000000000000x30'
+      - series: 'ordo_filesystem_free_bytes{mount="host"}'
+        values: '40000000000x30'
+      - series: 'ordo_filesystem_avail_bytes{mount="host"}'
+        values: '40000000000x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: DiskUsageHigh
+        exp_alerts:
+          - exp_labels: {severity: critical, mount: host}
+            exp_annotations:
+              summary: host disk is 96.0% full
+              description: >-
+                The host disk passed 95%. Databases and the Docker VM fail writes when it fills; free
+                space now.
+      - eval_time: 20m
+        alertname: DiskUsageHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, mount: docker}
+            exp_annotations:
+              summary: docker disk is 87.0% full
+              description: >-
+                The docker disk passed 85%. Find what grew (`docker system df -v`; a container's log
+                or data volume) before it reaches 95%.
+          - exp_labels: {severity: warning, mount: host}
+            exp_annotations:
+              summary: host disk is 96.0% full
+              description: >-
+                The host disk passed 85%. Find what grew (`docker system df -v`; a container's log
+                or data volume) before it reaches 95%.
+          - exp_labels: {severity: critical, mount: host}
+            exp_annotations:
+              summary: host disk is 96.0% full
+              description: >-
+                The host disk passed 95%. Databases and the Docker VM fail writes when it fills; free
+                space now.
+
+  # Restart loops: the live mcp-comfyui burst (7 restarts in 4 minutes, then stable) must NOT fire;
+  # a container still restarting every minute after 15 minutes must.
+  - interval: 1m
+    input_series:
+      - series: 'ordo_container_restarts_total{service="mcp-comfyui"}'
+        values: '0 2 4 6 7x40'
+      - series: 'ordo_container_restarts_total{service="n8n"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: ContainerRestartLoop
+        exp_alerts:
+          - exp_labels: {severity: critical, service: n8n}
+            exp_annotations:
+              summary: n8n is crash-looping
+              description: >-
+                n8n keeps restarting (5 restarts in the last 5 minutes). Read `docker logs
+                ordo-n8n-1`.
+
+  - interval: 1m
+    input_series:
+      - series: 'ordo_container_unhealthy{service="gpu-exporter"}'
+        values: '0 0 1x20'
+      - series: 'ordo_container_unhealthy{service="db"}'
+        values: '0 1 1 1 0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ContainerUnhealthy
+        exp_alerts:
+          - exp_labels: {severity: warning, service: gpu-exporter}
+            exp_annotations:
+              summary: gpu-exporter healthcheck is failing
+              description: gpu-exporter has reported unhealthy for 10 minutes.
+
+  # The stale-lease incident: llama.cpp evicted, the lease that evicted it gone, nothing restoring
+  # it. A resident evicted WHILE a lease runs is a render in progress and is fine.
+  - interval: 1m
+    input_series:
+      - series: 'ordo_gpu_resident_evicted{resident="llamacpp"}'
+        values: '1x40'
+      - series: 'ordo_gpu_leases_running'
+        values: '1x10 0x30'
+      - series: 'ordo_gpu_leases_queued'
+        values: '0x40'
+      - series: 'up{job="llamacpp"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: GpuResidentEvictedWithoutLease
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: LlamaCppDown
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: GpuResidentEvictedWithoutLease
+        exp_alerts:
+          - exp_labels: {severity: critical, resident: llamacpp}
+            exp_annotations:
+              summary: llamacpp is still evicted with no GPU lease held
+              description: >-
+                llamacpp was stopped for a GPU lease that is gone, and has not been restored. Chat is
+                on the CPU fallback. Check ops-controller's /status and logs.
+
+  # Evicted for a legitimate long job: a warning at 2 hours (the longest observed render: 54 min).
+  - interval: 5m
+    input_series:
+      - series: 'ordo_gpu_resident_evicted{resident="llamacpp"}'
+        values: '1x40'
+      - series: 'ordo_gpu_leases_running'
+        values: '1x40'
+      - series: 'ordo_gpu_leases_queued'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: GpuResidentEvictedLong
+        exp_alerts: []
+      - eval_time: 150m
+        alertname: GpuResidentEvictedLong
+        exp_alerts:
+          - exp_labels: {severity: warning, resident: llamacpp}
+            exp_annotations:
+              summary: llamacpp has been evicted for over 2 hours
+              description: >-
+                A GPU lease has kept llamacpp stopped for over 2 hours (the longest render observed
+                took 54 minutes). Check the running lease on ops-controller's /status.
+
+  # A lease the sweep never completed: at 0 remaining for over 5 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'ordo_gpu_lease_ttl_remaining_seconds{lease="gate-comfyui",kind="media"}'
+        values: '120 60 0x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: GpuLeasePastTtl
+        exp_alerts:
+          - exp_labels: {severity: critical, lease: gate-comfyui, kind: media}
+            exp_annotations:
+              summary: GPU lease gate-comfyui is past its TTL
+              description: >-
+                The scheduler has not completed lease gate-comfyui (media) after its TTL. Check
+                `docker logs ordo-ops-controller-1` for lease sweep errors.
+
+  # llama.cpp down and NOT evicted fires; so does llama.cpp down while ops-controller is unreachable
+  # (no eviction series at all).
+  - interval: 1m
+    input_series:
+      - series: 'up{job="llamacpp"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: LlamaCppDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: llamacpp}
+            exp_annotations:
+              summary: llama.cpp (the GPU chat model) is down and not evicted for a GPU lease
+              description: >-
+                Prometheus cannot scrape llamacpp:8080 and no GPU lease has evicted it. Read `docker
+                logs ordo-llamacpp-1`.
+
+  # Scrape targets: the GPU exporter's one-scrape timeouts do not fire; 20 minutes down does.
+  # llama.cpp is never a TargetDown (LlamaCppDown owns it).
+  - interval: 1m
+    input_series:
+      - series: 'up{job="gpu",instance="gpu-exporter:9835"}'
+        values: '1 0 1 0 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'up{job="model-gateway",instance="model-gateway:11435"}'
+        values: '1 0 0 0 1x20'
+      - series: 'up{job="llamacpp",instance="llamacpp:8080"}'
+        values: '0x25'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: TargetDown
+        exp_alerts:
+          - exp_labels: {severity: warning, job: gpu, instance: "gpu-exporter:9835"}
+            exp_annotations:
+              summary: Prometheus cannot scrape gpu
+              description: gpu-exporter:9835 (gpu) has been unreachable for 15 minutes.
+
+  # GPU: the observed peaks (65 C, a 408 W five-minute average on the 5090's 400 W cap, single
+  # samples of 419 W) do not fire; sustained heat and a cap that does not hold do.
+  - interval: 1m
+    input_series:
+      - series: 'nvidia_smi_temperature_gpu{uuid="gpu-a"}'
+        values: '65x20'
+      - series: 'nvidia_smi_temperature_gpu{uuid="gpu-b"}'
+        values: '82x20'
+      - series: 'nvidia_smi_power_draw_watts{uuid="gpu-a"}'
+        values: '400 419 405 410 395 408 419 400 405 410 400 419 405 410 395 408 419 400 405 410 400'
+      - series: 'nvidia_smi_enforced_power_limit_watts{uuid="gpu-a"}'
+        values: '400x20'
+      - series: 'nvidia_smi_power_draw_watts{uuid="gpu-b"}'
+        values: '125x20'
+      - series: 'nvidia_smi_enforced_power_limit_watts{uuid="gpu-b"}'
+        values: '75x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: GpuTemperatureHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, uuid: gpu-b}
+            exp_annotations:
+              summary: GPU gpu-b is at 82 C
+              description: 15 C above the hottest sustained reading observed. Check the fans and the case airflow.
+      - eval_time: 15m
+        alertname: GpuPowerAboveLimit
+        exp_alerts:
+          - exp_labels: {severity: warning, uuid: gpu-b}
+            exp_annotations:
+              summary: GPU gpu-b draws 125 W, over its power limit
+              description: >-
+                The card has averaged more than 5% over its enforced power limit for 10 minutes.
+                Check the power cap (`nvidia-smi -q -d POWER`).
+
+  # The edge certificate: 10 days left warns, 2 days left is critical too.
+  - interval: 1m
+    input_series:
+      - series: 'ordo_tls_cert_not_after_timestamp_seconds{cert="edge"}'
+        values: '864000'
+      - series: 'ordo_tls_cert_not_after_timestamp_seconds{cert="old"}'
+        values: '172800'
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: TlsCertExpiring
+        exp_alerts:
+          - exp_labels: {severity: warning, cert: edge}
+            exp_annotations:
+              summary: The edge TLS certificate expires in 10 days
+              description: >-
+                Renew it (docs/runbooks/auth.md, `tailscale cert`) before it expires and every edge
+                site stops serving.
+          - exp_labels: {severity: warning, cert: old}
+            exp_annotations:
+              summary: The old TLS certificate expires in 2 days
+              description: >-
+                Renew it (docs/runbooks/auth.md, `tailscale cert`) before it expires and every edge
+                site stops serving.
+          - exp_labels: {severity: critical, cert: old}
+            exp_annotations:
+              summary: The old TLS certificate expires in 2.0 days
+              description: Renew it now (docs/runbooks/auth.md).
+
+  - interval: 1m
+    input_series:
+      - series: 'ordo_metrics_collector_ok{collector="restarts"}'
+        values: '0x20'
+      - series: 'ordo_metrics_collector_ok{collector="disk_host"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: MetricsCollectorFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, collector: restarts}
+            exp_annotations:
+              summary: ops-controller cannot read restarts
+              description: >-
+                GET /metrics has not been able to read restarts for 15 minutes, so the alerts that
+                use it cannot fire. Check `docker logs ordo-ops-controller-1`.

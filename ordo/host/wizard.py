@@ -74,7 +74,7 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
         "gpu": False,
     },
     "monitoring": {
-        "label": "Monitoring (Grafana + Prometheus + GPU exporter)",
+        "label": "Monitoring and alerting (Grafana + Prometheus + GPU exporter + Alertmanager)",
         "plugins": ["monitoring"],
         "gpu": False,
     },

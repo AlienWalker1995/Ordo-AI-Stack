@@ -1,0 +1,225 @@
+# Ordo alert rules, loaded by monitoring/prometheus/prometheus.yml (rule_files) and delivered by
+# Alertmanager (monitoring/alertmanager/alertmanager.yml): Discord for everything, the off-box
+# heartbeat for Watchdog.
+#
+# Thresholds come from the live stack's own history (15 days of Prometheus data, 2026-09-29), not
+# from vendor defaults; each rule says what was observed. CI runs `promtool check rules` and
+# `promtool test rules` (ordo-alerts.test.yml) against the pinned Prometheus image.
+#
+# Severity: `critical` needs action now, `warning` needs a look today. A critical alert inhibits the
+# warning of the same alertname on the same target (alertmanager.yml), so a disk at 96% sends one
+# alert, not two. The ordo_* series come from ops-controller's GET /metrics (ordo/control/metrics.py).
+groups:
+  - name: ordo-heartbeat
+    rules:
+      # Always firing. Alertmanager routes it to the off-box heartbeat check only (never Discord):
+      # when the heartbeat stops arriving, the box, Docker, Prometheus or Alertmanager is down, and
+      # the off-box check alerts. This is the one alert that works when everything else is dead.
+      - alert: Watchdog
+        expr: vector(1)
+        labels:
+          severity: none
+        annotations:
+          summary: Alerting pipeline heartbeat (always firing)
+
+  - name: ordo-disk
+    rules:
+      # docker = the Docker VM disk (it filled to 100% from ClickHouse logs on 2026-09-28);
+      # host = the disk holding the checkout. Used % the way df computes it. Live on 2026-09-29:
+      # docker 86.2%, host 84.2%, so the docker warning fires on the day this ships: it is that full.
+      - alert: DiskUsageHigh
+        expr: |
+          100 * (ordo_filesystem_size_bytes - ordo_filesystem_free_bytes)
+            / (ordo_filesystem_size_bytes - ordo_filesystem_free_bytes + ordo_filesystem_avail_bytes) > 85
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.mount }} disk is {{ $value | printf \"%.1f\" }}% full"
+          description: >-
+            The {{ $labels.mount }} disk passed 85%. Find what grew (`docker system df -v`; a
+            container's log or data volume) before it reaches 95%.
+      - alert: DiskUsageHigh
+        expr: |
+          100 * (ordo_filesystem_size_bytes - ordo_filesystem_free_bytes)
+            / (ordo_filesystem_size_bytes - ordo_filesystem_free_bytes + ordo_filesystem_avail_bytes) > 95
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.mount }} disk is {{ $value | printf \"%.1f\" }}% full"
+          description: >-
+            The {{ $labels.mount }} disk passed 95%. Databases and the Docker VM fail writes when it
+            fills; free space now.
+
+  - name: ordo-containers
+    rules:
+      # Docker's RestartCount of the service's current container. Two restarts in 5 minutes, held
+      # for 10 minutes, is a loop that is still going. Observed live: mcp-comfyui restarted 7 times
+      # in its first 4 minutes on 2026-09-29 and then settled; this does not fire on that.
+      - alert: ContainerRestartLoop
+        expr: increase(ordo_container_restarts_total[5m]) >= 2
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} is crash-looping"
+          description: >-
+            {{ $labels.service }} keeps restarting ({{ $value | printf "%.0f" }} restarts in the
+            last 5 minutes). Read `docker logs ordo-{{ $labels.service }}-1`.
+      - alert: ContainerUnhealthy
+        expr: ordo_container_unhealthy == 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} healthcheck is failing"
+          description: "{{ $labels.service }} has reported unhealthy for 10 minutes."
+
+  - name: ordo-gpu-lease
+    rules:
+      # The lease sweep runs every 10 seconds and completes a lease at its TTL, so a lease at 0 for
+      # 5 minutes means the sweep itself is failing (it logged `lease sweep error` on 2026-09-27).
+      - alert: GpuLeasePastTtl
+        expr: ordo_gpu_lease_ttl_remaining_seconds <= 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GPU lease {{ $labels.lease }} is past its TTL"
+          description: >-
+            The scheduler has not completed lease {{ $labels.lease }} ({{ $labels.kind }}) after its
+            TTL. Check `docker logs ordo-ops-controller-1` for lease sweep errors.
+      # A resident (llama.cpp) stopped for a lease while no lease is running or queued: nothing
+      # will restore it but the sweep, and the sweep has had 10 minutes. This is the "llama.cpp left
+      # evicted after a stale lease" incident.
+      - alert: GpuResidentEvictedWithoutLease
+        expr: |
+          ordo_gpu_resident_evicted == 1
+            unless on() (ordo_gpu_leases_running + ordo_gpu_leases_queued > 0)
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.resident }} is still evicted with no GPU lease held"
+          description: >-
+            {{ $labels.resident }} was stopped for a GPU lease that is gone, and has not been
+            restored. Chat is on the CPU fallback. Check ops-controller's /status and logs.
+      # Observed live: llama.cpp's longest eviction for a render in 15 days was 54 minutes. Two
+      # hours is a render that is stuck, or a long job (LoRA training) worth knowing about.
+      - alert: GpuResidentEvictedLong
+        expr: ordo_gpu_resident_evicted == 1
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.resident }} has been evicted for over 2 hours"
+          description: >-
+            A GPU lease has kept {{ $labels.resident }} stopped for over 2 hours (the longest render
+            observed took 54 minutes). Check the running lease on ops-controller's /status.
+
+  - name: ordo-gpu-hardware
+    rules:
+      # Observed live: the hottest 5-minute stretch in 15 days was 65 C (RTX 5090) and 57 C
+      # (GTX 1070). The 5090 slows down at about 90 C (nvidia-smi temperature.gpu.tlimit).
+      - alert: GpuTemperatureHigh
+        expr: nvidia_smi_temperature_gpu >= 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU {{ $labels.uuid }} is at {{ $value }} C"
+          description: >-
+            15 C above the hottest sustained reading observed. Check the fans and the case airflow.
+      - alert: GpuTemperatureHigh
+        expr: nvidia_smi_temperature_gpu >= 88
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GPU {{ $labels.uuid }} is at {{ $value }} C"
+          description: The card is at its thermal slowdown point.
+      # A 5-minute average above the card's enforced power limit means the cap is not holding.
+      # Observed live: the highest 5-minute average was 1.02x the limit (408 W on a 400 W cap);
+      # single samples reach 1.05x, so the rule averages first.
+      - alert: GpuPowerAboveLimit
+        expr: |
+          avg_over_time(nvidia_smi_power_draw_watts[5m])
+            > 1.05 * nvidia_smi_enforced_power_limit_watts
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU {{ $labels.uuid }} draws {{ $value | printf \"%.0f\" }} W, over its power limit"
+          description: >-
+            The card has averaged more than 5% over its enforced power limit for 10 minutes. Check
+            the power cap (`nvidia-smi -q -d POWER`).
+
+  - name: ordo-services
+    rules:
+      # llama.cpp is down on purpose while a GPU lease has evicted it (observed: 88 evictions in 15
+      # days, up to 54 minutes each), so this fires only when it is down and NOT evicted. With
+      # ops-controller unreachable the eviction is unknown and this fires: that is correct.
+      - alert: LlamaCppDown
+        expr: |
+          up{job="llamacpp"} == 0
+            unless on() (ordo_gpu_resident_evicted{resident="llamacpp"} == 1)
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: llama.cpp (the GPU chat model) is down and not evicted for a GPU lease
+          description: >-
+            Prometheus cannot scrape llamacpp:8080 and no GPU lease has evicted it. Read `docker
+            logs ordo-llamacpp-1`.
+      # Every other scrape target. Observed live: the GPU exporter's nvidia-smi scrape timed out in
+      # runs of up to 30 minutes, but only on the 2026-09-25 and 2026-09-27 crash days, and runs of
+      # 15 minutes or more happened only then. 15 minutes keeps the one-scrape blips out.
+      - alert: TargetDown
+        expr: up{job!="llamacpp"} == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus cannot scrape {{ $labels.job }}"
+          description: "{{ $labels.instance }} ({{ $labels.job }}) has been unreachable for 15 minutes."
+      # ops-controller answers /metrics but could not read one of its sources (docker, a disk, the
+      # edge certificate): the alerts built on that source are blind until it can.
+      - alert: MetricsCollectorFailing
+        expr: ordo_metrics_collector_ok == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ops-controller cannot read {{ $labels.collector }}"
+          description: >-
+            GET /metrics has not been able to read {{ $labels.collector }} for 15 minutes, so the
+            alerts that use it cannot fire. Check `docker logs ordo-ops-controller-1`.
+      - alert: AlertRuleEvaluationFailing
+        expr: increase(prometheus_rule_evaluation_failures_total[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alert rule group {{ $labels.rule_group }} fails to evaluate"
+          description: A rule that cannot evaluate cannot fire. Check Prometheus's rules page.
+
+  - name: ordo-tls
+    rules:
+      # The edge's Tailscale-issued certificate (auth/caddy/certs/tailnet.crt). It expired silently on
+      # 2026-07-24. Live on 2026-09-29: it expires 2026-12-22.
+      - alert: TlsCertExpiring
+        expr: (ordo_tls_cert_not_after_timestamp_seconds - time()) / 86400 < 14
+        labels:
+          severity: warning
+        annotations:
+          summary: "The {{ $labels.cert }} TLS certificate expires in {{ $value | printf \"%.0f\" }} days"
+          description: >-
+            Renew it (docs/runbooks/auth.md, `tailscale cert`) before it expires and every edge site
+            stops serving.
+      - alert: TlsCertExpiring
+        expr: (ordo_tls_cert_not_after_timestamp_seconds - time()) / 86400 < 3
+        labels:
+          severity: critical
+        annotations:
+          summary: "The {{ $labels.cert }} TLS certificate expires in {{ $value | printf \"%.1f\" }} days"
+          description: Renew it now (docs/runbooks/auth.md).

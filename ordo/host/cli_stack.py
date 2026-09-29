@@ -253,7 +253,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
                                                    with_profiles=True, catalog_path=args.catalog),
         materialize_secrets=lambda: cli_secrets._prepare_secrets(args, out),
         doctor=lambda: cli_render.cmd_doctor(argparse.Namespace(source=str(source), catalog=args.catalog, bundle=None,
-                                                     project=args.project)))
+                                                     project=args.project, out=str(out))))
     return apply.run(host, only=args.only, dry_run=args.dry_run)
 
 

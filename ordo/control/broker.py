@@ -133,6 +133,10 @@ class ContainerBackend(Protocol):
     def list_services(self) -> dict: ...
     def list_containers(self) -> list[dict]: ...  # bare list: ops-api's shape, see DockerBackend
     def service_stats(self) -> dict: ...
+    # {service: docker's RestartCount} for every container of this project: how many times the
+    # restart policy has restarted it (a recreate makes a new container, counting from 0). Read by
+    # GET /metrics for the restart-loop alert.
+    def service_restarts(self) -> dict[str, int]: ...
 
     # The rendered compose this backend acts on. The control plane derives a service's netns
     # members from it (`stack.lifecycle_group`), so it reads the same file the compose verbs run.
@@ -205,6 +209,7 @@ class _FakeContainer:
     owner_container_id: str       # the owner container a member was created against ("" otherwise)
     state: str = "created"        # created, running, exited
     exit_code: int = 0
+    restart_count: int = 0        # restart-policy restarts (`docker restart` does not count)
     netns: int = 0                # an owner's network namespace: a new one on every start
     joined_netns: int = 0         # a member's: the owner namespace it joined when it last started
     output: list[str] = dataclasses.field(default_factory=list)
@@ -516,6 +521,9 @@ class MockBackend:
     def foreign_restart(self, project: str, name: str) -> None:
         self._foreign(project, name)
         self.foreign_restarts.append((project, name))
+
+    def service_restarts(self) -> dict[str, int]:
+        return {c.service: c.restart_count for c in self.project_containers.values()}
 
     def service_stats(self) -> dict:
         self.service_stats_calls.append(None)
@@ -926,6 +934,24 @@ class DockerBackend:
         malformed (`_guard` refuses it), never a whole-stack down."""
         group = lifecycle_group(self.rendered_compose(), self._guard(service)) if service is not None else []
         subprocess.run(self._compose("down", *group), check=True, timeout=600)
+
+    def service_restarts(self) -> dict[str, int]:  # pragma: no cover - needs real docker
+        """docker's RestartCount per service of this project: one `docker ps` for the container IDs
+        (label-scoped, like every read here) and one `docker inspect` of all of them."""
+        ids = [row["id"] for row in self._project_ps() if row.get("id")]
+        if not ids:
+            return {}
+        proc = subprocess.run(
+            ["docker", "inspect", "--type", "container", "--format",
+             "{{index .Config.Labels \"com.docker.compose.service\"}}\t{{.RestartCount}}", *ids],
+            capture_output=True, text=True, timeout=30, check=True,
+        )
+        counts: dict[str, int] = {}
+        for line in proc.stdout.splitlines():
+            service, _, count = line.partition("\t")
+            if service and count.strip().isdigit():
+                counts[service] = int(count)
+        return counts
 
     def service_stats(self) -> dict:  # pragma: no cover - needs real docker
         """Per-service CPU and memory.

@@ -50,9 +50,17 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
     state_path = os.environ.get("SCHEDULER_STATE_PATH", "").strip()
     state_store = SchedulerStateStore(Path(state_path)) if state_path else None
     broker = Broker(sched, DockerBackend(project=args.project), history=history, state_store=state_store)
+    # GET /metrics disks: this container's root lives on the Docker data disk, and --out (/config)
+    # is a bind of the host's out/ directory, so it reports the host disk.
+    # The edge's certificate, when the render mounted it (EDGE_TLS_CERT_FILE, ordo/render/compose.py).
+    from .metrics import DOCKER_DISK, HOST_DISK
+
+    edge_cert = os.environ.get("EDGE_TLS_CERT_FILE", "").strip()
     cp = ControlPlane(Path(args.source), cat, reg, args.out, scheduler=sched, broker=broker,
                       history=history,
-                      model_volume_files=lambda: volume_files(DockerRunner(), args.project))
+                      model_volume_files=lambda: volume_files(DockerRunner(), args.project),
+                      disk_paths={DOCKER_DISK: "/", HOST_DISK: str(args.out)},
+                      tls_cert_files={"edge": edge_cert} if edge_cert else {})
 
     # Resident registration, DERIVED from the declared GPU inventory (ordo/render/gpu.py) rather than
     # from a `--resident-service llamacpp` default. Every service that DECLARES it holds VRAM on
