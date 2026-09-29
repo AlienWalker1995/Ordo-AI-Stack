@@ -49,13 +49,14 @@ from ..render.plugins import PluginRegistry
 from ..render.served_models import model_files, models_by_gpu, served_models
 from ..render.source_edit import edit_plugins_list
 from ..render.stack import lifecycle_group, plan_named
-from . import managed, routes
 from . import metrics as prom
 from . import principals as auth
+from . import routes
 from .broker import SELF_REFERENTIAL_SERVICES, Broker
 from .call_audit import ACTOR_HEADER, AUDITED_METHODS, CallAuditor, audit_actor, audited_read, lease_detail
 from .comfyui import ModelDownloads, NodeRequirements
 from .lifecycle import LeaseGuard, Lifecycle
+from .managed_projects import ManagedProjects
 from .responses import CONFIRM_REQUIRED, as_response, confirmed, error
 from .scheduler import Job, Scheduler
 
@@ -82,11 +83,6 @@ COMFYUI_MODELS_DIR = Path(os.environ.get("COMFYUI_MODELS_DIR", "/models/comfyui"
 AUDIT_LOG_PATH = Path(os.environ.get("AUDIT_LOG_PATH", "/data/audit.jsonl"))
 COMFYUI_CUSTOM_NODES_DIR = Path(os.environ.get("COMFYUI_CUSTOM_NODES_DIR", "/comfyui-app/ComfyUI/custom_nodes"))
 COMFYUI_CONTAINER_NAME = os.environ.get("COMFYUI_CONTAINER_NAME", "ordo-comfyui-1")
-def _project_rows(containers: list[dict]) -> list[dict]:
-    """Each managed-project row reduced to managed.ROW_FIELDS: no field a backend adds leaks."""
-    return [{field: row.get(field) for field in managed.ROW_FIELDS} for row in containers]
-
-
 class ControlPlane:
     def __init__(
         self,
@@ -135,8 +131,7 @@ class ControlPlane:
         # The lifecycle verbs, and the GPU-lease check they and the post-render apply make.
         self.lease = LeaseGuard(scheduler)
         self.lifecycle = Lifecycle(broker, self.lease)
-        # Restarts of managed-project containers: at most 3 per container per hour (managed.py).
-        self._restart_budget = managed.RestartBudget()
+        self.managed_projects = ManagedProjects(broker, self.source_path)
 
 
     # --- core operations (pure, testable) ---
@@ -808,23 +803,7 @@ class ControlPlane:
     def compose_restart(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.lifecycle.compose_restart(body)
 
-    # --- Managed projects: OTHER compose projects Hermes may maintain (ordo/control/managed.py) ---
-    # Status, logs and a confirmed, rate-limited restart; nothing else. The list is the source's
-    # `managed_projects:`, read per call so an edit takes effect without a restart. Ordo's own
-    # project is refused by the source validation and again by the backend, so no Ordo service, and
-    # so no lease-managed resident, is reachable here.
-
-    def _managed_project(self, project: str) -> dict[str, Any] | None:
-        """A 404 payload unless `project` is listed in the source's `managed_projects:`."""
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            listed = Source.load(self.source_path).managed_projects
-        except Exception as e:  # noqa: BLE001 - an unreadable source manages nothing
-            return self._error(500, f"cannot read managed_projects from the source: {e}")
-        if project not in listed:
-            return self._error(404, f"{project!r} is not a managed project (ordo.yaml managed_projects: {listed})")
-        return None
+    # --- Managed projects: OTHER compose projects (ordo/control/managed_projects.py) ---
 
     def _leased_gpu_uuid(self) -> str | None:
         """The uuid of the card the scheduler leases (the primary card), or None when unknown."""
@@ -845,84 +824,17 @@ class ControlPlane:
             return {}
 
     def managed_projects_overview(self) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            listed = Source.load(self.source_path).managed_projects
-        except Exception as e:  # noqa: BLE001
-            return self._error(500, f"cannot read managed_projects from the source: {e}")
-        projects = []
-        for project in listed:
-            try:
-                containers = self.broker.backend.foreign_containers(project)
-                projects.append({"project": project, "containers": _project_rows(containers)})
-            except Exception as e:  # noqa: BLE001 - one unreadable project does not hide the others
-                projects.append({"project": project, "containers": [], "error": str(e)})
-        return {"projects": projects}
+        return self.managed_projects.overview()
 
     def managed_project_containers(self, project: str) -> dict[str, Any]:
-        refusal = self._managed_project(project)
-        if refusal:
-            return refusal
-        try:
-            containers = self.broker.backend.foreign_containers(project)
-        except ValueError as e:
-            return self._error(404, str(e))
-        except Exception as e:
-            return self._error(500, str(e))
-        return {"project": project, "containers": _project_rows(containers)}
+        return self.managed_projects.containers(project)
 
     def managed_container_logs(self, project: str, name: str, query: dict[str, str]) -> dict[str, Any]:
-        refusal = self._managed_project(project)
-        if refusal:
-            return refusal
-        try:
-            tail = int(query.get("tail", managed.LOG_TAIL_DEFAULT))
-        except ValueError:
-            return self._error(422, "tail must be an integer")
-        tail = max(1, min(tail, managed.LOG_TAIL_MAX))
-        try:
-            logs = self.broker.backend.foreign_logs(project, name, tail)
-        except ValueError as e:
-            return self._error(404, str(e))
-        except Exception as e:
-            return self._error(500, str(e))
-        return {"project": project, "container": name, "tail": tail, "logs": logs}
+        return self.managed_projects.container_logs(project, name, query)
 
     def managed_container_restart(self, project: str, name: str, body: dict[str, Any]) -> dict[str, Any]:
-        refusal = self._managed_project(project)
-        if refusal:
-            return refusal
-        if not confirmed(body):
-            return self._error(400, CONFIRM_REQUIRED)
-        key = f"{project}/{name}"
-        try:
-            raw = self.broker.backend.foreign_inspect(project, name)
-        except ValueError as e:
-            return self._error(404, str(e))
-        except Exception as e:
-            return self._error(500, str(e))
-        gpu_refusal = managed.gpu_refusal(raw, self._leased_gpu_uuid(), self._gpu_indexes())
-        if gpu_refusal:
-            return self._error(409, f"refusing to restart {key}: {gpu_refusal}")
-        # Reserve the slot BEFORE restarting (one lock: parallel callers cannot all pass the check).
-        # Give it back ONLY when the backend's guard refused (ValueError, raised before docker ran).
-        # Any other failure may come after the container already restarted (`docker restart` timing
-        # out waiting for it, or exiting non-zero), so the slot stays spent: better one restart
-        # under-allowed than restarts nobody counted.
-        wait = self._restart_budget.reserve(key)
-        if wait is not None:
-            return self._error(429, f"{key} was restarted {self._restart_budget.limit} times in the last hour; "
-                                    "a restart loop needs a diagnosis, not another restart",
-                               retry_after_seconds=wait)
-        try:
-            self.broker.backend.foreign_restart(project, name)
-        except ValueError as e:
-            self._restart_budget.refund(key)
-            return self._error(404, str(e))
-        except Exception as e:
-            return self._error(500, str(e))
-        return {"ok": True, "project": project, "container": name, "action": "restarted"}
+        return self.managed_projects.container_restart(project, name, body, leased_gpu_uuid=self._leased_gpu_uuid,
+                                                       gpu_indexes=self._gpu_indexes)
 
     # --- Registry routes ---
     # Derived from the render on every call (ordo/render/served_models.py): which models the stack
