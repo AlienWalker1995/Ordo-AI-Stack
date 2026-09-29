@@ -115,3 +115,35 @@ def test_a_compose_tool_refuses_a_stack_wide_call_on_a_string_confirm(router, mo
     result = json.loads(getattr(router, tool)({"confirm": "false"}))
     assert result["ok"] is False
     assert client.calls == []
+
+
+class RestartClient:
+    def __init__(self):
+        self.calls = []
+
+    def restart_container(self, name, *, confirm=False):
+        self.calls.append((name, confirm))
+        return {"ok": True, "container": name}
+
+
+def test_restart_container_forwards_confirm_true(router, monkeypatch):
+    client = RestartClient()
+    monkeypatch.setattr(router, "_get_client", lambda: client)
+    result = json.loads(router._restart_container({"name": "ordo-n8n-1", "confirm": True}))
+    assert result["ok"] is True
+    assert client.calls == [("ordo-n8n-1", True)]
+
+
+@pytest.mark.parametrize("args", [{"name": "ordo-n8n-1"}, *({"name": "ordo-n8n-1", "confirm": c} for c in NOT_JSON_TRUE)])
+def test_restart_container_refuses_without_json_true(router, monkeypatch, args):
+    client = RestartClient()
+    monkeypatch.setattr(router, "_get_client", lambda: client)
+    result = json.loads(router._restart_container(args))
+    assert result["ok"] is False and "confirm" in result["error"]
+    assert client.calls == []
+
+
+def test_restart_container_schema_requires_confirm(router):
+    parameters = router.RESTART_CONTAINER_SCHEMA["parameters"]
+    assert parameters["properties"]["confirm"]["type"] == "boolean"
+    assert "confirm" in parameters["required"]

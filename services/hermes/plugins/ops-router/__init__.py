@@ -92,8 +92,10 @@ def _restart_container(args: dict, **kwargs) -> str:
     name = (args.get("name") or "").strip()
     if not name:
         return _err("name is required")
+    if not _confirmed(args):
+        return _err("restart_container requires confirm=true")
     try:
-        result = _get_client().restart_container(name)
+        result = _get_client().restart_container(name, confirm=True)
         return json.dumps({"ok": True, **result})
     except OpsClientError as exc:
         return _err(str(exc))
@@ -254,8 +256,12 @@ RESTART_CONTAINER_SCHEMA = {
                 "type": "string",
                 "description": "Container name to restart.",
             },
+            "confirm": {
+                "type": "boolean",
+                "description": "Required (true): ops-controller refuses a restart without it.",
+            },
         },
-        "required": ["name"],
+        "required": ["name", "confirm"],
     },
 }
 
@@ -280,7 +286,7 @@ COMPOSE_RESTART_SCHEMA = {
             },
             "confirm": {
                 "type": "boolean",
-                "description": "Required (true) when service is omitted. Guards against prompt-injected stack-wide restarts.",
+                "description": "Required (true): ops-controller refuses the call without it.",
             },
         },
         "required": [],
@@ -312,7 +318,7 @@ COMPOSE_UP_SCHEMA = {
             },
             "confirm": {
                 "type": "boolean",
-                "description": "Required (true) when service is omitted. Guards against prompt-injected stack-wide recreates.",
+                "description": "Required (true): ops-controller refuses the call without it.",
             },
         },
         "required": [],
@@ -404,7 +410,8 @@ _DOCKER_INTENT = re.compile(
 _NUDGE = (
     "Routing note: this turn looks like a docker/container op. For Ordo services prefer "
     "the control-plane tools (direct `docker` also works for anything else): `list_containers`, `container_logs(name, tail)`, "
-    "`restart_container(name)`, `compose_restart(service)`, `compose_up(service)`. "
+    "`restart_container(name, confirm=true)`, `compose_restart(service, confirm=true)`, "
+    "`compose_up(service, confirm=true)`. "
     "Picking the right verb: if .env / environment / volumes changed, use "
     "`compose_up(service=...)` (recreate) — `restart_container` and "
     "`compose_restart` only bounce the existing container and will NOT pick up "
