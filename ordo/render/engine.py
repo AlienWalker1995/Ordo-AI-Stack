@@ -3,7 +3,7 @@
 This is the drift cure. The ONE context-size value is computed once and flows to every
 consumer (.env, Hermes, model-gateway) identically — they cannot disagree, because they're
 all derived from the same source. Re-rendering overwrites any hand-edit to a derived output;
-only `overrides:` in the source survives.
+only the source (its `overrides:` for llama.cpp tuning, see `_apply_overrides`) survives.
 """
 from __future__ import annotations
 
@@ -109,15 +109,38 @@ def local_access(enabled_plugin_ids) -> bool:
     return EDGE_PLUGIN not in enabled_plugin_ids
 
 
-# Deep-merge an override dict onto a derived dict (overrides win, survive regeneration).
-def _apply_overrides(derived: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
-    out = dict(derived)
-    for k, v in (overrides or {}).items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = _apply_overrides(out[k], v)
-        else:
-            out[k] = v
+def _apply_overrides(derived: dict[str, dict[str, Any]], overrides: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Apply the source's `overrides:` onto the derived values (overrides win, survive regeneration).
+
+    Only the keys already in `derived` are honoured, because they are the only ones the render
+    reads: today that is `overrides.llamacpp.<tuning key>`. Anything else (another service, or a
+    container option such as `environment` or `cap_add`) would be silently ignored, so it is a
+    ValueError naming the key, the service and the supported keys.
+    """
+    out = {service: dict(values) for service, values in derived.items()}
+    for service, values in (overrides or {}).items():
+        if service not in out:
+            raise ValueError(
+                f"ordo.yaml overrides: service {service!r} is not supported; overrides apply only to "
+                f"{sorted(out)} (keys: {', '.join(_supported_override_keys(out))}). "
+                "Container options belong in the service's manifest (services/<id>/)."
+            )
+        if not isinstance(values, dict):
+            raise ValueError(f"ordo.yaml overrides: {service!r} must be a mapping of key -> value, "
+                             f"got {type(values).__name__}")
+        for key, value in values.items():
+            if key not in out[service]:
+                raise ValueError(
+                    f"ordo.yaml overrides: key {key!r} for service {service!r} is not supported; "
+                    f"supported keys: {sorted(out[service])}. "
+                    "Container options belong in the service's manifest (services/<id>/)."
+                )
+            out[service][key] = value
     return out
+
+
+def _supported_override_keys(derived: dict[str, dict[str, Any]]) -> list[str]:
+    return [f"{service}.{key}" for service in sorted(derived) for key in sorted(derived[service])]
 
 
 # Required keys for `cost:` (ordo.yaml): all four or none. Missing/non-positive/unknown ->

@@ -164,7 +164,8 @@ sync (256K in Hermes vs 128K in llama.cpp → a compaction deadlock; a stale mod
 > One human-editable declarative source (`ordo.yaml`). Everything derived (`.env`, Hermes
 > context, model-gateway ctx, compose vars) is **regenerated** from it. Edits to *derived*
 > outputs don't survive a re-render — so drift is structurally impossible. An explicit
-> `overrides:` block in the source is the escape hatch that *does* survive.
+> `overrides:` block in the source is the escape hatch that *does* survive (today it reaches the
+> llama.cpp tuning keys only; any other key is a render error).
 
 This is the substrate everything else (scheduler, plugins, installer) renders through, and it's the
 direct fix for the #1 pain — now proven in production, not just in test.
