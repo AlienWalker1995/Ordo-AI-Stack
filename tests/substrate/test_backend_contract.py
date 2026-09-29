@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -132,14 +133,83 @@ def _docker_available() -> bool:
     return info.returncode == 0 and compose.returncode == 0
 
 
-def _make_harness(kind: str, compose_dir: Path):
-    """A harness on a fresh project, and the teardown for it."""
-    project = f"ordo-contract-{uuid.uuid4().hex[:8]}"
+# Every real project this suite starts is named with this prefix, and nothing else on a host is.
+PROJECT_PREFIX = "ordo-contract-"
+
+
+def _parse_created(value: str) -> datetime:
+    """docker's `.Created` (RFC 3339 with nanoseconds, e.g. 2026-09-29T16:39:58.123456789Z) as an
+    aware datetime. fromisoformat takes at most microseconds, so the fraction is cut to 6 digits."""
+    stamp = value.strip().replace("Z", "+00:00")
+    head, dot, rest = stamp.partition(".")
+    if dot:
+        fraction_length = len(rest) - len(rest.lstrip("0123456789"))
+        stamp = f"{head}.{rest[:min(fraction_length, 6)]}{rest[fraction_length:]}"
+    return datetime.fromisoformat(stamp)
+
+
+def stale_projects(containers: list[tuple[str, str]], started_at: datetime) -> list[str]:
+    """The contract projects every container of which was created before `started_at`: left behind
+    by a run that was interrupted or killed before its teardown ran. A project with any container
+    created since belongs to a run in progress and is kept. `containers` is (project, created)."""
+    newest: dict[str, datetime] = {}
+    for project, created in containers:
+        if not project.startswith(PROJECT_PREFIX):
+            continue
+        when = _parse_created(created)
+        if project not in newest or when > newest[project]:
+            newest[project] = when
+    return sorted(project for project, when in newest.items() if when < started_at)
+
+
+def _contract_containers() -> list[tuple[str, str]]:
+    """(compose project, created) for every container of a contract project on this engine."""
+    listed = subprocess.run(["docker", "ps", "-aq", "--filter", f"name=^{PROJECT_PREFIX}"],
+                            capture_output=True, text=True, timeout=30, check=True)
+    ids = listed.stdout.split()
+    if not ids:
+        return []
+    template = '{{index .Config.Labels "com.docker.compose.project"}}|{{.Created}}'
+    inspected = subprocess.run(["docker", "inspect", "--type", "container", "--format", template, *ids],
+                               capture_output=True, text=True, timeout=30, check=True)
+    rows = [line.split("|", 1) for line in inspected.stdout.splitlines() if "|" in line]
+    return [(project, created) for project, created in rows if project]
+
+
+def remove_project(project: str) -> None:
+    """Take a contract project down by its compose labels (no compose file needed)."""
+    subprocess.run(["docker", "compose", "-p", project, "down", "--volumes", "--remove-orphans", "--timeout", "1"],
+                   capture_output=True, text=True, timeout=180)
+
+
+@pytest.fixture(scope="session")
+def contract_projects():
+    """The real projects this session starts, and the cleanup of every one a run can leak.
+
+    The teardown in `harness` and `unchanged` does not run when a run is killed (a CI timeout, a
+    closed terminal, `kill`), and those projects keep their containers running. So at session start
+    every contract project older than this session is removed, and at session end every project
+    this session started is taken down again, whatever state its test left it in."""
+    started: list[str] = []
+    session_start = datetime.now(UTC)
+    if _docker_available():
+        for project in stale_projects(_contract_containers(), session_start):
+            remove_project(project)
+    yield started
+    for project in started:
+        remove_project(project)
+
+
+def _make_harness(kind: str, compose_dir: Path, started: list[str]):
+    """A harness on a fresh project, and the teardown for it. A real project is recorded in
+    `started` before it is brought up, so the session finalizer can take it down."""
+    project = f"{PROJECT_PREFIX}{uuid.uuid4().hex[:8]}"
     if kind == "fake":
         return FakeHarness(project), lambda: None
     if not _docker_available():
         pytest.skip("docker is not reachable")
     real = DockerHarness(project, compose_dir)
+    started.append(project)
     try:
         real.up()
     except BaseException:
@@ -152,9 +222,9 @@ BACKENDS = ["fake", pytest.param("docker", marks=pytest.mark.docker)]
 
 
 @pytest.fixture(params=BACKENDS)
-def harness(request, tmp_path):
+def harness(request, tmp_path, contract_projects):
     """A fresh project per test: for every test that changes it."""
-    made, teardown = _make_harness(request.param, tmp_path / "stack")
+    made, teardown = _make_harness(request.param, tmp_path / "stack", contract_projects)
     try:
         yield made
     finally:
@@ -162,14 +232,62 @@ def harness(request, tmp_path):
 
 
 @pytest.fixture(scope="module", params=BACKENDS)
-def unchanged(request, tmp_path_factory):
+def unchanged(request, tmp_path_factory, contract_projects):
     """One project for the whole module: only for tests that must leave it exactly as it was
     (reads, and calls that are refused or change nothing). A real stack per test costs seconds."""
-    made, teardown = _make_harness(request.param, tmp_path_factory.mktemp("stack"))
+    made, teardown = _make_harness(request.param, tmp_path_factory.mktemp("stack"), contract_projects)
     try:
         yield made
     finally:
         teardown()
+
+
+# --------------------------------------------------------------------------- #
+# Cleanup of the projects a killed run leaves behind.
+# --------------------------------------------------------------------------- #
+
+SESSION = datetime(2026, 9, 29, 17, 0, tzinfo=UTC)
+
+
+def test_a_project_older_than_the_session_is_stale():
+    rows = [("ordo-contract-aaaa1111", "2026-09-29T16:39:58.123456789Z"),
+            ("ordo-contract-aaaa1111", "2026-09-29T16:40:01.5Z")]
+    assert stale_projects(rows, SESSION) == ["ordo-contract-aaaa1111"]
+
+
+def test_a_project_with_a_container_newer_than_the_session_is_kept():
+    rows = [("ordo-contract-bbbb2222", "2026-09-29T16:59:00Z"),
+            ("ordo-contract-bbbb2222", "2026-09-29T17:00:05.000000001Z")]
+    assert stale_projects(rows, SESSION) == []
+
+
+def test_only_contract_projects_are_ever_stale():
+    rows = [("ordo", "2026-01-01T00:00:00Z"), ("side", "2026-01-01T00:00:00Z")]
+    assert stale_projects(rows, SESSION) == []
+
+
+def test_docker_created_times_parse_to_the_microsecond():
+    assert _parse_created("2026-09-29T16:39:58.123456789Z") == datetime(
+        2026, 9, 29, 16, 39, 58, 123456, tzinfo=UTC)
+    assert _parse_created("2026-09-29T16:39:58Z") == datetime(2026, 9, 29, 16, 39, 58, tzinfo=UTC)
+
+
+@pytest.mark.docker
+def test_a_leaked_project_is_found_and_removed(tmp_path):
+    """The real path: a project brought up and never taken down is stale to any session that
+    starts after it, and removing it leaves no container of it behind."""
+    if not _docker_available():
+        pytest.skip("docker is not reachable")
+    leaked = DockerHarness(f"{PROJECT_PREFIX}{uuid.uuid4().hex[:8]}", tmp_path / "stack")
+    try:
+        leaked.up()
+        time.sleep(1)
+        later = datetime.now(UTC)
+        assert leaked.project in stale_projects(_contract_containers(), later)
+        remove_project(leaked.project)
+        assert leaked.project not in {project for project, _ in _contract_containers()}
+    finally:
+        leaked.down()
 
 
 # --------------------------------------------------------------------------- #
