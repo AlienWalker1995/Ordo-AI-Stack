@@ -26,7 +26,9 @@ only ever DECIDES which residents to evict and which to restore.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import itertools
+import threading
 
 # A lease with an unknown/zero estimate still gets a hard cap so a stranded job (crashed client
 # that never POSTs /jobs/complete) can't hold the resident down forever. The TTL for a job with a
@@ -40,6 +42,15 @@ LEASE_TTL_MAX_SECONDS = 3600.0     # absolute ceiling — no lease outlives this
 # heartbeating client that dies simply stops beating and is swept within HEARTBEAT_TTL_SECONDS).
 # This is what lets a multi-hour job (LoRA training) hold a lease without weakening self-heal.
 HEARTBEAT_TTL_SECONDS = 900.0
+
+
+def _locked(method):
+    """Run `method` holding the scheduler's lock (see Scheduler.__init__)."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
 
 
 @dataclasses.dataclass
@@ -62,6 +73,13 @@ class Scheduler:
         self.lease_ttl_default = float(lease_ttl_default)
         self.lease_ttl_max = float(lease_ttl_max)
         self.heartbeat_ttl = float(heartbeat_ttl)
+        # Several threads use one scheduler: the lease-sweep thread ticks and sweeps it, and the API
+        # serves each request on a worker thread (ControlPlane.app). Every public method holds this
+        # lock, so a read never sees a half-applied transition (or a dict changing size mid-iteration)
+        # and two transitions never interleave. It guards memory only and is never held across I/O;
+        # the broker serializes the docker side of a transition with its own operation lock.
+        # Reentrant because public methods call each other (pump reads free_vram_gb).
+        self._lock = threading.RLock()
         self._queue: list[Job] = []
         self._running: dict[str, Job] = {}
         self._elapsed: dict[str, float] = {}      # running job id -> seconds elapsed
@@ -76,32 +94,39 @@ class Scheduler:
 
     # --- introspection ---
     @property
+    @_locked
     def running_ids(self) -> list[str]:
         return list(self._running)
 
     @property
+    @_locked
     def queued_ids(self) -> list[str]:
         return [j.id for j in self._queue]
 
     @property
+    @_locked
     def idle_cached(self) -> dict[str, float]:
         return dict(self._idle_cached)
 
     @property
+    @_locked
     def evicted_residents(self) -> dict[str, float]:
         """Residents the scheduler has STOPPED to free VRAM and will restore when work drains."""
         return dict(self._evicted)
 
     @property
+    @_locked
     def used_vram_gb(self) -> float:
         # Evicted residents hold NO VRAM (they're stopped) — only running jobs + still-cached idles.
         return sum(j.vram_gb for j in self._running.values()) + sum(self._idle_cached.values())
 
     @property
+    @_locked
     def free_vram_gb(self) -> float:
         return self.total_vram_gb - self.used_vram_gb
 
     # --- lifecycle ---
+    @_locked
     def submit(self, job: Job) -> bool:
         """Queue a residency request. IDEMPOTENT on job id — returns False for a duplicate.
 
@@ -117,6 +142,7 @@ class Scheduler:
         self._queue.append(job)
         return True
 
+    @_locked
     def cache_idle(self, model_id: str, vram_gb: float) -> None:
         """A model loaded but not actively serving — reclaimable via LRU eviction.
 
@@ -149,6 +175,7 @@ class Scheduler:
             evicted.append(victim)
         return evicted
 
+    @_locked
     def pump(self) -> tuple[list[str], list[str]]:
         """Admit queue-head jobs while the head fits (co-run). FIFO: a non-fitting head blocks.
 
@@ -204,6 +231,7 @@ class Scheduler:
                 free -= self._evicted[rid]
         return restore
 
+    @_locked
     def take_restorable(self) -> dict[str, float]:
         """Pop + return the residents that should be restarted now (id -> vram). Broker starts them.
 
@@ -218,6 +246,7 @@ class Scheduler:
             self.cache_idle(rid, held)
         return out
 
+    @_locked
     def complete(self, job_id: str) -> None:
         """Give up residency — whether it was granted or still WAITING to be granted.
 
@@ -234,6 +263,7 @@ class Scheduler:
         self._deadline.pop(job_id, None)
         self._started.pop(job_id, None)
 
+    @_locked
     def heartbeat(self, job_id: str) -> bool:
         """Renew a running job's lease: deadline moves to now + heartbeat_ttl (liveness-based).
 
@@ -247,6 +277,7 @@ class Scheduler:
         self._deadline[job_id] = self._clock + self.heartbeat_ttl
         return True
 
+    @_locked
     def sweep_expired_leases(self) -> list[str]:
         """Force-complete any running job whose lease TTL has elapsed. Returns the swept ids.
 
@@ -261,6 +292,7 @@ class Scheduler:
         return expired
 
     # --- durable state (the shell writes it to disk; see scheduler_state.py) ---
+    @_locked
     def snapshot(self) -> dict:
         """The lease and eviction state a restart must not lose.
 
@@ -284,6 +316,7 @@ class Scheduler:
             "rejected": list(self._rejected),
         }
 
+    @_locked
     def load_snapshot(self, snap: dict) -> None:
         """Adopt the state a previous process saved. Call once, at startup, after the residents
         are registered and before anything is served.
@@ -308,6 +341,7 @@ class Scheduler:
             self.submit(Job(item["id"], float(item["vram_gb"]), item["kind"], float(item["est_seconds"])))
         self._rejected = list(snap["rejected"])[-50:]
 
+    @_locked
     def hold_residents_for_recovery(self, residents: list[str], job_id: str, ttl_seconds: float) -> None:
         """Mark `residents` evicted and hold their VRAM under a synthetic lease `job_id`.
 
@@ -330,6 +364,7 @@ class Scheduler:
         self._started[job.id] = self._clock
         self._deadline[job.id] = self._clock + float(ttl_seconds)
 
+    @_locked
     def tick(self, dt_seconds: float) -> None:
         """Advance elapsed time for running jobs (drives the ETA) and the lease clock."""
         self._clock += dt_seconds
@@ -343,6 +378,7 @@ class Scheduler:
     def _lease_remaining(self, jid: str) -> float:
         return max(0.0, self._deadline.get(jid, self._clock) - self._clock)
 
+    @_locked
     def status(self) -> dict:
         """The status contract polled by the dashboard/agents (the 'GPU busy, ~Ns' source)."""
         head_fits = bool(self._queue) and self._queue[0].vram_gb <= self.free_vram_gb
