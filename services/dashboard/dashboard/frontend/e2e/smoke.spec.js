@@ -10,7 +10,7 @@ const WIDTHS = [
 
 // What each page must show once its data has loaded.
 const PAGES = [
-  { id: 'overview', headings: ['GPUs right now', 'Needs attention', 'Recent activity'], text: 'RTX 5090' },
+  { id: 'overview', headings: ['Drift', 'GPUs right now', 'Needs attention', 'Recent activity'], text: 'RTX 5090' },
   { id: 'services', headings: [], text: '1 needs attention' },
   { id: 'models', headings: ['Running now', 'Model files on disk'], text: 'qwen3.8-27b-turbo' },
   { id: 'media', headings: ['ComfyUI', 'Recent outputs', 'GPU leases', 'Installed ComfyUI models'], text: 'Rendering now' },

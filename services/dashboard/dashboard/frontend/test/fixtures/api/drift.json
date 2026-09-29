@@ -1,0 +1,9 @@
+{
+  "available": true,
+  "findings": [
+    {
+      "check": "substrate",
+      "detail": "substrate MISMATCH: ops-controller 79e3afd63f62 vs the last render 0a898896c4f0. Its next model switch or plugin toggle would render from different inputs (it refuses with 409 once out/ records a digest). Rebuild ordo/ops-controller from the checkout that rendered out/, then `ordo recreate ops-controller`."
+    }
+  ]
+}

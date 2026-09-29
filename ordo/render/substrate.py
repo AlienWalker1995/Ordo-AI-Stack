@@ -56,3 +56,20 @@ def substrate_digest(root: str | Path) -> str:
 def current_digest() -> str:
     """This process's own substrate digest, computed once: its files do not change under it."""
     return substrate_digest(PACKAGE_ROOT)
+
+
+def substrate_verdict(ops_controller: str, reference: str, *, reference_name: str,
+                      rebuild_from: str) -> tuple[bool, str]:
+    """(ok, one-line report) comparing the running ops-controller's digest with `reference`.
+
+    `ops_controller` is "" when its image predates the digest. The one judgment both callers make:
+    `ordo doctor` compares the running ops-controller with the checkout (`reference_name` "this
+    checkout"), and ops-controller's `GET /doctor` compares itself with the digest the last render
+    recorded in out/manifest.json. A line starting "! " is a finding.
+    """
+    if ops_controller == reference:
+        return True, f"substrate: ops-controller matches {reference_name} ({reference[:12]})"
+    return False, (f"! substrate MISMATCH: ops-controller {ops_controller[:12] or '(predates the digest)'} vs "
+                   f"{reference_name} {reference[:12]}. Its next model switch or plugin toggle would render from "
+                   f"different inputs (it refuses with 409 once out/ records a digest). Rebuild "
+                   f"ordo/ops-controller from {rebuild_from}, then `ordo recreate ops-controller`.")

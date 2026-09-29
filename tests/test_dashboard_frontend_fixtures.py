@@ -57,6 +57,11 @@ OPS = {
                                    "outcome": "completed"}]},
     "/audit?limit=100": {"entries": [{"ts": 300.0, "caller": "dashboard", "action": "restart",
                                       "target": "n8n", "result": "ok"}]},
+    "/doctor": {"ok": False, "checks": [
+        {"check": "substrate", "ok": False, "detail": "substrate MISMATCH: ops-controller 79e3afd63f62 vs "
+                                                      "the last render 0a898896c4f0."},
+        {"check": "open-webui", "ok": True, "detail": "open-webui: not running"},
+    ]},
 }
 HARDWARE = {"cpu_pct": 18, "ram_used_gb": 46.8, "ram_total_gb": 109.7, "ram_pct": 43,
             "disk_used_gb": 1607.1, "disk_total_gb": 1999.8, "disk_pct": 80.4,
@@ -147,7 +152,7 @@ def client(tmp_path, monkeypatch, dashboard_operator_headers):
     servers_json.write_text(json.dumps(MCP_SERVERS_JSON), encoding="utf-8")
     monkeypatch.setattr(dashboard_app, "MCP_SERVERS_PATH", str(servers_json))
 
-    async def ops_json(path):
+    async def ops_json(path, timeout=None):
         return OPS.get(path)
 
     async def ops_call(method, path, json=None):  # the switch's one control-plane call
@@ -237,6 +242,7 @@ def _shape_mismatches(fixture, real, where: str) -> list[str]:
 # Each fixture file and the real request that produces the same response: (method, path, body).
 REAL_REQUESTS = {
     "api/overview.json": ("GET", "/api/overview", None),
+    "api/drift.json": ("GET", "/api/drift", None),
     "api/activity.json": ("GET", "/api/activity", None),
     "api/services/table.json": ("GET", "/api/services/table", None),
     "api/hardware/service-pressure.json": ("GET", "/api/hardware/service-pressure", None),

@@ -239,6 +239,17 @@ def build_attention(cards: list[dict], containers_by_id: dict, hardware: dict,
     return items
 
 
+def drift(doctor: dict | None) -> dict:
+    """ops-controller's GET /doctor as the Overview's Drift callout: the checks `ordo doctor` would
+    flag. `available` is False when the control plane did not answer, so an unanswered check never
+    reads as "no drift"."""
+    if not isinstance(doctor, dict):
+        return {"available": False, "findings": []}
+    findings = [{"check": str(check.get("check") or ""), "detail": str(check.get("detail") or "")}
+                for check in doctor.get("checks") or [] if isinstance(check, dict) and check.get("ok") is False]
+    return {"available": True, "findings": findings}
+
+
 # ---------------------------------------------------------------------------------------------
 # renders, media, activity
 # ---------------------------------------------------------------------------------------------

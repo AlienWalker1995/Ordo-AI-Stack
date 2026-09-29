@@ -319,15 +319,12 @@ class ControlPlane:
         from its own baked copy of ordo/, catalog/ and the manifests). No manifest, or one written
         before renders recorded a digest, is allowed: this render then records ours.
         """
-        manifest_path = self.out_dir / "manifest.json"
-        if not manifest_path.exists():
-            return None
         try:
-            recorded = json.loads(manifest_path.read_text(encoding="utf-8")).get("substrate_digest")
+            recorded = self._recorded_substrate_digest()
         except (OSError, ValueError, AttributeError) as e:
-            return self._error(409, f"cannot read {manifest_path} to check the render substrate ({e}); "
-                               "re-render from the host checkout, then retry")
-        if not recorded or recorded == self.substrate_digest:
+            return self._error(409, f"cannot read {self.out_dir / 'manifest.json'} to check the render substrate "
+                               f"({e}); re-render from the host checkout, then retry")
+        if recorded is None or recorded == self.substrate_digest:
             return None
         return self._error(
             409,
@@ -337,6 +334,51 @@ class ControlPlane:
             "Rebuild ordo/ops-controller from the checkout that rendered out/ (`ordo build "
             "ops-controller`), re-render, then `ordo recreate ops-controller`.",
             substrate_digest=self.substrate_digest, rendered_substrate_digest=recorded)
+
+    def _recorded_substrate_digest(self) -> str | None:
+        """The substrate digest the last render recorded in out/manifest.json. None when there is
+        no manifest or it was written before renders recorded one. Raises OSError, ValueError or
+        AttributeError when the manifest cannot be read."""
+        manifest_path = self.out_dir / "manifest.json"
+        if not manifest_path.exists():
+            return None
+        recorded = json.loads(manifest_path.read_text(encoding="utf-8")).get("substrate_digest")
+        return str(recorded) if recorded else None
+
+    def doctor(self) -> dict[str, Any]:
+        """`GET /doctor`: the drift `ordo doctor` reports, seen from the control plane. Read-only.
+
+        Each check is judged by the function `ordo doctor` uses, never a copy: this process's
+        substrate digest against the one the last render recorded in out/manifest.json
+        (`substrate.substrate_verdict`; the host compares the running ops-controller with its
+        checkout, which this process cannot see), and the open-webui probe (`open_webui_verdict`),
+        run once in its container when it is running. `detail` is the CLI's report line without
+        its "! " finding marker. The dashboard's Overview shows the failed checks.
+        """
+        checks = [("substrate", *self._substrate_drift()), (OPEN_WEBUI_SERVICE, *self._open_webui_drift())]
+        rows = [{"check": name, "ok": ok, "detail": line.removeprefix("! ")} for name, ok, line in checks]
+        return {"ok": all(row["ok"] for row in rows), "checks": rows}
+
+    def _substrate_drift(self) -> tuple[bool, str]:
+        try:
+            recorded = self._recorded_substrate_digest()
+        except (OSError, ValueError, AttributeError) as e:
+            return False, f"! substrate: cannot read {self.out_dir / 'manifest.json'} ({e})"
+        if recorded is None:
+            return True, f"substrate: ops-controller {self.substrate_digest[:12]}; out/ records no digest yet"
+        return substrate.substrate_verdict(self.substrate_digest, recorded, reference_name="the last render",
+                                           rebuild_from="the checkout that rendered out/")
+
+    def _open_webui_drift(self) -> tuple[bool, str]:
+        """The open-webui verdict `ordo doctor` gives: "not running" is fine, a failed probe is not."""
+        if not self.broker:
+            return False, "! open-webui: cannot be checked: this control plane has no container backend"
+        try:
+            rows = self.broker.backend.list_services().get("services", [])
+        except Exception as e:  # noqa: BLE001 - an unreadable stack is reported, not raised
+            return False, f"! open-webui: cannot read the running services ({type(e).__name__}: {e})"
+        running = any(row.get("id") == OPEN_WEBUI_SERVICE and row.get("state") == "running" for row in rows)
+        return self._open_webui_verdict() if running else open_webui_verdict(None)
 
     def status(self) -> dict[str, Any]:
         """Live status: GPU/scheduler state + the current rendered manifest."""
@@ -1764,6 +1806,8 @@ class ControlPlane:
         if m == "GET" and path == "/jobs/history":
             # Finished leases, newest first — what the orchestration tab's history table shows.
             return 200, {"history": self.history.tail(100) if self.history else []}
+        if m == "GET" and path == "/doctor":
+            return 200, self.doctor()
         if m == "GET" and path in ("/health", "/healthz"):
             # The digest is not secret; `ordo doctor` reads it here to compare with the checkout.
             return 200, {"ok": True, "substrate_digest": self.substrate_digest}

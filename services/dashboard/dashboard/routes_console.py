@@ -45,16 +45,18 @@ _SEGMENT = re.compile(r"^[A-Za-z0-9._ -]{1,128}$")
 # A switch is one ops-controller call that renders and recreates the changed set in one compose
 # call (600s at most there, DockerBackend.recreate_services), so this outlasts it.
 _RECREATE_TIMEOUT = 660.0
+# ops-controller's GET /doctor runs the open-webui probe, two model-gateway calls of up to 15 s each.
+_DOCTOR_TIMEOUT = 45.0
 
 
 # ---------------------------------------------------------------------------------------------
 # fetchers (patched in tests)
 # ---------------------------------------------------------------------------------------------
 
-async def _ops_json(path: str) -> dict | None:
+async def _ops_json(path: str, timeout: float = 15.0) -> dict | None:
     from dashboard.app import _ops_request
 
-    code, data = await _ops_request("GET", path, timeout=15.0)
+    code, data = await _ops_request("GET", path, timeout=timeout)
     return data if code == 200 and isinstance(data, dict) else None
 
 
@@ -216,6 +218,13 @@ async def overview() -> dict:
                   if c.get("open_url") and not c.get("background")],
         "generated_at": time.time(),
     }
+
+
+@router.get("/drift")
+async def drift() -> dict:
+    """What `ordo doctor` would flag, from ops-controller's read-only GET /doctor (the same checks,
+    judged by the same functions). Polled slower than /overview: each call probes open-webui."""
+    return console.drift(await _ops_json("/doctor", timeout=_DOCTOR_TIMEOUT))
 
 
 @router.get("/activity")

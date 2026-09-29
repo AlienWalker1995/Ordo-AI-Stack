@@ -1,10 +1,11 @@
 // Overview: is it healthy, what is happening, what needs me. One screen, answered in that order.
 //   GET /api/overview        status line, GPUs and who holds them, chat engine, attention, host
+//   GET /api/drift           what `ordo doctor` would flag (ops-controller's read-only GET /doctor)
 //   GET /api/activity        renders, GPU leases and operator actions, newest first
 //   GET /api/perf/series     tokens generated per second by each chat server, last 24 h
 import { usePolling } from '../api.js'
 import { api } from '../api.js'
-import { Chip, Dot, Meter, Panel, Skeleton, Sparkline, Unavailable } from '../components/ui.jsx'
+import { Banner, Chip, Dot, Meter, Panel, Skeleton, Sparkline, Unavailable } from '../components/ui.jsx'
 import { clock, formatGb, formatRate, pct, timeAgo } from '../lib/format.js'
 
 const LEVEL_TONE = { ok: 'ok', warning: 'warning', critical: 'critical', unknown: 'unknown' }
@@ -22,6 +23,34 @@ function StatusLine({ overview, lastUpdated }) {
         {lastUpdated ? ` · refreshed ${Math.max(0, Math.round((Date.now() - lastUpdated) / 1000))} s ago` : ''}
       </span>
     </div>
+  )
+}
+
+const CODE = 'font-mono text-caption text-fg'
+
+// A doctor report line, with its `command` spans set as code.
+function DoctorLine({ text }) {
+  return text.split('`').map((part, i) => (i % 2 ? <code key={i} className={CODE}>{part}</code> : part))
+}
+
+// Shown only when a check `ordo doctor` runs has something to fix; nothing when all pass or the
+// check could not run (the status line already says when the control plane is not answering).
+function Drift({ drift }) {
+  if (!drift?.available || !drift.findings.length) return null
+  return (
+    <Banner id="overview-drift" tone="warning" title="Drift">
+      <ul className="mt-1 grid gap-1.5">
+        {drift.findings.map((f) => (
+          <li key={f.check} className="grid grid-cols-[auto_1fr] items-baseline gap-x-2.5">
+            <Dot tone="warning" label="warning" />
+            <span className="min-w-0 break-words text-body text-fg-muted"><DoctorLine text={f.detail} /></span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-caption text-muted">
+        From the checks <code className={CODE}>ordo doctor</code> runs. Run it on the host for the full report.
+      </p>
+    </Banner>
   )
 }
 
@@ -152,6 +181,8 @@ export default function OverviewPage() {
   const overview = usePolling(() => api.get('/api/overview'), 5000)
   const activity = usePolling(() => api.get('/api/activity'), 15000)
   const series = usePolling(() => api.get('/api/perf/series'), 60000)
+  // Slower than the overview: each call runs the open-webui probe inside its container.
+  const drift = usePolling(() => api.get('/api/drift'), 60000)
   const o = overview.data
 
   if (!o) {
@@ -163,6 +194,7 @@ export default function OverviewPage() {
   return (
     <div className="grid gap-4 [&>*]:min-w-0">
       <StatusLine overview={o} lastUpdated={overview.lastUpdated} />
+      <Drift drift={drift.data} />
       <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr] [&>*]:min-w-0">
         <Panel title="GPUs right now">
           <div className="grid gap-4">
