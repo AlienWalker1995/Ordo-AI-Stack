@@ -567,6 +567,14 @@ class Broker:
         # API threads and the lease loop both persist: the snapshot and the write are taken under
         # one lock so an older snapshot can never land on disk after a newer one.
         self._persist_lock = threading.Lock()
+        # One container-changing operation at a time: a lease transition here (decide, then stop and
+        # start containers) or a lifecycle verb in ControlPlane, which takes this same lock. Without
+        # it a lease admitted in the middle of a recreate could stop llama.cpp while compose brings
+        # it back, putting two tenants on one card (the 2026-08-08 crash), and two reconciles could
+        # issue their stops and starts out of order. It is held across docker calls, so nothing that
+        # must stay prompt takes it: heartbeats, /status and /health only use the scheduler's own
+        # lock. Reentrant because restore_state sweeps while holding it.
+        self.operation_lock = threading.RLock()
 
     @property
     def state_persisted(self) -> bool:
@@ -584,9 +592,8 @@ class Broker:
         with self._persist_lock:
             try:
                 self.state_store.save(self.scheduler.snapshot())
-            except (OSError, RuntimeError) as e:
-                # RuntimeError: another thread changed the scheduler mid-snapshot. Either way the
-                # file is now behind, so stop claiming it is current; the lease loop retries.
+            except OSError as e:
+                # The file is now behind, so stop claiming it is current; the lease loop retries.
                 self._state_saved = False
                 print(f"[scheduler] ERROR: cannot write the scheduler state to {self.state_store.path} "
                       f"({e}); a restart now would lose the GPU lease state", file=sys.stderr, flush=True)
@@ -610,6 +617,10 @@ class Broker:
         """
         if self.state_store is None:
             return
+        with self.operation_lock:
+            self._restore_state()
+
+    def _restore_state(self) -> None:
         try:
             snapshot = self.state_store.load()
         except StateUnreadable as e:
@@ -651,21 +662,24 @@ class Broker:
         return bool(admitted or evicted or restored)
 
     def request(self, job: Job) -> None:
-        if self.history:
-            self.history.submitted(job.id, job.kind, job.vram_gb)
-        self.scheduler.submit(job)
-        self.reconcile()
-        self._persist()
-        if self.history and job.id in self.scheduler.status()["rejected"]:
-            self.history.rejected(job.id)
+        # Waits for a running lifecycle verb: a lease must not evict a resident that verb is starting.
+        with self.operation_lock:
+            if self.history:
+                self.history.submitted(job.id, job.kind, job.vram_gb)
+            self.scheduler.submit(job)
+            self.reconcile()
+            self._persist()
+            if self.history and job.id in self.scheduler.status()["rejected"]:
+                self.history.rejected(job.id)
 
     def complete(self, job_id: str) -> None:
-        if self.history:
-            self.history.ended(job_id, "completed")
-        self.scheduler.complete(job_id)
-        self.backend.stop(job_id)
-        self.reconcile()
-        self._persist()
+        with self.operation_lock:
+            if self.history:
+                self.history.ended(job_id, "completed")
+            self.scheduler.complete(job_id)
+            self.backend.stop(job_id)
+            self.reconcile()
+            self._persist()
 
     def heartbeat(self, job_id: str) -> bool:
         """Renew a running job's lease (liveness-based). No reconcile — nothing starts or stops."""
@@ -681,13 +695,17 @@ class Broker:
         start it again (a whole-stack `docker compose up -d` starts every stopped service), which
         puts two tenants on one card: the 2026-08-08 host crash. While the scheduler holds a
         resident evicted, its view wins. Called on the serve loop's timer.
+
+        It takes no operation lock, so it keeps guarding the card while a long verb runs. The
+        evicted set is read again AFTER the container listing: a restore removes the resident from
+        that set before starting it, so a resident that is running because it was just restored is
+        never mistaken for a stray and stopped (which would strand it down).
         """
-        evicted = self.scheduler.evicted_residents
-        if not evicted:
+        if not self.scheduler.evicted_residents:
             return []
         running = {r.get("id") for r in (self.backend.list_services() or {}).get("services", [])
                    if r.get("state") == "running"}
-        stray = sorted(set(evicted) & running)
+        stray = sorted(set(self.scheduler.evicted_residents) & running)
         for name in stray:
             self.backend.stop(name)
         return stray
@@ -698,13 +716,22 @@ class Broker:
         Called on a timer by `ordo serve`. Advancing the lease clock is tick()'s job (the serve loop
         ticks by the poll interval); this sweeps whatever expired and reconciles so a resident that a
         crashed client left evicted is restarted. Returns the swept job ids (for logging/audit).
+
+        While another operation holds the operation lock (a recreate can take minutes) the sweep
+        does nothing and returns []: the timer calls it again on the next tick, and an expired lease
+        stays expired until then.
         """
-        expired = self.scheduler.sweep_expired_leases()
-        for job_id in expired:
-            self.backend.stop(job_id)  # best-effort: ensure the stranded job's container is down
-            if self.history:
-                self.history.ended(job_id, "swept")
-        changed = self.reconcile()
-        if expired or changed or not self._state_saved:
-            self._persist()  # a transition, or a retry after a failed write
-        return expired
+        if not self.operation_lock.acquire(blocking=False):
+            return []
+        try:
+            expired = self.scheduler.sweep_expired_leases()
+            for job_id in expired:
+                self.backend.stop(job_id)  # best-effort: ensure the stranded job's container is down
+                if self.history:
+                    self.history.ended(job_id, "swept")
+            changed = self.reconcile()
+            if expired or changed or not self._state_saved:
+                self._persist()  # a transition, or a retry after a failed write
+            return expired
+        finally:
+            self.operation_lock.release()

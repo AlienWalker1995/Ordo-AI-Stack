@@ -271,6 +271,12 @@ class ControlPlane:
         # from AUDIT_LOG_PATH (read then, so tests can point it elsewhere); it creates its
         # directory on the first write only.
         self._audit_log: AuditLog | None = None
+        self._audit_init_lock = threading.Lock()
+        # Requests run concurrently on worker threads (see app()), so the verbs that change the
+        # stack take this lock, one at a time (`_exclusive`). It is the broker's operation lock, the
+        # one a GPU lease transition takes, so a lease cannot evict a resident mid-verb either. A
+        # control plane without a broker only needs its source writes kept apart.
+        self._operation_lock = broker.operation_lock if broker else threading.RLock()
 
 
     # --- core operations (pure, testable) ---
@@ -597,7 +603,7 @@ class ControlPlane:
         plane has no container backend (a hand-run or test instance): nothing is recreated then.
         """
         previous_text = self.source_path.read_text(encoding="utf-8")
-        self.source_path.write_text(text, encoding="utf-8")
+        self._write_source(text)
         rendered.write(self.out_dir)
         if not self.broker:
             return None, None
@@ -605,7 +611,7 @@ class ControlPlane:
         applied = self.apply_render()
         if "_status" not in applied:
             return applied, None
-        self.source_path.write_text(previous_text, encoding="utf-8")
+        self._write_source(previous_text)
         self._render().write(self.out_dir)
         rollback = self.apply_render()
         if rollback.pop("_status", None) is None:
@@ -617,6 +623,13 @@ class ControlPlane:
         applied["rolled_back"] = True
         applied["rollback"] = rollback
         return None, applied
+
+    def _write_source(self, text: str) -> None:
+        """Replace the operator source atomically (a temp file, then a rename): a read-only request
+        rendering it on another thread (GET /status) sees the old file or the new one, never half."""
+        temp = self.source_path.with_name(self.source_path.name + ".tmp")
+        temp.write_text(text, encoding="utf-8")
+        os.replace(temp, self.source_path)
 
     def _secret_holds(self, rc: Any) -> dict[str, list[str]]:
         """service -> the required secrets out/secrets.env lacks, for each enabled plugin's services
@@ -1168,9 +1181,6 @@ class ControlPlane:
             _validate_download_url(url)
         except ValueError as e:
             return self._error(400, str(e))
-        with self._dl_lock:
-            if self._dl_status.get("running"):
-                return self._error(409, "A download is already in progress")
         filename = str(body.get("filename", "")).strip() or url.split("/")[-1].split("?")[0]
         if not filename or ".." in filename or "/" in filename or "\\" in filename:
             return self._error(400, "Invalid or undetectable filename")
@@ -1179,6 +1189,11 @@ class ControlPlane:
             return self._error(400, f"Invalid category. Must be one of: {COMFYUI_CATEGORIES}")
         if not category:
             category = _auto_detect_category(url, filename)
+        with self._dl_lock:
+            # Checked and claimed under one lock: two concurrent requests cannot both start.
+            if self._dl_status.get("running"):
+                return self._error(409, "A download is already in progress")
+            self._dl_status["running"] = True
         # Start download in background thread
         thread = threading.Thread(
             target=self._run_model_download,
@@ -1340,9 +1355,11 @@ class ControlPlane:
     # --- Audit ---
 
     def _audit_sink(self) -> AuditLog:
-        if self._audit_log is None:
-            self._audit_log = AuditLog(AUDIT_LOG_PATH)
-        return self._audit_log
+        # Built once, under a lock: two instances would each hold their own write lock on one file.
+        with self._audit_init_lock:
+            if self._audit_log is None:
+                self._audit_log = AuditLog(AUDIT_LOG_PATH)
+            return self._audit_log
 
     def audit_call(
         self,
@@ -1507,6 +1524,19 @@ class ControlPlane:
             }
         return out
 
+    def _exclusive(self, verb: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        """Run a stack-changing verb holding the operation lock, or refuse it with 409 while
+        another holds it (the convention for "busy", as a second download is refused). Refusing
+        rather than waiting keeps a caller from queueing behind a recreate that can take 15
+        minutes, past its own timeout, and from tying up a worker thread while it waits."""
+        if not self._operation_lock.acquire(blocking=False):
+            return self._error(409, "another operation that changes the stack is in progress (a lifecycle "
+                                    "verb, a render apply or a GPU lease transition); retry when it finishes")
+        try:
+            return verb()
+        finally:
+            self._operation_lock.release()
+
     # --- routing (also pure) ---
     def route(
         self,
@@ -1523,15 +1553,17 @@ class ControlPlane:
         if m == "GET" and path == "/model-config":
             return 200, self.get_model_config()
         if m == "POST" and path == "/model-config":
-            return self._as_response(self.set_model_config(body))
+            return self._as_response(self._exclusive(lambda: self.set_model_config(body)))
         if m == "POST" and path == "/apply":
-            return self._as_response(self.apply(body))
+            return self._as_response(self._exclusive(lambda: self.apply(body)))
         if m == "GET" and path == "/plugins":
             return 200, self.list_plugins()
         if m == "POST" and path.startswith("/plugins/") and path.endswith("/enable"):
-            return self._as_response(self.enable_plugin(path[len("/plugins/"):-len("/enable")], body))
+            plugin_id = path[len("/plugins/"):-len("/enable")]
+            return self._as_response(self._exclusive(lambda: self.enable_plugin(plugin_id, body)))
         if m == "POST" and path.startswith("/plugins/") and path.endswith("/disable"):
-            return self._as_response(self.disable_plugin(path[len("/plugins/"):-len("/disable")], body))
+            plugin_id = path[len("/plugins/"):-len("/disable")]
+            return self._as_response(self._exclusive(lambda: self.disable_plugin(plugin_id, body)))
         if m == "POST" and path == "/jobs":
             return self._as_response(self.request_job(body))
         if m == "POST" and path == "/jobs/complete":
@@ -1547,13 +1579,13 @@ class ControlPlane:
         # Service lifecycle routes (ported from ops-api)
         if m == "POST" and path.startswith("/services/") and path.endswith("/start"):
             service_id = path[len("/services/"):-len("/start")]
-            return self._as_response(self.service_start(service_id, body))
+            return self._as_response(self._exclusive(lambda: self.service_start(service_id, body)))
         if m == "POST" and path.startswith("/services/") and path.endswith("/stop"):
             service_id = path[len("/services/"):-len("/stop")]
-            return self._as_response(self.service_stop(service_id, body))
+            return self._as_response(self._exclusive(lambda: self.service_stop(service_id, body)))
         if m == "POST" and path.startswith("/services/") and path.endswith("/restart"):
             service_id = path[len("/services/"):-len("/restart")]
-            return self._as_response(self.service_restart(service_id, body))
+            return self._as_response(self._exclusive(lambda: self.service_restart(service_id, body)))
         if m == "GET" and path.startswith("/services/") and path.endswith("/logs"):
             service_id = path[len("/services/"):-len("/logs")]
             return self._as_response(self.service_logs(service_id))
@@ -1561,7 +1593,7 @@ class ControlPlane:
             return self._as_response(self.list_services())
         if m == "POST" and path.startswith("/services/") and path.endswith("/recreate"):
             service_id = path[len("/services/"):-len("/recreate")]
-            return self._as_response(self.service_recreate(service_id, body))
+            return self._as_response(self._exclusive(lambda: self.service_recreate(service_id, body)))
         if m == "GET" and path == "/containers":
             return self._as_response(self.list_containers())
         if m == "GET" and path.startswith("/containers/") and path.endswith("/logs"):
@@ -1569,15 +1601,15 @@ class ControlPlane:
             return self._as_response(self.container_logs(name))
         if m == "POST" and path.startswith("/containers/") and path.endswith("/restart"):
             name = path[len("/containers/"):-len("/restart")]
-            return self._as_response(self.container_restart(name, body))
+            return self._as_response(self._exclusive(lambda: self.container_restart(name, body)))
         if m == "GET" and path == "/stats/services":
             return self._as_response(self.service_stats())
         if m == "POST" and path == "/compose/up":
-            return self._as_response(self.compose_up(body))
+            return self._as_response(self._exclusive(lambda: self.compose_up(body)))
         if m == "POST" and path == "/compose/down":
-            return self._as_response(self.compose_down(body))
+            return self._as_response(self._exclusive(lambda: self.compose_down(body)))
         if m == "POST" and path == "/compose/restart":
-            return self._as_response(self.compose_restart(body))
+            return self._as_response(self._exclusive(lambda: self.compose_restart(body)))
         # Registry routes (ported from ops-api, slice 2)
         if m == "GET" and path == "/registry/models":
             return 200, self.registry_models()
@@ -1604,7 +1636,7 @@ class ControlPlane:
             return 200, self.audit_log(limit)
         # Slice 4: ComfyUI node requirements, plus the two honest 410s
         if m == "POST" and path == "/comfyui/install-node-requirements":
-            return self._as_response(self.comfyui_install_node_requirements(body))
+            return self._as_response(self._exclusive(lambda: self.comfyui_install_node_requirements(body)))
         if m == "POST" and path == "/gpu/assign":
             return self._as_response(self.gpu_assign_gone((body or {}).get("service", "")))
         if m == "POST" and path.startswith("/registry/models/") and path.endswith("/assign-gpu"):
@@ -1631,6 +1663,7 @@ class ControlPlane:
         """
         from fastapi import FastAPI, Request
         from fastapi.responses import JSONResponse
+        from starlette.concurrency import run_in_threadpool
 
         read_token = auth_token if callable(auth_token) else (lambda: auth_token or "")
         current = {"token": read_token().strip()}
@@ -1689,7 +1722,13 @@ class ControlPlane:
                         error = "JSON body must be an object"
                         cp.audit_call(method, path, None, actor, 400, error)
                         return JSONResponse(content={"error": error}, status_code=400)
-            status, payload = cp.handle(method, path, body, dict(request.query_params), actor)
+            # Concurrency contract: handle() runs on a worker thread, never on the event loop. A verb can
+            # block on docker for up to 15 minutes, and on the loop it stalled every other request
+            # (/health, /status, GPU-lease heartbeats) behind it. Requests therefore run in parallel:
+            # the scheduler guards its state with its own lock, and verbs that change the stack take the
+            # operation lock (`_exclusive`, a second one gets 409), which lease calls never wait for.
+            status, payload = await run_in_threadpool(
+                cp.handle, method, path, body, dict(request.query_params), actor)
             return JSONResponse(content=payload, status_code=status)
 
         return app
