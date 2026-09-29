@@ -164,6 +164,7 @@ def test_the_probe_never_prints_the_key():
 
 def test_doctor_command_fails_on_an_open_webui_problem(monkeypatch, capsys):
     monkeypatch.setattr(doctor, "read_running_substrate_digest", lambda project: None)
+    monkeypatch.setattr(doctor, "read_cpu_fallback_limits", lambda project: None)
     monkeypatch.setattr(doctor, "read_open_webui_probe", lambda project: _probe(chat={"status": 401, "models": []}))
     code = cli.main(["doctor"])
     out = capsys.readouterr().out
@@ -175,6 +176,7 @@ def test_doctor_command_reports_an_unreadable_open_webui(monkeypatch, capsys):
         raise doctor.ContainerUnreadable("docker exec failed")
 
     monkeypatch.setattr(doctor, "read_running_substrate_digest", lambda project: None)
+    monkeypatch.setattr(doctor, "read_cpu_fallback_limits", lambda project: None)
     monkeypatch.setattr(doctor, "read_open_webui_probe", unreadable)
     code = cli.main(["doctor"])
     assert code == 1 and "docker exec failed" in capsys.readouterr().out

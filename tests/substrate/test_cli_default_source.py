@@ -35,6 +35,7 @@ def no_docker_probes(monkeypatch):
     monkeypatch.setattr(doctor, "substrate_check", lambda project: (True, "substrate: stubbed"))
     monkeypatch.setattr(doctor, "open_webui_check", lambda project: (True, "open-webui: stubbed"))
     monkeypatch.setattr(doctor, "alerting_check", lambda compose, out_dir: (True, "alerting: stubbed"))
+    monkeypatch.setattr(doctor, "cpu_fallback_check", lambda project, threads: (True, "cpu-fallback: stubbed"))
 
 
 def _operator_checkout(root: Path) -> Path:

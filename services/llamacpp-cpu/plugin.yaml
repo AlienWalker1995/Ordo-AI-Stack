@@ -54,6 +54,14 @@ services:
       - "${LLAMACPP_CPU_CTX?LLAMACPP_CPU_CTX is missing from the rendered .env}"
       - --parallel
       - "1"
+      # A declared CPU budget (overrides.llamacpp-cpu.threads; default min(12, half the detected
+      # logical CPUs)). This service runs while a render holds the GPU, and unbounded llama.cpp took
+      # ~24 of 48 threads, enough on top of the render to trip the host UPS's overload alarm. The
+      # same derived value is the compose `cpus` ceiling below, so the argv and the limit agree.
+      - --threads
+      - "${LLAMACPP_CPU_THREADS?LLAMACPP_CPU_THREADS is missing from the rendered .env}"
+      - --threads-batch
+      - "${LLAMACPP_CPU_THREADS?LLAMACPP_CPU_THREADS is missing from the rendered .env}"
       - --jinja                     # use the GGUF's chat template (Qwen3.6)
       - --reasoning-format
       - deepseek                    # match the GPU backend's reasoning handling
@@ -88,6 +96,8 @@ services:
       # the GPU llamacpp does the same. 117GB RAM easily holds the ~20GB A3B.
       - --no-mmap
       - --metrics
+    resources:
+      cpus: "${LLAMACPP_CPU_THREADS?LLAMACPP_CPU_THREADS is missing from the rendered .env}"
     volumes:
       # models-gguf named volume — the 9p bind wedged GGUF reads (2026-08-07); see ordo/render/compose.py.
       - models-gguf:/models:ro
