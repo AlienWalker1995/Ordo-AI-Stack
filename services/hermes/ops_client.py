@@ -29,6 +29,17 @@ class OpsClientError(RuntimeError):
     """Raised when the control plane returns a non-2xx response."""
 
 
+def _read_token_file() -> str:
+    path = os.environ.get("OPS_CONTROLLER_TOKEN_FILE", "")
+    if not path:
+        return ""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
 class OpsClient:
     def __init__(
         self,
@@ -42,9 +53,13 @@ class OpsClient:
         # `self.url`, and every request (plugin verbs included) goes through self._client.
         self.url = url or os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000")
         self.ctl_url = ctl_url or self.url
-        token = token or os.environ.get("OPS_CONTROLLER_TOKEN", "")
+        # Hermes' own scoped token (the `hermes` principal). The gateway gets it as
+        # OPS_CONTROLLER_TOKEN from the entrypoint; a `docker exec` session, which skips the
+        # entrypoint, reads the file the render mounts (OPS_CONTROLLER_TOKEN_FILE).
+        token = token or os.environ.get("OPS_CONTROLLER_TOKEN", "") or _read_token_file()
         if not token:
-            raise OpsClientError("OPS_CONTROLLER_TOKEN env var is empty")
+            raise OpsClientError("no ops-controller token: OPS_CONTROLLER_TOKEN is empty and "
+                                 "OPS_CONTROLLER_TOKEN_FILE is unset or empty")
         # X-Actor names the caller in ops-controller's audit log.
         self._headers = {"Authorization": f"Bearer {token}", "X-Actor": "hermes"}
         self._client = httpx.Client(base_url=self.url, headers=self._headers, timeout=timeout)
@@ -107,9 +122,6 @@ class OpsClient:
     def compose_up(self, *, service: str | None = None, confirm: bool = False) -> dict[str, Any]:
         return self._compose("up", service, confirm)
 
-    def compose_down(self, *, service: str | None = None, confirm: bool = False) -> dict[str, Any]:
-        return self._compose("down", service, confirm)
-
     def compose_restart(self, *, service: str | None = None, confirm: bool = False) -> dict[str, Any]:
         return self._compose("restart", service, confirm)
 
@@ -124,12 +136,9 @@ class OpsClient:
                 "stack-wide compose verbs are refused by this client (ops-controller would run "
                 "them on the whole project); pass a service name for a per-service recreate"
             )
-        # up / down / restart all take {"confirm": ...} the same way: ops-controller's
-        # service_stop/service_start/service_restart each refuse a missing confirm with 400.
-        if verb == "down":
-            r = self._request("POST", f"/services/{service}/stop", json={"confirm": confirm})
-        else:  # up / restart -> recreate (picks up new .env / volumes / network)
-            r = self._request("POST", f"/services/{service}/recreate", json={"confirm": confirm})
+        # up and restart both recreate (picks up new .env / volumes / network). There is no stop
+        # verb: the `hermes` principal is refused /services/{id}/stop.
+        r = self._request("POST", f"/services/{service}/recreate", json={"confirm": confirm})
         return r.json()
 
     # --- service-plugin install/enable: the render authority. These edit ordo.yaml's plugin

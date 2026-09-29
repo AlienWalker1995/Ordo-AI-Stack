@@ -99,3 +99,10 @@ overrides: {}
 # caller's principal. Nothing else (no stop, start, exec, compose) and never Ordo's own project.
 # List compose project names, e.g. [media-stack, game-server]. Empty: none.
 managed_projects: []
+
+# Host paths under CODE_ROOT that OTHER projects execute or read config from (another stack's
+# container init scripts, say). The agent mirror-mounts CODE_ROOT read-write, so each path listed
+# here is mounted read-only over the mirror inside the agent. Ordo's own such paths (out/, scripts/,
+# every file another Ordo service mounts from the checkout) are derived by the render and need no
+# entry. Example: [C:/dev/media-stack/app/custom-cont-init.d]. Empty: none.
+agent_readonly: []

@@ -30,7 +30,12 @@ litellm_key:
   # queueing on one llama.cpp slot. Without it the key returns 403 and the only way onto that
   # model is an involuntary failover.
   models: [local-chat, local-embed, local-chat-cpu]
-  mcp_servers: all
+  # Every enabled MCP server EXCEPT the two that call ops-controller with the admin token on the
+  # caller's behalf (comfyui: node installs, model downloads; orchestration: workflow runs). Through
+  # them Hermes' key would reach routes its own `hermes` principal is refused (hostile audit SEC-1,
+  # #310 review F3). Hermes renders through the ComfyUI gate and its skills instead.
+  mcp_servers:
+    all_except: [comfyui, orchestration]
 
 # ── Runtime wiring (data, mirroring V1's hermes-gateway — see the phase-5.5 parity audit) ──
 # Peers Hermes needs HEALTHY before it starts, else it spams 5xx while they warm (V1 uses
@@ -46,9 +51,10 @@ depends_on:
 # Env the container reads (non-secret; secret VALUES come from secrets.env / secret_files below).
 # ${VAR:-default} refs resolve against the rendered .env at compose time (single source of truth).
 # Env secrets it reads (rendered KEY: ${KEY}): its LiteLLM key (the entrypoint refuses to start
-# without it) and the control-plane token (ops-router tools, reel scripts). Nothing else from
-# secrets.env reaches the agent.
-secrets: [LITELLM_KEY_HERMES, OPS_CONTROLLER_TOKEN]
+# without it). Nothing else from secrets.env reaches the agent.
+# Its ops-controller credential is NOT here: it is the scoped OPS_CONTROLLER_TOKEN_HERMES, a file
+# secret below (hostile audit SEC-1). The admin OPS_CONTROLLER_TOKEN never reaches the agent.
+secrets: [LITELLM_KEY_HERMES]
 
 # Derived keys it reads from the rendered .env (rendered `KEY: ${KEY?...}`; the agent never loads the
 # whole file). COMFYUI_URL is the ComfyUI admission gate: the dialogue/reel/image publishers, the
@@ -167,11 +173,26 @@ volumes:
   # lease-before-GPU (a leaseless GPU job BSOD'd the box 2026-08-08) and no self/persistent-volume
   # destruction. See docs/design/hermes-owns-docker.md.
   - /var/run/docker.sock:/var/run/docker.sock
+  # Hide the materialized secret store from the /c/dev mirror above (hostile audit SEC-1): it holds
+  # the admin OPS_CONTROLLER_TOKEN and every other secret value. AGENT_CHECKOUT_PATH is the checkout's
+  # path inside this container (derived by the render, ordo/render/agent_mirror.py). An empty
+  # read-only volume covers the file-secret directory and /dev/null covers secrets.env. The agent
+  # still reads its own file secrets from /run/secrets (secret_files below), which are separate binds.
+  - hermes-secret-shadow:${AGENT_CHECKOUT_PATH}/out/secrets:ro
+  - /dev/null:${AGENT_CHECKOUT_PATH}/out/secrets.env:ro
 
 # File-delivered secrets (ordo/render/secret_files.py): each is mounted read-only at
 # /run/secrets/<key lowercased>, kept out of `docker inspect`, and the render sets <KEY>_FILE to that
 # path; the entrypoint bridges each *_FILE to the plain var the app reads.
-secret_files: [DISCORD_BOT_TOKEN, GITHUB_BACKUP_PAT]
+# OPS_CONTROLLER_TOKEN_HERMES is Hermes' own ops-controller token (the `hermes` principal,
+# ordo/control/principals.py: a route allowlist). It is delivered under OPS_CONTROLLER_TOKEN_FILE, and
+# the entrypoint bridges that to OPS_CONTROLLER_TOKEN: inside the agent that name is Hermes' own
+# credential, so every tool, script and skill that presents $OPS_CONTROLLER_TOKEN presents the
+# scoped token. Routes outside the allowlist answer 403.
+secret_files:
+  - DISCORD_BOT_TOKEN
+  - GITHUB_BACKUP_PAT
+  - {key: OPS_CONTROLLER_TOKEN_HERMES, env: OPS_CONTROLLER_TOKEN_FILE}
 
 # gateway_state.json is written by `hermes gateway` on startup (Docker mode writes no pid file).
 #
@@ -195,3 +216,4 @@ healthcheck:
 # How `ordo backup` saves the named volumes this agent writes (ordo/render/backup_policy.py).
 backup:
   hermes-home: stopped         # SQLite state.db + sessions: snapshot with the agent stopped
+  hermes-secret-shadow: skip   # always empty: it only hides out/secrets from the /c/dev mirror

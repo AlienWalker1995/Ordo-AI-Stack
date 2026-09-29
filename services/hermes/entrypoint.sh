@@ -55,6 +55,15 @@ if [ -n "${GITHUB_BACKUP_PAT_FILE:-}" ] && [ -s "$GITHUB_BACKUP_PAT_FILE" ]; the
     export GITHUB_BACKUP_PAT
 fi
 
+# Hermes' ops-controller credential: its own SCOPED token (the `hermes` principal, a route
+# allowlist), delivered as OPS_CONTROLLER_TOKEN_FILE and exposed under the name every tool, script
+# and skill already reads. The admin token is never mounted here (hostile audit SEC-1). An empty
+# file (a store without the key) leaves OPS_CONTROLLER_TOKEN unset, and the ops-router tools say so.
+if [ -n "${OPS_CONTROLLER_TOKEN_FILE:-}" ] && [ -s "$OPS_CONTROLLER_TOKEN_FILE" ]; then
+    OPS_CONTROLLER_TOKEN="$(cat "$OPS_CONTROLLER_TOKEN_FILE")"
+    export OPS_CONTROLLER_TOKEN
+fi
+
 HERMES_BIN=/opt/hermes-agent/.venv/bin/hermes
 
 # Hermes API server gate (the endpoint the `evals` runner drives at http://agent:8642/v1).

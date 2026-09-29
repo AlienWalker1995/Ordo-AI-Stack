@@ -200,6 +200,11 @@ RUN cd /opt/hermes-agent \
 # defers to it, and a volume loss cannot take it. Starting from the image's own bundled copy
 # means upstream fixes arrive with every hermes-agent pin bump.
 # --check first: the build fails loudly if a future pin bump breaks the patch.
+# Plain repo-owned skills (no upstream base), shipped as-is. `ordo_skills.py boot` moves any local
+# skill of the same frontmatter name aside, so these replace the brain-volume copies that taught
+# raw Docker, the retired /compose/* routes and a compose run with the hidden secrets.env
+# (hostile audit SEC-1).
+COPY skills/ /opt/ordo-skills/
 COPY skill-overlays/ /tmp/skill-overlays/
 COPY scripts/ordo_skills.py /opt/ordo/ordo_skills.py
 RUN cd /opt/hermes-agent \

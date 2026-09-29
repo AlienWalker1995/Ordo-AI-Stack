@@ -187,3 +187,18 @@ def test_the_script_never_calls_docker():
     text = SCRIPT.read_text(encoding="utf-8")
     code = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
     assert not any("docker " in line for line in code)
+
+
+def test_the_token_file_is_read_when_the_env_is_empty(stub, tmp_path):
+    """A `docker exec` session skips the entrypoint that exports OPS_CONTROLLER_TOKEN: the script
+    falls back to OPS_CONTROLLER_TOKEN_FILE, the file the render mounts."""
+    ops = stub(mem_gb=13.0)
+    token_file = tmp_path / "token"
+    token_file.write_text(TOKEN + "\n", encoding="utf-8")
+    bin_dir = _bin_dir(tmp_path)
+    env = {**os.environ, "OPS_CONTROLLER_URL": ops.url, "COMFYUI_URL": ops.url,
+           "OPS_CONTROLLER_TOKEN": "", "OPS_CONTROLLER_TOKEN_FILE": _bash_path(token_file)}
+    r = subprocess.run([BASH, "-c", f'export PATH="{_bash_path(bin_dir)}:$PATH"; bash "{_bash_path(SCRIPT)}"'],
+                       env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert ops.restarts == [{"confirm": True}]

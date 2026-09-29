@@ -588,11 +588,26 @@ def audit():
     }
 
 
+def ops_controller_token() -> str:
+    """Hermes' ops-controller token: OPS_CONTROLLER_TOKEN in the gateway's env, else the file the
+    render mounts (OPS_CONTROLLER_TOKEN_FILE), which a `docker exec` session sees without the
+    entrypoint's export. It is the scoped `hermes` principal, which may read /diagnostics/dstate."""
+    token = os.environ.get("OPS_CONTROLLER_TOKEN", "").strip()
+    path = os.environ.get("OPS_CONTROLLER_TOKEN_FILE", "")
+    if not token and path:
+        try:
+            with open(path, encoding="utf-8") as f:
+                token = f.read().strip()
+        except OSError:
+            token = ""
+    return token
+
+
 def fetch_dstate():
-    """Query the control plane for D-state (wedged) processes. Same Bearer token Hermes'
-    ops_client uses (OPS_CONTROLLER_TOKEN); OPS_CONTROLLER_URL overridable for tests."""
+    """Query the control plane for D-state (wedged) processes, with Hermes' scoped token
+    (ops_controller_token); OPS_CONTROLLER_URL overridable for tests."""
     url = os.environ.get("OPS_CONTROLLER_URL", "http://ops-controller:9000") + "/diagnostics/dstate"
-    token = os.environ.get("OPS_CONTROLLER_TOKEN", "")
+    token = ops_controller_token()
     if not token:
         return {"error": "OPS_CONTROLLER_TOKEN not set in this runtime"}
     try:

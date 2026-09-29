@@ -126,6 +126,23 @@ def _validate_managed_projects(projects: Any) -> None:
         seen.add(name)
 
 
+_ABSOLUTE_HOST_PATH = re.compile(r"^([A-Za-z]:[/\\]|/)")
+
+
+def _validate_agent_readonly(paths: Any) -> None:
+    """A list of absolute host paths, each once. That each lies under CODE_ROOT is checked by the
+    render, which knows the site."""
+    if not isinstance(paths, list):
+        raise ValueError("agent_readonly must be a list of absolute host paths")
+    seen: set[str] = set()
+    for path in paths:
+        if not isinstance(path, str) or not _ABSOLUTE_HOST_PATH.match(path):
+            raise ValueError(f"agent_readonly: {path!r} is not an absolute host path")
+        if path in seen:
+            raise ValueError(f"agent_readonly: {path!r} is listed twice")
+        seen.add(path)
+
+
 def _reject_unknown_keys(where: str, keys: Any, valid: list[str]) -> None:
     """Raise ValueError naming the first key not in `valid`, with the closest valid key as a hint."""
     for key in keys:
@@ -164,6 +181,11 @@ class Source:
     # logs and a confirmed, rate-limited restart of their containers (ordo/control/managed.py).
     # Empty (the default) means none. Ordo's own project can never be listed.
     managed_projects: list[str] = dataclasses.field(default_factory=list)
+    # Host paths under CODE_ROOT that OTHER projects execute or read config from (another stack's
+    # init scripts, say). The agent mirror-mounts CODE_ROOT read-write, so each listed path is
+    # mounted read-only over the mirror inside the agent (ordo/render/compose.py). Ordo's own such
+    # paths are derived from the render and need no entry here.
+    agent_readonly: list[str] = dataclasses.field(default_factory=list)
 
     @classmethod
     def load(cls, path: str | Path) -> Source:
@@ -184,6 +206,7 @@ class Source:
             site=data.get("site") or {},
             cost=data.get("cost") or {},
             managed_projects=data.get("managed_projects") or [],
+            agent_readonly=data.get("agent_readonly") or [],
         )
         s.validate()
         return s
@@ -203,6 +226,7 @@ class Source:
                 raise ValueError(f"site: {key} {_RETIRED_SITE_KEYS[key]}")
         secret_backend(self.site)
         _validate_managed_projects(self.managed_projects)
+        _validate_agent_readonly(self.agent_readonly)
         if isinstance(self.hardware, dict):
             _reject_unknown_keys("hardware", self.hardware, [f.name for f in dataclasses.fields(HardwareProfile)])
             for i, gpu in enumerate(self.hardware.get("gpus") or []):

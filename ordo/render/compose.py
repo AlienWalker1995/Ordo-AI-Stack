@@ -23,9 +23,10 @@ process broker starts/stops these against the scheduler.
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import TYPE_CHECKING, Any
 
-from . import gpu
+from . import agent_mirror, gpu
 from .secret_files import SecretFileRef
 from .secret_files import add_to_service as _add_secret_files
 
@@ -784,6 +785,7 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
                    agent_user: str | None = None,
                    agent_group_add: list[str] | None = None,
                    agent_volumes: list[str] | None = None,
+                   agent_readonly: list[str] | None = None,
                    agent_environment: dict[str, str] | None = None,
                    agent_secret_files: list[SecretFileRef] | None = None,
                    agent_secrets: list[str] | None = None,
@@ -935,6 +937,11 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
         if not server["hosted"]:
             svcs[server["service"]] = _mcp_service(server, net=net, mcp_net=_mcp_net(project))
 
+    if "agent" in svcs:
+        overlays = agent_readonly_overlays(svcs) + list(agent_readonly or [])
+        if overlays:
+            svcs["agent"]["volumes"] = list(svcs["agent"].get("volumes") or []) + overlays
+
     if model_gateway_config_digest:
         for reader in MODEL_GATEWAY_CONFIG_READERS:
             svcs[reader].setdefault("labels", {})[RENDERED_CONFIG_LABEL] = model_gateway_config_digest
@@ -951,6 +958,66 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     if named:
         out["volumes"] = {v: None for v in named}
     return out
+
+
+# `${BASE_PATH...}/rel:` or `${DATA_PATH...}/rel:` at the start of a short-syntax volume.
+_HOST_ROOT_BIND = re.compile(r"^\$\{(BASE_PATH|DATA_PATH)(:[?-][^}]*)?\}(/[^:]*)?:")
+_BASE = "${BASE_PATH:?BASE_PATH must be set (non-empty)}"
+_DATA = "${DATA_PATH:?DATA_PATH must be set (non-empty)}"
+# The service whose every mount is control-plane state (its audit log, its saved lease state).
+_CONTROL_PLANE = "ops-controller"
+
+
+def _volume_target(volume: Any) -> str:
+    """The container path of a short-syntax volume (`src:dst[:mode]`), whatever `src` holds: a
+    `${VAR:?message}` source may itself contain colons, so the target is read from the right."""
+    if not isinstance(volume, str):
+        return ""
+    parts = volume.rsplit(":", 2)
+    has_mode = len(parts) == 3 and parts[2].split(",")[0] in ("ro", "rw", "z", "Z")
+    if has_mode:
+        return parts[1]
+    return volume.rsplit(":", 1)[-1]
+
+
+def agent_readonly_overlays(svcs: dict[str, Any]) -> list[str]:
+    """Read-only overlays for the agent: every checkout path another service runs or reads.
+
+    The agent mirror-mounts the operator's code root read-write (hostile audit SEC-1, #310 review).
+    Anything in the Ordo checkout that another container executes or loads (a boot script, a
+    Caddyfile, a Grafana provisioning dir, the evals runner's code, and all of out/, which
+    ops-controller composes from) would otherwise be an edit away from running with that
+    container's privileges. So every `${BASE_PATH}` bind of every other service is overlaid
+    read-only at the same path inside the agent (AGENT_CHECKOUT_PATH), all of out/ likewise, and
+    ops-controller's `${DATA_PATH}` state at both places the agent sees DATA_PATH. Derived from the
+    rendered compose, so a new plugin's mount is covered without a list. Data directories that
+    services and the agent share on purpose (`${DATA_PATH}` binds of other services) stay writable."""
+    targets = {_volume_target(v) for v in (svcs.get("agent", {}).get("volumes") or [])}
+    mirrored = agent_mirror.MIRROR_ROOT in targets
+    data_mounted = "/workspace/data" in targets
+    if not (mirrored or data_mounted):
+        return []       # an agent without the code-root mirror or the data mount sees none of it
+    overlays: list[str] = [f"{_BASE}/out:${{AGENT_CHECKOUT_PATH}}/out:ro"] if mirrored else []
+    for name, svc in svcs.items():
+        if name == "agent":
+            continue
+        for vol in svc.get("volumes") or []:
+            match = _HOST_ROOT_BIND.match(vol) if isinstance(vol, str) else None
+            if not match:
+                continue
+            root, rel = match.group(1), match.group(3) or ""
+            if root == "BASE_PATH" and mirrored and not (rel == "/out" or rel.startswith("/out/")):
+                overlays.append(f"{_BASE}{rel}:${{AGENT_CHECKOUT_PATH}}{rel}:ro")
+            elif root == "DATA_PATH" and name == _CONTROL_PLANE:
+                if data_mounted:
+                    overlays.append(f"{_DATA}{rel}:/workspace/data{rel}:ro")
+                if mirrored:
+                    overlays.append(f"{_DATA}{rel}:${{AGENT_DATA_PATH}}{rel}:ro")
+    unique: list[str] = []
+    for overlay in overlays:
+        if overlay not in unique:
+            unique.append(overlay)
+    return unique
 
 
 def _named_volumes(svcs: dict[str, Any]) -> list[str]:

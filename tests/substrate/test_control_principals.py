@@ -283,19 +283,20 @@ def test_ops_controller_reads_the_hermes_token_from_a_file():
     assert "OPS_CONTROLLER_TOKEN_HERMES" not in env
 
 
-def test_no_other_service_is_handed_the_hermes_token_yet():
-    """This change is server side only: the agent switches to the token in its own change."""
+def test_only_the_agent_and_ops_controller_are_handed_the_hermes_token():
+    """ops-controller checks it; the agent presents it (SEC-1 step 6)."""
     _, c = _render_compose()
     holders = sorted(name for name, svc in c["services"].items()
                      if "OPS_CONTROLLER_TOKEN_HERMES" in json.dumps(svc))
-    assert holders == ["ops-controller"]
+    assert holders == ["agent", "ops-controller"]
 
 
-def test_the_hermes_token_is_an_optional_core_secret():
-    """Optional until the agent reads it: a store without it must not block `ordo apply`."""
+def test_the_hermes_token_is_a_required_core_secret():
+    """Required once the agent reads it: `ordo apply` refuses a store without it (mint it with
+    `ordo secrets set OPS_CONTROLLER_TOKEN_HERMES --generate`)."""
     rc, _ = _render_compose()
     assert "OPS_CONTROLLER_TOKEN_HERMES" in rc.required_secrets
-    assert "OPS_CONTROLLER_TOKEN_HERMES" in rc.optional_secrets
+    assert "OPS_CONTROLLER_TOKEN_HERMES" not in rc.optional_secrets
 
 
 def test_the_store_mints_and_rotates_the_hermes_token():

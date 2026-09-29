@@ -75,7 +75,9 @@ def test_full_render_declares_hermes_open_webui_automation_keys(tmp_path):
     # LiteLLM expands an object_permission entry by exact server_id/alias/server_name match, so a
     # hyphenated entry resolves to nothing and the key silently loses that server.
     litellm_names = sorted(s["litellm_name"] for s in rc.mcp_servers)
-    assert by_env["LITELLM_KEY_HERMES"]["mcp_servers"] == litellm_names
+    # Every enabled server except the two that call ops-controller with the admin token (SEC-1).
+    assert by_env["LITELLM_KEY_HERMES"]["mcp_servers"] == [n for n in litellm_names
+                                                          if n not in ("comfyui", "orchestration")]
     assert not any("-" in s for s in by_env["LITELLM_KEY_HERMES"]["mcp_servers"])
     assert "memory_vault" in litellm_names
     # local-chat-cpu is granted so Hermes can be PINNED to the CPU deployment per invocation
