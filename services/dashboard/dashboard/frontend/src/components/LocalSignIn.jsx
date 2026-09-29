@@ -4,7 +4,7 @@
 // edge on, /api/auth/session reports mode "edge" and this renders nothing.
 import { useCallback, useEffect, useState } from 'react'
 import { api, UNAUTHORIZED_EVENT } from '../api.js'
-import { BTN_PRIMARY, INPUT } from './ui.jsx'
+import { Banner, BTN_PRIMARY, INPUT } from './ui.jsx'
 import { useToast } from './Toast.jsx'
 
 const SIGN_IN_FRAGMENT = /^#sign-in=(.+)$/
@@ -74,9 +74,7 @@ export default function LocalSignIn() {
   }
 
   return (
-    <section aria-labelledby="local-sign-in-title"
-             className="mb-5 rounded-md border border-border border-l-[3px] border-l-accent bg-bg-elevated px-4 py-3">
-      <h2 id="local-sign-in-title" className="text-heading text-fg">Sign in to make changes</h2>
+    <Banner id="local-sign-in-title" title="Sign in to make changes">
       <p className="mt-1 text-body text-fg-muted">
         This stack runs without remote access, so there is no Google sign-in. Open the link <code className="font-mono text-caption text-fg">ordo up</code> printed,
         or paste <code className="font-mono text-caption text-fg">DASHBOARD_LOCAL_LOGIN_TOKEN</code> from <code className="font-mono text-caption text-fg">out/secrets.env</code>.
@@ -92,6 +90,6 @@ export default function LocalSignIn() {
         </button>
       </form>
       {error && <p id="local-sign-in-error" role="alert" className="mt-2 text-caption text-danger">{error}</p>}
-    </section>
+    </Banner>
   )
 }

@@ -87,42 +87,79 @@ function StateActions({ row, onAction, busy }) {
   )
 }
 
+// Status, name and the per-row actions are shared by the wide table row and the narrow card, so
+// the two layouts cannot drift apart.
+function ServiceStatus({ row }) {
+  return (
+    <span className="flex items-center gap-2">
+      {/* An evicted resident exits cleanly, but "Finished" would misread a loan as done. */}
+      <Dot tone={row.lent ? 'info' : VERDICT_TONE[row.verdict]} />
+      <span className="text-caption text-fg-muted">{row.lent ? 'Lent to a render' : VERDICT_LABEL[row.verdict] || row.verdict}</span>
+    </span>
+  )
+}
+
+function ServiceName({ row }) {
+  return (
+    <div className="flex min-w-0 flex-col">
+      <span className="truncate text-body text-fg">
+        {row.open_url
+          ? <a href={row.open_url} target="_blank" rel="noreferrer" className="text-fg no-underline hover:text-accent">{row.name}<span aria-hidden="true" className="ml-1 text-muted">↗</span></a>
+          : row.name}
+      </span>
+      {((row.compose && row.name !== row.compose) || row.error) && (
+        <span className="truncate font-mono text-micro text-muted">
+          {[row.compose && row.name !== row.compose ? row.compose : null, row.error].filter(Boolean).join(' · ')}
+        </span>
+      )}
+    </div>
+  )
+}
+
+function LogsButton({ row, onLogs }) {
+  if (!row.compose) return null
+  return <button type="button" className={BTN} onClick={() => onLogs(row)} aria-label={`Logs for ${row.name}`}>Logs</button>
+}
+
 function ServiceRow({ row, usage, onLogs, onAction, busy }) {
   return (
     <tr className="border-b border-border-subtle last:border-b-0 hover:bg-surface/60">
-      <td className="py-2 pl-3 pr-2">
-        <span className="flex items-center gap-2">
-          {/* An evicted resident exits cleanly, but "Finished" would misread a loan as done. */}
-          <Dot tone={row.lent ? 'info' : VERDICT_TONE[row.verdict]} />
-          <span className="text-caption text-fg-muted">{row.lent ? 'Lent to a render' : VERDICT_LABEL[row.verdict] || row.verdict}</span>
-        </span>
-      </td>
-      <td className="px-2 py-2">
-        <div className="flex min-w-0 flex-col">
-          <span className="truncate text-body text-fg">
-            {row.open_url
-              ? <a href={row.open_url} target="_blank" rel="noreferrer" className="text-fg no-underline hover:text-accent">{row.name}<span aria-hidden="true" className="ml-1 text-muted">↗</span></a>
-              : row.name}
-          </span>
-          {((row.compose && row.name !== row.compose) || row.error) && (
-            <span className="truncate font-mono text-micro text-muted">
-              {[row.compose && row.name !== row.compose ? row.compose : null, row.error].filter(Boolean).join(' · ')}
-            </span>
-          )}
-        </div>
-      </td>
+      <td className="py-2 pl-3 pr-2"><ServiceStatus row={row} /></td>
+      <td className="px-2 py-2"><ServiceName row={row} /></td>
       <td className="whitespace-nowrap px-2 py-2 text-caption tabular-nums text-muted">{row.uptime || '—'}</td>
       <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted">{usage ? formatCpu(usage.cpu_pct) : '—'}</td>
       <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted">{usage?.mem_gb != null ? `${usage.mem_gb.toFixed(1)} GB` : '—'}</td>
       <td className="whitespace-nowrap py-2 pl-2 pr-3">
         <div className="flex items-center justify-end gap-1.5">
-          {row.compose && <button type="button" className={BTN} onClick={() => onLogs(row)} aria-label={`Logs for ${row.name}`}>Logs</button>}
+          <LogsButton row={row} onLogs={onLogs} />
           <div className="flex w-[8.5rem] items-center gap-1.5">
             <StateActions row={row} onAction={onAction} busy={busy} />
           </div>
         </div>
       </td>
     </tr>
+  )
+}
+
+// The same row as a card, for widths where the table would need a sideways scroll: status and
+// name first, then the numbers, then every action on its own line so none sits off-screen.
+function ServiceCard({ row, usage, onLogs, onAction, busy }) {
+  return (
+    <li className="grid gap-2 border-b border-border-subtle px-3 py-3 last:border-b-0">
+      <div className="flex items-start justify-between gap-3">
+        <ServiceName row={row} />
+        <div className="shrink-0 whitespace-nowrap"><ServiceStatus row={row} /></div>
+      </div>
+      <dl className="flex flex-wrap gap-x-4 gap-y-1 text-caption text-muted">
+        <div className="flex gap-1"><dt>Up for</dt><dd className="tabular-nums text-fg-muted">{row.uptime || '—'}</dd></div>
+        <div className="flex gap-1"><dt>CPU</dt><dd className="font-mono tabular-nums text-fg-muted">{usage ? formatCpu(usage.cpu_pct) : '—'}</dd></div>
+        <div className="flex gap-1"><dt>Memory</dt><dd className="font-mono tabular-nums text-fg-muted">{usage?.mem_gb != null ? `${usage.mem_gb.toFixed(1)} GB` : '—'}</dd></div>
+      </dl>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <LogsButton row={row} onLogs={onLogs} />
+        <StateActions row={row} onAction={onAction} busy={busy} />
+      </div>
+    </li>
   )
 }
 
@@ -140,7 +177,14 @@ function Group({ group, usageById, filter: rawFilter, onLogs, onAction, busyId }
         <span className="text-caption font-normal text-muted">{rows.length}</span>
         {problems > 0 && <Chip tone="danger">{problems} need attention</Chip>}
       </summary>
-      <div className="relative overflow-x-auto border-t border-border-subtle">
+      {/* Cards below lg: the table needs 46rem, more than a phone or a narrow tablet has. */}
+      <ul className="border-t border-border-subtle lg:hidden">
+        {rows.map((row) => (
+          <ServiceCard key={row.compose || row.card_id} row={row} usage={usageById[row.compose] || usageById[row.card_id]}
+                       onLogs={onLogs} onAction={onAction} busy={busyId === row.compose} />
+        ))}
+      </ul>
+      <div className="relative overflow-x-auto border-t border-border-subtle max-lg:hidden">
         <table className="w-full min-w-[46rem] border-collapse">
           <thead>
             <tr className="text-left text-micro uppercase tracking-[0.08em] text-muted">

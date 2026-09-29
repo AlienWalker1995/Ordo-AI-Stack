@@ -3,6 +3,7 @@
 //   Custom-node requirements        POST /api/comfyui/install-node-requirements
 import { useState } from 'react'
 import { api } from '../api.js'
+import { HostStepBanners } from './HostSteps.jsx'
 import McpSettings from './McpSettings.jsx'
 import { useToast } from './Toast.jsx'
 import { BTN, Drawer, INPUT } from './ui.jsx'
@@ -62,6 +63,8 @@ export default function SettingsDrawer({ open, onClose }) {
   return (
     <Drawer open={open} title="Settings" onClose={onClose}>
       <div className="grid gap-6">
+        {/* A host step from an MCP toggle shows here too, where the change was made. */}
+        <HostStepBanners idPrefix="settings-host-step" />
         <Section title="MCP servers"><McpSettings /></Section>
         <Section title="ComfyUI custom-node requirements"><NodeRequirements /></Section>
       </div>

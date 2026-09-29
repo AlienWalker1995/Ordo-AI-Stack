@@ -3,6 +3,7 @@
 // the page that absorbed them.
 import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import CommandPalette from './components/CommandPalette.jsx'
+import { HostStepBanners } from './components/HostSteps.jsx'
 import LocalSignIn from './components/LocalSignIn.jsx'
 import SettingsDrawer from './components/SettingsDrawer.jsx'
 import { ToastProvider } from './components/Toast.jsx'
@@ -137,7 +138,11 @@ export default function App() {
       </header>
 
       <div className="mx-auto max-w-container px-6 pb-10 max-md:px-4">
-        <LocalSignIn />
+        {/* Banners that stay until acted on; the wrapper collapses when neither has anything to say. */}
+        <div className="mb-5 grid gap-3 empty:hidden">
+          <LocalSignIn />
+          <HostStepBanners idPrefix="page-host-step" />
+        </div>
 
         <main id="page" role="tabpanel" aria-labelledby={`tab-${active}`} tabIndex={-1}>
           <PageErrorBoundary key={active}>

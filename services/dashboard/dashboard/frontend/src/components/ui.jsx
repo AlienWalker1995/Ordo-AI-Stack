@@ -85,6 +85,24 @@ export function Unavailable({ children }) {
   )
 }
 
+// A page-level banner for something the operator has to do (sign in, finish a step on the
+// host). It stays until the thing is done or dismissed, unlike a toast. `action` sits beside
+// the title (a Dismiss button, for one).
+const BANNER_EDGE = { accent: 'border-l-accent', warning: 'border-l-warning' }
+
+export function Banner({ id, tone = 'accent', title, action, children }) {
+  return (
+    <section aria-labelledby={id}
+             className={'rounded-md border border-border border-l-[3px] bg-bg-elevated px-4 py-3 ' + (BANNER_EDGE[tone] || BANNER_EDGE.accent)}>
+      <div className="flex items-center justify-between gap-3">
+        <h2 id={id} className="text-heading text-fg">{title}</h2>
+        {action}
+      </div>
+      {children}
+    </section>
+  )
+}
+
 export function Skeleton({ className = 'h-4 w-full' }) {
   return <span className={'skeleton block ' + className} aria-hidden="true" />
 }

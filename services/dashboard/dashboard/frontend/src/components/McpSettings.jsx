@@ -3,16 +3,18 @@
 // and drives /api/mcp/add + /api/mcp/remove against the registered server list:
 //   - a gateway status badge (ok / unreachable / unknown),
 //   - enabled servers as chips, each with a live per-server health dot
-//     (green ok / yellow degraded / red fail) and a remove (×) button,
+//     (green ok / yellow degraded / red fail) and a remove (×) button that asks first,
 //   - enable a registered, not-yet-enabled server from the dropdown,
 //   - poll health every 15s (paused when hidden).
 // Add/remove surface the backend's result as a toast: ops-controller saves the change to ordo.yaml,
 // re-renders and restarts what the render changed, so a {persistent:true} success names what it
-// restarted (plus the host command when something can only restart there); otherwise an error
+// restarted. The host command, when something can only restart there, becomes a host-step banner
+// that stays until dismissed (HostSteps.jsx); otherwise an error
 // toast carries the {note} explaining why the change wasn't saved. When {dynamic:false} the
 // add/remove controls are disabled with a hint that the control plane isn't configured.
 import { useState } from 'react'
 import { api, usePolling } from '../api.js'
+import { useHostSteps } from './HostSteps.jsx'
 import { useToast } from './Toast.jsx'
 
 // Per-server dot: green when running, yellow when degraded (reachable-but-not-ok),
@@ -35,6 +37,7 @@ function serverTitle(info) {
 
 export default function McpSettings() {
   const toast = useToast()
+  const { addHostStep } = useHostSteps()
   const [selectValue, setSelectValue] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -68,7 +71,10 @@ export default function McpSettings() {
       const restarted = (res.recreated || []).join(', ')
       toast(`${server} ${verb}${restarted ? ` - restarted ${restarted}` : ''}`, 'success')
       if (res.note) toast(res.note, 'error')
-      if (res.host_command) toast(`Finish on the host: ${res.host_command}`, 'error')
+      addHostStep({
+        reason: `${server} ${verb}: ${(res.restart_required_on_host || []).join(', ') || 'a service'} cannot restart from the dashboard.`,
+        command: res.host_command,
+      })
     } else {
       toast(res.note || `${server} ${verb} - not saved (config is read-only)`, 'error')
     }
@@ -91,7 +97,10 @@ export default function McpSettings() {
     }
   }
 
+  // Same confirm as Stop on the Services page: this rewrites ordo.yaml and restarts the model
+  // gateway, which drops the tools of every connected agent until it is back.
   const removeServer = async (server) => {
+    if (!window.confirm(`Disable ${server}?\n\nThe control plane removes it from ordo.yaml and restarts the model gateway: every agent loses these tools, and all MCP tools drop while the gateway restarts.`)) return
     setBusy(true)
     try {
       const res = await api.post('/api/mcp/remove', { server })
@@ -166,7 +175,7 @@ export default function McpSettings() {
                       <span className="max-w-[16rem] truncate">{s}</span>
                       <button
                         type="button"
-                        className="ml-0.5 inline-flex h-5 w-5 items-center justify-center rounded-sm border border-transparent text-muted transition-colors hover:border-danger/40 hover:bg-danger/10 hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
+                        className="ml-0.5 inline-flex h-6 w-6 items-center justify-center rounded-sm border border-transparent text-muted transition-colors hover:border-danger/40 hover:bg-danger/10 hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
                         aria-label={`Remove ${s}`}
                         title={dynamic ? `Remove ${s}` : 'Read-only mode — cannot remove'}
                         disabled={!dynamic || busy}

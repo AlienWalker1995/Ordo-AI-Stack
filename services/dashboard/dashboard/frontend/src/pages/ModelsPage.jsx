@@ -7,6 +7,7 @@
 import { useState } from 'react'
 import { api, usePolling } from '../api.js'
 import { BTN, BTN_DANGER, BTN_PRIMARY, Chip, INPUT, Panel, Skeleton, Unavailable } from '../components/ui.jsx'
+import { useHostSteps } from '../components/HostSteps.jsx'
 import { useToast } from '../components/Toast.jsx'
 import { formatBytes, formatRate } from '../lib/format.js'
 
@@ -30,6 +31,7 @@ function Speed({ p50 }) {
 
 function SwitchModel({ data, onSwitched }) {
   const toast = useToast()
+  const { addHostStep } = useHostSteps()
   const installed = data.catalog.filter((c) => c.installed)
   const [choice, setChoice] = useState('')
   const [busy, setBusy] = useState(false)
@@ -42,9 +44,10 @@ function SwitchModel({ data, onSwitched }) {
     try {
       const r = await api.post('/api/models/switch', { model: target.id })
       toast(`Switched to ${r.active_model}. Restarted ${r.recreated.join(', ') || 'nothing'}.`, 'success')
-      if (r.host_command) {
-        toast(`${r.restart_required_on_host.join(', ')} cannot restart from here: run ${r.host_command} on the host.`, 'error')
-      }
+      addHostStep({
+        reason: `The switch to ${r.active_model} changed ${(r.restart_required_on_host || []).join(', ') || 'a service'}, which cannot restart from the dashboard.`,
+        command: r.host_command,
+      })
       setChoice('')
       onSwitched()
     } catch (e) {
@@ -123,40 +126,64 @@ function Files({ files, onDeleted }) {
       setBusy(null)
     }
   }
+  const status = (f) => (f.in_use ? <Chip tone="accent">In use</Chip> : <span className="text-caption text-muted">Unused</span>)
+  const deleteButton = (f) => (
+    <button type="button" className={BTN_DANGER} disabled={f.in_use || busy === f.name}
+            title={f.in_use ? 'A running model server depends on this file' : `Delete ${f.name}`}
+            aria-label={`Delete ${f.name}`}
+            onClick={() => remove(f.name)}>Delete</button>
+  )
   return (
-    <div className="relative overflow-x-auto">
-      <table className="w-full min-w-[560px] border-collapse">
-        <thead>
-          <tr className="text-left text-micro uppercase tracking-[0.08em] text-muted">
-            <th className="py-2 pr-2 font-semibold">File</th>
-            <th className="w-[6rem] px-2 py-2 text-right font-semibold">Size</th>
-            <th className="w-[6rem] px-2 py-2 font-semibold">Status</th>
-            <th className="w-[6rem] py-2 pl-2"><span className="sr-only">Actions</span></th>
-          </tr>
-        </thead>
-        <tbody>
-          {files.map((f) => (
-            <tr key={f.name} className="border-t border-border-subtle">
-              <td className="break-all py-2 pr-2 font-mono text-caption text-fg">{f.name}</td>
-              <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted">{formatBytes(f.size)}</td>
-              <td className="px-2 py-2">{f.in_use ? <Chip tone="accent">In use</Chip> : <span className="text-caption text-muted">Unused</span>}</td>
-              <td className="py-2 pl-2 text-right">
-                <button type="button" className={BTN_DANGER} disabled={f.in_use || busy === f.name}
-                        title={f.in_use ? 'A running model server depends on this file' : `Delete ${f.name}`}
-                        onClick={() => remove(f.name)}>Delete</button>
-              </td>
+    <>
+      {/* Cards below md, so size, status and Delete never sit past the right edge of a phone. */}
+      <ul className="md:hidden">
+        {files.map((f) => (
+          <li key={f.name} className="grid gap-2 border-t border-border-subtle py-3 first:border-t-0 first:pt-0">
+            <span className="break-all font-mono text-caption text-fg">{f.name}</span>
+            <div className="flex items-center justify-between gap-3">
+              <span className="flex items-center gap-3">
+                <span className="font-mono text-caption tabular-nums text-fg-muted">{formatBytes(f.size)}</span>
+                {status(f)}
+              </span>
+              {deleteButton(f)}
+            </div>
+          </li>
+        ))}
+        <li className="flex justify-between gap-3 border-t border-border pt-2 text-caption">
+          <span className="text-muted">{files.length} files</span>
+          <span className="font-mono tabular-nums text-fg-muted">{formatBytes(total)}</span>
+        </li>
+      </ul>
+      <div className="relative overflow-x-auto max-md:hidden">
+        <table className="w-full min-w-[560px] border-collapse">
+          <thead>
+            <tr className="text-left text-micro uppercase tracking-[0.08em] text-muted">
+              <th className="py-2 pr-2 font-semibold">File</th>
+              <th className="w-[6rem] px-2 py-2 text-right font-semibold">Size</th>
+              <th className="w-[6rem] px-2 py-2 font-semibold">Status</th>
+              <th className="w-[6rem] py-2 pl-2"><span className="sr-only">Actions</span></th>
             </tr>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr className="border-t border-border">
-            <td className="py-2 pr-2 text-caption text-muted">{files.length} files</td>
-            <td className="px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted">{formatBytes(total)}</td>
-            <td colSpan={2} />
-          </tr>
-        </tfoot>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {files.map((f) => (
+              <tr key={f.name} className="border-t border-border-subtle">
+                <td className="break-all py-2 pr-2 font-mono text-caption text-fg">{f.name}</td>
+                <td className="whitespace-nowrap px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted">{formatBytes(f.size)}</td>
+                <td className="px-2 py-2">{status(f)}</td>
+                <td className="py-2 pl-2 text-right">{deleteButton(f)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t border-border">
+              <td className="py-2 pr-2 text-caption text-muted">{files.length} files</td>
+              <td className="px-2 py-2 text-right font-mono text-caption tabular-nums text-fg-muted">{formatBytes(total)}</td>
+              <td colSpan={2} />
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </>
   )
 }
 
