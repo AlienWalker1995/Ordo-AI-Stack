@@ -1670,7 +1670,8 @@ class ControlPlane:
 
         `scoped` adds narrower principals (ordo/control/principals.py), each with its own token and
         route allowlist. A call whose token proves one of them, on a route it may not call, is
-        refused with 403 before routing and recorded, whatever its method.
+        refused with 403 before routing and recorded, whatever its method. Emptying a scoped
+        principal's token file revokes it on the next request (TokenSource `empty_revokes`).
         """
         from fastapi import FastAPI, Request
         from fastapi.responses import JSONResponse
