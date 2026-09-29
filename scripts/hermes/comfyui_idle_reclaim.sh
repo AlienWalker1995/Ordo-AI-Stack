@@ -10,12 +10,16 @@ set -o pipefail
 OPS="${OPS_CONTROLLER_URL:-http://ops-controller:9000}"
 [ -n "$COMFYUI_URL" ] || { echo "ComfyUI idle reclaim: COMFYUI_URL is not set; cannot read the queue"; exit 1; }
 
-MEM=$(docker stats --no-stream --format '{{.MemUsage}}' ordo-comfyui-1 2>/dev/null | awk '{print $1}')
-val=$(printf '%s' "$MEM" | grep -oE '[0-9.]+' | head -1)
-unit=$(printf '%s' "$MEM" | grep -oE '[A-Za-z]+' | head -1)
-gib=0
-[ "$unit" = "GiB" ] && gib=${val%.*}
-[ "${gib:-0}" -ge 12 ] || exit 0
+# ComfyUI's memory, from ops-controller's GET /stats/services (docker stats, read by the control
+# plane): Hermes has no Docker access of its own (hostile audit SEC-1). `mem_gb` is docker's GiB
+# figure. An unreadable answer prints nothing, so the check below fails closed.
+MEM=$(curl -sf -m 30 -H "Authorization: Bearer $OPS_CONTROLLER_TOKEN" "$OPS/stats/services" | python3 -c "
+import json, sys
+service = json.load(sys.stdin)['services'].get('comfyui') or {}
+print(service.get('mem_gb', ''))
+" 2>/dev/null)
+python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) >= 12 else 1)" "${MEM:-0}" 2>/dev/null || exit 0
+MEM="${MEM} GiB"
 
 gpu_idle=$(curl -sf -m 10 -H "Authorization: Bearer $OPS_CONTROLLER_TOKEN" "$OPS/status" | python3 -c "
 import json, sys
