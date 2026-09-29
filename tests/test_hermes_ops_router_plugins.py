@@ -156,7 +156,8 @@ def test_restart_container_schema_requires_confirm(router):
 # `docker` "also works": each refusal then sent it to the socket (hostile audit SEC-1, 2026-09-29).
 
 def _tool_text(router) -> str:
-    schemas = [router.LIST_CONTAINERS_SCHEMA, router.CONTAINER_LOGS_SCHEMA, router.RESTART_CONTAINER_SCHEMA,
+    schemas = [router.LIST_CONTAINERS_SCHEMA, router.CONTAINER_LOGS_SCHEMA, router.INSPECT_CONTAINER_SCHEMA,
+               router.RESTART_CONTAINER_SCHEMA,
                router.COMPOSE_RESTART_SCHEMA, router.COMPOSE_UP_SCHEMA]
     return json.dumps(schemas) + router._NUDGE + (router.__doc__ or "")
 
@@ -199,3 +200,56 @@ def test_the_seed_soul_retires_raw_docker():
     assert "restart any container" not in soul
     for tool in ("list_containers", "container_logs", "restart_container", "compose_up"):
         assert tool in soul
+
+
+# --- inspect_container: the read-only replacement for `docker inspect` (SEC-1 step 3) ---
+
+class InspectClient:
+    def __init__(self):
+        self.calls = []
+
+    def inspect_container(self, name):
+        self.calls.append(name)
+        return {"name": name, "state": "running", "health": "healthy"}
+
+
+def test_inspect_container_returns_the_summary(router, monkeypatch):
+    client = InspectClient()
+    monkeypatch.setattr(router, "_get_client", lambda: client)
+    result = json.loads(router._inspect_container({"name": "ordo-n8n-1"}))
+    assert result == {"ok": True, "container": {"name": "ordo-n8n-1", "state": "running", "health": "healthy"}}
+    assert client.calls == ["ordo-n8n-1"]
+
+
+def test_inspect_container_needs_a_name(router, monkeypatch):
+    client = InspectClient()
+    monkeypatch.setattr(router, "_get_client", lambda: client)
+    assert json.loads(router._inspect_container({}))["ok"] is False
+    assert client.calls == []
+
+
+def test_inspect_container_says_what_it_returns(router):
+    schema = router.INSPECT_CONTAINER_SCHEMA
+    text = schema["description"].lower()
+    assert "ordo project" in text and "read-only" in text and "environment" in text
+    assert schema["parameters"]["required"] == ["name"]
+
+
+def test_the_client_calls_the_inspect_route(monkeypatch):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("ops_client_under_test", HERMES / "ops_client.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setenv("OPS_CONTROLLER_TOKEN", "t")
+    client = module.OpsClient(url="http://ops-controller:9000")
+    seen = []
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"name": "ordo-n8n-1"}
+
+    monkeypatch.setattr(client._client, "request", lambda method, path, **kw: seen.append((method, path)) or Response())
+    assert client.inspect_container("ordo-n8n-1") == {"name": "ordo-n8n-1"}
+    assert seen == [("GET", "/containers/ordo-n8n-1")]

@@ -31,6 +31,7 @@ and call `ops-controller` (`OPS_CONTROLLER_URL=http://ops-controller:9000`):
 |---|---|---|
 | `list_containers` | `GET /containers` | every container on the host, read-only |
 | `container_logs` | `GET /containers/{name}/logs` | `ordo` project only |
+| `inspect_container` | `GET /containers/{name}` | `ordo` project only; field allowlist, never the environment or labels |
 | `restart_container` | `POST /containers/{name}/restart` | `ordo` project only, lease-checked |
 | `compose_restart`, `compose_up` | `POST /services/{name}/recreate` | one `ordo` service, lease-checked |
 

@@ -55,6 +55,7 @@ HERMES_ROUTES: tuple[Route, ...] = (
     Route("GET", "/status"),
     Route("GET", "/containers"),
     Route("GET", "/containers/{name}/logs"),
+    Route("GET", "/containers/{name}"),   # field-allowlisted inspect: no environment, no labels
     Route("GET", "/services"),
     Route("GET", "/services/{id}/logs"),
     Route("GET", "/stats/services"),

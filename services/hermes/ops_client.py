@@ -82,6 +82,11 @@ class OpsClient:
             params["since"] = since
         return self._request("GET", f"/containers/{name}/logs", params=params).text
 
+    def inspect_container(self, name: str) -> dict[str, Any]:
+        """One Ordo container's shape (image, state, health, mounts, networks, ports), never its
+        environment or labels: ops-controller's field-allowlisted inspect."""
+        return self._request("GET", f"/containers/{name}").json()
+
     def restart_container(self, name: str, *, confirm: bool = False) -> dict[str, Any]:
         return self._request("POST", f"/containers/{name}/restart", json={"confirm": confirm}).json()
 

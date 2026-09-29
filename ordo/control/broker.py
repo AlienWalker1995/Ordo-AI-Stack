@@ -18,6 +18,7 @@ so the resident can never be stranded down, V1's fatal flaw).
 """
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -45,6 +46,52 @@ from .scheduler_state import RECOVERY_JOB_ID, SchedulerStateStore, StateUnreadab
 SELF_REFERENTIAL_SERVICES = frozenset({"agent", "ops-controller"})
 
 
+def summarize_inspect(raw: dict) -> dict:
+    """One `docker inspect` object reduced to a FIELD ALLOWLIST: what a caller needs to reason about
+    a container (image, state, health, start, restarts, mounts, networks, ports) and nothing else.
+
+    What is left out is left out on purpose, and a test pins the exact key set:
+    - the environment and the command line: they carry secret values;
+    - every label: the render puts each file secret's digest in one, and an image may label anything;
+    - healthcheck log output, bind specs and the rest of HostConfig: free text a service controls.
+    Mount sources are paths or volume names, never file contents."""
+    config = raw.get("Config") or {}
+    labels = config.get("Labels") or {}
+    state = raw.get("State") or {}
+    health = (state.get("Health") or {}).get("Status")
+    host_config = raw.get("HostConfig") or {}
+    network_settings = raw.get("NetworkSettings") or {}
+    mounts = []
+    for mount in raw.get("Mounts") or []:
+        kind = mount.get("Type")
+        source = mount.get("Name") if kind == "volume" else mount.get("Source")
+        mounts.append({"type": kind, "source": source, "destination": mount.get("Destination"),
+                       "rw": bool(mount.get("RW"))})
+    ports = []
+    for container_port, bindings in sorted((network_settings.get("Ports") or {}).items()):
+        host = None
+        if bindings:
+            first = bindings[0]
+            host = f"{first.get('HostIp') or '0.0.0.0'}:{first.get('HostPort')}"
+        ports.append({"container": container_port, "host": host})
+    return {
+        "name": str(raw.get("Name") or "").lstrip("/"),
+        # Compose identity, read from its two labels and returned as plain fields: no label map.
+        "project": labels.get("com.docker.compose.project", ""),
+        "service": labels.get("com.docker.compose.service", ""),
+        "image": config.get("Image"),
+        "image_id": raw.get("Image"),
+        "state": state.get("Status"),
+        "health": health,
+        "started_at": state.get("StartedAt"),
+        "restart_count": raw.get("RestartCount"),
+        "restart_policy": (host_config.get("RestartPolicy") or {}).get("Name"),
+        "mounts": mounts,
+        "networks": sorted((network_settings.get("Networks") or {}).keys()),
+        "ports": ports,
+    }
+
+
 class ContainerBackend(Protocol):
     # Two kinds of argument, and the distinction is load-bearing. `service` is a COMPOSE SERVICE
     # name (`llamacpp`), resolved to a container by compose labels so the `-1` replica suffix is
@@ -64,6 +111,9 @@ class ContainerBackend(Protocol):
     def remove_stopped_containers(self, services: list[str]) -> None: ...
     def container_logs(self, name: str, tail: int = 100) -> str: ...
     def container_restart(self, name: str) -> None: ...
+    # One Ordo container, as `summarize_inspect` shapes it. ValueError when the name is not a
+    # container of this project.
+    def container_inspect(self, name: str) -> dict: ...
 
     # The read methods return the ops-api PAYLOAD, not a bare list, because the dashboard consumes
     # these shapes directly: {"services": [...]}, {"containers": [...]}. Returning a list here and
@@ -107,6 +157,8 @@ class MockBackend:
         self.list_containers_calls: list = []
         self.container_log_requests: list[tuple[str, int]] = []
         self.container_restart_calls: list[str] = []
+        self.inspect_requests: list[str] = []
+        self.inspect_result: dict | None = None
         self.service_stats_calls: list = []
         self.compose_up_calls: list = []
         self.compose_down_calls: list = []
@@ -162,6 +214,10 @@ class MockBackend:
 
     def container_restart(self, name: str) -> None:
         self.container_restart_calls.append(name)
+
+    def container_inspect(self, name: str) -> dict:
+        self.inspect_requests.append(name)
+        return self.inspect_result or {"name": name}
 
     def service_stats(self) -> dict:
         self.service_stats_calls.append(None)
@@ -366,15 +422,26 @@ class DockerBackend:
         smuggled into a port whose whole promise is that nothing user-facing moves.
         """
         proc = subprocess.run(
-            ["docker", "ps", "-a", "--format", "{{.Names}}\t{{.State}}\t{{.Image}}"],
+            ["docker", "ps", "-a", "--format", self.CONTAINER_PS_FORMAT],
             capture_output=True, text=True, timeout=30,
         )
-        rows = []
-        for line in proc.stdout.splitlines():
-            parts = line.split("\t")
-            if len(parts) == 3:
-                rows.append({"name": parts[0], "status": parts[1], "image": parts[2]})
-        return rows
+        return [row for line in proc.stdout.splitlines() if (row := self.container_row(line))]
+
+    # `docker ps` columns for list_containers, in the order container_row reads them.
+    CONTAINER_PS_FORMAT = ("{{.Names}}\t{{.State}}\t{{.Image}}\t{{.Label \"com.docker.compose.project\"}}"
+                           "\t{{.Label \"com.docker.compose.service\"}}\t{{.Status}}")
+
+    @classmethod
+    def container_row(cls, line: str) -> dict | None:
+        """One CONTAINER_PS_FORMAT line as a /containers row, or None for a malformed line.
+        `status` keeps its ops-api meaning (docker's State); project and service are empty for a
+        container compose did not create; health is None without a healthcheck."""
+        parts = line.split("\t")
+        if len(parts) != 6:
+            return None
+        name, state, image, project, service, status = parts
+        return {"name": name, "status": state, "image": image, "project": project, "service": service,
+                "health": cls._health_from_status(status)}
 
     def _container_guard(self, name: str) -> str:
         """Container routes take a RAW container name, not a service name, so `_guard` does not
@@ -397,6 +464,12 @@ class DockerBackend:
 
     def container_restart(self, name: str) -> None:  # pragma: no cover - needs real docker
         subprocess.run(["docker", "restart", self._container_guard(name)], check=True, timeout=120)
+
+    def container_inspect(self, name: str) -> dict:  # pragma: no cover - needs real docker
+        container = self._container_guard(name)
+        proc = subprocess.run(["docker", "inspect", "--type", "container", container],
+                              capture_output=True, text=True, timeout=30, check=True)
+        return summarize_inspect(json.loads(proc.stdout)[0])
 
     def recreate_service(self, service: str) -> None:
         """Recreate one service and its netns members. Recreate is NOT restart: an env change only

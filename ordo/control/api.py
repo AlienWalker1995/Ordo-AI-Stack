@@ -1063,6 +1063,18 @@ class ControlPlane:
             return self._error(500, str(e))
         return logs
 
+    def container_inspect(self, name: str) -> dict[str, Any]:
+        """One Ordo container through `broker.summarize_inspect`'s field allowlist: never its
+        environment or labels. 404 for a name that is not a container of this project."""
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        try:
+            return self.broker.backend.container_inspect(name)
+        except ValueError as e:
+            return self._error(404, str(e))
+        except Exception as e:
+            return self._error(500, str(e))
+
     def container_restart(self, name: str, body: dict[str, Any]) -> dict[str, Any]:
         if not self.broker:
             return self._error(503, "no broker configured")
@@ -1608,6 +1620,8 @@ class ControlPlane:
         if m == "POST" and path.startswith("/containers/") and path.endswith("/restart"):
             name = path[len("/containers/"):-len("/restart")]
             return self._as_response(self._exclusive(lambda: self.container_restart(name, body)))
+        if m == "GET" and path.startswith("/containers/") and "/" not in path[len("/containers/"):]:
+            return self._as_response(self.container_inspect(path[len("/containers/"):]))
         if m == "GET" and path == "/stats/services":
             return self._as_response(self.service_stats())
         if m == "POST" and path == "/compose/up":
