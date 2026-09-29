@@ -27,8 +27,8 @@ A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`
 | MCP tool aggregation on the model gateway | Live | `services/model-gateway/`, `ordo/render/compose.py::_mcp_service`, `out/docker-compose.yml` |
 | MCP server manifests (`kind: mcp`) rendered to LiteLLM + dashboard | Live | `services/*/plugin.yaml`, `out/model-gateway/mcp_servers.yaml`, `out/mcp/servers.json` |
 | MCP health endpoint + UI badges (Settings drawer) | Live | `services/dashboard/dashboard/app.py` |
-| Container lifecycle API (start/stop/restart/recreate/logs/pull) | Live | `ordo/control/api.py`, `ordo/control/broker.py` |
-| Append-only JSONL audit log | Live | `ordo/control/audit.py`, `ordo/control/api.py` |
+| Container lifecycle API (start/stop/restart/recreate/logs/pull) | Live | `ordo/control/lifecycle.py`, `ordo/control/broker.py` |
+| Append-only JSONL audit log | Live | `ordo/control/audit.py`, `ordo/control/call_audit.py` |
 | Dashboard auth via Caddy edge SSO (oauth2-proxy + Google + allowlist); optional dormant per-service Bearer token in code, unused in deployment | Live | `services/dashboard/dashboard/app.py` |
 | Dashboard throughput stats + benchmark | Live | `services/dashboard/dashboard/app.py` |
 | Dashboard hardware stats | Live | `services/dashboard/dashboard/app.py` |

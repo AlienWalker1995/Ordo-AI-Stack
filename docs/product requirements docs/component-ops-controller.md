@@ -64,7 +64,7 @@ agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>
 | `/audit` | GET | Audit log tail (`limit`, default 50) |
 
 **Safety:** Every mutating lifecycle, compose, plugin and pip call requires `{"confirm": true}` (JSON true: `"true"`, `1` or `"yes"` is refused).
-Plugin enable/disable is limited to the `INSTALLABLE_PLUGINS` allowlist in `ordo/control/api.py`;
+Plugin enable/disable is limited to the `INSTALLABLE_PLUGINS` allowlist in `ordo/control/plugin_install.py`;
 core substrate services cannot be added or removed through it.
 
 ## Audit Log
