@@ -27,7 +27,6 @@ Design constraints (from the architecture decisions + the drift lessons):
 """
 from __future__ import annotations
 
-import hmac
 import ipaddress
 import json
 import logging
@@ -36,7 +35,7 @@ import re
 import socket
 import subprocess
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -54,6 +53,7 @@ from ..render.plugins import PluginRegistry
 from ..render.served_models import model_files, models_by_gpu, served_models
 from ..render.source_edit import edit_plugins_list
 from ..render.stack import lifecycle_group, plan_named
+from . import principals as auth
 from .audit import AuditLog
 from .broker import SELF_REFERENTIAL_SERVICES, Broker
 from .scheduler import Job, Scheduler
@@ -1370,12 +1370,15 @@ class ControlPlane:
         status: int,
         error: str | None = None,
         detail: str | None = None,
+        principal: str | None = None,
     ) -> None:
         """Write the one record for a state-changing call.
 
         The record holds only named fields (see `audit_subject`): never the request body, the
-        headers or a credential. Never raises: an audit failure must not fail the action, but it
-        is logged so a broken log does not go unnoticed.
+        headers or a credential. `actor` is the caller's own X-Actor claim; `principal` is what its
+        token proved (ordo/control/principals.py), set by the HTTP binding on every record it
+        writes. Never raises: an audit failure must not fail the action, but it is logged so a
+        broken log does not go unnoticed.
         """
         fields = body if isinstance(body, dict) else {}
         action, target = audit_subject(path, body)
@@ -1390,6 +1393,8 @@ class ControlPlane:
             extra["error"] = _clip(error, _AUDIT_ERROR_MAX)
         if detail:
             extra["detail"] = _clip(detail)
+        if principal:
+            extra["principal"] = principal
         try:
             self._audit_sink().record(action=action, target=target, result=audit_result(status),
                                       caller=actor, **extra)
@@ -1416,6 +1421,7 @@ class ControlPlane:
         body: dict[str, Any] | None,
         query: dict[str, str] | None,
         actor: str,
+        principal: str | None = None,
     ) -> tuple[int, dict]:
         """`route()` plus the audit record: the HTTP binding's one entry point.
 
@@ -1427,11 +1433,11 @@ class ControlPlane:
         try:
             status, payload = self.route(method, path, body, query)
         except Exception as e:
-            self.audit_call(method, path, body, actor, 500, str(e) or type(e).__name__)
+            self.audit_call(method, path, body, actor, 500, str(e) or type(e).__name__, principal=principal)
             raise
         error = payload.get("error") if isinstance(payload, dict) else None
         self.audit_call(method, path, body, actor, status, str(error) if error else None,
-                        self._lease_detail(path, body, status, payload))
+                        self._lease_detail(path, body, status, payload), principal=principal)
         return status, payload
 
     @staticmethod
@@ -1652,41 +1658,33 @@ class ControlPlane:
         status = int(payload.pop("_status", 200)) if isinstance(payload, dict) else 200
         return status, payload
 
-    def app(self, auth_token: str | Callable[[], str] | None):
+    def app(self, auth_token: str | Callable[[], str] | None, scoped: Sequence[auth.Principal] = ()):
         """Build the FastAPI application that delegates every authenticated request to route().
 
-        `auth_token` is required: without one the API would be open to every container on the
-        network, so an empty token is refused here rather than silently served. It may be a function
-        that reads the token (serve passes one reading the /run/secrets file): each request then
-        checks against the current value, so a rotated file takes effect without a restart. A read
-        that fails or comes back empty (a torn write) keeps the last good token, never an open API.
+        `auth_token` is the admin token, and it is required: without one the API would be open to
+        every container on the network, so an empty token is refused here rather than silently
+        served. It may be a function that reads the token (serve passes one reading the /run/secrets
+        file): each request then checks against the current value, so a rotated file takes effect
+        without a restart. A read that fails or comes back empty (a torn write) keeps the last good
+        token, never an open API.
+
+        `scoped` adds narrower principals (ordo/control/principals.py), each with its own token and
+        route allowlist. A call whose token proves one of them, on a route it may not call, is
+        refused with 403 before routing and recorded, whatever its method.
         """
         from fastapi import FastAPI, Request
         from fastapi.responses import JSONResponse
         from starlette.concurrency import run_in_threadpool
 
         read_token = auth_token if callable(auth_token) else (lambda: auth_token or "")
-        current = {"token": read_token().strip()}
-        if not current["token"]:
+        admin = auth.admin(read_token)
+        if not admin.token.current():
             raise ValueError("ops-controller needs OPS_CONTROLLER_TOKEN: refusing to serve an unauthenticated API")
-
-        def _expected() -> bytes:
-            try:
-                token = read_token().strip()
-            except Exception:  # noqa: BLE001 - an unreadable file keeps the last good token
-                token = ""
-            if token:
-                current["token"] = token
-            return f"bearer {current['token']}".encode()
+        # Admin first: a scoped token equal to the admin token is the admin credential.
+        known = (admin, *scoped)
 
         cp = self
         app = FastAPI(title="ops-controller")
-
-        def _authorized(header: str) -> bool:
-            # Normalise only the scheme's case; the token itself is compared exactly, in constant time.
-            scheme, _, token = header.partition(" ")
-            presented = f"{scheme.lower()} {token.strip()}".encode()
-            return hmac.compare_digest(presented, _expected())
 
         @app.middleware("http")
         async def dispatch(request: Request, call_next):
@@ -1694,8 +1692,9 @@ class ControlPlane:
             path = request.url.path
             actor = audit_actor(request.headers.get(ACTOR_HEADER))
             audited = method.upper() in AUDITED_METHODS
-            if path not in UNAUTHENTICATED_PATHS and not _authorized(request.headers.get("authorization", "")):
-                client = request.client.host if request.client else "unknown"
+            principal = auth.authenticate(known, request.headers.get("authorization", ""))
+            client = request.client.host if request.client else "unknown"
+            if path not in UNAUTHENTICATED_PATHS and principal is None:
                 # Never log the presented credential, right or wrong.
                 logger.warning("ops-controller refused %s %s from %s: missing or invalid bearer token (401)",
                                method, path, client)
@@ -1703,9 +1702,17 @@ class ControlPlane:
                 if audited:
                     # The body of an unauthenticated call is never read, so the record has only
                     # what the method and path say.
-                    cp.audit_call(method, path, None, actor, 401, error)
+                    cp.audit_call(method, path, None, actor, 401, error, principal=auth.UNAUTHENTICATED)
                 return JSONResponse(content={"error": error}, status_code=401,
                                     headers={"WWW-Authenticate": "Bearer"})
+            if path not in UNAUTHENTICATED_PATHS and not principal.allows(method, path):
+                # A proven principal asking for a route it was not granted: refused before routing,
+                # and recorded for every method, reads included. Its body is never read.
+                error = f"the {principal.name} principal may not call {method} {path}"
+                logger.warning("ops-controller refused %s %s from %s: %s (403)", method, path, client, error)
+                cp.audit_call(method, path, None, actor, 403, error, principal=principal.name)
+                return JSONResponse(content={"error": error}, status_code=403)
+            principal_name = principal.name if principal else auth.UNAUTHENTICATED
             body = None
             if method in ("POST", "PUT", "PATCH"):
                 raw = await request.body()
@@ -1714,13 +1721,13 @@ class ControlPlane:
                         body = json.loads(raw)
                     except json.JSONDecodeError:
                         error = "invalid JSON body"
-                        cp.audit_call(method, path, None, actor, 400, error)
+                        cp.audit_call(method, path, None, actor, 400, error, principal=principal_name)
                         return JSONResponse(content={"error": error}, status_code=400)
                     # Every route reads its body as an object; an array, string, number or null
                     # would otherwise fail inside a handler as a bare 500.
                     if not isinstance(body, dict):
                         error = "JSON body must be an object"
-                        cp.audit_call(method, path, None, actor, 400, error)
+                        cp.audit_call(method, path, None, actor, 400, error, principal=principal_name)
                         return JSONResponse(content={"error": error}, status_code=400)
             # Concurrency contract: handle() runs on a worker thread, never on the event loop. A verb can
             # block on docker for up to 15 minutes, and on the loop it stalled every other request
@@ -1728,13 +1735,13 @@ class ControlPlane:
             # the scheduler guards its state with its own lock, and verbs that change the stack take the
             # operation lock (`_exclusive`, a second one gets 409), which lease calls never wait for.
             status, payload = await run_in_threadpool(
-                cp.handle, method, path, body, dict(request.query_params), actor)
+                cp.handle, method, path, body, dict(request.query_params), actor, principal_name)
             return JSONResponse(content=payload, status_code=status)
 
         return app
 
     def serve(self, auth_token: str | Callable[[], str] | None, host: str = "0.0.0.0",
-              port: int = 9000) -> None:  # pragma: no cover - needs a socket
+              port: int = 9000, scoped: Sequence[auth.Principal] = ()) -> None:  # pragma: no cover - needs a socket
         """Thin FastAPI binding around route().
 
         The binding is deliberately thin: every request is dispatched through route(), which stays a pure
@@ -1749,5 +1756,5 @@ class ControlPlane:
         """
         import uvicorn
 
-        app = self.app(auth_token)
+        app = self.app(auth_token, scoped)
         uvicorn.run(app, host=host, port=port, log_level="warning")

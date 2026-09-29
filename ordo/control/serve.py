@@ -20,6 +20,7 @@ from ..render.hardware import detect
 from ..render.models_volume import DockerRunner, volume_files
 from ..render.plugins import PluginRegistry
 from ..secret_env import SecretFileError, read_secret
+from . import principals
 
 
 def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a socket
@@ -124,6 +125,11 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
         return 2
     print(f"ops-controller on {args.host}:{args.port} (project={args.project}, "
           f"{sched.total_vram_gb:.0f}GB GPU) — Ctrl-C to stop")
+    # Hermes' scoped token (ordo/control/principals.py). Optional: a store without the key
+    # materializes an empty file, and an empty token matches nothing.
+    hermes = principals.hermes(lambda: read_secret("OPS_CONTROLLER_TOKEN_HERMES"))
+    print(f"ops-controller: hermes principal {'active' if hermes.token.current() else 'off (no token)'}",
+          flush=True)
     # Re-read on every request, so a rotated token file takes effect without a restart.
-    cp.serve(lambda: read_secret("OPS_CONTROLLER_TOKEN"), host=args.host, port=args.port)
+    cp.serve(lambda: read_secret("OPS_CONTROLLER_TOKEN"), host=args.host, port=args.port, scoped=[hermes])
     return 0

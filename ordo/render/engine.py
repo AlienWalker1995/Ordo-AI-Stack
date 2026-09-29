@@ -81,6 +81,9 @@ CORE_SECRET_KEYS: tuple[str, ...] = (
     "LITELLM_SALT_KEY",           # LiteLLM DB credential-encryption salt. NEVER rotate (stored creds unreadable)
     "LITELLM_DB_PASSWORD",        # litellm-db postgres password (compose-interpolated into DATABASE_URL)
     "OPS_CONTROLLER_TOKEN",       # bearer between agent/dashboard/mcp <-> ops-controller
+    # Hermes' scoped ops-controller token (the `hermes` principal, ordo/control/principals.py). Only
+    # ops-controller reads it so far, and it is OPTIONAL below: without it the principal is off.
+    "OPS_CONTROLLER_TOKEN_HERMES",
     # NB: no DASHBOARD_AUTH_TOKEN. Operators reach the dashboard through the Caddy edge SSO;
     # internal callers of its protected routes send OPS_CONTROLLER_TOKEN (dashboard/auth.py).
     # Without the edge, the dashboard manifest's `local_login_secret` is added by render() below.
@@ -94,7 +97,7 @@ CORE_SECRET_KEYS: tuple[str, ...] = (
 
 # The core keys above the stack runs WITHOUT (they only unlock gated downloads). Listed so a blank
 # one is a preflight note, not a blocker; a plugin that reads one declares it in `optional_secrets:`.
-CORE_OPTIONAL_SECRET_KEYS: tuple[str, ...] = ("HF_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN")
+CORE_OPTIONAL_SECRET_KEYS: tuple[str, ...] = ("HF_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN", "OPS_CONTROLLER_TOKEN_HERMES")
 
 # The SSO edge plugin (services/edge). Whether it is enabled is THE switch between the two access
 # modes; nothing else (no flag, no env var) selects the mode.
