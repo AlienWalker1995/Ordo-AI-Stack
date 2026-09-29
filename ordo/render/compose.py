@@ -25,7 +25,7 @@ from __future__ import annotations
 import hashlib
 from typing import TYPE_CHECKING, Any
 
-from . import gpu
+from . import bind_configs, gpu
 from .secret_files import SecretFileRef
 from .secret_files import add_to_service as _add_secret_files
 
@@ -272,6 +272,9 @@ def _ops_controller(project: str, net: str, nvidia_gpu: bool) -> dict[str, Any]:
         # and a "./" bind would hash differently there than on the host (read as changed forever).
         "${BASE_PATH:?BASE_PATH must be set (non-empty)}/out:/config",
         "${DATA_PATH:?DATA_PATH must be set (non-empty)}/ops-controller:/data",  # audit log, scheduler state
+        # The checkout, read-only: its re-render digests the config files services bind from it,
+        # which it cannot open at their host paths (ordo/render/bind_configs.py).
+        f"${{BASE_PATH:?BASE_PATH must be set (non-empty)}}:{bind_configs.OPS_CONTROLLER_CHECKOUT_DIR}:ro",
         "comfyui-models:/models/comfyui",             # shared ComfyUI model store (same as ops-api)
         # ComfyUI's app tree, read-only: /comfyui/install-node-requirements has to see whether a
         # custom-node pack ships a requirements.txt before it runs pip inside the comfyui
@@ -289,6 +292,8 @@ def _ops_controller(project: str, net: str, nvidia_gpu: bool) -> dict[str, Any]:
         # The GPU lease and eviction state, written on every transition so a recreate mid-lease
         # adopts it instead of forgetting it. `ordo recreate ops-controller` checks for this key.
         "SCHEDULER_STATE_PATH": "/data/scheduler-state.json",
+        # Where its render reads the checkout BASE_PATH names (the mount above).
+        bind_configs.CHECKOUT_DIR_ENV: bind_configs.OPS_CONTROLLER_CHECKOUT_DIR,
     }
     # --source/--catalog are global (pre-subcommand) flags; --project/--out belong to `serve`.
     # --out is /config ITSELF: the deployment mounts the dir holding ordo.yaml AND the rendered

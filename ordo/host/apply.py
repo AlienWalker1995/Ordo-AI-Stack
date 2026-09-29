@@ -11,7 +11,8 @@ the one correct order:
   2. render out/ from the operator source (the compose pins the tags step 1 recorded)
   3. materialize secrets.env and the file secrets from the secret store
   4. compute the changed set: every long-running service whose rendered config hash or image id
-     differs from its running container's
+     differs from its running container's (the hash covers the config files it bind-mounts from the
+     checkout, through the content-digest labels of ordo/render/bind_configs.py)
   5. check the GPU lease against that set (refused before anything is recreated)
   6. run the host preflight for the services that start
   7. recreate ops-controller first when it changed (its image, config or substrate digest), and

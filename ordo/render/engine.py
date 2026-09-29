@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-from . import backup_policy, compose, gpu, secret_files, substrate
+from . import backup_policy, bind_configs, compose, gpu, secret_files, substrate
 from .agents import AgentRegistry
 from .catalog import DEFAULT_VRAM_RESERVE_GB, Catalog, Model
 from .config import Source
@@ -508,6 +508,10 @@ class RenderedConfig:
             oauth2_proxy = doc["services"]["oauth2-proxy"]
             oauth2_proxy.setdefault("labels", {})[compose.RENDERED_CONFIG_LABEL] = \
                 compose.rendered_config_digest(allowlist)
+        # Each read-only config file a service mounts from the checkout, labelled with its content
+        # digest: compose does not hash bind-mounted content, so without it an edited file is never
+        # recreated (ordo/render/bind_configs.py).
+        bind_configs.add_labels(doc["services"], self.env)
         return doc
 
     def write(self, out_dir: str | Path) -> None:
