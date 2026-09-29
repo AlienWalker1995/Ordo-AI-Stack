@@ -35,9 +35,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from ..render import alerting, substrate
+from ..render import substrate
 from ..render.catalog import Catalog
-from ..render.open_webui_probe import OPEN_WEBUI_SERVICE, open_webui_verdict
 from ..render.plugins import PluginRegistry
 from . import diagnostics, gpus, routes
 from . import metrics as prom
@@ -46,6 +45,7 @@ from .apply import RenderApply
 from .broker import Broker
 from .call_audit import ACTOR_HEADER, AUDITED_METHODS, CallAuditor, audit_actor, audited_read, lease_detail
 from .comfyui import ModelDownloads, NodeRequirements
+from .doctor import DriftReport
 from .gpus import LeaseJobs
 from .lifecycle import LeaseGuard, Lifecycle
 from .managed_projects import ManagedProjects
@@ -109,6 +109,7 @@ class ControlPlane:
         self.applier = RenderApply(self.source, broker, self.lease, model_volume_files)
         self.model_config = ModelConfig(self.source, self.applier, model_volume_files)
         self.plugins = PluginInstaller(self.source, self.applier)
+        self.drift = DriftReport(self.source, self.applier, broker)
         self.lease_jobs = LeaseJobs(broker, scheduler)
         self.managed_projects = ManagedProjects(broker, self.source.path)
         # ComfyUI's files. Their locations are read from this module's settings when used, so a test
@@ -132,48 +133,8 @@ class ControlPlane:
         return self.source.render()
 
     def doctor(self) -> dict[str, Any]:
-        """`GET /doctor`: the drift `ordo doctor` reports, seen from the control plane. Read-only.
-
-        Each check is judged by the function `ordo doctor` uses, never a copy: this process's
-        substrate digest against the one the last render recorded in out/manifest.json
-        (`substrate.substrate_verdict`; the host compares the running ops-controller with its
-        checkout, which this process cannot see), and the open-webui probe (`open_webui_verdict`),
-        run once in its container when it is running. `detail` is the CLI's report line without
-        its "! " finding marker. The dashboard's Overview shows the failed checks.
-        """
-        checks = [("substrate", *self._substrate_drift()), (OPEN_WEBUI_SERVICE, *self._open_webui_drift()),
-                  ("alerting", *self._alerting_drift())]
-        rows = [{"check": name, "ok": ok, "detail": line.removeprefix("! ")} for name, ok, line in checks]
-        return {"ok": all(row["ok"] for row in rows), "checks": rows}
-
-    def _substrate_drift(self) -> tuple[bool, str]:
-        try:
-            recorded = self.source.recorded_substrate_digest()
-        except (OSError, ValueError, AttributeError) as e:
-            return False, f"! substrate: cannot read {self.source.out_dir / 'manifest.json'} ({e})"
-        if recorded is None:
-            return True, f"substrate: ops-controller {self.substrate_digest[:12]}; out/ records no digest yet"
-        return substrate.substrate_verdict(self.substrate_digest, recorded, reference_name="the last render",
-                                           rebuild_from="the checkout that rendered out/")
-
-    def _alerting_drift(self) -> tuple[bool, str]:
-        """The alert-delivery verdict `ordo doctor` gives, from the secret files materialized in out/."""
-        try:
-            compose = self._render().compose_dict()
-        except Exception as e:  # noqa: BLE001 - an unrenderable source is reported, not raised
-            return False, f"! alerting: cannot render the source to check alert delivery ({type(e).__name__}: {e})"
-        return alerting.check(compose, self.source.out_dir)
-
-    def _open_webui_drift(self) -> tuple[bool, str]:
-        """The open-webui verdict `ordo doctor` gives: "not running" is fine, a failed probe is not."""
-        if not self.broker:
-            return False, "! open-webui: cannot be checked: this control plane has no container backend"
-        try:
-            rows = self.broker.backend.list_services().get("services", [])
-        except Exception as e:  # noqa: BLE001 - an unreadable stack is reported, not raised
-            return False, f"! open-webui: cannot read the running services ({type(e).__name__}: {e})"
-        running = any(row.get("id") == OPEN_WEBUI_SERVICE and row.get("state") == "running" for row in rows)
-        return self.applier.open_webui_verdict() if running else open_webui_verdict(None)
+        """`GET /doctor`: the drift `ordo doctor` reports, seen from here (doctor.py)."""
+        return self.drift.report()
 
     def status(self) -> dict[str, Any]:
         """Live status: GPU/scheduler state + the current rendered manifest."""
