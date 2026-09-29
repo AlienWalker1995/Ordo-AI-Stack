@@ -513,8 +513,8 @@ class RenderedConfig:
     def write(self, out_dir: str | Path, *, refresh_bind_configs: bool = False) -> None:
         """Write the render to `out_dir`. `refresh_bind_configs` (the host's renders only) also writes
         out/bind-configs.env from the checkout; a control-plane render keeps the digests the host
-        last wrote, so it never deploys a checkout edit the operator has not applied
-        (ordo/render/bind_configs.py)."""
+        last wrote, so a checkout edit never makes it recreate a service (the exact cases are in
+        ordo/render/bind_configs.py)."""
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
         # .env (derived — regenerated every time; hand-edits here do not survive)

@@ -74,21 +74,48 @@ def test_a_declaration_naming_no_bind_or_listed_twice_is_refused():
         bind_configs.parse_config_mounts("svc", ["/etc/prometheus/rules"] * 2, volumes)
 
 
-def test_the_manifests_declare_every_checkout_bind_or_it_is_a_reviewed_exception():
+# Read-only checkout binds a service re-reads live, so they are deliberately not declared config.
+READ_LIVE = {
+    ("rag-ingestion", "/watch/stack-docs"): "the ingester watches the docs and re-reads them",
+    ("evals", "/app"): "a one-shot job: every `run --rm` starts a fresh container",
+    ("ltx-trainer", "/ordo/lease-exec.py"): "the idle container runs it anew on every `docker exec`",
+    ("ops-controller", "/edge-certs"): "its /metrics collector re-reads the certificate on every scrape",
+}
+EDGE_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
+             "CADDY_TAILNET_DOMAIN": "example.ts.net", "SSO_ALLOWED_EMAILS": "me@example.com"}
+
+
+def _undeclared(name: str, volumes, declared) -> set[tuple[str, str]]:
+    return {(name, target) for target, path in bind_configs.checkout_binds(volumes).items()
+            if path.split("/")[0] != "out" and target not in declared}
+
+
+def test_every_checkout_bind_is_declared_config_or_a_reviewed_exception():
     """Declaring is explicit, so a new read-only checkout bind has to be decided: config (declare it
-    under config_mounts) or read live (add it here, with the reason)."""
-    read_live = {
-        ("rag-ingestion", "/watch/stack-docs"): "the ingester watches the docs and re-reads them",
-        ("evals", "/app"): "a one-shot job: every `run --rm` starts a fresh container",
-        ("ltx-trainer", "/ordo/lease-exec.py"): "the idle container runs it anew on every `docker exec`",
-    }
-    undeclared = set()
+    under config_mounts, or through bind_configs.add_labels for a service compose.py builds) or read
+    live (add it to READ_LIVE, with the reason). Covers every plugin manifest, whether or not a
+    render enables it, and every service of a full render, which includes the core services
+    compose.py builds (llamacpp, ops-controller, dashboard, agent, the MCP servers)."""
+    undeclared: set[tuple[str, str]] = set()
     for plugin in REGISTRY.plugins:
         for service in plugin.services:
-            for target, path in bind_configs.checkout_binds(service.volumes).items():
-                if path.split("/")[0] != "out" and target not in service.config_mounts:
-                    undeclared.add((service.name, target))
-    assert undeclared == set(read_live), sorted(undeclared ^ set(read_live))
+            undeclared |= _undeclared(service.name, service.volumes, service.config_mounts)
+        if plugin.mcp is not None:
+            undeclared |= _undeclared(plugin.id, plugin.mcp.volumes, ())
+    site = {**EDGE_SITE, "BASE_PATH": "/srv/ordo", "DATA_PATH": "/srv/ordo/data",
+            "MEMORY_VAULT_PATH": "/srv/ordo/data/memory-vault"}
+    plugins = sorted(p.id for p in REGISTRY.plugins if p.default) + ["edge", "monitoring", "langfuse"]
+    doc = render(Source.from_dict({"hardware": HW, "model": "auto", "plugins": plugins, "site": site}),
+                 CATALOG, REGISTRY).compose_dict()
+    for name, spec in doc["services"].items():
+        labelled = {label[len(LABEL):] for label in (spec.get("labels") or {}) if label.startswith(LABEL)}
+        undeclared |= _undeclared(name, spec.get("volumes") or [], labelled)
+    assert {"llamacpp", "ops-controller", "dashboard"} <= set(doc["services"]), "the render lacks core services"
+    assert undeclared == set(READ_LIVE), sorted(undeclared ^ set(READ_LIVE))
+    # `ordo apply` restores the previous digests after recreating only ops-controller, which is
+    # right only while ops-controller declares no config bind (ordo/host/apply.py).
+    assert not [label for label in doc["services"]["ops-controller"].get("labels") or {}
+                if label.startswith(LABEL)]
 
 
 # --------------------------------------------------------------------------- #
