@@ -48,23 +48,6 @@
 }
 
 @layer components {
-  /* Status dot — state encoded by colour alone, a bare mark with no ring halo (the halo
-     read as a decorative glow). Only "pending" animates (a gentle opacity pulse) because
-     motion there is meaningful: it marks an in-flight transition, not decoration. */
-  .status-dot {
-    @apply w-2 h-2 rounded-full shrink-0 bg-muted;
-  }
-  .status-dot.ok {
-    background: theme('colors.success');
-  }
-  .status-dot.fail {
-    background: theme('colors.danger');
-  }
-  .status-dot.pending {
-    background: theme('colors.warning');
-    animation: pulse-pending 1.1s ease-in-out infinite;
-  }
-
   /* Skeleton shimmer. */
   .skeleton {
     background: linear-gradient(
@@ -75,16 +58,6 @@
     );
     background-size: 200% 100%;
     @apply animate-skeleton rounded-sm;
-  }
-}
-
-@keyframes pulse-pending {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
   }
 }
 

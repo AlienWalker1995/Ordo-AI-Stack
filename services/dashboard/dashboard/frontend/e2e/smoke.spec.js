@@ -82,3 +82,33 @@ test.describe('Services layout', () => {
     expect(problems).toEqual([])
   })
 })
+
+// The MCP controls in Settings are the shared INPUT/BTN from ui.jsx, so they render exactly like
+// the custom-node controls under them (and every other page), not a taller one-off size.
+async function controlStyle(locator) {
+  const box = await locator.boundingBox()
+  const font = await locator.evaluate((el) => getComputedStyle(el).fontSize)
+  return { height: box.height, font }
+}
+
+for (const viewport of WIDTHS) {
+  test(`Settings: MCP controls match the rest of Settings at ${viewport.width} px`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height })
+    const { problems, unhandled } = await openPage(page, 'overview')
+    await page.getByRole('button', { name: 'Settings' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    await expect(dialog.getByText('gateway ok')).toBeVisible()
+
+    const mcpSelect = dialog.getByLabel('Enable a registered server')
+    const nodeInput = dialog.getByLabel(/custom_nodes whose requirements/)
+    expect(await controlStyle(mcpSelect)).toEqual(await controlStyle(nodeInput))
+
+    const add = dialog.getByRole('button', { name: 'Add', exact: true })
+    const install = dialog.getByRole('button', { name: 'Install', exact: true })
+    expect(await controlStyle(add)).toEqual(await controlStyle(install))
+
+    expect(await horizontalOverflow(page)).toBe(0)
+    expect(unhandled).toEqual([])
+    expect(problems).toEqual([])
+  })
+}
