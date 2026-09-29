@@ -5,6 +5,8 @@
 secrets/.env.sops.bak
 secrets/.env.sops.bak.*
 models/
+# ...except the dashboard SPA's fixture for /api/models/* (a JSON response, not model weights).
+!services/dashboard/dashboard/frontend/test/fixtures/api/models/
 data/
 
 # Rendered runtime + operator-real source (moved from v2/ at the 2026-07-24 flatten).
