@@ -16,18 +16,23 @@ proxy) is recorded in `docs/design/hermes-owns-docker.md`.
 
 Anything Hermes does over the raw socket is not audited by Ordo.
 
+The 2026-08-09 "full Docker control" grant is retired (hostile audit SEC-1):
+the socket is being removed, and until then the seeded `SOUL.md` and the
+`ops-router` tools tell Hermes to use the control plane only. The live
+`SOUL.md` sits in the `hermes-home` volume and is not re-seeded; edit it there.
+
 ## First-class ops tools (the `ops-router` plugin)
 
 `services/hermes/plugins/ops-router/` exposes the control plane's container
 verbs as Hermes tools. They wrap `OpsClient` (`services/hermes/ops_client.py`)
 and call `ops-controller` (`OPS_CONTROLLER_URL=http://ops-controller:9000`):
 
-| Tool | ops-controller route |
-|---|---|
-| `list_containers` | `GET /containers` |
-| `container_logs` | `GET /containers/{name}/logs` |
-| `restart_container` | `POST /containers/{name}/restart` |
-| `compose_restart`, `compose_up` | `POST /services/{name}/recreate` |
+| Tool | ops-controller route | Scope |
+|---|---|---|
+| `list_containers` | `GET /containers` | every container on the host, read-only |
+| `container_logs` | `GET /containers/{name}/logs` | `ordo` project only |
+| `restart_container` | `POST /containers/{name}/restart` | `ordo` project only, lease-checked |
+| `compose_restart`, `compose_up` | `POST /services/{name}/recreate` | one `ordo` service, lease-checked |
 
 `OpsClient` refuses stack-wide compose verbs (`service=None`) before making
 a request; the render pipeline owns stack lifecycle:
@@ -39,8 +44,9 @@ ops.compose_restart(service="open-webui", confirm=True) # OK
 ```
 
 `OpsClient` requires `OPS_CONTROLLER_TOKEN` to be non-empty and sends it as
-a Bearer header. `ops-controller` itself does not check it (auth is Caddy's
-job at the edge, see the `ordo/control/api.py` module docstring).
+a Bearer header. `ops-controller` checks it on every path except `/health`
+and `/healthz` (constant-time compare, token file re-read per request; see
+`ControlPlane.app` in `ordo/control/api.py`) and answers 401 without it.
 
 ## Audit log
 
