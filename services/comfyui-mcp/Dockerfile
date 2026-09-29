@@ -77,7 +77,11 @@ t = t.replace(
 p.write_text(t, encoding="utf-8")
 PY
 
+# Ordo AI Stack: wait for ComfyUI with no deadline, then exec server.py. Upstream exits after five
+# failed checks (~30 s), which crash-looped this container through every ComfyUI boot. See start.py.
+COPY start.py start.py
+
 # Streamable HTTP on 0.0.0.0:9000 (/mcp), stateless. ComfyUI at COMFYUI_URL, which compose sets
 # to the GPU admission gate. No image default: comfyui is reachable only through its gate.
 EXPOSE 9000
-CMD ["python", "server.py"]
+CMD ["python", "start.py"]
