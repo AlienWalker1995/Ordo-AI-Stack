@@ -53,7 +53,7 @@ from ..render.plugins import PluginRegistry
 from ..render.served_models import model_files, models_by_gpu, served_models
 from ..render.source_edit import edit_plugins_list
 from ..render.stack import lifecycle_group, plan_named
-from . import managed
+from . import managed, routes
 from . import metrics as prom
 from . import principals as auth
 from .audit import AuditLog
@@ -197,10 +197,6 @@ def audit_subject(path: str, body: Any) -> tuple[str, str]:
         # The file name the download would use: the URL's last path segment, never its query.
         target = urlparse(str(fields.get("url") or "")).path.rsplit("/", 1)[-1]
     return action, _clip(target)
-
-
-# /projects/{project}/containers[/{name}/{verb}]: one segment each, so a name never carries a slash.
-_MANAGED_ROUTE = re.compile(r"^/projects/(?P<project>[^/]+)/containers(?:/(?P<name>[^/]+)/(?P<verb>[^/]+))?$")
 
 
 def _project_rows(containers: list[dict]) -> list[dict]:
@@ -1822,6 +1818,25 @@ class ControlPlane:
             self._operation_lock.release()
 
     # --- routing (also pure) ---
+    def jobs_history(self) -> dict[str, Any]:
+        """Finished leases, newest first: what the orchestration tab's history table shows."""
+        return {"history": self.history.tail(100) if self.history else []}
+
+    def health(self) -> dict[str, Any]:
+        """The container healthcheck. The digest is not secret; `ordo doctor` reads it here to compare
+        with the checkout."""
+        return {"ok": True, "substrate_digest": self.substrate_digest}
+
+    def read_audit(self, query: dict[str, str]) -> dict[str, Any]:
+        """`GET /audit?limit=N`: the newest N records, N from 1 to AUDIT_READ_LIMIT_MAX (default 50)."""
+        try:
+            limit = int(query.get("limit", "50"))
+        except ValueError:
+            return self._error(422, "limit must be an integer")
+        if not 1 <= limit <= AUDIT_READ_LIMIT_MAX:
+            return self._error(422, f"limit must be between 1 and {AUDIT_READ_LIMIT_MAX}")
+        return self.audit_log(limit)
+
     def route(
         self,
         method: str,
@@ -1829,119 +1844,19 @@ class ControlPlane:
         body: dict[str, Any] | None = None,
         query: dict[str, str] | None = None,
     ) -> tuple[int, dict]:
-        body = body or {}
-        query = query or {}
-        m = method.upper()
-        if m == "GET" and path == "/status":
-            return 200, self.status()
-        if m == "GET" and path == "/model-config":
-            return 200, self.get_model_config()
-        if m == "POST" and path == "/model-config":
-            return self._as_response(self._exclusive(lambda: self.set_model_config(body)))
-        if m == "POST" and path == "/apply":
-            return self._as_response(self._exclusive(lambda: self.apply(body)))
-        if m == "GET" and path == "/plugins":
-            return 200, self.list_plugins()
-        if m == "POST" and path.startswith("/plugins/") and path.endswith("/enable"):
-            plugin_id = path[len("/plugins/"):-len("/enable")]
-            return self._as_response(self._exclusive(lambda: self.enable_plugin(plugin_id, body)))
-        if m == "POST" and path.startswith("/plugins/") and path.endswith("/disable"):
-            plugin_id = path[len("/plugins/"):-len("/disable")]
-            return self._as_response(self._exclusive(lambda: self.disable_plugin(plugin_id, body)))
-        if m == "POST" and path == "/jobs":
-            return self._as_response(self.request_job(body))
-        if m == "POST" and path == "/jobs/complete":
-            return self._as_response(self.complete_job(body))
-        if m == "POST" and path == "/jobs/heartbeat":
-            return self._as_response(self.heartbeat_job(body))
-        if m == "GET" and path == "/jobs/history":
-            # Finished leases, newest first — what the orchestration tab's history table shows.
-            return 200, {"history": self.history.tail(100) if self.history else []}
-        if m == "GET" and path == "/doctor":
-            return 200, self.doctor()
-        if m == "GET" and path in ("/health", "/healthz"):
-            # The digest is not secret; `ordo doctor` reads it here to compare with the checkout.
-            return 200, {"ok": True, "substrate_digest": self.substrate_digest}
-        # Service lifecycle routes (ported from ops-api)
-        if m == "POST" and path.startswith("/services/") and path.endswith("/start"):
-            service_id = path[len("/services/"):-len("/start")]
-            return self._as_response(self._exclusive(lambda: self.service_start(service_id, body)))
-        if m == "POST" and path.startswith("/services/") and path.endswith("/stop"):
-            service_id = path[len("/services/"):-len("/stop")]
-            return self._as_response(self._exclusive(lambda: self.service_stop(service_id, body)))
-        if m == "POST" and path.startswith("/services/") and path.endswith("/restart"):
-            service_id = path[len("/services/"):-len("/restart")]
-            return self._as_response(self._exclusive(lambda: self.service_restart(service_id, body)))
-        if m == "GET" and path.startswith("/services/") and path.endswith("/logs"):
-            service_id = path[len("/services/"):-len("/logs")]
-            return self._as_response(self.service_logs(service_id))
-        if m == "GET" and path == "/services":
-            return self._as_response(self.list_services())
-        if m == "POST" and path.startswith("/services/") and path.endswith("/recreate"):
-            service_id = path[len("/services/"):-len("/recreate")]
-            return self._as_response(self._exclusive(lambda: self.service_recreate(service_id, body)))
-        if m == "GET" and path == "/containers":
-            return self._as_response(self.list_containers())
-        if m == "GET" and path.startswith("/containers/") and path.endswith("/logs"):
-            name = path[len("/containers/"):-len("/logs")]
-            return self._as_response(self.container_logs(name))
-        if m == "POST" and path.startswith("/containers/") and path.endswith("/restart"):
-            name = path[len("/containers/"):-len("/restart")]
-            return self._as_response(self._exclusive(lambda: self.container_restart(name, body)))
-        if m == "GET" and path.startswith("/containers/") and "/" not in path[len("/containers/"):]:
-            return self._as_response(self.container_inspect(path[len("/containers/"):]))
-        if m == "GET" and path == "/stats/services":
-            return self._as_response(self.service_stats())
-        if m == "POST" and path == "/compose/up":
-            return self._as_response(self._exclusive(lambda: self.compose_up(body)))
-        if m == "POST" and path == "/compose/down":
-            return self._as_response(self._exclusive(lambda: self.compose_down(body)))
-        if m == "POST" and path == "/compose/restart":
-            return self._as_response(self._exclusive(lambda: self.compose_restart(body)))
-        # Registry routes (ported from ops-api, slice 2)
-        if m == "GET" and path == "/registry/models":
-            return 200, self.registry_models()
-        if m == "GET" and path == "/registry/gpus":
-            return 200, self.registry_gpus()
-        if m == "GET" and path == "/gpus":
-            return 200, self.live_gpus()
-        # Slice 3: model download/pull routes
-        if m == "POST" and path == "/models/download":
-            return self._as_response(self.models_download(body))
-        if m == "GET" and path == "/models/download/status":
-            return 200, self.models_download_status()
-        # Slice 3: diagnostics routes
-        if m == "GET" and path == "/diagnostics/dstate":
-            return 200, self.diagnostics_dstate()
-        # Slice 3: audit route
-        if m == "GET" and path == "/audit":
-            try:
-                limit = int(query.get("limit", "50"))
-            except ValueError:
-                return 422, {"error": "limit must be an integer"}
-            if not 1 <= limit <= AUDIT_READ_LIMIT_MAX:
-                return 422, {"error": f"limit must be between 1 and {AUDIT_READ_LIMIT_MAX}"}
-            return 200, self.audit_log(limit)
-        # Slice 4: ComfyUI node requirements, plus the two honest 410s
-        if m == "POST" and path == "/comfyui/install-node-requirements":
-            return self._as_response(self._exclusive(lambda: self.comfyui_install_node_requirements(body)))
-        if m == "POST" and path == "/gpu/assign":
-            return self._as_response(self.gpu_assign_gone((body or {}).get("service", "")))
-        if m == "POST" and path.startswith("/registry/models/") and path.endswith("/assign-gpu"):
-            return self._as_response(self.gpu_assign_gone(path.split("/")[3]))
-        # Managed projects: status, logs and a confirmed restart of OTHER compose projects.
-        if m == "GET" and path == "/projects":
-            return self._as_response(self.managed_projects_overview())
-        managed_route = _MANAGED_ROUTE.match(path)
-        if managed_route:
-            project, name, verb = managed_route.group("project", "name", "verb")
-            if m == "GET" and name is None:
-                return self._as_response(self.managed_project_containers(project))
-            if m == "GET" and verb == "logs":
-                return self._as_response(self.managed_container_logs(project, name, query))
-            if m == "POST" and verb == "restart":
-                return self._as_response(self.managed_container_restart(project, name, body))
-        return 404, {"error": f"no route {method} {path}"}
+        """(status, payload) for one call, from the route table (ordo/control/routes.py)."""
+        found = routes.find(method, path)
+        if found is None:
+            return 404, {"error": f"no route {method} {path}"}
+        entry, params = found
+        request = routes.Request(path=path, body=body or {}, query=query or {}, params=params)
+        if entry.exclusive:
+            payload = self._exclusive(lambda: entry.handler(self, request))
+        else:
+            payload = entry.handler(self, request)
+        if entry.always_ok:
+            return 200, payload
+        return self._as_response(payload)
 
     @staticmethod
     def _error(status: int, message: str, **extra: Any) -> dict[str, Any]:
