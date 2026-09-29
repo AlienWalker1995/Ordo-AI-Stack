@@ -85,9 +85,7 @@ def test_plan_named_does_not_repeat_a_member_that_was_also_named():
 
 @pytest.fixture
 def backend() -> MockBackend:
-    b = MockBackend()
-    b.compose_doc = COMPOSE
-    return b
+    return MockBackend(COMPOSE)
 
 
 @pytest.fixture

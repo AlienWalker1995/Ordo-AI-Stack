@@ -34,7 +34,7 @@ def cp(tmp_path, monkeypatch):
         {"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128}, "model": "auto", "plugins": "auto"}
     ))
     scheduler = Scheduler(32)
-    backend = MockBackend()
+    backend = MockBackend({"services": {"comfyui": {"image": "comfyui"}}})
     plane = ControlPlane(
         src, CATALOG, REGISTRY, tmp_path / "out",
         scheduler=scheduler, broker=Broker(scheduler, backend),

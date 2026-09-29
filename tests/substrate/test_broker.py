@@ -203,12 +203,13 @@ def test_an_evicted_resident_started_from_outside_is_stopped_again():
     # A whole-stack `docker compose up -d` during a render starts every stopped service, the
     # evicted resident included; the scheduler still believes it is off the card. Two tenants on
     # one GPU is how the host crashed (2026-08-08), so the broker puts it back down.
-    b = _broker()
+    b = Broker(Scheduler(32), MockBackend({"services": {"llamacpp": {"image": "llama"}}}))
     b.scheduler.cache_idle("llamacpp", 25)
     b.request(Job("render", 20, "media"))
     assert "llamacpp" in b.scheduler.evicted_residents
+    b.backend.start("llamacpp")                      # the whole-stack `up -d` from outside
     b.backend.stopped.clear()
-    assert b.enforce_evictions() == ["llamacpp"]    # MockBackend reports llamacpp running
+    assert b.enforce_evictions() == ["llamacpp"]
     assert b.backend.stopped == ["llamacpp"]
 
 

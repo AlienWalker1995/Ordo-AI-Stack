@@ -2,7 +2,8 @@
 
 The Scheduler is the pure decision core; the Broker is the imperative shell that reconciles those
 decisions into container start/stop via a pluggable backend:
-  - MockBackend  — for tests (records what would start/stop).
+  - MockBackend: for tests, an in-memory compose project held to DockerBackend's behaviour by
+    tests/substrate/test_backend_contract.py.
   - DockerBackend — real, but HARD-SCOPED to its own project prefix so it can NEVER touch
     containers outside that project (a guard refuses any name outside the project).
 
@@ -18,6 +19,9 @@ so the resident can never be stranded down, V1's fatal flaw).
 """
 from __future__ import annotations
 
+import dataclasses
+import hashlib
+import itertools
 import json
 import re
 import subprocess
@@ -25,7 +29,7 @@ import sys
 import threading
 from typing import Protocol
 
-from ..render.changed_set import DockerState, StackState, Staged
+from ..render.changed_set import DockerState, RenderedService, RunningContainer, StackState, Staged
 from ..render.stack import compose_argv, lifecycle_group, load_compose, plan_named, profiles_in
 from .scheduler import Job, Scheduler
 from .scheduler_state import RECOVERY_JOB_ID, SchedulerStateStore, StateUnreadable
@@ -150,9 +154,90 @@ class ContainerBackend(Protocol):
     def compose_restart(self, service: str | None = None) -> None: ...
 
 
+def compose_service_name(project: str, service: str) -> str:
+    """Reject anything that isn't a bare compose service name for `project`; return the bare name.
+
+    Both backends validate a SERVICE argument through here, so the fake cannot accept a name the
+    real backend refuses. The real scoping is DockerBackend's compose-project LABEL filter (it can
+    only ever match a container whose `com.docker.compose.project` == project). This is
+    belt-and-braces: refuse an argument shaped like a raw container path or another project's
+    container so a caller can't smuggle one in. A service that already carries this project's
+    prefix is normalized back to the bare service name.
+    """
+    if "/" in service or service.strip() != service or not service:
+        raise ValueError(f"not a valid compose service name for '{project}': {service!r}")
+    if service.startswith(f"{project}-"):
+        # tolerate the fully-qualified form: strip the project prefix (and any -N replica suffix)
+        core = service[len(project) + 1:]
+        return core.rsplit("-", 1)[0] if core.rsplit("-", 1)[-1].isdigit() else core
+    return service
+
+
+def lifecycle_service_name(project: str, service: str) -> str:
+    """`compose_service_name`, plus the refusal to act on whatever is serving this request."""
+    service = compose_service_name(project, service)
+    if service in SELF_REFERENTIAL_SERVICES:
+        raise ValueError(
+            f"{service!r} runs the control plane itself and cannot be cycled through it; "
+            "use docker/compose from the host"
+        )
+    return service
+
+
+def container_name_argument(name: str) -> str:
+    """A RAW container name argument, checked for shape before the project-membership check."""
+    if "/" in name or name.strip() != name or not name:
+        raise ValueError(f"not a valid container name: {name!r}")
+    return name
+
+
+@dataclasses.dataclass
+class _FakeContainer:
+    """One container of MockBackend's project: what `docker ps` and `docker inspect` report."""
+    service: str
+    name: str
+    container_id: str
+    image: str
+    config_hash: str
+    one_shot: bool                # `restart: "no"`: runs to completion when started
+    has_healthcheck: bool
+    owner: str | None             # the owner service of a `network_mode: service:<owner>` member
+    owner_container_id: str       # the owner container a member was created against ("" otherwise)
+    state: str = "created"        # created, running, exited
+    exit_code: int = 0
+    netns: int = 0                # an owner's network namespace: a new one on every start
+    joined_netns: int = 0         # a member's: the owner namespace it joined when it last started
+    output: list[str] = dataclasses.field(default_factory=list)
+
+
 class MockBackend:
-    """Records actions instead of touching Docker — used by tests."""
-    def __init__(self) -> None:
+    """An in-memory compose project that behaves the way DockerBackend does against real docker.
+
+    A FAKE, not a recorder. The recorder it replaced returned canned payloads whatever had
+    happened, so it agreed with every caller, and twice a route that could not work against real
+    docker shipped with a green suite (0867df4: methods DockerBackend lacked; 62492fd: netns members
+    orphaned by owner verbs). tests/substrate/test_backend_contract.py runs one set of behavioural
+    tests against this class AND against DockerBackend on a throwaway compose project, so what this
+    fake does is what the real backend is proven to do.
+
+    Two things live side by side:
+      - the CALL LOG (`started`, `stopped`, `restarted`, `recreate_calls`, ...): one entry per call,
+        recorded before the call is validated and whether or not it changed anything;
+      - the MODELLED PROJECT (`project_containers`, by service): every read reports it and every
+        verb changes it the way docker does, including the network namespace of a
+        `network_mode: service:<owner>` member (attached only while it holds its owner's current
+        namespace).
+
+    The constructor brings the project up: every service `compose_doc` defines gets a started
+    container, in dependency order (`ordo up --all`). Knobs a test may set:
+      - `exec_result`: what a command run in a RUNNING container returns (the fake runs nothing);
+      - `state`: a scripted StackState in place of the modelled one;
+      - `inspect_result`: a scripted container_inspect summary in place of the modelled one.
+    """
+
+    COMPOSE_VERSION = "fake"
+
+    def __init__(self, compose_doc: dict | None = None, project: str = "ordo") -> None:
         self.started: list[str] = []
         self.stopped: list[str] = []
         self.restarted: list[str] = []
@@ -161,7 +246,6 @@ class MockBackend:
         self.recreate_calls: list[str] = []
         self.recreate_batches: list[list[str]] = []
         self.removed_containers: list[list[str]] = []
-        self.state = StackState(rendered={}, running={}, compose_version="")
         self.list_containers_calls: list = []
         self.container_log_requests: list[tuple[str, int]] = []
         self.container_restart_calls: list[str] = []
@@ -177,59 +261,240 @@ class MockBackend:
         self.compose_restart_calls: list = []
         self.execs: list[tuple[str, list[str]]] = []
         self.exec_result: tuple[int, str] = (0, "")
-        self.compose_doc: dict = {"services": {}}
+        self.state: StackState | None = None
+        self.project = project
+        self.compose_doc: dict = compose_doc if compose_doc is not None else {"services": {}}
+        self.project_containers: dict[str, _FakeContainer] = {}
+        self._container_ids = itertools.count(1)
+        self._namespaces = itertools.count(1)
+        for service in self._in_dependency_order(sorted(self._services())):
+            self._replace(service)
+
+    # --- the model ---
+
+    def _services(self) -> dict:
+        return self.compose_doc.get("services") or {}
+
+    def _owner_of(self, service: str) -> str | None:
+        mode = str((self._services().get(service) or {}).get("network_mode") or "")
+        return mode[len("service:"):] if mode.startswith("service:") else None
+
+    def _unprofiled(self, services: list[str]) -> list[str]:
+        """What a compose call with no `--profile` sees: a service with a profile is not there."""
+        return [s for s in services if not (self._services().get(s) or {}).get("profiles")]
+
+    def _in_dependency_order(self, services: list[str]) -> list[str]:
+        """Owners before their members: compose orders a member after the owner it depends on."""
+        return ([s for s in services if self._owner_of(s) is None]
+                + [s for s in services if self._owner_of(s) is not None])
+
+    def _config_hash(self, service: str) -> str:
+        """The hash compose labels a container with. A member's `service:<owner>` is resolved to
+        the owner's current container first, as compose does (changed_set.shared_namespace_overrides)."""
+        spec = dict(self._services().get(service) or {})
+        owner = self._owner_of(service)
+        if owner is not None and owner in self.project_containers:
+            spec["network_mode"] = f"container:{self.project_containers[owner].container_id}"
+        return hashlib.sha256(json.dumps(spec, sort_keys=True, default=str).encode()).hexdigest()
+
+    def _require_defined(self, services: list[str], verb: str) -> None:
+        """compose refuses a verb that names a service the file does not define."""
+        for service in services:
+            if service not in self._services():
+                raise subprocess.CalledProcessError(1, ["docker", "compose", verb, service],
+                                                    stderr=f"no such service: {service}")
+
+    def _replace(self, service: str) -> None:
+        """Remove the service's container (if any), then create and start a new one."""
+        self.project_containers.pop(service, None)
+        spec = self._services().get(service) or {}
+        owner = self._owner_of(service)
+        owner_container = self.project_containers.get(owner) if owner else None
+        healthcheck = spec.get("healthcheck") or {}
+        container = _FakeContainer(
+            service=service, name=f"{self.project}-{service}-1",
+            container_id=f"fake{next(self._container_ids):060d}", image=str(spec.get("image") or ""),
+            config_hash=self._config_hash(service), one_shot=str(spec.get("restart")) == "no",
+            has_healthcheck=bool(healthcheck) and not healthcheck.get("disable"),
+            owner=owner, owner_container_id=owner_container.container_id if owner_container else "")
+        self.project_containers[service] = container
+        self._boot(container)
+
+    def _boot(self, container: _FakeContainer) -> None:
+        """`docker start`. A member joins its owner's CURRENT namespace, which needs the owner
+        container it was created against to exist and run; anything else gets a new namespace."""
+        if container.owner is not None:
+            owner = next((c for c in self.project_containers.values()
+                          if c.container_id == container.owner_container_id), None)
+            if owner is None:
+                raise subprocess.CalledProcessError(
+                    1, ["docker", "start", container.name],
+                    stderr=f"joining network namespace of container: No such container: "
+                           f"{container.owner_container_id}")
+            if owner.state != "running":
+                raise subprocess.CalledProcessError(
+                    1, ["docker", "start", container.name],
+                    stderr=f"cannot join network namespace of a non running container: {owner.name}")
+            container.joined_netns = owner.netns
+        else:
+            container.netns = next(self._namespaces)
+        container.state, container.exit_code = ("exited", 0) if container.one_shot else ("running", 0)
+
+    @staticmethod
+    def _halt(container: _FakeContainer) -> None:
+        """`docker stop`: SIGTERM, which the stack's containers exit on."""
+        if container.state == "running":
+            container.state, container.exit_code = "exited", 143
+
+    def _cycle(self, container: _FakeContainer) -> None:
+        """`docker restart`."""
+        self._halt(container)
+        self._boot(container)
+
+    def _named_container(self, name: str) -> _FakeContainer:
+        name = container_name_argument(name)
+        for container in self.project_containers.values():
+            if container.name == name:
+                return container
+        raise ValueError(f"container {name!r} is not in project '{self.project}'")
+
+    @staticmethod
+    def _tail(container: _FakeContainer, tail: int) -> str:
+        lines = container.output[-tail:] if tail > 0 else []
+        return "".join(f"{line}\n" for line in lines)
+
+    def network_attached(self, service: str) -> bool:
+        """Whether the service's container has a network beyond `lo`: it runs and, for a netns
+        member, still holds the namespace its owner has now."""
+        container = self.project_containers.get(service)
+        if container is None or container.state != "running":
+            return False
+        if container.owner is None:
+            return True
+        owner = self.project_containers.get(container.owner)
+        return (owner is not None and owner.container_id == container.owner_container_id
+                and owner.state == "running" and owner.netns == container.joined_netns)
+
+    # --- ContainerBackend ---
 
     def start(self, service: str) -> None:
         self.started.append(service)
+        container = self.project_containers.get(lifecycle_service_name(self.project, service))
+        if container is not None and container.state != "running":
+            self._boot(container)
 
     def stop(self, service: str) -> None:
         self.stopped.append(service)
+        container = self.project_containers.get(lifecycle_service_name(self.project, service))
+        if container is not None:
+            self._halt(container)
 
     def restart(self, service: str) -> None:
         self.restarted.append(service)
+        container = self.project_containers.get(lifecycle_service_name(self.project, service))
+        if container is not None:
+            self._cycle(container)
 
     def logs(self, service: str, tail: int = 100) -> str:
         self.log_requests.append((service, tail))
-        return f"[mock logs for {service}, tail={tail}]"
+        container = self.project_containers.get(compose_service_name(self.project, service))
+        if container is None:
+            return f"[no container found for service {service}]"
+        return self._tail(container, tail)
 
     def list_services(self) -> dict:
         self.list_services_calls.append(None)
-        return {"services": [
-            {"id": "llamacpp", "name": "llamacpp", "state": "running", "health": "healthy",
-             "status": "Up 3 hours (healthy)"},
-            {"id": "dashboard", "name": "dashboard", "state": "running", "health": None,
-             "status": "Up 3 hours"},
-        ]}
+        rows = [DockerBackend._service_row({"service": c.service, "name": c.name, "state": c.state,
+                                            "status": self._status(c)})
+                for c in self.project_containers.values()]
+        rows.sort(key=lambda row: row["id"])
+        return {"services": rows}
 
     def recreate_service(self, service: str) -> None:
         self.recreate_calls.append(service)
+        self._recreate([service])
 
     def recreate_services(self, services: list[str]) -> None:
         self.recreate_batches.append(list(services))
+        self._recreate(services)
+
+    def _recreate(self, services: list[str]) -> None:
+        """`up -d --no-deps --force-recreate` of the named services and their netns members."""
+        _args, targets = plan_named(self.rendered_compose(),
+                                    [lifecycle_service_name(self.project, s) for s in services],
+                                    force_recreate=True)
+        for name in targets:
+            lifecycle_service_name(self.project, name)  # a member cannot be the control plane either
+        self._require_defined(sorted(targets), "up")
+        for name in self._in_dependency_order(sorted(targets)):
+            self._replace(name)
 
     def remove_stopped_containers(self, services: list[str]) -> None:
         self.removed_containers.append(list(services))
+        names = [lifecycle_service_name(self.project, s) for s in services]
+        self._require_defined(names, "rm")
+        for name in names:
+            container = self.project_containers.get(name)
+            if container is not None and container.state != "running":
+                del self.project_containers[name]
 
     def stack_state(self) -> StackState:
-        return self.state
+        if self.state is not None:
+            return self.state
+        rendered = {
+            name: RenderedService(service=name, config_hash=self._config_hash(name),
+                                  image_ref=str((spec or {}).get("image") or ""),
+                                  image_id=f"fake-image:{(spec or {}).get('image')}",
+                                  one_shot=str((spec or {}).get("restart")) == "no")
+            for name, spec in self._services().items()
+        }
+        running = {
+            name: RunningContainer(service=name, config_hash=c.config_hash, image_id=f"fake-image:{c.image}",
+                                   compose_version=self.COMPOSE_VERSION, container_id=c.container_id,
+                                   state=c.state)
+            for name, c in self.project_containers.items()
+        }
+        return StackState(rendered=rendered, running=running, compose_version=self.COMPOSE_VERSION)
+
+    def _status(self, container: _FakeContainer) -> str:
+        """docker's Status text for the container."""
+        if container.state == "running":
+            return "Up 1 second" + (" (healthy)" if container.has_healthcheck else "")
+        if container.state == "exited":
+            return f"Exited ({container.exit_code}) 1 second ago"
+        return "Created"
 
     def list_containers(self) -> list[dict]:
         self.list_containers_calls.append(None)
-        return [
-            {"name": "ordo-llamacpp-1", "status": "running", "image": "llamacpp:latest"},
-            {"name": "ordo-dashboard-1", "status": "running", "image": "dashboard:latest"},
-        ]
+        # `docker ps` shows a digest-pinned image by its tag alone.
+        return [{"name": c.name, "status": c.state, "image": c.image.split("@", 1)[0], "project": self.project,
+                 "service": c.service, "health": DockerBackend._health_from_status(self._status(c))}
+                for c in self.project_containers.values()]
 
     def container_logs(self, name: str, tail: int = 100) -> str:
         self.container_log_requests.append((name, tail))
-        return f"[mock container logs for {name}, tail={tail}]"
+        return self._tail(self._named_container(name), tail)
 
     def container_restart(self, name: str) -> None:
         self.container_restart_calls.append(name)
+        self._cycle(self._named_container(name))
 
     def container_inspect(self, name: str) -> dict:
         self.inspect_requests.append(name)
-        return self.inspect_result or {"name": name}
+        container = self._named_container(name)
+        if self.inspect_result is not None:
+            return self.inspect_result
+        spec = self._services().get(container.service) or {}
+        return {
+            "name": container.name, "project": self.project, "service": container.service,
+            "image": container.image, "image_id": f"fake-image:{container.image}", "state": container.state,
+            "health": "healthy" if container.has_healthcheck and container.state == "running" else None,
+            "started_at": "", "restart_count": 0, "restart_policy": str(spec.get("restart") or "no"),
+            "mounts": [],
+            # A netns member has no network of its own; everything else is on the project default.
+            "networks": [] if container.owner else [f"{self.project}_default"],
+            "ports": [],
+        }
 
     def _foreign(self, project: str, name: str) -> tuple[dict, dict]:
         entry = self.foreign.get(project, {}).get(name)
@@ -254,13 +519,12 @@ class MockBackend:
 
     def service_stats(self) -> dict:
         self.service_stats_calls.append(None)
+        idle = {"cpu_pct": 0.0, "mem_gb": 0.0, "mem_pct": 0.0, "vram_gb": 0.0, "vram_pct": 0.0}
         return {
-            "gpu": {"total_gb": 24.0, "used_gb": 12.0, "util": 50},
-            "services": {
-                "llamacpp": {"cpu_pct": 10.0, "mem_gb": 2.0, "mem_pct": 5.0, "vram_gb": 8.0, "vram_pct": 33.0, "running": True},
-                "dashboard": {"cpu_pct": 1.0, "mem_gb": 0.5, "mem_pct": 1.0, "vram_gb": 0.0, "vram_pct": 0.0, "running": True},
-            },
-            "vram_aggregate_unavailable": False,
+            "gpu": None,
+            "services": {c.service: {**idle, "running": c.state == "running"}
+                         for c in self.project_containers.values()},
+            "vram_aggregate_unavailable": True,
         }
 
     def rendered_compose(self) -> dict:
@@ -268,19 +532,58 @@ class MockBackend:
 
     def exec_in(self, container: str, command: list[str]) -> tuple[int, str]:
         self.execs.append((container, list(command)))
+        try:
+            target = self._named_container(container)
+        except ValueError as exc:
+            raise FileNotFoundError(container) from exc
+        if target.state != "running":
+            return 1, f"Error response from daemon: container {target.container_id} is not running\n"
         return self.exec_result
 
     def exec_in_service(self, service: str, command: list[str]) -> tuple[int, str]:
-        return self.exec_in(service, command)
+        container = self.project_containers.get(compose_service_name(self.project, service))
+        if container is None:
+            raise FileNotFoundError(service)
+        return self.exec_in(container.name, command)
 
     def compose_up(self, service: str | None = None) -> None:
         self.compose_up_calls.append(service)
+        if service is None:
+            targets = self._unprofiled(sorted(self._services()))
+        else:
+            _args, named = plan_named(self.rendered_compose(), [compose_service_name(self.project, service)],
+                                      force_recreate=False)
+            targets = sorted(named)
+            self._require_defined(targets, "up")
+        for name in self._in_dependency_order(targets):
+            container = self.project_containers.get(name)
+            if container is None or container.config_hash != self._config_hash(name):
+                self._replace(name)
+            elif container.state != "running":
+                self._boot(container)
 
     def compose_down(self, service: str | None = None) -> None:
         self.compose_down_calls.append(service)
+        if service is None:
+            # A bare `compose down` runs with no profile active, so it leaves profiled services up.
+            for name in self._unprofiled(sorted(self.project_containers)):
+                del self.project_containers[name]
+            return
+        group = lifecycle_group(self.rendered_compose(), compose_service_name(self.project, service))
+        self._require_defined(group, "down")
+        for name in group:
+            self.project_containers.pop(name, None)
 
     def compose_restart(self, service: str | None = None) -> None:
         self.compose_restart_calls.append(service)
+        if service is None:
+            group = self._unprofiled(sorted(self.project_containers))   # as down: no profile active
+        else:
+            group = lifecycle_group(self.rendered_compose(), compose_service_name(self.project, service))
+            self._require_defined(group, "restart")
+        for name in self._in_dependency_order(group):
+            if name in self.project_containers:
+                self._cycle(self.project_containers[name])
 
 
 class DockerBackend:
@@ -307,30 +610,12 @@ class DockerBackend:
 
     def _lifecycle_guard(self, service: str) -> str:
         """`_guard`, plus the refusal to act on whatever is serving this request."""
-        service = self._guard(service)
-        if service in self.SELF_REFERENTIAL:
-            raise ValueError(
-                f"{service!r} runs the control plane itself and cannot be cycled through it; "
-                "use docker/compose from the host"
-            )
-        return service
+        return lifecycle_service_name(self.project, service)
 
     def _guard(self, service: str) -> str:
-        """Reject anything that isn't a bare compose service name for THIS project.
-
-        The real scoping is the compose-project LABEL filter in `_resolve` (it can only ever match a
-        container whose `com.docker.compose.project` == self.project). This is belt-and-braces: refuse
-        an argument shaped like a raw container path or another project's container so a caller can't
-        smuggle one in. A service that already carries this project's prefix is normalized back to the
-        bare service name for the label filter.
-        """
-        if "/" in service or service.strip() != service or not service:
-            raise ValueError(f"not a valid compose service name for '{self.project}': {service!r}")
-        if service.startswith(f"{self.project}-"):
-            # tolerate the fully-qualified form: strip the project prefix (and any -N replica suffix)
-            core = service[len(self.project) + 1:]
-            return core.rsplit("-", 1)[0] if core.rsplit("-", 1)[-1].isdigit() else core
-        return service
+        """Reject anything that isn't a bare compose service name for THIS project
+        (`compose_service_name`, shared with MockBackend)."""
+        return compose_service_name(self.project, service)
 
     def _resolve(self, service: str) -> str | None:  # pragma: no cover - needs real docker
         """Compose service name -> running/stopped container name, or None if the service isn't in
@@ -521,8 +806,7 @@ class DockerBackend:
         """Container routes take a RAW container name, not a service name, so `_guard` does not
         apply. Refuse anything outside this project rather than trusting the caller: the whole
         point of this backend is that it structurally cannot touch another project's containers."""
-        if "/" in name or name.strip() != name or not name:
-            raise ValueError(f"not a valid container name: {name!r}")
+        name = container_name_argument(name)
         known = {r["name"] for r in self._project_ps()}
         if name not in known:
             raise ValueError(f"container {name!r} is not in project '{self.project}'")
@@ -630,7 +914,7 @@ class DockerBackend:
     def compose_restart(self, service: str | None = None) -> None:
         # Compose restarts named services in dependency order, and every member depends on its
         # owner, so the members come back after the owner has its new namespace.
-        group = lifecycle_group(self.rendered_compose(), self._guard(service)) if service else []
+        group = lifecycle_group(self.rendered_compose(), self._guard(service)) if service is not None else []
         subprocess.run(self._compose("restart", *group), check=True, timeout=600)
 
     def compose_down(self, service: str | None = None) -> None:
@@ -638,8 +922,9 @@ class DockerBackend:
         the backend exposes: it stops the entire stack, the agent and the GPU scheduler included.
         It is implemented because the protocol declares it, not because anything should call it
         casually. A named owner takes its netns members down with it: a member left running
-        would sit in the removed namespace."""
-        group = lifecycle_group(self.rendered_compose(), self._guard(service)) if service else []
+        would sit in the removed namespace. Only None means the whole project: an empty name is
+        malformed (`_guard` refuses it), never a whole-stack down."""
+        group = lifecycle_group(self.rendered_compose(), self._guard(service)) if service is not None else []
         subprocess.run(self._compose("down", *group), check=True, timeout=600)
 
     def service_stats(self) -> dict:  # pragma: no cover - needs real docker

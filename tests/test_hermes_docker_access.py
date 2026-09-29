@@ -14,6 +14,9 @@ import subprocess
 
 import pytest
 
+# Live checks: run by CI's docker job against a real bring-up, skipped where nothing is running.
+pytestmark = pytest.mark.docker
+
 # Container names are "<compose project>-<service>-1"; the service that runs
 # the Hermes agent is `agent` (renamed from hermes-gateway). Derive the
 # project prefix from COMPOSE_PROJECT_NAME so a project rename doesn't
@@ -24,10 +27,13 @@ DASHBOARD = f"{COMPOSE_PROJECT_NAME}-hermes-dashboard-1"
 
 
 def _container_running(name: str) -> bool:
-    r = subprocess.run(
-        ["docker", "inspect", "-f", "{{.State.Running}}", name],
-        capture_output=True, text=True,
-    )
+    try:
+        r = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", name],
+            capture_output=True, text=True,
+        )
+    except OSError:  # no docker CLI on this machine: nothing is running
+        return False
     return r.returncode == 0 and r.stdout.strip() == "true"
 
 

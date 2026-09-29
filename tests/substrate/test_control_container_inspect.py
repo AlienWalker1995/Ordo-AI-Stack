@@ -143,7 +143,7 @@ def cp(tmp_path):
     ))
     scheduler = Scheduler(32)
     return ControlPlane(src, CATALOG, REGISTRY, tmp_path / "out", scheduler=scheduler,
-                        broker=Broker(scheduler, MockBackend()))
+                        broker=Broker(scheduler, MockBackend({"services": {"n8n": {"image": "n8nio/n8n"}}})))
 
 
 def test_the_route_answers_the_summary(cp):

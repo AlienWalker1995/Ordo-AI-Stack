@@ -14,7 +14,8 @@ from ordo.control.scheduler import Scheduler
 
 @pytest.fixture
 def mock_backend():
-    return MockBackend()
+    # The fake answers for the project it models, as docker does: two running services.
+    return MockBackend({"services": {"test-svc": {"image": "busybox"}, "other-svc": {"image": "busybox"}}})
 
 
 @pytest.fixture
@@ -263,14 +264,15 @@ class TestContainerLogs:
     """GET /containers/{name}/logs — ported from ops-api."""
 
     def test_returns_container_logs(self, control_plane, mock_backend):
-        status, body = control_plane.route("GET", "/containers/test-container/logs")
+        mock_backend.project_containers["test-svc"].output = ["line1", "line2"]
+        status, body = control_plane.route("GET", "/containers/ordo-test-svc-1/logs")
         assert status == 200
-        assert "logs" in body
-        assert ("test-container", 100) in mock_backend.container_log_requests
+        assert body == "line1\nline2\n"
+        assert ("ordo-test-svc-1", 100) in mock_backend.container_log_requests
 
     def test_error_on_logs_failure(self, control_plane, mock_backend):
         mock_backend.container_logs = MagicMock(side_effect=Exception("docker failed"))
-        status, body = control_plane.route("GET", "/containers/test-container/logs")
+        status, body = control_plane.route("GET", "/containers/ordo-test-svc-1/logs")
         assert status == 500
         assert "docker failed" in body["error"]
 
@@ -279,21 +281,21 @@ class TestContainerRestart:
     """POST /containers/{name}/restart — ported from ops-api."""
 
     def test_requires_confirm(self, control_plane):
-        status, body = control_plane.route("POST", "/containers/test-container/restart", {})
+        status, body = control_plane.route("POST", "/containers/ordo-test-svc-1/restart", {})
         assert status == 400
         assert "confirm" in body["error"]
 
     def test_restarts_container(self, control_plane, mock_backend):
-        status, body = control_plane.route("POST", "/containers/test-container/restart", {"confirm": True})
+        status, body = control_plane.route("POST", "/containers/ordo-test-svc-1/restart", {"confirm": True})
         assert status == 200
         assert body["ok"] is True
-        assert body["container"] == "test-container"
+        assert body["container"] == "ordo-test-svc-1"
         assert body["action"] == "restarted"
-        assert "test-container" in mock_backend.container_restart_calls
+        assert "ordo-test-svc-1" in mock_backend.container_restart_calls
 
     def test_error_on_restart_failure(self, control_plane, mock_backend):
         mock_backend.container_restart = MagicMock(side_effect=Exception("docker failed"))
-        status, body = control_plane.route("POST", "/containers/test-container/restart", {"confirm": True})
+        status, body = control_plane.route("POST", "/containers/ordo-test-svc-1/restart", {"confirm": True})
         assert status == 500
         assert "docker failed" in body["error"]
 

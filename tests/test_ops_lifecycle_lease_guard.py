@@ -21,7 +21,7 @@ CONFIRM = {"confirm": True}
 
 @pytest.fixture
 def backend():
-    return MockBackend()
+    return MockBackend({"services": {name: {"image": name} for name in ("llamacpp", "comfyui", "open-webui")}})
 
 
 @pytest.fixture

@@ -112,9 +112,15 @@ class RenderedStackBackend(MockBackend):
         self.containers.pop(service, None)
 
     def remove_stopped_containers(self, services: list[str]) -> None:
-        super().remove_stopped_containers(services)
+        self.removed_containers.append(list(services))
         for name in services:
             self.containers.pop(name, None)
+
+    def exec_in_service(self, service: str, command: list[str]) -> tuple[int, str]:
+        if service not in self.containers:
+            raise FileNotFoundError(service)
+        self.execs.append((service, list(command)))
+        return self.exec_result
 
 
 def _write_source(path: Path, **fields) -> None:

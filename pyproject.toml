@@ -65,3 +65,7 @@ norecursedirs = ["data", "models", "out", "secrets", "tmp*", ".git", "*.egg-info
 # exclusion rule the E6 fix relies on (see tests/rag/test_ingest.py) is exercised against the real
 # module, not a copy.
 pythonpath = ["services/dashboard", "services/evals", "services/rag"]
+# `docker`: needs a reachable docker daemon (and, for the live-stack checks, running containers).
+# Such a test skips where docker is absent; the CI job that exists to run them (`-m docker`) sets
+# ORDO_REQUIRE_DOCKER=1, which turns that skip into a failure (tests/conftest.py).
+markers = ["docker: runs against a real docker daemon; skipped without one"]
