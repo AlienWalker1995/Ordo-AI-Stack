@@ -71,3 +71,47 @@ def test_disable_reports_what_ops_controller_stopped(router, monkeypatch):
     result = json.loads(router._disable_service({"plugin_id": "automation", "confirm": True}))
     assert client.calls == [("disable", "automation")]
     assert result["stopped"] == ["n8n"] and result["host_command"] is None
+
+
+NOT_JSON_TRUE = ["false", "no", "true", 1, "yes", [True]]
+
+
+@pytest.mark.parametrize("confirm", NOT_JSON_TRUE)
+@pytest.mark.parametrize("tool", ["_enable_service", "_disable_service"])
+def test_a_plugin_tool_refuses_a_confirm_that_is_not_json_true(router, monkeypatch, tool, confirm):
+    client = FakeClient({"ok": True})
+    monkeypatch.setattr(router, "_get_client", lambda: client)
+    result = json.loads(getattr(router, tool)({"plugin_id": "automation", "confirm": confirm}))
+    assert result["ok"] is False
+    assert client.calls == []
+
+
+class ComposeClient:
+    def __init__(self):
+        self.calls = []
+
+    def compose_restart(self, *, service, confirm):
+        self.calls.append(("restart", service, confirm))
+        return {"ok": True}
+
+    def compose_up(self, *, service, confirm):
+        self.calls.append(("up", service, confirm))
+        return {"ok": True}
+
+
+@pytest.mark.parametrize("confirm", NOT_JSON_TRUE)
+@pytest.mark.parametrize("tool, verb", [("_compose_restart", "restart"), ("_compose_up", "up")])
+def test_a_compose_tool_forwards_only_json_true_as_a_confirmation(router, monkeypatch, tool, verb, confirm):
+    client = ComposeClient()
+    monkeypatch.setattr(router, "_get_client", lambda: client)
+    getattr(router, tool)({"service": "n8n", "confirm": confirm})
+    assert client.calls == [(verb, "n8n", False)]
+
+
+@pytest.mark.parametrize("tool", ["_compose_restart", "_compose_up"])
+def test_a_compose_tool_refuses_a_stack_wide_call_on_a_string_confirm(router, monkeypatch, tool):
+    client = ComposeClient()
+    monkeypatch.setattr(router, "_get_client", lambda: client)
+    result = json.loads(getattr(router, tool)({"confirm": "false"}))
+    assert result["ok"] is False
+    assert client.calls == []

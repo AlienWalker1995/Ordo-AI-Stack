@@ -479,6 +479,10 @@ class ControlPlane:
         plugin = self.registry.get(plugin_id)
         if plugin is None:
             return self._error(404, f"plugin '{plugin_id}' is not in the registry")
+        if body.get("dry_run"):
+            return {"would": "enable", "plugin": plugin_id}
+        if not confirmed(body):
+            return self._error(400, CONFIRM_REQUIRED)
         src = Source.load(self.source_path)
         rc = self._render()
         hw = rc.hardware
@@ -554,6 +558,10 @@ class ControlPlane:
         plugin = self.registry.get(plugin_id)
         if plugin is None:
             return self._error(404, f"plugin '{plugin_id}' is not in the registry")
+        if body.get("dry_run"):
+            return {"would": "disable", "plugin": plugin_id}
+        if not confirmed(body):
+            return self._error(400, CONFIRM_REQUIRED)
         services = [s.name for s in plugin.services]
         src = Source.load(self.source_path)
         if src.plugins == "auto" or src.plugins is None:

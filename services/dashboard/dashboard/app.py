@@ -428,7 +428,7 @@ async def _persist_mcp_toggle(server: str, action: str) -> dict:
                               f"'{server}' is not a registered mcp plugin - change not persisted; ordo.yaml "
                               "left untouched. Adding a brand-new non-plugin MCP to ordo.yaml is out of scope.")
     verb = "enable" if action == "add" else "disable"
-    code, data = await _ops_request("POST", f"/plugins/{plugin}/{verb}", timeout=660.0)
+    code, data = await _ops_request("POST", f"/plugins/{plugin}/{verb}", json={"confirm": True}, timeout=660.0)
     if code != 200 or not data.get("ok"):
         reason = data.get("error") or data.get("detail") or f"HTTP {code}"
         logger.warning("MCP toggle persist failed for server=%s plugin=%s action=%s: %s",

@@ -172,7 +172,7 @@ def test_model_switch_allowed_and_records_when_nothing_recorded(tmp_path, record
 def test_plugin_enable_is_409_on_mismatch(tmp_path):
     cp, src = _cp(tmp_path, plugins=["comfyui"], recorded="0" * 64)
     before = src.read_text(encoding="utf-8")
-    code, body = cp.route("POST", "/plugins/open-webui/enable", {})
+    code, body = cp.route("POST", "/plugins/open-webui/enable", {"confirm": True})
     assert code == 409 and "ordo recreate ops-controller" in body["error"]
     assert src.read_text(encoding="utf-8") == before
 
@@ -180,14 +180,14 @@ def test_plugin_enable_is_409_on_mismatch(tmp_path):
 def test_plugin_disable_is_409_on_mismatch(tmp_path):
     cp, src = _cp(tmp_path, plugins=["comfyui", "rag"], recorded="0" * 64)
     before = src.read_text(encoding="utf-8")
-    code, body = cp.route("POST", "/plugins/rag/disable", {})
+    code, body = cp.route("POST", "/plugins/rag/disable", {"confirm": True})
     assert code == 409 and "ordo recreate ops-controller" in body["error"]
     assert src.read_text(encoding="utf-8") == before
 
 
 def test_plugin_enable_proceeds_on_match(tmp_path):
     cp, _ = _cp(tmp_path, plugins=["comfyui"], recorded=substrate.current_digest())
-    code, body = cp.route("POST", "/plugins/open-webui/enable", {})
+    code, body = cp.route("POST", "/plugins/open-webui/enable", {"confirm": True})
     assert code == 200 and body["ok"] and not body["already_rendered"]
 
 
