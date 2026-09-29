@@ -175,7 +175,7 @@ function Group({ group, usageById, filter: rawFilter, onLogs, onAction, busyId }
       <summary className="flex cursor-pointer items-center gap-2 px-3 py-2.5 text-heading text-fg">
         {group.group}
         <span className="text-caption font-normal text-muted">{rows.length}</span>
-        {problems > 0 && <Chip tone="danger">{problems} need attention</Chip>}
+        {problems > 0 && <Chip tone="danger">{problems} need{problems === 1 ? 's' : ''} attention</Chip>}
       </summary>
       {/* Cards below lg: the table needs 46rem, more than a phone or a narrow tablet has. */}
       <ul className="border-t border-border-subtle lg:hidden">

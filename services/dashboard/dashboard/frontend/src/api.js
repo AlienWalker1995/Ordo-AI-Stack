@@ -20,7 +20,12 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * @param {string} path
+ * @param {{ method?: string, body?: unknown, headers?: Record<string, string>, signal?: AbortSignal }} [options]
+ */
 async function request(path, { method = 'GET', body, headers, signal } = {}) {
+  /** @type {RequestInit & { headers: Record<string, string> }} */
   const opts = {
     method,
     credentials: 'same-origin',
@@ -80,7 +85,6 @@ export function useFetch(fetcher, deps = []) {
     } finally {
       if (!signal || !signal.aborted) setLoading(false)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {

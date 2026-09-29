@@ -1,0 +1,21 @@
+{
+  "ok": true,
+  "gateway": "reachable",
+  "gateway_error": null,
+  "servers": [
+    {
+      "id": "searxng",
+      "ok": true,
+      "status": "healthy",
+      "error": null,
+      "tool_count": 1
+    },
+    {
+      "id": "codebase-memory",
+      "ok": true,
+      "status": "healthy",
+      "error": null,
+      "tool_count": 2
+    }
+  ]
+}

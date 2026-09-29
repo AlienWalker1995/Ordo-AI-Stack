@@ -1,0 +1,17 @@
+{
+  "status": "removed",
+  "servers": [
+    "searxng"
+  ],
+  "persistent": true,
+  "plugin": "mcp-codebase-memory",
+  "note": null,
+  "recreated": [
+    "model-gateway"
+  ],
+  "stopped": [
+    "mcp-codebase-memory"
+  ],
+  "restart_required_on_host": [],
+  "host_command": null
+}

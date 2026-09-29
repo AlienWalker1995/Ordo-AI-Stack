@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "active_model": "gemma4-31b",
+  "ctx_size": 131072,
+  "recreated": [
+    "llamacpp",
+    "model-gateway"
+  ],
+  "restart_required_on_host": [
+    "agent"
+  ],
+  "host_command": "ordo apply --only agent"
+}

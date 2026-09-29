@@ -2,7 +2,10 @@
 // stack, auto-dismiss after 5s, click to dismiss. type is '' | 'success' | 'error'.
 import { createContext, useCallback, useContext, useRef, useState } from 'react'
 
-const ToastContext = createContext(() => {})
+/** @typedef {(msg: string, type?: '' | 'success' | 'error') => void} Toast */
+
+/** @type {import('react').Context<Toast>} */
+const ToastContext = createContext(/** @type {Toast} */ (() => {}))
 
 export function useToast() {
   return useContext(ToastContext)

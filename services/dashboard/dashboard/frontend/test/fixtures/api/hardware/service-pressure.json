@@ -1,0 +1,80 @@
+{
+  "gpu": {
+    "total_gb": 34.2,
+    "used_gb": 27.9,
+    "utilization_pct": 41
+  },
+  "host": {
+    "cpu_cores": 32,
+    "ram_total_gb": 109.7
+  },
+  "services": [
+    {
+      "id": "llamacpp",
+      "name": "llama.cpp (GPU)",
+      "cpu_pct": 12.4,
+      "mem_gb": 3.2,
+      "mem_pct": 2.9,
+      "vram_gb": 24.6,
+      "vram_pct": 71.9,
+      "has_gpu": true,
+      "running": true
+    },
+    {
+      "id": "comfyui",
+      "name": "ComfyUI",
+      "cpu_pct": 3.1,
+      "mem_gb": 6.8,
+      "mem_pct": 6.2,
+      "vram_gb": 3.3,
+      "vram_pct": 9.6,
+      "has_gpu": true,
+      "running": true
+    },
+    {
+      "id": "llamacpp-cpu",
+      "name": "llama.cpp (CPU fallback)",
+      "cpu_pct": 0.4,
+      "mem_gb": 21.7,
+      "mem_pct": 19.8,
+      "vram_gb": 0.0,
+      "vram_pct": 0.0,
+      "has_gpu": false,
+      "running": true
+    },
+    {
+      "id": "webui",
+      "name": "Open WebUI",
+      "cpu_pct": 1.5,
+      "mem_gb": 0.6,
+      "mem_pct": 0.5,
+      "vram_gb": 0.0,
+      "vram_pct": 0.0,
+      "has_gpu": false,
+      "running": true
+    },
+    {
+      "id": "n8n",
+      "name": "N8N",
+      "cpu_pct": 0.8,
+      "mem_gb": 0.4,
+      "mem_pct": 0.4,
+      "vram_gb": 0.0,
+      "vram_pct": 0.0,
+      "has_gpu": false,
+      "running": true
+    },
+    {
+      "id": "qdrant",
+      "name": "Qdrant",
+      "cpu_pct": 0.6,
+      "mem_gb": 1.2,
+      "mem_pct": 1.1,
+      "vram_gb": 0.0,
+      "vram_pct": 0.0,
+      "has_gpu": false,
+      "running": true
+    }
+  ],
+  "vram_aggregate_unavailable": false
+}

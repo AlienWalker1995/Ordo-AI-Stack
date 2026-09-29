@@ -26,6 +26,7 @@ Ordo is defined and operated from the repo root. Config is rendered from `ordo.y
 ## Build, test and lint
 - `pip install -r tests/requirements.txt`, then `python -m pytest tests/ -q --ignore=tests/substrate` (the main CI job).
 - `pip install -r requirements-dev.txt`, then `PYTHONPATH=. python -m pytest tests/substrate -q` (the path-gated substrate job, run on changes to `ordo/`, `catalog/` or `services/`).
+- Dashboard frontend (`services/dashboard/dashboard/frontend`, the path-gated `frontend` job): `npm ci`, then `npm run typecheck`, `npm run lint`, `npm run build`, `npm test` (vitest) and `npm run test:e2e` (Playwright; `npx playwright install chromium` once). Both suites answer `/api/*` from `test/fixtures/` (file path = URL path), and `tests/test_dashboard_frontend_fixtures.py` fails when a fixture's shape drifts from the backend's response: change a fixture together with its endpoint.
 - `python -m ruff check .`: the lint gate. It honors `.gitignore`, so one command covers everything.
 - Dependencies are pinned to exact versions (for example `services/dashboard/dashboard/requirements.txt`, which `tests/requirements.txt` includes). Bump deliberately, rebuild, retest.
 

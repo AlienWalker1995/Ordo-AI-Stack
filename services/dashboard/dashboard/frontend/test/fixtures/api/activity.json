@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "ts": 1790679880.0,
+      "kind": "render",
+      "title": "Render finished · image",
+      "severity": "ok"
+    },
+    {
+      "ts": 1790679100.0,
+      "kind": "action",
+      "title": "Restarted n8n",
+      "severity": "info"
+    },
+    {
+      "ts": 1790676400.0,
+      "kind": "render",
+      "title": "Render failed",
+      "severity": "critical"
+    },
+    {
+      "ts": 1790672800.0,
+      "kind": "gpu",
+      "title": "GPU lease train-lora completed",
+      "severity": "ok"
+    },
+    {
+      "ts": 1790593600.0,
+      "kind": "action",
+      "title": "Switched model to qwen3.8-27b-turbo",
+      "severity": "info"
+    }
+  ]
+}

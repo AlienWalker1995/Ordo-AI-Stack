@@ -1,0 +1,31 @@
+{
+  "history": [
+    {
+      "id": "gate-comfyui",
+      "kind": "media",
+      "vram_gb": 18.0,
+      "submitted": 1790679759.5,
+      "started": 1790679761.9,
+      "ended": 1790679879.6,
+      "outcome": "completed"
+    },
+    {
+      "id": "train-lora",
+      "kind": "train",
+      "vram_gb": 30.0,
+      "submitted": 1790672700.0,
+      "started": 1790672710.0,
+      "ended": 1790672800.0,
+      "outcome": "completed"
+    },
+    {
+      "id": "gate-comfyui",
+      "kind": "media",
+      "vram_gb": 18.0,
+      "submitted": 1790671000.0,
+      "started": null,
+      "ended": 1790671010.0,
+      "outcome": "rejected"
+    }
+  ]
+}

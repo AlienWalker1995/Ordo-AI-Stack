@@ -15,6 +15,15 @@ export default defineConfig({
     // Small app — a single chunk keeps the CSP module-preload graph trivial.
     chunkSizeWarningLimit: 900,
   },
+  // `npm test`: component tests in jsdom against the API fixtures in test/fixtures (their shape is
+  // checked against the backend by tests/test_dashboard_frontend_fixtures.py). e2e/ is Playwright's.
+  test: {
+    environment: 'jsdom',
+    include: ['test/**/*.test.{js,jsx}'],
+    setupFiles: ['test/setup.js'],
+    restoreMocks: true,
+    unstubGlobals: true,
+  },
   server: {
     // `npm run dev` proxies /api and /grafana to a locally running dashboard backend.
     proxy: {
