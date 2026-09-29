@@ -31,3 +31,45 @@ describe('the Drift callout', () => {
     expect(screen.queryByRole('heading', { name: 'Drift' })).toBeNull()
   })
 })
+
+// The header's summary counts drift with what needs attention, so it never reads "All systems
+// normal" above a Drift callout.
+describe('the status line with drift', () => {
+  const calm = () => ({ ...fixture('/api/overview'), attention: [], status: { level: 'ok', text: 'All systems normal' } })
+
+  it('counts a drift finding when nothing else needs attention', async () => {
+    mockApi({ 'GET /api/overview': calm })
+    renderInShell(<OverviewPage />)
+    await screen.findByRole('heading', { name: 'Drift' })
+    expect(screen.getByText('1 thing needs you')).toBeTruthy()
+    expect(screen.queryByText('All systems normal')).toBeNull()
+    // The attention panel points at the callout instead of saying nothing needs you.
+    expect(screen.getByText('Nothing else needs you. See Drift above.')).toBeTruthy()
+    expect(screen.queryByText('Nothing needs you.')).toBeNull()
+  })
+
+  it('adds drift findings to the attention count', async () => {
+    mockApi()
+    renderInShell(<OverviewPage />)
+    await screen.findByRole('heading', { name: 'Drift' })
+    expect(screen.getByText('2 things need you')).toBeTruthy()
+  })
+
+  it.each([
+    ['no findings', { available: true, findings: [] }],
+    ['the check could not run', { available: false, findings: [] }],
+  ])('is the backend verdict with %s', async (_name, drift) => {
+    mockApi({ 'GET /api/overview': calm, 'GET /api/drift': drift })
+    renderInShell(<OverviewPage />)
+    expect(await screen.findByText('All systems normal')).toBeTruthy()
+  })
+
+  it('keeps "not answering" when the control plane is down', async () => {
+    mockApi({
+      'GET /api/overview': () => ({ ...calm(), status: { level: 'unknown', text: 'The control plane is not answering' } }),
+    })
+    renderInShell(<OverviewPage />)
+    await screen.findByRole('heading', { name: 'Drift' })
+    expect(screen.getByText('The control plane is not answering')).toBeTruthy()
+  })
+})

@@ -10,8 +10,21 @@ import { clock, formatGb, formatRate, pct, timeAgo } from '../lib/format.js'
 
 const LEVEL_TONE = { ok: 'ok', warning: 'warning', critical: 'critical', unknown: 'unknown' }
 
-function StatusLine({ overview, lastUpdated }) {
-  const { status, services } = overview
+// The backend's summary counts what needs attention (routes_console._status_line); drift comes
+// from its own slower endpoint, so it is counted here. Drift alone is a warning; a control plane
+// that is not answering stays "unknown" (its drift cannot be read then anyway).
+function withDrift(status, attentionCount, driftCount) {
+  if (!driftCount || status.level === 'unknown') return status
+  const n = attentionCount + driftCount
+  return {
+    level: status.level === 'critical' ? 'critical' : 'warning',
+    text: `${n} thing${n !== 1 ? 's' : ''} need${n === 1 ? 's' : ''} you`,
+  }
+}
+
+function StatusLine({ overview, driftCount, lastUpdated }) {
+  const { services } = overview
+  const status = withDrift(overview.status, overview.attention.length, driftCount)
   return (
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
       <span className="flex items-center gap-2.5 text-title text-fg">
@@ -122,8 +135,10 @@ function ChatEngine({ chat, series }) {
 
 const SEVERITY_TONE = { critical: 'critical', warning: 'warning' }
 
-function Attention({ items }) {
-  if (!items.length) return <p className="text-body text-muted">Nothing needs you.</p>
+function Attention({ items, driftCount }) {
+  if (!items.length) {
+    return <p className="text-body text-muted">{driftCount ? 'Nothing else needs you. See Drift above.' : 'Nothing needs you.'}</p>
+  }
   return (
     <ul className="grid gap-2">
       {items.map((a) => (
@@ -184,6 +199,7 @@ export default function OverviewPage() {
   // Slower than the overview: each call runs the open-webui probe inside its container.
   const drift = usePolling(() => api.get('/api/drift'), 60000)
   const o = overview.data
+  const driftCount = drift.data?.available ? drift.data.findings.length : 0
 
   if (!o) {
     return overview.error
@@ -193,7 +209,7 @@ export default function OverviewPage() {
 
   return (
     <div className="grid gap-4 [&>*]:min-w-0">
-      <StatusLine overview={o} lastUpdated={overview.lastUpdated} />
+      <StatusLine overview={o} driftCount={driftCount} lastUpdated={overview.lastUpdated} />
       <Drift drift={drift.data} />
       <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr] [&>*]:min-w-0">
         <Panel title="GPUs right now">
@@ -206,7 +222,7 @@ export default function OverviewPage() {
           </div>
         </Panel>
         <div className="grid content-start gap-4">
-          <Panel title="Needs attention"><Attention items={o.attention} /></Panel>
+          <Panel title="Needs attention"><Attention items={o.attention} driftCount={driftCount} /></Panel>
           <Panel title="Recent activity">
             {activity.data ? <Activity items={activity.data.items.slice(0, 8)} />
               : activity.error ? <Unavailable>Activity is unavailable.</Unavailable>

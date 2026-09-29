@@ -175,6 +175,7 @@ def _registry(payload: dict | None) -> dict:
 
 
 def _status_line(status_gpu: dict | None, attention: list[dict]) -> dict:
+    # The Overview adds /api/drift's findings to this count (OverviewPage.jsx `withDrift`).
     if status_gpu is None:
         return {"level": "unknown", "text": "The control plane is not answering"}
     if not attention:
