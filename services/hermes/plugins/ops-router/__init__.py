@@ -2,17 +2,20 @@
 
 Five tools wrap the ops-controller HTTP API (OPS_CONTROLLER_URL=http://ops-controller:9000)
 so the common container verbs go through the control plane (audited, lease-aware) without the
-model needing curl. Hermes also has the host docker socket (docs/design/hermes-owns-docker.md);
-these are the preferred path for Ordo services, not the only one.
+model needing curl. They are Hermes' container verbs: raw `docker` is being retired (hostile
+audit SEC-1), so the text here must say exactly what ops-controller does.
 
-- list_containers    -> GET  /containers
-- container_logs     -> GET  /containers/{name}/logs
-- restart_container  -> POST /containers/{name}/restart       (bounce existing container)
-- compose_restart    -> POST /services/{name}/recreate        (per-service; stack-wide is refused client-side)
-- compose_up         -> POST /services/{name}/recreate        (picks up new .env / volumes / network)
+- list_containers    -> GET  /containers                      (read-only; every container on the host)
+- container_logs     -> GET  /containers/{name}/logs          (Ordo project only)
+- restart_container  -> POST /containers/{name}/restart       (Ordo project only; bounce existing container)
+- compose_restart    -> POST /services/{service}/recreate     (per-service; stack-wide is refused client-side)
+- compose_up         -> POST /services/{service}/recreate     (same route: picks up new .env / volumes / network)
+
+ops-controller's container verbs refuse a container outside the `ordo` compose project
+(DockerBackend._container_guard); only the list is host-wide.
 
 When to use which:
-- Process is wedged or a bind-mounted file changed   -> restart_container / compose_restart
+- Process is wedged or a bind-mounted file changed   -> restart_container
 - .env, image, volumes, or network changed           -> compose_up (recreate)
 
 Plus a pre_llm_call hook that, on docker / container / restart / logs intent, reminds the model
@@ -204,9 +207,9 @@ def _disable_service(args: dict, **kwargs) -> str:
 LIST_CONTAINERS_SCHEMA = {
     "name": "list_containers",
     "description": (
-        "List every Docker container visible to the host daemon (every compose "
-        "project, not just Ordo). Returns name, status, image. "
-        "Goes through ops-controller."
+        "List every Docker container on the host (every compose project, not just "
+        "Ordo). Returns name, status, image. Read-only. Goes through ops-controller. "
+        "The other container tools act only on the Ordo project."
     ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
@@ -214,8 +217,8 @@ LIST_CONTAINERS_SCHEMA = {
 CONTAINER_LOGS_SCHEMA = {
     "name": "container_logs",
     "description": (
-        "Tail a container's logs by name. Works for ANY container on the host "
-        "daemon, not just Ordo-allowlisted services."
+        "Tail a container's logs by name via ops-controller. Ordo project only: "
+        "ops-controller refuses a container from another compose project."
     ),
     "parameters": {
         "type": "object",
@@ -244,10 +247,10 @@ RESTART_CONTAINER_SCHEMA = {
     "name": "restart_container",
     "description": (
         "Bounce a single container by name via ops-controller's "
-        "/containers/{name}/restart endpoint. Works for ANY container the host "
-        "daemon sees, including non-Ordo containers. "
-        "NOTE: this does NOT pick up changes to environment variables / .env / "
-        "volumes — use `compose_up` for that."
+        "/containers/{name}/restart endpoint. Ordo project only: ops-controller "
+        "refuses a container from another compose project, and refuses one the GPU "
+        "lease has evicted. NOTE: this does NOT pick up changes to environment "
+        "variables / .env / volumes; use `compose_up` for that."
     ),
     "parameters": {
         "type": "object",
@@ -268,11 +271,11 @@ RESTART_CONTAINER_SCHEMA = {
 COMPOSE_RESTART_SCHEMA = {
     "name": "compose_restart",
     "description": (
-        "Compose-aware restart: `docker compose restart <service>` via "
-        "ops-controller's /compose/restart endpoint. Bounces the process but "
-        "does NOT recreate the container — does NOT pick up .env or compose "
-        "config changes. Use `compose_up` for those. Use this when the process "
-        "is wedged and you want a clean restart of the existing container."
+        "Recreate one Ordo service (and the services in its network namespace) via "
+        "ops-controller's POST /services/{service}/recreate: the same call as "
+        "`compose_up`, kept under this name for callers that ask for a restart. It "
+        "picks up .env and compose config changes. Refused while the GPU lease would "
+        "be violated. To only bounce a wedged process, use `restart_container`."
     ),
     "parameters": {
         "type": "object",
@@ -280,8 +283,8 @@ COMPOSE_RESTART_SCHEMA = {
             "service": {
                 "type": "string",
                 "description": (
-                    "Compose service name (e.g. `llamacpp`, `hermes-gateway`). "
-                    "Omit to restart the whole stack — requires confirm=true."
+                    "Compose service name (e.g. `n8n`, `model-gateway`). Required: "
+                    "stack-wide calls are refused."
                 ),
             },
             "confirm": {
@@ -289,16 +292,16 @@ COMPOSE_RESTART_SCHEMA = {
                 "description": "Required (true): ops-controller refuses the call without it.",
             },
         },
-        "required": [],
+        "required": ["service", "confirm"],
     },
 }
 
 COMPOSE_UP_SCHEMA = {
     "name": "compose_up",
     "description": (
-        "Compose recreate of one service (and the services in its network "
-        "namespace) via ops-controller's /compose/up endpoint; refused while the "
-        "GPU lease would be violated. Recreates the container so it picks up a "
+        "Compose recreate of one Ordo service (and the services in its network "
+        "namespace) via ops-controller's POST /services/{service}/recreate; refused "
+        "while the GPU lease would be violated. Recreates the container so it picks up a "
         "rendered config change (environment, volumes, network, image tag). Use it "
         "after a render changed the service's config. Never edit .env: it is "
         "rendered, and the next render reverts it. A model switch goes through "
@@ -312,8 +315,8 @@ COMPOSE_UP_SCHEMA = {
             "service": {
                 "type": "string",
                 "description": (
-                    "Compose service name (e.g. `llamacpp`, `model-gateway`). "
-                    "Omit to recreate the whole stack — requires confirm=true."
+                    "Compose service name (e.g. `llamacpp`, `model-gateway`). Required: "
+                    "stack-wide calls are refused."
                 ),
             },
             "confirm": {
@@ -321,7 +324,7 @@ COMPOSE_UP_SCHEMA = {
                 "description": "Required (true): ops-controller refuses the call without it.",
             },
         },
-        "required": [],
+        "required": ["service", "confirm"],
     },
 }
 
@@ -408,14 +411,14 @@ _DOCKER_INTENT = re.compile(
 )
 
 _NUDGE = (
-    "Routing note: this turn looks like a docker/container op. For Ordo services prefer "
-    "the control-plane tools (direct `docker` also works for anything else): `list_containers`, `container_logs(name, tail)`, "
-    "`restart_container(name, confirm=true)`, `compose_restart(service, confirm=true)`, "
-    "`compose_up(service, confirm=true)`. "
+    "Routing note: this turn looks like a docker/container op. Use the control-plane "
+    "tools, not the `docker` CLI: `list_containers`, `container_logs(name, tail)`, "
+    "`restart_container(name, confirm=true)`, `compose_up(service, confirm=true)`. "
+    "Logs, restarts and recreates act only on the Ordo project; for another project's "
+    "container, say it is outside your reach and name the host command instead. "
     "Picking the right verb: if .env / environment / volumes changed, use "
-    "`compose_up(service=...)` (recreate) — `restart_container` and "
-    "`compose_restart` only bounce the existing container and will NOT pick up "
-    "env changes. The OPS_CONTROLLER_TOKEN is already in your env — do NOT "
+    "`compose_up(service=...)` (recreate); `restart_container` only bounces the "
+    "existing container and will NOT pick up env changes. The OPS_CONTROLLER_TOKEN is already in your env — do NOT "
     "generate a new one or write tokens to .env. "
     "To INSTALL / ENABLE a service that is NOT yet running (open-webui, comfyui, "
     "rag, monitoring, …), use `enable_service(plugin_id, confirm=true)` — it "
@@ -453,7 +456,7 @@ def register(ctx) -> None:
         toolset="ops-router",
         schema=CONTAINER_LOGS_SCHEMA,
         handler=_container_logs,
-        description="Tail any container's logs via ops-controller.",
+        description="Tail an Ordo container's logs via ops-controller.",
         emoji="📜",
     )
     ctx.register_tool(
@@ -469,7 +472,7 @@ def register(ctx) -> None:
         toolset="ops-router",
         schema=COMPOSE_RESTART_SCHEMA,
         handler=_compose_restart,
-        description="Compose-aware restart of a service (does NOT pick up env changes).",
+        description="Recreate one Ordo service (same call as compose_up).",
         emoji="🔄",
     )
     ctx.register_tool(

@@ -28,12 +28,14 @@ The underlying model is Gemma 4 31B served locally via llama.cpp behind a canoni
 
 ## Docker and container ops
 
-The docker socket IS mounted: `docker` and `docker compose` work directly from `terminal` / `execute_code` (see docs/design/hermes-owns-docker.md). Alongside them you have first-class helpers that go through the control plane:
+Container work goes through the control plane, never the `docker` CLI. Raw Docker access is retired (hostile audit SEC-1): it bypassed the GPU lease and Ordo's audit log, and the socket is being removed. Your tools:
 
-- `list_containers()`: every container the host daemon sees (any compose project)
-- `container_logs(name, tail=100)`: tail any container's logs by name
-- `restart_container(name, confirm=true)`: restart any container by name
+- `list_containers()`: every container on the host, read-only (any compose project)
+- `container_logs(name, tail=100)`: tail an Ordo container's logs
+- `restart_container(name, confirm=true)`: bounce an Ordo container (does not pick up env changes)
+- `compose_up(service, confirm=true)`: recreate an Ordo service after .env / volume / image changes
+- `enable_service(plugin_id, confirm=true)`: install an optional Ordo service
 
-For Ordo services, prefer the control plane (`compose_up(service, confirm=true)` after .env / volume / image changes, `enable_service(plugin_id, confirm=true)` to install a service); follow the `devops/ops-controller-api` skill. When asked to deploy or bring something up, actually do it; never narrate commands for the operator to run.
+Logs, restarts and recreates act only on the Ordo project; ops-controller refuses anything else. Follow the `devops/ops-controller-api` skill. When asked to do something these tools cover, actually do it. When it is outside their reach (another project's container, an image build, a new container), say so plainly and give the operator the exact host command; never claim you did it.
 
 GPU work is the exception: never start a GPU container or submit a ComfyUI render outside the scheduler lease (renders go through `$COMFYUI_URL`, the gate).

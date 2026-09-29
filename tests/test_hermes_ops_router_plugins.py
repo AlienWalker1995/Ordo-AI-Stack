@@ -147,3 +147,55 @@ def test_restart_container_schema_requires_confirm(router):
     parameters = router.RESTART_CONTAINER_SCHEMA["parameters"]
     assert parameters["properties"]["confirm"]["type"] == "boolean"
     assert "confirm" in parameters["required"]
+
+
+# --- The tool text is what the model routes on, so it must match what ops-controller does. ---
+# ops-controller's container verbs act only on the `ordo` compose project (DockerBackend's
+# _container_guard), and compose_restart / compose_up both call POST /services/{service}/recreate.
+# The old text promised logs and restarts for ANY host container and told the model that raw
+# `docker` "also works": each refusal then sent it to the socket (hostile audit SEC-1, 2026-09-29).
+
+def _tool_text(router) -> str:
+    schemas = [router.LIST_CONTAINERS_SCHEMA, router.CONTAINER_LOGS_SCHEMA, router.RESTART_CONTAINER_SCHEMA,
+               router.COMPOSE_RESTART_SCHEMA, router.COMPOSE_UP_SCHEMA]
+    return json.dumps(schemas) + router._NUDGE + (router.__doc__ or "")
+
+
+def test_no_tool_text_promises_a_container_outside_the_ordo_project(router):
+    text = _tool_text(router).lower()
+    assert "any container" not in text
+    assert "non-ordo" not in text
+
+
+def test_no_tool_text_points_the_model_at_raw_docker(router):
+    text = _tool_text(router).lower()
+    assert "also works" not in text
+    assert "docker socket" not in text
+
+
+@pytest.mark.parametrize("schema", ["CONTAINER_LOGS_SCHEMA", "RESTART_CONTAINER_SCHEMA"])
+def test_the_container_verbs_say_they_are_ordo_only(router, schema):
+    assert "ordo project" in getattr(router, schema)["description"].lower()
+
+
+def test_compose_restart_says_it_recreates(router):
+    description = router.COMPOSE_RESTART_SCHEMA["description"].lower()
+    assert "/services/{service}/recreate" in description
+    assert "does not recreate" not in description
+    assert "compose_restart` only bounce" not in router._NUDGE
+
+
+@pytest.mark.parametrize("schema", ["COMPOSE_RESTART_SCHEMA", "COMPOSE_UP_SCHEMA"])
+def test_a_compose_tool_schema_requires_a_service(router, schema):
+    parameters = getattr(router, schema)["parameters"]
+    assert parameters["required"] == ["service", "confirm"]
+    assert "whole stack" not in json.dumps(parameters).lower()
+
+
+def test_the_seed_soul_retires_raw_docker():
+    soul = (HERMES / "seed" / "SOUL.md").read_text(encoding="utf-8")
+    assert "docker socket IS mounted" not in soul
+    assert "tail any container" not in soul
+    assert "restart any container" not in soul
+    for tool in ("list_containers", "container_logs", "restart_container", "compose_up"):
+        assert tool in soul
