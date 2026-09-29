@@ -24,6 +24,26 @@ Design constraints (from the architecture decisions + the drift lessons):
   - Every state-changing call (POST/PUT/PATCH/DELETE) leaves one audit record, whatever its
     outcome, refusals included. It is written in one place, `handle()` (plus the 401 and bad-JSON
     refusals in `app()`, which never reach it), so a new route is audited without opting in.
+
+`ControlPlane` is a facade. Each concern lives in its own module and is handed exactly the shared
+state it uses (the broker, the scheduler, the source, the GPU-lease check); `ControlPlane` builds
+them once and keeps one method per route handler, a one-line delegate, so the route table and
+every caller see one stable surface:
+
+  routes.py            the route table `route()` dispatches through
+  source.py            the operator source and out/: render, atomic write, substrate check
+  apply.py             the post-render step, and the source commit that rolls back on failure
+  model_config.py      GET/POST /model-config
+  plugin_install.py    GET /plugins, plugin enable and disable
+  doctor.py            GET /doctor: the drift `ordo doctor` reports, seen from here
+  lifecycle.py         the service, container and compose verbs, and the GPU-lease check they make
+  gpus.py              the GPU lease routes and the GPU views
+  managed_projects.py  OTHER compose projects: status, logs and a budgeted restart
+  comfyui.py           ComfyUI model downloads and custom-node requirements
+  diagnostics.py       the D-state scan
+  metrics.py           GET /metrics (served by `app()` as plain text, outside the route table)
+  call_audit.py        what an audit record says, and writing it
+  responses.py         the payload conventions: error(), as_response(), confirmed()
 """
 from __future__ import annotations
 
@@ -125,15 +145,11 @@ class ControlPlane:
     def substrate_digest(self) -> str:
         return self.source.substrate_digest
 
-    # --- Status, the model, plugins and the post-render apply (source.py, model_config.py,
-    # plugin_install.py, apply.py) ---
+    # --- Status, the model switch, plugins, the post-render apply and the drift report (source.py,
+    # model_config.py, plugin_install.py, apply.py, doctor.py) ---
 
     def _render(self) -> Any:
         return self.source.render()
-
-    def doctor(self) -> dict[str, Any]:
-        """`GET /doctor`: the drift `ordo doctor` reports, seen from here (doctor.py)."""
-        return self.drift.report()
 
     def status(self) -> dict[str, Any]:
         """Live status: GPU/scheduler state + the current rendered manifest."""
@@ -145,6 +161,11 @@ class ControlPlane:
             # refuses a mid-lease recreate unless this is true.
             out["gpu"]["state_persisted"] = bool(self.broker and self.broker.state_persisted)
         return out
+
+    def health(self) -> dict[str, Any]:
+        """The container healthcheck. The digest is not secret; `ordo doctor` reads it here to compare
+        with the checkout."""
+        return {"ok": True, "substrate_digest": self.substrate_digest}
 
     def get_model_config(self) -> dict[str, Any]:
         return self.model_config.get()
@@ -168,7 +189,11 @@ class ControlPlane:
     def apply(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.applier.apply(body)
 
-    # --- The GPU lease and the GPU views (ordo/control/gpus.py) ---
+    def doctor(self) -> dict[str, Any]:
+        """`GET /doctor`: the drift `ordo doctor` reports, seen from here (doctor.py)."""
+        return self.drift.report()
+
+    # --- The GPU lease and the GPU views (gpus.py) ---
 
     def request_job(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.lease_jobs.request(body)
@@ -208,7 +233,7 @@ class ControlPlane:
 
     _gpu_indexes = staticmethod(gpus.gpu_indexes)
 
-    # --- Service lifecycle (ordo/control/lifecycle.py) ---
+    # --- Service lifecycle (lifecycle.py) ---
 
     def service_start(self, service_id: str, body: dict[str, Any]) -> dict[str, Any]:
         return self.lifecycle.service_start(service_id, body)
@@ -252,7 +277,7 @@ class ControlPlane:
     def compose_restart(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.lifecycle.compose_restart(body)
 
-    # --- Managed projects: OTHER compose projects (ordo/control/managed_projects.py) ---
+    # --- Managed projects: OTHER compose projects (managed_projects.py) ---
 
     def managed_projects_overview(self) -> dict[str, Any]:
         return self.managed_projects.overview()
@@ -267,7 +292,7 @@ class ControlPlane:
         return self.managed_projects.container_restart(project, name, body, leased_gpu_uuid=self._leased_gpu_uuid,
                                                        gpu_indexes=self._gpu_indexes)
 
-    # --- ComfyUI model downloads (ordo/control/comfyui.py) ---
+    # --- ComfyUI model downloads and node requirements (comfyui.py) ---
 
     def models_download(self, body: dict[str, Any]) -> dict[str, Any]:
         """Start a resumable file download to the ComfyUI models directory."""
@@ -279,12 +304,19 @@ class ControlPlane:
     def _run_model_download(self, url: str, category: str, filename: str) -> None:
         self.downloads.run(url, category, filename)
 
-    # --- Diagnostics (ordo/control/diagnostics.py) ---
+    def comfyui_install_node_requirements(self, body: dict[str, Any] | None) -> dict[str, Any]:
+        return self.node_requirements.install(body)
+
+    # --- Diagnostics (diagnostics.py) and Prometheus metrics (metrics.py) ---
 
     def diagnostics_dstate(self) -> dict[str, Any]:
         return diagnostics.dstate()
 
-    # --- Audit ---
+    def metrics_text(self) -> str:
+        """GET /metrics, in the Prometheus text format (metrics.py). Read-only."""
+        return self.metrics.text()
+
+    # --- The audit log (call_audit.py) ---
 
     def audit_call(
         self,
@@ -299,6 +331,15 @@ class ControlPlane:
     ) -> None:
         """Write the one audit record for a state-changing call (call_audit.CallAuditor.record)."""
         self.auditor.record(method, path, body, actor, status, error, detail, principal)
+
+    def audit_log(self, limit: int = 50) -> dict[str, Any]:
+        """The newest `limit` audit records, newest first, across the rotated generations."""
+        return self.auditor.tail(limit)
+
+    def read_audit(self, query: dict[str, str]) -> dict[str, Any]:
+        return self.auditor.read(query)
+
+    # --- Routing: the audited entry point, the route table (routes.py) and the operation lock ---
 
     def handle(
         self,
@@ -327,39 +368,6 @@ class ControlPlane:
                         lease_detail(path, body, status, payload), principal=principal)
         return status, payload
 
-    def comfyui_install_node_requirements(self, body: dict[str, Any] | None) -> dict[str, Any]:
-        return self.node_requirements.install(body)
-
-    def audit_log(self, limit: int = 50) -> dict[str, Any]:
-        """The newest `limit` audit records, newest first, across the rotated generations."""
-        return self.auditor.tail(limit)
-
-    def metrics_text(self) -> str:
-        """GET /metrics, in the Prometheus text format (metrics.py). Read-only."""
-        return self.metrics.text()
-
-    def _exclusive(self, verb: Callable[[], dict[str, Any]]) -> dict[str, Any]:
-        """Run a stack-changing verb holding the operation lock, or refuse it with 409 while
-        another holds it (the convention for "busy", as a second download is refused). Refusing
-        rather than waiting keeps a caller from queueing behind a recreate that can take 15
-        minutes, past its own timeout, and from tying up a worker thread while it waits."""
-        if not self._operation_lock.acquire(blocking=False):
-            return self._error(409, "another operation that changes the stack is in progress (a lifecycle "
-                                    "verb, a render apply or a GPU lease transition); retry when it finishes")
-        try:
-            return verb()
-        finally:
-            self._operation_lock.release()
-
-    # --- routing (also pure) ---
-    def health(self) -> dict[str, Any]:
-        """The container healthcheck. The digest is not secret; `ordo doctor` reads it here to compare
-        with the checkout."""
-        return {"ok": True, "substrate_digest": self.substrate_digest}
-
-    def read_audit(self, query: dict[str, str]) -> dict[str, Any]:
-        return self.auditor.read(query)
-
     def route(
         self,
         method: str,
@@ -380,6 +388,19 @@ class ControlPlane:
         if entry.always_ok:
             return 200, payload
         return self._as_response(payload)
+
+    def _exclusive(self, verb: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        """Run a stack-changing verb holding the operation lock, or refuse it with 409 while
+        another holds it (the convention for "busy", as a second download is refused). Refusing
+        rather than waiting keeps a caller from queueing behind a recreate that can take 15
+        minutes, past its own timeout, and from tying up a worker thread while it waits."""
+        if not self._operation_lock.acquire(blocking=False):
+            return self._error(409, "another operation that changes the stack is in progress (a lifecycle "
+                                    "verb, a render apply or a GPU lease transition); retry when it finishes")
+        try:
+            return verb()
+        finally:
+            self._operation_lock.release()
 
     _error = staticmethod(error)
     _as_response = staticmethod(as_response)
