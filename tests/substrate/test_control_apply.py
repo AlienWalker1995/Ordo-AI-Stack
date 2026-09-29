@@ -111,10 +111,21 @@ class RenderedStackBackend(MockBackend):
         super().stop(service)
         self.containers.pop(service, None)
 
+    # These two bypass MockBackend's own project model on purpose: this backend keeps its
+    # containers in `self.containers` (RunningContainers built from the render in out/, so the
+    # changed set is computed from real config hashes), and MockBackend's model is empty here.
+    # Calling super() would validate against that empty model and refuse every service. Both
+    # still record into the same call log (`removed_containers`, `execs`) the tests assert on.
     def remove_stopped_containers(self, services: list[str]) -> None:
-        super().remove_stopped_containers(services)
+        self.removed_containers.append(list(services))
         for name in services:
             self.containers.pop(name, None)
+
+    def exec_in_service(self, service: str, command: list[str]) -> tuple[int, str]:
+        if service not in self.containers:
+            raise FileNotFoundError(service)
+        self.execs.append((service, list(command)))
+        return self.exec_result
 
 
 def _write_source(path: Path, **fields) -> None:

@@ -22,6 +22,12 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 |--------|---------|
 | `smoke_test.sh` / `.ps1` | Quick smoke test against the rendered `out/docker-compose.yml` (project `ordo`): optionally starts services, then checks health in-network via `docker compose exec` (only Caddy publishes a host port). |
 
+## CI
+
+| Script | Purpose |
+|--------|---------|
+| `ci/live-stack-up.sh` | CI's `docker` job: brings up agent, ops-controller, caddy and hermes-dashboard through `ordo init` / `ordo remote enable` / `ordo up` for the live docker tests. Throwaway daemons only: it uses project `ordo`. |
+
 ## MCP
 
 There is no MCP-server-editing script any more. An MCP server is a `kind: mcp` plugin manifest,

@@ -66,3 +66,20 @@ def dashboard_operator_headers(monkeypatch) -> dict[str, str]:
 
     monkeypatch.setattr(dashboard_settings, "OPS_CONTROLLER_TOKEN", DASHBOARD_TEST_OPS_TOKEN)
     return {"Authorization": f"Bearer {DASHBOARD_TEST_OPS_TOKEN}"}
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """In a job that requires docker, a `docker` test that skipped has failed.
+
+    Docker-backed tests skip where no daemon (or no live container) answers, so a laptop without
+    docker stays green. The CI job that exists to run them sets ORDO_REQUIRE_DOCKER=1: there a skip
+    means the job proved nothing (a broken bring-up, a renamed container), and a skip that stays
+    green is how these tests went years without running at all."""
+    outcome = yield
+    report = outcome.get_result()
+    if (report.skipped and os.environ.get("ORDO_REQUIRE_DOCKER") == "1"
+            and item.get_closest_marker("docker") is not None):
+        reason = report.longrepr[2] if isinstance(report.longrepr, tuple) else str(report.longrepr)
+        report.outcome = "failed"
+        report.longrepr = f"ORDO_REQUIRE_DOCKER=1 but this docker test skipped: {reason}"

@@ -944,6 +944,18 @@ class ControlPlane:
                 return lifecycle_group(doc, service)[1:]
         return []
 
+    def _compose_service(self, body: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
+        """(service, error) for a compose verb's body. No `service` key, or null, means the whole
+        stack. Anything else must be a non-empty string: `""` must never widen a named verb into a
+        whole-stack down."""
+        service = body.get("service")
+        if service is None:
+            return None, None
+        if not isinstance(service, str) or not service.strip():
+            return None, self._error(400, f"service must be a non-empty compose service name, got {service!r}; "
+                                          "omit it to act on the whole stack")
+        return service, None
+
     def _group_lease_conflict(self, group: list[str]) -> dict[str, Any] | None:
         """`_lease_conflict` for each service a verb would start."""
         for service in group:
@@ -1253,7 +1265,9 @@ class ControlPlane:
             return self._error(503, "no broker configured")
         if not confirmed(body):
             return self._error(400, CONFIRM_REQUIRED)
-        service = body.get("service") or None
+        service, invalid = self._compose_service(body)
+        if invalid:
+            return invalid
         try:
             # A named compose verb acts on the service's whole lifecycle group (the backend
             # expands it through `bringup`), so every member is lease-checked too.
@@ -1274,7 +1288,18 @@ class ControlPlane:
             return self._error(503, "no broker configured")
         if not confirmed(body):
             return self._error(400, CONFIRM_REQUIRED)
-        service = body.get("service") or None
+        service, invalid = self._compose_service(body)
+        if invalid:
+            return invalid
+        try:
+            # Down REMOVES containers: an evicted resident taken down has nothing left for the
+            # scheduler to restore, and a whole-stack down ends the lease holder's work too.
+            conflict = (self._group_lease_conflict(self._lifecycle_group(service)) if service
+                        else self._lease_conflict(None))
+        except LifecycleGroupUnknown as e:
+            return self._error(500, str(e))
+        if conflict:
+            return conflict
         try:
             self.broker.backend.compose_down(service)
         except Exception as e:
@@ -1286,7 +1311,9 @@ class ControlPlane:
             return self._error(503, "no broker configured")
         if not confirmed(body):
             return self._error(400, CONFIRM_REQUIRED)
-        service = body.get("service") or None
+        service, invalid = self._compose_service(body)
+        if invalid:
+            return invalid
         try:
             # A named compose verb acts on the service's whole lifecycle group (the backend
             # expands it through `bringup`), so every member is lease-checked too.

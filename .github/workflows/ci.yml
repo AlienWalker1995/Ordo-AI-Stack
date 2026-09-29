@@ -46,8 +46,9 @@ jobs:
 
       # tests/substrate/ is the render-engine suite — it runs in the path-gated `substrate`
       # job below (with its own pinned deps), so exclude it here to avoid double-running.
+      # `docker` tests run in the `docker` job, against real containers.
       - name: Run tests
-        run: python -m pytest tests/ -v --ignore=tests/substrate
+        run: python -m pytest tests/ -v --ignore=tests/substrate -m "not docker"
 
   frontend:
     name: Dashboard frontend
@@ -155,7 +156,7 @@ jobs:
       # "mocked-profile CI" requirement). Also proves the config renders from a clean checkout.
       - name: Pytest (mocked profiles)
         if: steps.filter.outputs.substrate == 'true'
-        run: PYTHONPATH=. python -m pytest tests/substrate -q
+        run: PYTHONPATH=. python -m pytest tests/substrate -q -m "not docker"
 
       - name: Fresh-install render smoke
         if: steps.filter.outputs.substrate == 'true'
@@ -191,3 +192,73 @@ jobs:
       - name: Skip (no substrate changes)
         if: steps.filter.outputs.substrate != 'true'
         run: echo "Skipping substrate — no changes under the render-engine paths."
+
+  # Every test marked `docker` (pyproject.toml): they skip wherever no daemon or no live container
+  # answers, so the jobs above never run them. Here docker is real and ORDO_REQUIRE_DOCKER=1 turns
+  # any such skip into a failure (tests/conftest.py).
+  docker:
+    name: docker (real containers)
+    runs-on: ubuntu-24.04
+    # Observed ~5 min (contract ~1 min, the Hermes image build most of the rest); a hung bring-up
+    # or a wedged container must fail the job, not hold a runner for the 6-hour default.
+    timeout-minutes: 30
+    env:
+      ORDO_REQUIRE_DOCKER: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            docker:
+              - 'ordo/**'
+              - 'catalog/**'
+              - 'services/**'
+              - 'auth/**'
+              - 'scripts/ci/**'
+              - 'tests/conftest.py'
+              - 'tests/substrate/test_backend_contract.py'
+              - 'tests/test_secrets_isolation.py'
+              - 'tests/test_hermes_docker_access.py'
+              - 'ordo.example.yaml'
+              - 'requirements-dev.txt'
+              - 'pyproject.toml'
+              - '.github/workflows/ci.yml'
+
+      - name: Set up Python
+        if: steps.filter.outputs.docker == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            tests/requirements.txt
+
+      # Both sets: the live checks are collected from tests/, whose modules import the dashboard.
+      - name: Install pinned deps
+        if: steps.filter.outputs.docker == 'true'
+        run: |
+          pip install -r requirements-dev.txt -r tests/requirements.txt
+          pip install -e .
+
+      # MockBackend and DockerBackend held to one behavioural contract, the real half on throwaway
+      # compose projects of digest-pinned busybox (tests/substrate/test_backend_contract.py).
+      - name: Backend contract (real docker)
+        if: steps.filter.outputs.docker == 'true'
+        run: PYTHONPATH=. python -m pytest tests/substrate -m docker -q -rs
+
+      # The smallest real stack the live checks need (agent, ops-controller, caddy, hermes-dashboard),
+      # brought up by the operator's own commands. Builds the Hermes and ops-controller images.
+      - name: Bring up the live stack
+        if: steps.filter.outputs.docker == 'true'
+        run: bash scripts/ci/live-stack-up.sh
+
+      - name: Live docker checks (secrets isolation, Hermes docker access)
+        if: steps.filter.outputs.docker == 'true'
+        run: python -m pytest tests -m docker --ignore=tests/substrate -q -rs
+
+      - name: Skip (no docker-relevant changes)
+        if: steps.filter.outputs.docker != 'true'
+        run: echo "Skipping the docker job - no changes under its paths."

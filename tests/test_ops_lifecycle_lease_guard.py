@@ -21,7 +21,7 @@ CONFIRM = {"confirm": True}
 
 @pytest.fixture
 def backend():
-    return MockBackend()
+    return MockBackend({"services": {name: {"image": name} for name in ("llamacpp", "comfyui", "open-webui")}})
 
 
 @pytest.fixture
@@ -106,3 +106,49 @@ def test_status_reports_whether_the_card_is_leased(broker, leased):
 
 def test_status_reports_an_idle_card_as_not_leased():
     assert Scheduler(total_vram_gb=32.0).status()["leased"] is False
+
+
+# --- the compose verbs' `service` field ---
+
+COMPOSE_VERBS = [("/compose/up", "compose_up_calls"), ("/compose/restart", "compose_restart_calls"),
+                 ("/compose/down", "compose_down_calls")]
+
+
+@pytest.mark.parametrize("path,calls", COMPOSE_VERBS)
+@pytest.mark.parametrize("service", ["", 0, False, ["open-webui"], {"name": "open-webui"}])
+def test_a_service_that_is_not_a_name_is_refused_not_widened_to_the_whole_stack(control_plane, backend, path,
+                                                                                calls, service):
+    # `{"service": ""}` used to read as "no service": a whole-project down from one empty field.
+    status, body = control_plane.route("POST", path, {"confirm": True, "service": service})
+    assert status == 400, body
+    assert "service" in body["error"]
+    assert getattr(backend, calls) == []
+    assert sorted(backend.project_containers) == ["comfyui", "llamacpp", "open-webui"]
+
+
+@pytest.mark.parametrize("path,calls", COMPOSE_VERBS)
+def test_no_service_field_is_still_the_whole_stack(control_plane, backend, path, calls):
+    status, _ = control_plane.route("POST", path, {"confirm": True})
+    assert status == 200
+    assert getattr(backend, calls) == [None]
+
+
+def test_a_whole_stack_down_is_refused_during_a_lease(control_plane, backend, leased):
+    status, body = control_plane.route("POST", "/compose/down", CONFIRM)
+    assert status == 409
+    assert "gate-comfyui" in body["error"]
+    assert backend.compose_down_calls == []
+
+
+def test_a_named_down_of_an_evicted_resident_is_refused(control_plane, backend, leased):
+    # Down REMOVES the container: the scheduler's restore would then find nothing to start and
+    # the resident would stay down after the lease.
+    status, _ = control_plane.route("POST", "/compose/down", {"confirm": True, "service": "llamacpp"})
+    assert status == 409
+    assert backend.compose_down_calls == []
+
+
+def test_a_named_down_of_another_service_is_allowed_during_a_lease(control_plane, backend, leased):
+    status, _ = control_plane.route("POST", "/compose/down", {"confirm": True, "service": "open-webui"})
+    assert status == 200
+    assert backend.compose_down_calls == ["open-webui"]

@@ -6,6 +6,9 @@ import subprocess
 
 import pytest
 
+# Live checks: run by CI's docker job against a real bring-up, skipped where nothing is running.
+pytestmark = pytest.mark.docker
+
 # Container names are "<compose project>-<service>-1"; the service that runs
 # the Hermes agent is `agent` (renamed from hermes-gateway). Derive the
 # project prefix from COMPOSE_PROJECT_NAME so a project rename doesn't
@@ -22,10 +25,13 @@ def _docker_exec(container: str, *cmd: str) -> subprocess.CompletedProcess:
 
 
 def _container_running(name: str) -> bool:
-    r = subprocess.run(
-        ["docker", "inspect", "-f", "{{.State.Running}}", name],
-        capture_output=True, text=True,
-    )
+    try:
+        r = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", name],
+            capture_output=True, text=True,
+        )
+    except OSError:  # no docker CLI on this machine: nothing is running
+        return False
     return r.returncode == 0 and r.stdout.strip() == "true"
 
 
@@ -85,14 +91,21 @@ def test_secret_file_inside_container_is_readable(hermes_gateway: str):
 
 
 def _project_containers() -> list[str]:
-    r = subprocess.run(
-        ["docker", "ps", "--filter", f"label=com.docker.compose.project={COMPOSE_PROJECT_NAME}",
-         "--format", "{{.Names}}"],
-        capture_output=True, text=True,
-    )
+    try:
+        r = subprocess.run(
+            ["docker", "ps", "--filter", f"label=com.docker.compose.project={COMPOSE_PROJECT_NAME}",
+             "--format", "{{.Names}}"],
+            capture_output=True, text=True,
+        )
+    except OSError:
+        pytest.skip("docker is not installed")
     if r.returncode != 0:
         pytest.skip("docker is not reachable")
-    return [line for line in r.stdout.splitlines() if line.strip()]
+    names = [line for line in r.stdout.splitlines() if line.strip()]
+    if not names:
+        # Nothing to inspect is not a pass: an empty project would make the check below vacuous.
+        pytest.skip(f"no container of project {COMPOSE_PROJECT_NAME} is running")
+    return names
 
 
 def test_file_secrets_are_not_in_any_container_environment():
