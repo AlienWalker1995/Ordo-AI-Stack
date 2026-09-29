@@ -72,6 +72,7 @@ ALLOWED = [
     ("GET", "/status"),
     ("GET", "/containers"),
     ("GET", "/containers/ordo-n8n-1/logs"),
+    ("GET", "/containers/ordo-n8n-1"),
     ("GET", "/services"),
     ("GET", "/services/n8n/logs"),
     ("GET", "/stats/services"),

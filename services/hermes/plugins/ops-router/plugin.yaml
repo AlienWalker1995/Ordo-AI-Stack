@@ -6,6 +6,7 @@ requires_env:
 provides_tools:
   - list_containers
   - container_logs
+  - inspect_container
   - restart_container
   - compose_restart
   - compose_up

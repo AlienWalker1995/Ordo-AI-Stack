@@ -7,6 +7,7 @@ audit SEC-1), so the text here must say exactly what ops-controller does.
 
 - list_containers    -> GET  /containers                      (read-only; every container on the host)
 - container_logs     -> GET  /containers/{name}/logs          (Ordo project only)
+- inspect_container  -> GET  /containers/{name}               (Ordo project only; no environment, no labels)
 - restart_container  -> POST /containers/{name}/restart       (Ordo project only; bounce existing container)
 - compose_restart    -> POST /services/{service}/recreate     (per-service; stack-wide is refused client-side)
 - compose_up         -> POST /services/{service}/recreate     (same route: picks up new .env / volumes / network)
@@ -88,6 +89,19 @@ def _container_logs(args: dict, **kwargs) -> str:
         return _err(str(exc))
     except Exception as exc:
         logger.exception("container_logs failed")
+        return _err(f"unexpected error: {exc}")
+
+
+def _inspect_container(args: dict, **kwargs) -> str:
+    name = (args.get("name") or "").strip()
+    if not name:
+        return _err("name is required")
+    try:
+        return json.dumps({"ok": True, "container": _get_client().inspect_container(name)})
+    except OpsClientError as exc:
+        return _err(str(exc))
+    except Exception as exc:
+        logger.exception("inspect_container failed")
         return _err(f"unexpected error: {exc}")
 
 
@@ -238,6 +252,23 @@ CONTAINER_LOGS_SCHEMA = {
                     "timestamp like '2026-05-09T10:00:00'."
                 ),
             },
+        },
+        "required": ["name"],
+    },
+}
+
+INSPECT_CONTAINER_SCHEMA = {
+    "name": "inspect_container",
+    "description": (
+        "Read-only view of one Ordo container via ops-controller's GET /containers/{name}: "
+        "image and image id, state, health, start time, restart count and policy, mounts, "
+        "networks and published ports. Ordo project only. It never returns the environment "
+        "or labels (they carry secrets). Use it instead of `docker inspect`."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Container name, e.g. 'ordo-n8n-1'."},
         },
         "required": ["name"],
     },
@@ -412,7 +443,7 @@ _DOCKER_INTENT = re.compile(
 
 _NUDGE = (
     "Routing note: this turn looks like a docker/container op. Use the control-plane "
-    "tools, not the `docker` CLI: `list_containers`, `container_logs(name, tail)`, "
+    "tools, not the `docker` CLI: `list_containers`, `container_logs(name, tail)`, `inspect_container(name)`, "
     "`restart_container(name, confirm=true)`, `compose_up(service, confirm=true)`. "
     "Logs, restarts and recreates act only on the Ordo project; for another project's "
     "container, say it is outside your reach and name the host command instead. "
@@ -458,6 +489,14 @@ def register(ctx) -> None:
         handler=_container_logs,
         description="Tail an Ordo container's logs via ops-controller.",
         emoji="📜",
+    )
+    ctx.register_tool(
+        name="inspect_container",
+        toolset="ops-router",
+        schema=INSPECT_CONTAINER_SCHEMA,
+        handler=_inspect_container,
+        description="Read-only view of an Ordo container (no environment, no labels).",
+        emoji="🔎",
     )
     ctx.register_tool(
         name="restart_container",
