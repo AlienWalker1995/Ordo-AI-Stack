@@ -38,7 +38,7 @@ from typing import Any
 
 import yaml
 
-from ..render import alerting, gpu_live, substrate
+from ..render import alerting, substrate
 from ..render.catalog import Catalog
 from ..render.changed_set import STOPPED_STATES, Change, diff_services, stale_one_shot_jobs
 from ..render.config import Source
@@ -46,19 +46,20 @@ from ..render.engine import render
 from ..render.models_volume import CHAT_SERVICE, required_model_files
 from ..render.open_webui_probe import OPEN_WEBUI_PROBE, OPEN_WEBUI_SERVICE, open_webui_verdict
 from ..render.plugins import PluginRegistry
-from ..render.served_models import model_files, models_by_gpu, served_models
+from ..render.served_models import model_files
 from ..render.source_edit import edit_plugins_list
 from ..render.stack import lifecycle_group, plan_named
+from . import gpus, routes
 from . import metrics as prom
 from . import principals as auth
-from . import routes
 from .broker import SELF_REFERENTIAL_SERVICES, Broker
 from .call_audit import ACTOR_HEADER, AUDITED_METHODS, CallAuditor, audit_actor, audited_read, lease_detail
 from .comfyui import ModelDownloads, NodeRequirements
+from .gpus import LeaseJobs
 from .lifecycle import LeaseGuard, Lifecycle
 from .managed_projects import ManagedProjects
 from .responses import CONFIRM_REQUIRED, as_response, confirmed, error
-from .scheduler import Job, Scheduler
+from .scheduler import Scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,7 @@ class ControlPlane:
         self.lease = LeaseGuard(scheduler)
         self.lifecycle = Lifecycle(broker, self.lease)
         self.managed_projects = ManagedProjects(broker, self.source_path)
+        self.lease_jobs = LeaseJobs(broker, scheduler)
 
 
     # --- core operations (pure, testable) ---
@@ -728,36 +730,45 @@ class ControlPlane:
                                     'request body to proceed, or {"dry_run": true} for the plan.')
         return self.apply_render(dry_run=dry_run)
 
+    # --- The GPU lease and the GPU views (ordo/control/gpus.py) ---
+
     def request_job(self, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        try:
-            job = Job(id=str(body["id"]), vram_gb=float(body["vram_gb"]),
-                      kind=str(body.get("kind", "generic")),
-                      est_seconds=float(body.get("est_seconds", 0.0)))
-        except (KeyError, ValueError, TypeError):
-            return self._error(400, "job needs 'id' and numeric 'vram_gb'")
-        self.broker.request(job)
-        return self.scheduler.status()
+        return self.lease_jobs.request(body)
 
     def complete_job(self, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        job_id = str(body.get("id", "")).strip()
-        if not job_id:
-            return self._error(400, "body must include 'id'")
-        self.broker.complete(job_id)
-        return self.scheduler.status()
+        return self.lease_jobs.complete(body)
 
     def heartbeat_job(self, body: dict[str, Any]) -> dict[str, Any]:
-        if not self.broker:
-            return self._error(503, "no broker configured")
-        job_id = str(body.get("id", "")).strip()
-        if not job_id:
-            return self._error(400, "body must include 'id'")
-        if not self.broker.heartbeat(job_id):
-            return self._error(404, f"no running job '{job_id}'")
-        return self.scheduler.status()
+        return self.lease_jobs.heartbeat(body)
+
+    def jobs_history(self) -> dict[str, Any]:
+        """Finished leases, newest first: what the orchestration tab's history table shows."""
+        return {"history": self.history.tail(100) if self.history else []}
+
+    def registry_models(self) -> dict[str, Any]:
+        """Every model the current render serves, keyed by model id."""
+        return {"models": self._served_models()}
+
+    def registry_gpus(self) -> dict[str, Any]:
+        """Live GPU info (gpu_live) with the models the render pins to each card."""
+        return gpus.registry_gpus(self._live_gpus(), self._served_models())
+
+    def live_gpus(self) -> dict[str, Any]:
+        return gpus.live_cards()
+
+    def gpu_assign_gone(self, target: str = "") -> dict[str, Any]:
+        return gpus.assign_gone()
+
+    def _served_models(self) -> dict[str, dict[str, Any]]:
+        return gpus.served_by(self._render())
+
+    def _live_gpus(self) -> dict[str, dict[str, Any]]:
+        return gpus.live_by_uuid()
+
+    def _leased_gpu_uuid(self) -> str | None:
+        return gpus.leased_gpu_uuid(self._render)
+
+    _gpu_indexes = staticmethod(gpus.gpu_indexes)
 
     # --- Service lifecycle (ordo/control/lifecycle.py) ---
 
@@ -805,24 +816,6 @@ class ControlPlane:
 
     # --- Managed projects: OTHER compose projects (ordo/control/managed_projects.py) ---
 
-    def _leased_gpu_uuid(self) -> str | None:
-        """The uuid of the card the scheduler leases (the primary card), or None when unknown."""
-        try:
-            gpu = self._render().hardware.primary_gpu
-        except Exception:  # noqa: BLE001 - unknown means managed.gpu_refusal fails closed
-            return None
-        return getattr(gpu, "uuid", None) or None
-
-    @staticmethod
-    def _gpu_indexes() -> dict[str, str]:
-        """nvidia-smi index -> uuid for every card on the host (ordo/render/gpu_live.py), so a device
-        named by index resolves to one card. Empty when unreadable: an index then proves nothing."""
-        try:
-            return {str(card["index"]): str(card["uuid"]) for card in gpu_live.live_gpus()
-                    if card.get("uuid") and card.get("index") is not None}
-        except Exception:  # noqa: BLE001 - unknown means managed.gpu_refusal fails closed on indexes
-            return {}
-
     def managed_projects_overview(self) -> dict[str, Any]:
         return self.managed_projects.overview()
 
@@ -835,31 +828,6 @@ class ControlPlane:
     def managed_container_restart(self, project: str, name: str, body: dict[str, Any]) -> dict[str, Any]:
         return self.managed_projects.container_restart(project, name, body, leased_gpu_uuid=self._leased_gpu_uuid,
                                                        gpu_indexes=self._gpu_indexes)
-
-    # --- Registry routes ---
-    # Derived from the render on every call (ordo/render/served_models.py): which models the stack
-    # serves, from which file, on which GPU. There is no stored registry to drift from ordo.yaml.
-
-    def _served_models(self) -> dict[str, dict[str, Any]]:
-        rc = self._render()
-        return served_models(rc.compose_dict(), rc.env, rc.gpu_inventory())
-
-    def registry_models(self) -> dict[str, Any]:
-        """Every model the current render serves, keyed by model id."""
-        return {"models": self._served_models()}
-
-    def live_gpus(self) -> dict[str, Any]:
-        """Every card's live VRAM, utilization and temperature (ordo/render/gpu_live.py)."""
-        return {"gpus": gpu_live.live_gpus()}
-
-    def registry_gpus(self) -> dict[str, Any]:
-        """Live GPU info (gpu_live) with the models the render pins to each card."""
-        live = self._live_gpus()
-        uuid_to_models = models_by_gpu(self._served_models())
-        result: dict[str, Any] = {}
-        for uuid, info in live.items():
-            result[uuid] = {**info, "models": uuid_to_models.get(uuid, [])}
-        return {"gpus": result}
 
     # --- ComfyUI model downloads (ordo/control/comfyui.py) ---
 
@@ -979,21 +947,6 @@ class ControlPlane:
     def comfyui_install_node_requirements(self, body: dict[str, Any] | None) -> dict[str, Any]:
         return self.node_requirements.install(body)
 
-    def gpu_assign_gone(self, target: str = "") -> dict[str, Any]:
-        """410 GONE. GPU pins are baked at `ordo render` time, not at runtime.
-
-        The v1 flow wrote overrides/gpu-assignments.yml and recreated the service. Under the render
-        substrate nothing reads that file back and a recreate replays the already-rendered compose
-        byte for byte, so the endpoint answered {"ok": true} while changing nothing. This mirrors
-        the /guardian/* retirement: an honest 410 beats a silent no-op.
-        """
-        return self._error(
-            410,
-            "GPU reassignment moved to the render pipeline: set the service's `gpu_pin:` in its "
-            "manifest and re-render (`ordo render`), then recreate the service. "
-            "Runtime reassignment was a silent no-op and has been retired.",
-        )
-
     def audit_log(self, limit: int = 50) -> dict[str, Any]:
         """The newest `limit` audit records, newest first, across the rotated generations."""
         return self.auditor.tail(limit)
@@ -1030,19 +983,6 @@ class ControlPlane:
             scheduler=self.scheduler.status() if self.scheduler else None,
             containers=containers, restarts=restarts, disks=disks, tls_certs=certs))
 
-    def _live_gpus(self) -> dict[str, dict[str, Any]]:
-        """The live GPU reader's cards keyed by uuid, in the GiB units /registry/gpus has always used."""
-        out: dict[str, dict[str, Any]] = {}
-        for card in gpu_live.live_gpus():
-            used_mib = card["vram_used_mib"]
-            out[card["uuid"]] = {
-                "name": card["name"],
-                "total_gb": round(card["vram_total_mib"] / 1024.0, 1),
-                "used_gb": round(used_mib / 1024.0, 1) if used_mib is not None else None,
-                "util": card["utilization_pct"],
-            }
-        return out
-
     def _exclusive(self, verb: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         """Run a stack-changing verb holding the operation lock, or refuse it with 409 while
         another holds it (the convention for "busy", as a second download is refused). Refusing
@@ -1057,10 +997,6 @@ class ControlPlane:
             self._operation_lock.release()
 
     # --- routing (also pure) ---
-    def jobs_history(self) -> dict[str, Any]:
-        """Finished leases, newest first: what the orchestration tab's history table shows."""
-        return {"history": self.history.tail(100) if self.history else []}
-
     def health(self) -> dict[str, Any]:
         """The container healthcheck. The digest is not secret; `ordo doctor` reads it here to compare
         with the checkout."""
