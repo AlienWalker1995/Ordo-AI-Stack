@@ -60,6 +60,7 @@ agent, comfyui-mcp, gpu-gate) send `Authorization: Bearer <OPS_CONTROLLER_TOKEN>
 | `/models/download`, `/models/download/status` | POST, GET | Resumable download of one allowlisted-host URL into the ComfyUI models volume |
 | `/comfyui/install-node-requirements` | POST | pip-install a custom-node pack's `requirements.txt` inside the comfyui container |
 | `/diagnostics/dstate` | GET | Processes stuck in uninterruptible sleep |
+| `/doctor` | GET | Read-only drift checks, judged as `ordo doctor` judges them: this process's substrate digest vs the one out/manifest.json records, and the open-webui model-gateway probe when it runs. `{"ok", "checks": [{"check", "ok", "detail"}]}`; the dashboard Overview shows the failed ones |
 | `/audit` | GET | Audit log tail (`limit`, default 50) |
 
 **Safety:** Every mutating lifecycle, compose, plugin and pip call requires `{"confirm": true}` (JSON true: `"true"`, `1` or `"yes"` is refused).

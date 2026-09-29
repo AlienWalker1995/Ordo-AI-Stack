@@ -52,6 +52,11 @@ OPS = {
                                    "outcome": "completed"}]},
     "/audit?limit=100": {"entries": [{"ts": 300.0, "caller": "dashboard", "action": "restart",
                                       "target": "n8n", "result": "ok"}]},
+    "/doctor": {"ok": False, "checks": [
+        {"check": "substrate", "ok": False, "detail": "substrate MISMATCH: ops-controller 79e3afd63f62 vs "
+                                                      "the last render 0a898896c4f0."},
+        {"check": "open-webui", "ok": True, "detail": "open-webui: not running"},
+    ]},
 }
 HARDWARE = {"cpu_pct": 18, "ram_used_gb": 46.8, "ram_total_gb": 109.7, "ram_pct": 43,
             "disk_used_gb": 1607.1, "disk_total_gb": 1999.8, "disk_pct": 80.4,
@@ -71,7 +76,7 @@ HISTORY = {"r1": {"status": {"status_str": "success", "messages": [["execution_s
                   "outputs": {"9": {"audio": [{"filename": "song.mp3", "subfolder": "audio", "type": "output"}]}}}}
 
 
-async def fake_ops_json(path):
+async def fake_ops_json(path, timeout=None):
     return OPS.get(path)
 
 
@@ -135,6 +140,34 @@ def test_overview_with_the_control_plane_down_is_unknown_not_healthy(live):
     assert body["chat"]["engine"] == "unknown"
     assert body["status"]["level"] == "unknown"
     assert body["status"]["text"] == "The control plane is not answering"
+
+
+# --- drift (hostile audit OPS-3) ---
+
+def test_drift_lists_the_checks_ordo_doctor_would_flag(live):
+    body = live.get("/api/drift").json()
+    assert body == {"available": True, "findings": [
+        {"check": "substrate",
+         "detail": "substrate MISMATCH: ops-controller 79e3afd63f62 vs the last render 0a898896c4f0."}]}
+
+
+def test_drift_waits_for_the_probe_longer_than_a_plain_read(live):
+    # GET /doctor runs the open-webui probe (two 15 s calls), so it gets more than _ops_json's default.
+    seen = []
+
+    async def ops_json(path, timeout=None):
+        seen.append((path, timeout))
+        return OPS.get(path)
+
+    with patch.object(routes_console, "_ops_json", side_effect=ops_json):
+        live.get("/api/drift")
+    assert seen == [("/doctor", routes_console._DOCTOR_TIMEOUT)] and routes_console._DOCTOR_TIMEOUT > 30
+
+
+def test_drift_with_the_control_plane_down_is_unavailable_not_clean(live):
+    with patch.object(routes_console, "_ops_json", new=AsyncMock(return_value=None)):
+        body = TestClient(app).get("/api/drift").json()
+    assert body == {"available": False, "findings": []}
 
 
 # --- activity ---

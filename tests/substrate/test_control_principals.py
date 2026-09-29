@@ -84,6 +84,7 @@ ALLOWED = [
     ("GET", "/jobs/history"),
     ("GET", "/diagnostics/dstate"),
     ("GET", "/models/download/status"),
+    ("GET", "/doctor"),
     ("POST", "/jobs"),
     ("POST", "/jobs/heartbeat"),
     ("POST", "/jobs/complete"),

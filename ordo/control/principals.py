@@ -67,6 +67,7 @@ HERMES_ROUTES: tuple[Route, ...] = (
     Route("GET", "/jobs/history"),
     Route("GET", "/diagnostics/dstate"),
     Route("GET", "/models/download/status"),
+    Route("GET", "/doctor"),             # the drift `ordo doctor` reports; runs a fixed probe only
     # The GPU lease: the only sanctioned way onto the card.
     Route("POST", "/jobs"),
     Route("POST", "/jobs/heartbeat"),

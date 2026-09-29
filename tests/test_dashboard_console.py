@@ -486,3 +486,23 @@ def test_a_card_without_ops_service_uses_a_container_of_the_same_name_when_there
     all_rows = [r for g in groups for r in g["services"]]
     assert len(all_rows) == 1  # not listed twice, once as the card and once as a bare container
     assert all_rows[0]["compose"] == "couchdb" and all_rows[0]["controllable"] is True
+
+
+# --- drift: ops-controller's GET /doctor, the checks `ordo doctor` would flag (hostile audit OPS-3) ---
+
+def test_drift_keeps_only_the_failed_checks():
+    doctor = {"ok": False, "checks": [
+        {"check": "substrate", "ok": True, "detail": "substrate: ops-controller matches the last render (abc)"},
+        {"check": "open-webui", "ok": False, "detail": "open-webui: model-gateway refuses the chat connection"},
+    ]}
+    assert console.drift(doctor) == {"available": True, "findings": [
+        {"check": "open-webui", "detail": "open-webui: model-gateway refuses the chat connection"}]}
+
+
+def test_no_failed_check_is_no_drift():
+    assert console.drift({"ok": True, "checks": [{"check": "substrate", "ok": True, "detail": "x"}]}) ==         {"available": True, "findings": []}
+
+
+@pytest.mark.parametrize("doctor", [None, [], "error"])
+def test_an_unanswered_doctor_is_unavailable_not_clean(doctor):
+    assert console.drift(doctor) == {"available": False, "findings": []}

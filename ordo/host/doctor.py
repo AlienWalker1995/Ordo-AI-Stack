@@ -109,12 +109,8 @@ def substrate_check(project: str) -> tuple[bool, str]:
         return False, f"! substrate: cannot read the running ops-controller's digest ({e})"
     if running is None:
         return True, f"substrate: checkout {checkout[:12]}; ops-controller not running"
-    if running == checkout:
-        return True, f"substrate: ops-controller matches this checkout ({checkout[:12]})"
-    return False, (f"! substrate MISMATCH: ops-controller {running[:12] or '(predates the digest)'} vs "
-                   f"checkout {checkout[:12]}. Its next model switch or plugin toggle would render from "
-                   f"different inputs (it refuses with 409 once out/ records a digest). Rebuild "
-                   f"ordo/ops-controller from this checkout, then `ordo recreate ops-controller`.")
+    return substrate.substrate_verdict(running, checkout, reference_name="this checkout",
+                                       rebuild_from="this checkout")
 
 
 # --- Open WebUI: its declared connection authenticates against model-gateway ---
