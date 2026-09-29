@@ -253,3 +253,100 @@ def test_the_client_calls_the_inspect_route(monkeypatch):
     monkeypatch.setattr(client._client, "request", lambda method, path, **kw: seen.append((method, path)) or Response())
     assert client.inspect_container("ordo-n8n-1") == {"name": "ordo-n8n-1"}
     assert seen == [("GET", "/containers/ordo-n8n-1")]
+
+
+# --- other-project maintenance (SEC-1, Q3): status, logs and a confirmed restart only ---
+
+class ProjectClient:
+    def __init__(self):
+        self.calls = []
+
+    def list_projects(self):
+        self.calls.append(("list",))
+        return {"projects": [{"project": "nas-stack", "containers": []}]}
+
+    def project_containers(self, project):
+        self.calls.append(("containers", project))
+        return {"project": project, "containers": [{"name": "janitorr"}]}
+
+    def project_logs(self, project, name, *, tail=100):
+        self.calls.append(("logs", project, name, tail))
+        return {"project": project, "container": name, "logs": "line"}
+
+    def restart_project_container(self, project, name, *, confirm=False):
+        self.calls.append(("restart", project, name, confirm))
+        return {"ok": True, "project": project, "container": name, "action": "restarted"}
+
+
+def test_project_containers_lists_every_managed_project_without_a_name(router, monkeypatch):
+    client = ProjectClient()
+    monkeypatch.setattr(router, "_get_client", lambda: client)
+    assert json.loads(router._project_containers({}))["ok"] is True
+    assert json.loads(router._project_containers({"project": "nas-stack"}))["project"] == "nas-stack"
+    assert client.calls == [("list",), ("containers", "nas-stack")]
+
+
+def test_project_logs_forwards_the_tail(router, monkeypatch):
+    client = ProjectClient()
+    monkeypatch.setattr(router, "_get_client", lambda: client)
+    result = json.loads(router._project_logs({"project": "nas-stack", "name": "janitorr", "tail": 50}))
+    assert result["ok"] is True
+    assert client.calls == [("logs", "nas-stack", "janitorr", 50)]
+
+
+@pytest.mark.parametrize("confirm", NOT_JSON_TRUE)
+def test_restart_project_container_refuses_without_json_true(router, monkeypatch, confirm):
+    client = ProjectClient()
+    monkeypatch.setattr(router, "_get_client", lambda: client)
+    result = json.loads(router._restart_project_container({"project": "nas-stack", "name": "janitorr",
+                                                           "confirm": confirm}))
+    assert result["ok"] is False and "confirm" in result["error"]
+    assert client.calls == []
+
+
+def test_restart_project_container_forwards_a_confirmed_restart(router, monkeypatch):
+    client = ProjectClient()
+    monkeypatch.setattr(router, "_get_client", lambda: client)
+    result = json.loads(router._restart_project_container({"project": "nas-stack", "name": "janitorr",
+                                                           "confirm": True}))
+    assert result["ok"] is True
+    assert client.calls == [("restart", "nas-stack", "janitorr", True)]
+
+
+def test_the_project_tools_say_what_they_may_do(router):
+    restart = router.RESTART_PROJECT_CONTAINER_SCHEMA
+    assert restart["parameters"]["required"] == ["project", "name", "confirm"]
+    text = restart["description"].lower()
+    assert "managed_projects" in text and "3" in text and "gpu" in text
+    for schema in (router.PROJECT_CONTAINERS_SCHEMA, router.PROJECT_LOGS_SCHEMA, restart):
+        assert "docker socket" not in json.dumps(schema).lower()
+
+
+def test_the_client_calls_the_project_routes(monkeypatch):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("ops_client_projects", HERMES / "ops_client.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setenv("OPS_CONTROLLER_TOKEN", "t")
+    client = module.OpsClient(url="http://ops-controller:9000")
+    seen = []
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {}
+
+    monkeypatch.setattr(client._client, "request",
+                        lambda method, path, **kw: seen.append((method, path, kw.get("json"), kw.get("params")))
+                        or Response())
+    client.list_projects()
+    client.project_containers("nas-stack")
+    client.project_logs("nas-stack", "janitorr", tail=20)
+    client.restart_project_container("nas-stack", "janitorr", confirm=True)
+    assert seen == [
+        ("GET", "/projects", None, None),
+        ("GET", "/projects/nas-stack/containers", None, None),
+        ("GET", "/projects/nas-stack/containers/janitorr/logs", None, {"tail": 20}),
+        ("POST", "/projects/nas-stack/containers/janitorr/restart", {"confirm": True}, None),
+    ]

@@ -53,6 +53,7 @@ from ..render.plugins import PluginRegistry
 from ..render.served_models import model_files, models_by_gpu, served_models
 from ..render.source_edit import edit_plugins_list
 from ..render.stack import lifecycle_group, plan_named
+from . import managed
 from . import principals as auth
 from .audit import AuditLog
 from .broker import SELF_REFERENTIAL_SERVICES, Broker
@@ -159,9 +160,26 @@ def audit_actor(header: str | None) -> str:
     return actor or "unknown"
 
 
+# POST /projects/{project}/containers/{name}/restart: a managed project's container (managed.py).
+_PROJECT_RESTART = re.compile(r"^/projects/([^/]+)/containers/([^/]+)/restart$")
+# GET /projects/{project}/containers/{name}/logs: another project's logs. The one READ that is
+# audited: log output is that project's data, so every read of it leaves a record.
+_PROJECT_LOGS = re.compile(r"^/projects/([^/]+)/containers/([^/]+)/logs$")
+
+
+def audited_read(method: str, path: str) -> bool:
+    return method.upper() == "GET" and _PROJECT_LOGS.match(path) is not None
+
+
 def audit_subject(path: str, body: Any) -> tuple[str, str]:
     """(action, target) for a state-changing call. Reads only the one body field that names the
     target, so nothing else a caller sends (a URL's query string, a credential) reaches the log."""
+    project_restart = _PROJECT_RESTART.match(path)
+    if project_restart:
+        return "project.restart", _clip(f"{project_restart.group(1)}/{project_restart.group(2)}")
+    project_logs = _PROJECT_LOGS.match(path)
+    if project_logs:
+        return "project.logs", _clip(f"{project_logs.group(1)}/{project_logs.group(2)}")
     for prefix, suffix, action in _AUDIT_PATH_VERBS:
         if path.startswith(prefix) and path.endswith(suffix) and len(path) > len(prefix) + len(suffix):
             return action, _clip(path[len(prefix):-len(suffix)])
@@ -176,6 +194,15 @@ def audit_subject(path: str, body: Any) -> tuple[str, str]:
         # The file name the download would use: the URL's last path segment, never its query.
         target = urlparse(str(fields.get("url") or "")).path.rsplit("/", 1)[-1]
     return action, _clip(target)
+
+
+# /projects/{project}/containers[/{name}/{verb}]: one segment each, so a name never carries a slash.
+_MANAGED_ROUTE = re.compile(r"^/projects/(?P<project>[^/]+)/containers(?:/(?P<name>[^/]+)/(?P<verb>[^/]+))?$")
+
+
+def _project_rows(containers: list[dict]) -> list[dict]:
+    """Each managed-project row reduced to managed.ROW_FIELDS: no field a backend adds leaks."""
+    return [{field: row.get(field) for field in managed.ROW_FIELDS} for row in containers]
 
 
 def audit_result(status: int) -> str:
@@ -277,6 +304,8 @@ class ControlPlane:
         # one a GPU lease transition takes, so a lease cannot evict a resident mid-verb either. A
         # control plane without a broker only needs its source writes kept apart.
         self._operation_lock = broker.operation_lock if broker else threading.RLock()
+        # Restarts of managed-project containers: at most 3 per container per hour (managed.py).
+        self._restart_budget = managed.RestartBudget()
 
 
     # --- core operations (pure, testable) ---
@@ -1063,6 +1092,122 @@ class ControlPlane:
             return self._error(500, str(e))
         return logs
 
+    # --- Managed projects: OTHER compose projects Hermes may maintain (ordo/control/managed.py) ---
+    # Status, logs and a confirmed, rate-limited restart; nothing else. The list is the source's
+    # `managed_projects:`, read per call so an edit takes effect without a restart. Ordo's own
+    # project is refused by the source validation and again by the backend, so no Ordo service, and
+    # so no lease-managed resident, is reachable here.
+
+    def _managed_project(self, project: str) -> dict[str, Any] | None:
+        """A 404 payload unless `project` is listed in the source's `managed_projects:`."""
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        try:
+            listed = Source.load(self.source_path).managed_projects
+        except Exception as e:  # noqa: BLE001 - an unreadable source manages nothing
+            return self._error(500, f"cannot read managed_projects from the source: {e}")
+        if project not in listed:
+            return self._error(404, f"{project!r} is not a managed project (ordo.yaml managed_projects: {listed})")
+        return None
+
+    def _leased_gpu_uuid(self) -> str | None:
+        """The uuid of the card the scheduler leases (the primary card), or None when unknown."""
+        try:
+            gpu = self._render().hardware.primary_gpu
+        except Exception:  # noqa: BLE001 - unknown means managed.gpu_refusal fails closed
+            return None
+        return getattr(gpu, "uuid", None) or None
+
+    @staticmethod
+    def _gpu_indexes() -> dict[str, str]:
+        """nvidia-smi index -> uuid for every card on the host (ordo/render/gpu_live.py), so a device
+        named by index resolves to one card. Empty when unreadable: an index then proves nothing."""
+        try:
+            return {str(card["index"]): str(card["uuid"]) for card in gpu_live.live_gpus()
+                    if card.get("uuid") and card.get("index") is not None}
+        except Exception:  # noqa: BLE001 - unknown means managed.gpu_refusal fails closed on indexes
+            return {}
+
+    def managed_projects_overview(self) -> dict[str, Any]:
+        if not self.broker:
+            return self._error(503, "no broker configured")
+        try:
+            listed = Source.load(self.source_path).managed_projects
+        except Exception as e:  # noqa: BLE001
+            return self._error(500, f"cannot read managed_projects from the source: {e}")
+        projects = []
+        for project in listed:
+            try:
+                containers = self.broker.backend.foreign_containers(project)
+                projects.append({"project": project, "containers": _project_rows(containers)})
+            except Exception as e:  # noqa: BLE001 - one unreadable project does not hide the others
+                projects.append({"project": project, "containers": [], "error": str(e)})
+        return {"projects": projects}
+
+    def managed_project_containers(self, project: str) -> dict[str, Any]:
+        refusal = self._managed_project(project)
+        if refusal:
+            return refusal
+        try:
+            containers = self.broker.backend.foreign_containers(project)
+        except ValueError as e:
+            return self._error(404, str(e))
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"project": project, "containers": _project_rows(containers)}
+
+    def managed_container_logs(self, project: str, name: str, query: dict[str, str]) -> dict[str, Any]:
+        refusal = self._managed_project(project)
+        if refusal:
+            return refusal
+        try:
+            tail = int(query.get("tail", managed.LOG_TAIL_DEFAULT))
+        except ValueError:
+            return self._error(422, "tail must be an integer")
+        tail = max(1, min(tail, managed.LOG_TAIL_MAX))
+        try:
+            logs = self.broker.backend.foreign_logs(project, name, tail)
+        except ValueError as e:
+            return self._error(404, str(e))
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"project": project, "container": name, "tail": tail, "logs": logs}
+
+    def managed_container_restart(self, project: str, name: str, body: dict[str, Any]) -> dict[str, Any]:
+        refusal = self._managed_project(project)
+        if refusal:
+            return refusal
+        if not confirmed(body):
+            return self._error(400, CONFIRM_REQUIRED)
+        key = f"{project}/{name}"
+        try:
+            raw = self.broker.backend.foreign_inspect(project, name)
+        except ValueError as e:
+            return self._error(404, str(e))
+        except Exception as e:
+            return self._error(500, str(e))
+        gpu_refusal = managed.gpu_refusal(raw, self._leased_gpu_uuid(), self._gpu_indexes())
+        if gpu_refusal:
+            return self._error(409, f"refusing to restart {key}: {gpu_refusal}")
+        # Reserve the slot BEFORE restarting (one lock: parallel callers cannot all pass the check).
+        # Give it back ONLY when the backend's guard refused (ValueError, raised before docker ran).
+        # Any other failure may come after the container already restarted (`docker restart` timing
+        # out waiting for it, or exiting non-zero), so the slot stays spent: better one restart
+        # under-allowed than restarts nobody counted.
+        wait = self._restart_budget.reserve(key)
+        if wait is not None:
+            return self._error(429, f"{key} was restarted {self._restart_budget.limit} times in the last hour; "
+                                    "a restart loop needs a diagnosis, not another restart",
+                               retry_after_seconds=wait)
+        try:
+            self.broker.backend.foreign_restart(project, name)
+        except ValueError as e:
+            self._restart_budget.refund(key)
+            return self._error(404, str(e))
+        except Exception as e:
+            return self._error(500, str(e))
+        return {"ok": True, "project": project, "container": name, "action": "restarted"}
+
     def container_inspect(self, name: str) -> dict[str, Any]:
         """One Ordo container through `broker.summarize_inspect`'s field allowlist: never its
         environment or labels. 404 for a name that is not a container of this project."""
@@ -1438,9 +1583,10 @@ class ControlPlane:
         """`route()` plus the audit record: the HTTP binding's one entry point.
 
         Every call with an AUDITED_METHODS method leaves exactly one record, whatever route() does
-        with it (success, dry run, 4xx refusal, 5xx failure or an exception). Reads leave none.
+        with it (success, dry run, 4xx refusal, 5xx failure or an exception). Reads leave none,
+        except a read of another project's logs (`audited_read`).
         """
-        if method.upper() not in AUDITED_METHODS:
+        if method.upper() not in AUDITED_METHODS and not audited_read(method, path):
             return self.route(method, path, body, query)
         try:
             status, payload = self.route(method, path, body, query)
@@ -1661,6 +1807,18 @@ class ControlPlane:
             return self._as_response(self.gpu_assign_gone((body or {}).get("service", "")))
         if m == "POST" and path.startswith("/registry/models/") and path.endswith("/assign-gpu"):
             return self._as_response(self.gpu_assign_gone(path.split("/")[3]))
+        # Managed projects: status, logs and a confirmed restart of OTHER compose projects.
+        if m == "GET" and path == "/projects":
+            return self._as_response(self.managed_projects_overview())
+        managed_route = _MANAGED_ROUTE.match(path)
+        if managed_route:
+            project, name, verb = managed_route.group("project", "name", "verb")
+            if m == "GET" and name is None:
+                return self._as_response(self.managed_project_containers(project))
+            if m == "GET" and verb == "logs":
+                return self._as_response(self.managed_container_logs(project, name, query))
+            if m == "POST" and verb == "restart":
+                return self._as_response(self.managed_container_restart(project, name, body))
         return 404, {"error": f"no route {method} {path}"}
 
     @staticmethod

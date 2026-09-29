@@ -105,6 +105,53 @@ def _inspect_container(args: dict, **kwargs) -> str:
         return _err(f"unexpected error: {exc}")
 
 
+def _project_containers(args: dict, **kwargs) -> str:
+    project = (args.get("project") or "").strip()
+    try:
+        client = _get_client()
+        result = client.project_containers(project) if project else client.list_projects()
+        return json.dumps({"ok": True, **result})
+    except OpsClientError as exc:
+        return _err(str(exc))
+    except Exception as exc:
+        logger.exception("project_containers failed")
+        return _err(f"unexpected error: {exc}")
+
+
+def _project_logs(args: dict, **kwargs) -> str:
+    project = (args.get("project") or "").strip()
+    name = (args.get("name") or "").strip()
+    if not project or not name:
+        return _err("project and name are required")
+    try:
+        tail = int(args.get("tail") or 100)
+    except (TypeError, ValueError):
+        return _err("tail must be an integer")
+    try:
+        return json.dumps({"ok": True, **_get_client().project_logs(project, name, tail=tail)})
+    except OpsClientError as exc:
+        return _err(str(exc))
+    except Exception as exc:
+        logger.exception("project_logs failed")
+        return _err(f"unexpected error: {exc}")
+
+
+def _restart_project_container(args: dict, **kwargs) -> str:
+    project = (args.get("project") or "").strip()
+    name = (args.get("name") or "").strip()
+    if not project or not name:
+        return _err("project and name are required")
+    if not _confirmed(args):
+        return _err("restart_project_container requires confirm=true")
+    try:
+        return json.dumps({"ok": True, **_get_client().restart_project_container(project, name, confirm=True)})
+    except OpsClientError as exc:
+        return _err(str(exc))
+    except Exception as exc:
+        logger.exception("restart_project_container failed")
+        return _err(f"unexpected error: {exc}")
+
+
 def _restart_container(args: dict, **kwargs) -> str:
     name = (args.get("name") or "").strip()
     if not name:
@@ -271,6 +318,60 @@ INSPECT_CONTAINER_SCHEMA = {
             "name": {"type": "string", "description": "Container name, e.g. 'ordo-n8n-1'."},
         },
         "required": ["name"],
+    },
+}
+
+PROJECT_CONTAINERS_SCHEMA = {
+    "name": "project_containers",
+    "description": (
+        "Status of the OTHER compose projects you maintain (the operator lists them in ordo.yaml "
+        "`managed_projects:`, e.g. the media stack): each container's name, service, state, "
+        "health, status text and image. Omit `project` to list every managed project. Read-only."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "project": {"type": "string", "description": "Compose project name, e.g. 'nas-stack'. Optional."},
+        },
+        "required": [],
+    },
+}
+
+PROJECT_LOGS_SCHEMA = {
+    "name": "project_logs",
+    "description": (
+        "Tail the logs of a container in a managed project (ordo.yaml `managed_projects:`). "
+        "At most 2000 lines. Read-only."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "project": {"type": "string", "description": "Compose project name, e.g. 'nas-stack'."},
+            "name": {"type": "string", "description": "Container name, e.g. 'janitorr'."},
+            "tail": {"type": "integer", "description": "Trailing lines to return. Default 100, max 2000."},
+        },
+        "required": ["project", "name"],
+    },
+}
+
+RESTART_PROJECT_CONTAINER_SCHEMA = {
+    "name": "restart_project_container",
+    "description": (
+        "Restart one container of a managed project (ordo.yaml `managed_projects:`) via "
+        "ops-controller. Requires confirm=true. At most 3 restarts per container per hour: the "
+        "4th is refused (429), because a restart loop needs a diagnosis, so read its logs instead. "
+        "Refused (409) for a container that could use the GPU the scheduler leases, unless "
+        "CUDA_VISIBLE_DEVICES pins it to another card. Status, logs and restart are the only verbs "
+        "for other projects: no stop, start, exec or compose."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "project": {"type": "string", "description": "Compose project name, e.g. 'nas-stack'."},
+            "name": {"type": "string", "description": "Container name, e.g. 'janitorr'."},
+            "confirm": {"type": "boolean", "description": "Required (true): ops-controller refuses the call without it."},
+        },
+        "required": ["project", "name", "confirm"],
     },
 }
 
@@ -445,8 +546,10 @@ _NUDGE = (
     "Routing note: this turn looks like a docker/container op. Use the control-plane "
     "tools, not the `docker` CLI: `list_containers`, `container_logs(name, tail)`, `inspect_container(name)`, "
     "`restart_container(name, confirm=true)`, `compose_up(service, confirm=true)`. "
-    "Logs, restarts and recreates act only on the Ordo project; for another project's "
-    "container, say it is outside your reach and name the host command instead. "
+    "Those act only on the Ordo project. For the other stacks the operator listed as managed "
+    "projects (e.g. the media stack) use `project_containers`, `project_logs` and "
+    "`restart_project_container(project, name, confirm=true)`; for anything else, say it is "
+    "outside your reach and name the host command instead. "
     "Picking the right verb: if .env / environment / volumes changed, use "
     "`compose_up(service=...)` (recreate); `restart_container` only bounces the "
     "existing container and will NOT pick up env changes. The OPS_CONTROLLER_TOKEN is already in your env — do NOT "
@@ -497,6 +600,30 @@ def register(ctx) -> None:
         handler=_inspect_container,
         description="Read-only view of an Ordo container (no environment, no labels).",
         emoji="🔎",
+    )
+    ctx.register_tool(
+        name="project_containers",
+        toolset="ops-router",
+        schema=PROJECT_CONTAINERS_SCHEMA,
+        handler=_project_containers,
+        description="Status of the other compose projects you maintain.",
+        emoji="🗂️",
+    )
+    ctx.register_tool(
+        name="project_logs",
+        toolset="ops-router",
+        schema=PROJECT_LOGS_SCHEMA,
+        handler=_project_logs,
+        description="Tail a managed project's container logs.",
+        emoji="📜",
+    )
+    ctx.register_tool(
+        name="restart_project_container",
+        toolset="ops-router",
+        schema=RESTART_PROJECT_CONTAINER_SCHEMA,
+        handler=_restart_project_container,
+        description="Restart a managed project's container (confirmed, 3 per hour).",
+        emoji="🔁",
     )
     ctx.register_tool(
         name="restart_container",
