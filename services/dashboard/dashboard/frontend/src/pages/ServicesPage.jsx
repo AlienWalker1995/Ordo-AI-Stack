@@ -248,7 +248,7 @@ export default function ServicesPage() {
     <div className="grid gap-3 [&>*]:min-w-0">
       <div className="flex flex-wrap items-center gap-3">
         <label htmlFor="service-filter" className="sr-only">Filter services</label>
-        <input id="service-filter" className={INPUT + ' w-72 max-w-full'} placeholder="Filter by name"
+        <input id="service-filter" className={INPUT + ' w-full lg:w-72'} placeholder="Filter by name"
                value={filter} onChange={(e) => setFilter(e.target.value)} />
         {!table.data.control_plane && <Unavailable>The control plane is not answering; states may be stale.</Unavailable>}
         {pressure.error && <span className="text-caption text-muted">CPU and memory are unavailable right now.</span>}

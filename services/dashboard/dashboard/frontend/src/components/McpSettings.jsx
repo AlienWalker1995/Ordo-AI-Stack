@@ -161,31 +161,31 @@ export default function McpSettings() {
               ) : enabled.length === 0 ? (
                 <span className="text-[0.8125rem] italic text-muted">None enabled - pick a registered server below</span>
               ) : (
-                enabled.map((s) => {
-                  const info = healthById[s] || healthById[s.split('/').pop()]
-                  return (
-                    <span
-                      key={s}
-                      className="inline-flex items-center gap-2 rounded-sm border border-border bg-surface py-1 pl-2.5 pr-1.5 text-[0.8125rem] text-fg transition-colors hover:border-accent/30"
-                      title={s}
-                    >
-                      <span className={`status-dot ${serverDotClass(info)}`.trim()} aria-hidden="true" title={serverTitle(info)} />
-                      {/* Health as accessible text, not just a hover tooltip on an aria-hidden dot. */}
-                      <span className="sr-only">health: {serverTitle(info)}. </span>
-                      <span className="max-w-[16rem] truncate">{s}</span>
-                      <button
-                        type="button"
-                        className="ml-0.5 inline-flex h-6 w-6 items-center justify-center rounded-sm border border-transparent text-muted transition-colors hover:border-danger/40 hover:bg-danger/10 hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
-                        aria-label={`Remove ${s}`}
-                        title={dynamic ? `Remove ${s}` : 'Read-only mode — cannot remove'}
-                        disabled={!dynamic || busy}
-                        onClick={() => removeServer(s)}
+                  enabled.map((s) => {
+                    const info = healthById[s] || healthById[s.split('/').pop()]
+                    return (
+                      <span
+                        key={s}
+                        className="inline-flex items-center gap-2 rounded-sm border border-border bg-surface py-1 pl-2.5 pr-1.5 text-[0.8125rem] text-fg transition-colors hover:border-accent/30"
+                        title={s}
                       >
-                        ×
-                      </button>
-                    </span>
-                  )
-                })
+                        <span className={`status-dot ${serverDotClass(info)}`.trim()} aria-hidden="true" title={serverTitle(info)} />
+                        {/* Health as accessible text, not just a hover tooltip on an aria-hidden dot. */}
+                        <span className="sr-only">health: {serverTitle(info)}. </span>
+                        <span className="max-w-[16rem] truncate">{s}</span>
+                        <button
+                          type="button"
+                          className="ml-0.5 inline-flex h-6 w-6 items-center justify-center rounded-sm border border-transparent text-muted transition-colors hover:border-danger/40 hover:bg-danger/10 hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
+                          aria-label={`Remove ${s}`}
+                          title={dynamic ? `Remove ${s}` : 'Read-only mode — cannot remove'}
+                          disabled={!dynamic || busy}
+                          onClick={() => removeServer(s)}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    )
+                  })
               )}
             </div>
           </div>
@@ -193,6 +193,15 @@ export default function McpSettings() {
           {/* Add controls */}
           {dynamic ? (
             <div className="space-y-5 border-t border-border-subtle pt-5">
+              {data && addable.length === 0 ? (
+                // Nothing left to enable: say so instead of drawing a select with no choices.
+                <div>
+                  <p className={LABEL}>Enable a registered server</p>
+                  <p className="text-body text-muted">
+                    Every registered server is already enabled.
+                  </p>
+                </div>
+              ) : (
               <div>
                 <label className={LABEL} htmlFor="mcp-add-select">Enable a registered server</label>
                 <div className="flex flex-wrap items-center gap-2">
@@ -211,6 +220,7 @@ export default function McpSettings() {
                   <button type="button" className={BTN} disabled={busy || !selectValue} onClick={onAddFromCatalog}>Add</button>
                 </div>
               </div>
+              )}
             </div>
           ) : (
             <div className="border-t border-border-subtle pt-5">
