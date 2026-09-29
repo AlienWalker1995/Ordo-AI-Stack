@@ -116,9 +116,9 @@ def _apply_overrides(derived: dict[str, dict[str, Any]], overrides: dict[str, An
     """Apply the source's `overrides:` onto the derived values (overrides win, survive regeneration).
 
     Only the keys already in `derived` are honoured, because they are the only ones the render
-    reads: today that is `overrides.llamacpp.<tuning key>`. Anything else (another service, or a
-    container option such as `environment` or `cap_add`) would be silently ignored, so it is a
-    ValueError naming the key, the service and the supported keys.
+    reads: today that is `overrides.llamacpp.<tuning key>` and `overrides.llamacpp-cpu.threads`.
+    Anything else (another service, or a container option such as `environment` or `cap_add`) would
+    be silently ignored, so it is a ValueError naming the key, the service and the supported keys.
     """
     out = {service: dict(values) for service, values in derived.items()}
     for service, values in (overrides or {}).items():
@@ -140,6 +140,26 @@ def _apply_overrides(derived: dict[str, dict[str, Any]], overrides: dict[str, An
                 )
             out[service][key] = value
     return out
+
+
+# The CPU fallback (services/llamacpp-cpu) serves chat while a render holds the GPU. Unbounded,
+# llama.cpp takes about half the host's threads and pushes the host's power draw past what its UPS
+# carries on top of the render. It gets a declared budget: `overrides.llamacpp-cpu.threads`, by
+# default half the detected logical CPUs and never more than this many.
+CPU_FALLBACK_DEFAULT_MAX_THREADS = 12
+
+
+def default_cpu_fallback_threads(cpu_cores: int) -> int:
+    """Half the detected logical CPUs, at least 1 and at most CPU_FALLBACK_DEFAULT_MAX_THREADS."""
+    return max(1, min(CPU_FALLBACK_DEFAULT_MAX_THREADS, cpu_cores // 2))
+
+
+def _validated_cpu_fallback_threads(threads: Any, cpu_cores: int) -> int:
+    """`overrides.llamacpp-cpu.threads` must be a whole number from 1 to the detected logical CPUs."""
+    if isinstance(threads, bool) or not isinstance(threads, int) or not 1 <= threads <= cpu_cores:
+        raise ValueError(f"ordo.yaml overrides: llamacpp-cpu.threads must be an integer from 1 to the "
+                         f"{cpu_cores} logical CPUs detected, got {threads!r}")
+    return threads
 
 
 def _supported_override_keys(derived: dict[str, dict[str, Any]]) -> list[str]:
@@ -739,11 +759,16 @@ def render(source: Source, catalog: Catalog,
             # The model's special build when it pins one, else this host's backend build.
             "image": model.backend_image or backend.image,
         },
+        # The CPU fallback's thread budget: its --threads, --threads-batch and compose cpus limit.
+        "llamacpp-cpu": {
+            "threads": default_cpu_fallback_threads(hw.cpu_cores),
+        },
     }
     # `overrides:` survive regeneration; everything else is recomputed each render.
     derived = _apply_overrides(derived, source.overrides)
     lc = derived["llamacpp"]
     ctx = int(lc["ctx_size"])  # re-read in case an override pinned it
+    cpu_fallback_threads = _validated_cpu_fallback_threads(derived["llamacpp-cpu"]["threads"], hw.cpu_cores)
 
     env = {
         "LLAMACPP_MODEL": str(lc["model"]),
@@ -755,6 +780,9 @@ def render(source: Source, catalog: Catalog,
         # and the two silently diverged. That default (`${LLAMACPP_CPU_CTX:-...}` in
         # services/llamacpp-cpu) now only applies to an .env this renderer never wrote.
         "LLAMACPP_CPU_CTX": str(ctx),
+        # The CPU failover's thread budget. services/llamacpp-cpu reads it for --threads,
+        # --threads-batch and its compose `cpus` limit, so the argv and the ceiling agree.
+        "LLAMACPP_CPU_THREADS": str(cpu_fallback_threads),
         "LLAMACPP_GPU_LAYERS": str(lc["gpu_layers"]),
         "LLAMACPP_PARALLEL": str(lc["parallel"]),
         "LLAMACPP_FLASH_ATTN": str(lc["flash_attn"]),

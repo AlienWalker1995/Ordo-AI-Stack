@@ -162,6 +162,7 @@ def test_the_cli_and_the_route_judge_the_substrate_with_one_function(tmp_path, m
 
     monkeypatch.setattr(doctor, "read_running_substrate_digest", lambda project: "2" * 64)
     monkeypatch.setattr(doctor, "read_open_webui_probe", lambda project: None)
+    monkeypatch.setattr(doctor, "read_cpu_fallback_limits", lambda project: None)
     assert cli.main(["doctor"]) == 1
     assert "! substrate: judged once" in capsys.readouterr().out
     assert calls == [(substrate.current_digest(), "1" * 64), ("2" * 64, substrate.current_digest())]
@@ -215,6 +216,7 @@ def test_the_cli_and_the_route_judge_alert_delivery_with_one_function(tmp_path, 
 
     monkeypatch.setattr(doctor, "read_running_substrate_digest", lambda project: None)
     monkeypatch.setattr(doctor, "read_open_webui_probe", lambda project: None)
+    monkeypatch.setattr(doctor, "read_cpu_fallback_limits", lambda project: None)
     assert cli.main(["--source", str(tmp_path / "ordo.yaml"), "doctor", "--out", str(tmp_path / "out")]) == 1
     assert "! alerting: judged once" in capsys.readouterr().out
     assert calls == [(list(ALERT_KEYS), [alerting.HEARTBEAT_KEY])] * 2
@@ -224,6 +226,7 @@ def test_ordo_doctor_passes_when_both_alert_urls_are_set(tmp_path, monkeypatch, 
     _plane(tmp_path)
     monkeypatch.setattr(doctor, "read_running_substrate_digest", lambda project: None)
     monkeypatch.setattr(doctor, "read_open_webui_probe", lambda project: None)
+    monkeypatch.setattr(doctor, "read_cpu_fallback_limits", lambda project: None)
     assert cli.main(["--source", str(tmp_path / "ordo.yaml"), "doctor", "--out", str(tmp_path / "out")]) == 0
     assert "alerting: the Discord webhook and the heartbeat URL are set" in capsys.readouterr().out
 
@@ -232,6 +235,7 @@ def test_ordo_doctor_fails_loud_on_a_blank_heartbeat_url(tmp_path, monkeypatch, 
     _plane(tmp_path, alert_urls=(alerting.DISCORD_WEBHOOK_KEY,))
     monkeypatch.setattr(doctor, "read_running_substrate_digest", lambda project: None)
     monkeypatch.setattr(doctor, "read_open_webui_probe", lambda project: None)
+    monkeypatch.setattr(doctor, "read_cpu_fallback_limits", lambda project: None)
     assert cli.main(["--source", str(tmp_path / "ordo.yaml"), "doctor", "--out", str(tmp_path / "out")]) == 1
     out = capsys.readouterr().out
     assert f"! alerting: {alerting.HEARTBEAT_KEY} is blank: no off-box heartbeat" in out
@@ -245,6 +249,7 @@ def test_ordo_apply_ends_with_a_doctor_that_reads_the_same_out(tmp_path, monkeyp
     _plane(tmp_path, alert_urls=(alerting.DISCORD_WEBHOOK_KEY,))
     monkeypatch.setattr(doctor, "read_running_substrate_digest", lambda project: None)
     monkeypatch.setattr(doctor, "read_open_webui_probe", lambda project: None)
+    monkeypatch.setattr(doctor, "read_cpu_fallback_limits", lambda project: None)
     monkeypatch.setattr(apply, "run", lambda host, only, dry_run: host.doctor())
     code = cli.main(["--source", str(tmp_path / "ordo.yaml"), "apply", "--out", str(tmp_path / "out")])
     assert code == 1

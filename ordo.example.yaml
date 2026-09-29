@@ -85,13 +85,22 @@ site:
 
 # Escape hatch: values here SURVIVE regeneration and override derived config. Use sparingly —
 # this is the one place a human/agent pins something the sizer would otherwise compute.
-# Only `llamacpp:` is accepted, with the keys ctx_size, model, gpu_layers, kv_cache_type, parallel,
-# flash_attn, rope_scaling, rope_scale, yarn_orig_ctx, n_predict, reasoning_budget, enable_kv_quant,
-# mmproj, extra_args, image. Any other key fails the render; container options (environment,
-# cap_add, mem_limit, ...) belong in the service's manifest under services/<id>/.
+# Two services are accepted:
+#   llamacpp:     ctx_size, model, gpu_layers, kv_cache_type, parallel, flash_attn, rope_scaling,
+#                 rope_scale, yarn_orig_ctx, n_predict, reasoning_budget, enable_kv_quant, mmproj,
+#                 extra_args, image
+#   llamacpp-cpu: threads - the CPU chat fallback's budget: its --threads, --threads-batch and
+#                 compose `cpus` limit. Default min(12, half the detected logical CPUs). It runs
+#                 while a render holds the GPU, so an unbounded one adds CPU load on top of the
+#                 render's peak draw (on a 48-thread host it took ~24 threads and tripped the UPS's
+#                 overload alarm). A whole number from 1 to the detected logical CPUs.
+# Any other key fails the render; container options (environment, cap_add, mem_limit, ...) belong
+# in the service's manifest under services/<id>/.
 overrides: {}
   # llamacpp:
   #   ctx_size: 131072
+  # llamacpp-cpu:
+  #   threads: 12
 
 # OTHER compose projects on this host that the agent may maintain through ops-controller: status,
 # logs and a confirmed restart of their containers (at most 3 restarts per container per hour; a
