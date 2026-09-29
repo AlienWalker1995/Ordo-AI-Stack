@@ -15,6 +15,7 @@ from typing import Any
 import yaml
 
 from . import backup_policy
+from .bind_configs import parse_config_mounts
 from .buildspec import BuildSpec
 from .gpu import GpuArbitration
 from .hardware import HardwareProfile
@@ -130,6 +131,11 @@ class PluginService:
     env: dict[str, str] = dataclasses.field(default_factory=dict)
     command: list[str] = dataclasses.field(default_factory=list)
     volumes: list[str] = dataclasses.field(default_factory=list)
+    # The container paths of the read-only checkout binds this service reads as config at start.
+    # Each is labelled with its content digest, so an edit to the file recreates the service
+    # (ordo/render/bind_configs.py). A bind it re-reads live (watched docs, a cert it re-reads on
+    # every scrape) is not listed.
+    config_mounts: tuple[str, ...] = ()
     healthcheck: dict[str, Any] = dataclasses.field(default_factory=dict)
     # Start-order peers. A LIST is plain ordering (compose's short form). A MAPPING
     # {peer: condition} renders the long form, so a service can wait for a peer to be READY
@@ -218,6 +224,7 @@ class PluginService:
             env={str(k): str(v) for k, v in (d.get("env", {}) or {}).items()},
             command=[str(c) for c in (d.get("command", []) or [])],
             volumes=[str(v) for v in (d.get("volumes", []) or [])],
+            config_mounts=parse_config_mounts(where, d.get("config_mounts"), d.get("volumes", []) or []),
             healthcheck=dict(d.get("healthcheck", {}) or {}),
             depends_on=depends_on,
             secrets=secrets,

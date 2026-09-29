@@ -25,7 +25,7 @@ from __future__ import annotations
 import hashlib
 from typing import TYPE_CHECKING, Any
 
-from . import gpu
+from . import bind_configs, gpu
 from .secret_files import SecretFileRef
 from .secret_files import add_to_service as _add_secret_files
 
@@ -718,6 +718,7 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str,
         resources = s.setdefault("deploy", {}).setdefault("resources", {})
         resources["limits"] = dict(ps.resources)
     _add_secret_files(s, ps.secret_files)
+    bind_configs.add_labels(ps.name, s, ps.config_mounts)
     return s
 
 
@@ -856,6 +857,8 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
         "models-gguf:/models:ro",
         "${BASE_PATH:?BASE_PATH must be set (non-empty)}/scripts/llamacpp:/llamacpp-scripts:ro",
     ]
+    # Its entrypoint script is read at start: an edit recreates it (ordo/render/bind_configs.py).
+    bind_configs.add_labels("llamacpp", llamacpp, ["/llamacpp-scripts"])
     # model-gateway is the V1 custom-built LiteLLM config wrapper (+ the MCP gateway since 2026-09);
     # a first-party BUILDABLE image (build context services/model-gateway) so preflight reports
     # 'build first' not 'Docker will pull'. The V2-native ops-controller + dashboard remain the new control plane.

@@ -57,7 +57,7 @@ COMPOSE = {
 }
 SERVICES = sorted(COMPOSE["services"])
 LONG_RUNNING = [s for s in SERVICES if s != "job"]
-ENV_FILES = (".env", "secrets.env", "secret-files.env")   # stack.compose_argv passes all three
+ENV_FILES = (".env", "secrets.env", "secret-files.env", "bind-configs.env")   # every one stack.compose_argv passes
 
 
 # --------------------------------------------------------------------------- #

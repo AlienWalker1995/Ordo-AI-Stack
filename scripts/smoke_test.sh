@@ -19,7 +19,8 @@ cd "$REPO_ROOT"
 # Both env files, always: compose interpolates ${...} from them, and a call without secrets.env
 # renders blank secrets, so an `up` would recreate services with empty credentials.
 COMPOSE_ARGS=(--project-directory out -f out/docker-compose.yml -p ordo
-              --env-file out/.env --env-file out/secrets.env --env-file out/secret-files.env)
+              --env-file out/.env --env-file out/secrets.env --env-file out/secret-files.env
+              --env-file out/bind-configs.env)
 
 UP=false
 for arg in "$@"; do

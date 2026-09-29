@@ -118,6 +118,7 @@ def test_compose_argv_shape():
         "docker", "compose", "-p", "ordo", "-f", "/d/docker-compose.yml",
         "--profile", "a", "--profile", "b",
         "--env-file", "/d/.env", "--env-file", "/d/secrets.env", "--env-file", "/d/secret-files.env",
+        "--env-file", "/d/bind-configs.env",
         "up", "-d",
     ]
 
@@ -145,7 +146,8 @@ def test_named_up_is_no_deps_with_both_env_files_and_every_profile(monkeypatch, 
     assert cmd[cmd.index("-f") + 1] == f"{out_dir.resolve().as_posix()}/docker-compose.yml"
     env_files = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--env-file"]
     assert env_files == [f"{out_dir.resolve().as_posix()}/.env", f"{out_dir.resolve().as_posix()}/secrets.env",
-                         f"{out_dir.resolve().as_posix()}/secret-files.env"]
+                         f"{out_dir.resolve().as_posix()}/secret-files.env",
+                         f"{out_dir.resolve().as_posix()}/bind-configs.env"]
     assert _profiles(cmd) == ["edge", "hermes-ui", "rag", "webui"]
     assert _tail(cmd) == ["up", "-d", "--no-deps", "open-webui"]
 
@@ -192,7 +194,7 @@ def test_dry_run_prints_the_argv_and_runs_nothing(monkeypatch, out_dir, recorded
     assert cli.main(["up", "--all", "--out", str(out_dir), "--dry-run"]) == 0
     assert recorded == []
     printed = capsys.readouterr().out
-    assert "docker compose -p ordo" in printed and "secret-files.env up -d" in printed
+    assert "docker compose -p ordo" in printed and "bind-configs.env up -d" in printed
 
 
 def test_unknown_service_is_refused(monkeypatch, out_dir, recorded):

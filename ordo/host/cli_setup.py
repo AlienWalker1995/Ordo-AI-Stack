@@ -189,7 +189,7 @@ def cmd_remote(args: argparse.Namespace) -> int:
     except (ValueError, secret_store.SecretStoreError) as e:
         print(f"error: {e}\nnothing was written.", file=sys.stderr)
         return 1
-    change.rendered.write(out)
+    change.rendered.write(out, refresh_bind_configs=True)
     removed = remote.OAUTH_CLIENT_KEYS if args.action == "disable" else ()
     try:
         secret_store.materialize(store, secret_store.SecretNeeds.from_render(change.rendered), out,

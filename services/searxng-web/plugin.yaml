@@ -26,6 +26,8 @@ services:
       # image's entrypoint owns (it chowns it and seeds a template settings.yml there).
       SEARXNG_SETTINGS_PATH: /etc/ordo-searxng/settings.yml
       SEARXNG_BASE_URL: http://searxng:8080/
+    # Read at start: an edit recreates the service on the next `ordo apply` (ordo/render/bind_configs.py).
+    config_mounts: [/etc/ordo-searxng]
     volumes:
       - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/services/searxng-web/settings:/etc/ordo-searxng:ro
     healthcheck:

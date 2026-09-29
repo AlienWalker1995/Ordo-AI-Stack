@@ -71,7 +71,7 @@ def test_recreate_passes_BOTH_env_files(capture):
     cmd = _recreate(capture)
     env_flags = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--env-file"]
     assert env_flags == [f"{backend.COMPOSE_DIR}/.env", f"{backend.COMPOSE_DIR}/secrets.env",
-                         f"{backend.COMPOSE_DIR}/secret-files.env"]
+                         f"{backend.COMPOSE_DIR}/secret-files.env", f"{backend.COMPOSE_DIR}/bind-configs.env"]
 
 
 def test_recreate_is_no_deps_and_force_recreate(capture):
