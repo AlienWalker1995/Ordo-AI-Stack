@@ -300,7 +300,7 @@ class Catalog:
             if not self._fits_budget(m, hw, m.reserve_gb(reserve_gb)):
                 warnings.append(
                     f"'{m.id}' needs ~{m.vram_gb:.0f}GB VRAM but only "
-                    f"~{max(hw.primary_vram_gb - m.reserve_gb(reserve_gb), 0):.0f}GB is usable — "
+                    f"~{max(hw.primary_vram_gb - m.reserve_gb(reserve_gb), 0):.0f}GB is usable; "
                     "expect CPU-offload/OOM (override honored anyway)"
                 )
             return m, warnings
