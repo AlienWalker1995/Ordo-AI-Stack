@@ -155,6 +155,36 @@ class Scheduler:
         # a re-cached resident is no longer "evicted/pending restore"
         self._evicted.pop(model_id, None)
 
+    @_locked
+    def update_resident_footprints(self, footprints: dict[str, float]) -> dict[str, tuple[float, float]]:
+        """Adopt the VRAM the current render declares for each resident. Returns {resident: (old, new)}
+        for every one that changed (old 0.0 for a resident this scheduler did not hold).
+
+        An idle-cached resident keeps its place in the LRU order; an evicted one keeps waiting for
+        its restore, now measured at its new size. A resident the render declares that this
+        scheduler does not hold at all is registered as idle-cached, the way startup registers it.
+        A resident the render no longer declares is left as it is: the apply that removed it stops
+        its container, and nothing here can tell whether that has happened yet.
+        """
+        changed: dict[str, tuple[float, float]] = {}
+        for resident, vram in footprints.items():
+            vram = float(vram)
+            if resident in self._idle_cached:
+                old = self._idle_cached[resident]
+                if old != vram:
+                    self._idle_cached[resident] = vram
+                    changed[resident] = (old, vram)
+            elif resident in self._evicted:
+                old = self._evicted[resident]
+                if old != vram:
+                    self._evicted[resident] = vram
+                    changed[resident] = (old, vram)
+            else:
+                self._idle_cached[resident] = vram
+                self._lru_order[resident] = next(self._lru)
+                changed[resident] = (0.0, vram)
+        return changed
+
     def _lease_ttl(self, job: Job) -> float:
         """The hard cap after which a lease is force-completed (self-healing against a stranded job)."""
         base = job.est_seconds * LEASE_TTL_EST_MULT if job.est_seconds > 0 else self.lease_ttl_default

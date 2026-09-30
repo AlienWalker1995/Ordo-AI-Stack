@@ -71,6 +71,7 @@ from .lifecycle import LeaseGuard, Lifecycle
 from .managed_projects import ManagedProjects
 from .model_config import ModelConfig
 from .plugin_install import PluginInstaller
+from .residents import ResidentFootprints
 from .responses import as_response, error
 from .scheduler import Scheduler
 from .source import StackSource
@@ -119,9 +120,12 @@ class ControlPlane:
         self.auditor = CallAuditor(lambda: AUDIT_LOG_PATH)
         # One object per concern, each handed exactly the shared state it uses. The GPU-lease check
         # is shared by the lifecycle verbs and the post-render apply.
+        # The scheduler's resident footprints, kept equal to the render's (residents.py).
+        self.residents = ResidentFootprints(self.source, broker)
         self.lease = LeaseGuard(scheduler)
         self.lifecycle = Lifecycle(broker, self.lease)
-        self.applier = RenderApply(self.source, broker, self.lease, model_volume_files)
+        self.applier = RenderApply(self.source, broker, self.lease, model_volume_files,
+                                   after_apply=self.residents.adopt)
         self.model_config = ModelConfig(self.source, self.applier, model_volume_files)
         self.plugins = PluginInstaller(self.source, self.applier)
         self.drift = DriftReport(self.source, self.applier, broker)
