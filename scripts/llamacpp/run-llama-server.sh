@@ -9,6 +9,17 @@ set -eu
 # them and re-append at the end so last-wins parsing keeps operator intent.
 LLAMACPP_CMD_ARGS="$*"
 
+# Load the whole model into memory instead of memory-mapping it. The flag was renamed upstream:
+# llama.cpp v0.5.0 and later (the patched image, services/llamacpp-patched) take `--load-mode none`
+# and reject `--no-mmap`; the older pinned upstream images (ordo/render/llamacpp_backend.py) only
+# know `--no-mmap`. Ask the binary which one it accepts rather than assume the image.
+if /app/llama-server --help 2>&1 | grep -q -- '--load-mode'; then
+  NO_MMAP_ARGS="--load-mode none"
+else
+  NO_MMAP_ARGS="--no-mmap"
+fi
+
+# shellcheck disable=SC2086
 set -- \
   --host 0.0.0.0 \
   --port 8080 \
@@ -23,7 +34,7 @@ set -- \
   --n-predict "${LLAMACPP_N_PREDICT:-65536}" \
   --reasoning-budget "${LLAMACPP_REASONING_BUDGET:-32768}" \
   --jinja \
-  --no-mmap
+  ${NO_MMAP_ARGS}
 
 # --reasoning-budget caps tokens spent inside <think>...</think> per response.
 # Llama.cpp's grammar engine is meant to force-close the block when this is

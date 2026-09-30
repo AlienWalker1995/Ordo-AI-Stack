@@ -133,3 +133,30 @@ def test_missing_context_window_refuses_to_start() -> None:
     assert result.returncode != 0, result.stdout
     assert "FINAL_ARGS:" not in result.stdout
     assert "LLAMACPP_CTX_SIZE" in result.stderr
+
+
+def _final_args_with_help(help_text: str) -> str:
+    """Run the wrapper with the binary's `--help` stubbed to print `help_text` (the probe that picks
+    the no-mmap flag) and the final exec stubbed to echo, as _run_wrapper does."""
+    script = WRAPPER.read_text(encoding="utf-8")
+    script = script.replace("/app/llama-server --help", f"printf '%s\n' '{help_text}'")
+    script = script.replace("exec /app/llama-server", "echo FINAL_ARGS:")
+    result = subprocess.run([_sh()], input=script, env={**os.environ, **_base_env()}, capture_output=True,
+                            text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    return _final_args(result.stdout)
+
+
+def test_a_v0_5_build_loads_without_mmap_through_load_mode() -> None:
+    """llama.cpp v0.5.0 (the patched image) dropped --no-mmap for --load-mode; passing the old flag
+    makes llama-server exit with 'invalid argument: --no-mmap'."""
+    args = _final_args_with_help("-lm,    --load-mode MODE            model loading mode (default: auto)")
+    assert "--load-mode none" in args, args
+    assert "--no-mmap" not in args, args
+
+
+def test_an_older_build_keeps_no_mmap() -> None:
+    """The pinned upstream images (b9935) have no --load-mode and still take --no-mmap."""
+    args = _final_args_with_help("--mmap, --no-mmap                       whether to memory-map model")
+    assert "--no-mmap" in args, args
+    assert "--load-mode" not in args, args
