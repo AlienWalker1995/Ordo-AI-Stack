@@ -66,9 +66,14 @@ index 529bc4a5e992..1460e1bf7f52 100644
 +    const bool ok = expand ? recr->expand(new_n_seq_max) : recr->shrink(new_n_seq_max);
 +    if (ok) {
 +        sched_need_reserve = true;
-+        if (gf_res_prev) {
-+            gf_res_prev->reset();
++        // gf_res_prev is double-buffered upstream (one graph per n_outputs > 0); reset both, as
++        // llama_context does after a scheduler reset, so no graph that points at the old tensors is reused.
++        for (auto & res : gf_res_prev) {
++            if (res) {
++                res->reset();
++            }
 +        }
++        gf_res_prev_active = nullptr;
 +    }
 +
 +    return ok;
