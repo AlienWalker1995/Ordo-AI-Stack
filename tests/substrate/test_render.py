@@ -95,7 +95,7 @@ def test_override_survives_regeneration_and_stays_consistent():
 _LLAMACPP_OVERRIDE_KEYS = (
     "ctx_size", "model", "gpu_layers", "kv_cache_type", "parallel", "flash_attn", "rope_scaling",
     "rope_scale", "yarn_orig_ctx", "n_predict", "reasoning_budget", "enable_kv_quant", "mmproj",
-    "extra_args", "image",
+    "extra_args", "n_cpu_moe", "threads", "load_mode", "image",
 )
 
 
@@ -128,7 +128,8 @@ def test_every_supported_llamacpp_override_key_renders():
         baseline = render(_src(hardware=PROFILE_5090), CATALOG)
         pinned = {"ctx_size": 65536, "gpu_layers": 12, "parallel": 2, "rope_scale": 2,
                   "yarn_orig_ctx": 4096, "n_predict": 1024, "reasoning_budget": 1024,
-                  "enable_kv_quant": 0}.get(key, "override-probe")
+                  "enable_kv_quant": 0, "n_cpu_moe": 4, "threads": 8,
+                  "load_mode": "mmap-lazy"}.get(key, "override-probe")
         rc = render(_src(hardware=PROFILE_5090, overrides={"llamacpp": {key: pinned}}), CATALOG)
         # every honoured key changes what the render writes, so none is a silent no-op
         assert rc.env != baseline.env, key

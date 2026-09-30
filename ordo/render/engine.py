@@ -18,7 +18,7 @@ import yaml
 
 from . import backup_policy, bind_configs, compose, gpu, secret_files, substrate
 from .agents import AgentRegistry
-from .catalog import DEFAULT_VRAM_RESERVE_GB, Catalog, Model
+from .catalog import DEFAULT_VRAM_RESERVE_GB, LOAD_MODES, Catalog, Model
 from .config import Source
 from .dashboards import DashboardRegistry
 from .hardware import HardwareProfile, detect
@@ -288,7 +288,7 @@ def _max_ctx_for_vram(model: Model, hw: HardwareProfile, reserve_gb: float,
     """
     if not backend.accelerated or not model.kv_kb_per_token:
         return model.ctx_default
-    free_after_weights_gb = hw.primary_vram_gb - model.vram_gb - reserve_gb
+    free_after_weights_gb = hw.primary_vram_gb - model.vram_gb - model.reserve_gb(reserve_gb)
     if free_after_weights_gb <= 0:
         return min(model.ctx_default, 8192)
     max_tokens = int((free_after_weights_gb * 1024 * 1024) / model.kv_kb_per_token)
@@ -758,11 +758,16 @@ def render(source: Source, catalog: Catalog,
             "rope_scaling": "none",
             "rope_scale": 1,
             "yarn_orig_ctx": 0,
-            "n_predict": 65536,
+            "n_predict": model.n_predict or 65536,
             "reasoning_budget": 32768,
             "enable_kv_quant": 1,
             "mmproj": model.mmproj or "",
             "extra_args": model.extra_args,
+            # MoE expert offload, the CPU threads it computes with, and how the weights are loaded:
+            # the model's own placement (catalog), rendered only when it declares one.
+            "n_cpu_moe": model.n_cpu_moe,
+            "threads": model.cpu_threads,
+            "load_mode": model.load_mode,
             # The model's special build when it pins one, else this host's backend build.
             "image": model.backend_image or backend.image,
         },
@@ -804,6 +809,20 @@ def render(source: Source, catalog: Catalog,
         "LLAMACPP_MMPROJ": str(lc["mmproj"]),
         "LLAMACPP_EXTRA_ARGS": str(lc["extra_args"]),
     }
+    # Placement keys exist only for a model that declares a placement, so every other model renders
+    # exactly the .env (and llamacpp config hash) it did before they existed.
+    if int(lc["n_cpu_moe"]):
+        env["LLAMACPP_N_CPU_MOE"] = str(int(lc["n_cpu_moe"]))
+    if int(lc["threads"]):
+        env["LLAMACPP_THREADS"] = str(int(lc["threads"]))
+    if str(lc["load_mode"]) != "none":
+        if str(lc["load_mode"]) not in LOAD_MODES:
+            raise ValueError(f"overrides.llamacpp.load_mode must be one of {', '.join(LOAD_MODES)}")
+        env["LLAMACPP_LOAD_MODE"] = str(lc["load_mode"])
+    # The chat model's further GGUF shards: llama.cpp finds them by name next to LLAMACPP_MODEL, and
+    # the models-volume checks (ordo up, ordo fetch, a model switch) require them with it.
+    if model.shards and lc["model"] == model.file:
+        env["LLAMACPP_MODEL_SHARDS"] = " ".join(shard.file for shard in model.shards)
     # The image the chat service runs, always explicit: compose reads it from here, and
     # model-gateway advertises it (served_by), so both name the build that is actually running.
     env["LLAMACPP_IMAGE"] = str(lc["image"])

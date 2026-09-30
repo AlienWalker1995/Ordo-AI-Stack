@@ -14,10 +14,28 @@ LLAMACPP_CMD_ARGS="$*"
 # and reject `--no-mmap`; the older pinned upstream images (ordo/render/llamacpp_backend.py) only
 # know `--no-mmap`. Ask the binary which one it accepts rather than assume the image.
 if /app/llama-server --help 2>&1 | grep -q -- '--load-mode'; then
-  NO_MMAP_ARGS="--load-mode none"
+  HAS_LOAD_MODE=1
+  LOAD_ARGS="--load-mode none"
 else
-  NO_MMAP_ARGS="--no-mmap"
+  HAS_LOAD_MODE=0
+  LOAD_ARGS="--no-mmap"
 fi
+
+# A model that declares `load_mode: mmap-lazy` (catalog) memory-maps its weights and reads the rows of
+# its very large lookup tensors (a per-layer n-gram embedding table) from disk on demand. Only builds
+# with --load-mode have the lazy reader: refuse rather than silently load the table into memory.
+case "${LLAMACPP_LOAD_MODE:-none}" in
+  none) ;;
+  mmap-lazy)
+    if [ "$HAS_LOAD_MODE" != 1 ]; then
+      echo "LLAMACPP_LOAD_MODE=mmap-lazy needs a llama.cpp build with --load-mode/--lazy-mode" >&2
+      exit 1
+    fi
+    LOAD_ARGS="--load-mode mmap --lazy-mode on" ;;
+  *)
+    echo "unknown LLAMACPP_LOAD_MODE='${LLAMACPP_LOAD_MODE}' (none or mmap-lazy)" >&2
+    exit 1 ;;
+esac
 
 # shellcheck disable=SC2086
 set -- \
@@ -34,7 +52,7 @@ set -- \
   --n-predict "${LLAMACPP_N_PREDICT:-65536}" \
   --reasoning-budget "${LLAMACPP_REASONING_BUDGET:-32768}" \
   --jinja \
-  ${NO_MMAP_ARGS}
+  ${LOAD_ARGS}
 
 # --reasoning-budget caps tokens spent inside <think>...</think> per response.
 # Llama.cpp's grammar engine is meant to force-close the block when this is
@@ -51,6 +69,17 @@ set -- \
 # without emitting </think>, defeating the budget. The n-predict cap fires
 # regardless and force-terminates with finish_reason=length. Tuned high
 # enough (~64K) that normal responses are unaffected.
+
+# A MoE model placed partly in system RAM (catalog n_cpu_moe): the expert tensors of its first N layers
+# stay on the CPU. The placement is explicit, so llama.cpp's own --fit must not re-place it.
+if [ -n "${LLAMACPP_N_CPU_MOE:-}" ]; then
+  set -- "$@" --n-cpu-moe "${LLAMACPP_N_CPU_MOE}" --fit off
+fi
+
+# The CPU threads llama.cpp computes with (catalog cpu_threads): the CPU load offloaded experts add.
+if [ -n "${LLAMACPP_THREADS:-}" ]; then
+  set -- "$@" --threads "${LLAMACPP_THREADS}"
+fi
 
 if [ -n "${LLAMACPP_OVERRIDE_KV:-}" ]; then
   set -- "$@" --override-kv "${LLAMACPP_OVERRIDE_KV}"

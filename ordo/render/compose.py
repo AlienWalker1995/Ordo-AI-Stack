@@ -197,6 +197,8 @@ LLAMACPP_DERIVED_ENV: tuple[str, ...] = (
     "LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION", "LLAMACPP_KV_CACHE_TYPE_K", "LLAMACPP_KV_CACHE_TYPE_V",
     "LLAMACPP_EXTRA_ARGS",
     "LLAMACPP_OVERRIDE_KV",  # an optional `site:` knob (--override-kv), absent unless set
+    # A model's own placement (catalog n_cpu_moe, cpu_threads, load_mode), absent unless it declares one.
+    "LLAMACPP_N_CPU_MOE", "LLAMACPP_THREADS", "LLAMACPP_LOAD_MODE",
 )
 # model-gateway: services/model-gateway/entrypoint.sh, which writes these into the LiteLLM config's
 # model_info (context window, max output, weights names, vision, per-token cost). The CPU and embed

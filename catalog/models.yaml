@@ -25,6 +25,21 @@
 # pins a downloadable projector: `ordo fetch` / `ordo up` provision it like the weights, into the
 # models volume under `file`, and the render points LLAMACPP_MMPROJ at /models/<file>. A bare path
 # (/models/<file>) names a projector with no pinned source, which has to be copied in by hand.
+#
+# shards: a model split into several GGUF files. `file` is shard 1 (what llama.cpp is pointed at);
+# each further shard pins file, source, sha256 and size_bytes like the weights. `ordo fetch`, `ordo up`
+# and a model switch provision and require every shard (the render lists them in LLAMACPP_MODEL_SHARDS).
+#
+# A model's own placement, for a MoE model larger than the card:
+#   n_cpu_moe       the expert tensors of the first N layers stay in system RAM (--n-cpu-moe N --fit off)
+#   cpu_threads     the threads those experts compute on (--threads); required with n_cpu_moe
+#   load_mode       none (default: read into memory) or mmap-lazy (memory-map, and read a huge lookup
+#                   table such as a per-layer n-gram embedding row by row from disk)
+#   n_predict       the server's generation cap for requests that send no max_tokens (default 65536)
+#   vram_reserve_gb the VRAM the sizer keeps free beside it (default 4.0); only for a model whose
+#                   vram_gb is its measured footprint including compute buffers
+#   auto: false     pinnable only: `model: auto` never picks it
+# Each is also an `overrides.llamacpp` key (n_cpu_moe, threads, load_mode, n_predict).
 
 version: 1
 
@@ -147,6 +162,60 @@ models:
     # under VRAM pressure (2026-08-19), and this card itself says to drop to the plain quant below
     # 50% acceptance. Nothing here would use the MTP tensors, so they would only cost VRAM.
     # `qwen35` arch needs the SWA/hybrid-cache patched build, same image as the other Qwen3.8s.
+    backend_image: ordo/llamacpp-patched
+    tier: ultra
+
+  - id: swift-1.5-qwen3.8-flash-next-iq2xs
+    name: Swift 1.5 Qwen3.8-Flash-Next GSQ-RCO (IQ2_XS)
+    backend: llama.cpp
+    # UkisAI's reasoning-efficient fine-tune of Qwen3.8-Flash-Next (125B MoE, 6B active, 512 experts,
+    # plus a 51B per-layer n-gram embedding table), quantized with ISTA's GSQ-RCO allocations.
+    # LICENSE: Swift Open License v1.0 over the Qwen Community License. It limits commercial use
+    # (a revenue threshold); read it before deploying this anywhere but a personal box. For that
+    # reason, and its 68GB download and 12-thread CPU load, `model: auto` never picks it: pin it.
+    auto: false
+    # Two shards: `file` is shard 1 (the transformer weights), llama.cpp opens shard 2 (the n-gram
+    # table) from the same directory.
+    file: Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002.gguf
+    source: https://huggingface.co/ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/main/Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002.gguf
+    # sha256 = the repo's LFS oid, matched on the downloaded copy (2026-09-30).
+    sha256: ca3b302d3d1eb6eddce3ea4acc79854e6cc5fdc0583e374a6a8b6bb67327743b
+    size_bytes: 39788473344
+    shards:
+      - file: Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00002-of-00002.gguf
+        source: https://huggingface.co/ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/main/Swift-Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00002-of-00002.gguf
+        sha256: e4996a6de18fd49c58d9a0040fcfd73787db6407c51973f29884bee7b14c9dbb
+        size_bytes: 28363693824
+    # The placement measured on the 5090 (2026-09-30 eval, llama.cpp v0.5.0): every layer on the GPU
+    # except the expert tensors of the first 15 layers, which stay in system RAM (--n-cpu-moe 15, the
+    # split llama.cpp's own --fit chose at this context). The n-gram table is memory-mapped and read
+    # row by row from disk (27.5GB that never occupies RAM or VRAM).
+    n_cpu_moe: 15
+    load_mode: mmap-lazy
+    # The offloaded experts compute on these threads. 12 is the ceiling the host's UPS budget allows
+    # beside the 5090 at its 400W cap; measured at ~12 cores, 180W GPU peak.
+    cpu_threads: 12
+    # vram_gb is the MEASURED footprint at that placement minus the KV cache: 30.2GiB on the card at
+    # 106496 tokens, less 1.57GiB of KV. It already includes compute buffers and CUDA overhead, so
+    # the reserve beside it is only the other declared resident on this card (llamacpp-embed, 1.0GB).
+    # ram_gb is the expert weights held in RAM (10.2GiB) plus headroom.
+    requires: { vram_gb: 28.6, ram_gb: 12, cpu_ok: false, min_compute_cap: "12.0" }
+    vram_reserve_gb: 1.0
+    # The window the placement was sized and measured at. The card claims 262144 native; a larger
+    # window would need another layer of experts moved to RAM.
+    ctx_default: 106496
+    # Hybrid attention: 1604MiB of KV + recurrent state at 106496 tokens with q8_0.
+    kv_kb_per_token: 15.4
+    # The server's default generation cap. In the eval an unbounded generation ran past a client
+    # timeout and was retried forever; at 12288 no item repeated. A request that sends its own
+    # max_tokens overrides this (llama-server takes the request's value), so a client's own cap,
+    # e.g. HERMES_MAX_TOKENS, is what bounds that client.
+    n_predict: 12288
+    # Sampling from the model card's thinking mode (thinking is on by default in its template).
+    extra_args: "--reasoning-format deepseek --temp 1.0 --top-k 20 --top-p 0.95 --min-p 0.0 --presence-penalty 0.0 --repeat-penalty 1.0"
+    # No mmproj: the BF16 projector (0.91GB) does not fit beside this placement, and vision was not
+    # validated for qwen4exp. Text only.
+    # qwen4exp needs llama.cpp v0.5.0 (ggml-org#27742, #28770): the patched build.
     backend_image: ordo/llamacpp-patched
     tier: ultra
 
