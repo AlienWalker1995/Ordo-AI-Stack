@@ -211,7 +211,7 @@ no volume needed.
 
 ## Custom llama.cpp Build (llamacpp service)
 
-The `llamacpp` service does **not** run a TurboQuant fork. `services/llamacpp-patched/Dockerfile` clones mainline [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp), pinned to commit `86b94708f22478f900b76ca02e316f4f3418faff` (`86b9470`), and applies exactly two patches on top:
+The `llamacpp` service does **not** run a TurboQuant fork. `services/llamacpp-patched/Dockerfile` clones mainline [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp), pinned to the stable release v0.5.0 (commit `7fe450e19305b828c199d602c23a8337aaa1f03b`, build `b11146`), and applies exactly two patches on top:
 
 1. **Checkpoint search fix for hybrid/recurrent models** (`tools/server/server-context.cpp`) — addresses upstream issues #22384, #20225, #24055.
 2. **`recurrent_shrink`/`expand` API for prompt-cache operations** — a minimal diff for upstream PR #24785.

@@ -5,12 +5,12 @@ attention/SSM model: it needs two out-of-tree patches. This build context produc
 first-party image `ordo/llamacpp-patched`, which the catalog entries that need it name (untagged)
 via `backend_image`.
 
-The Dockerfile pins the upstream commit (`86b94708…`) the patches were tested against, so the
-build is reproducible, not a floating `:server` tag. Like every first-party image, it is tagged
+The Dockerfile pins the upstream stable release v0.5.0 (commit `7fe450e1…`, build `b11146`) the
+patches were tested against, so the build is reproducible, not a floating `:server` tag. Like every first-party image, it is tagged
 with the commit that last changed this folder, recorded in `out/images.json`, and render pins
 the compose to that tag.
 
-The embedded web UI is pinned the same way: the release built from that commit (`b9843`),
+The embedded web UI is pinned the same way: the release built from that commit (`b11146`),
 downloaded by sha256. Upstream's default fetch resolves a shallow clone to build `b1`, which does
 not exist, and falls back to the floating `latest` UI; a newer UI broke the embed step of this
 commit. Bump `LLAMA_UI_RELEASE`/`LLAMA_UI_SHA256` together with the pinned commit.
@@ -20,6 +20,10 @@ commit. Bump `LLAMA_UI_RELEASE`/`LLAMA_UI_SHA256` together with the pinned commi
 - **PATCH 2** — `recurrent_shrink/expand` prompt-cache API (upstream PR #24785, minimal diff in
   `pr24785-minimal.diff`). The build **fails loudly** if either patch stops applying — that's
   the signal to re-verify before bumping the pinned commit.
+
+Both were re-checked at v0.5.0 and kept: upstream only added a `pos_max > pos_next` guard to the
+checkpoint search (#24055 is still open), and #24785 is unmerged (`llama.h` has no recurrent
+shrink/expand API). Retire a patch when upstream ships its fix, not when it stops applying.
 
 ## Build
 From the repo root, while the active model uses this build:
