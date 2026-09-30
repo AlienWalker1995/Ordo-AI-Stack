@@ -544,3 +544,21 @@ def test_volume_files_never_creates_the_volume_it_lists():
     assert models_volume.volume_files(absent, "ordo") == set()
     assert not any(models_volume.LIST_MARKER in argv for argv, _ in absent.calls)
     assert models_volume.volume_files(FakeRunner(files={"a.gguf"}), "ordo") == {"a.gguf"}
+
+
+def test_up_fetches_only_the_missing_shard_of_a_sharded_model():
+    """A sharded model is only loadable with every shard: the render names the further shards in
+    LLAMACPP_MODEL_SHARDS, and `ordo up` fetches whichever of them the volume lacks."""
+    sharded = Model.from_dict({
+        "id": "m", "file": "m-00001-of-00002.gguf", "source": "https://example.invalid/m-00001-of-00002.gguf",
+        "sha256": "a" * 64, "requires": {"vram_gb": 10}, "tier": "high",
+        "shards": [{"file": "m-00002-of-00002.gguf", "source": "https://example.invalid/m-00002-of-00002.gguf",
+                    "sha256": "b" * 64}]})
+    doc, env = _stack("m-00001-of-00002.gguf")
+    env["LLAMACPP_MODEL_SHARDS"] = "m-00002-of-00002.gguf"
+    runner = FakeRunner(files={"m-00001-of-00002.gguf"})
+    assert fetch.ensure_models(doc, env, ["llamacpp"], catalog=_catalog(sharded), project="ordo",
+                               secrets={}, runner=runner, dry_run=False) == 0
+    [(argv, _env_)] = runner.helper_runs()
+    assert "ORDO_FETCH_FILE=m-00002-of-00002.gguf" in argv
+    assert f"ORDO_FETCH_SHA256={'b' * 64}" in argv

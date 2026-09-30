@@ -98,8 +98,9 @@ def _model_mount(spec: dict) -> str | None:
 def required_model_files(doc: dict, env: Mapping[str, str], services: Sequence[str]) -> list[NeededFile]:
     """Every file in the models volume that `services` load, read from the rendered compose + .env.
 
-    The chat service's launcher takes its file from LLAMACPP_MODEL (and the optional projector from
-    LLAMACPP_MMPROJ); every other service names `<mount>/<file>` in its command."""
+    The chat service's launcher takes its file from LLAMACPP_MODEL (a sharded model's further shards
+    from LLAMACPP_MODEL_SHARDS, the optional projector from LLAMACPP_MMPROJ); every other service
+    names `<mount>/<file>` in its command."""
     found: dict[str, NeededFile] = {}
     defined = doc.get("services") or {}
     for name in services:
@@ -111,6 +112,8 @@ def required_model_files(doc: dict, env: Mapping[str, str], services: Sequence[s
         candidates: list[tuple[str, bool]] = []
         if name == CHAT_SERVICE:
             candidates.append((prefix + env.get("LLAMACPP_MODEL", ""), False))
+            # A sharded model's further shards: llama.cpp opens them next to shard 1.
+            candidates.extend((prefix + shard, False) for shard in env.get("LLAMACPP_MODEL_SHARDS", "").split())
             candidates.append((env.get("LLAMACPP_MMPROJ", ""), True))
         command = spec.get("command") or []
         for arg in command.split() if isinstance(command, str) else command:

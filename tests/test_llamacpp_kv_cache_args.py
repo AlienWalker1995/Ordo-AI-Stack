@@ -160,3 +160,44 @@ def test_an_older_build_keeps_no_mmap() -> None:
     args = _final_args_with_help("--mmap, --no-mmap                       whether to memory-map model")
     assert "--no-mmap" in args, args
     assert "--load-mode" not in args, args
+
+
+V05_HELP = "-lm,    --load-mode MODE            model loading mode (default: auto)"
+
+
+def _run_with_help(help_text: str, **env: str) -> subprocess.CompletedProcess:
+    script = WRAPPER.read_text(encoding="utf-8")
+    script = script.replace("/app/llama-server --help", f"printf '%s\n' '{help_text}'")
+    script = script.replace("exec /app/llama-server", "echo FINAL_ARGS:")
+    return subprocess.run([_sh()], input=script, env={**os.environ, **_base_env(**env)}, capture_output=True,
+                          text=True, timeout=10)
+
+
+def test_a_lazy_mmap_model_memory_maps_and_reads_its_table_on_demand() -> None:
+    result = _run_with_help(V05_HELP, LLAMACPP_LOAD_MODE="mmap-lazy")
+    args = _final_args(result.stdout)
+    assert "--load-mode mmap --lazy-mode on" in args, args
+    assert "--load-mode none" not in args and "--no-mmap" not in args, args
+
+
+def test_lazy_mmap_on_a_build_without_it_refuses_to_start() -> None:
+    result = _run_with_help("--mmap, --no-mmap   whether to memory-map model", LLAMACPP_LOAD_MODE="mmap-lazy")
+    assert result.returncode != 0
+    assert "FINAL_ARGS:" not in result.stdout
+
+
+def test_an_unknown_load_mode_refuses_to_start() -> None:
+    result = _run_with_help(V05_HELP, LLAMACPP_LOAD_MODE="mlock")
+    assert result.returncode != 0 and "LLAMACPP_LOAD_MODE" in result.stderr
+
+
+def test_offloaded_experts_pin_the_placement_and_the_threads() -> None:
+    args = _final_args(_run_with_help(V05_HELP, LLAMACPP_N_CPU_MOE="15", LLAMACPP_THREADS="12").stdout)
+    assert "--n-cpu-moe 15 --fit off" in args, args
+    assert "--threads 12" in args, args
+
+
+def test_no_placement_keys_add_no_placement_flags() -> None:
+    args = _final_args(_run_with_help(V05_HELP).stdout)
+    for flag in ("--n-cpu-moe", "--fit", "--threads", "--lazy-mode"):
+        assert flag not in args, args

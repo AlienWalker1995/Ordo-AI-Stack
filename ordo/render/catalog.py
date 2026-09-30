@@ -23,6 +23,12 @@ TIER_ORDER = ["cpu", "low", "medium", "high", "ultra"]
 # Deliberately generous — headroom is why chat stays fast.
 DEFAULT_VRAM_RESERVE_GB = 4.0
 
+# How llama.cpp loads the weights (`load_mode:`). "none" reads the whole model into memory (the default,
+# --load-mode none). "mmap-lazy" memory-maps it and reads the rows of very large lookup tensors (a
+# per-layer n-gram embedding table) from disk on demand (--load-mode mmap --lazy-mode on), so they
+# never occupy RAM or VRAM.
+LOAD_MODES = ("none", "mmap-lazy")
+
 # Where the chat service mounts the models volume: a pinned projector's `file` is rendered as
 # LLAMACPP_MMPROJ=<this>/<file>.
 CHAT_MODELS_MOUNT = "/models"
@@ -58,6 +64,26 @@ class Model:
     # The vision projector as a downloadable entry of its own, when the catalog pins its source
     # (`mmproj:` as a mapping). A bare `mmproj:` path has no source: it has to be copied in by hand.
     projector: Model | None = None
+    # The model's further GGUF shards, each a downloadable entry of its own (`shards:`). `file` is
+    # shard 1, the one llama.cpp is pointed at; it finds the others by name in the same directory.
+    shards: tuple[Model, ...] = ()
+    # MoE expert offload: the expert tensors of the first `n_cpu_moe` layers stay in system RAM
+    # (--n-cpu-moe), which is how a model larger than the card fits. 0 = everything on the GPU.
+    n_cpu_moe: int = 0
+    # CPU threads llama.cpp computes with (--threads); 0 = llama.cpp's default. A model with offloaded
+    # experts must set it: those threads are the CPU load it adds, and the host's power budget caps it.
+    cpu_threads: int = 0
+    load_mode: str = "none"
+    # The generation cap the server applies when a request sends no max_tokens (--n-predict).
+    # None = the render's default.
+    n_predict: int | None = None
+    # VRAM the sizer keeps free beside this model, when it differs from DEFAULT_VRAM_RESERVE_GB. Only
+    # for a model whose `vram_gb` already includes its compute buffers and CUDA overhead, measured at
+    # its placement: the default reserve exists to cover exactly those. None = the default.
+    vram_reserve_gb: float | None = None
+    # False = pinnable only: `model: auto` never picks it (a restrictive license, or a placement that
+    # needs a deliberate choice). A pinned `model:` or a model switch still selects it.
+    auto: bool = True
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Model:
@@ -67,8 +93,21 @@ class Model:
         if isinstance(mmproj, dict):
             projector = _projector(str(d["id"]), str(d.get("name", d["id"])), mmproj)
             mmproj = f"{CHAT_MODELS_MOUNT}/{projector.file}"
+        model_id = str(d["id"])
+        shards = tuple(_shard(model_id, str(d.get("name", model_id)), n, spec)
+                       for n, spec in enumerate(d.get("shards") or [], start=2))
+        load_mode = str(d.get("load_mode", "none"))
+        if load_mode not in LOAD_MODES:
+            raise ValueError(f"{model_id}: load_mode must be one of {', '.join(LOAD_MODES)}, not {load_mode!r}")
+        n_cpu_moe = int(d.get("n_cpu_moe", 0))
+        cpu_threads = int(d.get("cpu_threads", 0))
+        if n_cpu_moe < 0 or cpu_threads < 0:
+            raise ValueError(f"{model_id}: n_cpu_moe and cpu_threads cannot be negative")
+        if n_cpu_moe and not cpu_threads:
+            raise ValueError(f"{model_id}: a model with offloaded experts (n_cpu_moe) must set cpu_threads, "
+                             "the CPU load it adds")
         return cls(
-            id=str(d["id"]), name=str(d.get("name", d["id"])),
+            id=model_id, name=str(d.get("name", d["id"])),
             backend=str(d.get("backend", "llama.cpp")), file=str(d.get("file", "")),
             source=str(d.get("source", "")), sha256=(d.get("sha256") or None),
             vram_gb=float(req.get("vram_gb", 0)), ram_gb=float(req.get("ram_gb", 0)),
@@ -81,7 +120,15 @@ class Model:
             gated=bool(d.get("gated", False)),
             size_bytes=(int(d["size_bytes"]) if d.get("size_bytes") else None),
             projector=projector,
+            shards=shards, n_cpu_moe=n_cpu_moe, cpu_threads=cpu_threads, load_mode=load_mode,
+            n_predict=(int(d["n_predict"]) if d.get("n_predict") else None),
+            vram_reserve_gb=(float(d["vram_reserve_gb"]) if d.get("vram_reserve_gb") is not None else None),
+            auto=bool(d.get("auto", True)),
         )
+
+    def reserve_gb(self, default: float) -> float:
+        """The VRAM the sizer keeps free beside this model."""
+        return default if self.vram_reserve_gb is None else self.vram_reserve_gb
 
     def _rank(self) -> tuple[int, float]:
         return (TIER_ORDER.index(self.tier) if self.tier in TIER_ORDER else -1, self.vram_gb)
@@ -101,6 +148,20 @@ def _projector(model_id: str, model_name: str, spec: dict[str, Any]) -> Model:
         "file": spec["file"], "source": spec["source"], "sha256": spec["sha256"],
         "size_bytes": spec.get("size_bytes"), "gated": spec.get("gated", False),
         "requires": {"vram_gb": 0, "ram_gb": 0, "cpu_ok": True}, "tier": "projector",
+    })
+
+
+def _shard(model_id: str, model_name: str, number: int, spec: dict[str, Any]) -> Model:
+    """A further GGUF shard as a downloadable entry, id `<model id>-shard<number>` (shard 1 is the
+    model's own `file`). Pinned like the weights: file, source and sha256."""
+    missing = [key for key in ("file", "source", "sha256") if not spec.get(key)]
+    if missing:
+        raise ValueError(f"{model_id}: shard {number} must pin {', '.join(missing)}")
+    return Model.from_dict({
+        "id": f"{model_id}-shard{number}", "name": f"{model_name}, shard {number}", "backend": "llama.cpp",
+        "file": spec["file"], "source": spec["source"], "sha256": spec["sha256"],
+        "size_bytes": spec.get("size_bytes"), "gated": spec.get("gated", False),
+        "requires": {"vram_gb": 0, "ram_gb": 0, "cpu_ok": True}, "tier": "shard",
     })
 
 
@@ -149,14 +210,17 @@ class Catalog:
         return self._by_id.get(model_id)
 
     def entries(self) -> list[Model]:
-        """Every downloadable entry: chat models, then support models, then pinned projectors."""
-        projectors = [m.projector for m in self.models + self.support_models if m.projector]
-        return self.models + self.support_models + projectors
+        """Every downloadable entry: chat models, then support models, then their further shards, then
+        pinned projectors."""
+        owners = self.models + self.support_models
+        shards = [shard for m in owners for shard in m.shards]
+        projectors = [m.projector for m in owners if m.projector]
+        return owners + shards + projectors
 
     @staticmethod
     def files_of(model: Model) -> list[Model]:
-        """The entries a model needs in the volume: its weights, then its pinned projector."""
-        return [model] + ([model.projector] if model.projector else [])
+        """The entries a model needs in the volume: its weights (every shard), then its pinned projector."""
+        return [model, *model.shards] + ([model.projector] if model.projector else [])
 
     def get_entry(self, model_id: str) -> Model | None:
         """Any downloadable entry by id, chat or support."""
@@ -167,7 +231,7 @@ class Catalog:
         return next((m for m in self.entries() if m.file == file), None)
 
     def fits(self, m: Model, hw: HardwareProfile, reserve_gb: float = DEFAULT_VRAM_RESERVE_GB) -> bool:
-        return not compute_blocker(m, hw) and self._fits_budget(m, hw, reserve_gb)
+        return not compute_blocker(m, hw) and self._fits_budget(m, hw, m.reserve_gb(reserve_gb))
 
     @staticmethod
     def _fits_budget(m: Model, hw: HardwareProfile, reserve_gb: float) -> bool:
@@ -184,11 +248,11 @@ class Catalog:
     ) -> tuple[Model, list[str]]:
         """Return (chosen model, warnings). Never raises — always yields a runnable choice."""
         warnings: list[str] = []
-        candidates = [m for m in self.models if self.fits(m, hw, reserve_gb)]
+        candidates = [m for m in self.models if m.auto and self.fits(m, hw, reserve_gb)]
         # Models the budget allows but whose special build cannot run on this GPU. Reported below
         # when one outranks the pick, so a big non-Blackwell card says why it got a smaller model.
-        build_blocked = [m for m in self.models
-                         if self._fits_budget(m, hw, reserve_gb) and compute_blocker(m, hw)]
+        build_blocked = [m for m in self.models if m.auto
+                         and self._fits_budget(m, hw, m.reserve_gb(reserve_gb)) and compute_blocker(m, hw)]
 
         if tier and tier != "auto":
             tier_c = [m for m in candidates if m.tier == tier]
@@ -233,10 +297,10 @@ class Catalog:
             if blocker:
                 warnings.append(f"'{m.id}' {blocker} (override honored anyway; expect llama.cpp to fail "
                                 "to load it)")
-            if not self._fits_budget(m, hw, reserve_gb):
+            if not self._fits_budget(m, hw, m.reserve_gb(reserve_gb)):
                 warnings.append(
                     f"'{m.id}' needs ~{m.vram_gb:.0f}GB VRAM but only "
-                    f"~{max(hw.primary_vram_gb - reserve_gb, 0):.0f}GB is usable — "
+                    f"~{max(hw.primary_vram_gb - m.reserve_gb(reserve_gb), 0):.0f}GB is usable — "
                     "expect CPU-offload/OOM (override honored anyway)"
                 )
             return m, warnings

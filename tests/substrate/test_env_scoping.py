@@ -37,6 +37,9 @@ SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.ne
         "N8N_WEBHOOK_URL": "https://n8n.example.ts.net/", "HERMES_MAX_TOKENS": "32768",
         "HERMES_COMPRESSION_THRESHOLD_PERCENT": "0.8", "LLAMACPP_OVERRIDE_KV": "x=int:1",
         "LLAMACPP_CPU_MODEL": "cpu.gguf", "LLAMACPP_EMBED_MODEL": "embed.gguf"}
+# A model placement (catalog n_cpu_moe, cpu_threads, load_mode), which the auto-picked model does not
+# declare: set here so its keys render, like the optional `site:` knobs above.
+PLACEMENT = {"n_cpu_moe": 4, "threads": 8, "load_mode": "mmap-lazy"}
 HW = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": "GPU-aaaa"},
                {"name": "GTX 1070", "vram_gb": 8, "uuid": "GPU-bbbb"}], "ram_gb": 128, "cpu_cores": 32}
 # The operator's plugin set, so every service renders.
@@ -51,7 +54,8 @@ SPEC: dict[str, set[str]] = {
                  "LLAMACPP_ROPE_SCALE", "LLAMACPP_YARN_ORIG_CTX", "LLAMACPP_GPU_LAYERS", "LLAMACPP_FLASH_ATTN",
                  "LLAMACPP_N_PREDICT", "LLAMACPP_REASONING_BUDGET", "LLAMACPP_MMPROJ",
                  "LLAMACPP_ENABLE_KV_CACHE_QUANTIZATION", "LLAMACPP_KV_CACHE_TYPE_K", "LLAMACPP_KV_CACHE_TYPE_V",
-                 "LLAMACPP_EXTRA_ARGS", "LLAMACPP_OVERRIDE_KV"},
+                 "LLAMACPP_EXTRA_ARGS", "LLAMACPP_OVERRIDE_KV", "LLAMACPP_N_CPU_MOE", "LLAMACPP_THREADS",
+                 "LLAMACPP_LOAD_MODE"},
     # services/model-gateway/entrypoint.sh writes these into LiteLLM's model_info.
     "model-gateway": {"LLAMACPP_CTX_SIZE", "LLAMACPP_N_PREDICT", "LLAMACPP_CPU_CTX", "LLAMACPP_MODEL",
                       "LLAMACPP_IMAGE", "LLAMACPP_MMPROJ", "LOCAL_INPUT_COST_PER_TOKEN",
@@ -79,7 +83,8 @@ SPEC: dict[str, set[str]] = {
 
 @pytest.fixture(scope="module")
 def rendered():
-    rc = render(Source.from_dict({"hardware": HW, "model": "auto", "plugins": PLUGINS, "site": SITE}),
+    rc = render(Source.from_dict({"hardware": HW, "model": "auto", "plugins": PLUGINS, "site": SITE,
+                                  "overrides": {"llamacpp": PLACEMENT}}),
                 CATALOG, REGISTRY)
     return rc, rc.compose_dict()["services"]
 
