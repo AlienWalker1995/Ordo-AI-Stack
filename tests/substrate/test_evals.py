@@ -229,4 +229,14 @@ def test_run_sh_computes_provenance_with_the_real_host_git_and_forwards_args():
     assert 'git -C "$REPO_ROOT" rev-parse HEAD' in script
     assert 'git -C "$REPO_ROOT" status --porcelain -- services/evals' in script
     assert "export GIT_COMMIT GIT_DIRTY" in script
-    assert 'run --rm evals "$@"' in script
+    assert 'run --rm ${ENDPOINT_ARGS[@]+"${ENDPOINT_ARGS[@]}"} evals "$@"' in script
+
+
+def test_run_sh_forwards_the_endpoint_mode_variables_only_when_the_label_is_set():
+    """Endpoint mode (services/evals/README.md): the wrapper forwards the label, the eval server URL and
+    the model name into the container only when the caller set EVALS_MODEL_ENDPOINT_LABEL, and refuses
+    to run endpoint mode without MODEL_BASE_URL, so a normal run still targets the live gateway."""
+    script = (ROOT / "scripts" / "evals" / "run.sh").read_text(encoding="utf-8")
+    assert 'if [ -n "${EVALS_MODEL_ENDPOINT_LABEL:-}" ]; then' in script
+    assert '"${MODEL_BASE_URL:?' in script
+    assert "ENDPOINT_ARGS=(-e EVALS_MODEL_ENDPOINT_LABEL -e MODEL_BASE_URL -e MODEL_NAME)" in script

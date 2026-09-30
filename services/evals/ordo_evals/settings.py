@@ -42,6 +42,12 @@ class Settings:
     hermes_item_budget_s: float
     hermes_overrun_wait_s: float
     model_max_tokens: int | None
+    model_endpoint_label: str
+
+    @property
+    def endpoint_mode(self) -> bool:
+        """True when the model suites target a dedicated eval endpoint instead of the live gateway."""
+        return bool(self.model_endpoint_label)
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -96,6 +102,11 @@ class Settings:
             hermes_overrun_wait_s=float(_env("EVALS_HERMES_OVERRUN_WAIT_S", "900")),
             # Unset = the deployment's own output cap (llama.cpp n_predict), i.e. the model as deployed.
             model_max_tokens=int(max_tokens) if max_tokens else None,
+            # Endpoint mode: set to a label naming the model behind MODEL_BASE_URL when that URL is a
+            # dedicated eval server (for example a candidate llama-server run under the operator's own
+            # GPU lease), not the live gateway. See runner._endpoint_mode_refusal and the README's
+            # "Evaluating a candidate model on its own endpoint" section.
+            model_endpoint_label=_env("EVALS_MODEL_ENDPOINT_LABEL"),
         )
 
     def redacted(self) -> dict[str, str]:

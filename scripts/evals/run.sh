@@ -48,5 +48,15 @@ else
 fi
 export GIT_COMMIT GIT_DIRTY
 
+# Endpoint mode (services/evals/README.md, "Evaluating a candidate model on its own endpoint"): when
+# the caller sets EVALS_MODEL_ENDPOINT_LABEL, forward it with MODEL_BASE_URL (required) and MODEL_NAME
+# (defaults to the label) so the model suites target that eval server instead of the live gateway.
+ENDPOINT_ARGS=()
+if [ -n "${EVALS_MODEL_ENDPOINT_LABEL:-}" ]; then
+    : "${MODEL_BASE_URL:?endpoint mode needs MODEL_BASE_URL, the /v1 URL of the eval server}"
+    export MODEL_NAME="${MODEL_NAME:-$EVALS_MODEL_ENDPOINT_LABEL}"
+    ENDPOINT_ARGS=(-e EVALS_MODEL_ENDPOINT_LABEL -e MODEL_BASE_URL -e MODEL_NAME)
+fi
+
 cd "$OUT_DIR"
-exec docker compose -p ordo --profile evals --env-file .env --env-file secrets.env --env-file secret-files.env --env-file bind-configs.env run --rm evals "$@"
+exec docker compose -p ordo --profile evals --env-file .env --env-file secrets.env --env-file secret-files.env --env-file bind-configs.env run --rm ${ENDPOINT_ARGS[@]+"${ENDPOINT_ARGS[@]}"} evals "$@"
