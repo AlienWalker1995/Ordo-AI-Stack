@@ -300,6 +300,27 @@ full run: recorded iterations have taken 4 to 6 hours end to end, and `harness_h
 not in one hour. `--limit N` is the smoke-run lever, and it is stratified across each suite's
 categories.
 
+### Evaluating a candidate model on its own endpoint
+
+To compare a model that is not the stack's active one, serve it on a dedicated eval server (under the
+GPU lease, never beside the resident llama.cpp) and point the model suites at it:
+
+```bash
+EVALS_MODEL_ENDPOINT_LABEL=candidate-x MODEL_BASE_URL=http://<eval-server>:8080/v1 \
+  scripts/evals/run.sh run --suites model_ifeval,model_toolcall,model_reasoning,model_domain \
+  --run-id cand-x-20260930 --no-langfuse
+```
+
+The label becomes the run's `served_model` (in `summary.json` and every `history.jsonl` row) and
+`summary.json` records the `endpoint`, so a candidate's rows never read as the live model's.
+`MODEL_NAME` defaults to the label. In this mode the runner:
+
+- refuses a run that includes a harness suite (exit code `7`): Hermes always talks to the live
+  gateway, so those numbers would describe the live model under the candidate's label;
+- skips the GPU-lease guard (E15, below): it exists because a leased card makes the gateway fail over
+  to the CPU deployment, and a dedicated endpoint is not behind the gateway (it is normally the very
+  thing holding the lease). The per-item backend-integrity check still applies.
+
 ### Where the output goes
 
 ```
