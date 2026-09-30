@@ -1161,6 +1161,18 @@ class Broker:
             self._persist()  # the deadline moved
         return renewed
 
+    def adopt_resident_footprints(self, footprints: dict[str, float]) -> dict[str, tuple[float, float]]:
+        """Set the scheduler's resident footprints to the render's, under the operation lock, and
+        persist them when any changed (an evicted resident's size is in the state file)."""
+        with self.operation_lock:
+            changed = self.scheduler.update_resident_footprints(footprints)
+            if changed:
+                self._persist()
+        for resident, (old, new) in sorted(changed.items()):
+            print(f"[scheduler] resident '{resident}' footprint {old:.1f}GB -> {new:.1f}GB (the render changed)",
+                  flush=True)
+        return changed
+
     def enforce_evictions(self) -> list[str]:
         """Stop any evicted resident that is running anyway, and return their names.
 

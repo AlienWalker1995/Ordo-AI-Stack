@@ -26,13 +26,18 @@ class RenderApply:
     """Recreates what a render changed, through the broker's container backend."""
 
     def __init__(self, source: StackSource, broker: Broker | None, lease: LeaseGuard,
-                 model_volume_files: Callable[[], set[str] | None] | None):
+                 model_volume_files: Callable[[], set[str] | None] | None,
+                 after_apply: Callable[[], Any] | None = None):
         self.source = source
         self.broker = broker
         self.lease = lease
         # Lists the file names in the models volume (None: it could not be listed); None = no volume
         # to check (a control plane without the Docker socket, and tests that do not wire one).
         self.model_volume_files = model_volume_files
+        # Run after every apply that changed the stack: the control plane adopts the render's GPU
+        # resident footprints here (ordo/control/residents.py), so the scheduler never keeps the
+        # previous model's size after a switch.
+        self.after_apply = after_apply
 
     def commit(self, text: str, rendered: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         """Write `text` as the operator source, write its render to out/, then apply it.
@@ -220,6 +225,8 @@ class RenderApply:
                 self.broker.backend.remove_stopped_containers(removed_jobs)
         except Exception as e:  # noqa: BLE001 - reported with the plan it was executing
             return error(500, f"applying the render failed: {e}", changes=plan["changes"])
+        if self.after_apply is not None:
+            self.after_apply()
         if OPEN_WEBUI_SERVICE in targets:
             ok, line = self.open_webui_verdict()
             if not ok:

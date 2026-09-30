@@ -12,7 +12,6 @@ import os
 import sys
 from pathlib import Path
 
-from ..render import gpu
 from ..render.catalog import Catalog
 from ..render.config import Source
 from ..render.engine import DEFAULT_PLUGINS_DIR, render
@@ -31,6 +30,7 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
     # imported here so every other command runs on the PyYAML-only core.
     from .api import ControlPlane
     from .broker import Broker, DockerBackend
+    from .residents import start_residents
     from .scheduler import Scheduler
 
     cat = Catalog.load(Path(args.catalog))
@@ -62,36 +62,12 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
                       disk_paths={DOCKER_DISK: "/", HOST_DISK: str(args.out)},
                       tls_cert_files={"edge": edge_cert} if edge_cert else {})
 
-    # Resident registration, DERIVED from the declared GPU inventory (ordo/render/gpu.py) rather than
-    # from a `--resident-service llamacpp` default. Every service that DECLARES it holds VRAM on
-    # the primary device and may be reclaimed is registered as idle-cached, so a burst request
-    # can actually evict it; an unregistered resident's VRAM looks free and the scheduler admits
-    # a job into space that is already taken (the live defect: /status showed free == total).
-    # Secondary-device residents (the 1070's voice models) are excluded on purpose, and a
-    # non-preemptible resident's VRAM is removed from the budget instead of being offered.
-    # Read from the same render the stack runs, so it can't drift from what `.env` loads.
-    if hw.has_gpu:
-        rc = render(src, cat, reg)
-        claims = rc.gpu_inventory()
-        pinned = gpu.pinned_primary_vram_gb(claims)
-        if pinned:
-            sched.total_vram_gb = round(sched.total_vram_gb - pinned, 2)
-            print(f"[scheduler] {pinned:.1f}GB of the primary card is held by non-preemptible "
-                  f"residents — removed from the admission budget", flush=True)
-        for service, vram in gpu.primary_residents(claims).items():
-            sched.cache_idle(service, vram)
-            print(f"[scheduler] resident '{service}' ~{vram:.1f}GB registered as reclaimable",
-                  flush=True)
-        for c in claims:
-            degraded = f" -> {c.degraded_service}" if c.degraded_service else ""
-            print(f"[scheduler] gpu claim: {c.service:<16} mode={c.mode:<8} "
-                  f"enforcement={c.enforcement:<7} device={c.device:<9} "
-                  f"vram={c.vram_gb:>6.1f}GB yield={c.yield_strategy}{degraded}", flush=True)
-
-    # Adopt the previous process's lease state BEFORE the lease loop or the API run: a lease held
-    # across this restart keeps its resident evicted, and one that expired while down is swept.
+    # Resident registration from the render, then the previous process's lease state adopted BEFORE
+    # the lease loop or the API run (a lease held across this restart keeps its resident evicted,
+    # and one that expired while down is swept), then the adopted footprints reconciled with the
+    # render (ordo/control/residents.py).
+    start_residents(sched, broker, cp.residents, render(src, cat, reg) if hw.has_gpu else None)
     if state_store is not None:
-        broker.restore_state()
         print(f"[scheduler] lease state persisted at {state_path}; adopted "
               f"running={sched.running_ids} queued={sched.queued_ids} "
               f"evicted={sorted(sched.evicted_residents)}", flush=True)
@@ -107,6 +83,9 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
             time.sleep(args.lease_poll_seconds)
             try:
                 sched.tick(args.lease_poll_seconds)
+                # A host `ordo apply` renders out/ and recreates services without calling this
+                # process: adopt the new render's resident footprints within one tick.
+                cp.residents.adopt_if_render_changed()
                 swept = broker.sweep_leases()
                 if swept:
                     print(f"[scheduler] lease TTL expired for {swept} — resident restored on drain",
