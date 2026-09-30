@@ -201,7 +201,7 @@ models:
     # are passed, so it is inert.
     extra_args: "--reasoning-format deepseek"
     # `qwen35` arch needs the SWA/hybrid-cache patched build — verified present at
-    # commit 86b9470 (LLM_ARCH_QWEN35 in src/llama-arch.cpp); same image as the 3.6s.
+    # v0.5.0 / 7fe450e (LLM_ARCH_QWEN35 in src/llama-arch.cpp); same image as the 3.6s.
     backend_image: ordo/llamacpp-patched
     tier: ultra
 
