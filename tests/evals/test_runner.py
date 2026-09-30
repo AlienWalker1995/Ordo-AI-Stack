@@ -282,6 +282,80 @@ def test_run_with_mixed_backends_marks_integrity_and_returns_a_nonzero_exit(tmp_
     assert rows and all(r["integrity"] == "backend_changed" for r in rows)
 
 
+# ── Endpoint mode: the model suites against a dedicated eval server ─────────────
+
+def _endpoint_settings(tmp_path, monkeypatch, label="candidate-x"):
+    monkeypatch.setenv("EVALS_MODEL_ENDPOINT_LABEL", label)
+    monkeypatch.setenv("MODEL_BASE_URL", "http://eval-server:8080/v1")
+    return _clean_settings(tmp_path, monkeypatch)
+
+
+def test_endpoint_mode_is_off_by_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("EVALS_MODEL_ENDPOINT_LABEL", raising=False)
+    settings = _clean_settings(tmp_path, monkeypatch)
+    assert not settings.endpoint_mode
+    assert runner._endpoint_mode_refusal(settings, ["harness_ops"]) is None
+    reason = runner._gpu_guard_reason(settings, _FakeProbesForRun(LEASED_STATUS))
+    assert reason is not None and "leased" in reason
+
+
+def test_endpoint_mode_refuses_harness_suites_before_writing_anything(tmp_path, monkeypatch):
+    """Hermes always talks to the live gateway, so a harness suite in endpoint mode would score the live
+    model under the candidate's label. Refused before any suite loads or run_dir exists."""
+    settings = _endpoint_settings(tmp_path, monkeypatch)
+
+    def _must_not_load(name):
+        raise AssertionError(f"suite {name!r} must never be loaded when endpoint mode refuses")
+
+    monkeypatch.setattr(runner, "load", _must_not_load)
+
+    code = runner.run(settings, suites=["model_reasoning", "harness_ops"], run_id="endpoint-harness",
+                      limit=None, seed=1, no_langfuse=True, probes=_FakeProbesForRun(IDLE_STATUS))
+
+    assert code == 7
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_endpoint_mode_runs_model_suites_while_the_gpu_is_leased(tmp_path, monkeypatch):
+    """The candidate server is normally what holds the lease, so the gateway-only GPU guard must not
+    refuse it; the run is labelled with the candidate and records its endpoint."""
+    _install_fake_suite_context(monkeypatch)
+    settings = _endpoint_settings(tmp_path, monkeypatch)
+    modules = {"model_reasoning": _FakeSuiteModule("reasoning", [
+        _fake_item("model_reasoning", "model", "a", "/models/candidate.gguf", {"correct": True, "format_ok": True})])}
+    monkeypatch.setattr(runner, "load", lambda name: modules[name])
+
+    code = runner.run(settings, suites=["model_reasoning"], run_id="endpoint-leased", limit=None, seed=1,
+                      no_langfuse=True, probes=_FakeProbesForRun(LEASED_STATUS))
+
+    assert code == 0
+    run_summary = json.loads((runner.run_dir_for(settings, "endpoint-leased") / "summary.json")
+                            .read_text(encoding="utf-8"))
+    assert run_summary["served_model"] == "candidate-x"
+    assert run_summary["endpoint"] == "http://eval-server:8080/v1"
+    assert run_summary["integrity"] is None
+    rows = read_jsonl(settings.results_dir / "history.jsonl")
+    assert rows and all(r["model"] == "candidate-x" for r in rows)
+
+
+def test_endpoint_mode_still_catches_a_mixed_backend(tmp_path, monkeypatch):
+    """Skipping the GPU guard must not skip the per-item backend-integrity check."""
+    _install_fake_suite_context(monkeypatch)
+    settings = _endpoint_settings(tmp_path, monkeypatch)
+    modules = {
+        "model_reasoning": _FakeSuiteModule("reasoning", [
+            _fake_item("model_reasoning", "model", "a", "/models/candidate.gguf", {"correct": True, "format_ok": True})]),
+        "model_toolcall": _FakeSuiteModule("toolcall", [
+            _fake_item("model_toolcall", "model", "b", "/models/other.gguf", {"correct": True})]),
+    }
+    monkeypatch.setattr(runner, "load", lambda name: modules[name])
+
+    code = runner.run(settings, suites=["model_reasoning", "model_toolcall"], run_id="endpoint-mixed",
+                      limit=None, seed=1, no_langfuse=True, probes=_FakeProbesForRun(LEASED_STATUS))
+
+    assert code == 6
+
+
 # ── round 7: backfill-metrics (E17 stopping, E19 replay) ────────────────────────
 
 BACKFILL_SCHEMA = """

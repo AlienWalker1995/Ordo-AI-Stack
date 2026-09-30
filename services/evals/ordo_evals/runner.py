@@ -44,7 +44,12 @@ def run_dir_for(settings: Settings, run_id: str) -> Path:
 
 def _served_model(probes: Any, settings: Settings, notes: list[str]) -> str:
     """The catalog id of the model behind the alias (ops-controller), so history rows stay attributable
-    when the alias is re-pointed. Falls back to the alias itself, with a note."""
+    when the alias is re-pointed. Falls back to the alias itself, with a note. In endpoint mode the
+    model is not the stack's active one, so the operator's label names it instead."""
+    if settings.endpoint_mode:
+        notes.append(f"endpoint mode: model suites ran against {settings.model_base_url}, "
+                     f"labelled {settings.model_endpoint_label!r}")
+        return settings.model_endpoint_label
     try:
         model_id = probes.ops_status().get("manifest", {}).get("model", {}).get("id")
     except ProbeError as exc:
@@ -121,6 +126,29 @@ def _gpu_preflight_reason(probes: Any) -> str | None:
             "the slow CPU fallback deployment (see services/evals/README.md's run-validity section)")
 
 
+def _endpoint_mode_refusal(settings: Settings, suites: list[str]) -> str | None:
+    """A refusal reason, or None. Endpoint mode points only the MODEL suites at MODEL_BASE_URL; the
+    harness suites drive Hermes, which always talks to the live gateway, so their numbers would
+    describe the live model while the run is labelled as the candidate. Refused, never mixed."""
+    if not settings.endpoint_mode:
+        return None
+    harness = [s for s in suites if SUBJECTS[s] == "harness"]
+    if harness:
+        return (f"endpoint mode ({settings.model_endpoint_label!r}) runs only model suites; {harness} "
+                "drive Hermes, which uses the live gateway, not this endpoint")
+    return None
+
+
+def _gpu_guard_reason(settings: Settings, probes: Any) -> str | None:
+    """The GPU-lease guard, applied where it means something. It exists because a leased card can make
+    the live gateway fail `local-chat` over to the CPU deployment. A dedicated eval endpoint is not
+    behind that gateway (and is normally itself running under the lease), so the guard does not
+    apply; the per-item backend-integrity check still does."""
+    if settings.endpoint_mode:
+        return None
+    return _gpu_preflight_reason(probes)
+
+
 def _backend_integrity_reason(served_models_by_subject: dict[str, set[str]]) -> str | None:
     """E15: a run whose model-suite items (or whose harness-suite items) show more than one distinct
     served backend cannot be trusted - part of it measured a different deployment than the rest.
@@ -143,6 +171,10 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
     if refusal:
         _log(f"refusing to start run {run_id}: {refusal}")
         return 4
+    endpoint_refusal = _endpoint_mode_refusal(settings, suites)
+    if endpoint_refusal:
+        _log(f"refusing to start run {run_id}: {endpoint_refusal}")
+        return 7
 
     from ordo_evals.probes import LiveProbes
 
@@ -159,7 +191,7 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
     # Checked before the suites.common import below (which pulls in the heavy optional Inspect-AI
     # dependency, same reasoning as the provenance gate's own import ordering) so a refusal here is
     # exactly as cheap as one from the provenance gate.
-    gpu_refusal = _gpu_preflight_reason(probes)
+    gpu_refusal = _gpu_guard_reason(settings, probes)
     if gpu_refusal:
         _log(f"refusing to start run {run_id}: {gpu_refusal}")
         return 5
@@ -189,6 +221,7 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
     run_summary: dict[str, Any] = {
         "run_id": run_id, "ts": history.utc_now_iso(), "evals_version": EVALS_VERSION, "seed": seed,
         "limit": limit, "model_alias": settings.model_name, "served_model": served_model,
+        "endpoint": settings.model_base_url if settings.endpoint_mode else None,
         "langfuse": sink.enabled, "suites": {}, "skipped": {}, "notes": ctx.notes,
         "commit": settings.git_commit, "dirty": settings.git_dirty,
         "integrity": None,  # E15: set to "backend_changed" below if the run turns out untrustworthy
@@ -258,7 +291,8 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
             # mid-run backend change is caught as soon as its evidence exists, and the GPU is
             # re-checked live (cheaply - one ops-controller GET) so a suite that hasn't shown the
             # drift YET is still stopped before it starts one that would.
-            integrity_reason = _backend_integrity_reason(served_models_by_subject) or _gpu_preflight_reason(probes)
+            integrity_reason = (_backend_integrity_reason(served_models_by_subject)
+                                or _gpu_guard_reason(settings, probes))
             if integrity_reason:
                 run_summary["integrity"] = "backend_changed"
                 run_summary["integrity_detail"] = integrity_reason
