@@ -525,6 +525,7 @@ class RenderedConfig:
             dashboard=self.dashboard,
             llamacpp_backend=self.llamacpp_backend,
             llamacpp_image=self.env["LLAMACPP_IMAGE"],
+            chat_backend=self.model.backend,
             plugin_services=self.plugin_services,
             primary_gpu_uuid=(pri.uuid if pri else None),
             secondary_gpu_uuid=(sec.uuid if sec else None),
@@ -809,6 +810,8 @@ def render(source: Source, catalog: Catalog,
             "n_cpu_moe": model.n_cpu_moe,
             "threads": model.cpu_threads,
             "load_mode": model.load_mode,
+            # NInfer only: load the artifact's vision encoder (`--vision`); it costs context.
+            "vision": model.vision,
             # The model's special build when it pins one, else this host's backend build.
             "image": model.backend_image or backend.image,
         },
@@ -820,6 +823,13 @@ def render(source: Source, catalog: Catalog,
     # `overrides:` survive regeneration; everything else is recomputed each render.
     derived = _apply_overrides(derived, source.overrides)
     lc = derived["llamacpp"]
+    vision = bool(lc["vision"])
+    if vision and model.backend != "ninfer":
+        raise ValueError(f"overrides.llamacpp.vision applies to a ninfer model; '{model.id}' is a llama.cpp "
+                         "model, whose vision is its catalog mmproj")
+    if vision and model.vision_max_context and int(lc["ctx_size"]) > model.vision_max_context:
+        # The vision encoder takes VRAM the KV pool would otherwise have: the measured window shrinks.
+        lc["ctx_size"] = model.vision_max_context
     ctx = int(lc["ctx_size"])  # re-read in case an override pinned it
     cpu_fallback_threads = _validated_cpu_fallback_threads(derived["llamacpp-cpu"]["threads"], hw.cpu_cores)
 
@@ -860,6 +870,8 @@ def render(source: Source, catalog: Catalog,
         if str(lc["load_mode"]) not in LOAD_MODES:
             raise ValueError(f"overrides.llamacpp.load_mode must be one of {', '.join(LOAD_MODES)}")
         env["LLAMACPP_LOAD_MODE"] = str(lc["load_mode"])
+    if vision:
+        env["LLAMACPP_VISION"] = "1"
     # The chat model's further GGUF shards: llama.cpp finds them by name next to LLAMACPP_MODEL, and
     # the models-volume checks (ordo up, ordo fetch, a model switch) require them with it.
     if model.shards and lc["model"] == model.file:

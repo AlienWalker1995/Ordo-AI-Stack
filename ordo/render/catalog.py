@@ -29,6 +29,12 @@ DEFAULT_VRAM_RESERVE_GB = 4.0
 # never occupy RAM or VRAM.
 LOAD_MODES = ("none", "mmap-lazy")
 
+# The engines the single GPU chat service (`llamacpp`) can run. llama.cpp serves GGUF files through
+# scripts/llamacpp/run-llama-server.sh; NInfer (services/ninfer) serves one `.ninfer` artifact through
+# scripts/llamacpp/run-ninfer-serve.sh. The service name, its network alias, port 8080 and the
+# OpenAI-compatible API stay the same, so the gateway, the scheduler and the dashboard see one service.
+BACKENDS = ("llama.cpp", "ninfer")
+
 # Where the chat service mounts the models volume: a pinned projector's `file` is rendered as
 # LLAMACPP_MMPROJ=<this>/<file>.
 CHAT_MODELS_MOUNT = "/models"
@@ -92,6 +98,10 @@ class Model:
     # `gateway: {drop_tool_strict: true}`: model-gateway strips tools[].function.strict from requests to
     # this model (rendered as GATEWAY_DROP_TOOL_STRICT, see services/model-gateway/entrypoint.sh).
     gateway_drop_tool_strict: bool = False
+    # NInfer only: the artifact carries its vision encoder, loaded with `--vision` (`vision.enabled`, or
+    # `overrides.llamacpp.vision`). It costs VRAM, so the window drops to `vision.max_context`.
+    vision: bool = False
+    vision_max_context: int | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Model:
@@ -111,13 +121,21 @@ class Model:
         cpu_threads = int(d.get("cpu_threads", 0))
         if n_cpu_moe < 0 or cpu_threads < 0:
             raise ValueError(f"{model_id}: n_cpu_moe and cpu_threads cannot be negative")
+        backend = str(d.get("backend", "llama.cpp"))
+        if backend not in BACKENDS:
+            raise ValueError(f"{model_id}: backend must be one of {', '.join(BACKENDS)}, not {backend!r}")
+        if backend == "ninfer" and not d.get("backend_image"):
+            raise ValueError(f"{model_id}: a ninfer model must name its engine image (backend_image)")
+        vision = d.get("vision") or {}
+        if vision and backend != "ninfer":
+            raise ValueError(f"{model_id}: `vision:` is a ninfer option; a llama.cpp model pins an mmproj instead")
         if n_cpu_moe and not cpu_threads:
             raise ValueError(f"{model_id}: a model with offloaded experts (n_cpu_moe) must set cpu_threads, "
                              "the CPU load it adds")
         gateway = _gateway_options(model_id, d.get("gateway"))
         return cls(
             id=model_id, name=str(d.get("name", d["id"])),
-            backend=str(d.get("backend", "llama.cpp")), file=str(d.get("file", "")),
+            backend=backend, file=str(d.get("file", "")),
             source=str(d.get("source", "")), sha256=(d.get("sha256") or None),
             vram_gb=float(req.get("vram_gb", 0)), ram_gb=float(req.get("ram_gb", 0)),
             cpu_ok=bool(req.get("cpu_ok", False)),
@@ -134,6 +152,8 @@ class Model:
             vram_reserve_gb=(float(d["vram_reserve_gb"]) if d.get("vram_reserve_gb") is not None else None),
             auto=bool(d.get("auto", True)),
             gateway_drop_tool_strict=gateway.get("drop_tool_strict", False),
+            vision=bool(vision.get("enabled", False)),
+            vision_max_context=(int(vision["max_context"]) if vision.get("max_context") else None),
         )
 
     def reserve_gb(self, default: float) -> float:

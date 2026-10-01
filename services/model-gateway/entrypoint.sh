@@ -46,11 +46,17 @@ LOCAL_OUTPUT_COST_PER_TOKEN="${LOCAL_OUTPUT_COST_PER_TOKEN:-0}"
 # The pickable pin-alias NAMES derive from the deployed weights (basename, lowercased,
 # .gguf stripped) — a model swap renames them automatically, so the template never
 # hardcodes a model generation. `local-chat`/`local-embed` stay stable by contract.
-GPU_MODEL_NAME="$(basename "${GPU_WEIGHTS}" .gguf | tr '[:upper:]' '[:lower:]')"
+# The pin alias is the weights file without its extension: a GGUF, or a NInfer .ninfer artifact.
+GPU_MODEL_NAME="$(basename "${GPU_WEIGHTS}" | sed -e 's/\.gguf$//' -e 's/\.ninfer$//' | tr '[:upper:]' '[:lower:]')"
 CPU_MODEL_NAME="$(basename "${CPU_WEIGHTS}" .gguf | tr '[:upper:]' '[:lower:]')-cpu"
 
 # Vision support is a fact about the deployment (is an mmproj loaded?), not the template.
-if [ -n "${LLAMACPP_MMPROJ:-}" ]; then GPU_SUPPORTS_VISION=true; else GPU_SUPPORTS_VISION=false; fi
+# Vision: a llama.cpp model's mmproj, or a NInfer model rendered with its vision encoder on.
+if [ -n "${LLAMACPP_MMPROJ:-}" ] || [ "${LLAMACPP_VISION:-0}" = "1" ]; then
+  GPU_SUPPORTS_VISION=true
+else
+  GPU_SUPPORTS_VISION=false
+fi
 
 # The chat model's catalog `gateway: {drop_tool_strict: true}` (rendered only for such a model): LiteLLM
 # removes `strict` from every tool definition before the request reaches the GPU chat server, which

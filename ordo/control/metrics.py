@@ -21,6 +21,7 @@ import logging
 import os
 import ssl
 import subprocess
+import urllib.request
 from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -65,6 +66,8 @@ class Inputs:
     disks: Mapping[str, DiskUsage | None] = dataclasses.field(default_factory=dict)
     # cert name -> its notAfter as a Unix time; None when a configured cert could not be read.
     tls_certs: Mapping[str, float | None] = dataclasses.field(default_factory=dict)
+    # Whether the GPU chat service answered its /health probe; None when no probe is configured.
+    gpu_chat_up: bool | None = None
 
 
 def _escape(value: Any) -> str:
@@ -179,6 +182,12 @@ def render(inputs: Inputs) -> str:
     for name in inputs.tls_certs:
         collectors[f"tls_cert_{name}"] = name in readable_certs
     _certs(w, readable_certs)
+    if inputs.gpu_chat_up is not None:
+        # Engine-neutral liveness of the GPU chat service: llama.cpp and NInfer both answer /health,
+        # while only llama.cpp serves the Prometheus /metrics the `llamacpp` scrape job reads.
+        w.add("ordo_gpu_chat_up", "gauge",
+              "1 when the GPU chat service (llamacpp:8080, either engine) answers /health with 200.",
+              {}, 1 if inputs.gpu_chat_up else 0)
     for collector in sorted(collectors):
         w.add("ordo_metrics_collector_ok", "gauge",
               "1 when this scrape could read the collector's source, 0 when it could not.",
@@ -206,11 +215,22 @@ class MetricsCollector:
     failed collector and the rest are still served."""
 
     def __init__(self, scheduler: Scheduler | None, broker: Broker | None, disk_paths: Mapping[str, str],
-                 tls_cert_files: Mapping[str, str]):
+                 tls_cert_files: Mapping[str, str], chat_health_url: str | None = None):
         self.scheduler = scheduler
         self.broker = broker
         self.disk_paths = dict(disk_paths)
         self.tls_cert_files = dict(tls_cert_files)
+        self.chat_health_url = chat_health_url
+
+    def _chat_up(self) -> bool | None:
+        """True when the GPU chat service answers /health with 200 within 3 s; None when unconfigured."""
+        if not self.chat_health_url:
+            return None
+        try:
+            with urllib.request.urlopen(self.chat_health_url, timeout=3) as response:
+                return response.status == 200
+        except Exception:  # noqa: BLE001 - down, refusing, loading (503) or unresolvable: all "not up"
+            return False
 
     def text(self) -> str:
         """The lease, container, disk and certificate state in the Prometheus text format."""
@@ -240,4 +260,5 @@ class MetricsCollector:
                 certs[name] = None
         return render(Inputs(
             scheduler=self.scheduler.status() if self.scheduler else None,
-            containers=containers, restarts=restarts, disks=disks, tls_certs=certs))
+            containers=containers, restarts=restarts, disks=disks, tls_certs=certs,
+            gpu_chat_up=self._chat_up()))

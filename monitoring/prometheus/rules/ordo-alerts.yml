@@ -157,20 +157,22 @@ groups:
 
   - name: ordo-services
     rules:
-      # llama.cpp is down on purpose while a GPU lease has evicted it (observed: 88 evictions in 15
-      # days, up to 54 minutes each), so this fires only when it is down and NOT evicted. With
-      # ops-controller unreachable the eviction is unknown and this fires: that is correct.
+      # The GPU chat service (the `llamacpp` service, running llama.cpp or NInfer) is down on purpose
+      # while a GPU lease has evicted it (observed: 88 evictions in 15 days, up to 54 minutes each),
+      # so this fires only when it is down and NOT evicted. Liveness is ops-controller's /health
+      # probe (ordo_gpu_chat_up), which both engines answer; the `llamacpp` scrape job reads
+      # llama.cpp's /metrics, which NInfer does not serve. ops-controller unreachable is TargetDown.
       - alert: LlamaCppDown
         expr: |
-          up{job="llamacpp"} == 0
+          ordo_gpu_chat_up == 0
             unless on() (ordo_gpu_resident_evicted{resident="llamacpp"} == 1)
         for: 10m
         labels:
           severity: critical
         annotations:
-          summary: llama.cpp (the GPU chat model) is down and not evicted for a GPU lease
+          summary: the GPU chat service is down and not evicted for a GPU lease
           description: >-
-            Prometheus cannot scrape llamacpp:8080 and no GPU lease has evicted it. Read `docker
+            llamacpp:8080/health does not answer 200 and no GPU lease has evicted it. Read `docker
             logs ordo-llamacpp-1`.
       # Every other scrape target. Observed live: the GPU exporter's nvidia-smi scrape timed out in
       # runs of up to 30 minutes, but only on the 2026-09-25 and 2026-09-27 crash days, and runs of

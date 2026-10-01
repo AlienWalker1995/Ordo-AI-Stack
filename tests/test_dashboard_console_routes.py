@@ -576,3 +576,29 @@ def test_ops_requests_name_the_dashboard_as_the_actor(monkeypatch):
         asyncio.run(dashboard_app._ops_request("POST", "/services/n8n/restart", json={"confirm": True}))
     assert sent["X-Actor"] == "dashboard"
     assert sent["Authorization"] == "Bearer t"
+
+
+# --- NInfer artifacts: a .ninfer file is a GPU chat model like a GGUF ---
+
+def test_the_model_scan_lists_ninfer_artifacts_beside_ggufs(tmp_path, monkeypatch):
+    import dashboard.app as dashboard_app
+    (tmp_path / "a.gguf").write_bytes(b"x")
+    (tmp_path / "qwen3_8_27b_nvfp4.ninfer").write_bytes(b"xy")
+    (tmp_path / "notes.txt").write_bytes(b"z")
+    monkeypatch.setattr(dashboard_app, "_GGUF_MODELS_DIR", tmp_path)
+    assert [m["name"] for m in dashboard_app._scan_gguf_models()] == ["a.gguf", "qwen3_8_27b_nvfp4.ninfer"]
+
+
+def test_the_pin_alias_matches_the_gateway_for_both_engines():
+    import dashboard.app as dashboard_app
+    assert dashboard_app._gateway_pin_alias("Qwen3.8-27B-Q6_K.gguf") == "qwen3.8-27b-q6_k"
+    assert dashboard_app._gateway_pin_alias("qwen3_8_27b_nvfp4.ninfer") == "qwen3_8_27b_nvfp4"
+
+
+def test_a_ninfer_artifact_can_be_deleted_but_other_files_cannot(live, tmp_path):
+    (tmp_path / "old.ninfer").write_bytes(b"x")
+    with patch.object(routes_console, "GGUF_DIR", tmp_path):
+        r = live.post("/api/models/delete", json={"file": "old.ninfer"})
+        refused = live.post("/api/models/delete", json={"file": "old.bin"})
+    assert r.status_code == 200, r.text
+    assert refused.status_code == 400

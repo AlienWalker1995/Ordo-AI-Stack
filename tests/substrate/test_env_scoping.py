@@ -47,6 +47,8 @@ GATEWAY_CATALOG = Catalog([dataclasses.replace(m, gateway_drop_tool_strict=True)
                           CATALOG.support_models)
 HW = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": "GPU-aaaa"},
                {"name": "GTX 1070", "vram_gb": 8, "uuid": "GPU-bbbb"}], "ram_gb": 128, "cpu_cores": 32}
+# NInfer needs a Blackwell card (catalog min_compute_cap 12.0).
+NINFER_HW = {**HW, "gpus": [{**HW["gpus"][0], "compute_cap": "12.0"}, HW["gpus"][1]]}
 # The operator's plugin set, so every service renders.
 PLUGINS = ["comfyui", "song-gen", "voice", "rag", "qdrant-rag", "llamacpp-cpu", "open-webui", "automation",
            "searxng-web", "searxng", "codebase-memory-ui", "codebase-memory", "comfyui-mcp", "n8n",
@@ -164,7 +166,13 @@ def test_declared_derived_keys_are_real(rendered):
     for plugin in REGISTRY.plugins:
         for ps in plugin.services:
             declared[(plugin.id, ps.name)] = set(ps.derived_env)
-    known = set(rc.env)
+    # LLAMACPP_VISION renders only for a NInfer model with vision turned on, which the auto-picked
+    # GGUF model cannot be, so that render supplies it.
+    ninfer_vision = render(Source.from_dict({"hardware": NINFER_HW, "model": "qwen3.8-27b-nvfp4-ninfer",
+                                             "plugins": PLUGINS, "site": SITE,
+                                             "overrides": {"llamacpp": {"vision": True}}}),
+                           CATALOG, REGISTRY)
+    known = set(rc.env) | set(ninfer_vision.env)
     for where, names in declared.items():
         assert names <= known, f"{where} declares unknown derived keys {sorted(names - known)}"
 

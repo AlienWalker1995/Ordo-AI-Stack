@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field, StrictBool
 from starlette.middleware.gzip import GZipMiddleware
 
 from dashboard import auth
+from dashboard.console import CHAT_MODEL_SUFFIXES
 from dashboard.routes_auth import router as auth_router
 from dashboard.routes_console import router as console_router
 from dashboard.routes_hub import router as hub_router
@@ -145,11 +146,11 @@ _GGUF_MODELS_DIR = Path(os.environ.get("GGUF_MODELS_DIR", "/gguf-models"))
 
 
 def _scan_gguf_models() -> list[dict]:
-    """Return all .gguf files on disk with their sizes."""
+    """Return every chat model file on disk (.gguf and .ninfer) with its size."""
     models = []
     try:
         for p in sorted(_GGUF_MODELS_DIR.iterdir()):
-            if p.suffix.lower() == ".gguf" and p.is_file():
+            if p.suffix.lower() in CHAT_MODEL_SUFFIXES and p.is_file():
                 st = p.stat()
                 models.append({"name": p.name, "size": st.st_size, "modified_at": int(st.st_mtime)})
     except OSError as e:
@@ -689,7 +690,9 @@ def _gateway_pin_alias(gguf: str | None) -> str | None:
     if not gguf:
         return None
     name = gguf.replace("\\", "/").rsplit("/", 1)[-1].lower()
-    return name.removesuffix(".gguf")
+    for suffix in CHAT_MODEL_SUFFIXES:   # the entrypoint strips .gguf or .ninfer the same way
+        name = name.removesuffix(suffix)
+    return name
 
 
 async def _throughput_active_model() -> dict:

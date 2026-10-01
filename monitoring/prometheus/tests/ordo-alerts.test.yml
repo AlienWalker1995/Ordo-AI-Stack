@@ -11,7 +11,7 @@ tests:
   # Watchdog always fires; nothing else fires on a healthy stack.
   - interval: 1m
     input_series:
-      - series: 'up{job="llamacpp"}'
+      - series: 'ordo_gpu_chat_up'
         values: '1x30'
       - series: 'ordo_gpu_resident_evicted{resident="llamacpp"}'
         values: '0x30'
@@ -124,7 +124,7 @@ tests:
         values: '1x10 0x30'
       - series: 'ordo_gpu_leases_queued'
         values: '0x40'
-      - series: 'up{job="llamacpp"}'
+      - series: 'ordo_gpu_chat_up'
         values: '0x40'
     alert_rule_test:
       - eval_time: 10m
@@ -182,22 +182,40 @@ tests:
                 The scheduler has not completed lease gate-comfyui (media) after its TTL. Check
                 `docker logs ordo-ops-controller-1` for lease sweep errors.
 
-  # llama.cpp down and NOT evicted fires; so does llama.cpp down while ops-controller is unreachable
-  # (no eviction series at all).
+  # The GPU chat service down and NOT evicted fires (no eviction series: ops-controller reports the
+  # probe but nothing is evicted).
   - interval: 1m
     input_series:
-      - series: 'up{job="llamacpp"}'
+      - series: 'ordo_gpu_chat_up'
         values: '0x20'
     alert_rule_test:
       - eval_time: 15m
         alertname: LlamaCppDown
         exp_alerts:
-          - exp_labels: {severity: critical, job: llamacpp}
+          - exp_labels: {severity: critical}
             exp_annotations:
-              summary: llama.cpp (the GPU chat model) is down and not evicted for a GPU lease
+              summary: the GPU chat service is down and not evicted for a GPU lease
               description: >-
-                Prometheus cannot scrape llamacpp:8080 and no GPU lease has evicted it. Read `docker
+                llamacpp:8080/health does not answer 200 and no GPU lease has evicted it. Read `docker
                 logs ordo-llamacpp-1`.
+
+  # NInfer serves no Prometheus /metrics, so the `llamacpp` scrape is down for good while the engine
+  # is healthy: neither LlamaCppDown nor TargetDown may fire.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="llamacpp",instance="llamacpp:8080"}'
+        values: '0x30'
+      - series: 'ordo_gpu_chat_up'
+        values: '1x30'
+      - series: 'ordo_gpu_resident_evicted{resident="llamacpp"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: LlamaCppDown
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: TargetDown
+        exp_alerts: []
 
   # Scrape targets: the GPU exporter's one-scrape timeouts do not fire; 20 minutes down does.
   # llama.cpp is never a TargetDown (LlamaCppDown owns it).

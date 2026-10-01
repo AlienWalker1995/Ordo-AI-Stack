@@ -200,6 +200,8 @@ LLAMACPP_DERIVED_ENV: tuple[str, ...] = (
     "LLAMACPP_OVERRIDE_KV",  # an optional `site:` knob (--override-kv), absent unless set
     # A model's own placement (catalog n_cpu_moe, cpu_threads, load_mode), absent unless it declares one.
     "LLAMACPP_N_CPU_MOE", "LLAMACPP_THREADS", "LLAMACPP_LOAD_MODE",
+    # A ninfer model's vision encoder (catalog vision / overrides.llamacpp.vision), absent unless on.
+    "LLAMACPP_VISION",
 )
 # model-gateway: services/model-gateway/entrypoint.sh, which writes these into the LiteLLM config's
 # model_info (context window, max output, weights names, vision, per-token cost). The CPU and embed
@@ -209,6 +211,7 @@ MODEL_GATEWAY_DERIVED_ENV: tuple[str, ...] = (
     "LLAMACPP_CTX_SIZE", "LLAMACPP_N_PREDICT", "LLAMACPP_CPU_CTX", "LLAMACPP_MODEL",
     "LLAMACPP_CPU_MODEL", "LLAMACPP_EMBED_MODEL", "LLAMACPP_IMAGE", "LLAMACPP_MMPROJ",
     "LOCAL_INPUT_COST_PER_TOKEN", "LOCAL_OUTPUT_COST_PER_TOKEN", "GATEWAY_DROP_TOOL_STRICT",
+    "LLAMACPP_VISION",  # a ninfer model's vision encoder, absent unless on
 )
 
 
@@ -798,6 +801,7 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
                    agent_healthcheck: dict[str, Any] | None = None,
                    dashboard: dict[str, Any] | None = None,
                    llamacpp_image: str | None = None,
+                   chat_backend: str = "llama.cpp",
                    plugin_services: list[tuple[Plugin, PluginService]] | None = None,
                    primary_gpu_uuid: str | None = None,
                    secondary_gpu_uuid: str | None = None,
@@ -828,8 +832,10 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     llamacpp_img = llamacpp_image or llamacpp_backend.image
     uses_cuda = llamacpp_backend.name == "cuda"
     llamacpp = _svc(llamacpp_img, net=net, gpu=uses_cuda)
-    # always-on Prometheus metrics endpoint (the monitoring plugin's prometheus scrapes it).
-    llamacpp["command"] = [LLAMACPP_METRICS_ARG]
+    if chat_backend == "llama.cpp":
+        # always-on Prometheus metrics endpoint (the monitoring plugin's prometheus scrapes it).
+        # NInfer has no Prometheus endpoint; ops-controller's chat probe covers its liveness.
+        llamacpp["command"] = [LLAMACPP_METRICS_ARG]
     # Pin the compute service to the PRIMARY card by uuid (V1 does this in gpu-assignments.yml).
     # Without the CUDA_VISIBLE_DEVICES pin, on a dual-GPU WSL2 box `count: all` lets llama.cpp see
     # the 1070 too — a failure that only surfaces against real dual-GPU hardware. The
@@ -849,7 +855,9 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     # entrypoint + the two bind mounts, the image falls through to its default entrypoint and
     # boots in model-less "router mode" (0 models, no VRAM). GGUF weights + the wrapper are
     # shared-by-path from the V1 tree via ${BASE_PATH} (already rendered into .env), so no copy.
-    llamacpp["entrypoint"] = ["/bin/sh", "/llamacpp-scripts/run-llama-server.sh"]
+    # The model's catalog `backend` picks the launcher: one GPU chat service, whichever engine runs it.
+    launcher = "run-ninfer-serve.sh" if chat_backend == "ninfer" else "run-llama-server.sh"
+    llamacpp["entrypoint"] = ["/bin/sh", f"/llamacpp-scripts/{launcher}"]
     llamacpp["volumes"] = [
         # models-gguf NAMED VOLUME, not the old ${BASE_PATH}/models/gguf 9p bind: on
         # 2026-08-07 the 9p mount began wedging GGUF reads deterministically
