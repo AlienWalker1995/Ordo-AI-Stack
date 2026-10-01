@@ -40,6 +40,11 @@
 #                   vram_gb is its measured footprint including compute buffers
 #   auto: false     pinnable only: `model: auto` never picks it
 # Each is also an `overrides.llamacpp` key (n_cpu_moe, threads, load_mode, n_predict).
+#
+# gateway: how model-gateway (LiteLLM) adapts client requests to this model's server. Unknown keys are
+# a load error.
+#   drop_tool_strict: true   remove `strict` from every tool definition (tools[].function.strict)
+#                            before the request reaches a server that refuses strict tools
 
 version: 1
 

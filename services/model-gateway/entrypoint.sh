@@ -52,6 +52,15 @@ CPU_MODEL_NAME="$(basename "${CPU_WEIGHTS}" .gguf | tr '[:upper:]' '[:lower:]')-
 # Vision support is a fact about the deployment (is an mmproj loaded?), not the template.
 if [ -n "${LLAMACPP_MMPROJ:-}" ]; then GPU_SUPPORTS_VISION=true; else GPU_SUPPORTS_VISION=false; fi
 
+# The chat model's catalog `gateway: {drop_tool_strict: true}` (rendered only for such a model): LiteLLM
+# removes `strict` from every tool definition before the request reaches the GPU chat server, which
+# refuses strict tools. Anything but "true" or unset is a render/manual-edit error: refuse to start.
+case "${GATEWAY_DROP_TOOL_STRICT:-}" in
+  true) GPU_ADDITIONAL_DROP_PARAMS='["tools[*].function.strict"]' ;;
+  "") GPU_ADDITIONAL_DROP_PARAMS='[]' ;;
+  *) echo "GATEWAY_DROP_TOOL_STRICT must be 'true' or unset, not '${GATEWAY_DROP_TOOL_STRICT}'" >&2; exit 1 ;;
+esac
+
 sed -e "s|__CTX_SIZE__|${CTX_SIZE}|g" \
     -e "s|__N_PREDICT__|${N_PREDICT}|g" \
     -e "s|__CPU_CTX_SIZE__|${CPU_CTX_SIZE}|g" \
@@ -62,6 +71,7 @@ sed -e "s|__CTX_SIZE__|${CTX_SIZE}|g" \
     -e "s|__GPU_MODEL_NAME__|${GPU_MODEL_NAME}|g" \
     -e "s|__CPU_MODEL_NAME__|${CPU_MODEL_NAME}|g" \
     -e "s|__GPU_SUPPORTS_VISION__|${GPU_SUPPORTS_VISION}|g" \
+    -e "s|__GPU_ADDITIONAL_DROP_PARAMS__|${GPU_ADDITIONAL_DROP_PARAMS}|g" \
     -e "s|__LOCAL_INPUT_COST_PER_TOKEN__|${LOCAL_INPUT_COST_PER_TOKEN}|g" \
     -e "s|__LOCAL_OUTPUT_COST_PER_TOKEN__|${LOCAL_OUTPUT_COST_PER_TOKEN}|g" /app/config.template.yaml > /tmp/config.yaml
 

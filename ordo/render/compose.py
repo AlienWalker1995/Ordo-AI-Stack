@@ -202,11 +202,12 @@ LLAMACPP_DERIVED_ENV: tuple[str, ...] = (
 )
 # model-gateway: services/model-gateway/entrypoint.sh, which writes these into the LiteLLM config's
 # model_info (context window, max output, weights names, vision, per-token cost). The CPU and embed
-# model names are `site:` knobs, present only when the operator sets them.
+# model names are `site:` knobs, present only when the operator sets them. GATEWAY_DROP_TOOL_STRICT is
+# the chat model's catalog `gateway: {drop_tool_strict: true}`, present only for such a model.
 MODEL_GATEWAY_DERIVED_ENV: tuple[str, ...] = (
     "LLAMACPP_CTX_SIZE", "LLAMACPP_N_PREDICT", "LLAMACPP_CPU_CTX", "LLAMACPP_MODEL",
     "LLAMACPP_CPU_MODEL", "LLAMACPP_EMBED_MODEL", "LLAMACPP_IMAGE", "LLAMACPP_MMPROJ",
-    "LOCAL_INPUT_COST_PER_TOKEN", "LOCAL_OUTPUT_COST_PER_TOKEN",
+    "LOCAL_INPUT_COST_PER_TOKEN", "LOCAL_OUTPUT_COST_PER_TOKEN", "GATEWAY_DROP_TOOL_STRICT",
 )
 
 

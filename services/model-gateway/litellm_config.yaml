@@ -23,6 +23,11 @@ model_list:
       stream_timeout: 1800
       input_cost_per_token: __LOCAL_INPUT_COST_PER_TOKEN__
       output_cost_per_token: __LOCAL_OUTPUT_COST_PER_TOKEN__
+      # Request fields LiteLLM removes before calling the GPU chat server, from the chat model's
+      # catalog `gateway:` options (entrypoint.sh): ["tools[*].function.strict"] for a server that
+      # refuses strict tools (gateway.drop_tool_strict), else []. LiteLLM applies nested paths in
+      # get_optional_params (litellm/utils.py, litellm_core_utils/dot_notation_indexing.py).
+      additional_drop_params: __GPU_ADDITIONAL_DROP_PARAMS__
     model_info:
       # Health probes are not traffic: keep them out of the logging callbacks (Langfuse). Only the
       # health-check path merges health_check_params into the probe request
@@ -65,6 +70,8 @@ model_list:
       stream_timeout: 1800
       input_cost_per_token: __LOCAL_INPUT_COST_PER_TOKEN__
       output_cost_per_token: __LOCAL_OUTPUT_COST_PER_TOKEN__
+      # Same backend as local-chat, same drops.
+      additional_drop_params: __GPU_ADDITIONAL_DROP_PARAMS__
     model_info:
       # Probes skip the logging callbacks; see the local-chat entry.
       health_check_params: {"no-log": true}

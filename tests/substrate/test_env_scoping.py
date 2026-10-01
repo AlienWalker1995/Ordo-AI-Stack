@@ -13,6 +13,7 @@ changing SPEC on purpose.
 """
 from __future__ import annotations
 
+import dataclasses
 import re
 from pathlib import Path
 
@@ -40,6 +41,10 @@ SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.ne
 # A model placement (catalog n_cpu_moe, cpu_threads, load_mode), which the auto-picked model does not
 # declare: set here so its keys render, like the optional `site:` knobs above.
 PLACEMENT = {"n_cpu_moe": 4, "threads": 8, "load_mode": "mmap-lazy"}
+# Every chat model declares `gateway: {drop_tool_strict: true}` here (no catalog model does yet), so the
+# gateway key it renders is present, like the placement above.
+GATEWAY_CATALOG = Catalog([dataclasses.replace(m, gateway_drop_tool_strict=True) for m in CATALOG.models],
+                          CATALOG.support_models)
 HW = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": "GPU-aaaa"},
                {"name": "GTX 1070", "vram_gb": 8, "uuid": "GPU-bbbb"}], "ram_gb": 128, "cpu_cores": 32}
 # The operator's plugin set, so every service renders.
@@ -59,7 +64,8 @@ SPEC: dict[str, set[str]] = {
     # services/model-gateway/entrypoint.sh writes these into LiteLLM's model_info.
     "model-gateway": {"LLAMACPP_CTX_SIZE", "LLAMACPP_N_PREDICT", "LLAMACPP_CPU_CTX", "LLAMACPP_MODEL",
                       "LLAMACPP_IMAGE", "LLAMACPP_MMPROJ", "LOCAL_INPUT_COST_PER_TOKEN",
-                      "LOCAL_OUTPUT_COST_PER_TOKEN", "LLAMACPP_CPU_MODEL", "LLAMACPP_EMBED_MODEL"},
+                      "LOCAL_OUTPUT_COST_PER_TOKEN", "LLAMACPP_CPU_MODEL", "LLAMACPP_EMBED_MODEL",
+                      "GATEWAY_DROP_TOOL_STRICT"},
     # services_catalog.py builds the cards' Open links from the edge hostname / tailnet domain; the
     # console and orchestration routes reach ComfyUI through its gate.
     "dashboard": {"CADDY_TAILNET_HOSTNAME", "CADDY_TAILNET_DOMAIN", "TAILNET_NAMES_ENABLED", "COMFYUI_URL"},
@@ -85,7 +91,7 @@ SPEC: dict[str, set[str]] = {
 def rendered():
     rc = render(Source.from_dict({"hardware": HW, "model": "auto", "plugins": PLUGINS, "site": SITE,
                                   "overrides": {"llamacpp": PLACEMENT}}),
-                CATALOG, REGISTRY)
+                GATEWAY_CATALOG, REGISTRY)
     return rc, rc.compose_dict()["services"]
 
 

@@ -867,6 +867,11 @@ def render(source: Source, catalog: Catalog,
     # The image the chat service runs, always explicit: compose reads it from here, and
     # model-gateway advertises it (served_by), so both name the build that is actually running.
     env["LLAMACPP_IMAGE"] = str(lc["image"])
+    # The chat model's `gateway:` options, rendered only when set so every other model renders the
+    # .env (and model-gateway config hash) it did before. model-gateway's entrypoint turns it into
+    # LiteLLM's additional_drop_params on the GPU chat entries (local-chat and its pin alias).
+    if model.gateway_drop_tool_strict:
+        env["GATEWAY_DROP_TOOL_STRICT"] = "true"
     # Electricity-derived per-token cost for every local model (local-chat, the GPU/CPU pins,
     # local-embed): see local_token_costs. Empty `cost:` -> "0"/"0" (unchanged $0 default).
     input_cost_per_token, output_cost_per_token = local_token_costs(source.cost)
