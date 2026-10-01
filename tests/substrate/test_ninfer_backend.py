@@ -159,3 +159,19 @@ def test_heretic_vision_keeps_the_full_window():
     rc = _render(HERETIC, overrides={"llamacpp": {"vision": True}})
     assert rc.env["LLAMACPP_VISION"] == "1"
     assert rc.ctx_size == 262144
+
+
+HERETIC_NVFP4 = "qwen3.8-27b-heretic-ara-nvfp4-ninfer"
+
+
+def test_the_heretic_nvfp4_entry_serves_on_the_same_ninfer_service():
+    rc = _render(HERETIC_NVFP4)
+    llamacpp = rc.compose_dict()["services"]["llamacpp"]
+    assert llamacpp["entrypoint"] == ["/bin/sh", "/llamacpp-scripts/run-ninfer-serve.sh"]
+    assert rc.env["LLAMACPP_MODEL"] == "qwen3_8_27b_heretic_ara_nvfp4.ninfer"
+    assert rc.ctx_size == 262144
+    assert rc.env["GATEWAY_DROP_TOOL_STRICT"] == "true"
+    # the official NVFP4 footprint, beside the embedder's reserve
+    assert rc.resident_vram_gb() == pytest.approx(29.35, abs=0.05)
+    # the groupwise build stays as the rollback
+    assert _render(HERETIC).env["LLAMACPP_MODEL"] == "qwen3_8_27b_heretic_ara.ninfer"

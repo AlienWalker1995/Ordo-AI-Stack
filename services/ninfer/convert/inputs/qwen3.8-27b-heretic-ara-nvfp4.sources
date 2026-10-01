@@ -1,0 +1,24 @@
+# Inputs of the qwen3.8-27b-heretic-ara-nvfp4 conversion, each pinned by repository revision and
+# sha256. Columns: sha256, local path (under the work directory), source. run.sh fetches every line
+# and refuses to convert unless all of them match. A source "inputs:<file>" is a tracked file here.
+#
+# catplusplus/Qwen3.8-27B-heretic-ara-NVFP4-MTP (Apache-2.0): a Heretic ARA abliteration of
+# Qwen3.8-27B (its card names coder3101/Qwen3.8-27B-heretic-ara) quantized with llm-compressor in
+# the exact layout of unsloth/Qwen3.8-27B-NVFP4, the official NVFP4 recipe's quantized source: NVFP4
+# MLP in layers 0-55, FP8 rows for attention, GDN, layers 56-63 MLP and the output head. Embedding,
+# norms and Vision are BF16. It serves as both the base (--model) and the quantized source.
+# MTP head: model_mtp.safetensors, which the card says was copied from unsloth/Qwen3.8-27B-NVFP4. Its
+# bytes equal heretic-org/Qwen3.8-27B-heretic-ara's model-auxiliary.safetensors (same sha256).
+444975eb8058fd24c43a3fbfd541fd4e2ec51a2f6c677dcaec9ce2a27e58e1fd model/config.json https://huggingface.co/catplusplus/Qwen3.8-27B-heretic-ara-NVFP4-MTP/resolve/3065e616dd08276bc601f9d9a5e86d7ef5aad316/config.json
+96f078fc4d38c36e620699962eeabf5db74dd9d03923d0438750a0ed529dd1a3 model/model.safetensors https://huggingface.co/catplusplus/Qwen3.8-27B-heretic-ara-NVFP4-MTP/resolve/3065e616dd08276bc601f9d9a5e86d7ef5aad316/model.safetensors
+1d8268aa85ace093a561e3e7b63b9d390dac1cd55a90cd55b5ec509c3c9da9fe model/model_mtp.safetensors https://huggingface.co/catplusplus/Qwen3.8-27B-heretic-ara-NVFP4-MTP/resolve/3065e616dd08276bc601f9d9a5e86d7ef5aad316/model_mtp.safetensors
+# The repository ships no tensor index, and the converter reads a second file only through one; this
+# index is generated from the two headers above and tracked beside this file.
+271409509cb69b4b9610c0b4df72d1f69b6cf54a39d844115b75fbaa4d90b067 model/model.safetensors.index.json inputs:qwen3.8-27b-heretic-ara-nvfp4.index.json
+#
+# Frontend: the official Qwen/Qwen3.8-27B resources, as in the official NInfer artifacts.
+0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3 frontend/tokenizer.json https://huggingface.co/Qwen/Qwen3.8-27B/resolve/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/tokenizer.json
+b11349aafa7cdc6a320767cf7ceb29ed82f7eda5d65e8e0819e76f0ce947bf27 frontend/tokenizer_config.json https://huggingface.co/Qwen/Qwen3.8-27B/resolve/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/tokenizer_config.json
+e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e frontend/generation_config.json https://huggingface.co/Qwen/Qwen3.8-27B/resolve/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/generation_config.json
+27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516 frontend/preprocessor_config.json https://huggingface.co/Qwen/Qwen3.8-27B/resolve/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/preprocessor_config.json
+7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13 frontend/video_preprocessor_config.json https://huggingface.co/Qwen/Qwen3.8-27B/resolve/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/video_preprocessor_config.json
