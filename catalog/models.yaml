@@ -289,6 +289,15 @@ support_models:
     sha256: ac0e2c1189e055faa36eff361580e79c5bd6f8e76bffb4ce547f167d53e31a61
     size_bytes: 22134528992
     requires: { vram_gb: 0, ram_gb: 24, cpu_ok: true }
+    # The fallback serves the chat model's whole window (LLAMACPP_CPU_CTX = LLAMACPP_CTX_SIZE), so the
+    # render checks that window against these two and refuses one the fallback cannot hold.
+    # ctx_default: the window it was trained for (qwen35moe.context_length in the GGUF header).
+    ctx_default: 262144
+    # Hybrid attention (qwen35moe): only every 4th of the 40 blocks is full attention, with 2 KV heads of
+    # 256 for K and V. At q8_0 (34 bytes per 32 values): 10 * 2 * 512 * 34 / 32 = 10,880 bytes per token,
+    # 1.08GiB at 106,496 tokens and 2.66GiB at 262,144. The 30 linear-attention blocks add ~63MiB of
+    # recurrent state that does not grow with the window. Measured beside it: 24.5GiB resident at 106,496.
+    kv_kb_per_token: 10.625
 
   - id: nomic-embed-text-v1.5-q4
     name: nomic-embed-text v1.5 (Q4_K_M), embeddings

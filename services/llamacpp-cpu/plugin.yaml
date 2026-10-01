@@ -47,9 +47,10 @@ services:
       # No fallback: a missing key fails the compose call instead of serving a disagreeing window.
       # This value is NOT how much a client fills (Hermes compacts far earlier); it's the model
       # window. Undersizing it bites live: a 38k-token turn 503'd against a 32k ctx ("exceeds
-      # available context size"). Cost is near-zero: ctx-size sets the KV *allocation* (~6-7GB at
-      # q8, trivial vs 117GB RAM), NOT per-request work — llama.cpp prefills only the actual
-      # tokens sent, so a bigger window adds no latency to normal turns.
+      # available context size"). ctx-size sets the KV *allocation* (1.08GiB at 106,496 tokens,
+      # 2.66GiB at 262,144, q8_0), NOT per-request work: llama.cpp prefills only the tokens sent.
+      # The render refuses a window larger than this model's trained window (262,144) and shows
+      # the KV cost in `ordo doctor`; see docs/configuration.md "CPU fallback context window".
       - --ctx-size
       - "${LLAMACPP_CPU_CTX?LLAMACPP_CPU_CTX is missing from the rendered .env}"
       - --parallel

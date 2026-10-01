@@ -49,7 +49,7 @@ def collect_bundle(source: Source, catalog: Catalog,
         "hardware": rc.hardware.summary(),
         "sizing": {
             "tier": rc.tier, "model": rc.model.id,
-            "ctx_size": rc.ctx_size, "warnings": rc.warnings,
+            "ctx_size": rc.ctx_size, "cpu_fallback": rc.cpu_fallback, "warnings": rc.warnings,
         },
         "plugins_enabled": rc.plugins_enabled,
         "compose_profiles": rc.compose_profiles,
@@ -59,6 +59,24 @@ def collect_bundle(source: Source, catalog: Catalog,
             "unpinned_sha256": [m.id for m in catalog.models if not m.sha256],
         },
     }
+
+
+def window_line(rc: Any) -> str:
+    """The chat window and the CPU fallback's, which the render keeps equal, with what the fallback's
+    window costs in RAM (ordo/render/engine.py _cpu_fallback_window)."""
+    fallback = rc.cpu_fallback
+    if fallback is None:
+        return f"windows : chat {rc.ctx_size:,}; cpu-fallback not rendered"
+    if fallback["model"] is None:
+        return (f"windows : chat {rc.ctx_size:,}; cpu-fallback {fallback['ctx_size']:,} "
+                f"({fallback['file']} is not in the catalog: unchecked)")
+    cost = []
+    if fallback["kv_gb"] is not None:
+        cost.append(f"KV {fallback['kv_gb']:.1f} GiB")
+    if fallback["weights_gb"] is not None:
+        cost.append(f"weights {fallback['weights_gb']:.1f} GiB")
+    detail = f"trained {fallback['trained_ctx']:,}" + (f"; {' + '.join(cost)}" if cost else "")
+    return f"windows : chat {rc.ctx_size:,}; cpu-fallback {fallback['ctx_size']:,} ({detail})"
 
 
 def write_bundle(bundle: dict[str, Any], path: str | Path) -> Path:

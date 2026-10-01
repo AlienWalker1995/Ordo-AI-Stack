@@ -250,6 +250,28 @@ overrides:
 - The GPU chat service (`llamacpp`) is not affected.
 - `ordo doctor` prints the declared value next to what the running container has, and flags a mismatch (for example a hand `docker update --cpus`, which leaves no trace in the config hash). Apply a change with `ordo apply --only llamacpp-cpu`.
 
+### CPU fallback context window
+
+There is one chat window. The GPU backend (`LLAMACPP_CTX_SIZE`), the CPU fallback (`LLAMACPP_CPU_CTX`), Hermes (its `context_length`, and so its compaction trigger) and model-gateway (`max_input_tokens` of `local-chat` and of the CPU deployment) all read the same resolved value. The fallback serves `local-chat` while a render holds the GPU, so a smaller fallback window would reject long conversations exactly then; with one window, a conversation Hermes has not compacted fits wherever it is routed.
+
+The render proves the fallback can serve that window instead of assuming it:
+
+- The fallback's catalog entry (`support_models`, `qwen3.6-35b-a3b-cpu-q4`) declares its trained window (`ctx_default: 262144`, from the GGUF header) and its KV rate (`kv_kb_per_token: 10.625`: 10 full-attention layers x 2 KV heads x 256, q8_0).
+- A chat window larger than the fallback's trained window is a render error that names both windows and the fix (`overrides.llamacpp.ctx_size` at or below the fallback's window, or disable `llamacpp-cpu`). It is never served by a silently smaller fallback.
+- Weights named by a `site: LLAMACPP_CPU_MODEL` that the catalog does not list render with a warning: their window is unchecked.
+- `out/manifest.json` (`cpu_fallback`) and `ordo doctor` (`windows :` line) show both windows and what the window costs the fallback in RAM.
+
+What a window costs the fallback (q8_0 KV, ~63 MiB of recurrent state on top, constant):
+
+| Window | KV | Weights | Measured resident |
+|---|---|---|---|
+| 106,496 | 1.08 GiB | 20.61 GiB | 24.5 GiB |
+| 262,144 | 2.66 GiB | 20.61 GiB | ~26.3 GiB (estimate: +1.58 GiB KV, +0.15 GiB attention mask) |
+
+On the reference host (Docker VM 102 GiB, ~61 GiB available with the fallback already resident at 106,496) the 262,144 window costs about 1.7 GiB more, so the fallback runs at the full window.
+
+The window is an allocation, not per-request work: llama.cpp prefills only the tokens sent. A cold failover still has to prefill the whole conversation on CPU, measured at about 25 tokens/s, so a conversation much past ~45k tokens does not finish its first fallback turn inside the gateway's 1800 s timeout. That timeout is a visible error, not a truncation; it is a property of CPU prefill, not of the window.
+
 ## Served Models
 
 ops-controller derives what the stack serves from the current render (`ordo.yaml`, the model

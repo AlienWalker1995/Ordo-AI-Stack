@@ -95,6 +95,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"detected: {bundle['hardware']}")
     print(f"sizing  : tier={bundle['sizing']['tier']} model={bundle['sizing']['model']} "
           f"ctx={bundle['sizing']['ctx_size']:,}")
+    print(doctor.window_line(rc))
     unpinned = bundle["catalog"]["unpinned_sha256"]
     if unpinned:
         print(f"! {len(unpinned)} catalog model(s) have no sha256 (download refuses unless "
