@@ -33,6 +33,11 @@ LOAD_MODES = ("none", "mmap-lazy")
 # LLAMACPP_MMPROJ=<this>/<file>.
 CHAT_MODELS_MOUNT = "/models"
 
+# The keys a model's `gateway:` mapping may set: how model-gateway (LiteLLM) adapts client requests to
+# this model's server. drop_tool_strict: remove `strict` from every tool definition before the request
+# reaches the backend, for a server that refuses strict tools (NInfer answers 400).
+GATEWAY_KEYS = ("drop_tool_strict",)
+
 
 @dataclasses.dataclass(frozen=True)
 class Model:
@@ -84,6 +89,9 @@ class Model:
     # False = pinnable only: `model: auto` never picks it (a restrictive license, or a placement that
     # needs a deliberate choice). A pinned `model:` or a model switch still selects it.
     auto: bool = True
+    # `gateway: {drop_tool_strict: true}`: model-gateway strips tools[].function.strict from requests to
+    # this model (rendered as GATEWAY_DROP_TOOL_STRICT, see services/model-gateway/entrypoint.sh).
+    gateway_drop_tool_strict: bool = False
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Model:
@@ -106,6 +114,7 @@ class Model:
         if n_cpu_moe and not cpu_threads:
             raise ValueError(f"{model_id}: a model with offloaded experts (n_cpu_moe) must set cpu_threads, "
                              "the CPU load it adds")
+        gateway = _gateway_options(model_id, d.get("gateway"))
         return cls(
             id=model_id, name=str(d.get("name", d["id"])),
             backend=str(d.get("backend", "llama.cpp")), file=str(d.get("file", "")),
@@ -124,6 +133,7 @@ class Model:
             n_predict=(int(d["n_predict"]) if d.get("n_predict") else None),
             vram_reserve_gb=(float(d["vram_reserve_gb"]) if d.get("vram_reserve_gb") is not None else None),
             auto=bool(d.get("auto", True)),
+            gateway_drop_tool_strict=gateway.get("drop_tool_strict", False),
         )
 
     def reserve_gb(self, default: float) -> float:
@@ -132,6 +142,23 @@ class Model:
 
     def _rank(self) -> tuple[int, float]:
         return (TIER_ORDER.index(self.tier) if self.tier in TIER_ORDER else -1, self.vram_gb)
+
+
+def _gateway_options(model_id: str, spec: Any) -> dict[str, bool]:
+    """A model's `gateway:` mapping, validated. Every key is a boolean from GATEWAY_KEYS; an unknown key
+    or a non-boolean value is an error rather than a silently ignored setting."""
+    if spec is None:
+        return {}
+    if not isinstance(spec, dict):
+        raise ValueError(f"{model_id}: gateway must be a mapping of {', '.join(GATEWAY_KEYS)}")
+    unknown = sorted(set(spec) - set(GATEWAY_KEYS))
+    if unknown:
+        raise ValueError(f"{model_id}: unknown gateway key(s) {', '.join(map(str, unknown))}; "
+                         f"supported: {', '.join(GATEWAY_KEYS)}")
+    for key, value in spec.items():
+        if not isinstance(value, bool):
+            raise ValueError(f"{model_id}: gateway.{key} must be true or false, not {value!r}")
+    return dict(spec)
 
 
 def _projector(model_id: str, model_name: str, spec: dict[str, Any]) -> Model:
