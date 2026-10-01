@@ -1,0 +1,30 @@
+# Converter arguments for qwen3.8-27b-heretic-ara-nvfp4 (python -m tools.convert, one per line).
+# Upstream's official NVFP4 recipe: NVFP4/FP8 words imported without requantization, the BF16 token
+# embedding encoded as FP8 rows. Text, Vision and MTP, plus the indexed proposal head. No DFlash2.
+--model
+/work/model
+--recipe
+qwen3_8_27b_nvfp4
+--source
+quantized=/work/model
+--components
+text,vision,mtp
+--proposal
+--resource
+tokenizer.json=/work/frontend/tokenizer.json
+--resource
+tokenizer_config.json=/work/frontend/tokenizer_config.json
+--resource
+generation_config.json=/work/frontend/generation_config.json
+--resource
+chat_template.jinja=/ninfer/tools/chat_templates/qwen3_8.jinja
+--resource
+preprocessor_config.json=/work/frontend/preprocessor_config.json
+--resource
+video_preprocessor_config.json=/work/frontend/video_preprocessor_config.json
+--name
+qwen3.8-27b-heretic-ara
+--device
+cpu
+--out
+/out/qwen3_8_27b_heretic_ara_nvfp4.ninfer

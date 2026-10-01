@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 CONVERT = ROOT / "services" / "ninfer" / "convert"
 HERETIC = "qwen3.8-27b-heretic-ara-ninfer"
+HERETIC_NVFP4 = "qwen3.8-27b-heretic-ara-nvfp4-ninfer"
 
 DATA = b"converted weights"
 DATA_SHA = hashlib.sha256(DATA).hexdigest()
@@ -91,7 +92,7 @@ def test_a_recipe_name_cannot_leave_the_recipe_directory():
 
 def test_every_built_catalog_entry_has_a_complete_pinned_recipe():
     built = [m for m in CATALOG.models if m.build]
-    assert [m.id for m in built] == [HERETIC]
+    assert [m.id for m in built] == [HERETIC, HERETIC_NVFP4]
     for model in built:
         sources = CONVERT / "inputs" / f"{model.build}.sources"
         args = CONVERT / "inputs" / f"{model.build}.args"
@@ -101,6 +102,11 @@ def test_every_built_catalog_entry_has_a_complete_pinned_recipe():
         assert lines, model.id
         for sha, path, url in lines:
             assert re.fullmatch(r"[0-9a-f]{64}", sha), path
+            if url.startswith("inputs:"):
+                # a file tracked beside the recipe: it must exist and hash to its pin
+                tracked = CONVERT / "inputs" / url.removeprefix("inputs:")
+                assert hashlib.sha256(tracked.read_bytes()).hexdigest() == sha, url
+                continue
             # pinned by revision: a full commit sha in the URL, never a branch
             assert url.startswith("https://") and re.search(r"/resolve/[0-9a-f]{40}/", url), url
         argv = [line for line in args.read_text().splitlines() if line and not line.startswith("#")]

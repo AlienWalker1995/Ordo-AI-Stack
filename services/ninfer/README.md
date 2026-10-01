@@ -63,8 +63,9 @@ size_bytes in the catalog before installing it.
 | Artifact | Source | Recipe | Notes |
 |---|---|---|---|
 | `qwen3.8-27b-heretic-ara` | `heretic-org/Qwen3.8-27B-heretic-ara` | `qwen3_8_27b` (groupwise-int) | Text, Vision, MTP and the proposal head; official `Qwen/Qwen3.8-27B` frontend. |
+| `qwen3.8-27b-heretic-ara-nvfp4` | `catplusplus/Qwen3.8-27B-heretic-ara-NVFP4-MTP` (base and `quantized`) | `qwen3_8_27b_nvfp4` | Same components and frontend; its MTP head is unsloth's, byte-identical to heretic-org's. A tensor index generated from the two pinned headers is tracked in `inputs/`. |
 
-Why groupwise-int and not NVFP4 for the Heretic weights: upstream's NVFP4 recipe imports
+Why the first Heretic build was groupwise-int: upstream's NVFP4 recipe imports
 pre-quantized NVFP4/FP8 weights (`--source quantized`, compressed-tensors in the mixed layout of
 `unsloth/Qwen3.8-27B-NVFP4`), and no such quantization of these weights exists. The published
 Heretic `.ninfer` files do not load on this engine: both are v2 files, which it refuses, and

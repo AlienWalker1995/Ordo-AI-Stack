@@ -34,8 +34,17 @@ grep -v '^#' "$sources" | grep -v '^[[:space:]]*$' | while read -r sha path url;
         continue
     fi
     mkdir -p "$(dirname "$target")"
-    echo "downloading $path"
-    curl -fL --retry 10 --retry-delay 10 --retry-all-errors -C - -o "$target.part" "$url"
+    case "$url" in
+        inputs:*)
+            # a file tracked beside the recipe (e.g. a tensor index generated from pinned headers)
+            echo "copying $path"
+            cp "$here/inputs/${url#inputs:}" "$target.part"
+            ;;
+        *)
+            echo "downloading $path"
+            curl -fL --retry 10 --retry-delay 10 --retry-all-errors -C - -o "$target.part" "$url"
+            ;;
+    esac
     if ! echo "$sha  $target.part" | sha256sum -c --quiet -; then
         echo "checksum mismatch for $path: the download was deleted" >&2
         rm -f "$target.part"
