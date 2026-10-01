@@ -42,3 +42,6 @@ assets/* text eol=lf
 # The patched llama.cpp Dockerfile carries a python heredoc (PATCH 1) that is fed verbatim to the
 # Linux builder; keep the whole build context LF so a Windows checkout cannot alter what it runs.
 services/llamacpp-patched/** text eol=lf
+
+# The NInfer Dockerfile is fed to a Linux builder; keep its context LF like the patched llama.cpp one.
+services/ninfer/** text eol=lf

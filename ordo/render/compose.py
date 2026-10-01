@@ -52,8 +52,8 @@ CORE_BACKUP: dict[str, str] = {
 }
 
 # Build contexts for the SUBSTRATE images: the project images with NO manifest (`_model_gateway`,
-# `_ops_controller`, the gpu-gate, and the patched llama.cpp build a model's catalog `backend_image`
-# names). Manifest services (plugins/agents/dashboards) declare their own context via `build:` in
+# `_ops_controller`, the gpu-gate, and the engine builds a model's catalog `backend_image` names: the
+# patched llama.cpp build and NInfer). Manifest services (plugins/agents/dashboards) declare their own context via `build:` in
 # the manifest; only these need to be declared here. `buildspec.py` reads this to give preflight +
 # the substrate test a single image→context resolver, so a rename/typo fails CI, not deploy. Keyed
 # by the image name under the project namespace. This is build METADATA, never rendered into compose.
@@ -61,6 +61,7 @@ SUBSTRATE_BUILD_CONTEXTS: dict[str, str] = {
     "model-gateway": "services/model-gateway",
     "ops-controller": "services/ops-controller",
     "llamacpp-patched": "services/llamacpp-patched",
+    "ninfer": "services/ninfer",
     # The generic GPU admission gate. Rendered as a companion service for any manifest service
     # declaring `gpu_arbitration.enforcement: gate` (see _gpu_gate below) — derived from the
     # declaration rather than declared per-plugin, so a second gated service needs no new image
@@ -68,9 +69,9 @@ SUBSTRATE_BUILD_CONTEXTS: dict[str, str] = {
     "gpu-gate": "services/gpu-gate",
 }
 # The substrate images `ordo build` builds and render tags. Each is declared UNTAGGED (by compose.py,
-# or for llamacpp-patched by a model's catalog `backend_image`): render fills in the tag `ordo build`
-# recorded (ordo/render/image_tags.py).
-SUBSTRATE_IMAGES: tuple[str, ...] = ("model-gateway", "ops-controller", "gpu-gate", "llamacpp-patched")
+# or for llamacpp-patched and ninfer by a model's catalog `backend_image`): render fills in the tag
+# `ordo build` recorded (ordo/render/image_tags.py).
+SUBSTRATE_IMAGES: tuple[str, ...] = ("model-gateway", "ops-controller", "gpu-gate", "llamacpp-patched", "ninfer")
 
 # --metrics turns on llama-server's native Prometheus endpoint at /metrics:8080 (token rates,
 # queue depth). Always-on — it's cheap, and the monitoring plugin's prometheus scrapes it.

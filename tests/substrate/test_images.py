@@ -236,7 +236,8 @@ def test_dry_run_builds_and_records_nothing(tmp_path):
 
 def test_first_party_set_covers_the_substrate_and_manifest_builds():
     for ident in ("ordo/ops-controller", "ordo/model-gateway", "ordo/gpu-gate", "ordo/dashboard",
-                  "ordo/agent-hermes", "ordo/rag-ingestion", "ordo/n8n-mcp", "ordo/llamacpp-patched"):
+                  "ordo/agent-hermes", "ordo/rag-ingestion", "ordo/n8n-mcp", "ordo/llamacpp-patched",
+                  "ordo/ninfer"):
         assert ident in FIRST_PARTY, ident
 
 
@@ -290,6 +291,49 @@ def _upstream_images() -> dict[str, str]:
 def test_every_upstream_image_is_pinned_by_tag_and_digest():
     unpinned = {where: ref for where, ref in _upstream_images().items() if not _is_digest_pinned(ref)}
     assert not unpinned, unpinned
+
+
+# A Dockerfile `FROM` line: the image, then an optional `AS <stage>`. Matched case-sensitively, so a
+# python heredoc's `from x import y` is not one.
+_FROM_LINE = re.compile(r"^FROM\s+(?:--platform=\S+\s+)?(?P<image>\S+)(?:\s+AS\s+(?P<stage>\S+))?", re.M)
+
+
+def _base_images(dockerfile: str) -> list[str]:
+    """The registry images a Dockerfile builds from: every FROM that names no earlier stage."""
+    stages: set[str] = set()
+    bases = []
+    for match in _FROM_LINE.finditer(dockerfile):
+        if match.group("image") not in stages and match.group("image") != "scratch":
+            bases.append(match.group("image"))
+        if match.group("stage"):
+            stages.add(match.group("stage"))
+    return bases
+
+
+def test_every_first_party_build_pins_its_base_images_by_digest():
+    """A first-party image is only as reproducible as what it builds FROM: a base on a tag alone (an
+    upstream Dockerfile's `nvidia/cuda:13.1.2-devel`) changes under the same `ordo build` tag."""
+    unpinned = {}
+    for image, context in sorted(FIRST_PARTY.items()):
+        dockerfile = (ROOT / context / "Dockerfile").read_text(encoding="utf-8")
+        bases = _base_images(dockerfile)
+        assert bases, f"{context}/Dockerfile has no FROM line"
+        bad = [ref for ref in bases if not _DIGEST_PINNED.match(ref) or ref.endswith(":latest")]
+        if bad:
+            unpinned[image] = bad
+    assert not unpinned, unpinned
+
+
+def test_base_image_collector_skips_build_stages_and_heredocs():
+    dockerfile = "\n".join([
+        "FROM nvidia/cuda@sha256:" + "a" * 64 + " AS build",
+        "RUN python3 - <<'PYEOF'",
+        "from x import y",
+        "PYEOF",
+        "FROM build AS again",
+        "FROM nvidia/cuda:13.0.2-runtime",
+    ])
+    assert _base_images(dockerfile) == ["nvidia/cuda@sha256:" + "a" * 64, "nvidia/cuda:13.0.2-runtime"]
 
 
 def test_the_upstream_image_set_includes_the_edge_images():
@@ -560,3 +604,58 @@ def test_every_catalog_backend_image_is_a_first_party_build():
     for model_id, ref in special.items():
         assert not image_tags.has_tag(ref), f"{model_id}: {ref} carries its own tag; render owns it"
         assert ref in FIRST_PARTY, f"{model_id}: {ref} is not an image `ordo build` manages"
+
+
+# --- the NInfer engine build (services/ninfer) ---
+
+NINFER_DOCKERFILE = (ROOT / "services" / "ninfer" / "Dockerfile").read_text(encoding="utf-8")
+
+
+def test_ordo_build_ninfer_names_the_engine_image_the_stack_does_not_run_yet():
+    """`ordo build ninfer` builds the engine before a model switch selects it: the compose does not run it
+    yet, so the name resolves to the first-party image, not to a rendered service."""
+    assert "ordo/ninfer" not in images.select_images(COMPOSE, FIRST_PARTY, None)
+    assert images.select_images(COMPOSE, FIRST_PARTY, ["ninfer"]) == ["ordo/ninfer"]
+    assert images.select_images(COMPOSE, FIRST_PARTY, ["ordo/ninfer"]) == ["ordo/ninfer"]
+    target = images.build_target("ordo/ninfer", FIRST_PARTY["ordo/ninfer"], ROOT)
+    assert (target.context, target.dockerfile, target.inputs) == (
+        "services/ninfer", "services/ninfer/Dockerfile", ("services/ninfer",))
+
+
+def test_ordo_build_ninfer_tags_the_commit_and_records_it(tmp_path):
+    target = images.build_target("ordo/ninfer", FIRST_PARTY["ordo/ninfer"], ROOT)
+    docker = FakeDocker()
+    assert images.build_images([target], git=FakeGit({target.inputs: SHA}), docker=docker, out_dir=tmp_path) == 0
+    assert [ref for ref, *_ in docker.builds] == ["ordo/ninfer:0123456789ab"]
+    assert docker.tags == [("ordo/ninfer:0123456789ab", "ordo/ninfer:current")]
+    assert images.load_record(tmp_path) == {"ordo/ninfer": "0123456789ab"}
+
+
+def test_an_untagged_ninfer_backend_image_is_pinned_to_its_record_never_latest():
+    services = {"llamacpp": {"image": "ordo/ninfer"}}
+    image_tags.pin_first_party(services, FIRST_PARTY, {})
+    assert services["llamacpp"]["image"] == "ordo/ninfer:current"
+    services = {"llamacpp": {"image": "ordo/ninfer"}}
+    image_tags.pin_first_party(services, FIRST_PARTY, {"ordo/ninfer": "0123456789ab"})
+    assert services["llamacpp"]["image"] == "ordo/ninfer:0123456789ab"
+
+
+def test_ninfer_is_fetched_by_its_full_commit_and_verified():
+    commit = re.search(r"^ARG NINFER_COMMIT=(\S+)$", NINFER_DOCKERFILE, re.M).group(1)
+    assert re.fullmatch(r"[0-9a-f]{40}", commit), commit
+    assert 'git fetch -q --depth 1 origin "${NINFER_COMMIT}"' in NINFER_DOCKERFILE
+    assert 'test "$(git rev-parse HEAD)" = "${NINFER_COMMIT}"' in NINFER_DOCKERFILE
+    assert "COPY . ." not in NINFER_DOCKERFILE
+
+
+def test_ninfer_bases_stay_within_the_host_driver_cuda_ceiling():
+    """The host driver stays on the 581.x branch, which runs CUDA 13.0 at most; NInfer validates 13.1,
+    so a bump to upstream's base would build and then fail to start. Both stages share one toolkit."""
+    tags = [ref.split("@", 1)[0] for ref in _base_images(NINFER_DOCKERFILE)]
+    assert tags == ["nvidia/cuda:13.0.2-devel-ubuntu24.04", "nvidia/cuda:13.0.2-runtime-ubuntu24.04"]
+
+
+def test_ninfer_compile_is_capped_and_targets_sm120a():
+    assert re.search(r"^ARG NINFER_BUILD_JOBS=\d+$", NINFER_DOCKERFILE, re.M)
+    assert '--parallel "${NINFER_BUILD_JOBS}"' in NINFER_DOCKERFILE
+    assert "-DCMAKE_CUDA_ARCHITECTURES=120a" in NINFER_DOCKERFILE

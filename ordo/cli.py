@@ -192,7 +192,8 @@ def main(argv: list[str] | None = None) -> int:
     # `build`: first-party images, tagged with the commit that last changed each image's inputs and
     # recorded in <out>/images.json, which every render pins the compose to (ordo/render/image_tags.py).
     pb = sub.add_parser("build", help="build the first-party images the rendered stack runs")
-    pb.add_argument("services", nargs="*", metavar="SERVICE", help="build only these services' images")
+    pb.add_argument("services", nargs="*", metavar="SERVICE",
+                    help="build only these services' images, or a first-party image by name (e.g. ninfer)")
     pb.add_argument("--all", action="store_true", help="every first-party image the rendered compose names")
     pb.add_argument("--out", default="out", help="the rendered stack directory (default: out)")
     pb.add_argument("--project", default="ordo", help="compose project name (default: ordo)")
