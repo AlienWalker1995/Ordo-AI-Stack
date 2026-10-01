@@ -60,7 +60,9 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
                       history=history,
                       model_volume_files=lambda: volume_files(DockerRunner(), args.project),
                       disk_paths={DOCKER_DISK: "/", HOST_DISK: str(args.out)},
-                      tls_cert_files={"edge": edge_cert} if edge_cert else {})
+                      tls_cert_files={"edge": edge_cert} if edge_cert else {},
+                      # The GPU chat service's liveness, whichever engine runs it (metrics.py).
+                      chat_health_url="http://llamacpp:8080/health" if hw.has_gpu else None)
 
     # Resident registration from the render, then the previous process's lease state adopted BEFORE
     # the lease loop or the API run (a lease held across this restart keeps its resident evicted,

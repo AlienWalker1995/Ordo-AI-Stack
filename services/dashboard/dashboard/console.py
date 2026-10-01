@@ -339,8 +339,14 @@ def merge_activity(leases: list[dict], audit: list[dict], renders: list[dict], l
 # models
 # ---------------------------------------------------------------------------------------------
 
+# The model files the GPU chat service can load: llama.cpp GGUFs and NInfer artifacts. One list, so the
+# disk scan, the gateway pin alias and the delete guard agree.
+CHAT_MODEL_SUFFIXES = (".gguf", ".ninfer")
+
+
 def served_file(v1_models: dict | None) -> str | None:
-    """The file a llama-server actually loaded, from its /v1/models (id is the model path)."""
+    """The file the GPU chat server actually loaded, from its /v1/models: llama.cpp's id is the model
+    path, NInfer's is the artifact file (its --model-id, run-ninfer-serve.sh)."""
     data = (v1_models or {}).get("data") or []
     if not data or not data[0].get("id"):
         return None

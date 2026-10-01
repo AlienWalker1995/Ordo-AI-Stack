@@ -102,6 +102,7 @@ class ControlPlane:
         model_volume_files: Callable[[], set[str] | None] | None = None,
         disk_paths: dict[str, str] | None = None,
         tls_cert_files: dict[str, str] | None = None,
+        chat_health_url: str | None = None,
     ):
         # The source and out/, and what this process renders them with. `model_volume_files` lists
         # the file names in the models volume (None: it could not be listed); None = no volume to
@@ -133,7 +134,8 @@ class ControlPlane:
         # What GET /metrics reports beyond the scheduler and the containers: {mount label: a path on
         # that filesystem} and {cert name: a PEM file}. Empty = not reported (ordo/control/serve.py
         # wires the real ones).
-        self.metrics = prom.MetricsCollector(scheduler, broker, disk_paths or {}, tls_cert_files or {})
+        self.metrics = prom.MetricsCollector(scheduler, broker, disk_paths or {}, tls_cert_files or {},
+                                             chat_health_url=chat_health_url)
         self.managed_projects = ManagedProjects(broker, self.source.path)
         # ComfyUI's files. Their locations are read from this module's settings when used, so a test
         # can repoint them after construction.

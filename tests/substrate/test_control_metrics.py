@@ -125,7 +125,8 @@ def test_every_ordo_series_the_rules_read_is_exported():
     """A renamed metric would leave its rule silently evaluating to nothing."""
     exported = set(re.findall(r"^# TYPE (ordo_\w+)", metrics.render(metrics.Inputs(
         scheduler=_leased_scheduler().status(), containers=[], restarts={},
-        disks={"docker": metrics.DiskUsage(1, 1, 1)}, tls_certs={"edge": 1.0})), re.MULTILINE))
+        disks={"docker": metrics.DiskUsage(1, 1, 1)}, tls_certs={"edge": 1.0}, gpu_chat_up=True)),
+        re.MULTILINE))
     rules = yaml.safe_load(RULES.read_text(encoding="utf-8"))
     used = {name for group in rules["groups"] for rule in group["rules"]
             for name in re.findall(r"\bordo_\w+", rule["expr"])}
@@ -203,3 +204,47 @@ def test_the_route_is_plain_text_and_needs_no_token(plane):
     # Only the metrics read is opened: everything else still needs the bearer token.
     assert client.get("/status").status_code == 401
     assert client.post("/metrics").status_code == 404
+
+
+# --- the GPU chat service's liveness, whichever engine runs it -------------------------------------
+
+def test_gpu_chat_up_is_exported_only_when_probed():
+    def value(up):
+        return _samples(metrics.render(metrics.Inputs(gpu_chat_up=up))).get(("ordo_gpu_chat_up", ()))
+    assert value(True) == 1 and value(False) == 0
+    assert value(None) is None                      # no probe configured: no series, never a fake 0
+
+
+def _serve(status: int):
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(status)
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok"}')
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@pytest.mark.parametrize(("status", "up"), [(200, True), (503, False)])
+def test_the_collector_probes_the_chat_health_endpoint(status, up):
+    server = _serve(status)
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/health"
+        collector = metrics.MetricsCollector(None, None, {}, {}, chat_health_url=url)
+        assert collector._chat_up() is up
+    finally:
+        server.shutdown()
+
+
+def test_an_unreachable_chat_service_is_down_not_an_error():
+    collector = metrics.MetricsCollector(None, None, {}, {}, chat_health_url="http://127.0.0.1:9/health")
+    assert collector._chat_up() is False
+    assert metrics.MetricsCollector(None, None, {}, {})._chat_up() is None

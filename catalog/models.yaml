@@ -45,6 +45,12 @@
 # a load error.
 #   drop_tool_strict: true   remove `strict` from every tool definition (tools[].function.strict)
 #                            before the request reaches a server that refuses strict tools
+# backend: the engine the single GPU chat service (`llamacpp`) runs. `llama.cpp` (the default) serves
+# GGUF files through scripts/llamacpp/run-llama-server.sh. `ninfer` serves one .ninfer artifact through
+# scripts/llamacpp/run-ninfer-serve.sh and must name its engine image (backend_image: ordo/ninfer).
+# Same service name, alias, port and models volume either way; rolling back is a `model:` change.
+#   vision: { enabled, max_context }  ninfer only: load the artifact's vision encoder, which caps the
+#                                     window at max_context. Also `overrides.llamacpp.vision`.
 
 version: 1
 
@@ -222,6 +228,44 @@ models:
     # validated for qwen4exp. Text only.
     # qwen4exp needs llama.cpp v0.5.0 (ggml-org#27742, #28770): the patched build.
     backend_image: ordo/llamacpp-patched
+    tier: ultra
+
+  - id: qwen3.8-27b-nvfp4-ninfer
+    name: Qwen3.8 27B NVFP4 on NInfer (official artifact, MTP3)
+    # The official NInfer engine (services/ninfer, image ordo/ninfer) serving the official artifact.
+    # Same GPU chat service as the llama.cpp models; the render picks run-ninfer-serve.sh for it.
+    backend: ninfer
+    backend_image: ordo/ninfer
+    # Revision a107ba1b is the v3 packaging of the official weights. The engine pinned in
+    # services/ninfer requires v3 artifacts and refuses the v2 file (revision 3b84117e, sha256
+    # bb336052..., the one the YaRN fork loads): "NInfer v2 artifact is not supported".
+    file: qwen3_8_27b_nvfp4.ninfer
+    source: https://huggingface.co/neroued/Qwen3.8-27B-nvfp4-NInfer/resolve/a107ba1b5b0609d9ca90d5ed61439f5f5cc7d64d/qwen3_8_27b_nvfp4.ninfer
+    # sha256 = the repo's LFS oid at that revision, matched on the downloaded copy (2026-09-30).
+    sha256: 74d2c57145e6ff11d1d2faa79594477f9bc903a611af1fb20218189fbbb77d82
+    size_bytes: 23719715844
+    # Measured on the 5090 (2026-09-30 eval, engine d44ab584): 29.3GiB on the card at 262,144 tokens
+    # with fp8 KV and MTP3, of which the KV pool is 16.6KiB per token (9.19GiB runtime at 262,144 vs
+    # 8.84GiB at 240,000). vram_gb is the rest: weights 19.7GiB plus the engine's fixed buffers. The
+    # reserve beside it is the other declared resident on this card, llamacpp-embed's 1.0GB.
+    # ram_gb: the engine pins 8GiB of host KV plus checkpoint state by default.
+    requires: { vram_gb: 25.2, ram_gb: 12, cpu_ok: false, min_compute_cap: "12.0" }
+    vram_reserve_gb: 1.0
+    kv_kb_per_token: 16.6
+    # The model's native window: 257,653-token prompt, 5/5 needle retrieval, 155 tok/s decode.
+    ctx_default: 262144
+    # One request at a time (upstream issue #339: concurrency 2 can wedge the server), fp8 KV, MTP
+    # with three draft tokens and the optimized proposal head (126 tok/s decode, about 44% acceptance),
+    # and assistant reasoning kept across turns. Sampling comes from the engine's Qwen3.8 thinking
+    # preset (1.0 / 0.95 / 20 / 0 / 0), which is the model card's.
+    extra_args: "--max-concurrency 1 --kv-dtype fp8 --spec mtp --draft-tokens 3 --lm-head-draft --preserve-thinking"
+    # Text only by default. With the vision encoder loaded, 262,144 no longer fits (the engine needs
+    # 10.48GB + 1GB headroom after weights, 10.86GB is left); 200,000 measured (image QA correct).
+    vision: { enabled: false, max_context: 200000 }
+    # NInfer answers a `strict: true` tool with 400 strict_tools_not_supported; Hermes sends them.
+    gateway: { drop_tool_strict: true }
+    # A new engine, opted into by the operator: `model: auto` keeps picking a llama.cpp model.
+    auto: false
     tier: ultra
 
   - id: qwen3.8-27b-uncensored-q6

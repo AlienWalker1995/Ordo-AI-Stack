@@ -332,8 +332,9 @@ class DeleteBody(BaseModel):
 @router.post("/models/delete")
 async def delete_model(body: DeleteBody) -> dict:
     name = (body.file or "").strip()
-    if not name or "/" in name or "\\" in name or ".." in name or not name.lower().endswith(".gguf"):
-        raise HTTPException(status_code=400, detail="Name a single .gguf file")
+    if (not name or "/" in name or "\\" in name or ".." in name
+            or not name.lower().endswith(console.CHAT_MODEL_SUFFIXES)):
+        raise HTTPException(status_code=400, detail="Name a single .gguf or .ninfer file")
     # A switch checks the file is on disk and then loads it; a delete in between would pull it
     # out from under the recreate.
     if _switch_lock.locked():
