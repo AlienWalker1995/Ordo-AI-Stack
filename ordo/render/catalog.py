@@ -8,6 +8,7 @@ the other resident services (embed, a possibly-idle ComfyUI, etc.).
 from __future__ import annotations
 
 import dataclasses
+import re
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +103,12 @@ class Model:
     # `overrides.llamacpp.vision`). It costs VRAM, so the window drops to `vision.max_context`.
     vision: bool = False
     vision_max_context: int | None = None
+    # A locally built artifact (`build:`), in place of a download `source`: the name of a conversion
+    # recipe in services/ninfer/convert/inputs/ (<build>.sources pins every input, <build>.args the
+    # converter arguments). Nothing can download it, so the fetch only verifies the file in the
+    # models volume against `sha256`, and a missing or different file refuses the bring-up with the
+    # rebuild commands (ordo/host/fetch.py).
+    build: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Model:
@@ -133,6 +140,7 @@ class Model:
             raise ValueError(f"{model_id}: a model with offloaded experts (n_cpu_moe) must set cpu_threads, "
                              "the CPU load it adds")
         gateway = _gateway_options(model_id, d.get("gateway"))
+        build = _build_recipe(model_id, d)
         return cls(
             id=model_id, name=str(d.get("name", d["id"])),
             backend=backend, file=str(d.get("file", "")),
@@ -154,6 +162,7 @@ class Model:
             gateway_drop_tool_strict=gateway.get("drop_tool_strict", False),
             vision=bool(vision.get("enabled", False)),
             vision_max_context=(int(vision["max_context"]) if vision.get("max_context") else None),
+            build=build,
         )
 
     def reserve_gb(self, default: float) -> float:
@@ -162,6 +171,24 @@ class Model:
 
     def _rank(self) -> tuple[int, float]:
         return (TIER_ORDER.index(self.tier) if self.tier in TIER_ORDER else -1, self.vram_gb)
+
+
+def _build_recipe(model_id: str, d: dict[str, Any]) -> str | None:
+    """A built entry's recipe name, validated: a plain name (it selects files in one directory), no
+    download source beside it, and the bytes pinned, since the pin is the only thing that identifies
+    the file the recipe produced."""
+    build = d.get("build")
+    if build is None:
+        return None
+    build = str(build)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", build):
+        raise ValueError(f"{model_id}: build must be a recipe name in services/ninfer/convert/inputs, not {build!r}")
+    if d.get("source"):
+        raise ValueError(f"{model_id}: a `build:` entry is built locally and cannot also name a download source")
+    for key in ("sha256", "size_bytes"):
+        if not d.get(key):
+            raise ValueError(f"{model_id}: a `build:` entry must pin its {key}")
+    return build
 
 
 def _gateway_options(model_id: str, spec: Any) -> dict[str, bool]:

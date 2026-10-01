@@ -1,0 +1,31 @@
+# Converter arguments for qwen3.8-27b-heretic-ara (python -m tools.convert, one argument per line).
+# The official groupwise-int recipe for Qwen3.8-27B (Q4/Q5 projections, Q8 vocabulary weights),
+# which quantizes from the BF16 source alone. The NVFP4 recipe would also need an NVFP4/FP8
+# compressed-tensors quantization of these exact weights, which no one publishes.
+# Text, Vision and MTP, plus the indexed proposal head MTP drafting uses. No DFlash2: its companion
+# is trained against the unmodified Qwen3.8-27B.
+--model
+/work/model
+--recipe
+qwen3_8_27b
+--components
+text,vision,mtp
+--proposal
+--resource
+tokenizer.json=/work/frontend/tokenizer.json
+--resource
+tokenizer_config.json=/work/frontend/tokenizer_config.json
+--resource
+generation_config.json=/work/frontend/generation_config.json
+--resource
+chat_template.jinja=/ninfer/tools/chat_templates/qwen3_8.jinja
+--resource
+preprocessor_config.json=/work/frontend/preprocessor_config.json
+--resource
+video_preprocessor_config.json=/work/frontend/video_preprocessor_config.json
+--name
+qwen3.8-27b-heretic-ara
+--device
+cpu
+--out
+/out/qwen3_8_27b_heretic_ara.ninfer

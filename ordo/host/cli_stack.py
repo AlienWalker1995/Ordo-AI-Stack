@@ -125,9 +125,50 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
+def local_install_target(args: argparse.Namespace, cat: Catalog):
+    """The catalog model `ordo fetch <id> --from <file>` installs, or None (reason printed). Only a
+    `build:` model takes a local file: a downloadable one gets its bytes from its pinned source."""
+    if not args.model:
+        print("--from installs one built model: name the catalog id (ordo fetch <id> --from <file>)",
+              file=sys.stderr)
+        return None
+    model = cat.get_entry(args.model)
+    if model is None:
+        print(f"no catalog entry '{args.model}'", file=sys.stderr)
+        return None
+    if not model.build:
+        print(f"{model.id} downloads its file from its pinned source; --from is only for a `build:` model",
+              file=sys.stderr)
+        return None
+    if not Path(args.local_file).is_file():
+        print(f"no such file: {args.local_file}", file=sys.stderr)
+        return None
+    return model
+
+
+def _install_local_file(args: argparse.Namespace, cat: Catalog) -> int:  # pragma: no cover - docker
+    """`ordo fetch <id> --from <file>`: copy a locally built file into the models volume through the
+    helper, which installs it only when it matches the pinned sha256."""
+    model = local_install_target(args, cat)
+    if model is None:
+        return 1
+    runner = models_volume.DockerRunner()
+    volume = models_volume.volume_name(args.project)
+    if not models_volume.volume_exists(runner, volume) and not fetch.create_volume(runner, volume, args.project):
+        print(f"cannot create the {volume} volume", file=sys.stderr)
+        return 1
+    code = fetch.fetch_into_volume([model], project=args.project, secrets={}, runner=runner,
+                                   local_file=args.local_file)
+    if code == 0:
+        print(f"{model.file} installed and verified in {volume}")
+    return code
+
+
 def _fetch_into_volume(args: argparse.Namespace, cat: Catalog) -> int:  # pragma: no cover - docker
     """`ordo fetch` (the default): download into the models volume the stack reads, verifying every
-    file, present ones included."""
+    file, present ones included. A built model is verified only, never downloaded."""
+    if getattr(args, "local_file", None):
+        return _install_local_file(args, cat)
     targets = _volume_fetch_targets(args, cat)
     if targets is None:
         return 1

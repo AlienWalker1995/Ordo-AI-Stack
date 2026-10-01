@@ -51,6 +51,11 @@
 # Same service name, alias, port and models volume either way; rolling back is a `model:` change.
 #   vision: { enabled, max_context }  ninfer only: load the artifact's vision encoder, which caps the
 #                                     window at max_context. Also `overrides.llamacpp.vision`.
+# build: in place of `source`, a file built locally by the tracked recipe of that name in
+# services/ninfer/convert/inputs/ (every input pinned by revision and sha256). It must pin sha256 and
+# size_bytes. Nothing downloads it: `ordo fetch`, `ordo up` and `ordo apply` verify the file in the
+# models volume and refuse with the rebuild commands when it is missing or different;
+# `ordo fetch <id> --from <file>` installs a built file through the same check.
 
 version: 1
 
@@ -265,6 +270,42 @@ models:
     # NInfer answers a `strict: true` tool with 400 strict_tools_not_supported; Hermes sends them.
     gateway: { drop_tool_strict: true }
     # A new engine, opted into by the operator: `model: auto` keeps picking a llama.cpp model.
+    auto: false
+    tier: ultra
+
+  - id: qwen3.8-27b-heretic-ara-ninfer
+    name: Qwen3.8 27B Heretic ARA on NInfer (groupwise-int, MTP3)
+    # heretic-org/Qwen3.8-27B-heretic-ara (the canonical Heretic ARA abliteration of Qwen3.8-27B,
+    # Apache-2.0) converted by upstream's own converter at the engine commit services/ninfer serves,
+    # with the official groupwise-int recipe and the official Qwen3.8 frontend. Inputs, arguments and
+    # the reproducible run: services/ninfer/convert/inputs/qwen3.8-27b-heretic-ara.* and
+    # services/ninfer/README.md "Converting weights". The published Heretic .ninfer files do not load
+    # on this engine (both v2, and the official v2-to-v3 upgrade refuses both).
+    backend: ninfer
+    backend_image: ordo/ninfer
+    file: qwen3_8_27b_heretic_ara.ninfer
+    # Built locally, never downloaded (no source): `ordo fetch`/`up`/`apply` verify the file in the
+    # models volume against sha256 and size, and refuse with the rebuild commands when it is missing
+    # or different. The pin is the converted file itself: the converter writes a random artifact id,
+    # so a re-run gives the same weights under another sha256, to validate and pin again.
+    build: qwen3.8-27b-heretic-ara
+    sha256: 6c5862c690c2d60e4c4fd1ac86ab30e10bb20c8b10bca2c5e518502a4d9bb904
+    size_bytes: 18210704128
+    # Measured on the 5090 (2026-10-01, engine d44ab584): 26.8GiB on the card at 262,144 tokens with
+    # fp8 KV and MTP3 (weights 16.7GiB, runtime 9.19GiB, 4.08GiB free). The KV pool is the same
+    # 16.6KiB per token as the official artifact; vram_gb is the rest.
+    requires: { vram_gb: 22.0, ram_gb: 12, cpu_ok: false, min_compute_cap: "12.0" }
+    vram_reserve_gb: 1.0
+    kv_kb_per_token: 16.6
+    # The model's native window: 256,644-token prompt, 5/5 needle retrieval.
+    ctx_default: 262144
+    # The same serving flags as the official entry (one request at a time, upstream issue #339).
+    extra_args: "--max-concurrency 1 --kv-dtype fp8 --spec mtp --draft-tokens 3 --lm-head-draft --preserve-thinking"
+    # Text only by default. The smaller weights leave room for the vision encoder at the full window:
+    # 27.6GiB on the card with --vision at 262,144 (image QA correct).
+    vision: { enabled: false, max_context: 262144 }
+    # NInfer answers a `strict: true` tool with 400 strict_tools_not_supported; Hermes sends them.
+    gateway: { drop_tool_strict: true }
     auto: false
     tier: ultra
 

@@ -149,14 +149,26 @@ TOKEN_KEY = "HF_TOKEN"
 FETCH_MARKER = "ordo.model-fetch=download"
 EXIT_DOWNLOAD_FAILED = 2
 EXIT_CHECKSUM_MISMATCH = 3
+# A built model (catalog `build:`) is missing from the volume, or the file there is not the pinned one.
+EXIT_NOT_BUILT = 4
+# Where the helper sees the directory of a locally built file it installs (`ordo fetch --from`).
+LOCAL_MOUNT = "/local"
+# The tracked conversion recipes a `build:` entry names, and the script that runs one.
+BUILD_RECIPES = "services/ninfer/convert/inputs"
+BUILD_SCRIPT = "services/ninfer/convert/run.sh"
 
 # The helper's program. Every input arrives as an environment variable (never interpolated into
 # the script), and the token reaches curl through a header file, so it is in no argv.
+# Three ways a file gets in: downloaded from ORDO_FETCH_URL, copied from ORDO_FETCH_FROM (a locally
+# built file, `ordo fetch --from`), or neither (a built model: verify what is there, exit 4 when it
+# is missing or different, and never replace it).
 HELPER_SCRIPT = r"""
 set -eu
 dir="${ORDO_FETCH_DIR:-/models}"
 file="$ORDO_FETCH_FILE"
 want="$ORDO_FETCH_SHA256"
+url="${ORDO_FETCH_URL:-}"
+from="${ORDO_FETCH_FROM:-}"
 dest="$dir/$file"
 part="$dir/.$file.part"
 
@@ -173,10 +185,22 @@ if [ -f "$dest" ]; then
     echo "present and verified: $file"
     exit 0
   fi
-  echo "$file does not match its pinned sha256: downloading a fresh copy"
+  if [ -z "$url" ] && [ -z "$from" ]; then
+    echo "$file in the volume is not the pinned build (its sha256 differs); it was left as it is" >&2
+    exit 4
+  fi
+  echo "$file does not match its pinned sha256: installing a fresh copy"
 fi
 
-if [ -n "$want" ] && [ -f "$part" ] && [ "$(sha_of "$part")" = "$want" ]; then
+if [ -z "$url" ] && [ -z "$from" ]; then
+  echo "$file is not in the volume" >&2
+  exit 4
+fi
+
+if [ -n "$from" ]; then
+  echo "copying the local $file"
+  cp "$from" "$part"
+elif [ -n "$want" ] && [ -f "$part" ] && [ "$(sha_of "$part")" = "$want" ]; then
   echo "a previous run already downloaded $file"
 else
   echo "downloading $file"
@@ -188,7 +212,7 @@ else
     printf 'Authorization: Bearer %s\n' "$HF_TOKEN" > "$header_file"
     set -- "$@" --header "@$header_file"
   fi
-  if ! curl "$@" "$ORDO_FETCH_URL"; then
+  if ! curl "$@" "$url"; then
     echo "download of $file failed; the partial download is kept, re-run to resume" >&2
     exit 2
   fi
@@ -214,9 +238,10 @@ def _check_file_name(file: str) -> None:
         raise ValueError(f"refusing catalog file name {file!r}: it must be a plain file name")
 
 
-def helper_argv(volume: str, model: Model) -> list[str]:
-    """`docker run` for the download helper. The volume is its only mount, and HF_TOKEN is named
-    (so docker copies the value from this process's environment) only for a gated model."""
+def helper_argv(volume: str, model: Model, local_file: str | Path | None = None) -> list[str]:
+    """`docker run` for the download helper. The volume is its only mount, plus the directory of
+    `local_file` read-only when it installs a locally built file. HF_TOKEN is named (so docker copies
+    the value from this process's environment) only for a gated model."""
     _check_file_name(model.file)
     argv = ["docker", "run", "--rm", "--label", FETCH_MARKER,
             # the image's default user cannot write the root-owned volume
@@ -226,6 +251,10 @@ def helper_argv(volume: str, model: Model) -> list[str]:
             "-e", f"ORDO_FETCH_FILE={model.file}",
             "-e", f"ORDO_FETCH_SHA256={model.sha256 or ''}",
             "-e", f"ORDO_FETCH_URL={model.source}"]
+    if local_file is not None:
+        local = Path(local_file).resolve()
+        argv += ["-v", f"{local.parent.as_posix()}:{LOCAL_MOUNT}:ro",
+                 "-e", f"ORDO_FETCH_FROM={LOCAL_MOUNT}/{local.name}"]
     if model.gated:
         argv += ["-e", TOKEN_KEY]
     return argv + ["--entrypoint", "sh", HELPER_IMAGE, "-c", HELPER_SCRIPT]
@@ -240,8 +269,21 @@ def create_volume(runner, volume: str, project: str) -> bool:
     return runner.run(argv, capture=True).returncode == 0
 
 
+def rebuild_instructions(model: Model) -> str:
+    """How to make a built model's file again and install it, for the refusal that needs it."""
+    return (f"{model.id} ({model.file}) is built locally from the recipe {BUILD_RECIPES}/{model.build}.*, "
+            f"not downloaded. Rebuild and install it:\n"
+            f"  {BUILD_SCRIPT} {model.build} <work dir> <out dir>\n"
+            f"  ordo fetch {model.id} --from <out dir>/{model.file}\n"
+            f"The converter writes a random artifact id, so a rebuilt file has a new sha256: validate it, "
+            f"then pin its sha256 and size_bytes in catalog/models.yaml before installing it.")
+
+
 def refusal(model: Model, allow_unverified: bool = False) -> str | None:
-    """Why this entry cannot be downloaded into the volume, or None when it can."""
+    """Why this entry cannot be fetched into the volume, or None when it can. A built model is never
+    downloaded: the helper only verifies it, or installs it from `ordo fetch --from`."""
+    if model.build:
+        return None
     # A file URL, not a repo or org page. Its name may differ from `file` (a projector is stored
     # under a model-specific name), but it has to be the same kind of file.
     url = urlparse(model.source)
@@ -256,8 +298,10 @@ def refusal(model: Model, allow_unverified: bool = False) -> str | None:
 
 
 def fetch_into_volume(models: Sequence[Model], *, project: str, secrets: Mapping[str, str], runner,
-                      process_env: Mapping[str, str] | None = None) -> int:
-    """Run the helper for each model: download, verify, move into place. 0 when all are in place.
+                      process_env: Mapping[str, str] | None = None,
+                      local_file: str | Path | None = None) -> int:
+    """Run the helper for each model: download (a built model: verify), move into place. 0 when all
+    are in place. `local_file` installs that file for the one model given (`ordo fetch --from`).
 
     Each run is idempotent (a verified file is left alone). The token reaches the helper through
     the child's environment only, and only for a gated model."""
@@ -272,8 +316,13 @@ def fetch_into_volume(models: Sequence[Model], *, project: str, secrets: Mapping
                       f"from https://huggingface.co/settings/tokens), then re-run", file=sys.stderr)
                 return 1
             env = {**process_env, TOKEN_KEY: token}
-        print(f"fetching {model.id} ({model.file}) into the {volume} volume", flush=True)
-        code = runner.run(helper_argv(volume, model), env=env).returncode
+        verb = "installing" if local_file else ("verifying" if model.build else "fetching")
+        print(f"{verb} {model.id} ({model.file}) in the {volume} volume", flush=True)
+        code = runner.run(helper_argv(volume, model, local_file), env=env).returncode
+        if code == EXIT_NOT_BUILT:
+            print(f"refusing: {model.file} is missing from the {volume} volume or is not the pinned build "
+                  f"(sha256 {model.sha256}).\n{rebuild_instructions(model)}", file=sys.stderr)
+            return 1
         if code == EXIT_CHECKSUM_MISMATCH:
             print(f"{model.id}: checksum mismatch, the download does not match the pinned sha256 and was "
                   f"deleted. Check the catalog entry's source and sha256.", file=sys.stderr)
@@ -307,7 +356,8 @@ def ensure_models(doc: dict, env: Mapping[str, str], services: Sequence[str], *,
             print(f"cannot list the {volume} volume (pass --no-fetch to skip this step)", file=sys.stderr)
             return 1
         present = listed
-    missing = [need for need in needed if need.file not in present]
+    # A built model is verified even when present: no download ever checked how it got there.
+    missing = [need for need in needed if need.file not in present or _is_built(catalog, need.file)]
 
     todo: list[Model] = []
     problems: list[str] = []
@@ -335,13 +385,19 @@ def ensure_models(doc: dict, env: Mapping[str, str], services: Sequence[str], *,
         return 0
     if dry_run:
         for model in todo:
-            print(f"would fetch {model.id} ({model.file}) into the {volume} volume:\n"
+            verb = "verify" if model.build else "fetch"
+            print(f"would {verb} {model.id} ({model.file}) in the {volume} volume:\n"
                   f"  $ {shlex.join(helper_argv(volume, model)[:-1])} '<fetch script>'")
         return 0
     if not exists and not create_volume(runner, volume, project):
         print(f"cannot create the {volume} volume", file=sys.stderr)
         return 1
     return fetch_into_volume(todo, project=project, secrets=secrets, runner=runner, process_env=process_env)
+
+
+def _is_built(catalog: Catalog, file: str) -> bool:
+    model = catalog.by_file(file)
+    return bool(model and model.build)
 
 
 def ensure_models_for_render(out_dir: str | Path, doc: dict, services: Sequence[str], *, project: str,

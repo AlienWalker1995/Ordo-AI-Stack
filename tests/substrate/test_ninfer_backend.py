@@ -126,3 +126,36 @@ def test_the_gateway_drops_strict_from_tools_for_ninfer_only():
     clients send strict tools, so its entry turns on the gateway's strict drop. llama.cpp accepts them."""
     assert _render(NINFER).env.get("GATEWAY_DROP_TOOL_STRICT") == "true"
     assert "GATEWAY_DROP_TOOL_STRICT" not in _render(SWIFT).env
+
+
+# --- the Heretic ARA artifact: same engine, same service, the official entry stays as the rollback ---
+
+HERETIC = "qwen3.8-27b-heretic-ara-ninfer"
+
+
+def test_the_heretic_entry_serves_on_the_same_ninfer_service():
+    rc = _render(HERETIC)
+    llamacpp = rc.compose_dict()["services"]["llamacpp"]
+    assert llamacpp["entrypoint"] == ["/bin/sh", "/llamacpp-scripts/run-ninfer-serve.sh"]
+    assert llamacpp["image"].startswith("ordo/ninfer")
+    assert rc.env["LLAMACPP_MODEL"] == "qwen3_8_27b_heretic_ara.ninfer"
+    assert rc.ctx_size == 262144
+    assert "LLAMACPP_VISION" not in rc.env                # text only by default
+    assert rc.env["GATEWAY_DROP_TOOL_STRICT"] == "true"
+
+
+def test_the_heretic_footprint_is_its_measured_size():
+    rc = _render(HERETIC)
+    # measured: 26.8GiB on the card at 262,144 tokens with fp8 KV and MTP3, about 0.7GiB of it baseline
+    assert rc.resident_vram_gb() == pytest.approx(26.15, abs=0.05)
+    assert rc.resident_vram_gb() + 1.0 <= PROFILE_5090["gpus"][0]["vram_gb"]
+
+
+def test_the_official_entry_stays_as_the_rollback():
+    assert _render(NINFER).env["LLAMACPP_MODEL"] == "qwen3_8_27b_nvfp4.ninfer"
+
+
+def test_heretic_vision_keeps_the_full_window():
+    rc = _render(HERETIC, overrides={"llamacpp": {"vision": True}})
+    assert rc.env["LLAMACPP_VISION"] == "1"
+    assert rc.ctx_size == 262144

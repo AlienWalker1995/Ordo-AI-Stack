@@ -1,0 +1,24 @@
+# Inputs of the qwen3.8-27b-heretic-ara conversion, each pinned by repository revision and sha256.
+# Columns: sha256, local path (under the work directory), source URL. run.sh downloads every
+# line and refuses to convert unless all of them match.
+#
+# Weights and model config: heretic-org/Qwen3.8-27B-heretic-ara (Apache-2.0), the canonical Heretic
+# ARA abliteration of Qwen/Qwen3.8-27B (Text, Vision and MTP weights in BF16).
+5a1911420c23cca59e18efe1685e66f73fa6daee946ee43f4afc9a92f4bfc43d model/config.json https://huggingface.co/heretic-org/Qwen3.8-27B-heretic-ara/resolve/2dc9b364104881cbb85e390f00195ba6b9d745e9/config.json
+b0eb836dd3b5d2261cbf9e49913c02fd4e2ae886b0f2129e363c0a6156673d37 model/model.safetensors.index.json https://huggingface.co/heretic-org/Qwen3.8-27B-heretic-ara/resolve/2dc9b364104881cbb85e390f00195ba6b9d745e9/model.safetensors.index.json
+55a4ad961830c6dfae435ba5d718c40dcd6169feb26c368007f6ba8c5f0329db model/model-00001-of-00006.safetensors https://huggingface.co/heretic-org/Qwen3.8-27B-heretic-ara/resolve/2dc9b364104881cbb85e390f00195ba6b9d745e9/model-00001-of-00006.safetensors
+74e61e9be6b6f6b02e8e0ae2f7f360f9df2c271860b4f52974ef64bdefcee274 model/model-00002-of-00006.safetensors https://huggingface.co/heretic-org/Qwen3.8-27B-heretic-ara/resolve/2dc9b364104881cbb85e390f00195ba6b9d745e9/model-00002-of-00006.safetensors
+3c71faa739ce1f74875363b4ed0136a21da028208f11815471917ac2b17b50a7 model/model-00003-of-00006.safetensors https://huggingface.co/heretic-org/Qwen3.8-27B-heretic-ara/resolve/2dc9b364104881cbb85e390f00195ba6b9d745e9/model-00003-of-00006.safetensors
+ebf94d3caa061031ce2f183adfca73128e7d7708aa78bebd55e1278358fc2f1b model/model-00004-of-00006.safetensors https://huggingface.co/heretic-org/Qwen3.8-27B-heretic-ara/resolve/2dc9b364104881cbb85e390f00195ba6b9d745e9/model-00004-of-00006.safetensors
+c843c9f461d6533eef4141d000b9e5a03fe328825346cbe7a062104b546a6e0c model/model-00005-of-00006.safetensors https://huggingface.co/heretic-org/Qwen3.8-27B-heretic-ara/resolve/2dc9b364104881cbb85e390f00195ba6b9d745e9/model-00005-of-00006.safetensors
+f7c99ba96930a0a4a8e7850660912ac71210622aa6e709d7df9af0e641d44451 model/model-00006-of-00006.safetensors https://huggingface.co/heretic-org/Qwen3.8-27B-heretic-ara/resolve/2dc9b364104881cbb85e390f00195ba6b9d745e9/model-00006-of-00006.safetensors
+1d8268aa85ace093a561e3e7b63b9d390dac1cd55a90cd55b5ec509c3c9da9fe model/model-auxiliary.safetensors https://huggingface.co/heretic-org/Qwen3.8-27B-heretic-ara/resolve/2dc9b364104881cbb85e390f00195ba6b9d745e9/model-auxiliary.safetensors
+#
+# Frontend: the official Qwen/Qwen3.8-27B resources at the revision the official NInfer artifacts
+# use (the Heretic repository re-serializes its tokenizer, and some Unicode text tokenizes
+# differently there). The chat template is the engine's own tools/chat_templates/qwen3_8.jinja.
+0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3 frontend/tokenizer.json https://huggingface.co/Qwen/Qwen3.8-27B/resolve/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/tokenizer.json
+b11349aafa7cdc6a320767cf7ceb29ed82f7eda5d65e8e0819e76f0ce947bf27 frontend/tokenizer_config.json https://huggingface.co/Qwen/Qwen3.8-27B/resolve/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/tokenizer_config.json
+e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e frontend/generation_config.json https://huggingface.co/Qwen/Qwen3.8-27B/resolve/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/generation_config.json
+27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516 frontend/preprocessor_config.json https://huggingface.co/Qwen/Qwen3.8-27B/resolve/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/preprocessor_config.json
+7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13 frontend/video_preprocessor_config.json https://huggingface.co/Qwen/Qwen3.8-27B/resolve/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/video_preprocessor_config.json
