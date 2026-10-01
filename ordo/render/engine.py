@@ -279,6 +279,44 @@ def render_litellm_keys(consumers: list[tuple[str, dict[str, Any]]],
     return keys
 
 
+# The CPU fallback (services/llamacpp-cpu) and the weights it loads when `site:` names none. The same
+# default is in its manifest and in model-gateway's entrypoint (tests/substrate/test_cpu_fallback_window.py).
+CPU_FALLBACK_PLUGIN = "llamacpp-cpu"
+CPU_FALLBACK_DEFAULT_FILE = "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+_GIB = 1024 ** 3
+
+
+def _cpu_fallback_window(catalog: Catalog, env: dict[str, str], window: int,
+                         plugin_ids: list[str]) -> tuple[dict[str, Any] | None, list[str]]:
+    """(what the chat window costs the CPU fallback, warnings); None when no fallback is rendered.
+
+    The fallback serves the chat model's whole window (LLAMACPP_CPU_CTX is LLAMACPP_CTX_SIZE): LiteLLM
+    fails `local-chat` over to it while a render holds the GPU, and Hermes compacts against that one
+    window. So a window the fallback model was not trained for is a render error naming both windows,
+    never a silently smaller fallback that rejects long conversations exactly when the GPU is away.
+    """
+    if CPU_FALLBACK_PLUGIN not in plugin_ids:
+        return None, []
+    file = env.get("LLAMACPP_CPU_MODEL") or CPU_FALLBACK_DEFAULT_FILE
+    entry = catalog.by_file(file)
+    if entry is None:
+        return ({"model": None, "file": file, "ctx_size": window, "trained_ctx": None,
+                 "kv_gb": None, "weights_gb": None},
+                [f"CPU fallback weights {file} are not in the catalog: its {window:,}-token window "
+                 f"is unchecked against the model and its RAM cost is unknown"])
+    if window > entry.ctx_default:
+        raise ValueError(
+            f"the chat window ({window:,} tokens) is larger than the CPU fallback's trained window "
+            f"({entry.ctx_default:,} tokens, {entry.id}). The fallback serves the same window as the GPU "
+            f"model, so it would reject the conversations the GPU accepts. Set "
+            f"overrides.llamacpp.ctx_size to {entry.ctx_default} or less, or disable {CPU_FALLBACK_PLUGIN}.")
+    kv_gb = window * entry.kv_kb_per_token * 1024 / _GIB if entry.kv_kb_per_token else None
+    weights_gb = entry.size_bytes / _GIB if entry.size_bytes else None
+    return ({"model": entry.id, "file": file, "ctx_size": window, "trained_ctx": entry.ctx_default,
+             "kv_gb": round(kv_gb, 2) if kv_gb is not None else None,
+             "weights_gb": round(weights_gb, 2) if weights_gb is not None else None}, [])
+
+
 def _max_ctx_for_vram(model: Model, hw: HardwareProfile, reserve_gb: float,
                       backend: LlamaCppBackend) -> int:
     """Largest context that fits after weights + reserve, capped at the model's trained ctx.
@@ -357,6 +395,8 @@ class RenderedConfig:
     # {volume: method}: how `ordo backup` saves each named volume, as the core, the agent and the
     # enabled plugins declare it (ordo/render/backup_policy.py).
     backup: dict[str, str] = dataclasses.field(default_factory=dict)
+    # What the chat window costs the CPU fallback (_cpu_fallback_window); None when it is not rendered.
+    cpu_fallback: dict[str, Any] | None = None
 
     def resident_vram_gb(self) -> float:
         """The GPU footprint the resident LLM actually holds while cached: weights + KV at the
@@ -391,6 +431,7 @@ class RenderedConfig:
                       # Weights on disk ~ weights in VRAM; a CPU model declares RAM instead.
                       "disk_gb": self.model.vram_gb or self.model.ram_gb},
             "ctx_size": self.ctx_size,
+            "cpu_fallback": self.cpu_fallback,
             "llamacpp_backend": self.llamacpp_backend.name,
             # The declared GPU-contention map — what competes for which card and how it is
             # arbitrated. Surfaced in the manifest (and via ops-controller /status) so the
@@ -926,6 +967,10 @@ def render(source: Source, catalog: Catalog,
     for k, v in (source.site or {}).items():
         env.setdefault(str(k), str(v))
 
+    # The CPU fallback serves this same window: refuse one it cannot, and say what it costs in RAM.
+    cpu_fallback, cpu_fallback_notes = _cpu_fallback_window(catalog, env, ctx, [p.id for p in services])
+    warnings = warnings + cpu_fallback_notes
+
     # Langfuse's two non-secret settings. Emitted only when the plugin is enabled (a stack without
     # it gets no dead keys), and with setdefault AFTER the site merge - unlike the derived keys
     # above, these are DEFAULTS an operator may deliberately override from `site:` (a Langfuse
@@ -981,7 +1026,7 @@ def render(source: Source, catalog: Catalog,
     optional_secrets = [key for key in required_secrets if _is_optional(key)]
 
     return RenderedConfig(
-        hardware=hw, model=model, ctx_size=ctx, tier=(model.tier),
+        hardware=hw, model=model, ctx_size=ctx, tier=(model.tier), cpu_fallback=cpu_fallback,
         warnings=warnings + mcp_notes, env=env, hermes=hermes, model_gateway=model_gateway,
         dashboard=dashboard,
         plugins_enabled=[p.id for p in services], compose_profiles=compose_profiles,
