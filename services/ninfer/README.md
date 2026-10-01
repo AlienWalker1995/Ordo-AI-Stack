@@ -49,9 +49,16 @@ every file matches its sha256), builds `ordo/ninfer-convert:<engine sha12>` (Pyt
 PyTorch, every package pinned in `convert/requirements.txt`) and runs the converter with no GPU and
 at most `CONVERT_CPUS` (12) CPUs. The artifact and its `.sha256` land in `<out dir>`.
 
-The converter writes a random artifact id into every file, so a re-run produces the same weights
-under a different sha256. The catalog pins the sha256 of the file that was converted, validated
-and published, not of a re-run.
+Install the result into the models volume, which checks it against the catalog pin:
+```
+ordo fetch <catalog id> --from <out dir>/<file>
+```
+A catalog entry for a converted artifact names its recipe with `build: <name>` instead of a download
+`source:`, and pins `sha256` and `size_bytes`. Nothing downloads it: `ordo fetch`, `ordo up` and
+`ordo apply` verify the file in the volume and refuse, printing these two commands, when it is
+missing or different. The converter writes a random artifact id into every file, so a re-run
+produces the same weights under a different sha256: validate the new file, then pin its sha256 and
+size_bytes in the catalog before installing it.
 
 | Artifact | Source | Recipe | Notes |
 |---|---|---|---|

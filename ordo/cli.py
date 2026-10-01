@@ -146,6 +146,9 @@ def main(argv: list[str] | None = None) -> int:
     pget.add_argument("--allow-unverified", action="store_true",
                       help="permit downloading a model with no pinned sha256 (unsafe)")
     pget.add_argument("--plan-only", action="store_true", help="print the plan, download nothing")
+    pget.add_argument("--from", dest="local_file", default=None, metavar="FILE",
+                      help="install this locally built file for the named catalog `build:` model, "
+                           "after checking it against the pinned sha256")
     pget.set_defaults(func=_handler("ordo.host.cli_stack", "cmd_fetch"))
     pn = sub.add_parser("native")
     pn.add_argument("--models-dir", default="./models", help="where the GGUF files live natively")

@@ -51,6 +51,11 @@
 # Same service name, alias, port and models volume either way; rolling back is a `model:` change.
 #   vision: { enabled, max_context }  ninfer only: load the artifact's vision encoder, which caps the
 #                                     window at max_context. Also `overrides.llamacpp.vision`.
+# build: in place of `source`, a file built locally by the tracked recipe of that name in
+# services/ninfer/convert/inputs/ (every input pinned by revision and sha256). It must pin sha256 and
+# size_bytes. Nothing downloads it: `ordo fetch`, `ordo up` and `ordo apply` verify the file in the
+# models volume and refuse with the rebuild commands when it is missing or different;
+# `ordo fetch <id> --from <file>` installs a built file through the same check.
 
 version: 1
 
@@ -279,9 +284,11 @@ models:
     backend: ninfer
     backend_image: ordo/ninfer
     file: qwen3_8_27b_heretic_ara.ninfer
-    source: https://huggingface.co/__HOSTING_PENDING__/resolve/__REVISION__/qwen3_8_27b_heretic_ara.ninfer
-    # sha256 of the converted file itself (the converter writes a random artifact id, so a re-run
-    # gives the same weights under another sha256).
+    # Built locally, never downloaded (no source): `ordo fetch`/`up`/`apply` verify the file in the
+    # models volume against sha256 and size, and refuse with the rebuild commands when it is missing
+    # or different. The pin is the converted file itself: the converter writes a random artifact id,
+    # so a re-run gives the same weights under another sha256, to validate and pin again.
+    build: qwen3.8-27b-heretic-ara
     sha256: 6c5862c690c2d60e4c4fd1ac86ab30e10bb20c8b10bca2c5e518502a4d9bb904
     size_bytes: 18210704128
     # Measured on the 5090 (2026-10-01, engine d44ab584): 26.8GiB on the card at 262,144 tokens with
