@@ -84,6 +84,8 @@ model-gateway, gpu-gate, the dashboard, the agent, the MCP adapters) are built f
   and a `-dirty` tag is always rebuilt. The image also carries the full commit in the
   `org.opencontainers.image.revision` label.
 - An image whose tag already exists is not rebuilt, so `ordo build --all` is cheap to repeat.
+- `ordo build <name>` takes a rendered service, or a first-party image the stack does not run yet
+  (`ordo build ninfer`), so an engine build a catalog model names exists before a switch picks it.
 - Each build is recorded in `out/images.json`, and `ordo/<name>:current` moves to it.
 - Every render (yours, and ops-controller's on a model switch) writes the recorded tag into the
   compose `image:` field, or `current` for an image not built yet. The compose therefore names the

@@ -49,14 +49,30 @@ SHORT_SHA_LENGTH = 12
 ROOT_CONTEXT_IMAGES = frozenset({"ordo/ops-controller"})
 
 
+def _first_party_image_named(name: str, first_party: dict[str, str]) -> str | None:
+    """The first-party image `name` names (`ninfer` or `ordo/ninfer`), else None."""
+    for image in first_party:
+        if name == image or image.endswith("/" + name):
+            return image
+    return None
+
+
 def select_images(doc: dict[str, Any], first_party: dict[str, str], services: Sequence[str] | None) -> list[str]:
-    """The first-party images the rendered compose runs, for the named services or (None) all."""
+    """The first-party images the rendered compose runs, for the named services or (None) all.
+
+    A name that is no rendered service may name a first-party image directly (`ninfer` for
+    `ordo/ninfer`): an engine build a catalog model names has to exist before a model switch can
+    select it, while the compose does not run it yet."""
     rendered = doc.get("services") or {}
     names = list(rendered) if services is None else list(services)
     selected: set[str] = set()
     for name in names:
         if name not in rendered:
-            raise ValueError(f"no such service in the rendered stack: {name}")
+            image = _first_party_image_named(name, first_party)
+            if image is None:
+                raise ValueError(f"no such service in the rendered stack, and no first-party image: {name}")
+            selected.add(image)
+            continue
         ref = str((rendered[name] or {}).get("image") or "")
         image = buildspec.image_ident(ref)
         if ref.startswith("${") or image not in first_party:
