@@ -45,4 +45,8 @@ def test_store_and_erase_do_nothing(tmp_path, action):
 
 def test_the_image_wires_the_helper_for_github_only():
     dockerfile = (HELPER.parent / "Dockerfile").read_text(encoding="utf-8")
-    assert "git config --system credential.https://github.com.helper /usr/local/bin/git-credential-github-pat" in dockerfile
+    lines = dockerfile.splitlines()
+    wiring = "    && git config --system credential.https://github.com.helper /usr/local/bin/git-credential-github-pat"
+    assert wiring in lines, "the helper must be configured on its own continuation line of the RUN step"
+    # A literal backslash-n instead of a line continuation once broke the image build.
+    assert not any("\\n    &&" in line for line in lines)

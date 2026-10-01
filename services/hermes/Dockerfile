@@ -418,7 +418,8 @@ COPY entrypoint.sh /entrypoint.sh
 # git authenticates to github.com through this helper, which reads GITHUB_BACKUP_PAT from its file
 # secret when asked (services/hermes/git-credential-github-pat). Nothing secret is in the config.
 COPY git-credential-github-pat /usr/local/bin/git-credential-github-pat
-RUN chmod 0755 /usr/local/bin/git-credential-github-pat \n    && git config --system credential.https://github.com.helper /usr/local/bin/git-credential-github-pat
+RUN chmod 0755 /usr/local/bin/git-credential-github-pat \
+    && git config --system credential.https://github.com.helper /usr/local/bin/git-credential-github-pat
 RUN chmod +x /entrypoint.sh
 
 # Ordo AI Stack: ship the push-through plugin (bundled location, opt-in via entrypoint
