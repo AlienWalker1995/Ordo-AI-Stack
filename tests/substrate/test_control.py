@@ -33,6 +33,21 @@ def test_status_merges_manifest_and_gpu(tmp_path):
     assert st["gpu"]["state"] == "idle"           # nothing running yet
 
 
+def test_status_reports_the_lease_when_the_source_does_not_render(tmp_path):
+    """The host's `ordo apply` reads the lease from /status before it recreates ops-controller. A
+    source naming a model this (older) ops-controller's catalog lacks must not hide the lease: the
+    gpu block is still served, and the render failure is reported beside it instead of a manifest."""
+    cp, src = _cp(tmp_path)
+    cp.route("POST", "/jobs", {"id": "render", "vram_gb": 17, "kind": "media"})
+    src.write_text(src.read_text().replace("model: auto", "model: a-model-this-catalog-lacks"))
+    code, st = cp.route("GET", "/status")
+    assert code == 200
+    assert st["gpu"]["leased"] is True
+    assert [job["id"] for job in st["gpu"]["running"]] == ["render"]
+    assert "manifest" not in st
+    assert "a-model-this-catalog-lacks" in st["render_error"]
+
+
 def test_get_model_config_lists_catalog(tmp_path):
     cp, _ = _cp(tmp_path)
     code, body = cp.route("GET", "/model-config")

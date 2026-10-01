@@ -158,9 +158,17 @@ class ControlPlane:
         return self.source.render()
 
     def status(self) -> dict[str, Any]:
-        """Live status: GPU/scheduler state + the current rendered manifest."""
-        rc = self._render()
-        out: dict[str, Any] = {"manifest": rc.manifest()}
+        """Live status: GPU/scheduler state + the current rendered manifest.
+
+        The gpu block never depends on the render. The host's `ordo apply` reads the lease here
+        before it recreates this container, and the source it reads may already name a model or key
+        that only the replacement's code knows. A render failure is reported as `render_error` in
+        place of the manifest, so the lease guard still sees the real lease."""
+        out: dict[str, Any] = {}
+        try:
+            out["manifest"] = self._render().manifest()
+        except Exception as e:  # any render failure: the lease state below must still be served
+            out["render_error"] = f"{type(e).__name__}: {e}"
         out["gpu"] = self.scheduler.status() if self.scheduler else {"state": "no-scheduler"}
         if self.scheduler:
             # Whether a restart would keep the lease: the host's `ordo recreate ops-controller`
