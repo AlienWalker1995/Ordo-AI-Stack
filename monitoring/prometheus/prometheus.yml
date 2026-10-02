@@ -25,6 +25,9 @@ scrape_configs:
 
   # llama.cpp server exposes Prometheus metrics on its own port when started
   # with --metrics (prompt/generation token rates, KV-cache usage, queue depth).
+  # When the active model's backend is NInfer this target is down by design (NInfer has no /metrics):
+  # TargetDown excludes it, ops-controller's /health probe (ordo_gpu_chat_up) says whether chat is up,
+  # and the Grafana GPU chat panels read the model gateway's per-backend metrics instead.
   - job_name: llamacpp
     metrics_path: /metrics
     static_configs:

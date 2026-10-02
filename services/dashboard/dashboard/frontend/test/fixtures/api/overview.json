@@ -16,7 +16,7 @@
       "util_pct": 41,
       "temp_c": 58,
       "tenants": [
-        "llama.cpp",
+        "GPU chat",
         "ComfyUI"
       ],
       "borrowed_by": []

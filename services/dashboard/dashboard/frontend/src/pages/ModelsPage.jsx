@@ -39,7 +39,7 @@ function SwitchModel({ data, onSwitched }) {
 
   const run = async () => {
     if (!target) return
-    if (!window.confirm(`Switch the GPU chat model to ${target.id}?\n\nllama.cpp, the model gateway and whatever else the new model changes restart; chat runs on the CPU fallback for about a minute while the new model loads.`)) return
+    if (!window.confirm(`Switch the GPU chat model to ${target.id}?\n\nThe GPU chat engine, the model gateway and whatever else the new model changes restart; chat runs on the CPU fallback for about a minute while the new model loads.`)) return
     setBusy(true)
     try {
       const r = await api.post('/api/models/switch', { model: target.id })
