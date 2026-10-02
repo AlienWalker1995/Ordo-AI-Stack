@@ -154,6 +154,35 @@ def read_open_webui_probe(project: str) -> dict | None:
     return report
 
 
+# Domains reserved for documentation and testing (RFC 2606 / RFC 6761): an address there can never be
+# a real Google account, so an allowlist holding one is a placeholder left in the live source.
+_PLACEHOLDER_DOMAINS = ("example.com", "example.net", "example.org", "localhost")
+_PLACEHOLDER_SUFFIXES = (".example", ".invalid", ".test", ".localhost")
+
+
+def _is_placeholder(address: str) -> bool:
+    domain = address.rpartition("@")[2].lower()
+    return domain in _PLACEHOLDER_DOMAINS or domain.endswith(_PLACEHOLDER_SUFFIXES)
+
+
+def sso_allowlist_check(rc: Any) -> tuple[bool, str]:
+    """(ok, one-line report): whether anyone can sign in through the edge. The render requires
+    `site: SSO_ALLOWED_EMAILS`, but a placeholder address satisfies that and admits no one: every
+    Google sign-in then ends on oauth2-proxy's 403 page."""
+    files = rc.sso_allowlist_files()
+    if not files:
+        return True, "sso     : edge off (no allowlist rendered)"
+    addresses = [line.strip() for line in files["emails.txt"].splitlines() if line.strip()]
+    if not addresses:
+        return False, "! sso: the allowlist (site: SSO_ALLOWED_EMAILS) has no address: nobody can sign in"
+    placeholders = [a for a in addresses if _is_placeholder(a)]
+    if placeholders:
+        return False, (f"! sso: the allowlist (site: SSO_ALLOWED_EMAILS) holds {len(placeholders)} placeholder "
+                       f"address(es) ({', '.join(placeholders)}); set the real Google accounts in out/ordo.yaml, "
+                       f"then `ordo apply`")
+    return True, f"sso     : {len(addresses)} address(es) on the allowlist"
+
+
 def alerting_check(compose: dict[str, Any], out_dir: str | Path) -> tuple[bool, str]:
     """(ok, one-line report): whether the rendered Alertmanager can deliver (ordo/render/alerting.py),
     judged from the materialized secret files under `out_dir`."""
