@@ -64,3 +64,9 @@ def test_the_gpu_chat_panels_do_not_need_llama_cpp_metrics():
     assert not [e for e in _exprs() if 'job="llamacpp"' in e]
     assert any("ordo_gpu_chat_up" in e for e in _exprs())
     assert any('api_base="http://llamacpp:8080/v1"' in e for e in _exprs())
+
+
+def test_no_panel_uses_litellm_per_token_latency_as_a_speed():
+    """litellm_deployment_latency_per_output_token reads impossibly high for streamed requests (1,785
+    tok/s measured on a ~120 tok/s engine), so no panel turns it into a speed."""
+    assert not [e for e in _exprs() if "latency_per_output_token_sum" in e]
