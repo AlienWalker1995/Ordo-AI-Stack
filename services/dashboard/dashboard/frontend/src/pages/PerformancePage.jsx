@@ -1,4 +1,4 @@
-// Performance: the Grafana dashboard (llama.cpp GPU and CPU fallback, GPU hardware) embedded
+// Performance: the Grafana dashboard (GPU chat engine and CPU fallback, GPU hardware) embedded
 // same-origin at /grafana/, with range presets. When Grafana is not running the page says so
 // instead of drawing an empty frame.
 //   GET /api/perf/grafana   {available, path}

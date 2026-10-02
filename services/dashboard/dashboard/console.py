@@ -19,7 +19,8 @@ NOT_CONTROLLABLE = frozenset({"agent", "ops-controller"})
 
 # How a registry entry's service reads on a GPU card.
 _TENANT_LABELS = {
-    "llamacpp": "llama.cpp",
+    # The GPU chat service, whichever engine serves it (llama.cpp or NInfer).
+    "llamacpp": "GPU chat",
     "llamacpp-embed": "Embeddings",
     "comfyui": "ComfyUI",
     "stt": "Whisper",
@@ -191,7 +192,7 @@ def chat_engine(status_gpu: dict | None, containers_by_id: dict) -> dict:
     if borrowers:
         reason = f"The GPU is lent to {', '.join(borrowers)}"
     else:
-        reason = "llama.cpp (GPU) is not running"
+        reason = "The GPU chat model is not running"
     if _verdict(containers_by_id.get("llamacpp-cpu")) in ("up", "starting"):
         return {"engine": "cpu", "reason": reason}
     return {"engine": "none", "reason": reason}

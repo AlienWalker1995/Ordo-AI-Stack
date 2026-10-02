@@ -30,7 +30,8 @@ def test_the_cpu_fallback_is_scraped():
 
 
 def test_every_llama_cpp_query_names_its_server():
-    unfiltered = [e for e in _exprs() if "llamacpp:" in e and not re.search(r'job=~?"', e)]
+    # A llama.cpp metric is `llamacpp:<name>`; `http://llamacpp:8080` in a gateway label is not one.
+    unfiltered = [e for e in _exprs() if re.search(r"(?<!/)llamacpp:[a-z]", e) and not re.search(r'job=~?"', e)]
     assert not unfiltered, f"these would merge the GPU and CPU servers: {unfiltered}"
 
 
@@ -55,3 +56,11 @@ def test_panels_do_not_overlap():
 def test_the_embed_uid_is_stable():
     """The dashboard's Performance page embeds this uid."""
     assert DASH["uid"] == "ordo-llm-gpu"
+
+
+def test_the_gpu_chat_panels_do_not_need_llama_cpp_metrics():
+    """The GPU chat engine may be NInfer, which serves no /metrics: GPU chat panels read the model
+    gateway's per-backend metrics and ops-controller's health probe, never the llamacpp scrape job."""
+    assert not [e for e in _exprs() if 'job="llamacpp"' in e]
+    assert any("ordo_gpu_chat_up" in e for e in _exprs())
+    assert any('api_base="http://llamacpp:8080/v1"' in e for e in _exprs())

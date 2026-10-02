@@ -569,7 +569,8 @@ class RenderedConfig:
         # card(s) next to its other manifests). Mounted read-only into the dashboard like the
         # manifest; services_catalog.py loads it (SERVICES_CATALOG_PATH) and React renders it.
         (out / "services-catalog.json").write_text(
-            json.dumps(aggregate_services_catalog(), indent=2) + "\n", encoding="utf-8")
+            json.dumps(aggregate_services_catalog(gpu_engine=self.model.backend), indent=2) + "\n",
+            encoding="utf-8")
         # secrets.env.example: the KEYS the enabled stack needs, values EMPTY. A reference, never
         # copied by hand. `ordo secrets materialize` writes secrets.env from the secret store (the SOPS
         # file `site: SECRETS_SOURCE` names, or secrets.env itself without one). Derived config (.env)
@@ -653,7 +654,19 @@ def _refuse_shared_edge_ports(sites: dict[str, EdgeSite]) -> None:
                          "`edge_site.port`")
 
 
-def aggregate_services_catalog(services_dir: str | Path = DEFAULT_PLUGINS_DIR) -> dict[str, Any]:
+# How the dashboard names each chat engine a catalog `backend:` can select.
+_GPU_ENGINE_LABELS = {"llama.cpp": "llama.cpp", "ninfer": "NInfer"}
+# The core card for the GPU chat service, whichever engine serves it.
+GPU_CHAT_CARD = "llamacpp"
+
+
+def gpu_engine_label(backend: str) -> str:
+    """The engine name the dashboard shows for a catalog `backend:` value."""
+    return _GPU_ENGINE_LABELS.get(backend, backend)
+
+
+def aggregate_services_catalog(services_dir: str | Path = DEFAULT_PLUGINS_DIR,
+                               gpu_engine: str | None = None) -> dict[str, Any]:
     """Aggregate the per-service dashboard-card fragments (services/<id>/catalog.json) into
     the single catalog document the dashboard consumes (out/services-catalog.json).
 
@@ -666,6 +679,9 @@ def aggregate_services_catalog(services_dir: str | Path = DEFAULT_PLUGINS_DIR) -
     are off) is DERIVED here from the edge site its owner declares: the card's `plugin`, or for a
     core card (`plugin: null`) its own id. A fragment that writes `sso_port` itself is refused,
     so the port has one declaration.
+
+    `gpu_engine` is the active model's catalog `backend:`; the GPU chat card is named after it, so
+    the Services page names the engine that actually serves chat (llama.cpp or NInfer).
     """
     services = Path(services_dir)
     sites = declared_edge_sites(PluginRegistry.load(services), DashboardRegistry.load(services))
@@ -680,6 +696,8 @@ def aggregate_services_catalog(services_dir: str | Path = DEFAULT_PLUGINS_DIR) -
             site = sites.get(card.get("plugin") or card.get("id", ""))
             if site is not None:
                 card["sso_port"] = site.port
+            if gpu_engine and card.get("id") == GPU_CHAT_CARD:
+                card["name"] = f"{gpu_engine_label(gpu_engine)} (GPU)"
             cards.append(card)
     cards.sort(key=lambda c: (int(c.get("order", 1000)), str(c.get("id", ""))))
     return {"version": 1, "services": cards}

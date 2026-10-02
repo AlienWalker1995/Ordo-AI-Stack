@@ -24,7 +24,7 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "GPU generation (tok/s)",
+      "title": "GPU chat generation (tok/s, per request)",
       "gridPos": {
         "h": 4,
         "w": 6,
@@ -40,10 +40,11 @@
       },
       "targets": [
         {
-          "expr": "llamacpp:predicted_tokens_seconds{job=\"llamacpp\"}",
+          "expr": "1 / (sum(rate(litellm_deployment_latency_per_output_token_sum{api_base=\"http://llamacpp:8080/v1\"}[5m])) / sum(rate(litellm_deployment_latency_per_output_token_count{api_base=\"http://llamacpp:8080/v1\"}[5m])))",
           "refId": "A"
         }
-      ]
+      ],
+      "description": "Measured at the model gateway (LiteLLM), so it works for any GPU chat engine (llama.cpp or NInfer; NInfer has no /metrics). Per request: output tokens over total latency, so it includes prompt reading."
     },
     {
       "id": 2,
@@ -72,7 +73,7 @@
     {
       "id": 3,
       "type": "stat",
-      "title": "GPU prompt eval (tok/s)",
+      "title": "GPU chat time to first token, p50 (s)",
       "gridPos": {
         "h": 4,
         "w": 6,
@@ -81,17 +82,18 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "none",
+          "unit": "s",
           "decimals": 1
         },
         "overrides": []
       },
       "targets": [
         {
-          "expr": "llamacpp:prompt_tokens_seconds{job=\"llamacpp\"}",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(litellm_llm_api_time_to_first_token_metric_bucket[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://llamacpp:8080/v1\"}) * 0 + 1)))",
           "refId": "A"
         }
-      ]
+      ],
+      "description": "Measured at the model gateway (LiteLLM), so it works for any GPU chat engine."
     },
     {
       "id": 4,
@@ -112,8 +114,8 @@
       },
       "targets": [
         {
-          "expr": "llamacpp:requests_processing{job=\"llamacpp\"}",
-          "legendFormat": "GPU",
+          "expr": "litellm_in_flight_requests",
+          "legendFormat": "Gateway (all chat)",
           "refId": "A"
         },
         {
@@ -154,8 +156,8 @@
       },
       "targets": [
         {
-          "expr": "up{job=\"llamacpp\"}",
-          "legendFormat": "GPU (llama.cpp)",
+          "expr": "ordo_gpu_chat_up",
+          "legendFormat": "GPU chat engine",
           "refId": "A"
         },
         {
@@ -189,19 +191,14 @@
       },
       "targets": [
         {
-          "expr": "llamacpp:predicted_tokens_seconds{job=\"llamacpp\"}",
-          "legendFormat": "GPU generation",
+          "expr": "1 / (sum(rate(litellm_deployment_latency_per_output_token_sum{api_base=\"http://llamacpp:8080/v1\"}[5m])) / sum(rate(litellm_deployment_latency_per_output_token_count{api_base=\"http://llamacpp:8080/v1\"}[5m])))",
+          "legendFormat": "GPU generation (per request)",
           "refId": "A"
         },
         {
           "expr": "llamacpp:predicted_tokens_seconds{job=\"llamacpp-cpu\"}",
           "legendFormat": "CPU fallback generation",
           "refId": "B"
-        },
-        {
-          "expr": "llamacpp:prompt_tokens_seconds{job=\"llamacpp\"}",
-          "legendFormat": "GPU prompt eval",
-          "refId": "C"
         }
       ]
     },
@@ -229,8 +226,8 @@
       },
       "targets": [
         {
-          "expr": "rate(llamacpp:tokens_predicted_total{job=\"llamacpp\"}[5m])",
-          "legendFormat": "GPU",
+          "expr": "sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://llamacpp:8080/v1\"}) * 0 + 1))",
+          "legendFormat": "GPU (gateway)",
           "refId": "A"
         },
         {
