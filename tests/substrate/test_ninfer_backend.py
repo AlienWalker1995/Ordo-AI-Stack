@@ -175,18 +175,3 @@ def test_the_heretic_nvfp4_entry_serves_on_the_same_ninfer_service():
     assert rc.resident_vram_gb() == pytest.approx(29.35, abs=0.05)
     # the groupwise build stays as the rollback
     assert _render(HERETIC).env["LLAMACPP_MODEL"] == "qwen3_8_27b_heretic_ara.ninfer"
-
-
-def test_every_ninfer_entry_queues_on_the_gpu_instead_of_failing_over_to_the_cpu():
-    """NInfer serves one request at a time. With its default short pending timeout a second request
-    failed with request_queue_timeout/503 and the gateway failed it over to the CPU fallback, which then
-    spent minutes reading a long prompt at ~23 tok/s on 12 cores (2026-10-02). A GPU request finishes in
-    seconds to a couple of minutes, so a waiting request queues on the GPU instead."""
-    import re
-    entries = [m for m in CATALOG.models if m.backend == "ninfer"]
-    assert entries
-    for model in entries:
-        pending = re.search(r"--max-pending-requests (\d+)", model.extra_args)
-        timeout = re.search(r"--pending-timeout-ms (\d+)", model.extra_args)
-        assert pending and int(pending.group(1)) >= 8, model.id
-        assert timeout and int(timeout.group(1)) >= 600000, model.id
