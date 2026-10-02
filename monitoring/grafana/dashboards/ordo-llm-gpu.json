@@ -24,7 +24,7 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "GPU chat generation (tok/s, per request)",
+      "title": "GPU chat output (tok/s, all requests)",
       "gridPos": {
         "h": 4,
         "w": 6,
@@ -40,11 +40,11 @@
       },
       "targets": [
         {
-          "expr": "1 / (sum(rate(litellm_deployment_latency_per_output_token_sum{api_base=\"http://llamacpp:8080/v1\"}[5m])) / sum(rate(litellm_deployment_latency_per_output_token_count{api_base=\"http://llamacpp:8080/v1\"}[5m])))",
+          "expr": "sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://llamacpp:8080/v1\"}) * 0 + 1))",
           "refId": "A"
         }
       ],
-      "description": "Measured at the model gateway (LiteLLM), so it works for any GPU chat engine (llama.cpp or NInfer; NInfer has no /metrics). Per request: output tokens over total latency, so it includes prompt reading."
+      "description": "Output tokens per second served by the GPU chat engine, counted at the model gateway (LiteLLM), so it works for any engine (llama.cpp or NInfer; NInfer has no /metrics). LiteLLM's per-token latency metric is not used: it reads impossibly high for streamed requests."
     },
     {
       "id": 2,
@@ -191,8 +191,8 @@
       },
       "targets": [
         {
-          "expr": "1 / (sum(rate(litellm_deployment_latency_per_output_token_sum{api_base=\"http://llamacpp:8080/v1\"}[5m])) / sum(rate(litellm_deployment_latency_per_output_token_count{api_base=\"http://llamacpp:8080/v1\"}[5m])))",
-          "legendFormat": "GPU generation (per request)",
+          "expr": "sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() (max by (model_id) (litellm_deployment_latency_per_output_token_count{api_base=\"http://llamacpp:8080/v1\"}) * 0 + 1))",
+          "legendFormat": "GPU output (gateway)",
           "refId": "A"
         },
         {
