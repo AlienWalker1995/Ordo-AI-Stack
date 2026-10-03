@@ -3,7 +3,7 @@
 Open WebUI keeps its settings in webui.db (`config` table). With ENABLE_PERSISTENT_CONFIG at its
 default (true) it reads env only on first launch and the DB row wins forever after: a first-launch
 placeholder key survived three months of manifest-declared scoped keys, LiteLLM rejected it (401), and
-the chat UI listed no models. v0.11.3 has no per-key override (only oauth.* has its own switch,
+the chat UI listed no models. v0.11.4 has no per-key override (only oauth.* has its own switch,
 ENABLE_OAUTH_PERSISTENT_CONFIG), so the manifest turns persistence off: env (the render) is the
 source of truth for every setting, and the settings the operator had changed in the admin UI are
 declared here instead.
@@ -30,8 +30,10 @@ HARDWARE = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128, "cpu_c
 SITE = {"BASE_PATH": "/srv/ordo", "DATA_PATH": "/srv/ordo/data"}
 # The image whose PersistentConfig semantics this contract was verified against. A bump must re-check
 # open_webui/models/config.py (Config.persistent_enabled_for) before this pin moves.
-VERIFIED_IMAGE = ("ghcr.io/open-webui/open-webui:v0.11.3"
-                  "@sha256:41daa0cf2561a5d4c8d1ff31ee2a98d93ab4d3ac2605cac69366ff6a3374a933")
+# v0.11.4: models/config.py is byte-identical to v0.11.3 and config.py's ENABLE_PERSISTENT_CONFIG
+# switch is unchanged (re-checked 2026-10-03).
+VERIFIED_IMAGE = ("ghcr.io/open-webui/open-webui:v0.11.4"
+                  "@sha256:9591b13f13843c7721c2b8eaf7382846c81b3ffe126526d1888d1fed50c6a33f")
 
 
 def _render(plugins: list[str]):
