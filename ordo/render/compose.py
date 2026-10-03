@@ -897,6 +897,10 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
     # mirroring V1's compose. Empty -> omitted, so an agent whose image self-starts is unaffected.
     if agent_command:
         svcs["agent"]["command"] = list(agent_command)
+    # The agent is a long-lived orchestrator that spawns tool subprocesses. Without an init the
+    # agent process is PID 1 and nothing reaps the orphans those leave (Hermes v0.21.5 warns about
+    # exactly this at boot). Docker's init becomes PID 1 and reaps them, as for the MCP services.
+    svcs["agent"]["init"] = True
     # Full agent runtime wiring (data-driven, from the agent manifest) — mirrors V1's hermes-gateway:
     # the brain bind (staged), /workspace/data, the /c/dev mirror, file secrets, env, service_healthy
     # depends, healthcheck. Each is emitted only when the manifest declares it (a self-contained
