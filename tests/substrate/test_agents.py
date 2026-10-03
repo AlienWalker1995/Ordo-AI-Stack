@@ -68,6 +68,14 @@ def test_render_agent_emits_gateway_command(tmp_path):
     assert c["services"]["agent"]["command"] == ["hermes", "gateway"]
 
 
+def test_render_agent_runs_under_an_init(tmp_path):
+    # The agent spawns tool subprocesses; as PID 1 it would never reap their orphans (zombies pile
+    # up for the life of the container). Docker's init must be PID 1 instead.
+    render(_src("hermes"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    assert c["services"]["agent"]["init"] is True
+
+
 def test_render_agent_without_command_omits_it(tmp_path):
     # an agent whose image self-starts (no manifest `command`) leaves compose `command` unset so the
     # image default runs — the openai-agent manifest declares none.
