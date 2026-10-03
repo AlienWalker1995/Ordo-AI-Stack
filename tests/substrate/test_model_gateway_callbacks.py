@@ -37,7 +37,8 @@ CONFIG = """\
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
 litellm_settings:
-  callbacks: ["throughput_callback.throughput_recorder_instance", "prometheus"]
+  callbacks: ["throughput_callback.throughput_recorder_instance",
+              "gpu_lease_fallback_gate.gpu_lease_fallback_gate_instance", "prometheus"]
 """
 
 
