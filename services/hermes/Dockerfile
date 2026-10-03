@@ -5,7 +5,8 @@
 
 # Upstream pin. ALWAYS record which release the SHA is — a bare 40-hex string tells a
 # future reader nothing, and this pin silently rotted 2.5 months (see below).
-#   v2026.8.3 (v0.20.0, 2026-08-03) — commit 3c27eb62, the tag's dereferenced commit.
+#   v2026.9.24 (v0.21.5, 2026-09-24) — commit f97608f1, the tag's dereferenced commit.
+#   The three local patches below were re-ported to this pin (none was fixed upstream).
 #   NOTE: `git/ref/tags/<tag>` returns the ANNOTATED TAG object here, not the commit;
 #   deref via `git/tags/<sha>` or the checkout below resolves to the wrong object.
 # Previous pin 5fdcfd85 was a 2026-05-19 commit left 11 releases behind, several citing
@@ -14,7 +15,7 @@
 # very ARG (see its `pinned_sources` block), so bumping this line is what clears the
 # SECURITY row it emits. Keep the `<X>_PINNED_SHA` / `<X>_REPO` naming — discovery is
 # by that convention, not a hardcoded table.
-ARG HERMES_PINNED_SHA=3c27eb6234bf91b8ceee9e9071591b31e9b148cb
+ARG HERMES_PINNED_SHA=f97608f178d1ffeca59860195ab7da295f7c8e5f
 ARG HERMES_REPO=https://github.com/NousResearch/hermes-agent.git
 
 # ── Stage 1: web-builder ──
@@ -178,7 +179,7 @@ RUN cd /opt/hermes-agent \
 # so no checkpoint was ever produced. The patch (a) wall-clock-bounds the
 # walk (HERMES_CHECKPOINT_SCAN_SECONDS, default 10s), (b) remembers the
 # too-big verdict across turns, (c) logs the skip once at INFO. Upstream
-# v0.20.3 is still unbounded — re-check on pin bumps.
+# v0.21.5 (v2026.9.24) is still unbounded — re-check on pin bumps.
 # --check first: the build fails loudly if a future pin bump breaks the patch.
 COPY checkpoint-scan-bounds.diff /tmp/checkpoint-scan-bounds.diff
 RUN cd /opt/hermes-agent \
@@ -205,10 +206,10 @@ COPY scripts/ordo_skills.py /opt/ordo/ordo_skills.py
 RUN cd /opt/hermes-agent \
     && git apply --recount --check /tmp/skill-overlays/comfyui/submit-via-comfyui-url.diff \
     && git apply --recount /tmp/skill-overlays/comfyui/submit-via-comfyui-url.diff \
-    && chown hermes:hermes skills/creative/comfyui/scripts/_common.py \
-                           skills/creative/comfyui/tests/test_run_workflow.py \
+    && chown hermes:hermes optional-skills/creative/comfyui/scripts/_common.py \
+                           optional-skills/creative/comfyui/tests/test_run_workflow.py \
     && python3 /opt/ordo/ordo_skills.py build \
-           skills/creative/comfyui \
+           optional-skills/creative/comfyui \
            /tmp/skill-overlays/comfyui/ordo-deployment.md \
            /opt/ordo-skills/creative/comfyui \
     && chown -R root:root /opt/ordo-skills /opt/ordo/ordo_skills.py \
@@ -276,42 +277,38 @@ RUN uv pip install "langfuse==4.15.1"
 # WAL-hostile filesystem, and it cannot rot the way an anchor-matching patch does.
 
 # Ordo AI Stack patch: allow 3D/maker file types as native outbound attachments.
-# Upstream's outbound media allowlists (gateway/platforms/base.py) omit
-# STL/3MF/OBJ/STEP/gcode/etc., so a generated .stl degrades to a plain-text
-# link instead of a real Discord/Telegram file attachment — breaking
-# "send me an STL" workflows. Two lists need it: the explicit MEDIA: tag regex
-# and the bare-path auto-detect tuple (_LOCAL_MEDIA_EXTS). Non-image/video
-# types already route to send_document, so once recognized they attach.
-# The asserts fail the build loudly if upstream moves either anchor.
+# Upstream's outbound media allowlist (gateway/platforms/base.py) omits
+# STL/3MF/OBJ/STEP/gcode/etc. Since v2026.9.24 an explicit MEDIA: tag with an unknown
+# extension still delivers (validated pass, upstream #36060), but the bare-path
+# auto-detect (extract_local_files) only recognises MEDIA_DELIVERY_EXTS, so a generated
+# .stl mentioned by path degrades to plain text instead of a Discord/Telegram file
+# attachment. Non-image/video types already route to send_document, so once recognized
+# they attach. The asserts fail the build loudly if upstream moves the anchor.
 RUN python3 - <<'PYEOF'
 import pathlib
 b = pathlib.Path("/opt/hermes-agent/gateway/platforms/base.py")
 s = b.read_text()
 
-# v2026.8.3 consolidated what used to be TWO hand-maintained allowlists (a regex
-# alternation + _LOCAL_MEDIA_EXTS) into ONE tuple, MEDIA_DELIVERY_EXTS, from which
-# both are now derived. So this patch has exactly one insertion point — but it is
-# only correct while that consolidation holds. Assert it, or a future upstream
-# split silently half-patches us (regex updated, path detection not).
+# MEDIA_DELIVERY_EXTS is upstream's single source of truth: the MEDIA: cleanup regex and
+# extract_local_files() both derive from it, so one insertion covers both. Assert that,
+# or a future upstream split silently half-patches us.
 assert "MEDIA_DELIVERY_EXTS" in s, "hermes: MEDIA_DELIVERY_EXTS gone — allowlist restructured"
-assert "_LOCAL_MEDIA_EXTS = MEDIA_DELIVERY_EXTS" in s, \
-    "hermes: _LOCAL_MEDIA_EXTS no longer aliases MEDIA_DELIVERY_EXTS — needs a second patch site"
 assert "sorted((e.lstrip(\".\") for e in MEDIA_DELIVERY_EXTS)" in s, \
     "hermes: MEDIA: regex alternation no longer derived from MEDIA_DELIVERY_EXTS"
+assert "ext_part = '|'.join(e.lstrip('.') for e in MEDIA_DELIVERY_EXTS)" in s, \
+    "hermes: extract_local_files no longer derived from MEDIA_DELIVERY_EXTS — needs a second patch site"
 
 if '".stl"' in s:
     print("outbound media allowlist already carries 3D/maker formats — nothing to do")
 else:
-    # Anchor on comment + closing paren: the bare '".html", ".htm",' line also occurs
-    # in _TEXT_INJECT_EXTENSIONS (followed by ".css"), and patching THAT would make
-    # Hermes inline 3D files as text instead of attaching them.
-    anchor = '    # Web / rendered output\n    ".html", ".htm",\n)'
+    # The tuple's last line, closing paren and trailing comment included, so the
+    # similar ".html", ".htm" line in _TEXT_INJECT_EXTENSIONS can never match.
+    anchor = '    ".html", ".htm")  # web / rendered output\n'
     assert s.count(anchor) == 1, "hermes: MEDIA_DELIVERY_EXTS tail anchor missing or ambiguous"
     exts = ['.stl', '.3mf', '.obj', '.step', '.stp', '.gcode', '.ply', '.glb', '.gltf']
     s = s.replace(anchor,
-                  '    # Web / rendered output\n    ".html", ".htm",\n'
-                  '    # Ordo AI Stack: 3D / maker formats\n    '
-                  + ", ".join('"%s"' % e for e in exts) + ',\n)')
+                  '    ".html", ".htm",  # web / rendered output\n'
+                  '    ' + ", ".join('"%s"' % e for e in exts) + ')  # Ordo AI Stack: 3D / maker formats\n')
     b.write_text(s)
     print("patched MEDIA_DELIVERY_EXTS with 3D/maker formats")
 
@@ -377,34 +374,31 @@ PYEOF
 # Drop this block when an upstream fix lands.
 RUN python3 - <<'PYEOF'
 import pathlib
-b = pathlib.Path("/opt/hermes-agent/gateway/run.py")
+# v2026.9.24 moved the join handler from gateway/run.py into gateway/run_voice.py and now
+# records the mode through _apply_voice_mode(...), which persists it and mirrors it into
+# the adapter. The bug is unchanged: join passes a hard-coded "all".
+b = pathlib.Path("/opt/hermes-agent/gateway/run_voice.py")
 s = b.read_text()
 
-anchor = '''            self._voice_mode[self._voice_key(event.source.platform, event.source.chat_id)] = "all"
-            self._save_voice_modes()'''
-assert s.count(anchor) == 1, "hermes voice: join-handler mode-set anchor moved/ambiguous"
-s = s.replace(anchor, '''            _vkey = self._voice_key(event.source.platform, event.source.chat_id)
-            self._voice_mode.setdefault(_vkey, "all")
-            self._save_voice_modes()''', 1)
-
-# The canned reply hard-codes "I'll speak my replies" — false when a preserved mode
-# is voice_only/off. Reflect the effective mode instead.
-reply_anchor = '''            return (
-                f"Joined voice channel **{voice_channel.name}**.\\n"
-                f"I'll speak my replies and listen to you. Use /voice leave to disconnect."
-            )'''
-assert s.count(reply_anchor) == 1, "hermes voice: join-handler reply anchor moved/ambiguous"
-s = s.replace(reply_anchor, '''            _vmode = self._voice_mode.get(_vkey, "all")
-            _speak = ("I'll speak my replies and listen to you."
-                      if _vmode == "all"
-                      else f"I'll listen; replies follow your saved voice mode ({_vmode}).")
-            return (
-                f"Joined voice channel **{voice_channel.name}**.\\n"
-                f"{_speak} Use /voice leave to disconnect."
-            )''', 1)
+anchor = '''        self._apply_voice_mode(adapter, self._voice_key_for_source(event.source),
+                               event.source.chat_id, "all")
+        return (f"Joined voice channel **{voice_channel.name}**.\\n"
+                f"I'll speak my replies and listen to you. Use /voice leave to disconnect.")'''
+assert s.count(anchor) == 1, "hermes voice: join-handler mode/reply anchor moved/ambiguous"
+s = s.replace(anchor, '''        _vkey = self._voice_key_for_source(event.source)
+        _vmode = self._voice_mode.get(_vkey, "all")
+        self._apply_voice_mode(adapter, _vkey, event.source.chat_id, _vmode)
+        # The canned reply hard-codes "I'll speak my replies", false when a preserved mode
+        # is voice_only/off. Reflect the effective mode instead.
+        _speak = ("I'll speak my replies and listen to you."
+                  if _vmode == "all"
+                  else f"I'll listen; replies follow your saved voice mode ({_vmode}).")
+        return (f"Joined voice channel **{voice_channel.name}**.\\n"
+                f"{_speak} Use /voice leave to disconnect.")''', 1)
 
 b.write_text(s)
-assert 'self._voice_mode.setdefault(_vkey, "all")' in b.read_text(), "hermes voice: join mode-preserve patch did not stick"
+assert '_vmode = self._voice_mode.get(_vkey, "all")' in b.read_text(), \
+    "hermes voice: join mode-preserve patch did not stick"
 print("patched gateway: /voice join preserves saved voice mode")
 PYEOF
 
