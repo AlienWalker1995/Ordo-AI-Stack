@@ -39,7 +39,7 @@ services:
   - name: tailnet-chat
     # Multi-arch INDEX digest (amd64 + arm64), never a per-platform child: a child digest runs
     # emulated or not at all on the other arch. Verify: docker buildx imagetools inspect <ref>
-    image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
+    image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
     network_mode: service:caddy
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]  # used on first login (TS_AUTH_ONCE); state persists after
     depends_on: [caddy]
@@ -61,7 +61,7 @@ services:
       timeout: 10s
       retries: 3
   - name: tailnet-dash
-    image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
+    image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
     network_mode: service:caddy
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
@@ -83,7 +83,7 @@ services:
       timeout: 10s
       retries: 3
   - name: tailnet-n8n
-    image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
+    image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
     network_mode: service:caddy
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
@@ -105,7 +105,7 @@ services:
       timeout: 10s
       retries: 3
   - name: tailnet-comfy
-    image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
+    image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
     network_mode: service:caddy
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
@@ -127,7 +127,7 @@ services:
       timeout: 10s
       retries: 3
   - name: tailnet-hermes
-    image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
+    image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
     network_mode: service:caddy
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
@@ -149,7 +149,7 @@ services:
       timeout: 10s
       retries: 3
   - name: tailnet-graph
-    image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
+    image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
     network_mode: service:caddy
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
@@ -179,7 +179,7 @@ services:
   # Cline/Cursor (LITELLM_MASTER_KEY bearer); this subdomain is the human entry and is
   # SSO-gated like every other one.
   - name: tailnet-llm
-    image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
+    image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
     network_mode: service:caddy
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
@@ -209,7 +209,7 @@ services:
   # proxies a Caddy port that simply has no upstream, exactly like any other sidecar whose
   # service is off.
   - name: tailnet-langfuse
-    image: tailscale/tailscale:v1.98.4@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
+    image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
     network_mode: service:caddy
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]

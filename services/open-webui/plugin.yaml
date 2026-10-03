@@ -24,7 +24,7 @@ litellm_key:
 services:
   - name: open-webui
     # Pinned to the exact version V1 runs (V1 uses ${OPEN_WEBUI_IMAGE:-...v0.10.1}). Pin, don't float.
-    image: ghcr.io/open-webui/open-webui:v0.11.3@sha256:41daa0cf2561a5d4c8d1ff31ee2a98d93ab4d3ac2605cac69366ff6a3374a933
+    image: ghcr.io/open-webui/open-webui:v0.11.4@sha256:9591b13f13843c7721c2b8eaf7382846c81b3ffe126526d1888d1fed50c6a33f
     # Local access while the edge is off: http://127.0.0.1:8443 (the port Caddy serves chat on).
     # The renderer binds it to loopback only and drops it when the edge is enabled.
     local_port: {host: 8443, container: 8080}

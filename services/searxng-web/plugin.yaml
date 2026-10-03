@@ -19,7 +19,7 @@ services:
   - name: searxng
     # Pinned by tag + digest. Upstream engines change their anti-bot pages often; an old build gets
     # CAPTCHAs from every scraped engine (2026.4.22 returned 0 results for everything). Bump it.
-    image: searxng/searxng:2026.9.23-3cd69d30e@sha256:bcfaed4091d59f7ce85670bd701a2d0295872196dc19908a3965a8353b149f83
+    image: searxng/searxng:2026.10.2-19ffbcd30@sha256:c642712fcedcdaa78fac44f71eada86aff510745826ba1bd1a368211fea2ce7f
     secrets: [SEARXNG_SECRET]
     env:
       # The tracked settings (engine selection), read-only and outside /etc/searxng, which the

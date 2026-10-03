@@ -103,7 +103,7 @@ services:
       retries: 5
       start_period: 20s
   - name: langfuse-clickhouse
-    image: clickhouse/clickhouse-server:25.12@sha256:8a790dd3468db22b1d4e7b18a176f378ff5ff6053b9c48dd4ea1fa71a24c5ba6
+    image: clickhouse/clickhouse-server:26.8.15.10@sha256:9716a352d25f538bd19d868b001141e7a60e4d035bc9b823658c6a071660aa61
     env:
       CLICKHOUSE_DB: default
       CLICKHOUSE_USER: clickhouse
@@ -190,7 +190,7 @@ services:
   # The two application services share one env surface (upstream merges a YAML anchor); this
   # manifest is data, so the shared keys are written out on both. Keep them in step.
   - name: langfuse-worker
-    image: docker.langfuse.com/langfuse/langfuse-worker:4@sha256:25212a931e27f5d8a87cb25c81b5ccdb9f239655c1d9efb54a4378ded32c2c9e
+    image: docker.langfuse.com/langfuse/langfuse-worker:4.50.0@sha256:52f7fd41ded2f1a6acab13ff7cb1832d36dfe2cbf44adea402b7a09cfa4ce800
     depends_on:
       langfuse-db: service_healthy
       langfuse-clickhouse: service_healthy
@@ -244,7 +244,7 @@ services:
       retries: 5
       start_period: 60s
   - name: langfuse-web
-    image: docker.langfuse.com/langfuse/langfuse:4@sha256:b0556ab389af97d861185323e6dbd410464bb2b1669bd819251cb3635c291c07
+    image: docker.langfuse.com/langfuse/langfuse:4.50.0@sha256:3d2ae888a0e6edb41fdba6e7d5baca5e4baede3a870dac7970dadd9d925b018e
     # No host port: reached through the Caddy edge (:8450) like every other UI. `worker: started`
     # (not healthy) - the two share one ClickHouse and race the same migrations; making web wait on
     # worker START orders the migration runner first without turning a slow worker into a web outage.
