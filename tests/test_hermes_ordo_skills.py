@@ -226,7 +226,8 @@ def test_the_diff_makes_the_scripts_follow_comfyui_url_with_the_stock_fallback()
     diff = (OVERLAY / "submit-via-comfyui-url.diff").read_text(encoding="utf-8")
     assert '+DEFAULT_LOCAL_HOST = os.environ.get("COMFYUI_URL") or "http://127.0.0.1:8188"' in diff
     assert '-DEFAULT_LOCAL_HOST = "http://127.0.0.1:8188"' in diff
-    assert "b/skills/creative/comfyui/scripts/_common.py" in diff
+    # The skill moved to optional-skills/ upstream in v2026.9.24.
+    assert "b/optional-skills/creative/comfyui/scripts/_common.py" in diff
 
 
 def test_the_deployment_notes_forbid_the_engine_address_and_name_the_variable():

@@ -1,10 +1,10 @@
 diff --git a/agent/context_compressor.py b/agent/context_compressor.py
-index fbb7e6c5e..b0dd32b10 100644
+index 99add9a9ae..80115552b7 100644
 --- a/agent/context_compressor.py
 +++ b/agent/context_compressor.py
-@@ -652,6 +652,17 @@ _FEASIBILITY_SKIP_MIDDLE_FRACTION = 0.10
- # protected region — but always keep this many trailing messages verbatim so
- # the active user ask / latest tool pair remain readable.  Issue #61932.
+@@ -1128,6 +1128,17 @@ _FEASIBILITY_SKIP_MIDDLE_FRACTION = 0.10
+ # Under pressure, demote large tool outputs even inside the protected region but
+ # keep this many trailing messages verbatim.
  _PRESSURE_KEEP_RECENT_MESSAGES = 3
 +# Final pressure escalation: condense an OVERSIZED USER message (e.g. a
 +# pasted transcript/document) to a head/tail excerpt when every tool /
@@ -17,98 +17,97 @@ index fbb7e6c5e..b0dd32b10 100644
 +_PRESSURE_USER_KEEP_HEAD_CHARS = 2000
 +_PRESSURE_USER_KEEP_TAIL_CHARS = 1500
 +_PRESSURE_USER_CONDENSE_MARKER = "[condensed under context pressure:"
- 
- # Models with context windows below this get their compression threshold
- # floored at ``_SMALL_CTX_THRESHOLD_PERCENT`` (raise-only — an explicitly
-@@ -3003,10 +3014,79 @@ class ContextCompressor(ContextEngine):
-                             last_tool_idx, spare_protected_skills=False
-                         ):
-                             pressure_hits += 1
-+                # Pass 5: oversized USER message condensation — the final
-+                # escalation before the no_progress dead-end.  A pasted
-+                # transcript or document in a user turn can exceed the whole
-+                # soft budget by itself; every pass above spares user rows,
-+                # so without this the session deadlocks (empty middle →
-+                # no_progress → abort) while the request can only grow.
-+                # Condense the bulkiest non-active user messages to a
-+                # head/tail excerpt with an explicit marker.  The active
-+                # (last) user message is never touched, and the full
-+                # original stays in the session store.
-+                if _protected_region_tokens() > soft_ceiling:
+ # Newest image-bearing tool results kept verbatim; older image payloads retire
+ # even inside protect_last_n (matches the Anthropic adapter's keep-window).
+ # Native vision_analyze / computer_use screenshots that sit inside the protected tail cannot be demoted by
+@@ -3104,10 +3115,77 @@ class ContextCompressor(SummaryDispatchMixin, MicroCompactionMixin, ContextEngin
+             ) and self._demote_tool_result_at(result, last_tool_idx, call_id_to_tool, min_prune_chars):
+                 demoted += 1
+                 pressure_hits += 1
++        # Pass 5: oversized USER message condensation - the final escalation
++        # before the no_progress dead-end.  A pasted transcript or document in
++        # a user turn can exceed the whole soft budget by itself; every pass
++        # above spares user rows, so without this the session deadlocks (empty
++        # middle -> no_progress -> abort) while the request can only grow.
++        # Condense the bulkiest non-active user messages to a head/tail excerpt
++        # with an explicit marker.  The active (last) user message is never
++        # touched, and the full original stays in the session store.
++        if _protected_region_tokens() > soft_ceiling:
 +
-+                    def _condense_user_message_at(idx: int) -> bool:
-+                        nonlocal pruned
-+                        msg = result[idx]
-+                        if msg.get("role") != "user":
-+                            return False
-+                        content = msg.get("content")
-+                        if not isinstance(content, str):
-+                            return False
-+                        # Idempotent: already condensed by a prior pass.
-+                        if _PRESSURE_USER_CONDENSE_MARKER in content:
-+                            return False
-+                        keep = (
-+                            _PRESSURE_USER_KEEP_HEAD_CHARS
-+                            + _PRESSURE_USER_KEEP_TAIL_CHARS
-+                        )
-+                        # Only worth it when the cut is substantial.
-+                        if len(content) <= keep + 500:
-+                            return False
-+                        omitted = len(content) - keep
-+                        result[idx] = {
-+                            **msg,
-+                            "content": (
-+                                content[:_PRESSURE_USER_KEEP_HEAD_CHARS]
-+                                + f"\n\n{_PRESSURE_USER_CONDENSE_MARKER} "
-+                                + f"{omitted:,} chars omitted from this "
-+                                "oversized user message; the full original "
-+                                "is preserved in the session history]\n\n"
-+                                + content[-_PRESSURE_USER_KEEP_TAIL_CHARS:]
-+                            ),
-+                        }
-+                        pruned += 1
-+                        return True
++            def _condense_user_message_at(idx: int) -> bool:
++                msg = result[idx]
++                if msg.get("role") != "user":
++                    return False
++                content = msg.get("content")
++                if not isinstance(content, str):
++                    return False
++                # Idempotent: already condensed by a prior pass.
++                if _PRESSURE_USER_CONDENSE_MARKER in content:
++                    return False
++                keep = (
++                    _PRESSURE_USER_KEEP_HEAD_CHARS
++                    + _PRESSURE_USER_KEEP_TAIL_CHARS
++                )
++                # Only worth it when the cut is substantial.
++                if len(content) <= keep + 500:
++                    return False
++                omitted = len(content) - keep
++                result[idx] = {
++                    **msg,
++                    "content": (
++                        content[:_PRESSURE_USER_KEEP_HEAD_CHARS]
++                        + f"\n\n{_PRESSURE_USER_CONDENSE_MARKER} "
++                        + f"{omitted:,} chars omitted from this "
++                        "oversized user message; the full original "
++                        "is preserved in the session history]\n\n"
++                        + content[-_PRESSURE_USER_KEEP_TAIL_CHARS:]
++                    ),
++                }
++                return True
 +
-+                    last_user_idx = None
-+                    for i in range(len(result) - 1, -1, -1):
-+                        if result[i].get("role") == "user":
-+                            last_user_idx = i
-+                            break
-+                    candidates = [
-+                        i
-+                        for i in range(max(0, prune_boundary), len(result))
-+                        if result[i].get("role") == "user"
-+                        and i != last_user_idx
-+                        and isinstance(result[i].get("content"), str)
-+                        and _estimate_msg_budget_tokens(result[i])
-+                        >= _PRESSURE_USER_CONDENSE_MIN_TOKENS
-+                    ]
-+                    candidates.sort(
-+                        key=lambda i: _estimate_msg_budget_tokens(result[i]),
-+                        reverse=True,
-+                    )
-+                    for i in candidates:
-+                        if _condense_user_message_at(i):
-+                            pressure_hits += 1
-+                        if _protected_region_tokens() <= soft_ceiling:
-+                            break
-                 if pressure_hits and not self.quiet_mode:
-                     logger.info(
-                         "Pre-compression pressure demotion: reclaimed protected-tail "
--                        "tool output (%d change(s); protected region now ~%s tokens, "
-+                        "bulk (%d change(s), incl. any oversized-user-message "
-+                        "condensation; protected region now ~%s tokens, "
-                         "soft ceiling %s)",
-                         pressure_hits,
-                         f"{_protected_region_tokens():,}",
++            last_user_idx = None
++            for i in range(len(result) - 1, -1, -1):
++                if result[i].get("role") == "user":
++                    last_user_idx = i
++                    break
++            candidates = [
++                i
++                for i in range(start, len(result))
++                if result[i].get("role") == "user"
++                and i != last_user_idx
++                and isinstance(result[i].get("content"), str)
++                and _estimate_msg_budget_tokens(result[i])
++                >= _PRESSURE_USER_CONDENSE_MIN_TOKENS
++            ]
++            candidates.sort(
++                key=lambda i: _estimate_msg_budget_tokens(result[i]),
++                reverse=True,
++            )
++            for i in candidates:
++                if _condense_user_message_at(i):
++                    demoted += 1
++                    pressure_hits += 1
++                if _protected_region_tokens() <= soft_ceiling:
++                    break
+         if pressure_hits and not self.quiet_mode:
+             logger.info(
+-                "Pre-compression pressure demotion: reclaimed protected-tail tool output (%d change(s); "
+-                "protected region now ~%s tokens, soft ceiling %s)",
++                "Pre-compression pressure demotion: reclaimed protected-tail "
++                "bulk (%d change(s), incl. any oversized-user-message "
++                "condensation; protected region now ~%s tokens, "
++                "soft ceiling %s)",
+                 pressure_hits, f"{_protected_region_tokens():,}", f"{soft_ceiling:,}",
+             )
+         return demoted
 diff --git a/tests/agent/test_context_compressor.py b/tests/agent/test_context_compressor.py
-index cccf654ab..c454f34fd 100644
+index 4c60d58e81..96ddd19060 100644
 --- a/tests/agent/test_context_compressor.py
 +++ b/tests/agent/test_context_compressor.py
-@@ -2895,3 +2895,103 @@ class TestPreLlmFeasibilityCheck:
-             feasibility_skip=compressor._last_feasibility_skip,
-         )
-         assert compressor._fallback_compression_streak == 1
+@@ -3584,3 +3584,103 @@ class TestSanitizeToolPairsWhitespace:
+         tool_call_ids = [m.get("tool_call_id") for m in out if m.get("role") == "tool"]
+         assert "call_orphan" not in tool_call_ids, "genuinely orphaned result must be removed"
+         assert " call_orphan " not in tool_call_ids, "original whitespace form must also be gone"
 +
 +
 +class TestPressureUserMessageCondensation:
@@ -157,7 +156,7 @@ index cccf654ab..c454f34fd 100644
 +
 +    def test_active_user_message_never_condensed(self, budget_compressor):
 +        c = budget_compressor
-+        # The LAST user message is huge — it is the active ask and must
++        # The LAST user message is huge - it is the active ask and must
 +        # survive verbatim even under pressure.
 +        messages = [
 +            {"role": "assistant", "content": "earlier"},
@@ -181,7 +180,7 @@ index cccf654ab..c454f34fd 100644
 +
 +    def test_small_user_messages_untouched(self, budget_compressor):
 +        c = budget_compressor
-+        # Pressure from a big tool body, but user rows are small — pass 5
++        # Pressure from a big tool body, but user rows are small - pass 5
 +        # must not touch them (tool demotion alone relieves pressure).
 +        messages = [
 +            {"role": "user", "content": "short question"},
@@ -207,5 +206,5 @@ index cccf654ab..c454f34fd 100644
 +        result, _ = c._prune_old_tool_results(
 +            messages, protect_tail_count=4, protect_tail_tokens=2_000,
 +        )
-+        # List-content user messages are out of scope for pass 5 — unchanged.
++        # List-content user messages are out of scope for pass 5 - unchanged.
 +        assert result[0]["content"] is parts
