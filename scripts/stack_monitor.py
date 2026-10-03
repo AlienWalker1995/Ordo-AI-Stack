@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Ordo-AI-Stack image audit — "should we update this image?"
+"""Ordo-AI-Stack image audit — "what is new upstream, and should we update?"
 
 Enumerates EVERY service in the *deployed* compose (the rendered
-`out/docker-compose.yml`), classifies each image by how it
-is pinned, resolves the latest upstream version where one exists, and emits a
-single JSON document. The daily cron injects that JSON into its prompt and the
+`out/docker-compose.yml`) plus any extra compose stacks listed in the
+STACK_AUDIT_SOURCES JSON file, classifies each image by how it is pinned,
+resolves the latest upstream version where one exists, and collects the feature
+notes of every release the deployed pin is missing. It emits a single JSON
+document. The weekly cron injects that JSON into its prompt and the
 `stack-audit` skill writes the Discord digest — the model curates, it does not
 collect. Output is JSON by default (what the cron consumes); `--pretty` renders
 a human-readable table for debugging.
@@ -27,14 +29,16 @@ Report-only: this script never mutates compose or opens PRs.
 Stdlib only (urllib). Per-source failure isolation, global deadline.
 """
 
+import html
 import json
 import os
 import re
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 # ── Config ───────────────────────────────────────────────────────────────────
@@ -43,8 +47,17 @@ STACK_ROOT = Path(os.environ.get("ORDO_STACK_ROOT", "/c/dev/ordo-ai-stack"))
 SERVICES_DIR = STACK_ROOT / "services"
 COMPOSE_FILE = STACK_ROOT / "out" / "docker-compose.yml"  # rendered = deployed
 ENV_FILE = STACK_ROOT / "out" / ".env"
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
+# Optional JSON file naming more compose stacks to audit next to Ordo's own:
+#   {"stacks": [{"name": "media", "compose": "/path/docker-compose.yaml", "env": "/path/.env"}]}
+# "env" is optional. Unset = audit Ordo only.
+SOURCES_FILE = os.environ.get("STACK_AUDIT_SOURCES", "")
+# GitHub token for the release API (5,000 requests/hour instead of 60). The Hermes runtime
+# has no GITHUB_TOKEN, so fall back to the PAT file its git credential helper reads.
+GITHUB_TOKEN_FILE = os.environ.get("GITHUB_BACKUP_PAT_FILE", "/run/secrets/github_backup_pat")
 GLOBAL_DEADLINE_S = 100  # cron script timeout is 120s
+FEATURE_WINDOW_DAYS = 7  # the cron runs weekly: releases newer than this are "new this week"
+MAX_FEATURE_RELEASES = 5  # newest missed releases reported per service
+MAX_FEATURES_PER_RELEASE = 5
 
 _START = time.monotonic()
 _INVISIBLE = dict.fromkeys(
@@ -75,6 +88,29 @@ HINTS = {
                                      "note": "moving tag; a catalog backend_image can name the patched build (ordo/llamacpp-patched)"},
     "yanwk/comfyui-boot":           {"hub": "yanwk/comfyui-boot", "upstream": ("ComfyUI", "comfy-org/ComfyUI"),
                                      "note": "boot wrapper; cu128-slim is a moving tag"},
+    "prom/alertmanager":            {"gh": "prometheus/alertmanager", "hub": "prom/alertmanager"},
+    "couchdb":                      {"hub": "library/couchdb"},
+    "langfuse/langfuse":            {"gh": "langfuse/langfuse"},
+    "langfuse/langfuse-worker":     {"gh": "langfuse/langfuse"},
+    "tailscale/tailscale":          {"gh": "tailscale/tailscale", "hub": "tailscale/tailscale"},
+    "clickhouse/clickhouse-server": {"gh": "ClickHouse/ClickHouse"},
+    "isokoliuk/mcp-searxng":        {"gh": "ihor-sokoliuk/mcp-searxng"},
+    "qmcgaw/gluetun":               {"gh": "qdm12/gluetun"},
+    "linuxserver/prowlarr":         {"gh": "Prowlarr/Prowlarr"},
+    "thephaseless/byparr":          {"gh": "ThePhaseless/Byparr"},
+    "linuxserver/radarr":           {"gh": "Radarr/Radarr"},
+    "linuxserver/sonarr":           {"gh": "Sonarr/Sonarr"},
+    "linuxserver/bazarr":           {"gh": "morpheus65535/bazarr"},
+    "recyclarr/recyclarr":          {"gh": "recyclarr/recyclarr"},
+    "cloudflare/cloudflared":       {"gh": "cloudflare/cloudflared"},
+    "seerr-team/seerr":             {"gh": "seerr-team/seerr"},
+    "linuxserver/jellyfin":         {"gh": "jellyfin/jellyfin"},
+    "cyfershepard/jellystat":       {"gh": "CyferShepard/Jellystat"},
+    "schaka/janitorr":              {"gh": "Schaka/janitorr"},
+    "gethomepage/homepage":         {"gh": "gethomepage/homepage"},
+    "adguard/adguardhome":          {"gh": "AdguardTeam/AdGuardHome"},
+    "vaultwarden/server":           {"gh": "dani-garcia/vaultwarden"},
+    "infisical/infisical":          {"gh": "Infisical/infisical"},
 }
 
 # Registry namespaces that mean "built here", not pulled from a registry.
@@ -102,11 +138,39 @@ def http_json(url: str, headers=None, timeout: float = 15):
         return json.loads(resp.read().decode("utf-8", errors="replace"))
 
 
+def _read_github_token() -> str:
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        return token
+    try:
+        return Path(GITHUB_TOKEN_FILE).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+_github_token = _read_github_token()
+
+
 def gh_headers():
     h = {"Accept": "application/vnd.github+json"}
-    if GITHUB_TOKEN:
-        h["Authorization"] = f"token {GITHUB_TOKEN}"
+    if _github_token:
+        h["Authorization"] = f"token {_github_token}"
     return h
+
+
+def github_json(path: str):
+    """GET api.github.com/<path>. A rejected token (401: expired or revoked) is dropped for the
+    rest of the run and the call retried anonymously, so a stale secret degrades to the
+    60/hour anonymous limit instead of failing every lookup."""
+    global _github_token
+    url = f"https://api.github.com/{path}"
+    try:
+        return http_json(url, headers=gh_headers())
+    except urllib.error.HTTPError as exc:
+        if exc.code != 401 or not _github_token:
+            raise
+        _github_token = ""
+        return http_json(url, headers=gh_headers())
 
 
 # ── Version parsing ──────────────────────────────────────────────────────────
@@ -146,10 +210,12 @@ def compare(cur: str, latest: str):
 
 # ── Compose parsing ──────────────────────────────────────────────────────────
 
-def load_env():
+def load_env(path: Path | None):
     env = {}
+    if path is None:
+        return env
     try:
-        for line in ENV_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
@@ -242,15 +308,13 @@ def hint_for(repo: str):
 def github_latest(owner_repo: str):
     """(tag, url, body) of latest non-prerelease release, or (None, '', '')."""
     try:
-        data = http_json(f"https://api.github.com/repos/{owner_repo}/releases/latest",
-                          headers=gh_headers())
+        data = github_json(f"repos/{owner_repo}/releases/latest")
         if data.get("tag_name"):
             return data["tag_name"], data.get("html_url", ""), data.get("body", "") or ""
     except Exception:
         pass
     try:
-        rels = http_json(f"https://api.github.com/repos/{owner_repo}/releases?per_page=15",
-                         headers=gh_headers())
+        rels = github_json(f"repos/{owner_repo}/releases?per_page=15")
         for r in rels:
             if not r.get("prerelease") and not r.get("draft") and r.get("tag_name"):
                 return r["tag_name"], r.get("html_url", ""), r.get("body", "") or ""
@@ -294,22 +358,42 @@ def quay_latest_semver(repo: str):
         return None
 
 
+def github_releases(owner_repo: str):
+    """Published, non-prerelease releases, newest first (one API call)."""
+    try:
+        rels = github_json(f"repos/{owner_repo}/releases?per_page=40")
+    except Exception:
+        return []
+    return [r for r in rels if not r.get("prerelease") and not r.get("draft") and r.get("tag_name")]
+
+
+def newest_release(releases):
+    """The highest-versioned release. Creation order is not enough: n8n publishes a release
+    named `stable` alongside each version, and ClickHouse interleaves LTS backports."""
+    versioned = [r for r in releases if semver_tuple(r["tag_name"]) is not None]
+    if not versioned:
+        return releases[0]
+    return max(versioned, key=lambda r: semver_tuple(r["tag_name"]))
+
+
 def resolve_latest(repo: str, hint: dict):
-    """Return (latest_tag, url, body). Prefer GitHub releases; fall back to a
-    registry tag list so digest/rolling images still get a version to report."""
+    """Return (latest_tag, url, body, releases). Prefer GitHub releases; fall back to a
+    registry tag list so digest/rolling images still get a version to report.
+    `releases` is the GitHub release list (empty for registry-only images)."""
     if "gh" in hint:
-        tag, url, body = github_latest(hint["gh"])
-        if tag:
-            return tag, url, body
+        releases = github_releases(hint["gh"])
+        if releases:
+            newest = newest_release(releases)
+            return newest["tag_name"], newest.get("html_url", ""), newest.get("body") or "", releases
     if "hub" in hint:
         tag = dockerhub_latest_semver(hint["hub"])
         if tag:
-            return tag, f"https://hub.docker.com/r/{hint['hub']}/tags", ""
+            return tag, f"https://hub.docker.com/r/{hint['hub']}/tags", "", []
     if "quay" in hint:
         tag = quay_latest_semver(hint["quay"])
         if tag:
-            return tag, f"https://quay.io/repository/{hint['quay']}?tab=tags", ""
-    return None, "", ""
+            return tag, f"https://quay.io/repository/{hint['quay']}?tab=tags", "", []
+    return None, "", "", []
 
 
 # ── Severity ─────────────────────────────────────────────────────────────────
@@ -378,6 +462,101 @@ def highlights(body: str, n: int = 3):
     return out
 
 
+# ── New features ─────────────────────────────────────────────────────────────
+#
+# The weekly digest answers "what major features shipped upstream that we do not run yet?".
+# For a version pin that is every release newer than the pin. A rolling or bare-digest pin has
+# no version to compare, so for those it is the releases published in the last week.
+
+_FEATURE_HEADING_RE = re.compile(
+    r"feature|highlight|what'?s new|\bnew\b|added|enhancement|improvement", re.I)
+_NOISE_HEADING_RE = re.compile(
+    r"contributor|dependenc|full changelog|checksum|docker image|fix|security", re.I)
+# Outside a feature section only lines that read like a feature count, e.g. Sonarr's "New: ...",
+# conventional-commit "feat: ...", or bazarr's "Added ...". Fix-only releases yield nothing.
+_FEATURE_LINE_RE = re.compile(
+    r"^(?:feat\b|feat\(|new\b|add(?:ed|s)?\b|supports?\b|introduc|enhance|allow|implement)", re.I)
+_HEADING_RE = re.compile(r"^(?:#{1,6}\s+(.+?)|\*\*([^*]+)\*\*:?)\s*#*$")
+_BULLET_RE = re.compile(r"^[-*\u2022]\s+")
+
+
+def _clean_note(line: str) -> str:
+    s = _BULLET_RE.sub("", line.strip())
+    s = html.unescape(s)
+    s = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)          # md links -> text
+    s = re.sub(r"[*_`]{1,3}([^*_`]+)[*_`]{1,3}", r"\1", s)
+    s = re.sub(r"\s+by @\S+(?:\s+in\s+\S+)?\s*$", "", s)      # GitHub "by @user in <PR url>"
+    s = re.sub(r"https?://\S+", "", s)
+    s = re.sub(r"^[0-9a-f]{7,40}\s+", "", s)                      # leading commit hash
+    s = re.sub(r"(?:\s+-)?\s*\(?\b[0-9a-f]{7,40}\b\)?\s*$", "", s)  # trailing commit hash
+    s = re.sub(r"\s*\(?(?:#\d+(?:,\s*)?)+\)?", "", s)           # "#1234" / "(#1234)" refs
+    return scrub(s).strip()
+
+
+def feature_lines(body: str, n: int = MAX_FEATURES_PER_RELEASE):
+    """Bullet points from a release's feature sections, else bullets elsewhere (outside fix,
+    security and contributor sections) that read like a feature. Fix-only notes give []."""
+    section = "none"  # none = before any heading, then feature / noise / other
+    featured, candidates = [], []
+    for raw in (body or "").splitlines():
+        line = raw.strip()
+        heading = _HEADING_RE.match(line)
+        if heading:
+            title = heading.group(1) or heading.group(2)
+            if _NOISE_HEADING_RE.search(title):
+                section = "noise"
+            elif _FEATURE_HEADING_RE.search(title):
+                section = "feature"
+            else:
+                section = "other"
+            continue
+        if section == "noise" or not _BULLET_RE.match(line):
+            continue
+        text = _clean_note(line)
+        if len(text) <= 12:
+            continue
+        if section == "feature":
+            featured.append(text[:160])
+        elif _FEATURE_LINE_RE.match(text):
+            candidates.append(text[:160])
+    return (featured or candidates)[:n]
+
+
+def missed_releases(releases, declared: str, kind: str, now: datetime):
+    """Releases the deployed pin does not have, newest first."""
+    current = semver_tuple(declared) if kind in ("semver", "digest") else None
+    cutoff = (now - timedelta(days=FEATURE_WINDOW_DAYS)).strftime("%Y-%m-%d")
+    missed = []
+    for release in releases:
+        if current is not None:
+            version = semver_tuple(release.get("tag_name") or "")
+            if version is None or version <= current:
+                continue
+        elif (release.get("published_at") or "")[:10] < cutoff:
+            continue
+        missed.append(release)
+    return missed
+
+
+def release_features(missed, now: datetime):
+    """[{tag, published, new_this_week, url, features, summary}] for the newest missed releases.
+    `summary` holds the opening lines of notes written as prose (no bullet list), e.g. Hermes."""
+    cutoff = (now - timedelta(days=FEATURE_WINDOW_DAYS)).strftime("%Y-%m-%d")
+    out = []
+    for release in missed[:MAX_FEATURE_RELEASES]:
+        published = (release.get("published_at") or "")[:10]
+        features = feature_lines(release.get("body") or "")
+        out.append({
+            "tag": release.get("tag_name"),
+            "published": published,
+            "new_this_week": published >= cutoff,
+            "url": release.get("html_url", ""),
+            "features": features,
+            "summary": [] if features else highlights(release.get("body") or "", 2),
+        })
+    return out
+
+
 # ── Pinned upstream sources ──────────────────────────────────────────────────
 #
 # The image table above answers "is this IMAGE behind?" — but a locally-built
@@ -423,8 +602,7 @@ def discover_pinned_sources():
 def github_commit_date(owner_repo: str, sha: str) -> str:
     """YYYY-MM-DD the pinned commit was authored, or '' if unresolvable."""
     try:
-        data = http_json(f"https://api.github.com/repos/{owner_repo}/commits/{sha}",
-                         headers=gh_headers())
+        data = github_json(f"repos/{owner_repo}/commits/{sha}")
         return ((data.get("commit") or {}).get("author") or {}).get("date", "")[:10]
     except Exception:
         return ""
@@ -433,8 +611,7 @@ def github_commit_date(owner_repo: str, sha: str) -> str:
 def github_releases_after(owner_repo: str, iso_date: str):
     """Non-prerelease releases published after iso_date, newest first."""
     try:
-        rels = http_json(f"https://api.github.com/repos/{owner_repo}/releases?per_page=30",
-                         headers=gh_headers())
+        rels = github_json(f"repos/{owner_repo}/releases?per_page=30")
     except Exception:
         return []
     return [r for r in rels
@@ -446,10 +623,10 @@ def audit_pinned_sources():
     """Report each pinned upstream source with the same tier vocabulary as images."""
     entries = []
     for src in discover_pinned_sources():
-        row = {"service": src["service"], "arg": src["arg"], "repo": src["gh"],
+        row = {"stack": "ordo", "service": src["service"], "arg": src["arg"], "repo": src["gh"],
                "pinned_sha": src["sha"][:12], "pinned_date": "", "latest": None,
                "releases_behind": 0, "tier": "UNKNOWN", "reason": "", "url": "",
-               "highlights": []}
+               "highlights": [], "new_features": []}
         if budget_left() < 12:
             row["reason"] = "skipped (time budget)"
             entries.append(row)
@@ -468,6 +645,7 @@ def audit_pinned_sources():
             continue
         missed = github_releases_after(src["gh"], row["pinned_date"])
         row["releases_behind"] = len(missed)
+        row["new_features"] = release_features(missed, datetime.now(UTC))
         if not missed:
             row["tier"] = "OK"
             row["reason"] = f"pin ({row['pinned_date']}) is current with {latest}"
@@ -491,28 +669,50 @@ def audit_pinned_sources():
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
-def audit():
-    env = load_env()
-    compose_path = COMPOSE_FILE
-    if not compose_path.exists():
-        return {"error": f"no compose file found at {compose_path} (run `ordo render` first)"}
+def load_sources():
+    """Compose stacks to audit: Ordo's deployed compose first, then STACK_AUDIT_SOURCES."""
+    sources = [{"stack": "ordo", "compose": COMPOSE_FILE, "env": ENV_FILE}]
+    if not SOURCES_FILE:
+        return sources, []
+    try:
+        data = json.loads(Path(SOURCES_FILE).read_text(encoding="utf-8"))
+        for entry in data["stacks"]:
+            env = entry.get("env")
+            sources.append({"stack": entry["name"], "compose": Path(entry["compose"]),
+                            "env": Path(env) if env else None})
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return sources, [f"sources file {SOURCES_FILE}: {type(exc).__name__}: {exc}"]
+    return sources, []
 
-    services = parse_compose(compose_path, env)
+
+def audit():
+    if not COMPOSE_FILE.exists():
+        return {"error": f"no compose file found at {COMPOSE_FILE} (run `ordo render` first)"}
+
+    now = datetime.now(UTC)
+    sources, failures = load_sources()
+    services = []  # (stack, service, image ref)
+    for src in sources:
+        if not src["compose"].exists():
+            failures.append(f"{src['stack']}: compose file not found at {src['compose']}")
+            continue
+        for name, ref in sorted(parse_compose(src["compose"], load_env(src["env"])).items()):
+            services.append((src["stack"], name, ref))
+
     results = []
-    failures = []
     resolved_cache = {}
 
-    for name, ref in sorted(services.items()):
+    for stack, name, ref in services:
         info = classify(ref)
         kind, repo, tag = info["kind"], info["repo"], info.get("tag", "")
         hint = hint_for(repo)
-        latest, url, body = None, "", ""
+        latest, url, body, releases = None, "", "", []
 
         if kind in ("semver", "digest", "rolling", "base"):
             if budget_left() < 8:
-                failures.append(f"{name}: skipped (time budget)")
+                failures.append(f"{stack}/{name}: skipped (time budget)")
             elif repo in resolved_cache:
-                latest, url, body = resolved_cache[repo]
+                latest, url, body, releases = resolved_cache[repo]
             else:
                 try:
                     if kind == "base":
@@ -520,10 +720,10 @@ def audit():
                             repo if "/" in repo else f"library/{repo}")
                         url = f"https://hub.docker.com/_/{repo.split('/')[-1]}"
                     else:
-                        latest, url, body = resolve_latest(repo, hint)
+                        latest, url, body, releases = resolve_latest(repo, hint)
                 except Exception as e:  # noqa: BLE001
-                    failures.append(f"{name}: {type(e).__name__}: {e}")
-                resolved_cache[repo] = (latest, url, body)
+                    failures.append(f"{stack}/{name}: {type(e).__name__}: {e}")
+                resolved_cache[repo] = (latest, url, body, releases)
 
         tracks = None
         if hint.get("upstream") and budget_left() > 8:
@@ -533,22 +733,28 @@ def audit():
                 tracks = {"name": up_name, "latest": t, "url": u}
 
         tier, reason = severity(kind, tag, latest, body)
+        missed = missed_releases(releases, tag, kind, now)
+        bump, _ = compare(tag, latest) if latest else ("unknown", 0)
         results.append({
+            "stack": stack,
             "service": name,
             "image": ref,
             "kind": kind,
             "declared": tag or (info.get("digest", "") + "…" if kind == "digest" else ""),
             "latest": latest,
+            "bump": bump,
             "tier": tier,
             "reason": scrub(reason),
             "url": url,
             "highlights": highlights(body) if tier in ("UPDATE", "SECURITY") else [],
+            "releases_behind": len(missed),
+            "new_features": release_features(missed, now),
             "note": scrub(hint.get("note", "")),
             "tracks_upstream": tracks,
         })
 
     order = {"SECURITY": 0, "UPDATE": 1, "DRIFT": 2, "REBUILD": 3, "UNKNOWN": 4, "OK": 5}
-    results.sort(key=lambda r: (order.get(r["tier"], 9), r["service"]))
+    results.sort(key=lambda r: (order.get(r["tier"], 9), r["stack"], r["service"]))
 
     counts = {}
     for r in results:
@@ -570,16 +776,20 @@ def audit():
         failures.append(f"dstate probe: {dstate['error']}")
 
     return {
-        "date": datetime.now(UTC).strftime("%Y-%m-%d"),
+        "date": now.strftime("%Y-%m-%d"),
         "dstate": dstate,
-        "compose": str(compose_path),
+        "compose": str(COMPOSE_FILE),
+        "stacks": [{"name": src["stack"], "compose": str(src["compose"])} for src in sources],
         "note": ("Audited the DEPLOYED compose. 'declared' = what compose ships; "
                  "compare against 'latest'. Tiers: SECURITY/UPDATE (act), "
                  "DRIFT (rolling/unpinned), REBUILD (local image), OK, UNKNOWN. "
                  "'pinned_sources' covers upstream repos that locally-built images "
                  "clone at a fixed SHA — a REBUILD image can still be months behind "
                  "upstream, which the image table alone cannot see. "
-                 "Report-only — no changes are applied."),
+                 "'new_features' lists the feature notes of the newest releases the deployed "
+                 "pin is missing (for rolling/bare-digest pins: releases from the last "
+                 f"{FEATURE_WINDOW_DAYS} days); 'new_this_week' marks releases published in "
+                 "that window. Report-only — no changes are applied."),
         "counts": counts,
         "actionable_count": len(actionable),
         "services": results,
@@ -623,8 +833,11 @@ def render_pretty(data):
                      + ", ".join(f"{w['container']}:{w['comm']}" for w in ds["wedged"]))
         lines.append("")
     for r in data["services"]:
-        lines.append(f"[{r['tier']:8}] {r['service']:24} {(r['declared'] or r['kind']):>18}"
+        lines.append(f"[{r['tier']:8}] {r['stack'] + '/' + r['service']:32} {(r['declared'] or r['kind']):>18}"
                      f" -> {str(r['latest'] or '-'):<14} {r['reason']}")
+        for rel in r["new_features"]:
+            mark = "*" if rel["new_this_week"] else " "
+            lines.append(f"    {mark} {rel['tag']} ({rel['published']}): " + " | ".join(rel["features"]))
     if data.get("pinned_sources"):
         lines.append("\npinned upstream sources (locally-built images):")
         for p in data["pinned_sources"]:
