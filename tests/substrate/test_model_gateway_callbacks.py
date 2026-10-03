@@ -28,7 +28,8 @@ DOCKERFILE = ROOT / "services" / "model-gateway" / "Dockerfile"
 CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 REGISTRY = PluginRegistry.load(ROOT / "services")
 P_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128, "cpu_cores": 32}
-BASE_CALLBACKS = ["throughput_callback.throughput_recorder_instance", "prometheus"]
+BASE_CALLBACKS = ["throughput_callback.throughput_recorder_instance",
+                  "gpu_lease_fallback_gate.gpu_lease_fallback_gate_instance", "prometheus"]
 LANGFUSE_ENV = {"LANGFUSE_PUBLIC_KEY": "pk-lf-x", "LANGFUSE_SECRET_KEY": "sk-lf-x",
                 "LANGFUSE_OTEL_HOST": "http://langfuse-web:3000"}
 
@@ -36,7 +37,8 @@ CONFIG = """\
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
 litellm_settings:
-  callbacks: ["throughput_callback.throughput_recorder_instance", "prometheus"]
+  callbacks: ["throughput_callback.throughput_recorder_instance",
+              "gpu_lease_fallback_gate.gpu_lease_fallback_gate_instance", "prometheus"]
 """
 
 

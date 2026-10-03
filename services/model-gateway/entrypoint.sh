@@ -84,6 +84,7 @@ sed -e "s|__CTX_SIZE__|${CTX_SIZE}|g" \
 # LiteLLM resolves `callbacks:` module paths relative to the CONFIG FILE's directory, and the
 # config lives in /tmp (read_only container + tmpfs). Co-locate the callback with it.
 cp /app/throughput_callback.py /tmp/throughput_callback.py
+cp /app/gpu_lease_fallback_gate.py /tmp/gpu_lease_fallback_gate.py
 
 # Merge the render-emitted MCP server fragment (out/model-gateway/mcp_servers.yaml, mounted at
 # /config). Required: a missing fragment means the mount or the render is wrong; never boot with
