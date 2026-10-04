@@ -140,14 +140,15 @@ def test_the_heretic_entry_serves_on_the_same_ninfer_service():
     assert llamacpp["image"].startswith("ordo/ninfer")
     assert rc.env["LLAMACPP_MODEL"] == "qwen3_8_27b_heretic_ara.ninfer"
     assert rc.ctx_size == 262144
-    assert "LLAMACPP_VISION" not in rc.env                # text only by default
+    assert rc.env["LLAMACPP_VISION"] == "1"               # vision on by default, full window kept
     assert rc.env["GATEWAY_DROP_TOOL_STRICT"] == "true"
 
 
 def test_the_heretic_footprint_is_its_measured_size():
     rc = _render(HERETIC)
-    # measured: 26.8GiB on the card at 262,144 tokens with fp8 KV and MTP3, about 0.7GiB of it baseline
-    assert rc.resident_vram_gb() == pytest.approx(26.15, abs=0.05)
+    # measured: 27.6GiB on the card at 262,144 tokens with fp8 KV, MTP3 and the vision encoder,
+    # about 0.7GiB of it baseline
+    assert rc.resident_vram_gb() == pytest.approx(26.95, abs=0.05)
     assert rc.resident_vram_gb() + 1.0 <= PROFILE_5090["gpus"][0]["vram_gb"]
 
 
@@ -156,8 +157,14 @@ def test_the_official_entry_stays_as_the_rollback():
 
 
 def test_heretic_vision_keeps_the_full_window():
-    rc = _render(HERETIC, overrides={"llamacpp": {"vision": True}})
+    rc = _render(HERETIC)
     assert rc.env["LLAMACPP_VISION"] == "1"
+    assert rc.ctx_size == 262144
+
+
+def test_heretic_vision_can_still_be_turned_off():
+    rc = _render(HERETIC, overrides={"llamacpp": {"vision": False}})
+    assert "LLAMACPP_VISION" not in rc.env
     assert rc.ctx_size == 262144
 
 
