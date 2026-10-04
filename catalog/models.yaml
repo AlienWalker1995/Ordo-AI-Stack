@@ -294,9 +294,10 @@ models:
     sha256: 6c5862c690c2d60e4c4fd1ac86ab30e10bb20c8b10bca2c5e518502a4d9bb904
     size_bytes: 18210704128
     # Measured on the 5090 (2026-10-01, engine d44ab584): 26.8GiB on the card at 262,144 tokens with
-    # fp8 KV and MTP3 (weights 16.7GiB, runtime 9.19GiB, 4.08GiB free). The KV pool is the same
-    # 16.6KiB per token as the official artifact; vram_gb is the rest.
-    requires: { vram_gb: 22.0, ram_gb: 12, cpu_ok: false, min_compute_cap: "12.0" }
+    # fp8 KV and MTP3 (weights 16.7GiB, runtime 9.19GiB, 4.08GiB free), 27.6GiB with the vision
+    # encoder loaded. The KV pool is the same 16.6KiB per token as the official artifact; vram_gb is
+    # the rest, vision encoder included (+0.8GiB).
+    requires: { vram_gb: 22.8, ram_gb: 12, cpu_ok: false, min_compute_cap: "12.0" }
     vram_reserve_gb: 1.0
     kv_kb_per_token: 16.6
     # The model's native window: 256,644-token prompt, 5/5 needle retrieval.
@@ -305,9 +306,9 @@ models:
     # A request that arrives while one is running waits for the GPU (up to 8 queued, 10 minutes) instead of
     # failing over to the CPU fallback, which reads a long prompt at ~23 tok/s on 12 cores.
     extra_args: "--max-concurrency 1 --max-pending-requests 8 --pending-timeout-ms 600000 --kv-dtype fp8 --spec mtp --draft-tokens 3 --lm-head-draft --preserve-thinking"
-    # Text only by default. The smaller weights leave room for the vision encoder at the full window:
-    # 27.6GiB on the card with --vision at 262,144 (image QA correct).
-    vision: { enabled: false, max_context: 262144 }
+    # Vision on: the smaller weights leave room for the vision encoder at the full window
+    # (27.6GiB on the card with --vision at 262,144, image QA correct), so images cost no context.
+    vision: { enabled: true, max_context: 262144 }
     # NInfer answers a `strict: true` tool with 400 strict_tools_not_supported; Hermes sends them.
     gateway: { drop_tool_strict: true }
     auto: false
