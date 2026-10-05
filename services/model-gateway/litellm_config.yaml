@@ -118,8 +118,8 @@ model_list:
       supports_function_calling: true
       supports_tool_choice: true
       supports_response_schema: true
-      # CPU server loads no mmproj — text-only.
-      supports_vision: false
+      # The CPU server loads its model's own mmproj (services/llamacpp-cpu): images work on failover.
+      supports_vision: true
       supports_reasoning: true
       description: >-
         Always-on CPU fallback and local-chat's failover target (see weights_file for the
@@ -160,7 +160,7 @@ model_list:
       supports_function_calling: true
       supports_tool_choice: true
       supports_response_schema: true
-      supports_vision: false
+      supports_vision: true
       supports_reasoning: true
       description: >-
         Stable alias for the CPU deployment, for work deliberately routed off the GPU: batch

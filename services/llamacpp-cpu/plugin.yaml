@@ -19,7 +19,7 @@ name: CPU LLM Fallback (Qwen3.6-35B-A3B)
 description: Always-on CPU llama.cpp chat server that LiteLLM fails local-chat over to while the GPU is busy.
 requires:
   nvidia: false           # deliberately CPU-only — never contends for the 5090
-  ram_gb: 24              # ~20GB A3B weights (Q4) + KV cache
+  ram_gb: 25              # ~20GB A3B weights (Q4) + 0.9GB vision projector + KV cache
 provides: [llm-cpu-fallback]
 compose_profile: cpu-fallback
 services:
@@ -37,6 +37,10 @@ services:
       - "8080"
       - --model
       - /models/${LLAMACPP_CPU_MODEL:-Qwen3.6-35B-A3B-UD-Q4_K_M.gguf}
+      # The model's own vision projector (its catalog `mmproj:`, provisioned by `ordo fetch`), so an
+      # image still works while the fallback serves. Measured: correct image QA, about 9s on 12 cores.
+      - --mmproj
+      - /models/Qwen3.6-35B-A3B-mmproj-F16.gguf
       - --n-gpu-layers
       - "0"
       # Ctx MUST match the GPU backend's window. This is the failover target for `local-chat`:
