@@ -415,7 +415,15 @@ support_models:
     # 22,134,528,992 bytes.
     sha256: ac0e2c1189e055faa36eff361580e79c5bd6f8e76bffb4ce547f167d53e31a61
     size_bytes: 22134528992
-    requires: { vram_gb: 0, ram_gb: 24, cpu_ok: true }
+    # Qwen3.6-35B-A3B's own F16 vision projector, so images keep working while the fallback serves.
+    # Stored under a model-specific name (upstream calls it mmproj-F16.gguf); sha256 = its HF LFS oid.
+    # services/llamacpp-cpu passes it as --mmproj (tests/substrate/test_cpu_fallback_vision.py).
+    mmproj:
+      file: Qwen3.6-35B-A3B-mmproj-F16.gguf
+      source: https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf
+      sha256: 8971ee4f331ff0a4c609374f32984b3d4e6dc086c0aa35f1d637fad1829e887f
+      size_bytes: 899283680
+    requires: { vram_gb: 0, ram_gb: 25, cpu_ok: true }
     # The fallback serves the chat model's whole window (LLAMACPP_CPU_CTX = LLAMACPP_CTX_SIZE), so the
     # render checks that window against these two and refuses one the fallback cannot hold.
     # ctx_default: the window it was trained for (qwen35moe.context_length in the GGUF header).
