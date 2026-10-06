@@ -51,6 +51,22 @@ class ReasoningEffortGate(CustomLogger):
         # Belt and braces: drop a reasoning_effort that an earlier stage already
         # injected, in case a future LiteLLM version translates before the hook.
         kwargs.pop("reasoning_effort", None)
+        # Strip tool types the local backends cannot execute. Claude Code offers
+        # built-in tools such as `web_search_preview` (and `computer_use`); NInfer
+        # 400s on them ("requires a non-function output contract that NInfer does
+        # not provide") and llama.cpp 500s ("Unsupported tool type"), so a request
+        # carrying one would fail on BOTH the GPU model and the CPU fallback. The
+        # local Qwen models only understand `function` tools, so keeping just those
+        # makes the request valid for both backends. A dropped built-in tool is a
+        # no-op here anyway (there is no real Claude upstream to execute it).
+        tools = kwargs.get("tools")
+        if isinstance(tools, list):
+            kept = [
+                t for t in tools
+                if isinstance(t, dict) and t.get("type", "function") == "function"
+            ]
+            if len(kept) != len(tools):
+                kwargs["tools"] = kept
         return kwargs
 
 
