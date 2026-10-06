@@ -188,6 +188,29 @@ RUN cd /opt/hermes-agent \
     && chown hermes:hermes tools/checkpoint_manager.py \
     && echo "checkpoint-scan-bounds patch applied"
 
+# PATCH: Discord plugin relative self-imports (kills the twin-module bug).
+# The plugin loads under the namespace `hermes_plugins.platforms__discord`, but
+# adapter.py / adapter_media.py used ABSOLUTE self-imports
+# (`from plugins.platforms.discord.adapter import ...`). Because the venv is an
+# editable install, `plugins` is importable as a top-level package, so those
+# absolute imports spawned a SECOND copy of the module (a "twin") whose module
+# globals never got rebound. After a venv rebuild that wiped discord.py, the
+# lazy installer rebound only the PRIMARY module, leaving the twin's `discord`
+# global at None — text sends (primary) worked but file attachments (twin)
+# crashed with `AttributeError: 'NoneType' object has no attribute 'File'` in
+# _send_file_attachment. Relative imports (`.adapter`, `.adapter_media`,
+# `.recovery`) resolve within the already-loaded plugin package, so no twin can
+# ever be created. Upstream v2026.9.24 (v0.21.5) still uses the absolute form —
+# re-check on pin bumps. --check first: the build fails loudly if a future pin
+# bump breaks the patch.
+COPY discord-relative-imports.diff /tmp/discord-relative-imports.diff
+RUN cd /opt/hermes-agent \
+    && git apply --recount --check /tmp/discord-relative-imports.diff \
+    && git apply --recount /tmp/discord-relative-imports.diff \
+    && chown hermes:hermes plugins/platforms/discord/adapter.py \
+                           plugins/platforms/discord/adapter_media.py \
+    && echo "discord-relative-imports patch applied"
+
 # SKILLS OWNED BY THIS REPO: the bundled ComfyUI skill, patched and shipped read-only.
 # Upstream's scripts default to submitting at http://127.0.0.1:8188, straight at the engine. On
 # this stack that skips the GPU admission gate, which is what takes the scheduler lease and evicts
