@@ -1,19 +1,21 @@
-"""LiteLLM custom callback: gates local-chat's CPU fallback on GPU lease state.
+"""LiteLLM custom callback: local-chat's CPU fallback is always allowed.
 
 Wired in `litellm_config.yaml` as:
     litellm_settings:
       callbacks: ["gpu_lease_fallback_gate.gpu_lease_fallback_gate_instance"]
 
 router_settings.fallbacks sends ANY error from the GPU deployment (busy queue, 400, 500,
-mid-stream) to the CPU model. The operator wants that failover only while a GPU lease
-(a render) has evicted the GPU chat model, or the GPU chat server is down. This hook
-runs on the fallback hop and denies it otherwise, so a busy GPU or a bad request fails
-loudly instead of silently degrading to the much slower CPU model.
+mid-stream) to the CPU model. Operator policy (2026-10-06): a GPU failure must never
+kill a local-chat consumer (Claude Code, Hermes, ...), so the CPU fallback is ALWAYS
+allowed — whether the GPU is evicted for a render, down, or merely returned an error.
+This hook runs on the fallback hop and logs the lease state (read from ops-controller's
+unauthenticated /metrics) for observability, but no longer denies the fallback.
 
 The lease state is read from ops-controller's unauthenticated /metrics (Prometheus
-text): the fallback is allowed while ordo_gpu_resident_evicted{resident="llamacpp"} is
-1 or ordo_gpu_chat_up is 0. The parsed state is cached for 5 s; an unreadable or
-unparseable metrics response fails open (availability first).
+text): ordo_gpu_resident_evicted{resident="llamacpp"} is 1 while a render has evicted
+the GPU chat model, and ordo_gpu_chat_up is 0 while the chat engine is down. The parsed
+state is cached for 5 s; an unreadable or unparseable metrics response is logged and
+treated as "not evicted" (the fallback is allowed regardless).
 """
 from __future__ import annotations
 
@@ -24,7 +26,6 @@ import time
 from typing import Any
 
 import httpx
-import litellm
 from litellm.integrations.custom_logger import CustomLogger
 
 logger = logging.getLogger("gpu_lease_fallback_gate")
@@ -34,11 +35,6 @@ logger = logging.getLogger("gpu_lease_fallback_gate")
 METRICS_URL = os.environ.get("GPU_LEASE_GATE_METRICS_URL", "http://ops-controller:9000/metrics")
 METRICS_TIMEOUT = float(os.environ.get("GPU_LEASE_GATE_TIMEOUT_SEC", "2"))
 CACHE_TTL = float(os.environ.get("GPU_LEASE_GATE_CACHE_TTL_SEC", "5"))
-
-DENY_MESSAGE = (
-    "GPU chat model failed and no GPU lease is held: the CPU fallback only serves "
-    "while a render holds the GPU"
-)
 
 # The two series ops-controller exports for the GPU chat service (ordo/control/metrics.py):
 # one per resident (1 while stopped for a lease) and the /health liveness of the chat engine.
@@ -101,8 +97,8 @@ def _is_fallback_hop(model: str, request_kwargs: dict[str, Any] | None) -> bool:
 
 
 class GpuLeaseFallbackGate(CustomLogger):
-    """LiteLLM CustomLogger: denies local-chat's CPU fallback unless a GPU lease is held
-    or the GPU chat server is down (see the module docstring)."""
+    """LiteLLM CustomLogger: always allows local-chat's CPU fallback and logs the
+    GPU lease state for observability (see the module docstring)."""
 
     def __init__(self) -> None:
         # (expiry as time.monotonic(), parsed allowed state) of the last metrics read.
@@ -118,8 +114,20 @@ class GpuLeaseFallbackGate(CustomLogger):
     ) -> list[Any]:
         if not _is_fallback_hop(model, request_kwargs):
             return healthy_deployments
-        if not await self._fallback_allowed():
-            raise litellm.ServiceUnavailableError(message=DENY_MESSAGE, llm_provider="openai", model=model)
+        # Operator policy (2026-10-06): a GPU failure must never kill a local-chat
+        # consumer (Claude Code, Hermes, ...). Always allow the CPU fallback,
+        # whether the GPU is evicted for a render, down, or merely returned an
+        # error (a bad request, a transient 5xx, a mid-stream drop). The metrics
+        # scrape is kept for observability — it logs the lease state — but no
+        # longer gates the fallback. (Previously this raised ServiceUnavailable
+        # when no lease was held, which turned a GPU 400 into a hard failure for
+        # Claude Code instead of degrading to the CPU Qwen model.)
+        allowed = await self._fallback_allowed()
+        logger.info(
+            "gpu_lease_fallback_gate: allowing CPU fallback for %s (lease-allowed=%s)",
+            model,
+            allowed,
+        )
         return healthy_deployments
 
     async def _fallback_allowed(self) -> bool:
