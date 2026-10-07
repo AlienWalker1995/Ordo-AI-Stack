@@ -1,6 +1,6 @@
 # Plugin manifest (data-only) — OFF-TAILNET public access for the Obsidian sync endpoint via
 # Tailscale Funnel. A single Tailscale sidecar joins the tailnet as `notes.<CADDY_TAILNET_DOMAIN>`
-# and Funnels its :443 to CouchDB (shared netns) so Obsidian LiveSync works from devices with NO
+# and Funnels its :443 to CouchDB (by service name) so Obsidian LiveSync works from devices with NO
 # Tailscale at all. The public endpoint is protected by CouchDB's own auth (require_valid_user) and
 # LiveSync end-to-end encryption (note content is encrypted at rest in CouchDB).
 #
@@ -28,12 +28,13 @@ secrets:
   - TS_AUTHKEY
 services:
   - name: notes-funnel
-    # Tailscale sidecar in CouchDB's network namespace, so `tailscale serve` can proxy to CouchDB
-    # over loopback (serve targets 127.0.0.1 only). AllowFunnel in the serve config makes it public.
+    # Tailscale sidecar with its own network namespace; `tailscale serve` proxies to CouchDB by
+    # service name (http://couchdb:5984). It no longer shares CouchDB's netns: a shared netns loses
+    # its member whenever the owner restarts first (tailnet-names, 2026-10-06). AllowFunnel in the
+    # serve config makes it public.
     # Multi-arch INDEX digest (amd64 + arm64), never a per-platform child: a child digest runs
     # emulated or not at all on the other arch. Verify: docker buildx imagetools inspect <ref>
     image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
-    network_mode: service:couchdb
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [couchdb]
     env:

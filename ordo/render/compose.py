@@ -652,7 +652,7 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str,
     s: dict[str, Any] = {"image": ps.image, "restart": ps.restart or "unless-stopped", "networks": [net]}
     if ps.network_mode:
         # compose forbids networks: alongside network_mode: — the service lives in the
-        # target's namespace (e.g. the tailnet-name sidecars inside Caddy's netns).
+        # target's namespace (hermes-dashboard inside Caddy's netns).
         s.pop("networks")
         s["network_mode"] = ps.network_mode
     if plugin.compose_profile:
@@ -685,9 +685,9 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str,
         s["healthcheck"] = dict(ps.healthcheck)
     dep = _depends_on(ps.depends_on)
     if ps.network_mode.startswith("service:"):
-        # This service shares another service's network namespace (the tailnet-name sidecars and
-        # hermes-dashboard join caddy's netns; `tailscale serve`/loopback binds can only target
-        # 127.0.0.1). Recreating or restarting the OWNER destroys that shared sandbox and orphans
+        # This service shares another service's network namespace (hermes-dashboard joins caddy's
+        # netns for its loopback-only bind). Recreating or restarting the OWNER destroys that shared
+        # sandbox and orphans
         # every member: its tailscale node goes offline / its loopback upstream is unreachable, yet
         # the container stays up and can still report healthy. So the member's lifecycle MUST be
         # coupled to the owner's — `depends_on.<owner>.restart: true` (compose spec, Compose v2.17+)
