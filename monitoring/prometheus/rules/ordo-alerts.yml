@@ -75,6 +75,21 @@ groups:
         annotations:
           summary: "{{ $labels.service }} healthcheck is failing"
           description: "{{ $labels.service }} has reported unhealthy for 10 minutes."
+      # ops-controller's netns sweep (ordo/control/netns_repair.py) brings back a member that a
+      # Docker daemon restart left stopped within 30 seconds. One still down after 5 minutes is one
+      # it could not bring back (budget spent, or its owner is down): the case that left every
+      # *.ts.net name down for 43 hours on 2026-10-06.
+      - alert: NetnsMemberDown
+        expr: ordo_netns_orphans > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "A network-namespace member is stopped and was not brought back"
+          description: >-
+            {{ $value | printf "%.0f" }} container(s) failed to join their owner's network namespace
+            and the repair sweep could not restart them. Read `docker logs ordo-ops-controller-1 | grep
+            netns-repair`.
 
   - name: ordo-gpu-lease
     rules:
