@@ -2,9 +2,14 @@
 # node per UI service: chat/dash/n8n/comfy/hermes/graph each join the tailnet as their own
 # node (<name>.${CADDY_TAILNET_DOMAIN}), terminate TLS with their auto-issued, auto-renewed
 # MagicDNS cert via `tailscale serve`, and proxy into the EXISTING SSO-gated Caddy port
-# listener over loopback (network_mode: service:caddy — serve can only target 127.0.0.1,
-# so the sidecars live in Caddy's netns). The Google SSO layer, the :443 OAuth callback,
-# and the :8443-:8448 port layer are untouched underneath.
+# listener by service name (https+insecure://caddy:<port>, assets/tailscale-serve/*.json).
+# Each sidecar has its OWN network namespace on the stack network. They used to share Caddy's
+# (network_mode: service:caddy) on the belief that serve could only target 127.0.0.1; serve has
+# accepted any hostname since well before v1.102.5 (ipn/serve.go ExpandProxyTargetValue). The
+# shared netns made every Docker daemon restart a boot race: a member that starts before Caddy
+# cannot join its namespace and Docker never retries it (all 8 sidecars stayed down 43 hours
+# after the 2026-10-06 engine restart). Own netns = no ordering to lose. The Google SSO layer,
+# the :443 OAuth callback, and the :8443-:8450 port layer are untouched underneath.
 #
 # Chosen by the 2026-07-24 clean-URLs judge panel (architect-refereed) over native VIP
 # Services (beta + cloud-side config + would tag-convert the load-bearing tailnet node)
@@ -40,7 +45,6 @@ services:
     # Multi-arch INDEX digest (amd64 + arm64), never a per-platform child: a child digest runs
     # emulated or not at all on the other arch. Verify: docker buildx imagetools inspect <ref>
     image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
-    network_mode: service:caddy
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]  # used on first login (TS_AUTH_ONCE); state persists after
     depends_on: [caddy]
     env:
@@ -62,7 +66,6 @@ services:
       retries: 3
   - name: tailnet-dash
     image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
-    network_mode: service:caddy
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
     env:
@@ -84,7 +87,6 @@ services:
       retries: 3
   - name: tailnet-n8n
     image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
-    network_mode: service:caddy
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
     env:
@@ -106,7 +108,6 @@ services:
       retries: 3
   - name: tailnet-comfy
     image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
-    network_mode: service:caddy
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
     env:
@@ -128,7 +129,6 @@ services:
       retries: 3
   - name: tailnet-hermes
     image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
-    network_mode: service:caddy
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
     env:
@@ -150,7 +150,6 @@ services:
       retries: 3
   - name: tailnet-graph
     image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
-    network_mode: service:caddy
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
     env:
@@ -180,7 +179,6 @@ services:
   # SSO-gated like every other one.
   - name: tailnet-llm
     image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
-    network_mode: service:caddy
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
     env:
@@ -210,7 +208,6 @@ services:
   # service is off.
   - name: tailnet-langfuse
     image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
-    network_mode: service:caddy
     secret_files: [{key: TS_AUTHKEY, env: TS_AUTHKEY, prefix: "file:"}]
     depends_on: [caddy]
     env:

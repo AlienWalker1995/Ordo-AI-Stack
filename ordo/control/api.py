@@ -57,6 +57,7 @@ from typing import Any
 
 from ..render import substrate
 from ..render.catalog import Catalog
+from ..render.config import Source
 from ..render.plugins import PluginRegistry
 from . import diagnostics, gpus, routes
 from . import metrics as prom
@@ -70,6 +71,7 @@ from .gpus import LeaseJobs
 from .lifecycle import LeaseGuard, Lifecycle
 from .managed_projects import ManagedProjects
 from .model_config import ModelConfig
+from .netns_repair import NetnsRepair
 from .plugin_install import PluginInstaller
 from .residents import ResidentFootprints
 from .responses import as_response, error
@@ -134,9 +136,15 @@ class ControlPlane:
         # What GET /metrics reports beyond the scheduler and the containers: {mount label: a path on
         # that filesystem} and {cert name: a PEM file}. Empty = not reported (ordo/control/serve.py
         # wires the real ones).
-        self.metrics = prom.MetricsCollector(scheduler, broker, disk_paths or {}, tls_cert_files or {},
-                                             chat_health_url=chat_health_url)
         self.managed_projects = ManagedProjects(broker, self.source.path)
+        # Brings back netns members a Docker daemon restart left stopped (netns_repair.py): this
+        # project's and every managed project's. ordo/control/serve.py drives the sweep.
+        self.netns_repair = (NetnsRepair(broker.backend, broker.backend.project,
+                                         lambda: Source.load(self.source.path).managed_projects)
+                             if broker else None)
+        self.metrics = prom.MetricsCollector(scheduler, broker, disk_paths or {}, tls_cert_files or {},
+                                             chat_health_url=chat_health_url,
+                                             netns_repair_stats=self.netns_repair.stats if self.netns_repair else None)
         # ComfyUI's files. Their locations are read from this module's settings when used, so a test
         # can repoint them after construction.
         self.downloads = ModelDownloads(lambda: COMFYUI_MODELS_DIR)

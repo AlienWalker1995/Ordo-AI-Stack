@@ -22,7 +22,7 @@ import os
 import ssl
 import subprocess
 import urllib.request
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -68,6 +68,8 @@ class Inputs:
     tls_certs: Mapping[str, float | None] = dataclasses.field(default_factory=dict)
     # Whether the GPU chat service answered its /health probe; None when no probe is configured.
     gpu_chat_up: bool | None = None
+    # The netns-member repair sweep's counters (ordo/control/netns_repair.py); None when not wired.
+    netns_repair: Mapping[str, int] | None = None
 
 
 def _escape(value: Any) -> str:
@@ -188,6 +190,14 @@ def render(inputs: Inputs) -> str:
         w.add("ordo_gpu_chat_up", "gauge",
               "1 when the GPU chat service (llamacpp:8080, either engine) answers /health with 200.",
               {}, 1 if inputs.gpu_chat_up else 0)
+    if inputs.netns_repair is not None:
+        for result in ("repaired", "failed"):
+            w.add("ordo_netns_repairs_total", "counter",
+                  "Network-namespace members the repair sweep restarted (repaired) or could not (failed).",
+                  {"result": result}, inputs.netns_repair.get(result, 0))
+        w.add("ordo_netns_orphans", "gauge",
+              "Network-namespace members left stopped after the last sweep (failed to join their owner).",
+              {}, inputs.netns_repair.get("orphans", 0))
     for collector in sorted(collectors):
         w.add("ordo_metrics_collector_ok", "gauge",
               "1 when this scrape could read the collector's source, 0 when it could not.",
@@ -215,8 +225,10 @@ class MetricsCollector:
     failed collector and the rest are still served."""
 
     def __init__(self, scheduler: Scheduler | None, broker: Broker | None, disk_paths: Mapping[str, str],
-                 tls_cert_files: Mapping[str, str], chat_health_url: str | None = None):
+                 tls_cert_files: Mapping[str, str], chat_health_url: str | None = None,
+                 netns_repair_stats: Callable[[], Mapping[str, int]] | None = None):
         self.scheduler = scheduler
+        self.netns_repair_stats = netns_repair_stats
         self.broker = broker
         self.disk_paths = dict(disk_paths)
         self.tls_cert_files = dict(tls_cert_files)
@@ -261,4 +273,5 @@ class MetricsCollector:
         return render(Inputs(
             scheduler=self.scheduler.status() if self.scheduler else None,
             containers=containers, restarts=restarts, disks=disks, tls_certs=certs,
-            gpu_chat_up=self._chat_up()))
+            gpu_chat_up=self._chat_up(),
+            netns_repair=self.netns_repair_stats() if self.netns_repair_stats else None))

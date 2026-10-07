@@ -21,6 +21,10 @@ from ..render.plugins import PluginRegistry
 from ..secret_env import SecretFileError, read_secret
 from . import principals
 
+# How often ops-controller looks for netns members a Docker daemon restart left stopped
+# (ordo/control/netns_repair.py): a dashboard name is back within this long of its owner.
+NETNS_REPAIR_SECONDS = 30
+
 
 def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a socket
     import threading
@@ -101,6 +105,19 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
                 print(f"[scheduler] lease sweep error: {e}", flush=True)
 
     threading.Thread(target=_lease_loop, daemon=True, name="lease-sweep").start()
+
+    # netns members a Docker daemon restart left stopped (ordo/control/netns_repair.py). Its own
+    # thread: a slow docker inspect must never delay the lease clock above.
+    def _netns_loop() -> None:
+        while True:
+            time.sleep(NETNS_REPAIR_SECONDS)
+            try:
+                cp.netns_repair.sweep()
+            except Exception as e:  # noqa: BLE001 - the control plane must survive a sweep hiccup
+                print(f"[netns-repair] sweep error: {e}", flush=True)
+
+    if cp.netns_repair is not None:
+        threading.Thread(target=_netns_loop, daemon=True, name="netns-repair").start()
 
     try:
         # A file under /run/secrets (OPS_CONTROLLER_TOKEN_FILE, the rendered delivery), else the env var.

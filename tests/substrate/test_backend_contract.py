@@ -33,6 +33,7 @@ import pytest
 import yaml
 
 from ordo.control.broker import DockerBackend, MockBackend
+from ordo.control.netns_repair import NetnsRepair
 from ordo.render.changed_set import diff_services
 
 # Multi-arch index digest of busybox 1.37.0: tiny, has `sh`, `sleep`, `ls` and `true`.
@@ -48,7 +49,7 @@ COMPOSE = {
         # A netns owner and its member, in the shape the renderer emits (ordo/render/compose.py):
         # `depends_on.<owner>.restart: true` is what makes compose restart the member with it.
         "owner": dict(SLEEPER),
-        "member": {**SLEEPER, "network_mode": "service:owner",
+        "member": {**SLEEPER, "network_mode": "service:owner", "restart": "unless-stopped",
                    "depends_on": {"owner": {"condition": "service_started", "restart": True}}},
         # A one-shot job (`restart: "no"`), like evals: runs to completion and stays exited.
         "job": {"image": BUSYBOX, "command": ["true"], "restart": "no"},
@@ -614,6 +615,43 @@ def test_restarting_an_owner_alone_orphans_its_member_and_restarting_the_member_
     assert not harness.attached("member")
     harness.backend.restart("member")
     assert harness.attached("member")
+
+
+def _orphan_member_like_a_daemon_restart(backend) -> None:
+    """What a Docker daemon restart does to a member that comes up before its owner: the member's
+    start fails to join the stopped owner's namespace and it stays down (2026-10-06)."""
+    backend.stop("member")
+    backend.stop("owner")
+    with pytest.raises(subprocess.CalledProcessError):
+        backend.start("member")
+    backend.start("owner")
+
+
+def test_a_member_that_failed_to_join_its_owner_is_reported_with_dockers_error(harness):
+    _orphan_member_like_a_daemon_restart(harness.backend)
+    (row,) = harness.backend.netns_rows()
+    assert row["service"] == "member" and row["state"] in ("exited", "created")
+    assert "network namespace" in row["error"], "State.Error is the signal (the exit code is not)"
+    assert row["restart_policy"] == "unless-stopped"
+    assert row["owner_state"] == "running"
+
+
+def test_the_netns_sweep_brings_an_orphaned_member_back_onto_the_network(harness):
+    _orphan_member_like_a_daemon_restart(harness.backend)
+    assert not harness.attached("member")
+    (row,) = harness.backend.netns_rows()
+    repair = NetnsRepair(harness.backend, harness.project, lambda: [], log=lambda _line: None)
+    assert repair.sweep() == [f"{harness.project}/{row['name']}"]
+    assert harness.attached("member")
+    assert repair.stats() == {"repaired": 1, "failed": 0, "orphans": 0}
+    assert repair.sweep() == [], "a member that is back is left alone"
+
+
+def test_the_netns_sweep_leaves_a_deliberately_stopped_member_alone(harness):
+    harness.backend.stop("member")
+    repair = NetnsRepair(harness.backend, harness.project, lambda: [], log=lambda _line: None)
+    assert repair.sweep() == []
+    assert _state(harness.backend, "member") == "exited"
 
 
 def test_compose_restart_of_an_owner_restarts_its_member_with_it(harness):

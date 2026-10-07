@@ -1,4 +1,5 @@
 """Rendered compose is isolated + correct so it can run without colliding with other projects."""
+import json
 import re
 from pathlib import Path
 
@@ -483,15 +484,14 @@ def test_hermes_dashboard_renders_in_caddy_netns_when_the_edge_is_on(tmp_path):
 def test_netns_members_restart_couple_to_the_owner(tmp_path):
     """Every service that joins another service's netns declares its owner as a
     restart-coupled dependency (long-form depends_on with restart: true), so a compose
-    recreate/restart of the owner cascades to the member. This covers the tailnet-name
-    sidecars and hermes-dashboard in one renderer rule."""
+    recreate/restart of the owner cascades to the member (hermes-dashboard, which binds
+    loopback inside caddy's netns)."""
     c = _render_with_plugins(["edge", "tailnet-names", "hermes-dashboard"], tmp_path)
     members = [
         (name, svc) for name, svc in c["services"].items()
         if str(svc.get("network_mode", "")).startswith("service:")
     ]
-    # the sidecars + hermes-dashboard must actually be present, or the assertion below is vacuous
-    assert any(n.startswith("tailnet-") for n, _ in members)
+    # hermes-dashboard must actually be present, or the assertion below is vacuous
     assert any(n == "hermes-dashboard" for n, _ in members)
     for name, svc in members:
         owner = svc["network_mode"].split("service:", 1)[1]
@@ -504,6 +504,37 @@ def test_netns_members_restart_couple_to_the_owner(tmp_path):
         for peer, cond in dep.items():
             if peer != owner:
                 assert cond == {"condition": "service_started"}, f"{name}: peer {peer} over-coupled"
+
+
+# ── Tailscale sidecars own their network namespace ───────────────────────────────
+# A shared netns is a boot race on every Docker daemon restart: a member that starts before its
+# owner cannot join the namespace ("cannot join network namespace of a non running container")
+# and Docker never retries it. On 2026-10-06 that left all 8 tailnet sidecars down for 43 hours.
+# `tailscale serve` proxies to any hostname, so the sidecars reach Caddy / CouchDB by name instead.
+
+SERVE_DIR = Path(__file__).resolve().parents[2] / "assets" / "tailscale-serve"
+
+
+def test_tailscale_sidecars_have_their_own_netns(tmp_path):
+    c = _render_with_plugins(["edge", "tailnet-names", "obsidian-livesync", "obsidian-livesync-funnel"],
+                             tmp_path)
+    sidecars = {n: s for n, s in c["services"].items() if n.startswith("tailnet-") or n == "notes-funnel"}
+    assert len(sidecars) == 9, sorted(sidecars)
+    for name, svc in sidecars.items():
+        assert "network_mode" not in svc, f"{name} shares a netns: it is lost on any daemon restart"
+        assert svc["networks"], f"{name} has no network to reach its upstream on"
+
+
+def test_tailscale_serve_configs_target_services_by_name():
+    for config in sorted(SERVE_DIR.glob("*.json")):
+        targets = [h["Proxy"] for web in json.loads(config.read_text(encoding="utf-8"))["Web"].values()
+                   for h in web["Handlers"].values()]
+        assert targets, config.name
+        for target in targets:
+            host = target.split("://", 1)[1].rsplit(":", 1)[0]
+            assert host in {"caddy", "couchdb"}, (
+                f"{config.name}: {target} must name the upstream service; loopback only works in a "
+                "shared netns, which the sidecars no longer have")
 
 
 def test_gguf_models_on_named_volume():

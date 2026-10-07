@@ -125,7 +125,8 @@ def test_every_ordo_series_the_rules_read_is_exported():
     """A renamed metric would leave its rule silently evaluating to nothing."""
     exported = set(re.findall(r"^# TYPE (ordo_\w+)", metrics.render(metrics.Inputs(
         scheduler=_leased_scheduler().status(), containers=[], restarts={},
-        disks={"docker": metrics.DiskUsage(1, 1, 1)}, tls_certs={"edge": 1.0}, gpu_chat_up=True)),
+        disks={"docker": metrics.DiskUsage(1, 1, 1)}, tls_certs={"edge": 1.0}, gpu_chat_up=True,
+        netns_repair={"repaired": 0, "failed": 0, "orphans": 0})),
         re.MULTILINE))
     rules = yaml.safe_load(RULES.read_text(encoding="utf-8"))
     used = {name for group in rules["groups"] for rule in group["rules"]

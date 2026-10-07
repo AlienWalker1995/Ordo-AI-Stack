@@ -27,6 +27,7 @@ import re
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from typing import Protocol
 
 from ..render.changed_set import DockerState, RenderedService, RunningContainer, StackState, Staged
@@ -96,6 +97,35 @@ def summarize_inspect(raw: dict) -> dict:
     }
 
 
+def netns_member_rows(inspected: list[dict], owner_state: Callable[[str], str]) -> list[dict]:
+    """ContainerBackend.netns_rows from `docker inspect` documents: one row per container whose
+    HostConfig.NetworkMode is `container:<owner>`. The owner is looked up among `inspected` by id or
+    name, else through `owner_state(ref)` (a container outside the list, or "missing")."""
+    by_id = {c.get("Id"): c for c in inspected}
+    by_name = {str(c.get("Name") or "").lstrip("/"): c for c in inspected}
+    rows = []
+    for c in inspected:
+        host = c.get("HostConfig") or {}
+        mode = str(host.get("NetworkMode") or "")
+        if not mode.startswith("container:"):
+            continue
+        ref = mode[len("container:"):]
+        owner = by_id.get(ref) or by_name.get(ref)
+        state = c.get("State") or {}
+        labels = (c.get("Config") or {}).get("Labels") or {}
+        rows.append({
+            "service": labels.get("com.docker.compose.service", ""),
+            "name": str(c.get("Name") or "").lstrip("/"),
+            "state": state.get("Status", ""),
+            "exit_code": state.get("ExitCode", 0),
+            "error": state.get("Error", "") or "",
+            "restart_policy": (host.get("RestartPolicy") or {}).get("Name") or "no",
+            "owner": str(owner.get("Name") or "").lstrip("/") if owner else ref,
+            "owner_state": (owner.get("State") or {}).get("Status", "") if owner else owner_state(ref),
+        })
+    return rows
+
+
 class ContainerBackend(Protocol):
     # Two kinds of argument, and the distinction is load-bearing. `service` is a COMPOSE SERVICE
     # name (`llamacpp`), resolved to a container by compose labels so the `-1` replica suffix is
@@ -126,6 +156,12 @@ class ContainerBackend(Protocol):
     def foreign_logs(self, project: str, name: str, tail: int) -> str: ...
     def foreign_inspect(self, project: str, name: str) -> dict: ...   # raw; never returned to a caller
     def foreign_restart(self, project: str, name: str) -> None: ...
+
+    # Every `network_mode` member of a project (this one for None, else a managed project): one row
+    # each, {service, name, state, exit_code, error, restart_policy, owner, owner_state}, where
+    # `error` is Docker's State.Error and owner_state is running / exited / created / missing. Read
+    # by ordo/control/netns_repair.py, which brings back members a daemon restart left stopped.
+    def netns_rows(self, project: str | None = None) -> list[dict]: ...
 
     # The read methods return the ops-api PAYLOAD, not a bare list, because the dashboard consumes
     # these shapes directly: {"services": [...]}, {"containers": [...]}. Returning a list here and
@@ -212,6 +248,7 @@ class _FakeContainer:
     restart_count: int = 0        # restart-policy restarts (`docker restart` does not count)
     netns: int = 0                # an owner's network namespace: a new one on every start
     joined_netns: int = 0         # a member's: the owner namespace it joined when it last started
+    error: str = ""               # State.Error: why the last start failed ("" once one succeeds)
     output: list[str] = dataclasses.field(default_factory=list)
 
 
@@ -331,18 +368,22 @@ class MockBackend:
         if container.owner is not None:
             owner = next((c for c in self.project_containers.values()
                           if c.container_id == container.owner_container_id), None)
-            if owner is None:
-                raise subprocess.CalledProcessError(
-                    1, ["docker", "start", container.name],
-                    stderr=f"joining network namespace of container: No such container: "
-                           f"{container.owner_container_id}")
-            if owner.state != "running":
-                raise subprocess.CalledProcessError(
-                    1, ["docker", "start", container.name],
-                    stderr=f"cannot join network namespace of a non running container: {owner.name}")
+            failure = (f"joining network namespace of container: No such container: "
+                       f"{container.owner_container_id}" if owner is None else
+                       f"cannot join network namespace of a non running container: {owner.name}"
+                       if owner.state != "running" else "")
+            if failure:
+                # Docker records why the start failed in State.Error and leaves the container
+                # stopped. The exit code is not a signal: it keeps the previous stop's (143 after a
+                # `docker stop`); only a daemon boot's failed start reports 128.
+                container.error = failure
+                if container.state == "running":
+                    container.state = "exited"
+                raise subprocess.CalledProcessError(1, ["docker", "start", container.name], stderr=failure)
             container.joined_netns = owner.netns
         else:
             container.netns = next(self._namespaces)
+        container.error = ""
         container.state, container.exit_code = ("exited", 0) if container.one_shot else ("running", 0)
 
     @staticmethod
@@ -521,6 +562,24 @@ class MockBackend:
     def foreign_restart(self, project: str, name: str) -> None:
         self._foreign(project, name)
         self.foreign_restarts.append((project, name))
+
+    def netns_rows(self, project: str | None = None) -> list[dict]:
+        if project and project != self.project:
+            # A managed project is modelled as raw inspect documents: parse them as the real backend does.
+            return netns_member_rows([raw for _row, raw in self.foreign.get(project, {}).values()],
+                                     lambda ref: "missing")
+        rows = []
+        for c in self.project_containers.values():
+            if c.owner is None:
+                continue
+            owner = next((o for o in self.project_containers.values()
+                          if o.container_id == c.owner_container_id), None)
+            rows.append({"service": c.service, "name": c.name, "state": c.state, "exit_code": c.exit_code,
+                         "error": c.error,
+                         "restart_policy": str((self._services().get(c.service) or {}).get("restart") or "no"),
+                         "owner": owner.name if owner else c.owner_container_id,
+                         "owner_state": owner.state if owner else "missing"})
+        return rows
 
     def service_restarts(self) -> dict[str, int]:
         return {c.service: c.restart_count for c in self.project_containers.values()}
@@ -748,6 +807,22 @@ class DockerBackend:
 
     def foreign_restart(self, project: str, name: str) -> None:  # pragma: no cover - needs real docker
         subprocess.run(["docker", "restart", self._foreign_guard(project, name)], check=True, timeout=120)
+
+    def netns_rows(self, project: str | None = None) -> list[dict]:  # pragma: no cover - needs real docker
+        target = project or self.project
+        ids = [r["id"] for r in self._project_ps(target) if r.get("id")]
+        if not ids:
+            return []
+        proc = subprocess.run(["docker", "inspect", "--type", "container", *ids],
+                              capture_output=True, text=True, timeout=60, check=True)
+        return netns_member_rows(json.loads(proc.stdout), self._container_status)
+
+    @staticmethod
+    def _container_status(ref: str) -> str:  # pragma: no cover - needs real docker
+        """A container's State.Status by id or name, or "missing" when docker has no such container."""
+        proc = subprocess.run(["docker", "inspect", "--type", "container", "--format", "{{.State.Status}}", ref],
+                              capture_output=True, text=True, timeout=30)
+        return proc.stdout.strip() if proc.returncode == 0 and proc.stdout.strip() else "missing"
 
     @staticmethod
     def _health_from_status(status: str) -> str | None:

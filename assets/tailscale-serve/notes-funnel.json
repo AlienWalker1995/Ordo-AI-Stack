@@ -2,7 +2,7 @@
   "TCP": { "443": { "HTTPS": true } },
   "Web": {
     "${TS_CERT_DOMAIN}:443": {
-      "Handlers": { "/": { "Proxy": "http://127.0.0.1:5984" } }
+      "Handlers": { "/": { "Proxy": "http://couchdb:5984" } }
     }
   },
   "AllowFunnel": { "${TS_CERT_DOMAIN}:443": true }
