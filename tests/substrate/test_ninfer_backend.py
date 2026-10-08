@@ -184,6 +184,20 @@ def test_the_heretic_nvfp4_entry_serves_on_the_same_ninfer_service():
     assert _render(HERETIC).env["LLAMACPP_MODEL"] == "qwen3_8_27b_heretic_ara.ninfer"
 
 
+HUIHUI_NVFP4 = "qwen3.8-27b-huihui-abliterated-nvfp4-ninfer"
+
+
+def test_the_huihui_nvfp4_entry_serves_with_vision_on_the_ninfer_service():
+    rc = _render(HUIHUI_NVFP4)
+    llamacpp = rc.compose_dict()["services"]["llamacpp"]
+    assert llamacpp["entrypoint"] == ["/bin/sh", "/llamacpp-scripts/run-ninfer-serve.sh"]
+    assert rc.env["LLAMACPP_MODEL"] == "qwen3_8_27b_huihui_abliterated_nvfp4.ninfer"
+    assert rc.env["LLAMACPP_VISION"] == "1"
+    # NVFP4 weights plus the vision encoder leave room for 200,000 tokens beside the embedder
+    assert rc.ctx_size == 200000
+    assert rc.env["GATEWAY_DROP_TOOL_STRICT"] == "true"
+
+
 def test_every_ninfer_entry_queues_on_the_gpu_instead_of_failing_over_to_the_cpu():
     """NInfer serves one request at a time. With its default short pending timeout a second request
     failed with request_queue_timeout/503 and the gateway failed it over to the CPU fallback, which then

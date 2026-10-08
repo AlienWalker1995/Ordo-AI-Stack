@@ -1,0 +1,9 @@
+# Input of the qwen3.8-27b-huihui-abliterated-nvfp4 upgrade, pinned by repository revision and sha256.
+# Columns: sha256, local path (under the work directory), source URL.
+#
+# lyf/Qwen3.8-27B-Huihui-Abliterated-NInfer-NVFP4 (Apache-2.0): a complete NInfer artifact of
+# huihui-ai/Huihui-Qwen3.8-27B-abliterated (revision d42ca897) in NInfer's official FP8 + NVFP4
+# Qwen3.8 allocation, with the same model's vision tower and MTP tensors. It is a v2 file (built at
+# NInfer a99407c6, 2026-08-19, before v3 on 2026-09-13), which the served engine refuses; its
+# identity (qwen3.8-27b / nvfp4, 1124 objects) is one upstream's v2-to-v3 upgrade accepts.
+f21f308d3b23ccd627071cd015e413db08deee4356643900518e2b251750fdc2  lyf-v2/qwen3_8_27b_nvfp4.ninfer  https://huggingface.co/lyf/Qwen3.8-27B-Huihui-Abliterated-NInfer-NVFP4/resolve/181446902fc777c479749e98cf2abf2250263a8d/qwen3_8_27b_nvfp4.ninfer

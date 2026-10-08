@@ -34,7 +34,7 @@ is a CUDA build). `ordo up` and `ordo apply` also build it when the rendered com
 Docker lacks. Never `docker build` it by hand: a hand tag is invisible to the stack.
 
 ## Converting weights
-`convert/` converts a source checkpoint into a `.ninfer` artifact with upstream's own converter
+`convert/` converts a source checkpoint into a `.ninfer` artifact with upstream's own converter, or (a `<name>.upgrade` recipe) upgrades a published v2 artifact to v3 with upstream's offline upgrade tool,
 (`python -m tools.convert`, [docs/weight-conversion.md](https://github.com/Neroued/ninfer/blob/d44ab58408aa389728cd8b1ee50179527e1f3e0d/docs/weight-conversion.md))
 at the same engine commit this image serves, on the CPU only. Each artifact is two files in
 `convert/inputs/`:
@@ -63,7 +63,8 @@ size_bytes in the catalog before installing it.
 | Artifact | Source | Recipe | Notes |
 |---|---|---|---|
 | `qwen3.8-27b-heretic-ara` | `heretic-org/Qwen3.8-27B-heretic-ara` | `qwen3_8_27b` (groupwise-int) | Text, Vision, MTP and the proposal head; official `Qwen/Qwen3.8-27B` frontend. |
-| `qwen3.8-27b-heretic-ara-nvfp4` | `catplusplus/Qwen3.8-27B-heretic-ara-NVFP4-MTP` (base and `quantized`) | `qwen3_8_27b_nvfp4` | Same components and frontend; its MTP head is unsloth's, byte-identical to heretic-org's. A tensor index generated from the two pinned headers is tracked in `inputs/`. |
+| `qwen3.8-27b-heretic-ara-nvfp4` | `catplusplus/Qwen3.8-27B-heretic-ara-NVFP4-MTP` (base and `quantized`) | `qwen3_8_27b_nvfp4` | Same components and frontend; its MTP head is unsloth's, byte-identical to heretic-org's.
+| `qwen3.8-27b-huihui-abliterated-nvfp4` | `lyf/Qwen3.8-27B-Huihui-Abliterated-NInfer-NVFP4` (a published v2 `.ninfer`) | `.upgrade`: upstream `tools/upgrade_ninfer_v2_to_v3.py` | Huihui's abliteration in the official FP8 + NVFP4 allocation with its own vision and MTP tensors; weight bytes unchanged by the upgrade. | A tensor index generated from the two pinned headers is tracked in `inputs/`. |
 
 Why the first Heretic build was groupwise-int: upstream's NVFP4 recipe imports
 pre-quantized NVFP4/FP8 weights (`--source quantized`, compressed-tensors in the mixed layout of
