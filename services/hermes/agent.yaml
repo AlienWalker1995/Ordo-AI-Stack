@@ -99,6 +99,10 @@ environment:
   # so this tag is what separates Hermes's richer turn/tool traces from the gateway's copy of the
   # same generations. Filter dashboards by environment. See services/langfuse/README.md.
   HERMES_LANGFUSE_ENV: hermes
+  # Hermes's web_search tool backend. Unset, Hermes autodetects OpenAI's server-side search, which
+  # cannot run on the local model, so every search failed once before a keyless fallback. Empty
+  # (Hermes skips it) when the searxng-web plugin is disabled, like open-webui's SEARXNG_QUERY_URL.
+  SEARXNG_URL: ${SEARXNG_ENABLED:+http://searxng:8080}
   # ── Hermes API server (the OpenAI-compatible endpoint the `evals` runner drives) ──
   # OFF unless HERMES_API_SERVER_KEY is set. The key is declared by the evals plugin's `secrets:`,
   # so it exists in secrets.env only when that plugin is enabled; everywhere else the ref
