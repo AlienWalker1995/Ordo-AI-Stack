@@ -1,0 +1,4 @@
+# Upgrade of the pinned v2 artifact to v3 with upstream's tools/upgrade_ninfer_v2_to_v3.py (at the
+# served engine commit). Line 1: the v2 input under /work. Line 2: the v3 output under /out.
+/work/lyf-v2/qwen3_8_27b_nvfp4.ninfer
+/out/qwen3_8_27b_huihui_abliterated_nvfp4.ninfer

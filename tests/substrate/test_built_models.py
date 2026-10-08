@@ -26,6 +26,7 @@ CATALOG = Catalog.load(ROOT / "catalog" / "models.yaml")
 CONVERT = ROOT / "services" / "ninfer" / "convert"
 HERETIC = "qwen3.8-27b-heretic-ara-ninfer"
 HERETIC_NVFP4 = "qwen3.8-27b-heretic-ara-nvfp4-ninfer"
+HUIHUI_NVFP4 = "qwen3.8-27b-huihui-abliterated-nvfp4-ninfer"
 
 DATA = b"converted weights"
 DATA_SHA = hashlib.sha256(DATA).hexdigest()
@@ -92,11 +93,13 @@ def test_a_recipe_name_cannot_leave_the_recipe_directory():
 
 def test_every_built_catalog_entry_has_a_complete_pinned_recipe():
     built = [m for m in CATALOG.models if m.build]
-    assert [m.id for m in built] == [HERETIC, HERETIC_NVFP4]
+    assert [m.id for m in built] == [HERETIC, HERETIC_NVFP4, HUIHUI_NVFP4]
     for model in built:
         sources = CONVERT / "inputs" / f"{model.build}.sources"
         args = CONVERT / "inputs" / f"{model.build}.args"
-        assert sources.is_file() and args.is_file(), model.id
+        upgrade = CONVERT / "inputs" / f"{model.build}.upgrade"
+        assert sources.is_file() and (args.is_file() != upgrade.is_file()), (
+            f"{model.id}: a recipe is its .sources plus exactly one of .args (convert) or .upgrade")
         lines = [line.split() for line in sources.read_text().splitlines()
                  if line.strip() and not line.startswith("#")]
         assert lines, model.id
@@ -109,6 +112,13 @@ def test_every_built_catalog_entry_has_a_complete_pinned_recipe():
                 continue
             # pinned by revision: a full commit sha in the URL, never a branch
             assert url.startswith("https://") and re.search(r"/resolve/[0-9a-f]{40}/", url), url
+        if upgrade.is_file():
+            # a published v2 artifact upgraded offline: its input is a pinned source, its output the file
+            steps = [line for line in upgrade.read_text().splitlines() if line.strip() and not line.startswith("#")]
+            assert len(steps) == 2, model.id
+            assert steps[0].removeprefix("/work/") in {path for _sha, path, _url in lines}, steps[0]
+            assert Path(steps[1]).name == model.file
+            continue
         argv = [line for line in args.read_text().splitlines() if line and not line.startswith("#")]
         assert Path(argv[argv.index("--out") + 1]).name == model.file
         assert argv[argv.index("--device") + 1] == "cpu"          # never the GPU

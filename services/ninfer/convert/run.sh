@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Convert one artifact with the official NInfer converter, CPU only (no GPU is attached, so no GPU
 # lease is involved). Usage: services/ninfer/convert/run.sh <artifact name> <work dir> <out dir>
-#   <artifact name>  a pair of files in inputs/: <name>.sources (pinned inputs) and <name>.args
+#   <artifact name>  a pair of files in inputs/: <name>.sources (pinned inputs) and either <name>.args
+#                    (a conversion) or <name>.upgrade (a published v2 artifact upgraded to v3)
 #   <work dir>       receives the downloaded inputs (resumable; about 56 GB for a 27B BF16 source)
 #   <out dir>        receives the .ninfer file and its .sha256
 # The inputs are downloaded and checked on the host: a container writing through a bind mount is
@@ -14,7 +15,7 @@ work="${2:?usage: run.sh <artifact name> <work dir> <out dir>}"
 out="${3:?usage: run.sh <artifact name> <work dir> <out dir>}"
 here="$(cd "$(dirname "$0")" && pwd)"
 sources="$here/inputs/$name.sources"
-[ -f "$sources" ] && [ -f "$here/inputs/$name.args" ] || { echo "no inputs named $name in $here/inputs" >&2; exit 2; }
+[ -f "$sources" ] && { [ -f "$here/inputs/$name.args" ] || [ -f "$here/inputs/$name.upgrade" ]; }     || { echo "no inputs named $name in $here/inputs" >&2; exit 2; }
 
 commit="$(sed -n 's/^ARG NINFER_COMMIT=//p' "$here/Dockerfile")"
 serving="$(sed -n 's/^ARG NINFER_COMMIT=//p' "$here/../Dockerfile")"
