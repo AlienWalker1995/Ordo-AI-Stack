@@ -197,7 +197,12 @@ RUN cd /opt/hermes-agent \
 # thinking-prefill / empty-response ladder, plus a test. Default unchanged; upstream v0.21.5
 # has no such knob. --check first: the build fails loudly if a future pin bump breaks the patch.
 COPY reasoning-only-stop-reprompt.diff /tmp/reasoning-only-stop-reprompt.diff
-RUN cd /opt/hermes-agent     && git apply --recount --check /tmp/reasoning-only-stop-reprompt.diff     && git apply --recount /tmp/reasoning-only-stop-reprompt.diff     && chown hermes:hermes agent/turn_final_response.py                            tests/agent/test_reasoning_only_stop_persistence.py     && echo "reasoning-only-stop-reprompt patch applied"
+RUN cd /opt/hermes-agent \
+    && git apply --recount --check /tmp/reasoning-only-stop-reprompt.diff \
+    && git apply --recount /tmp/reasoning-only-stop-reprompt.diff \
+    && chown hermes:hermes agent/turn_final_response.py \
+                           tests/agent/test_reasoning_only_stop_persistence.py \
+    && echo "reasoning-only-stop-reprompt patch applied"
 
 # SKILLS OWNED BY THIS REPO: the bundled ComfyUI skill, patched and shipped read-only.
 # Upstream's scripts default to submitting at http://127.0.0.1:8188, straight at the engine. On
