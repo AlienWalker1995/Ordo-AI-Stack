@@ -1,0 +1,60 @@
+diff --git a/agent/turn_final_response.py b/agent/turn_final_response.py
+index 779a473003..f4969c4378 100644
+--- a/agent/turn_final_response.py
++++ b/agent/turn_final_response.py
+@@ -9,11 +9,13 @@ from __future__ import annotations
+ 
+ from dataclasses import dataclass
+ import logging
++import os
+ from typing import Any, Dict, Optional
+ 
+ from agent.message_metadata import append_message
+ from agent.turn_empty_response import recover_empty_response
+ from agent.turn_stop_gates import apply_stop_gates
++from utils import is_truthy_value
+ 
+ logger = logging.getLogger("agent.conversation_loop")
+ 
+@@ -84,10 +86,15 @@ def finish_text_response(
+     # from a real reply on every history surface (#111761). The row keeps ``content``
+     # empty with the text in its reasoning fields and carries the promoted text as the
+     # ``api_content`` sidecar, so the next turn still replays it byte-identically.
++    # Off switch (HERMES_PROMOTE_REASONING_ONLY_STOP=0) for engines whose reasoning parser is exact:
++    # there an empty-content stop means the model ended inside its thinking (a mid-sentence
++    # monologue), so the thinking-prefill / empty-response ladder below re-asks for the answer
++    # instead of delivering the raw reasoning as the reply.
+     _content = assistant_message.content
+     _promoted = None
+     if (
+-        finish_reason == "stop"
++        is_truthy_value(os.getenv("HERMES_PROMOTE_REASONING_ONLY_STOP"), default=True)
++        and finish_reason == "stop"
+         and not assistant_message.tool_calls
+         and (_content is None or (isinstance(_content, str) and not _content.strip()))
+     ):
+diff --git a/tests/agent/test_reasoning_only_stop_persistence.py b/tests/agent/test_reasoning_only_stop_persistence.py
+index 063fcab0f6..49582eb042 100644
+--- a/tests/agent/test_reasoning_only_stop_persistence.py
++++ b/tests/agent/test_reasoning_only_stop_persistence.py
+@@ -175,3 +175,20 @@ def test_genuine_reasoning_only_answer_with_tools_still_promotes_on_first_call(l
+         ])
+         assert result["api_calls"] == 1
+         assert result["final_response"] == answer
++
++
++def test_promotion_off_switch_reprompts_instead_of_returning_reasoning(loop_agent, monkeypatch):
++    """HERMES_PROMOTE_REASONING_ONLY_STOP=0: an empty-content stop is the model quitting inside its
++    thinking, so the ladder re-asks and the real answer is returned, never the monologue."""
++    from tests.agent.test_run_agent import _mock_response
++
++    monkeypatch.setenv("HERMES_PROMOTE_REASONING_ONLY_STOP", "0")
++    monologue = "The user wants images of themselves. Hmm, but generating a specific person is tricky. Let me"
++
++    result = _run(loop_agent, [
++        _mock_response(content="", finish_reason="stop", reasoning_content=monologue),
++        _mock_response(content="Here are the two images.", finish_reason="stop"),
++    ])
++
++    assert result["api_calls"] == 2
++    assert result["final_response"] == "Here are the two images."
