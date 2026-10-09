@@ -188,6 +188,17 @@ RUN cd /opt/hermes-agent \
     && chown hermes:hermes tools/checkpoint_manager.py \
     && echo "checkpoint-scan-bounds patch applied"
 
+# PATCH: re-ask instead of posting raw reasoning when the model stops inside its thinking.
+# On an empty-content `stop` with reasoning, upstream returns the reasoning as the reply (a
+# compat path for vLLM parsers that file real answers as reasoning). NInfer splits on </think>
+# exactly, so there it only means the model emitted its stop token mid-thought, and Discord got
+# up to 110k chars of chain-of-thought as the answer. The diff adds an off switch,
+# HERMES_PROMOTE_REASONING_ONLY_STOP=0 (set in agent.yaml), that routes the turn to the existing
+# thinking-prefill / empty-response ladder, plus a test. Default unchanged; upstream v0.21.5
+# has no such knob. --check first: the build fails loudly if a future pin bump breaks the patch.
+COPY reasoning-only-stop-reprompt.diff /tmp/reasoning-only-stop-reprompt.diff
+RUN cd /opt/hermes-agent     && git apply --recount --check /tmp/reasoning-only-stop-reprompt.diff     && git apply --recount /tmp/reasoning-only-stop-reprompt.diff     && chown hermes:hermes agent/turn_final_response.py                            tests/agent/test_reasoning_only_stop_persistence.py     && echo "reasoning-only-stop-reprompt patch applied"
+
 # SKILLS OWNED BY THIS REPO: the bundled ComfyUI skill, patched and shipped read-only.
 # Upstream's scripts default to submitting at http://127.0.0.1:8188, straight at the engine. On
 # this stack that skips the GPU admission gate, which is what takes the scheduler lease and evicts
