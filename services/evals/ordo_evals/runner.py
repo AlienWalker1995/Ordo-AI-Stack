@@ -151,7 +151,7 @@ def run(settings: Settings, *, suites: list[str], run_id: str, limit: int | None
     probes = probes if probes is not None else LiveProbes(
         vault_dir=settings.vault_dir, ops_controller_url=settings.ops_controller_url,
         ops_controller_token=settings.ops_controller_token,
-        n8n_url=settings.n8n_url, qdrant_url=settings.qdrant_url, qdrant_collection=settings.qdrant_collection)
+        qdrant_url=settings.qdrant_url, qdrant_collection=settings.qdrant_collection)
 
     # E15 (round-6 fix): refused before run_dir exists, same guarantee as the provenance gate above -
     # a run that starts while the GPU is already leased can spend its whole duration silently served

@@ -18,7 +18,7 @@ OPS = "http://ops-controller:9000"
 def test_ops_status_sends_the_bearer_token(tmp_path):
     route = respx.get(f"{OPS}/status").mock(return_value=httpx.Response(200, json={"gpu": {"state": "idle"}}))
     probes = LiveProbes(vault_dir=tmp_path, ops_controller_url=OPS, ops_controller_token="tok-123",
-                        n8n_url="http://n8n:5678", qdrant_url="http://qdrant:6333")
+                        qdrant_url="http://qdrant:6333")
     assert probes.ops_status()["gpu"]["state"] == "idle"
     assert route.calls.last.request.headers["authorization"] == "Bearer tok-123"
 

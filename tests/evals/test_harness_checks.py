@@ -11,11 +11,10 @@ class FakeProbes:
     """checks.Probes with an in-memory vault and canned stack answers."""
 
     def __init__(self, vault=None, model_id="qwen-test-q6", mcp_servers=("a", "b", "c"),
-                 n8n=True, collections=("documents", "code"), fail=()):
+                 collections=("documents", "code"), fail=()):
         self.vault = dict(vault or {})
         self.model_id = model_id
         self.mcp_servers = list(mcp_servers)
-        self.n8n = n8n
         self.collections = list(collections)
         self.fail = set(fail)
         self.writes: list[str] = []
@@ -34,9 +33,6 @@ class FakeProbes:
             raise ProbeError("ops-controller unreachable")
         return {"manifest": {"model": {"id": self.model_id, "file": f"{self.model_id}.gguf"},
                              "mcp_servers": self.mcp_servers}}
-
-    def n8n_healthy(self):
-        return self.n8n
 
     def qdrant_collections(self):
         if "qdrant" in self.fail:
@@ -165,11 +161,6 @@ def test_stack_checks_compare_against_the_stack_not_the_reply():
     mcp = {"id": "ops-05", "check": {"type": "ops_mcp_count"}}
     assert check(mcp, "RESULT: 3", FakeProbes()).artifact_ok
     assert not check(mcp, "RESULT: 7", FakeProbes()).artifact_ok
-
-    n8n = {"id": "ops-14", "check": {"type": "n8n_health"}}
-    assert check(n8n, "RESULT: healthy", FakeProbes(n8n=True)).artifact_ok
-    assert not check(n8n, "RESULT: healthy", FakeProbes(n8n=False)).artifact_ok
-    assert check(n8n, "RESULT: unhealthy", FakeProbes(n8n=False)).artifact_ok
 
     qdrant = {"id": "ops-15", "check": {"type": "qdrant_collection_count"}}
     assert check(qdrant, "RESULT: 2 collections", FakeProbes()).artifact_ok

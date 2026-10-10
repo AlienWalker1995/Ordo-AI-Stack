@@ -21,15 +21,15 @@
 # SSO-gated HTTPS port on the tailnet hostname. Rationale: subpath mounting
 # repeatedly fought prebuilt SPAs with baked root-absolute bases — Open WebUI
 # hard-404s under a prefix (client-side router; proven with a real browser on
-# v0.10.1), Hermes needed header-driven base injection, n8n needed strip_prefix
-# surgery, codebase-memory needed nginx rewrites. Ports end that problem class:
+# v0.10.1), Hermes needed header-driven base injection, codebase-memory needed
+# nginx rewrites. Ports end that problem class:
 # each app is served at the root it was built for.
 #
 #   :443   front door — landing page, /oauth2 (the ONE Google callback),
-#          /llm + /mcp API routes, n8n webhook/OAuth passthroughs, and 302s
+#          /llm + /mcp API routes, and 302s
 #          from every legacy subpath so old bookmarks keep working.
 #   :8443  Open WebUI (chat)        :8444  Dashboard (+ /grafana/ embed)
-#   :8445  n8n                      :8446  ComfyUI
+#   :8446  ComfyUI
 #   :8447  Hermes                   :8448  codebase-memory
 #
 # SSO works across all ports (and the per-service Tailscale sidecar names —
@@ -129,15 +129,6 @@
     }
 }
 
-# ---- :8445 — n8n ----
-# Served at root: N8N_PATH=/ tells n8n to emit root-absolute asset URLs, so a plain
-# pass-through proxy works with no prefix surgery. n8n's EXTERNAL public base
-# (N8N_WEBHOOK_URL, OAuth callbacks) still lives at :443/n8n/* — those passthroughs
-# below strip /n8n and are unchanged.
-:8445 {
-    import sso_service n8n:5678
-}
-
 # ---- :8446 — ComfyUI ----
 # Upstream is the ADMISSION GATE, not ComfyUI itself. comfyui declares
 # `gpu_arbitration.enforcement: gate` (services/comfyui/plugin.yaml), and the gate takes GPU
@@ -190,7 +181,7 @@
 # `/swagger/...js`. Through `/llm/` the HTML returns 200 but every asset resolves to
 # `https://<host>/ui/_next/...` (or `/swagger/...`), escapes the `/llm/*` handler, falls through
 # to the front door and 404s: a blank page that looks like the service is down. Same class
-# of bug as the Hermes SPA base-path issue and the n8n prefix strip.
+# of bug as the Hermes SPA base-path issue.
 #
 # Keep BOTH: `/llm/*` on :443 stays the SSO-BYPASSING programmatic API base for
 # Cline/Cursor/scripts (LITELLM_MASTER_KEY bearer, no interactive login possible),
@@ -231,19 +222,6 @@
     handle /healthz {
         respond "ok" 200
     }
-    # External services (Google OAuth for n8n credentials, IG Graph webhooks…)
-    # hit these registered URLs — they MUST stay on :443 and MUST keep working.
-    # strip_prefix because n8n's internal routes live at /rest/... and
-    # /webhook/..., not /n8n/rest/... (verified live 2026-05-18).
-    handle /n8n/rest/oauth2-credential/callback* {
-        uri strip_prefix /n8n
-        reverse_proxy n8n:5678
-    }
-    handle /n8n/webhook/* {
-        uri strip_prefix /n8n
-        reverse_proxy n8n:5678
-    }
-
     # ---- LiteLLM model gateway (OpenAI-compatible API) for tailnet API clients ----
     # Bypasses SSO: programmatic clients (Cline, Cursor, scripts) can't do an
     # interactive Google login. Auth is LiteLLM's own Bearer (a virtual key or
@@ -297,16 +275,6 @@
     redir /hermes* https://hermes.{$CADDY_TAILNET_DOMAIN}/ 302
     redir /codebase-memory* https://graph.{$CADDY_TAILNET_DOMAIN}/ 302
     redir /grafana* https://dash.{$CADDY_TAILNET_DOMAIN}/grafana/ 302
-    # /n8n UI → its subdomain. NB: Caddy sorts `redir` BEFORE `handle` regardless of file
-    # order, so a bare `redir /n8n*` would shadow the webhook/OAuth passthrough handles
-    # above (verified live 2026-07-24: /n8n/webhook/* 302'd instead of proxying). The
-    # matcher must therefore exclude the external-facing paths explicitly.
-    @n8n_ui {
-        path /n8n /n8n/*
-        not path /n8n/webhook/* /n8n/rest/oauth2-credential/callback*
-    }
-    redir @n8n_ui https://n8n.{$CADDY_TAILNET_DOMAIN}/ 302
-
     # ---- landing page + everything else (SSO-gated) ----
     route {
         import sso_forward_auth
@@ -336,7 +304,6 @@
                 <li><a href="https://dash.{$CADDY_TAILNET_DOMAIN}/">Dashboard<small>control hub · dash</small></a></li>
                 <li><a href="https://hermes.{$CADDY_TAILNET_DOMAIN}/">Hermes<small>agent · hermes</small></a></li>
                 <li><a href="https://comfy.{$CADDY_TAILNET_DOMAIN}/">ComfyUI<small>media · comfy</small></a></li>
-                <li><a href="https://n8n.{$CADDY_TAILNET_DOMAIN}/">n8n<small>automation · n8n</small></a></li>
                 <li><a href="https://graph.{$CADDY_TAILNET_DOMAIN}/">Code graph<small>memory · graph</small></a></li>
                 </ul></main></body></html>
                 HTML

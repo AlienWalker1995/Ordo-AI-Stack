@@ -17,7 +17,7 @@ Thanks for contributing to Ordo.
 
 ## Edge serving contract
 
-Every UI serves at its origin **root** behind a plain SSO reverse_proxy (`import sso_service <upstream>`); **no** edge- or sidecar-side path rewriting (`handle_path`/`strip_prefix`, `X-Forwarded-Prefix` injection, `sub_filter`) in a UI block — enforced by `tests/test_caddyfile_invariants.py`. Two permanent exceptions: Grafana's native same-origin `/grafana/` embed, and n8n's external `:443/n8n` webhook/OAuth-callback URLs (registered outside the stack).
+Every UI serves at its origin **root** behind a plain SSO reverse_proxy (`import sso_service <upstream>`); **no** edge- or sidecar-side path rewriting (`handle_path`/`strip_prefix`, `X-Forwarded-Prefix` injection, `sub_filter`) in a UI block — enforced by `tests/test_caddyfile_invariants.py`. One permanent exception: Grafana's native same-origin `/grafana/` embed.
 
 ## What not to commit
 

@@ -228,7 +228,7 @@ current split: today there is only Ordo.
     `kind=service` plugin manifests — **`rag`** (qdrant + llamacpp-embed + rag-ingestion),
     **`worker`** *(the headless render/publish job-queue worker — since retired, see
     CHANGELOG; media generation now runs via Hermes cron + the direct render/publish
-    scripts)*, **`automation`** (n8n), **`open-webui`**, **`searxng-web`**,
+    scripts)*, **`open-webui`**, **`searxng-web`**,
     **`codebase-memory-ui`**, **`hermes-dashboard`**, and the opt-in **`edge`** (Caddy + oauth2-proxy,
     the *only* host-port publish, profile `edge`) — and 4 obsolete-by-design (model pullers → `ordo
     fetch`; the manager-setup shim → image build; the reactive guardian → the V2 scheduler). Each
@@ -274,29 +274,28 @@ cutover. **Test suite: 181 passed, 2 skipped** (verified 2026-07-09).
 ## Operating this stack (it IS production now)
 The rendered services (43 as of 2026-09-12) run under compose project `ordo` from `C:\dev\ordo-ai-stack`, all reached through
 the edge — Caddy is still the **only** service that publishes host ports, but since 2026-07-24 it
-listens on **nine** SSO-gated ports on `${CADDY_TAILNET_HOSTNAME}`, one per UI surface, instead of
+listens on **eight** SSO-gated ports on `${CADDY_TAILNET_HOSTNAME}`, one per UI surface, instead of
 mounting every app under a subpath of a single `:443`:
 
 | Port | Service |
 |---|---|
-| `:443` | front door — landing page, `/oauth2` (the one Google callback), `/llm/*` (LiteLLM API, Bearer), `/mcp` (Bearer), n8n webhook/OAuth passthroughs (`/n8n/webhook/*`, `/n8n/rest/oauth2-credential/callback` — external URLs unchanged), and 302s from every legacy subpath |
+| `:443` | front door — landing page, `/oauth2` (the one Google callback), `/llm/*` (LiteLLM API, Bearer), `/mcp` (Bearer), and 302s from every legacy subpath |
 | `:8443` | Open WebUI (chat) |
 | `:8444` | Dashboard (+ `/grafana/` embed) |
-| `:8445` | n8n UI |
 | `:8446` | ComfyUI |
 | `:8447` | Hermes (served at its own port root) |
 | `:8448` | codebase-memory (served at its own port root) |
 | `:8449` | LiteLLM admin UI (served at its own port root) |
 | `:8450` | Langfuse (served at its own port root) |
 
-One Google sign-in covers all nine ports **and the clean per-service tailnet names** — the
+One Google sign-in covers all eight ports **and the clean per-service tailnet names** — the
 oauth2-proxy cookie is domain-scoped and the SSO gate's `rd=` carries `{host}` (portless), so a
 single wildcard `--whitelist-domain=.<domain>` covers every port and sidecar name at once; the Google
-OAuth client needs no new redirect URIs. Old subpath URLs (`/chat`, `/dash`, `/n8n`, `/comfy`,
+OAuth client needs no new redirect URIs. Old subpath URLs (`/chat`, `/dash`, `/comfy`,
 `/hermes`, `/codebase-memory`, `/grafana`) 302 from `:443` to their new ports, so bookmarks keep
-working, and n8n's public webhook base (`N8N_WEBHOOK_URL=https://<host>/n8n`) is unchanged. This
+working. This
 retires the subpath-rewrite class of workaround (Open WebUI root-catchall, Hermes header-based
-base injection, n8n `strip_prefix`, codebase-memory nginx rewrites) in favor of giving every
+base injection, codebase-memory nginx rewrites) in favor of giving every
 prebuilt SPA the root it was actually compiled for. One data root at
 `C:\dev\ordo-ai-stack\data` (Hermes brain at `data\hermes`). Secrets live in one SOPS file in a
 private repo (`site: SECRETS_SOURCE`), materialized into gitignored `out\secrets.env` (a second

@@ -33,8 +33,8 @@ REQUIRED_SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.exam
 HW = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": "GPU-aaaa"},
                {"name": "GTX 1070", "vram_gb": 8, "uuid": "GPU-bbbb"}], "ram_gb": 128, "cpu_cores": 32}
 # The same plugin set the operator's stack runs, so every secret-bearing service renders.
-PLUGINS = ["comfyui", "song-gen", "voice", "rag", "qdrant-rag", "llamacpp-cpu", "open-webui", "automation",
-           "searxng-web", "searxng", "codebase-memory-ui", "codebase-memory", "comfyui-mcp", "n8n",
+PLUGINS = ["comfyui", "song-gen", "voice", "rag", "qdrant-rag", "llamacpp-cpu", "open-webui",
+           "searxng-web", "searxng", "codebase-memory-ui", "codebase-memory", "comfyui-mcp",
            "orchestration", "hermes-dashboard", "monitoring", "memory-vault", "edge", "tailnet-names",
            "obsidian-livesync", "langfuse", "evals"]
 
@@ -49,7 +49,7 @@ FILE_SPEC: dict[str, set[str]] = {
     "model-gateway": {"LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "LITELLM_DB_PASSWORD",
                       "THROUGHPUT_RECORD_TOKEN", "OAUTH2_PROXY_CLIENT_ID", "OAUTH2_PROXY_CLIENT_SECRET"}
                      | LANGFUSE_PAIR,
-    "model-gateway-keys": {"LITELLM_MASTER_KEY", "LITELLM_KEY_HERMES", "LITELLM_KEY_AUTOMATION", "LITELLM_KEY_EDGE",
+    "model-gateway-keys": {"LITELLM_MASTER_KEY", "LITELLM_KEY_HERMES", "LITELLM_KEY_EDGE",
                            "LITELLM_KEY_EVALS", "LITELLM_KEY_OPEN_WEBUI"},
     "litellm-db": {"LITELLM_DB_PASSWORD"},
     "ops-controller": {"OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN_HERMES"},
@@ -58,7 +58,6 @@ FILE_SPEC: dict[str, set[str]] = {
     "comfyui-gate": {"OPS_CONTROLLER_TOKEN"},
     "mcp-comfyui": {"OPS_CONTROLLER_TOKEN"},
     "mcp-orchestration": {"OPS_CONTROLLER_TOKEN"},
-    "mcp-n8n": {"N8N_API_KEY"},
     "evals": {"OPS_CONTROLLER_TOKEN", "LITELLM_KEY_EVALS", "HERMES_API_SERVER_KEY"} | LANGFUSE_PAIR,
     "livesync-bridge": {"COUCHDB_PASSWORD", "LIVESYNC_E2EE_PASSPHRASE"},
     "oauth2-proxy": {"OAUTH2_PROXY_CLIENT_SECRET", "OAUTH2_PROXY_COOKIE_SECRET"},
@@ -68,18 +67,17 @@ FILE_SPEC: dict[str, set[str]] = {
     "langfuse-minio": {"LANGFUSE_MINIO_SECRET"},
     "langfuse-minio-lifecycle": {"LANGFUSE_MINIO_SECRET"},
     "langfuse-retention": LANGFUSE_PAIR,
-    **{f"tailnet-{n}": TAILNET for n in ("chat", "comfy", "dash", "graph", "hermes", "langfuse", "llm", "n8n")},
+    **{f"tailnet-{n}": TAILNET for n in ("chat", "comfy", "dash", "graph", "hermes", "langfuse", "llm")},
 }
 # Secrets still delivered in the environment (`KEY: ${KEY}`), each for a stated reason: the
-# software has no file variant (langfuse, couchdb, searxng, open-webui, n8n's workflow env, the
-# oauth2-proxy client id), or the reader is the agent's image, which holds the Docker socket and
+# software has no file variant (langfuse, couchdb, searxng, open-webui, the oauth2-proxy
+# client id), or the reader is the agent's image, which holds the Docker socket and
 # the /c/dev mirror (so a file would hide nothing from it) and whose docker-exec'd CLI and skills
 # read these by name. Moving one to FILE_SPEC is the goal; adding one here needs a reason.
 ENV_SPEC: dict[str, set[str]] = {
     "agent": {"LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN", "HERMES_API_SERVER_KEY"} | LANGFUSE_PAIR,
     "hermes-dashboard": {"LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN"} | LANGFUSE_PAIR,
     "comfyui": {"OPS_CONTROLLER_TOKEN", "LITELLM_MASTER_KEY", "HF_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"},
-    "n8n": {"LITELLM_KEY_AUTOMATION"},
     "open-webui": {"LITELLM_KEY_OPEN_WEBUI"},
     "couchdb": {"COUCHDB_PASSWORD"},
     "oauth2-proxy": {"OAUTH2_PROXY_CLIENT_ID"},

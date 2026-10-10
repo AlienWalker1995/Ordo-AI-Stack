@@ -62,8 +62,8 @@ ISSUED_ELSEWHERE: dict[str, str] = {
 }
 
 # `ordo secrets rotate --internal`: the internal tokens with no outside authority, plus every
-# per-consumer LiteLLM key. Other generated keys (COUCHDB_PASSWORD, SEARXNG_SECRET, N8N_API_KEY, the
-# local sign-in token) can be rotated by name.
+# per-consumer LiteLLM key. Other generated keys (COUCHDB_PASSWORD, SEARXNG_SECRET, the local
+# sign-in token) can be rotated by name.
 INTERNAL_ROTATION: tuple[str, ...] = (
     "LITELLM_MASTER_KEY", "LITELLM_DB_PASSWORD", "OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN_HERMES",
     "THROUGHPUT_RECORD_TOKEN",
@@ -119,7 +119,6 @@ SECRET_GENERATORS: dict[str, Any] = {
     "DASHBOARD_LOCAL_LOGIN_TOKEN": lambda: _secrets.token_urlsafe(32),
     "OAUTH2_PROXY_COOKIE_SECRET": _cookie_secret,
     "SEARXNG_SECRET": lambda: _secrets.token_hex(32),
-    "N8N_API_KEY": lambda: _secrets.token_urlsafe(32),
     # Obsidian notes sync (CouchDB LiveSync). token_urlsafe is base64url - JSON-safe for the
     # bridge's generated config, and shell-safe. The E2EE passphrase encrypts note content at rest
     # in CouchDB; the operator enters the SAME value in every Obsidian LiveSync client.

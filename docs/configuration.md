@@ -202,7 +202,7 @@ ordo up stt tts
   Hermes config schema does **not** persist a TTS `base_url` (and there is no env for
   it), so this Hermes version cannot target local Kokoro for replies. The Kokoro
   service is still deployed and reachable at `http://tts:8880/v1`
-  for n8n / the media/render pipeline / scripts / a future Hermes that honours a TTS base URL.
+  for the media/render pipeline / scripts / a future Hermes that honours a TTS base URL.
   For a fully-local reply voice today, use Hermes' native `neutts` provider (on-device).
 
 **STT** weights download once to `${DATA_PATH}/voice/hf-cache` (persists across
@@ -333,7 +333,7 @@ network: only `model-gateway` can reach them.
 entrypoint) and `out/mcp/servers.json` (the dashboard's server list plus the registered-plugin
 map).
 
-The registered servers are `comfyui`, `orchestration`, `qdrant-rag`, `n8n`, `searxng`,
+The registered servers are `comfyui`, `orchestration`, `qdrant-rag`, `searxng`,
 `codebase-memory`, and `memory-vault`: there are no `duckduckgo` or `playwright` defaults.
 
 Enable or disable a server by editing `ordo.yaml`'s `plugins:` list (or via MCP servers in the
@@ -385,7 +385,6 @@ Host bind mounts (reachable from Windows):
 | Directory | Purpose |
 |---|---|
 | `data/rag-input/` | Drop files here for `rag-ingestion` |
-| `data/n8n-files/` | n8n file-exchange drop zone |
 | `data/ops-controller/` | Audit logs |
 | *(none)* | MCP config is no longer host-bind state: `ordo render` writes `out/mcp/servers.json` and `out/model-gateway/mcp_servers.yaml` |
 | `data/dashboard/` | Dashboard throughput / benchmark data |
@@ -399,7 +398,6 @@ Named volumes (state; back up via a helper container, see [data.md](data.md)):
 | `hermes-home` | Hermes agent brain (sessions, config, skills, cron) |
 | `qdrant-data` | Qdrant vector DB storage |
 | `couchdb-data` | CouchDB (Obsidian LiveSync) |
-| `n8n-data` | n8n workflows and credentials |
 | `open-webui-data` | Open WebUI accounts + uploads |
 | `litellm-db-data` | LiteLLM Postgres (virtual keys, teams, spend; models and MCP servers stay in the rendered config) |
 | `models-gguf` | llama.cpp GGUF weights (what the backends actually read) |
@@ -444,16 +442,15 @@ nodes that `services/song-gen` declares, so never roll back below it.
 
 ## Network Ports
 
-Caddy is still the **only** service with published host ports, every other service (dashboard, open-webui, model-gateway, litellm-db, comfyui, n8n, hermes-dashboard, langfuse-web, the `mcp-*` servers, qdrant, ops-controller, etc.) has no `ports:` entry and is reachable only from other containers on the internal `ordo-net` network. But since 2026-07-24 Caddy itself is **port-per-service**: it publishes the SSO-gated host ports below on `${CADDY_TAILNET_HOSTNAME}` (all bound to `CADDY_BIND`) instead of routing every UI under subpaths of a single `:443`. Each prebuilt SPA is served at the root it was compiled for, ending the subpath-rewrite workarounds (Open WebUI root-catchall 404s, Hermes header-based base injection, n8n `strip_prefix`, codebase-memory nginx rewrites).
+Caddy is still the **only** service with published host ports, every other service (dashboard, open-webui, model-gateway, litellm-db, comfyui, hermes-dashboard, langfuse-web, the `mcp-*` servers, qdrant, ops-controller, etc.) has no `ports:` entry and is reachable only from other containers on the internal `ordo-net` network. But since 2026-07-24 Caddy itself is **port-per-service**: it publishes the SSO-gated host ports below on `${CADDY_TAILNET_HOSTNAME}` (all bound to `CADDY_BIND`) instead of routing every UI under subpaths of a single `:443`. Each prebuilt SPA is served at the root it was compiled for, ending the subpath-rewrite workarounds (Open WebUI root-catchall 404s, Hermes header-based base injection, codebase-memory nginx rewrites).
 
 One Google sign-in covers every port **and the clean per-service tailnet names** — the oauth2-proxy session cookie is domain-scoped, the one OAuth callback stays on `:443`, and the SSO gate's `rd=` redirect carries `{host}` (portless), so a single wildcard `--whitelist-domain=.<domain>` in the edge plugin covers every port and every sidecar name. A first sign-in through a bare `:844x` port lands on the `:443` hub and the domain-scoped cookie then covers everything (one extra click); the clean tailnet names (`chat`/`dash`/… `.<tailnet>.ts.net`) return you straight to the service. No new Google OAuth redirect URIs are needed. See [deployment-models.md](deployment-models.md) for the clean-URL sidecar layer.
 
 | Port | Service | Notes |
 |---|---|---|
-| `443` | Front door | Landing page; `/oauth2/*` (the one Google callback); `/llm/*` → LiteLLM API (Bearer, SSO-bypassed); `/mcp` → model-gateway's MCP endpoint (Bearer LiteLLM key, SSO-bypassed); `/n8n/webhook/*` and `/n8n/rest/oauth2-credential/callback*` passthroughs (external URLs unchanged); 302s from every legacy subpath (`/chat`, `/dash`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`, `/n8n`) to its new port |
+| `443` | Front door | Landing page; `/oauth2/*` (the one Google callback); `/llm/*` → LiteLLM API (Bearer, SSO-bypassed); `/mcp` → model-gateway's MCP endpoint (Bearer LiteLLM key, SSO-bypassed); 302s from every legacy subpath (`/chat`, `/dash`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`) to its new port |
 | `8443` | Open WebUI (chat) | Served at root |
 | `8444` | Dashboard | Served at root; Grafana rides along at `/grafana/` on this port |
-| `8445` | n8n UI | Served at root; the public webhook base (`N8N_WEBHOOK_URL=https://host/n8n`) stays on `:443`, unchanged |
 | `8446` | ComfyUI | Served at root |
 | `8447` | Hermes | Served at root (plain SSO proxy — the header-derived-base injection was removed when it moved off `:443`) |
 | `8448` | codebase-memory | Served at root (the container's nginx now proxies straight through, no `sub_filter`) |
@@ -461,12 +458,12 @@ One Google sign-in covers every port **and the clean per-service tailnet names**
 | `8450` | Langfuse | Served at root; the only route into `langfuse-web` (agent traces, datasets, evals). Hermes ingests directly over `ordo-net`, not through this port |
 | (none) | Everything else | Reachable service-to-service by container DNS name (e.g. `http://ops-controller:9000`), never from the host or LAN directly |
 
-Old subpath URLs (`/chat`, `/dash`, `/n8n`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`) still work — Caddy 302s them from `:443` to the matching port — so existing bookmarks don't break.
+Old subpath URLs (`/chat`, `/dash`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`) still work — Caddy 302s them from `:443` to the matching port — so existing bookmarks don't break.
 
 ## Audit Log Schema
 
 `data/ops-controller/audit.log` is JSONL, append-only, one record per state-changing call (refusals included). The schema, the rotation and `GET /audit` are documented in [data.md](data.md#audit-log).
 
 ```json
-{"ts":1790281806.1,"caller":"dashboard","action":"restart","target":"n8n","result":"ok","method":"POST","path":"/services/n8n/restart","status":200,"dry_run":false,"confirm":true}
+{"ts":1790281806.1,"caller":"dashboard","action":"restart","target":"searxng","result":"ok","method":"POST","path":"/services/searxng/restart","status":200,"dry_run":false,"confirm":true}
 ```

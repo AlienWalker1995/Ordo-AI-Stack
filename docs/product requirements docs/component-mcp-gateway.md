@@ -160,10 +160,8 @@ CMD ["mcp-proxy", "--host", "0.0.0.0", "--port", "9000", "--stateless", "--pass-
    declares `mcp>=1.17.0` unbounded and `mcp` 2.x breaks its imports. `supergateway` was rejected:
    its stateless mode spawns the child per request.
 
-   Three servers use the recipe: [`services/codebase-memory/Dockerfile`](../../services/codebase-memory/Dockerfile),
-   [`services/memory-vault/Dockerfile`](../../services/memory-vault/Dockerfile) and
-   [`services/n8n/Dockerfile`](../../services/n8n/Dockerfile) (the Alpine variant, `apk` instead of
-   `apt-get`, since its base image is Alpine).
+   Two servers use the recipe: [`services/codebase-memory/Dockerfile`](../../services/codebase-memory/Dockerfile)
+   and [`services/memory-vault/Dockerfile`](../../services/memory-vault/Dockerfile).
 
 In all three cases, finish by adding the plugin id to `ordo.yaml`'s `plugins:` list, then
 `ordo apply` (it recreates `model-gateway`, whose definition carries a digest of its MCP config).
@@ -188,7 +186,7 @@ In all three cases, finish by adding the plugin id to `ordo.yaml`'s `plugins:` l
 ## Non-goals
 
 - **End-user identity per MCP call.** Scoping is per consumer key, not per human.
-- **Replacing n8n or ComfyUI.** The gateway invokes them; it does not own their authoring UIs.
+- **Replacing ComfyUI.** The gateway invokes it; it does not own its authoring UI.
 
 ---
 

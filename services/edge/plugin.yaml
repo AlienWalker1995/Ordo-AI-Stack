@@ -98,8 +98,8 @@ services:
     # Port-per-service model (2026-07-24): every UI service gets its own SSO-gated
     # Caddy listener — each prebuilt SPA is served at the root it was compiled for,
     # ending the subpath-rewrite bandaid class (webui root-catchall, hermes header
-    # base, n8n strip_prefix, cbm nginx rewrites). :443 = front door (landing, OAuth
-    # callback, /llm + /mcp APIs, n8n webhook passthroughs, legacy-path 302s).
+    # base, cbm nginx rewrites). :443 = front door (landing, OAuth callback,
+    # /llm + /mcp APIs, legacy-path 302s).
     # Only :443 is listed here. Each UI declares its own port once, as `edge_site:` in its
     # manifest (model-gateway's in ordo/render/engine.py); the render publishes the port of
     # every ENABLED UI on this bind, and tests/substrate/test_edge_sites.py holds the Caddyfile

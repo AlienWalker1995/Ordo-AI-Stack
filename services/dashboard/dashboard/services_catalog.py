@@ -177,7 +177,7 @@ TAILNET_LABELS = {s["id"]: s["tailnet_label"] for s in SERVICES if s.get("tailne
 # their true up/down from ops-controller container health, see routes_hub) it ALSO tags the
 # infra/backend services that have a port & health check but no browsable UI a person
 # visits: llamacpp, llamacpp-cpu, mcp, qdrant, stt, tts, couchdb. The main grid is ONLY
-# the user-facing UIs (webui/comfyui/n8n/hermes/codebase-memory-ui/langfuse) plus
+# the user-facing UIs (webui/comfyui/hermes/codebase-memory-ui/langfuse) plus
 # model-gateway (its Open link points at the LiteLLM admin UI at /ui/ through the edge; see
 # service_open_url() above).
 #
@@ -193,7 +193,7 @@ TAILNET_LABELS = {s["id"]: s["tailnet_label"] for s in SERVICES if s.get("tailne
 # Kept EXPLICIT (not derived from the fragments) on purpose: deriving it from the same
 # fragments it guards would blind the tripwire to a deleted fragment.
 CARD_PLUGINS = frozenset({
-    "open-webui", "comfyui", "automation", "rag",
+    "open-webui", "comfyui", "rag",
     "hermes-dashboard", "codebase-memory-ui", "voice",
     "llamacpp-cpu", "langfuse",
 })

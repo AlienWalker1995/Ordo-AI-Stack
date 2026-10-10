@@ -1,6 +1,6 @@
-"""The three stdio->HTTP bridge images must agree on their bridge pins.
+"""The stdio->HTTP bridge images must agree on their bridge pins.
 
-codebase-memory, memory-vault and n8n each wrap an stdio MCP upstream in mcp-proxy inside their own
+codebase-memory and memory-vault each wrap an stdio MCP upstream in mcp-proxy inside their own
 image (the gateway never spawns a process). They run the same bridge, so a version that drifts in
 one Dockerfile is a bridge behaving differently on one server only, which is exactly the kind of
 difference nothing else in the stack would surface.
@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-BRIDGES = ("codebase-memory", "memory-vault", "n8n")
+BRIDGES = ("codebase-memory", "memory-vault")
 
 MCP_PROXY_ARG = re.compile(r"^ARG MCP_PROXY_VERSION=(\S+)", re.MULTILINE)
 MCP_PIN = re.compile(r'"mcp==([^"]+)"')

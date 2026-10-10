@@ -37,7 +37,6 @@ _UA_MAP: tuple[tuple[str, str], ...] = (
     ("open-webui", "open-webui"),
     ("openwebui", "open-webui"),
     ("hermes", "hermes"),
-    ("n8n", "n8n"),
     ("cline", "cline"),
     ("continue", "continue"),
     ("claude-code", "claude-code"),

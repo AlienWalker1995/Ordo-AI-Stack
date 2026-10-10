@@ -58,12 +58,6 @@ tool (`services/comfyui-mcp`, arguments `url` + `category`), which has ops-contr
 GGUF model provisioning is **`ordo fetch`** (checksum-mandatory, offline-capable). There is no
 GGUF pull script or pull route in the control plane.
 
-## n8n
-
-| Script | Purpose |
-|--------|---------|
-| `n8n/bootstrap_owner.py` | Applies `N8N_OWNER_EMAIL` / `N8N_OWNER_PASSWORD` (env-form secrets in `out/secrets.env`, see `docs/runbooks/secrets.md`) to the running n8n instance — first-run owner bootstrap, or updates the existing owner's email/password on re-run. Idempotent; run from inside the docker network so `n8n:5678` is reachable. |
-
 ## Usage
 
 From the repo root:

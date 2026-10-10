@@ -16,7 +16,7 @@
 | `MCP_SERVERS_PATH` | dashboard | Rendered MCP server list read by the dashboard (`./mcp:/mcp-config:ro`) | `/mcp-config/servers.json` |
 | `MODEL_GATEWAY_PORT` | model-gateway | Not wired to anything — `services/model-gateway/entrypoint.sh` hardcodes `--port 11435`; documented here for reference only | `11435` |
 | `WEBUI_AUTH` | open-webui | Enable Open WebUI auth | `False` (target `True` in M6) |
-| `OPENAI_API_BASE` | open-webui, n8n | OpenAI-compat base URL | `http://model-gateway:11435/v1` |
+| `OPENAI_API_BASE` | open-webui | OpenAI-compat base URL | `http://model-gateway:11435/v1` |
 | `GGUF_MODELS` | `ordo fetch` (host CLI) | Hugging Face repo(s) of GGUF files to pull | *(empty)* |
 | `COMPUTE_MODE` | compose | CPU/nvidia/amd | auto-detected |
 | `QDRANT_PORT` | qdrant | Not wired to anything — consumers hardcode `http://qdrant:6333` (e.g. `services/qdrant-rag/plugin.yaml`); no host publish (`ordo-net` only) | `6333` |
@@ -28,7 +28,7 @@
 | `LITELLM_MASTER_KEY` | model-gateway, model-gateway-keys, dashboard | LiteLLM master key; the entrypoint refuses to start unless it matches `^sk-[A-Za-z0-9_-]{32,}$` | *(required)* |
 | `LITELLM_SALT_KEY` | model-gateway | Encrypts provider credentials stored in `litellm-db`. NEVER rotate | *(required)* |
 | `LITELLM_DB_PASSWORD` | model-gateway, litellm-db | Postgres password, a file for both (`POSTGRES_PASSWORD_FILE`, `DATABASE_PASSWORD_FILE`) | *(required)* |
-| `LITELLM_KEY_HERMES` / `_OPEN_WEBUI` / `_AUTOMATION` / `_EDGE` | agent, open-webui, n8n, external clients | Per-consumer LiteLLM virtual keys, provisioned by `model-gateway-keys` | *(generated)* |
+| `LITELLM_KEY_HERMES` / `_OPEN_WEBUI` / `_EDGE` | agent, open-webui, external clients | Per-consumer LiteLLM virtual keys, provisioned by `model-gateway-keys` | *(generated)* |
 | `LITELLM_KEYS_SPEC` | model-gateway-keys | Rendered key/grant spec read by the bootstrap one-shot | `/config/keys.json` |
 | `LITELLM_MODE` | model-gateway | LiteLLM run mode | `PRODUCTION` |
 | `STORE_MODEL_IN_DB` | model-gateway | Models and MCP servers stay in the rendered config, never in the DB | `False` |

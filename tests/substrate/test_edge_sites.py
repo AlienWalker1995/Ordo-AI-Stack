@@ -47,7 +47,7 @@ EDGE_SITE = {"CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
 BIND = "${CADDY_BIND:?CADDY_BIND must be set (non-empty)}"
 
 # Every plugin that owns an edge site, plus what it needs to be enabled.
-UI_PLUGINS = ["edge", "open-webui", "rag", "automation", "comfyui", "hermes-dashboard",
+UI_PLUGINS = ["edge", "open-webui", "rag", "comfyui", "hermes-dashboard",
               "codebase-memory-ui", "langfuse"]
 
 
@@ -77,7 +77,7 @@ def test_the_declared_edge_sites_are_the_shipped_ui_ports():
     """Pins today's layout, so moving a UI is a reviewed change to one manifest line."""
     sites = declared_edge_sites(REGISTRY, DASHBOARDS)
     assert {owner: site.port for owner, site in sites.items()} == {
-        "open-webui": 8443, "dashboard": 8444, "automation": 8445, "comfyui": 8446,
+        "open-webui": 8443, "dashboard": 8444, "comfyui": 8446,
         "hermes-dashboard": 8447, "codebase-memory-ui": 8448, "model-gateway": 8449,
         "langfuse": 8450,
     }
@@ -142,7 +142,7 @@ def test_the_edge_publishes_its_front_door_plus_every_enabled_ui():
     rc = _render(UI_PLUGINS)
     ports = sorted(site.port for site in rc.edge_sites.values())
     assert _caddy_ports(rc) == [f"{BIND}:443:443"] + [f"{BIND}:{p}:{p}" for p in ports]
-    assert ports == [8443, 8444, 8445, 8446, 8447, 8448, 8449, 8450]
+    assert ports == [8443, 8444, 8446, 8447, 8448, 8449, 8450]
 
 
 def test_a_disabled_ui_publishes_no_edge_port():
@@ -203,7 +203,6 @@ def test_the_aggregated_catalog_carries_each_owners_port():
     assert cards["langfuse"]["sso_port"] == sites["langfuse"].port
     assert cards["model-gateway"]["sso_port"] == sites["model-gateway"].port
     assert cards["webui"]["sso_port"] == sites["open-webui"].port
-    assert cards["n8n"]["sso_port"] == sites["automation"].port
     assert cards["comfyui"]["sso_port"] == sites["comfyui"].port
     assert cards["hermes"]["sso_port"] == sites["hermes-dashboard"].port
     assert cards["codebase-memory-ui"]["sso_port"] == sites["codebase-memory-ui"].port

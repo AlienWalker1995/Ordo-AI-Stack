@@ -21,20 +21,19 @@
 ## Current Architecture
 
 Port-per-service model (2026-07-24): Caddy is still the **only** service that
-publishes host ports, but it now listens on **nine** SSO-gated ports on
+publishes host ports, but it now listens on **eight** SSO-gated ports on
 `${CADDY_TAILNET_HOSTNAME}` instead of one — each prebuilt SPA gets the root
 it was compiled for, retiring the subpath-rewrite bandaids (Open WebUI
-root-catchall, Hermes header-injected base, n8n `strip_prefix` surgery,
-codebase-memory nginx rewrites).
+root-catchall, Hermes header-injected base, codebase-memory nginx
+rewrites).
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │  Host                                                                          │
 │                                                                                │
 │  Caddy — the ONLY host-published ports (`${CADDY_BIND}:<port>` for each)      │
-│  :443 front door (landing page, /oauth2, /llm, /mcp, n8n webhook/OAuth        │
-│       passthroughs, legacy-path 302s)                                        │
-│  :8443 Open WebUI   :8444 Dashboard (+ /grafana/)   :8445 n8n                 │
+│  :443 front door (landing page, /oauth2, /llm, /mcp, legacy-path 302s)        │
+│  :8443 Open WebUI   :8444 Dashboard (+ /grafana/)                             │
 │  :8446 ComfyUI      :8447 Hermes (at root)          :8448 codebase-memory     │
 │  :8449 LiteLLM admin UI                             :8450 Langfuse            │
 │  oauth2-proxy (Google SSO, one domain-scoped session across all ports)       │
@@ -44,13 +43,13 @@ codebase-memory nginx rewrites).
 ┌────────────────────────────────────────▼─────────────────────────────────────┐
 │  network: ordo-net  (every service below, no host port of its own)          │
 │                                                                                │
-│  ┌─────────────┐  ┌──────────┐  ┌──────────────────────────────────────────┐  │
-│  │ Open WebUI  │  │   N8N    │  │  Hermes  gateway + dashboard             │  │
-│  │ :8080       │  │ :5678    │  │  model → gateway  (LITELLM_KEY_HERMES)   │  │
-│  │ → gateway   │  │ → gw     │  │  tools → gateway /mcp (same key)         │  │
-│  └──────┬──────┘  └────┬─────┘  └────────────────┬─────────────────────────┘  │
-│         │              │                           │                            │
-│  ┌──────▼──────────────▼───────────────────────────▼──────────────────────┐   │
+│  ┌─────────────┐                ┌──────────────────────────────────────────┐  │
+│  │ Open WebUI  │                │  Hermes  gateway + dashboard             │  │
+│  │ :8080       │                │  model → gateway  (LITELLM_KEY_HERMES)   │  │
+│  │ → gateway   │                │  tools → gateway /mcp (same key)         │  │
+│  └──────┬──────┘                └────────────────┬─────────────────────────┘  │
+│         │                                          │                            │
+│  ┌──────▼──────────────────────────────────────────▼──────────────────────┐   │
 │  │  Model Gateway :11435  (Caddy `:443/llm/*` + `:443/mcp` → LiteLLM key, │   │
 │  │                         no SSO)                                        │   │
 │  │  GET  /v1/models           — llama.cpp, TTL-cached 60s                 │   │
@@ -95,7 +94,7 @@ codebase-memory nginx rewrites).
 │  │  member that also sits on ordo-net, so nothing else can call a       │    │
 │  │  server directly)                                                     │    │
 │  │                                                                        │    │
-│  │  mcp-comfyui   mcp-orchestration   mcp-qdrant-rag   mcp-n8n           │    │
+│  │  mcp-comfyui   mcp-orchestration   mcp-qdrant-rag                     │    │
 │  │  mcp-searxng                     → these also join ordo-net          │    │
 │  │  mcp-codebase-memory   mcp-memory-vault  (internal only)             │    │
 │  │                                                                        │    │
@@ -117,7 +116,7 @@ codebase-memory nginx rewrites).
 - **Qdrant** `:6333` — Vector database; backend-only; used by Open WebUI for RAG and by `rag-ingestion` service.
 - **RAG Ingestion** — Watch-mode document ingester (`--profile rag`); reads `data/rag-input/`; chunks and embeds via model gateway; stores in Qdrant.
 - **Hermes** (`agent` + `hermes-dashboard`) — Agent runtime; routes both model calls and tool calls through `model-gateway` (`/v1/*` and `/mcp`) with its own virtual key `LITELLM_KEY_HERMES`. State under `data/hermes/`. Published to the tailnet by Caddy on its own dedicated port, `${CADDY_TAILNET_HOSTNAME}:8447/` (served at its origin root behind a plain SSO reverse_proxy — no forwarded-prefix base injection). See [docs/hermes-agent.md](../hermes-agent.md) for setup.
-- **Supporting services** — Open WebUI (internal `:8080`, connected to Qdrant, published at `${CADDY_TAILNET_HOSTNAME}:8443`), N8N (internal `:5678`, published at `${CADDY_TAILNET_HOSTNAME}:8445`; public webhook/OAuth-callback base stays `:443/n8n/*`), ComfyUI (internal `:8188`, published at `${CADDY_TAILNET_HOSTNAME}:8446`).
+- **Supporting services** — Open WebUI (internal `:8080`, connected to Qdrant, published at `${CADDY_TAILNET_HOSTNAME}:8443`), ComfyUI (internal `:8188`, published at `${CADDY_TAILNET_HOSTNAME}:8446`).
 
 ## Data Flows
 
@@ -162,33 +161,30 @@ UI request:       Browser → Caddy :<service-port> (Google SSO, domain-scoped
 
 All services run on a single Docker network, `ordo-net`. **Caddy is the only
 service the stack publishes to the host** — but since the 2026-07-24
-port-per-service model, Caddy itself listens on **nine** host ports
+port-per-service model, Caddy itself listens on **eight** host ports
 (`${CADDY_BIND}:443` plus `${CADDY_BIND}:8443`–`:8450`), one per UI plus the
 `:443` front door. Every UI and API still reaches the outside world
 exclusively through Caddy; nothing else binds a host port at all. Each
 prebuilt SPA is served at the root it was compiled for — `:8443` Open WebUI,
-`:8444` Dashboard (+ `/grafana/` embed), `:8445` n8n, `:8446` ComfyUI, `:8447`
+`:8444` Dashboard (+ `/grafana/` embed), `:8446` ComfyUI, `:8447`
 Hermes, `:8448` codebase-memory, `:8449` LiteLLM admin UI, `:8450` Langfuse,
 all at their origin root behind a plain
 `import sso_service <upstream>` — retiring the subpath-rewrite bandaids
-(Open WebUI root-catchall, Hermes header-injected base, n8n `strip_prefix`,
-codebase-memory nginx `sub_filter` rewrites) that the single-port model
-needed. The n8n, Hermes, and codebase-memory adapters were the last to
-converge: their subpath surgery is now deleted, so every one of the eight UIs
-serves at root (the only surviving edge path-handling is Grafana's native
-same-origin `/grafana/` embed and n8n's external `:443/n8n` webhook/OAuth
-URLs — see below).
+(Open WebUI root-catchall, Hermes header-injected base, codebase-memory
+nginx `sub_filter` rewrites) that the single-port model needed. The Hermes
+and codebase-memory adapters were the last to converge: their subpath surgery
+is now deleted, so every one of the seven UIs serves at root (the only
+surviving edge path-handling is Grafana's native same-origin `/grafana/`
+embed — see below).
 
 `:443` remains the front door: the landing page, the one Google OAuth
 callback (`/oauth2/*`), the two bearer-gated programmatic APIs
-(`/llm/*`, `/mcp`), n8n's external webhook/OAuth-callback passthroughs
-(`/n8n/webhook/*`, `/n8n/rest/oauth2-credential/callback*` — unchanged so
-nothing external needs re-registration), and 302 redirects from every
+(`/llm/*`, `/mcp`), and 302 redirects from every
 legacy subpath (`/chat`, `/dash`, `/comfy`, `/hermes`, `/codebase-memory`,
-`/grafana`, `/n8n`) to the new port, so old bookmarks keep working.
+`/grafana`) to the new port, so old bookmarks keep working.
 
 All user-facing UIs sit behind oauth2-proxy / Google SSO, one Google
-sign-in for all nine ports **and the clean per-service tailnet names**: the
+sign-in for all eight ports **and the clean per-service tailnet names**: the
 oauth2-proxy session cookie is domain-scoped (port-agnostic), the OAuth
 callback always stays on `:443`, and the SSO gate's `rd=` redirect carries
 `{host}` (portless, not `{hostport}`), so a single wildcard
@@ -206,19 +202,16 @@ and qdrant publish no host port at all.
 **Uniform serving contract.** Every UI serves at its origin root behind a
 plain SSO reverse_proxy; no edge- or sidecar-side path rewriting
 (`handle_path`/`strip_prefix`, `X-Forwarded-Prefix` injection, `sub_filter`)
-in a UI block — enforced by `tests/test_caddyfile_invariants.py`. Two
-permanent exceptions: Grafana's native same-origin `/grafana/` embed (the
-dashboard iframe expects that prefix), and n8n's external
-`:443/n8n/webhook/*` + `:443/n8n/rest/oauth2-credential/callback*` URLs
-(registered outside the stack, so they stay put).
+in a UI block — enforced by `tests/test_caddyfile_invariants.py`. One
+permanent exception: Grafana's native same-origin `/grafana/` embed (the
+dashboard iframe expects that prefix).
 
 | Service | Host port | Notes |
 |---------|-----------|-------|
-| caddy | `${CADDY_BIND}:443`, `:8443`–`:8450` | The only host-published ports in the stack (nine total: the `:443` front door plus one per UI service). Bound to `0.0.0.0` (operator-approved 2026-07-17 for LAN reachability on an internet-dark network — see `docs/runbooks/auth.md`); the `${CADDY_BIND:?...}` failsafe only rejects an empty/unset value, it does not distinguish a tailnet IP from `0.0.0.0`. Reverse-proxies everything else with forward_auth → oauth2-proxy |
-| oauth2-proxy | — | Internal; sits behind Caddy; Google SSO with email allowlist (`site: SSO_ALLOWED_EMAILS`); one domain-scoped session covers all nine Caddy ports |
+| caddy | `${CADDY_BIND}:443`, `:8443`–`:8450` | The only host-published ports in the stack (eight total: the `:443` front door plus one per UI service). Bound to `0.0.0.0` (operator-approved 2026-07-17 for LAN reachability on an internet-dark network — see `docs/runbooks/auth.md`); the `${CADDY_BIND:?...}` failsafe only rejects an empty/unset value, it does not distinguish a tailnet IP from `0.0.0.0`. Reverse-proxies everything else with forward_auth → oauth2-proxy |
+| oauth2-proxy | — | Internal; sits behind Caddy; Google SSO with email allowlist (`site: SSO_ALLOWED_EMAILS`); one domain-scoped session covers all eight Caddy ports |
 | open-webui | — | Reached at `https://<tailnet>:8443/` (its own port, served at its compiled root); needs model-gateway, qdrant |
 | dashboard | — | Reached at `https://<tailnet>:8444/` (Grafana embed at `.../grafana/` on the same port); needs llamacpp, ops-controller, model-gateway |
-| n8n | — | UI reached at `https://<tailnet>:8445/`; public webhook base and OAuth-callback URL stay on `:443` (`https://<tailnet>/n8n/webhook/*`, `.../n8n/rest/oauth2-credential/callback*`, unchanged so nothing external needs re-registration) |
 | agent (Hermes) | — | No UI; needs model-gateway, model-gateway-keys |
 | hermes-dashboard | — | Reached at `https://<tailnet>:8447/` (served at its origin root behind a plain SSO proxy) |
 | model-gateway | — | No host port; reached internally at `http://model-gateway:11435` on `ordo-net`, and externally via Caddy `:443/llm/*` (bearer key, no SSO) |
@@ -237,7 +230,7 @@ dashboard iframe expects that prefix), and n8n's external
 
 | Check | Status |
 |-------|--------|
-| Non-root | `model-gateway`, `dashboard`, `n8n`: `user: "1000:1000"` |
+| Non-root | `model-gateway`, `dashboard`: `user: "1000:1000"` |
 | `cap_drop: [ALL]` | `model-gateway`, `dashboard`, `ops-controller` |
 | `security_opt: [no-new-privileges:true]` | `model-gateway`, `dashboard`, `ops-controller` |
 | `read_only: true` + `tmpfs: [/tmp]` | `model-gateway`, `dashboard` |
@@ -264,7 +257,7 @@ ordo-ai-stack/
 │   ├── codebase-memory/ # Headless codebase-memory MCP
 │   ├── codebase-memory-ui/  # Codebase-memory 3D graph UI service
 │   ├── hermes/          # Hermes agent build context (Dockerfile, entrypoint.sh, plugins/, seed/) + its agent.yaml manifest
-│   └── …                # edge, model-gateway, memory-vault, n8n, searxng, monitoring, voice, …
+│   └── …                # edge, model-gateway, memory-vault, searxng, monitoring, voice, …
 ├── ordo/                # Render substrate (Python package): `ordo render`, `ordo detect`, etc.
 ├── catalog/             # Curated model catalog (models.yaml)
 ├── auth/                # Edge auth: auth/caddy (Caddyfile), auth/oauth2-proxy (SSO allowlist)

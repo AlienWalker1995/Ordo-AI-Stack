@@ -51,7 +51,6 @@ class Probes(Protocol):
     def vault_read(self, relative_path: str) -> str | None: ...        # None = file does not exist
     def vault_write(self, relative_path: str, content: str) -> None: ...
     def ops_status(self) -> dict[str, Any]: ...                        # ops-controller GET /status
-    def n8n_healthy(self) -> bool: ...
     def qdrant_collections(self) -> list[str]: ...
     def qdrant_scratch_leak_sources(self) -> list[str]: ...            # E6 safety net, see is_scratch_source
 
@@ -277,16 +276,6 @@ def _check_result_and_url(check, context, text, answer, trajectory, probes) -> C
     return CheckResult(True, f"answer correct, cited {urls[0]}")
 
 
-def _check_n8n_health(check, context, text, answer, trajectory, probes) -> CheckResult:
-    healthy = probes.n8n_healthy()
-    if answer is None:
-        return CheckResult(False, f"no RESULT line; n8n healthy={healthy}")
-    said_unhealthy = bool(re.search(r"\b(unhealthy|down|not healthy|unreachable|failing)\b", answer, re.I))
-    said_healthy = bool(re.search(r"\b(healthy|ok|up|running)\b", answer, re.I)) and not said_unhealthy
-    ok = said_healthy if healthy else said_unhealthy
-    return CheckResult(ok, f"n8n healthy={healthy}, RESULT {answer!r}")
-
-
 def _check_qdrant_collection_count(check, context, text, answer, trajectory, probes) -> CheckResult:
     expected = str(len(probes.qdrant_collections()))
     if answer is None:
@@ -305,7 +294,6 @@ _CHECKS = {
     "vault_file_and_result": _check_vault_file_and_result,
     "result_contains": _check_result_contains,
     "result_and_url": _check_result_and_url,
-    "n8n_health": _check_n8n_health,
     "qdrant_collection_count": _check_qdrant_collection_count,
 }
 CHECK_TYPES = frozenset(_CHECKS)

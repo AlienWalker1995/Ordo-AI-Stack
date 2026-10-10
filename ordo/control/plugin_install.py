@@ -26,7 +26,7 @@ from .source import StackSource, enabled_ids
 # through this same write path.
 INSTALLABLE_PLUGINS = frozenset({
     "comfyui", "song-gen", "voice", "rag", "open-webui", "monitoring",
-    "automation", "searxng-web", "codebase-memory-ui", "obsidian-livesync", "llamacpp-cpu",
+    "searxng-web", "codebase-memory-ui", "obsidian-livesync", "llamacpp-cpu",
 })
 
 

@@ -29,7 +29,6 @@ class Settings:
     langfuse_secret_key: str
     ops_controller_url: str
     ops_controller_token: str
-    n8n_url: str
     qdrant_url: str
     qdrant_collection: str
     git_commit: str | None
@@ -59,7 +58,6 @@ class Settings:
             ops_controller_url=_env("OPS_CONTROLLER_URL", "http://ops-controller:9000"),
             # ops-controller authenticates every call except its health probe.
             ops_controller_token=read_secret("OPS_CONTROLLER_TOKEN"),
-            n8n_url=_env("N8N_URL", "http://n8n:5678"),
             qdrant_url=_env("QDRANT_URL", "http://qdrant:6333"),
             # Same var rag-ingestion reads (services/rag/plugin.yaml: QDRANT_COLLECTION from
             # ${RAG_COLLECTION:-documents}), so the RAG-leak safety check scans the collection the

@@ -150,8 +150,7 @@ class Source:
     overrides: dict[str, Any] = dataclasses.field(default_factory=dict)
     # Host/site config — NOT derived from the model and NOT secret: bind-mount roots
     # (DATA_PATH, BASE_PATH, CODE_ROOT), the edge hostnames (CADDY_*), and any other
-    # operator-environment key the plugin manifests interpolate (e.g. COMFYUI_IMAGE,
-    # N8N_WEBHOOK_URL). These flow verbatim into the rendered `.env` so `${DATA_PATH}` /
+    # operator-environment key the plugin manifests interpolate (e.g. COMFYUI_IMAGE). These flow verbatim into the rendered `.env` so `${DATA_PATH}` /
     # `${BASE_PATH}` etc. resolve deterministically instead of defaulting to `./data`
     # relative to out/. Kept in the source (single source of truth) so there is no
     # hand-edit of a derived output and no drift.

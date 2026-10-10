@@ -125,7 +125,7 @@ def test_toolcall_hard_tier_is_a_stable_addition_not_a_replacement():
 
 def test_harness_ops_dataset_shape_and_checks_exist():
     items = rows(DATASETS / "harness_ops.jsonl")
-    assert len(items) == 16
+    assert len(items) == 15
     for entry in items:
         assert entry["check"]["type"] in checks.CHECK_TYPES
         for step in entry.get("setup", []) or []:

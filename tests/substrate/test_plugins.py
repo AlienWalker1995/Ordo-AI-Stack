@@ -36,7 +36,7 @@ def _src(**kw):
 # behind their compose profile until requested. Voice/comfyui/song-gen are the GPU-gated ones
 # handled separately. The tailnet-name sidecars are opt-in (they need a tagged Tailscale key), so
 # `plugins: auto` leaves them out.
-CPU_OK_SERVICE_PLUGINS = {"monitoring", "rag", "automation", "open-webui",
+CPU_OK_SERVICE_PLUGINS = {"monitoring", "rag", "open-webui",
                           "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
                           "obsidian-livesync"}
 
@@ -45,7 +45,7 @@ def test_registry_loaded_manifests():
     ids = {p.id for p in REGISTRY.plugins}
     assert {"comfyui", "song-gen", "voice", "monitoring"} <= ids
     # the ported V1-parity plugins are registered too
-    assert {"rag", "automation", "open-webui", "searxng-web",
+    assert {"rag", "open-webui", "searxng-web",
             "codebase-memory-ui", "hermes-dashboard", "edge"} <= ids
 
 

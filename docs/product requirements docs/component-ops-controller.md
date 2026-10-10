@@ -77,7 +77,7 @@ opting in. The log rotates at 10 MB and keeps five generations (`audit.1.log` ..
 Export: `GET /audit?limit=N` (`1 <= N <= 1000`, newest first, across the generations).
 
 ```json
-{"ts":1790281806.1,"caller":"dashboard","action":"restart","target":"n8n","result":"ok","method":"POST","path":"/services/n8n/restart","status":200,"dry_run":false,"confirm":true}
+{"ts":1790281806.1,"caller":"dashboard","action":"restart","target":"searxng","result":"ok","method":"POST","path":"/services/searxng/restart","status":200,"dry_run":false,"confirm":true}
 ```
 
 `caller` is the request's `X-Actor` header (`unknown` when absent). Every client sends one, but it

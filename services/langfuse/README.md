@@ -81,7 +81,7 @@ being down can never take Hermes down.
 ## What the gateway sends
 
 `model-gateway` (LiteLLM) traces every LLM call it serves, whoever the caller is: Hermes, Open
-WebUI, n8n (the `automation` key), edge clients such as Cline or Cursor, and the dashboard's
+WebUI, edge clients such as Cline or Cursor, and the dashboard's
 probes. It uses LiteLLM's `langfuse_otel` callback, the one Langfuse recommends for v3/v4, exporting
 over OTLP straight to `http://langfuse-web:3000/api/public/otel`.
 
@@ -137,7 +137,7 @@ Which source to trust for which question:
 | Question | Use | Why |
 |---|---|---|
 | Total LLM calls, tokens, cost, latency across the stack; per-consumer usage | `gateway` only, grouped by `litellm.key_alias` | One generation per call for every consumer, priced by the gateway that billed it |
-| What Open WebUI, n8n, edge clients sent | `gateway`, filtered by key alias | Hermes's plugin never sees these calls |
+| What Open WebUI and edge clients sent | `gateway`, filtered by key alias | Hermes's plugin never sees these calls |
 | Why a Hermes turn behaved as it did: turn structure, tool calls, retries | `hermes` | Only the agent knows which LLM call belongs to which turn and which tool ran between them |
 | Hermes token or cost totals | `gateway` with `key_alias = hermes` | Same numbers the gateway billed; do not add the `hermes` environment on top |
 
@@ -200,7 +200,7 @@ retention goes through the public API only:
 
 **Schedule.** Ordo has no general-purpose job scheduler: `ops-controller` only arbitrates GPU
 leases, the existing periodic scripts run from Hermes cron (an LLM in the loop, which this delete
-job must not have), n8n cannot start a container and would be a second implementation, and a host
+job must not have), and a host
 Task Scheduler entry is untracked per-machine config. So `langfuse-retention` schedules itself in
 its own always-on container, the same shape as LiteLLM's in-process spend-log cleanup: one run five
 minutes after the container starts, then daily at 04:45 UTC (`LANGFUSE_RETENTION_RUN_AT`, set in
