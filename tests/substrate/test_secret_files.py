@@ -262,7 +262,6 @@ PY_HELPER_COPIES = [
 SH_HELPER_COPIES = [
     "services/model-gateway/secret-env.sh",
     "services/obsidian-livesync/secret-env.sh",
-    "services/n8n/secret-env.sh",
 ]
 
 

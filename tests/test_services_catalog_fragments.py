@@ -84,7 +84,6 @@ def test_derived_ops_service_map_is_exactly_the_pre_refactor_wiring():
         "model-gateway": "model-gateway",
         "webui": "open-webui",
         "comfyui": "comfyui",
-        "n8n": "n8n",
         "qdrant": "qdrant",
         "hermes": "hermes-dashboard",
         "stt": "stt",
@@ -97,7 +96,6 @@ def test_derived_tailnet_labels_are_exactly_the_pre_refactor_labels():
     assert TAILNET_LABELS == {
         "webui": "chat",
         "comfyui": "comfy",
-        "n8n": "n8n",
         "hermes": "hermes",
         "codebase-memory-ui": "graph",
         "model-gateway": "llm",

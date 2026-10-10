@@ -236,7 +236,7 @@ def test_dry_run_builds_and_records_nothing(tmp_path):
 
 def test_first_party_set_covers_the_substrate_and_manifest_builds():
     for ident in ("ordo/ops-controller", "ordo/model-gateway", "ordo/gpu-gate", "ordo/dashboard",
-                  "ordo/agent-hermes", "ordo/rag-ingestion", "ordo/n8n-mcp", "ordo/llamacpp-patched",
+                  "ordo/agent-hermes", "ordo/rag-ingestion", "ordo/llamacpp-patched",
                   "ordo/ninfer"):
         assert ident in FIRST_PARTY, ident
 

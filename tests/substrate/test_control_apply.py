@@ -304,24 +304,24 @@ def test_disabling_an_mcp_plugin_stops_its_server_and_recreates_the_gateway(list
 
 def test_a_plugin_whose_secrets_are_missing_is_rendered_but_left_to_the_host(listed):
     cp, backend, _, out = listed
-    assert not (out / "secrets.env").exists()     # nothing materialized: LITELLM_KEY_AUTOMATION is unset
-    status, body = cp.route("POST", "/plugins/automation/enable", {"confirm": True})
+    assert not (out / "secrets.env").exists()     # nothing materialized: LITELLM_KEY_OPEN_WEBUI is unset
+    status, body = cp.route("POST", "/plugins/open-webui/enable", {"confirm": True})
     assert status == 200, body
     applied = body["apply"]
     # Started without its secret it would crash-loop: rendered, never started, escalated to the
     # host, where `ordo secrets set` supplies it and `ordo apply` starts it.
-    assert "n8n" not in applied["recreated"] and "n8n" not in backend.containers
-    assert applied["restart_required_on_host"] == ["n8n"]
-    assert "LITELLM_KEY_AUTOMATION" in applied["host_reasons"]["n8n"]
-    assert applied["host_command"] == "ordo apply --only n8n"
+    assert "open-webui" not in applied["recreated"] and "open-webui" not in backend.containers
+    assert applied["restart_required_on_host"] == ["open-webui"]
+    assert "LITELLM_KEY_OPEN_WEBUI" in applied["host_reasons"]["open-webui"]
+    assert applied["host_command"] == "ordo apply --only open-webui"
 
 
 def test_a_plugin_whose_secrets_are_present_is_started(listed):
     cp, backend, _, out = listed
-    (out / "secrets.env").write_text("LITELLM_KEY_AUTOMATION=sk-test\n", encoding="utf-8")
-    status, body = cp.route("POST", "/plugins/automation/enable", {"confirm": True})
+    (out / "secrets.env").write_text("LITELLM_KEY_OPEN_WEBUI=sk-test\n", encoding="utf-8")
+    status, body = cp.route("POST", "/plugins/open-webui/enable", {"confirm": True})
     assert status == 200, body
-    assert "n8n" in body["apply"]["recreated"] and "n8n" in backend.containers
+    assert "open-webui" in body["apply"]["recreated"] and "open-webui" in backend.containers
     assert body["apply"]["restart_required_on_host"] == []
 
 

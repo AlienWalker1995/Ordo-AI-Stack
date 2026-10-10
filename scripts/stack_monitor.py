@@ -72,7 +72,6 @@ _INVISIBLE = dict.fromkeys(
 # real thing being tracked (e.g. the comfyui boot image tracks ComfyUI proper).
 HINTS = {
     "caddy":                        {"gh": "caddyserver/caddy", "hub": "library/caddy"},
-    "n8nio/n8n":                    {"gh": "n8n-io/n8n", "hub": "n8nio/n8n"},
     "open-webui/open-webui":        {"gh": "open-webui/open-webui", "hub": "openwebui/open-webui",
                                      "note": "versioned tags live on Docker Hub (docker.io/openwebui), not ghcr"},
     "qdrant/qdrant":                {"gh": "qdrant/qdrant", "hub": "qdrant/qdrant"},

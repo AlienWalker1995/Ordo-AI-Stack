@@ -2,7 +2,7 @@
 
 > ⚠️ **See [`operator-guide.md`](operator-guide.md) for the authoritative getting-started + operator doc.** Ordo is defined and operated entirely from the render substrate. A fresh install is two commands: `ordo init` (the wizard; accept its offer to render) and `ordo up --core` (or `--all`), which builds the stack's own images on first run. The workflow commands below assume you've rendered the stack once (`out/`) and run `ordo` from the repo root; `ordo up` builds any image it needs that is not built yet.
 
-Quick paths to common workflows for a single homelab operator. A fresh install is local-only: the chat UI and the dashboard publish on `127.0.0.1:8443` / `:8444`, and no Caddy or oauth2-proxy is rendered. With remote access on (`ordo remote enable`, see [Tailscale + SSO front door](#tailscale--sso-front-door) below), Caddy is up on `${CADDY_TAILNET_HOSTNAME}`: `:443` is the landing page (plus `/oauth2`, `/llm/*`, `/mcp`, n8n's webhook/OAuth passthroughs, and 302s from legacy subpaths) and each UI service has its own SSO-gated port (`:8443` Open WebUI, `:8444` dashboard, `:8445` n8n, `:8446` ComfyUI, `:8447` Hermes, `:8448` codebase-memory, `:8449` LiteLLM admin UI, `:8450` Langfuse), and you can sign in with a Google account on the allowlist (`site: SSO_ALLOWED_EMAILS` in `out/ordo.yaml`). One sign-in covers every port.
+Quick paths to common workflows for a single homelab operator. A fresh install is local-only: the chat UI and the dashboard publish on `127.0.0.1:8443` / `:8444`, and no Caddy or oauth2-proxy is rendered. With remote access on (`ordo remote enable`, see [Tailscale + SSO front door](#tailscale--sso-front-door) below), Caddy is up on `${CADDY_TAILNET_HOSTNAME}`: `:443` is the landing page (plus `/oauth2`, `/llm/*`, `/mcp`, and 302s from legacy subpaths) and each UI service has its own SSO-gated port (`:8443` Open WebUI, `:8444` dashboard, `:8446` ComfyUI, `:8447` Hermes, `:8448` codebase-memory, `:8449` LiteLLM admin UI, `:8450` Langfuse), and you can sign in with a Google account on the allowlist (`site: SSO_ALLOWED_EMAILS` in `out/ordo.yaml`). One sign-in covers every port.
 
 ## Workflows
 
@@ -18,11 +18,6 @@ No GPU required for chat (llama.cpp runs on CPU, slower but works).
 1. Render the stack (`python -m ordo render` from the repo root; hardware, including NVIDIA/AMD/Intel/CPU, is auto-detected), then `ordo up --all` (brings up every rendered profile, ComfyUI included)
 2. Pull LTX-2 models via the dashboard (~60 GB, first run takes a while)
 3. Open `https://${CADDY_TAILNET_HOSTNAME}:8446/` — ComfyUI
-
-### I want workflow automation
-
-1. Enable the `automation` plugin in `out/ordo.yaml`'s `plugins:`, render, then `ordo up --all` (a named `ordo up n8n` is `--no-deps`, so it would not start the model gateway n8n calls).
-2. Open `https://${CADDY_TAILNET_HOSTNAME}:8445/` — n8n (the UI lives on this port; n8n's public webhook/OAuth-callback base, `N8N_WEBHOOK_URL=https://${CADDY_TAILNET_HOSTNAME}/n8n`, is unchanged and stays on `:443`)
 
 ### Full stack
 
@@ -61,10 +56,9 @@ Single homelab operator with a small Google-account allowlist for friends / fami
 
 | Port | Service |
 | --- | --- |
-| `:443` | Front door — landing page, `/oauth2` (the one Google callback), `/llm/*` (LiteLLM API, Bearer), `/mcp` (Bearer), n8n's webhook/OAuth passthroughs (`/n8n/webhook/*`, `/n8n/rest/oauth2-credential/callback`), and 302s from every legacy subpath |
+| `:443` | Front door — landing page, `/oauth2` (the one Google callback), `/llm/*` (LiteLLM API, Bearer), `/mcp` (Bearer), and 302s from every legacy subpath |
 | `:8443` | Open WebUI (chat) |
 | `:8444` | Dashboard (+ `/grafana/` embed) |
-| `:8445` | n8n (UI) |
 | `:8446` | ComfyUI |
 | `:8447` | Hermes (served at this port's root) |
 | `:8448` | codebase-memory (served at this port's root) |
@@ -77,7 +71,7 @@ The edge (Caddy + oauth2-proxy) stays off until remote access is enabled. `ordo 
 2. Create the Google OAuth client per [docs/runbooks/auth.md](runbooks/auth.md). No new redirect URI is needed for the port model; the OAuth callback stays on `:443`.
 3. From the repo root: `ordo remote enable` (hostname, bind address, OAuth client, allowlisted emails; accept the cert offer). For the bind address, the tailnet IPv4 from `tailscale ip -4` binds Caddy to that interface only; `0.0.0.0` is also a supported posture (binds all interfaces, still tailnet-dark since nothing else is published).
 4. `ordo up --all`.
-5. Browse to `https://${CADDY_TAILNET_HOSTNAME}/` from any tailnet device for the landing page, or go straight to a service's port (e.g. `https://${CADDY_TAILNET_HOSTNAME}:8443/` for Open WebUI). Caddy terminates TLS with the Tailscale-issued cert, oauth2-proxy enforces Google sign-in against the allowlist (`site: SSO_ALLOWED_EMAILS` in `out/ordo.yaml`), and one sign-in covers every port — the SSO cookie is domain-scoped and the post-login redirect carries `{host}` (portless), so a single wildcard `--whitelist-domain=.<domain>` covers every port and clean sidecar name at once. Old subpath bookmarks (`/chat`, `/dash`, `/n8n`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`) still work — `:443` 302s them to the matching port.
+5. Browse to `https://${CADDY_TAILNET_HOSTNAME}/` from any tailnet device for the landing page, or go straight to a service's port (e.g. `https://${CADDY_TAILNET_HOSTNAME}:8443/` for Open WebUI). Caddy terminates TLS with the Tailscale-issued cert, oauth2-proxy enforces Google sign-in against the allowlist (`site: SSO_ALLOWED_EMAILS` in `out/ordo.yaml`), and one sign-in covers every port — the SSO cookie is domain-scoped and the post-login redirect carries `{host}` (portless), so a single wildcard `--whitelist-domain=.<domain>` covers every port and clean sidecar name at once. Old subpath bookmarks (`/chat`, `/dash`, `/comfy`, `/hermes`, `/codebase-memory`, `/grafana`) still work — `:443` 302s them to the matching port.
 
 Traffic between tailnet devices is WireGuard-encrypted; Caddy adds app-layer TLS for the Google OAuth flow and the SSO cookie. Open WebUI's own auth (`WEBUI_AUTH`) is off by default because the proxy already gates it; flip to `True` only if you want per-user workspaces inside Open WebUI on top of the shared SSO gate.
 
@@ -93,4 +87,4 @@ Traffic between tailnet devices is WireGuard-encrypted; Caddy adds app-layer TLS
 - [Data](data.md) — data schemas, lifecycle, and persistence rules
 - [Hermes Agent](hermes-agent.md) — agent setup, Discord wiring, upgrade notes
 - [PRD index](product%20requirements%20docs/index.md) — platform design and components
-- [MCP tools](../services/model-gateway/README.md): LiteLLM's `/mcp` endpoint aggregating the registered MCP servers (web search, n8n, ComfyUI, code and memory tools)
+- [MCP tools](../services/model-gateway/README.md): LiteLLM's `/mcp` endpoint aggregating the registered MCP servers (web search, ComfyUI, code and memory tools)

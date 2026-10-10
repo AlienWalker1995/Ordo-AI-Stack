@@ -98,7 +98,7 @@ def test_the_databases_are_dumped_or_snapshotted_stopped():
     declared = _all_declarations()
     assert declared["litellm-db-data"] == declared["langfuse-db-data"] == "pg_dump"
     for volume in ("qdrant-data", "couchdb-data", "langfuse-clickhouse-data", "langfuse-redis-data",
-                   "n8n-data", "open-webui-data", "hermes-home", "grafana-data", "langfuse-minio-data"):
+                   "open-webui-data", "hermes-home", "grafana-data", "langfuse-minio-data"):
         assert declared[volume] == "stopped", volume
 
 

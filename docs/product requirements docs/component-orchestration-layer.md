@@ -1,7 +1,7 @@
 # Orchestration Layer
 
 ## Purpose
-A lightweight, plug‑in‑driven orchestrator that stitches together all AI services (model‑gateway, MCP, n8n, custom plugins) into a unified workflow engine. It does **not** expose any direct UI; it only provides APIs that any service (including the dashboard, agent clients, or external callers) can call.
+A lightweight, plug‑in‑driven orchestrator that stitches together all AI services (model‑gateway, MCP, custom plugins) into a unified workflow engine. It does **not** expose any direct UI; it only provides APIs that any service (including the dashboard, agent clients, or external callers) can call.
 
 ## Current Implementation
 
@@ -54,7 +54,7 @@ Response:
 
 ## Design Decisions (Why this shape?)
 1. **Extensibility over rigidity** – We want any new AI service (e.g., an Azure OpenAI integration) to be added by dropping a manifest file, not by touching core code.
-2. **Separation of concerns** – Orchestrator never holds long‑running state. It delegates execution to the underlying services (model‑gateway, n8n). The orchestrator's role is coordination, not execution.
+2. **Separation of concerns** – Orchestrator never holds long‑running state. It delegates execution to the underlying services (model‑gateway, MCP servers). The orchestrator's role is coordination, not execution.
 3. **Security** – All calls are authenticated with the existing `OPS_CONTROLLER_TOKEN`. The token is passed in the HTTP `Authorization` header by the dashboard or agent client.
 4. **Observability** – Every step is logged with trace IDs, making it easy to trace a user's request through the entire AI stack.
 
@@ -62,7 +62,6 @@ Response:
 - **Model Gateway** – Calls to the orchestrator can chain model calls (e.g., call `model-a`, then `model-b`). The orchestrator forwards the request to the gateway with the appropriate provider name.
 - **Agent clients** (Hermes, etc.) – Invoke the orchestrator through the gateway's namespaced MCP tools (`gateway__orchestration-<tool>`) or the dashboard HTTP routes.
 - **Dashboard** – The Media page shows GPU lease history and restarts ComfyUI via `routes_orchestration.py`; the orchestration MCP server uses the same routes for workflows.
-- **n8n** – Existing n8n workflows can be composed with the orchestrator for multi‑model orchestration, without rewriting node logic.
 - **Ops Controller** – Handles lifecycle of the orchestrator container; restarts it automatically on failures.
 
 ## Example Workflow: "Create a multi‑modal response"

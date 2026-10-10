@@ -2,10 +2,8 @@
 
 These are cheap grep-style assertions on textual content — no Caddy adapter
 or docker daemon required — that guard the security-fragile lines we'd
-notice only at integration smoke time. They exist because the n8n OAuth
-callback / webhook bypass list is the most easily-broken line in the
-Caddyfile (a typo here either breaks Google OAuth callbacks for n8n, or
-accidentally exempts a wider path than intended).
+notice only at integration smoke time: an SSO exemption typo either breaks
+the sign-in flow or exempts a wider path than intended.
 
 If any of these tests fail, treat it as a regression of an explicit
 security guarantee — not a refactor opportunity.
@@ -37,25 +35,6 @@ def test_oauth2_endpoints_exempt_from_auth(caddyfile_text: str) -> None:
 def test_healthz_exempt_from_auth(caddyfile_text: str) -> None:
     """/healthz must remain reachable without a session for liveness probes."""
     assert "/healthz" in caddyfile_text
-
-
-def test_n8n_oauth_callback_bypasses_sso(caddyfile_text: str) -> None:
-    """External OAuth providers (Google, Notion, etc.) call back to n8n at
-    /n8n/rest/oauth2-credential/callback. Caddy must NOT challenge that
-    path with SSO — the caller has no session cookie."""
-    assert "/n8n/rest/oauth2-credential/callback" in caddyfile_text, (
-        "Caddyfile missing the n8n OAuth callback bypass — external OAuth "
-        "flows into n8n will fail."
-    )
-
-
-def test_n8n_webhook_bypasses_sso(caddyfile_text: str) -> None:
-    """n8n /webhook/* triggers must remain reachable without SSO so external
-    services (Stripe, Linear, etc.) can fire workflows."""
-    assert "/n8n/webhook/*" in caddyfile_text, (
-        "Caddyfile missing the n8n /webhook/* bypass — external webhooks "
-        "into n8n will fail."
-    )
 
 
 def test_caddy_tls_uses_tailscale_cert(caddyfile_text: str) -> None:
@@ -181,12 +160,7 @@ def test_legacy_paths_redirect_to_subdomains(caddyfile_text: str) -> None:
     """Old bookmarks must keep working AND land on the canonical URL: each pre-port
     subpath 302s to the clean per-service tailnet subdomain (chat/dash/hermes/…),
     not the :844x port. The port sites still exist as the sidecars' proxy target +
-    a direct fallback, but the user-facing redirect targets are the subdomains.
-
-    n8n is special: a bare `redir /n8n*` is FORBIDDEN because Caddy sorts redir
-    before handle and it would shadow the :443 webhook/OAuth passthroughs. The
-    real redirect goes through the @n8n_ui matcher (which excludes those paths),
-    so assert the matcher-based redirect, not a literal `redir /n8n`."""
+    a direct fallback, but the user-facing redirect targets are the subdomains."""
     for legacy, target in (
         ("/chat*", "https://chat.{$CADDY_TAILNET_DOMAIN}/"),
         ("/dash*", "https://dash.{$CADDY_TAILNET_DOMAIN}/"),
@@ -197,15 +171,11 @@ def test_legacy_paths_redirect_to_subdomains(caddyfile_text: str) -> None:
     ):
         assert f"redir {legacy} {target} 302" in caddyfile_text, (
             f"legacy redirect for {legacy} must target the canonical subdomain {target}")
-    # n8n: the real redirect is the matcher form targeting the n8n subdomain, NOT a bare `redir /n8n`.
-    assert "redir @n8n_ui https://n8n.{$CADDY_TAILNET_DOMAIN}/ 302" in caddyfile_text, (
-        "n8n legacy redirect must use the @n8n_ui matcher targeting the n8n subdomain — a bare "
-        "`redir /n8n` would shadow the webhook/OAuth passthroughs")
 
 
 # ── converged uniform-serving model (feat/clean-tailnet-urls) ───────────────────
-# The three formerly-divergent UIs (n8n strip_prefix, Hermes X-Forwarded-Prefix,
-# codebase-memory nginx sub_filter) now serve at their origin root behind a plain
+# The formerly-divergent UIs (Hermes X-Forwarded-Prefix, codebase-memory nginx
+# sub_filter) now serve at their origin root behind a plain
 # `import sso_service <upstream>` — identical to :8443/:8446. These invariants FAIL
 # if any adapter (handle_path, redir-to-subpath bounce, X-Forwarded-Prefix) returns.
 
@@ -228,7 +198,7 @@ def _site_block(text: str, port: str) -> str:
 
 
 def test_formerly_divergent_ports_serve_at_root(caddyfile_text: str) -> None:
-    """8445/8447/8448/8449 each proxy at root via `import sso_service <upstream>` with
+    """8447/8448/8449/8450 each proxy at root via `import sso_service <upstream>` with
     no adapter — no handle_path, no `redir /` bounce to a subpath.
 
     :8447's upstream is 127.0.0.1 and it uses (sso_service_loopback), both deliberate:
@@ -251,8 +221,7 @@ def test_formerly_divergent_ports_serve_at_root(caddyfile_text: str) -> None:
     service publishes no host port), so losing the SSO gate here exposes the trace store.
     """
     port_of = {upstream: port for port, upstream in SERVICE_PORTS.items()}
-    for snippet, upstream in (("sso_service", "n8n:5678"),
-                              ("sso_service_loopback", "127.0.0.1:9119"),
+    for snippet, upstream in (("sso_service_loopback", "127.0.0.1:9119"),
                               ("sso_service", "codebase-memory-ui:9750"),
                               ("sso_service", "model-gateway:11435"),
                               ("sso_service", "langfuse-web:3000")):

@@ -17,12 +17,11 @@ from ordo_evals.ids import safe_token
 
 
 class LiveProbes:
-    def __init__(self, *, vault_dir: Path, ops_controller_url: str, ops_controller_token: str, n8n_url: str,
+    def __init__(self, *, vault_dir: Path, ops_controller_url: str, ops_controller_token: str,
                  qdrant_url: str, qdrant_collection: str = "documents"):
         self._vault = vault_dir.resolve()
         self._ops = ops_controller_url.rstrip("/")
         self._ops_headers = {"Authorization": f"Bearer {ops_controller_token}"}
-        self._n8n = n8n_url.rstrip("/")
         self._qdrant = qdrant_url.rstrip("/")
         self._qdrant_collection = qdrant_collection
 
@@ -61,17 +60,6 @@ class LiveProbes:
             return response.json()
         except (httpx.HTTPError, ValueError) as exc:
             raise ProbeError(f"ops-controller /status: {exc}") from exc
-
-    def n8n_healthy(self) -> bool:
-        """n8n's own /healthz. Unreachable IS the truth "not healthy", not a probe failure."""
-        try:
-            response = httpx.get(f"{self._n8n}/healthz", timeout=15.0)
-        except httpx.HTTPError:
-            return False
-        try:
-            return response.status_code == 200 and response.json().get("status") == "ok"
-        except ValueError:
-            return False
 
     def qdrant_collections(self) -> list[str]:
         try:

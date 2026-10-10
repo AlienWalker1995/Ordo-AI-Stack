@@ -286,7 +286,7 @@ def test_agent_depends_on_health_conditions():
 def test_mcp_services_rendered_with_isolation_limits_and_labels():
     c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
     names = {n for n in c["services"] if n.startswith("mcp-")}
-    assert names == {"mcp-codebase-memory", "mcp-comfyui", "mcp-memory-vault", "mcp-n8n",
+    assert names == {"mcp-codebase-memory", "mcp-comfyui", "mcp-memory-vault",
                      "mcp-orchestration", "mcp-qdrant-rag", "mcp-searxng"}
     for n in names:
         s = c["services"][n]
@@ -298,8 +298,6 @@ def test_mcp_services_rendered_with_isolation_limits_and_labels():
         assert "healthcheck" in s
     assert c["services"]["mcp-memory-vault"]["networks"] == ["ordo-mcp-net"]          # internal
     assert c["services"]["mcp-searxng"]["networks"] == ["ordo-mcp-net", "ordo-net"]    # stack
-    assert c["services"]["mcp-n8n"]["environment"]["N8N_API_KEY_FILE"] == "/run/secrets/n8n_api_key"
-    assert "N8N_API_KEY" not in c["services"]["mcp-n8n"]["environment"]
     assert "codebase-memory-cache" in c["volumes"]
     assert "mcp-gateway" not in c["services"]
 
@@ -321,7 +319,7 @@ def test_mcp_healthcheck_defaults_to_the_renderer_probe_unless_overridden():
     assert "urllib.request.urlopen('http://localhost:9000/mcp', timeout=5)" in probe[3]
     assert "except urllib.error.HTTPError: pass" in probe[3]
 
-    for name in ("mcp-codebase-memory", "mcp-comfyui", "mcp-memory-vault", "mcp-n8n",
+    for name in ("mcp-codebase-memory", "mcp-comfyui", "mcp-memory-vault",
                  "mcp-orchestration", "mcp-qdrant-rag"):
         assert c["services"][name]["healthcheck"] == expected, name
     # searxng-mcp overrides it: that image ships node, not python3.
@@ -439,7 +437,7 @@ def test_no_service_joins_a_namespace_that_is_not_rendered(tmp_path):
         ["hermes-dashboard"],            # the regression: SPA without the edge
         ["edge", "tailnet-names"],
         ["tailnet-names"],               # sidecars without the edge
-        ["open-webui", "automation"],
+        ["open-webui", "searxng-web"],
     ]
     for i, plugins in enumerate(combos):
         c = _render_with_plugins(plugins, tmp_path / f"r{i}")
@@ -519,7 +517,7 @@ def test_tailscale_sidecars_have_their_own_netns(tmp_path):
     c = _render_with_plugins(["edge", "tailnet-names", "obsidian-livesync", "obsidian-livesync-funnel"],
                              tmp_path)
     sidecars = {n: s for n, s in c["services"].items() if n.startswith("tailnet-") or n == "notes-funnel"}
-    assert len(sidecars) == 9, sorted(sidecars)
+    assert len(sidecars) == 8, sorted(sidecars)
     for name, svc in sidecars.items():
         assert "network_mode" not in svc, f"{name} shares a netns: it is lost on any daemon restart"
         assert svc["networks"], f"{name} has no network to reach its upstream on"
@@ -569,16 +567,15 @@ def test_db_state_on_named_volumes_never_9p():
     # which wedges on metadata ops (p9_client_rpc D-state; casualties: hermes brain,
     # comfyui app, gguf models, a live rag-ingestion worker). Databases fsync/mmap
     # constantly, so their data dirs must be named volumes. Deliberate 9p exceptions:
-    # drop zones the operator reaches from Windows (data/rag-input, data/n8n-files,
+    # drop zones the operator reaches from Windows (data/rag-input,
     # /c/dev mirror).
     src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
                             "model": "auto",
-                            "plugins": ["rag", "automation", "open-webui", "obsidian-livesync"]})
+                            "plugins": ["rag", "open-webui", "obsidian-livesync"]})
     c = render(src, CATALOG, REGISTRY).compose_dict()
     expected = {
         "qdrant": "qdrant-data:/qdrant/storage",
         "couchdb": "couchdb-data:/opt/couchdb/data",
-        "n8n": "n8n-data:/home/node/.n8n",
         "open-webui": "open-webui-data:/app/backend/data",
     }
     for name, mount in expected.items():

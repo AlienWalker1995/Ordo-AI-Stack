@@ -315,7 +315,7 @@ INSPECT_CONTAINER_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "name": {"type": "string", "description": "Container name, e.g. 'ordo-n8n-1'."},
+            "name": {"type": "string", "description": "Container name, e.g. 'ordo-searxng-1'."},
         },
         "required": ["name"],
     },
@@ -415,7 +415,7 @@ COMPOSE_RESTART_SCHEMA = {
             "service": {
                 "type": "string",
                 "description": (
-                    "Compose service name (e.g. `n8n`, `model-gateway`). Required: "
+                    "Compose service name (e.g. `searxng`, `model-gateway`). Required: "
                     "stack-wide calls are refused."
                 ),
             },
@@ -475,7 +475,7 @@ ENABLE_SERVICE_SCHEMA = {
     "name": "enable_service",
     "description": (
         "Install / enable an OPTIONAL Ordo stack service that is NOT yet running (open-webui, "
-        "comfyui, rag, voice, automation, searxng-web, monitoring, obsidian-livesync, llamacpp-cpu). "
+        "comfyui, rag, voice, searxng-web, monitoring, obsidian-livesync, llamacpp-cpu). "
         "This RE-RENDERS the stack to include the service (adding it to ordo.yaml when needed) and "
         "ops-controller recreates exactly what the render changed, the new service included: the "
         "correct verb when the service isn't rendered/running yet. If a service already exists but is "

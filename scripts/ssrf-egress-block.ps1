@@ -15,7 +15,7 @@ Docker Desktop on Windows does not expose the DOCKER-USER iptables chain from
 the host. Options:
 
 Nothing is blocked on this host. MCP servers declaring network: stack
-(searxng, qdrant-rag, n8n, orchestration, comfyui-mcp) can reach every stack
+(searxng, qdrant-rag, orchestration, comfyui-mcp) can reach every stack
 service, the LAN, the tailnet and the internet.
 
 Running scripts/ssrf-egress-block.sh from a user WSL distro does NOT help: its

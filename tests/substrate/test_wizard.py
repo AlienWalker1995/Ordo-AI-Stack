@@ -62,14 +62,14 @@ def test_plugins_from_capabilities():
 def test_resolve_secrets_generates_internal_and_blanks_external():
     required = ["LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "LITELLM_DB_PASSWORD",
                 "LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN",
-                "OAUTH2_PROXY_COOKIE_SECRET", "SEARXNG_SECRET", "N8N_API_KEY",
+                "OAUTH2_PROXY_COOKIE_SECRET", "SEARXNG_SECRET",
                 "OAUTH2_PROXY_CLIENT_ID", "OAUTH2_PROXY_CLIENT_SECRET",
                 "HF_TOKEN", "TS_AUTHKEY", "GITHUB_PERSONAL_ACCESS_TOKEN"]
     values, generated, provided, blank = wizard.resolve_secrets(required)
     assert set(values) == set(required)
     for k in ("LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "LITELLM_DB_PASSWORD",
               "LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN",
-              "OAUTH2_PROXY_COOKIE_SECRET", "SEARXNG_SECRET", "N8N_API_KEY"):
+              "OAUTH2_PROXY_COOKIE_SECRET", "SEARXNG_SECRET"):
         assert k in generated and values[k]
     # LiteLLM keys (master, salt, every LITELLM_KEY_*) must carry the sk- prefix LiteLLM requires
     for k in ("LITELLM_MASTER_KEY", "LITELLM_SALT_KEY", "LITELLM_KEY_HERMES"):
@@ -203,9 +203,9 @@ def test_feature_presets_map_to_a_plugin_selection():
     assert wizard.plugins_from_features("everything", all_ids) == "auto"
     chat = wizard.plugins_from_features("chat", all_ids)
     assert "open-webui" in chat and "rag" in chat            # Open WebUI cannot run without rag
-    assert "comfyui" not in chat and "n8n" not in chat
+    assert "comfyui" not in chat and "searxng" not in chat
     tools = wizard.plugins_from_features("tools", all_ids)
-    assert {"searxng", "n8n", "rag"} <= set(tools) and "comfyui" not in tools
+    assert {"searxng", "rag"} <= set(tools) and "comfyui" not in tools
     assert wizard.DEFAULT_FEATURES == "everything"
 
 
@@ -257,4 +257,4 @@ def test_interactive_features_choice_is_applied(tmp_path, monkeypatch):
     monkeypatch.setattr(sys.modules["ordo.render.engine"], "detect", lambda: HW_CPU)
     _scripted_input(monkeypatch, ["", "1"])                  # keep the model, "Chat only"
     result = wizard.run(CATALOG, REGISTRY, tmp_path / "out", interactive=True, host_root=tmp_path / "repo")
-    assert "open-webui" in result.plugins_enabled and "automation" not in result.plugins_enabled
+    assert "open-webui" in result.plugins_enabled and "comfyui" not in result.plugins_enabled

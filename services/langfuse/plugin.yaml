@@ -6,7 +6,7 @@
 #
 # WHAT SENDS TRACES: two writers, told apart by Langfuse `environment`.
 #   * `gateway`: model-gateway's LiteLLM `langfuse_otel` callback, one generation per LLM call for
-#     EVERY consumer (Hermes, Open WebUI, n8n, edge clients, health probes), tagged with the virtual
+#     EVERY consumer (Hermes, Open WebUI, edge clients, health probes), tagged with the virtual
 #     key alias. Wired by the renderer only while this plugin is enabled (ordo/render/compose.py
 #     GATEWAY_LANGFUSE_ENV).
 #   * `hermes`: the Hermes agent's bundled `observability/langfuse` plugin (turn, LLM-call and tool
@@ -331,8 +331,7 @@ services:
   #
   # WHY A SELF-SCHEDULING SERVICE: Ordo has no general-purpose job scheduler. ops-controller only
   # arbitrates GPU leases, the existing periodic jobs (stack_monitor, storage_purge) run from Hermes
-  # cron (an LLM in the loop for an irreversible delete, rejected here), n8n cannot start a
-  # container and would be a second implementation, and a host Task Scheduler entry is untracked
+  # cron (an LLM in the loop for an irreversible delete, rejected here), and a host Task Scheduler entry is untracked
   # per-machine config. So the job schedules itself inside its own always-on container, the same
   # shape as LiteLLM's in-process spend-log cleanup: a run five minutes after start, then daily at
   # LANGFUSE_RETENTION_RUN_AT UTC. The unit of work is the idempotent one-shot `--once`, which an

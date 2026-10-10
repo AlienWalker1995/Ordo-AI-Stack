@@ -31,7 +31,6 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 | `hermes-home` named volume | Hermes agent brain (sessions, config, skills, cron) | JSON / SQLite / YAML |
 | `data/comfyui-output/` | Generated media (renders) | mixed |
 | `comfyui-app` named volume | ComfyUI app tree + custom nodes — app version pinned by `COMFYUI_APP_REF`, reconciled on boot ([configuration.md](configuration.md#comfyui-application-version)) | mixed |
-| `n8n-data` named volume | n8n workflows and credentials | n8n native |
 | `couchdb-data` named volume | CouchDB (Obsidian LiveSync) | CouchDB native |
 | `open-webui-data` named volume | Open WebUI accounts + uploads | SQLite / files |
 
@@ -44,7 +43,7 @@ Reference for where data lives, how it moves, and what survives a restart / rebu
 Every state-changing call to ops-controller (every `POST`, whatever the route) leaves exactly one record, whatever its outcome: success, dry run, refusal (`401` without the bearer, `403` outside the principal's allowlist, `409` during a GPU lease, `400` without `confirm`) or failure. Reads (`GET`) leave none, except a read the caller's principal is not granted (`403`), which is recorded like a write. The records are written in one place, `ControlPlane.handle()` in `ordo/control/api.py`, so a new route is audited without opting in.
 
 ```json
-{"ts":1790281806.1,"caller":"dashboard","action":"restart","target":"n8n","result":"ok","method":"POST","path":"/services/n8n/restart","status":200,"dry_run":false,"confirm":true}
+{"ts":1790281806.1,"caller":"dashboard","action":"restart","target":"searxng","result":"ok","method":"POST","path":"/services/searxng/restart","status":200,"dry_run":false,"confirm":true}
 {"ts":1790281810.4,"caller":"hermes","action":"start","target":"llamacpp","result":"refused","method":"POST","path":"/services/llamacpp/start","status":409,"dry_run":false,"confirm":true,"error":"'llamacpp' is evicted for a GPU lease held by ['gate-comfyui']; ..."}
 {"ts":1790281815.0,"caller":"gpu-gate","action":"lease.request","target":"gate-comfyui","result":"ok","method":"POST","path":"/jobs","status":200,"dry_run":false,"confirm":false,"detail":"granted"}
 ```
@@ -179,13 +178,11 @@ Hermes keeps its own state in the `hermes-home` named volume (mounted at `/home/
 | `hermes-home` volume | Hermes brain (sessions, config, skills, cron) | yes | yes |
 | `qdrant-data` volume | Vector DB | yes | yes |
 | `couchdb-data` volume | CouchDB (LiveSync) | yes | yes |
-| `n8n-data` volume | n8n workflows | yes | yes |
 | `open-webui-data` volume | Open WebUI accounts | yes | yes |
 | `models-gguf` volume | llama.cpp GGUF weights | yes | yes |
 | `comfyui-models` volume | ComfyUI weights | yes | yes |
 | `comfyui-app` volume | ComfyUI app + custom nodes | yes | yes |
 | `data/rag-input/` | RAG drop zone | yes | yes |
-| `data/n8n-files/` | n8n file exchange | yes | yes |
 | `data/ops-controller/` | Audit log | yes | yes |
 | `litellm-db-data` volume | LiteLLM Postgres (virtual keys, teams, spend) | yes | yes |
 | `data/dashboard/` | Throughput / benchmarks | yes | yes |
@@ -214,7 +211,7 @@ rendered stack in `out/` (`--stack DIR` for another), so render first.
 | Method | Used for | Backup | Restore |
 |---|---|---|---|
 | `pg_dump` | `litellm-db-data`, `langfuse-db-data` | `pg_dump -Fc` in the running server, online | loads the dump into a temporary database beside the live one, then (clients stopped) renames it over the live one in one transaction and drops the old copy |
-| `stopped` | `hermes-home`, `qdrant-data`, `couchdb-data`, `n8n-data`, `open-webui-data`, `grafana-data`, the Langfuse ClickHouse, Redis and MinIO volumes | stops the services writing the volume, snapshots its files, starts them again | stops the writers, unpacks into a staging directory in the volume, swaps it in by renames, starts them |
+| `stopped` | `hermes-home`, `qdrant-data`, `couchdb-data`, `open-webui-data`, `grafana-data`, the Langfuse ClickHouse, Redis and MinIO volumes | stops the services writing the volume, snapshots its files, starts them again | stops the writers, unpacks into a staging directory in the volume, swaps it in by renames, starts them |
 | `live` | `caddy_data`, `caddy_config`, the Tailscale `ts-state-*` volumes, `comfyui-app` | snapshot with the services running (no database in them) | as `stopped` |
 | `skip` | `models-gguf`, `comfyui-models`, `ltx-models`, `hf-hub-cache`, `codebase-memory-cache`, `prometheus-data`, `alertmanager-data`, `langfuse-clickhouse-logs` | not saved: re-derivable (`ordo fetch`, `download_comfyui_model`), a cache, or metrics and logs | nothing |
 

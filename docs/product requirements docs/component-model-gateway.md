@@ -8,7 +8,7 @@
 ## Key Responsibilities
 - **Unified API**: OpenAI-compatible surface (`/v1/...`) for local and routed models.
 - **Provider / API keys**: Manages keys and headers where configured; local llama.cpp uses the stack's shared key material.
-- **Cross-service use**: Open WebUI, Hermes, n8n, and other services target this service instead of raw llama.cpp where compose wires them.
+- **Cross-service use**: Open WebUI, Hermes, and other services target this service instead of raw llama.cpp where compose wires them.
 - **Extensibility**: Additional backends or policies are added in the gateway service code and compose env—not in every client.
 
 ## API Reference
@@ -54,7 +54,6 @@ Converts Responses API input items and tool definitions to chat-completions form
 |--------|---------|--------|---------------|
 | Open WebUI | `OPENAI_API_BASE_URL=http://model-gateway:11435/v1` | Same | None |
 | Hermes | `http://model-gateway:11435/v1` | Same | None |
-| N8N | No LLM node set | `OPENAI_API_BASE=http://model-gateway:11435/v1` | Docs only |
 | Cursor/external | Via Caddy `:443/llm/v1` (bearer `LITELLM_MASTER_KEY`; no host port on model-gateway) | Same | None |
 
 ## Configuration

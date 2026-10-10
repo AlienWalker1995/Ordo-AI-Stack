@@ -35,7 +35,7 @@ REGISTRY = PluginRegistry.load(ROOT / "services")
 # reads at runtime, so every derived key a service can read is present in this render.
 SITE = {"CADDY_BIND": "127.0.0.1", "CADDY_TAILNET_HOSTNAME": "host.example.ts.net",
         "CADDY_TAILNET_DOMAIN": "example.ts.net", "SSO_ALLOWED_EMAILS": "me@example.com", "MEMORY_VAULT_PATH": "/srv/vault",
-        "N8N_WEBHOOK_URL": "https://n8n.example.ts.net/", "HERMES_MAX_TOKENS": "32768",
+        "HERMES_MAX_TOKENS": "32768",
         "HERMES_COMPRESSION_THRESHOLD_PERCENT": "0.8", "LLAMACPP_OVERRIDE_KV": "x=int:1",
         "LLAMACPP_CPU_MODEL": "cpu.gguf", "LLAMACPP_EMBED_MODEL": "embed.gguf"}
 # A model placement (catalog n_cpu_moe, cpu_threads, load_mode), which the auto-picked model does not
@@ -50,8 +50,8 @@ HW = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": "GPU-aaaa"},
 # NInfer needs a Blackwell card (catalog min_compute_cap 12.0).
 NINFER_HW = {**HW, "gpus": [{**HW["gpus"][0], "compute_cap": "12.0"}, HW["gpus"][1]]}
 # The operator's plugin set, so every service renders.
-PLUGINS = ["comfyui", "song-gen", "voice", "rag", "qdrant-rag", "llamacpp-cpu", "open-webui", "automation",
-           "searxng-web", "searxng", "codebase-memory-ui", "codebase-memory", "comfyui-mcp", "n8n",
+PLUGINS = ["comfyui", "song-gen", "voice", "rag", "qdrant-rag", "llamacpp-cpu", "open-webui",
+           "searxng-web", "searxng", "codebase-memory-ui", "codebase-memory", "comfyui-mcp",
            "orchestration", "hermes-dashboard", "monitoring", "memory-vault", "edge", "tailnet-names",
            "obsidian-livesync", "langfuse", "evals"]
 
@@ -84,8 +84,6 @@ SPEC: dict[str, set[str]] = {
     "couchdb": {"COUCHDB_USER"},
     # services/obsidian-livesync/entrypoint.sh (`:?` guards on all three).
     "livesync-bridge": {"COUCHDB_USER", "COUCHDB_INTERNAL_URL", "LIVESYNC_DATABASE"},
-    # n8n's own config reads N8N_WEBHOOK_URL (@n8n/config `webhookUrl`), not only WEBHOOK_URL (AR3).
-    "n8n": {"N8N_WEBHOOK_URL"},
 }
 
 

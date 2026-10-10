@@ -271,6 +271,12 @@ All notable changes to this project are documented here. The format is loosely b
   naming both ids, as the component doc already promised.
 
 ### Removed
+- **n8n.** The `automation` plugin (the n8n service, its `:8445` edge site, the `/n8n/webhook/*`
+  and `/n8n/rest/oauth2-credential/callback*` passthroughs and legacy `/n8n` redirect, the `n8n`
+  tailnet sidecar, the `n8n-data` volume) and the `n8n` MCP bridge (`ordo/n8n-mcp`, `N8N_API_KEY`,
+  `LITELLM_KEY_AUTOMATION`) are gone, along with `scripts/n8n/bootstrap_owner.py`, the wizard's
+  `automation` capability and the evals `n8n_health` check (item `ops-14`). Nothing in the stack
+  depended on it; workflows that used it moved to plain code. Caddy now publishes eight ports.
 - **The runtime model registry file (`data/ops-controller/model-registry.json`).** It was a
   second, hand-edited record of which GGUF and vision projector llama.cpp serves, with no writer
   since GPU assignment went 410. ops-controller's `/registry/models` and `/registry/gpus` now

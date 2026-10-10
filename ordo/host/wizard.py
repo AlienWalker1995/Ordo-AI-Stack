@@ -63,11 +63,6 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
         "plugins": ["voice"],
         "gpu": True,
     },
-    "automation": {
-        "label": "Automation (n8n workflows)",
-        "plugins": ["automation", "n8n"],
-        "gpu": False,
-    },
     "search": {
         "label": "Web search (self-hosted SearXNG)",
         "plugins": ["searxng-web", "searxng"],
@@ -90,8 +85,8 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
 # chat preset keeps `rag` because Open WebUI stores its documents in Qdrant and cannot run without it.
 FEATURE_PRESETS: dict[str, dict[str, Any]] = {
     "chat": {"label": "Chat only (Open WebUI + the agent)", "capabilities": ["rag"]},
-    "tools": {"label": "Chat + tools (web search, document RAG, n8n automation)",
-              "capabilities": ["rag", "search", "automation"]},
+    "tools": {"label": "Chat + tools (web search, document RAG)",
+              "capabilities": ["rag", "search"]},
     "everything": {"label": "Everything this hardware supports", "capabilities": None},
 }
 DEFAULT_FEATURES = "everything"

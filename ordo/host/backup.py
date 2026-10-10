@@ -89,7 +89,7 @@ if ! tar -xzpf - -C "$S"; then
   rm -rf "$S"; echo "the unpack failed; the volume is unchanged"; exit {SWAP_UNCHANGED}
 fi
 # The snapshot's `.` entry set the staging directory's owner and mode; the volume root takes them, so
-# a non-root service (n8n, CouchDB) can still write at its data root, even in a newly created volume.
+# a non-root service (CouchDB) can still write at its data root, even in a newly created volume.
 OLD_OWNER=$(stat -c %u:%g "$V") && OLD_MODE=$(stat -c %a "$V") \
   && NEW_OWNER=$(stat -c %u:%g "$S") && NEW_MODE=$(stat -c %a "$S") || {{ rm -rf "$S"; exit {SWAP_UNCHANGED}; }}
 put_root_back() {{ chown "$OLD_OWNER" "$V"; chmod "$OLD_MODE" "$V"; }}

@@ -5,7 +5,7 @@ render substrate (`ordo.yaml` → `out/`) produces the *same* set of services ev
 between deployments is only **the front door in front of them**. Two facts make this possible:
 
 - **Caddy is the only service that publishes host ports.** Every UI (`open-webui`, `dashboard`,
-  `n8n`, `comfyui`, `hermes-dashboard`, `codebase-memory-ui`) and every gateway (`model-gateway`,
+  `comfyui`, `hermes-dashboard`, `codebase-memory-ui`) and every gateway (`model-gateway`,
   the `mcp-*` servers, `litellm-db`, `qdrant`, …) publishes **no** host port, each is reachable only on the internal
   `ordo-net` network, or *through* Caddy. So changing how the world reaches the stack means changing
   exactly one thing: Caddy's listeners and their TLS/DNS.
@@ -31,7 +31,7 @@ removes the SSO gate. See [Security note](#security-note) below.
 | | Model 1 — Tailscale | Model 2 — Self-hosted domain | Model 3 — Cloud VM (AWS/equiv.) |
 |---|---|---|---|
 | **Exposure** | Private tailnet only; zero public surface | Public internet (your NAT/router or tunnel) | Public internet (cloud provider network) |
-| **DNS** | MagicDNS (`host.tailnet.ts.net` + `chat\|dash\|n8n\|comfy\|hermes\|graph.<tailnet>.ts.net`) | Your domain — public A/AAAA or split-horizon (`ordo.example.com`) | Route 53 / any DNS → the VM's elastic IP |
+| **DNS** | MagicDNS (`host.tailnet.ts.net` + `chat\|dash\|comfy\|hermes\|graph.<tailnet>.ts.net`) | Your domain — public A/AAAA or split-horizon (`ordo.example.com`) | Route 53 / any DNS → the VM's elastic IP |
 | **Cert mechanism** | `tailscale cert` (front door) + per-node MagicDNS certs via `tailscale serve` (sidecars); both auto-renew | Wildcard `*.example.com` via ACME **DNS-01** (no inbound `:80` needed) | ACM behind an ALB, **or** Caddy DNS-01 on the instance |
 | **NAT / tunnel** | None — WireGuard mesh | Port-forward `:443` (+`:8443`–`:8450`) **or** an outbound tunnel | Security group allowing inbound `:443` only; ALB optional |
 | **SSO gate** | Google SSO at the edge | Google SSO at the edge (unchanged) | Google SSO at the edge (unchanged) |
@@ -51,14 +51,14 @@ tailnet; there is no public DNS record and no port open to the internet.
   `0.0.0.0` that stays internet-dark because nothing is port-forwarded — operator-approved
   2026-07-17).
 - **The SSO-gated port layer** — Caddy publishes `:443` (front door: landing page, the one Google
-  OAuth callback, `/llm/*` and `/mcp` API routes, n8n webhook/OAuth passthroughs, legacy-subpath
+  OAuth callback, `/llm/*` and `/mcp` API routes, legacy-subpath
   302s) plus one dedicated SSO-gated port per UI: `:8443` Open WebUI, `:8444` Dashboard (+`/grafana/`),
-  `:8445` n8n, `:8446` ComfyUI, `:8447` Hermes, `:8448` codebase-memory, `:8449` LiteLLM admin UI, `:8450` Langfuse. Every prebuilt SPA is served
+  `:8446` ComfyUI, `:8447` Hermes, `:8448` codebase-memory, `:8449` LiteLLM admin UI, `:8450` Langfuse. Every prebuilt SPA is served
   at the root it was compiled for. (See [operator-guide](operator-guide.md) and
   [configuration → Network Ports](configuration.md#network-ports).)
 - **Clean per-service hostnames** via the [`tailnet-names`](../services/tailnet-names/plugin.yaml)
   plugin: one minimal Tailscale sidecar per UI joins the tailnet as its own node —
-  `chat|dash|n8n|comfy|hermes|graph.<tailnet>.ts.net` — and `tailscale serve` forwards its clean host
+  `chat|dash|comfy|hermes|graph.<tailnet>.ts.net` — and `tailscale serve` forwards its clean host
   into the *existing* SSO-gated Caddy port over loopback (`network_mode: service:caddy`). So
   `https://chat.<tailnet>.ts.net/` and `https://host.tailnet.ts.net:8443/` are the same Open WebUI
   behind the same gate.
@@ -192,7 +192,7 @@ The compose stack splits cleanly by hardware need:
   `nvidia: true` in their plugin manifests and require a **GPU instance** (e.g. AWS `g`/`p` families
   with the NVIDIA container runtime). On a CPU-only VM the render engine gates them **off** rather than
   shipping a guaranteed crash.
-- **The CPU-only subset** — llama.cpp (CPU inference), Open WebUI, n8n, dashboard, the model/MCP
+- **The CPU-only subset** — llama.cpp (CPU inference), Open WebUI, dashboard, the model/MCP
   gateways, Qdrant, the edge — **runs anywhere**, including a plain CPU VM. A perfectly valid cloud
   deployment is the CPU subset in the cloud with no GPU services at all.
 

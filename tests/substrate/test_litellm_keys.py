@@ -68,7 +68,7 @@ def test_the_real_model_names_are_accepted():
     assert keys[0]["models"] == ["local-chat", "local-embed"]
 
 
-def test_full_render_declares_hermes_open_webui_automation_keys(tmp_path):
+def test_full_render_declares_hermes_and_open_webui_keys(tmp_path):
     rc = _full()
     by_env = {k["env"]: k for k in rc.litellm_keys}
     # The grant names servers the way LiteLLM knows them (hyphen-free), NOT by hyphenated server_id:
@@ -84,7 +84,6 @@ def test_full_render_declares_hermes_open_webui_automation_keys(tmp_path):
     # on the single llama.cpp slot. Operator decision 2026-09-22: use both as workers.
     assert by_env["LITELLM_KEY_HERMES"]["models"] == ["local-chat", "local-embed", "local-chat-cpu"]
     assert by_env["LITELLM_KEY_OPEN_WEBUI"]["mcp_servers"] == []
-    assert by_env["LITELLM_KEY_AUTOMATION"]["models"] == ["local-chat"]
     for env in by_env:
         assert env in rc.required_secrets
     rc.write(tmp_path)

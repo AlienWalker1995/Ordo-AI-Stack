@@ -25,18 +25,18 @@ P_DUAL = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": UUID_5090, "compu
 # Every kind=service plugin V2 ships after the parity port (GPU + CPU-ok), on the real dual-GPU host.
 EXPECTED_SERVICE_PLUGINS = {
     "comfyui", "song-gen", "voice", "monitoring",          # GPU / media / voice
-    "rag", "automation", "open-webui",                     # ported CPU-ok services
+    "rag", "open-webui",                                   # ported CPU-ok services
     "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
     "ltx-trainer",                                        # LoRA trainer (sole trainer since 2026-07-24)
     "obsidian-livesync",                                 # cross-device Obsidian notes sync (CouchDB LiveSync + bridge)
     "llamacpp-cpu",                                      # CPU LLM fallback (needs 24GB RAM, no GPU); dormant behind the cpu-fallback profile
 }
 # memory-vault is a post-parity add (file-based markdown-memory MCP). codebase-memory / comfyui /
-# n8n / orchestration are the RESTORED V1 roster (the V1→V2 migration had silently dropped them);
+# orchestration are the RESTORED V1 roster (the V1→V2 migration had silently dropped them);
 # these are SERVER ids — the comfyui MCP plugin is id `comfyui-mcp` but renders under server_id
 # `comfyui` to preserve Hermes' V1 `comfyui__*` tool namespace.
 EXPECTED_MCP = {"qdrant-rag", "searxng", "memory-vault",
-                "codebase-memory", "comfyui", "n8n", "orchestration"}
+                "codebase-memory", "comfyui", "orchestration"}
 
 
 def _dual():
@@ -52,32 +52,31 @@ def test_dual_gpu_enables_the_full_parity_set():
 
 
 def test_parity_matrix_counts():
-    # 18 kind=service plugins are REGISTERED (11 parity set + ltx-trainer + tailnet-names +
-    # obsidian-livesync + obsidian-livesync-funnel + llamacpp-cpu + langfuse + evals) and 7 kind=mcp
-    # (qdrant-rag, searxng, memory-vault + the restored codebase-memory / comfyui-mcp / n8n /
-    # orchestration). 14 of the service plugins ENABLE on the full host: langfuse, evals, the public
+    # 17 kind=service plugins are REGISTERED (10 parity set + ltx-trainer + tailnet-names +
+    # obsidian-livesync + obsidian-livesync-funnel + llamacpp-cpu + langfuse + evals) and 6 kind=mcp
+    # (qdrant-rag, searxng, memory-vault + the restored codebase-memory / comfyui-mcp /
+    # orchestration). 13 of the service plugins ENABLE on the full host: langfuse, evals, the public
     # Funnel and the tailnet-name sidecars are opt-in (`default: false`), so `plugins: auto`
     # deliberately leaves them out. (The media "worker"
     # plugin was retired, dropping the parity set from 12 to 11; llamacpp-cpu - the CPU LLM
-    # fallback - was added post-parity.)
+    # fallback - was added post-parity; n8n (`automation`) was removed 2026-10-10.)
     svc = [p for p in REGISTRY.plugins if p.kind == "service"]
     mcp = [p for p in REGISTRY.plugins if p.kind == "mcp"]
     opt_in = [p.id for p in svc if not p.default]
-    assert len(svc) == 18 and len(mcp) == 7
+    assert len(svc) == 17 and len(mcp) == 6
     assert opt_in == ["evals", "langfuse", "obsidian-livesync-funnel", "tailnet-names"]
     rc = _dual()
-    assert len(rc.plugins_enabled) == 14
-    assert len(rc.mcp_servers) == 7
+    assert len(rc.plugins_enabled) == 13
+    assert len(rc.mcp_servers) == 6
 
 
 def test_ported_services_carry_pins_and_healthchecks():
     # spot-check the exact V1 pins/healthchecks survived the port (no silent :latest drift)
     c = _dual().compose_dict()
     assert c["services"]["qdrant"]["image"].startswith("qdrant/qdrant:v1.19.1@sha256:")
-    assert c["services"]["n8n"]["image"].startswith("docker.n8n.io/n8nio/n8n:2.41.6@sha256:")
     assert c["services"]["open-webui"]["image"].startswith("ghcr.io/open-webui/open-webui:v0.11.4@sha256:")
     assert "@sha256:" in c["services"]["searxng"]["image"]         # searxng pinned by digest
-    for svc in ("qdrant", "n8n", "open-webui", "rag-ingestion"):
+    for svc in ("qdrant", "open-webui", "rag-ingestion"):
         assert "healthcheck" in c["services"][svc]
 
 
@@ -102,7 +101,7 @@ def test_core_gateway_and_mcp_services_are_project_or_pinned_images():
     assert c["services"]["model-gateway"]["image"] == "ordo/model-gateway:current"
     assert "mcp-gateway" not in c["services"]
     for n in ("mcp-orchestration", "mcp-qdrant-rag", "mcp-comfyui", "mcp-codebase-memory",
-              "mcp-memory-vault", "mcp-n8n"):
+              "mcp-memory-vault"):
         assert c["services"][n]["image"].startswith("ordo/")
     for n in ("mcp-searxng",):
         assert "@sha256:" in c["services"][n]["image"]

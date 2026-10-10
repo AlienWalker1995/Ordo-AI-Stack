@@ -12,7 +12,7 @@
 #   - agent:8642            the harness suites drive Hermes through its OpenAI-compatible API
 #                           server (enabled in services/hermes by HERMES_API_SERVER_KEY)
 #   - langfuse-web:3000     datasets, dataset runs and scores (the `hermes` project key pair)
-#   - ops-controller / n8n / qdrant   OUT-OF-BAND ground truth for harness checks: the runner
+#   - ops-controller / qdrant   OUT-OF-BAND ground truth for harness checks: the runner
 #                           verifies what Hermes did itself and never trusts Hermes's claim
 # No Docker socket, no host port, no GPU. GPU renders are out of scope by construction: no suite
 # asks for image/video generation, and llamacpp-bound work runs at concurrency 1.
@@ -61,7 +61,6 @@ services:
       HERMES_API_URL: http://agent:8642/v1
       LANGFUSE_HOST: http://langfuse-web:3000
       OPS_CONTROLLER_URL: http://ops-controller:9000
-      N8N_URL: http://n8n:5678
       QDRANT_URL: http://qdrant:6333
       # Same var rag-ingestion reads (services/rag/plugin.yaml) for the collection it upserts into,
       # so the harness's RAG-leak safety check (runner._check_rag_leak) scans the collection the

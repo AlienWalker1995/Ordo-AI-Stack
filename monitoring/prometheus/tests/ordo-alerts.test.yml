@@ -86,18 +86,18 @@ tests:
     input_series:
       - series: 'ordo_container_restarts_total{service="mcp-comfyui"}'
         values: '0 2 4 6 7x40'
-      - series: 'ordo_container_restarts_total{service="n8n"}'
+      - series: 'ordo_container_restarts_total{service="searxng"}'
         values: '0+1x40'
     alert_rule_test:
       - eval_time: 30m
         alertname: ContainerRestartLoop
         exp_alerts:
-          - exp_labels: {severity: critical, service: n8n}
+          - exp_labels: {severity: critical, service: searxng}
             exp_annotations:
-              summary: n8n is crash-looping
+              summary: searxng is crash-looping
               description: >-
-                n8n keeps restarting (5 restarts in the last 5 minutes). Read `docker logs
-                ordo-n8n-1`.
+                searxng keeps restarting (5 restarts in the last 5 minutes). Read `docker logs
+                ordo-searxng-1`.
 
   - interval: 1m
     input_series:

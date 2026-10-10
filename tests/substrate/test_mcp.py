@@ -161,15 +161,15 @@ def test_hosted_server_renders_no_compose_service():
     assert yaml.safe_load(render_litellm_mcp_fragment(servers))["mcp_servers"]["ext"]["url"] == "https://h.example/mcp"
 
 
-# ── Restored roster (V1→V2 migration dropped these): codebase-memory, comfyui, n8n, orchestration
+# ── Restored roster (V1→V2 migration dropped these): codebase-memory, comfyui, orchestration
 #    must reappear in the rendered servers.json + compose services with correct wiring. ──
-RESTORED = {"codebase-memory", "comfyui", "n8n", "orchestration"}
+RESTORED = {"codebase-memory", "comfyui", "orchestration"}
 
 
 def test_restored_mcp_plugins_loaded():
     mcp = {p.id for p in REGISTRY.plugins if p.kind == "mcp"}
     # plugin ids (comfyui-mcp decoupled from its server_id) — the manifests are present
-    assert {"codebase-memory", "comfyui-mcp", "n8n", "orchestration"} <= mcp
+    assert {"codebase-memory", "comfyui-mcp", "orchestration"} <= mcp
 
 
 def test_restored_servers_in_rendered_registry():
@@ -217,30 +217,6 @@ def test_codebase_memory_wiring():
     assert "index_repository" in cb["tools"] and "search_graph" in cb["tools"]
 
 
-def test_n8n_bridged_and_banner_suppressed():
-    rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
-    n8 = next(s for s in rc.mcp_servers if s["id"] == "n8n")
-    # Project-built stdio bridge (services/n8n/Dockerfile) over the pinned upstream image: the
-    # upstream's own HTTP mode is session-ful and LiteLLM cannot hold a session across operations.
-    assert n8["image"] == "ordo/n8n-mcp"
-    assert n8["port"] == 9000
-    # No upstream bearer: the bridge listens on the internal MCP network only.
-    assert n8["auth_type"] == "" and n8["auth_secret"] == ""
-    # the banner/log suppression: under the stdio bridge a stray stdout byte corrupts JSON-RPC,
-    # and these also keep the FULL tool set (not the docs-only subset)
-    assert n8["env"]["LOG_LEVEL"] == "error"
-    assert n8["env"]["N8N_DIAGNOSTICS_ENABLED"] == "false"
-    assert n8["env"]["DISABLE_TELEMETRY"] == "true"
-    # a file the image's CMD exports before the bridge starts (services/n8n/Dockerfile)
-    assert "N8N_API_KEY" not in n8["env"]
-    assert [ref.key for ref in n8["secret_files"]] == ["N8N_API_KEY"]
-
-
-def test_n8n_api_key_is_a_required_secret():
-    rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
-    assert "N8N_API_KEY" in rc.required_secrets  # emitted into secrets.env.example
-
-
 def test_orchestration_wiring():
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     orc = next(s for s in rc.mcp_servers if s["id"] == "orchestration")
@@ -256,7 +232,7 @@ def test_orchestration_wiring():
 
 
 def test_restored_images_do_not_warn():
-    # codebase-memory/comfyui/orchestration = project buildable images; n8n = real registry digest.
+    # codebase-memory/comfyui/orchestration = project buildable images.
     rc = render(_src(hardware=P_5090), CATALOG, REGISTRY)
     assert not any("placeholder" in w for w in rc.warnings)
     assert not any("not digest-pinned" in w for w in rc.warnings)
@@ -296,7 +272,7 @@ def test_render_builds_server_plugin_map():
     assert m["comfyui"] == "comfyui-mcp"
     # the identity-mapped ones (server_id defaults to plugin id)
     assert m["qdrant-rag"] == "qdrant-rag" and m["searxng"] == "searxng"
-    assert m["n8n"] == "n8n" and m["orchestration"] == "orchestration"
+    assert m["orchestration"] == "orchestration"
     assert m["codebase-memory"] == "codebase-memory" and m["memory-vault"] == "memory-vault"
     # keyed by SERVER id, never the decoupled plugin id
     assert "comfyui-mcp" not in m
@@ -316,7 +292,7 @@ def test_write_emits_server_plugin_map_in_servers_json(tmp_path):
     render(_src(hardware=P_5090), CATALOG, REGISTRY).write(tmp_path)
     m = json.loads((tmp_path / "mcp" / "servers.json").read_text())["plugin_map"]
     assert m["comfyui"] == "comfyui-mcp"
-    assert {"qdrant-rag", "searxng", "n8n", "orchestration",
+    assert {"qdrant-rag", "searxng", "orchestration",
             "codebase-memory", "memory-vault"} <= set(m)
     # servers.json is the ONLY file in the dir the dashboard mounts at /mcp-config
     assert [p.name for p in (tmp_path / "mcp").iterdir()] == ["servers.json"]
@@ -407,7 +383,7 @@ def test_the_gateway_config_digest_is_the_digest_of_what_write_puts_in_its_confi
 # other ordo-net container, the LAN, the tailnet and the internet. No egress filter applies to them
 # on Docker Desktop (SECURITY.md, "MCP SSRF"), so adding one widens the SSRF surface: justify it,
 # add it here and name it in that SECURITY.md row.
-STACK_NETWORK_MCP = {"comfyui-mcp", "n8n", "orchestration", "qdrant-rag", "searxng"}
+STACK_NETWORK_MCP = {"comfyui-mcp", "orchestration", "qdrant-rag", "searxng"}
 
 
 def test_stack_network_mcp_servers_are_the_documented_set():

@@ -5,7 +5,7 @@ hardcoded substrate services must resolve — through the single `ordo.render.bu
 EXISTING build context + Dockerfile under `services/` (or be explicitly declared built out-of-band
 via `build: {external: true}`). So a folder rename or an image typo fails CI, not deploy.
 
-Pull-only UPSTREAM images (caddy, qdrant, n8n, node/llama.cpp bases, …) are exempt by construction:
+Pull-only UPSTREAM images (caddy, qdrant, node/llama.cpp bases, …) are exempt by construction:
 the resolver returns None for them (they are not project images), and this test only asserts over
 images the resolver classifies as project-built.
 """
@@ -72,7 +72,6 @@ def test_folder_id_differs_from_image_name_resolves_to_folder():
     """The services where folder-id ≠ image-name (audit §2.1) must resolve to their real folder,
     not the (nonexistent) image-named one — the exact bug the resolver cures."""
     expected = {
-        "ordo/n8n-mcp": "services/n8n",
         "ordo/mcpvault-mcp": "services/memory-vault",
         "ordo/rag-ingestion": "services/rag",
         "ordo/codebase-memory-mcp": "services/codebase-memory",
