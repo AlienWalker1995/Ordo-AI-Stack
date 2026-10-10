@@ -308,3 +308,18 @@ def test_llm_route_blocks_litellm_metrics(caddyfile_text: str) -> None:
     assert "respond @metrics 404" in handler
     assert handler.index("respond @metrics 404") < handler.index("reverse_proxy model-gateway:11435"), (
         "the metrics 404 must come before the proxy, or Caddy forwards the request first")
+
+
+def test_loopback_upstream_origin_is_checked_at_the_edge_then_rewritten(caddyfile_text: str) -> None:
+    """A loopback-bound upstream (Hermes) refuses any browser Origin that is not loopback, which broke
+    its chat websockets behind the edge. The cross-site websocket guard moves to Caddy: a foreign
+    Origin is refused with 403 BEFORE the request reaches the app, and only then is an allowed Origin
+    rewritten to loopback. Rewriting without the check would silently drop that protection."""
+    start = caddyfile_text.index("(sso_service_loopback) {")
+    snippet = caddyfile_text[start:caddyfile_text.index("\n}\n", start)]
+    assert "@foreign_origin expression" in snippet
+    assert 'https://{args[1]}.{$CADDY_TAILNET_DOMAIN}' in snippet
+    assert 'https://{$CADDY_TAILNET_HOSTNAME}:{args[2]}' in snippet
+    assert snippet.index("respond @foreign_origin") < snippet.index("reverse_proxy {args[0]}")
+    assert 'header_up Origin ".+" "http://{args[0]}"' in snippet
+    assert "import sso_service_loopback 127.0.0.1:9119 hermes 8447" in caddyfile_text

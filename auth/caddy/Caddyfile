@@ -93,13 +93,24 @@
 # skips the check entirely — which is why this only appears once a service moves to
 # loopback. Use ONLY for loopback upstreams; everything else keeps (sso_service) so the
 # origin Host reaches the app.
+#
+# The same bind also makes the upstream check a browser's Origin against loopback, so its
+# websockets (Hermes's chat terminal and side panel) were refused with origin_mismatch for
+# every browser. The check guards against cross-site websocket hijacking, so it moves here
+# instead of being dropped: an Origin other than this service's own public names (the
+# tailnet sidecar `{args[1]}.<tailnet>` and the host's `:{args[2]}`) is refused with 403,
+# and an allowed one is rewritten to loopback like Host.
+# Args: <loopback upstream> <tailnet sidecar name> <edge port>.
 (sso_service_loopback) {
     import tls_tailnet
     import sso_port_gate
     route {
+        @foreign_origin expression `{header.Origin} != "" && {header.Origin} != "https://{args[1]}.{$CADDY_TAILNET_DOMAIN}" && {header.Origin} != "https://{$CADDY_TAILNET_HOSTNAME}:{args[2]}"`
+        respond @foreign_origin "cross-origin request refused" 403
         import sso_forward_auth
         reverse_proxy {args[0]} {
             header_up Host {args[0]}
+            header_up Origin ".+" "http://{args[0]}"
         }
     }
 }
@@ -162,7 +173,7 @@
 # Recreating caddy destroys this namespace and orphans hermes-dashboard along with
 # the tailnet sidecars, so recreate them together: `ordo recreate caddy` names them.
 :8447 {
-    import sso_service_loopback 127.0.0.1:9119
+    import sso_service_loopback 127.0.0.1:9119 hermes 8447
 }
 
 # ---- :8448 — codebase-memory 3D graph ----
