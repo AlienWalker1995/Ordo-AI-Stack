@@ -204,6 +204,21 @@ RUN cd /opt/hermes-agent \
                            tests/agent/test_reasoning_only_stop_persistence.py \
     && echo "reasoning-only-stop-reprompt patch applied"
 
+# PATCH: one Models-page card per model on the dashboard's Analytics page.
+# Aux usage (titles, compression, approvals, vision) records whatever provider string it resolved
+# (`auto`, `custom`, empty), and upstream keyed those rows by (model, provider) and dropped the task
+# label, so this stack's single local model showed as ~15 unlabeled `local-chat` cards. The diff
+# folds aux usage into the model's busiest session row (sessions not counted twice); a model used
+# only by aux tasks still gets one card (upstream #23270). Includes a test. v0.21.5 has no fix.
+# --check first: the build fails loudly if a future pin bump breaks the patch.
+COPY models-analytics-aux-fold.diff /tmp/models-analytics-aux-fold.diff
+RUN cd /opt/hermes-agent \
+    && git apply --recount --check /tmp/models-analytics-aux-fold.diff \
+    && git apply --recount /tmp/models-analytics-aux-fold.diff \
+    && chown hermes:hermes hermes_cli/web_routers/analytics.py \
+                           tests/hermes_state/test_aux_usage_accounting.py \
+    && echo "models-analytics-aux-fold patch applied"
+
 # SKILLS OWNED BY THIS REPO: the bundled ComfyUI skill, patched and shipped read-only.
 # Upstream's scripts default to submitting at http://127.0.0.1:8188, straight at the engine. On
 # this stack that skips the GPU admission gate, which is what takes the scheduler lease and evicts
