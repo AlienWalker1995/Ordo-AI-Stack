@@ -61,9 +61,14 @@ fi
 # The chat model's catalog `gateway: {drop_tool_strict: true}` (rendered only for such a model): LiteLLM
 # removes `strict` from every tool definition before the request reaches the GPU chat server, which
 # refuses strict tools. Anything but "true" or unset is a render/manual-edit error: refuse to start.
+# reasoning_effort is also dropped on the OpenAI /v1/chat/completions path (the Anthropic
+# /v1/messages path is handled by the reasoning_effort_gate callback): LiteLLM maps an
+# Anthropic `thinking` budget to an OpenAI-style reasoning_effort ("high"/"minimal"/...), but
+# the Qwen3.6 chat template only accepts xhigh/medium/low, so "high"/"minimal" raise a Jinja
+# exception and 400 the request. Dropping the field lets the backend use its own default.
 case "${GATEWAY_DROP_TOOL_STRICT:-}" in
-  true) GPU_ADDITIONAL_DROP_PARAMS='["tools[*].function.strict"]' ;;
-  "") GPU_ADDITIONAL_DROP_PARAMS='[]' ;;
+  true) GPU_ADDITIONAL_DROP_PARAMS='["tools[*].function.strict", "reasoning_effort"]' ;;
+  "") GPU_ADDITIONAL_DROP_PARAMS='["reasoning_effort"]' ;;
   *) echo "GATEWAY_DROP_TOOL_STRICT must be 'true' or unset, not '${GATEWAY_DROP_TOOL_STRICT}'" >&2; exit 1 ;;
 esac
 
@@ -85,6 +90,7 @@ sed -e "s|__CTX_SIZE__|${CTX_SIZE}|g" \
 # config lives in /tmp (read_only container + tmpfs). Co-locate the callback with it.
 cp /app/throughput_callback.py /tmp/throughput_callback.py
 cp /app/gpu_lease_fallback_gate.py /tmp/gpu_lease_fallback_gate.py
+cp /app/reasoning_effort_gate.py /tmp/reasoning_effort_gate.py
 
 # Merge the render-emitted MCP server fragment (out/model-gateway/mcp_servers.yaml, mounted at
 # /config). Required: a missing fragment means the mount or the render is wrong; never boot with

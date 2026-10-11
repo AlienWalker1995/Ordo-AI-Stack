@@ -106,6 +106,9 @@ model_list:
       stream_timeout: 1800
       input_cost_per_token: __LOCAL_INPUT_COST_PER_TOKEN__
       output_cost_per_token: __LOCAL_OUTPUT_COST_PER_TOKEN__
+      # Same Qwen3.6 chat template as the GPU model: drop the LiteLLM-translated reasoning_effort
+      # (see the GPU entries) so a failover to CPU doesn't 400 on an Anthropic `thinking` budget.
+      additional_drop_params: ["reasoning_effort"]
     model_info:
       # Probes skip the logging callbacks; see the local-chat entry.
       health_check_params: {"no-log": true}
@@ -149,6 +152,9 @@ model_list:
       stream_timeout: 1800
       input_cost_per_token: __LOCAL_INPUT_COST_PER_TOKEN__
       output_cost_per_token: __LOCAL_OUTPUT_COST_PER_TOKEN__
+      # Same Qwen3.6 chat template as the GPU model: drop the LiteLLM-translated reasoning_effort
+      # (see the GPU entries) so a failover to CPU doesn't 400 on an Anthropic `thinking` budget.
+      additional_drop_params: ["reasoning_effort"]
     model_info:
       health_check_params: {"no-log": true}
       mode: chat
@@ -250,7 +256,7 @@ litellm_settings:
   # Plugin-dependent callbacks are NOT listed here: the renderer appends them at container start
   # through LITELLM_EXTRA_CALLBACKS (add_callbacks.py), e.g. `langfuse_otel` only when the langfuse
   # plugin is enabled, so this template never requires an optional plugin.
-  callbacks: ["throughput_callback.throughput_recorder_instance", "gpu_lease_fallback_gate.gpu_lease_fallback_gate_instance", "prometheus"]
+  callbacks: ["throughput_callback.throughput_recorder_instance", "gpu_lease_fallback_gate.gpu_lease_fallback_gate_instance", "reasoning_effort_gate.reasoning_effort_gate_instance", "prometheus"]
   require_auth_for_metrics_endpoint: false
   # Strip user_api_key_* fields from the metadata the integrations that honour this flag forward
   # (langfuse SDK, langsmith, logfire). In LiteLLM 1.100.1 the langfuse_otel callback does not

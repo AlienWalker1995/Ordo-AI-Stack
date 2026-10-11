@@ -35,6 +35,8 @@ ENTRYPOINT = GATEWAY_DIR / "entrypoint.sh"
 TEMPLATE = GATEWAY_DIR / "litellm_config.yaml"
 PROFILE_5090 = {"gpus": [{"name": "RTX 5090", "vram_gb": 32}], "ram_gb": 128, "cpu_cores": 32, "platform": "Linux"}
 DROP_STRICT = ["tools[*].function.strict"]
+# Every Qwen chat entry drops the LiteLLM-translated reasoning_effort (see entrypoint.sh).
+DROP_REASONING_EFFORT = ["reasoning_effort"]
 MASTER_KEY = "sk-" + "t" * 40
 
 
@@ -130,16 +132,18 @@ def _drops_by_model(tmp_path: Path, extra_env: dict[str, str]) -> dict[str, list
 
 def test_the_flag_drops_strict_on_the_gpu_chat_entries_only(tmp_path):
     drops = _drops_by_model(tmp_path, {"GATEWAY_DROP_TOOL_STRICT": "true"})
-    assert drops["local-chat"] == DROP_STRICT
-    assert drops["ninfer-test"] == DROP_STRICT          # the GPU pin alias, named from the weights
-    # The CPU fallback and the embedder run stock llama.cpp, which accepts (and ignores) strict.
-    others = {name: value for name, value in drops.items() if name not in ("local-chat", "ninfer-test")}
-    assert others and all(value is None for value in others.values()), others
+    assert drops["local-chat"] == DROP_STRICT + DROP_REASONING_EFFORT
+    assert drops["ninfer-test"] == DROP_STRICT + DROP_REASONING_EFFORT  # the GPU pin alias, named from the weights
+    # The CPU fallback runs stock llama.cpp, which accepts (and ignores) strict, so it only drops
+    # reasoning_effort; the embedder drops nothing.
+    cpu_chat = {name: value for name, value in drops.items() if name not in ("local-chat", "ninfer-test", "local-embed")}
+    assert cpu_chat and all(value == DROP_REASONING_EFFORT for value in cpu_chat.values()), cpu_chat
+    assert drops["local-embed"] is None
 
 
 def test_without_the_flag_nothing_is_dropped(tmp_path):
     drops = _drops_by_model(tmp_path, {})
-    assert drops["local-chat"] == [] and drops["ninfer-test"] == []
+    assert drops["local-chat"] == DROP_REASONING_EFFORT and drops["ninfer-test"] == DROP_REASONING_EFFORT
 
 
 def test_a_malformed_flag_refuses_to_start(tmp_path):
