@@ -25,7 +25,6 @@ clients (which send no `thinking` param) are unaffected.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from litellm.integrations.custom_logger import CustomLogger
 
