@@ -6,12 +6,12 @@ device wiring) all ask this module, so they cannot disagree about whether chat r
 
 Images are upstream ggml-org server builds, all at ONE build number, pinned by tag + index
 digest (multi-arch indexes, so the same pin serves amd64 and arm64 where upstream publishes
-both). Resolved read-only on 2026-09-24 with `docker buildx imagetools inspect`:
+both). Resolved read-only on 2026-10-11 with `docker buildx imagetools inspect`:
 
-  server-b9935         amd64 arm64 s390x   CPU only (libggml-cpu-* variants, no GPU backend)
-  server-cuda12-b9935  amd64 arm64         CUDA 12.8.1; PTX sm_50..sm_90, native sm_86/89/120a
-  server-rocm-b9935    amd64               ROCm 7.2.1
-  server-vulkan-b9935  amd64 arm64         Vulkan (Mesa), reaches the GPU through /dev/dri
+  server-b11552        amd64 arm64 s390x   CPU only (libggml-cpu-* variants, no GPU backend)
+  server-cuda12-b11552 amd64 arm64         CUDA 12.8.1; PTX sm_50..sm_90, native sm_86/89/120a
+  server-rocm-b11552   amd64               ROCm 7.2.1
+  server-vulkan-b11552 amd64 arm64         Vulkan (Mesa), reaches the GPU through /dev/dri
 
 The CPU pin is the same digest llamacpp-cpu and llamacpp-embed already run
 (tests/substrate/test_llamacpp_backend.py holds the three together). Bump every backend to one
@@ -42,24 +42,24 @@ class LlamaCppBackend:
 
 CPU = LlamaCppBackend(
     "cpu",
-    "ghcr.io/ggml-org/llama.cpp:server-b9935"
-    "@sha256:295dc9897fa8a643e4a513fbcaada51d3b8db4b0afa4fda7aeae2386757de58b")
+    "ghcr.io/ggml-org/llama.cpp:server-b11552"
+    "@sha256:fc9b506e89c1a1cfdd7bc056480f54dc657c1c04d76839a08642dc280b8ed2f6")
 # NVIDIA goes through the compose `driver: nvidia` reservation (compose.py), not device nodes.
 CUDA = LlamaCppBackend(
     "cuda",
-    "ghcr.io/ggml-org/llama.cpp:server-cuda12-b9935"
-    "@sha256:502fde462776339020cec39425525e9ce78f17cd9f7b14123f55f5197b1da00a")
+    "ghcr.io/ggml-org/llama.cpp:server-cuda12-b11552"
+    "@sha256:9d835c2febd6f09a0aafb30e9c1b29a67a49923b67075993551ab4593d84491f")
 # Experimental: rendered and compose-validated, never run on real AMD hardware here.
 ROCM = LlamaCppBackend(
     "rocm",
-    "ghcr.io/ggml-org/llama.cpp:server-rocm-b9935"
-    "@sha256:7c653a53b496e56bf93be17a31b7594435ccc0ef731a9f2a6ace01edbf471424",
+    "ghcr.io/ggml-org/llama.cpp:server-rocm-b11552"
+    "@sha256:d44aa74ffda23aa5b31844f71aa001fe5eeba1d56d8b5c3155cc84fb94cd6823",
     devices=("/dev/kfd", "/dev/dri"))
 # Experimental: rendered and compose-validated, never run on real hardware here.
 VULKAN = LlamaCppBackend(
     "vulkan",
-    "ghcr.io/ggml-org/llama.cpp:server-vulkan-b9935"
-    "@sha256:a584bca7a7d3280f82506a45efcea3a9d426a1cfdc5359fb74faa13fcc1c850f",
+    "ghcr.io/ggml-org/llama.cpp:server-vulkan-b11552"
+    "@sha256:f4e145aa5370fd619be9dc512e28a5bb55581dc48b957fe09f775e359f2c7ee8",
     devices=("/dev/dri",))
 
 BACKENDS: dict[str, LlamaCppBackend] = {b.name: b for b in (CPU, CUDA, ROCM, VULKAN)}

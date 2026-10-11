@@ -11,7 +11,7 @@
     "p50": 9.2
   },
   "embed": {
-    "file": "nomic-embed-text-v1.5.Q4_K_M.gguf"
+    "file": "embeddinggemma-2-Q8_0.gguf"
   },
   "catalog": [
     {
@@ -51,8 +51,8 @@
       "in_use": true
     },
     {
-      "name": "nomic-embed-text-v1.5.Q4_K_M.gguf",
-      "size": 84100000,
+      "name": "embeddinggemma-2-Q8_0.gguf",
+      "size": 309860000,
       "in_use": true
     },
     {

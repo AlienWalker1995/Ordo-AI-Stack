@@ -31,7 +31,7 @@ DUAL = {"gpus": [{"name": "RTX 5090", "vram_gb": 32, "uuid": UUID_BIG, "compute_
                  {"name": "GTX 1070", "vram_gb": 8, "uuid": UUID_SMALL, "compute_cap": "6.1"}],
         "ram_gb": 128, "cpu_cores": 32}
 CPU_FALLBACK_FILE = "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
-EMBED_FILE = "nomic-embed-text-v1.5.Q4_K_M.gguf"
+EMBED_FILE = "embeddinggemma-2-Q8_0.gguf"
 
 # Two catalog models whose vision projectors differ: the switch case the stale registry got wrong.
 MODEL_A = "qwen3.8-27b-turbo-fable-q6"

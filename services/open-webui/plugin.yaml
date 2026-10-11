@@ -48,6 +48,10 @@ services:
       RAG_OPENAI_API_KEY: ${LITELLM_KEY_OPEN_WEBUI}
       # The gateway alias, not a GGUF filename: the scoped key may only use local-chat and local-embed.
       RAG_EMBEDDING_MODEL: local-embed
+      # local-embed is EmbeddingGemma 2, which expects task prompts on both sides (Open WebUI
+      # prepends them), the same ones rag-ingestion and the qdrant-rag MCP send.
+      RAG_EMBEDDING_QUERY_PREFIX: "task: search result | query: "
+      RAG_EMBEDDING_CONTENT_PREFIX: "title: none | text: "
       # Operator settings formerly held only in webui.db. Web search needs the searxng-web plugin.
       ENABLE_WEB_SEARCH: ${SEARXNG_ENABLED:+true}
       WEB_SEARCH_ENGINE: searxng

@@ -35,7 +35,11 @@ logger = logging.getLogger("rag-ingestion")
 # is kept as a fallback for backward compat with plugins/rag/plugin.yaml's existing env, which
 # despite the name actually points this service straight at llamacpp-embed, not the LiteLLM gateway.
 EMBED_URL = os.environ.get("EMBED_URL", os.environ.get("MODEL_GATEWAY_URL", "http://model-gateway:11435")).rstrip("/")
-EMBED_MODEL = os.environ.get("EMBED_MODEL", "nomic-embed-text-v1.5.Q4_K_M.gguf").strip()
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "embeddinggemma-2-Q8_0.gguf").strip()
+# The embedding model's document prompt, prepended to every chunk before it is embedded (the stored
+# `content` stays the raw chunk). Queries need the matching query prompt (EMBED_QUERY_PREFIX in
+# services/qdrant-rag/server.py).
+EMBED_DOCUMENT_PREFIX = os.environ.get("EMBED_DOCUMENT_PREFIX", "")
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333").rstrip("/")
 QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "documents").strip()
 WATCH_DIR = Path(os.environ.get("WATCH_DIR", "/watch")).resolve()
@@ -144,6 +148,32 @@ def _save_state(state: dict[str, str]) -> None:
     STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _drop_collection_if_other_model() -> bool:
+    """Drop the collection when its vectors came from a different embedding model.
+
+    Vectors from two models live in different spaces, so a model swap must re-embed everything;
+    mixing them returns nonsense neighbours. Each point records the model that embedded it
+    (`embed_model`); points written before that field existed count as another model. Returns True
+    when the collection was dropped, so the caller re-ingests every file.
+    """
+    url = f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}"
+    with httpx.Client(timeout=30.0) as client:
+        r = client.post(f"{url}/points/scroll", json={"limit": 1, "with_payload": ["embed_model"]})
+        if r.status_code == 404:
+            return False
+        r.raise_for_status()
+        points = r.json().get("result", {}).get("points", [])
+        if not points:
+            return False
+        stored_model = (points[0].get("payload") or {}).get("embed_model")
+        if stored_model == EMBED_MODEL:
+            return False
+        logger.warning("Collection %s was embedded with %s, not %s: dropping it to re-embed every file",
+                       QDRANT_COLLECTION, stored_model or "an unrecorded model", EMBED_MODEL)
+        client.delete(url).raise_for_status()
+        return True
+
+
 def _ensure_collection(vector_size: int) -> None:
     url = f"{QDRANT_URL}/collections/{QDRANT_COLLECTION}"
     with httpx.Client(timeout=30.0) as client:
@@ -232,6 +262,7 @@ def _upsert_points(source: str, digest: str, chunks: list[str], vectors: list[li
                     "chunk_size": CHUNK_SIZE,
                     "chunk_overlap": CHUNK_OVERLAP,
                     "digest": digest,
+                    "embed_model": EMBED_MODEL,
                 },
             }
         )
@@ -269,7 +300,7 @@ def ingest_path(path: Path, state: dict[str, str]) -> bool:
         logger.info("Skipping %s: no extractable text", source)
         state[source] = digest
         return False
-    vectors = _embed(chunks)
+    vectors = _embed([EMBED_DOCUMENT_PREFIX + chunk for chunk in chunks])
     _upsert_points(source, digest, chunks, vectors)
     state[source] = digest
     logger.info("Ingested %s (%d chunks)", source, len(chunks))
@@ -302,7 +333,7 @@ class _EventHandler(FileSystemEventHandler):
 
 def main() -> None:
     WATCH_DIR.mkdir(parents=True, exist_ok=True)
-    state = _load_state()
+    state = {} if _drop_collection_if_other_model() else _load_state()
     stop_event = threading.Event()
     heartbeat = threading.Thread(target=_heartbeat, args=(stop_event,), daemon=True)
     heartbeat.start()

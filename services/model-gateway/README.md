@@ -12,7 +12,7 @@ entrypoint that templates the config placeholders at startup.
 | `local-chat` | chat | `llamacpp` (GPU) | Canonical auto-routing alias; fails over to the CPU pin on GPU eviction. |
 | *\<gpu model\>* | chat | `llamacpp` (GPU) | Explicit pin of the GPU deployment — no failover. Name derived from `LLAMACPP_MODEL` (basename, lowercased; e.g. `qwen3.8-27b-q6_k`). |
 | *\<cpu model\>*`-cpu` | chat | `llamacpp-cpu` | Always-on CPU fallback (opt-in `cpu-fallback` profile). Name derived from `LLAMACPP_CPU_MODEL`. |
-| `local-embed` | embedding | `llamacpp-embed` | nomic-embed-text-v1.5, 768-dim, ctx 8192. |
+| `local-embed` | embedding | `llamacpp-embed` | EmbeddingGemma 2, 768-dim, ctx 8192. |
 
 Every local model's `input_cost_per_token` / `output_cost_per_token` (in both `litellm_params`,
 what LiteLLM actually bills against, and `model_info`, what `/model/info` and the UI display) is
@@ -39,7 +39,7 @@ metadata tracks the running deployment instead of drifting:
 | `__CPU_CTX_SIZE__` | `LLAMACPP_CPU_CTX` (required) - rendered from the same resolved window as `LLAMACPP_CTX_SIZE`, so the failover's advertised window can't diverge from the primary's |
 | `__GPU_WEIGHTS__` | `LLAMACPP_MODEL` (model.gguf) |
 | `__CPU_WEIGHTS__` | `LLAMACPP_CPU_MODEL` (Qwen3.6-35B-A3B-UD-Q4_K_M.gguf) |
-| `__EMBED_WEIGHTS__` | `LLAMACPP_EMBED_MODEL` (nomic-embed-text-v1.5.Q4_K_M.gguf) |
+| `__EMBED_WEIGHTS__` | `LLAMACPP_EMBED_MODEL` (embeddinggemma-2-Q8_0.gguf) |
 | `__GPU_IMAGE__` | `LLAMACPP_IMAGE` (llama.cpp) |
 | `__GPU_MODEL_NAME__` | derived: `LLAMACPP_MODEL` basename, lowercased, `.gguf` stripped |
 | `__CPU_MODEL_NAME__` | derived: `LLAMACPP_CPU_MODEL` basename, lowercased, + `-cpu` |

@@ -26,7 +26,7 @@ BIG = "GPU-97fe65ee"
 SMALL = "GPU-20fac13a"
 GPU_FILE = "Qwen3.8-27B-TurboFCFusion-Q6_K.gguf"
 CPU_FILE = "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
-EMBED_FILE = "nomic-embed-text-v1.5.Q4_K_M.gguf"
+EMBED_FILE = "embeddinggemma-2-Q8_0.gguf"
 MMPROJ_FILE = "Qwen3.8-27B-TurboFable-vision-f16.gguf"
 
 HW_GPUS = [

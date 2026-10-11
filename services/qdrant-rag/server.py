@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """MCP server: semantic search over the stack's Qdrant RAG collection.
 
-Embeds the query with the SAME local nomic embedder used by rag-ingestion
-(llamacpp-embed, 768-dim, no task prefix) so query vectors live in the same
-space as the stored chunks, then runs a Qdrant similarity search. Exposed to
+Embeds the query with the SAME local embedder used by rag-ingestion
+(llamacpp-embed, EmbeddingGemma 2, 768-dim) so query vectors live in the same
+space as the stored chunks, then runs a Qdrant similarity search. The query
+gets the model's query prompt (EMBED_QUERY_PREFIX); rag-ingestion gives each
+chunk the matching document prompt. Exposed to
 Hermes through the LiteLLM MCP gateway as qdrant-rag-qdrant_search.
 
 Why embed via llamacpp-embed directly (not model-gateway/litellm): litellm's
@@ -21,6 +23,7 @@ from mcp.server.fastmcp import FastMCP
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333").rstrip("/")
 EMBED_URL = os.environ.get("EMBED_URL", "http://llamacpp-embed:8080").rstrip("/")
 COLLECTION = os.environ.get("RAG_COLLECTION", "documents").strip()
+EMBED_QUERY_PREFIX = os.environ.get("EMBED_QUERY_PREFIX", "")
 
 mcp = FastMCP("qdrant-rag", host="0.0.0.0", port=9000, stateless_http=True)
 
@@ -54,7 +57,7 @@ def qdrant_search(query: str, limit: int = 5) -> dict[str, Any]:
         return {"error": "query is empty"}
     limit = max(1, min(int(limit or 5), 25))
     try:
-        vector = _embed(q)
+        vector = _embed(EMBED_QUERY_PREFIX + q)
     except Exception as exc:  # noqa: BLE001
         return {"error": f"embedding failed: {exc}"}
     try:

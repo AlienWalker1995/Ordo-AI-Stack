@@ -3,7 +3,7 @@
 Build context for the RAG ingester image, referenced by the `rag` plugin
 ([`plugin.yaml`](plugin.yaml)) as `ordo/rag-ingestion`. A small Python service that watches
 a folder, chunks + embeds documents against `llamacpp-embed`, and upserts to Qdrant (`documents`
-collection, 768-dim nomic space, matching the qdrant-rag MCP's query vectors). Project buildable
+collection, 768-dim EmbeddingGemma 2 space, matching the qdrant-rag MCP's query vectors). Project buildable
 image, so `ordo preflight` reports a missing one as "build first".
 
 ## Build
