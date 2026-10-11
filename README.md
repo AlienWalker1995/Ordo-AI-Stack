@@ -1,13 +1,19 @@
-```
-  ___          _
- / _ \ _ __ __| | ___
-| | | | '__/ _` |/ _ \
-| |_| | | | (_| | (_) |
- \___/|_|  \__,_|\___/
+<p align="center">
+  <img src="docs/assets/hero.png" alt="Ordo" width="100%">
+</p>
 
-──────────────────────────────────────────────────
-Local-first AI homelab: stand up services from a one-line manifest, then let them intelligently share one GPU — one declarative source, one scheduler, one dashboard.
-```
+<h1 align="center">Ordo</h1>
+
+<p align="center">
+  <em>Local-first AI homelab: stand up services from a one-line manifest, then let them intelligently share one GPU, one declarative source, one scheduler, one dashboard.</em>
+</p>
+
+<p align="center">
+  <a href="https://github.com/AlienWalker1995/Ordo-AI-Stack/actions/workflows/ci.yml"><img src="https://github.com/AlienWalker1995/Ordo-AI-Stack/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/local--first-AI%20homelab-6f42c1.svg" alt="Local-first AI homelab">
+</p>
 
 **Ordo** is a local-first, single-operator AI homelab built around two ideas:
 
@@ -15,7 +21,7 @@ Local-first AI homelab: stand up services from a one-line manifest, then let the
 
 **2 · Services intelligently share one GPU.** A homelab has one expensive card and many things that want it — a resident chat model, image/video diffusion, 3D, voice. Ordo runs a real **scheduler** (`ordo serve`) that arbitrates GPU *residency*: the chat model stays resident and co-runs when a job fits, or is cleanly evicted and **restored** when a big render needs the whole card. Every GPU service *declares* how it competes (`gpu_arbitration:` — resident, burst, or exempt), and for work that can't ask politely — a render hand-queued in a web UI — an admission **gate** forces the request through the scheduler before it can touch the card. Two tenants never silently saturate the GPU (the failure that hard-crashed the box before the gate existed).
 
-Everything else follows from those two. The stack runs llama.cpp models behind an **OpenAI-compatible** LiteLLM gateway, **Open WebUI** for chat, **ComfyUI** for image/video diffusion, and that same gateway's **MCP endpoint** (`/mcp`) for shared tools — all fronted by one **dashboard** and reached through a single **SSO front door** (Caddy + oauth2-proxy). Every choice is made once — in an **interactive terminal wizard** — and captured in one declarative source (`ordo.yaml`) that renders into the running config. Derived files are regenerated, never hand-edited, so configuration drift is structurally impossible.
+Everything else follows from those two. The stack runs local models on a pluggable GPU inference engine (llama.cpp or NInfer) behind an **OpenAI-compatible** LiteLLM gateway, **Open WebUI** for chat, **ComfyUI** for image/video diffusion, and that same gateway's **MCP endpoint** (`/mcp`) for shared tools — all fronted by one **dashboard** and reached through a single **SSO front door** (Caddy + oauth2-proxy). Every choice is made once — in an **interactive terminal wizard** — and captured in one declarative source (`ordo.yaml`) that renders into the running config. Derived files are regenerated, never hand-edited, so configuration drift is structurally impossible.
 
 ## Install
 
@@ -106,7 +112,7 @@ Full engine reference, the plugin/agent registries, and the render-discipline ru
 
 Every UI is published only through the SSO front door; APIs are exposed on authenticated front-door routes (`/llm/*`, `/mcp`). What the stack gives you:
 
-- **Chat** — Open WebUI backed by an **OpenAI-compatible model gateway** (LiteLLM in front of llama.cpp), so any OpenAI-style client works against your local models.
+- **Chat** — Open WebUI backed by an **OpenAI-compatible model gateway** (LiteLLM in front of the GPU inference engine, llama.cpp or NInfer), so any OpenAI-style client works against your local models.
 - **Image & video** — ComfyUI workflows with scheduler-gated GPU access; large models download on demand.
 - **Agents** — a pluggable agent framework (`agent.yaml` manifests) with an included default assistant (Hermes): chat through the model gateway, tools through that gateway's `/mcp` endpoint, GPU through the scheduler.
 - **Shared tools** — MCP servers run as their own services on an internal network and are aggregated behind one `/mcp` URL on the model gateway, so host clients (Claude Code, editors) and in-stack services use the same endpoint and key.
@@ -130,7 +136,7 @@ flowchart TB
     E --> UIs["SSO-gated UIs (one port per app)<br/>chat · dashboard · automation · image/video · agent · code intelligence"]
     E --> API["Authenticated API routes<br/>/llm/* (OpenAI-compatible) · /mcp (MCP tools)"]
     subgraph internal["Project network — no host ports"]
-        MG["Model gateway (LiteLLM)<br/>chat → llama.cpp · /mcp tool aggregation"]
+        MG["Model gateway (LiteLLM)<br/>chat → llama.cpp / NInfer · /mcp tool aggregation"]
         DB[("litellm-db<br/>virtual keys · spend")]
         OPS["Ops controller<br/>render + GPU scheduler"]
         GPU[("GPU")]
