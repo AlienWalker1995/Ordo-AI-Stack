@@ -156,7 +156,7 @@ def test_a_v0_5_build_loads_without_mmap_through_load_mode() -> None:
 
 
 def test_an_older_build_keeps_no_mmap() -> None:
-    """The pinned upstream images (b9935) have no --load-mode and still take --no-mmap."""
+    """Upstream builds without --load-mode still take --no-mmap."""
     args = _final_args_with_help("--mmap, --no-mmap                       whether to memory-map model")
     assert "--no-mmap" in args, args
     assert "--load-mode" not in args, args

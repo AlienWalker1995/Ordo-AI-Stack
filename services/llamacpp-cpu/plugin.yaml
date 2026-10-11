@@ -25,7 +25,7 @@ compose_profile: cpu-fallback
 services:
   - name: llamacpp-cpu
     # Same upstream llama.cpp server image as the GPU chat backend + llamacpp-embed (Docker pulls it).
-    image: ghcr.io/ggml-org/llama.cpp:server@sha256:295dc9897fa8a643e4a513fbcaada51d3b8db4b0afa4fda7aeae2386757de58b
+    image: ghcr.io/ggml-org/llama.cpp:server-b11552@sha256:fc9b506e89c1a1cfdd7bc056480f54dc657c1c04d76839a08642dc280b8ed2f6
     # Force CPU: CUDA_VISIBLE_DEVICES="" hides every GPU from this container so it can NEVER grab
     # VRAM the render/GPU-llamacpp own, even though the image is a CUDA build. --n-gpu-layers 0 too.
     environment:
@@ -96,10 +96,12 @@ services:
       - q8_0
       - --cache-type-v
       - q8_0
-      # MUST use --no-mmap: the models/gguf Docker Desktop bind mount is 9p, which can't mmap a
-      # 20GB file (it hangs at "loading model" with ~0 RAM used). Read it fully into RAM instead —
-      # the GPU llamacpp does the same. 117GB RAM easily holds the ~20GB A3B.
-      - --no-mmap
+      # MUST NOT mmap: the models/gguf Docker Desktop bind mount is 9p, which can't mmap a 20GB
+      # file (it hangs at "loading model" with ~0 RAM used). Read it fully into RAM instead, as the
+      # GPU llamacpp does. 117GB RAM easily holds the ~20GB A3B. `--load-mode none` is this build's
+      # spelling: it removed --no-mmap and exits "invalid argument" on it.
+      - --load-mode
+      - none
       - --metrics
     resources:
       cpus: "${LLAMACPP_CPU_THREADS?LLAMACPP_CPU_THREADS is missing from the rendered .env}"

@@ -34,7 +34,7 @@ N_PREDICT="${LLAMACPP_N_PREDICT:-65536}"
 CPU_CTX_SIZE="${LLAMACPP_CPU_CTX:?LLAMACPP_CPU_CTX is missing: it is rendered into out/.env by ordo render}"
 GPU_WEIGHTS="${LLAMACPP_MODEL:-model.gguf}"
 CPU_WEIGHTS="${LLAMACPP_CPU_MODEL:-Qwen3.6-35B-A3B-UD-Q4_K_M.gguf}"
-EMBED_WEIGHTS="${LLAMACPP_EMBED_MODEL:-nomic-embed-text-v1.5.Q4_K_M.gguf}"
+EMBED_WEIGHTS="${LLAMACPP_EMBED_MODEL:-embeddinggemma-2-Q8_0.gguf}"
 GPU_IMAGE="${LLAMACPP_IMAGE:-llama.cpp}"
 
 # Electricity-derived per-token cost for the local models (ordo.yaml `cost:`; see

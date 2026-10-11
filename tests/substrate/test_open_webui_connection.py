@@ -146,8 +146,8 @@ def test_doctor_flags_a_default_model_the_key_cannot_list():
 
 
 def test_doctor_flags_an_embedding_model_the_key_cannot_use():
-    ok, line = open_webui_verdict(_probe(embed_model="nomic-embed-text-v1.5.Q4_K_M.gguf"))
-    assert not ok and "nomic-embed-text-v1.5.Q4_K_M.gguf" in line
+    ok, line = open_webui_verdict(_probe(embed_model="embeddinggemma-2-Q8_0.gguf"))
+    assert not ok and "embeddinggemma-2-Q8_0.gguf" in line
 
 
 def test_doctor_flags_an_unreachable_gateway():

@@ -22,7 +22,7 @@ from dashboard.app import app  # noqa: E402
 
 GPU_FILE = "Qwen3.8-27B-TurboFCFusion-Q6_K.gguf"
 CPU_FILE = "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
-EMBED_FILE = "nomic-embed-text-v1.5.Q4_K_M.gguf"
+EMBED_FILE = "embeddinggemma-2-Q8_0.gguf"
 BIG, SMALL = "GPU-big", "GPU-small"
 
 OPS = {

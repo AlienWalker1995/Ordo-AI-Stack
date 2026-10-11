@@ -467,12 +467,12 @@ support_models:
     # recurrent state that does not grow with the window. Measured beside it: 24.5GiB resident at 106,496.
     kv_kb_per_token: 10.625
 
-  - id: nomic-embed-text-v1.5-q4
-    name: nomic-embed-text v1.5 (Q4_K_M), embeddings
+  - id: embeddinggemma-2-q8
+    name: EmbeddingGemma 2 (Q8_0), embeddings
     backend: llama.cpp
-    file: nomic-embed-text-v1.5.Q4_K_M.gguf
-    source: https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf
-    # 84,106,624 bytes.
-    sha256: d4e388894e09cf3816e8b0896d81d265b55e7a9fff9ab03fe8bf4ef5e11295ac
-    size_bytes: 84106624
+    file: embeddinggemma-2-Q8_0.gguf
+    source: https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/main/embeddinggemma-2-Q8_0.gguf
+    # 309,855,456 bytes. Text-only use: the separate mmproj (vision/audio) is not loaded.
+    sha256: 2188ac1deca4b77dffefd603c2776a9d76d9d74ec01841392982ebb840b09135
+    size_bytes: 309855456
     requires: { vram_gb: 0, ram_gb: 1, cpu_ok: true }

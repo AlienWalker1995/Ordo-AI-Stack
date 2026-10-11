@@ -25,5 +25,5 @@
 | 6 | **Audit log rotation** | Resolved — size-based rotation in `ordo/control/audit.py` (10 MB, five generations kept) |
 | 8 | **ComfyUI non-root** | Open — `yanwk/comfyui-boot` runs as root; image limitation |
 | 9 | **Smoke test in CI** | Resolved — see `.github/workflows/ci.yml` |
-| 11 | **RAG embed model pull** | Open, `nomic-embed-text` must be pulled before ingestion; fetch it with `ordo fetch` or document it |
+| 11 | **RAG embed model pull** | Open, the embedding model (EmbeddingGemma 2) must be pulled before ingestion; fetch it with `ordo fetch` or document it |
 | 12 | **Reliability spine (M7)** | Partial — registry + health/ready + doctor/validation shipped; circuit breakers / full L3 semantics remain |

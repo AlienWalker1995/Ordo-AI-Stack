@@ -44,7 +44,7 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `EMBED_MODEL` | `nomic-embed-text-v1.5.Q4_K_M.gguf` | Embedding model used by `rag-ingestion` and Open WebUI |
+| `EMBED_MODEL` | `embeddinggemma-2-Q8_0.gguf` | Embedding model used by `rag-ingestion` and Open WebUI |
 | `RAG_COLLECTION` | `documents` | Qdrant collection (must match Open WebUI / ingestion) |
 | `RAG_CHUNK_SIZE` | `400` | Chunk size in tokens |
 | `RAG_CHUNK_OVERLAP` | `50` | Chunk overlap in tokens |
@@ -230,7 +230,7 @@ In `ordo.yaml`, point the chat service at the pinned upstream CUDA build (the `C
 ```yaml
 overrides:
   llamacpp:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda12-b9935@sha256:502fde462776339020cec39425525e9ce78f17cd9f7b14123f55f5197b1da00a
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda12-b11552@sha256:9d835c2febd6f09a0aafb30e9c1b29a67a49923b67075993551ab4593d84491f
 ```
 Re-render, then from the repo root: `ordo recreate llamacpp` (refused while a GPU lease has it evicted). This drops the two hybrid/recurrent patches above, so a `qwen35`-arch model may no longer load on it.
 

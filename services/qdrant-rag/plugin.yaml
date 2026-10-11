@@ -13,7 +13,7 @@ depends_on: [rag]         # needs the qdrant + embed services (rag plugin) to an
 mcp:
   # Project buildable image (build context services/qdrant-rag): pinned by its build context like
   # llamacpp-patched, so preflight reports 'build first', not a digest warning. It embeds queries
-  # via llamacpp-embed to match rag-ingestion's 768-dim nomic vectors.
+  # via llamacpp-embed to match rag-ingestion's 768-dim EmbeddingGemma 2 vectors.
   image: ordo/qdrant-rag-mcp
   transport: http
   port: 9000
@@ -22,4 +22,6 @@ mcp:
     QDRANT_URL: http://qdrant:6333
     EMBED_URL: http://llamacpp-embed:8080
     RAG_COLLECTION: documents
+    # EmbeddingGemma 2's query prompt; rag-ingestion's EMBED_DOCUMENT_PREFIX is the document side.
+    EMBED_QUERY_PREFIX: "task: search result | query: "
   tools: [qdrant_search, qdrant_status]

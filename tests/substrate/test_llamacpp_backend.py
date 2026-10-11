@@ -196,10 +196,17 @@ def test_every_backend_image_is_one_pinned_upstream_build():
 def test_cpu_backend_is_the_same_digest_the_cpu_manifests_run():
     # llamacpp-cpu and llamacpp-embed pin the CPU server build; the chat backend's CPU choice must
     # be that same image, not a second CPU build that can drift from it.
-    digest = llamacpp_backend.CPU.image.split("@", 1)[1]
     for manifest in ("llamacpp-cpu", "rag"):
         text = (ROOT / "services" / manifest / "plugin.yaml").read_text(encoding="utf-8")
-        assert f"ghcr.io/ggml-org/llama.cpp:server@{digest}" in text
+        assert f"image: {llamacpp_backend.CPU.image}" in text, manifest
+
+
+def test_cpu_manifests_use_the_pinned_builds_load_flag():
+    # The pinned build removed --no-mmap ("invalid argument: --no-mmap" and the server exits);
+    # reading the weights fully into RAM is `--load-mode none` now.
+    for manifest in ("llamacpp-cpu", "rag"):
+        text = (ROOT / "services" / manifest / "plugin.yaml").read_text(encoding="utf-8")
+        assert "- --no-mmap" not in text, manifest
 
 
 def test_special_builds_declare_the_compute_capability_they_need():

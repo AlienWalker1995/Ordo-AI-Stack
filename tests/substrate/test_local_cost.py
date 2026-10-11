@@ -179,7 +179,7 @@ def test_entrypoint_substitutes_cost_placeholders_into_valid_yaml(tmp_path):
         "LLAMACPP_CPU_CTX": "131072",
         "LLAMACPP_MODEL": "Qwen3.8-27B-UD-Q6_K.gguf",
         "LLAMACPP_CPU_MODEL": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
-        "LLAMACPP_EMBED_MODEL": "nomic-embed-text-v1.5.Q4_K_M.gguf",
+        "LLAMACPP_EMBED_MODEL": "embeddinggemma-2-Q8_0.gguf",
         "LLAMACPP_IMAGE": "ordo/llamacpp:pinned",
         "LLAMACPP_MMPROJ": "",
         "LOCAL_INPUT_COST_PER_TOKEN": "0.0000000151041667",

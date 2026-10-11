@@ -158,6 +158,14 @@ All notable changes to this project are documented here. The format is loosely b
   embedding models on model-gateway.
 
 ### Changed
+- **RAG embeddings are EmbeddingGemma 2.** `llamacpp-embed` serves `embeddinggemma-2-Q8_0.gguf`
+  (768-dim, 8K context, text only) instead of nomic-embed-text v1.5. On the live index (2,494
+  chunks, 60 generated questions) the right chunk landed in the top 5 for 80% of questions, up
+  from 60%. rag-ingestion, the qdrant-rag MCP and Open WebUI send the model's document and query
+  prompts. Each point records its `embed_model`, and rag-ingestion drops and re-embeds a collection
+  written by another model, so a model swap never mixes vector spaces. Every llama.cpp backend
+  moves to upstream build b11552 (the first with EmbeddingGemma 2 plus its embeddings fix);
+  llamacpp-cpu passes `--load-mode none`, since that build removed `--no-mmap`.
 - **One live GPU reader, NVIDIA and AMD.** Live GPU telemetry was read twice, NVIDIA only:
   ops-controller's `/registry/gpus` and the dashboard's own NVML + nvidia-smi probes, so on an AMD
   host every live GPU view said "no GPU". `ordo/render/gpu_live.py` now reads every card (nvidia-smi,

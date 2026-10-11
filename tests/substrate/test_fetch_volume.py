@@ -135,7 +135,7 @@ def test_the_whole_stack_needs_the_chat_cpu_fallback_and_embed_models(tmp_path):
     files = {n.file for n in needed if not n.optional}
     assert env["LLAMACPP_MODEL"] in files
     assert "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf" in files                   # llamacpp-cpu
-    assert "nomic-embed-text-v1.5.Q4_K_M.gguf" in files                # llamacpp-embed
+    assert "embeddinggemma-2-Q8_0.gguf" in files                # llamacpp-embed
 
 
 def test_a_service_that_reads_no_model_needs_nothing(tmp_path):
@@ -151,7 +151,7 @@ def test_support_models_are_never_picked_as_the_chat_model():
         rc = render(Source.from_dict({"hardware": hardware, "model": "auto", "plugins": "auto"}), CATALOG)
         assert rc.model.id not in support_ids
     with pytest.raises(ValueError):
-        render(Source.from_dict({"hardware": PROFILE_CPU, "model": "nomic-embed-text-v1.5-q4",
+        render(Source.from_dict({"hardware": PROFILE_CPU, "model": "embeddinggemma-2-q8",
                                  "plugins": "auto"}), CATALOG)
 
 

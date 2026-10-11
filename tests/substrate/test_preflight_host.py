@@ -127,7 +127,7 @@ def test_model_files_are_every_file_the_render_loads_sized_from_the_catalog():
     rc = render(source, catalog, PluginRegistry.load(root / "services"))
     services = rc.compose_dict(project="ordo")["services"]
     files = {f.file: f.gb for f in preflight.model_files(services, rc.env, catalog)}
-    assert set(files) == {rc.model.file, "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf", "nomic-embed-text-v1.5.Q4_K_M.gguf",
+    assert set(files) == {rc.model.file, "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf", "embeddinggemma-2-Q8_0.gguf",
                           "Qwen3.8-27B-TurboFable-vision-f16.gguf", "Qwen3.6-35B-A3B-mmproj-F16.gguf"}
     assert files["Qwen3.8-27B-TurboFable-vision-f16.gguf"] == pytest.approx(927_606_976 / 1024 ** 3)
     assert files["Qwen3.6-35B-A3B-mmproj-F16.gguf"] == pytest.approx(899_283_680 / 1024 ** 3)

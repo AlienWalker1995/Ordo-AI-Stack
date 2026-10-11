@@ -20,7 +20,7 @@
 | `GGUF_MODELS` | `ordo fetch` (host CLI) | Hugging Face repo(s) of GGUF files to pull | *(empty)* |
 | `COMPUTE_MODE` | compose | CPU/nvidia/amd | auto-detected |
 | `QDRANT_PORT` | qdrant | Not wired to anything — consumers hardcode `http://qdrant:6333` (e.g. `services/qdrant-rag/plugin.yaml`); no host publish (`ordo-net` only) | `6333` |
-| `EMBED_MODEL` | rag-ingestion | Embedding model for RAG | `nomic-embed-text` |
+| `EMBED_MODEL` | rag-ingestion | Embedding model for RAG | `embeddinggemma-2-Q8_0.gguf` |
 | `RAG_COLLECTION` | rag-ingestion, dashboard | Qdrant collection name | `documents` |
 | `RAG_CHUNK_SIZE` | rag-ingestion | Token chunk size for document splitting | `400` |
 | `RAG_CHUNK_OVERLAP` | rag-ingestion | Token overlap between chunks | `50` |

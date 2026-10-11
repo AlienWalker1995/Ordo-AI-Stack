@@ -196,9 +196,11 @@ model_list:
       output_cost_per_token: 0
       output_vector_size: 768
       description: >-
-        Stack-wide embedding alias: nomic-embed-text-v1.5 (768-dim, matryoshka-capable)
+        Stack-wide embedding alias: EmbeddingGemma 2 (768-dim, matryoshka-capable)
         served by llamacpp-embed on the RTX 5090. Used by Open WebUI RAG and rag-ingestion
         (Qdrant `documents` collection) — swapping this model invalidates existing vectors.
+        Expects task prompts: queries `task: search result | query: `, documents
+        `title: <title or none> | text: `.
       weights_file: __EMBED_WEIGHTS__
       served_by: llamacpp-embed (stock llama.cpp, RTX 5090)
 

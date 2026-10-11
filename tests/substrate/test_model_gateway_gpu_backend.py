@@ -42,7 +42,7 @@ def _render_config(tmp_path: Path, **env_overrides: str) -> dict:
            "LITELLM_MASTER_KEY_FILE": key_file.as_posix(),
            "LLAMACPP_CTX_SIZE": "262144", "LLAMACPP_N_PREDICT": "65536", "LLAMACPP_CPU_CTX": "262144",
            "LLAMACPP_MODEL": "qwen3_8_27b_nvfp4.ninfer", "LLAMACPP_CPU_MODEL": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
-           "LLAMACPP_EMBED_MODEL": "nomic-embed-text-v1.5.Q4_K_M.gguf", "LLAMACPP_IMAGE": "ordo/ninfer:abc",
+           "LLAMACPP_EMBED_MODEL": "embeddinggemma-2-Q8_0.gguf", "LLAMACPP_IMAGE": "ordo/ninfer:abc",
            "LLAMACPP_MMPROJ": "", "LOCAL_INPUT_COST_PER_TOKEN": "0", "LOCAL_OUTPUT_COST_PER_TOKEN": "0",
            **env_overrides}
     result = subprocess.run([_sh()], input=script, env=env, capture_output=True, text=True, timeout=10)
