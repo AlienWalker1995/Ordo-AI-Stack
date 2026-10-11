@@ -1,0 +1,95 @@
+diff --git a/plugins/platforms/discord/adapter.py b/plugins/platforms/discord/adapter.py
+index cc7b7f4..b0d8098 100644
+--- a/plugins/platforms/discord/adapter.py
++++ b/plugins/platforms/discord/adapter.py
+@@ -4978,6 +4978,16 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
+             return True
+         return str(self._client.user.id) in self._raw_mentioned_user_ids(message)
+ 
++    def _is_reply_to_self(self, message: Any) -> bool:
++        """True when ``message`` quote-replies a message this bot sent. Discord ships the
++        referenced message in the MESSAGE_CREATE payload (``reference.resolved``); when it is
++        missing or deleted the author is unknown and this returns False."""
++        if not self._client or not self._client.user:
++            return False
++        referenced = getattr(getattr(message, "reference", None), "resolved", None)
++        author = getattr(referenced, "author", None)
++        return author is not None and getattr(author, "id", None) == self._client.user.id
++
+     def _self_is_raw_mentioned(self, message: Any) -> bool:
+         """True only for a literal ``<@bot>`` token: reply-pings add us to ``message.mentions``
+         without one, and the bot admission gate must tell those apart."""
+@@ -6002,8 +6012,13 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
+                 is_free_channel and not self._discord_free_response_auto_thread()
+             )
+             auto_thread = self._extra_or_env_flag("auto_thread", "DISCORD_AUTO_THREAD", "true", truthy=True)
+-            is_reply_message = getattr(message, "type", None) == discord.MessageType.reply
+-            if auto_thread and not skip_thread and not is_voice_linked_channel and not is_reply_message:
++            # Only a reply to one of our own in-channel answers continues that exchange inline;
++            # replying to any other message is a new @mention and gets its own thread.
++            is_reply_to_self = (
++                getattr(message, "type", None) == discord.MessageType.reply
++                and self._is_reply_to_self(message)
++            )
++            if auto_thread and not skip_thread and not is_voice_linked_channel and not is_reply_to_self:
+                 thread = await self._auto_create_thread(message)
+                 if thread:
+                     parent_channel_id = str(message.channel.id)
+diff --git a/tests/gateway/test_discord_free_response.py b/tests/gateway/test_discord_free_response.py
+index 1db4429..60dd6e1 100644
+--- a/tests/gateway/test_discord_free_response.py
++++ b/tests/gateway/test_discord_free_response.py
+@@ -322,6 +322,53 @@ async def test_discord_reply_message_skips_auto_thread(adapter, monkeypatch):
+     assert event.source.chat_type == "group"
+ 
+ 
++@pytest.mark.asyncio
++async def test_discord_reply_to_own_message_still_auto_threads(adapter, monkeypatch):
++    """A mention sent as a quote-reply to a human's message is a new request: it gets a thread."""
++    monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "true")
++    monkeypatch.delenv("DISCORD_FREE_RESPONSE_CHANNELS", raising=False)
++    monkeypatch.delenv("DISCORD_AUTO_THREAD", raising=False)  # default true
++
++    adapter._auto_create_thread = AsyncMock(return_value=FakeThread(channel_id=456, name="t"))
++    message = make_message(
++        channel=FakeTextChannel(channel_id=123),
++        content="<@999> what is this bottle?",
++        mentions=[adapter._client.user],
++        msg_type=discord_platform.discord.MessageType.reply,
++    )
++    human = SimpleNamespace(id=42, display_name="Jezza", name="Jezza")
++    message.reference = SimpleNamespace(message_id=77, resolved=SimpleNamespace(id=77, author=human))
++
++    await adapter._handle_message(message)
++
++    adapter._auto_create_thread.assert_awaited_once_with(message)
++    assert adapter.handle_message.await_args.args[0].source.chat_type == "thread"
++
++
++@pytest.mark.asyncio
++async def test_discord_reply_to_bot_message_stays_inline(adapter, monkeypatch):
++    """Quote-replying the bot's own in-channel answer continues that exchange inline."""
++    monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "true")
++    monkeypatch.delenv("DISCORD_FREE_RESPONSE_CHANNELS", raising=False)
++    monkeypatch.delenv("DISCORD_AUTO_THREAD", raising=False)  # default true
++
++    adapter._auto_create_thread = AsyncMock()
++    message = make_message(
++        channel=FakeTextChannel(channel_id=123),
++        content="<@999> and the second one?",
++        mentions=[adapter._client.user],
++        msg_type=discord_platform.discord.MessageType.reply,
++    )
++    message.reference = SimpleNamespace(
++        message_id=88, resolved=SimpleNamespace(id=88, author=adapter._client.user),
++    )
++
++    await adapter._handle_message(message)
++
++    adapter._auto_create_thread.assert_not_awaited()
++    assert adapter.handle_message.await_args.args[0].source.chat_type == "group"
++
++
+ @pytest.mark.asyncio
+ async def test_discord_voice_linked_channel_skips_mention_requirement_and_auto_thread(adapter, monkeypatch):
+     """Active voice-linked text channels should behave like free-response channels."""
