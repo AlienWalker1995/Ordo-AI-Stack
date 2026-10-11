@@ -219,6 +219,19 @@ RUN cd /opt/hermes-agent \
                            tests/hermes_state/test_aux_usage_accounting.py \
     && echo "models-analytics-aux-fold patch applied"
 
+# PATCH: an @mention sent as a Discord quote-reply gets its own thread like any other mention.
+# Upstream skips auto-thread for every reply, so replying to an older message (your own included)
+# answered straight in the channel. Only a reply to one of the bot's own in-channel answers now
+# stays inline (it continues that exchange). Includes tests. v0.21.5 has no fix.
+# --check first: the build fails loudly if a future pin bump breaks the patch.
+COPY discord-reply-auto-thread.diff /tmp/discord-reply-auto-thread.diff
+RUN cd /opt/hermes-agent \
+    && git apply --recount --check /tmp/discord-reply-auto-thread.diff \
+    && git apply --recount /tmp/discord-reply-auto-thread.diff \
+    && chown hermes:hermes plugins/platforms/discord/adapter.py \
+                           tests/gateway/test_discord_free_response.py \
+    && echo "discord-reply-auto-thread patch applied"
+
 # SKILLS OWNED BY THIS REPO: the bundled ComfyUI skill, patched and shipped read-only.
 # Upstream's scripts default to submitting at http://127.0.0.1:8188, straight at the engine. On
 # this stack that skips the GPU admission gate, which is what takes the scheduler lease and evicts
