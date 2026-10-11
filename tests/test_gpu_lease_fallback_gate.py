@@ -1,15 +1,14 @@
 """Unit tests for the model-gateway GPU-lease fallback gate.
 
 router_settings.fallbacks sends ANY error from the GPU deployment to the CPU model;
-the gate (services/model-gateway/gpu_lease_fallback_gate.py) denies that hop unless
-ops-controller's /metrics says the GPU chat model is evicted for a lease
-(ordo_gpu_resident_evicted{resident="llamacpp"} 1) or the GPU chat service is down
-(ordo_gpu_chat_up 0). A busy GPU or a bad request must fail loudly, not degrade to
-the CPU model.
+the gate (services/model-gateway/gpu_lease_fallback_gate.py) always allows that hop, so
+a GPU failure degrades to the CPU model instead of failing the caller. It still reads
+ops-controller's /metrics (ordo_gpu_resident_evicted{resident="llamacpp"},
+ordo_gpu_chat_up) and logs the lease state for observability.
 
 litellm is not a test dependency (huge tree); the gate only needs its CustomLogger
-base class and its ServiceUnavailableError, so the module chain is stubbed before
-the file loads, the same way test_throughput_callback.py does it.
+base class, so the module chain is stubbed before the file loads, the same way
+test_throughput_callback.py does it.
 """
 from __future__ import annotations
 
@@ -18,8 +17,6 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-import pytest
-
 REPO = Path(__file__).resolve().parents[1]
 
 _litellm = ModuleType("litellm")
@@ -27,18 +24,7 @@ _integrations = ModuleType("litellm.integrations")
 _custom_logger = ModuleType("litellm.integrations.custom_logger")
 
 
-class _ServiceUnavailableError(Exception):
-    """Stand-in for litellm.ServiceUnavailableError (message/llm_provider/model kwargs)."""
-
-    def __init__(self, message=None, llm_provider=None, model=None, **kwargs):
-        super().__init__(message)
-        self.message = message
-        self.llm_provider = llm_provider
-        self.model = model
-
-
 _custom_logger.CustomLogger = object
-_litellm.ServiceUnavailableError = _ServiceUnavailableError
 _litellm.integrations = _integrations
 _integrations.custom_logger = _custom_logger
 sys.modules.setdefault("litellm", _litellm)
@@ -158,13 +144,13 @@ async def test_hook_passes_through_direct_cpu_call(monkeypatch):
     assert calls == []
 
 
-async def test_hook_raises_on_fallback_hop_when_gpu_up_and_not_leased(monkeypatch):
+async def test_hook_allows_fallback_hop_when_gpu_up_and_not_leased(monkeypatch):
+    """Operator policy: a GPU error (bad request, 5xx, mid-stream drop) must degrade to the
+    CPU model, never fail the caller, even with the GPU up and no render holding the lease."""
     _install_client(monkeypatch, text=METRICS_NORMAL)
     hook = gate.GpuLeaseFallbackGate()
-    with pytest.raises(_ServiceUnavailableError) as excinfo:
-        await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs())
-    assert excinfo.value.message == gate.DENY_MESSAGE
-    assert excinfo.value.model == CPU_MODEL
+    out = await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs())
+    assert out == _deployments()
 
 
 async def test_hook_allows_fallback_hop_when_lease_held(monkeypatch):
@@ -185,8 +171,8 @@ async def test_hook_uses_litellm_metadata_key(monkeypatch):
     """The router may carry the hop marker under litellm_metadata instead of metadata."""
     _install_client(monkeypatch, text=METRICS_NORMAL)
     hook = gate.GpuLeaseFallbackGate()
-    with pytest.raises(_ServiceUnavailableError):
-        await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs("litellm_metadata"))
+    out = await hook.async_filter_deployments(CPU_MODEL, _deployments(), [], request_kwargs=_hop_kwargs("litellm_metadata"))
+    assert out == _deployments()
 
 
 async def test_hook_fails_open_when_metrics_fetch_raises(monkeypatch):
