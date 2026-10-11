@@ -228,10 +228,9 @@ general_settings:
   maximum_spend_logs_cleanup_cron: "30 4 * * *"
 
 router_settings:
-  # The CPU fallback is NOT a general error sink: gpu_lease_fallback_gate (registered in
-  # litellm_settings.callbacks) denies it unless ops-controller reports the GPU chat model
-  # evicted for a lease or the GPU chat service down, so a busy GPU or a bad request fails
-  # loudly instead of degrading to the CPU model.
+  # Any GPU error (render lease, engine down, bad request, 5xx, mid-stream drop) fails over to
+  # the CPU model, so no local-chat workload is ever lost to a GPU failure.
+  # gpu_lease_fallback_gate (litellm_settings.callbacks) logs the lease state on each hop.
   fallbacks: [{"local-chat": ["__CPU_MODEL_NAME__"]}]
   # Must exceed health_check_interval (the failure counter's TTL) so failures accumulate.
   cooldown_time: 120
@@ -245,9 +244,8 @@ litellm_settings:
   drop_params: true
   json_logs: true
   # throughput_callback posts tok/s + TTFT to the dashboard; prometheus serves /metrics for the
-  # monitoring plugin. gpu_lease_fallback_gate limits local-chat's CPU fallback to the window in
-  # which it is legitimate: the GPU chat model evicted for a render lease, or the GPU chat
-  # service down (it reads ops-controller's /metrics and denies the hop otherwise).
+  # monitoring plugin. gpu_lease_fallback_gate logs each local-chat CPU fallback hop with the
+  # GPU lease state it reads from ops-controller's /metrics; it never denies the hop.
   # The endpoint runs unauthenticated (require_auth_for_metrics_endpoint
   # defaults to false) and is internal-network-only ONLY because the edge's SSO-bypassing
   # /llm/* route answers 404 for /metrics and /metrics/* (auth/caddy/Caddyfile). Its labels
