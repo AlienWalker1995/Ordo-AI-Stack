@@ -84,7 +84,7 @@ def test_served_models_come_from_the_render():
     assert models["local-chat-cpu"]["source"] == {"file": CPU_FALLBACK_FILE}
     assert models["local-chat-cpu"]["gpu_uuid"] is None
     assert models["local-embed"]["source"] == {"file": EMBED_FILE}
-    assert models["local-embed"]["gpu_uuid"] == UUID_BIG
+    assert models["local-embed"]["gpu_uuid"] is None              # CPU build, no card
     assert models["comfyui"]["gpu_uuid"] == UUID_BIG
     assert models["voice-stt"]["gpu_uuid"] == UUID_SMALL
     assert models["voice-stt"]["source"] == {"file": "Systran/faster-whisper-small"}
@@ -138,7 +138,8 @@ def test_registry_gpus_list_the_models_the_render_pins_to_each_card(tmp_path, mo
             UUID_SMALL: {"name": "GTX 1070", "total_gb": 8.0, "used_gb": 1.0, "util": 0}}
     monkeypatch.setattr(cp, "_live_gpus", lambda: live)
     gpus = cp.route("GET", "/registry/gpus")[1]["gpus"]
-    assert {"local-chat", "local-embed", "comfyui"} <= set(gpus[UUID_BIG]["models"])
+    assert {"local-chat", "comfyui"} <= set(gpus[UUID_BIG]["models"])
+    assert "local-embed" not in gpus[UUID_BIG]["models"]                  # CPU build, no card
     assert set(gpus[UUID_SMALL]["models"]) == {"voice-stt", "voice-tts"}
     assert gpus[UUID_BIG]["name"] == "RTX 5090"
 

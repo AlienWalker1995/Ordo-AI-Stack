@@ -106,8 +106,8 @@ def test_resident_set_is_derived_and_excludes_the_secondary_card(rendered):
     # llamacpp's footprint comes from the render (weights + KV at the rendered ctx), never a
     # constant — so it cannot drift from what .env tells llama-server to load.
     assert residents["llamacpp"] == pytest.approx(rendered.resident_vram_gb())
-    # llamacpp-embed genuinely holds VRAM on the same card and was previously invisible.
-    assert "llamacpp-embed" in residents
+    # llamacpp-embed runs the CPU build: it holds no VRAM, so it is no resident to budget or evict.
+    assert "llamacpp-embed" not in residents
     # The 1070's voice models must NOT be folded into the 5090's budget.
     assert "stt" not in residents and "tts" not in residents
 
@@ -161,11 +161,12 @@ def test_an_exclusive_burst_request_evicts_every_primary_resident(rendered):
     broker.request(Job(id="gate-comfyui", vram_gb=comfy.vram_gb, kind=comfy.kind))
 
     assert "gate-comfyui" in sched.running_ids, "the exclusive request was not admitted"
-    assert set(backend.stopped) >= {"llamacpp", "llamacpp-embed"}, (
+    assert set(backend.stopped) >= {"llamacpp"}, (
         f"an exclusive render must reclaim every primary resident; stopped={backend.stopped}")
+    assert "llamacpp-embed" not in backend.stopped, "the CPU embedder must keep serving during a render"
     # ...and they come back when it drains — the other half of the contract.
     broker.complete("gate-comfyui")
-    assert set(backend.started) >= {"llamacpp", "llamacpp-embed"}
+    assert set(backend.started) >= {"llamacpp"}
 
 
 # --- gate enforcement -----------------------------------------------------------------------
