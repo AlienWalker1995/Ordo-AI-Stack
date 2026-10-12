@@ -661,7 +661,7 @@ def _plugin_service(ps: PluginService, plugin: Plugin, *, net: str,
     # GPU wiring — BOTH layers (CUDA_VISIBLE_DEVICES + a device_ids reservation) on a real uuid,
     # because device_ids alone is a WSL2 no-op (see overrides/gpu-assignments.yml in V1):
     #   gpu_pin: secondary -> the non-primary card (voice STT/TTS → the Pascal 1070; no Blackwell)
-    #   gpu_pin: primary   -> the compute card by uuid (comfyui/llamacpp-embed → the 5090). V1 pins
+    #   gpu_pin: primary   -> the compute card by uuid (comfyui → the 5090). V1 pins
     #                         these explicitly; `count: all` here would let them see the 1070 too.
     if ps.gpu_pin == "secondary" and secondary_uuid:
         env.update(_pin_env(secondary_uuid))

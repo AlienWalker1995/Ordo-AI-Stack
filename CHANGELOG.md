@@ -113,6 +113,10 @@ All notable changes to this project are documented here. The format is loosely b
   default.
 
 ### Fixed
+- **The embedder is declared CPU-only, as it runs.** `llamacpp-embed` runs llama.cpp's CPU build
+  but was pinned to the 5090 and declared a 1 GB preemptible GPU resident: the scheduler budgeted
+  VRAM it never used, every render stopped retrieval for nothing, and the dashboard listed
+  Embeddings as a 5090 tenant. It now reserves no GPU and is no resident.
 - **The dashboard's GPU chat speed is the engine's real speed.** The model gateway's throughput
   sample divided output tokens by the whole request, so time queued and reading the prompt counted
   as generation: a GPU decoding at 206 tok/s showed as 17 tok/s. Samples now take the engine's own

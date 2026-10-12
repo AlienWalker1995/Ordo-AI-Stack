@@ -24,7 +24,7 @@ Two independent axes, deliberately not conflated:
 
 `mode` — HOW the service holds VRAM.
   - ``resident``  Holds VRAM continuously for as long as it runs and serves many short requests
-                  from it (llama.cpp: chat completions; llamacpp-embed: embeddings). A resident
+                  from it (llama.cpp or NInfer: chat completions). A resident
                   enters the global queue ONCE, for residency — its individual inference calls
                   never do. That distinction is the whole point: if a chat completion had to
                   queue behind a four-minute render as a peer, interactive inference would be

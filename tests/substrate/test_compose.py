@@ -244,13 +244,15 @@ def test_llamacpp_pinned_to_primary_gpu_uuid():
     assert lc["environment"]["NVIDIA_VISIBLE_DEVICES"] == "GPU-PRIMARY-uuid"
 
 
-def test_comfyui_and_embed_pinned_to_primary_gpu_uuid():
+def test_comfyui_pinned_to_primary_gpu_uuid_and_the_embedder_reserves_no_gpu():
     c = render(_dual_gpu_src(plugins=["comfyui", "rag"]), CATALOG, REGISTRY).compose_dict()
-    for name in ("comfyui", "llamacpp-embed"):
-        svc = c["services"][name]
-        assert svc["deploy"]["resources"]["reservations"]["devices"][0]["device_ids"] == \
-            ["GPU-PRIMARY-uuid"], f"{name} not pinned to primary uuid"
-        assert svc["environment"]["CUDA_VISIBLE_DEVICES"] == "GPU-PRIMARY-uuid"
+    comfy = c["services"]["comfyui"]
+    assert comfy["deploy"]["resources"]["reservations"]["devices"][0]["device_ids"] == ["GPU-PRIMARY-uuid"]
+    assert comfy["environment"]["CUDA_VISIBLE_DEVICES"] == "GPU-PRIMARY-uuid"
+    # llamacpp-embed runs the CPU build: a GPU reservation would only claim a card it never uses.
+    embed = c["services"]["llamacpp-embed"]
+    assert "devices" not in ((embed.get("deploy") or {}).get("resources") or {}).get("reservations", {})
+    assert "CUDA_VISIBLE_DEVICES" not in (embed.get("environment") or {})
 
 
 def test_voice_pinned_to_secondary_gpu_uuid():
