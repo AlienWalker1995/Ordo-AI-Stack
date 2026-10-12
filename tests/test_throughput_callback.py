@@ -55,8 +55,11 @@ def _kwargs(weights: str | None, api_base: str, alias: str = "local-chat") -> di
     }
 
 
-def _response(model: str = "local-chat", completion_tokens: int = 64):
-    return {"model": model, "usage": {"completion_tokens": completion_tokens, "prompt_tokens": 10}}
+def _response(model: str = "local-chat", completion_tokens: int = 64, predicted_per_second: float | None = None):
+    response = {"model": model, "usage": {"completion_tokens": completion_tokens, "prompt_tokens": 10}}
+    if predicted_per_second is not None:
+        response["timings"] = {"predicted_n": completion_tokens, "predicted_per_second": predicted_per_second}
+    return response
 
 
 def test_resolves_model_to_served_gguf_not_alias():
@@ -81,7 +84,7 @@ def test_build_payload_includes_alias_and_backend():
     start = datetime(2026, 8, 17, 12, 0, 0)
     end = start + timedelta(seconds=2)
     kw = _kwargs(GPU_GGUF, "http://llamacpp:8080/v1")
-    payload = tc._build_payload(kw, _response(completion_tokens=64), start, end)
+    payload = tc._build_payload(kw, _response(completion_tokens=64, predicted_per_second=32.0), start, end)
     assert payload["model"] == "Qwen-GPU-Q6_K.gguf"
     assert payload["alias"] == "local-chat"
     assert payload["backend"] == "llamacpp"
@@ -93,3 +96,31 @@ def test_build_payload_still_none_without_completion_tokens():
     end = start + timedelta(seconds=2)
     kw = _kwargs(GPU_GGUF, "http://llamacpp:8080/v1")
     assert tc._build_payload(kw, _response(completion_tokens=0), start, end) is None
+
+
+# --- generation speed: the engine's, not the whole request's ---
+
+def test_a_queued_request_records_the_engines_speed_not_the_wait():
+    """Live 2026-10-12: a 30-token reply waited ~4 minutes in NInfer's queue and then generated at
+    206 tok/s. Dividing by the whole request reported 0.13 tok/s; the engine's timings say 206."""
+    start = datetime(2026, 10, 12, 18, 0, 0)
+    end = start + timedelta(seconds=239)
+    kw = _kwargs(GPU_GGUF, "http://llamacpp:8080/v1")
+    payload = tc._build_payload(kw, _response(completion_tokens=30, predicted_per_second=206.48), start, end)
+    assert payload["output_tokens_per_sec"] == 206.48
+
+
+def test_a_streamed_reply_without_engine_timings_counts_from_the_first_token():
+    start = datetime(2026, 10, 12, 18, 0, 0)
+    kw = {**_kwargs(GPU_GGUF, "http://llamacpp:8080/v1"), "completion_start_time": start + timedelta(seconds=100)}
+    end = start + timedelta(seconds=110)
+    payload = tc._build_payload(kw, _response(completion_tokens=1000), start, end)
+    assert payload["output_tokens_per_sec"] == 100.0
+
+
+def test_no_sample_when_generation_time_is_unknown():
+    """A non-streamed reply without engine timings: its only clock includes the queue, so skip it."""
+    start = datetime(2026, 10, 12, 18, 0, 0)
+    end = start + timedelta(seconds=239)
+    kw = _kwargs(GPU_GGUF, "http://llamacpp:8080/v1")
+    assert tc._build_payload(kw, _response(completion_tokens=30), start, end) is None

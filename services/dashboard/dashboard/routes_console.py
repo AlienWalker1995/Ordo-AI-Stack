@@ -36,10 +36,20 @@ LLAMACPP_EMBED_URL = os.environ.get("LLAMACPP_EMBED_URL", "http://llamacpp-embed
 # The Grafana dashboard the Performance page embeds (monitoring/grafana/dashboards), kiosk mode.
 GRAFANA_EMBED_PATH = "/grafana/d/ordo-llm-gpu/ordo-performance?orgId=1&kiosk&theme=dark&refresh=10s"
 
-# Tokens generated per second by each llama.cpp server, summed per scrape job. A rate over the
-# counter rather than the instantaneous gauge, because the gauge goes stale when a server is
-# evicted and a sparkline of stale samples draws a flat line that never happened.
-_TOKEN_RATE_QUERY = "sum by (job) (rate(llamacpp:tokens_predicted_total[5m]))"
+# Tokens generated per second by each chat server, one series per `job` label. A rate over a
+# counter rather than an instantaneous gauge, because a gauge goes stale when a server is evicted
+# and a sparkline of stale samples draws a flat line that never happened.
+# GPU: the gateway's output-token counter for the deployment at llamacpp:8080, the same expression
+# as the Grafana GPU panels. It holds for either engine there; llama.cpp's own counter does not,
+# because NInfer serves no /metrics. Relabelled job="llamacpp" so both series parse alike.
+# CPU: the llama.cpp CPU fallback's own counter.
+_GPU_TOKEN_RATE_QUERY = (
+    'label_replace(sum(rate(litellm_output_tokens_metric_total[5m]) * on(model_id) group_left() '
+    '(max by (model_id) (litellm_deployment_latency_per_output_token_count'
+    '{api_base="http://llamacpp:8080/v1"}) * 0 + 1)), "job", "llamacpp", "", "")'
+)
+_CPU_TOKEN_RATE_QUERY = 'sum by (job) (rate(llamacpp:tokens_predicted_total{job="llamacpp-cpu"}[5m]))'
+_TOKEN_RATE_QUERY = f"{_GPU_TOKEN_RATE_QUERY} or {_CPU_TOKEN_RATE_QUERY}"
 
 _SEGMENT = re.compile(r"^[A-Za-z0-9._ -]{1,128}$")
 # A switch is one ops-controller call that renders and recreates the changed set in one compose
@@ -205,7 +215,8 @@ async def overview() -> dict:
                 for c in containers.values()]
     return {
         "status": _status_line(status_gpu, attention),
-        "services": {"up": sum(v == "up" for v in verdicts), "total": len(verdicts)},
+        # A one-shot job that finished ("done", exit 0) is not a service that should be up.
+        "services": {"up": sum(v == "up" for v in verdicts), "total": sum(v != "done" for v in verdicts)},
         "gpus": console.gpu_cards((hardware or {}).get("gpus") or [], _registry(registry), status_gpu),
         "chat": {**engine,
                  "gpu_p50": (stats.get(gpu_file) or {}).get("p50") if gpu_file else None,

@@ -543,7 +543,9 @@ _MAX_TRACKED_MODELS = 50
 # v2: samples are timestamped dicts. v1 stored bare floats keyed largely by routing
 # ALIAS (one `local-chat` bucket conflating every model ever active behind it, CPU
 # failover included) — unattributable, so version bumps trigger a clean reset.
-_THROUGHPUT_STORE_VERSION = 2
+# v3: tok/s is the engine's generation speed. v2 divided by the whole request, queue and prompt
+# reading included, so a 206 tok/s GPU read as 17 tok/s while requests queued.
+_THROUGHPUT_STORE_VERSION = 3
 _SAMPLE_MAX_AGE_SEC = 7 * 86400  # models with no sample in 7 days leave the store
 
 
