@@ -128,6 +128,13 @@ def test_overview_status_counts_what_needs_attention(live):
     assert body["status"]["text"] == "2 things need you"
 
 
+def test_overview_service_count_leaves_out_finished_one_shot_jobs(live):
+    """evals exited 0 (a finished job) and must not read as a service that is down; llamacpp,
+    stopped by a GPU eviction, still counts against the total."""
+    body = live.get("/api/overview").json()
+    assert body["services"] == {"up": 2, "total": 3}
+
+
 def test_overview_carries_host_knowledge_and_links_from_the_catalog(live):
     body = live.get("/api/overview").json()
     assert body["host"]["disk_pct"] == 80.4 and body["knowledge"]["documents"] == 2483

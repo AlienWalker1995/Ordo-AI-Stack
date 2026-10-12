@@ -215,7 +215,8 @@ async def overview() -> dict:
                 for c in containers.values()]
     return {
         "status": _status_line(status_gpu, attention),
-        "services": {"up": sum(v == "up" for v in verdicts), "total": len(verdicts)},
+        # A one-shot job that finished ("done", exit 0) is not a service that should be up.
+        "services": {"up": sum(v == "up" for v in verdicts), "total": sum(v != "done" for v in verdicts)},
         "gpus": console.gpu_cards((hardware or {}).get("gpus") or [], _registry(registry), status_gpu),
         "chat": {**engine,
                  "gpu_p50": (stats.get(gpu_file) or {}).get("p50") if gpu_file else None,
