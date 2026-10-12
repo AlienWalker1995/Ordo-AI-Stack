@@ -498,6 +498,19 @@ def test_perf_series_returns_gpu_and_cpu_rates(live):
     assert body["gpu"] == [[1000, 12.5], [1300, 20.0]] and body["cpu"] == [[1000, 0.0], [1300, 2.5]]
 
 
+def test_perf_series_reads_the_gpu_rate_from_the_gateway_not_llama_cpp(live):
+    """NInfer serves no /metrics, so llama.cpp's counter left the GPU sparkline empty. The GPU
+    series is the gateway's output-token rate for the llamacpp:8080 deployment (either engine)."""
+    from urllib.parse import parse_qs, urlsplit
+
+    fetch = AsyncMock(return_value={"status": "success", "data": {"result": []}})
+    with patch.object(routes_console, "_get_json", new=fetch):
+        live.get("/api/perf/series")
+    query = parse_qs(urlsplit(fetch.call_args.args[0]).query)["query"][0]
+    assert 'litellm_output_tokens_metric_total' in query and 'api_base="http://llamacpp:8080/v1"' in query
+    assert 'llamacpp:tokens_predicted_total{job="llamacpp-cpu"}' in query
+
+
 def test_perf_series_without_prometheus_is_unavailable_not_empty(live):
     with patch.object(routes_console, "_get_json", new=AsyncMock(return_value=None)):
         body = live.get("/api/perf/series").json()

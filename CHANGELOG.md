@@ -113,6 +113,13 @@ All notable changes to this project are documented here. The format is loosely b
   default.
 
 ### Fixed
+- **The dashboard's GPU chat speed is the engine's real speed.** The model gateway's throughput
+  sample divided output tokens by the whole request, so time queued and reading the prompt counted
+  as generation: a GPU decoding at 206 tok/s showed as 17 tok/s. Samples now take the engine's own
+  `timings.predicted_per_second` (llama.cpp and NInfer both send it), else first token to end for a
+  streamed reply, and skip a request with neither. The store version bump drops the old samples.
+  The Overview's GPU sparkline was empty since NInfer became the GPU engine (it serves no
+  `/metrics`); it now reads the gateway's output-token rate, as the Grafana GPU panels do.
 - **Rotating OPS_CONTROLLER_TOKEN no longer locks the host out of its own deploy.** The token is
   a file under /run/secrets, bind-mounted from the host; `ordo secrets rotate` rewrote it, but
   ops-controller kept the value it read at startup. The host's lease probe (which reads the

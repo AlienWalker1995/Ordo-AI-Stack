@@ -184,6 +184,37 @@ def _duration_sec(start_time: Any, end_time: Any) -> float:
         return 0.0
 
 
+def _engine_timings(response_obj: Any) -> dict[str, Any]:
+    """The llama.cpp-style `timings` block the engine returned (llama.cpp and NInfer both send it)."""
+    if isinstance(response_obj, dict):
+        timings = response_obj.get("timings")
+    else:
+        timings = getattr(response_obj, "timings", None)
+    return timings if isinstance(timings, dict) else {}
+
+
+def _generation_tokens_per_sec(response_obj, kwargs, completion_tokens: int, end_time: Any) -> float | None:
+    """How fast the engine generated, excluding time spent queued and reading the prompt.
+
+    Dividing by the whole request time instead reported a 206 tok/s engine as 17 tok/s while
+    requests waited minutes in its queue. Preferred source: the engine's own `predicted_per_second`.
+    Otherwise, for a streamed reply, tokens over first-token-to-end. Neither available: None, so
+    no sample is recorded rather than one that mostly measures waiting.
+    """
+    predicted = _engine_timings(response_obj).get("predicted_per_second")
+    try:
+        if predicted and float(predicted) > 0:
+            return float(predicted)
+    except (TypeError, ValueError):
+        pass
+    first_token = kwargs.get("completion_start_time")
+    if isinstance(first_token, datetime) and isinstance(end_time, datetime):
+        generating = (end_time - first_token).total_seconds()
+        if generating > 0:
+            return completion_tokens / generating
+    return None
+
+
 def _build_payload(kwargs, response_obj, start_time, end_time) -> dict[str, Any] | None:
     duration = _duration_sec(start_time, end_time)
     if duration <= 0:
@@ -206,9 +237,12 @@ def _build_payload(kwargs, response_obj, start_time, end_time) -> dict[str, Any]
     model = _resolve_model(kwargs, response_obj)
     if not model:
         return None
+    tokens_per_sec = _generation_tokens_per_sec(response_obj, kwargs, completion_tokens, end_time)
+    if tokens_per_sec is None:
+        return None
     payload = {
         "model": model,
-        "output_tokens_per_sec": round(completion_tokens / duration, 2),
+        "output_tokens_per_sec": round(tokens_per_sec, 2),
         "service": _detect_service(kwargs),
         "ttft_ms": round(_ttft_ms_from_kwargs(kwargs, start_time), 1),
     }

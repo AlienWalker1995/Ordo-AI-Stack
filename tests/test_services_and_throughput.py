@@ -357,8 +357,24 @@ def test_throughput_store_v1_file_triggers_clean_reset(tmp_path, monkeypatch):
     assert dashboard_app._throughput_samples == {}
     assert dashboard_app._last_benchmark["model"] == "local-chat"
     persisted = _json.loads(f.read_text(encoding="utf-8"))
-    assert persisted["version"] == 2
+    assert persisted["version"] == dashboard_app._THROUGHPUT_STORE_VERSION
     assert persisted["samples"] == {}
+
+
+def test_throughput_store_v2_samples_are_reset(tmp_path, monkeypatch):
+    """v2 samples divided output tokens by the whole request, queue included: wrong, so dropped."""
+    import json as _json
+
+    import dashboard.app as dashboard_app
+    v2 = {"version": 2, "samples": {"gpu.ninfer": [{"tps": 17.3, "ts": 1791000000}]}, "ttft_samples": {},
+          "last_benchmark": None}
+    f = tmp_path / "throughput.json"
+    f.write_text(_json.dumps(v2), encoding="utf-8")
+    monkeypatch.setattr(dashboard_app, "_THROUGHPUT_FILE", f)
+    monkeypatch.setattr(dashboard_app, "_throughput_samples", {})
+    monkeypatch.setattr(dashboard_app, "_ttft_samples", {})
+    dashboard_app._load_throughput_state()
+    assert dashboard_app._throughput_samples == {}
 
 
 def test_throughput_store_v2_roundtrip(tmp_path, monkeypatch):
