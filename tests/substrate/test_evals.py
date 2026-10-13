@@ -185,10 +185,12 @@ def test_hermes_maps_the_key_onto_api_server_key_with_an_empty_fallback():
         "the key must not also reach the agent under a name Hermes does not strip from tool subprocesses")
 
 
-def test_the_entrypoint_disables_the_api_server_without_a_usable_key():
-    entrypoint = (ROOT / "services" / "hermes" / "entrypoint.sh").read_text(encoding="utf-8")
-    assert "unset API_SERVER_KEY API_SERVER_HOST API_SERVER_PORT" in entrypoint
-    assert '"${#API_SERVER_KEY}" -ge 16' in entrypoint, "Hermes's own startup guard rejects shorter keys"
+def test_the_boot_hook_keeps_the_api_server_on_loopback_without_a_usable_key():
+    """Upstream always runs the API server (cron fires use it) with a self-generated key when the
+    container brings none; only a usable evals key may expose it on the project network."""
+    hook = (ROOT / "services" / "hermes" / "ordo-init.sh").read_text(encoding="utf-8")
+    assert '"${#API_SERVER_KEY}" -ge 16' in hook, "Hermes's own startup guard rejects shorter keys"
+    assert "publish_env API_SERVER_HOST 127.0.0.1" in hook
 
 
 def test_the_agent_publishes_no_host_port_for_the_api_server():

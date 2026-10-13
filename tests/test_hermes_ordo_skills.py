@@ -17,9 +17,16 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import sys
+import types
 from pathlib import Path
 
 import pytest
+import yaml
+
+# ordo_skills.py runs inside the Hermes image and parses frontmatter with Hermes's own YAML loader
+# (hermes_yaml). CI has no Hermes install, so a PyYAML-backed module with the same surface stands in.
+sys.modules.setdefault("hermes_yaml", types.SimpleNamespace(safe_load=yaml.safe_load, YAMLError=yaml.YAMLError))
 
 REPO = Path(__file__).resolve().parents[1]
 OVERLAY = REPO / "services" / "hermes" / "skill-overlays" / "comfyui"

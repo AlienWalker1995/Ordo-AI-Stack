@@ -169,19 +169,24 @@ All notable changes to this project are documented here. The format is loosely b
   embedding models on model-gateway.
 
 ### Changed
-- **Hermes Agent v0.21.7, unmodified.** The pin moves from v0.21.5 to v0.21.7 (2026-10-11), which
-  carries upstream's dashboard login hardening (a spoofed `X-Forwarded-For` could reset the login
-  rate limit) and repository git-filter hardening. The image no longer patches Hermes: all six
-  source diffs, the three anchor patches and the ComfyUI script diff are gone, with each behavior
-  either configured, fixed upstream or dropped. Auxiliary tasks run on `provider: main` (one
-  Models-page card per model); checkpoints stay off by config; the ComfyUI skill notes pass
-  `--host "$COMFYUI_URL"`; upstream now keeps reasoning-only stops private, budgets the compaction
-  tail by tokens and delivers any file type through `MEDIA:` tags. Dropped, as upstream's design:
-  a quote-reply @mention answers inline, and `/voice join` sets the channel to speak every reply
-  (run `/voice on` after joining for voice-only). The image moves to Python 3.14, the only version
-  upstream supports (on 3.11 its core dependencies are not installed), bakes in the `discord`
-  extra instead of lazy-installing it at boot, and writes upstream's install stamp so `hermes
-  --version` reports the real release.
+- **Hermes Agent v0.21.7, on upstream's own image, unmodified.** The agent image is now
+  `nousresearch/hermes-agent` (pinned by digest, asserted at build time against the commit in
+  `HERMES_PINNED_SHA`) plus this stack's layer, instead of a from-source build that re-created
+  upstream's packaging and patched its code. Upstream now owns Python 3.14, the locked venv, the
+  package manager, SQLite, the s6-overlay boot (UID remap, ownership, gateway supervision and
+  reaping) and the install stamp. The stack's layer adds libopus (Discord voice), the `ops-router`
+  plugin, the ComfyUI skill notes, the seed `SOUL.md` and one boot hook (`ordo-init.sh`, run as
+  `/etc/cont-init.d/50-ordo`) that configures Hermes through its CLI; the old entrypoint is gone.
+  Every source patch is gone too: auxiliary tasks run on `provider: main` (one Models-page card
+  per model), checkpoints stay off by config, the ComfyUI notes pass `--host "$COMFYUI_URL"`, the
+  Langfuse SDK comes from upstream's `langfuse` extra via `hermes pm install`, and upstream now
+  keeps reasoning-only stops private, budgets the compaction tail by tokens and delivers any file
+  type through `MEDIA:` tags. Dropped as upstream's design: a quote-reply @mention answers inline,
+  and `/voice join` sets the channel to speak every reply (run `/voice on` after joining). The
+  brain volume mounts at upstream's `/opt/data` and stays at `/home/hermes/.hermes` for the
+  brain's own absolute paths; `HERMES_UID=1000` keeps its ownership. The agent manifest gains
+  `init: false` (the image's s6 is PID 1) and `command: [gateway, run]`. Upstream migrates
+  `config.yaml` (schema 21 -> 50) on first boot and logs each change.
 - **The push-through plugin is retired; its rule lives in `SOUL.md`.** The plugin only appended a
   fixed "execute, don't propose" reminder to every model call, which the seeded `SOUL.md` already
   states. Existing homes keep their `SOUL.md`; drop `push-through` from `plugins.enabled`.

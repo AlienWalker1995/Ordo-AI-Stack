@@ -513,6 +513,7 @@ class RenderedConfig:
             agent_image=self.hermes.get("agent_image") or None,
             agent_command=self.hermes.get("agent_command") or None,
             agent_user=self.hermes.get("agent_user") or None,
+            agent_init=self.hermes.get("agent_init", True),
             agent_group_add=self.hermes.get("agent_group_add") or None,
             agent_volumes=self.hermes.get("agent_volumes") or None,
             agent_environment=self.hermes.get("agent_environment") or None,
@@ -919,6 +920,7 @@ def render(source: Source, catalog: Catalog,
         # Full runtime wiring for the agent service (data-driven parity with the V1 container).
         # Empty/absent for an agent that declares none — compose omits each accordingly.
         "agent_user": (agent.user if agent else ""),
+        "agent_init": (agent.init if agent else True),
         "agent_group_add": (list(agent.group_add) if agent else []),
         "agent_volumes": (list(agent.volumes) if agent else []),
         "agent_environment": (dict(agent.environment) if agent else {}),

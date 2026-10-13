@@ -10,7 +10,7 @@
 #     key alias. Wired by the renderer only while this plugin is enabled (ordo/render/compose.py
 #     GATEWAY_LANGFUSE_ENV).
 #   * `hermes`: the Hermes agent's bundled `observability/langfuse` plugin (turn, LLM-call and tool
-#     spans; services/hermes/{Dockerfile,agent.yaml,entrypoint.sh}).
+#     spans; services/hermes/{agent.yaml,ordo-init.sh}).
 # Hermes's LLM calls therefore appear once in EACH environment: LiteLLM 1.100.1 has no open-source
 # way to exclude one virtual key from a callback (the per-key `litellm_disabled_callbacks` switch is
 # enforced only for premium users). Filter dashboards by environment. See README.md in this dir.

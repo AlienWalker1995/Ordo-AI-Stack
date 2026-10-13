@@ -57,23 +57,32 @@ def test_hermes_manifest_declares_gateway_command():
     # the agent-hermes image's default CMD is `hermes --help` (prints usage + exits); the manifest
     # must start the persistent gateway or the container restart-loops. Regression guard for the
     # phase-5 flip attempt #2 rollback.
-    assert AGENTS.get("hermes").command == ("hermes", "gateway")
+    assert AGENTS.get("hermes").command == ("gateway", "run")
 
 
 def test_render_agent_emits_gateway_command(tmp_path):
-    # the rendered agent service MUST override the image's no-op default CMD with `hermes gateway`,
-    # mirroring V1's compose. Without this the agent boots into `hermes --help` and crash-loops.
+    # the rendered agent service MUST override the image's default CMD (the interactive `hermes`)
+    # with upstream's documented `gateway run`, or the container never starts the gateway.
     render(_src("hermes"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
-    assert c["services"]["agent"]["command"] == ["hermes", "gateway"]
+    assert c["services"]["agent"]["command"] == ["gateway", "run"]
 
 
 def test_render_agent_runs_under_an_init(tmp_path):
     # The agent spawns tool subprocesses; as PID 1 it would never reap their orphans (zombies pile
-    # up for the life of the container). Docker's init must be PID 1 instead.
-    render(_src("hermes"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
+    # up for the life of the container). Docker's init must be PID 1 instead, by default.
+    render(_src("openai-agent"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
     c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
     assert c["services"]["agent"]["init"] is True
+
+
+def test_render_agent_keeps_its_own_init_when_the_image_brings_one(tmp_path):
+    # Hermes's image runs s6-overlay as PID 1 (supervision and reaping); Docker's init would take
+    # PID 1 and push s6 into its degraded fallback, so the manifest opts out with `init: false`.
+    assert AGENTS.get("hermes").init is False
+    render(_src("hermes"), CATALOG, REGISTRY, agents=AGENTS).write(tmp_path)
+    c = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    assert "init" not in c["services"]["agent"]
 
 
 def test_render_agent_without_command_omits_it(tmp_path):
@@ -118,7 +127,8 @@ def test_render_agent_mounts_brain_workspace_and_mirror(tmp_path):
     # strip the traverse bit from uid 1000 (the user the gateway drops to via gosu). That happened
     # 2026-08-04 and silently killed cron for 22h. Assert the volume AND assert the bind is gone,
     # so a well-meaning "restore host access" change trips this test instead of production.
-    assert "hermes-home:/home/hermes/.hermes" in vols
+    assert "hermes-home:/opt/data" in vols  # upstream's HERMES_HOME
+    assert "hermes-home:/home/hermes/.hermes" in vols  # the brain's own absolute paths
     assert not any(v.endswith(":/home/hermes/.hermes") and "DATA_PATH" in v for v in vols)
     # The SAME volume is mounted a second time at the path cron jobs hardcode for skill scripts
     # (/workspace/data/hermes/skills/...). Without it that path falls through to the host copy
@@ -136,7 +146,7 @@ def test_render_agent_mounts_file_secrets_readonly(tmp_path):
     agent = c["services"]["agent"]
     assert any(v.endswith("/out/secrets/discord_bot_token:/run/secrets/discord_bot_token:ro") for v in agent["volumes"])
     assert any(v.endswith("/out/secrets/github_backup_pat:/run/secrets/github_backup_pat:ro") for v in agent["volumes"])
-    # The entrypoint bridges each *_FILE to the plain var (services/hermes/entrypoint.sh).
+    # The boot hook bridges each *_FILE to the plain var (services/hermes/ordo-init.sh).
     assert agent["environment"]["DISCORD_BOT_TOKEN_FILE"] == "/run/secrets/discord_bot_token"
     assert agent["environment"]["GITHUB_BACKUP_PAT_FILE"] == "/run/secrets/github_backup_pat"
 
@@ -148,12 +158,12 @@ def test_render_agent_has_user_env_and_healthcheck(tmp_path):
     assert agent["user"] == "root"
     assert agent["environment"]["OPS_CONTROLLER_URL"] == "http://ops-controller:9000"
     # The healthcheck MUST probe as the unprivileged runtime user, not as root. The container's
-    # `user: root` is only the entry identity — the gateway drops to uid 1000 via gosu. A root
+    # `user: root` is only the entry identity — upstream's s6 boot drops the gateway to hermes. A root
     # probe cannot see a root-owned 0700 lockout of the brain, which is why the old
     # `test -f .../gateway_state.json` reported healthy through 22h of total cron failure on
     # 2026-08-04 (it also only tested EXISTENCE of a file written once at startup).
     probe = agent["healthcheck"]["test"][-1]
-    assert "gosu hermes" in probe
+    assert "s6-setuidgid hermes" in probe
     assert "gateway_state.json" in probe
     # Guard the specific regression: a bare root `test -f` on the state file is not a liveness probe.
     assert not probe.strip().startswith("test -f")

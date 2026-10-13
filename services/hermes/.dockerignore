@@ -1,6 +1,6 @@
-# Build context needs Dockerfile, entrypoint.sh, spa-patches.mjs, plugins/, seed/SOUL.md,
-# ops_client.py, and scripts/vault_federate.py (all explicitly COPYed). Exclude everything
-# else (markdown, editor files, etc.).
+# The Dockerfile COPYs ordo-init.sh, secret-env.sh, git-credential-github-pat, ops_client.py,
+# plugins/, skill-overlays/, scripts/ and seed/SOUL.md. `*.md` matches top-level markdown only
+# (this dir's README), so the nested overlay notes and seed SOUL.md stay in the context.
 *.md
 .git
 .gitignore
