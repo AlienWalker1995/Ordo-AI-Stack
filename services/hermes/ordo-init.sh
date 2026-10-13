@@ -20,6 +20,12 @@ CONTAINER_ENV=/run/s6/container_environment
 
 as_hermes() { /command/s6-setuidgid hermes "$@"; }
 hermes_config() { as_hermes "$HERMES_BIN" config set "$1" "$2" >/dev/null; }
+# Remove a key if present (`config unset` fails on an absent key).
+hermes_config_unset() {
+    if as_hermes "$HERMES_BIN" config get "$1" >/dev/null 2>&1; then
+        as_hermes "$HERMES_BIN" config unset "$1" >/dev/null
+    fi
+}
 publish_env() { mkdir -p "$CONTAINER_ENV" && printf '%s' "$2" > "$CONTAINER_ENV/$1"; }
 
 # File-delivered secrets (ordo/render/secret_files.py): Hermes reads these from its environment
@@ -46,12 +52,20 @@ else
     publish_env API_SERVER_HOST 127.0.0.1
 fi
 
-# The model: the stack's LiteLLM gateway, local-chat alias, this consumer's virtual key.
+# The model: the stack's LiteLLM gateway as a NAMED provider, `ordo` (`custom:ordo`), with this
+# consumer's virtual key; local-chat is the default. Named rather than the anonymous
+# model.base_url endpoint because only a named provider has its model list fetched from the
+# gateway's /v1/models, which is what fills the model picker (the desktop app, the dashboard);
+# the anonymous one showed only the default. The old anonymous fields are removed, so there is
+# one route to the gateway. Hermes still runs it as provider `custom`, which is why its timeouts
+# stay under providers.custom below.
 : "${LITELLM_KEY_HERMES:?LITELLM_KEY_HERMES must be set (SOPS/secrets.env) - refusing to seed a guessable default}"
 CONTEXT_WINDOW="${LLAMACPP_CTX_SIZE:?LLAMACPP_CTX_SIZE is missing: it is rendered into out/.env by ordo render}"
-hermes_config model.provider custom
-hermes_config model.base_url http://model-gateway:11435/v1
-hermes_config model.api_key "$LITELLM_KEY_HERMES"
+hermes_config providers.ordo.base_url http://model-gateway:11435/v1
+hermes_config providers.ordo.api_key "$LITELLM_KEY_HERMES"
+hermes_config model.provider custom:ordo
+hermes_config_unset model.base_url
+hermes_config_unset model.api_key
 hermes_config model.default local-chat
 hermes_config model.context_length "$CONTEXT_WINDOW"
 # Per-turn budgets, monitorable from .env. model.max_tokens: output cap per call (match
@@ -98,6 +112,7 @@ fi
 hermes_config mcp_servers.gateway.url http://model-gateway:11435/mcp
 hermes_config mcp_servers.gateway.headers.Authorization "Bearer ${LITELLM_KEY_HERMES}"
 # Local models prefill long contexts for minutes; the default 180s stale timeout aborts them.
+# Keyed `custom`: the provider id Hermes runs the named `ordo` provider as (hermes_cli/timeouts.py).
 hermes_config providers.custom.stale_timeout_seconds 1800
 hermes_config providers.custom.request_timeout_seconds 1800
 
