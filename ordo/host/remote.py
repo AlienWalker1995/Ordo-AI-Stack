@@ -34,6 +34,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CERT_DIR = REPO_ROOT / "auth" / "caddy" / "certs"
 
 OAUTH_CLIENT_KEYS = ("OAUTH2_PROXY_CLIENT_ID", "OAUTH2_PROXY_CLIENT_SECRET")
+# The Hermes dashboard's own Google client (services/hermes-dashboard/plugin.yaml): its login, which
+# the edge does not gate. Required whenever that plugin renders on; removed with the edge.
+HERMES_DASHBOARD = "hermes-dashboard"
+HERMES_OIDC_KEYS = ("HERMES_DASHBOARD_OIDC_CLIENT_ID", "HERMES_DASHBOARD_OIDC_CLIENT_SECRET")
+# Every operator-provided secret remote access adds, so everything `disable` removes.
+REMOTE_CLIENT_KEYS = (*OAUTH_CLIENT_KEYS, *HERMES_OIDC_KEYS)
 
 
 def edge_site_keys(registry: PluginRegistry) -> tuple[str, ...]:
@@ -87,9 +93,16 @@ def enable(source_path: Path, store: secret_store.Store, answers: wizard.RemoteA
     if EDGE_PLUGIN not in rendered.plugins_enabled:
         raise ValueError(f"the edge would still be off after this change: {'; '.join(rendered.warnings)}")
     secrets_now = store.read_text()   # read (a SOPS file: decrypt) before anything is written
-    secrets_new, generated, blank = secret_store.update_dotenv(
-        secrets_now, rendered.required_secrets,
-        provided={"OAUTH2_PROXY_CLIENT_ID": answers.client_id, "OAUTH2_PROXY_CLIENT_SECRET": answers.client_secret})
+    provided = {"OAUTH2_PROXY_CLIENT_ID": answers.client_id, "OAUTH2_PROXY_CLIENT_SECRET": answers.client_secret}
+    provided |= {k: v for k, v in zip(HERMES_OIDC_KEYS, (answers.hermes_client_id, answers.hermes_client_secret),
+                                      strict=True) if v.strip()}
+    secrets_new, generated, blank = secret_store.update_dotenv(secrets_now, rendered.required_secrets, provided=provided)
+    missing_hermes = [k for k in HERMES_OIDC_KEYS if k in blank]
+    if HERMES_DASHBOARD in rendered.plugins_enabled and missing_hermes:
+        # The edge does not gate the Hermes dashboard; without its own Google client it has no login.
+        raise ValueError(f"{HERMES_DASHBOARD} is on and its Google login needs {', '.join(missing_hermes)}: "
+                         "pass --hermes-client-id/--hermes-client-secret (a second Google OAuth client, "
+                         "audience in Testing; see docs/runbooks/auth.md)")
     source_path.write_text(new_text, encoding="utf-8")
     if secrets_new != secrets_now:
         store.write_text(secrets_new)
@@ -98,13 +111,14 @@ def enable(source_path: Path, store: secret_store.Store, answers: wizard.RemoteA
 
 def disable(source_path: Path, store: secret_store.Store, catalog: Catalog, registry: PluginRegistry) -> Change:
     """Turn remote access off: the edge's site keys, its entry in an explicit plugins list, the
-    OAuth client pair go; the UIs publish their loopback ports again."""
+    OAuth client pairs (the edge's and the Hermes dashboard's) go; the UIs publish their loopback
+    ports again."""
     text = source_path.read_text(encoding="utf-8")
     new_text = _plugins_edit(edit_site_keys(text, {}, list(edge_site_keys(registry))), "remove")
     rendered = render(Source.from_dict(yaml.safe_load(new_text)), catalog, registry)
     secrets_now = store.read_text()
     secrets_new, generated, blank = secret_store.update_dotenv(
-        secrets_now, rendered.required_secrets, remove=list(OAUTH_CLIENT_KEYS))
+        secrets_now, rendered.required_secrets, remove=list(REMOTE_CLIENT_KEYS))
     source_path.write_text(new_text, encoding="utf-8")
     if secrets_new != secrets_now:
         store.write_text(secrets_new)

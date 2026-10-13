@@ -424,12 +424,16 @@ def _tailscale_ip() -> str:  # pragma: no cover - shells to tailscale
 @dataclasses.dataclass
 class RemoteAnswers:
     """What `ordo remote enable` collects: the tailnet name, the Caddy bind, the Google OAuth
-    client and the allowlist. The domain is derived from the hostname."""
+    client and the allowlist. The domain is derived from the hostname. The Hermes dashboard's own
+    Google client (its login, for the Hermes desktop app) is collected too and is required only
+    while that plugin renders on (remote.enable checks)."""
     hostname: str
     bind: str
     client_id: str
     client_secret: str
     emails: list[str]
+    hermes_client_id: str = ""
+    hermes_client_secret: str = ""
 
 
 def remote_answer_errors(answers: RemoteAnswers) -> list[str]:
@@ -479,8 +483,16 @@ def ask_remote_access() -> RemoteAnswers:  # pragma: no cover - interactive only
         if emails and not bad:
             break
         print(f"  ! not a valid email: {', '.join(bad)}" if bad else "  ! at least one email is required")
+    print("  The Hermes dashboard signs in itself (its desktop app cannot pass the SSO gate). Create a")
+    print("  SECOND OAuth client in a Google project whose audience is in Testing, with the emails above")
+    print("  as its test users (they are who may sign in):")
+    print(f"    type: Web application   Authorized redirect URI: https://hermes.{tailnet_domain(host)}/auth/callback")
+    print("  Leave both blank if the Hermes dashboard plugin is off.")
+    hermes_client_id = _prompt("Hermes dashboard Google OAuth client ID", "")
+    hermes_client_secret = _prompt("Hermes dashboard Google OAuth client secret", "") if hermes_client_id else ""
     return RemoteAnswers(hostname=host, bind=bind, client_id=client_id, client_secret=client_secret,
-                         emails=emails)
+                         emails=emails, hermes_client_id=hermes_client_id,
+                         hermes_client_secret=hermes_client_secret)
 
 
 def run(catalog: Catalog, registry: PluginRegistry, out_dir: str | Path,

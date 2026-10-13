@@ -55,6 +55,7 @@ FILE_SPEC: dict[str, set[str]] = {
     "ops-controller": {"OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN_HERMES"},
     "dashboard": {"OPS_CONTROLLER_TOKEN", "THROUGHPUT_RECORD_TOKEN", "LITELLM_MASTER_KEY"},
     "agent": {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT"},
+    "hermes-dashboard": {"HERMES_DASHBOARD_OIDC_CLIENT_SECRET"},
     "comfyui-gate": {"OPS_CONTROLLER_TOKEN"},
     "mcp-comfyui": {"OPS_CONTROLLER_TOKEN"},
     "mcp-orchestration": {"OPS_CONTROLLER_TOKEN"},
@@ -70,13 +71,13 @@ FILE_SPEC: dict[str, set[str]] = {
     **{f"tailnet-{n}": TAILNET for n in ("chat", "comfy", "dash", "graph", "hermes", "langfuse", "llm")},
 }
 # Secrets still delivered in the environment (`KEY: ${KEY}`), each for a stated reason: the
-# software has no file variant (langfuse, couchdb, searxng, open-webui, the oauth2-proxy
-# client id), or the reader is the agent's image, which holds the Docker socket and
+# software has no file variant (langfuse, couchdb, searxng, open-webui, the oauth2-proxy and
+# Hermes dashboard OIDC client ids), or the reader is the agent's image, which holds the Docker socket and
 # the /c/dev mirror (so a file would hide nothing from it) and whose docker-exec'd CLI and skills
 # read these by name. Moving one to FILE_SPEC is the goal; adding one here needs a reason.
 ENV_SPEC: dict[str, set[str]] = {
     "agent": {"LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN", "HERMES_API_SERVER_KEY"} | LANGFUSE_PAIR,
-    "hermes-dashboard": {"LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN"} | LANGFUSE_PAIR,
+    "hermes-dashboard": {"LITELLM_KEY_HERMES", "OPS_CONTROLLER_TOKEN", "HERMES_DASHBOARD_OIDC_CLIENT_ID"} | LANGFUSE_PAIR,
     "comfyui": {"OPS_CONTROLLER_TOKEN", "LITELLM_MASTER_KEY", "HF_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"},
     "open-webui": {"LITELLM_KEY_OPEN_WEBUI"},
     "couchdb": {"COUCHDB_PASSWORD"},

@@ -95,6 +95,10 @@ def main(argv: list[str] | None = None) -> int:
     prm.add_argument("--client-secret",
                      help="Google OAuth client secret (prefer env OAUTH2_PROXY_CLIENT_SECRET: flags land in history)")
     prm.add_argument("--emails", help="allowlisted Google accounts, comma-separated")
+    prm.add_argument("--hermes-client-id",
+                     help="the Hermes dashboard's own Google OAuth client id (or env HERMES_DASHBOARD_OIDC_CLIENT_ID)")
+    prm.add_argument("--hermes-client-secret",
+                     help="its secret (prefer env HERMES_DASHBOARD_OIDC_CLIENT_SECRET: flags land in history)")
     prm.set_defaults(func=_handler("ordo.host.cli_setup", "cmd_remote"))
     # `secrets`: the secret store. With `site: SECRETS_BACKEND: infisical` it is an Infisical project,
     # with `site: SECRETS_SOURCE` alone a SOPS file (a private repo); out/secrets.env is materialized from

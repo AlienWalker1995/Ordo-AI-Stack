@@ -118,7 +118,7 @@ def test_each_declared_port_has_exactly_one_site_proxying_its_upstream(caddyfile
     for port, upstream in SERVICE_PORTS.items():
         assert sites.count(port) == 1, f":{port} must have exactly one site block (found {sites.count(port)})"
         block = _site_block(caddyfile_text, port)
-        routes = (f"import sso_service {upstream}", f"import sso_service_loopback {upstream}",
+        routes = (f"import sso_service {upstream}", f"import self_authenticating_service {upstream}",
                   f"reverse_proxy {upstream}")
         assert any(route in block for route in routes), (
             f":{port} must proxy its declared upstream {upstream}")
@@ -198,19 +198,12 @@ def _site_block(text: str, port: str) -> str:
 
 
 def test_formerly_divergent_ports_serve_at_root(caddyfile_text: str) -> None:
-    """8447/8448/8449/8450 each proxy at root via `import sso_service <upstream>` with
-    no adapter — no handle_path, no `redir /` bounce to a subpath.
+    """8447/8448/8449/8450 each proxy at root via their site snippet with no adapter — no
+    handle_path, no `redir /` bounce to a subpath.
 
-    :8447's upstream is 127.0.0.1 and it uses (sso_service_loopback), both deliberate:
-    hermes-dashboard runs inside caddy's network namespace (network_mode: service:caddy)
-    so it can bind LOOPBACK. Hermes >= v0.20.0 hard-refuses a non-loopback bind unless
-    the dashboard registers an auth provider of its own, which would mean a second
-    credential and a second login behind the SSO gate. Loopback keeps oauth2-proxy the
-    ONE auth gate — but it also turns on that build's Host-header validation, which
-    accepts only loopback Host values and 400s the inherited `hermes.<tailnet>` Host.
-    (sso_service_loopback) is (sso_service) plus the Host rewrite that satisfies it.
-    The invariant this test actually protects — served at origin root with no PATH
-    adapter (handle_path / redir bounce / X-Forwarded-Prefix) — is unchanged.
+    :8447 (Hermes) uses (self_authenticating_service): the dashboard runs its own Google
+    OIDC login so its desktop app can connect (see the test below), and its upstream is
+    127.0.0.1 because it lives in caddy's network namespace.
 
     :8449 is the LiteLLM admin UI (at /ui/; swagger at /). It needs a port root because
     the :443 `/llm/*` route strips its prefix and the admin UI / swagger HTML then request
@@ -221,7 +214,7 @@ def test_formerly_divergent_ports_serve_at_root(caddyfile_text: str) -> None:
     service publishes no host port), so losing the SSO gate here exposes the trace store.
     """
     port_of = {upstream: port for port, upstream in SERVICE_PORTS.items()}
-    for snippet, upstream in (("sso_service_loopback", "127.0.0.1:9119"),
+    for snippet, upstream in (("self_authenticating_service", "127.0.0.1:9119"),
                               ("sso_service", "codebase-memory-ui:9750"),
                               ("sso_service", "model-gateway:11435"),
                               ("sso_service", "langfuse-web:3000")):
@@ -310,16 +303,28 @@ def test_llm_route_blocks_litellm_metrics(caddyfile_text: str) -> None:
         "the metrics 404 must come before the proxy, or Caddy forwards the request first")
 
 
-def test_loopback_upstream_origin_is_checked_at_the_edge_then_rewritten(caddyfile_text: str) -> None:
-    """A loopback-bound upstream (Hermes) refuses any browser Origin that is not loopback, which broke
-    its chat websockets behind the edge. The cross-site websocket guard moves to Caddy: a foreign
-    Origin is refused with 403 BEFORE the request reaches the app, and only then is an allowed Origin
-    rewritten to loopback. Rewriting without the check would silently drop that protection."""
-    start = caddyfile_text.index("(sso_service_loopback) {")
+def test_only_the_hermes_site_skips_the_sso_gate_and_its_own_login_is_configured(caddyfile_text: str) -> None:
+    """Every UI port sits behind oauth2-proxy except Hermes (:8447), whose desktop app cannot pass
+    a browser SSO gate, so the dashboard authenticates itself with Google OIDC. Skipping the edge
+    gate is only safe while that login is configured: Hermes engages its gate on a loopback bind
+    only for a non-loopback public URL, and an OIDC issuer is what gives it a provider. Drop either
+    and the dashboard would be served to the tailnet with no login at all."""
+    import yaml
+
+    start = caddyfile_text.index("(self_authenticating_service) {")
     snippet = caddyfile_text[start:caddyfile_text.index("\n}\n", start)]
-    assert "@foreign_origin expression" in snippet
-    assert 'https://{args[1]}.{$CADDY_TAILNET_DOMAIN}' in snippet
-    assert 'https://{$CADDY_TAILNET_HOSTNAME}:{args[2]}' in snippet
-    assert snippet.index("respond @foreign_origin") < snippet.index("reverse_proxy {args[0]}")
-    assert 'header_up Origin ".+" "http://{args[0]}"' in snippet
-    assert "import sso_service_loopback 127.0.0.1:9119 hermes 8447" in caddyfile_text
+    assert "forward_auth" not in snippet and "sso_forward_auth" not in snippet
+    assert "header_up Host" not in snippet and "header_up Origin" not in snippet, (
+        "Hermes validates Host and Origin against its public URL; the edge must pass them through")
+    users = [port for port, upstream in SERVICE_PORTS.items()
+             if f"import self_authenticating_service {upstream}" in _site_block(caddyfile_text, port)]
+    assert users == ["8447"], f"only Hermes may skip the SSO gate, found {users}"
+
+    manifest = yaml.safe_load((REPO_ROOT / "services" / "hermes-dashboard" / "plugin.yaml").read_text(encoding="utf-8"))
+    service = manifest["services"][0]
+    env = service["env"]
+    assert env["HERMES_DASHBOARD_OIDC_ISSUER"] == "https://accounts.google.com"
+    assert env["HERMES_DASHBOARD_PUBLIC_URL"] == "https://hermes.${CADDY_TAILNET_DOMAIN}"
+    assert "HERMES_DASHBOARD_OIDC_CLIENT_ID" in service["secrets"]
+    assert "HERMES_DASHBOARD_OIDC_CLIENT_SECRET" in service["secret_files"]
+    assert "--insecure" not in service["command"]

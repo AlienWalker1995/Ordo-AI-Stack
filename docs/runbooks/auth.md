@@ -27,6 +27,46 @@
 
 `ordo remote disable` reverses all of it (UIs back on `127.0.0.1`).
 
+## The Hermes dashboard: its own Google sign-in
+
+Every UI is behind oauth2-proxy except the Hermes dashboard
+(`https://hermes.<tailnet>.ts.net`, Caddy `:8447`): the Hermes desktop
+app connects to it as a remote gateway and cannot pass a browser SSO
+gate. The dashboard authenticates itself with Hermes's bundled
+self-hosted OIDC provider, against Google. Browser and desktop both sign
+in with Google; the desktop opens your system browser and keeps its own
+tokens (Hermes's native RFC 8252 flow).
+
+Hermes has no allowlist of its own, so **who may sign in is decided by
+Google**: the client lives in a Google project whose OAuth audience is in
+**Testing**, and only that project's test users can complete sign-in.
+With only the `openid email profile` scopes, Google does not expire those
+sign-ins after 7 days.
+
+1. Google Cloud Console, in a project whose audience is **Testing** (if
+   the oauth2-proxy client's project is in production, use a separate
+   project): add your accounts under **Audience → Test users**, then
+   create an OAuth 2.0 **Web application** client.
+   - Authorized redirect: `https://hermes.<tailnet>.ts.net/auth/callback`
+2. Store it: `ordo remote enable` asks for it (`--hermes-client-id`, and
+   the secret from `HERMES_DASHBOARD_OIDC_CLIENT_SECRET` with `--yes`), or
+   on a stack where remote access is already on:
+   ```
+   ordo secrets set HERMES_DASHBOARD_OIDC_CLIENT_ID --from-stdin
+   ordo secrets set HERMES_DASHBOARD_OIDC_CLIENT_SECRET --from-stdin
+   ```
+3. `ordo apply`. With the plugin on and either value missing,
+   `ordo remote enable` refuses: Caddy does not gate this port, so the
+   dashboard must never run without its login.
+4. In the desktop app: **Settings → Gateways → Remote gateway**, URL
+   `https://hermes.<tailnet>.ts.net`, then **Sign in with Self-Hosted
+   OIDC**.
+
+Revoke access: remove the account from the project's test users (and
+sign out the desktop app). Rotate the client secret in the console, then
+`ordo secrets set HERMES_DASHBOARD_OIDC_CLIENT_SECRET --from-stdin` and
+`ordo apply`.
+
 ## Local mode: dashboard sign-in without the edge
 
 With the edge off there is no SSO identity, so the dashboard

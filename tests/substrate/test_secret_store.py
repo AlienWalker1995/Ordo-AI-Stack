@@ -460,12 +460,15 @@ def test_remote_enable_writes_the_oauth_pair_to_the_sops_store(stack, tmp_path, 
     assert _ordo(stack, "import", "--to", str(target)) == 0
     assert cli.main(["remote", "enable", "--out", str(stack), "--yes", "--hostname", "ordo.tail1234.ts.net",
                      "--bind", "100.64.0.1", "--client-id", "cid", "--client-secret", "GOCSPX-x",
-                     "--emails", "me@example.com"]) == 0
+                     "--emails", "me@example.com",
+                     "--hermes-client-id", "hcid", "--hermes-client-secret", "GOCSPX-h"]) == 0
     stored = secret_store.parse_dotenv(secret_store.SopsStore(target).read_text())
     assert stored["OAUTH2_PROXY_CLIENT_SECRET"] == "GOCSPX-x" and stored["OAUTH2_PROXY_COOKIE_SECRET"]
+    assert stored["HERMES_DASHBOARD_OIDC_CLIENT_SECRET"] == "GOCSPX-h"
     assert _values(stack / "secrets.env")["OAUTH2_PROXY_CLIENT_SECRET"] == "GOCSPX-x"
     assert cli.main(["remote", "disable", "--out", str(stack), "--yes"]) == 0
-    assert "OAUTH2_PROXY_CLIENT_SECRET" not in secret_store.parse_dotenv(secret_store.SopsStore(target).read_text())
+    after = secret_store.parse_dotenv(secret_store.SopsStore(target).read_text())
+    assert "OAUTH2_PROXY_CLIENT_SECRET" not in after and "HERMES_DASHBOARD_OIDC_CLIENT_SECRET" not in after
     assert "OAUTH2_PROXY_CLIENT_SECRET" not in _values(stack / "secrets.env")
 
 
