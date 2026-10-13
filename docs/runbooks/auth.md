@@ -38,15 +38,21 @@ in with Google; the desktop opens your system browser and keeps its own
 tokens (Hermes's native RFC 8252 flow).
 
 Hermes has no allowlist of its own, so **who may sign in is decided by
-Google**: the client lives in a Google project whose OAuth audience is in
-**Testing**, and only that project's test users can complete sign-in.
-With only the `openid email profile` scopes, Google does not expire those
-sign-ins after 7 days.
+Google**, through the audience of the Google project the client lives in:
 
-1. Google Cloud Console, in a project whose audience is **Testing** (if
-   the oauth2-proxy client's project is in production, use a separate
-   project): add your accounts under **Audience → Test users**, then
-   create an OAuth 2.0 **Web application** client.
+- **Internal** (a Google Workspace organization): only the organization's
+  accounts can sign in. Nothing else to maintain; check who is in the
+  organization.
+- **External, in Testing** (personal Google accounts): only the project's
+  test users can sign in. Keep that list matching `SSO_ALLOWED_EMAILS`.
+  With only the `openid email profile` scopes, Google does not expire
+  those sign-ins after 7 days.
+- Never **External, in production**: any Google account could sign in.
+
+1. Google Cloud Console, in such a project (the oauth2-proxy client's
+   project works when its audience is one of the above): create an
+   OAuth 2.0 **Web application** client. Use a client of its own, not
+   oauth2-proxy's, so it can be rotated or revoked separately.
    - Authorized redirect: `https://hermes.<tailnet>.ts.net/auth/callback`
 2. Store it: `ordo remote enable` asks for it (`--hermes-client-id`, and
    the secret from `HERMES_DASHBOARD_OIDC_CLIENT_SECRET` with `--yes`), or
@@ -62,8 +68,8 @@ sign-ins after 7 days.
    `https://hermes.<tailnet>.ts.net`, then **Sign in with Self-Hosted
    OIDC**.
 
-Revoke access: remove the account from the project's test users (and
-sign out the desktop app). Rotate the client secret in the console, then
+Revoke access: remove the account from the Workspace organization or the
+project's test users (and sign out the desktop app). Rotate the client secret in the console, then
 `ordo secrets set HERMES_DASHBOARD_OIDC_CLIENT_SECRET --from-stdin` and
 `ordo apply`.
 

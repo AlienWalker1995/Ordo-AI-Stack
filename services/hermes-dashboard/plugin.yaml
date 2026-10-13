@@ -46,8 +46,8 @@ services:
     # It runs Hermes's bundled self-hosted OIDC provider against Google, the same identity
     # oauth2-proxy uses, so browser and desktop both sign in with Google; the desktop uses
     # Hermes's native (RFC 8252) flow and holds Bearer tokens. Who may sign in is decided by
-    # the IDP: the Google OAuth app is kept in Testing with the operator's accounts as its test
-    # users (Hermes has no allowlist of its own). Setup: docs/runbooks/auth.md.
+    # the IDP (Hermes has no allowlist of its own): the Google project's audience, Internal to a
+    # Workspace organization or External in Testing with test users. Setup: docs/runbooks/auth.md.
     #   - HERMES_DASHBOARD_PUBLIC_URL is the host the dashboard trusts, the origin it allows and
     #     the base of its OAuth callback (<public_url>/auth/callback, the redirect URI registered
     #     on the Google client). A non-loopback public URL is also what engages Hermes's login
