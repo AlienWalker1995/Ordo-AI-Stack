@@ -790,6 +790,7 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
                    agent_image: str | None = None,
                    agent_command: list[str] | None = None,
                    agent_user: str | None = None,
+                   agent_init: bool = True,
                    agent_group_add: list[str] | None = None,
                    agent_volumes: list[str] | None = None,
                    agent_environment: dict[str, str] | None = None,
@@ -891,16 +892,18 @@ def render_compose(*, nvidia_gpu: bool, llamacpp_backend: LlamaCppBackend,
         "agent": _svc(agent_img, net=net,
                       depends=["model-gateway", "model-gateway-keys", "ops-controller"]),
     }
-    # The agent image's default CMD may be a no-op (agent-hermes defaults to `hermes --help`, which
-    # prints usage and exits → restart loop). The manifest's `command` (Hermes: `hermes gateway`)
+    # The agent image's default CMD may not be the long-lived service (Hermes's is the interactive
+    # `hermes`). The manifest's `command` (Hermes: `gateway run`)
     # starts the persistent orchestrator; emit it so the rendered service overrides that default,
     # mirroring V1's compose. Empty -> omitted, so an agent whose image self-starts is unaffected.
     if agent_command:
         svcs["agent"]["command"] = list(agent_command)
     # The agent is a long-lived orchestrator that spawns tool subprocesses. Without an init the
-    # agent process is PID 1 and nothing reaps the orphans those leave (Hermes v0.21.5 warns about
-    # exactly this at boot). Docker's init becomes PID 1 and reaps them, as for the MCP services.
-    svcs["agent"]["init"] = True
+    # agent process is PID 1 and nothing reaps the orphans those leave. Docker's init becomes PID 1
+    # and reaps them, as for the MCP services, unless the agent's image brings its own init
+    # (manifest `init: false`; Hermes's s6-overlay), which Docker's would displace.
+    if agent_init:
+        svcs["agent"]["init"] = True
     # Full agent runtime wiring (data-driven, from the agent manifest) — mirrors V1's hermes-gateway:
     # the brain bind (staged), /workspace/data, the /c/dev mirror, file secrets, env, service_healthy
     # depends, healthcheck. Each is emitted only when the manifest declares it (a self-contained

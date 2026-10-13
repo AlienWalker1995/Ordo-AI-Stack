@@ -257,7 +257,7 @@ def test_no_process_defaults_the_context_window():
     launcher, the gateway's model_info, the Hermes config seed) refuse to start without it instead of
     falling back to a window the render never chose."""
     readers = ["scripts/llamacpp/run-llama-server.sh", "services/model-gateway/entrypoint.sh",
-               "services/hermes/entrypoint.sh"]
+               "services/hermes/ordo-init.sh"]
     window = re.compile(r"\$\{(LLAMACPP_CTX_SIZE|LLAMACPP_CPU_CTX):?-")
     defaulted = [f"{path}: {m.group(0)}" for path in readers
                  for m in window.finditer((ROOT / path).read_text(encoding="utf-8"))]

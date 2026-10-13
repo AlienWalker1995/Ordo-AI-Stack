@@ -2,23 +2,31 @@
 
 The ComfyUI skill is the one this exists for. It used to live only in the agent's home volume,
 where it had no version control and Hermes rewrites its own SKILL.md, and its scripts submitted
-straight to the engine, skipping the GPU admission gate. It now ships from the image with a small
-overlay, and these tests pin the pieces that keep that true:
+straight to the engine, skipping the GPU admission gate. It now ships from the image with
+deployment notes spliced in (upstream's code untouched), and these tests pin the pieces that keep
+that true:
 
 * the overlay markdown lands before the upstream quick start, not after it;
 * registering the shipped dir never drops an operator's own external_dirs entries;
 * a local skill with the same frontmatter name is found and moved aside, never deleted, because
   Hermes lists local skills first and silently skips a same-named external one;
-* the overlay diff makes the scripts follow COMFYUI_URL and keeps the stock fallback;
+* the notes route every script through COMFYUI_URL with --host, and no code diff ships;
 * the overlay files carry nothing deployment-specific, because this repo is public.
 """
 from __future__ import annotations
 
 import importlib.util
 import re
+import sys
+import types
 from pathlib import Path
 
 import pytest
+import yaml
+
+# ordo_skills.py runs inside the Hermes image and parses frontmatter with Hermes's own YAML loader
+# (hermes_yaml). CI has no Hermes install, so a PyYAML-backed module with the same surface stands in.
+sys.modules.setdefault("hermes_yaml", types.SimpleNamespace(safe_load=yaml.safe_load, YAMLError=yaml.YAMLError))
 
 REPO = Path(__file__).resolve().parents[1]
 OVERLAY = REPO / "services" / "hermes" / "skill-overlays" / "comfyui"
@@ -222,18 +230,16 @@ def test_unreadable_frontmatter_is_not_a_match(tmp_path):
 
 # --- the overlay itself ---
 
-def test_the_diff_makes_the_scripts_follow_comfyui_url_with_the_stock_fallback():
-    diff = (OVERLAY / "submit-via-comfyui-url.diff").read_text(encoding="utf-8")
-    assert '+DEFAULT_LOCAL_HOST = os.environ.get("COMFYUI_URL") or "http://127.0.0.1:8188"' in diff
-    assert '-DEFAULT_LOCAL_HOST = "http://127.0.0.1:8188"' in diff
-    # The skill moved to optional-skills/ upstream in v2026.9.24.
-    assert "b/optional-skills/creative/comfyui/scripts/_common.py" in diff
+def test_the_overlay_ships_notes_only_never_a_code_diff():
+    """Upstream's skill code runs unmodified; the stack routes it with --host, not a patch."""
+    assert sorted(p.name for p in OVERLAY.rglob("*") if p.is_file()) == ["ordo-deployment.md"]
 
 
 def test_the_deployment_notes_forbid_the_engine_address_and_name_the_variable():
     notes = (OVERLAY / "ordo-deployment.md").read_text(encoding="utf-8")
     assert notes.startswith("## ")  # it is spliced in as a section
     assert "$COMFYUI_URL" in notes
+    assert '--host "$COMFYUI_URL"' in notes
     assert "never to `comfyui:8188`" in notes
     assert "Never install or launch ComfyUI" in notes
 

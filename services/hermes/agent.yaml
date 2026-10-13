@@ -8,13 +8,16 @@ default: true
 # image omitted -> resolves to <project>/agent-hermes (tagged by `ordo build`), built from this co-located build
 # context (services/hermes/ + its Dockerfile — the default, so no explicit `build:` is needed);
 # pin an explicit image here to ship a prebuilt one instead.
-# The agent-hermes image's default CMD is `hermes --help` (prints usage and exits); the gateway is
-# started explicitly so the container runs the persistent messaging gateway (mirrors V1 compose).
-command: [hermes, gateway]
-# The image's entrypoint (/entrypoint.sh) runs as root to chmod the bind-mounted brain, then drops
-# to the unprivileged hermes user via gosu. V1's hermes-gateway runs User=root for exactly this;
-# mirror it (empty -> compose omits `user:` and the image default applies).
+# The image is upstream's nousresearch/hermes-agent plus this stack's layer (see the Dockerfile). Its
+# default CMD is the interactive `hermes`; `gateway run` is upstream's documented gateway command. In
+# this image s6 supervises the gateway (restart on crash) and the CMD itself is a keep-alive.
+command: [gateway, run]
+# Upstream's boot (s6-overlay) must start as root: it remaps the hermes user to HERMES_UID, fixes the
+# brain volume's ownership and runs the boot hooks, then drops to hermes for the CMD.
 user: root
+# The image brings its own PID-1 init (s6-overlay supervises the gateway and reaps orphaned tool
+# subprocesses). Docker's init would take PID 1 and push s6 into its degraded non-PID-1 path.
+init: false
 consumes:
   - model-gateway
   - model-gateway-keys
@@ -45,7 +48,7 @@ depends_on:
 
 # Env the container reads (non-secret; secret VALUES come from secrets.env / secret_files below).
 # ${VAR:-default} refs resolve against the rendered .env at compose time (single source of truth).
-# Env secrets it reads (rendered KEY: ${KEY}): its LiteLLM key (the entrypoint refuses to start
+# Env secrets it reads (rendered KEY: ${KEY}): its LiteLLM key (the boot hook refuses to start
 # without it) and the control-plane token (ops-router tools, reel scripts). Nothing else from
 # secrets.env reaches the agent.
 secrets: [LITELLM_KEY_HERMES, OPS_CONTROLLER_TOKEN]
@@ -55,15 +58,19 @@ secrets: [LITELLM_KEY_HERMES, OPS_CONTROLLER_TOKEN]
 # idle-reclaim cron script and the baked comfyui skill submit to it. Without it they fall back to a
 # direct ComfyUI address, which bypasses the GPU lease. Rendered only while comfyui is enabled.
 # LLAMACPP_CTX_SIZE: the context window (llamacpp KV / gateway max_input_tokens / the dashboard
-# progress bar); the entrypoint seeds it into $HERMES_HOME/config.yaml and refuses to start without it.
+# progress bar); the boot hook seeds it into $HERMES_HOME/config.yaml and refuses to start without it.
 # HERMES_MAX_TOKENS / HERMES_COMPRESSION_THRESHOLD_PERCENT (`site:` knobs, present only when set): the
-# entrypoint seeds them into config.yaml; unset, it keeps its own defaults. Compaction triggers at that
+# boot hook seeds them into config.yaml; unset, it keeps its own defaults. Compaction triggers at that
 # fraction (0-1) of the effective input budget (context_length - max_tokens), see
 # agent/context_compressor.py::_compute_threshold_tokens; raising it compacts LATER.
 derived_env: [COMFYUI_URL, LLAMACPP_CTX_SIZE, HERMES_MAX_TOKENS, HERMES_COMPRESSION_THRESHOLD_PERCENT]
 
 environment:
   PYTHONIOENCODING: utf-8
+  # Upstream's boot remaps its hermes user (built as 10000) to this UID/GID, so the brain volume
+  # keeps the ownership it has had since the volume was created (1000:1000).
+  HERMES_UID: "1000"
+  HERMES_GID: "1000"
   # The control plane: GPU leases, /status, /model-config, and the container/compose verbs the
   # ops-router tools call (services/hermes/ops_client.py). One service, one URL.
   OPS_CONTROLLER_URL: http://ops-controller:9000
@@ -103,13 +110,10 @@ environment:
   # cannot run on the local model, so every search failed once before a keyless fallback. Empty
   # (Hermes skips it) when the searxng-web plugin is disabled, like open-webui's SEARXNG_QUERY_URL.
   SEARXNG_URL: ${SEARXNG_ENABLED:+http://searxng:8080}
-  # The model's reasoning parser (NInfer) is exact, so an empty-content stop is the model quitting
-  # mid-thought: re-ask for the answer instead of posting the reasoning (reasoning-only-stop-reprompt.diff).
-  HERMES_PROMOTE_REASONING_ONLY_STOP: "0"
   # ── Hermes API server (the OpenAI-compatible endpoint the `evals` runner drives) ──
   # OFF unless HERMES_API_SERVER_KEY is set. The key is declared by the evals plugin's `secrets:`,
   # so it exists in secrets.env only when that plugin is enabled; everywhere else the ref
-  # interpolates to "" and entrypoint.sh unsets all three vars before the gateway starts. Hermes
+  # interpolates to "" and the boot hook (ordo-init.sh) keeps the server on loopback. Hermes
   # itself reads these three env vars (gateway/config.py::_apply_env_overrides) and refuses a key
   # shorter than 16 characters. Mapped straight onto API_SERVER_KEY (not passed under its own name)
   # because Hermes strips API_SERVER_KEY from every terminal-tool subprocess environment; a second
@@ -143,24 +147,26 @@ environment:
 # repos + the Ordo runtime dir) — keep the path name exactly.
 #
 # WHY THE BRAIN IS A NAMED VOLUME (was `${DATA_PATH}/hermes:/home/hermes/.hermes`):
-# The gateway runs as uid 1000 (hermes) — the entrypoint drops from root via gosu, and that user
+# The gateway runs as uid 1000 (hermes, HERMES_UID below) — upstream's boot drops from root, and that user
 # is the security boundary for the agent's execute_code sandbox. On Docker Desktop/Windows the
 # host bind is DrvFs/9p, where POSIX ownership is synthesized from Windows ACLs. Any Windows-side
 # write into the tree can discard that metadata and flip directories back to `root:root 0700`.
 # uid 1000 then loses the TRAVERSE bit on its own home and every path under it becomes
 # unreadable. That happened 2026-08-04 15:00 UTC: cron read no jobs.json for 22h (~29 missed
 # runs), Discord could not create pairing/discord-approved.json, and kanban.db failed to open.
-# The entrypoint's `chmod -R a+rwX` repairs this, but only ONCE at container start — a mid-run
+# A boot-time ownership repair fixes this only ONCE at container start — a mid-run
 # flip is never rechecked, and nothing crashes, so `restart: unless-stopped` never fires.
 # A named volume lives on ext4 inside the WSL2 VM, where the container owns the metadata outright
 # and Windows has no path to it. That removes the failure mode instead of repairing it on a timer.
-# Root group so the unprivileged `hermes` user can reach the root:root docker.sock (mode 660)
-# mounted below — without it the mount is present but every docker call gets EACCES (the bug
-# that made Hermes report "no docker access" despite the socket being mounted).
-group_add: ["0"]
+# Docker socket access: upstream's boot adds the hermes user to the socket's group itself
+# (stage2-hook.sh, #16703), so no group_add is needed.
 
 volumes:
-  - hermes-home:/home/hermes/.hermes                           # THE BRAIN (named volume — see above)
+  # THE BRAIN (named volume — see above), at upstream's HERMES_HOME. The same volume stays mounted at
+  # the legacy path below because the brain's own files (skills, cron jobs, memories) hold absolute
+  # /home/hermes/.hermes paths; both names are one store.
+  - hermes-home:/opt/data
+  - hermes-home:/home/hermes/.hermes
   - ${DATA_PATH:?DATA_PATH must be set (non-empty)}:/workspace/data                       # staged mutable data (skills' /workspace/data/*)
   # The SAME volume, mounted a second time at the path skills hardcode. Cron jobs invoke scripts as
   # /workspace/data/hermes/skills/... (absolute), so both paths MUST resolve to one object; binding
@@ -177,24 +183,19 @@ volumes:
 
 # File-delivered secrets (ordo/render/secret_files.py): each is mounted read-only at
 # /run/secrets/<key lowercased>, kept out of `docker inspect`, and the render sets <KEY>_FILE to that
-# path; the entrypoint bridges each *_FILE to the plain var the app reads.
+# path; the boot hook (ordo-init.sh) bridges each *_FILE to the plain var the app reads.
 secret_files: [DISCORD_BOT_TOKEN, GITHUB_BACKUP_PAT]
 
 # gateway_state.json is written by `hermes gateway` on startup (Docker mode writes no pid file).
 #
-# Probe AS uid 1000 (gosu hermes), never as root. The previous check was
-# `test -f .../gateway_state.json`, which could not detect the 2026-08-04 outage for three reasons:
-#   1. it ran as ROOT, so mode-0700 root-owned dirs — the exact fault — looked fine;
-#   2. it tested EXISTENCE, and the file is written once at startup, so it stays true forever;
-#   3. it never touched anything the agent actually depends on at runtime.
-# Result: `healthy`, FailingStreak=0, for 22h of total cron/Discord failure. These probes assert
-# what the gateway genuinely needs — that the unprivileged user can still READ its state and WRITE
-# its home — so a permission flip trips the healthcheck within ~90s (3 × 30s) instead of never.
-# The cron leg is guarded on the directory existing so a fresh install (no jobs yet, scheduler has
-# not created cron/) does not report unhealthy. timeout is 10s: three gosu spawns under 9p load.
+# Probe AS the hermes user, never as root. The 2026-08-04 outage (22h of cron/Discord failure while
+# `healthy`) came from a check that ran as root, tested only existence, and touched nothing the
+# gateway needs. These probes assert that the unprivileged user can still READ its state and WRITE
+# its home, so a permission flip trips the healthcheck within ~90s. The cron leg is guarded on the
+# directory existing so a fresh install does not report unhealthy.
 healthcheck:
-  test: ["CMD-SHELL", "gosu hermes test -r /home/hermes/.hermes/gateway_state.json && gosu hermes test -w /home/hermes/.hermes && { [ ! -d /home/hermes/.hermes/cron ] || gosu hermes test -w /home/hermes/.hermes/cron; }"]
-  start_period: 60s
+  test: ["CMD-SHELL", "/command/s6-setuidgid hermes test -r /opt/data/gateway_state.json && /command/s6-setuidgid hermes test -w /opt/data && { [ ! -d /opt/data/cron ] || /command/s6-setuidgid hermes test -w /opt/data/cron; }"]
+  start_period: 90s
   interval: 30s
   timeout: 10s
   retries: 3

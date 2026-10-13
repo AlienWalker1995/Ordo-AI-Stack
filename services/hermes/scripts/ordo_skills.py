@@ -108,8 +108,11 @@ def merged_external_dirs(current, required: str) -> list[str] | None:
 
 
 def frontmatter_name(skill_md: Path) -> str | None:
-    """The `name:` from a SKILL.md frontmatter, or None if there is no readable one."""
-    import yaml
+    """The `name:` from a SKILL.md frontmatter, or None if there is no readable one.
+
+    Parsed with Hermes's own YAML loader (hermes_yaml), the one Hermes reads skills with; the image
+    has no PyYAML."""
+    import hermes_yaml as yaml
 
     try:
         text = skill_md.read_text(encoding="utf-8")

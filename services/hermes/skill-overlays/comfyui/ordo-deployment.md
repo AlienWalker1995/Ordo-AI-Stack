@@ -8,7 +8,8 @@ single machine do not apply here.
   and its custom nodes; for a node pack's Python requirements use the
   `comfyui__install_custom_node_requirements` tool.
 - **Submit through `$COMFYUI_URL`, never to `comfyui:8188`.** The stack points `COMFYUI_URL` at
-  its GPU admission gate and the scripts here default to it, so run them without `--host`. The
+  its GPU admission gate. Pass `--host "$COMFYUI_URL"` to every script here: their default,
+  `127.0.0.1:8188`, has nothing listening in this container. The
   gate takes the scheduler's GPU lease before a render starts, evicting the resident language
   model, and releases it once the queue drains. Submitting to the engine directly skips the lease,
   so the render and the resident model share the GPU, and near full VRAM that can take down the

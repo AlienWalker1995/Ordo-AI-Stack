@@ -156,10 +156,11 @@ def test_an_absent_file_secret_materializes_as_an_empty_file(tmp_path):
     assert (out / "secrets" / "discord_bot_token").read_text(encoding="utf-8") == ""
 
 
-def test_the_agent_entrypoint_treats_an_empty_file_secret_as_unset():
-    entrypoint = (ROOT / "services" / "hermes" / "entrypoint.sh").read_text(encoding="utf-8")
-    assert '[ -s "$DISCORD_BOT_TOKEN_FILE" ]' in entrypoint
-    assert '[ -s "$GITHUB_BACKUP_PAT_FILE" ]' in entrypoint
+def test_the_agent_boot_hook_treats_an_empty_file_secret_as_unset():
+    hook = (ROOT / "services" / "hermes" / "ordo-init.sh").read_text(encoding="utf-8")
+    assert "ordo_secret_file_env DISCORD_BOT_TOKEN GITHUB_BACKUP_PAT" in hook
+    assert '[ -z "${DISCORD_BOT_TOKEN:-}" ] || publish_env DISCORD_BOT_TOKEN' in hook
+    assert '[ -z "${GITHUB_BACKUP_PAT:-}" ] || publish_env GITHUB_BACKUP_PAT' in hook
 
 
 # --------------------------------------------------------------------------- #

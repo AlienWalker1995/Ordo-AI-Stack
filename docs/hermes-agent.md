@@ -25,8 +25,8 @@ Stop only Hermes: `docker compose -p ordo stop agent hermes-dashboard`
 ## State
 
 All persistent state (the "brain") lives in the **`hermes-home` named volume**, mounted at
-`/home/hermes/.hermes` (and again at `/workspace/data/hermes` — the absolute path skills
-hardcode; the two are one store). It moved off the `data/hermes/` host bind 2026-08-05
+`/opt/data` (upstream's `HERMES_HOME`), and again at `/home/hermes/.hermes` and
+`/workspace/data/hermes`, the absolute paths the brain's own skills and jobs use; all three are one store. It moved off the `data/hermes/` host bind 2026-08-05
 (#143) after a Windows-side write flipped the 9p-synthesized permissions and silently
 killed cron for 22h — the volume removes that failure mode.
 
@@ -39,7 +39,7 @@ killed cron for 22h — the volume removes that failure mode.
 | `cron/` | Scheduled jobs |
 | `logs/` | Hermes's own log files (separate from `docker compose logs`) |
 
-Edit brain files via `docker exec ordo-agent-1 gosu hermes …` (or the
+Edit brain files via `docker exec ordo-agent-1 /command/s6-setuidgid hermes …` (or the
 `\\wsl$\docker-desktop\...\volumes\ordo_hermes-home\_data` path from Windows). To start
 from a clean slate: `docker compose -p ordo down`, `docker volume rm ordo_hermes-home`,
 `ordo up --all` (from the repo root).
@@ -85,7 +85,7 @@ Expected: `[Discord] Connected as <botname>#<discriminator>`. If the bot appears
 
 ## Configuration endpoints (seeded automatically)
 
-The container's entrypoint seeds `config.yaml` inside the `ordo_hermes-home` volume (`/home/hermes/.hermes/config.yaml`) on every start so the Docker-network endpoints are correct (the brain moved off the `data/hermes` bind, 2026-08-05 #143):
+The image's boot hook (`services/hermes/ordo-init.sh`, run by upstream's s6 boot as `/etc/cont-init.d/50-ordo`) seeds `config.yaml` inside the `ordo_hermes-home` volume (`/opt/data/config.yaml`) on every start through `hermes config set`, so the Docker-network endpoints are correct:
 
 ```yaml
 model:
@@ -100,48 +100,31 @@ mcp_servers:
       Authorization: Bearer <LITELLM_KEY_HERMES>
 ```
 
-Any other keys you add manually (skills, memory providers, display preferences) are preserved across restarts — the entrypoint only touches the six keys above.
+It also sets the per-turn budgets, the compression context length, every `auxiliary.<task>.provider` to `main`, and the provider timeouts (see `ordo-init.sh`). On a home's first start it also hides reasoning and interim assistant updates from replies, once (marker `.ordo-response-display-seeded-v1`), so later display changes stick. Any other keys you add manually (skills, memory providers, display preferences) are preserved across restarts.
 
-## Execute-don't-propose behavior (push-through)
+## Execute-don't-propose behavior
 
-The image ships a small bundled plugin called `push-through` and seeds an opinionated `SOUL.md` on first run. Together they push the agent toward Claude Code-style behavior: execute via tools, never return a plan for approval, only stop when the work is verifiably done.
+The image seeds an opinionated `SOUL.md` on first run that pushes the agent toward Claude Code-style behavior: execute via tools, never return a plan for approval, only stop when the work is verifiably done. It is ordinary configuration: edit `SOUL.md` to change it.
 
-Persistent state lives in the `hermes-home` named volume, mounted at `/home/hermes/.hermes` inside the container; edit it via `docker exec` as the `hermes` user (host-side `data/hermes/` is retired and no longer read).
-
-First-run seeding is gated by `/home/hermes/.hermes/.ordo-push-through-seeded`. After that sentinel exists, the entrypoint never re-seeds — your toggles stick.
-
-To turn the nudge off:
-
-```bash
-docker compose -p ordo exec agent hermes plugins disable push-through
-```
-
-To opt back in:
-
-```bash
-docker compose -p ordo exec agent hermes plugins enable push-through
-```
+First-run seeding is gated by `/opt/data/.ordo-push-through-seeded` (named after a retired plugin). After that sentinel exists, the boot hook never re-seeds, so your `SOUL.md` edits stick.
 
 To replace your existing `SOUL.md` with the shipped opinionated default (one-liner — also reuses the seed inside the image):
 
 ```bash
-docker compose -p ordo exec agent sh -c "cp /opt/ordo-seed/SOUL.md /home/hermes/.hermes/SOUL.md"
+docker compose -p ordo exec agent sh -c "cp /opt/ordo-seed/SOUL.md /opt/data/SOUL.md"
 ```
-
-If `hermes plugins enable push-through` returns non-zero on container start (older Hermes builds), the seeding block swallows the error and writes the sentinel anyway — enable manually with the command above.
 
 Hermes still has the host Docker socket mounted, but raw Docker use is retired (hostile audit SEC-1) and the socket is being removed: container work goes through the `ops-router` tools. See [`runbooks/bounded-hermes.md`](runbooks/bounded-hermes.md) for the privilege model.
 
 ## Updating Hermes
 
-The Hermes upstream SHA is pinned in `services/hermes/Dockerfile` as `ARG HERMES_PINNED_SHA=...`. To upgrade:
+The image is upstream's published `nousresearch/hermes-agent` plus this stack's layer, and it never modifies Hermes: stack behavior is configuration in the boot hook, the `ops-router` plugin, the repo-owned ComfyUI skill notes and the seed `SOUL.md`. The base is pinned by digest in `services/hermes/Dockerfile`, next to `HERMES_PINNED_SHA` (the upstream commit that digest was built from; the build fails if they disagree). To upgrade:
 
-1. Check recent commits: `git ls-remote https://github.com/NousResearch/hermes-agent.git main` — pick a SHA.
-2. Edit `services/hermes/Dockerfile`, change the `ARG HERMES_PINNED_SHA` default.
-3. Rebuild the image from the `services/hermes/` build context: `ordo build agent` (run from the repo root).
-4. Re-render (`ordo render`) so the compose names the new tag, then `ordo recreate agent hermes-dashboard`.
+1. `docker buildx imagetools inspect nousresearch/hermes-agent:stable` for the new digest; pull it and read `revision` from `/etc/hermes/image-provenance.json`.
+2. Replace the digest and `HERMES_PINNED_SHA` together in `services/hermes/Dockerfile`, and commit.
+3. `ordo apply` from the repo root (it builds the image, renders and recreates `agent` and `hermes-dashboard`).
 
-`ordo build` tags the image with the commit that last changed `services/hermes/`, so commit the bump: an uncommitted edit builds a `-dirty` tag, and a `--build-arg` override would run code no commit describes.
+Upstream migrates `config.yaml` on the first boot of a new release and logs each change; read `docker logs ordo-agent-1` after an upgrade.
 
 ## Troubleshooting
 

@@ -46,6 +46,10 @@ class Agent:
     command: tuple[str, ...]         # () -> compose omits it and the image's default CMD runs
     # ── runtime wiring (data-driven parity with the V1 agent container; phase-5.5 audit) ──
     user: str = ""                   # "" -> compose omits `user:` and the image default applies
+    # Docker's init as PID 1 (compose `init: true`), which reaps the orphans a long-lived agent's tool
+    # subprocesses leave. False for an image that brings its own PID-1 init (Hermes: s6-overlay),
+    # which Docker's init would displace.
+    init: bool = True
     # Supplementary groups (compose `group_add`). Hermes needs `["0"]` (root group) so the
     # unprivileged `hermes` user can reach the root:root docker.sock (mode 660) it mounts — the
     # same pattern the control plane uses. Empty -> compose omits it.
@@ -88,6 +92,7 @@ class Agent:
             env={str(k): str(v) for k, v in (d.get("env", {}) or {}).items()},
             command=tuple(str(c) for c in (d.get("command", []) or [])),
             user=str(d.get("user", "") or ""),
+            init=bool(d.get("init", True)),
             group_add=tuple(str(g) for g in (d.get("group_add", []) or [])),
             volumes=tuple(str(v) for v in (d.get("volumes", []) or [])),
             environment={str(k): str(v) for k, v in (d.get("environment", {}) or {}).items()},

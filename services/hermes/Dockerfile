@@ -1,514 +1,80 @@
 # syntax=docker/dockerfile:1.6
-# Multi-stage build for Hermes Agent.
-# Stage 1: node builds the web UI bundle.
-# Stage 2: python runtime with hermes installed; copies web_dist from stage 1.
-
-# Upstream pin. ALWAYS record which release the SHA is — a bare 40-hex string tells a
-# future reader nothing, and this pin silently rotted 2.5 months (see below).
-#   v2026.9.24 (v0.21.5, 2026-09-24) — commit f97608f1, the tag's dereferenced commit.
-#   The three local patches below were re-ported to this pin (none was fixed upstream).
-#   NOTE: `git/ref/tags/<tag>` returns the ANNOTATED TAG object here, not the commit;
-#   deref via `git/tags/<sha>` or the checkout below resolves to the wrong object.
-# Previous pin 5fdcfd85 was a 2026-05-19 commit left 11 releases behind, several citing
-# security fixes. It went unnoticed because the daily stack audit grades locally-built
-# images as REBUILD and never looked upstream; scripts/stack_monitor.py now audits this
-# very ARG (see its `pinned_sources` block), so bumping this line is what clears the
-# SECURITY row it emits. Keep the `<X>_PINNED_SHA` / `<X>_REPO` naming — discovery is
-# by that convention, not a hardcoded table.
-ARG HERMES_PINNED_SHA=f97608f178d1ffeca59860195ab7da295f7c8e5f
+# Hermes Agent for the Ordo stack: upstream's published image plus this stack's pieces.
+#
+# Upstream owns Hermes itself: Python, the lockfile-sealed venv, the package-manager runtime,
+# SQLite, the Discord/DAVE stack, ffmpeg, git, the Docker CLI, the s6-overlay boot (UID remap,
+# brain-volume ownership, config seeding) and the install stamp. Nothing here modifies it. This
+# layer only ADDS: one system library, a boot hook, a plugin, a skill, a seed SOUL.md and
+# helper scripts. A Hermes behavior that configuration cannot express is an
+# upstream issue, not a local patch.
+#
+# Upstream pin: nousresearch/hermes-agent:stable at v0.21.7 (2026-10-11), by digest. Docker Hub
+# carries no per-release tag, so the digest IS the pin. HERMES_PINNED_SHA names the upstream commit
+# that digest was built from, and the build asserts it against the image's own provenance
+# (/etc/hermes/image-provenance.json), so the two cannot disagree. scripts/stack_monitor.py reads
+# HERMES_PINNED_SHA + HERMES_REPO (its `<X>_PINNED_SHA` convention) to report releases behind.
+# To bump: resolve the new :stable digest (`docker buildx imagetools inspect
+# nousresearch/hermes-agent:stable`), read `revision` from that file in the pulled image, and
+# replace both values together.
+ARG HERMES_PINNED_SHA=71d34bad1045610252eda02ee79549436896e784
 ARG HERMES_REPO=https://github.com/NousResearch/hermes-agent.git
-
-# ── Stage 1: web-builder ──
-# Upstream's ROOT package.json (hermes-agent@1.0.0) declares:
-#   engines: {"node": ">=22.22.0", "npm": "<11.10.0 || >=11.17.0"}
-# node:20-slim (node 20.20.2 / npm 10.8.2) fails `npm install` outright with EBADENGINE
-# at the v2026.8.3 pin. Note the npm range EXCLUDES 11.10.0–11.16.x, so "newest npm" is
-# not automatically valid — node:26-slim ships npm 11.18.0, which clears it.
-# Checking web/package.json is NOT sufficient; it declares no engines and the constraint
-# lives in the workspace root.
-# This stage only produces the static web bundle (the runtime stage is python:3.11-slim),
-# so the major bump carries no runtime risk. Digest-pinned, not a rolling tag, per the
-# stack's pin-don't-float rule — bump tag and digest together.
-FROM node:26-slim@sha256:80f12a4030a00d8f78ebc4602bc3ef0f984932f498649b8ed3c0a740a6dff4a8 AS web-builder
-ARG HERMES_REPO
+FROM nousresearch/hermes-agent:stable@sha256:444b42594e7f467425872fc35e077a227d377f0fe0726bc818706d62175fad8b
 ARG HERMES_PINNED_SHA
-
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /build
-RUN git clone --no-single-branch "$HERMES_REPO" hermes-agent \
-    && cd hermes-agent \
-    && git checkout "$HERMES_PINNED_SHA"
-
-WORKDIR /build/hermes-agent/web
-
-# No SPA base rewrite. The stack serves Hermes at its ORIGIN ROOT on the dedicated
-# edge port :8447 (auth/caddy/Caddyfile — the port-per-service model), so the upstream
-# root-absolute asset URLs (/assets, /ds-assets, /api, the WS endpoints) resolve as-is.
-# Any future subpath deployment (X-Forwarded-Prefix) is handled at RUNTIME by upstream
-# web_server.py's mount_spa, which rewrites /assets, /ds-assets, /fonts and /favicon in
-# index.html + CSS to honour the prefix. A build-time `base: '/hermes/'` (the old
-# spa-patches.mjs, removed) baked a prefix the port model never strips → the browser
-# requested /hermes/assets/*.js, hit the SPA catch-all, got index.html, and rendered a
-# blank page. Building at the upstream root base is the fix.
-RUN npm install && npm run build
-# Produces: /build/hermes-agent/hermes_cli/web_dist/
-
-# ── Stage 1b: sqlite-builder ──
-# hermes_state refuses to ENABLE WAL when the linked SQLite has the WAL-reset corruption
-# bug (3.7.0–3.51.2, sqlite.org/wal.html#walresetbug) and falls back to
-# journal_mode=DELETE for every brain DB (state.db ~1.3GB incl. trigram FTS, kanban.db,
-# cron/executions.db). DELETE mode does full-journal fsync per commit; under context-
-# compression write bursts that wedged the gateway event loop inside os.fsync long enough
-# to trip the shutdown watchdog (exit 75) — the near-daily unclean exits in
-# gateway-exit-diag.log (root-caused 2026-08-08). Debian trixie ships libsqlite3 3.46.1
-# and will never bump to 3.51.3+, and `hermes update` cannot replace an OS library, so we
-# build a fixed SQLite and let /usr/local/lib win soname resolution (the stdlib _sqlite3
-# extension links libsqlite3.so.0 dynamically; Debian's ld.so searches /usr/local/lib
-# before the multiarch dir). --all enables FTS5 (messages_fts + trigram) and the other
-# loadable features Debian's build carried; the runtime stage asserts both version and
-# trigram FTS5 at build time so a flag regression fails the build, not the gateway.
-FROM python:3.11.15-slim-trixie@sha256:6d85378d88a19cd4d76079817532d62232be95757cb45945a99fec8e8084b9c2 AS sqlite-builder
-ARG SQLITE_YEAR=2026
-ARG SQLITE_AUTOCONF=3530400
-# sha256 of sqlite-autoconf-3530400.tar.gz (3.53.4), computed 2026-08-08.
-ARG SQLITE_SHA256=0e9483900e92cd5de8fd48d16bf9200145a61f7fd5be542a5ac81d8a9516eb9c
-# libc6-dev is only a Recommends of gcc — without it there is "no working C compiler".
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        gcc make libc6-dev curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-RUN curl -fsSL "https://sqlite.org/${SQLITE_YEAR}/sqlite-autoconf-${SQLITE_AUTOCONF}.tar.gz" \
-      -o /tmp/sqlite.tar.gz \
-    && echo "${SQLITE_SHA256}  /tmp/sqlite.tar.gz" | sha256sum -c - \
-    && tar -xzf /tmp/sqlite.tar.gz -C /tmp \
-    && cd "/tmp/sqlite-autoconf-${SQLITE_AUTOCONF}" \
-    && CFLAGS="-O2 -DSQLITE_ENABLE_COLUMN_METADATA=1 -DSQLITE_ENABLE_UNLOCK_NOTIFY=1 -DSQLITE_ENABLE_DBSTAT_VTAB=1 -DSQLITE_MAX_VARIABLE_NUMBER=250000" \
-       ./configure --prefix=/usr/local --disable-static --all \
-    && make -j"$(nproc)" && make install
-
-# ── Stage 2: runtime ──
-FROM python:3.11.15-slim-trixie@sha256:6d85378d88a19cd4d76079817532d62232be95757cb45945a99fec8e8084b9c2 AS runtime
-ARG HERMES_REPO
-ARG HERMES_PINNED_SHA
-
-# libopus0 + ffmpeg: Discord VOICE. discord.py voice needs the Opus codec to encode/decode
-# voice frames and ffmpeg for audio transcode; without libopus the gateway logs
-# "Opus codec not found — voice channel playback disabled" and voice mode is dead.
-# Upstream's own checklist is scripts/discord-voice-doctor.py — run it in the container
-# after any change here; it must report Opus + ffmpeg green.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ca-certificates curl gosu libopus0 ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
-
-# Fixed SQLite (see sqlite-builder stage). Copy the shared lib, refresh the loader
-# cache, and prove at BUILD time that (a) the stdlib picked it up, (b) it is past the
-# WAL-reset bug, and (c) FTS5+trigram — which state.db's messages_fts requires — work.
-COPY --from=sqlite-builder /usr/local/lib/libsqlite3.so* /usr/local/lib/
-RUN ldconfig \
-    && python3 - <<'SQLEOF'
-import sqlite3
-v = sqlite3.sqlite_version_info
-assert v >= (3, 51, 3), f"linked SQLite {sqlite3.sqlite_version} still WAL-reset vulnerable"
-conn = sqlite3.connect(":memory:")
-conn.execute("CREATE VIRTUAL TABLE t USING fts5(x, tokenize='trigram')")
-conn.execute("INSERT INTO t VALUES ('hello world')")
-assert conn.execute("SELECT count(*) FROM t WHERE t MATCH 'ello'").fetchone()[0] == 1
-print("sqlite", sqlite3.sqlite_version, "with fts5+trigram: OK")
-SQLEOF
-
-# uv (fast Python package manager), pinned via the versioned installer URL.
-RUN curl -LsSf https://astral.sh/uv/0.12.3/install.sh | sh \
-    && mv /root/.local/bin/uv /usr/local/bin/uv \
-    && mv /root/.local/bin/uvx /usr/local/bin/uvx
-
-# Docker CLI + compose plugin — lets Hermes run `docker exec`, `docker ps`,
-# `docker compose ...` against the host daemon (via the mounted /var/run/docker.sock).
-# Download static binaries (docker.io apt package doesn't always ship the client).
-RUN curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-26.1.4.tgz" \
-      -o /tmp/docker.tgz \
-    && tar -xzf /tmp/docker.tgz -C /tmp \
-    && mv /tmp/docker/docker /usr/local/bin/docker \
-    && rm -rf /tmp/docker /tmp/docker.tgz \
-    && curl -fsSL "https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64" \
-       -o /usr/local/bin/docker-compose \
-    && chmod +x /usr/local/bin/docker /usr/local/bin/docker-compose
-
-# Non-root user (uid 1000 matches other stack services). Add hermes to the root group (gid 0)
-# so the gosu-dropped gateway can read the root:root /var/run/docker.sock it mounts. Compose
-# `group_add: ["0"]` alone is NOT enough: the entrypoint drops privileges with `gosu hermes`,
-# which recomputes supplementary groups from /etc/group (where hermes must actually be a member)
-# and discards the compose group_add. This is the layer that makes docker work for the real
-# gateway process, not just `docker exec -u hermes`.
-RUN useradd -m -u 1000 -s /bin/bash hermes \
-    && usermod -aG root hermes
-
-# Clone hermes-agent source into /opt, owned by hermes user.
-RUN git clone --no-single-branch "$HERMES_REPO" /opt/hermes-agent \
-    && cd /opt/hermes-agent \
-    && git checkout "$HERMES_PINNED_SHA" \
-    && chown -R hermes:hermes /opt/hermes-agent
-
-# PATCH: pressure-pass condensation of oversized USER messages (pass 5).
-# A giant user paste (e.g. an exported transcript handed to Hermes as the task)
-# deadlocked compression on 2026-08-15: after compaction the whole transcript sat
-# inside the protected tail, every demotion pass spares user rows, so preflight
-# ended in no_progress forever while the request could only grow past the model
-# window (llamacpp rejected 131,147 > 131,072 tokens; 10 doomed 30-min retries).
-# The patch lets the #61932 pressure pass — as its FINAL escalation — condense a
-# non-active oversized user message to a head/tail excerpt with an explicit
-# marker (full original stays in the session store). Includes upstream-style
-# tests (tests/agent/test_context_compressor.py — 113 pass at this pin).
-# --check first: the build fails loudly if a future pin bump breaks the patch.
-COPY pressure-user-condense.diff /tmp/pressure-user-condense.diff
-RUN cd /opt/hermes-agent \
-    && git apply --recount --check /tmp/pressure-user-condense.diff \
-    && git apply --recount /tmp/pressure-user-condense.diff \
-    && chown hermes:hermes agent/context_compressor.py tests/agent/test_context_compressor.py \
-    && echo "pressure-user-condense patch applied"
-
-# PATCH: bound the checkpoint manager's pre-snapshot tree walk.
-# With checkpoints enabled, any terminal command matching the destructive
-# heuristic (a bare `2>/dev/null` qualifies via the `>` redirect regex)
-# triggers _dir_file_count(): an unbounded rglob of the process cwd. Our
-# /workspace/data is a Docker Desktop 9p bind (~50-95 stats/s), so each walk
-# toward the 50k-file cap took ~9 min — and new_turn() clears the dedup set,
-# so it repeated EVERY turn (2026-08-17 session ed681a: ~20 stalls x ~530s,
-# confirmed by py-spy mid-stall in _dir_file_count; same pathology all of
-# 2026-08-16). The scan always ended in ">50k files, skip" logged at DEBUG,
-# so no checkpoint was ever produced. The patch (a) wall-clock-bounds the
-# walk (HERMES_CHECKPOINT_SCAN_SECONDS, default 10s), (b) remembers the
-# too-big verdict across turns, (c) logs the skip once at INFO. Upstream
-# v0.21.5 (v2026.9.24) is still unbounded — re-check on pin bumps.
-# --check first: the build fails loudly if a future pin bump breaks the patch.
-COPY checkpoint-scan-bounds.diff /tmp/checkpoint-scan-bounds.diff
-RUN cd /opt/hermes-agent \
-    && git apply --recount --check /tmp/checkpoint-scan-bounds.diff \
-    && git apply --recount /tmp/checkpoint-scan-bounds.diff \
-    && chown hermes:hermes tools/checkpoint_manager.py \
-    && echo "checkpoint-scan-bounds patch applied"
-
-# PATCH: Discord plugin relative self-imports (kills the twin-module bug).
-# The plugin loads under the namespace `hermes_plugins.platforms__discord`, but
-# adapter.py / adapter_media.py used ABSOLUTE self-imports
-# (`from plugins.platforms.discord.adapter import ...`). Because the venv is an
-# editable install, `plugins` is importable as a top-level package, so those
-# absolute imports spawned a SECOND copy of the module (a "twin") whose module
-# globals never got rebound. After a venv rebuild that wiped discord.py, the
-# lazy installer rebound only the PRIMARY module, leaving the twin's `discord`
-# global at None — text sends (primary) worked but file attachments (twin)
-# crashed with `AttributeError: 'NoneType' object has no attribute 'File'` in
-# _send_file_attachment. Relative imports (`.adapter`, `.adapter_media`,
-# `.recovery`) resolve within the already-loaded plugin package, so no twin can
-# ever be created. Upstream v2026.9.24 (v0.21.5) still uses the absolute form —
-# re-check on pin bumps. --check first: the build fails loudly if a future pin
-# bump breaks the patch.
-COPY discord-relative-imports.diff /tmp/discord-relative-imports.diff
-RUN cd /opt/hermes-agent \
-    && git apply --recount --check /tmp/discord-relative-imports.diff \
-    && git apply --recount /tmp/discord-relative-imports.diff \
-    && chown hermes:hermes plugins/platforms/discord/adapter.py \
-                           plugins/platforms/discord/adapter_media.py \
-    && echo "discord-relative-imports patch applied"
-
-# PATCH: re-ask instead of posting raw reasoning when the model stops inside its thinking.
-# On an empty-content `stop` with reasoning, upstream returns the reasoning as the reply (a
-# compat path for vLLM parsers that file real answers as reasoning). NInfer splits on </think>
-# exactly, so there it only means the model emitted its stop token mid-thought, and Discord got
-# up to 110k chars of chain-of-thought as the answer. The diff adds an off switch,
-# HERMES_PROMOTE_REASONING_ONLY_STOP=0 (set in agent.yaml), that routes the turn to the existing
-# thinking-prefill / empty-response ladder, plus a test. Default unchanged; upstream v0.21.5
-# has no such knob. --check first: the build fails loudly if a future pin bump breaks the patch.
-COPY reasoning-only-stop-reprompt.diff /tmp/reasoning-only-stop-reprompt.diff
-RUN cd /opt/hermes-agent \
-    && git apply --recount --check /tmp/reasoning-only-stop-reprompt.diff \
-    && git apply --recount /tmp/reasoning-only-stop-reprompt.diff \
-    && chown hermes:hermes agent/turn_final_response.py \
-                           tests/agent/test_reasoning_only_stop_persistence.py \
-    && echo "reasoning-only-stop-reprompt patch applied"
-
-# PATCH: one Models-page card per model on the dashboard's Analytics page.
-# Aux usage (titles, compression, approvals, vision) records whatever provider string it resolved
-# (`auto`, `custom`, empty), and upstream keyed those rows by (model, provider) and dropped the task
-# label, so this stack's single local model showed as ~15 unlabeled `local-chat` cards. The diff
-# folds aux usage into the model's busiest session row (sessions not counted twice); a model used
-# only by aux tasks still gets one card (upstream #23270). Includes a test. v0.21.5 has no fix.
-# --check first: the build fails loudly if a future pin bump breaks the patch.
-COPY models-analytics-aux-fold.diff /tmp/models-analytics-aux-fold.diff
-RUN cd /opt/hermes-agent \
-    && git apply --recount --check /tmp/models-analytics-aux-fold.diff \
-    && git apply --recount /tmp/models-analytics-aux-fold.diff \
-    && chown hermes:hermes hermes_cli/web_routers/analytics.py \
-                           tests/hermes_state/test_aux_usage_accounting.py \
-    && echo "models-analytics-aux-fold patch applied"
-
-# PATCH: an @mention sent as a Discord quote-reply gets its own thread like any other mention.
-# Upstream skips auto-thread for every reply, so replying to an older message (your own included)
-# answered straight in the channel. Only a reply to one of the bot's own in-channel answers now
-# stays inline (it continues that exchange). Includes tests. v0.21.5 has no fix.
-# --check first: the build fails loudly if a future pin bump breaks the patch.
-COPY discord-reply-auto-thread.diff /tmp/discord-reply-auto-thread.diff
-RUN cd /opt/hermes-agent \
-    && git apply --recount --check /tmp/discord-reply-auto-thread.diff \
-    && git apply --recount /tmp/discord-reply-auto-thread.diff \
-    && chown hermes:hermes plugins/platforms/discord/adapter.py \
-                           tests/gateway/test_discord_free_response.py \
-    && echo "discord-reply-auto-thread patch applied"
-
-# SKILLS OWNED BY THIS REPO: the bundled ComfyUI skill, patched and shipped read-only.
-# Upstream's scripts default to submitting at http://127.0.0.1:8188, straight at the engine. On
-# this stack that skips the GPU admission gate, which is what takes the scheduler lease and evicts
-# the resident model before a render; without it the two share the GPU. The diff makes the
-# default follow COMFYUI_URL, the address the renderer already publishes (and already points at
-# the gate when ComfyUI is gated), falling back to stock when unset. The overlay markdown is
-# spliced into SKILL.md ahead of the upstream quick start, which otherwise tells the agent to
-# install and launch its own ComfyUI.
-# The result goes to /opt/ordo-skills, root-owned and read-only, which the entrypoint registers
-# as a Hermes `skills.external_dirs` entry: the curator will not rewrite it, the bundled sync
-# defers to it, and a volume loss cannot take it. Starting from the image's own bundled copy
-# means upstream fixes arrive with every hermes-agent pin bump.
-# --check first: the build fails loudly if a future pin bump breaks the patch.
-COPY skill-overlays/ /tmp/skill-overlays/
-COPY scripts/ordo_skills.py /opt/ordo/ordo_skills.py
-RUN cd /opt/hermes-agent \
-    && git apply --recount --check /tmp/skill-overlays/comfyui/submit-via-comfyui-url.diff \
-    && git apply --recount /tmp/skill-overlays/comfyui/submit-via-comfyui-url.diff \
-    && chown hermes:hermes optional-skills/creative/comfyui/scripts/_common.py \
-                           optional-skills/creative/comfyui/tests/test_run_workflow.py \
-    && python3 /opt/ordo/ordo_skills.py build \
-           optional-skills/creative/comfyui \
-           /tmp/skill-overlays/comfyui/ordo-deployment.md \
-           /opt/ordo-skills/creative/comfyui \
-    && chown -R root:root /opt/ordo-skills /opt/ordo/ordo_skills.py \
-    && chmod -R a+rX,go-w /opt/ordo-skills /opt/ordo/ordo_skills.py \
-    && rm -rf /tmp/skill-overlays \
-    && echo "ordo skills built"
-
-USER hermes
-WORKDIR /opt/hermes-agent
-
-# Install Hermes + all extras into a venv at /opt/hermes-agent/.venv/.
-RUN uv venv --python 3.11 \
-    && uv pip install -e ".[all]"
-
-# Langfuse SDK - the optional runtime dependency of the BUNDLED `observability/langfuse`
-# plugin (plugins/observability/langfuse/, shipped by upstream, enabled by entrypoint.sh
-# when the langfuse plugin provides project keys). The plugin does
-# `try: from langfuse import Langfuse, propagate_attributes / except: hooks are inert`,
-# so without this line the plugin can be "enabled" and still trace nothing, silently -
-# which is precisely the failure mode worth removing from an observability tool.
-#
-# Installed into the SAME venv hermes-agent itself runs from: WORKDIR is still
-# /opt/hermes-agent, so `uv pip install` discovers the ./.venv created just above (the same
-# discovery the `uv pip install -e` line relies on). It must not land in a second
-# interpreter, or the gateway process would not see it.
-#
-# Pinned to 4.15.1 - the SDK major that matches the self-hosted server major (Langfuse v4,
-# services/langfuse/plugin.yaml). It carries every symbol the plugin touches (Langfuse,
-# propagate_attributes, create_trace_id, start_as_current_observation, start_observation,
-# flush) and, unlike the 3.x line, exposes `langfuse.__version__` - which is how the
-# deployment check verifies the install inside the container. Bump tag and server together.
-#
-# NOT the newest release, on purpose. Upstream's pyproject sets `[tool.uv] exclude-newer =
-# "14 days"` - a ROLLING cutoff relative to BUILD time - so uv refuses any distribution
-# published in the last fortnight and a just-released pin fails the build outright
-# ("filtered by exclude-newer", seen with 4.15.2 on 2026-09-14). Versions only ever age INTO
-# the window, never out of it, so a pin older than the cutoff is stable forever. When bumping,
-# pick a release that is already more than 14 days old rather than adding an
-# exclude-newer-package override, which would opt this one dependency out of the soak upstream
-# deliberately applies to everything else.
-RUN uv pip install "langfuse==4.15.1"
-
-# REMOVED 2026-08-05: the journal_mode=WAL -> DELETE sed. Do not reinstate without
-# reading this — it is now actively harmful, for two independent reasons.
-#
-# 1. Its premise is gone. It existed because WAL needs mmap/shared-memory that is
-#    unreliable on Docker Desktop Windows bind mounts (9p/virtiofs). Hermes' brain
-#    is no longer a bind mount — state.db, kanban.db and sessions.db all live in the
-#    `hermes-home` NAMED VOLUME (ext4 in the WSL2 VM), where WAL works normally and
-#    is faster. The only SQLite files left on the 9p bind (dashboard orchestration.db,
-#    open-webui webui.db) belong to other services and were never in this sed's path.
-#
-# 2. It corrupted upstream's own handling. v2026.8.3 added
-#    hermes_state.apply_wal_with_fallback(), which probes WAL and degrades to DELETE
-#    on filesystems that refuse it — including the silent-refusal case. A blunt sed
-#    rewrites the pragma INSIDE that probe, so the function executes
-#    `PRAGMA journal_mode=DELETE`, observes mode != "wal", and takes its
-#    "WAL refused without raising" branch: a false fallback WARNING on every open, and
-#    a raised WalUnsupportedError anywhere `require_wal=True` (no such call sites
-#    today — which is the only reason this degraded quietly instead of crashing).
-#    It also rewrote comments and docstrings, leaving upstream source claiming
-#    "PRAGMA journal_mode=DELETE raises ..." where it meant WAL.
-#
-# Upstream's detection is strictly better than the sed: correct on ext4, correct on a
-# WAL-hostile filesystem, and it cannot rot the way an anchor-matching patch does.
-
-# Ordo AI Stack patch: allow 3D/maker file types as native outbound attachments.
-# Upstream's outbound media allowlist (gateway/platforms/base.py) omits
-# STL/3MF/OBJ/STEP/gcode/etc. Since v2026.9.24 an explicit MEDIA: tag with an unknown
-# extension still delivers (validated pass, upstream #36060), but the bare-path
-# auto-detect (extract_local_files) only recognises MEDIA_DELIVERY_EXTS, so a generated
-# .stl mentioned by path degrades to plain text instead of a Discord/Telegram file
-# attachment. Non-image/video types already route to send_document, so once recognized
-# they attach. The asserts fail the build loudly if upstream moves the anchor.
-RUN python3 - <<'PYEOF'
-import pathlib
-b = pathlib.Path("/opt/hermes-agent/gateway/platforms/base.py")
-s = b.read_text()
-
-# MEDIA_DELIVERY_EXTS is upstream's single source of truth: the MEDIA: cleanup regex and
-# extract_local_files() both derive from it, so one insertion covers both. Assert that,
-# or a future upstream split silently half-patches us.
-assert "MEDIA_DELIVERY_EXTS" in s, "hermes: MEDIA_DELIVERY_EXTS gone — allowlist restructured"
-assert "sorted((e.lstrip(\".\") for e in MEDIA_DELIVERY_EXTS)" in s, \
-    "hermes: MEDIA: regex alternation no longer derived from MEDIA_DELIVERY_EXTS"
-assert "ext_part = '|'.join(e.lstrip('.') for e in MEDIA_DELIVERY_EXTS)" in s, \
-    "hermes: extract_local_files no longer derived from MEDIA_DELIVERY_EXTS — needs a second patch site"
-
-if '".stl"' in s:
-    print("outbound media allowlist already carries 3D/maker formats — nothing to do")
-else:
-    # The tuple's last line, closing paren and trailing comment included, so the
-    # similar ".html", ".htm" line in _TEXT_INJECT_EXTENSIONS can never match.
-    anchor = '    ".html", ".htm")  # web / rendered output\n'
-    assert s.count(anchor) == 1, "hermes: MEDIA_DELIVERY_EXTS tail anchor missing or ambiguous"
-    exts = ['.stl', '.3mf', '.obj', '.step', '.stp', '.gcode', '.ply', '.glb', '.gltf']
-    s = s.replace(anchor,
-                  '    ".html", ".htm",  # web / rendered output\n'
-                  '    ' + ", ".join('"%s"' % e for e in exts) + ')  # Ordo AI Stack: 3D / maker formats\n')
-    b.write_text(s)
-    print("patched MEDIA_DELIVERY_EXTS with 3D/maker formats")
-
-assert '".stl"' in b.read_text(), "hermes: 3D ext patch did not stick"
-PYEOF
-
-# Ordo AI Stack patch (DIAGNOSTIC ONLY): name the caller on every voice-channel leave.
-#
-# An AUTO-JOIN patch briefly lived here (2026-08-05, three iterations) and was REMOVED
-# the same day — do not reintroduce it. Lessons, paid for live:
-#   * Upstream has NO auto-join; it is open idea #33683. The web claims of a
-#     `discord.voice.auto_join` config are extrapolated from that issue — verify with a
-#     code search (`auto_join_channels` -> 0 hits), not docs summaries.
-#   * Every mystery that looked like "the adapter double-fires events" — duplicate
-#     threads per message, doubled voice_state logs, "Already connected" zombies, an
-#     unexplained voice disconnect — was actually a LEAKED SECOND GATEWAY: a
-#     `docker compose run --rm agent` debug container survives when the compose client
-#     is timeout-killed, and two processes then share one bot token and one brain.
-#     Before debugging "impossible" duplicate behavior: `docker ps --filter
-#     name=ordo-agent-run`. Never leave a foreground gateway run unreaped.
-#   * Even so, patching event handlers we don't own remains the wrong seam — the
-#     adapter's voice lifecycle (locks, receiver, mixer) is not a public surface.
-#   * The SUPPORTED equivalent of "if I'm in the channel it works": run /voice join once
-#     and set `discord.voice_channel_inactivity_timeout_seconds: 0` in config.yaml
-#     (minimum=0 means 0 disables the auto-leave) — the bot stays resident in the VC.
-# What remains below is one INFO line instrumenting leave_voice_channel, because a leave
-# fired 2026-08-05 23:43 with NO recorded initiator (provably not the inactivity timeout).
-# Remove once upstream logs its own leave reasons.
-RUN python3 - <<'PYEOF'
-import pathlib
-b = pathlib.Path("/opt/hermes-agent/plugins/platforms/discord/adapter.py")
-s = b.read_text()
-
-# Instrument leave_voice_channel with its caller. Something tore the bot out of the
-# channel ~30s after TTS on 2026-08-05 (not the inactivity timeout — 300s, and its
-# text notification never fired) and INFO logs recorded no initiator. One line names
-# the caller on every future leave instead of leaving us to guess again.
-anchor2 = '''    async def leave_voice_channel(self, guild_id: int) -> None:
-        """Disconnect from the voice channel in a guild."""'''
-assert s.count(anchor2) == 1, "hermes voice: leave_voice_channel anchor moved/ambiguous"
-inject2 = anchor2 + '''
-        import traceback as _tb
-        logger.info("leave_voice_channel(guild=%s) called by:\\n%s", guild_id,
-                    "".join(_tb.format_stack(limit=6)[:-1]))'''
-s = s.replace(anchor2, inject2, 1)
-
-b.write_text(s)
-assert "leave_voice_channel(guild=%s) called by" in b.read_text(), "hermes voice: leave instrumentation did not stick"
-print("patched Discord adapter with leave instrumentation")
-PYEOF
-
-# Ordo AI Stack patch: /voice join must PRESERVE an existing per-channel voice mode.
-#
-# Upstream's join handler unconditionally sets the bound text channel's mode to "all"
-# (speak EVERY reply, typed text included) and persists it — clobbering an operator's
-# saved "voice_only" ("voice in -> voice out; text in -> text out"). The only recovery
-# is remembering to run /voice on after EVERY rejoin; forgetting it silently degrades
-# to the bot talking over the text channel. Unlike the removed auto-join patch (a
-# missing surface), this is a one-line bug on the SUPPORTED tri-state surface —
-# upstream reaffirmed the voice_mode design when closing PR #19521, and their meta
-# issue #78207 lane 02 tracks exactly this decision layer. setdefault keeps upstream's
-# "all" for channels with no saved mode (non-breaking) and respects a saved one.
-# Drop this block when an upstream fix lands.
-RUN python3 - <<'PYEOF'
-import pathlib
-# v2026.9.24 moved the join handler from gateway/run.py into gateway/run_voice.py and now
-# records the mode through _apply_voice_mode(...), which persists it and mirrors it into
-# the adapter. The bug is unchanged: join passes a hard-coded "all".
-b = pathlib.Path("/opt/hermes-agent/gateway/run_voice.py")
-s = b.read_text()
-
-anchor = '''        self._apply_voice_mode(adapter, self._voice_key_for_source(event.source),
-                               event.source.chat_id, "all")
-        return (f"Joined voice channel **{voice_channel.name}**.\\n"
-                f"I'll speak my replies and listen to you. Use /voice leave to disconnect.")'''
-assert s.count(anchor) == 1, "hermes voice: join-handler mode/reply anchor moved/ambiguous"
-s = s.replace(anchor, '''        _vkey = self._voice_key_for_source(event.source)
-        _vmode = self._voice_mode.get(_vkey, "all")
-        self._apply_voice_mode(adapter, _vkey, event.source.chat_id, _vmode)
-        # The canned reply hard-codes "I'll speak my replies", false when a preserved mode
-        # is voice_only/off. Reflect the effective mode instead.
-        _speak = ("I'll speak my replies and listen to you."
-                  if _vmode == "all"
-                  else f"I'll listen; replies follow your saved voice mode ({_vmode}).")
-        return (f"Joined voice channel **{voice_channel.name}**.\\n"
-                f"{_speak} Use /voice leave to disconnect.")''', 1)
-
-b.write_text(s)
-assert '_vmode = self._voice_mode.get(_vkey, "all")' in b.read_text(), \
-    "hermes voice: join mode-preserve patch did not stick"
-print("patched gateway: /voice join preserves saved voice mode")
-PYEOF
-
-# Web UI — copy built SPA from stage 1.
-COPY --from=web-builder --chown=hermes:hermes \
-    /build/hermes-agent/hermes_cli/web_dist/ \
-    /opt/hermes-agent/hermes_cli/web_dist/
 
 USER root
-COPY entrypoint.sh /entrypoint.sh
+
+RUN python3 -c 'import json, sys; revision = json.load(open("/etc/hermes/image-provenance.json"))["revision"]; sys.exit(None if revision == sys.argv[1] else f"base image is upstream commit {revision}, HERMES_PINNED_SHA says {sys.argv[1]}")' "$HERMES_PINNED_SHA"
+
+# libopus0: Discord voice. Upstream's voice docs list it as a system dependency of the gateway
+# host (discord.py loads libopus.so.0 to encode and decode voice frames); the image ships only
+# discord.py's bundled Windows DLLs, so without it voice playback is disabled.
+RUN apt-get update && apt-get install -y --no-install-recommends libopus0 \
+    && rm -rf /var/lib/apt/lists/*
+
 # git authenticates to github.com through this helper, which reads GITHUB_BACKUP_PAT from its file
 # secret when asked (services/hermes/git-credential-github-pat). Nothing secret is in the config.
 COPY git-credential-github-pat /usr/local/bin/git-credential-github-pat
 RUN chmod 0755 /usr/local/bin/git-credential-github-pat \
     && git config --system credential.https://github.com.helper /usr/local/bin/git-credential-github-pat
-RUN chmod +x /entrypoint.sh
 
-# Ordo AI Stack: ship the push-through plugin (bundled location, opt-in via entrypoint
-# on first run) and the seeded SOUL.md.
-COPY --chown=hermes:hermes plugins/push-through/ /opt/hermes-agent/plugins/push-through/
-COPY --chown=hermes:hermes seed/SOUL.md /opt/ordo-seed/SOUL.md
+# The ops-router plugin: ops-controller verbs (list/logs/inspect/restart containers, recreate a
+# service) as first-class tools, the audited control-plane path for Ordo services. A bundled-source
+# plugin directory, so its plugin.yaml (requires_env, provides_tools/hooks) is honored. The
+# canonical ops_client.py is co-located so the plugin can `from .ops_client import OpsClient`.
+COPY plugins/ops-router/ /opt/hermes/plugins/ops-router/
+COPY ops_client.py /opt/hermes/plugins/ops-router/ops_client.py
+
+# Repo-owned skill: upstream's optional ComfyUI skill plus this stack's deployment notes
+# (skill-overlays/comfyui/ordo-deployment.md), spliced into SKILL.md ahead of the upstream quick
+# start, which otherwise tells the agent to install and launch its own ComfyUI. The notes tell it
+# to pass --host "$COMFYUI_URL" (the GPU admission gate) to every script; upstream's code is not
+# modified, and its default (127.0.0.1:8188) has nothing listening in this container, so a missed
+# --host fails to connect instead of skipping the lease. The result goes to /opt/ordo-skills,
+# read-only, which the boot hook registers as a Hermes `skills.external_dirs` entry: the curator
+# will not rewrite it and a volume loss cannot take it.
+COPY skill-overlays/ /tmp/skill-overlays/
+COPY scripts/ordo_skills.py /opt/ordo/ordo_skills.py
+RUN python3 /opt/ordo/ordo_skills.py build \
+        /opt/hermes/optional-skills/creative/comfyui \
+        /tmp/skill-overlays/comfyui/ordo-deployment.md \
+        /opt/ordo-skills/creative/comfyui \
+    && rm -rf /tmp/skill-overlays
+
+# The seed SOUL.md (execute, don't propose), copied into a home that has none on first boot.
+COPY seed/SOUL.md /opt/ordo-seed/SOUL.md
 
 # Vault federation: two-way sync of SOUL/memories with the Obsidian vault
 # (introduced in #181; behavior in scripts/vault_federate.py's docstring).
-COPY --chown=hermes:hermes scripts/vault_federate.py /opt/ordo/vault_federate.py
+COPY scripts/vault_federate.py /opt/ordo/vault_federate.py
 
-# Ordo AI Stack: ship the ops-router plugin alongside push-through. Exposes
-# ops-controller verbs (list_containers / container_logs / restart_container)
-# as first-class tools, the audited control-plane path for Ordo services. Co-locate the canonical
-# ops_client.py inside the plugin dir so the plugin can `from .ops_client import OpsClient`.
-COPY --chown=hermes:hermes plugins/ops-router/ /opt/hermes-agent/plugins/ops-router/
-COPY --chown=hermes:hermes ops_client.py /opt/hermes-agent/plugins/ops-router/ops_client.py
-
-# Stay as root through the final stage so the entrypoint can chmod the
-# bind-mounted $HERMES_HOME (host UID and container hermes UID often diverge
-# on Docker Desktop / virtiofs). Entrypoint drops to hermes via gosu before
-# exec'ing the CMD — same pattern as dashboard/entrypoint.sh.
-USER root
-ENV HERMES_HOME=/home/hermes/.hermes
-ENV PYTHONIOENCODING=utf-8
-ENV PATH=/opt/hermes-agent/.venv/bin:$PATH
-
-WORKDIR /workspace
-
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["hermes", "--help"]
+# The stack's boot hook. s6-overlay runs /etc/cont-init.d/* in name order, as root, before the
+# CMD: upstream's 01-hermes-setup (UID remap, ownership, seeding) first, then this one, which
+# applies the stack's configuration. It is the only startup code this repo owns: there is no
+# replacement entrypoint, and upstream's PID-1 init (s6) stays in charge of supervision and reaping.
+# S6_BEHAVIOUR_IF_STAGE2_FAILS=2: a failing boot hook stops the container (s6-overlay's default is
+# to log and start the CMD anyway, which would run a gateway with no model or secrets configured).
+ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
+COPY secret-env.sh /opt/ordo/secret-env.sh
+COPY ordo-init.sh /etc/cont-init.d/50-ordo
+RUN chmod -R a+rX,go-w /opt/ordo /opt/ordo-skills /opt/ordo-seed /opt/hermes/plugins/ops-router \
+    && chmod 0755 /etc/cont-init.d/50-ordo

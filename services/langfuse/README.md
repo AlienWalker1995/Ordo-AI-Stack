@@ -57,9 +57,9 @@ gate in front of it is the real boundary.
 ## What Hermes sends
 
 Hermes ships an `observability/langfuse` plugin from upstream. This stack supplies the two things it
-needs (the SDK in the image (`services/hermes/Dockerfile`) and the project keys in its environment,
+needs (the SDK, installed through Hermes's package manager, and the project keys in its environment,
 `services/hermes/agent.yaml`) and enables it once on first start with a key present
-(`services/hermes/entrypoint.sh`). Traces go straight to `http://langfuse-web:3000` over the project
+(`services/hermes/ordo-init.sh`). Traces go straight to `http://langfuse-web:3000` over the project
 network, never through the edge.
 
 Per turn you get a root span (`Hermes turn`) with a generation span per LLM call and a span per tool
