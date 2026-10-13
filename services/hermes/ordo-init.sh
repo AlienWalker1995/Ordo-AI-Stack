@@ -78,10 +78,13 @@ hermes_config agent.api_max_retries "${HERMES_API_MAX_RETRIES:-10}"
 # The proxy's /v1/models exposes no max_input_tokens, so without this Hermes assumes a 128K
 # compression model and warns that it is smaller than the main model's compression threshold.
 hermes_config auxiliary.compression.context_length "$CONTEXT_WINDOW"
-# Every auxiliary task runs on the main model. Their default, `auto`, records usage under the
-# literal provider "auto", so the dashboard's Models page split one model into several cards;
-# `main` resolves to the main provider and accounts under it. The task list comes from Hermes's
-# own defaults, so a task added upstream is covered without editing this file.
+# Every auxiliary task (titles, compression, vision, ...) runs on the main model, the stack's local
+# gateway. Their default, `auto`, probes for a provider and can route an aux task to any other
+# provider the home is signed in to (a ChatGPT/Codex login, for one); `main` keeps them local.
+# (It does not merge the dashboard's Models-page cards: Hermes records an aux call under its
+# configured route label and a chat turn under its runtime provider id, so one model can show as
+# two cards. That is upstream behavior; no setting makes the two labels match.) The task list
+# comes from Hermes's own defaults, so a task added upstream is covered without editing this file.
 AUX_TASKS="$(as_hermes "$HERMES_PYTHON" -c 'from hermes_cli.config_defaults import DEFAULT_CONFIG
 print(" ".join(k for k, v in DEFAULT_CONFIG["auxiliary"].items() if isinstance(v, dict) and "provider" in v))')"
 for task in $AUX_TASKS; do

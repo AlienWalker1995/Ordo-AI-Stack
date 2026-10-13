@@ -449,3 +449,16 @@ def test_plugin_service_restart_policy_is_validated():
     assert PluginService.from_dict({"name": "x", "image": "i"}).restart == ""
     with pytest.raises(ValueError, match="restart"):
         PluginService.from_dict({"name": "x", "image": "i", "restart": "always"})
+
+
+def test_the_hermes_dashboard_traces_exactly_like_the_agent():
+    """The dashboard runs Hermes sessions too (its chat tab, the desktop app), through the same
+    bundled plugin. Its Langfuse settings must be the agent's: with the keys but no base URL the SDK
+    sent the self-hosted keys to Langfuse Cloud and every span batch was rejected (401)."""
+    agent_env = yaml.safe_load((ROOT / "services" / "hermes" / "agent.yaml").read_text(encoding="utf-8"))["environment"]
+    dashboard = yaml.safe_load((ROOT / "services" / "hermes-dashboard" / "plugin.yaml").read_text(encoding="utf-8"))
+    dashboard_env = dashboard["services"][0]["env"]
+    agent_langfuse = {k: v for k, v in agent_env.items() if k.startswith("HERMES_LANGFUSE_")}
+    dashboard_langfuse = {k: v for k, v in dashboard_env.items() if k.startswith("HERMES_LANGFUSE_")}
+    assert "HERMES_LANGFUSE_BASE_URL" in agent_langfuse
+    assert dashboard_langfuse == agent_langfuse

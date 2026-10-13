@@ -187,8 +187,8 @@ All notable changes to this project are documented here. The format is loosely b
   reaping) and the install stamp. The stack's layer adds libopus (Discord voice), the `ops-router`
   plugin, the ComfyUI skill notes, the seed `SOUL.md` and one boot hook (`ordo-init.sh`, run as
   `/etc/cont-init.d/50-ordo`) that configures Hermes through its CLI; the old entrypoint is gone.
-  Every source patch is gone too: auxiliary tasks run on `provider: main` (one Models-page card
-  per model), checkpoints stay off by config, the ComfyUI notes pass `--host "$COMFYUI_URL"`, the
+  Every source patch is gone too: auxiliary tasks run on `provider: main` (kept on the local
+  model instead of `auto`, which can pick any other signed-in provider), checkpoints stay off by config, the ComfyUI notes pass `--host "$COMFYUI_URL"`, the
   Langfuse SDK comes from upstream's `langfuse` extra via `hermes pm install`, and upstream now
   keeps reasoning-only stops private, budgets the compaction tail by tokens and delivers any file
   type through `MEDIA:` tags. Dropped as upstream's design: a quote-reply @mention answers inline,

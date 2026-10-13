@@ -72,9 +72,13 @@ services:
     network_mode: service:caddy
     env:
       PYTHONIOENCODING: utf-8
-      # Chat-tab sessions trace to Langfuse like the agent's (same pair, fail-open when unset).
+      # Chat-tab and desktop sessions trace to Langfuse like the agent's: the same four values as
+      # services/hermes/agent.yaml (a test holds them equal). Without the base URL the SDK sends
+      # the self-hosted keys to Langfuse Cloud, which rejects every span batch with a 401.
       HERMES_LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       HERMES_LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      HERMES_LANGFUSE_BASE_URL: ${HERMES_LANGFUSE_BASE_URL:-http://langfuse-web:3000}
+      HERMES_LANGFUSE_ENV: hermes
       OPS_CONTROLLER_URL: http://ops-controller:9000
       # Upstream's boot remaps its hermes user to this UID/GID; must match the agent's (the brain
       # volume is shared and owned 1000:1000).
