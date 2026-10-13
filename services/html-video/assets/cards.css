@@ -1,0 +1,153 @@
+/* Concept cards: the design system every template under templates/ shares.
+ *
+ * Look: a whiteboard-sketch card. Cream paper, a hand-drawn ink frame that draws itself on,
+ * marker headlines, handwritten body text, a highlighter swipe under the phrase that matters,
+ * and a rubber stamp for the verdict. Everything animates with CSS only, and every animation is
+ * `both`-filled, so the renderer can step to any timestamp and the card holds its final frame
+ * after the last animation ends.
+ *
+ * Timing: each element sets its own delay through `--d` (inline, per template). Tokens live on
+ * :root; templates use them and never hardcode a colour or a size.
+ */
+@font-face { font-family: "Permanent Marker"; src: url("/assets/fonts/PermanentMarker-Regular.ttf") format("truetype"); font-display: block; }
+@font-face { font-family: "Patrick Hand"; src: url("/assets/fonts/PatrickHand-Regular.ttf") format("truetype"); font-display: block; }
+
+:root {
+  --paper: #FFFBEE;
+  --ink: #171717;
+  --ink-soft: #4F4A42;
+  --yellow: #FFE24A;
+  --lime: #86FF3C;
+  --green: #22B36B;
+  --red: #FF4D4D;
+  --blue: #2F80FF;
+  --shadow: rgba(0, 0, 0, 0.42);
+  --marker: "Permanent Marker", "Comic Sans MS", cursive;
+  --hand: "Patrick Hand", "Comic Sans MS", cursive;
+  --card-w: 1000px;
+  --card-h: 500px;
+  --pad-x: 56px;
+  --pad-y: 38px;
+  --d: 0s; /* an element's animation delay; templates set it inline */
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; width: 1080px; height: 560px; background: transparent; overflow: hidden; }
+body { font-family: var(--hand); color: var(--ink); -webkit-font-smoothing: antialiased; text-rendering: geometricPrecision; }
+h1, p, ul { margin: 0; padding: 0; }
+ul { list-style: none; }
+
+.stage { position: absolute; inset: 0; display: grid; place-items: center; }
+
+.card {
+  position: relative;
+  width: var(--card-w);
+  height: var(--card-h);
+  padding: var(--pad-y) var(--pad-x);
+  background: var(--paper);
+  border-radius: 26px;
+  box-shadow: 0 18px 38px var(--shadow);
+  rotate: -1.2deg;
+  animation: card-pop 0.45s cubic-bezier(0.2, 1.35, 0.45, 1) both;
+}
+.card.tilt-right { rotate: 1deg; }
+.card > .body { position: relative; height: 100%; display: flex; flex-direction: column; }
+
+/* The hand-drawn ink frame: an SVG rect with a wobble filter, drawn on by dash offset. */
+.frame {
+  position: absolute; left: 12px; top: 12px;
+  width: calc(var(--card-w) - 24px); height: calc(var(--card-h) - 24px);
+  overflow: visible; pointer-events: none;
+}
+.frame rect {
+  fill: none; stroke: var(--ink); stroke-width: 6; stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: 3000; stroke-dashoffset: 3000; filter: url(#rough);
+  animation: draw 0.85s ease-out 0.15s both;
+}
+
+/* Entrances. Each reads its delay from --d. */
+.write { clip-path: inset(-20% 100% -20% -4%); animation: write 0.5s ease-out var(--d) both; }
+.pop { transform: scale(0.55); opacity: 0; animation: pop 0.42s cubic-bezier(0.2, 1.5, 0.45, 1) var(--d) both; }
+.fade { opacity: 0; animation: fade 0.35s ease-out var(--d) both; }
+.draw { stroke-dasharray: 1200; stroke-dashoffset: 1200; animation: draw 0.55s ease-out var(--d) both; }
+
+/* Highlighter swipe under a phrase. */
+.hl { position: relative; display: inline-block; z-index: 0; padding: 0 6px; }
+.hl::before {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 10%; height: 48%;
+  background: var(--yellow); border-radius: 4px; z-index: -1;
+  transform: scaleX(0) skewX(-8deg); transform-origin: left center;
+  animation: swipe 0.4s ease-out var(--d) both;
+}
+.hl.lime::before { background: var(--lime); }
+
+/* Rubber stamp, slammed on. */
+.stamp {
+  position: absolute; right: 48px; bottom: 34px;
+  padding: 4px 18px 6px; border: 5px solid var(--red); border-radius: 12px;
+  color: var(--red); font-family: var(--marker); font-size: 40px; line-height: 1.1;
+  letter-spacing: 2px; text-transform: uppercase; white-space: nowrap;
+  rotate: -9deg; transform: scale(2.4); opacity: 0; mix-blend-mode: multiply;
+  animation: stamp 0.32s cubic-bezier(0.3, 1.6, 0.6, 1) var(--d) both;
+}
+
+/* Type scale. */
+.title { font-family: var(--marker); font-size: 52px; line-height: 1.12; }
+.big { font-family: var(--marker); font-size: 168px; line-height: 0.95; letter-spacing: -2px; }
+.label { font-size: 60px; line-height: 1.05; }
+.note { font-size: 44px; line-height: 1.15; color: var(--ink-soft); }
+.tone-hype .big { color: var(--blue); }
+.tone-bust .big { color: var(--red); }
+
+/* stat */
+.stat { justify-content: center; gap: 6px; }
+.stat.has-stamp .note { padding-right: 300px; }
+
+/* versus: left = the claim, right = the reality */
+.versus .cols { flex: 1; display: grid; grid-template-columns: 1fr 120px 1fr; align-items: center; gap: 12px; }
+.versus .col { text-align: center; }
+.versus .v-label { font-size: 44px; line-height: 1.05; color: var(--ink-soft); }
+.versus .v-value { font-family: var(--marker); font-size: 80px; line-height: 1; margin-top: 6px; }
+.versus .col.claim .v-value { color: var(--blue); }
+.versus .col.reality .v-value { color: var(--red); }
+.versus .vs {
+  width: 110px; height: 110px; border-radius: 50%; justify-self: center;
+  display: grid; place-items: center; background: var(--ink); color: var(--lime);
+  font-family: var(--marker); font-size: 46px; rotate: -8deg;
+}
+.versus .verdict { font-size: 42px; line-height: 1.1; text-align: center; }
+
+/* list */
+.list ul { margin-top: 16px; }
+.list li { display: flex; align-items: center; gap: 18px; font-size: 50px; line-height: 1.1; margin-bottom: 14px; }
+.list .mark { width: 56px; height: 56px; flex: none; }
+.list .mark path { fill: none; stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; animation-delay: calc(var(--d) + 0.2s); }
+.list .mark-check path { stroke: var(--green); }
+.list .mark-x path { stroke: var(--red); }
+.list .mark-question path { stroke: var(--blue); }
+
+/* flow */
+.flow .steps { flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px; }
+.flow .step {
+  flex: 1 1 0; min-height: 150px; display: grid; place-items: center; text-align: center;
+  padding: 14px 16px; font-size: 40px; line-height: 1.05;
+  border: 4px solid var(--ink); border-radius: 18px; background: #fff; filter: url(#rough);
+}
+.flow .arrow { width: 80px; height: 40px; flex: none; }
+.flow .arrow path { fill: none; stroke: var(--ink); stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+
+/* quote */
+.quote { padding-left: 40px; justify-content: center; }
+.quote .qmark { position: absolute; left: -28px; top: -36px; font-family: var(--marker); font-size: 220px; line-height: 1; color: var(--yellow); }
+.quote .qtext { position: relative; font-size: 54px; line-height: 1.15; }
+.quote .who { display: flex; align-items: center; gap: 14px; margin-top: 16px; font-family: var(--marker); font-size: 34px; color: var(--ink-soft); }
+.quote .who svg { width: 60px; height: 12px; }
+.quote .who path { fill: none; stroke: var(--ink-soft); stroke-width: 5; stroke-linecap: round; }
+
+@keyframes card-pop { from { transform: scale(0.84); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes write { to { clip-path: inset(-20% -4% -20% -4%); } }
+@keyframes pop { to { transform: scale(1); opacity: 1; } }
+@keyframes fade { to { opacity: 1; } }
+@keyframes swipe { to { transform: scaleX(1) skewX(-8deg); } }
+@keyframes stamp { to { transform: scale(1); opacity: 0.92; } }

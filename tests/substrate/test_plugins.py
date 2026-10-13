@@ -38,7 +38,7 @@ def _src(**kw):
 # `plugins: auto` leaves them out.
 CPU_OK_SERVICE_PLUGINS = {"monitoring", "rag", "open-webui",
                           "searxng-web", "codebase-memory-ui", "hermes-dashboard", "edge",
-                          "obsidian-livesync"}
+                          "obsidian-livesync", "html-video"}
 
 
 def test_registry_loaded_manifests():

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block card_class %}tone-{{ d.tone }}{% endblock %}
+{% block body_class %}stat{% if d.stamp %} has-stamp{% endif %}{% endblock %}
+{% block card %}
+<div class="big pop" style="--d:.55s">{{ d.value }}</div>
+<div class="label write" style="--d:.85s"><span class="hl" style="--d:1.25s">{{ d.label }}</span></div>
+{% if d.note %}<div class="note write" style="--d:1.15s">{{ d.note }}</div>{% endif %}
+{% endblock %}
+{% block outside %}
+{% if d.stamp %}<div class="stamp" style="--d:1.65s">{{ d.stamp }}</div>{% endif %}
+{% endblock %}

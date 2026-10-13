@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block card_class %}tilt-right{% endblock %}
+{% block body_class %}versus{% endblock %}
+{% block card %}
+{% if d.title %}<h1 class="title write" style="--d:.45s">{{ d.title }}</h1>{% endif %}
+<div class="cols">
+  <div class="col claim pop" style="--d:.75s">
+    <div class="v-label">{{ d.left.label }}</div>
+    <div class="v-value">{{ d.left.value }}</div>
+  </div>
+  <div class="vs pop" style="--d:1.15s">VS</div>
+  <div class="col reality pop" style="--d:.95s">
+    <div class="v-label">{{ d.right.label }}</div>
+    <div class="v-value">{{ d.right.value }}</div>
+  </div>
+</div>
+{% if d.verdict %}<div class="verdict write" style="--d:1.45s"><span class="hl" style="--d:1.85s">{{ d.verdict }}</span></div>{% endif %}
+{% endblock %}

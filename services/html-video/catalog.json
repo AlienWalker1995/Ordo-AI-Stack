@@ -1,0 +1,17 @@
+{
+  "cards": [
+    {
+      "id": "html-video",
+      "name": "HTML motion renderer",
+      "order": 55,
+      "port": 8000,
+      "check": "http://html-video:8000/health",
+      "has_gpu": false,
+      "plugin": "html-video",
+      "category": "media",
+      "background": true,
+      "ops_service": "html-video",
+      "hint": "Headless Chromium renders HTML/CSS/SVG animations to RGBA clips (reel concept cards). CPU only. POST /render, GET /templates."
+    }
+  ]
+}

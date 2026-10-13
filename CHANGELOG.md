@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Added
+- **`html-video`: HTML/CSS/SVG animations to RGBA video.** A CPU service (`services/html-video`,
+  headless Chromium from the digest-pinned Playwright image) that renders a page with CSS
+  animations to a PNG-in-MOV clip with alpha, or to one still, stepping every animation to each
+  frame's timestamp so the frames are deterministic. Ships a sketch-style card library (`stat`,
+  `versus`, `list`, `flow`, `quote`; `GET /templates` is the contract, data is validated and
+  autoescaped) for the reel pipelines' overlay graphics: the Rick and Morty dialogue reel now
+  carries a concept card across the top of the frame for each exchange, rendered before the GPU
+  render so a card never touches the lease. Profile `media`, no host port.
 - **ops-controller applies every source change it makes.** A model switch, a plugin enable or
   disable and the dashboard's MCP toggle now write `ordo.yaml`, render, and recreate exactly the
   changed set (`ordo/render/changed_set.py`, shared with `ordo apply`), GPU-lease checked; a failed
