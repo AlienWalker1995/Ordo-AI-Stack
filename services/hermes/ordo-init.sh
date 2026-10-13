@@ -22,14 +22,16 @@ as_hermes() { /command/s6-setuidgid hermes "$@"; }
 hermes_config() { as_hermes "$HERMES_BIN" config set "$1" "$2" >/dev/null; }
 publish_env() { mkdir -p "$CONTAINER_ENV" && printf '%s' "$2" > "$CONTAINER_ENV/$1"; }
 
-# File-delivered secrets (ordo/render/secret_files.py): Hermes reads DISCORD_BOT_TOKEN from its
-# environment and has no *_FILE option, so the canonical reader resolves each one and the value is
-# published to the gateway's environment. GITHUB_BACKUP_PAT is published for the backup scripts;
-# git itself reads the file through git-credential-github-pat.
+# File-delivered secrets (ordo/render/secret_files.py): Hermes reads these from its environment
+# and has no *_FILE option, so the canonical reader resolves each one the container declares and
+# the value is published to the CMD's environment. DISCORD_BOT_TOKEN (the agent's gateway),
+# GITHUB_BACKUP_PAT (the backup scripts; git itself reads the file through
+# git-credential-github-pat), HERMES_DASHBOARD_OIDC_CLIENT_SECRET (the dashboard's Google login).
 . /opt/ordo/secret-env.sh
-ordo_secret_file_env DISCORD_BOT_TOKEN GITHUB_BACKUP_PAT
+ordo_secret_file_env DISCORD_BOT_TOKEN GITHUB_BACKUP_PAT HERMES_DASHBOARD_OIDC_CLIENT_SECRET
 [ -z "${DISCORD_BOT_TOKEN:-}" ] || publish_env DISCORD_BOT_TOKEN "$DISCORD_BOT_TOKEN"
 [ -z "${GITHUB_BACKUP_PAT:-}" ] || publish_env GITHUB_BACKUP_PAT "$GITHUB_BACKUP_PAT"
+[ -z "${HERMES_DASHBOARD_OIDC_CLIENT_SECRET:-}" ] || publish_env HERMES_DASHBOARD_OIDC_CLIENT_SECRET "$HERMES_DASHBOARD_OIDC_CLIENT_SECRET"
 
 # Hermes API server. Upstream always runs it (cron fires go through it) and, when the container
 # brings no key, generates one into $HERMES_HOME/.env. The stack exposes it on the project network

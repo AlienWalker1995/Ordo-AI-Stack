@@ -149,6 +149,8 @@ def _remote_answers_from_flags(args: argparse.Namespace) -> wizard.RemoteAnswers
         client_id=args.client_id or os.environ.get("OAUTH2_PROXY_CLIENT_ID", ""),
         client_secret=args.client_secret or os.environ.get("OAUTH2_PROXY_CLIENT_SECRET", ""),
         emails=wizard.parse_emails(args.emails or ""),
+        hermes_client_id=args.hermes_client_id or os.environ.get("HERMES_DASHBOARD_OIDC_CLIENT_ID", ""),
+        hermes_client_secret=args.hermes_client_secret or os.environ.get("HERMES_DASHBOARD_OIDC_CLIENT_SECRET", ""),
     )
 
 
@@ -190,7 +192,7 @@ def cmd_remote(args: argparse.Namespace) -> int:
         print(f"error: {e}\nnothing was written.", file=sys.stderr)
         return 1
     change.rendered.write(out, refresh_bind_configs=True)
-    removed = remote.OAUTH_CLIENT_KEYS if args.action == "disable" else ()
+    removed = remote.REMOTE_CLIENT_KEYS if args.action == "disable" else ()
     try:
         secret_store.materialize(store, secret_store.SecretNeeds.from_render(change.rendered), out,
                                  strict=False, removed=removed)

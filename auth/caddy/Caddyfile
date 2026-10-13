@@ -101,18 +101,12 @@
 # tailnet sidecar `{args[1]}.<tailnet>` and the host's `:{args[2]}`) is refused with 403,
 # and an allowed one is rewritten to loopback like Host.
 # Args: <loopback upstream> <tailnet sidecar name> <edge port>.
-(sso_service_loopback) {
+(self_authenticating_service) {
     import tls_tailnet
-    import sso_port_gate
-    route {
-        @foreign_origin expression `{header.Origin} != "" && {header.Origin} != "https://{args[1]}.{$CADDY_TAILNET_DOMAIN}" && {header.Origin} != "https://{$CADDY_TAILNET_HOSTNAME}:{args[2]}"`
-        respond @foreign_origin "cross-origin request refused" 403
-        import sso_forward_auth
-        reverse_proxy {args[0]} {
-            header_up Host {args[0]}
-            header_up Origin ".+" "http://{args[0]}"
-        }
+    handle /healthz {
+        respond "ok" 200
     }
+    reverse_proxy {args[0]}
 }
 
 # ---- :8443 — Open WebUI (chat) ----
@@ -155,25 +149,22 @@
 }
 
 # ---- :8447 — Hermes ----
-# Served at its origin root behind a plain SSO proxy — no prefix strip, no
-# forwarded-prefix header base injection.
+# The one UI that is NOT behind oauth2-proxy: Hermes authenticates itself, because its
+# desktop app cannot pass a browser SSO gate. The dashboard runs Hermes's self-hosted OIDC
+# provider against the same Google identity (services/hermes-dashboard/plugin.yaml), and the
+# Google OAuth app's test-user list is who may sign in. Browser and desktop sign in the
+# same way; the desktop uses Hermes's native (RFC 8252) flow and Bearer tokens.
+#
+# Served at its origin root, Host and Origin passed through untouched: the dashboard's
+# HERMES_DASHBOARD_PUBLIC_URL (https://hermes.<tailnet>) is the host it trusts and the
+# origin it allows, and that setting is also what engages its login gate on a loopback bind.
 #
 # Reached at 127.0.0.1, NOT hermes-dashboard:9119 — the service runs inside THIS
-# container's network namespace (network_mode: service:caddy).
-#
-# Hermes >= v0.20.0 hard-refuses a non-loopback bind unless the dashboard registers
-# an auth provider of its own, and `--insecure` no longer bypasses it. Injecting
-# `Authorization: Basic` from here does NOT satisfy it: the bundled `basic` provider
-# is login-form + session-cookie only and reads no inbound header (verified —
-# unauthenticated AND header-injected requests both 302 to /login?next=%2F). No
-# provider trusts oauth2-proxy's X-Auth-Request-* identity either. Giving the
-# dashboard a loopback bind inside this namespace means its gate never engages, so
-# oauth2-proxy stays the ONE auth gate and there is no second credential anywhere.
-#
-# Recreating caddy destroys this namespace and orphans hermes-dashboard along with
-# the tailnet sidecars, so recreate them together: `ordo recreate caddy` names them.
+# container's network namespace (network_mode: service:caddy). Recreating caddy destroys
+# this namespace and orphans hermes-dashboard along with the tailnet sidecars, so recreate
+# them together: `ordo recreate caddy` names them.
 :8447 {
-    import sso_service_loopback 127.0.0.1:9119 hermes 8447
+    import self_authenticating_service 127.0.0.1:9119
 }
 
 # ---- :8448 — codebase-memory 3D graph ----

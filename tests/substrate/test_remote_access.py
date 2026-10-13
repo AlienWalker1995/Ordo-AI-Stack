@@ -28,9 +28,11 @@ RENDER_MODULE = sys.modules["ordo.render.engine"]
 HARDWARE = HardwareProfile.from_spec({"gpus": [], "ram_gb": 32, "cpu_cores": 8})
 
 CLIENT_SECRET = "GOCSPX-never-print-me"
+HERMES_SECRET = "GOCSPX-hermes-never-print-me"
 ENABLE_FLAGS = ["--yes", "--hostname", "ordo.tail1234.ts.net", "--bind", "100.64.0.1",
                 "--client-id", "cid.apps.googleusercontent.com", "--client-secret", CLIENT_SECRET,
-                "--emails", "me@example.com, you@example.com"]
+                "--emails", "me@example.com, you@example.com",
+                "--hermes-client-id", "hermes-cid.apps.googleusercontent.com", "--hermes-client-secret", HERMES_SECRET]
 
 
 @pytest.fixture
@@ -63,6 +65,8 @@ def test_enable_writes_site_secrets_and_renders_the_edge_with_its_allowlist(stac
     assert secrets["OAUTH2_PROXY_CLIENT_ID"] == "cid.apps.googleusercontent.com"
     assert secrets["OAUTH2_PROXY_CLIENT_SECRET"] == CLIENT_SECRET
     assert secrets["OAUTH2_PROXY_COOKIE_SECRET"]              # generated, not asked
+    assert secrets["HERMES_DASHBOARD_OIDC_CLIENT_ID"] == "hermes-cid.apps.googleusercontent.com"
+    assert secrets["HERMES_DASHBOARD_OIDC_CLIENT_SECRET"] == HERMES_SECRET
     assert secrets["LITELLM_KEY_EDGE"]                        # the edge's own gateway key, generated
     assert site["SSO_ALLOWED_EMAILS"] == "me@example.com,you@example.com"
     allowlist = stack / "oauth2-proxy" / "emails.txt"
@@ -70,7 +74,7 @@ def test_enable_writes_site_secrets_and_renders_the_edge_with_its_allowlist(stac
     services = _compose(stack)["services"]
     assert "caddy" in services and "ports" not in services["dashboard"]
     printed = capsys.readouterr().out
-    assert CLIENT_SECRET not in printed and "ordo up --all" in printed
+    assert CLIENT_SECRET not in printed and HERMES_SECRET not in printed and "ordo up --all" in printed
     assert "still blank" not in printed         # nothing left that would block `ordo up`
 
 
@@ -115,9 +119,12 @@ def test_invalid_input_writes_nothing(stack, flag, value):
 
 def test_yes_reads_the_client_secret_from_the_environment(stack, monkeypatch):
     monkeypatch.setenv("OAUTH2_PROXY_CLIENT_SECRET", "from-env")
-    flags = [f for f in ENABLE_FLAGS if f not in ("--client-secret", CLIENT_SECRET)]
+    monkeypatch.setenv("HERMES_DASHBOARD_OIDC_CLIENT_SECRET", "hermes-from-env")
+    secret_flags = ("--client-secret", CLIENT_SECRET, "--hermes-client-secret", HERMES_SECRET)
+    flags = [f for f in ENABLE_FLAGS if f not in secret_flags]
     assert cli.main(["remote", "enable", "--out", str(stack), *flags]) == 0
     assert _secrets(stack)["OAUTH2_PROXY_CLIENT_SECRET"] == "from-env"
+    assert _secrets(stack)["HERMES_DASHBOARD_OIDC_CLIENT_SECRET"] == "hermes-from-env"
 
 
 def test_the_rendered_stack_after_enable_is_the_source(stack):
@@ -173,3 +180,13 @@ def test_an_allowlist_change_recreates_oauth2_proxy():
 
     assert label("me@example.com") == label("me@example.com")
     assert label("me@example.com") != label("me@example.com,you@example.com")
+
+
+def test_enable_refuses_a_hermes_dashboard_without_its_own_login(stack, capsys):
+    """The edge does not gate the Hermes dashboard (its desktop app cannot pass SSO); with the plugin
+    on and no Google client of its own it would have no login, so enabling refuses and writes nothing."""
+    flags = ENABLE_FLAGS[:ENABLE_FLAGS.index("--hermes-client-id")]
+    source_before = (stack / "ordo.yaml").read_text(encoding="utf-8")
+    assert cli.main(["remote", "enable", "--out", str(stack), *flags]) != 0
+    assert "HERMES_DASHBOARD_OIDC_CLIENT_ID" in capsys.readouterr().err
+    assert (stack / "ordo.yaml").read_text(encoding="utf-8") == source_before
