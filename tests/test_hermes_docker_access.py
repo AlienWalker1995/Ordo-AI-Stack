@@ -1,7 +1,7 @@
 """Hermes' Docker access, checked against the running stack.
 
-The agent container (`agent`) has the host Docker socket and the root group needed to use it:
-operator-granted on 2026-08-09, with guardrails in its prompt (docs/design/hermes-owns-docker.md).
+The agent container (`agent`) has the host Docker socket, and its unprivileged hermes user can use
+it: operator-granted on 2026-08-09, with guardrails in its prompt (docs/design/hermes-owns-docker.md).
 The hermes-dashboard container must have neither. Both still reach ops-controller.
 
 These are live checks (`docker exec` / `docker inspect`); they skip when the containers are not up.
@@ -79,11 +79,14 @@ def test_hermes_dashboard_has_no_docker_sock(dashboard: str):
     )
 
 
-def test_hermes_agent_is_in_the_root_group(gateway: str):
-    """The socket is root:root mode 660 on Docker Desktop; without group 0 every docker call
-    from the unprivileged hermes user fails with EACCES."""
-    group_add = _inspect(gateway)["HostConfig"].get("GroupAdd", []) or []
-    assert "0" in group_add, f"group_add is {group_add!r}; the hermes user cannot use the socket"
+def test_hermes_user_can_use_the_docker_socket(gateway: str):
+    """The socket is root:root mode 660 on Docker Desktop. The image's boot (upstream's s6 stage2)
+    adds the hermes user to the socket's group, and the gateway runs as that user, so the check is
+    a real Docker call made as hermes, the way the gateway makes it."""
+    r = _docker_exec(gateway, "/command/s6-setuidgid", "hermes",
+                     "docker", "version", "--format", "{{.Server.Version}}")
+    assert r.returncode == 0 and r.stdout.strip(), (
+        f"the hermes user cannot use /var/run/docker.sock: {r.stderr.strip()!r}")
 
 
 def test_hermes_dashboard_not_in_root_group(dashboard: str):
