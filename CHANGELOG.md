@@ -169,6 +169,17 @@ All notable changes to this project are documented here. The format is loosely b
   embedding models on model-gateway.
 
 ### Changed
+- **Hermes Agent v0.21.7.** The pin moves from v0.21.5 (2026-09-24) to v0.21.7 (2026-10-11),
+  which carries upstream's dashboard login hardening (spoofed `X-Forwarded-For` could reset the
+  login rate limit) and repository git-filter hardening. The checkpoint-scan, user-message
+  condensation, Discord relative-import, Models-page aux fold and `/voice join` patches are
+  re-ported; the relative-import patch now covers the four mixins upstream added. The
+  reasoning-only-stop patch and its `HERMES_PROMOTE_REASONING_ONLY_STOP` switch are gone: upstream
+  now promotes a reasoning-only stop only on routes that opt in, so this stack re-asks by default.
+  The image moves to Python 3.14, the only version upstream supports since v0.21.6 (on 3.11 its
+  core dependencies are not installed at all), installs the `discord` extra that upstream's `all`
+  no longer includes (previously lazy-installed from PyPI on every fresh container start), and
+  writes upstream's install stamp so `hermes --version` reports the real release.
 - **RAG embeddings are EmbeddingGemma 2.** `llamacpp-embed` serves `embeddinggemma-2-Q8_0.gguf`
   (768-dim, 8K context, text only) instead of nomic-embed-text v1.5. On the live index (2,494
   chunks, 60 generated questions) the right chunk landed in the top 5 for 80% of questions, up

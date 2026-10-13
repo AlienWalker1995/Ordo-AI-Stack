@@ -5,8 +5,10 @@
 
 # Upstream pin. ALWAYS record which release the SHA is — a bare 40-hex string tells a
 # future reader nothing, and this pin silently rotted 2.5 months (see below).
-#   v2026.9.24 (v0.21.5, 2026-09-24) — commit f97608f1, the tag's dereferenced commit.
-#   The three local patches below were re-ported to this pin (none was fixed upstream).
+#   v0.21.7 (2026-10-11) — commit 71d34bad, the tag's dereferenced commit.
+#   Re-ported to this pin: pressure-user-condense, checkpoint-scan-bounds,
+#   discord-relative-imports, models-analytics-aux-fold and the /voice join block (none
+#   fixed upstream). Dropped: reasoning-only-stop-reprompt, fixed upstream (see below).
 #   NOTE: `git/ref/tags/<tag>` returns the ANNOTATED TAG object here, not the commit;
 #   deref via `git/tags/<sha>` or the checkout below resolves to the wrong object.
 # Previous pin 5fdcfd85 was a 2026-05-19 commit left 11 releases behind, several citing
@@ -15,7 +17,7 @@
 # very ARG (see its `pinned_sources` block), so bumping this line is what clears the
 # SECURITY row it emits. Keep the `<X>_PINNED_SHA` / `<X>_REPO` naming — discovery is
 # by that convention, not a hardcoded table.
-ARG HERMES_PINNED_SHA=f97608f178d1ffeca59860195ab7da295f7c8e5f
+ARG HERMES_PINNED_SHA=71d34bad1045610252eda02ee79549436896e784
 ARG HERMES_REPO=https://github.com/NousResearch/hermes-agent.git
 
 # ── Stage 1: web-builder ──
@@ -26,7 +28,7 @@ ARG HERMES_REPO=https://github.com/NousResearch/hermes-agent.git
 # not automatically valid — node:26-slim ships npm 11.18.0, which clears it.
 # Checking web/package.json is NOT sufficient; it declares no engines and the constraint
 # lives in the workspace root.
-# This stage only produces the static web bundle (the runtime stage is python:3.11-slim),
+# This stage only produces the static web bundle (the runtime stage is python:3.14-slim),
 # so the major bump carries no runtime risk. Digest-pinned, not a rolling tag, per the
 # stack's pin-don't-float rule — bump tag and digest together.
 FROM node:26-slim@sha256:80f12a4030a00d8f78ebc4602bc3ef0f984932f498649b8ed3c0a740a6dff4a8 AS web-builder
@@ -69,7 +71,7 @@ RUN npm install && npm run build
 # before the multiarch dir). --all enables FTS5 (messages_fts + trigram) and the other
 # loadable features Debian's build carried; the runtime stage asserts both version and
 # trigram FTS5 at build time so a flag regression fails the build, not the gateway.
-FROM python:3.11.15-slim-trixie@sha256:6d85378d88a19cd4d76079817532d62232be95757cb45945a99fec8e8084b9c2 AS sqlite-builder
+FROM python:3.14.8-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS sqlite-builder
 ARG SQLITE_YEAR=2026
 ARG SQLITE_AUTOCONF=3530400
 # sha256 of sqlite-autoconf-3530400.tar.gz (3.53.4), computed 2026-08-08.
@@ -88,7 +90,11 @@ RUN curl -fsSL "https://sqlite.org/${SQLITE_YEAR}/sqlite-autoconf-${SQLITE_AUTOC
     && make -j"$(nproc)" && make install
 
 # ── Stage 2: runtime ──
-FROM python:3.11.15-slim-trixie@sha256:6d85378d88a19cd4d76079817532d62232be95757cb45945a99fec8e8084b9c2 AS runtime
+# Python 3.14: upstream supports only 3.14 since v0.21.6. pyproject declares every core dependency
+# with `python_version >= '3.14'` (older interpreters are allowed only so old installs can run
+# their update step), so a 3.11 venv installs without openai, ruamel.yaml or dotenv and the
+# gateway cannot import. Bump with upstream's .python-version.
+FROM python:3.14.8-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS runtime
 ARG HERMES_REPO
 ARG HERMES_PINNED_SHA
 
@@ -179,7 +185,7 @@ RUN cd /opt/hermes-agent \
 # so no checkpoint was ever produced. The patch (a) wall-clock-bounds the
 # walk (HERMES_CHECKPOINT_SCAN_SECONDS, default 10s), (b) remembers the
 # too-big verdict across turns, (c) logs the skip once at INFO. Upstream
-# v0.21.5 (v2026.9.24) is still unbounded — re-check on pin bumps.
+# v0.21.7 is still unbounded — re-check on pin bumps.
 # --check first: the build fails loudly if a future pin bump breaks the patch.
 COPY checkpoint-scan-bounds.diff /tmp/checkpoint-scan-bounds.diff
 RUN cd /opt/hermes-agent \
@@ -200,8 +206,9 @@ RUN cd /opt/hermes-agent \
 # crashed with `AttributeError: 'NoneType' object has no attribute 'File'` in
 # _send_file_attachment. Relative imports (`.adapter`, `.adapter_media`,
 # `.recovery`) resolve within the already-loaded plugin package, so no twin can
-# ever be created. Upstream v2026.9.24 (v0.21.5) still uses the absolute form —
-# re-check on pin bumps. --check first: the build fails loudly if a future pin
+# ever be created. Upstream v0.21.7 still uses the absolute form (and added four more:
+# the slash-auth, thread-titles, voice-info and component-auth mixins, plus onboarding);
+# all are relative here — re-check on pin bumps. --check first: the build fails loudly if a future pin
 # bump breaks the patch.
 COPY discord-relative-imports.diff /tmp/discord-relative-imports.diff
 RUN cd /opt/hermes-agent \
@@ -211,28 +218,18 @@ RUN cd /opt/hermes-agent \
                            plugins/platforms/discord/adapter_media.py \
     && echo "discord-relative-imports patch applied"
 
-# PATCH: re-ask instead of posting raw reasoning when the model stops inside its thinking.
-# On an empty-content `stop` with reasoning, upstream returns the reasoning as the reply (a
-# compat path for vLLM parsers that file real answers as reasoning). NInfer splits on </think>
-# exactly, so there it only means the model emitted its stop token mid-thought, and Discord got
-# up to 110k chars of chain-of-thought as the answer. The diff adds an off switch,
-# HERMES_PROMOTE_REASONING_ONLY_STOP=0 (set in agent.yaml), that routes the turn to the existing
-# thinking-prefill / empty-response ladder, plus a test. Default unchanged; upstream v0.21.5
-# has no such knob. --check first: the build fails loudly if a future pin bump breaks the patch.
-COPY reasoning-only-stop-reprompt.diff /tmp/reasoning-only-stop-reprompt.diff
-RUN cd /opt/hermes-agent \
-    && git apply --recount --check /tmp/reasoning-only-stop-reprompt.diff \
-    && git apply --recount /tmp/reasoning-only-stop-reprompt.diff \
-    && chown hermes:hermes agent/turn_final_response.py \
-                           tests/agent/test_reasoning_only_stop_persistence.py \
-    && echo "reasoning-only-stop-reprompt patch applied"
+# (Dropped at v0.21.7: reasoning-only-stop-reprompt. Upstream now promotes a reasoning-only
+# stop to the answer only on trusted routes (agent/reasoning_promotion.py: an explicit
+# `answer_in_reasoning` capability or the Nemotron parser route), so on this stack the turn
+# already takes the thinking-prefill / empty-response ladder by default.)
 
 # PATCH: one Models-page card per model on the dashboard's Analytics page.
 # Aux usage (titles, compression, approvals, vision) records whatever provider string it resolved
 # (`auto`, `custom`, empty), and upstream keyed those rows by (model, provider) and dropped the task
 # label, so this stack's single local model showed as ~15 unlabeled `local-chat` cards. The diff
 # folds aux usage into the model's busiest session row (sessions not counted twice); a model used
-# only by aux tasks still gets one card (upstream #23270). Includes a test. v0.21.5 has no fix.
+# only by aux tasks still gets one card (upstream #23270). Includes a test. v0.21.7 merges aux
+# rows by (model, provider) only, which still splits `auto`/`custom`/empty into separate cards.
 # --check first: the build fails loudly if a future pin bump breaks the patch.
 COPY models-analytics-aux-fold.diff /tmp/models-analytics-aux-fold.diff
 RUN cd /opt/hermes-agent \
@@ -245,7 +242,7 @@ RUN cd /opt/hermes-agent \
 # PATCH: an @mention sent as a Discord quote-reply gets its own thread like any other mention.
 # Upstream skips auto-thread for every reply, so replying to an older message (your own included)
 # answered straight in the channel. Only a reply to one of the bot's own in-channel answers now
-# stays inline (it continues that exchange). Includes tests. v0.21.5 has no fix.
+# stays inline (it continues that exchange). Includes tests. v0.21.7 has no fix.
 # --check first: the build fails loudly if a future pin bump breaks the patch.
 COPY discord-reply-auto-thread.diff /tmp/discord-reply-auto-thread.diff
 RUN cd /opt/hermes-agent \
@@ -284,12 +281,25 @@ RUN cd /opt/hermes-agent \
     && rm -rf /tmp/skill-overlays \
     && echo "ordo skills built"
 
+# Install stamp: the version `hermes --version`, `hermes dump` and the dashboard report. Since
+# v0.21.6 hermes_cli reads it from install-stamp.json (written by upstream's packagers), not from
+# pyproject (0.0.0) or git, so a plain clone reports "vunknown". Same script and flags as upstream's
+# Docker build; the base version and distance come from the pinned checkout's nearest release tag,
+# so HERMES_PINNED_SHA stays the one source of truth. Written after the patches above, so the stamp
+# records the tree as dirty, which it is. git runs as root on the hermes-owned clone, hence the
+# per-command safe.directory.
+RUN cd /opt/hermes-agent     && export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=/opt/hermes-agent     && described="$(git describe --tags --long --match 'v[0-9]*')"     && base_tag="${described%-*-g*}"     && distance="${described%-g*}" && distance="${distance##*-}"     && python3 scripts/write_install_stamp.py --output install-stamp.json            --commit "$(git rev-parse HEAD)" --base-version "${base_tag#v}" --distance "$distance"            --source ci --distribution docker --update-mechanism external     && chown hermes:hermes install-stamp.json
+
 USER hermes
 WORKDIR /opt/hermes-agent
 
-# Install Hermes + all extras into a venv at /opt/hermes-agent/.venv/.
-RUN uv venv --python 3.11 \
-    && uv pip install -e ".[all]"
+# Install Hermes into a venv at /opt/hermes-agent/.venv/. `all` is upstream's general bundle; it
+# no longer carries any messaging platform, so the Discord gateway's own extra (discord.py[voice]:
+# PyNaCl + davey for voice and DAVE E2EE) is named here. Without it Hermes lazy-installs those from
+# PyPI on every fresh container start, which makes the gateway depend on the network at boot and
+# the image differ from what runs.
+RUN uv venv --python 3.14 \
+    && uv pip install -e ".[all,discord]"
 
 # Langfuse SDK - the optional runtime dependency of the BUNDLED `observability/langfuse`
 # plugin (plugins/observability/langfuse/, shipped by upstream, enabled by entrypoint.sh
@@ -441,27 +451,26 @@ PYEOF
 # Drop this block when an upstream fix lands.
 RUN python3 - <<'PYEOF'
 import pathlib
-# v2026.9.24 moved the join handler from gateway/run.py into gateway/run_voice.py and now
-# records the mode through _apply_voice_mode(...), which persists it and mirrors it into
-# the adapter. The bug is unchanged: join passes a hard-coded "all".
+# The join handler lives in gateway/run_voice.py and records the mode through
+# _apply_voice_mode(...), which persists it and mirrors it into the adapter. The bug is
+# unchanged at v0.21.7: join passes a hard-coded "all".
 b = pathlib.Path("/opt/hermes-agent/gateway/run_voice.py")
 s = b.read_text()
 
 anchor = '''        self._apply_voice_mode(adapter, self._voice_key_for_source(event.source),
                                event.source.chat_id, "all")
-        return (f"Joined voice channel **{voice_channel.name}**.\\n"
-                f"I'll speak my replies and listen to you. Use /voice leave to disconnect.")'''
+        return t("gateway.voice.channel_joined", name=voice_channel.name)'''
 assert s.count(anchor) == 1, "hermes voice: join-handler mode/reply anchor moved/ambiguous"
 s = s.replace(anchor, '''        _vkey = self._voice_key_for_source(event.source)
         _vmode = self._voice_mode.get(_vkey, "all")
         self._apply_voice_mode(adapter, _vkey, event.source.chat_id, _vmode)
-        # The canned reply hard-codes "I'll speak my replies", false when a preserved mode
-        # is voice_only/off. Reflect the effective mode instead.
-        _speak = ("I'll speak my replies and listen to you."
-                  if _vmode == "all"
-                  else f"I'll listen; replies follow your saved voice mode ({_vmode}).")
+        # The stock reply says "I'll speak my replies", false when a preserved mode is
+        # voice_only/off. Reflect the effective mode instead.
+        if _vmode == "all":
+            return t("gateway.voice.channel_joined", name=voice_channel.name)
         return (f"Joined voice channel **{voice_channel.name}**.\\n"
-                f"{_speak} Use /voice leave to disconnect.")''', 1)
+                f"I'll listen; replies follow your saved voice mode ({_vmode}). "
+                f"Use /voice leave to disconnect.")''', 1)
 
 b.write_text(s)
 assert '_vmode = self._voice_mode.get(_vkey, "all")' in b.read_text(), \

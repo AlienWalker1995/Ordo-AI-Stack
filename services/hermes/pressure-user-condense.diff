@@ -1,8 +1,8 @@
 diff --git a/agent/context_compressor.py b/agent/context_compressor.py
-index 99add9a9ae..80115552b7 100644
+index 13b1d4a08b..a52c4996f3 100644
 --- a/agent/context_compressor.py
 +++ b/agent/context_compressor.py
-@@ -1128,6 +1128,17 @@ _FEASIBILITY_SKIP_MIDDLE_FRACTION = 0.10
+@@ -1137,6 +1137,17 @@ _MAX_TAIL_MESSAGE_FLOOR = 8
  # Under pressure, demote large tool outputs even inside the protected region but
  # keep this many trailing messages verbatim.
  _PRESSURE_KEEP_RECENT_MESSAGES = 3
@@ -20,10 +20,10 @@ index 99add9a9ae..80115552b7 100644
  # Newest image-bearing tool results kept verbatim; older image payloads retire
  # even inside protect_last_n (matches the Anthropic adapter's keep-window).
  # Native vision_analyze / computer_use screenshots that sit inside the protected tail cannot be demoted by
-@@ -3104,10 +3115,77 @@ class ContextCompressor(SummaryDispatchMixin, MicroCompactionMixin, ContextEngin
+@@ -3255,10 +3266,76 @@ class ContextCompressor(
+                 and _protected_region_tokens() > soft_ceiling
              ) and self._demote_tool_result_at(result, last_tool_idx, call_id_to_tool, min_prune_chars):
                  demoted += 1
-                 pressure_hits += 1
 +        # Pass 5: oversized USER message condensation - the final escalation
 +        # before the no_progress dead-end.  A pasted transcript or document in
 +        # a user turn can exceed the whole soft budget by itself; every pass
@@ -86,10 +86,9 @@ index 99add9a9ae..80115552b7 100644
 +            for i in candidates:
 +                if _condense_user_message_at(i):
 +                    demoted += 1
-+                    pressure_hits += 1
 +                if _protected_region_tokens() <= soft_ceiling:
 +                    break
-         if pressure_hits and not self.quiet_mode:
+         if demoted and not self.quiet_mode:
              logger.info(
 -                "Pre-compression pressure demotion: reclaimed protected-tail tool output (%d change(s); "
 -                "protected region now ~%s tokens, soft ceiling %s)",
@@ -97,14 +96,14 @@ index 99add9a9ae..80115552b7 100644
 +                "bulk (%d change(s), incl. any oversized-user-message "
 +                "condensation; protected region now ~%s tokens, "
 +                "soft ceiling %s)",
-                 pressure_hits, f"{_protected_region_tokens():,}", f"{soft_ceiling:,}",
+                 demoted, f"{_protected_region_tokens():,}", f"{soft_ceiling:,}",
              )
          return demoted
 diff --git a/tests/agent/test_context_compressor.py b/tests/agent/test_context_compressor.py
-index 4c60d58e81..96ddd19060 100644
+index 60c07e473a..08d4c66d7b 100644
 --- a/tests/agent/test_context_compressor.py
 +++ b/tests/agent/test_context_compressor.py
-@@ -3584,3 +3584,103 @@ class TestSanitizeToolPairsWhitespace:
+@@ -3822,3 +3822,103 @@ class TestSanitizeToolPairsWhitespace:
          tool_call_ids = [m.get("tool_call_id") for m in out if m.get("role") == "tool"]
          assert "call_orphan" not in tool_call_ids, "genuinely orphaned result must be removed"
          assert " call_orphan " not in tool_call_ids, "original whitespace form must also be gone"
