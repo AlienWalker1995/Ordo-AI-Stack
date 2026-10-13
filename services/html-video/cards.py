@@ -13,6 +13,7 @@ that its example validates and renders (tests/test_html_video.py iterates TEMPLA
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +21,19 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 
-# The card canvas: the reel composites it full-width across the top of a 1080x1920 frame. A
+# The card canvas: designed to sit full-width across the top of a vertical 1080x1920 video. A
 # template may be rendered at another size, but the layouts are designed for this one.
 CARD_WIDTH = 1080
 CARD_HEIGHT = 560
+
+# The looks every template (and a bespoke card) can wear: <body data-theme="...">, which only
+# redefines the colour tokens in assets/cards.css. The first is the default.
+THEMES: dict[str, str] = {
+    "paper": "Whiteboard sketch: cream card, black marker ink, yellow highlighter.",
+    "chalk": "Chalkboard: dark green card, chalk-white handwriting, warm yellow accents.",
+    "blueprint": "Blueprint: deep blue card with a faint grid, crisp white lines, cyan accents.",
+    "neon": "Neon: near-black card, glowing magenta and cyan type.",
+}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -69,6 +79,51 @@ class Template:
     duration: float            # seconds of animation; the clip holds its last frame after this
     fields: tuple[AnyField, ...]
     example: dict[str, Any]
+    # Values the markup needs that are computed from the validated data (bar widths, a parsed
+    # percentage). Appends to `problems` instead of raising, so every problem is named at once.
+    context: Callable[[dict[str, Any], list[str]], dict[str, Any]] | None = None
+
+
+def _number_in(text: str | None, where: str, problems: list[str], lo: float, hi: float) -> float | None:
+    """`text` as a number (thousands separators allowed), within [lo, hi]."""
+    if text is None:
+        return None
+    try:
+        value = float(text.replace(",", ""))
+    except ValueError:
+        problems.append(f"{where}: must be a plain number like 4000 or 2.5, got {text!r}")
+        return None
+    if not lo <= value <= hi:
+        problems.append(f"{where}: must be between {lo:g} and {hi:g}")
+        return None
+    return value
+
+
+def _bars_context(d: dict[str, Any], problems: list[str]) -> dict[str, Any]:
+    sizes = [_number_in(b.get("size"), f"bars[{i}].size", problems, 0, 1e15) for i, b in enumerate(d["bars"])]
+    if not sizes or any(size is None for size in sizes):
+        return {"bars": []}
+    largest = max(sizes) or 1.0
+    # The longest bar takes 68% of the track, so its value label always fits beside it.
+    return {"bars": [{"label": b["label"], "display": b["value"], "focus": b["focus"] == "yes",
+                      "width": round(68 * size / largest, 2)}
+                     for b, size in zip(d["bars"], sizes, strict=True)]}
+
+
+def _meter_context(d: dict[str, Any], problems: list[str]) -> dict[str, Any]:
+    pct = _number_in(d.get("percent"), "percent", problems, 0, 100)
+    return {"pct": int(round(pct)) if pct is not None else 0}
+
+
+def _headline_context(d: dict[str, Any], problems: list[str]) -> dict[str, Any]:
+    words = (d.get("text") or "").split()
+    if not 1 <= len(words) <= 3:
+        problems.append(f"text: {len(words)} words, need 1-3 (it is slammed in word by word)")
+    for word in words:
+        if len(word) > 12:
+            problems.append(f"text: the word {word!r} is {len(word)} characters, max 12 at this size")
+    accent = {"first": 0, "last": len(words) - 1, "none": -1}[d.get("accent") or "last"]
+    return {"words": words, "accent": accent}
 
 
 TEMPLATES: dict[str, Template] = {
@@ -152,6 +207,80 @@ TEMPLATES: dict[str, Template] = {
         ),
         example={"text": "matches GLM-5 while using 3-4x less compute", "who": "Reflection AI, launch post",
                  "stamp": "SELF-GRADED"},
+    ),
+    "bars": Template(
+        id="bars", file="bars.html", duration=2.8,
+        description="2-5 labelled horizontal bars, lengths proportional to their sizes, one "
+                    "optionally in focus. Scale and lopsided comparisons: who has how much.",
+        fields=(
+            Field("title", "What is being measured, 2-6 words.", required=False, max_len=40),
+            ListField("bars", "The bars, top to bottom.", min_items=2, max_items=5, item_fields=(
+                Field("label", "Who or what, 1-2 words.", max_len=14),
+                Field("value", "The number as it should read: '4,000 GPUs', '$25B'.", max_len=12),
+                Field("size", "The same quantity as a plain number, for the bar length: '4000'.",
+                      max_len=20),
+                Field("focus", "yes to colour this bar and bold its label.", required=False,
+                      max_len=3, choices=("no", "yes")),
+            )),
+            Field("stamp", "A rubber-stamp word: 'NOT CLOSE', 'ROUNDING ERROR'.", required=False, max_len=14),
+        ),
+        example={"title": "GPUs behind each model", "bars": [
+            {"label": "OpenAI", "value": "100,000+", "size": "100000"},
+            {"label": "Meta", "value": "60,000", "size": "60000"},
+            {"label": "Mistral", "value": "4,000", "size": "4000", "focus": "yes"},
+        ], "stamp": "NOT CLOSE"},
+        context=_bars_context,
+    ),
+    "timeline": Template(
+        id="timeline", file="timeline.html", duration=2.8,
+        description="2-5 dated events on a line drawn left to right, one optionally in focus. "
+                    "How fast something happened, or what came before the claim.",
+        fields=(
+            Field("title", "What the timeline shows, 2-6 words.", required=False, max_len=40),
+            ListField("events", "The events, oldest first.", min_items=2, max_items=5, item_fields=(
+                Field("when", "The date as it should read: 'Mar 2024', 'Q3', 'Day 1'.", max_len=10),
+                Field("what", "What happened, 2-4 words.", max_len=24),
+                Field("focus", "yes to highlight this event.", required=False, max_len=3,
+                      choices=("no", "yes")),
+            )),
+        ),
+        example={"title": "From demo to valuation", "events": [
+            {"when": "Jan", "what": "founded"},
+            {"when": "Mar", "what": "$4.7B raised"},
+            {"when": "Jun", "what": "demo video"},
+            {"when": "Oct", "what": "$25B valuation", "focus": "yes"},
+        ]},
+    ),
+    "meter": Template(
+        id="meter", file="meter.html", duration=2.6,
+        description="One percentage as a ring that fills while the number counts up, with a label "
+                    "and an optional note and stamp. Shares, success rates, benchmark scores.",
+        fields=(
+            Field("percent", "0-100, the plain number: '83'.", max_len=5),
+            Field("label", "What the percentage is, 2-5 words.", max_len=26),
+            Field("note", "The catch, one short line.", required=False, max_len=44),
+            Field("tone", "Ring colour: hype (blue), good (green), bad (red).", required=False,
+                  max_len=5, choices=("hype", "good", "bad")),
+            Field("stamp", "A rubber-stamp word: 'SELF-GRADED'.", required=False, max_len=14),
+        ),
+        example={"percent": "83", "label": "on their own benchmark", "note": "41% on everyone else's",
+                 "tone": "hype", "stamp": "SELF-GRADED"},
+        context=_meter_context,
+    ),
+    "headline": Template(
+        id="headline", file="headline.html", duration=2.2,
+        description="Kinetic type: 1-3 huge words slammed in one at a time, an optional kicker "
+                    "chip above and a line below. The punchline, the one-word verdict.",
+        fields=(
+            Field("kicker", "A small label above: 'THE CLAIM', 'MEANWHILE'.", required=False, max_len=22),
+            Field("text", "1-3 words, each at most 12 characters: 'Zero weights.'", max_len=36),
+            Field("accent", "Which word takes the accent colour.", required=False, max_len=5,
+                  choices=("last", "first", "none")),
+            Field("under", "One line under the words.", required=False, max_len=56),
+        ),
+        example={"kicker": "SHIPPED SO FAR", "text": "Zero weights.", "accent": "last",
+                 "under": "for a model priced at $25B"},
+        context=_headline_context,
     ),
 }
 
@@ -247,11 +376,20 @@ def validate(template_id: str, data: Any) -> dict[str, Any]:
 _env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=select_autoescape(default=True))
 
 
-def render_html(template_id: str, data: Any) -> tuple[str, Template]:
-    """Validate `data` and return (html, template). Raises CardDataError."""
+def render_html(template_id: str, data: Any, theme: str | None = None) -> tuple[str, Template]:
+    """Validate `data` and `theme` and return (html, template). Raises CardDataError naming
+    every problem."""
     normalised = validate(template_id, data)
     template = TEMPLATES[template_id]
-    html = _env.get_template(template.file).render(d=normalised, template_id=template_id)
+    problems: list[str] = []
+    theme = theme or next(iter(THEMES))
+    if theme not in THEMES:
+        problems.append(f"theme: must be one of {', '.join(THEMES)}")
+    extra = template.context(normalised, problems) if template.context else {}
+    if problems:
+        raise CardDataError("; ".join(problems))
+    html = _env.get_template(template.file).render(d=normalised, template_id=template_id, theme=theme,
+                                                   **extra)
     return html, template
 
 

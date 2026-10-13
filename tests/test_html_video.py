@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -33,6 +34,7 @@ def _load(name: str, filename: str):
 
 
 cards = _load("cards", "cards.py")
+kit = _load("kit", "kit.py")
 app_module = _load("html_video_app", "app.py")
 
 
@@ -129,7 +131,12 @@ def test_build_spec_raw_html():
     ({"template": "stat", "html": "<p>"}, "exactly one of"),
     ({"html": "   "}, "html: must be a non-empty string"),
     ({"template": "stat", "data": {}}, "value: required"),
-    ({"template": "stat", "data": cards.TEMPLATES["stat"].example, "format": "gif"}, "format: must be"),
+    ({"template": "stat", "data": cards.TEMPLATES["stat"].example, "format": "gif"}, "format: must be one of"),
+    ({"template": "stat", "data": cards.TEMPLATES["stat"].example, "theme": "pink"}, "theme: must be one of"),
+    ({"html": "<p>x</p>", "theme": "neon"}, "theme: applies to templates"),
+    ({"html": "<p>x</p><script>go()</script>"}, "scripts and event handlers are not allowed"),
+    ({"html": '<img src="x" onerror="go()">'}, "scripts and event handlers are not allowed"),
+    ({"html": "<p>x</p>", "format": "sheet", "frames": 40}, "frames: must be between"),
     ({"template": "stat", "data": cards.TEMPLATES["stat"].example, "width": 99999}, "width: must be between"),
     ({"template": "stat", "data": cards.TEMPLATES["stat"].example, "fps": "fast"}, "fps: must be a number"),
     ({"template": "stat", "data": cards.TEMPLATES["stat"].example, "duration": 0}, "duration: must be positive"),
@@ -152,8 +159,7 @@ class FakeRenderer:
 
     async def capture(self, page_id, spec):
         self.specs.append((page_id, spec))
-        count = 1 if spec.fmt == "png" else spec.frame_count
-        return [self.PNG] * count
+        return [self.PNG] * len(spec.timestamps_ms)
 
 
 @pytest.fixture
@@ -163,6 +169,8 @@ async def client(monkeypatch):
     # The encoder needs the real frames; the routes only need to know it was called with them.
     monkeypatch.setattr(app_module, "encode_mov",
                         lambda frames, w, h, fps: b"MOV:%d:%dx%d@%d" % (len(frames), w, h, fps))
+    monkeypatch.setattr(app_module, "compose_sheet",
+                        lambda frames, stamps, w, h: b"SHEET:%d" % len(frames))
     async with TestClient(TestServer(app_module.build_app(service))) as c:
         c.renderer = renderer
         c.service = service
@@ -228,3 +236,85 @@ async def test_assets_are_served_without_directory_listing(client):
     assert (await client.get("/assets/cards.css")).status == 200
     assert (await client.get("/assets/fonts/PermanentMarker-Regular.ttf")).status == 200
     assert (await client.get("/assets/")).status in (403, 404)
+
+
+# --- themes, the new templates, sheets and the design kit --------------------------------------
+
+@pytest.mark.parametrize("theme", sorted(cards.THEMES))
+@pytest.mark.parametrize("template_id", sorted(cards.TEMPLATES))
+def test_every_template_renders_in_every_theme(template_id, theme):
+    html, _ = cards.render_html(template_id, cards.TEMPLATES[template_id].example, theme)
+    assert f'<body data-theme="{theme}">' in html
+
+
+def test_every_theme_is_defined_in_the_stylesheet():
+    css = (SERVICE_DIR / "assets" / "cards.css").read_text(encoding="utf-8")
+    default, *others = cards.THEMES
+    assert default == "paper"  # the :root tokens; every other theme overrides them
+    for theme in others:
+        assert f'[data-theme="{theme}"]' in css, theme
+
+
+def test_bar_widths_are_proportional_and_leave_room_for_the_value():
+    html, _ = cards.render_html("bars", {"bars": [
+        {"label": "a", "value": "100", "size": "100"}, {"label": "b", "value": "25", "size": "25"}]})
+    assert "--w:68.0" in html and "--w:17.0" in html
+
+
+@pytest.mark.parametrize("template_id, data, problem", [
+    ("bars", {"bars": [{"label": "a", "value": "x", "size": "lots"}, {"label": "b", "value": "y", "size": "2"}]},
+     "bars[0].size: must be a plain number"),
+    ("meter", {"percent": "140", "label": "x"}, "percent: must be between 0 and 100"),
+    ("headline", {"text": "far too many words here"}, "need 1-3"),
+    ("headline", {"text": "Incomprehensibilities"}, "max 12 at this size"),
+])
+def test_computed_fields_are_validated(template_id, data, problem):
+    with pytest.raises(cards.CardDataError, match=re.escape(problem)):
+        cards.render_html(template_id, data)
+
+
+def test_meter_percentage_drives_the_ring_and_the_count():
+    html, _ = cards.render_html("meter", {"percent": "82.6", "label": "share"})
+    assert "--pct:83" in html and "--to:83" in html
+
+
+def test_sheet_timestamps_spread_to_the_final_frame():
+    spec = app_module.build_spec({"template": "stat", "data": cards.TEMPLATES["stat"].example,
+                                  "format": "sheet", "frames": 4})
+    stamps = spec.timestamps_ms
+    assert len(stamps) == 4 and stamps[-1] == pytest.approx(spec.duration * 1000)
+    assert stamps == sorted(stamps) and stamps[0] > 0
+
+
+async def test_render_sheet_returns_one_png_of_all_frames(client):
+    resp = await client.post("/render", json={"template": "meter", "theme": "neon", "format": "sheet",
+                                              "data": cards.TEMPLATES["meter"].example})
+    assert resp.status == 200 and resp.content_type == "image/png"
+    assert await resp.read() == b"SHEET:%d" % app_module.SHEET_FRAMES_DEFAULT
+
+
+async def test_design_route_serves_the_kit(client):
+    body = await (await client.get("/design")).json()
+    assert body["ok"] is True
+    assert set(body["themes"]) == set(cards.THEMES)
+    assert body["skeleton"] == kit.SKELETON
+    assert set(body["examples"]) == set(kit.EXAMPLES)
+    templates = await (await client.get("/templates")).json()
+    assert templates["themes"] == cards.THEMES
+
+
+def test_every_class_the_kit_names_exists_in_the_stylesheet():
+    css = (SERVICE_DIR / "assets" / "cards.css").read_text(encoding="utf-8")
+    named = set(kit.MOTION) | set(kit.COMPONENTS) | set(kit.TYPE_SCALE)
+    missing = sorted(name for name in named if f".{name}" not in css)
+    assert not missing, f"the kit documents classes the stylesheet does not define: {missing}"
+    for token in kit.TOKENS:
+        assert f"{token}:" in css, token
+
+
+@pytest.mark.parametrize("name", sorted(kit.EXAMPLES))
+def test_kit_examples_are_valid_bespoke_cards(name):
+    example = kit.EXAMPLES[name]
+    spec = app_module.build_spec({"html": example["html"], "duration": example["duration"], "format": "sheet"})
+    assert spec.template is None and spec.duration == example["duration"]
+    assert '/assets/cards.css' in example["html"] and "data-theme=" in example["html"]

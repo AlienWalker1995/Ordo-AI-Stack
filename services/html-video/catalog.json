@@ -11,7 +11,7 @@
       "category": "media",
       "background": true,
       "ops_service": "html-video",
-      "hint": "Headless Chromium renders HTML/CSS/SVG animations to RGBA clips (reel concept cards). CPU only. POST /render, GET /templates."
+      "hint": "Headless Chromium renders HTML/CSS/SVG animations to RGBA clips (overlay cards, kinetic type). CPU only. POST /render, GET /templates, GET /design."
     }
   ]
 }

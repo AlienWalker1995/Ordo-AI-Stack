@@ -30,7 +30,7 @@ RUN pip install \
       pillow==12.3.0
 
 WORKDIR /app
-COPY app.py cards.py /app/
+COPY app.py cards.py kit.py /app/
 COPY templates /app/templates
 COPY assets /app/assets
 

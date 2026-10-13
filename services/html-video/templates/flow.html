@@ -6,7 +6,7 @@
 {% for step in d.steps %}
   {% if not loop.first %}
   <svg class="arrow" viewBox="0 0 80 40" aria-hidden="true" style="--d:{{ '%.2f' % (0.75 + loop.index0 * 0.4 - 0.18) }}s">
-    <path class="draw" d="M4 20 H66 M50 6 L68 20 L50 34"/>
+    <path class="draw" pathLength="1200" d="M4 20 H66 M50 6 L68 20 L50 34"/>
   </svg>
   {% endif %}
   <div class="step pop" style="--d:{{ '%.2f' % (0.75 + loop.index0 * 0.4) }}s">{{ step }}</div>

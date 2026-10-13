@@ -1,6 +1,6 @@
 """html-video: an HTTP service that renders an HTML/CSS/SVG animation to an RGBA video clip.
 
-Why a browser: the overlay graphics the reel pipelines want (sketch-style concept cards, kinetic
+Why a browser: overlay graphics for video (sketch-style concept cards, kinetic
 typography, small diagrams) are cheap to author as HTML + CSS animation and expensive any other
 way. ffmpeg's drawtext cannot lay out a card; an image model cannot be told exactly what to draw.
 Chromium can render the page, and it can be stepped frame by frame.
@@ -14,9 +14,15 @@ matter how long the capture takes. Templates therefore animate with CSS only (no
 Routes:
   GET  /health            {"ok": true, "chromium": "<version>", "templates": [...]}
   GET  /templates         the template catalogue (fields, limits, example data), see cards.py
-  POST /render            {"template": "stat", "data": {...}}  or  {"html": "<!doctype html>..."}
-                          plus optional width, height, fps, duration, format ("mov" | "png"), at
-                          -> video/quicktime (PNG-in-MOV, RGBA) or image/png (one frame at `at`)
+  GET  /design            the design kit for bespoke cards (themes, motion, components, rules,
+                          skeleton, examples), see kit.py
+  POST /render            {"template": "stat", "data": {...}, "theme": "chalk"}
+                          or {"html": "<!doctype html>...", "duration": 2.5}
+                          plus optional width, height, fps, duration, format, at, frames
+                          format "mov"   -> video/quicktime (PNG-in-MOV, RGBA)
+                          format "png"   -> image/png, one frame at `at`
+                          format "sheet" -> image/png, `frames` frames across the animation in
+                                            one labelled grid: the motion at a glance
                           -> 400 {"ok": false, "error": "..."} when the request or data is invalid
   GET  /_page/<id>        the page the browser loads for one render (loopback only, one-shot)
   GET  /assets/...        the stylesheet and fonts the templates reference
@@ -31,12 +37,14 @@ import dataclasses
 import io
 import logging
 import os
+import re
 import secrets
 import time
 from pathlib import Path
 from typing import Any
 
 import cards
+import kit
 from aiohttp import web
 
 log = logging.getLogger("html-video")
@@ -50,6 +58,12 @@ MAX_DIMENSION = 2160
 MAX_FPS = 60
 MAX_FRAMES = 1800
 MAX_BODY_BYTES = 2 * 1024 * 1024
+FORMATS = ("mov", "png", "sheet")
+SHEET_FRAMES_DEFAULT = 6
+SHEET_FRAMES_MAX = 12
+# Raw html must animate with CSS: a script's timers and requestAnimationFrame do not follow the
+# renderer's seek, so their frames would not be the page at N/fps seconds.
+_SCRIPT_RE = re.compile(r"<\s*script\b|\bjavascript\s*:|\son[a-z]+\s*=", re.IGNORECASE)
 CONCURRENCY = int(os.environ.get("HTML_VIDEO_CONCURRENCY", "2"))
 PAGE_TTL_S = 120.0
 
@@ -78,13 +92,25 @@ class RenderSpec:
     height: int
     fps: int
     duration: float
-    fmt: str                 # "mov" (video, RGBA) | "png" (one frame)
+    fmt: str                 # "mov" (video, RGBA) | "png" (one frame) | "sheet" (frames in a grid)
     at: float                # png only: the timestamp of the captured frame
     template: str | None     # None for raw html
+    sheet_frames: int = SHEET_FRAMES_DEFAULT
 
     @property
     def frame_count(self) -> int:
         return max(1, int(round(self.duration * self.fps)))
+
+    @property
+    def timestamps_ms(self) -> list[float]:
+        """The timestamps to capture: every frame of a video, `at` for a still, and for a sheet
+        `sheet_frames` moments spread across the animation, the last one its final frame."""
+        if self.fmt == "png":
+            return [self.at * 1000.0]
+        if self.fmt == "sheet":
+            n = self.sheet_frames
+            return [self.duration * 1000.0 * (i + 1) / n for i in range(n)]
+        return [i * 1000.0 / self.fps for i in range(self.frame_count)]
 
 
 def _number(body: dict[str, Any], key: str, default: float, lo: float, hi: float) -> float:
@@ -106,32 +132,65 @@ def build_spec(body: Any) -> RenderSpec:
     if (template_id is None) == (raw_html is None):
         raise ValueError("send exactly one of `template` (+ `data`) or `html`")
     duration_default = 2.0
+    theme = body.get("theme")
     if template_id is not None:
         if not isinstance(template_id, str):
             raise ValueError("template: must be a string")
-        html, template = cards.render_html(template_id, body.get("data", {}))
+        if theme is not None and not isinstance(theme, str):
+            raise ValueError("theme: must be a string")
+        html, template = cards.render_html(template_id, body.get("data", {}), theme)
         duration_default = template.duration
     else:
         if not isinstance(raw_html, str) or not raw_html.strip():
             raise ValueError("html: must be a non-empty string")
+        if theme is not None:
+            raise ValueError("theme: applies to templates; a bespoke card sets <body data-theme=\"...\">")
+        if _SCRIPT_RE.search(raw_html):
+            raise ValueError("html: scripts and event handlers are not allowed; animate with CSS "
+                             "(see GET /design): the renderer steps CSS and SVG animations frame by frame")
         html = raw_html
     fmt = body.get("format", "mov")
-    if fmt not in ("mov", "png"):
-        raise ValueError("format: must be 'mov' or 'png'")
+    if fmt not in FORMATS:
+        raise ValueError(f"format: must be one of {', '.join(FORMATS)}")
     width = int(_number(body, "width", cards.CARD_WIDTH, 16, MAX_DIMENSION))
     height = int(_number(body, "height", cards.CARD_HEIGHT, 16, MAX_DIMENSION))
     fps = int(_number(body, "fps", 30, 1, MAX_FPS))
     duration = _number(body, "duration", duration_default, 0.0, MAX_FRAMES / fps)
-    if fmt == "mov" and duration <= 0:
-        raise ValueError("duration: must be positive for a video")
+    if fmt in ("mov", "sheet") and duration <= 0:
+        raise ValueError(f"duration: must be positive for a {'video' if fmt == 'mov' else 'sheet'}")
     at = _number(body, "at", duration, 0.0, MAX_FRAMES / fps)
+    sheet_frames = int(_number(body, "frames", SHEET_FRAMES_DEFAULT, 2, SHEET_FRAMES_MAX))
     return RenderSpec(html=html, width=width, height=height, fps=fps, duration=duration,
-                      fmt=fmt, at=at, template=template_id)
+                      fmt=fmt, at=at, template=template_id, sheet_frames=sheet_frames)
+
+
+def compose_sheet(frames: list[bytes], timestamps_ms: list[float], width: int, height: int) -> bytes:
+    """Frames -> one PNG grid (three across), each frame at half size on a neutral grey with its
+    timestamp, so a reviewer sees the card's motion and its final state in one image."""
+    from PIL import Image, ImageDraw, ImageFont  # imported here for the same reason as in encode_mov
+
+    cols = min(3, len(frames))
+    rows = -(-len(frames) // cols)
+    cell_w, cell_h, gap, label_h = width // 2, height // 2, 12, 28
+    sheet = Image.new("RGB", (cols * cell_w + (cols + 1) * gap, rows * (cell_h + label_h) + (rows + 1) * gap),
+                      (128, 128, 128))
+    draw = ImageDraw.Draw(sheet)
+    font = ImageFont.load_default(size=20)
+    for i, (png, ms) in enumerate(zip(frames, timestamps_ms, strict=True)):
+        x = gap + (i % cols) * (cell_w + gap)
+        y = gap + (i // cols) * (cell_h + label_h + gap)
+        with Image.open(io.BytesIO(png)) as image:
+            frame = image.convert("RGBA").resize((cell_w, cell_h))
+        sheet.paste(frame, (x, y + label_h), frame)
+        draw.text((x + 4, y + 3), f"{ms / 1000.0:.2f}s", fill=(255, 255, 255), font=font)
+    out = io.BytesIO()
+    sheet.save(out, format="PNG")
+    return out.getvalue()
 
 
 def encode_mov(frames: list[bytes], width: int, height: int, fps: int) -> bytes:
     """PNG screenshots -> a QuickTime file whose video track is PNG frames with alpha. Lossless,
-    and any ffmpeg decodes it (the png decoder is built in), which is what the reel compositor
+    and any ffmpeg decodes it (the png decoder is built in), which is what a video compositor
     needs: `-i card.mov` then `overlay` keeps the transparency."""
     # Imported here, not at module level: the request contract (build_spec) and the routes are
     # unit-tested without the encoder's binary wheels installed.
@@ -182,8 +241,7 @@ class ChromiumRenderer:
             await self._playwright.stop()
 
     async def capture(self, page_id: str, spec: RenderSpec) -> list[bytes]:
-        """The frames of `spec` as PNG bytes: every frame for a video, one frame (at `spec.at`)
-        for a still."""
+        """The frames of `spec` as PNG bytes, one per `spec.timestamps_ms`."""
         assert self._browser is not None, "renderer not started"
         own_origin = self._base_url + "/"
         context = await self._browser.new_context(
@@ -201,12 +259,8 @@ class ChromiumRenderer:
             await page.goto(f"{self._base_url}/_page/{page_id}", wait_until="load")
             await page.evaluate("document.fonts.ready")
             await page.evaluate(PREPARE_JS)
-            if spec.fmt == "png":
-                timestamps_ms = [spec.at * 1000.0]
-            else:
-                timestamps_ms = [i * 1000.0 / spec.fps for i in range(spec.frame_count)]
             frames: list[bytes] = []
-            for ms in timestamps_ms:
+            for ms in spec.timestamps_ms:
                 await page.evaluate(SEEK_JS, ms)
                 frames.append(await page.screenshot(
                     type="png", omit_background=True, animations="allow", caret="hide",
@@ -248,6 +302,8 @@ class Service:
             captured = time.monotonic()
             if spec.fmt == "png":
                 out = frames[0]
+            elif spec.fmt == "sheet":
+                out = await asyncio.to_thread(compose_sheet, frames, spec.timestamps_ms, spec.width, spec.height)
             else:
                 out = await asyncio.to_thread(encode_mov, frames, spec.width, spec.height, spec.fps)
         log.info("render %s %dx%d %d frames: capture %.1fs encode %.1fs -> %d bytes",
@@ -268,8 +324,11 @@ def build_app(service: Service) -> web.Application:
                                   "templates": sorted(cards.TEMPLATES)})
 
     async def templates(_request: web.Request) -> web.Response:
-        return web.json_response({"ok": True, "templates": cards.describe(),
+        return web.json_response({"ok": True, "templates": cards.describe(), "themes": cards.THEMES,
                                   "canvas": {"width": cards.CARD_WIDTH, "height": cards.CARD_HEIGHT}})
+
+    async def design(_request: web.Request) -> web.Response:
+        return web.json_response({"ok": True, **kit.describe()})
 
     async def render(request: web.Request) -> web.Response:
         try:
@@ -285,7 +344,7 @@ def build_app(service: Service) -> web.Application:
         except Exception:  # a browser failure is a 500 with the log, never a silent empty clip
             log.exception("render failed")
             return _error(500, "render failed; see the service log")
-        if spec.fmt == "png":
+        if spec.fmt in ("png", "sheet"):
             return web.Response(body=out, content_type="image/png")
         return web.Response(body=out, content_type="video/quicktime",
                             headers={"X-Frames": str(spec.frame_count), "X-Duration": f"{spec.duration:.3f}",
@@ -302,6 +361,7 @@ def build_app(service: Service) -> web.Application:
 
     app.router.add_get("/health", health)
     app.router.add_get("/templates", templates)
+    app.router.add_get("/design", design)
     app.router.add_post("/render", render)
     app.router.add_get("/_page/{page_id}", page)
     app.router.add_static("/assets", ASSETS_DIR, show_index=False)

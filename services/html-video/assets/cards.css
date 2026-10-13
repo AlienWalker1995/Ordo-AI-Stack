@@ -1,41 +1,73 @@
-/* Concept cards: the design system every template under templates/ shares.
+/* html-video design system: every template under templates/ and every bespoke card share it.
  *
- * Look: a whiteboard-sketch card. Cream paper, a hand-drawn ink frame that draws itself on,
- * marker headlines, handwritten body text, a highlighter swipe under the phrase that matters,
- * and a rubber stamp for the verdict. Everything animates with CSS only, and every animation is
- * `both`-filled, so the renderer can step to any timestamp and the card holds its final frame
- * after the last animation ends.
+ * One card canvas (1080x560, transparent around the card), four themes, a motion vocabulary and a
+ * few components. Everything animates with CSS only, and every animation is `both`-filled, so the
+ * renderer can step to any timestamp and the card holds its final frame after the last animation.
  *
- * Timing: each element sets its own delay through `--d` (inline, per template). Tokens live on
- * :root; templates use them and never hardcode a colour or a size.
+ * Themes: <body data-theme="paper|chalk|blueprint|neon">. A theme only redefines the tokens below;
+ * templates and bespoke cards use the tokens and never hardcode a colour, a font or a size.
+ * Timing: each element sets its own delay through `--d` (inline). GET /design describes all of it.
  */
 @font-face { font-family: "Permanent Marker"; src: url("/assets/fonts/PermanentMarker-Regular.ttf") format("truetype"); font-display: block; }
 @font-face { font-family: "Patrick Hand"; src: url("/assets/fonts/PatrickHand-Regular.ttf") format("truetype"); font-display: block; }
 
+/* An animatable integer, for count-up numbers (`.count`). */
+@property --n { syntax: "<integer>"; inherits: false; initial-value: 0; }
+
 :root {
-  --paper: #FFFBEE;
-  --ink: #171717;
-  --ink-soft: #4F4A42;
-  --yellow: #FFE24A;
-  --lime: #86FF3C;
-  --green: #22B36B;
-  --red: #FF4D4D;
-  --blue: #2F80FF;
+  /* theme tokens (paper: a whiteboard-sketch card) */
+  --paper: #FFFBEE;          /* the card surface */
+  --panel: #FFFFFF;          /* boxes on the card */
+  --ink: #171717;            /* primary text and strokes */
+  --ink-soft: #4F4A42;       /* secondary text */
+  --accent: #FFE24A;         /* highlighter, quote marks */
+  --accent-2: #86FF3C;       /* the VS badge, a second highlight */
+  --good: #22B36B;
+  --bad: #FF4D4D;
+  --hype: #2F80FF;
   --shadow: rgba(0, 0, 0, 0.42);
-  --marker: "Permanent Marker", "Comic Sans MS", cursive;
-  --hand: "Patrick Hand", "Comic Sans MS", cursive;
+  --glow: none;              /* text-shadow on headline type (neon) */
+  --texture: none;           /* background-image layered on the card (blueprint grid) */
+  --stroke-filter: url(#rough);  /* hand-drawn wobble on strokes; `none` for clean themes */
+  --display: "Permanent Marker", "Comic Sans MS", cursive;  /* headlines, numbers */
+  --hand: "Patrick Hand", "Comic Sans MS", cursive;         /* body text */
+  /* geometry */
   --card-w: 1000px;
   --card-h: 500px;
   --pad-x: 56px;
   --pad-y: 38px;
-  --d: 0s; /* an element's animation delay; templates set it inline */
+  --radius: 26px;
+  --d: 0s; /* an element's animation delay; set inline */
+}
+/* Back-compat names the first templates used. */
+:root, [data-theme] { --yellow: var(--accent); --lime: var(--accent-2); --green: var(--good); --red: var(--bad); --blue: var(--hype); --marker: var(--display); }
+
+[data-theme="chalk"] {
+  --paper: #1F3B2D; --panel: #284A39; --ink: #F4F1E6; --ink-soft: #BFC9BE;
+  --accent: #F7D54A; --accent-2: #9EF0B0; --good: #9EF0B0; --bad: #FF8A80; --hype: #8EC5FF;
+  --shadow: rgba(0, 0, 0, 0.55);
+}
+[data-theme="blueprint"] {
+  --paper: #0E4C92; --panel: #135AA8; --ink: #F2F7FF; --ink-soft: #B9D3F5;
+  --accent: #FFD23F; --accent-2: #7CF0FF; --good: #7CF0B0; --bad: #FF8F8F; --hype: #7CF0FF;
+  --shadow: rgba(3, 20, 45, 0.5);
+  --texture: linear-gradient(rgba(255,255,255,0.09) 1px, transparent 1px) 0 0 / 40px 40px,
+             linear-gradient(90deg, rgba(255,255,255,0.09) 1px, transparent 1px) 0 0 / 40px 40px;
+  --stroke-filter: none;
+}
+[data-theme="neon"] {
+  --paper: #0B0B12; --panel: #161624; --ink: #F5F3FF; --ink-soft: #A9A6C9;
+  --accent: #FF3FD8; --accent-2: #3FFFE0; --good: #3FFF8B; --bad: #FF4F6D; --hype: #3FD2FF;
+  --shadow: rgba(80, 0, 120, 0.55);
+  --glow: 0 0 6px currentColor, 0 0 20px color-mix(in srgb, currentColor 55%, transparent);
+  --stroke-filter: none;
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; width: 1080px; height: 560px; background: transparent; overflow: hidden; }
 body { font-family: var(--hand); color: var(--ink); -webkit-font-smoothing: antialiased; text-rendering: geometricPrecision; }
-h1, p, ul { margin: 0; padding: 0; }
-ul { list-style: none; }
+h1, p, ul, ol { margin: 0; padding: 0; }
+ul, ol { list-style: none; }
 
 .stage { position: absolute; inset: 0; display: grid; place-items: center; }
 
@@ -44,16 +76,17 @@ ul { list-style: none; }
   width: var(--card-w);
   height: var(--card-h);
   padding: var(--pad-y) var(--pad-x);
-  background: var(--paper);
-  border-radius: 26px;
+  background: var(--texture), var(--paper);
+  border-radius: var(--radius);
   box-shadow: 0 18px 38px var(--shadow);
   rotate: -1.2deg;
   animation: card-pop 0.45s cubic-bezier(0.2, 1.35, 0.45, 1) both;
 }
 .card.tilt-right { rotate: 1deg; }
+.card.flat { rotate: 0deg; }
 .card > .body { position: relative; height: 100%; display: flex; flex-direction: column; }
 
-/* The hand-drawn ink frame: an SVG rect with a wobble filter, drawn on by dash offset. */
+/* The ink frame: an SVG rect, drawn on by dash offset, wobbly on hand-drawn themes. */
 .frame {
   position: absolute; left: 12px; top: 12px;
   width: calc(var(--card-w) - 24px); height: calc(var(--card-h) - 24px);
@@ -61,43 +94,83 @@ ul { list-style: none; }
 }
 .frame rect {
   fill: none; stroke: var(--ink); stroke-width: 6; stroke-linecap: round; stroke-linejoin: round;
-  stroke-dasharray: 3000; stroke-dashoffset: 3000; filter: url(#rough);
+  stroke-dasharray: 3000; stroke-dashoffset: 3000; filter: var(--stroke-filter);
   animation: draw 0.85s ease-out 0.15s both;
 }
+[data-theme="neon"] .frame rect { stroke: var(--accent); filter: drop-shadow(0 0 8px var(--accent)); }
 
-/* Entrances. Each reads its delay from --d. */
+/* Motion vocabulary. Each reads its delay from --d. */
 .write { clip-path: inset(-20% 100% -20% -4%); animation: write 0.5s ease-out var(--d) both; }
 .pop { transform: scale(0.55); opacity: 0; animation: pop 0.42s cubic-bezier(0.2, 1.5, 0.45, 1) var(--d) both; }
 .fade { opacity: 0; animation: fade 0.35s ease-out var(--d) both; }
 .draw { stroke-dasharray: 1200; stroke-dashoffset: 1200; animation: draw 0.55s ease-out var(--d) both; }
+.rise { opacity: 0; transform: translateY(48px); animation: rise 0.45s cubic-bezier(0.2, 1.2, 0.4, 1) var(--d) both; }
+.slide-left { opacity: 0; transform: translateX(-90px); animation: slide 0.45s cubic-bezier(0.2, 1.2, 0.4, 1) var(--d) both; }
+.slide-right { opacity: 0; transform: translateX(90px); animation: slide 0.45s cubic-bezier(0.2, 1.2, 0.4, 1) var(--d) both; }
+.slam { opacity: 0; transform: scale(2.6) rotate(-4deg); animation: slam 0.3s cubic-bezier(0.3, 1.5, 0.6, 1) var(--d) both; }
+.shake { animation: shake 0.5s ease-in-out var(--d) both; }
+.blink { animation: blink 0.9s steps(1) var(--d) 2 both; }
+.grow-x { transform: scaleX(0); transform-origin: left center; animation: grow-x 0.7s cubic-bezier(0.25, 1, 0.4, 1) var(--d) both; }
+.grow-y { transform: scaleY(0); transform-origin: center bottom; animation: grow-y 0.7s cubic-bezier(0.25, 1, 0.4, 1) var(--d) both; }
+/* Count-up: <span class="count" style="--to:83; --d:.6s"></span> counts 0 -> 83. */
+.count { --n: 0; counter-reset: n var(--n); animation: count 0.9s ease-out var(--d) both; }
+.count::after { content: counter(n); }
+/* Typewriter: the text must be one line; set --chars to its length. */
+.type { display: inline-block; white-space: nowrap; overflow: hidden; width: 0; animation: type calc(var(--chars, 20) * 0.04s) steps(var(--chars, 20)) var(--d) both; }
 
-/* Highlighter swipe under a phrase. */
-.hl { position: relative; display: inline-block; z-index: 0; padding: 0 6px; }
-.hl::before {
-  content: ""; position: absolute; left: 0; right: 0; bottom: 10%; height: 48%;
-  background: var(--yellow); border-radius: 4px; z-index: -1;
-  transform: scaleX(0) skewX(-8deg); transform-origin: left center;
+/* Highlighter swipe under a phrase. A background, cloned per line box, so a phrase that wraps
+ * gets a stroke under each of its lines. */
+.hl {
+  --hl: color-mix(in srgb, var(--accent) 85%, transparent);
+  --hl-h: 48%;
+  padding: 0 6px; border-radius: 4px;
+  background: linear-gradient(var(--hl), var(--hl)) left 92% / 0% var(--hl-h) no-repeat;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
   animation: swipe 0.4s ease-out var(--d) both;
 }
-.hl.lime::before { background: var(--lime); }
+.hl.lime { --hl: color-mix(in srgb, var(--accent-2) 85%, transparent); }
+/* On dark cards a translucent wash goes muddy; a solid marker underline reads instead. */
+[data-theme="neon"] .hl, [data-theme="chalk"] .hl, [data-theme="blueprint"] .hl { --hl: var(--accent); --hl-h: 16%; }
+[data-theme="neon"] .hl.lime, [data-theme="chalk"] .hl.lime, [data-theme="blueprint"] .hl.lime { --hl: var(--accent-2); }
+
+/* Hand-drawn circle around a word: wrap it in .circled and add the svg (see GET /design). */
+.circled { position: relative; display: inline-block; padding: 0 10px; }
+.circled > svg { position: absolute; inset: -18px -22px; width: calc(100% + 44px); height: calc(100% + 36px); overflow: visible; }
+.circled > svg ellipse { fill: none; stroke: var(--bad); stroke-width: 5; stroke-linecap: round; filter: var(--stroke-filter); }
 
 /* Rubber stamp, slammed on. */
 .stamp {
   position: absolute; right: 48px; bottom: 34px;
-  padding: 4px 18px 6px; border: 5px solid var(--red); border-radius: 12px;
-  color: var(--red); font-family: var(--marker); font-size: 40px; line-height: 1.1;
+  padding: 4px 18px 6px; border: 5px solid var(--bad); border-radius: 12px;
+  color: var(--bad); font-family: var(--display); font-size: 40px; line-height: 1.1;
   letter-spacing: 2px; text-transform: uppercase; white-space: nowrap;
-  rotate: -9deg; transform: scale(2.4); opacity: 0; mix-blend-mode: multiply;
+  rotate: -9deg; transform: scale(2.4); opacity: 0;
   animation: stamp 0.32s cubic-bezier(0.3, 1.6, 0.6, 1) var(--d) both;
 }
+[data-theme="paper"] .stamp, body:not([data-theme]) .stamp { mix-blend-mode: multiply; }
+
+/* Components. */
+.panel { background: var(--panel); border: 4px solid var(--ink); border-radius: 18px; padding: 14px 18px; }
+.chip { display: inline-block; align-self: flex-start; padding: 4px 16px 6px; border-radius: 999px; background: var(--ink); color: var(--paper); font-family: var(--display); font-size: 30px; }
+.badge {
+  width: 110px; height: 110px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--ink); color: var(--accent-2); font-family: var(--display); font-size: 46px; rotate: -8deg;
+}
+.muted { color: var(--ink-soft); }
+.good { color: var(--good); }
+.bad { color: var(--bad); }
+.hype { color: var(--hype); }
 
 /* Type scale. */
-.title { font-family: var(--marker); font-size: 52px; line-height: 1.12; }
-.big { font-family: var(--marker); font-size: 168px; line-height: 0.95; letter-spacing: -2px; }
+.title { font-family: var(--display); font-size: 52px; line-height: 1.12; text-shadow: var(--glow); }
+.large { font-family: var(--display); font-size: 112px; line-height: 1; letter-spacing: -1px; text-shadow: var(--glow); }
+.big { font-family: var(--display); font-size: 168px; line-height: 0.95; letter-spacing: -2px; text-shadow: var(--glow); }
+.huge { font-family: var(--display); font-size: 200px; line-height: 0.9; letter-spacing: -3px; text-shadow: var(--glow); }
 .label { font-size: 60px; line-height: 1.05; }
 .note { font-size: 44px; line-height: 1.15; color: var(--ink-soft); }
-.tone-hype .big { color: var(--blue); }
-.tone-bust .big { color: var(--red); }
+.small { font-size: 34px; line-height: 1.15; }
+.tone-hype .big { color: var(--hype); }
+.tone-bust .big { color: var(--bad); }
 
 /* stat */
 .stat { justify-content: center; gap: 6px; }
@@ -107,14 +180,10 @@ ul { list-style: none; }
 .versus .cols { flex: 1; display: grid; grid-template-columns: 1fr 120px 1fr; align-items: center; gap: 12px; }
 .versus .col { text-align: center; }
 .versus .v-label { font-size: 44px; line-height: 1.05; color: var(--ink-soft); }
-.versus .v-value { font-family: var(--marker); font-size: 80px; line-height: 1; margin-top: 6px; }
-.versus .col.claim .v-value { color: var(--blue); }
-.versus .col.reality .v-value { color: var(--red); }
-.versus .vs {
-  width: 110px; height: 110px; border-radius: 50%; justify-self: center;
-  display: grid; place-items: center; background: var(--ink); color: var(--lime);
-  font-family: var(--marker); font-size: 46px; rotate: -8deg;
-}
+.versus .v-value { font-family: var(--display); font-size: 80px; line-height: 1; margin-top: 6px; text-shadow: var(--glow); }
+.versus .col.claim .v-value { color: var(--hype); }
+.versus .col.reality .v-value { color: var(--bad); }
+.versus .vs { justify-self: center; }
 .versus .verdict { font-size: 42px; line-height: 1.1; text-align: center; }
 
 /* list */
@@ -122,32 +191,85 @@ ul { list-style: none; }
 .list li { display: flex; align-items: center; gap: 18px; font-size: 50px; line-height: 1.1; margin-bottom: 14px; }
 .list .mark { width: 56px; height: 56px; flex: none; }
 .list .mark path { fill: none; stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; animation-delay: calc(var(--d) + 0.2s); }
-.list .mark-check path { stroke: var(--green); }
-.list .mark-x path { stroke: var(--red); }
-.list .mark-question path { stroke: var(--blue); }
+.list .mark-check path { stroke: var(--good); }
+.list .mark-x path { stroke: var(--bad); }
+.list .mark-question path { stroke: var(--hype); }
 
 /* flow */
 .flow .steps { flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px; }
 .flow .step {
   flex: 1 1 0; min-height: 150px; display: grid; place-items: center; text-align: center;
   padding: 14px 16px; font-size: 40px; line-height: 1.05;
-  border: 4px solid var(--ink); border-radius: 18px; background: #fff; filter: url(#rough);
+  border: 4px solid var(--ink); border-radius: 18px; background: var(--panel); filter: var(--stroke-filter);
 }
 .flow .arrow { width: 80px; height: 40px; flex: none; }
 .flow .arrow path { fill: none; stroke: var(--ink); stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
 
 /* quote */
 .quote { padding-left: 40px; justify-content: center; }
-.quote .qmark { position: absolute; left: -28px; top: -36px; font-family: var(--marker); font-size: 220px; line-height: 1; color: var(--yellow); }
+.quote .qmark { position: absolute; left: -28px; top: -36px; font-family: var(--display); font-size: 220px; line-height: 1; color: var(--accent); text-shadow: var(--glow); }
 .quote .qtext { position: relative; font-size: 54px; line-height: 1.15; }
-.quote .who { display: flex; align-items: center; gap: 14px; margin-top: 16px; font-family: var(--marker); font-size: 34px; color: var(--ink-soft); }
+.quote .who { display: flex; align-items: center; gap: 14px; margin-top: 16px; font-family: var(--display); font-size: 34px; color: var(--ink-soft); }
 .quote .who svg { width: 60px; height: 12px; }
 .quote .who path { fill: none; stroke: var(--ink-soft); stroke-width: 5; stroke-linecap: round; }
+
+/* bars: labelled horizontal bars, lengths proportional to the values */
+.bars .rows { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 18px; margin-top: 8px; }
+.bars .row { display: grid; grid-template-columns: 230px 1fr; align-items: center; gap: 20px; }
+.bars .b-label { font-size: 40px; line-height: 1; text-align: right; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bars .track { position: relative; height: 62px; }
+.bars .bar { height: 100%; width: calc(var(--w) * 1%); min-width: 6px; border-radius: 10px; background: var(--ink-soft); }
+.bars .row.focus .bar { background: var(--hype); box-shadow: 0 0 22px color-mix(in srgb, var(--hype) 45%, transparent); }
+.bars .row.focus .b-label { color: var(--ink); font-family: var(--display); }
+.bars .b-value { position: absolute; left: calc(var(--w) * 1% + 16px); top: 50%; translate: 0 -50%; font-family: var(--display); font-size: 40px; white-space: nowrap; text-shadow: var(--glow); }
+
+/* timeline: dated events on a line drawn left to right */
+.timeline .line { position: relative; flex: 1; margin: 6px 10px 10px; }
+.timeline .rail { position: absolute; left: 0; right: 0; top: 50%; height: 6px; margin-top: -3px; border-radius: 3px; background: var(--ink); }
+.timeline .events { position: absolute; inset: 0; display: flex; justify-content: space-between; }
+.timeline .event { position: relative; flex: 1 1 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.timeline .dot { width: 42px; height: 42px; border-radius: 50%; background: var(--paper); border: 6px solid var(--ink); z-index: 1; }
+.timeline .event.focus .dot { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 35%, transparent); }
+.timeline .when { position: absolute; bottom: calc(50% + 40px); font-family: var(--display); font-size: 52px; white-space: nowrap; text-shadow: var(--glow); }
+.timeline .what { position: absolute; top: calc(50% + 38px); font-size: 42px; line-height: 1.05; max-width: 220px; color: var(--ink-soft); }
+.timeline .event.focus .what { color: var(--ink); }
+
+/* meter: one percentage as a filling ring */
+.card > .body.meter { flex-direction: row; align-items: center; gap: 52px; padding-left: 12px; }
+.meter .ring { position: relative; width: 340px; height: 340px; flex: none; }
+.meter .ring svg { width: 100%; height: 100%; rotate: -90deg; overflow: visible; }
+.meter .ring circle { fill: none; stroke-width: 34; }
+.meter .ring .track { stroke: color-mix(in srgb, var(--ink) 14%, transparent); }
+.meter .ring .fill { stroke: var(--hype); stroke-linecap: round; stroke-dasharray: 0 1000; animation: ring 1s cubic-bezier(0.3, 0.9, 0.3, 1) var(--d) both; }
+[data-theme="neon"] .meter .ring .fill { filter: drop-shadow(0 0 10px currentColor); color: var(--hype); }
+.meter.tone-good .ring .fill { stroke: var(--good); }
+.meter.tone-bad .ring .fill { stroke: var(--bad); }
+.meter .pct { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--display); font-size: 104px; text-shadow: var(--glow); }
+.meter .pct .count::after { content: counter(n) "%"; }
+.meter .side { flex: 1; display: flex; flex-direction: column; gap: 14px; padding-right: 12px; }
+
+/* headline: kinetic type, 1-3 words slammed in, an optional kicker above and line below */
+.headline { justify-content: center; align-items: flex-start; gap: 10px; }
+.headline .kicker { margin-bottom: 4px; }
+.headline .words { display: flex; flex-wrap: wrap; gap: 0 30px; align-items: baseline; }
+.headline .word { font-family: var(--display); font-size: 150px; line-height: 0.95; letter-spacing: -2px; text-shadow: var(--glow); }
+.headline .word.accent { color: var(--hype); }
+.headline .under { font-size: 46px; line-height: 1.1; color: var(--ink-soft); margin-top: 10px; }
 
 @keyframes card-pop { from { transform: scale(0.84); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 @keyframes draw { to { stroke-dashoffset: 0; } }
 @keyframes write { to { clip-path: inset(-20% -4% -20% -4%); } }
 @keyframes pop { to { transform: scale(1); opacity: 1; } }
 @keyframes fade { to { opacity: 1; } }
-@keyframes swipe { to { transform: scaleX(1) skewX(-8deg); } }
+@keyframes rise { to { opacity: 1; transform: translateY(0); } }
+@keyframes slide { to { opacity: 1; transform: translateX(0); } }
+@keyframes slam { to { opacity: 1; transform: scale(1) rotate(-4deg); } }
+@keyframes shake { 0%, 100% { translate: 0 0; } 20% { translate: -14px 0; } 40% { translate: 12px 0; } 60% { translate: -8px 0; } 80% { translate: 5px 0; } }
+@keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes grow-x { to { transform: scaleX(1); } }
+@keyframes grow-y { to { transform: scaleY(1); } }
+@keyframes count { to { --n: var(--to); } }
+@keyframes type { to { width: calc(var(--chars, 20) * 1ch); } }
+@keyframes swipe { to { background-size: 100% var(--hl-h); } }
 @keyframes stamp { to { transform: scale(1); opacity: 0.92; } }
+@keyframes ring { to { stroke-dasharray: calc(var(--pct) * 9.42) 1000; } }
