@@ -148,16 +148,16 @@ gosu hermes "$HERMES_BIN" config set mcp_servers.gateway.headers.Authorization "
 gosu hermes "$HERMES_BIN" config set providers.custom.stale_timeout_seconds   1800 >/dev/null
 gosu hermes "$HERMES_BIN" config set providers.custom.request_timeout_seconds 1800 >/dev/null
 
-# Push-through: seed an opinionated SOUL.md and enable the bundled plugin once.
-# Sentinel ensures user toggles via `hermes plugins enable/disable` are respected
-# on subsequent starts. See docs/hermes-agent.md and the design spec for details.
+# First run: seed the opinionated SOUL.md (execute, don't propose) and enable ops-router once.
+# The sentinel keeps operator toggles (`hermes plugins enable/disable`) and SOUL.md edits on later
+# starts. Its file name predates the retired push-through plugin; it stays so existing homes are
+# not re-seeded. See docs/hermes-agent.md.
 SEED_MARK="$HERMES_HOME/.ordo-push-through-seeded"
 if [ ! -f "$SEED_MARK" ]; then
   if [ ! -f "$HERMES_HOME/SOUL.md" ] || [ ! -s "$HERMES_HOME/SOUL.md" ]; then
     cp /opt/ordo-seed/SOUL.md "$HERMES_HOME/SOUL.md"
     chown hermes:hermes "$HERMES_HOME/SOUL.md" 2>/dev/null || true
   fi
-  gosu hermes "$HERMES_BIN" plugins enable push-through >/dev/null 2>&1 || true
   gosu hermes "$HERMES_BIN" plugins enable ops-router    >/dev/null 2>&1 || true
   gosu hermes touch "$SEED_MARK"
 fi

@@ -1,3 +1,0 @@
-name: push-through
-version: "1.0"
-description: Per-turn nudge keeping the agent in execute-not-propose mode.

@@ -262,16 +262,14 @@ RUN chmod 0755 /usr/local/bin/git-credential-github-pat \
     && git config --system credential.https://github.com.helper /usr/local/bin/git-credential-github-pat
 RUN chmod +x /entrypoint.sh
 
-# Ordo AI Stack: ship the push-through plugin (bundled location, opt-in via entrypoint
-# on first run) and the seeded SOUL.md.
-COPY --chown=hermes:hermes plugins/push-through/ /opt/hermes-agent/plugins/push-through/
+# Ordo AI Stack: the seeded SOUL.md (first run only; the entrypoint copies it into an empty home).
 COPY --chown=hermes:hermes seed/SOUL.md /opt/ordo-seed/SOUL.md
 
 # Vault federation: two-way sync of SOUL/memories with the Obsidian vault
 # (introduced in #181; behavior in scripts/vault_federate.py's docstring).
 COPY --chown=hermes:hermes scripts/vault_federate.py /opt/ordo/vault_federate.py
 
-# Ordo AI Stack: ship the ops-router plugin alongside push-through. Exposes
+# Ordo AI Stack: ship the ops-router plugin. Exposes
 # ops-controller verbs (list_containers / container_logs / restart_container)
 # as first-class tools, the audited control-plane path for Ordo services. Co-locate the canonical
 # ops_client.py inside the plugin dir so the plugin can `from .ops_client import OpsClient`.

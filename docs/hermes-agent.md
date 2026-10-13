@@ -102,33 +102,19 @@ mcp_servers:
 
 Any other keys you add manually (skills, memory providers, display preferences) are preserved across restarts — the entrypoint only touches the six keys above.
 
-## Execute-don't-propose behavior (push-through)
+## Execute-don't-propose behavior
 
-The image ships a small bundled plugin called `push-through` and seeds an opinionated `SOUL.md` on first run. Together they push the agent toward Claude Code-style behavior: execute via tools, never return a plan for approval, only stop when the work is verifiably done.
+The image seeds an opinionated `SOUL.md` on first run that pushes the agent toward Claude Code-style behavior: execute via tools, never return a plan for approval, only stop when the work is verifiably done. It is ordinary configuration: edit `SOUL.md` to change it.
 
 Persistent state lives in the `hermes-home` named volume, mounted at `/home/hermes/.hermes` inside the container; edit it via `docker exec` as the `hermes` user (host-side `data/hermes/` is retired and no longer read).
 
-First-run seeding is gated by `/home/hermes/.hermes/.ordo-push-through-seeded`. After that sentinel exists, the entrypoint never re-seeds — your toggles stick.
-
-To turn the nudge off:
-
-```bash
-docker compose -p ordo exec agent hermes plugins disable push-through
-```
-
-To opt back in:
-
-```bash
-docker compose -p ordo exec agent hermes plugins enable push-through
-```
+First-run seeding is gated by `/home/hermes/.hermes/.ordo-push-through-seeded` (named after a retired plugin). After that sentinel exists, the entrypoint never re-seeds, so your `SOUL.md` edits stick.
 
 To replace your existing `SOUL.md` with the shipped opinionated default (one-liner — also reuses the seed inside the image):
 
 ```bash
 docker compose -p ordo exec agent sh -c "cp /opt/ordo-seed/SOUL.md /home/hermes/.hermes/SOUL.md"
 ```
-
-If `hermes plugins enable push-through` returns non-zero on container start (older Hermes builds), the seeding block swallows the error and writes the sentinel anyway — enable manually with the command above.
 
 Hermes still has the host Docker socket mounted, but raw Docker use is retired (hostile audit SEC-1) and the socket is being removed: container work goes through the `ops-router` tools. See [`runbooks/bounded-hermes.md`](runbooks/bounded-hermes.md) for the privilege model.
 

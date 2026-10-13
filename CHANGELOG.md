@@ -182,6 +182,9 @@ All notable changes to this project are documented here. The format is loosely b
   upstream supports (on 3.11 its core dependencies are not installed), bakes in the `discord`
   extra instead of lazy-installing it at boot, and writes upstream's install stamp so `hermes
   --version` reports the real release.
+- **The push-through plugin is retired; its rule lives in `SOUL.md`.** The plugin only appended a
+  fixed "execute, don't propose" reminder to every model call, which the seeded `SOUL.md` already
+  states. Existing homes keep their `SOUL.md`; drop `push-through` from `plugins.enabled`.
 - **RAG embeddings are EmbeddingGemma 2.** `llamacpp-embed` serves `embeddinggemma-2-Q8_0.gguf`
   (768-dim, 8K context, text only) instead of nomic-embed-text v1.5. On the live index (2,494
   chunks, 60 generated questions) the right chunk landed in the top 5 for 80% of questions, up
