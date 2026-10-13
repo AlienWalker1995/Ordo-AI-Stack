@@ -88,10 +88,12 @@ Expected: `[Discord] Connected as <botname>#<discriminator>`. If the bot appears
 The image's boot hook (`services/hermes/ordo-init.sh`, run by upstream's s6 boot as `/etc/cont-init.d/50-ordo`) seeds `config.yaml` inside the `ordo_hermes-home` volume (`/opt/data/config.yaml`) on every start through `hermes config set`, so the Docker-network endpoints are correct:
 
 ```yaml
+providers:
+  ordo:                    # the stack's gateway as a named provider: the model picker lists its /v1/models
+    base_url: http://model-gateway:11435/v1
+    api_key: <LITELLM_KEY_HERMES>
 model:
-  provider: custom
-  base_url: http://model-gateway:11435/v1
-  api_key: <LITELLM_KEY_HERMES>
+  provider: custom:ordo
   default: local-chat
 mcp_servers:
   gateway:
