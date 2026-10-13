@@ -1,6 +1,6 @@
 # Scripts
 
-> ⚠️ **Mixed lifecycle — read per-row.** Some of these scripts are LIVE (bind-mounted into containers, invoked by Hermes cron, or the documented secrets flow); only the V1 *bring-up* model is retired:  `ensure_dirs` + `detect_hardware.py` (→ `overrides/compute.yml`), the `./compose` / `.\compose.ps1` wrapper, and the model pullers. That V1 top-level tree (root `docker-compose.yml`, `compose`/`compose.ps1`, the root `Makefile`, `overrides/`, `scripts/detect_hardware.py`, the root `.env.example`) was **removed 2026-07-24** after the 2026-07-09 v2 cutover soak — it is no longer present in this repo — and its last remnant, the `ensure_dirs` scripts + the ComfyUI-Manager seed they bootstrapped, have now been removed too, so every script listed below is live. In production, the stack is defined and operated entirely from the repo root (edit `ordo.yaml`, run `ordo render`, bring up the rendered compose from `out/`); directory/config generation is the render engine, hardware detection is `ordo detect` (`hardware: auto`), model provisioning is **`ordo fetch`** (checksum-mandatory, offline-capable — replaces `pull_gguf_models.py` / the pullers), and GPU scheduling is `ordo serve` (not a reactive guardian). See [`../docs/operator-guide.md`](../docs/operator-guide.md).
+Every script listed here is live. Stack bring-up is `ordo` itself (`ordo render`, `ordo up`, `ordo fetch`, `ordo detect`); see [`../docs/operator-guide.md`](../docs/operator-guide.md).
 
 Setup, operations, and maintenance scripts for the Ordo AI Stack.
 
@@ -9,6 +9,7 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 | Script | Role |
 | --- | --- |
 | `llamacpp/run-llama-server.sh` | **Bind-mounted entrypoint** of the llamacpp container (`${BASE_PATH}/scripts/llamacpp:/llamacpp-scripts:ro` in the rendered compose). Deleting it takes the LLM down on next restart. |
+| `llamacpp/run-ninfer-serve.sh` | The same GPU chat service's entrypoint when the active catalog model has `backend: ninfer`: the render picks it over `run-llama-server.sh` and it turns the rendered `LLAMACPP_*` env into the `ninfer-serve` argv. |
 | `stack_monitor.py` | Weekly image/pin audit and upstream new-feature digest (extra compose stacks via `STACK_AUDIT_SOURCES`) — invoked by Hermes cron via the `/c/dev` mirror mount; tested by `tests/test_stack_monitor_*.py`. |
 | `hermes/comfyui_idle_reclaim.sh` | Hermes no-agent cron (ComfyUI Idle RAM Reclaim): restarts ComfyUI through ops-controller when it holds >=12 GiB idle with no lease. The scheduler only runs files under `~/.hermes/scripts/`, so a two-line shim there runs this tracked copy; edit it here, not in the volume. |
 | `storage_purge.py` | Weekly storage purge — invoked by Hermes cron (`cd /c/dev/ordo-ai-stack && python3 scripts/storage_purge.py`); tested by `tests/test_storage_purge.py`. |
@@ -26,6 +27,7 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 
 | Script | Purpose |
 |--------|---------|
+| `ci/check-monitoring-config.sh` | CI's monitoring job: validates the Prometheus rules and Alertmanager config with `promtool` / `amtool`. |
 | `ci/live-stack-up.sh` | CI's `docker` job: brings up agent, ops-controller, caddy and hermes-dashboard through `ordo init` / `ordo remote enable` / `ordo up` for the live docker tests. Throwaway daemons only: it uses project `ordo`. |
 
 ## MCP

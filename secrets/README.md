@@ -25,13 +25,5 @@ ordo secrets materialize                   # out/secrets.env + out/secrets/* fro
 ordo secrets backup                        # Infisical backend: copy the project into the SOPS file
 ```
 
-## What is committed here
-
-- `.sops.yaml`: a SOPS recipient config (an age public key).
-- `*.sops` (`.env.sops`, `discord_token.sops`, `github_pat.sops`, ...): older
-  encrypted blobs from before the private store. Nothing reads them and they
-  are not the source of any value the stack runs with. They stay untouched
-  until the operator decides their fate; do not edit them or add new ones.
-
 `scripts/secrets/audit-git-history.sh` checks this public repo's history for
 plaintext secrets.

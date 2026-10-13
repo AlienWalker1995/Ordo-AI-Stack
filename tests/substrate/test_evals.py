@@ -223,7 +223,7 @@ def test_git_provenance_env_vars_pass_through_from_the_invoking_shell():
 
 
 def test_run_sh_computes_provenance_with_the_real_host_git_and_forwards_args():
-    """scripts/evals/run.sh is the canonical invocation (services/evals/README.md's E7 section):
+    """scripts/evals/run.sh is the canonical invocation (services/evals/README.md's "Git provenance" section):
     it must compute GIT_COMMIT/GIT_DIRTY with the real git (the container has none), scope the
     dirty check to services/evals (unrelated repo changes must not block a run), export both before
     docker compose starts, and forward every CLI argument through untouched."""

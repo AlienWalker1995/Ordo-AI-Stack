@@ -52,12 +52,11 @@ rewrites).
 │  ┌──────▼──────────────────────────────────────────▼──────────────────────┐   │
 │  │  Model Gateway :11435  (Caddy `:443/llm/*` + `:443/mcp` → LiteLLM key, │   │
 │  │                         no SSO)                                        │   │
-│  │  GET  /v1/models           — llama.cpp, TTL-cached 60s                 │   │
+│  │  GET  /v1/models           — the rendered model list                   │   │
 │  │  POST /v1/chat/completions — streaming, tools, X-Request-ID            │   │
 │  │  POST /v1/responses        — OpenAI Responses API compat               │   │
 │  │  POST /v1/completions      — legacy completions compat                 │   │
 │  │  POST /v1/embeddings       — llama.cpp embeddings                      │   │
-│  │  DELETE /v1/cache          — invalidate model list cache               │   │
 │  │  /mcp                      - MCP aggregation, scoped per virtual key   │   │
 │  │  GET /v1/mcp/server/health - per-server MCP health                     │   │
 │  └────────┬──────────────────────────────────────────────┬───────────────┘    │
@@ -106,7 +105,7 @@ rewrites).
 
 ## Components
 
-- **Model Gateway** `:11435` — OpenAI-compatible LiteLLM proxy in front of llama.cpp; streaming, Responses API, completions compat, embeddings; TTL model cache; cache-bust endpoint; `X-Request-ID` propagation; throughput recording. It also serves `/mcp`, aggregating every MCP server the caller's virtual key is granted, and `/v1/mcp/server/health`.
+- **Model Gateway** `:11435` — OpenAI-compatible LiteLLM proxy in front of the GPU inference engine; streaming, Responses API, completions compat, embeddings; throughput recording. Model list and aliases: [services/model-gateway/README.md](../../services/model-gateway/README.md). It also serves `/mcp`, aggregating every MCP server the caller's virtual key is granted, and `/v1/mcp/server/health`.
 - **litellm-db** `:5432` (internal): Postgres holding LiteLLM's virtual keys, teams and spend. Models and MCP servers stay in the rendered config (`STORE_MODEL_IN_DB=False`); chat keeps working when the DB is down (`allow_requests_on_db_unavailable`).
 - **model-gateway-keys** (one-shot): Bootstraps the per-consumer virtual keys and their model/MCP grants from `out/model-gateway/keys.json`; idempotent, and the agent waits on it (`service_completed_successfully`).
 - **MCP servers** (`mcp-<server_id>`): One long-lived compose service per enabled `kind: mcp` plugin, `transport: http`, on the internal `ordo-mcp-net`. Images are digest-pinned or built from a repo build context; no `env_file` (only the manifest's own `env:` / `secrets:`), `no-new-privileges`, 1 CPU / 2 GB, healthchecked, labelled `ordo.mcp=true` / `ordo.mcp.server_id`. No container in the tool path mounts `docker.sock`.
@@ -155,7 +154,6 @@ UI request:       Browser → Caddy :<service-port> (Google SSO, domain-scoped
 | `WEBUI_AUTH` defaults to `False` | G4 | Open WebUI ships open; target default is `True` | Medium |
 | Per-tool restrictions unused | G2 | Per-consumer MCP scoping is enforced by LiteLLM virtual-key grants (`require_key_mcp_access_defined: true`); the manifest's `allowed_tools` (per-tool narrowing) is supported by the schema but set by no manifest yet | Low |
 | MCP server network isolation | G5 | Closed: the `mcp-*` services sit on `ordo-mcp-net` (`internal: true`), joined only by `model-gateway`, and publish no host port. External clients reach `/mcp` through Caddy `:443` with a LiteLLM key | Low |
-| Reliability / readiness contracts | G1–G2 | Health today is partly architectural; see [Reliability & Contracts](reliability-and-contracts.md) | High |
 
 ## Network Assignment
 
@@ -271,9 +269,8 @@ ordo-ai-stack/
 │   │                    # (no data/mcp/: MCP config renders into out/mcp/servers.json)
 │   ├── ops-controller/  # audit.log
 │   ├── qdrant/          # Vector DB storage
-│   ├── rag-input/       # Drop documents here
-│   └── hermes/          # Hermes runtime state
-├── secrets/             # SOPS-encrypted secrets (*.sops, tracked); decrypted plaintext is gitignored
+│   └── rag-input/       # Drop documents here
+├── secrets/             # README only; the secret store is a private repo or Infisical
 ├── ordo.example.yaml    # Tracked template; copy to ordo.yaml and edit
 ├── ordo.yaml            # Operator-real source (gitignored)
 ├── out/                 # `ordo render` output: docker-compose.yml, .env, secrets.env (never hand-edited)

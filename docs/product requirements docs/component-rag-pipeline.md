@@ -11,7 +11,7 @@ Retrieval-Augmented Generation (RAG) pipeline providing vector search and docume
 
 ## Ingest Flow
 
-1. Drop documents into `data/rag-input/`
+1. Drop documents into `data/rag-input/` (the ingester also watches the memory vault and this repo's `docs/`, read-only)
 2. `rag-ingestion` watches directory; chunks at `RAG_CHUNK_SIZE` tokens (default 400, overlap 50)
 3. Embeds directly against the `llamacpp-embed` service (`http://llamacpp-embed:8080`) — **not**
    the LiteLLM model gateway; the env var carrying that URL is confusingly still named

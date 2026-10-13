@@ -11,15 +11,15 @@ The guardrails are prompting, not enforcement: `services/hermes/seed/SOUL.md`
 carries the rules (take a scheduler GPU lease before any GPU work, never
 destroy its own container or persistent volumes). A raw socket bypasses the
 GPU lease, so a leaseless GPU container can still co-tenant the GPU with the
-resident llama.cpp. The rejected enforcing alternative (a guarded socket
+resident model. The rejected enforcing alternative (a guarded socket
 proxy) is recorded in `docs/design/hermes-owns-docker.md`.
 
 Anything Hermes does over the raw socket is not audited by Ordo.
 
-The 2026-08-09 "full Docker control" grant is retired (hostile audit SEC-1):
-the socket is being removed, and until then the seeded `SOUL.md` and the
-`ops-router` tools tell Hermes to use the control plane only. The live
-`SOUL.md` sits in the `hermes-home` volume and is not re-seeded; edit it there.
+Removing the socket (hostile audit SEC-1) is paused: the socket stays mounted.
+The seeded `SOUL.md` and the `ops-router` tools tell Hermes to use the control
+plane; an operator's live `SOUL.md` may grant more. The live `SOUL.md` sits in
+the `hermes-home` volume and is not re-seeded; edit it there.
 
 ## First-class ops tools (the `ops-router` plugin)
 

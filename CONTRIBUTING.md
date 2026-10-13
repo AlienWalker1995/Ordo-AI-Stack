@@ -2,7 +2,7 @@
 
 Thanks for contributing to Ordo.
 
-> **The stack is Ordo, defined and operated entirely from the repo root.** Config is rendered from `ordo.yaml` (tracked template: `ordo.example.yaml`); the old top-level V1 tree was removed 2026-07-24. Changes to the stack belong at the repo root.
+> **The stack is Ordo, defined and operated entirely from the repo root.** Config is rendered from `ordo.yaml` (tracked template: `ordo.example.yaml`).
 
 ## Building and testing the stack
 
@@ -17,7 +17,17 @@ Thanks for contributing to Ordo.
 
 ## Edge serving contract
 
-Every UI serves at its origin **root** behind a plain SSO reverse_proxy (`import sso_service <upstream>`); **no** edge- or sidecar-side path rewriting (`handle_path`/`strip_prefix`, `X-Forwarded-Prefix` injection, `sub_filter`) in a UI block — enforced by `tests/test_caddyfile_invariants.py`. One permanent exception: Grafana's native same-origin `/grafana/` embed.
+Every UI serves at its origin **root** behind a plain SSO reverse_proxy (`import sso_service <upstream>`); **no** edge- or sidecar-side path rewriting (`handle_path`/`strip_prefix`, `X-Forwarded-Prefix` injection, `sub_filter`) in a UI block — enforced by `tests/test_caddyfile_invariants.py`. Exceptions: Grafana's native same-origin `/grafana/` embed, and Hermes (`:8447`, `import self_authenticating_service`), whose dashboard runs its own Google sign-in because its desktop app cannot pass oauth2-proxy.
+
+## Security review checklist (every PR)
+
+- [ ] No secrets introduced in code or compose (check `git diff` for tokens)
+- [ ] New services: non-root user, `cap_drop`, `security_opt`, log rotation, resource limits
+- [ ] New endpoints: auth required for mutating operations
+- [ ] New MCP servers: `kind: mcp` manifest with an explicit `network:` and only the `env:` / `secrets:` the server needs; granted to the keys that should see it
+- [ ] No new host port exposures without justification
+- [ ] Audit events emitted for all privileged actions
+- [ ] New env vars documented in [Environment Variables Reference](docs/product%20requirements%20docs/appendix-env-vars.md), `ordo.example.yaml`, and `out/secrets.env.example`
 
 ## What not to commit
 

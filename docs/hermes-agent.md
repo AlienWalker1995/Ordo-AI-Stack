@@ -1,8 +1,8 @@
 # Hermes Agent (Docker-mode)
 
-> ⚠️ **Naming note — v2 is the only stack (V1 top-level tree retired 2026-07-24, commit `62540bf`). The repo was later flattened (2026-07-24, commit `2d4bd9c`): the `v2/` directory no longer exists — its contents live at the repo root; there is no v2, there is only Ordo.** Hermes is the stack's assistant-agent layer and **is the default agent**. The stack models an agent as a **data manifest** ([`../services/hermes/agent.yaml`](../services/hermes/agent.yaml)) that the renderer wires into a single `agent` compose service (the hermes web UI ships as the separate `hermes-dashboard` service-plugin, profile `hermes-ui`). The agent contract (chat via model-gateway, tools via the model-gateway `/mcp` endpoint, GPU via the ops-controller `/jobs` scheduler, `.env` read-only) is documented in [`agents.md`](agents.md). Hermes' persistent brain lives in the **`hermes-home` named volume** (moved off the `data/hermes/` bind 2026-08-05, #143) and the Discord/`SOUL.md`/state notes below remain accurate. The agent image is built from its co-located build context **`services/hermes/`** (`Dockerfile` alongside the `agent.yaml` manifest) via `ordo build agent` and selected via `agent: hermes` in `ordo.yaml`. The stack is brought up entirely from the repo root: edit `ordo.yaml` (template `ordo.example.yaml`), render with `ordo render` (`python -m ordo.cli render --out out`), then `ordo up --all` from the repo root — see [`operator-guide.md`](operator-guide.md).
+Hermes is the stack's assistant-agent layer and the default agent. The stack models an agent as a **data manifest** ([`../services/hermes/agent.yaml`](../services/hermes/agent.yaml)) that the renderer wires into a single `agent` compose service; the agent contract (chat via model-gateway, tools via the model-gateway `/mcp` endpoint, GPU via the ops-controller `/jobs` scheduler, `.env` read-only) is in [`agents.md`](agents.md). The image builds from `services/hermes/` via `ordo build agent` and is selected by `agent: hermes` in `ordo.yaml`.
 
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) is the stack's assistant-agent layer. It runs as two compose services — `agent` (Discord / Telegram messaging) and `hermes-dashboard` (web UI, container port 9119, published by Caddy at `https://${CADDY_TAILNET_HOSTNAME}:8447/` — served at its origin root behind a plain SSO proxy, no forwarded-prefix base injection) — that come up with the rest of the stack.
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) is the stack's assistant-agent layer. It runs as two compose services — `agent` (Discord / Telegram messaging) and `hermes-dashboard` (web UI, container port 9119, published by Caddy at `https://${CADDY_TAILNET_HOSTNAME}:8447/` — Hermes's own Google OIDC sign-in, served at its origin root) — that come up with the rest of the stack.
 
 ## Running
 
@@ -15,7 +15,7 @@ ordo up --all                          # refuses while a GPU lease holds the car
 
 That's it. Hermes starts automatically, waits for model-gateway / model-gateway-keys / dashboard to be healthy, then registers messaging platforms (if configured) and serves the web UI.
 
-Web UI: `https://${CADDY_TAILNET_HOSTNAME}:8447/` (Google SSO, its own dedicated Caddy port, served at the origin root — see [docs/runbooks/auth.md](runbooks/auth.md)). The old `https://${CADDY_TAILNET_HOSTNAME}/hermes*` URL still works — Caddy's `:443` front door 302s it to `:8447/`.
+Web UI: `https://${CADDY_TAILNET_HOSTNAME}:8447/` (Hermes's own Google OIDC sign-in, its own dedicated Caddy port, served at the origin root — see [docs/runbooks/auth.md](runbooks/auth.md)). The old `https://${CADDY_TAILNET_HOSTNAME}/hermes*` URL still works — Caddy's `:443` front door 302s it to `:8447/`.
 Logs: `docker compose -p ordo logs -f agent hermes-dashboard`
 Restart (also picks up changed env or secrets), from the repo root: `ordo recreate agent`
 Stop only Hermes: `docker compose -p ordo stop agent hermes-dashboard`
@@ -33,8 +33,9 @@ killed cron for 22h — the volume removes that failure mode.
 | Path (inside the volume) | Contents |
 |---|---|
 | `config.yaml` | Hermes config (endpoints, Discord behavior, skills preferences) |
-| `sessions/` | Conversation history |
-| `memories/` | FTS5-indexed memories |
+| `state.db`, `sessions/` | Conversation history (SQLite, FTS5-indexed) |
+| `memories/` | `MEMORY.md` and `USER.md`, loaded into every turn (24,000-char cap each) |
+| `profiles/<name>/` | Extra agent profiles, each a complete home of its own (see Profiles) |
 | `skills/` | Installed and auto-generated skills |
 | `cron/` | Scheduled jobs |
 | `logs/` | Hermes's own log files (separate from `docker compose logs`) |
@@ -116,7 +117,23 @@ To replace your existing `SOUL.md` with the shipped opinionated default (one-lin
 docker compose -p ordo exec agent sh -c "cp /opt/ordo-seed/SOUL.md /opt/data/SOUL.md"
 ```
 
-Hermes still has the host Docker socket mounted, but raw Docker use is retired (hostile audit SEC-1) and the socket is being removed: container work goes through the `ops-router` tools. See [`runbooks/bounded-hermes.md`](runbooks/bounded-hermes.md) for the privilege model.
+The seeded `SOUL.md` routes container work through the `ops-router` tools. The host Docker socket is still mounted; see [`runbooks/bounded-hermes.md`](runbooks/bounded-hermes.md) for the privilege model.
+
+## Profiles (more than one bot)
+
+`hermes profile create <name>` adds a profile under `/opt/data/profiles/<name>/`: its own `SOUL.md`, memory, skills and sessions. One gateway serves every profile (upstream's multiplexer); do not run a second gateway per profile. A profile created while the gateway runs is served after the next restart (`ordo recreate agent`, or restart `gateway-default` inside the container); `/opt/data/gateway_state.json` lists `served_profiles`.
+
+- **Route a channel to a profile** in the default `config.yaml`:
+  ```yaml
+  gateway:
+    profile_routes:
+    - name: <name>-channel
+      platform: discord
+      chat_id: "<channel id>"
+      profile: <name>
+  ```
+  The boot hook only sets individual keys, so routes survive restarts and recreates.
+- **Trim the clone.** A new profile copies the default's `MEMORY.md` and `.env`; cut both to what that profile needs and give it its own `SOUL.md`.
 
 ## Updating Hermes
 
@@ -145,10 +162,5 @@ docker compose -p ordo logs hermes-dashboard | tail -50
 **Discord bot shows online but doesn't reply:**
 - Message Content Intent disabled in Developer Portal.
 
-**Clean restart (throws away all sessions + skills):**
-```bash
-(cd out && docker compose -p ordo down)
-docker volume rm ordo_hermes-home
-ordo up --all
-```
+**Clean restart (throws away all sessions + skills):** see the clean-slate steps under State.
 

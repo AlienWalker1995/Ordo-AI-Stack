@@ -1,7 +1,7 @@
 # Orchestration Layer
 
 ## Purpose
-A lightweight, plug‑in‑driven orchestrator that stitches together all AI services (model‑gateway, MCP, custom plugins) into a unified workflow engine. It does **not** expose any direct UI; it only provides APIs that any service (including the dashboard, agent clients, or external callers) can call.
+MCP tools for multi-service workflows (ComfyUI workflow management and versioning), served through the model gateway's `/mcp` endpoint. No UI of its own.
 
 ## Current Implementation
 
@@ -18,59 +18,10 @@ The orchestration layer today is an **MCP server** (`services/orchestration/serv
 - JSON-RPC `POST /orchestrate` API — the current surface is MCP tools + dashboard HTTP routes.
 - Automatic rollback/retry with compensating actions.
 
-## Target Architecture
-
-> The following describes the intended design. Items marked **(planned)** are not yet implemented.
-
-### Key Concepts
-- **Plugin Registry** **(planned)** – New services would register themselves via a `manifest.json` in a well‑known plugin folder. The orchestrator would load them on start‑up and watch for changes.
-- **Execution Context** – Each workflow run receives a scoped context (environment variables, secrets from `.env`, and runtime state). The context is passed as part of the call so plugins can request data (e.g., token values) without seeing the full `.env`.
-- **Event Bus** **(planned)** – Orchestrator would emit `workflow.started`, `workflow.completed`, and `workflow.failed` events via a message broker or in‑memory queue. Consumers could subscribe (e.g., a monitoring service).
-- **Rollback & Retry** **(planned)** – The orchestrator would automatically retry failed steps up to `max_retries` and could roll back to a previous step if a compensating action is defined.
-
-### Target Public API (planned)
-```json
-POST /orchestrate
-{
-  "method": "startWorkflow",
-  "params": {
-    "workflowId": "string",
-    "input": { "key": "value" }
-  },
-  "id": 1
-}
-```
-Response:
-```json
-{
-  "result": {
-    "runId": "uuid",
-    "status": "running|completed|failed",
-    "logs": ["msg 1", "msg 2"]
-  },
-  "id": 1
-}
-```
-
-## Design Decisions (Why this shape?)
-1. **Extensibility over rigidity** – We want any new AI service (e.g., an Azure OpenAI integration) to be added by dropping a manifest file, not by touching core code.
-2. **Separation of concerns** – Orchestrator never holds long‑running state. It delegates execution to the underlying services (model‑gateway, MCP servers). The orchestrator's role is coordination, not execution.
-3. **Security** – All calls are authenticated with the existing `OPS_CONTROLLER_TOKEN`. The token is passed in the HTTP `Authorization` header by the dashboard or agent client.
-4. **Observability** – Every step is logged with trace IDs, making it easy to trace a user's request through the entire AI stack.
-
 ## Integration with Existing Stack
-- **Model Gateway** – Calls to the orchestrator can chain model calls (e.g., call `model-a`, then `model-b`). The orchestrator forwards the request to the gateway with the appropriate provider name.
 - **Agent clients** (Hermes, etc.) – Invoke the orchestrator through the gateway's namespaced MCP tools (`gateway__orchestration-<tool>`) or the dashboard HTTP routes.
 - **Dashboard** – The Media page shows GPU lease history and restarts ComfyUI via `routes_orchestration.py`; the orchestration MCP server uses the same routes for workflows.
-- **Ops Controller** – Handles lifecycle of the orchestrator container; restarts it automatically on failures.
-
-## Example Workflow: "Create a multi‑modal response"
-1. **Input** – User asks a question.
-2. **Step 1** – Orchestrator calls `gateway__searxng-searxng_web_search` to fetch context.
-3. **Step 2** – Orchestrator invokes the `comfyui` plugin to render an image.
-4. **Step 3** – Orchestrator compiles a markdown summary using the LLM.
-5. **Step 4** – Returns the full response to the caller (agent client or dashboard).
 
 ---
 
-**See also:** [Index](index.md) for the broader goals that motivate this layer.
+**See also:** [Index](index.md).

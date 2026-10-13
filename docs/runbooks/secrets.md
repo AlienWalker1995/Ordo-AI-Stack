@@ -262,13 +262,6 @@ Treat as catastrophic:
 4. Run `scripts/secrets/audit-git-history.sh` to confirm this public repo holds
    no plaintext.
 
-## The committed `secrets/*.sops` blobs
-
-`secrets/` in this public repo still holds older encrypted blobs
-(`.env.sops`, `discord_token.sops`, ...). Nothing reads them: they are not the
-source of any value the stack runs with. Whether to delete them is a separate
-decision; do not edit them.
-
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

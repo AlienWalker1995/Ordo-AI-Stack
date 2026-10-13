@@ -2,7 +2,7 @@
 # and for the Hermes harness. OPTIONAL, opt-in (`default: false`), profile `evals`.
 #
 # ONE-SHOT JOB, NOT A DAEMON. Launch a `run` through scripts/evals/run.sh (not `docker compose run`
-# directly - see GIT_COMMIT/GIT_DIRTY below and E7 in services/evals/README.md), which wraps:
+# directly - see GIT_COMMIT/GIT_DIRTY below and "Git provenance" in services/evals/README.md), which wraps:
 #   docker compose -p ordo --profile evals run --rm evals run --suites all --run-id <id>
 # so it declares `restart: "no"` (a finished run must never be restarted into the same run) and its
 # image CMD is `--help` (an accidental `up` prints usage and exits 0 instead of starting a run).
