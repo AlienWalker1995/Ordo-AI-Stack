@@ -1,7 +1,6 @@
 # Ordo AI Stack — Product Requirements Document
 
-**Status:** Living document — updated 2026-03-28
-**Scope:** Local-first AI platform: unified model access, shared tools, secure ops, RAG, and agentic runtime.
+Reference docs for the stack's components and cross-cutting design. Operator how-tos live in [`../operator-guide.md`](../operator-guide.md) and [`../runbooks/`](../runbooks/).
 
 ---
 
@@ -9,76 +8,25 @@
 
 A self-hosted AI platform that any developer can run by rendering `ordo.yaml` (`ordo render`) and bringing it up with `ordo up --all` from the repo root. Core guarantees:
 
-1. **One model endpoint** — Every service reaches every model served by llama.cpp via a single OpenAI-compatible gateway. No per-service provider config.
+1. **One model endpoint** — Every service reaches every model served by the GPU inference engine (llama.cpp or NInfer) via a single OpenAI-compatible gateway. No per-service provider config.
 2. **Shared tools with health** — MCP tools served from one `/mcp` endpoint on the model gateway, with per-server health badges and per-consumer key scoping.
 3. **Authenticated ops** — Dashboard manages the full service lifecycle through a secure, audited control plane. No docker.sock in the UI layer.
 4. **RAG out of the box** — Vector search (Qdrant) is wired into Open WebUI and exposed to the gateway; document ingestion is one compose profile away.
 5. **Hardened by default** — Non-root containers, `cap_drop: [ALL]`, read-only filesystems, explicit networks, log rotation, resource limits across all custom services.
-
-## Shipped Capabilities (as of 2026-03-04)
-
-| Capability | Status | Key Files |
-|-----------|--------|-----------|
-| OpenAI-compat model gateway (llama.cpp) | Live | `services/model-gateway/` |
-| Model list TTL cache + cache-bust endpoint | Live | `services/model-gateway/` |
-| `X-Request-ID` forwarded by the dashboard to ops-controller | Partial (ops-controller does not record it yet) | `services/dashboard/dashboard/app.py`, `services/dashboard/dashboard/routes_orchestration.py` |
-| Responses API (`/v1/responses`) | Live | `services/model-gateway/` |
-| Completions compat (`/v1/completions`) | Live | `services/model-gateway/` |
-| MCP tool aggregation on the model gateway | Live | `services/model-gateway/`, `ordo/render/compose.py::_mcp_service`, `out/docker-compose.yml` |
-| MCP server manifests (`kind: mcp`) rendered to LiteLLM + dashboard | Live | `services/*/plugin.yaml`, `out/model-gateway/mcp_servers.yaml`, `out/mcp/servers.json` |
-| MCP health endpoint + UI badges (Settings drawer) | Live | `services/dashboard/dashboard/app.py` |
-| Container lifecycle API (start/stop/restart/recreate/logs/pull) | Live | `ordo/control/lifecycle.py`, `ordo/control/broker.py` |
-| Append-only JSONL audit log | Live | `ordo/control/audit.py`, `ordo/control/call_audit.py` |
-| Dashboard auth via Caddy edge SSO (oauth2-proxy + Google + allowlist); optional dormant per-service Bearer token in code, unused in deployment | Live | `services/dashboard/dashboard/app.py` |
-| Dashboard throughput stats + benchmark | Live | `services/dashboard/dashboard/app.py` |
-| Dashboard hardware stats | Live | `services/dashboard/dashboard/app.py` |
-| Dashboard model switch (catalog id -> render -> recreate llama.cpp + model-gateway) | Live | `services/dashboard/dashboard/routes_console.py`, `ordo/control/api.py` |
-| RAG pipeline (Qdrant + rag-ingestion) | Live | `services/rag/`, `out/docker-compose.yml` |
-| Open WebUI → Qdrant vector DB | Live | `out/docker-compose.yml` |
-| RAG status endpoint | Live | `services/dashboard/dashboard/app.py` |
-| Docker hardening (cap_drop, read_only, networks) | Live | `out/docker-compose.yml` |
-| Single `ordo-net` Docker network (edge-only host-port publish) | Live | `out/docker-compose.yml` |
-| llama.cpp backend-only (no host port) | Live | `out/docker-compose.yml` |
-| SSRF egress block scripts | Linux engine only, manual; not enforced on Docker Desktop | `scripts/ssrf-egress-block.sh`, `.ps1` (advice only) |
-| Hermes agent (gateway + dashboard) | Live | `out/docker-compose.yml`, `services/hermes/` |
-| Contract + smoke tests | Live | `tests/` |
-
-## Open Risks
-
-| Risk | Severity | Status |
-|------|----------|--------|
-| `docker.sock` only in the control plane (`ops-controller`) and the Hermes agent | High | Accepted, mitigated by the project-prefix guard, confirm-gated verbs and no host port; the MCP tool path no longer touches the socket |
-| `WEBUI_AUTH` still defaults to `False` | Medium | Tracked — change to `True` in M6 |
-| Per-tool `allowed_tools` narrowing unused | Low | Schema supports it; per-consumer scoping is already enforced by LiteLLM virtual-key MCP grants |
-| Rendered compose validated in CI | Low | Done — `.github/workflows/ci.yml` has `secret-scan`, `pytest` (incl. ruff), and `substrate` jobs on push/PR; `substrate` runs `docker compose config` against the rendered output (path-filtered, no separate `compose-smoke` job) |
-| Reliability / readiness contracts | High | Strategic — see [reliability-and-contracts.md](reliability-and-contracts.md) |
-
-## Strategic Priority: Reliability Layer
-
-The platform's next major quality bar is a **reliability spine**: guarantees that agent and tool clients can **reach, authenticate to, and recover from failures** across the shared stack—especially **Model Gateway `:11435`** (both `/v1/*` and `/mcp`), the **MCP servers** behind it, and **browser/tool bridges**.
-
-**Design stance:** Any given agent (today: Hermes) is **one client** on a **shared service mesh**, not the architectural center. Service-to-service reliability and dependency management are the dominant failure mode when weak.
-
-See [Reliability & Service Contracts](reliability-and-contracts.md) for full details.
 
 ---
 
 ## Component Docs
 
 - [Architecture & Principles](architecture-and-principles.md) – System architecture, product principles, data flows, network assignments.
-- [Model Gateway](component-model-gateway.md) – Unified model routing and provider-facing API keys (llama.cpp / OpenAI-compatible surface).
+- [Model Gateway](../../services/model-gateway/README.md) – The LiteLLM gateway: model list, aliases, CPU failover, cost, MCP aggregation.
 - [Ops Controller](component-ops-controller.md) – Docker Compose control plane: GPU scheduler, model switch, lifecycle API (internal port 9000).
 - [MCP & Tool Aggregation](component-mcp-gateway.md) – One `/mcp` endpoint on the model gateway; the `mcp-*` servers behind it, scoped per LiteLLM key.
 - [RAG Pipeline](component-rag-pipeline.md) – Qdrant vector search + document ingestion.
 - [Orchestration Layer](component-orchestration-layer.md) – Multi-service workflow coordination (target architecture; implementation evolves with the repo).
 - [Dashboard UI](component-dashboard-ui.md) – Ops dashboard: Overview, Services, Models, Media and Performance pages, Settings drawer.
 - [Security & Trust Model](security-and-trust-model.md) – Threat model, auth tiers, SSRF, secret handling.
-- [Reliability & Contracts](reliability-and-contracts.md) – Service contracts, health depth, circuit breakers, observability.
-- [Milestones & Roadmap](milestones-and-roadmap.md) – M0–M7 milestone tracking, PR slices, acceptance criteria.
-- [Risks & Open Questions](risks-and-questions.md) – Risk register and open questions.
 - [Environment Variables Reference](appendix-env-vars.md) – All env vars, services, defaults.
 - [Rollback Procedures](appendix-rollback.md) – Per-component rollback playbook.
-- [Quality Bar](appendix-quality-bar.md) – Test suite, performance targets, security review checklist.
 - [Open WebUI](https://docs.openwebui.com/) – Day-to-day chat interface (port 3000); not owned by this repo but wired into the stack via compose.
 
-*Add or split components as the codebase grows.*

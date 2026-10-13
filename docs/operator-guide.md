@@ -190,105 +190,14 @@ direct fix for the #1 pain — now proven in production, not just in test.
 | `ordo/render/plugins.py` + `services/*/plugin.yaml` | **registry-driven** plugins: each manifest declares hardware needs + a config fragment; the renderer enables what fits (media = NVIDIA-only) and resolves `depends_on` |
 | `ordo/control/scheduler.py` | GPU **scheduler decision engine** — FIFO admission + co-run-when-it-fits + LRU idle-evict (replaces the reactive guardian that caused the outage; the process broker drives it against the real `ordo-` containers — live in production) |
 | `ordo/cli.py` | `ordo detect | render | doctor | serve | preflight | …` — the one-script control surface |
-| `tests/substrate/` | mocked-profile render (5090 + CPU-only), drift-revert, ctx consistency, plugin gating/deps, scheduler co-run/FIFO/evict, and per-defect-class regression guards from the parity audits (current suite: **172 passed, 2 skipped** — run below) |
+| `tests/substrate/` | mocked-profile render (5090 + CPU-only), drift-revert, ctx consistency, plugin gating/deps, scheduler co-run/FIFO/evict, and per-defect-class regression guards from the parity audits (run below) |
 
-## Build history (archival engineering record)
-Ordo's render substrate was built slice-by-slice (originally beside the previous stack, on branch
-`arch/v2-substrate`), each slice validated before the next. **This section is the historical build
-log** — the "V1"/"V2" references below are that history (the previous stack vs this one), not a
-current split: today there is only Ordo.
+## Operating this stack
+The rendered services run under compose project `ordo` from `C:\dev\ordo-ai-stack`, all reached through
+the edge: Caddy is the **only** service that publishes host ports, one port per UI surface on
+`${CADDY_TAILNET_HOSTNAME}`. The port map (which service, which port, how each signs in) lives in [configuration.md's Network Ports](configuration.md#network-ports).
 
-1. **Config render engine** — declarative source → drift-proof config + hardware right-sizing + checksummed catalog. ✅
-2. **Plugin registry** — data-only manifests, hardware-gated, dependency-resolved. ✅
-3. **Scheduler decision engine** — FIFO + co-run-if-fits + LRU idle-evict. ✅ (the process broker that drives it against the real `ordo-` containers landed in slice 9 and now runs in production as the `ops-controller` service — this is the arbiter that replaced the outage-causing reactive guardian.)
-4. **Guided-setup wizard** — `ordo setup` detects → proposes → writes `ordo.yaml` (headless path = CI). ✅
-5. **Full-stack parity render + `ordo parity`** — the renderer now reproduces the complete llama.cpp surface (model/ctx/mmproj/MTP args/…), and `ordo parity --ref <.env>` diffs it. ✅
-   **Merge-gate (a) demonstrated live:** `ordo parity` vs the real running `.env` → **PARITY OK** (15 keys, 0 mismatches), read-only — proving the engine regenerates today's hand-tuned config from one source with no drift.
-6. **Scheduler status API + `ordo doctor` support bundle** — `Scheduler.status()` emits the busy/idle + free-VRAM + running/queued + ETA JSON the dashboard/agents poll; `ordo doctor [--bundle]` exports a secret-redacted diagnostics bundle. ✅ Demonstrated: a 17GB render job + a 4GB chat **co-run** (chat slips beside the render) — the exact eviction-deadlock that broke the agent, gone.
-7. **MCP as `kind=mcp` plugins** — an MCP server is a manifest (pinned image + env + tools); the renderer composes enabled ones into a compose service `mcp-<server_id>` plus `out/model-gateway/mcp_servers.yaml` and `out/mcp/servers.json` (drift-free) and flags un-pinned images. Runs on CPU. ✅
-8. **Compose rendering** — `ordo render` emits an **isolated, runnable** `docker-compose.yml` (own project/network, no host-port clashes, GPU-gated, profile-gated plugins). ✅ The rendered compose is validated by the **real `docker compose config`** engine (both CPU-core and GPU+media shapes), and that check is a CI gate — not just a well-shaped Python dict.
-9. **Process broker** — turns scheduler decisions into real container start/stop; the Docker backend is **hard-scoped to the `ordo-` prefix so it can never touch the live stack**. ✅
-10. **Control-plane service (`ordo serve` = the `ops-controller` image)** — the substrate over HTTP: `GET /status` (live GPU/scheduler + manifest), `GET/POST /model-config` (drift-safe model switch, applied to the stack), `POST /apply` (recreate the changed set of the current render), `POST /jobs[/complete]` (drive the broker). A real `services/ops-controller/Dockerfile` (built + smoke-tested) makes the compose ref concrete. ✅
-    **Validated live in a container:** switching the model over HTTP rewrote `ordo.yaml` **and** regenerated `.env` in one pass (`LLAMACPP_MODEL` + `LLAMACPP_CTX_SIZE` moved together — the drift bug is structurally impossible); unknown model → 404, source untouched. The socket it mounts to drive the broker is guard-scoped to `ordo-*`, so it still can't touch the live stack.
-11. **`ordo preflight` GO/NO-GO gate + cutover runbook** — a read-only readiness check for the migration: ctx consistency (drift gate), model/MCP checksums, GPU-present-for-enabled-plugins, **parity vs the live `.env`**, and image readiness (project images blocking, upstream pull-able). Blocking failure → non-zero exit. The runbook is the operator's atomic-cutover procedure (build → preflight → up-beside → validate parity + restore personal backup → flip → rollback-ready). ✅
-    **Validated live:** `ordo preflight --ref <live .env>` → **GO**, `parity vs live .env: 15 keys, 0 mismatch`; the unpinned 27b sha256 correctly surfaced as a non-blocking warning.
-12. **Dashboard (control plane)**: service `dashboard` (manifest `services/dashboard/dashboard.yaml`, image `ordo/dashboard`, selected by `dashboard: dashboard` in `ordo.yaml`) is a FastAPI backend plus a React SPA with five pages (Overview, Services, Models, Media, Performance), a Settings drawer and a Ctrl/Cmd K command palette. Its backend calls `ops-controller` for every privileged action; the Models page switches the GPU model through `POST /api/models/switch` → `ops-controller` `POST /model-config`, and Performance embeds the Grafana "Ordo performance" dashboard at `/grafana/`. ✅
-
-13. **One-command packaging + mocked-profile CI** — `pyproject.toml` installs the substrate as a real `ordo` command (`pip install -e .`; runtime dep = just PyYAML, so the core runs anywhere); `python -m ordo` also works. A dedicated **`substrate` CI job** (in `.github/workflows/ci.yml`, path-gated on `ordo/**`, `services/**`, etc., pinned deps) runs ruff + the full mocked-profile suite + a fresh-install render smoke — the merge-gate "mocked-profile CI" + "clean fresh-install" requirements. ✅
-    **Validated:** simulated the CI on a `python:3.12` runner-equivalent — ruff clean, 67 tests, `python -m ordo render` from a clean checkout, and `pip install` → a working `ordo detect`.
-14. **Multi-agent adapter contract (Hermes default, pluggable)** — an agent is a data manifest (`services/<id>/agent.yaml`) declaring its image + the core services it consumes; `ordo/render/agents.py` resolves the chosen agent, and `render` wires its image into the compose `agent` service. Hermes is `default: true`; a pinned `openai-agent` reference adapter proves the core is genuinely agent-agnostic; an unknown agent is warned at render/preflight (convention fallback) not silently broken at `compose up`. The contract (chat via model-gateway, tools via the model-gateway `/mcp` endpoint, GPU via ops-controller `/jobs`, `.env` read-only) is documented in [`agents.md`](agents.md). ✅
-15. **Native (non-Docker) path** — `ordo native` builds the exact `llama-server` argv from the *same* rendered `LLAMACPP_*` env the container uses (model/ctx/gpu-layers/kv-type/rope/mmproj/MTP extra-args), proving the source is deployment-mode-agnostic — Docker or bare process, one source, no divergence. Best-effort by design: it's honest about the pieces native mode doesn't orchestrate (gateways/agent = manual steps; media/voice = Docker-only). ✅
-16. **A starvation-bug fix**: `pump()` used to `break` on a job too big for the GPU, permanently stalling every smaller job queued behind it. Fixed: a can-never-fit job is removed from the queue and **rejected**, and pumping continues, so small jobs never starve. `status()` surfaces it under `rejected`, which the lease clients (lease-exec, gpu-gate) check to fail fast. (An opt-in `cloud_fallback` that routed such jobs to a drain route was removed: nothing polled the route, so routed jobs never ran and their clients waited out a timeout.) ✅
-17. **`ordo fetch` — offline model provisioning with mandatory checksum** — downloads catalog models and **refuses to trust unpinned or corrupt weights**: a null-sha256 entry is refused for download unless `--allow-unverified`, a post-download hash mismatch deletes the file and errors (never leave corrupt weights to load into noise), and an already-verified file short-circuits with no network call — so once fetched, installs are **offline-capable**. Hashing/planning/verify-reject logic is pure + fully tested (download injected); only the network shells out. ✅ Demonstrated: `fetch --all --plan-only` refuses the 4 unpinned Qwen entries and cleanly plans the pinned 27b.
-18. **Data-driven plugin services + `monitoring` & real `voice` bundles (V1 PR #71 + #45 parity)** — the plugin schema now declares its compose services as **data** (`services: [{name, image, gpu, gpu_pin, env, command, volumes, healthcheck, depends_on}]`); `compose.py` builds them from the resolved manifests instead of hardcoded if-blocks (comfyui/song-gen/voice migrated). Two bundles land as first-class plugins: **`monitoring`** (Grafana + Prometheus + `nvidia_gpu_exporter`, all sha-pinned; CPU-ok so it runs anywhere; keeps the driver-581.80 `--query-field-names` crash-fix; `render` now emits `--metrics` on `llama-server` so Prometheus can scrape `:8080`; named volumes are declared at the compose top level), and the **real `voice`** (faster-whisper **stt** + Kokoro **tts**, sha-pinned). Voice introduces **`gpu_pin: secondary`**: because those images have no Blackwell kernels and CRASH on the 5090, `hardware.detect()` now captures each GPU's uuid and render pins them to the **non-primary (Pascal 1070)** card via `CUDA_VISIBLE_DEVICES` + a `device_ids` reservation (the only pin WSL2 honors); with no secondary GPU the plugin is **gated OFF with a warning** rather than shipping a guaranteed crash. ✅ Validated: mocked dual-GPU (5090+1070) enables voice pinned to `GPU-20fac13a-…`, single-5090 disables it with a warning, CPU-only disables it; the rendered dual-GPU compose (profiles `media`+`voice`+`monitoring`) passes the real `docker compose config`. Live stack untouched.
-
-19. **Full V1→V2 service parity + secrets model (this slice)** — the substrate now reaches
-    **service-level parity** with the live stack. Every V1 `docker-compose.yml` service is accounted
-    for: 12 already-covered (core/existing plugins), **9 ported now** as new
-    `kind=service` plugin manifests — **`rag`** (qdrant + llamacpp-embed + rag-ingestion),
-    **`worker`** *(the headless render/publish job-queue worker — since retired, see
-    CHANGELOG; media generation now runs via Hermes cron + the direct render/publish
-    scripts)*, **`open-webui`**, **`searxng-web`**,
-    **`codebase-memory-ui`**, **`hermes-dashboard`**, and the opt-in **`edge`** (Caddy + oauth2-proxy,
-    the *only* host-port publish, profile `edge`) — and 4 obsolete-by-design (model pullers → `ordo
-    fetch`; the manager-setup shim → image build; the reactive guardian → the V2 scheduler). Each
-    ported service kept V1's **exact image pins** at the time of the port (current pins live in each
-    `services/<id>/plugin.yaml`), floating `:latest` tags are **digest-pinned** (searxng), and env keys / volumes
-    (bind + named) / healthchecks / profiles / depends_on carry over verbatim.
-    **Image parity fixed:** `model-gateway` now references V1's custom config-wrapper build as a
-    **project buildable image** (`ordo/model-gateway:latest`,
-    context under `services/`) instead of the unconfigured upstream `litellm:main`,
-    so the `local-chat` alias + reload wrapper survive and `preflight` reports "build first". The two
-    MCP **placeholder digests** are replaced with real refs (qdrant-rag = a project buildable image,
-    searxng = the live registry digest). **Secrets model:** derived `.env` and operator secrets stay
-    in **separate files**. No service loads `secrets.env` whole: each service declares the secret
-    names it reads, the renderer emits `KEY: ${KEY}`, and compose interpolates the values from
-    `--env-file secrets.env` (see `docs/runbooks/secrets.md`), and `ordo render`
-    emits **`secrets.env.example`** listing the required KEYS (names only, values empty) gathered from
-    the core set + each enabled plugin's `secrets:`. `ordo preflight --secrets <file>` adds a
-    non-blocking check for missing keys. ✅
-    **Validated:** the full dual-GPU render enables all 12 service plugins + 2 MCP with **zero
-    warnings**; the rendered compose with **all 10 profiles** passes the real `docker compose config`
-    (27 entries, caddy the sole host-port publisher, CADDY_BIND `:?` failsafe preserved); the CPU-only
-    render validates too; `ordo preflight` → GO, MCP "all pinned".
-
-20. **Memory vault (file-based MCP)** — a shared markdown vault
-    (`data/memory-vault`, seeded with `README`/`CONVENTIONS` + the `name`/`description`/`type`
-    frontmatter schema) is the durable agent-memory substrate: plain `.md` files, no hidden store.
-    The **`memory-vault`** plugin ships it (`kind=mcp`, `@bitbonsai/mcpvault` version-pinned in
-    `services/memory-vault`, 15 tools: read/write/patch/search/frontmatter/tags/…). The vault is browsed
-    with **native Obsidian on the operator's machine**, opened at `data/memory-vault` — the SAME host
-    dir the MCP mounts, so agent writes appear in the desktop app and vice-versa. To let a
-    file-based MCP **write** its data dir, the render engine passes the manifest's own `mcp:` fields
-    through, `volumes` (a **read-write** host bind, compose-interpolated from `${MEMORY_VAULT_PATH}`),
-    `command`, `env` and `healthcheck`, which the previous image+env-only
-    MCP render dropped; existing MCP entries render byte-identically (passthrough is opt-in). ✅
-    Validated live: `write_note` through the gateway persists a real file on disk that native Obsidian
-    sees; `read_note`/`search_notes` round-trip; llamacpp/agent untouched.
-
-`ordo render` writes the complete stack (`.env` + `docker-compose.yml` +
-`manifest.json` + `mcp/servers.json` + `model-gateway/mcp_servers.yaml` + `model-gateway/keys.json` + `secrets.env.example`); `ordo serve` runs the control plane
-(service `ops-controller`) that regenerates it drift-safely at runtime; `ordo preflight` gated the
-cutover. **Test suite: 181 passed, 2 skipped** (verified 2026-07-09).
-
-## Operating this stack (it IS production now)
-The rendered services (43 as of 2026-09-12) run under compose project `ordo` from `C:\dev\ordo-ai-stack`, all reached through
-the edge — Caddy is still the **only** service that publishes host ports, but since 2026-07-24 it
-listens on **eight** SSO-gated ports on `${CADDY_TAILNET_HOSTNAME}`, one per UI surface, instead of
-mounting every app under a subpath of a single `:443`:
-
-| Port | Service |
-|---|---|
-| `:443` | front door — landing page, `/oauth2` (the one Google callback), `/llm/*` (LiteLLM API, Bearer), `/mcp` (Bearer), and 302s from every legacy subpath |
-| `:8443` | Open WebUI (chat) |
-| `:8444` | Dashboard (+ `/grafana/` embed) |
-| `:8446` | ComfyUI |
-| `:8447` | Hermes (served at its own port root) |
-| `:8448` | codebase-memory (served at its own port root) |
-| `:8449` | LiteLLM admin UI (served at its own port root) |
-| `:8450` | Langfuse (served at its own port root) |
-
-One Google sign-in covers all eight ports **and the clean per-service tailnet names** — the
+One Google sign-in covers every oauth2-proxy-gated port (all but Hermes, which signs in itself) **and the clean per-service tailnet names** — the
 oauth2-proxy cookie is domain-scoped and the SSO gate's `rd=` carries `{host}` (portless), so a
 single wildcard `--whitelist-domain=.<domain>` covers every port and sidecar name at once; the Google
 OAuth client needs no new redirect URIs. Old subpath URLs (`/chat`, `/dash`, `/comfy`,
@@ -297,9 +206,10 @@ working. This
 retires the subpath-rewrite class of workaround (Open WebUI root-catchall, Hermes header-based
 base injection, codebase-memory nginx rewrites) in favor of giving every
 prebuilt SPA the root it was actually compiled for. One data root at
-`C:\dev\ordo-ai-stack\data` (Hermes brain at `data\hermes`). Secrets live in one SOPS file in a
-private repo (`site: SECRETS_SOURCE`), materialized into gitignored `out\secrets.env` (a second
-compose `--env-file`) by `ordo secrets materialize`.
+`C:\dev\ordo-ai-stack\data`; stateful services (the Hermes brain included) keep their state on
+named volumes. Secrets come from one store (a SOPS file in a private repo, or Infisical), materialized
+into gitignored `out\secrets.env` by `ordo secrets materialize`; see
+[runbooks/secrets.md](runbooks/secrets.md).
 
 This Tailscale front door is the **default of three swappable access layers** — the edge
 (`services/edge`) and clean-URL names (`services/tailnet-names`) are plugins, so the same rendered stack
@@ -318,22 +228,6 @@ gate). Only the Tailscale model is wired today; the others' required pieces are 
 **Backups:** `ordo backup` saves `out/ordo.yaml`, `out/secrets.env`, `out/images.json` and every stateful
 volume (databases dumped, or copied with their writers stopped) to one owner-only archive outside the
 checkout; `ordo restore <archive>` puts it back. See [data.md](data.md#backup-and-recovery).
-
-## What the cutover produced
-The 2026-07-09 cutover took this substrate to production: 3 flip attempts (2 clean ~7-min rollbacks
-that each converted a live defect into a test-guarded fix; success at ~3.75-min core downtime),
-then a consolidation that re-homed everything to `C:\dev\ordo-ai-stack` and merged to `main`. The
-operator-specific images (`agent-hermes` wrapping the Hermes `data/`, `comfyui`, `voice`) are built
-and running. The 27b model is
-**sha256-pinned** (`c03727f9…`, computed from the on-disk weights) so `preflight`'s checksum gate
-stays green.
-
-## Design acceptance gates (all met, proven in production)
-1. Renders a full config from one source with **zero hand-edits**.
-2. **Drift-revert**: a hand-edited derived value is corrected on the next render.
-3. Renders both a **5090 profile and a mocked CPU-only profile** into valid configs.
-4. **Consistency**: the one ctx value is identical across `.env`, Hermes, and model-gateway
-   (the exact bug that started this).
 
 ## Run the tests (no host Python needed)
 ```

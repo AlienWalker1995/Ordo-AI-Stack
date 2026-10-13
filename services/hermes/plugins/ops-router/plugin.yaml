@@ -13,5 +13,8 @@ provides_tools:
   - restart_project_container
   - compose_restart
   - compose_up
+  - list_installable_services
+  - enable_service
+  - disable_service
 provides_hooks:
   - pre_llm_call

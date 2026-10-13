@@ -190,4 +190,4 @@ In all three cases, finish by adding the plugin id to `ordo.yaml`'s `plugins:` l
 
 ---
 
-**See also:** [Model Gateway](component-model-gateway.md), [Security & Trust Model](security-and-trust-model.md), [Index](index.md).
+**See also:** [Model Gateway](../../services/model-gateway/README.md), [Security & Trust Model](security-and-trust-model.md), [Index](index.md).

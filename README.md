@@ -76,7 +76,7 @@ Caddy then becomes the one front door (HTTPS on your tailnet, Google sign-in) an
 
 ## Overview
 
-**Deployment model:** a single operator running the stack on their own hardware. Out of the box the chat UI and dashboard listen on `127.0.0.1` only; with remote access on (`ordo remote enable`) the stack is reached through one authenticated front door and only the edge proxy publishes host ports: every UI sits behind SSO, and one sign-in (a domain-scoped cookie) covers the whole stack, gated by an email allowlist you control. Internal services (model gateway, the MCP servers behind it, vector store) publish no host ports and are reachable only on the project network, or through the front door's authenticated API routes. The concrete port layout lives in the [operator guide](docs/operator-guide.md) and the [auth runbook](docs/runbooks/auth.md).
+**Deployment model:** a single operator running the stack on their own hardware. Out of the box the chat UI and dashboard listen on `127.0.0.1` only; with remote access on (`ordo remote enable`) the stack is reached through one authenticated front door and only the edge proxy publishes host ports: every UI sits behind Google sign-in, and one sign-in (a domain-scoped cookie) covers the stack, gated by an email allowlist you control; the Hermes dashboard is the one UI that runs its own Google sign-in. Internal services (model gateway, the MCP servers behind it, vector store) publish no host ports and are reachable only on the project network, or through the front door's authenticated API routes. The concrete port layout lives in [configuration.md](docs/configuration.md#network-ports) and the [auth runbook](docs/runbooks/auth.md).
 
 **Who it is for:** anyone who wants to run local AI models on their own machine and reach them securely from their own devices — with configuration discipline built in rather than bolted on.
 
@@ -110,7 +110,7 @@ Full engine reference, the plugin/agent registries, and the render-discipline ru
 
 ## Features
 
-Every UI is published only through the SSO front door; APIs are exposed on authenticated front-door routes (`/llm/*`, `/mcp`). What the stack gives you:
+Every UI is published only through the front door, behind Google sign-in; APIs are exposed on authenticated front-door routes (`/llm/*`, `/mcp`). What the stack gives you:
 
 - **Chat** — Open WebUI backed by an **OpenAI-compatible model gateway** (LiteLLM in front of the GPU inference engine, llama.cpp or NInfer), so any OpenAI-style client works against your local models.
 - **Image & video** — ComfyUI workflows with scheduler-gated GPU access; large models download on demand.

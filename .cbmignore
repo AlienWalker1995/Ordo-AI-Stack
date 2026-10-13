@@ -7,8 +7,6 @@
 # Secrets / credentials
 .env
 .env.*
-*.sops
-*.sops.*
 secrets/
 **/secrets/
 *.pem

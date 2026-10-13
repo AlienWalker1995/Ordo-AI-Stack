@@ -35,7 +35,7 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 | Variable | Default | Purpose |
 |---|---|---|
 | `HERMES_DASHBOARD_PORT` | `9119` | Internal port the Hermes dashboard listens on (`ordo-net` only, no host publish; Caddy reverse-proxies it at `${CADDY_TAILNET_HOSTNAME}:8447/`, served at the origin root) |
-| `DISCORD_BOT_TOKEN` | *(empty)* | Discord bot token. Managed via SOPS (`secrets/discord_token.sops`) or `DISCORD_BOT_TOKEN_FILE=/run/secrets/discord_bot_token`; inline `DISCORD_TOKEN=` in `.env` is no longer accepted. |
+| `DISCORD_BOT_TOKEN` | *(empty)* | Discord bot token. Set it in the secret store (`ordo secrets set DISCORD_BOT_TOKEN --from-stdin`); the agent reads it from `/run/secrets/discord_bot_token`. Never in `.env`. |
 | `DISCORD_ALLOWED_USERS` | *(empty)* | Comma-separated Discord user IDs authorized to DM / invoke the bot. Required for Discord use. |
 | `DISCORD_ALLOWED_CHANNELS` | *(empty)* | Comma-separated channel IDs where the bot may respond. Optional. |
 | `DISCORD_REQUIRE_MENTION` | `true` | Require `@bot` mention to respond. |
@@ -191,7 +191,7 @@ ordo up stt tts
 
 - **STT (voice memo → text): fully local.** Hermes' STT openai provider takes its
   base URL from the `STT_OPENAI_BASE_URL` env, which the rendered `out/docker-compose.yml` sets on
-  `agent` to `http://stt:8000/v1`. Set in the brain volume's `config.yaml` (`docker exec ordo-agent-1 sh -c 'vi /home/hermes/.hermes/config.yaml'` — the `data/hermes` bind was retired for the `ordo_hermes-home` volume, #143):
+  `agent` to `http://stt:8000/v1`. Set in the brain volume's `config.yaml` with `docker exec --user hermes ordo-agent-1 hermes config set <key> <value>`:
   `stt.provider: openai`, `stt.openai.model: Systran/faster-whisper-small`,
   `stt.openai.api_key: local`, `stt.enabled: true`. Inbound Discord voice messages
   are then auto-transcribed on the secondary GPU.
@@ -444,7 +444,7 @@ nodes that `services/song-gen` declares, so never roll back below it.
 
 Caddy is still the **only** service with published host ports, every other service (dashboard, open-webui, model-gateway, litellm-db, comfyui, hermes-dashboard, langfuse-web, the `mcp-*` servers, qdrant, ops-controller, etc.) has no `ports:` entry and is reachable only from other containers on the internal `ordo-net` network. But since 2026-07-24 Caddy itself is **port-per-service**: it publishes the SSO-gated host ports below on `${CADDY_TAILNET_HOSTNAME}` (all bound to `CADDY_BIND`) instead of routing every UI under subpaths of a single `:443`. Each prebuilt SPA is served at the root it was compiled for, ending the subpath-rewrite workarounds (Open WebUI root-catchall 404s, Hermes header-based base injection, codebase-memory nginx rewrites).
 
-One Google sign-in covers every port **and the clean per-service tailnet names** — the oauth2-proxy session cookie is domain-scoped, the one OAuth callback stays on `:443`, and the SSO gate's `rd=` redirect carries `{host}` (portless), so a single wildcard `--whitelist-domain=.<domain>` in the edge plugin covers every port and every sidecar name. A first sign-in through a bare `:844x` port lands on the `:443` hub and the domain-scoped cookie then covers everything (one extra click); the clean tailnet names (`chat`/`dash`/… `.<tailnet>.ts.net`) return you straight to the service. No new Google OAuth redirect URIs are needed. See [deployment-models.md](deployment-models.md) for the clean-URL sidecar layer.
+One Google sign-in covers every port except Hermes's `:8447` (its own sign-in) **and the clean per-service tailnet names** — the oauth2-proxy session cookie is domain-scoped, the one OAuth callback stays on `:443`, and the SSO gate's `rd=` redirect carries `{host}` (portless), so a single wildcard `--whitelist-domain=.<domain>` in the edge plugin covers every port and every sidecar name. A first sign-in through a bare `:844x` port lands on the `:443` hub and the domain-scoped cookie then covers everything (one extra click); the clean tailnet names (`chat`/`dash`/… `.<tailnet>.ts.net`) return you straight to the service. No new Google OAuth redirect URIs are needed. See [deployment-models.md](deployment-models.md) for the clean-URL sidecar layer.
 
 | Port | Service | Notes |
 |---|---|---|
@@ -452,7 +452,7 @@ One Google sign-in covers every port **and the clean per-service tailnet names**
 | `8443` | Open WebUI (chat) | Served at root |
 | `8444` | Dashboard | Served at root; Grafana rides along at `/grafana/` on this port |
 | `8446` | ComfyUI | Served at root |
-| `8447` | Hermes | Served at root (plain SSO proxy — the header-derived-base injection was removed when it moved off `:443`) |
+| `8447` | Hermes | Served at root; Hermes's own Google OIDC sign-in, not oauth2-proxy ([runbooks/auth.md](runbooks/auth.md)) |
 | `8448` | codebase-memory | Served at root (the container's nginx now proxies straight through, no `sub_filter`) |
 | `8449` | LiteLLM admin UI | Served at root; the admin UI lives at `/ui/` and swagger at `/`. Distinct from the `/llm/*` API route on `:443`, which stays the SSO-bypassing programmatic base |
 | `8450` | Langfuse | Served at root; the only route into `langfuse-web` (agent traces, datasets, evals). Hermes ingests directly over `ordo-net`, not through this port |

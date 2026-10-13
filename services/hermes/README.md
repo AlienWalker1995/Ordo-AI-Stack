@@ -1,6 +1,6 @@
 # agent-hermes (the default Ordo agent)
 
-V2's Hermes agent image, referenced by the Hermes agent manifest (`services/hermes/agent.yaml`) via
+The Hermes agent image, referenced by the Hermes agent manifest (`services/hermes/agent.yaml`) via
 the `<project>/agent-<id>` convention as `ordo/agent-hermes`, and reused by the
 `hermes-dashboard` plugin (one Hermes image serves as both the gateway and the dashboard).
 
