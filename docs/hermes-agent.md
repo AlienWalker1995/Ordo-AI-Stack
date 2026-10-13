@@ -100,7 +100,7 @@ mcp_servers:
       Authorization: Bearer <LITELLM_KEY_HERMES>
 ```
 
-It also sets the per-turn budgets, the compression context length, every `auxiliary.<task>.provider` to `main`, and the provider timeouts (see `ordo-init.sh`). Any other keys you add manually (skills, memory providers, display preferences) are preserved across restarts.
+It also sets the per-turn budgets, the compression context length, every `auxiliary.<task>.provider` to `main`, and the provider timeouts (see `ordo-init.sh`). On a home's first start it also hides reasoning and interim assistant updates from replies, once (marker `.ordo-response-display-seeded-v1`), so later display changes stick. Any other keys you add manually (skills, memory providers, display preferences) are preserved across restarts.
 
 ## Execute-don't-propose behavior
 

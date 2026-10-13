@@ -76,6 +76,22 @@ done
 if [ -n "${HERMES_COMPRESSION_THRESHOLD_PERCENT:-}" ]; then
     hermes_config compression.threshold "$HERMES_COMPRESSION_THRESHOLD_PERCENT"
 fi
+# Hide internal reasoning and interim assistant updates from user-facing replies (the model keeps
+# its thinking internally for tool use). Seeded once, so later operator preference changes survive
+# restarts like other user-owned display settings. Discord's platform-level interim setting
+# overrides the global one and has its own marker, so homes seeded before it existed still get it.
+DISPLAY_PREFS_MARK="$HERMES_HOME/.ordo-response-display-seeded-v1"
+if [ ! -f "$DISPLAY_PREFS_MARK" ]; then
+    hermes_config display.show_reasoning false
+    hermes_config display.interim_assistant_messages false
+    hermes_config display.platforms.discord.show_reasoning false
+    as_hermes touch "$DISPLAY_PREFS_MARK"
+fi
+DISCORD_INTERIM_PREFS_MARK="$HERMES_HOME/.ordo-discord-interim-off-seeded-v1"
+if [ ! -f "$DISCORD_INTERIM_PREFS_MARK" ]; then
+    hermes_config display.platforms.discord.interim_assistant_messages off
+    as_hermes touch "$DISCORD_INTERIM_PREFS_MARK"
+fi
 # MCP tools come from LiteLLM's MCP gateway (every mcp-* service this key is granted).
 hermes_config mcp_servers.gateway.url http://model-gateway:11435/mcp
 hermes_config mcp_servers.gateway.headers.Authorization "Bearer ${LITELLM_KEY_HERMES}"
