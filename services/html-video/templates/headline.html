@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block card_class %}flat{% endblock %}
+{% block body_class %}headline{% endblock %}
+{% block card %}
+{% if d.kicker %}<div class="kicker"><span class="chip fade" style="--d:.4s">{{ d.kicker }}</span></div>{% endif %}
+<div class="words">
+{% for w in words %}
+  <span class="word slam{% if loop.index0 == accent %} accent{% endif %}" style="--d:{{ '%.2f' % (0.6 + loop.index0 * 0.28) }}s">{{ w }}</span>
+{% endfor %}
+</div>
+{% if d.under %}<div class="under write" style="--d:{{ '%.2f' % (0.75 + words|length * 0.28) }}s">{{ d.under }}</div>{% endif %}
+{% endblock %}

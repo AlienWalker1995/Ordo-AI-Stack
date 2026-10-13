@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Added
+- **`html-video`: HTML/CSS/SVG animations to RGBA video.** An opt-in CPU service
+  (`services/html-video`, headless Chromium from the digest-pinned Playwright image) that renders a
+  CSS-animated card to a PNG-in-MOV clip with alpha, a still, or a contact sheet of frames, stepping
+  every animation to each frame's timestamp so the frames are deterministic. Nine templates (`stat`,
+  `versus`, `list`, `flow`, `quote`, `bars`, `timeline`, `meter`, `headline`; `GET /templates` is the
+  contract, data is validated and autoescaped) in four themes (`paper`, `chalk`, `blueprint`,
+  `neon`), plus a design kit (`GET /design`: motion classes, components, rules, a skeleton and
+  examples) for bespoke cards sent as raw `html`, which must animate with CSS (scripts are refused).
+  Callers render a `sheet` to review the motion in one image before rendering the clip. Profile
+  `media`, no host port.
 - **ops-controller applies every source change it makes.** A model switch, a plugin enable or
   disable and the dashboard's MCP toggle now write `ordo.yaml`, render, and recreate exactly the
   changed set (`ordo/render/changed_set.py`, shared with `ordo apply`), GPU-lease checked; a failed

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block body_class %}list{% endblock %}
+{% block card %}
+<h1 class="title write" style="--d:.45s">{{ d.title }}</h1>
+<ul>
+{% for item in d["items"] %}
+  <li style="--d:{{ '%.2f' % (0.8 + loop.index0 * 0.3) }}s">
+    <svg class="mark mark-{{ item.mark }}" viewBox="0 0 60 60" aria-hidden="true">
+      {% if item.mark == "check" %}
+      <path class="draw" pathLength="1200" d="M10 32 L25 46 L51 14"/>
+      {% elif item.mark == "x" %}
+      <path class="draw" pathLength="1200" d="M14 14 L46 46 M46 14 L14 46"/>
+      {% else %}
+      <path class="draw" pathLength="1200" d="M18 20 C18 8 42 8 42 21 C42 31 30 30 30 40 M30 50 L30 52"/>
+      {% endif %}
+    </svg>
+    <span class="write">{{ item.text }}</span>
+  </li>
+{% endfor %}
+</ul>
+{% endblock %}

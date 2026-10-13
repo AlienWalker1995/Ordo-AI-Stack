@@ -108,12 +108,13 @@ def test_non_user_facing_services_carry_background_flag():
     """`background: True` marks NON-user-facing services — the ones the frontend moves out
     of the main grid (which is only browsable UIs) into the secondary 'Background jobs'
     section (no 'Open' link). That is the backend infra (llamacpp, qdrant, stt, tts)
-    plus the two portless headless workers (rag-ingestion, livesync-bridge). The user-facing UIs —
+    plus the two portless headless workers (rag-ingestion, livesync-bridge) and the html-video
+    renderer (an HTTP API with no UI). The user-facing UIs —
     webui/comfyui/n8n/hermes/codebase-memory-ui — and model-gateway (its Open link is the
     LiteLLM admin UI) must NOT carry it, so an openable service can't be quietly demoted."""
     bg = {s["id"] for s in SERVICES if s.get("background")}
     assert bg == {"rag-ingestion", "llamacpp", "llamacpp-cpu", "qdrant", "stt", "tts",
-                  "couchdb", "livesync-bridge"}
+                  "couchdb", "livesync-bridge", "html-video"}
     user_facing = {"webui", "comfyui", "n8n", "hermes", "codebase-memory-ui", "model-gateway"}
     for s in SERVICES:
         if s["id"] in user_facing:
@@ -156,7 +157,7 @@ def test_visible_services_hides_disabled_plugins():
 def test_visible_services_shows_all_for_live_enabled_set():
     """Against the real rendered manifest's enabled set, nothing is hidden."""
     enabled = {
-        "automation", "codebase-memory-ui", "comfyui", "edge", "hermes-dashboard",
+        "automation", "codebase-memory-ui", "comfyui", "edge", "hermes-dashboard", "html-video",
         "langfuse", "llamacpp-cpu", "ltx-trainer", "monitoring", "open-webui", "rag",
         "searxng-web", "song-gen", "tailnet-names", "voice", "obsidian-livesync",
         "obsidian-livesync-funnel",

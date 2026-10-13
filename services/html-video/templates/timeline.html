@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block card_class %}tilt-right{% endblock %}
+{% block body_class %}timeline{% endblock %}
+{% block card %}
+{% if d.title %}<h1 class="title write" style="--d:.45s">{{ d.title }}</h1>{% endif %}
+<div class="line">
+  <div class="rail grow-x" style="--d:.7s"></div>
+  <div class="events">
+  {% for e in d.events %}
+    <div class="event{% if e.focus == 'yes' %} focus{% endif %}">
+      <div class="when rise" style="--d:{{ '%.2f' % (0.95 + loop.index0 * 0.32) }}s">{{ e.when }}</div>
+      <div class="dot pop" style="--d:{{ '%.2f' % (0.85 + loop.index0 * 0.32) }}s"></div>
+      <div class="what fade" style="--d:{{ '%.2f' % (1.1 + loop.index0 * 0.32) }}s">{{ e.what }}</div>
+    </div>
+  {% endfor %}
+  </div>
+</div>
+{% endblock %}

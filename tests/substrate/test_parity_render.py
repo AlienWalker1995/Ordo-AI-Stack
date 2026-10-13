@@ -52,10 +52,10 @@ def test_dual_gpu_enables_the_full_parity_set():
 
 
 def test_parity_matrix_counts():
-    # 17 kind=service plugins are REGISTERED (10 parity set + ltx-trainer + tailnet-names +
-    # obsidian-livesync + obsidian-livesync-funnel + llamacpp-cpu + langfuse + evals) and 6 kind=mcp
+    # 18 kind=service plugins are REGISTERED (10 parity set + ltx-trainer + tailnet-names +
+    # obsidian-livesync + obsidian-livesync-funnel + llamacpp-cpu + langfuse + evals + html-video) and 6 kind=mcp
     # (qdrant-rag, searxng, memory-vault + the restored codebase-memory / comfyui-mcp /
-    # orchestration). 13 of the service plugins ENABLE on the full host: langfuse, evals, the public
+    # orchestration). 13 of the service plugins ENABLE on the full host: langfuse, evals, html-video, the public
     # Funnel and the tailnet-name sidecars are opt-in (`default: false`), so `plugins: auto`
     # deliberately leaves them out. (The media "worker"
     # plugin was retired, dropping the parity set from 12 to 11; llamacpp-cpu - the CPU LLM
@@ -63,8 +63,8 @@ def test_parity_matrix_counts():
     svc = [p for p in REGISTRY.plugins if p.kind == "service"]
     mcp = [p for p in REGISTRY.plugins if p.kind == "mcp"]
     opt_in = [p.id for p in svc if not p.default]
-    assert len(svc) == 17 and len(mcp) == 6
-    assert opt_in == ["evals", "langfuse", "obsidian-livesync-funnel", "tailnet-names"]
+    assert len(svc) == 18 and len(mcp) == 6
+    assert opt_in == ["evals", "html-video", "langfuse", "obsidian-livesync-funnel", "tailnet-names"]
     rc = _dual()
     assert len(rc.plugins_enabled) == 13
     assert len(rc.mcp_servers) == 6

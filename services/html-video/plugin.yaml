@@ -1,0 +1,37 @@
+# Plugin manifest - data-only. One CPU service: a headless-Chromium renderer that turns an
+# HTML/CSS/SVG animation into an RGBA video clip (or a still, or a contact sheet of frames), for
+# overlay graphics in video pipelines: concept cards, kinetic type, small diagrams. A caller (an
+# agent, a script) sends DATA for a template (`template` + `data` + `theme`), or writes its own card
+# on the shared design system (`html`; GET /design is the kit), and gets a clip back.
+#
+# No GPU: Chromium paints in software and a 2-second 1080x560 card takes a few seconds of CPU. It
+# never touches the GPU scheduler, so a pipeline can render its cards before it takes the lease.
+#
+# OPT-IN (`default: false`): only a stack that composes video needs it; enable it in ordo.yaml.
+id: html-video
+name: HTML motion renderer
+description: Headless Chromium renders HTML/CSS/SVG animations to RGBA video clips (overlay cards, kinetic typography). CPU only.
+requires:
+  nvidia: false
+  ram_gb: 2
+provides: [media]
+default: false
+compose_profile: media
+services:
+  - name: html-video
+    # First-party image, built from THIS folder by `ordo build html-video` (commit-tagged, see
+    # ordo/host/images.py). Untagged here on purpose: the render pins the recorded tag.
+    image: ordo/html-video
+    # Chromium keeps its frame buffers in /dev/shm; docker's 64MB default makes it crash
+    # mid-screenshot on a 1080-wide viewport.
+    shm_size: 1gb
+    # Ceilings, not reservations: one render pegs ~2 cores for a few seconds; the memory cap
+    # covers Chromium plus the in-memory frame buffer of the longest clip the API allows.
+    resources: {cpus: "4", memory: "3g"}
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health',timeout=5).status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s

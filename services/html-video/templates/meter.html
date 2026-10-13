@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block body_class %}meter tone-{{ d.tone }}{% endblock %}
+{% block card %}
+<div class="ring pop" style="--d:.45s">
+  <svg viewBox="0 0 340 340" aria-hidden="true">
+    <circle class="track" cx="170" cy="170" r="150"/>
+    <circle class="fill" cx="170" cy="170" r="150" style="--pct:{{ pct }}; --d:.75s"/>
+  </svg>
+  <div class="pct"><span class="count" style="--to:{{ pct }}; --d:.75s"></span></div>
+</div>
+<div class="side">
+  <div class="label write" style="--d:1.05s"><span class="hl" style="--d:1.5s">{{ d.label }}</span></div>
+  {% if d.note %}<div class="note write" style="--d:1.35s">{{ d.note }}</div>{% endif %}
+</div>
+{% endblock %}
+{% block outside %}
+{% if d.stamp %}<div class="stamp" style="--d:1.8s">{{ d.stamp }}</div>{% endif %}
+{% endblock %}

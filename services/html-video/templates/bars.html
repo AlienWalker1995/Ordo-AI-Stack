@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block card_class %}flat{% endblock %}
+{% block body_class %}bars{% endblock %}
+{% block card %}
+{% if d.title %}<h1 class="title write" style="--d:.45s">{{ d.title }}</h1>{% endif %}
+<div class="rows">
+{% for bar in bars %}
+  <div class="row{% if bar.focus %} focus{% endif %}" style="--w:{{ bar.width }}">
+    <div class="b-label fade" style="--d:{{ '%.2f' % (0.7 + loop.index0 * 0.22) }}s">{{ bar.label }}</div>
+    <div class="track">
+      <div class="bar grow-x" style="--d:{{ '%.2f' % (0.8 + loop.index0 * 0.22) }}s"></div>
+      <div class="b-value fade" style="--d:{{ '%.2f' % (1.3 + loop.index0 * 0.22) }}s">{{ bar.display }}</div>
+    </div>
+  </div>
+{% endfor %}
+</div>
+{% endblock %}
+{% block outside %}
+{% if d.stamp %}<div class="stamp" style="--d:{{ '%.2f' % (1.6 + bars|length * 0.22) }}s">{{ d.stamp }}</div>{% endif %}
+{% endblock %}

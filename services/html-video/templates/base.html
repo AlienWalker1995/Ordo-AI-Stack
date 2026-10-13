@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ template_id }}</title>
+<link rel="stylesheet" href="/assets/cards.css">
+</head>
+<body data-theme="{{ theme }}">
+<svg width="0" height="0" aria-hidden="true" style="position:absolute">
+  <defs>
+    <!-- The "drawn by hand" wobble: displace the stroke by low-frequency noise. -->
+    <filter id="rough" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.007" numOctaves="1" seed="7" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="8" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+</svg>
+<div class="stage">
+  <div class="card {% block card_class %}{% endblock %}">
+    <svg class="frame" viewBox="0 0 976 476" aria-hidden="true">
+      <rect x="4" y="4" width="968" height="468" rx="22"/>
+    </svg>
+    <div class="body {% block body_class %}{% endblock %}">
+      {% block card %}{% endblock %}
+    </div>
+    {% block outside %}{% endblock %}
+  </div>
+</div>
+</body>
+</html>

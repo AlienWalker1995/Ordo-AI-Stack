@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block body_class %}quote{% endblock %}
+{% block card %}
+<div class="qmark pop" style="--d:.45s">&ldquo;</div>
+<p class="qtext write" style="--d:.7s">{{ d.text }}</p>
+<div class="who fade" style="--d:1.3s">
+  <svg viewBox="0 0 60 12" aria-hidden="true"><path d="M3 7 C15 3 30 9 57 5"/></svg>
+  <span>{{ d.who }}</span>
+</div>
+{% endblock %}
+{% block outside %}
+{% if d.stamp %}<div class="stamp" style="--d:1.6s">{{ d.stamp }}</div>{% endif %}
+{% endblock %}
