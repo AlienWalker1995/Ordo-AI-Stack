@@ -6,9 +6,9 @@
 # Upstream pin. ALWAYS record which release the SHA is — a bare 40-hex string tells a
 # future reader nothing, and this pin silently rotted 2.5 months (see below).
 #   v0.21.7 (2026-10-11) — commit 71d34bad, the tag's dereferenced commit.
-#   Re-ported to this pin: pressure-user-condense, checkpoint-scan-bounds,
-#   discord-relative-imports, models-analytics-aux-fold and the /voice join block (none
-#   fixed upstream). Dropped: reasoning-only-stop-reprompt, fixed upstream (see below).
+#   The image runs this commit UNMODIFIED: no diffs, no anchor patches. Stack behavior is
+#   configuration (services/hermes/entrypoint.sh) and repo-owned skills and plugins. A
+#   Hermes behavior that config cannot express is an upstream issue, not a local patch.
 #   NOTE: `git/ref/tags/<tag>` returns the ANNOTATED TAG object here, not the commit;
 #   deref via `git/tags/<sha>` or the checkout below resolves to the wrong object.
 # Previous pin 5fdcfd85 was a 2026-05-19 commit left 11 releases behind, several citing
@@ -155,123 +155,19 @@ RUN git clone --no-single-branch "$HERMES_REPO" /opt/hermes-agent \
     && git checkout "$HERMES_PINNED_SHA" \
     && chown -R hermes:hermes /opt/hermes-agent
 
-# PATCH: pressure-pass condensation of oversized USER messages (pass 5).
-# A giant user paste (e.g. an exported transcript handed to Hermes as the task)
-# deadlocked compression on 2026-08-15: after compaction the whole transcript sat
-# inside the protected tail, every demotion pass spares user rows, so preflight
-# ended in no_progress forever while the request could only grow past the model
-# window (llamacpp rejected 131,147 > 131,072 tokens; 10 doomed 30-min retries).
-# The patch lets the #61932 pressure pass — as its FINAL escalation — condense a
-# non-active oversized user message to a head/tail excerpt with an explicit
-# marker (full original stays in the session store). Includes upstream-style
-# tests (tests/agent/test_context_compressor.py — 113 pass at this pin).
-# --check first: the build fails loudly if a future pin bump breaks the patch.
-COPY pressure-user-condense.diff /tmp/pressure-user-condense.diff
-RUN cd /opt/hermes-agent \
-    && git apply --recount --check /tmp/pressure-user-condense.diff \
-    && git apply --recount /tmp/pressure-user-condense.diff \
-    && chown hermes:hermes agent/context_compressor.py tests/agent/test_context_compressor.py \
-    && echo "pressure-user-condense patch applied"
-
-# PATCH: bound the checkpoint manager's pre-snapshot tree walk.
-# With checkpoints enabled, any terminal command matching the destructive
-# heuristic (a bare `2>/dev/null` qualifies via the `>` redirect regex)
-# triggers _dir_file_count(): an unbounded rglob of the process cwd. Our
-# /workspace/data is a Docker Desktop 9p bind (~50-95 stats/s), so each walk
-# toward the 50k-file cap took ~9 min — and new_turn() clears the dedup set,
-# so it repeated EVERY turn (2026-08-17 session ed681a: ~20 stalls x ~530s,
-# confirmed by py-spy mid-stall in _dir_file_count; same pathology all of
-# 2026-08-16). The scan always ended in ">50k files, skip" logged at DEBUG,
-# so no checkpoint was ever produced. The patch (a) wall-clock-bounds the
-# walk (HERMES_CHECKPOINT_SCAN_SECONDS, default 10s), (b) remembers the
-# too-big verdict across turns, (c) logs the skip once at INFO. Upstream
-# v0.21.7 is still unbounded — re-check on pin bumps.
-# --check first: the build fails loudly if a future pin bump breaks the patch.
-COPY checkpoint-scan-bounds.diff /tmp/checkpoint-scan-bounds.diff
-RUN cd /opt/hermes-agent \
-    && git apply --recount --check /tmp/checkpoint-scan-bounds.diff \
-    && git apply --recount /tmp/checkpoint-scan-bounds.diff \
-    && chown hermes:hermes tools/checkpoint_manager.py \
-    && echo "checkpoint-scan-bounds patch applied"
-
-# PATCH: Discord plugin relative self-imports (kills the twin-module bug).
-# The plugin loads under the namespace `hermes_plugins.platforms__discord`, but
-# adapter.py / adapter_media.py used ABSOLUTE self-imports
-# (`from plugins.platforms.discord.adapter import ...`). Because the venv is an
-# editable install, `plugins` is importable as a top-level package, so those
-# absolute imports spawned a SECOND copy of the module (a "twin") whose module
-# globals never got rebound. After a venv rebuild that wiped discord.py, the
-# lazy installer rebound only the PRIMARY module, leaving the twin's `discord`
-# global at None — text sends (primary) worked but file attachments (twin)
-# crashed with `AttributeError: 'NoneType' object has no attribute 'File'` in
-# _send_file_attachment. Relative imports (`.adapter`, `.adapter_media`,
-# `.recovery`) resolve within the already-loaded plugin package, so no twin can
-# ever be created. Upstream v0.21.7 still uses the absolute form (and added four more:
-# the slash-auth, thread-titles, voice-info and component-auth mixins, plus onboarding);
-# all are relative here — re-check on pin bumps. --check first: the build fails loudly if a future pin
-# bump breaks the patch.
-COPY discord-relative-imports.diff /tmp/discord-relative-imports.diff
-RUN cd /opt/hermes-agent \
-    && git apply --recount --check /tmp/discord-relative-imports.diff \
-    && git apply --recount /tmp/discord-relative-imports.diff \
-    && chown hermes:hermes plugins/platforms/discord/adapter.py \
-                           plugins/platforms/discord/adapter_media.py \
-    && echo "discord-relative-imports patch applied"
-
-# (Dropped at v0.21.7: reasoning-only-stop-reprompt. Upstream now promotes a reasoning-only
-# stop to the answer only on trusted routes (agent/reasoning_promotion.py: an explicit
-# `answer_in_reasoning` capability or the Nemotron parser route), so on this stack the turn
-# already takes the thinking-prefill / empty-response ladder by default.)
-
-# PATCH: one Models-page card per model on the dashboard's Analytics page.
-# Aux usage (titles, compression, approvals, vision) records whatever provider string it resolved
-# (`auto`, `custom`, empty), and upstream keyed those rows by (model, provider) and dropped the task
-# label, so this stack's single local model showed as ~15 unlabeled `local-chat` cards. The diff
-# folds aux usage into the model's busiest session row (sessions not counted twice); a model used
-# only by aux tasks still gets one card (upstream #23270). Includes a test. v0.21.7 merges aux
-# rows by (model, provider) only, which still splits `auto`/`custom`/empty into separate cards.
-# --check first: the build fails loudly if a future pin bump breaks the patch.
-COPY models-analytics-aux-fold.diff /tmp/models-analytics-aux-fold.diff
-RUN cd /opt/hermes-agent \
-    && git apply --recount --check /tmp/models-analytics-aux-fold.diff \
-    && git apply --recount /tmp/models-analytics-aux-fold.diff \
-    && chown hermes:hermes hermes_cli/web_routers/analytics.py \
-                           tests/hermes_state/test_aux_usage_accounting.py \
-    && echo "models-analytics-aux-fold patch applied"
-
-# PATCH: an @mention sent as a Discord quote-reply gets its own thread like any other mention.
-# Upstream skips auto-thread for every reply, so replying to an older message (your own included)
-# answered straight in the channel. Only a reply to one of the bot's own in-channel answers now
-# stays inline (it continues that exchange). Includes tests. v0.21.7 has no fix.
-# --check first: the build fails loudly if a future pin bump breaks the patch.
-COPY discord-reply-auto-thread.diff /tmp/discord-reply-auto-thread.diff
-RUN cd /opt/hermes-agent \
-    && git apply --recount --check /tmp/discord-reply-auto-thread.diff \
-    && git apply --recount /tmp/discord-reply-auto-thread.diff \
-    && chown hermes:hermes plugins/platforms/discord/adapter.py \
-                           tests/gateway/test_discord_free_response.py \
-    && echo "discord-reply-auto-thread patch applied"
-
-# SKILLS OWNED BY THIS REPO: the bundled ComfyUI skill, patched and shipped read-only.
-# Upstream's scripts default to submitting at http://127.0.0.1:8188, straight at the engine. On
-# this stack that skips the GPU admission gate, which is what takes the scheduler lease and evicts
-# the resident model before a render; without it the two share the GPU. The diff makes the
-# default follow COMFYUI_URL, the address the renderer already publishes (and already points at
-# the gate when ComfyUI is gated), falling back to stock when unset. The overlay markdown is
-# spliced into SKILL.md ahead of the upstream quick start, which otherwise tells the agent to
-# install and launch its own ComfyUI.
+# SKILLS OWNED BY THIS REPO: upstream's optional ComfyUI skill plus this stack's deployment notes.
+# The notes (skill-overlays/comfyui/ordo-deployment.md) are spliced into SKILL.md ahead of the
+# upstream quick start, which otherwise tells the agent to install and launch its own ComfyUI, and
+# tell it to pass --host "$COMFYUI_URL" (the GPU admission gate) to every script. Upstream's code is
+# not modified: its scripts already take --host, and the stock default (127.0.0.1:8188) has nothing
+# listening in this container, so a missed --host fails to connect instead of skipping the lease.
 # The result goes to /opt/ordo-skills, root-owned and read-only, which the entrypoint registers
 # as a Hermes `skills.external_dirs` entry: the curator will not rewrite it, the bundled sync
 # defers to it, and a volume loss cannot take it. Starting from the image's own bundled copy
 # means upstream fixes arrive with every hermes-agent pin bump.
-# --check first: the build fails loudly if a future pin bump breaks the patch.
 COPY skill-overlays/ /tmp/skill-overlays/
 COPY scripts/ordo_skills.py /opt/ordo/ordo_skills.py
 RUN cd /opt/hermes-agent \
-    && git apply --recount --check /tmp/skill-overlays/comfyui/submit-via-comfyui-url.diff \
-    && git apply --recount /tmp/skill-overlays/comfyui/submit-via-comfyui-url.diff \
-    && chown hermes:hermes optional-skills/creative/comfyui/scripts/_common.py \
-                           optional-skills/creative/comfyui/tests/test_run_workflow.py \
     && python3 /opt/ordo/ordo_skills.py build \
            optional-skills/creative/comfyui \
            /tmp/skill-overlays/comfyui/ordo-deployment.md \
@@ -285,9 +181,8 @@ RUN cd /opt/hermes-agent \
 # v0.21.6 hermes_cli reads it from install-stamp.json (written by upstream's packagers), not from
 # pyproject (0.0.0) or git, so a plain clone reports "vunknown". Same script and flags as upstream's
 # Docker build; the base version and distance come from the pinned checkout's nearest release tag,
-# so HERMES_PINNED_SHA stays the one source of truth. Written after the patches above, so the stamp
-# records the tree as dirty, which it is. git runs as root on the hermes-owned clone, hence the
-# per-command safe.directory.
+# so HERMES_PINNED_SHA stays the one source of truth. git runs as root on the hermes-owned clone,
+# hence the per-command safe.directory.
 RUN cd /opt/hermes-agent     && export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=/opt/hermes-agent     && described="$(git describe --tags --long --match 'v[0-9]*')"     && base_tag="${described%-*-g*}"     && distance="${described%-g*}" && distance="${distance##*-}"     && python3 scripts/write_install_stamp.py --output install-stamp.json            --commit "$(git rev-parse HEAD)" --base-version "${base_tag#v}" --distance "$distance"            --source ci --distribution docker --update-mechanism external     && chown hermes:hermes install-stamp.json
 
 USER hermes
@@ -352,131 +247,6 @@ RUN uv pip install "langfuse==4.15.1"
 #
 # Upstream's detection is strictly better than the sed: correct on ext4, correct on a
 # WAL-hostile filesystem, and it cannot rot the way an anchor-matching patch does.
-
-# Ordo AI Stack patch: allow 3D/maker file types as native outbound attachments.
-# Upstream's outbound media allowlist (gateway/platforms/base.py) omits
-# STL/3MF/OBJ/STEP/gcode/etc. Since v2026.9.24 an explicit MEDIA: tag with an unknown
-# extension still delivers (validated pass, upstream #36060), but the bare-path
-# auto-detect (extract_local_files) only recognises MEDIA_DELIVERY_EXTS, so a generated
-# .stl mentioned by path degrades to plain text instead of a Discord/Telegram file
-# attachment. Non-image/video types already route to send_document, so once recognized
-# they attach. The asserts fail the build loudly if upstream moves the anchor.
-RUN python3 - <<'PYEOF'
-import pathlib
-b = pathlib.Path("/opt/hermes-agent/gateway/platforms/base.py")
-s = b.read_text()
-
-# MEDIA_DELIVERY_EXTS is upstream's single source of truth: the MEDIA: cleanup regex and
-# extract_local_files() both derive from it, so one insertion covers both. Assert that,
-# or a future upstream split silently half-patches us.
-assert "MEDIA_DELIVERY_EXTS" in s, "hermes: MEDIA_DELIVERY_EXTS gone — allowlist restructured"
-assert "sorted((e.lstrip(\".\") for e in MEDIA_DELIVERY_EXTS)" in s, \
-    "hermes: MEDIA: regex alternation no longer derived from MEDIA_DELIVERY_EXTS"
-assert "ext_part = '|'.join(e.lstrip('.') for e in MEDIA_DELIVERY_EXTS)" in s, \
-    "hermes: extract_local_files no longer derived from MEDIA_DELIVERY_EXTS — needs a second patch site"
-
-if '".stl"' in s:
-    print("outbound media allowlist already carries 3D/maker formats — nothing to do")
-else:
-    # The tuple's last line, closing paren and trailing comment included, so the
-    # similar ".html", ".htm" line in _TEXT_INJECT_EXTENSIONS can never match.
-    anchor = '    ".html", ".htm")  # web / rendered output\n'
-    assert s.count(anchor) == 1, "hermes: MEDIA_DELIVERY_EXTS tail anchor missing or ambiguous"
-    exts = ['.stl', '.3mf', '.obj', '.step', '.stp', '.gcode', '.ply', '.glb', '.gltf']
-    s = s.replace(anchor,
-                  '    ".html", ".htm",  # web / rendered output\n'
-                  '    ' + ", ".join('"%s"' % e for e in exts) + ')  # Ordo AI Stack: 3D / maker formats\n')
-    b.write_text(s)
-    print("patched MEDIA_DELIVERY_EXTS with 3D/maker formats")
-
-assert '".stl"' in b.read_text(), "hermes: 3D ext patch did not stick"
-PYEOF
-
-# Ordo AI Stack patch (DIAGNOSTIC ONLY): name the caller on every voice-channel leave.
-#
-# An AUTO-JOIN patch briefly lived here (2026-08-05, three iterations) and was REMOVED
-# the same day — do not reintroduce it. Lessons, paid for live:
-#   * Upstream has NO auto-join; it is open idea #33683. The web claims of a
-#     `discord.voice.auto_join` config are extrapolated from that issue — verify with a
-#     code search (`auto_join_channels` -> 0 hits), not docs summaries.
-#   * Every mystery that looked like "the adapter double-fires events" — duplicate
-#     threads per message, doubled voice_state logs, "Already connected" zombies, an
-#     unexplained voice disconnect — was actually a LEAKED SECOND GATEWAY: a
-#     `docker compose run --rm agent` debug container survives when the compose client
-#     is timeout-killed, and two processes then share one bot token and one brain.
-#     Before debugging "impossible" duplicate behavior: `docker ps --filter
-#     name=ordo-agent-run`. Never leave a foreground gateway run unreaped.
-#   * Even so, patching event handlers we don't own remains the wrong seam — the
-#     adapter's voice lifecycle (locks, receiver, mixer) is not a public surface.
-#   * The SUPPORTED equivalent of "if I'm in the channel it works": run /voice join once
-#     and set `discord.voice_channel_inactivity_timeout_seconds: 0` in config.yaml
-#     (minimum=0 means 0 disables the auto-leave) — the bot stays resident in the VC.
-# What remains below is one INFO line instrumenting leave_voice_channel, because a leave
-# fired 2026-08-05 23:43 with NO recorded initiator (provably not the inactivity timeout).
-# Remove once upstream logs its own leave reasons.
-RUN python3 - <<'PYEOF'
-import pathlib
-b = pathlib.Path("/opt/hermes-agent/plugins/platforms/discord/adapter.py")
-s = b.read_text()
-
-# Instrument leave_voice_channel with its caller. Something tore the bot out of the
-# channel ~30s after TTS on 2026-08-05 (not the inactivity timeout — 300s, and its
-# text notification never fired) and INFO logs recorded no initiator. One line names
-# the caller on every future leave instead of leaving us to guess again.
-anchor2 = '''    async def leave_voice_channel(self, guild_id: int) -> None:
-        """Disconnect from the voice channel in a guild."""'''
-assert s.count(anchor2) == 1, "hermes voice: leave_voice_channel anchor moved/ambiguous"
-inject2 = anchor2 + '''
-        import traceback as _tb
-        logger.info("leave_voice_channel(guild=%s) called by:\\n%s", guild_id,
-                    "".join(_tb.format_stack(limit=6)[:-1]))'''
-s = s.replace(anchor2, inject2, 1)
-
-b.write_text(s)
-assert "leave_voice_channel(guild=%s) called by" in b.read_text(), "hermes voice: leave instrumentation did not stick"
-print("patched Discord adapter with leave instrumentation")
-PYEOF
-
-# Ordo AI Stack patch: /voice join must PRESERVE an existing per-channel voice mode.
-#
-# Upstream's join handler unconditionally sets the bound text channel's mode to "all"
-# (speak EVERY reply, typed text included) and persists it — clobbering an operator's
-# saved "voice_only" ("voice in -> voice out; text in -> text out"). The only recovery
-# is remembering to run /voice on after EVERY rejoin; forgetting it silently degrades
-# to the bot talking over the text channel. Unlike the removed auto-join patch (a
-# missing surface), this is a one-line bug on the SUPPORTED tri-state surface —
-# upstream reaffirmed the voice_mode design when closing PR #19521, and their meta
-# issue #78207 lane 02 tracks exactly this decision layer. setdefault keeps upstream's
-# "all" for channels with no saved mode (non-breaking) and respects a saved one.
-# Drop this block when an upstream fix lands.
-RUN python3 - <<'PYEOF'
-import pathlib
-# The join handler lives in gateway/run_voice.py and records the mode through
-# _apply_voice_mode(...), which persists it and mirrors it into the adapter. The bug is
-# unchanged at v0.21.7: join passes a hard-coded "all".
-b = pathlib.Path("/opt/hermes-agent/gateway/run_voice.py")
-s = b.read_text()
-
-anchor = '''        self._apply_voice_mode(adapter, self._voice_key_for_source(event.source),
-                               event.source.chat_id, "all")
-        return t("gateway.voice.channel_joined", name=voice_channel.name)'''
-assert s.count(anchor) == 1, "hermes voice: join-handler mode/reply anchor moved/ambiguous"
-s = s.replace(anchor, '''        _vkey = self._voice_key_for_source(event.source)
-        _vmode = self._voice_mode.get(_vkey, "all")
-        self._apply_voice_mode(adapter, _vkey, event.source.chat_id, _vmode)
-        # The stock reply says "I'll speak my replies", false when a preserved mode is
-        # voice_only/off. Reflect the effective mode instead.
-        if _vmode == "all":
-            return t("gateway.voice.channel_joined", name=voice_channel.name)
-        return (f"Joined voice channel **{voice_channel.name}**.\\n"
-                f"I'll listen; replies follow your saved voice mode ({_vmode}). "
-                f"Use /voice leave to disconnect.")''', 1)
-
-b.write_text(s)
-assert '_vmode = self._voice_mode.get(_vkey, "all")' in b.read_text(), \
-    "hermes voice: join mode-preserve patch did not stick"
-print("patched gateway: /voice join preserves saved voice mode")
-PYEOF
 
 # Web UI — copy built SPA from stage 1.
 COPY --from=web-builder --chown=hermes:hermes \

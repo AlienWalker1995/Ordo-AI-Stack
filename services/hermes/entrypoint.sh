@@ -56,6 +56,7 @@ if [ -n "${GITHUB_BACKUP_PAT_FILE:-}" ] && [ -s "$GITHUB_BACKUP_PAT_FILE" ]; the
 fi
 
 HERMES_BIN=/opt/hermes-agent/.venv/bin/hermes
+HERMES_PYTHON=/opt/hermes-agent/.venv/bin/python
 
 # Hermes API server gate (the endpoint the `evals` runner drives at http://agent:8642/v1).
 # Hermes enables the api_server platform from ENV alone (API_SERVER_KEY/HOST/PORT, see
@@ -113,6 +114,16 @@ gosu hermes "$HERMES_BIN" config set agent.api_max_retries  "${HERMES_API_MAX_RE
 # See agent/model_metadata.py get_model_context_length resolution order #0
 # and run_agent.py line ~1605 where auxiliary.compression.context_length is read.
 gosu hermes "$HERMES_BIN" config set auxiliary.compression.context_length "$CONTEXT_WINDOW" >/dev/null
+# Every auxiliary task (titles, compression, vision, approvals, ...) runs on the main model, the
+# stack's local gateway route. Their default, `auto`, probes for a provider and records its usage
+# under the literal provider "auto", so the dashboard's Models page split one model into several
+# cards. `main` resolves to the main provider and accounts under it. The task list comes from
+# Hermes's own defaults, so a task added upstream is covered without editing this file.
+AUX_TASKS="$(gosu hermes "$HERMES_PYTHON" -c 'from hermes_cli.config_defaults import DEFAULT_CONFIG
+print(" ".join(k for k, v in DEFAULT_CONFIG["auxiliary"].items() if isinstance(v, dict) and "provider" in v))')"
+for task in $AUX_TASKS; do
+  gosu hermes "$HERMES_BIN" config set "auxiliary.${task}.provider" main >/dev/null
+done
 # Compaction trigger as a fraction of the effective input budget (context_length - max_tokens).
 # Only seed when explicitly set so this stays a no-op (framework default) for deployments that
 # don't tune it. With a large max_tokens the default floors the trigger at MINIMUM_CONTEXT_LENGTH
