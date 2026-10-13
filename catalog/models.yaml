@@ -369,7 +369,11 @@ models:
     ctx_default: 262144
     # The same serving flags as the other NInfer entries (one request at a time, upstream issue #339;
     # waiting requests queue on the GPU instead of failing over to the CPU fallback).
-    extra_args: "--max-concurrency 1 --max-pending-requests 8 --pending-timeout-ms 600000 --kv-dtype fp8 --spec mtp --draft-tokens 3 --lm-head-draft --preserve-thinking"
+    # --presence-penalty 1.5: the model card's remedy for endless repetition (0 to 2). With the card's
+    # thinking-mode default of 0 this abliterated model looped in its reasoning until the 32,768-token
+    # thinking budget ran out, 13 to 90 times a day (engine log: thinking 32,768/32,768, 96-99% MTP
+    # acceptance). Temperature, top-p and top-k stay at the model's own defaults.
+    extra_args: "--max-concurrency 1 --max-pending-requests 8 --pending-timeout-ms 600000 --kv-dtype fp8 --spec mtp --draft-tokens 3 --lm-head-draft --preserve-thinking --presence-penalty 1.5"
     # Vision on. With the encoder loaded the NVFP4 weights leave room for 200,000 tokens, not 262,144
     # (measured 2026-10-08: 262,144 with vision starts only on an otherwise empty card, 31.4GiB of
     # 31.8, with no room for the embedder this card also serves; 200,000 runs at 29.3GiB, image QA correct).
