@@ -240,10 +240,11 @@ ul, ol { list-style: none; }
 .meter .ring svg { width: 100%; height: 100%; rotate: -90deg; overflow: visible; }
 .meter .ring circle { fill: none; stroke-width: 34; }
 .meter .ring .track { stroke: color-mix(in srgb, var(--ink) 14%, transparent); }
-.meter .ring .fill { stroke: var(--hype); stroke-linecap: round; stroke-dasharray: 0 1000; animation: ring 1s cubic-bezier(0.3, 0.9, 0.3, 1) var(--d) both; }
-[data-theme="neon"] .meter .ring .fill { filter: drop-shadow(0 0 10px currentColor); color: var(--hype); }
-.meter.tone-good .ring .fill { stroke: var(--good); }
-.meter.tone-bad .ring .fill { stroke: var(--bad); }
+.meter .ring .fill { color: var(--hype); stroke: currentColor; stroke-linecap: round; stroke-dasharray: 0 1000; animation: ring 1s cubic-bezier(0.3, 0.9, 0.3, 1) var(--d) both; }
+/* The glow follows the tone: currentColor is the fill's own colour. */
+[data-theme="neon"] .meter .ring .fill { filter: drop-shadow(0 0 10px currentColor); }
+.meter.tone-good .ring .fill { color: var(--good); }
+.meter.tone-bad .ring .fill { color: var(--bad); }
 .meter .pct { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--display); font-size: 104px; text-shadow: var(--glow); }
 .meter .pct .count::after { content: counter(n) "%"; }
 .meter .side { flex: 1; display: flex; flex-direction: column; gap: 14px; padding-right: 12px; }
