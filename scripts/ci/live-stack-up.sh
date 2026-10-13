@@ -27,8 +27,10 @@ if docker ps --filter "label=com.docker.compose.project=${PROJECT}" --format '{{
 fi
 
 python -m ordo init --yes --out "$OUT"
-OAUTH2_PROXY_CLIENT_SECRET=ci-placeholder python -m ordo remote enable --yes --out "$OUT" \
-  --hostname ordo.ci.test --bind 127.0.0.1 --client-id ci-placeholder --emails ci@example.test
+OAUTH2_PROXY_CLIENT_SECRET=ci-placeholder HERMES_DASHBOARD_OIDC_CLIENT_SECRET=ci-placeholder \
+  python -m ordo remote enable --yes --out "$OUT" \
+  --hostname ordo.ci.test --bind 127.0.0.1 --client-id ci-placeholder --emails ci@example.test \
+  --hermes-client-id ci-placeholder
 
 mkdir -p auth/caddy/certs
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=ordo.ci.test" \
