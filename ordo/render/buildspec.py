@@ -113,7 +113,7 @@ def manifest_image_contexts(
     `services/<id>` default), or EXTERNAL for an out-of-band image.
 
     First writer wins, in canonical-owner order (agents, then dashboards, then plugins): the
-    `ordo/agent-<id>` image is OWNED by the agent, so the hermes-dashboard plugin that merely
+    `ordo/agent-<id>` image is OWNED by the agent, so a plugin that merely
     REUSES that image doesn't mis-claim it under its own (Dockerfile-less) folder."""
     m: dict[str, str] = {}
 

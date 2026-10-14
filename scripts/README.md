@@ -28,7 +28,7 @@ Setup, operations, and maintenance scripts for the Ordo AI Stack.
 | Script | Purpose |
 |--------|---------|
 | `ci/check-monitoring-config.sh` | CI's monitoring job: validates the Prometheus rules and Alertmanager config with `promtool` / `amtool`. |
-| `ci/live-stack-up.sh` | CI's `docker` job: brings up agent, ops-controller, caddy and hermes-dashboard through `ordo init` / `ordo remote enable` / `ordo up` for the live docker tests. Throwaway daemons only: it uses project `ordo`. |
+| `ci/live-stack-up.sh` | CI's `docker` job: brings up agent, ops-controller and caddy through `ordo init` / `ordo remote enable` / `ordo up` for the live docker tests. Throwaway daemons only: it uses project `ordo`. |
 
 ## MCP
 

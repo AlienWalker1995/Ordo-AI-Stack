@@ -34,7 +34,7 @@ See [hermes-agent.md](hermes-agent.md) for the full setup flow.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `HERMES_DASHBOARD_PORT` | `9119` | Internal port the Hermes dashboard listens on (`ordo-net` only, no host publish; Caddy reverse-proxies it at `${CADDY_TAILNET_HOSTNAME}:8447/`, served at the origin root) |
+| `HERMES_DASHBOARD_PORT` | `9119` | Internal port the Hermes dashboard listens on inside the `agent` container (`ordo-net` only, no host publish; Caddy reverse-proxies it at `${CADDY_TAILNET_HOSTNAME}:8447/`, served at the origin root) |
 | `DISCORD_BOT_TOKEN` | *(empty)* | Discord bot token. Set it in the secret store (`ordo secrets set DISCORD_BOT_TOKEN --from-stdin`); the agent reads it from `/run/secrets/discord_bot_token`. Never in `.env`. |
 | `DISCORD_ALLOWED_USERS` | *(empty)* | Comma-separated Discord user IDs authorized to DM / invoke the bot. Required for Discord use. |
 | `DISCORD_ALLOWED_CHANNELS` | *(empty)* | Comma-separated channel IDs where the bot may respond. Optional. |
@@ -442,7 +442,7 @@ nodes that `services/song-gen` declares, so never roll back below it.
 
 ## Network Ports
 
-Caddy is still the **only** service with published host ports, every other service (dashboard, open-webui, model-gateway, litellm-db, comfyui, hermes-dashboard, langfuse-web, the `mcp-*` servers, qdrant, ops-controller, etc.) has no `ports:` entry and is reachable only from other containers on the internal `ordo-net` network. But since 2026-07-24 Caddy itself is **port-per-service**: it publishes the SSO-gated host ports below on `${CADDY_TAILNET_HOSTNAME}` (all bound to `CADDY_BIND`) instead of routing every UI under subpaths of a single `:443`. Each prebuilt SPA is served at the root it was compiled for, ending the subpath-rewrite workarounds (Open WebUI root-catchall 404s, Hermes header-based base injection, codebase-memory nginx rewrites).
+Caddy is still the **only** service with published host ports, every other service (dashboard, open-webui, model-gateway, litellm-db, comfyui, langfuse-web, the `mcp-*` servers, qdrant, ops-controller, etc.) has no `ports:` entry and is reachable only from other containers on the internal `ordo-net` network. But since 2026-07-24 Caddy itself is **port-per-service**: it publishes the SSO-gated host ports below on `${CADDY_TAILNET_HOSTNAME}` (all bound to `CADDY_BIND`) instead of routing every UI under subpaths of a single `:443`. Each prebuilt SPA is served at the root it was compiled for, ending the subpath-rewrite workarounds (Open WebUI root-catchall 404s, Hermes header-based base injection, codebase-memory nginx rewrites).
 
 One Google sign-in covers every port except Hermes's `:8447` (its own sign-in) **and the clean per-service tailnet names** — the oauth2-proxy session cookie is domain-scoped, the one OAuth callback stays on `:443`, and the SSO gate's `rd=` redirect carries `{host}` (portless), so a single wildcard `--whitelist-domain=.<domain>` in the edge plugin covers every port and every sidecar name. A first sign-in through a bare `:844x` port lands on the `:443` hub and the domain-scoped cookie then covers everything (one extra click); the clean tailnet names (`chat`/`dash`/… `.<tailnet>.ts.net`) return you straight to the service. No new Google OAuth redirect URIs are needed. See [deployment-models.md](deployment-models.md) for the clean-URL sidecar layer.
 

@@ -3,7 +3,6 @@ import json
 import re
 from pathlib import Path
 
-import pytest
 import yaml
 
 from ordo.render import compose
@@ -330,43 +329,11 @@ def test_mcp_healthcheck_defaults_to_the_renderer_probe_unless_overridden():
     assert searxng != expected and searxng["test"][1] == "node"
 
 
-def test_only_ops_controller_and_the_agent_runtime_mount_the_docker_socket():
-    """The Hermes dashboard runs agent sessions with the agent's runtime (`agent_runtime: true`)."""
+def test_only_ops_controller_and_agent_mount_the_docker_socket():
     c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
     with_sock = sorted(n for n, s in c["services"].items()
                        if any("/var/run/docker.sock" in v for v in s.get("volumes", []) or []))
-    assert with_sock == ["agent", "hermes-dashboard", "ops-controller"]
-
-
-def test_the_hermes_dashboard_gets_the_agent_runtime_less_the_gateway_only_names():
-    c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
-    agent, dashboard = c["services"]["agent"], c["services"]["hermes-dashboard"]
-    gateway_only = {"API_SERVER_KEY", "API_SERVER_HOST", "API_SERVER_PORT", "TELEGRAM_BOT_TOKEN",
-                    "DISCORD_BOT_TOKEN_FILE"}
-    for key, value in agent["environment"].items():
-        if key in gateway_only or key.startswith("DISCORD_"):
-            assert key not in dashboard["environment"], key
-        else:
-            assert dashboard["environment"][key] == value, key
-    assert set(agent["volumes"]) - set(dashboard["volumes"]) == {
-        v for v in agent["volumes"] if "/run/secrets/discord_bot_token" in v}
-    assert any("/run/secrets/claude_code_oauth_token" in v for v in dashboard["volumes"])
-    assert dashboard["network_mode"] == "service:caddy"
-    assert dashboard["command"][:2] == ["hermes", "dashboard"]
-
-
-def test_agent_runtime_refuses_a_name_the_agent_already_declares():
-    from ordo.render.agents import Agent
-    from ordo.render.plugins import PluginService
-    agent = Agent.from_dict({"id": "a", "environment": {"X": "1", "BOT": "t"},
-                             "volumes": ["v:/data"], "gateway_only": {"environment": ["BOT"]}})
-    merged = agent.session_runtime_for(PluginService(name="ui", image="i", agent_runtime=True,
-                                                     env={"OWN": "2"}))
-    assert merged.env == {"X": "1", "OWN": "2"} and merged.volumes == ["v:/data"]
-    with pytest.raises(ValueError, match="already come from agent"):
-        agent.session_runtime_for(PluginService(name="ui", image="i", agent_runtime=True, env={"X": "1"}))
-    with pytest.raises(ValueError, match="gateway_only names"):
-        Agent.from_dict({"id": "a", "gateway_only": {"environment": ["NOPE"]}})
+    assert with_sock == ["agent", "ops-controller"]
 
 
 def test_model_without_backend_image_runs_the_hosts_cuda_build(tmp_path):
@@ -485,25 +452,31 @@ def test_no_service_joins_a_namespace_that_is_not_rendered(tmp_path):
                     f"plugins={plugins} — gate its plugin with depends_on")
 
 
+def _dotenv(tmp_path):
+    return dict(line.split("=", 1) for line in (tmp_path / ".env").read_text().splitlines()
+                if "=" in line and not line.startswith("#"))
+
+
 def test_hermes_dashboard_is_dropped_when_the_edge_is_disabled(tmp_path):
-    """Enabling the Hermes SPA without the edge yields NO hermes-dashboard service rather
-    than one wired to a caddy that does not exist. It publishes no host port and binds
-    loopback inside caddy's namespace, so without the edge it is both unreachable and
-    unstartable — dropping it is the honest outcome."""
+    """Enabling the Hermes dashboard without the edge leaves it off: the agent publishes no host
+    port, so without the edge it would be unreachable."""
     c = _render_with_plugins(["hermes-dashboard"], tmp_path)
     assert "hermes-dashboard" not in c["services"]
-    assert "service:caddy" not in yaml.safe_dump(c)
+    assert "HERMES_DASHBOARD_ENABLED" not in _dotenv(tmp_path)
 
 
-def test_hermes_dashboard_renders_in_caddy_netns_when_the_edge_is_on(tmp_path):
-    """The positive case, so the test above cannot be satisfied by the plugin simply
-    never rendering: with the edge enabled it IS present, in caddy's namespace, on loopback."""
+def test_hermes_dashboard_runs_inside_the_agent_when_the_edge_is_on(tmp_path):
+    """The dashboard (web UI and desktop apps) is upstream's s6 service inside the agent container,
+    so its sessions have the gateway's runtime and its gateway controls reach the real gateways.
+    There is no separate container for it, and Caddy proxies :8447 to agent:9119."""
     c = _render_with_plugins(["edge", "hermes-dashboard"], tmp_path)
-    hd = c["services"]["hermes-dashboard"]
-    assert hd["network_mode"] == "service:caddy"
-    assert "caddy" in c["services"]
-    assert "127.0.0.1" in hd["command"]
-    assert "networks" not in hd, "compose forbids networks: alongside network_mode:"
+    assert "hermes-dashboard" not in c["services"]
+    assert _dotenv(tmp_path)["HERMES_DASHBOARD_ENABLED"] == "1"
+    env = c["services"]["agent"]["environment"]
+    assert env["HERMES_DASHBOARD"] == "${HERMES_DASHBOARD_ENABLED:+1}"
+    assert env["HERMES_DASHBOARD_HOST"] == "0.0.0.0" and env["HERMES_DASHBOARD_PORT"] == "9119"
+    assert env["HERMES_DASHBOARD_OIDC_CLIENT_SECRET_FILE"] == "/run/secrets/hermes_dashboard_oidc_client_secret"
+    assert "9119/api/status" in c["services"]["agent"]["healthcheck"]["test"][1]
 
 
 # ── netns members are lifecycle-coupled to the namespace owner ───────────────────
@@ -514,29 +487,20 @@ def test_hermes_dashboard_renders_in_caddy_netns_when_the_edge_is_on(tmp_path):
 # `depends_on.caddy.restart: true` on every netns member so `docker compose up -d` /
 # `docker compose restart caddy` bring the members with caddy atomically.
 
-def test_netns_members_restart_couple_to_the_owner(tmp_path):
-    """Every service that joins another service's netns declares its owner as a
-    restart-coupled dependency (long-form depends_on with restart: true), so a compose
-    recreate/restart of the owner cascades to the member (hermes-dashboard, which binds
-    loopback inside caddy's netns)."""
-    c = _render_with_plugins(["edge", "tailnet-names", "hermes-dashboard"], tmp_path)
-    members = [
-        (name, svc) for name, svc in c["services"].items()
-        if str(svc.get("network_mode", "")).startswith("service:")
-    ]
-    # hermes-dashboard must actually be present, or the assertion below is vacuous
-    assert any(n == "hermes-dashboard" for n, _ in members)
-    for name, svc in members:
-        owner = svc["network_mode"].split("service:", 1)[1]
-        dep = svc["depends_on"]
-        assert isinstance(dep, dict), f"{name}: depends_on must be long form to carry restart"
-        assert dep[owner] == {"condition": "service_started", "restart": True}, (
-            f"{name} joins {owner}'s netns but is not restart-coupled to it — a caddy "
-            f"recreate would orphan it")
-        # peers that are not the netns owner stay plain start-ordering (no needless restart churn)
-        for peer, cond in dep.items():
-            if peer != owner:
-                assert cond == {"condition": "service_started"}, f"{name}: peer {peer} over-coupled"
+def test_netns_members_restart_couple_to_the_owner():
+    """A service that joins another service's netns declares its owner as a restart-coupled
+    dependency (long-form depends_on with restart: true), so a compose recreate/restart of the
+    owner cascades to the member. No shipped service joins a netns today; this holds the
+    renderer's contract for the next one."""
+    from ordo.render.plugins import Plugin, PluginService
+    member = PluginService(name="member", image="i", network_mode="service:caddy",
+                           depends_on=["model-gateway"])
+    svc = compose._plugin_service(member, Plugin.from_dict({"id": "p", "kind": "service"}),
+                                  net="ordo-net", nvidia_gpu=False, primary_uuid=None,
+                                  secondary_uuid=None, project="ordo")
+    assert svc["network_mode"] == "service:caddy" and "networks" not in svc
+    assert svc["depends_on"] == {"model-gateway": {"condition": "service_started"},
+                                 "caddy": {"condition": "service_started", "restart": True}}
 
 
 # ── Tailscale sidecars own their network namespace ───────────────────────────────

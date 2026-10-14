@@ -10,8 +10,7 @@ that failed to START, so it stays down until someone notices.
 
 That happened on 2026-10-06: after an engine restart all 8 tailnet sidecars stayed down for 43
 hours while every service behind them was healthy. The sidecars no longer share a namespace
-(services/tailnet-names), but some members must: hermes-dashboard binds loopback inside Caddy's
-namespace, and a VPN client's members (a managed project's gluetun) share its namespace by design,
+(services/tailnet-names), but some members must: a VPN client's members (a managed project's gluetun) share its namespace by design,
 so their traffic cannot leave any other way. This sweep is the safety net for those.
 
 It repairs a member only when all of these hold, so it never fights an operator:

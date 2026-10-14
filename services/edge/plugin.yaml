@@ -76,20 +76,14 @@ services:
   - name: caddy
     image: caddy:2.11.4-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
     # no secrets: the /mcp and /llm routes delegate auth to LiteLLM
-    # --watch: reload the Caddyfile in-process whenever its content changes. The Caddyfile is a
-    # bind-mounted file (line 90), and `docker compose up` CANNOT detect a bind-mount's content
-    # changing — only its own service-definition changing. So a commit that edits the Caddyfile
-    # (e.g. #169, which repointed :8446 at the ComfyUI admission gate) leaves this container running
-    # its STARTUP-time config indefinitely: the render was applied to every service whose compose
-    # block changed, but caddy's block was unchanged, so it kept routing the ComfyUI canvas straight
-    # to comfyui:8188 — bypassing the GPU lease and OOM-crashing renders beside the resident LLM
-    # (2026-08-10). --watch closes that gap at the source: any Caddyfile change auto-applies here,
-    # regardless of how it arrived (git pull / edit / render). Caddy's "dev only" caveat is about
-    # (a) partial writes and (b) admin-API config being clobbered by the file — neither applies: the
-    # file is written atomically (git/editor) and this stack only ever `reload`s from it, never
-    # mutates config via the admin API. On an invalid Caddyfile, --watch logs the error and KEEPS
-    # the last-good running config, so a bad edit degrades to "not applied", never "edge down".
-    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile", "--watch"]
+    # No --watch. The Caddyfile is a bind of the TRACKED checkout file, and a change reaches this
+    # container only through `ordo apply`: its content digest is a label (config_mounts below,
+    # ordo/render/bind_configs.py), so an edit recreates caddy on the next apply, together with
+    # the services it routes to. --watch (added 2026-08-10, before those labels existed) applied
+    # every working-tree edit or branch checkout to production the moment it was saved: on
+    # 2026-10-14 an uncommitted edit repointed :8447 at a listener that was not deployed yet and
+    # the Hermes site returned 502 until the file was restored.
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
     # CADDY_BIND failsafe: the ${VAR:?} form only rejects an EMPTY/unset value — it makes
     # `docker compose config` exit non-zero if CADDY_BIND is unset, catching the V1 lesson where
     # an empty bind silently degraded to 0.0.0.0:443 with no operator intent behind it. It does
@@ -112,7 +106,7 @@ services:
       CADDY_TAILNET_DOMAIN: ${CADDY_TAILNET_DOMAIN}
     # Read at start: an edit recreates caddy (and its netns members) on the next `ordo apply`
     # (ordo/render/bind_configs.py). The certs directory counts too: a TLS certificate renewal
-    # recreates caddy, hermes-dashboard and the tailnet sidecars once.
+    # recreates caddy once.
     config_mounts: [/etc/caddy/Caddyfile, /etc/caddy/certs]
     volumes:
       # ${BASE_PATH} (not ./): the Caddyfile is a TRACKED repo file (guarded by

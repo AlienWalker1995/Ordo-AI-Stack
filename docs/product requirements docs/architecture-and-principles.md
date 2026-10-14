@@ -114,7 +114,7 @@ rewrites).
 - **llama.cpp** `:8080` — LLM inference; backend-only (no host port); GPU pinning resolved by the render engine (`hardware: auto` / `ordo detect`) into `out/`.
 - **Qdrant** `:6333` — Vector database; backend-only; used by Open WebUI for RAG and by `rag-ingestion` service.
 - **RAG Ingestion** — Watch-mode document ingester (`--profile rag`); reads `data/rag-input/`; chunks and embeds via model gateway; stores in Qdrant.
-- **Hermes** (`agent` + `hermes-dashboard`) — Agent runtime; routes both model calls and tool calls through `model-gateway` (`/v1/*` and `/mcp`) with its own virtual key `LITELLM_KEY_HERMES`. State under `data/hermes/`. Published to the tailnet by Caddy on its own dedicated port, `${CADDY_TAILNET_HOSTNAME}:8447/` (served at its origin root behind a plain SSO reverse_proxy — no forwarded-prefix base injection). See [docs/hermes-agent.md](../hermes-agent.md) for setup.
+- **Hermes** (`agent`, which also runs the Hermes dashboard as an s6 service) — Agent runtime; routes both model calls and tool calls through `model-gateway` (`/v1/*` and `/mcp`) with its own virtual key `LITELLM_KEY_HERMES`. State under `data/hermes/`. Published to the tailnet by Caddy on its own dedicated port, `${CADDY_TAILNET_HOSTNAME}:8447/` (served at its origin root, with Hermes's own Google sign-in so its desktop apps can connect). See [docs/hermes-agent.md](../hermes-agent.md) for setup.
 - **Supporting services** — Open WebUI (internal `:8080`, connected to Qdrant, published at `${CADDY_TAILNET_HOSTNAME}:8443`), ComfyUI (internal `:8188`, published at `${CADDY_TAILNET_HOSTNAME}:8446`).
 
 ## Data Flows
@@ -211,7 +211,7 @@ dashboard iframe expects that prefix).
 | open-webui | — | Reached at `https://<tailnet>:8443/` (its own port, served at its compiled root); needs model-gateway, qdrant |
 | dashboard | — | Reached at `https://<tailnet>:8444/` (Grafana embed at `.../grafana/` on the same port); needs llamacpp, ops-controller, model-gateway |
 | agent (Hermes) | — | No UI; needs model-gateway, model-gateway-keys |
-| hermes-dashboard | — | Reached at `https://<tailnet>:8447/` (served at its origin root behind a plain SSO proxy) |
+| Hermes dashboard (in `agent`) | — | Reached at `https://<tailnet>:8447/` (served at its origin root, Hermes's own Google sign-in) |
 | model-gateway | — | No host port; reached internally at `http://model-gateway:11435` on `ordo-net`, and externally via Caddy `:443/llm/*` (bearer key, no SSO) |
 | litellm-db | — | Internal only; Postgres for LiteLLM virtual keys, teams and spend; reached at `litellm-db:5432` on `ordo-net` |
 | `mcp-*` (seven MCP servers) | — | No host port; on `ordo-mcp-net` (`internal: true`), reachable only by model-gateway, which serves them at `:443/mcp` (LiteLLM key, no SSO) |

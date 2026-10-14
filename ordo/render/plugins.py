@@ -192,10 +192,6 @@ class PluginService:
     # service). A one-shot init step declares `on-failure`, so a transient error is retried but a
     # clean exit stays exited instead of being restarted forever (model-gateway-keys' policy).
     restart: str = ""
-    # This service runs the chosen agent's sessions (the Hermes dashboard's chat and desktop
-    # clients), so it gets the agent's session runtime: volumes, environment and secrets, less the
-    # agent's `gateway_only` names (Agent.session_runtime_for). Declared once, on the agent.
-    agent_runtime: bool = False
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> PluginService:
@@ -244,7 +240,6 @@ class PluginService:
             ulimits=dict(d.get("ulimits", {}) or {}),
             resources={str(k): str(v) for k, v in (d.get("resources", {}) or {}).items()},
             restart=_restart_policy(name, d.get("restart", "")),
-            agent_runtime=bool(d.get("agent_runtime", False)),
         )
 
 

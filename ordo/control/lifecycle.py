@@ -77,7 +77,7 @@ class Lifecycle:
     # A service's netns members (`network_mode: service:<it>`) share its network namespace, so
     # every verb that gives it a new namespace must cycle them too, after it; otherwise they keep
     # running in the dead one with only `lo` (observed 2026-09-24: a caddy restart from the
-    # dashboard cut off hermes-dashboard and every tailnet sidecar). The group comes from
+    # dashboard cut off every member of caddy's namespace). The group comes from
     # `stack.lifecycle_group`, the planner the host's `ordo up` / `ordo recreate` use.
 
     def rendered_compose(self, target: str) -> dict:

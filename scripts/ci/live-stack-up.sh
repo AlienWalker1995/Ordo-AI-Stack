@@ -8,10 +8,10 @@
 #
 # What comes up, and why each is needed by tests/test_secrets_isolation.py and
 # tests/test_hermes_docker_access.py:
-#   agent            the Hermes gateway: docker socket, root group, file secrets, ops-controller env
+#   agent            the Hermes gateway and its s6 dashboard service: docker socket, root group,
+#                    file secrets, ops-controller env
 #   ops-controller   the agent must reach it at http://ops-controller:9000/health
-#   caddy            the netns owner hermes-dashboard lives in (`ordo up caddy` names its members)
-#   hermes-dashboard must have neither the socket nor the root group
+#   caddy            the edge, which proxies the dashboard at :8447
 # Everything goes through the operator's own commands (`ordo init`, `ordo remote enable`,
 # `ordo up`), so the containers are the ones a fresh install renders. The edge needs Google OAuth
 # values and a TLS certificate to start; both are placeholders here, since nothing signs in.
@@ -40,7 +40,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=ordo.ci.test" \
 # --no-fetch: none of these services loads a model.
 python -m ordo up --no-preflight --no-fetch --out "$OUT" ops-controller agent caddy
 
-containers=("${PROJECT}-ops-controller-1" "${PROJECT}-agent-1" "${PROJECT}-caddy-1" "${PROJECT}-hermes-dashboard-1")
+containers=("${PROJECT}-ops-controller-1" "${PROJECT}-agent-1" "${PROJECT}-caddy-1")
 deadline=$((SECONDS + WAIT_SECONDS))
 while :; do
   not_running=()

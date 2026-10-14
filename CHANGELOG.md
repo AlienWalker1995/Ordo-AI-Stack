@@ -4,16 +4,29 @@ All notable changes to this project are documented here. The format is loosely b
 
 ## [Unreleased]
 
+### Fixed
+- **Caddy no longer hot-reloads the Caddyfile (`--watch` removed).** It bind-mounts the tracked
+  checkout file, so every working-tree edit or branch checkout went live the moment it was saved: on
+  2026-10-14 an uncommitted edit took the Hermes site down with a 502. A Caddyfile change now reaches
+  caddy only through `ordo apply`, which recreates it from the file's content digest label.
+
 ### Added
+- **Service cards can probe through the edge.** A card's `edge_check: <path>` is probed the way users
+  reach it: Caddy's TLS listener on its edge port, the tailnet certificate verified, the UI's public
+  host in `Host`. The Hermes card uses it, so it goes red when the Hermes site returns an error, not
+  only when the process is down (it read healthy through a 502 on 2026-10-14).
 - **Hermes can delegate coding to Codex.** The agent image pins the Codex CLI and ships upstream's
   `codex` skill with this stack's notes. `codex` runs on the operator's ChatGPT subscription, signed in
   once with `codex login --device-auth`; the sign-in stays in `/opt/data/codex`, which the brain backup
   skips. Not signed in, `codex` exits 78 with the command.
-- **Hermes desktop and Chat tab sessions get the agent's full runtime.** The dashboard runs those
-  sessions in its own container, which had a hand-copied subset of the agent's (no Docker socket, no
-  `/c/dev`, no Claude Code token), so a session resumed from the desktop app lost its tools mid-task.
-  A plugin service now declares `agent_runtime: true` to take the agent manifest's volumes, environment
-  and secrets, less its `gateway_only:` names (platform credentials, the API server).
+- **The Hermes dashboard runs inside the agent container.** The web UI and the backend every Hermes
+  desktop app connects to is now upstream's s6 `dashboard` service beside the s6-supervised gateways,
+  switched on by the `hermes-dashboard` plugin (`HERMES_DASHBOARD=1`); the separate `hermes-dashboard`
+  container in Caddy's network namespace is gone. Desktop sessions have the gateway's tools (Docker,
+  `/c/dev`, Claude Code, Codex), and the desktop app's gateway status and start/stop/restart act on the
+  real gateways through s6. From the old container they reported the gateway stopped, and Start would
+  have launched a second gateway there. Caddy's `:8447` proxies `agent:9119`. `GATEWAY_HEALTH_URL` covers an upstream bug (0.21.7-0.22.0 do
+  not recognise their own launcher's command line as a gateway) until it is fixed.
 - **Hermes can delegate coding to Claude Code.** The agent image pins the Claude Code CLI and ships
   upstream's `claude-code` skill with this stack's notes (scratch worktrees, scoped `--allowedTools`,
   no GPU, no secrets, verify the diff). `claude` runs on the operator's Claude subscription: the

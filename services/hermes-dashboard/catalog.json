@@ -5,14 +5,14 @@
       "name": "Hermes Agent",
       "order": 80,
       "port": 9119,
-      "url": "http://localhost:9119",
+      "url": "http://agent:9119",
+      "edge_check": "/api/status",
       "has_gpu": false,
       "plugin": "hermes-dashboard",
       "category": "agent",
-      "ops_service": "hermes-dashboard",
       "tailnet_label": "hermes",
-      "hint": "Managed by docker compose. Logs: docker compose logs hermes-dashboard",
-      "notes": "NO HTTP check on purpose — it falls through to the container-state signal. hermes-dashboard runs in caddy's network namespace (network_mode: service:caddy) and binds 127.0.0.1:9119, so it does not resolve on ordo-net and any HTTP probe could ONLY fail; the container's own healthcheck curls 127.0.0.1:9119 inside the namespace and is the truer signal. Do not re-add an HTTP check unless it stops being loopback-only. Lifecycle buttons target hermes-dashboard (the UI service), NOT the agent/gateway — its self-restart is delicate and it is not allowlisted."
+      "hint": "Runs inside the agent container (s6 service `dashboard`). Logs: docker compose logs agent",
+      "notes": "Probe-only card, probed through the edge (`edge_check`): Caddy :8447 with the tailnet certificate, so it goes red when the site you open is down, not only when the process is. The dashboard is an s6 service inside the agent container, and the agent is never a lifecycle target (restarting it from here would kill Hermes mid-tool-call). Restart the dashboard or a gateway from the Hermes UI itself (s6), or `ordo recreate agent` when Hermes is idle."
     }
   ]
 }

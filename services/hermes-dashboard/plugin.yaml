@@ -1,92 +1,40 @@
-# Plugin manifest (data-only) — the Hermes web dashboard (the `hermes dashboard` SPA), served at
-# its origin root on the edge port :8447. V1 runs it from the SAME image as the hermes-gateway agent. It's
-# Hermes-specific (uses the agent-hermes image), so it's opt-in behind its own profile; enable it
-# only when the chosen agent is Hermes. Distinct from the V2-native core `dashboard` (control plane).
+# Plugin manifest (data-only) - the Hermes dashboard: the web UI and the backend every Hermes desktop
+# app connects to, served at its origin root on the edge port :8447. Hermes-specific, so opt-in;
+# enable it only when the chosen agent is Hermes. Distinct from the V2-native core `dashboard`.
+#
+# It renders NO container of its own. The dashboard runs inside the agent container as upstream's s6
+# `dashboard` service, next to the s6-supervised gateways: this plugin's `env:` puts
+# HERMES_DASHBOARD_ENABLED=1 in the rendered .env and services/hermes/agent.yaml turns that into
+# HERMES_DASHBOARD=1 plus its bind and Google login settings. One runtime: desktop sessions have the
+# gateway's tools, and the dashboard's gateway controls act on the real gateways through s6.
+# (Until 2026-10 it was a separate `hermes-dashboard` container in Caddy's network namespace with a
+# copied subset of the agent's runtime; desktop sessions lost tools there and its gateway status
+# and controls pointed at a gateway that was not in that container.)
 id: hermes-dashboard
-name: Hermes dashboard (agent SPA)
-description: The Hermes agent's own web chat/skill dashboard, served at its origin root on :8447.
+name: Hermes dashboard (web UI and desktop apps)
+description: The Hermes agent's web UI and desktop-app backend, served at its origin root on :8447.
 requires:
   nvidia: false
   ram_gb: 1
 provides: [hermes-dashboard]
-compose_profile: hermes-ui
 # The UI's own edge port, declared ONCE here: the render publishes it on the edge
 # listener, the dashboard card's `sso_port` is derived from it, and the tests hold the
 # Caddyfile `:<port>` site (proxying `upstream`) and the tailnet sidecar to it.
-# Loopback: the service lives in caddy's network namespace (network_mode: service:caddy).
-edge_site: {port: 8447, upstream: "127.0.0.1:9119"}
-# HARD dependency on the edge (Caddy + oauth2-proxy), same gate tailnet-names uses.
-# Caddy/oauth2-proxy/Tailscale are all OPTIONAL layers a user may not enable, so this
-# must be declared rather than assumed:
-#   - this service publishes NO host port (the stack's UI model — reachable only through
-#     the SSO'd edge), so without the edge there is no way to reach it at all;
-#   - it runs in caddy's network namespace and binds 127.0.0.1 (see the service below).
-#     Without a caddy container to attach to, `network_mode: service:caddy` is not a
-#     degraded mode — compose cannot start the container at all;
-#   - its public URL (https://hermes.<CADDY_TAILNET_DOMAIN>) is the edge's tailnet name.
-# Declaring it means the dep gate DROPS this plugin with a clear note when edge is off
-# (instead of rendering a container that cannot start), and the wizard's _deps_closure
-# auto-adds `edge` when an operator enables this one.
+edge_site: {port: 8447, upstream: "agent:9119"}
+# HARD dependency on the edge (Caddy + the tailnet name): the agent publishes no host port, so the
+# edge is the only way to reach the dashboard, and its public URL
+# (https://hermes.<CADDY_TAILNET_DOMAIN>) is the edge's tailnet name. Declaring it means the dep gate
+# drops this plugin with a clear note when the edge is off, and the wizard's _deps_closure auto-adds
+# `edge` when an operator enables this one.
 depends_on: [edge]
 env:
   HERMES_DASHBOARD_ENABLED: "1"
+# AUTH: the one UI that authenticates itself instead of sitting behind oauth2-proxy, because the
+# Hermes desktop app (a remote-gateway client) cannot pass a browser SSO gate. Hermes's bundled
+# self-hosted OIDC provider against Google, the same identity oauth2-proxy uses; the desktop uses
+# Hermes's native (RFC 8252) flow and holds Bearer tokens. Who may sign in is decided by the IDP:
+# the Google project's audience. Setup: docs/runbooks/auth.md. The agent reads both: the client ID
+# as an env secret, the client secret as a file secret bridged by its boot hook.
 secrets:
-  - OPS_CONTROLLER_TOKEN    # required for Hermes to reach ops-controller
-  - HERMES_DASHBOARD_OIDC_CLIENT_ID      # the Google OAuth client the dashboard login uses
-  - HERMES_DASHBOARD_OIDC_CLIENT_SECRET  # its secret (a file secret on the service)
-services:
-  - name: hermes-dashboard
-    # Same image as the Hermes agent (V1 builds one hermes image, runs it as gateway + dashboard).
-    image: ordo/agent-hermes
-    # Its Chat tab and the desktop app run full agent sessions, so it gets the agent's session
-    # runtime from services/hermes/agent.yaml: the brain volume, /workspace/data, the /c/dev mirror,
-    # the Docker socket, its environment and secrets (the Claude Code token too), less the agent's
-    # `gateway_only` names. Declared there once; repeating one of them here is refused at render.
-    # Before this it carried a hand-copied subset, and a session resumed from the desktop app lost
-    # its tools mid-task.
-    agent_runtime: true
-    secrets: [HERMES_DASHBOARD_OIDC_CLIENT_ID]
-    secret_files: [HERMES_DASHBOARD_OIDC_CLIENT_SECRET]
-    # AUTH: the one UI that authenticates itself instead of sitting behind oauth2-proxy,
-    # because the Hermes desktop app (a remote-gateway client) cannot pass a browser SSO gate.
-    # It runs Hermes's bundled self-hosted OIDC provider against Google, the same identity
-    # oauth2-proxy uses, so browser and desktop both sign in with Google; the desktop uses
-    # Hermes's native (RFC 8252) flow and holds Bearer tokens. Who may sign in is decided by
-    # the IDP (Hermes has no allowlist of its own): the Google project's audience, Internal to a
-    # Workspace organization or External in Testing with test users. Setup: docs/runbooks/auth.md.
-    #   - HERMES_DASHBOARD_PUBLIC_URL is the host the dashboard trusts, the origin it allows and
-    #     the base of its OAuth callback (<public_url>/auth/callback, the redirect URI registered
-    #     on the Google client). A non-loopback public URL is also what engages Hermes's login
-    #     gate on this loopback bind.
-    #   - The client ID is an env secret (it names the operator's Google project); the client
-    #     secret is a file secret, bridged to the env var Hermes reads by the image's boot hook.
-    #
-    # Binds LOOPBACK inside caddy's network namespace; Caddy reaches it at 127.0.0.1:9119
-    # (auth/caddy/Caddyfile :8447), and nothing else on the network can.
-    #
-    # TRADE-OFF, know this before touching the edge: this service now shares caddy's
-    # network namespace like the tailnet sidecars do. Recreating caddy DESTROYS that
-    # namespace and orphans every member (they silently lose networking while still
-    # reporting healthy). The renderer couples the lifecycle automatically: because this
-    # service sets `network_mode: service:caddy`, compose.py emits
-    # `depends_on.caddy.restart: true`, so `docker compose up -d` / `docker compose restart
-    # caddy` restart this member with caddy. `--no-deps` bypasses depends_on, so a caddy
-    # recreate must name the members: `ordo recreate caddy` and ops-controller's lifecycle
-    # verbs (the dashboard's Restart button) do, via `bringup.lifecycle_group`. A BARE
-    # `docker restart ordo-caddy-1` won't cascade.
-    command: ["hermes", "dashboard", "--port", "9119", "--host", "127.0.0.1", "--no-open"]
-    network_mode: service:caddy
-    env:
-      # Dashboard login (see AUTH above): Google as the OIDC issuer, and the public URL the
-      # browser and the desktop app reach it at.
-      HERMES_DASHBOARD_OIDC_ISSUER: https://accounts.google.com
-      HERMES_DASHBOARD_PUBLIC_URL: https://hermes.${CADDY_TAILNET_DOMAIN}
-    # caddy is REQUIRED here, not optional: network_mode: service:caddy cannot attach if
-    # the target container does not exist yet.
-    depends_on: [caddy, model-gateway, dashboard, ops-controller]
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9119/api/status"]
-      start_period: 30s
-      interval: 30s
-      timeout: 5s
-      retries: 3
+  - HERMES_DASHBOARD_OIDC_CLIENT_ID
+  - HERMES_DASHBOARD_OIDC_CLIENT_SECRET

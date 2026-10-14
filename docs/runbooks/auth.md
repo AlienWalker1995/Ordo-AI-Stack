@@ -126,11 +126,8 @@ expiry with `openssl x509 -enddate -noout -in auth/caddy/certs/tailnet.crt` and 
 weeks ahead (note the date in a calendar). `ordo remote enable` offers the same `tailscale cert`
 call with these file names.
 
-Run the renewal from the repo root. hermes-dashboard and the tailnet sidecars share caddy's network
-namespace, and `ordo recreate caddy` recreates them in the same call. The dashboard's Restart
-button for caddy (ops-controller `POST /services/caddy/restart`) is also safe: it restarts the
-members after caddy. Never a bare `docker restart ordo-caddy-1`: it leaves every member running
-with no network interface.
+Run the renewal from the repo root, then `ordo recreate caddy` (or the dashboard's Restart button
+for caddy).
 
 ## Recovery — Google OIDC outage
 

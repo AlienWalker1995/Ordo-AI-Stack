@@ -76,10 +76,6 @@ SPEC: dict[str, set[str]] = {
     # direct address, which bypasses the GPU lease. The entrypoint seeds the context window and the two
     # Hermes budget knobs into config.yaml.
     "agent": {"COMFYUI_URL", "LLAMACPP_CTX_SIZE", "HERMES_MAX_TOKENS", "HERMES_COMPRESSION_THRESHOLD_PERCENT"},
-    # The same image entrypoint seeds the same keys into the config.yaml it shares with the agent, so
-    # without them a restart would reset the agent's values to the defaults.
-    "hermes-dashboard": {"COMFYUI_URL", "LLAMACPP_CTX_SIZE", "HERMES_MAX_TOKENS",
-                         "HERMES_COMPRESSION_THRESHOLD_PERCENT"},
     # The official couchdb image's docker-entrypoint.sh creates the admin from COUCHDB_USER.
     "couchdb": {"COUCHDB_USER"},
     # services/obsidian-livesync/entrypoint.sh (`:?` guards on all three).
@@ -133,8 +129,6 @@ def test_every_env_name_is_declared(rendered):
     }
     for plugin in REGISTRY.plugins:
         for ps in plugin.services:
-            if ps.agent_runtime:  # declared on the agent manifest (Agent.session_runtime_for)
-                ps = agent.session_runtime_for(ps)
             declared[ps.name] = (set(ps.env) | set(ps.derived_env) | set(ps.secrets)
                                  | {ref.env for ref in ps.secret_files})
     secret_names = set(rc.required_secrets) | set(OPTIONAL_SECRET_KEYS)
@@ -183,7 +177,7 @@ def test_the_agent_and_every_comfyui_client_get_the_gated_url(rendered):
     rc, services = rendered
     gate_url = rc.env[GATED_SERVICE_URL_ENV["comfyui"]]
     assert gate_url == "http://comfyui-gate:8188"
-    for client in ("agent", "hermes-dashboard", "dashboard", "mcp-comfyui"):
+    for client in ("agent", "dashboard", "mcp-comfyui"):
         raw = services[client]["environment"]["COMFYUI_URL"]
         resolved = re.sub(r"\$\{(\w+)[^}]*\}", lambda m: rc.env[m.group(1)], raw)
         assert resolved == gate_url, f"{client} resolves COMFYUI_URL to {resolved!r}"
