@@ -131,7 +131,7 @@ subscription, the official client, not an API key.
 
 Only `/usr/local/bin/claude` (the wrapper, `services/hermes/claude-code`) reads the token, per call, from
 its file secret; it is never in the agent's environment. Without it, `claude` exits 78 and prints these
-steps. Claude Code's settings and sessions live in `/opt/data/claude-code`. Bump the CLI by changing
+steps. Claude Code's settings and sessions live in `/opt/data/claude-code`. Its managed settings (`/etc/claude-code/managed-settings.json`, from `services/hermes/claude-code-managed-settings.json`) pin every run to the subscription at Anthropic, even one that skips the wrapper. Bump the CLI by changing
 `CLAUDE_CODE_VERSION` in the Dockerfile.
 
 ## Codex as a sub-agent
