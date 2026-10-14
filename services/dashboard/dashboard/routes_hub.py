@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from dashboard.services_catalog import (
     OPS_SERVICE_MAP,
     _check_service,
+    _check_via_edge,
     mcp_external_url,
     service_open_url,
     visible_services,
@@ -36,7 +37,7 @@ async def services():
         Returns (None, "") — a neutral 'unknown' — when the control plane has no row for it.
 
         the control plane keys /services by COMPOSE service name, not always the card id
-        (`hermes` -> `hermes-dashboard`). Resolve through OPS_SERVICE_MAP first or the
+        (`webui` -> `open-webui`). Resolve through OPS_SERVICE_MAP first or the
         lookup misses and a running service renders as a permanent grey 'unknown'."""
         c = container_by_id.get(OPS_SERVICE_MAP.get(svc_id, svc_id))
         if not c:
@@ -51,7 +52,9 @@ async def services():
         return True, ""  # running + (healthy | no healthcheck declared)
 
     async def _probe(svc: dict) -> dict:
-        if svc.get("check"):
+        if svc.get("edge_check"):
+            ok, err = await _check_via_edge(svc, client)
+        elif svc.get("check"):
             ok, err = await _check_service(svc["check"], client)
         else:
             ok, err = _container_health(svc["id"])
@@ -84,7 +87,10 @@ async def health():
     client = _get_http_client()
 
     async def _probe(svc: dict) -> dict:
-        ok, err = await _check_service(svc["check"], client) if svc.get("check") else (None, "")
+        if svc.get("edge_check"):
+            ok, err = await _check_via_edge(svc, client)
+        else:
+            ok, err = await _check_service(svc["check"], client) if svc.get("check") else (None, "")
         return {"id": svc["id"], "ok": ok, "error": err}
 
     results = await asyncio.gather(*[_probe(s) for s in visible_services()])

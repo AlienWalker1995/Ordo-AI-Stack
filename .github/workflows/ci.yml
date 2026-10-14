@@ -288,7 +288,7 @@ jobs:
         if: steps.filter.outputs.docker == 'true'
         run: PYTHONPATH=. python -m pytest tests/substrate -m docker -q -rs
 
-      # The smallest real stack the live checks need (agent, ops-controller, caddy, hermes-dashboard),
+      # The smallest real stack the live checks need (agent, ops-controller, caddy),
       # brought up by the operator's own commands. Builds the Hermes and ops-controller images.
       - name: Bring up the live stack
         if: steps.filter.outputs.docker == 'true'

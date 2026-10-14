@@ -5,7 +5,7 @@ render substrate (`ordo.yaml` → `out/`) produces the *same* set of services ev
 between deployments is only **the front door in front of them**. Two facts make this possible:
 
 - **Caddy is the only service that publishes host ports.** Every UI (`open-webui`, `dashboard`,
-  `comfyui`, `hermes-dashboard`, `codebase-memory-ui`) and every gateway (`model-gateway`,
+  `comfyui`, the Hermes dashboard, `codebase-memory-ui`) and every gateway (`model-gateway`,
   the `mcp-*` servers, `litellm-db`, `qdrant`, …) publishes **no** host port, each is reachable only on the internal
   `ordo-net` network, or *through* Caddy. So changing how the world reaches the stack means changing
   exactly one thing: Caddy's listeners and their TLS/DNS.

@@ -47,8 +47,13 @@ def _rendered_services() -> set[str]:
 
 # ── (a) Hermes ─────────────────────────────────────────────────────────────────
 
-def test_hermes_card_targets_the_ui_service_not_the_gateway():
-    assert OPS_SERVICE_MAP["hermes"] == "hermes-dashboard"
+def test_hermes_card_is_probe_only():
+    """The Hermes dashboard is an s6 service inside the agent container, and the agent is never a
+    lifecycle target, so the card has no compose service. It probes the dashboard through the edge,
+    the route its users take, so a broken route reads red (tests/test_edge_check.py)."""
+    assert "hermes" not in OPS_SERVICE_MAP
+    card = next(s for s in SERVICES if s["id"] == "hermes")
+    assert card["edge_check"] == "/api/status" and "check" not in card
 
 
 def test_the_agent_gateway_is_never_a_lifecycle_target():
@@ -88,8 +93,8 @@ def test_no_card_targets_a_service_the_backend_refuses():
 
 
 def test_added_cards_are_controllable():
-    """The newly-added cards (plus Hermes) must each be operator-controllable."""
-    for display_id in ("hermes", "stt", "tts", "rag-ingestion", "llamacpp-cpu"):
+    """The newly-added cards must each be operator-controllable."""
+    for display_id in ("stt", "tts", "rag-ingestion", "llamacpp-cpu"):
         assert display_id in OPS_SERVICE_MAP, f"{display_id} not wired for lifecycle control"
 
 

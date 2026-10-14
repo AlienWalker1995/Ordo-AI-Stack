@@ -139,6 +139,32 @@ environment:
   DISCORD_AUTO_THREAD: ${DISCORD_AUTO_THREAD:-true}
   DISCORD_REACTIONS: ${DISCORD_REACTIONS:-true}
   TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  # ── Hermes dashboard (the web UI and every Hermes desktop app) ──
+  # Runs IN this container as upstream's s6 `dashboard` service, next to the s6-supervised
+  # `gateway-<profile>` services, when the hermes-dashboard plugin is enabled (its manifest puts
+  # HERMES_DASHBOARD_ENABLED=1 in the rendered .env). Same runtime as the gateway, so a session
+  # started or resumed from the desktop app has every tool it has on Discord, and the dashboard's
+  # gateway start/stop/restart reach the real gateways through s6 (from a separate container they
+  # would have started a second gateway there). Caddy publishes it at :8447 (http://agent:9119).
+  # Bound on 0.0.0.0 inside the container, which engages Hermes's login gate: Google sign-in via its
+  # bundled OIDC provider. Setup: docs/runbooks/auth.md.
+  HERMES_DASHBOARD: ${HERMES_DASHBOARD_ENABLED:+1}
+  HERMES_DASHBOARD_HOST: 0.0.0.0
+  HERMES_DASHBOARD_PORT: "9119"
+  HERMES_DASHBOARD_OIDC_ISSUER: https://accounts.google.com
+  # The host it trusts, the origin it allows and the base of its OAuth callback
+  # (<public_url>/auth/callback, the redirect URI registered on the Google client).
+  HERMES_DASHBOARD_PUBLIC_URL: ${HERMES_DASHBOARD_ENABLED:+https://hermes.${CADDY_TAILNET_DOMAIN}}
+  # Declared by the hermes-dashboard plugin's `secrets:` (it names the operator's Google project);
+  # the client secret is the HERMES_DASHBOARD_OIDC_CLIENT_SECRET file secret below.
+  HERMES_DASHBOARD_OIDC_CLIENT_ID: ${HERMES_DASHBOARD_OIDC_CLIENT_ID:-}
+  # TEMPORARY, until upstream recognises its own launcher: Hermes 0.21.7-0.22.0 does not identify
+  # the gateway's `python -P -c "import os, site, sys; ..."` command line (scripts/build/launchers.py)
+  # as a gateway (gateway/status_inline_source.py _BOOTSTRAPS), so without this the dashboard reports
+  # the running gateway as stopped. Its HTTP health rung reads the gateway's API server instead,
+  # which always runs (on loopback without HERMES_API_SERVER_KEY, see ordo-init.sh); /health needs
+  # no key. Remove when the upstream fix ships.
+  GATEWAY_HEALTH_URL: http://127.0.0.1:8642
 
 # Mounts. THE BRAIN is a NAMED VOLUME, deliberately not a host bind — see below. /workspace/data
 # holds the mutable data the skills reference by absolute path (/workspace/data/drafts,
@@ -187,19 +213,8 @@ volumes:
 # CLAUDE_CODE_OAUTH_TOKEN is the exception: never bridged into the environment. Only the `claude`
 # wrapper (services/hermes/claude-code) reads it, per call, so Hermes and every other subprocess
 # never hold the operator's Claude subscription token. Unset, `claude` exits 78 and says how to set it.
-secret_files: [DISCORD_BOT_TOKEN, GITHUB_BACKUP_PAT, CLAUDE_CODE_OAUTH_TOKEN]
-
-# What only the messaging gateway uses: the platform credentials and its API server. The Hermes
-# dashboard runs agent sessions too (its Chat tab and the desktop app), so it declares
-# `agent_runtime: true` and gets everything above except these (services/hermes-dashboard/plugin.yaml).
-# A session then has the same mounts, Docker socket and tools from Discord or the desktop app. The
-# dashboard never holds a bot token, because its "restart gateway" action would start a second bot.
-gateway_only:
-  environment: [API_SERVER_KEY, API_SERVER_HOST, API_SERVER_PORT, DISCORD_ALLOWED_USERS,
-                DISCORD_ALLOWED_CHANNELS, DISCORD_ALLOWED_ROLES, DISCORD_REQUIRE_MENTION,
-                DISCORD_FREE_RESPONSE_CHANNELS, DISCORD_HOME_CHANNEL, DISCORD_AUTO_THREAD,
-                DISCORD_REACTIONS, TELEGRAM_BOT_TOKEN]
-  secret_files: [DISCORD_BOT_TOKEN]
+# HERMES_DASHBOARD_OIDC_CLIENT_SECRET: the dashboard's Google login (above), bridged by the boot hook.
+secret_files: [DISCORD_BOT_TOKEN, GITHUB_BACKUP_PAT, CLAUDE_CODE_OAUTH_TOKEN, HERMES_DASHBOARD_OIDC_CLIENT_SECRET]
 
 # gateway_state.json is written by `hermes gateway` on startup (Docker mode writes no pid file).
 #
@@ -207,9 +222,10 @@ gateway_only:
 # `healthy`) came from a check that ran as root, tested only existence, and touched nothing the
 # gateway needs. These probes assert that the unprivileged user can still READ its state and WRITE
 # its home, so a permission flip trips the healthcheck within ~90s. The cron leg is guarded on the
-# directory existing so a fresh install does not report unhealthy.
+# directory existing so a fresh install does not report unhealthy. With the dashboard on, its own
+# status endpoint must answer too (`$$`: the variable is the container's, not compose's).
 healthcheck:
-  test: ["CMD-SHELL", "/command/s6-setuidgid hermes test -r /opt/data/gateway_state.json && /command/s6-setuidgid hermes test -w /opt/data && { [ ! -d /opt/data/cron ] || /command/s6-setuidgid hermes test -w /opt/data/cron; }"]
+  test: ["CMD-SHELL", "/command/s6-setuidgid hermes test -r /opt/data/gateway_state.json && /command/s6-setuidgid hermes test -w /opt/data && { [ ! -d /opt/data/cron ] || /command/s6-setuidgid hermes test -w /opt/data/cron; } && { [ \"$$HERMES_DASHBOARD\" != 1 ] || curl -sf http://localhost:9119/api/status >/dev/null; }"]
   start_period: 90s
   interval: 30s
   timeout: 10s

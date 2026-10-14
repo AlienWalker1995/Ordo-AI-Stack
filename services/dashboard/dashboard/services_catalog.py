@@ -149,9 +149,9 @@ SERVICES = _load_catalog_cards()
 # `ops_service`. Every value MUST be a real compose service name AND be present in
 # the control plane's allowlist, else the card's start/stop/restart buttons 400. (Locked by
 # test_service_catalog_wiring.) Cards without `ops_service` (e.g. couchdb) fall back to
-# their own id at the call sites (OPS_SERVICE_MAP.get(id, id)). NB: Hermes deliberately
-# maps to hermes-dashboard (the UI service), NOT the agent/gateway — its self-restart is
-# delicate and it is not allowlisted.
+# their own id at the call sites (OPS_SERVICE_MAP.get(id, id)). NB: Hermes has no entry:
+# its dashboard is an s6 service inside the agent, and the agent is never a lifecycle
+# target (a self-restart mid-tool-call), so its card is probe-only.
 OPS_SERVICE_MAP = {s["id"]: s["ops_service"] for s in SERVICES if s.get("ops_service")}
 
 # Dashboard service id -> clean per-service tailnet subdomain label (the tailnet-names
@@ -247,6 +247,31 @@ def visible_services(services: list[dict] | None = None, enabled: set[str] | Non
             sorted(missing),
         )
     return [s for s in services if s.get("plugin") is None or s["plugin"] in enabled]
+
+
+async def _check_via_edge(card: dict, client: _httpx.AsyncClient) -> tuple[bool | None, str]:
+    """Probe a UI the way its users reach it: through Caddy's TLS listener on the card's edge port
+    (`sso_port`, derived from the plugin's `edge_site`), for the card's `edge_check` path, with the
+    tailnet certificate verified and the UI's public host in `Host`. A container-level check stays
+    green while the route in front of it is broken (on 2026-10-14 the Hermes card read healthy while
+    its site returned 502). Neutral (None) when the edge is not configured for this card."""
+    edge_host = os.environ.get("CADDY_TAILNET_HOSTNAME", "").strip()
+    domain = os.environ.get("CADDY_TAILNET_DOMAIN", "").strip()
+    port = card.get("sso_port")
+    if not edge_host or not port:
+        return None, ""
+    public_host = f"{card['tailnet_label']}.{domain}" if card.get("tailnet_label") and domain else edge_host
+    request = client.build_request(
+        "GET", f"https://caddy:{port}{card['edge_check']}", headers={"Host": public_host},
+        # Caddy serves the tailnet certificate, so the handshake names the edge host it covers.
+        extensions={"sni_hostname": edge_host})
+    try:
+        response = await client.send(request)
+    except (_httpx.RequestError, OSError) as e:
+        return False, str(e)
+    if response.status_code >= 500:
+        return False, f"{public_host} answers {response.status_code} through the edge"
+    return True, ""
 
 
 async def _check_service(url: str, client: _httpx.AsyncClient | None = None) -> tuple[bool, str]:

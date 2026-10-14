@@ -9,9 +9,8 @@ A request that changes state, or that reaches an ops-forwarding namespace, needs
   1. The SSO edge identity: `X-Forwarded-Email`, trusted only when the TCP peer is the Caddy
      edge itself. Caddy sets that header from oauth2-proxy's forward_auth response and strips any
      client-supplied copy (tests/test_caddyfile_invariants.py), so a browser cannot forge it, and
-     a container that connects to dashboard:8080 directly is not the edge peer. The containers
-     that share Caddy's network namespace (hermes-dashboard, the tailnet sidecars) do present its
-     address; hermes-dashboard already holds OPS_CONTROLLER_TOKEN, so that gains it nothing.
+     a container that connects to dashboard:8080 directly is not the edge peer. A container
+     that shared Caddy's network namespace would present its address; none does.
   2. `Authorization: Bearer <OPS_CONTROLLER_TOKEN>`: an internal caller (mcp-orchestration) that
      already holds the ops-controller credential gains nothing it could not do directly.
   3. Local mode only (the render turned the edge off, so no SSO identity exists): the local

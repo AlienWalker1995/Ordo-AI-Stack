@@ -202,8 +202,8 @@ def test_formerly_divergent_ports_serve_at_root(caddyfile_text: str) -> None:
     handle_path, no `redir /` bounce to a subpath.
 
     :8447 (Hermes) uses (self_authenticating_service): the dashboard runs its own Google
-    OIDC login so its desktop app can connect (see the test below), and its upstream is
-    127.0.0.1 because it lives in caddy's network namespace.
+    OIDC login so its desktop app can connect (see the test below), and its upstream is the
+    agent, which runs the dashboard as an s6 service next to the gateways.
 
     :8449 is the LiteLLM admin UI (at /ui/; swagger at /). It needs a port root because
     the :443 `/llm/*` route strips its prefix and the admin UI / swagger HTML then request
@@ -214,7 +214,7 @@ def test_formerly_divergent_ports_serve_at_root(caddyfile_text: str) -> None:
     service publishes no host port), so losing the SSO gate here exposes the trace store.
     """
     port_of = {upstream: port for port, upstream in SERVICE_PORTS.items()}
-    for snippet, upstream in (("self_authenticating_service", "127.0.0.1:9119"),
+    for snippet, upstream in (("self_authenticating_service", "agent:9119"),
                               ("sso_service", "codebase-memory-ui:9750"),
                               ("sso_service", "model-gateway:11435"),
                               ("sso_service", "langfuse-web:3000")):
@@ -320,11 +320,12 @@ def test_only_the_hermes_site_skips_the_sso_gate_and_its_own_login_is_configured
              if f"import self_authenticating_service {upstream}" in _site_block(caddyfile_text, port)]
     assert users == ["8447"], f"only Hermes may skip the SSO gate, found {users}"
 
-    manifest = yaml.safe_load((REPO_ROOT / "services" / "hermes-dashboard" / "plugin.yaml").read_text(encoding="utf-8"))
-    service = manifest["services"][0]
-    env = service["env"]
+    # The dashboard runs in the agent container (upstream's s6 `dashboard` service).
+    agent = yaml.safe_load((REPO_ROOT / "services" / "hermes" / "agent.yaml").read_text(encoding="utf-8"))
+    env = agent["environment"]
     assert env["HERMES_DASHBOARD_OIDC_ISSUER"] == "https://accounts.google.com"
-    assert env["HERMES_DASHBOARD_PUBLIC_URL"] == "https://hermes.${CADDY_TAILNET_DOMAIN}"
-    assert "HERMES_DASHBOARD_OIDC_CLIENT_ID" in service["secrets"]
-    assert "HERMES_DASHBOARD_OIDC_CLIENT_SECRET" in service["secret_files"]
-    assert "--insecure" not in service["command"]
+    assert env["HERMES_DASHBOARD_PUBLIC_URL"] == "${HERMES_DASHBOARD_ENABLED:+https://hermes.${CADDY_TAILNET_DOMAIN}}"
+    assert env["HERMES_DASHBOARD_OIDC_CLIENT_ID"] == "${HERMES_DASHBOARD_OIDC_CLIENT_ID:-}"
+    assert "HERMES_DASHBOARD_OIDC_CLIENT_SECRET" in agent["secret_files"]
+    plugin = yaml.safe_load((REPO_ROOT / "services" / "hermes-dashboard" / "plugin.yaml").read_text(encoding="utf-8"))
+    assert {"HERMES_DASHBOARD_OIDC_CLIENT_ID", "HERMES_DASHBOARD_OIDC_CLIENT_SECRET"} <= set(plugin["secrets"])

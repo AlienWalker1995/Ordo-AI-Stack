@@ -2,8 +2,8 @@
 
 The agent container (`agent`) has the host Docker socket, and its unprivileged hermes user can use
 it: operator-granted on 2026-08-09, with guardrails in its prompt (docs/design/hermes-owns-docker.md).
-The hermes-dashboard container runs agent sessions too (its Chat tab, the desktop app), so it gets the
-agent's runtime (`agent_runtime: true`) and the same access. Both still reach ops-controller.
+The Hermes dashboard (web UI and desktop apps) runs inside the same container, as upstream's s6
+`dashboard` service next to the gateways, so its sessions have the same access. It reaches ops-controller.
 
 These are live checks (`docker exec` / `docker inspect`); they skip when the containers are not up.
 """
@@ -24,7 +24,6 @@ pytestmark = pytest.mark.docker
 # silently re-break this suite into a permanent skip.
 COMPOSE_PROJECT_NAME = os.environ.get("COMPOSE_PROJECT_NAME", "ordo")
 GATEWAY = f"{COMPOSE_PROJECT_NAME}-agent-1"
-DASHBOARD = f"{COMPOSE_PROJECT_NAME}-hermes-dashboard-1"
 
 
 def _container_running(name: str) -> bool:
@@ -60,25 +59,10 @@ def gateway() -> str:
     return GATEWAY
 
 
-@pytest.fixture(scope="module")
-def dashboard() -> str:
-    if not _container_running(DASHBOARD):
-        pytest.skip(f"{DASHBOARD} not running; bring the stack up to run this suite")
-    return DASHBOARD
-
-
 def test_hermes_agent_has_the_docker_socket(gateway: str):
     """By design (docs/design/hermes-owns-docker.md): Hermes operates the host's Docker."""
     r = _docker_exec(gateway, "test", "-S", "/var/run/docker.sock")
     assert r.returncode == 0, "the agent lost /var/run/docker.sock; Hermes can no longer run Docker"
-
-
-def test_hermes_dashboard_sessions_have_the_docker_socket(dashboard: str):
-    """A session resumed from the desktop app must keep the tools it had on Discord."""
-    r = _docker_exec(dashboard, "/command/s6-setuidgid", "hermes",
-                     "docker", "version", "--format", "{{.Server.Version}}")
-    assert r.returncode == 0 and r.stdout.strip(), (
-        f"the dashboard's hermes user cannot use /var/run/docker.sock: {r.stderr.strip()!r}")
 
 
 def test_hermes_user_can_use_the_docker_socket(gateway: str):
@@ -91,10 +75,17 @@ def test_hermes_user_can_use_the_docker_socket(gateway: str):
         f"the hermes user cannot use /var/run/docker.sock: {r.stderr.strip()!r}")
 
 
-def test_hermes_dashboard_not_in_root_group(dashboard: str):
-    parsed = _inspect(dashboard)
-    group_add = parsed["HostConfig"].get("GroupAdd", []) or []
-    assert "0" not in group_add
+def test_the_dashboard_runs_beside_the_gateways(gateway: str):
+    """With the dashboard enabled it is the s6 `dashboard` service in this container: up, answering,
+    and reporting the gateway as running (what the desktop apps show)."""
+    env = dict(e.split("=", 1) for e in _inspect(gateway)["Config"]["Env"])
+    if env.get("HERMES_DASHBOARD") != "1":
+        pytest.skip("the hermes-dashboard plugin is not enabled in this stack")
+    r = _docker_exec(gateway, "/command/s6-svstat", "-u", "/run/service/dashboard")
+    assert r.stdout.strip() == "true", f"the s6 dashboard service is not up: {r.stdout or r.stderr!r}"
+    r = _docker_exec(gateway, "curl", "-fsS", "http://localhost:9119/api/status")
+    assert r.returncode == 0, f"the dashboard does not answer: {r.stderr!r}"
+    assert json.loads(r.stdout)["gateway_running"] is True, "the dashboard reports the gateway stopped"
 
 
 def test_hermes_can_reach_ops_controller(gateway: str):

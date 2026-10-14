@@ -2,7 +2,7 @@
 
 Hermes is the stack's assistant-agent layer and the default agent. The stack models an agent as a **data manifest** ([`../services/hermes/agent.yaml`](../services/hermes/agent.yaml)) that the renderer wires into a single `agent` compose service; the agent contract (chat via model-gateway, tools via the model-gateway `/mcp` endpoint, GPU via the ops-controller `/jobs` scheduler, `.env` read-only) is in [`agents.md`](agents.md). The image builds from `services/hermes/` via `ordo build agent` and is selected by `agent: hermes` in `ordo.yaml`.
 
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) is the stack's assistant-agent layer. It runs as two compose services — `agent` (Discord / Telegram messaging) and `hermes-dashboard` (web UI, container port 9119, published by Caddy at `https://${CADDY_TAILNET_HOSTNAME}:8447/` — Hermes's own Google OIDC sign-in, served at its origin root) — that come up with the rest of the stack.
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) is the stack's assistant-agent layer. It runs as one compose service, `agent`, that comes up with the rest of the stack. Inside it, upstream's s6 supervisor runs the gateways (`gateway-<profile>`: Discord / Telegram messaging, cron) and, with the `hermes-dashboard` plugin on, the dashboard: the web UI and the backend every Hermes desktop app connects to (port 9119, published by Caddy at `https://${CADDY_TAILNET_HOSTNAME}:8447/` with Hermes's own Google OIDC sign-in, served at its origin root).
 
 ## Running
 
@@ -16,9 +16,9 @@ ordo up --all                          # refuses while a GPU lease holds the car
 That's it. Hermes starts automatically, waits for model-gateway / model-gateway-keys / dashboard to be healthy, then registers messaging platforms (if configured) and serves the web UI.
 
 Web UI: `https://${CADDY_TAILNET_HOSTNAME}:8447/` (Hermes's own Google OIDC sign-in, its own dedicated Caddy port, served at the origin root — see [docs/runbooks/auth.md](runbooks/auth.md)). The old `https://${CADDY_TAILNET_HOSTNAME}/hermes*` URL still works — Caddy's `:443` front door 302s it to `:8447/`.
-Logs: `docker compose -p ordo logs -f agent hermes-dashboard`
+Logs: `docker compose -p ordo logs -f agent` (each gateway also logs to `/opt/data/logs/gateways/<profile>/`)
 Restart (also picks up changed env or secrets), from the repo root: `ordo recreate agent`
-Stop only Hermes: `docker compose -p ordo stop agent hermes-dashboard`
+Stop only Hermes: `docker compose -p ordo stop agent`
 
 (All `docker compose` commands below assume you're in `out/`, the rendered output directory, with `-p ordo`.)
 
@@ -151,13 +151,21 @@ subscription. Sign out with the same `docker exec` and `codex logout`.
 
 ## Desktop app and Chat tab sessions
 
-The dashboard (`hermes-dashboard`) runs agent sessions itself: its Chat tab and every Hermes desktop
-app conversation execute there, not in `agent`. It therefore declares `agent_runtime: true` and gets the
-agent's session runtime from `services/hermes/agent.yaml`: the brain, `/workspace/data`, the `/c/dev`
-mirror, the Docker socket, the environment and the secrets, including the Claude Code token. Only the
-names under `gateway_only:` there stay with the gateway (Discord and Telegram credentials, the API
-server). A session resumed from the desktop app keeps the tools it had on Discord. Add a mount, env var
-or secret to the agent manifest and both get it; repeating one in the dashboard manifest fails the render.
+The dashboard runs the agent sessions of its Chat tab and of every Hermes desktop app, and it runs
+in the `agent` container (upstream's s6 `dashboard` service, `HERMES_DASHBOARD=1` from the
+`hermes-dashboard` plugin). So:
+
+- A session has the same tools from the desktop app as from Discord: the Docker socket, `/c/dev`,
+  `/workspace/data`, Claude Code and Codex.
+- The desktop app's gateway controls (status, start, stop, restart, per-profile gateways, logs) act on
+  the real gateways through s6. Restarting a gateway from there is safe; `ordo recreate agent` restarts
+  the whole container, dashboard included, so check Hermes is idle first.
+- Sign-in: Google, through Hermes's bundled OIDC provider (setup: [runbooks/auth.md](runbooks/auth.md)).
+  Only `/api/status` answers without signing in. The stack dashboard's Hermes card probes it through Caddy (`edge_check`), so the card goes red when the site does.
+
+Hermes 0.21.7 to 0.22.0 do not recognise the gateway's own launcher command line, so a dashboard
+reports a running gateway as stopped. `GATEWAY_HEALTH_URL` (in `agent.yaml`) points its health rung at
+the gateway's API server until the upstream fix ships.
 
 ## Profiles (more than one bot)
 
@@ -181,7 +189,7 @@ The image is upstream's published `nousresearch/hermes-agent` plus this stack's 
 
 1. `docker buildx imagetools inspect nousresearch/hermes-agent:stable` for the new digest; pull it and read `revision` from `/etc/hermes/image-provenance.json`.
 2. Replace the digest and `HERMES_PINNED_SHA` together in `services/hermes/Dockerfile`, and commit.
-3. `ordo apply` from the repo root (it builds the image, renders and recreates `agent` and `hermes-dashboard`).
+3. `ordo apply` from the repo root (it builds the image, renders and recreates `agent`).
 
 Upstream migrates `config.yaml` on the first boot of a new release and logs each change; read `docker logs ordo-agent-1` after an upgrade.
 
@@ -191,12 +199,12 @@ Upstream migrates `config.yaml` on the first boot of a new release and logs each
 
 ```bash
 docker compose -p ordo logs agent | tail -50
-docker compose -p ordo logs hermes-dashboard | tail -50
+docker exec ordo-agent-1 /command/s6-svstat /run/service/dashboard /run/service/gateway-default
 ```
 
 **Web UI returns 502 / connection refused at `:8447`:**
-- Check that the dashboard container is running: `docker compose -p ordo ps hermes-dashboard`.
-- Confirm hermes-dashboard is on `ordo-net` so Caddy can reach it: `docker inspect ordo-hermes-dashboard-1 --format '{{json .NetworkSettings.Networks}}'`.
+- Check the dashboard service is up and answering: `docker exec ordo-agent-1 /command/s6-svstat /run/service/dashboard` and `docker exec ordo-agent-1 curl -s localhost:9119/api/status`.
+- Check `HERMES_DASHBOARD=1` in the agent: `docker exec ordo-agent-1 printenv HERMES_DASHBOARD` (empty means the `hermes-dashboard` plugin is off).
 - Check Caddy logs for routing errors on the `:8447` site block: `docker compose -p ordo logs caddy | grep -i hermes`.
 
 **Discord bot shows online but doesn't reply:**

@@ -157,14 +157,13 @@
 #
 # Served at its origin root, Host and Origin passed through untouched: the dashboard's
 # HERMES_DASHBOARD_PUBLIC_URL (https://hermes.<tailnet>) is the host it trusts and the
-# origin it allows, and that setting is also what engages its login gate on a loopback bind.
+# origin it allows.
 #
-# Reached at 127.0.0.1, NOT hermes-dashboard:9119 — the service runs inside THIS
-# container's network namespace (network_mode: service:caddy). Recreating caddy destroys
-# this namespace and orphans hermes-dashboard along with the tailnet sidecars, so recreate
-# them together: `ordo recreate caddy` names them.
+# The dashboard runs inside the agent container (upstream's s6 `dashboard` service, next to
+# the gateways; services/hermes/agent.yaml), bound on the project network with its login
+# gate engaged.
 :8447 {
-    import self_authenticating_service 127.0.0.1:9119
+    import self_authenticating_service agent:9119
 }
 
 # ---- :8448 — codebase-memory 3D graph ----
