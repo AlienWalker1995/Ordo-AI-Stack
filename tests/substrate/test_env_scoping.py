@@ -133,6 +133,8 @@ def test_every_env_name_is_declared(rendered):
     }
     for plugin in REGISTRY.plugins:
         for ps in plugin.services:
+            if ps.agent_runtime:  # declared on the agent manifest (Agent.session_runtime_for)
+                ps = agent.session_runtime_for(ps)
             declared[ps.name] = (set(ps.env) | set(ps.derived_env) | set(ps.secrets)
                                  | {ref.env for ref in ps.secret_files})
     secret_names = set(rc.required_secrets) | set(OPTIONAL_SECRET_KEYS)

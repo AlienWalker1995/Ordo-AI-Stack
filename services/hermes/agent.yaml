@@ -189,6 +189,18 @@ volumes:
 # never hold the operator's Claude subscription token. Unset, `claude` exits 78 and says how to set it.
 secret_files: [DISCORD_BOT_TOKEN, GITHUB_BACKUP_PAT, CLAUDE_CODE_OAUTH_TOKEN]
 
+# What only the messaging gateway uses: the platform credentials and its API server. The Hermes
+# dashboard runs agent sessions too (its Chat tab and the desktop app), so it declares
+# `agent_runtime: true` and gets everything above except these (services/hermes-dashboard/plugin.yaml).
+# A session then has the same mounts, Docker socket and tools from Discord or the desktop app. The
+# dashboard never holds a bot token, because its "restart gateway" action would start a second bot.
+gateway_only:
+  environment: [API_SERVER_KEY, API_SERVER_HOST, API_SERVER_PORT, DISCORD_ALLOWED_USERS,
+                DISCORD_ALLOWED_CHANNELS, DISCORD_ALLOWED_ROLES, DISCORD_REQUIRE_MENTION,
+                DISCORD_FREE_RESPONSE_CHANNELS, DISCORD_HOME_CHANNEL, DISCORD_AUTO_THREAD,
+                DISCORD_REACTIONS, TELEGRAM_BOT_TOKEN]
+  secret_files: [DISCORD_BOT_TOKEN]
+
 # gateway_state.json is written by `hermes gateway` on startup (Docker mode writes no pid file).
 #
 # Probe AS the hermes user, never as root. The 2026-08-04 outage (22h of cron/Discord failure while

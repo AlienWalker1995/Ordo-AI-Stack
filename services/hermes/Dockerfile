@@ -52,8 +52,8 @@ COPY ops_client.py /opt/hermes/plugins/ops-router/ops_client.py
 # --host fails to connect instead of skipping the lease. The result goes to /opt/ordo-skills,
 # read-only, which the boot hook registers as a Hermes `skills.external_dirs` entry: the curator
 # will not rewrite it and a volume loss cannot take it.
-# The same for upstream's bundled claude-code skill: the notes say the CLI is installed and signed
-# in (below), and carry the stack's rules (scratch worktrees, scoped tools, no GPU, no secrets).
+# The same for upstream's bundled claude-code and codex skills: the notes say the CLI is installed
+# (below) and how it is signed in, and carry the stack's rules (scratch worktrees, no GPU, no secrets).
 COPY skill-overlays/ /tmp/skill-overlays/
 COPY scripts/ordo_skills.py /opt/ordo/ordo_skills.py
 RUN python3 /opt/ordo/ordo_skills.py build \
@@ -64,6 +64,10 @@ RUN python3 /opt/ordo/ordo_skills.py build \
         /opt/hermes/skills/autonomous-ai-agents/claude-code \
         /tmp/skill-overlays/claude-code/ordo-deployment.md \
         /opt/ordo-skills/autonomous-ai-agents/claude-code \
+    && python3 /opt/ordo/ordo_skills.py build \
+        /opt/hermes/skills/autonomous-ai-agents/codex \
+        /tmp/skill-overlays/codex/ordo-deployment.md \
+        /opt/ordo-skills/autonomous-ai-agents/codex \
     && rm -rf /tmp/skill-overlays
 
 # Claude Code CLI, pinned, for the claude-code skill. It lives under /opt/claude-code (not on PATH);
@@ -78,6 +82,15 @@ RUN npm install --prefix /opt/claude-code --no-audit --no-fund "@anthropic-ai/cl
     && cd /opt/claude-code && node node_modules/@anthropic-ai/claude-code/install.cjs \
     && /opt/claude-code/node_modules/.bin/claude --version
 COPY claude-code /usr/local/bin/claude
+
+# Codex CLI, pinned, for the codex skill, the same way: /opt/codex, run through the /usr/local/bin/codex
+# wrapper on the operator's ChatGPT subscription (sign-in kept under the brain volume, see the
+# wrapper). Its platform binary arrives as an npm optional dependency, so no install script runs.
+# Same 14-day rule when bumping; never `codex update`.
+ARG CODEX_VERSION=0.159.1
+RUN npm install --prefix /opt/codex --no-audit --no-fund "@openai/codex@${CODEX_VERSION}" \
+    && /opt/codex/node_modules/.bin/codex --version
+COPY codex /usr/local/bin/codex
 
 # The seed SOUL.md (execute, don't propose), copied into a home that has none on first boot.
 COPY seed/SOUL.md /opt/ordo-seed/SOUL.md
@@ -95,5 +108,5 @@ COPY scripts/vault_federate.py /opt/ordo/vault_federate.py
 ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
 COPY secret-env.sh /opt/ordo/secret-env.sh
 COPY ordo-init.sh /etc/cont-init.d/50-ordo
-RUN chmod -R a+rX,go-w /opt/ordo /opt/ordo-skills /opt/ordo-seed /opt/hermes/plugins/ops-router /opt/claude-code \
-    && chmod 0755 /etc/cont-init.d/50-ordo /usr/local/bin/claude
+RUN chmod -R a+rX,go-w /opt/ordo /opt/ordo-skills /opt/ordo-seed /opt/hermes/plugins/ops-router /opt/claude-code /opt/codex \
+    && chmod 0755 /etc/cont-init.d/50-ordo /usr/local/bin/claude /usr/local/bin/codex

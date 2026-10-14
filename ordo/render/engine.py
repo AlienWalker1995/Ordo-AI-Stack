@@ -971,6 +971,13 @@ def render(source: Source, catalog: Catalog,
     compose_profiles = sorted({p.compose_profile for p in services if p.compose_profile})
     # flatten to (plugin, service) pairs — compose builds each declared service from data
     plugin_services = [(p, ps) for p in services for ps in p.services]
+    # A service that runs agent sessions takes the chosen agent's session runtime (one declaration).
+    for i, (p, ps) in enumerate(plugin_services):
+        if ps.agent_runtime:
+            if agent is None:
+                raise ValueError(f"service {ps.name!r} declares agent_runtime, but agent {source.agent!r} "
+                                 "is not in the registry")
+            plugin_services[i] = (p, agent.session_runtime_for(ps))
     mcp_servers, mcp_notes = _render_mcp(mcps)
     # server_id → plugin_id for EVERY registered kind=mcp plugin, not just the enabled ones. The
     # server_id defaults to the plugin id (mirrors _render_mcp), decoupled only when a plugin sets

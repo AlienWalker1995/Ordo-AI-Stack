@@ -454,11 +454,11 @@ def test_plugin_service_restart_policy_is_validated():
 def test_the_hermes_dashboard_traces_exactly_like_the_agent():
     """The dashboard runs Hermes sessions too (its chat tab, the desktop app), through the same
     bundled plugin. Its Langfuse settings must be the agent's: with the keys but no base URL the SDK
-    sent the self-hosted keys to Langfuse Cloud and every span batch was rejected (401)."""
-    agent_env = yaml.safe_load((ROOT / "services" / "hermes" / "agent.yaml").read_text(encoding="utf-8"))["environment"]
+    sent the self-hosted keys to Langfuse Cloud and every span batch was rejected (401). It takes them
+    from the agent's runtime (`agent_runtime: true`), so they must not be gateway-only."""
+    agent = yaml.safe_load((ROOT / "services" / "hermes" / "agent.yaml").read_text(encoding="utf-8"))
     dashboard = yaml.safe_load((ROOT / "services" / "hermes-dashboard" / "plugin.yaml").read_text(encoding="utf-8"))
-    dashboard_env = dashboard["services"][0]["env"]
-    agent_langfuse = {k: v for k, v in agent_env.items() if k.startswith("HERMES_LANGFUSE_")}
-    dashboard_langfuse = {k: v for k, v in dashboard_env.items() if k.startswith("HERMES_LANGFUSE_")}
+    agent_langfuse = {k for k in agent["environment"] if k.startswith("HERMES_LANGFUSE_")}
     assert "HERMES_LANGFUSE_BASE_URL" in agent_langfuse
-    assert dashboard_langfuse == agent_langfuse
+    assert dashboard["services"][0]["agent_runtime"] is True
+    assert not agent_langfuse & set(agent["gateway_only"]["environment"])

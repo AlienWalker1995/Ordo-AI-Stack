@@ -1,0 +1,26 @@
+#!/bin/sh
+# `codex` for Hermes: runs the image's pinned Codex CLI (/opt/codex) on the operator's ChatGPT
+# subscription. The sign-in is ChatGPT's own (`codex login --device-auth`, run once by the operator);
+# it refreshes its tokens and rewrites auth.json, so it lives in a writable folder on the brain volume
+# that both the agent and the dashboard mount (CODEX_HOME), not in a read-only file secret. The brain
+# backup skips that folder. Installed as /usr/local/bin/codex by the Dockerfile.
+set -eu
+
+export CODEX_HOME="${CODEX_HOME:-${HOME:-/opt/data}/codex}"
+mkdir -p "$CODEX_HOME"
+case "${1:-}" in
+  login|logout|help|--version|-V|--help|-h) ;;  # answerable, or needed, without a sign-in
+  *)
+    if [ ! -s "$CODEX_HOME/auth.json" ]; then
+      echo "codex: Codex is not signed in. The operator runs on the host:" \
+           "docker exec -it --user hermes ordo-agent-1 codex login --device-auth" \
+           "and completes the sign-in in any browser." >&2
+      exit 78
+    fi
+    ;;
+esac
+
+# Always the subscription: an inherited API key or base URL would bill or route somewhere else.
+unset OPENAI_API_KEY OPENAI_BASE_URL CODEX_API_KEY
+# The version is pinned by the image; never check for or offer an update.
+exec /opt/codex/node_modules/.bin/codex -c check_for_update_on_startup=false "$@"
