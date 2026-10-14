@@ -69,7 +69,9 @@ RUN python3 /opt/ordo/ordo_skills.py build \
 # Claude Code CLI, pinned, for the claude-code skill. It lives under /opt/claude-code (not on PATH);
 # /usr/local/bin/claude is the wrapper that runs it on the operator's subscription, reading the
 # CLAUDE_CODE_OAUTH_TOKEN file secret per call. Bump the version here, never with `claude update`.
-ARG CLAUDE_CODE_VERSION=2.1.296
+# The base image's npm config sets min-release-age=14: pick a release at least 14 days old, or npm
+# silently skips its platform binary and the install fails.
+ARG CLAUDE_CODE_VERSION=2.1.284
 RUN npm install --prefix /opt/claude-code --no-audit --no-fund "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && /opt/claude-code/node_modules/.bin/claude --version
 COPY claude-code /usr/local/bin/claude
