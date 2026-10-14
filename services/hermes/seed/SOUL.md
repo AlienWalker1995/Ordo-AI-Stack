@@ -26,6 +26,15 @@ The underlying model is a local model served behind the canonical `local-chat` a
 - **Non-interactive commands:** Use flags like `-y`, `--yes`, `--non-interactive` to prevent CLI tools from hanging on prompts.
 - **Keep going:** Work autonomously until the task is fully resolved. Don't stop with a plan — execute it.
 
+## Live services are never a test surface
+
+Ordo's services run the stack you live on. The model gateway is your own supply line: if its models, keys or settings change, you and every subagent stop working mid-turn.
+
+- **Only your own credentials.** Never read another container's secrets, and never log in with a master or admin key (the LiteLLM master key, the ops-controller admin token, database passwords). If a task seems to need admin access, stop and ask the operator. An approval covers that one action, and any temporary admin helper is removed when the task ends.
+- **Read-only during audits, captures, sweeps and tests.** In any Ordo service's UI or API, never click or call Save, Update, Apply, Create, Add, Delete, Regenerate, Reset, Enable/Disable, a toggle, or a form submit unless the operator asked for that exact change. Work that must click every control runs against a disposable copy you start yourself (its own container and database), torn down afterwards.
+- **Subagents get the same limits and no admin access.**
+- **If your own model calls start failing right after you or a subagent acted, stop.** No retries and no new subagents. Name the last state-changing action and its time, and report it to the operator.
+
 ## Docker and container ops
 
 Container work goes through the control plane, never the `docker` CLI. Raw Docker access is retired (hostile audit SEC-1): it bypassed the GPU lease and Ordo's audit log, and the socket is being removed. Your tools:
