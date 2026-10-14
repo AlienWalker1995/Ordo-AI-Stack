@@ -1,0 +1,32 @@
+#!/bin/sh
+# `claude` for Hermes: runs the image's pinned Claude Code CLI (/opt/claude-code) on the operator's
+# Claude subscription. The token (`claude setup-token`) is read from its file secret at the moment of
+# the call and handed only to this process, so it is never in the container's environment, a config
+# file, or a command line, and a rotated secret (`ordo secrets set CLAUDE_CODE_OAUTH_TOKEN`, then
+# `ordo apply`) takes effect on the next call. Installed as /usr/local/bin/claude by the Dockerfile.
+set -eu
+
+token_file="${CLAUDE_CODE_OAUTH_TOKEN_FILE:-/run/secrets/claude_code_oauth_token}"
+case "${1:-}" in
+  --version|-v|--help|-h) ;;  # answerable without a token
+  *)
+    if [ ! -s "$token_file" ]; then
+      echo "claude: no Claude Code token is configured. The operator creates one with \`claude setup-token\`" \
+           "on a machine with a browser, then runs on the host: ordo secrets set CLAUDE_CODE_OAUTH_TOKEN" \
+           "--from-stdin, then ordo apply." >&2
+      exit 78
+    fi
+    CLAUDE_CODE_OAUTH_TOKEN="$(cat "$token_file")"
+    export CLAUDE_CODE_OAUTH_TOKEN
+    ;;
+esac
+unset CLAUDE_CODE_OAUTH_TOKEN_FILE
+
+# Always the subscription: an inherited API key or base URL would bill or route somewhere else.
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+# The version is pinned by the image; the self-updater cannot write there and must not try.
+export DISABLE_AUTOUPDATER=1
+# Settings and session history in one folder on the agent's home volume (the brain backup skips it).
+export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${HOME:-/opt/data}/claude-code}"
+
+exec /opt/claude-code/node_modules/.bin/claude "$@"

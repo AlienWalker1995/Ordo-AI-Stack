@@ -184,7 +184,10 @@ volumes:
 # File-delivered secrets (ordo/render/secret_files.py): each is mounted read-only at
 # /run/secrets/<key lowercased>, kept out of `docker inspect`, and the render sets <KEY>_FILE to that
 # path; the boot hook (ordo-init.sh) bridges each *_FILE to the plain var the app reads.
-secret_files: [DISCORD_BOT_TOKEN, GITHUB_BACKUP_PAT]
+# CLAUDE_CODE_OAUTH_TOKEN is the exception: never bridged into the environment. Only the `claude`
+# wrapper (services/hermes/claude-code) reads it, per call, so Hermes and every other subprocess
+# never hold the operator's Claude subscription token. Unset, `claude` exits 78 and says how to set it.
+secret_files: [DISCORD_BOT_TOKEN, GITHUB_BACKUP_PAT, CLAUDE_CODE_OAUTH_TOKEN]
 
 # gateway_state.json is written by `hermes gateway` on startup (Docker mode writes no pid file).
 #

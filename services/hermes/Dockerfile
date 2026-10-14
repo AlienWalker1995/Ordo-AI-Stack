@@ -52,13 +52,32 @@ COPY ops_client.py /opt/hermes/plugins/ops-router/ops_client.py
 # --host fails to connect instead of skipping the lease. The result goes to /opt/ordo-skills,
 # read-only, which the boot hook registers as a Hermes `skills.external_dirs` entry: the curator
 # will not rewrite it and a volume loss cannot take it.
+# The same for upstream's bundled claude-code skill: the notes say the CLI is installed and signed
+# in (below), and carry the stack's rules (scratch worktrees, scoped tools, no GPU, no secrets).
 COPY skill-overlays/ /tmp/skill-overlays/
 COPY scripts/ordo_skills.py /opt/ordo/ordo_skills.py
 RUN python3 /opt/ordo/ordo_skills.py build \
         /opt/hermes/optional-skills/creative/comfyui \
         /tmp/skill-overlays/comfyui/ordo-deployment.md \
         /opt/ordo-skills/creative/comfyui \
+    && python3 /opt/ordo/ordo_skills.py build \
+        /opt/hermes/skills/autonomous-ai-agents/claude-code \
+        /tmp/skill-overlays/claude-code/ordo-deployment.md \
+        /opt/ordo-skills/autonomous-ai-agents/claude-code \
     && rm -rf /tmp/skill-overlays
+
+# Claude Code CLI, pinned, for the claude-code skill. It lives under /opt/claude-code (not on PATH);
+# /usr/local/bin/claude is the wrapper that runs it on the operator's subscription, reading the
+# CLAUDE_CODE_OAUTH_TOKEN file secret per call. Bump the version here, never with `claude update`.
+# The base image's npm policy wants releases at least 14 days old (min-release-age=14); an exact pin
+# is not checked against it, so honour it by hand when bumping. npm there also blocks install
+# scripts unless approved: the package's own postinstall (install.cjs, which links the platform
+# binary npm already downloaded) is run explicitly, for this one package only.
+ARG CLAUDE_CODE_VERSION=2.1.284
+RUN npm install --prefix /opt/claude-code --no-audit --no-fund "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    && cd /opt/claude-code && node node_modules/@anthropic-ai/claude-code/install.cjs \
+    && /opt/claude-code/node_modules/.bin/claude --version
+COPY claude-code /usr/local/bin/claude
 
 # The seed SOUL.md (execute, don't propose), copied into a home that has none on first boot.
 COPY seed/SOUL.md /opt/ordo-seed/SOUL.md
@@ -76,5 +95,5 @@ COPY scripts/vault_federate.py /opt/ordo/vault_federate.py
 ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
 COPY secret-env.sh /opt/ordo/secret-env.sh
 COPY ordo-init.sh /etc/cont-init.d/50-ordo
-RUN chmod -R a+rX,go-w /opt/ordo /opt/ordo-skills /opt/ordo-seed /opt/hermes/plugins/ops-router \
-    && chmod 0755 /etc/cont-init.d/50-ordo
+RUN chmod -R a+rX,go-w /opt/ordo /opt/ordo-skills /opt/ordo-seed /opt/hermes/plugins/ops-router /opt/claude-code \
+    && chmod 0755 /etc/cont-init.d/50-ordo /usr/local/bin/claude

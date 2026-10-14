@@ -5,6 +5,11 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Added
+- **Hermes can delegate coding to Claude Code.** The agent image pins the Claude Code CLI and ships
+  upstream's `claude-code` skill with this stack's notes (scratch worktrees, scoped `--allowedTools`,
+  no GPU, no secrets, verify the diff). `claude` runs on the operator's Claude subscription: the
+  `CLAUDE_CODE_OAUTH_TOKEN` file secret (`claude setup-token`) is read per call by the wrapper and never
+  bridged into the agent's environment. Unset, `claude` exits 78 with the setup steps.
 - **`html-video`: HTML/CSS/SVG animations to RGBA video.** An opt-in CPU service
   (`services/html-video`, headless Chromium from the digest-pinned Playwright image) that renders a
   CSS-animated card to a PNG-in-MOV clip with alpha, a still, or a contact sheet of frames, stepping
