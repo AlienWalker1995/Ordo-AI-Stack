@@ -26,7 +26,7 @@ import yaml
 
 from . import backup_policy
 from .buildspec import BuildSpec
-from .plugins import parse_derived_env
+from .plugins import PluginService, parse_derived_env
 from .secret_files import SecretFileRef, parse_secret_files
 
 # The core services an agent may declare it consumes — used to validate a manifest isn't asking
@@ -79,10 +79,26 @@ class Agent:
     # How `ordo backup` saves each named volume the agent writes: {volume: method}
     # (ordo/render/backup_policy.py).
     backup: dict[str, str] = dataclasses.field(default_factory=dict)
+    # What only the messaging gateway process uses, from `gateway_only: {environment: [NAMES],
+    # secret_files: [KEYS]}`: platform credentials and the API server. A plugin service that runs
+    # agent sessions (`agent_runtime: true`, the Hermes dashboard) inherits everything else, so a
+    # session has the same tools wherever it runs, and it never holds a bot token it could start a
+    # second gateway with.
+    gateway_only_environment: tuple[str, ...] = ()
+    gateway_only_secret_files: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Agent:
         secrets = tuple(str(k) for k in (d.get("secrets", []) or []))
+        gateway_only = d.get("gateway_only", {}) or {}
+        gateway_only_environment = tuple(str(k) for k in (gateway_only.get("environment", []) or []))
+        gateway_only_secret_files = tuple(str(k) for k in (gateway_only.get("secret_files", []) or []))
+        where = f"agent {d.get('id')!r}"
+        unknown_env = sorted(set(gateway_only_environment) - set(d.get("environment") or {}))
+        unknown_files = sorted(set(gateway_only_secret_files) - {str(k) for k in (d.get("secret_files") or [])})
+        if unknown_env or unknown_files:
+            raise ValueError(f"{where}: gateway_only names what the manifest does not declare: "
+                             f"{unknown_env + unknown_files}")
         return cls(
             id=str(d["id"]), name=str(d.get("name", d["id"])),
             description=str(d.get("description", "")),
@@ -105,6 +121,8 @@ class Agent:
             secrets=secrets,
             derived_env=parse_derived_env(f"agent {d.get('id')!r}", d),
             backup=backup_policy.parse(f"agent {d.get('id')!r}", d.get("backup"), d.get("volumes") or []),
+            gateway_only_environment=gateway_only_environment,
+            gateway_only_secret_files=gateway_only_secret_files,
         )
 
     def image_for(self, project: str) -> str:
@@ -112,6 +130,31 @@ class Agent:
 
     def unknown_services(self) -> list[str]:
         return [s for s in self.consumes if s not in KNOWN_SERVICES]
+
+    def session_runtime_for(self, service: PluginService) -> PluginService:
+        """`service` (declared `agent_runtime: true`) with this agent's session runtime: its volumes,
+        environment, env and file secrets and derived env, less the gateway_only names. The service
+        adds only what is its own; declaring one of the agent's names again is refused, so the two
+        cannot drift apart."""
+        where = f"service {service.name!r} (agent_runtime)"
+        environment = {k: v for k, v in self.environment.items() if k not in self.gateway_only_environment}
+        secret_files = tuple(ref for ref in self.secret_files if ref.key not in self.gateway_only_secret_files)
+        repeated = sorted(
+            (set(service.env) & set(environment))
+            | (set(service.secrets) & set(self.secrets))
+            | ({ref.key for ref in service.secret_files} & {ref.key for ref in secret_files})
+            | (set(service.derived_env) & set(self.derived_env))
+            | (set(service.volumes) & set(self.volumes)))
+        if repeated:
+            raise ValueError(f"{where}: {repeated} already come from agent {self.id!r}; remove them from the service")
+        return dataclasses.replace(
+            service,
+            env={**environment, **service.env},
+            volumes=[*self.volumes, *service.volumes],
+            secrets=(*self.secrets, *service.secrets),
+            secret_files=(*secret_files, *service.secret_files),
+            derived_env=(*self.derived_env, *service.derived_env),
+        )
 
 
 class AgentRegistry:

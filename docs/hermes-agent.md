@@ -134,6 +134,31 @@ its file secret; it is never in the agent's environment. Without it, `claude` ex
 steps. Claude Code's settings and sessions live in `/opt/data/claude-code`. Bump the CLI by changing
 `CLAUDE_CODE_VERSION` in the Dockerfile.
 
+## Codex as a sub-agent
+
+The same for OpenAI's Codex CLI (`CODEX_VERSION`) and upstream's `codex` skill
+(`services/hermes/skill-overlays/codex/`), on the operator's ChatGPT subscription. ChatGPT's sign-in
+refreshes its own tokens, so it is not a secret in the store: sign in once, from the host:
+
+```
+docker exec -it --user hermes ordo-agent-1 codex login --device-auth
+```
+
+Open the printed link in any browser and enter the code. The sign-in lands in `/opt/data/codex` (the
+brain volume, which the dashboard shares; the brain backup skips it). Until then `codex` exits 78 with
+that command. The wrapper (`services/hermes/codex`) drops any `OPENAI_API_KEY` so a run always uses the
+subscription. Sign out with the same `docker exec` and `codex logout`.
+
+## Desktop app and Chat tab sessions
+
+The dashboard (`hermes-dashboard`) runs agent sessions itself: its Chat tab and every Hermes desktop
+app conversation execute there, not in `agent`. It therefore declares `agent_runtime: true` and gets the
+agent's session runtime from `services/hermes/agent.yaml`: the brain, `/workspace/data`, the `/c/dev`
+mirror, the Docker socket, the environment and the secrets, including the Claude Code token. Only the
+names under `gateway_only:` there stay with the gateway (Discord and Telegram credentials, the API
+server). A session resumed from the desktop app keeps the tools it had on Discord. Add a mount, env var
+or secret to the agent manifest and both get it; repeating one in the dashboard manifest fails the render.
+
 ## Profiles (more than one bot)
 
 `hermes profile create <name>` adds a profile under `/opt/data/profiles/<name>/`: its own `SOUL.md`, memory, skills and sessions. One gateway serves every profile (upstream's multiplexer); do not run a second gateway per profile. A profile created while the gateway runs is served after the next restart (`ordo recreate agent`, or restart `gateway-default` inside the container); `/opt/data/gateway_state.json` lists `served_profiles`.

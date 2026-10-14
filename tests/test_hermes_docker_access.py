@@ -2,7 +2,8 @@
 
 The agent container (`agent`) has the host Docker socket, and its unprivileged hermes user can use
 it: operator-granted on 2026-08-09, with guardrails in its prompt (docs/design/hermes-owns-docker.md).
-The hermes-dashboard container must have neither. Both still reach ops-controller.
+The hermes-dashboard container runs agent sessions too (its Chat tab, the desktop app), so it gets the
+agent's runtime (`agent_runtime: true`) and the same access. Both still reach ops-controller.
 
 These are live checks (`docker exec` / `docker inspect`); they skip when the containers are not up.
 """
@@ -72,11 +73,12 @@ def test_hermes_agent_has_the_docker_socket(gateway: str):
     assert r.returncode == 0, "the agent lost /var/run/docker.sock; Hermes can no longer run Docker"
 
 
-def test_hermes_dashboard_has_no_docker_sock(dashboard: str):
-    r = _docker_exec(dashboard, "test", "-S", "/var/run/docker.sock")
-    assert r.returncode != 0, (
-        "FAIL: /var/run/docker.sock present in hermes-dashboard"
-    )
+def test_hermes_dashboard_sessions_have_the_docker_socket(dashboard: str):
+    """A session resumed from the desktop app must keep the tools it had on Discord."""
+    r = _docker_exec(dashboard, "/command/s6-setuidgid", "hermes",
+                     "docker", "version", "--format", "{{.Server.Version}}")
+    assert r.returncode == 0 and r.stdout.strip(), (
+        f"the dashboard's hermes user cannot use /var/run/docker.sock: {r.stderr.strip()!r}")
 
 
 def test_hermes_user_can_use_the_docker_socket(gateway: str):

@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Added
+- **Hermes can delegate coding to Codex.** The agent image pins the Codex CLI and ships upstream's
+  `codex` skill with this stack's notes. `codex` runs on the operator's ChatGPT subscription, signed in
+  once with `codex login --device-auth`; the sign-in stays in `/opt/data/codex`, which the brain backup
+  skips. Not signed in, `codex` exits 78 with the command.
+- **Hermes desktop and Chat tab sessions get the agent's full runtime.** The dashboard runs those
+  sessions in its own container, which had a hand-copied subset of the agent's (no Docker socket, no
+  `/c/dev`, no Claude Code token), so a session resumed from the desktop app lost its tools mid-task.
+  A plugin service now declares `agent_runtime: true` to take the agent manifest's volumes, environment
+  and secrets, less its `gateway_only:` names (platform credentials, the API server).
 - **Hermes can delegate coding to Claude Code.** The agent image pins the Claude Code CLI and ships
   upstream's `claude-code` skill with this stack's notes (scratch worktrees, scoped `--allowedTools`,
   no GPU, no secrets, verify the diff). `claude` runs on the operator's Claude subscription: the

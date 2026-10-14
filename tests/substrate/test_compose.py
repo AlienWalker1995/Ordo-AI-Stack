@@ -3,6 +3,7 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 from ordo.render import compose
@@ -329,11 +330,43 @@ def test_mcp_healthcheck_defaults_to_the_renderer_probe_unless_overridden():
     assert searxng != expected and searxng["test"][1] == "node"
 
 
-def test_only_ops_controller_and_agent_mount_the_docker_socket():
+def test_only_ops_controller_and_the_agent_runtime_mount_the_docker_socket():
+    """The Hermes dashboard runs agent sessions with the agent's runtime (`agent_runtime: true`)."""
     c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
     with_sock = sorted(n for n, s in c["services"].items()
                        if any("/var/run/docker.sock" in v for v in s.get("volumes", []) or []))
-    assert with_sock == ["agent", "ops-controller"]
+    assert with_sock == ["agent", "hermes-dashboard", "ops-controller"]
+
+
+def test_the_hermes_dashboard_gets_the_agent_runtime_less_the_gateway_only_names():
+    c = render(_dual_gpu_src(plugins="auto"), CATALOG, REGISTRY).compose_dict()
+    agent, dashboard = c["services"]["agent"], c["services"]["hermes-dashboard"]
+    gateway_only = {"API_SERVER_KEY", "API_SERVER_HOST", "API_SERVER_PORT", "TELEGRAM_BOT_TOKEN",
+                    "DISCORD_BOT_TOKEN_FILE"}
+    for key, value in agent["environment"].items():
+        if key in gateway_only or key.startswith("DISCORD_"):
+            assert key not in dashboard["environment"], key
+        else:
+            assert dashboard["environment"][key] == value, key
+    assert set(agent["volumes"]) - set(dashboard["volumes"]) == {
+        v for v in agent["volumes"] if "/run/secrets/discord_bot_token" in v}
+    assert any("/run/secrets/claude_code_oauth_token" in v for v in dashboard["volumes"])
+    assert dashboard["network_mode"] == "service:caddy"
+    assert dashboard["command"][:2] == ["hermes", "dashboard"]
+
+
+def test_agent_runtime_refuses_a_name_the_agent_already_declares():
+    from ordo.render.agents import Agent
+    from ordo.render.plugins import PluginService
+    agent = Agent.from_dict({"id": "a", "environment": {"X": "1", "BOT": "t"},
+                             "volumes": ["v:/data"], "gateway_only": {"environment": ["BOT"]}})
+    merged = agent.session_runtime_for(PluginService(name="ui", image="i", agent_runtime=True,
+                                                     env={"OWN": "2"}))
+    assert merged.env == {"X": "1", "OWN": "2"} and merged.volumes == ["v:/data"]
+    with pytest.raises(ValueError, match="already come from agent"):
+        agent.session_runtime_for(PluginService(name="ui", image="i", agent_runtime=True, env={"X": "1"}))
+    with pytest.raises(ValueError, match="gateway_only names"):
+        Agent.from_dict({"id": "a", "gateway_only": {"environment": ["NOPE"]}})
 
 
 def test_model_without_backend_image_runs_the_hosts_cuda_build(tmp_path):

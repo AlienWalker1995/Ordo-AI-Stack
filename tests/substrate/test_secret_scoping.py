@@ -55,7 +55,8 @@ FILE_SPEC: dict[str, set[str]] = {
     "ops-controller": {"OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN_HERMES"},
     "dashboard": {"OPS_CONTROLLER_TOKEN", "THROUGHPUT_RECORD_TOKEN", "LITELLM_MASTER_KEY"},
     "agent": {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT", "CLAUDE_CODE_OAUTH_TOKEN"},
-    "hermes-dashboard": {"HERMES_DASHBOARD_OIDC_CLIENT_SECRET"},
+    # The agent's runtime (agent_runtime: true), less the gateway-only Discord token.
+    "hermes-dashboard": {"HERMES_DASHBOARD_OIDC_CLIENT_SECRET", "GITHUB_BACKUP_PAT", "CLAUDE_CODE_OAUTH_TOKEN"},
     "comfyui-gate": {"OPS_CONTROLLER_TOKEN"},
     "mcp-comfyui": {"OPS_CONTROLLER_TOKEN"},
     "mcp-orchestration": {"OPS_CONTROLLER_TOKEN"},
