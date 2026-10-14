@@ -8,6 +8,11 @@ machine do not apply.
   subscription with a token from the stack's secret store. If `claude` exits 78 with "no Claude Code
   token is configured", stop and give the operator the command it prints; do not look for another
   credential and never set `ANTHROPIC_API_KEY`.
+- **Only Claude, only through `claude`.** Claude Code runs Anthropic's models on the operator's
+  subscription and nothing else. Never run the binary under `/opt/claude-code` directly, never set
+  `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` or a model override, and never point it at the stack's
+  LiteLLM gateway or the local model: the image's managed settings force the subscription, so such a
+  run only fails. Local-model work is yours to do, not Claude Code's.
 - **Print mode, bounded.** Use `claude -p` with `--max-turns` and a terminal `timeout`, and add
   `--output-format json` so you get the result, the session id (resume with `-r <id>`) and the cost.
   Use the tmux mode only when the operator asks for an interactive session.

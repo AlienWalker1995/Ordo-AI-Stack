@@ -81,3 +81,15 @@ def test_the_image_pins_the_cli_and_installs_the_wrapper():
 def test_the_token_is_never_bridged_into_the_agent_environment():
     hook = (ROOT / "services" / "hermes" / "ordo-init.sh").read_text(encoding="utf-8")
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in hook
+
+
+def test_managed_settings_pin_claude_code_to_the_subscription():
+    """Managed settings outrank every caller setting, so even a run of the binary that skips the
+    wrapper cannot be pointed at another endpoint or credential."""
+    import json
+    managed = json.loads((ROOT / "services" / "hermes" / "claude-code-managed-settings.json").read_text(encoding="utf-8"))
+    assert managed["forceLoginMethod"] == "claudeai"
+    assert managed["env"] == {"ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                              "ANTHROPIC_AUTH_TOKEN": "", "ANTHROPIC_API_KEY": ""}
+    dockerfile = (ROOT / "services" / "hermes" / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY claude-code-managed-settings.json /etc/claude-code/managed-settings.json" in dockerfile.splitlines()

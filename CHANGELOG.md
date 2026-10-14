@@ -5,6 +5,9 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Fixed
+- **Claude Code can only run on the subscription.** Its managed settings, which outrank any caller
+  setting, force the Claude login and Anthropic's endpoint. Hermes had run the binary directly with
+  `ANTHROPIC_BASE_URL` at the stack's LiteLLM gateway to use the local model, failing with 401s.
 - **Caddy no longer hot-reloads the Caddyfile (`--watch` removed).** It bind-mounts the tracked
   checkout file, so every working-tree edit or branch checkout went live the moment it was saved: on
   2026-10-14 an uncommitted edit took the Hermes site down with a 502. A Caddyfile change now reaches

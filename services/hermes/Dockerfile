@@ -82,6 +82,12 @@ RUN npm install --prefix /opt/claude-code --no-audit --no-fund "@anthropic-ai/cl
     && cd /opt/claude-code && node node_modules/@anthropic-ai/claude-code/install.cjs \
     && /opt/claude-code/node_modules/.bin/claude --version
 COPY claude-code /usr/local/bin/claude
+# Claude Code's managed settings (the highest precedence; no caller flag, env or user settings file
+# overrides them): always the operator's Claude subscription, at Anthropic. The wrapper drops
+# ANTHROPIC_* too, but a caller that runs the binary directly would otherwise keep them: on
+# 2026-10-14 Hermes ran /opt/claude-code/... with ANTHROPIC_BASE_URL at the stack's LiteLLM gateway
+# and its own key, to put Claude Code on the local model, and spent 40 minutes on 401s.
+COPY claude-code-managed-settings.json /etc/claude-code/managed-settings.json
 
 # Codex CLI, pinned, for the codex skill, the same way: /opt/codex, run through the /usr/local/bin/codex
 # wrapper on the operator's ChatGPT subscription (sign-in kept under the brain volume, see the
@@ -109,4 +115,5 @@ ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
 COPY secret-env.sh /opt/ordo/secret-env.sh
 COPY ordo-init.sh /etc/cont-init.d/50-ordo
 RUN chmod -R a+rX,go-w /opt/ordo /opt/ordo-skills /opt/ordo-seed /opt/hermes/plugins/ops-router /opt/claude-code /opt/codex \
-    && chmod 0755 /etc/cont-init.d/50-ordo /usr/local/bin/claude /usr/local/bin/codex
+    && chmod 0755 /etc/cont-init.d/50-ordo /usr/local/bin/claude /usr/local/bin/codex \
+    && chmod 0644 /etc/claude-code/managed-settings.json
