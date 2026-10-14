@@ -172,7 +172,7 @@ def test_the_agent_file_secrets_name_their_store_key_and_live_under_out():
     from ordo.render.agents import AgentRegistry
 
     hermes = AgentRegistry.load(ROOT / "services").get("hermes")
-    assert {s.key for s in hermes.secret_files} == {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT"}
+    assert {s.key for s in hermes.secret_files} == {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT", "CLAUDE_CODE_OAUTH_TOKEN"}
     for entry in hermes.secret_files:
         assert entry.source == "${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/secrets/" + entry.key.lower()
 

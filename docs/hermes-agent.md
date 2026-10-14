@@ -119,6 +119,21 @@ docker compose -p ordo exec agent sh -c "cp /opt/ordo-seed/SOUL.md /opt/data/SOU
 
 The seeded `SOUL.md` routes container work through the `ops-router` tools. The host Docker socket is still mounted; see [`runbooks/bounded-hermes.md`](runbooks/bounded-hermes.md) for the privilege model.
 
+## Claude Code as a sub-agent
+
+The image ships the Claude Code CLI (pinned in `services/hermes/Dockerfile`) and upstream's bundled
+`claude-code` skill with this stack's notes spliced in (`services/hermes/skill-overlays/claude-code/`),
+so Hermes can hand a coding task to `claude -p` and review the result. It runs on the operator's Claude
+subscription, the official client, not an API key.
+
+1. On a machine with a browser and Claude Code installed: `claude setup-token` (prints a long-lived token).
+2. On the host: `ordo secrets set CLAUDE_CODE_OAUTH_TOKEN --from-stdin`, paste it, then `ordo apply`.
+
+Only `/usr/local/bin/claude` (the wrapper, `services/hermes/claude-code`) reads the token, per call, from
+its file secret; it is never in the agent's environment. Without it, `claude` exits 78 and prints these
+steps. Claude Code's settings and sessions live in `/opt/data/claude-code`. Bump the CLI by changing
+`CLAUDE_CODE_VERSION` in the Dockerfile.
+
 ## Profiles (more than one bot)
 
 `hermes profile create <name>` adds a profile under `/opt/data/profiles/<name>/`: its own `SOUL.md`, memory, skills and sessions. One gateway serves every profile (upstream's multiplexer); do not run a second gateway per profile. A profile created while the gateway runs is served after the next restart (`ordo recreate agent`, or restart `gateway-default` inside the container); `/opt/data/gateway_state.json` lists `served_profiles`.

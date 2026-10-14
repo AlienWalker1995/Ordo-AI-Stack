@@ -54,7 +54,7 @@ FILE_SPEC: dict[str, set[str]] = {
     "litellm-db": {"LITELLM_DB_PASSWORD"},
     "ops-controller": {"OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN_HERMES"},
     "dashboard": {"OPS_CONTROLLER_TOKEN", "THROUGHPUT_RECORD_TOKEN", "LITELLM_MASTER_KEY"},
-    "agent": {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT"},
+    "agent": {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT", "CLAUDE_CODE_OAUTH_TOKEN"},
     "hermes-dashboard": {"HERMES_DASHBOARD_OIDC_CLIENT_SECRET"},
     "comfyui-gate": {"OPS_CONTROLLER_TOKEN"},
     "mcp-comfyui": {"OPS_CONTROLLER_TOKEN"},
