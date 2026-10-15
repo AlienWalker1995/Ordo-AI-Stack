@@ -9,6 +9,9 @@ All notable changes to this project are documented here. The format is loosely b
   once, at start, through a bind compose does not hash, so `ordo apply` never recreated it for a card
   change: after the voice service moved to Chatterbox on :8004 the TTS card kept probing Kokoro on
   :8880 ("All connection attempts failed"). Its definition now carries the catalog's digest.
+- **`ordo secrets set` refuses a multi-line value.** The store holds one `KEY=value` per line, so a
+  pasted PEM key would be written as one broken line plus stray lines. The error names the key and
+  says to base64-encode the value onto one line.
 - **Claude Code can only run on the subscription.** Its managed settings, which outrank any caller
   setting, force the Claude login and Anthropic's endpoint. Hermes had run the binary directly with
   `ANTHROPIC_BASE_URL` at the stack's LiteLLM gateway to use the local model, failing with 401s.
@@ -25,6 +28,10 @@ All notable changes to this project are documented here. The format is loosely b
   a lease admitted between its checks and its restart.
 - **The weekly storage purge expires unrendered reel drafts after 3 days.** `data/drafts-pending/` held
   272 news-story drafts, 254 older than 3 days and too stale to render.
+- **Hermes can act on GitHub as the operator's GitHub App.** `github-app-token <owner/repo>` in the
+  agent image prints a one-hour token scoped to one repository, from the `GITHUB_APP_ID` and
+  `GITHUB_APP_PRIVATE_KEY` file secrets (read per call, never in the environment). The app is its own
+  identity, so it can approve the operator's pull requests. Optional; unset, it exits 78 with the steps.
 - **Service cards can probe through the edge.** A card's `edge_check: <path>` is probed the way users
   reach it: Caddy's TLS listener on its edge port, the tailnet certificate verified, the UI's public
   host in `Host`. The Hermes card uses it, so it goes red when the Hermes site returns an error, not

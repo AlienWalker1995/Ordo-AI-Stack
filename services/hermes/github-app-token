@@ -1,0 +1,105 @@
+#!/usr/bin/python3
+"""github-app-token <owner/repo>: print a GitHub App installation token for one repository.
+
+Hermes acts on GitHub as the operator's GitHub App (its own identity, a `<app>[bot]` account): it can
+approve a pull request the operator opened, which a token of the operator's own cannot. The app's ID
+and private key are file secrets, read here at the moment of the call and never put in the agent's
+environment, a config file or a command line:
+
+  GITHUB_APP_ID           the app's numeric ID (github.com/settings/apps -> the app -> App ID)
+  GITHUB_APP_PRIVATE_KEY  its private key, the .pem file base64-encoded on one line (the secret store
+                          holds one line per value): base64 -w0 key.pem | ordo secrets set ...
+
+The printed token is scoped to that one repository and expires in an hour; nothing is cached. The
+permissions are whatever the app was granted when it was installed. Without the secrets the helper
+exits 78 and says how to set them. Installed as /usr/local/bin/github-app-token by the Dockerfile.
+"""
+import base64
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+API = "https://api.github.com"
+NOT_CONFIGURED = 78
+SETUP = ("github-app-token: no GitHub App is configured. Create one (docs/hermes-agent.md, \"Acting on "
+         "GitHub as an app\"), then on the host: ordo secrets set GITHUB_APP_ID --from-stdin, "
+         "base64 -w0 <key.pem> | ordo secrets set GITHUB_APP_PRIVATE_KEY --from-stdin, then ordo apply.")
+
+
+def read_secret(key: str) -> str:
+    path = os.environ.get(f"{key}_FILE", f"/run/secrets/{key.lower()}")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+
+def b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def app_jwt(app_id: str, pem: bytes) -> str:
+    """A 9-minute RS256 JWT for the app, signed with openssl (the image has no JWT library on its
+    system Python). Backdated a minute for clock skew, as GitHub recommends."""
+    now = int(time.time())
+    header = b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
+    claims = b64url(json.dumps({"iat": now - 60, "exp": now + 540, "iss": app_id}).encode())
+    signing_input = f"{header}.{claims}".encode()
+    # The key reaches openssl through a pipe (well under the pipe buffer), never a file on disk.
+    read_end, write_end = os.pipe()
+    os.write(write_end, pem)
+    os.close(write_end)
+    try:
+        signed = subprocess.run(["openssl", "dgst", "-sha256", "-sign", f"/dev/fd/{read_end}"],
+                                input=signing_input, capture_output=True, check=False, pass_fds=(read_end,))
+    finally:
+        os.close(read_end)
+    if signed.returncode != 0:
+        sys.exit("github-app-token: GITHUB_APP_PRIVATE_KEY is not a valid private key "
+                 "(it must be the .pem file, base64-encoded on one line)")
+    return f"{header}.{claims}.{b64url(signed.stdout)}"
+
+
+def call(method: str, path: str, bearer: str, body: dict | None = None) -> dict:
+    request = urllib.request.Request(
+        API + path, method=method, data=json.dumps(body).encode() if body is not None else None,
+        headers={"Authorization": f"Bearer {bearer}", "Accept": "application/vnd.github+json",
+                 "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "ordo-github-app-token"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as e:
+        detail = e.read()[:200].decode("utf-8", "replace")
+        sys.exit(f"github-app-token: GitHub {method} {path} -> HTTP {e.code}: {detail}")
+
+
+def main() -> int:
+    owner, _, name = sys.argv[1].partition("/") if len(sys.argv) == 2 else ("", "", "")
+    if not owner or not name or "/" in name:
+        print("usage: github-app-token <owner/repo>", file=sys.stderr)
+        return 2
+    repo = sys.argv[1]
+    app_id = read_secret("GITHUB_APP_ID")
+    key_b64 = read_secret("GITHUB_APP_PRIVATE_KEY")
+    if not app_id or not key_b64:
+        print(SETUP, file=sys.stderr)
+        return NOT_CONFIGURED
+    try:
+        pem = base64.b64decode(key_b64, validate=True)
+    except ValueError:
+        sys.exit("github-app-token: GITHUB_APP_PRIVATE_KEY must be the .pem file base64-encoded on one line")
+    jwt = app_jwt(app_id, pem)
+    installation = call("GET", f"/repos/{repo}/installation", jwt)
+    token = call("POST", f"/app/installations/{installation['id']}/access_tokens", jwt,
+                 {"repositories": [repo.split("/", 1)[1]]})
+    print(token["token"])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -243,6 +243,11 @@ def update_dotenv(text: str, required_keys: Iterable[str], provided: Mapping[str
     dropped. Every other line (existing values, comments) is kept as is.
     Returns (new text, generated keys, keys left blank)."""
     provided = {k: str(v).strip() for k, v in (provided or {}).items() if str(v or "").strip()}
+    multi_line = sorted(k for k, v in provided.items() if "\n" in v or "\r" in v)
+    if multi_line:
+        # One KEY=value per line: the rest of a multi-line value would parse as nothing, or as other keys.
+        raise SecretStoreError(f"{', '.join(multi_line)}: a value must be one line; base64-encode a "
+                               "multi-line value such as a PEM key (base64 -w0 key.pem) and store that")
     drop = set(remove or [])
     existing: dict[str, str] = {}
     kept: list[str] = []

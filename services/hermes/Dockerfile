@@ -49,6 +49,12 @@ COPY git-credential-github-pat /usr/local/bin/git-credential-github-pat
 RUN chmod 0755 /usr/local/bin/git-credential-github-pat \
     && git config --system credential.https://github.com.helper /usr/local/bin/git-credential-github-pat
 
+# `github-app-token <owner/repo>` prints a one-hour token of the operator's GitHub App for one repo,
+# read per call from the GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY file secrets (services/hermes/
+# github-app-token). System Python and openssl only, both already in the base image.
+COPY github-app-token /usr/local/bin/github-app-token
+RUN chmod 0755 /usr/local/bin/github-app-token
+
 # The ops-router plugin: ops-controller verbs (list/logs/inspect/restart containers, recreate a
 # service) as first-class tools, the audited control-plane path for Ordo services. A bundled-source
 # plugin directory, so its plugin.yaml (requires_env, provides_tools/hooks) is honored. The

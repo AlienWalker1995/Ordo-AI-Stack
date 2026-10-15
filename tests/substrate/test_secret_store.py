@@ -173,7 +173,7 @@ def test_the_agent_file_secrets_name_their_store_key_and_live_under_out():
 
     hermes = AgentRegistry.load(ROOT / "services").get("hermes")
     assert {s.key for s in hermes.secret_files} == {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT", "CLAUDE_CODE_OAUTH_TOKEN",
-                                                     "HERMES_DASHBOARD_OIDC_CLIENT_SECRET"}
+                                                     "HERMES_DASHBOARD_OIDC_CLIENT_SECRET", "GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"}
     for entry in hermes.secret_files:
         assert entry.source == "${BASE_PATH:?BASE_PATH must be set (non-empty)}/out/secrets/" + entry.key.lower()
 
@@ -279,6 +279,20 @@ def test_set_from_stdin_updates_the_store_and_prints_the_recreate(stack, monkeyp
     printed = capsys.readouterr().out
     assert "hf_new_value" not in printed
     assert "ordo recreate --reading HF_TOKEN" in printed
+
+
+def test_set_refuses_a_multi_line_value_and_leaves_the_store_untouched(stack, monkeypatch, capsys):
+    # The store holds one KEY=value per line: a PEM key pasted as is would split into lines that parse
+    # as nothing (or as other keys). The fix it names: base64 the value onto one line.
+    before = (stack / "secrets.env").read_text(encoding="utf-8")
+    pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\nIBAAKC\n-----END RSA PRIVATE KEY-----\n"
+    monkeypatch.setattr(sys, "stdin", io.StringIO(pem))
+    capsys.readouterr()
+    assert _ordo(stack, "set", "HF_TOKEN", "--from-stdin") == 1
+    err = capsys.readouterr().err
+    assert "HF_TOKEN" in err and "one line" in err and "base64" in err
+    assert "MIIEow" not in err
+    assert (stack / "secrets.env").read_text(encoding="utf-8") == before
 
 
 def test_set_generate_refuses_an_externally_issued_key(stack, capsys):

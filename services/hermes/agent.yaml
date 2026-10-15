@@ -214,7 +214,11 @@ volumes:
 # wrapper (services/hermes/claude-code) reads it, per call, so Hermes and every other subprocess
 # never hold the operator's Claude subscription token. Unset, `claude` exits 78 and says how to set it.
 # HERMES_DASHBOARD_OIDC_CLIENT_SECRET: the dashboard's Google login (above), bridged by the boot hook.
-secret_files: [DISCORD_BOT_TOKEN, GITHUB_BACKUP_PAT, CLAUDE_CODE_OAUTH_TOKEN, HERMES_DASHBOARD_OIDC_CLIENT_SECRET]
+# GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY: the operator's GitHub App, Hermes's own GitHub identity (it can
+# approve the operator's PRs). Never bridged either: only `github-app-token` (services/hermes/
+# github-app-token) reads them, per call, and prints a one-hour token for one repository. Optional.
+secret_files: [DISCORD_BOT_TOKEN, GITHUB_BACKUP_PAT, CLAUDE_CODE_OAUTH_TOKEN, HERMES_DASHBOARD_OIDC_CLIENT_SECRET,
+               GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY]
 
 # gateway_state.json is written by `hermes gateway` on startup (Docker mode writes no pid file).
 #
