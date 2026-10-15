@@ -54,15 +54,16 @@ services:
   - name: tts
     # Text-to-speech: Chatterbox Turbo behind Chatterbox-TTS-Server (OpenAI-compatible
     # /v1/audio/speech on :8004). First-party image, built from THIS folder by `ordo build voice`
-    # (Dockerfile + requirements.lock, everything pinned). Each Hermes profile speaks with its own
-    # cloned voice: the request's `voice` names a reference clip in data/voice/references
-    # (<profile>.wav, made once with VibeVoice), cloned zero-shot. Its torch (2.5.1+cu121) has no
-    # Blackwell kernels, which is fine: it must run on the Pascal 1070 anyway.
+    # (Dockerfile + requirements.lock, everything pinned). A request's `voice` names a clip that is
+    # cloned zero-shot: one of the server's bundled voices (Emily.wav is the default), or any 5-30 s
+    # clip the operator drops into data/voice/references (e.g. a voice per agent). Its torch
+    # (2.5.1+cu121) has no Blackwell kernels, which is fine: it must run on the secondary GPU.
     image: ordo/voice-tts
     gpu_pin: secondary
     volumes:
-      # The per-profile reference voices, read-only.
-      - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/voice/references:/app/voices:ro
+      # The operator's own reference clips, read-only, beside the bundled voices (the server looks
+      # a `voice` up in its bundled folder first, then here).
+      - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/voice/references:/app/reference_audio:ro
       # Downloaded model weights on a NAMED volume (ext4), not a 9p bind: read at every start.
       - voice-tts-hf:/app/hf_cache
     gpu_arbitration:

@@ -22,7 +22,7 @@ while time.time() < deadline:
     time.sleep(3)
 else:
     raise SystemExit(1)
-body = json.dumps({"model": "chatterbox", "input": "Warming up the voice.", "voice": "hermes.wav",
+body = json.dumps({"model": "chatterbox", "input": "Warming up the voice.", "voice": "Emily.wav",
                    "response_format": "wav"}).encode()
 for _ in range(2):  # the second pass catches kernels the first one compiled lazily
     urllib.request.urlopen(urllib.request.Request(f"{base}/v1/audio/speech", data=body,

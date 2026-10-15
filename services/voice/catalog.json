@@ -24,7 +24,7 @@
       "category": "voice",
       "background": true,
       "ops_service": "tts",
-      "hint": "Chatterbox Turbo voice cloning (OpenAI-compatible), one reference voice per Hermes profile. GPU-pinned to the 1070. Opt-in: --profile voice"
+      "hint": "Chatterbox Turbo voice cloning (OpenAI-compatible): bundled voices or your own clips in data/voice/references. GPU-pinned to the secondary GPU. Opt-in: --profile voice"
     }
   ]
 }
