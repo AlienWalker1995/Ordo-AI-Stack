@@ -8,7 +8,8 @@ The model, in one place:
 
 - `ordo build` tags each first-party image `ordo/<name>:<commit>`, where `<commit>` is the short
   sha of the last commit that changed the image's build inputs (its build context; for the one
-  image built from the repo root, the paths the root `.dockerignore` lets in). Uncommitted changes
+  image built from the repo root, the paths the root `.dockerignore` lets in; and `.gitattributes`,
+  whose line-ending rules decide the bytes the checkout writes there). Uncommitted changes
   to those inputs add `-dirty`. It also moves `ordo/<name>:current` to the new tag.
 - Each tag `ordo build` produces is recorded in `out/images.json` (RECORD_FILE). That record is
   the one source of image tags.
@@ -101,11 +102,16 @@ def _dockerignore_allowlist(repo_root: Path) -> tuple[str, ...]:
     return tuple(line[1:].strip().rstrip("/") for line in lines if line.startswith("!"))
 
 
+# Line-ending rules decide the bytes a checkout writes into every build context, so a change to
+# them is a change to every image's input even when no file in the context has a new commit.
+CHECKOUT_RULES = ".gitattributes"
+
+
 def build_target(image: str, context: str, repo_root: Path = REPO_ROOT) -> BuildTarget:
     dockerfile = f"{context}/Dockerfile"
     if image in ROOT_CONTEXT_IMAGES:
-        return BuildTarget(image, dockerfile, ".", _dockerignore_allowlist(repo_root))
-    return BuildTarget(image, dockerfile, context, (context,))
+        return BuildTarget(image, dockerfile, ".", (*_dockerignore_allowlist(repo_root), CHECKOUT_RULES))
+    return BuildTarget(image, dockerfile, context, (context, CHECKOUT_RULES))
 
 
 class GitLike(Protocol):
