@@ -147,7 +147,10 @@ docker exec -it --user hermes ordo-agent-1 codex login --device-auth
 Open the printed link in any browser and enter the code. The sign-in lands in `/opt/data/codex` (the
 brain volume, which the dashboard shares; the brain backup skips it). Until then `codex` exits 78 with
 that command. The wrapper (`services/hermes/codex`) drops any `OPENAI_API_KEY` so a run always uses the
-subscription. Sign out with the same `docker exec` and `codex logout`.
+subscription, and the image's admin-managed config (`/etc/codex/managed_config.toml`, from
+`services/hermes/codex-managed-config.toml`) backs that up for any run that skips the wrapper: it forces
+the ChatGPT sign-in and turns off Codex's shell snapshots, which would otherwise record the shell
+environment, tokens included. Sign out with the same `docker exec` and `codex logout`.
 
 ## Desktop app and Chat tab sessions
 
