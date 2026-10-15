@@ -5,6 +5,10 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Fixed
+- **The agent image's build context checks out LF on Windows.** `.gitattributes` listed the agent's
+  wrappers one by one, so the new `github-app-token` was written with CRLF on the Windows host and the
+  image shipped a shebang ending in a carriage return ("not found"). One rule now covers
+  `services/hermes/**`, and a test fails on any tracked file there without `eol=lf`.
 - **A changed service catalog recreates the dashboard.** The dashboard reads `out/services-catalog.json`
   once, at start, through a bind compose does not hash, so `ordo apply` never recreated it for a card
   change: after the voice service moved to Chatterbox on :8004 the TTS card kept probing Kokoro on
