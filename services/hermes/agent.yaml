@@ -54,8 +54,8 @@ depends_on:
 secrets: [LITELLM_KEY_HERMES, OPS_CONTROLLER_TOKEN]
 
 # Derived keys it reads from the rendered .env (rendered `KEY: ${KEY?...}`; the agent never loads the
-# whole file). COMFYUI_URL is the ComfyUI admission gate: the dialogue/reel/image publishers, the
-# idle-reclaim cron script and the baked comfyui skill submit to it. Without it they fall back to a
+# whole file). COMFYUI_URL is the ComfyUI admission gate: the dialogue/reel/image publishers and the
+# baked comfyui skill submit to it. Without it they fall back to a
 # direct ComfyUI address, which bypasses the GPU lease. Rendered only while comfyui is enabled.
 # LLAMACPP_CTX_SIZE: the context window (llamacpp KV / gateway max_input_tokens / the dashboard
 # progress bar); the boot hook seeds it into $HERMES_HOME/config.yaml and refuses to start without it.

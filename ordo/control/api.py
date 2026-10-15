@@ -66,6 +66,7 @@ from .apply import RenderApply
 from .broker import Broker
 from .call_audit import ACTOR_HEADER, AUDITED_METHODS, CallAuditor, audit_actor, audited_read, lease_detail
 from .comfyui import ModelDownloads, NodeRequirements
+from .comfyui_reclaim import ComfyUIReclaim
 from .doctor import DriftReport
 from .gpus import LeaseJobs
 from .lifecycle import LeaseGuard, Lifecycle
@@ -142,6 +143,11 @@ class ControlPlane:
         self.netns_repair = (NetnsRepair(broker.backend, broker.backend.project,
                                          lambda: Source.load(self.source.path).managed_projects)
                              if broker else None)
+        # Restarts an idle ComfyUI holding a lot of RAM, between leases (comfyui_reclaim.py).
+        # ordo/control/serve.py drives the sweep.
+        self.comfyui_reclaim = (ComfyUIReclaim(broker, lambda: self.lifecycle.service_restart(
+                                    "comfyui", {"confirm": True}))
+                                if broker else None)
         self.metrics = prom.MetricsCollector(scheduler, broker, disk_paths or {}, tls_cert_files or {},
                                              chat_health_url=chat_health_url,
                                              netns_repair_stats=self.netns_repair.stats if self.netns_repair else None)

@@ -14,6 +14,11 @@ All notable changes to this project are documented here. The format is loosely b
   caddy only through `ordo apply`, which recreates it from the file's content digest label.
 
 ### Added
+- **ops-controller restarts an idle ComfyUI that holds a lot of RAM.** Between leases, after the GPU
+  has been quiet for 10 minutes, when ComfyUI holds 12 GiB or more and its own queue is empty, with the
+  last checks and the restart under the lock every lease transition takes. It replaces the Hermes
+  cron (`scripts/hermes/comfyui_idle_reclaim.sh`, removed) that polled every 30 minutes and could race
+  a lease admitted between its checks and its restart.
 - **Service cards can probe through the edge.** A card's `edge_check: <path>` is probed the way users
   reach it: Caddy's TLS listener on its edge port, the tailnet certificate verified, the UI's public
   host in `Host`. The Hermes card uses it, so it goes red when the Hermes site returns an error, not
