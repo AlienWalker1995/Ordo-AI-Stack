@@ -104,6 +104,7 @@ class State:
     waiting: str = ""           # the commit waiting on a gate, and since when (unix seconds)
     waiting_since: float = 0.0
     waiting_reported: bool = False
+    deploying_from: str = ""     # the head before the fast-forward of the deploy in progress
     last_result: str = ""
     last_log: str = ""
     updated_at: str = ""
@@ -174,6 +175,7 @@ def _wait(host: Host, state: State, state_path: Path, target: str, reason: str, 
 def _finish(host: Host, state: State, state_path: Path, target: str, *, ok: bool, result: str,
             log: Path) -> int:
     state.waiting, state.waiting_since, state.waiting_reported = "", 0.0, False
+    state.deploying_from = ""
     state.last_result, state.last_log = result, str(log)
     if ok:
         state.deployed, state.failed = target, ""
@@ -206,7 +208,11 @@ def run_once(host: Host, *, out: Path, now: float | None = None) -> int:
     stamp = dt.datetime.fromtimestamp(now, dt.UTC).strftime("%Y%m%dT%H%M%SZ")
     log = deploy_dir / "logs" / f"{stamp}-{short(target)}.log"
     log.parent.mkdir(parents=True, exist_ok=True)
-    previous = host.head()
+    # What the stack ran before this deploy: the last commit deployed, else the head before the
+    # fast-forward (saved, because a pass that waits after its build has already fast-forwarded).
+    previous = state.deployed or state.deploying_from or host.head()
+    state.deploying_from = previous
+    state.save(state_path)
     if not host.fast_forward(target):
         return _finish(host, state, state_path, target, ok=False, result="the fast-forward failed", log=log)
     if host.build(log) != 0:
@@ -363,7 +369,7 @@ def install_schedule(*, out: Path, project: str, repo: Path = REPO_ROOT) -> int:
     args = f"-m ordo deploy --out \"{out}\" --project {project}"
     if os.name != "nt":
         print(f"add to the operator's crontab (crontab -e):\n"
-              f"*/{SCHEDULE_MINUTES} * * * * cd {repo} && {python} {args} >> {out}/deploy/deploy.log 2>&1")
+              f"*/{SCHEDULE_MINUTES} * * * * cd \"{repo}\" && \"{python}\" {args} >> \"{out}/deploy/deploy.log\" 2>&1")
         return 0
     # `conhost --headless` gives the pass a console no window shows, which every git and docker
     # child inherits (a console-less pythonw would open a window for each of them). The task runs

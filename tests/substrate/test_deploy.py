@@ -180,6 +180,23 @@ def test_the_gates_are_read_again_after_the_build(tmp_path):
     assert deploy.run_once(host, out=tmp_path, now=1200.0) == 0
     assert host.calls == ["ff", "build", "apply"]
     assert state(tmp_path)["deployed"] == NEW
+    assert host.notes == [f"Deployed `{NEW[:12]}`: {OLD[:12]} -> {NEW[:12]}."]
+
+
+def test_a_deploy_reports_the_commit_the_stack_ran_before(tmp_path):
+    host = FakeHost()
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    host.target, host.notes = "c" * 40, []
+    deploy.run_once(host, out=tmp_path, now=2000.0)
+    assert host.notes == [f"Deployed `{'c' * 12}`: {NEW[:12]} -> {'c' * 12}."]
+
+
+def test_the_crontab_line_quotes_its_paths(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(deploy.os, "name", "posix")
+    repo, out = tmp_path / "my repo", tmp_path / "my out"
+    assert deploy.install_schedule(out=out, project="ordo", repo=repo) == 0
+    line = capsys.readouterr().out.splitlines()[-1]
+    assert f'cd "{repo}"' in line and f'--out "{out}"' in line and f'>> "{out}/deploy/deploy.log"' in line
 
 
 def test_the_lock_admits_one_run_and_takes_over_a_dead_one(tmp_path):
