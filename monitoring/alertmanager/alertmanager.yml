@@ -39,6 +39,23 @@ receivers:
     discord_configs:
       - webhook_url_file: /run/secrets/alertmanager_discord_webhook_url
         send_resolved: true
+        # The default templates leave the message text empty and dump every label into the embed,
+        # so a push notification (or a client with embeds off) shows nothing. `content` is the
+        # line a notification shows; the embed carries each alert's summary and what to do.
+        content: >-
+          {{ if eq .Status "firing" }}Alert{{ else }}Resolved{{ end }}:
+          {{ .CommonLabels.alertname }}{{ with .CommonLabels.severity }} ({{ . }}){{ end }}:
+          {{ range $i, $a := .Alerts }}{{ if $i }}; {{ end }}{{ $a.Annotations.summary }}{{ end }}
+        title: >-
+          {{ if eq .Status "firing" }}Firing{{ else }}Resolved{{ end }}:
+          {{ .CommonLabels.alertname }}{{ with .CommonLabels.severity }} ({{ . }}){{ end }}
+        message: |-
+          {{ range .Alerts.Firing }}**{{ .Annotations.summary }}**
+          {{ with .Annotations.description }}{{ . }}
+          {{ end }}Since {{ .StartsAt.Format "2006-01-02 15:04 MST" }}
+
+          {{ end }}{{ range .Alerts.Resolved }}Resolved: {{ .Annotations.summary }} (ended {{ .EndsAt.Format "2006-01-02 15:04 MST" }})
+          {{ end }}
   - name: heartbeat
     webhook_configs:
       - url_file: /run/secrets/alertmanager_heartbeat_url
