@@ -71,8 +71,8 @@ SPEC: dict[str, set[str]] = {
     # services_catalog.py builds the cards' Open links from the edge hostname / tailnet domain; the
     # console and orchestration routes reach ComfyUI through its gate.
     "dashboard": {"CADDY_TAILNET_HOSTNAME", "CADDY_TAILNET_DOMAIN", "TAILNET_NAMES_ENABLED", "COMFYUI_URL"},
-    # The gated ComfyUI URL: the dialogue publisher, the reel/image scripts, the idle-reclaim cron and
-    # the baked comfyui skill all submit to $COMFYUI_URL (AR2). Without it they fall back to a
+    # The gated ComfyUI URL: the dialogue publisher, the reel/image scripts and the baked comfyui
+    # skill all submit to $COMFYUI_URL (AR2). Without it they fall back to a
     # direct address, which bypasses the GPU lease. The entrypoint seeds the context window and the two
     # Hermes budget knobs into config.yaml.
     "agent": {"COMFYUI_URL", "LLAMACPP_CTX_SIZE", "HERMES_MAX_TOKENS", "HERMES_COMPRESSION_THRESHOLD_PERCENT"},

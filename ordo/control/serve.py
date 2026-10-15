@@ -20,6 +20,7 @@ from ..render.models_volume import DockerRunner, volume_files
 from ..render.plugins import PluginRegistry
 from ..secret_env import SecretFileError, read_secret
 from . import principals
+from .comfyui_reclaim import SWEEP_SECONDS as COMFYUI_RECLAIM_SECONDS
 
 # How often ops-controller looks for netns members a Docker daemon restart left stopped
 # (ordo/control/netns_repair.py): a dashboard name is back within this long of its owner.
@@ -118,6 +119,21 @@ def cmd_serve(args: argparse.Namespace) -> int:  # pragma: no cover - binds a so
 
     if cp.netns_repair is not None:
         threading.Thread(target=_netns_loop, daemon=True, name="netns-repair").start()
+
+    # An idle ComfyUI holding a lot of RAM is restarted between leases (ordo/control/comfyui_reclaim.py).
+    # Its own thread: docker stats and the restart must never delay the lease clock.
+    def _comfyui_reclaim_loop() -> None:
+        while True:
+            time.sleep(COMFYUI_RECLAIM_SECONDS)
+            try:
+                line = cp.comfyui_reclaim.sweep()
+                if line:
+                    print(f"[comfyui-reclaim] {line}", flush=True)
+            except Exception as e:  # noqa: BLE001 - the control plane must survive a sweep hiccup
+                print(f"[comfyui-reclaim] sweep error: {e}", flush=True)
+
+    if cp.comfyui_reclaim is not None:
+        threading.Thread(target=_comfyui_reclaim_loop, daemon=True, name="comfyui-reclaim").start()
 
     try:
         # A file under /run/secrets (OPS_CONTROLLER_TOKEN_FILE, the rendered delivery), else the env var.
