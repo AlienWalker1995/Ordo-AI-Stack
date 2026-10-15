@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 _PATH = Path(__file__).resolve().parent.parent / "scripts" / "storage_purge.py"
@@ -164,6 +164,20 @@ def test_execute_removes_expired_drafts_keeps_recent(tmp_path):
     sp.execute_purge(plan, root)
     assert not (root / "drafts" / "2026-01-01_old").exists()
     assert (root / "drafts" / "2026-06-10_new").exists()
+
+
+def test_execute_removes_stale_unrendered_drafts_keeps_fresh_and_undated(tmp_path):
+    root = tmp_path / "data"
+    pending = root / "drafts-pending"
+    stale = (NOW - timedelta(days=sp.PENDING_DRAFT_MAX_AGE_DAYS + 1)).strftime("%Y-%m-%d") + "_stale"
+    fresh = (NOW - timedelta(days=sp.PENDING_DRAFT_MAX_AGE_DAYS - 1)).strftime("%Y-%m-%d") + "_fresh"
+    for name in (stale, fresh, "undated"):
+        (pending / name).mkdir(parents=True)
+        (pending / name / "script.txt").write_text("hello")
+    plan = sp.plan_purge(root, NOW)
+    assert [p.name for p in plan["drafts-pending"]["targets"]] == [stale]
+    sp.execute_purge(plan, root, force=True)
+    assert sorted(p.name for p in pending.iterdir()) == sorted([fresh, "undated"])
 
 
 def test_execute_removes_old_comfyui_files_keeps_recent(tmp_path):

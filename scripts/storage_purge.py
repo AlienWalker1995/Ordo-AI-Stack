@@ -10,6 +10,8 @@ Retention policy (introduced in #51):
   - Job drafts (data/drafts/<YYYY-MM-DD>_<slug>/): delete > 60 days (analytics
     window floor). Age comes from the folder-name date prefix, NOT mtime
     (metrics rewrites meta.json and would reset mtime).
+  - Unrendered reel drafts (data/drafts-pending/<YYYY-MM-DD>_<slug>/): delete > 3
+    days. Each is a news story written for the next render; by then it is stale.
   - ComfyUI output (data/comfyui-output/): delete files > 21 days (mtime).
   - ComfyUI input/temp (data/comfyui-storage/ComfyUI/{input,temp}): > 21 days.
   - Backups/snapshots (data/_backups/*, data/hermes/state-snapshots/*): keep
@@ -92,6 +94,7 @@ def within_root(path, root):
 # ── I/O shell: plan (read-only) then execute (delete) ─────────────────────────
 
 DRAFT_MAX_AGE_DAYS = 60
+PENDING_DRAFT_MAX_AGE_DAYS = 3
 COMFY_MAX_AGE_DAYS = 21
 BACKUPS_KEEP = 3
 
@@ -110,8 +113,8 @@ def _dir_size(path):
     return total
 
 
-def _plan_drafts(root, now, max_age_days):
-    base = root / "drafts"
+def _plan_drafts(root, now, max_age_days, folder="drafts"):
+    base = root / folder
     targets, total, size = [], 0, 0
     if base.is_dir():
         for d in sorted(base.iterdir()):
@@ -161,10 +164,12 @@ def _plan_keep_newest(root, locations, keep):
 
 
 def plan_purge(data_root, now, draft_days=DRAFT_MAX_AGE_DAYS,
-               mtime_days=COMFY_MAX_AGE_DAYS, keep=BACKUPS_KEEP):
+               mtime_days=COMFY_MAX_AGE_DAYS, keep=BACKUPS_KEEP,
+               pending_days=PENDING_DRAFT_MAX_AGE_DAYS):
     """Walk every bucket and return what *would* be deleted. No side effects."""
     return {
         "drafts": _plan_drafts(data_root, now, draft_days),
+        "drafts-pending": _plan_drafts(data_root, now, pending_days, folder="drafts-pending"),
         "comfyui-output": _plan_mtime(data_root, now, ["comfyui-output"], mtime_days),
         "comfyui-input": _plan_mtime(data_root, now, COMFY_INPUT_DIRS, mtime_days),
         "backups": _plan_keep_newest(data_root, BACKUP_LOCATIONS, keep),
