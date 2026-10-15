@@ -24,7 +24,7 @@ _TENANT_LABELS = {
     "llamacpp-embed": "Embeddings",
     "comfyui": "ComfyUI",
     "stt": "Whisper",
-    "tts": "Kokoro",
+    "tts": "Chatterbox",
 }
 
 # Audit actions that only read state. They are most of the log (Hermes polls) and none of them

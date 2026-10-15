@@ -485,6 +485,10 @@ class RenderedConfig:
             "mcp_servers.yaml": render_litellm_mcp_fragment(self.mcp_servers),
         }
 
+    def services_catalog_text(self) -> str:
+        """out/services-catalog.json: the dashboard's service-card catalog (aggregate_services_catalog)."""
+        return json.dumps(aggregate_services_catalog(gpu_engine=self.model.backend), indent=2) + "\n"
+
     def sso_allowlist_files(self) -> dict[str, str]:
         """out/oauth2-proxy/, file name -> text: the edge's Google-account allowlist, one address per
         line, from `site: SSO_ALLOWED_EMAILS`. Empty when the edge is off. oauth2-proxy reads it
@@ -546,6 +550,11 @@ class RenderedConfig:
             available_env=frozenset(self.env),
             model_gateway_config_digest=compose.rendered_config_digest(self.model_gateway_config_files()))
         pin_first_party(doc["services"], self.first_party_images, image_tags or {})
+        if "dashboard" in doc["services"]:
+            # The dashboard loads its card list once, at start, through a bind compose does not hash:
+            # the catalog's digest makes a changed list recreate it.
+            doc["services"]["dashboard"].setdefault("labels", {})[compose.RENDERED_CONFIG_LABEL] = \
+                compose.rendered_config_digest({"services-catalog.json": self.services_catalog_text()})
         allowlist = self.sso_allowlist_files()
         if allowlist:
             oauth2_proxy = doc["services"]["oauth2-proxy"]
@@ -569,9 +578,7 @@ class RenderedConfig:
         # per-service `services/<id>/catalog.json` fragments (each service declares its own
         # card(s) next to its other manifests). Mounted read-only into the dashboard like the
         # manifest; services_catalog.py loads it (SERVICES_CATALOG_PATH) and React renders it.
-        (out / "services-catalog.json").write_text(
-            json.dumps(aggregate_services_catalog(gpu_engine=self.model.backend), indent=2) + "\n",
-            encoding="utf-8")
+        (out / "services-catalog.json").write_text(self.services_catalog_text(), encoding="utf-8")
         # secrets.env.example: the KEYS the enabled stack needs, values EMPTY. A reference, never
         # copied by hand. `ordo secrets materialize` writes secrets.env from the secret store (the SOPS
         # file `site: SECRETS_SOURCE` names, or secrets.env itself without one). Derived config (.env)
