@@ -146,7 +146,8 @@ deploy, it fast-forwards the checkout, runs `ordo build --all`, then `ordo apply
 - a one-off job container of the project is running (an eval);
 - the agent is busy: a turn in flight, or a `hermes` CLI session (`hermes -z`, `hermes chat`).
 
-The gates are read again after the build, right before `ordo apply`. A deploy that waits an hour is
+The gates are read again after the build, right before `ordo apply`, and an `ordo apply` that refuses
+before recreating anything (a lease taken in between) is a wait too, tried again on the next pass. A deploy that waits an hour is
 posted once to the Discord channel Alertmanager uses (`ALERTMANAGER_DISCORD_WEBHOOK_URL`), with the
 gate holding it, and so is every deploy and every failure. A failed deploy is not retried: push a
 fix or a revert to main and the next pass deploys that.

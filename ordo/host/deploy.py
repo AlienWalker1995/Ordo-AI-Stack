@@ -49,8 +49,9 @@ AGENT_SERVICE = "agent"
 # Without it deploys still run; they are only recorded in the state file and the log.
 WEBHOOK_SECRET_FILE = "alertmanager_discord_webhook_url"
 WAIT_REPORT_SECONDS = 3600
-# A lock older than this belongs to a run that died without removing it.
-STALE_LOCK_SECONDS = 3 * 3600
+# `ordo apply`'s exit code for a refusal before anything was recreated (a GPU lease taken after
+# the gate check, or docker state it could not read): the deploy waits and is tried again.
+APPLY_REFUSED = 2
 SCHEDULED_TASK_NAME = "Ordo deploy"
 SCHEDULE_MINUTES = 2
 # What `waiting` holds when origin/main itself could not be fetched (no commit to name).
@@ -235,7 +236,11 @@ def run_once(host: Host, *, out: Path, now: float | None = None) -> int:
     problem = blocking_gate(host)
     if problem:
         return _wait(host, state, state_path, target, problem, now)
-    if host.apply(log) != 0:
+    code = host.apply(log)
+    if code == APPLY_REFUSED:
+        return _wait(host, state, state_path, target,
+                     f"`ordo apply` refused before recreating anything (log: {log})", now)
+    if code != 0:
         return _finish(host, state, state_path, target, ok=False, result="`ordo apply` failed", log=log)
     return _finish(host, state, state_path, target, ok=True, result=f"{short(previous)} -> {short(target)}",
                    log=log)
@@ -360,22 +365,50 @@ class RealHost:
 # --------------------------------------------------------------------------- #
 
 
-def acquire_lock(path: Path, *, now: float | None = None) -> bool:
-    """Create the lock file, or report that another run holds it. A lock older than
-    STALE_LOCK_SECONDS is a dead run's and is taken over."""
-    now = time.time() if now is None else now
+def acquire_lock(path: Path) -> bool:
+    """Create the lock file holding this process's pid, or report that a live run holds it. The
+    lock of a run that died without removing it (Task Scheduler ends a pass at its time limit, so
+    its `finally` never runs) is taken over."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                holder = int(path.read_text(encoding="utf-8").strip() or "0")
+            except (FileNotFoundError, ValueError):
+                holder = 0
+            if holder and pid_alive(holder):
+                return False
+            path.unlink(missing_ok=True)
+            continue
+        with os.fdopen(fd, "w") as stream:
+            stream.write(str(os.getpid()))
+        return True
+    return False
+
+
+def pid_alive(pid: int) -> bool:
+    """Whether a process with this pid is running."""
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        process_query_limited_information, still_active = 0x1000, 259
+        handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+        if not handle:
+            return False
+        try:
+            exit_code = ctypes.c_ulong()
+            return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)))                 and exit_code.value == still_active
+        finally:
+            kernel32.CloseHandle(handle)
     try:
-        if now - path.stat().st_mtime > STALE_LOCK_SECONDS:
-            path.unlink()
-    except FileNotFoundError:
-        pass
-    try:
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
+        os.kill(pid, 0)
+    except ProcessLookupError:
         return False
-    with os.fdopen(fd, "w") as stream:
-        stream.write(str(os.getpid()))
+    except PermissionError:
+        return True
     return True
 
 

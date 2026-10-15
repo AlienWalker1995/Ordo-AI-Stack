@@ -8,7 +8,9 @@ read again after the build, and a deploy records what it moved from and to. git,
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -202,7 +204,7 @@ def test_a_failed_build_is_reported_once_and_not_retried(tmp_path):
 
 def test_a_failed_apply_is_recorded_and_the_next_commit_deploys(tmp_path):
     host = FakeHost()
-    host.apply_code = 2
+    host.apply_code = 1
     assert deploy.run_once(host, out=tmp_path, now=1000.0) == 1
     assert state(tmp_path)["failed"] == NEW
     host.apply_code = 0
@@ -247,10 +249,34 @@ def test_the_crontab_line_quotes_its_paths(tmp_path, monkeypatch, capsys):
 
 def test_the_lock_admits_one_run_and_takes_over_a_dead_one(tmp_path):
     lock = tmp_path / "deploy" / "lock"
-    assert deploy.acquire_lock(lock, now=1000.0)
-    assert not deploy.acquire_lock(lock, now=1000.0)
-    stale = lock.stat().st_mtime + deploy.STALE_LOCK_SECONDS + 1
-    assert deploy.acquire_lock(lock, now=stale)
+    assert deploy.acquire_lock(lock)
+    assert lock.read_text() == str(os.getpid())
+    assert not deploy.acquire_lock(lock)            # this process is alive
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    lock.write_text(str(dead.pid))
+    assert deploy.acquire_lock(lock)                # its holder exited without removing it
+    assert lock.read_text() == str(os.getpid())
+
+
+def test_pid_alive():
+    assert deploy.pid_alive(os.getpid())
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    assert not deploy.pid_alive(dead.pid)
+
+
+def test_an_apply_refusal_waits_and_is_tried_again(tmp_path):
+    host = FakeHost()
+    host.apply_code = deploy.APPLY_REFUSED
+    assert deploy.run_once(host, out=tmp_path, now=1000.0) == 0
+    assert state(tmp_path)["waiting"] == NEW and state(tmp_path)["failed"] == ""
+    assert host.notes == []
+    host.apply_code = 0
+    host.calls.clear()
+    assert deploy.run_once(host, out=tmp_path, now=1120.0) == 0
+    assert host.calls == ["ff", "build", "apply"]
+    assert state(tmp_path)["deployed"] == NEW
 
 
 # The real host's agent probe: what it reads from the container, and how it fails closed.
