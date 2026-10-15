@@ -39,6 +39,10 @@ services:
       WHISPER__MODEL: Systran/faster-whisper-small
       WHISPER__INFERENCE_DEVICE: cuda
       WHISPER__COMPUTE_TYPE: int8
+      # Keep the model loaded. The server's default unloads it after 300 s idle, so the first voice
+      # message after a quiet spell paid a ~19 s reload (measured 2026-10-15); resident it answers a
+      # 4 s clip in ~0.5 s. Costs ~1 GB on the 1070, which has room.
+      WHISPER__TTL: "-1"
     volumes:
       - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/voice/hf-cache:/root/.cache/huggingface
     healthcheck:
