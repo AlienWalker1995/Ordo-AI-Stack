@@ -199,7 +199,8 @@ ordo up stt tts
   `tts.openai.base_url: http://tts:8004/v1`, `tts.openai.model: chatterbox` and
   `tts.openai.voice` (a bundled voice such as `Emily.wav`, or your own clip). To give an agent its own
   voice, drop a 5-30 s single-speaker clip into `data/voice/references/` and set that profile's
-  `tts.openai.voice` to its file name. On a GTX 1070 a short reply takes about 0.8 s, faster than
+  `tts.openai.voice` to its file name. Pick a name that is not one of the bundled voices (a bundled
+  voice wins a name clash). On a GTX 1070 a short reply takes about 0.8 s, faster than
   real time.
 - **Desktop clients relay through the gateway.** `voice.client_direct: false` on every profile, so
   Hermes Desktop sends audio to the gateway (`/api/audio/*`), which calls these internal services. A

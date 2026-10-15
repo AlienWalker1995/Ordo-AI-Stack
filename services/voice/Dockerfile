@@ -40,7 +40,7 @@ RUN pip3 install --no-cache-dir --upgrade "pip==25.3" \
 COPY config.yaml /app/config.yaml
 RUN mkdir -p model_cache reference_audio outputs voices logs hf_cache
 
-# start.sh runs the server and sends it one warm-up request once the model is loaded.
+# start.sh runs the server and, beside it, sends two warm-up requests once the model is loaded.
 COPY start.sh /app/start.sh
 RUN chmod 0755 /app/start.sh
 
