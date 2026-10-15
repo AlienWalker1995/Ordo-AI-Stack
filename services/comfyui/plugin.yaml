@@ -102,17 +102,21 @@ services:
       # Bumping it here is the ONLY supported way to change ComfyUI versions; the ref's own
       # requirements.txt then carries the matching Comfy-Org runtime pins.
       #
-      # 73c9bad4 = tag v0.37.0 (2026-09-20), the FIRST release carrying Qwen-Image 2.1
-      # support (upstream 6bfaacc6, CORE-423). The previous pin 72865f4f = v0.33.1 could not
-      # load the 2.1 VAE at all: it builds a 12-channel decoder head against the release's
-      # 4-channel checkpoint and dies on a shape mismatch. v0.33.1 remains the rollback, and
-      # it still carries the MiniMax Music3 nodes (upstream efd4e951a0) that services/song-gen
-      # declares, as does this one. Pin a full commit SHA, never a tag or branch — tags are
-      # movable refs, and "float" is how you get a different app on the next recreate.
-      # KNOWN REGRESSION at this pin: ComfyUI-LTXVideo fails to import against 0.37.0
-      # (comfy.ldm.lightricks.model no longer exports interleaved_freqs_cis). The LTX nodes
-      # are unavailable until that custom node is updated to a 0.37-compatible revision.
-      COMFYUI_APP_REF: ${COMFYUI_APP_REF:-73c9bad4d21e7addbe1d13bc92eee0f1431b017d}
+      # 45bf90d1 = tag v0.41.1 (2026-10-15), the FIRST release carrying FLUX 3 Image
+      # support (upstream 20b46065, PR #17064): native detection of the flux3_image_klein
+      # transformer (content_mode_blocks/txt_mode_blocks/single_blocks) plus the flux3_te()
+      # text-encoder path. Wire FLUX 3 through CLIPLoader type "flux3" (8-tap Qwen3-VL-4B
+      # -> 20480 context, native prefix-replace); the older "flux2"/klein_te path is 3-tap
+      # and only fits FLUX.2-Klein DiTs. Rollback: previous pin
+      # 73c9bad4d21e7addbe1d13bc92eee0f1431b017d = v0.37.0 (first release with Qwen-Image 2.1,
+      # upstream 6bfaacc6) — NOTE it cannot detect the flux3 transformer and has no
+      # CLIPType.FLUX3, so a rollback is only valid together with
+      # TIMELAPSE_T2I_TEMPLATE/TIMELAPSE_EDIT_TEMPLATE=qwen21_* overrides; the default flux3
+      # templates will not load there. Its known regression (ComfyUI-LTXVideo import failure
+      # vs 0.37.0) carries over unless the node is updated. Pin a full commit SHA, never a tag
+      # or branch — tags are movable refs, and "float" is how you get a different app on the
+      # next recreate.
+      COMFYUI_APP_REF: ${COMFYUI_APP_REF:-45bf90d1c91eecd782643346dcfb73cb0017667f}
       # V1's proven allocator config (overrides/compute.yml). An EMPTY string here is worse than
       # omitting it: torch's allocator parser rejects "" with `ValueError: Unrecognized key ','` at
       # `torch._C._cuda_init()`, crash-looping ComfyUI on boot. Default to V1's value; operator-
