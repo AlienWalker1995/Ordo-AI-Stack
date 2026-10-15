@@ -23,6 +23,8 @@ All notable changes to this project are documented here. The format is loosely b
   last checks and the restart under the lock every lease transition takes. It replaces the Hermes
   cron (`scripts/hermes/comfyui_idle_reclaim.sh`, removed) that polled every 30 minutes and could race
   a lease admitted between its checks and its restart.
+- **The weekly storage purge expires unrendered reel drafts after 3 days.** `data/drafts-pending/` held
+  272 news-story drafts, 254 older than 3 days and too stale to render.
 - **Service cards can probe through the edge.** A card's `edge_check: <path>` is probed the way users
   reach it: Caddy's TLS listener on its edge port, the tailnet certificate verified, the UI's public
   host in `Host`. The Hermes card uses it, so it goes red when the Hermes site returns an error, not
