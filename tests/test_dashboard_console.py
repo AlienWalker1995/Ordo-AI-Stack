@@ -110,7 +110,7 @@ def test_gpu_cards_list_tenants_per_card_biggest_first():
     big, small = cards
     assert big["borrowed_by"] == []
     assert "GPU chat" in big["tenants"] and "ComfyUI" in big["tenants"]
-    assert small["tenants"] == ["Whisper", "Kokoro"]
+    assert small["tenants"] == ["Whisper", "Chatterbox"]
     assert big["vram_used_gb"] == 29.6 and big["temp_c"] == 57
 
 

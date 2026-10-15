@@ -5,6 +5,10 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Fixed
+- **A changed service catalog recreates the dashboard.** The dashboard reads `out/services-catalog.json`
+  once, at start, through a bind compose does not hash, so `ordo apply` never recreated it for a card
+  change: after the voice service moved to Chatterbox on :8004 the TTS card kept probing Kokoro on
+  :8880 ("All connection attempts failed"). Its definition now carries the catalog's digest.
 - **Claude Code can only run on the subscription.** Its managed settings, which outrank any caller
   setting, force the Claude login and Anthropic's endpoint. Hermes had run the binary directly with
   `ANTHROPIC_BASE_URL` at the stack's LiteLLM gateway to use the local model, failing with 401s.

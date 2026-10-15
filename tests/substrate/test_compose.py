@@ -131,6 +131,22 @@ def test_the_shipped_dashboard_reserves_no_gpu(tmp_path):
     assert "deploy" not in c["services"]["dashboard"]
 
 
+def test_a_service_catalog_change_recreates_the_dashboard(tmp_path):
+    """The dashboard reads out/services-catalog.json once, at start, through a bind compose does not
+    hash. Its rendered definition carries the digest of what the render writes there, so a changed
+    card list changes its config and `ordo apply` recreates it (on 2026-10-15 it kept probing the
+    retired Kokoro TTS on :8880 for a day after the catalog had moved to Chatterbox on :8004)."""
+    from ordo.render.dashboards import DashboardRegistry
+    dashboards = DashboardRegistry.load(ROOT / "services")
+    src = Source.from_dict({"hardware": {"gpus": [{"vram_gb": 32}], "ram_gb": 128},
+                            "model": "auto", "plugins": "auto"})
+    rc = render(src, CATALOG, REGISTRY, dashboards=dashboards)
+    rc.write(tmp_path)
+    written = {"services-catalog.json": (tmp_path / "services-catalog.json").read_text(encoding="utf-8")}
+    label = rc.compose_dict()["services"]["dashboard"]["labels"][compose.RENDERED_CONFIG_LABEL]
+    assert label == compose.rendered_config_digest(written)
+
+
 def test_a_dashboard_manifest_can_still_declare_gpu_visibility():
     """The generic `gpu_capabilities` mechanism outlives the shipped dashboard's use of it: a
     dashboard that declares a capability gets it on NVIDIA hosts, and nothing on a CPU-only host."""
