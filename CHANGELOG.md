@@ -29,6 +29,11 @@ All notable changes to this project are documented here. The format is loosely b
   caddy only through `ordo apply`, which recreates it from the file's content digest label.
 
 ### Added
+- **`ordo deploy` keeps the stack on `origin/main`.** A merged PR used to wait for the operator to run
+  `ordo apply`. A scheduled task (`ordo deploy --install-schedule`) now runs a pass every 2 minutes:
+  when main moved it fast-forwards the checkout, builds and applies, but waits while the checkout is
+  off a clean `main`, a GPU lease is held, an eval is running or the agent is mid-turn. Deploys,
+  failures and hour-long waits are posted to the alert Discord channel; a failure is never retried.
 - **ops-controller restarts an idle ComfyUI that holds a lot of RAM.** Between leases, after the GPU
   has been quiet for 10 minutes, when ComfyUI holds 12 GiB or more and its own queue is empty, with the
   last checks and the restart under the lock every lease transition takes. It replaces the Hermes

@@ -216,6 +216,18 @@ def main(argv: list[str] | None = None) -> int:
     pa.add_argument("--only", nargs="+", metavar="SERVICE", default=None,
                     help="recreate only these of the changed services (a changed ops-controller still goes first)")
     pa.set_defaults(func=_handler("ordo.host.cli_stack", "cmd_apply"))
+    # `deploy`: follow origin/main. One pass: fast-forward the checkout and `ordo apply` when main
+    # moved and no lease, eval or agent turn would be cut off (ordo/host/deploy.py); a scheduled
+    # task runs it every few minutes.
+    pdp = sub.add_parser("deploy", help="deploy origin/main when it moved and the stack is idle (one pass)")
+    pdp.add_argument("--out", default="out", help="the config + rendered stack directory (default: out)")
+    pdp.add_argument("--project", default="ordo", help="compose project name (default: ordo)")
+    pdp.add_argument("--log", default=None, help="append this pass's output to this file")
+    pdp_mode = pdp.add_mutually_exclusive_group()
+    pdp_mode.add_argument("--status", action="store_true", help="print the last deploy's state, change nothing")
+    pdp_mode.add_argument("--install-schedule", action="store_true",
+                          help="register the scheduled task that runs `ordo deploy` every few minutes")
+    pdp.set_defaults(func=_handler("ordo.host.cli_stack", "cmd_deploy"))
     # `backup` / `restore`: the stack's state (config + named volumes) to one archive and back. Each
     # volume's method comes from its manifest's `backup:` declaration (ordo/render/backup_policy.py).
     # `--out` is where the archive goes, so the rendered stack directory is `--stack` here.

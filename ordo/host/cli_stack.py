@@ -4,8 +4,11 @@ from the host. Argument parsing lives in ordo/cli.py.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -16,7 +19,7 @@ from ..render.config import Source
 from ..render.engine import DEFAULT_PLUGINS_DIR, render
 from ..render.image_tags import load_record
 from ..render.plugins import PluginRegistry
-from . import apply, backup, bringup, cli_render, cli_secrets, fetch, images, parity, preflight
+from . import apply, backup, bringup, cli_render, cli_secrets, deploy, fetch, images, parity, preflight
 
 
 def _local_images() -> set[str]:  # pragma: no cover - shells to docker
@@ -297,6 +300,43 @@ def cmd_apply(args: argparse.Namespace) -> int:
                                                      project=args.project, out=str(out))))
     return apply.run(host, only=args.only, dry_run=args.dry_run)
 
+
+
+def cmd_deploy(args: argparse.Namespace) -> int:
+    """`ordo deploy`: one pass of following origin/main (ordo/host/deploy.py)."""
+    out = Path(args.out)
+    if args.status:
+        return deploy.print_status(out)
+    if args.install_schedule:
+        return deploy.install_schedule(out=out.resolve(), project=args.project)
+    if not args.log:
+        return _deploy_pass(out, args.project)
+    # The scheduled task has no console: keep what a pass printed, and only passes that printed
+    # something (a pass with nothing to deploy is silent), so the log stays readable.
+    captured = io.StringIO()
+    code = 1
+    try:
+        with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
+            code = _deploy_pass(out, args.project)
+    except Exception as e:  # noqa: BLE001 - the log is the only place a scheduled pass can report
+        captured.write(f"ordo deploy crashed: {type(e).__name__}: {e}\n")
+    if captured.getvalue():
+        log = Path(args.log)
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8") as stream:
+            stream.write(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} (exit {code})\n{captured.getvalue()}")
+    return code
+
+
+def _deploy_pass(out: Path, project: str) -> int:
+    lock = out / "deploy" / "lock"
+    if not deploy.acquire_lock(lock):
+        print(f"another `ordo deploy` holds {lock}")
+        return 0
+    try:
+        return deploy.run_once(deploy.RealHost(out=out, project=project), out=out)
+    finally:
+        lock.unlink(missing_ok=True)
 
 def cmd_build(args: argparse.Namespace) -> int:
     if int(args.all) + int(bool(args.services)) != 1:
