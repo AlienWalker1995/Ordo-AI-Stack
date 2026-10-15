@@ -37,7 +37,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Protocol
+from typing import IO, Protocol
 
 from . import bringup
 
@@ -216,13 +216,26 @@ def run_once(host: Host, *, out: Path, now: float | None = None) -> int:
             state.save(state_path)
         return 0
 
-    problem = checkout_problem(host, target) or blocking_gate(host)
+    try:
+        problem = checkout_problem(host, target)
+    except GateUnknown as e:
+        problem = f"the checkout could not be read: {e}"
+    problem = problem or blocking_gate(host)
     if problem:
         return _wait(host, state, state_path, target, problem, now)
 
     stamp = dt.datetime.fromtimestamp(now, dt.UTC).strftime("%Y%m%dT%H%M%SZ")
     log = deploy_dir / "logs" / f"{stamp}-{short(target)}.log"
     log.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        return _deploy(host, state, state_path, target, log, now)
+    except Exception as e:  # noqa: BLE001 - a crash mid-deploy is a failed deploy, reported once
+        return _finish(host, state, state_path, target, ok=False, result=f"crashed: {type(e).__name__}: {e}",
+                       log=log)
+
+
+def _deploy(host: Host, state: State, state_path: Path, target: str, log: Path, now: float) -> int:
+    """Fast-forward, build, re-check the gates, apply."""
     # What the stack ran before this deploy: the last commit deployed, else the head before the
     # fast-forward (saved, because a pass that waits after its build has already fast-forwarded).
     previous = state.deployed or state.deploying_from or host.head()
@@ -258,17 +271,20 @@ class RealHost:
         self.repo = repo
 
     def _git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-        proc = subprocess.run(["git", "-C", str(self.repo), *args], capture_output=True, text=True, timeout=300)
+        """Run git in the checkout. GateUnknown when it cannot run, or (with `check`) fails: a
+        checkout git cannot read (a stale index.lock, say) holds the deploy like any gate."""
+        try:
+            proc = subprocess.run(["git", "-C", str(self.repo), *args], capture_output=True, text=True,
+                                  timeout=300)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise GateUnknown(f"git {args[0]}: {e}") from e
         if check and proc.returncode != 0:
-            raise RuntimeError(f"git {' '.join(args)}: {(proc.stderr or proc.stdout).strip()}")
+            raise GateUnknown(f"git {' '.join(args)}: {(proc.stderr or proc.stdout).strip()}")
         return proc
 
     def fetch(self) -> str:
-        try:
-            self._git("fetch", "--quiet", REMOTE, BRANCH)
-            return self._git("rev-parse", f"{REMOTE}/{BRANCH}").stdout.strip()
-        except (RuntimeError, OSError, subprocess.SubprocessError) as e:
-            raise GateUnknown(str(e)) from e
+        self._git("fetch", "--quiet", REMOTE, BRANCH)
+        return self._git("rev-parse", f"{REMOTE}/{BRANCH}").stdout.strip()
 
     def head(self) -> str:
         return self._git("rev-parse", "HEAD").stdout.strip()
@@ -365,51 +381,26 @@ class RealHost:
 # --------------------------------------------------------------------------- #
 
 
-def acquire_lock(path: Path) -> bool:
-    """Create the lock file holding this process's pid, or report that a live run holds it. The
-    lock of a run that died without removing it (Task Scheduler ends a pass at its time limit, so
-    its `finally` never runs) is taken over."""
+def acquire_lock(path: Path) -> IO[str] | None:
+    """An exclusive OS lock on `path`, held until the returned file is closed, or None when another
+    pass holds it. The OS drops the lock when its process dies (Task Scheduler ends a pass at its
+    time limit), so a dead pass never blocks the next one. The file itself stays."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    for _ in range(2):
-        try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            try:
-                holder = int(path.read_text(encoding="utf-8").strip() or "0")
-            except (FileNotFoundError, ValueError):
-                holder = 0
-            if holder and pid_alive(holder):
-                return False
-            path.unlink(missing_ok=True)
-            continue
-        with os.fdopen(fd, "w") as stream:
-            stream.write(str(os.getpid()))
-        return True
-    return False
-
-
-def pid_alive(pid: int) -> bool:
-    """Whether a process with this pid is running."""
-    if os.name == "nt":
-        import ctypes
-
-        kernel32 = ctypes.windll.kernel32
-        process_query_limited_information, still_active = 0x1000, 259
-        handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
-        if not handle:
-            return False
-        try:
-            exit_code = ctypes.c_ulong()
-            return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)))                 and exit_code.value == still_active
-        finally:
-            kernel32.CloseHandle(handle)
+    stream = path.open("a+", encoding="utf-8")
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+        if os.name == "nt":
+            import msvcrt
+
+            stream.seek(0)
+            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        stream.close()
+        return None
+    return stream
 
 
 def install_schedule(*, out: Path, project: str, repo: Path = REPO_ROOT) -> int:

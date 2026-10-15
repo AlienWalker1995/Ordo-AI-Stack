@@ -329,14 +329,13 @@ def cmd_deploy(args: argparse.Namespace) -> int:
 
 
 def _deploy_pass(out: Path, project: str) -> int:
-    lock = out / "deploy" / "lock"
-    if not deploy.acquire_lock(lock):
-        print(f"another `ordo deploy` holds {lock}")
+    lock_path = out / "deploy" / "lock"
+    lock = deploy.acquire_lock(lock_path)
+    if lock is None:
+        print(f"another `ordo deploy` holds {lock_path}")
         return 0
-    try:
+    with lock:
         return deploy.run_once(deploy.RealHost(out=out, project=project), out=out)
-    finally:
-        lock.unlink(missing_ok=True)
 
 def cmd_build(args: argparse.Namespace) -> int:
     if int(args.all) + int(bool(args.services)) != 1:

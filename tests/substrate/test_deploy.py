@@ -8,7 +8,6 @@ read again after the build, and a deploy records what it moved from and to. git,
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -173,6 +172,44 @@ def test_a_resolved_fetch_wait_is_cleared_when_there_is_nothing_to_deploy(tmp_pa
     assert state(tmp_path)["waiting"] == ""
 
 
+def test_an_unreadable_checkout_waits(tmp_path, capsys):
+    host = FakeHost()
+
+    def broken() -> str:
+        raise deploy.GateUnknown("git status: index.lock exists")
+
+    host.branch = broken
+    assert deploy.run_once(host, out=tmp_path, now=1000.0) == 0
+    assert host.calls == []
+    assert "the checkout could not be read: git status: index.lock exists" in capsys.readouterr().out
+
+
+def test_a_crash_mid_deploy_is_a_failure_reported_once(tmp_path):
+    host = FakeHost()
+
+    def crash(log: Path) -> int:
+        raise OSError("disk full")
+
+    host.build = crash
+    assert deploy.run_once(host, out=tmp_path, now=1000.0) == 1
+    assert state(tmp_path)["failed"] == NEW
+    assert len(host.notes) == 1 and "crashed: OSError: disk full" in host.notes[0]
+    assert deploy.run_once(host, out=tmp_path, now=1120.0) == 0
+    assert len(host.notes) == 1
+
+
+def _failing_git(*args, **kwargs):
+    return subprocess.CompletedProcess(args, 128, "", "fatal: index.lock exists")
+
+
+@pytest.mark.parametrize("reader", ["head", "branch", "dirty_files"])
+def test_a_failed_git_read_is_a_gate(monkeypatch, reader):
+    host = deploy.RealHost(out=Path("out"), project="ordo")
+    monkeypatch.setattr(deploy.subprocess, "run", _failing_git)
+    with pytest.raises(deploy.GateUnknown, match="index.lock"):
+        getattr(host, reader)()
+
+
 def test_a_failed_git_fetch_is_a_gate_not_a_crash(monkeypatch):
     host = deploy.RealHost(out=Path("out"), project="ordo")
     monkeypatch.setattr(deploy.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 128, "", "fatal: unable"))
@@ -247,23 +284,41 @@ def test_the_crontab_line_quotes_its_paths(tmp_path, monkeypatch, capsys):
     assert f'cd "{repo}"' in line and f'--out "{out}"' in line and f'>> "{out}/deploy/deploy.log"' in line
 
 
-def test_the_lock_admits_one_run_and_takes_over_a_dead_one(tmp_path):
+def test_the_lock_admits_one_pass_and_is_free_once_it_closes(tmp_path):
     lock = tmp_path / "deploy" / "lock"
-    assert deploy.acquire_lock(lock)
-    assert lock.read_text() == str(os.getpid())
-    assert not deploy.acquire_lock(lock)            # this process is alive
-    dead = subprocess.Popen([sys.executable, "-c", "pass"])
-    dead.wait()
-    lock.write_text(str(dead.pid))
-    assert deploy.acquire_lock(lock)                # its holder exited without removing it
-    assert lock.read_text() == str(os.getpid())
+    first = deploy.acquire_lock(lock)
+    assert first is not None
+    assert deploy.acquire_lock(lock) is None
+    first.close()
+    second = deploy.acquire_lock(lock)
+    assert second is not None
+    second.close()
 
 
-def test_pid_alive():
-    assert deploy.pid_alive(os.getpid())
-    dead = subprocess.Popen([sys.executable, "-c", "pass"])
-    dead.wait()
-    assert not deploy.pid_alive(dead.pid)
+HOLD_LOCK = (
+    "import sys, time\n"
+    "from pathlib import Path\n"
+    "from ordo.host import deploy\n"
+    "held = deploy.acquire_lock(Path(sys.argv[1]))\n"
+    "print(held is not None, flush=True)\n"
+    "time.sleep(60)\n"
+)
+
+
+def test_a_killed_pass_holds_no_lock(tmp_path):
+    lock = tmp_path / "deploy" / "lock"
+    holder = subprocess.Popen([sys.executable, "-c", HOLD_LOCK, str(lock)], stdout=subprocess.PIPE, text=True,
+                              cwd=Path(deploy.__file__).resolve().parents[2])
+    try:
+        assert holder.stdout.readline().strip() == "True"
+        assert deploy.acquire_lock(lock) is None
+    finally:
+        holder.kill()
+        holder.wait()
+        holder.stdout.close()
+    held = deploy.acquire_lock(lock)
+    assert held is not None
+    held.close()
 
 
 def test_an_apply_refusal_waits_and_is_tried_again(tmp_path):
