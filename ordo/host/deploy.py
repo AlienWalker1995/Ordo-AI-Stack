@@ -360,21 +360,20 @@ def install_schedule(*, out: Path, project: str, repo: Path = REPO_ROOT) -> int:
     """Register the scheduled task that runs `ordo deploy` every SCHEDULE_MINUTES (Windows), or
     print the crontab line to add (elsewhere). Re-running replaces the task."""
     python = Path(sys.executable)
-    args = f"-m ordo deploy --out {out} --project {project}"
+    args = f"-m ordo deploy --out \"{out}\" --project {project}"
     if os.name != "nt":
         print(f"add to the operator's crontab (crontab -e):\n"
               f"*/{SCHEDULE_MINUTES} * * * * cd {repo} && {python} {args} >> {out}/deploy/deploy.log 2>&1")
         return 0
-    # pythonw has no console, so the task never flashes a window; S4U runs it whether or not the
-    # operator is signed in, as the operator, with no stored password (the repo is fetched without
-    # credentials, and docker answers the operator's account).
-    pythonw = python.with_name("pythonw.exe")
-    exe = pythonw if pythonw.exists() else python
+    # `conhost --headless` gives the pass a console no window shows, which every git and docker
+    # child inherits (a console-less pythonw would open a window for each of them). The task runs
+    # as the operator while they are signed in, which is when Docker Desktop runs; registering it
+    # needs no elevation and stores no password.
     log = Path(out) / "deploy" / "deploy.log"
     script = f"""
-$action = New-ScheduledTaskAction -Execute '{exe}' -Argument '{args} --log {log}' -WorkingDirectory '{repo}'
+$action = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument '--headless "{python}" {args} --log "{log}"' -WorkingDirectory '{repo}'
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes {SCHEDULE_MINUTES})
-$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\\$env:USERNAME" -LogonType S4U -RunLevel Limited
+$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\\$env:USERNAME" -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskName '{SCHEDULED_TASK_NAME}' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 """

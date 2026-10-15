@@ -157,8 +157,9 @@ ordo deploy --status              # the last deploy: commit, result, its log und
 ordo deploy                       # one pass by hand
 ```
 
-On Windows the task runs `pythonw` (no console window) as the operator, whether or not they are
-signed in, and appends each pass that did something to `out/deploy/deploy.log`. Elsewhere
+On Windows the task runs under `conhost --headless` (no window, for it or its git and docker
+children) as the operator while they are signed in (when Docker Desktop runs), and appends each pass
+that did something to `out/deploy/deploy.log`. Elsewhere
 `--install-schedule` prints the crontab line to add.
 
 ### Changes made through the control plane
