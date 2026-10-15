@@ -53,6 +53,8 @@ WAIT_REPORT_SECONDS = 3600
 STALE_LOCK_SECONDS = 3 * 3600
 SCHEDULED_TASK_NAME = "Ordo deploy"
 SCHEDULE_MINUTES = 2
+# What `waiting` holds when origin/main itself could not be fetched (no commit to name).
+UNFETCHED = "origin/main (not fetched)"
 
 # Run inside the agent container: the gateway's own count of turns in flight (written at every
 # turn boundary) and every `hermes` CLI process other than the gateway and the dashboard
@@ -83,7 +85,7 @@ class GateUnknown(Exception):
 
 
 class Host(Protocol):
-    def fetch(self) -> str: ...                       # origin/main's sha after a fetch
+    def fetch(self) -> str: ...                       # origin/main's sha; GateUnknown when unreachable
     def head(self) -> str: ...
     def branch(self) -> str: ...
     def dirty_files(self) -> list[str]: ...           # uncommitted changes to tracked files
@@ -104,6 +106,7 @@ class State:
     waiting: str = ""           # the commit waiting on a gate, and since when (unix seconds)
     waiting_since: float = 0.0
     waiting_reported: bool = False
+    waiting_reason: str = ""
     deploying_from: str = ""     # the head before the fast-forward of the deploy in progress
     last_result: str = ""
     last_log: str = ""
@@ -163,10 +166,15 @@ def checkout_problem(host: Host, target: str) -> str | None:
 def _wait(host: Host, state: State, state_path: Path, target: str, reason: str, now: float) -> int:
     if state.waiting != target:
         state.waiting, state.waiting_since, state.waiting_reported = target, now, False
-    print(f"deploy of {short(target)} waiting: {reason}")
+        state.waiting_reason = ""
+    subject = "Deploy" if target == UNFETCHED else f"Deploy of `{short(target)}`"
+    # Printed when the reason changes, not on every pass: a wait can last hours, two minutes apart.
+    if reason != state.waiting_reason:
+        print(f"{subject} waiting: {reason}")
+        state.waiting_reason = reason
     if not state.waiting_reported and now - state.waiting_since >= WAIT_REPORT_SECONDS:
         minutes = int((now - state.waiting_since) // 60)
-        host.notify(f"Deploy of `{short(target)}` has waited {minutes} min: {reason}.")
+        host.notify(f"{subject} has waited {minutes} min: {reason}.")
         state.waiting_reported = True
     state.save(state_path)
     return 0
@@ -174,7 +182,7 @@ def _wait(host: Host, state: State, state_path: Path, target: str, reason: str, 
 
 def _finish(host: Host, state: State, state_path: Path, target: str, *, ok: bool, result: str,
             log: Path) -> int:
-    state.waiting, state.waiting_since, state.waiting_reported = "", 0.0, False
+    state.waiting, state.waiting_since, state.waiting_reported, state.waiting_reason = "", 0.0, False, ""
     state.deploying_from = ""
     state.last_result, state.last_log = result, str(log)
     if ok:
@@ -197,8 +205,14 @@ def run_once(host: Host, *, out: Path, now: float | None = None) -> int:
     state_path = deploy_dir / "state.json"
     state = State.load(state_path)
 
-    target = host.fetch()
+    try:
+        target = host.fetch()
+    except GateUnknown as e:
+        return _wait(host, state, state_path, UNFETCHED, f"origin/{BRANCH} could not be fetched: {e}", now)
     if target in (state.deployed, state.failed):
+        if state.waiting:   # a wait (an unreachable remote, say) that resolved into nothing to do
+            state.waiting, state.waiting_since, state.waiting_reported, state.waiting_reason = "", 0.0, False, ""
+            state.save(state_path)
         return 0
 
     problem = checkout_problem(host, target) or blocking_gate(host)
@@ -245,8 +259,11 @@ class RealHost:
         return proc
 
     def fetch(self) -> str:
-        self._git("fetch", "--quiet", REMOTE, BRANCH)
-        return self._git("rev-parse", f"{REMOTE}/{BRANCH}").stdout.strip()
+        try:
+            self._git("fetch", "--quiet", REMOTE, BRANCH)
+            return self._git("rev-parse", f"{REMOTE}/{BRANCH}").stdout.strip()
+        except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+            raise GateUnknown(str(e)) from e
 
     def head(self) -> str:
         return self._git("rev-parse", "HEAD").stdout.strip()
@@ -369,22 +386,27 @@ def install_schedule(*, out: Path, project: str, repo: Path = REPO_ROOT) -> int:
     args = f"-m ordo deploy --out \"{out}\" --project {project}"
     if os.name != "nt":
         print(f"add to the operator's crontab (crontab -e):\n"
-              f"*/{SCHEDULE_MINUTES} * * * * cd \"{repo}\" && \"{python}\" {args} >> \"{out}/deploy/deploy.log\" 2>&1")
+              f"*/{SCHEDULE_MINUTES} * * * * mkdir -p \"{out}/deploy\" && cd \"{repo}\" && \"{python}\" {args} "
+              f">> \"{out}/deploy/deploy.log\" 2>&1")
         return 0
     # `conhost --headless` gives the pass a console no window shows, which every git and docker
     # child inherits (a console-less pythonw would open a window for each of them). The task runs
     # as the operator while they are signed in, which is when Docker Desktop runs; registering it
     # needs no elevation and stores no password.
+    # The paths reach PowerShell as environment variables, never spliced into its source, so no
+    # character in them (an apostrophe, say) can break the script.
     log = Path(out) / "deploy" / "deploy.log"
+    env = dict(os.environ, ORDO_TASK_ARGUMENT=f'--headless "{python}" {args} --log "{log}"',
+               ORDO_TASK_DIRECTORY=str(repo), ORDO_TASK_NAME=SCHEDULED_TASK_NAME)
     script = f"""
-$action = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument '--headless "{python}" {args} --log "{log}"' -WorkingDirectory '{repo}'
+$action = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument $env:ORDO_TASK_ARGUMENT -WorkingDirectory $env:ORDO_TASK_DIRECTORY
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes {SCHEDULE_MINUTES})
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\\$env:USERNAME" -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName '{SCHEDULED_TASK_NAME}' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+Register-ScheduledTask -TaskName $env:ORDO_TASK_NAME -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 """
     proc = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, env=env)
     if proc.returncode != 0:
         print(f"could not register the scheduled task: {(proc.stderr or proc.stdout).strip()}", file=sys.stderr)
         return 1

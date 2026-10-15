@@ -133,6 +133,51 @@ def test_a_long_wait_is_reported_once(tmp_path):
     assert host.notes == [f"Deploy of `{NEW[:12]}` has waited 60 min: a GPU lease is held."]
 
 
+def test_a_wait_is_logged_when_its_reason_changes_not_every_pass(tmp_path, capsys):
+    host = FakeHost()
+    host.leased = True
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    deploy.run_once(host, out=tmp_path, now=1120.0)
+    host.leased, host.jobs = False, ["ordo-evals-run-1"]
+    deploy.run_once(host, out=tmp_path, now=1240.0)
+    lines = capsys.readouterr().out.splitlines()
+    assert lines == [f"Deploy of `{NEW[:12]}` waiting: a GPU lease is held",
+                     f"Deploy of `{NEW[:12]}` waiting: a one-off job is running (ordo-evals-run-1)"]
+
+
+def test_an_unreachable_remote_waits_and_is_reported_once_after_an_hour(tmp_path):
+    host = FakeHost()
+
+    def unreachable() -> str:
+        raise deploy.GateUnknown("could not resolve host")
+
+    host.fetch = unreachable
+    for minute in range(0, 121, 2):
+        assert deploy.run_once(host, out=tmp_path, now=1000.0 + 60 * minute) == 0
+    assert host.calls == []
+    assert host.notes == ["Deploy has waited 60 min: origin/main could not be fetched: could not resolve host."]
+    assert state(tmp_path)["waiting"] == deploy.UNFETCHED
+
+
+def test_a_resolved_fetch_wait_is_cleared_when_there_is_nothing_to_deploy(tmp_path):
+    host = FakeHost()
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    real_fetch = host.fetch
+    host.fetch = lambda: (_ for _ in ()).throw(deploy.GateUnknown("down"))
+    deploy.run_once(host, out=tmp_path, now=1100.0)
+    assert state(tmp_path)["waiting"] == deploy.UNFETCHED
+    host.fetch = real_fetch
+    deploy.run_once(host, out=tmp_path, now=1200.0)
+    assert state(tmp_path)["waiting"] == ""
+
+
+def test_a_failed_git_fetch_is_a_gate_not_a_crash(monkeypatch):
+    host = deploy.RealHost(out=Path("out"), project="ordo")
+    monkeypatch.setattr(deploy.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 128, "", "fatal: unable"))
+    with pytest.raises(deploy.GateUnknown, match="unable"):
+        host.fetch()
+
+
 def test_a_new_commit_restarts_the_wait_clock(tmp_path):
     host = FakeHost()
     host.leased = True
@@ -196,6 +241,7 @@ def test_the_crontab_line_quotes_its_paths(tmp_path, monkeypatch, capsys):
     repo, out = tmp_path / "my repo", tmp_path / "my out"
     assert deploy.install_schedule(out=out, project="ordo", repo=repo) == 0
     line = capsys.readouterr().out.splitlines()[-1]
+    assert line.split(" && ")[0].endswith(f'mkdir -p "{out}/deploy"')
     assert f'cd "{repo}"' in line and f'--out "{out}"' in line and f'>> "{out}/deploy/deploy.log"' in line
 
 
