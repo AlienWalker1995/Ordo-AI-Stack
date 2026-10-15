@@ -114,3 +114,13 @@ def test_the_image_installs_it_and_never_bridges_its_secrets_into_the_environmen
     assert "COPY github-app-token /usr/local/bin/github-app-token" in dockerfile
     init = (ROOT / "services" / "hermes" / "ordo-init.sh").read_text(encoding="utf-8")
     assert "GITHUB_APP_PRIVATE_KEY" not in init and "GITHUB_APP_ID" not in init
+
+
+@pytest.mark.parametrize("repo", ["owner/", "/repo", "/", "owner", "owner/repo/extra"])
+def test_a_repo_argument_without_both_halves_gets_the_usage_message(repo, tmp_path, monkeypatch, capsys):
+    helper = load_helper()
+    secrets(tmp_path, monkeypatch, "123", base64.b64encode(b"unused").decode())
+    monkeypatch.setattr(helper, "call", lambda *a, **k: pytest.fail("must not reach GitHub"))
+    monkeypatch.setattr("sys.argv", ["github-app-token", repo])
+    assert helper.main() == 2
+    assert "usage: github-app-token <owner/repo>" in capsys.readouterr().err
