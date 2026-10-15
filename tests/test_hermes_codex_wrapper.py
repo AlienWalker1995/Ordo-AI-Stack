@@ -71,3 +71,15 @@ def test_the_image_pins_the_cli_and_installs_the_wrapper():
     assert re.search(r"^ARG CODEX_VERSION=\d+\.\d+\.\d+$", dockerfile, re.M), "pin an exact version"
     assert '"@openai/codex@${CODEX_VERSION}"' in dockerfile
     assert "COPY codex /usr/local/bin/codex" in dockerfile.splitlines()
+
+
+def test_managed_config_pins_the_subscription_and_disables_shell_snapshots():
+    """Codex's managed config outranks user config and CLI overrides, so even a run of the binary
+    that skips the wrapper stays on the ChatGPT subscription and never writes shell snapshots."""
+    import tomllib
+    managed = tomllib.loads((ROOT / "services" / "hermes" / "codex-managed-config.toml").read_text(encoding="utf-8"))
+    assert managed["forced_login_method"] == "chatgpt"
+    assert managed["model_provider"] == "openai"
+    assert managed["features"]["shell_snapshot"] is False
+    dockerfile = (ROOT / "services" / "hermes" / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY codex-managed-config.toml /etc/codex/managed_config.toml" in dockerfile.splitlines()

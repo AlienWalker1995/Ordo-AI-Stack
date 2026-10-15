@@ -1,0 +1,13 @@
+# Codex admin-managed config (Codex reads /etc/codex/managed_config.toml and lets it override the
+# user's own config.toml and CLI overrides). Installed by services/hermes/Dockerfile.
+#
+# - Always the operator's ChatGPT subscription: a run of the binary that skips the codex wrapper, or
+#   a config.toml pointing Codex at another provider, still lands here (2026-10-14: Hermes configured
+#   Codex to use the stack's LiteLLM gateway and the local model).
+# - No shell snapshots: Codex records the starting shell environment to
+#   $CODEX_HOME/shell_snapshots/, tokens included (a GitHub token was found in one on 2026-10-15).
+forced_login_method = "chatgpt"
+model_provider = "openai"
+
+[features]
+shell_snapshot = false
