@@ -134,6 +134,35 @@ Nothing changed means nothing is recreated. `--only SVC...` recreates only those
 services (a changed ops-controller still goes first). `ordo build`, `ordo up` and `ordo recreate`
 remain for single steps; a deploy is `ordo apply`.
 
+### Following main: `ordo deploy`
+
+`ordo deploy` is one pass of keeping the stack on `origin/main`: when main moved since the last
+deploy, it fast-forwards the checkout, runs `ordo build --all`, then `ordo apply`. It waits instead
+(and tries again on the next pass) while any of these holds:
+
+- the checkout is not on `main`, has uncommitted changes to tracked files, or has commits that are
+  not on `origin/main` (do feature work in a worktree, not in the deploy checkout);
+- a GPU lease is held;
+- a one-off job container of the project is running (an eval);
+- the agent is busy: a turn in flight, or a `hermes` CLI session (`hermes -z`, `hermes chat`).
+
+The gates are read again after the build, right before `ordo apply`, and an `ordo apply` that refuses
+before recreating anything (a lease taken in between) is a wait too, tried again on the next pass. A deploy that waits an hour is
+posted once to the Discord channel Alertmanager uses (`ALERTMANAGER_DISCORD_WEBHOOK_URL`), with the
+gate holding it, and so is every deploy and every failure. A failed deploy is not retried: push a
+fix or a revert to main and the next pass deploys that.
+
+```bash
+ordo deploy --install-schedule    # a scheduled task (Windows) runs a pass every 2 minutes
+ordo deploy --status              # the last deploy: commit, result, its log under out/deploy/logs/
+ordo deploy                       # one pass by hand
+```
+
+On Windows the task runs under `conhost --headless` (no window, for it or its git and docker
+children) as the operator while they are signed in (when Docker Desktop runs), and appends each pass
+that did something to `out/deploy/deploy.log`. Elsewhere
+`--install-schedule` prints the crontab line to add.
+
 ### Changes made through the control plane
 
 A model switch (the dashboard's Models page, `set_active_model`, `POST /model-config`) and a plugin
