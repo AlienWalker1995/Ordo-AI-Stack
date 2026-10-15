@@ -31,6 +31,18 @@ RUN python3 -c 'import json, sys; revision = json.load(open("/etc/hermes/image-p
 RUN apt-get update && apt-get install -y --no-install-recommends libopus0 \
     && rm -rf /var/lib/apt/lists/*
 
+# Bot Desktop: upstream gives every profile its own headless Xfce screen (Xvnc on a private
+# socket), which Hermes Desktop views and the agent drives (tools/bot_desktop). Upstream's image
+# leaves the desktop out; this is its own Debian package list (tools/bot_desktop/runtime.py
+# PACKAGES["apt"]), baked in so the desktops survive a recreate instead of being apt-installed
+# into a running container.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        tigervnc-standalone-server xfce4-panel xfwm4 xfdesktop4 xfce4-settings xfce4-terminal \
+        dbus-x11 x11-xserver-utils x11-utils x11-xkb-utils xauth fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/* \
+    && for b in Xvnc xfwm4 xfce4-panel xfdesktop xfsettingsd dbus-run-session xauth xdpyinfo setxkbmap xprop; do \
+        command -v "$b" >/dev/null || { echo "Bot Desktop binary missing: $b" >&2; exit 1; }; done
+
 # git authenticates to github.com through this helper, which reads GITHUB_BACKUP_PAT from its file
 # secret when asked (services/hermes/git-credential-github-pat). Nothing secret is in the config.
 COPY git-credential-github-pat /usr/local/bin/git-credential-github-pat
