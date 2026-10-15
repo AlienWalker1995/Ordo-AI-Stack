@@ -1,6 +1,6 @@
 id: voice
 name: Voice (STT + TTS)
-description: Speech-to-text (faster-whisper) + text-to-speech (Kokoro), OpenAI-compatible.
+description: Speech-to-text (faster-whisper) + voice-cloning text-to-speech (Chatterbox Turbo), OpenAI-compatible.
 requires:
   nvidia: true
   vram_gb: 4
@@ -9,7 +9,7 @@ provides: [voice]
 compose_profile: voice
 env:
   VOICE_ENABLED: "1"
-# TWO compose services. CRITICAL: both images have NO Blackwell kernels — they CRASH on the
+# TWO compose services. CRITICAL: neither image has Blackwell kernels — they CRASH on the
 # RTX 5090 and MUST run on the Pascal 1070. Under Docker Desktop/WSL2 device_ids/
 # NVIDIA_VISIBLE_DEVICES are no-ops for isolation; ONLY CUDA_VISIBLE_DEVICES=GPU-<uuid> pins.
 # `gpu_pin: secondary` makes render resolve the non-primary GPU's uuid and emit it. If there is
@@ -22,7 +22,7 @@ services:
     image: fedirz/faster-whisper-server@sha256:0b64050ad0b9244745746b652473ee42a8d5454d501877a252c3e65f631ffc99
     gpu_pin: secondary
     # Resident on the SECONDARY device (the Pascal 1070) — the whole point of the pin. Declaring
-    # `device: secondary` keeps it out of the primary card's VRAM budget, so Whisper/Kokoro never
+    # `device: secondary` keeps it out of the primary card's VRAM budget, so Whisper/Chatterbox never
     # contend with a render and a render is never told the 5090 is fuller than it is. Nothing
     # arbitrates the 1070 today: it hosts only these two, they fit together, and the arbiter
     # models one card. `preemptible: false` states that as a decision — voice is not something
@@ -48,16 +48,19 @@ services:
       retries: 5
       start_period: 90s
   - name: tts
-    # Text-to-speech (Kokoro, OpenAI-compatible /v1/audio/speech on :8880). sha-pinned.
-    # Kokoro's PyTorch build has no Blackwell kernels → must run on the Pascal 1070.
-    image: ghcr.io/remsky/kokoro-fastapi-gpu@sha256:63176e12e476470f020e29dfb3203bac249fa66c8fdf95e44b7482546eb4e974
+    # Text-to-speech: Chatterbox Turbo behind Chatterbox-TTS-Server (OpenAI-compatible
+    # /v1/audio/speech on :8004). First-party image, built from THIS folder by `ordo build voice`
+    # (Dockerfile + requirements.lock, everything pinned). Each Hermes profile speaks with its own
+    # cloned voice: the request's `voice` names a reference clip in data/voice/references
+    # (<profile>.wav, made once with VibeVoice), cloned zero-shot. Its torch (2.5.1+cu121) has no
+    # Blackwell kernels, which is fine: it must run on the Pascal 1070 anyway.
+    image: ordo/voice-tts
     gpu_pin: secondary
-    # Resident on the SECONDARY device (the Pascal 1070) — the whole point of the pin. Declaring
-    # `device: secondary` keeps it out of the primary card's VRAM budget, so Whisper/Kokoro never
-    # contend with a render and a render is never told the 5090 is fuller than it is. Nothing
-    # arbitrates the 1070 today: it hosts only these two, they fit together, and the arbiter
-    # models one card. `preemptible: false` states that as a decision — voice is not something
-    # the scheduler may reclaim — rather than leaving it to be inferred from silence.
+    volumes:
+      # The per-profile reference voices, read-only.
+      - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/voice/references:/app/voices:ro
+      # Downloaded model weights on a NAMED volume (ext4), not a 9p bind: read at every start.
+      - voice-tts-hf:/app/hf_cache
     gpu_arbitration:
       mode: resident
       enforcement: broker
@@ -67,8 +70,12 @@ services:
       yield:
         strategy: stop
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8880/v1/audio/voices',timeout=5).status==200 else 1)\""]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,json,sys; sys.exit(0 if json.load(urllib.request.urlopen('http://localhost:8004/api/model-info',timeout=5)).get('loaded') else 1)\""]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 90s
+      # First start downloads the Turbo weights (~1.5 GB) into the named volume.
+      start_period: 300s
+
+backup:
+  voice-tts-hf: skip           # Chatterbox Turbo weights, re-downloadable
