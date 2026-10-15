@@ -178,14 +178,14 @@ ordo up stt tts
 |---|---|---|
 | `WHISPER__MODEL` (in `services/voice/plugin.yaml`) | `Systran/faster-whisper-small` | Hugging Face repo ID for faster-whisper |
 | `STT_COMPUTE_TYPE` | `int8` | Quantization type (`int8` is Pascal-compatible; use `float16` on Turing+) |
-| Hermes `tts.openai.voice` | `af_bella` | Kokoro selects the voice **per request** via the API `voice` param, so the default voice is the client's setting (Hermes' `config.yaml`), not a container env. |
+| Hermes `tts.openai.voice` (per profile) | `<profile>.wav` | The reference clip Chatterbox clones, chosen **per request** by file name in `data/voice/references/`. Each Hermes profile sets its own in its `config.yaml`. |
 
 **Internal endpoints (backend network only — no host ports):**
 
 | Service | URL | API |
 |---|---|---|
 | STT | `http://stt:8000/v1` | OpenAI-compatible `/v1/audio/transcriptions` |
-| TTS | `http://tts:8880/v1` | OpenAI-compatible `/v1/audio/speech` |
+| TTS | `http://tts:8004/v1` | OpenAI-compatible `/v1/audio/speech` (Chatterbox Turbo voice cloning) |
 
 **Hermes wiring (Discord voice memos):**
 
@@ -195,19 +195,18 @@ ordo up stt tts
   `stt.provider: openai`, `stt.openai.model: Systran/faster-whisper-small`,
   `stt.openai.api_key: local`, `stt.enabled: true`. Inbound Discord voice messages
   are then auto-transcribed on the secondary GPU.
-- **TTS (voice reply): edge by default; local Kokoro available but not yet Hermes-wired.**
-  Hermes auto-replies in voice when the input was voice. Its default TTS provider is
-  `edge` (Microsoft cloud, free, works out of the box). Pointing Hermes' *openai* TTS
-  provider at the local Kokoro service requires `tts.openai.base_url`, but the current
-  Hermes config schema does **not** persist a TTS `base_url` (and there is no env for
-  it), so this Hermes version cannot target local Kokoro for replies. The Kokoro
-  service is still deployed and reachable at `http://tts:8880/v1`
-  for the media/render pipeline / scripts / a future Hermes that honours a TTS base URL.
-  For a fully-local reply voice today, use Hermes' native `neutts` provider (on-device).
+- **TTS (voice reply): fully local, one voice per profile.** Every profile's `config.yaml` sets
+  `tts.provider: openai`, `tts.openai.base_url: http://tts:8004/v1`, `tts.openai.model: chatterbox`
+  and `tts.openai.voice: <profile>.wav`. Chatterbox Turbo clones that profile's reference clip
+  (10-15 s in `data/voice/references/`, made once per persona with VibeVoice) for every reply, on the
+  1070: about 0.8 s for a short reply, faster than real time.
+- **Desktop clients relay through the gateway.** `voice.client_direct: false` on every profile, so
+  Hermes Desktop sends audio to the gateway (`/api/audio/*`), which calls these internal services. A
+  desktop never needs to reach `stt`/`tts` itself.
 
 **STT** weights download once to `${DATA_PATH}/voice/hf-cache` (persists across
-recreates). **TTS** (Kokoro) bakes its models into the image — no runtime download,
-no volume needed.
+recreates). **TTS** (Chatterbox Turbo) downloads its weights once into the named volume
+`voice-tts-hf`; the reference voices are read-only from `${DATA_PATH}/voice/references`.
 
 ## Custom llama.cpp Build (llamacpp service)
 

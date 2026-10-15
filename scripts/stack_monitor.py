@@ -82,7 +82,6 @@ HINTS = {
                                      "note": "rolling upstream — no semver releases; digest pin is correct"},
     "utkuozdemir/nvidia_gpu_exporter": {"gh": "utkuozdemir/nvidia_gpu_exporter"},
     "fedirz/faster-whisper-server": {"gh": "fedirz/faster-whisper-server", "hub": "fedirz/faster-whisper-server"},
-    "remsky/kokoro-fastapi-gpu":    {"gh": "remsky/Kokoro-FastAPI"},
     "ggml-org/llama.cpp":           {"gh": "ggml-org/llama.cpp",
                                      "note": "moving tag; a catalog backend_image can name the patched build (ordo/llamacpp-patched)"},
     "yanwk/comfyui-boot":           {"hub": "yanwk/comfyui-boot", "upstream": ("ComfyUI", "comfy-org/ComfyUI"),
