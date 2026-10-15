@@ -35,8 +35,8 @@ RUN pip3 install --no-cache-dir --upgrade "pip==25.3" \
     && pip3 install --no-cache-dir --no-deps "git+${CHATTERBOX_REPO}@${CHATTERBOX_COMMIT}" \
     && python3 -c "import torch, chatterbox; assert torch.__version__ == '2.5.1+cu121', torch.__version__"
 
-# The stack's settings: Turbo on CUDA, voices from the mounted folder, the generalist's voice as the
-# fallback. Replaces the server's own config.yaml.
+# The stack's settings: Turbo on CUDA, the bundled voices plus the operator's clips (mounted at
+# reference_audio/), Emily.wav as the default. Replaces the server's own config.yaml.
 COPY config.yaml /app/config.yaml
 RUN mkdir -p model_cache reference_audio outputs voices logs hf_cache
 
