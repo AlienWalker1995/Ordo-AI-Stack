@@ -171,11 +171,19 @@ def test_root_context_image_is_identified_by_the_dockerignore_allowlist():
     target = images.build_target("ordo/ops-controller", "services/ops-controller", ROOT)
     assert target.context == "."
     assert target.dockerfile == "services/ops-controller/Dockerfile"
-    assert set(target.inputs) == {"ordo", "catalog", "services"}
+    assert set(target.inputs) == {"ordo", "catalog", "services", ".gitattributes"}
     plain = images.build_target("ordo/dashboard", "services/dashboard/dashboard", ROOT)
     assert (plain.context, plain.dockerfile, plain.inputs) == (
         "services/dashboard/dashboard", "services/dashboard/dashboard/Dockerfile",
-        ("services/dashboard/dashboard",))
+        ("services/dashboard/dashboard", ".gitattributes"))
+
+
+def test_a_line_ending_rule_change_moves_every_tag():
+    """.gitattributes decides the bytes a checkout writes, and `docker build` copies the working tree:
+    on 2026-10-15 an eol=lf rule turned the agent's CRLF wrapper into LF, but its context's history
+    had not moved, so the CRLF image stayed "up to date" under the same tag."""
+    for image, context in (("ordo/agent-hermes", "services/hermes"), ("ordo/ops-controller", "services/ops-controller")):
+        assert ".gitattributes" in images.build_target(image, context, ROOT).inputs
 
 
 # --- building ---
@@ -619,7 +627,7 @@ def test_ordo_build_ninfer_names_the_engine_image_the_stack_does_not_run_yet():
     assert images.select_images(COMPOSE, FIRST_PARTY, ["ordo/ninfer"]) == ["ordo/ninfer"]
     target = images.build_target("ordo/ninfer", FIRST_PARTY["ordo/ninfer"], ROOT)
     assert (target.context, target.dockerfile, target.inputs) == (
-        "services/ninfer", "services/ninfer/Dockerfile", ("services/ninfer",))
+        "services/ninfer", "services/ninfer/Dockerfile", ("services/ninfer", ".gitattributes"))
 
 
 def test_ordo_build_ninfer_tags_the_commit_and_records_it(tmp_path):

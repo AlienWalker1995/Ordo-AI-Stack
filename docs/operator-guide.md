@@ -80,7 +80,9 @@ model-gateway, gpu-gate, the dashboard, the agent, the MCP adapters) are built f
 
 - Each image is tagged `ordo/<name>:<commit>`: the 12-character sha of the last commit that changed
   its build context (for ops-controller, which builds from the repo root, the `ordo/`, `catalog/`
-  and `services/` paths the root `.dockerignore` lets in). Uncommitted changes there add `-dirty`,
+  and `services/` paths the root `.dockerignore` lets in), or `.gitattributes`, whose line-ending
+  rules decide the bytes a checkout writes into the context: a commit that changes only an `eol`
+  rule retags and rebuilds every first-party image. Uncommitted changes there add `-dirty`,
   and a `-dirty` tag is always rebuilt. The image also carries the full commit in the
   `org.opencontainers.image.revision` label.
 - An image whose tag already exists is not rebuilt, so `ordo build --all` is cheap to repeat.

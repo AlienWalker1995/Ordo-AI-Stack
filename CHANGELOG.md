@@ -5,6 +5,10 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Fixed
+- **A line-ending rule change rebuilds the images it affects.** An image's tag is the last commit to
+  its build inputs, which did not include `.gitattributes`: after #382 turned the agent's wrappers LF,
+  `ordo build` still called the CRLF image "up to date". `.gitattributes` is now an input of every
+  first-party image (a one-time retag of all of them).
 - **The agent image's build context checks out LF on Windows.** `.gitattributes` listed the agent's
   wrappers one by one, so the new `github-app-token` was written with CRLF on the Windows host and the
   image shipped a shebang ending in a carriage return ("not found"). One rule now covers
