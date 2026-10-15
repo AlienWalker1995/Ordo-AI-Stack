@@ -5,6 +5,11 @@ All notable changes to this project are documented here. The format is loosely b
 ## [Unreleased]
 
 ### Fixed
+- **Streamed speech starts with the first sentence again.** Hermes asks the TTS endpoint for raw
+  `pcm` one sentence at a time (desktop speak-stream and Discord voice), but Chatterbox-TTS-Server
+  accepts only wav, opus and mp3: every streamed reply was refused (422) and spoken only after the
+  whole reply had been written and synthesized. The voice image now applies
+  `services/voice/patches/openai-pcm.patch`, which adds `pcm` with its rate in `X-Audio-Sample-Rate`.
 - **A line-ending rule change rebuilds the images it affects.** An image's tag is the last commit to
   its build inputs, which did not include `.gitattributes`: after #382 turned the agent's wrappers LF,
   `ordo build` still called the CRLF image "up to date". `.gitattributes` is now an input of every

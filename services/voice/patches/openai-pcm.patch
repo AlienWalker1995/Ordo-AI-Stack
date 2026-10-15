@@ -1,0 +1,66 @@
+diff --git a/server.py b/server.py
+index e435185..527abc5 100644
+--- a/server.py
++++ b/server.py
+@@ -77,7 +77,7 @@ class OpenAISpeechRequest(BaseModel):
+     model: str
+     input_: str = Field(..., alias="input")
+     voice: str
+-    response_format: Literal["wav", "opus", "mp3"] = "wav"  # Add "mp3"
++    response_format: Literal["wav", "opus", "mp3", "pcm"] = "wav"  # Add "mp3"
+     speed: float = 1.0
+     seed: Optional[int] = None
+     language: Optional[str] = None
+@@ -1491,17 +1491,25 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
+         if peak > 0.99:
+             final_audio_np = final_audio_np * (0.95 / peak)
+ 
++        # Raw PCM has no header to carry its rate, so it is sent at the engine's own rate and the
++        # rate goes in the response headers instead of being resampled to a rate the client
++        # cannot see.
++        is_pcm = request.response_format == "pcm"
+         encoded_audio = utils.encode_audio(
+             audio_array=final_audio_np,
+             sample_rate=engine_sr,
+             output_format=request.response_format,
+-            target_sample_rate=get_audio_sample_rate(),
++            target_sample_rate=None if is_pcm else get_audio_sample_rate(),
+         )
+ 
+         if encoded_audio is None:
+             raise HTTPException(status_code=500, detail="Failed to encode audio.")
+ 
+         media_type = f"audio/{request.response_format}"
++        response_headers = {}
++        if is_pcm:
++            media_type = f"audio/pcm;rate={engine_sr}"
++            response_headers["X-Audio-Sample-Rate"] = str(engine_sr)
+ 
+         # Optional: Save to disk if enabled
+         if config_manager.get_bool("audio_output.save_to_disk", False):
+@@ -1537,7 +1545,8 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
+                     status_code=500, detail=f"Failed to save audio file: {e}"
+                 )
+ 
+-        return StreamingResponse(io.BytesIO(encoded_audio), media_type=media_type)
++        return StreamingResponse(io.BytesIO(encoded_audio), media_type=media_type,
++                                 headers=response_headers)
+ 
+     except Exception as e:
+         logger.error(f"Error in openai_speech_endpoint: {e}", exc_info=True)
+diff --git a/utils.py b/utils.py
+index ec99d5f..420e6b0 100644
+--- a/utils.py
++++ b/utils.py
+@@ -338,6 +338,11 @@ def encode_audio(
+                 subtype="pcm_16",
+             )
+ 
++        elif output_format == "pcm":
++            # Headerless 16-bit little-endian mono samples (OpenAI's response_format="pcm").
++            audio_clipped = np.clip(audio_array, -1.0, 1.0)
++            output_buffer.write((audio_clipped * 32767).astype("<i2").tobytes())
++
+         elif output_format == "mp3":
+             audio_clipped = np.clip(audio_array, -1.0, 1.0)
+             audio_int16 = (audio_clipped * 32767).astype(np.int16)

@@ -25,8 +25,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-dev build-essential git ffmpeg libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
+# patches/openai-pcm.patch lets /v1/audio/speech answer response_format="pcm" (raw 16-bit mono,
+# its rate in X-Audio-Sample-Rate). Hermes's streaming speech asks for exactly that, sentence by
+# sentence; without it every streamed reply was refused (422) and fell back to speaking the whole
+# reply only after it finished. Upstream has no pcm format at this commit. `git apply` fails the
+# build if the patch no longer fits the pinned source.
+COPY patches/ /tmp/patches/
 RUN git clone "$SERVER_REPO" /app && git -C /app checkout --quiet "$SERVER_COMMIT" \
-    && rm -rf /app/.git
+    && git -C /app apply --verbose /tmp/patches/openai-pcm.patch \
+    && rm -rf /app/.git /tmp/patches
 WORKDIR /app
 
 COPY requirements.lock /tmp/requirements.lock
