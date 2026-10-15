@@ -134,6 +134,29 @@ its file secret; it is never in the agent's environment. Without it, `claude` ex
 steps. Claude Code's settings and sessions live in `/opt/data/claude-code`. Its managed settings (`/etc/claude-code/managed-settings.json`, from `services/hermes/claude-code-managed-settings.json`) pin every run to the subscription at Anthropic, even one that skips the wrapper. Bump the CLI by changing
 `CLAUDE_CODE_VERSION` in the Dockerfile.
 
+## Acting on GitHub as an app
+
+Hermes can act on GitHub as the operator's GitHub App instead of as the operator. The app has its own
+`<app-name>[bot]` identity, so it can approve a pull request the operator opened (GitHub never lets an
+author approve their own PR), its reviews and merges are labelled as the app's, and it holds only the
+permissions it was installed with.
+
+1. github.com/settings/apps/new: a name, any homepage URL, **Webhook: Active** unchecked. Repository
+   permissions: Contents *Read and write*, Pull requests *Read and write*, Checks *Read*, Commit
+   statuses *Read*. *Only on this account*, then Create.
+2. On the app's page, note the **App ID**, then *Generate a private key* (a `.pem` downloads).
+   *Install App* on the repositories it should act on.
+3. On the host (the store holds one line per value, so the key goes in base64-encoded):
+   ```bash
+   ordo secrets set GITHUB_APP_ID --from-stdin          # paste the App ID, then Ctrl-D
+   base64 -w0 <app>.private-key.pem | ordo secrets set GITHUB_APP_PRIVATE_KEY --from-stdin
+   ordo apply
+   ```
+
+Inside the agent, `github-app-token <owner/repo>` prints a one-hour token scoped to that one repository
+(`GH_TOKEN=$(github-app-token owner/repo) ...`). It reads the two file secrets per call, never from
+the environment, and without them exits 78 with these steps.
+
 ## Codex as a sub-agent
 
 The same for OpenAI's Codex CLI (`CODEX_VERSION`) and upstream's `codex` skill

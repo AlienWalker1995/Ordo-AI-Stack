@@ -113,7 +113,7 @@ def test_hermes_manifest_declares_runtime_wiring():
     h = AGENTS.get("hermes")
     assert h.user == "root"
     assert {s.key for s in h.secret_files} == {"DISCORD_BOT_TOKEN", "GITHUB_BACKUP_PAT", "CLAUDE_CODE_OAUTH_TOKEN",
-                                                "HERMES_DASHBOARD_OIDC_CLIENT_SECRET"}
+                                                "HERMES_DASHBOARD_OIDC_CLIENT_SECRET", "GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"}
     assert h.depends_on.get("model-gateway") == "service_healthy"
     assert h.healthcheck  # gateway_state.json check
 

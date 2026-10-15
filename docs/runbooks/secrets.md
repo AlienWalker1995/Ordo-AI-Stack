@@ -236,6 +236,7 @@ Regenerate at the provider first, then store the new value:
 | Discord bot | https://discord.com/developers/applications -> bot -> Reset Token | `DISCORD_BOT_TOKEN` |
 | GitHub PAT | https://github.com/settings/tokens (revoke + create) | `GITHUB_PERSONAL_ACCESS_TOKEN`, `GITHUB_BACKUP_PAT` |
 | Claude Code token | `claude setup-token` on a machine with a browser (revoke it from your Claude account settings) | `CLAUDE_CODE_OAUTH_TOKEN` |
+| GitHub App | the app's page -> *Generate a private key* (then delete the old key there) | `GITHUB_APP_PRIVATE_KEY` (base64 of the `.pem`, one line) |
 | HuggingFace | https://huggingface.co/settings/tokens | `HF_TOKEN` |
 | Tailscale | admin console -> Settings -> Keys | `TS_AUTHKEY` |
 
