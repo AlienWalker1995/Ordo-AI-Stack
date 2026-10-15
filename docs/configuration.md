@@ -178,7 +178,7 @@ ordo up stt tts
 |---|---|---|
 | `WHISPER__MODEL` (in `services/voice/plugin.yaml`) | `Systran/faster-whisper-small` | Hugging Face repo ID for faster-whisper |
 | `STT_COMPUTE_TYPE` | `int8` | Quantization type (`int8` is Pascal-compatible; use `float16` on Turing+) |
-| Hermes `tts.openai.voice` (per profile) | `<profile>.wav` | The reference clip Chatterbox clones, chosen **per request** by file name in `data/voice/references/`. Each Hermes profile sets its own in its `config.yaml`. |
+| Hermes `tts.openai.voice` | `Emily.wav` | The voice Chatterbox clones, chosen **per request** by file name: a bundled voice (Emily, Olivia, Ryan, Thomas and 24 more) or a clip you add to `data/voice/references/`. Each Hermes profile can set its own in its `config.yaml`. |
 
 **Internal endpoints (backend network only — no host ports):**
 
@@ -195,18 +195,20 @@ ordo up stt tts
   `stt.provider: openai`, `stt.openai.model: Systran/faster-whisper-small`,
   `stt.openai.api_key: local`, `stt.enabled: true`. Inbound Discord voice messages
   are then auto-transcribed on the secondary GPU.
-- **TTS (voice reply): fully local, one voice per profile.** Every profile's `config.yaml` sets
-  `tts.provider: openai`, `tts.openai.base_url: http://tts:8004/v1`, `tts.openai.model: chatterbox`
-  and `tts.openai.voice: <profile>.wav`. Chatterbox Turbo clones that profile's reference clip
-  (10-15 s in `data/voice/references/`, made once per persona with VibeVoice) for every reply, on the
-  1070: about 0.8 s for a short reply, faster than real time.
+- **TTS (voice reply): fully local.** Set `tts.provider: openai`,
+  `tts.openai.base_url: http://tts:8004/v1`, `tts.openai.model: chatterbox` and
+  `tts.openai.voice` (a bundled voice such as `Emily.wav`, or your own clip). To give an agent its own
+  voice, drop a 5-30 s single-speaker clip into `data/voice/references/` and set that profile's
+  `tts.openai.voice` to its file name. Pick a name that is not one of the bundled voices (a bundled
+  voice wins a name clash). On a GTX 1070 a short reply takes about 0.8 s, faster than
+  real time.
 - **Desktop clients relay through the gateway.** `voice.client_direct: false` on every profile, so
   Hermes Desktop sends audio to the gateway (`/api/audio/*`), which calls these internal services. A
   desktop never needs to reach `stt`/`tts` itself.
 
 **STT** weights download once to `${DATA_PATH}/voice/hf-cache` (persists across
 recreates). **TTS** (Chatterbox Turbo) downloads its weights once into the named volume
-`voice-tts-hf`; the reference voices are read-only from `${DATA_PATH}/voice/references`.
+`voice-tts-hf`; your own reference clips are read-only from `${DATA_PATH}/voice/references`.
 
 ## Custom llama.cpp Build (llamacpp service)
 

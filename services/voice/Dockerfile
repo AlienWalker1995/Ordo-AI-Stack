@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.6
 # Voice TTS for the Ordo stack: Resemble AI's Chatterbox Turbo (MIT, 350M) behind devnen's
-# Chatterbox-TTS-Server, which speaks the OpenAI /v1/audio/speech API. Every Hermes profile has its
-# own reference voice (a 10-15 s clip made once with VibeVoice); a request picks it by file name in
-# `voice`, and Chatterbox clones it zero-shot.
+# Chatterbox-TTS-Server, which speaks the OpenAI /v1/audio/speech API. A request picks a voice by
+# file name in `voice` and Chatterbox clones it zero-shot: one of the bundled voices, or a clip the
+# operator adds under data/voice/references.
 #
 # It runs on the secondary GPU, the Pascal GTX 1070 (compute 6.1): the 5090 belongs to the LLM and
 # the GPU lease, and speech must never evict it. Pascal is why torch is 2.5.1+cu121 (its wheels
@@ -35,10 +35,14 @@ RUN pip3 install --no-cache-dir --upgrade "pip==25.3" \
     && pip3 install --no-cache-dir --no-deps "git+${CHATTERBOX_REPO}@${CHATTERBOX_COMMIT}" \
     && python3 -c "import torch, chatterbox; assert torch.__version__ == '2.5.1+cu121', torch.__version__"
 
-# The stack's settings: Turbo on CUDA, voices from the mounted folder, the generalist's voice as the
-# fallback. Replaces the server's own config.yaml.
+# The stack's settings: Turbo on CUDA, the bundled voices plus the operator's clips (mounted at
+# reference_audio/), Emily.wav as the default. Replaces the server's own config.yaml.
 COPY config.yaml /app/config.yaml
 RUN mkdir -p model_cache reference_audio outputs voices logs hf_cache
 
+# start.sh runs the server and, beside it, sends two warm-up requests once the model is loaded.
+COPY start.sh /app/start.sh
+RUN chmod 0755 /app/start.sh
+
 EXPOSE 8004
-CMD ["python3", "server.py"]
+CMD ["/app/start.sh"]

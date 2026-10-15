@@ -11,10 +11,11 @@ model:
   repo_id: chatterbox-turbo
 tts_engine:
   device: cuda
-  # The per-profile reference voices (data/voice/references on the host, mounted here).
+  # Bundled voices ship in voices/; the operator's clips (data/voice/references) are mounted at
+  # reference_audio/. A request's `voice` is looked up in that order.
   predefined_voices_path: voices
   reference_audio_path: reference_audio
-  default_voice_id: hermes.wav
+  default_voice_id: Emily.wav
 paths:
   model_cache: model_cache
   output: outputs
