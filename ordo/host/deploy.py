@@ -173,11 +173,14 @@ def _wait(host: Host, state: State, state_path: Path, target: str, reason: str, 
     if reason != state.waiting_reason:
         print(f"{subject} waiting: {reason}")
         state.waiting_reason = reason
-    if not state.waiting_reported and now - state.waiting_since >= WAIT_REPORT_SECONDS:
-        minutes = int((now - state.waiting_since) // 60)
-        host.notify(f"{subject} has waited {minutes} min: {reason}.")
+    report = not state.waiting_reported and now - state.waiting_since >= WAIT_REPORT_SECONDS
+    if report:
         state.waiting_reported = True
+    # Saved before reporting: a report that fails must never lose the recorded state.
     state.save(state_path)
+    if report:
+        minutes = int((now - state.waiting_since) // 60)
+        _report(host, f"{subject} has waited {minutes} min: {reason}.")
     return 0
 
 
@@ -188,14 +191,25 @@ def _finish(host: Host, state: State, state_path: Path, target: str, *, ok: bool
     state.last_result, state.last_log = result, str(log)
     if ok:
         state.deployed, state.failed = target, ""
-        host.notify(f"Deployed `{short(target)}`: {result}.")
     else:
         state.failed = target
-        host.notify(f"Deploy of `{short(target)}` failed: {result}. Log: `{log}`. "
-                    f"Not retried; the next commit on {BRANCH} deploys.")
+    # Saved before reporting: a report that fails must never turn a recorded result into a retry.
     state.save(state_path)
     print(f"deploy of {short(target)}: {result}")
+    if ok:
+        _report(host, f"Deployed `{short(target)}`: {result}.")
+    else:
+        _report(host, f"Deploy of `{short(target)}` failed: {result}. Log: `{log}`. "
+                      f"Not retried; the next commit on {BRANCH} deploys.")
     return 0 if ok else 1
+
+
+def _report(host: Host, text: str) -> None:
+    """Post to the operator's channel. Reporting is best effort: its failure is logged, never raised."""
+    try:
+        host.notify(text)
+    except Exception as e:  # noqa: BLE001 - a broken webhook must not break the deploy's bookkeeping
+        print(f"could not post the report: {type(e).__name__}: {e}", file=sys.stderr)
 
 
 def run_once(host: Host, *, out: Path, now: float | None = None) -> int:
@@ -367,12 +381,13 @@ class RealHost:
             return
         if not url:
             return
-        request = urllib.request.Request(url, data=json.dumps({"content": f"**Ordo deploy** {text}"}).encode(),
-                                         headers={"Content-Type": "application/json",
-                                                  "User-Agent": "ordo-deploy"})
         try:
+            # Built inside the try: a URL urllib cannot parse (no scheme) raises ValueError here.
+            request = urllib.request.Request(url, data=json.dumps({"content": f"**Ordo deploy** {text}"}).encode(),
+                                             headers={"Content-Type": "application/json",
+                                                      "User-Agent": "ordo-deploy"})
             urllib.request.urlopen(request, timeout=20).close()
-        except (urllib.error.URLError, OSError) as e:
+        except (urllib.error.URLError, OSError, ValueError) as e:
             print(f"could not post to Discord: {e}", file=sys.stderr)
 
 

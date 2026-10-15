@@ -210,6 +210,43 @@ def test_a_failed_git_read_is_a_gate(monkeypatch, reader):
         getattr(host, reader)()
 
 
+def test_a_report_that_raises_never_loses_the_recorded_result(tmp_path):
+    host = FakeHost()
+
+    def broken(text: str) -> None:
+        raise ValueError("unknown url type")
+
+    host.notify = broken
+    assert deploy.run_once(host, out=tmp_path, now=1000.0) == 0
+    assert state(tmp_path)["deployed"] == NEW
+    host.calls.clear()
+    assert deploy.run_once(host, out=tmp_path, now=1120.0) == 0
+    assert host.calls == []                       # recorded, so not deployed again
+
+
+def test_a_wait_report_that_raises_is_still_recorded_as_sent(tmp_path):
+    host = FakeHost()
+    host.leased = True
+    sent = []
+
+    def broken(text: str) -> None:
+        sent.append(text)
+        raise OSError("network down")
+
+    host.notify = broken
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    deploy.run_once(host, out=tmp_path, now=1000.0 + deploy.WAIT_REPORT_SECONDS)
+    deploy.run_once(host, out=tmp_path, now=1000.0 + deploy.WAIT_REPORT_SECONDS + 120)
+    assert len(sent) == 1 and state(tmp_path)["waiting_reported"] is True
+
+
+@pytest.mark.parametrize("url", ["discord.com/api/webhooks/1/x", "https://", "not a url at all"])
+def test_the_real_notify_never_raises_on_a_bad_webhook(tmp_path, url):
+    (tmp_path / "secrets").mkdir()
+    (tmp_path / "secrets" / deploy.WEBHOOK_SECRET_FILE).write_text(url, encoding="utf-8")
+    deploy.RealHost(out=tmp_path, project="ordo").notify("hello")
+
+
 def test_a_failed_git_fetch_is_a_gate_not_a_crash(monkeypatch):
     host = deploy.RealHost(out=Path("out"), project="ordo")
     monkeypatch.setattr(deploy.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 128, "", "fatal: unable"))
