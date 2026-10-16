@@ -39,6 +39,7 @@ import dataclasses
 import datetime as dt
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -545,14 +546,36 @@ class RealHost:
         return self._git("commit-tree", tree, "-p", target, "-m", message).stdout.strip()
 
     def secret_findings(self, base: str, sha: str) -> list[str]:
+        # The scanner must see the bytes that land in the repo. A plain `git diff` prints only
+        # "Binary files differ" for a binary (and --binary encodes hunks base85), so its content
+        # would never reach TruffleHog; materialize every file the commit changes, at the commit.
         scan = self.out / "deploy" / "secret-scan"
-        scan.mkdir(parents=True, exist_ok=True)
-        diff = scan / "changes.diff"
         try:
-            # Bytes, not text: the scanner sees exactly what is pushed, whatever its encoding.
-            raw = subprocess.run(["git", "-C", str(self.repo), "diff", base, sha], capture_output=True,
-                                 timeout=300, check=True).stdout
-            diff.write_bytes(raw)
+            shutil.rmtree(scan, ignore_errors=True)
+            scan.mkdir(parents=True)
+            entries = self._git("diff", "--name-status", "-z", base, sha).stdout.split("\0")
+            paths: list[str] = []
+            i = 0
+            while i < len(entries):
+                status = entries[i]
+                i += 1
+                if not status:
+                    continue
+                if status[0] in ("R", "C"):      # rename/copy records carry old and new names
+                    i += 1
+                elif status[0] == "D":           # deleted: gone at sha, nothing to scan
+                    i += 1
+                    continue
+                if i < len(entries):
+                    paths.append(entries[i])
+                    i += 1
+            for path in paths:
+                # Bytes, not text: the scanner sees exactly what is pushed, whatever its encoding.
+                raw = subprocess.run(["git", "-C", str(self.repo), "show", f"{sha}:{path}"],
+                                     capture_output=True, timeout=300, check=True).stdout
+                dest = scan / path
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(raw)
             proc = subprocess.run(
                 ["docker", "run", "--rm", "--network", "none", "-v", f"{scan.resolve()}:/scan:ro", TRUFFLEHOG_IMAGE,
                  "filesystem", "/scan", "--results=verified,unknown,unverified", "--exclude-detectors=lob",
@@ -561,7 +584,7 @@ class RealHost:
         except (OSError, subprocess.SubprocessError) as e:
             raise GateUnknown(f"the secret scanner could not run: {e}") from e
         finally:
-            diff.unlink(missing_ok=True)
+            shutil.rmtree(scan, ignore_errors=True)
         if proc.returncode == 0:
             return []
         if proc.returncode != TRUFFLEHOG_FOUND:

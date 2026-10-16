@@ -745,6 +745,33 @@ def test_the_secret_scanner_is_the_release_ci_runs():
     assert "@sha256:" in deploy.TRUFFLEHOG_IMAGE
 
 
+def test_the_secret_scan_reads_binary_files_at_the_rescued_commit(repo, tmp_path, monkeypatch):
+    host = deploy.RealHost(out=tmp_path / "out", project="ordo", repo=repo)
+    base = host.head()
+    token = b"AKIAIOSFODNN7EXAMPLE"          # an AWS access key id, planted in a binary blob
+    (repo / "cert.p12").write_bytes(b"\x00\x01PKCS12" + token + b"\xff\xfe")
+    _git(repo, "add", "cert.p12")
+    _git(repo, "commit", "--quiet", "-m", "add cert")
+    sha = host.head()
+
+    real_run = subprocess.run
+
+    def fake_run(cmd, *args, **kwargs):      # stand in for the TruffleHog container
+        if cmd[0] != "docker":
+            return real_run(cmd, *args, **kwargs)
+        mount = Path(cmd[cmd.index("-v") + 1].split(":")[0])
+        found = any(token in p.read_bytes() for p in mount.rglob("*") if p.is_file())
+        out = json.dumps({"DetectorName": "aws"}) + "\n" if found else ""
+        return subprocess.CompletedProcess(cmd, 183 if found else 0, stdout=out, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert host.secret_findings(base, sha) == ["aws"]   # the binary's bytes reached the scanner
+    assert not (tmp_path / "out" / "deploy" / "secret-scan").exists()   # the scan dir is cleaned up
+    (repo / "notes.md").write_text("notes, edited\n", encoding="utf-8")
+    _git(repo, "commit", "--quiet", "-am", "text only")
+    assert host.secret_findings(sha, host.head()) == []   # unchanged files are not re-scanned
+
+
 def test_a_rescue_survives_another_branch_checked_out_for_a_while(tmp_path):
     host = rescued(tmp_path)
     host.branch_name = "feat/x"

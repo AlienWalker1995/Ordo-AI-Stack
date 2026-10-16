@@ -140,8 +140,9 @@ remain for single steps; a deploy is `ordo apply`.
 deploy, it fast-forwards the checkout, runs `ordo build --all`, then `ordo apply`. It waits instead
 (and tries again on the next pass) while any of these holds:
 
-- the checkout is not on `main`, has uncommitted changes to tracked files, or has commits that are
-  not on `origin/main` (do feature work in a worktree, not in the deploy checkout);
+- the checkout is not on `main` (do feature work in a worktree, not in the deploy checkout);
+- the checkout has uncommitted changes to tracked files, or commits that are not on `origin/main`
+  (held only until the rescue below settles them into a pull request);
 - a GPU lease is held;
 - a one-off job container of the project is running (an eval);
 - the agent is busy: a turn in flight, or a `hermes` CLI session (`hermes -z`, `hermes chat`).
