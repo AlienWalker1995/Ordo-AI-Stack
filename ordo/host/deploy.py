@@ -149,7 +149,7 @@ class State:
     rescue_branch: str = ""
     rescue_sha: str = ""
     rescue_tree: str = ""
-    rescue_blocked_tree: str = ""   # a tree the rescue could not push (secrets, a conflict), and why
+    rescue_blocked_tree: str = ""   # "<tree>:<origin/main>" the rescue could not push (secrets, a conflict), and why
     rescue_blocked_reason: str = ""
     last_result: str = ""
     last_log: str = ""
@@ -283,11 +283,14 @@ def _rescue(host: Host, state: State, state_path: Path, target: str, now: float)
     if now - state.local_tree_since < RESCUE_SETTLE_SECONDS:
         return (f"the checkout has changes made outside a pull request; they are saved as one once "
                 f"unchanged for {RESCUE_SETTLE_SECONDS // 60} min")
-    if state.rescue_blocked_tree == tree:
+    # A block holds for this tree against this origin/main: either one moving (the conflicting
+    # commit reverted, the checkout edited) tries the rescue again.
+    blocked_key = f"{tree}:{target}"
+    if state.rescue_blocked_tree == blocked_key:
         return state.rescue_blocked_reason
 
     if replayed is None:
-        return _blocked(host, state, state_path, tree,
+        return _blocked(host, state, state_path, blocked_key,
                         f"the checkout's changes made outside a pull request conflict with "
                         f"{REMOTE}/{BRANCH}; move them by hand")
     # One commit on top of origin/main: exactly what is scanned is what is pushed, and no local
@@ -298,7 +301,7 @@ def _rescue(host: Host, state: State, state_path: Path, target: str, now: float)
                            "`ordo deploy`.\n")
     findings = host.secret_findings(target, sha)
     if findings:
-        return _blocked(host, state, state_path, tree,
+        return _blocked(host, state, state_path, blocked_key,
                         f"the checkout's changes made outside a pull request were not pushed: the secret "
                         f"scanner flagged {', '.join(findings[:5])}; move them by hand")
 
@@ -320,10 +323,11 @@ def _rescue(host: Host, state: State, state_path: Path, target: str, now: float)
     return _open_rescue_pr(host, state, state_path, target, updated=reuse)
 
 
-def _blocked(host: Host, state: State, state_path: Path, tree: str, reason: str) -> str:
-    """A tree the rescue cannot push: reported once, and not tried again until the tree changes."""
-    if state.rescue_blocked_tree != tree:
-        state.rescue_blocked_tree, state.rescue_blocked_reason = tree, reason
+def _blocked(host: Host, state: State, state_path: Path, key: str, reason: str) -> str:
+    """Changes the rescue cannot push: reported once, and not tried again until the tree or
+    origin/main changes (`key` is both)."""
+    if state.rescue_blocked_tree != key:
+        state.rescue_blocked_tree, state.rescue_blocked_reason = key, reason
         state.save(state_path)
         _report(host, f"Deploy holds: {reason}.")
     return reason
@@ -418,9 +422,10 @@ def run_once(host: Host, *, out: Path, now: float | None = None) -> int:
         problem = checkout_problem(host, target)
         if problem and has_local_changes(host, target):
             problem = _rescue(host, state, state_path, target, now) or checkout_problem(host, target)
-        elif state.local_tree or state.rescue_branch:
-            # The checkout was cleaned some other way: forget the rescue (its PR stays on GitHub), so
-            # later, unrelated changes are never pushed into it.
+        elif (state.local_tree or state.rescue_branch) and host.branch() == BRANCH:
+            # The checkout's main was cleaned some other way: forget the rescue (its PR stays on
+            # GitHub), so later, unrelated changes are never pushed into it. Another branch checked
+            # out for a while is not that: the rescue is kept for when main is back.
             _clear_rescue(state)
             state.save(state_path)
     except GateUnknown as e:

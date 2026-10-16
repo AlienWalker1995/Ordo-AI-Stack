@@ -743,3 +743,24 @@ def test_the_secret_scanner_is_the_release_ci_runs():
     version = deploy.TRUFFLEHOG_IMAGE.split(":")[1].split("@")[0]
     assert "trufflesecurity/trufflehog@" in ci and f"# v{version}" in ci
     assert "@sha256:" in deploy.TRUFFLEHOG_IMAGE
+
+
+def test_a_rescue_survives_another_branch_checked_out_for_a_while(tmp_path):
+    host = rescued(tmp_path)
+    host.branch_name = "feat/x"
+    deploy.run_once(host, out=tmp_path, now=SETTLED + 120)
+    assert state(tmp_path)["rescue_pr"] == 500
+    host.branch_name = "main"
+    deploy.run_once(host, out=tmp_path, now=SETTLED + 240)
+    assert list(host.prs) == [500] and len(host.pushes) == 1
+
+
+def test_a_conflict_is_tried_again_once_origin_main_moves(tmp_path):
+    host = edited_host()
+    host.replayed = None
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    deploy.run_once(host, out=tmp_path, now=SETTLED)
+    assert host.pushes == []
+    host.target, host.replayed = "c" * 40, "r1"    # the conflicting commit reverted on main
+    deploy.run_once(host, out=tmp_path, now=SETTLED + 120)
+    assert len(host.pushes) == 1 and list(host.prs) == [500]
