@@ -110,12 +110,13 @@ services:
       # and only fits FLUX.2-Klein DiTs. Rollback: previous pin
       # 73c9bad4d21e7addbe1d13bc92eee0f1431b017d = v0.37.0 (first release with Qwen-Image 2.1,
       # upstream 6bfaacc6) — NOTE it cannot detect the flux3 transformer and has no
-      # CLIPType.FLUX3, so a rollback is only valid together with
-      # TIMELAPSE_T2I_TEMPLATE/TIMELAPSE_EDIT_TEMPLATE=qwen21_* overrides; the default flux3
-      # templates will not load there. Its known regression (ComfyUI-LTXVideo import failure
-      # vs 0.37.0) carries over unless the node is updated. Pin a full commit SHA, never a tag
-      # or branch — tags are movable refs, and "float" is how you get a different app on the
-      # next recreate.
+      # CLIPType.FLUX3, so a rollback is only valid together with switching the timelapse
+      # image pipeline from the default flux3 templates to the Qwen-Image 2.1 ones — the
+      # TIMELAPSE_T2I_TEMPLATE/TIMELAPSE_EDIT_TEMPLATE overrides read by the ai-timelapse-short
+      # skill's build_graphs.py (Hermes side; nothing in this repo ships or consumes them).
+      # Its known regression (ComfyUI-LTXVideo import failure vs 0.37.0) carries over unless
+      # the node is updated. Pin a full commit SHA, never a tag or branch — tags are movable
+      # refs, and "float" is how you get a different app on the next recreate.
       COMFYUI_APP_REF: ${COMFYUI_APP_REF:-45bf90d1c91eecd782643346dcfb73cb0017667f}
       # V1's proven allocator config (overrides/compute.yml). An EMPTY string here is worse than
       # omitting it: torch's allocator parser rejects "" with `ValueError: Unrecognized key ','` at
