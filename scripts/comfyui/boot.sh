@@ -149,6 +149,43 @@ seed_workflows() {
   log "seeded repo workflows -> user/default/workflows/ordo ($(ls -1 "$dst" | wc -l) file(s))"
 }
 
+# --- 3b. declared custom node packs -----------------------------------------------------
+# The packs the stack depends on are declared with a commit in scripts/comfyui/custom_nodes.json
+# and reconciled here, the same way the app checkout is: a pack that is missing is cloned, a pack
+# at another commit is fetched and detached to the declared one. Declared == running, for the
+# node code too. Packs on the volume that the file does not list are operator-installed state and
+# are left alone (removing them blindly would break whatever installed them); listing a pack is
+# how it becomes reproducible. Offline-safe: a pack already at its ref touches no network.
+reconcile_custom_nodes() {
+  local manifest=/comfyui-scripts/custom_nodes.json
+  [ -f "$manifest" ] || { log "no custom_nodes.json — skipping node pack reconcile"; return 0; }
+  local line name url ref dir head
+  while IFS=$'\t' read -r name url ref; do
+    [ -n "$name" ] || continue
+    dir="$COMFY_DIR/custom_nodes/$name"
+    if [ ! -d "$dir/.git" ]; then
+      log "node pack $name missing or unversioned — cloning ${ref:0:12}"
+      rm -rf "$dir"
+      mkdir -p "$dir" && git -C "$dir" init -q && git -C "$dir" remote add origin "$url"
+    fi
+    head="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
+    if [ "$head" != "$ref" ]; then
+      log "node pack $name drift: ${head:0:12} -> ${ref:0:12}"
+      git -C "$dir" fetch -q --depth 1 origin "$ref" \
+        || { log "WARN fetch failed for $name; leaving ${head:-<none>} in place"; continue; }
+      git -C "$dir" checkout -q --detach FETCH_HEAD \
+        || { log "WARN checkout failed for $name"; continue; }
+      find "$dir" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+    fi
+    log "node pack $name at $(git -C "$dir" rev-parse --short HEAD)"
+  done < <(python3 - "$manifest" <<'PY'
+import json, sys
+for p in json.load(open(sys.argv[1], encoding="utf-8"))["packs"]:
+    print(p["name"], p["url"], p["ref"], sep="\t")
+PY
+)
+}
+
 # --- 4. custom node deps ----------------------------------------------------------------
 # Deliberately NOT user-site: these land in the image's writable layer and are therefore
 # re-resolved from scratch on every recreate. A custom node that is later removed takes its
@@ -166,6 +203,7 @@ install_custom_node_deps() {
 reconcile_app
 install_runtime_deps
 seed_workflows
+reconcile_custom_nodes
 install_custom_node_deps
 
 log "handing off to the image entrypoint"
