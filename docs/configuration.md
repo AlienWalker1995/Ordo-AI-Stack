@@ -263,10 +263,10 @@ What a window costs the fallback (q8_0 KV, ~63 MiB of recurrent state on top, co
 
 | Window | KV | Weights | Measured resident |
 |---|---|---|---|
-| 106,496 | 1.08 GiB | 20.61 GiB | 24.5 GiB |
-| 262,144 | 2.66 GiB | 20.61 GiB | ~26.3 GiB (estimate: +1.58 GiB KV, +0.15 GiB attention mask) |
+| 106,496 | 1.08 GiB | 18.27 GiB | 20.1 GiB |
+| 262,144 | 2.66 GiB | 18.27 GiB | 21.2 GiB |
 
-On the reference host (Docker VM 102 GiB, ~61 GiB available with the fallback already resident at 106,496) the 262,144 window costs about 1.7 GiB more, so the fallback runs at the full window.
+On the reference host (Docker VM 102 GiB, ~61 GiB available with the fallback already resident at 106,496) the 262,144 window costs about 1.1 GiB more, so the fallback runs at the full window.
 
 The window is an allocation, not per-request work: llama.cpp prefills only the tokens sent. A cold failover still has to prefill the whole conversation on CPU, measured at about 25 tokens/s, so a conversation much past ~45k tokens does not finish its first fallback turn inside the gateway's 1800 s timeout. That timeout is a visible error, not a truncation; it is a property of CPU prefill, not of the window.
 

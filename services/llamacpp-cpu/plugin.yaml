@@ -42,7 +42,7 @@ services:
       - --model
       - /models/${LLAMACPP_CPU_MODEL:-Qwen3.8-35B-A3B-Distill-IQ4_XS.gguf}
       # The model's own vision projector (its catalog `mmproj:`, provisioned by `ordo fetch`), so an
-      # image still works while the fallback serves. Measured: correct image QA, about 9s on 12 cores.
+      # image still works while the fallback serves. Measured: correct image QA, about 6s on 12 cores.
       - --mmproj
       - /models/Qwen3.8-35B-A3B-Distill-mmproj-F16.gguf
       - --n-gpu-layers
