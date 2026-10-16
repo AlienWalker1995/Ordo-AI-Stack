@@ -39,9 +39,11 @@ _MODEL_DOWNLOAD_ALLOWED_HOSTS = {
 # (`us.aws.cdn.hf.co` on 2026-10-16; `cdn-lfs-us-1.huggingface.co` before). Any subdomain of these
 # two zones is Hugging Face infrastructure; the exact list above stays for the hosts named in docs.
 _MODEL_DOWNLOAD_ALLOWED_SUFFIXES = (".hf.co", ".huggingface.co")
-# The hosts a Hugging Face token may be sent to: the hub itself, which checks the licence gate and
-# answers with a pre-signed CDN URL. The CDN hop never needs the token, so it never gets it.
-_HF_TOKEN_HOSTS = {"huggingface.co", "hf-mirror.com"}
+# The one host a Hugging Face token may be sent to: the hub itself, which checks the licence gate
+# and answers with a pre-signed CDN URL. The CDN hop never needs the token, so it never gets it.
+# hf-mirror.com stays downloadable (allowlist above) but never sees the token: it is a community
+# mirror, and a bearer token handed to it could be replayed against huggingface.co.
+_HF_TOKEN_HOSTS = {"huggingface.co"}
 
 
 def _download_headers(url: str, hf_token: str) -> dict[str, str]:
@@ -69,7 +71,8 @@ def _validate_download_url(url: str) -> None:
     if not allowed:
         raise ValueError(
             f"Host {host!r} not in allowed list. "
-            f"Allowed: {', '.join(sorted(_MODEL_DOWNLOAD_ALLOWED_HOSTS))}"
+            f"Allowed: {', '.join(sorted(_MODEL_DOWNLOAD_ALLOWED_HOSTS))}, "
+            f"and any subdomain of {', '.join(s.lstrip('.') for s in _MODEL_DOWNLOAD_ALLOWED_SUFFIXES)}"
         )
     try:
         for info in socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM):

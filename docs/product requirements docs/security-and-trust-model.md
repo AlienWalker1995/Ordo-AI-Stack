@@ -49,7 +49,8 @@
 | `LITELLM_KEY_HERMES` / `_OPEN_WEBUI` / `_EDGE` | `out/secrets.env` | Per-service `KEY: ${KEY}`, interpolated from `secrets.env` | Per-consumer virtual keys, provisioned by `model-gateway-keys` |
 | `OPS_CONTROLLER_TOKEN` | `out/secrets.env` | Per-service `KEY: ${KEY}`, interpolated from `secrets.env` | Bearer the dashboard, agent and MCP clients send to ops-controller |
 | `DISCORD_BOT_TOKEN` | `secrets/discord_token.sops` | Docker secret → agent (`/run/secrets/discord_bot_token`) | Optional, only when Discord channel is used |
-| `HF_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN` | `out/secrets.env` | Per-service `KEY: ${KEY}`, interpolated from `secrets.env` | Optional, for gated HF model pulls and ComfyUI-Manager custom-node fetches |
+| `HF_TOKEN` | `out/secrets.env` | comfyui, ltx-trainer: `KEY: ${KEY}` from `secrets.env`. ops-controller: file secret, `HF_TOKEN_FILE=/run/secrets/hf_token` (read-only mount, path only in the environment) | Optional, for gated HF model pulls; ops-controller sends it to huggingface.co only, never to the CDN or mirror hop |
+| `GITHUB_PERSONAL_ACCESS_TOKEN` | `out/secrets.env` | Per-service `KEY: ${KEY}`, interpolated from `secrets.env` | Optional, for ComfyUI-Manager custom-node fetches |
 
 ## SSRF Defenses (MCP)
 
