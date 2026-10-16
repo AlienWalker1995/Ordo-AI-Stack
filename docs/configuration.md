@@ -254,7 +254,7 @@ There is one chat window. The GPU backend (`LLAMACPP_CTX_SIZE`), the CPU fallbac
 
 The render proves the fallback can serve that window instead of assuming it:
 
-- The fallback's catalog entry (`support_models`, `qwen3.6-35b-a3b-cpu-q4`) declares its trained window (`ctx_default: 262144`, from the GGUF header) and its KV rate (`kv_kb_per_token: 10.625`: 10 full-attention layers x 2 KV heads x 256, q8_0).
+- The fallback's catalog entry (`support_models`, `qwen3.8-35b-a3b-distill-cpu-iq4xs`) declares its trained window (`ctx_default: 262144`, from the GGUF header) and its KV rate (`kv_kb_per_token: 10.625`: 10 full-attention layers x 2 KV heads x 256, q8_0).
 - A chat window larger than the fallback's trained window is a render error that names both windows and the fix (`overrides.llamacpp.ctx_size` at or below the fallback's window, or disable `llamacpp-cpu`). It is never served by a silently smaller fallback.
 - Weights named by a `site: LLAMACPP_CPU_MODEL` that the catalog does not list render with a warning: their window is unchecked.
 - `out/manifest.json` (`cpu_fallback`) and `ordo doctor` (`windows :` line) show both windows and what the window costs the fallback in RAM.

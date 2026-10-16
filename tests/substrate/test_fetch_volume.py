@@ -134,7 +134,7 @@ def test_the_whole_stack_needs_the_chat_cpu_fallback_and_embed_models(tmp_path):
     needed = fetch.required_model_files(doc, env, list(doc["services"]))
     files = {n.file for n in needed if not n.optional}
     assert env["LLAMACPP_MODEL"] in files
-    assert "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf" in files                   # llamacpp-cpu
+    assert "Qwen3.8-35B-A3B-Distill-IQ4_XS.gguf" in files                   # llamacpp-cpu
     assert "embeddinggemma-2-Q8_0.gguf" in files                # llamacpp-embed
 
 

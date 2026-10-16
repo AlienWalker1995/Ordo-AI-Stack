@@ -282,7 +282,7 @@ def render_litellm_keys(consumers: list[tuple[str, dict[str, Any]]],
 # The CPU fallback (services/llamacpp-cpu) and the weights it loads when `site:` names none. The same
 # default is in its manifest and in model-gateway's entrypoint (tests/substrate/test_cpu_fallback_window.py).
 CPU_FALLBACK_PLUGIN = "llamacpp-cpu"
-CPU_FALLBACK_DEFAULT_FILE = "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+CPU_FALLBACK_DEFAULT_FILE = "Qwen3.8-35B-A3B-Distill-IQ4_XS.gguf"
 _GIB = 1024 ** 3
 
 
