@@ -82,7 +82,7 @@ def test_the_manifest_states_what_the_window_costs_the_fallback():
     assert fallback["model"] == "qwen3.8-35b-a3b-distill-cpu-iq4xs"
     assert fallback["ctx_size"] == FULL_WINDOW
     assert fallback["trained_ctx"] == FULL_WINDOW
-    # 262,144 tokens x 10,880 bytes = 2.66 GiB of KV; the weights are the pinned 22,134,528,992 bytes.
+    # 262,144 tokens x 10,880 bytes = 2.66 GiB of KV; the weights are the pinned 19,627,788,160 bytes.
     assert fallback["kv_gb"] == pytest.approx(FULL_WINDOW * 10880 / GIB, abs=0.01)
     assert fallback["weights_gb"] == pytest.approx(19627788160 / GIB, abs=0.01)
 

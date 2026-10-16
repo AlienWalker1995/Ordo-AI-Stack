@@ -20,7 +20,7 @@ LiteLLM directly, so their per-item served-backend signal is free and exact -
 `sample.output.model`, populated by Inspect from the raw completion response's own `model` field.
 llama.cpp sets that field to the path of the model IT has loaded (confirmed distinct between the
 GPU and CPU deployments: `GET /v1/models` on the GPU container reports
-`/models/Qwen3.8-27B-Uncensored-Q6_K.gguf`, the CPU container `/models/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf`),
+`/models/Qwen3.8-27B-Uncensored-Q6_K.gguf`, the CPU container `/models/Qwen3.8-35B-A3B-Distill-IQ4_XS.gguf`),
 and does not rewrite it to match the request's own `model` value; LiteLLM's
 `convert_to_model_response_object` (`litellm/litellm_core_utils/llm_response_utils/
 convert_dict_to_response.py`) passes the upstream `model` field through unchanged

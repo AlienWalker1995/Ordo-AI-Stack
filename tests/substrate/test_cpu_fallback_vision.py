@@ -44,6 +44,15 @@ def test_the_cpu_service_loads_the_catalog_projector():
     assert command[command.index("--mmproj") + 1] == f"/models/{_fallback_projector_file()}"
 
 
+def test_the_cpu_service_processes_prompts_in_2048_token_batches():
+    # The +17% prefill this service exists for (plugin.yaml: llama.cpp's 512 default is slower at
+    # the same thread count); if a later edit drops or lowers these, the gain disappears silently -
+    # pin them like every other behaviour-critical flag on this service.
+    command, _ = _cpu_command()
+    assert command[command.index("--batch-size") + 1] == "2048"
+    assert command[command.index("--ubatch-size") + 1] == "2048"
+
+
 def test_the_projector_is_a_required_model_file_so_fetch_provisions_it():
     _, rc = _cpu_command()
     needed = required_model_files(rc.compose_dict(), rc.env, ["llamacpp-cpu"])
