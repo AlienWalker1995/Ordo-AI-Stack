@@ -146,6 +146,17 @@ deploy, it fast-forwards the checkout, runs `ordo build --all`, then `ordo apply
 - a one-off job container of the project is running (an eval);
 - the agent is busy: a turn in flight, or a `hermes` CLI session (`hermes -z`, `hermes chat`).
 
+Changes made on the checkout's `main` outside a pull request (an agent's local commit, or edits to
+tracked files) are never discarded and never deployed as they are. Once they have been unchanged for
+30 minutes, `ordo deploy` scans them for secrets with the TruffleHog release CI runs (any finding,
+verified or not, stops it and is reported), commits them without touching the checkout, pushes the
+commit to a `deploy-rescue/<tree>` branch and opens a pull request, which gets the usual review.
+Deploys hold while it is open; newer edits update it in place. Merge it to keep the changes, or close
+it to drop them (they stay on the pull request). Either way the next pass resets the checkout to
+`origin/main` and deploys, but only when the pull request's head is still the rescued commit and the
+checkout has not changed since. The host's `gh` must be signed in for this; until it is, the deploy
+waits and says why.
+
 The gates are read again after the build, right before `ordo apply`, and an `ordo apply` that refuses
 before recreating anything (a lease taken in between) is a wait too, tried again on the next pass. A deploy that waits an hour is
 posted once to the Discord channel Alertmanager uses (`ALERTMANAGER_DISCORD_WEBHOOK_URL`), with the

@@ -36,6 +36,12 @@ class FakeHost:
         self.apply_code = 0
         self.calls: list[str] = []
         self.notes: list[str] = []
+        # Rescue: the checkout's tree, what the scanner flags, and the pull requests opened.
+        self.tree = "t1"
+        self.findings: list[str] = []
+        self.prs: dict[int, list[str]] = {}       # number -> [state, head]
+        self.pushes: list[tuple[str, str]] = []
+        self.saved = 0
 
     def fetch(self) -> str:
         return self.target
@@ -81,6 +87,40 @@ class FakeHost:
     def notify(self, text: str) -> None:
         self.notes.append(text)
 
+    def local_tree(self) -> str:
+        return self.tree
+
+    def describe_local_changes(self, target: str) -> str:
+        return "**Uncommitted changes:**\n- `services/comfyui/plugin.yaml`"
+
+    def save_local_changes(self, message: str) -> str:
+        self.saved += 1
+        return f"rescue-{self.tree}"
+
+    def secret_findings(self, base: str, sha: str) -> list[str]:
+        return self.findings
+
+    def push_branch(self, sha: str, branch: str) -> None:
+        self.pushes.append((sha, branch))
+        for pr in self.prs.values():
+            if pr[2] == branch and pr[0] == "OPEN":
+                pr[1] = sha
+
+    def open_pr(self, branch: str, title: str, body: str) -> int:
+        for number, pr in self.prs.items():
+            if pr[2] == branch and pr[0] == "OPEN":
+                return number
+        number = 500 + len(self.prs)
+        self.prs[number] = ["OPEN", self.pushes[-1][0], branch]
+        return number
+
+    def pr_status(self, number: int) -> tuple[str, str]:
+        return self.prs[number][0], self.prs[number][1]
+
+    def reset_hard(self, sha: str) -> None:
+        self.calls.append("reset")
+        self.head_sha, self.dirty, self.ancestor = sha, [], True
+
 
 def state(out: Path) -> dict:
     return json.loads((out / "deploy" / "state.json").read_text(encoding="utf-8"))
@@ -107,8 +147,8 @@ def test_nothing_happens_when_main_is_the_deployed_commit(tmp_path):
 
 @pytest.mark.parametrize("setup, reason", [
     (lambda h: setattr(h, "branch_name", "feat/x"), "the checkout is on feat/x, not main"),
-    (lambda h: setattr(h, "dirty", ["ordo/cli.py"]), "the checkout has uncommitted changes (ordo/cli.py)"),
-    (lambda h: setattr(h, "ancestor", False), "the checkout's main has commits that are not on origin/main"),
+    (lambda h: setattr(h, "dirty", ["ordo/cli.py"]), "the checkout has changes made outside a pull request"),
+    (lambda h: setattr(h, "ancestor", False), "the checkout has changes made outside a pull request"),
     (lambda h: setattr(h, "leased", True), "a GPU lease is held"),
     (lambda h: setattr(h, "jobs", ["ordo-evals-run-1"]), "a one-off job is running (ordo-evals-run-1)"),
     (lambda h: setattr(h, "busy", "1 turn(s) in flight"), "the agent is busy (1 turn(s) in flight)"),
@@ -405,3 +445,182 @@ def test_an_unreadable_agent_report_fails_closed(monkeypatch, stdout):
 
 def test_the_probe_script_parses():
     compile(deploy._AGENT_BUSY_SCRIPT, "<agent-busy>", "exec")
+
+
+# --------------------------------------------------------------------------- #
+# Changes made on the checkout outside a pull request are rescued into one.
+# --------------------------------------------------------------------------- #
+SETTLED = 1000.0 + deploy.RESCUE_SETTLE_SECONDS
+
+
+def edited_host() -> FakeHost:
+    host = FakeHost()
+    host.dirty = ["services/comfyui/plugin.yaml"]
+    return host
+
+
+def test_local_changes_are_left_alone_until_they_stop_changing(tmp_path, capsys):
+    host = edited_host()
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    host.tree = "t2"                                # still being edited
+    deploy.run_once(host, out=tmp_path, now=SETTLED)
+    assert host.saved == 0 and host.pushes == [] and host.calls == []
+    assert "saved as one once unchanged for 30 min" in capsys.readouterr().out
+
+
+def test_settled_local_changes_become_a_pull_request_and_deploys_hold(tmp_path, capsys):
+    host = edited_host()
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    assert deploy.run_once(host, out=tmp_path, now=SETTLED) == 0
+    assert host.pushes == [("rescue-t1", "deploy-rescue/t1")]
+    assert host.prs == {500: ["OPEN", "rescue-t1", "deploy-rescue/t1"]}
+    assert host.calls == []                         # nothing deployed, nothing reset
+    saved = state(tmp_path)
+    assert (saved["rescue_pr"], saved["rescue_sha"], saved["rescue_tree"]) == (500, "rescue-t1", "t1")
+    assert host.notes == ["Changes made on the deploy checkout outside a pull request are saved as PR #500 "
+                          "(`deploy-rescue/t1`, opened). Deploys hold until it is merged or closed."]
+    assert "are in PR #500" in capsys.readouterr().out
+
+
+def test_an_open_rescue_is_not_pushed_again(tmp_path):
+    host = edited_host()
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    deploy.run_once(host, out=tmp_path, now=SETTLED)
+    for minutes in range(2, 300, 2):
+        deploy.run_once(host, out=tmp_path, now=SETTLED + 60 * minutes)
+    assert len(host.pushes) == 1 and host.calls == []
+    assert len(host.notes) == 2                     # the PR, then one "waited an hour" report
+    assert "has waited" in host.notes[1]
+
+
+@pytest.mark.parametrize("outcome", ["MERGED", "CLOSED"])
+def test_a_finished_rescue_resets_the_checkout_and_deploying_resumes(tmp_path, outcome):
+    host = edited_host()
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    deploy.run_once(host, out=tmp_path, now=SETTLED)
+    host.prs[500][0] = outcome
+    assert deploy.run_once(host, out=tmp_path, now=SETTLED + 120) == 0
+    assert host.calls == ["reset", "ff", "build", "apply"]
+    saved = state(tmp_path)
+    assert saved["deployed"] == NEW and saved["rescue_pr"] == 0 and saved["local_tree"] == ""
+    assert host.notes[1] == (f"PR #500 (changes rescued from the deploy checkout) is {outcome.lower()}: the "
+                             "checkout is back on `origin/main`; the changes stay on "
+                             "`deploy-rescue/t1`.")
+
+
+def test_a_rescue_whose_pull_request_head_moved_is_never_reset(tmp_path, capsys):
+    host = edited_host()
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    deploy.run_once(host, out=tmp_path, now=SETTLED)
+    host.prs[500] = ["CLOSED", "someone-else", host.prs[500][2]]
+    deploy.run_once(host, out=tmp_path, now=SETTLED + 120)
+    assert "reset" not in host.calls and host.calls == []
+    assert "its head is someone-else, not the rescued rescue-t1" in capsys.readouterr().out
+
+
+def test_changes_made_after_the_rescue_never_reset_and_update_the_open_pull_request(tmp_path):
+    host = edited_host()
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    deploy.run_once(host, out=tmp_path, now=SETTLED)
+    host.tree = "t2"                                # more edits after the PR was opened
+    deploy.run_once(host, out=tmp_path, now=SETTLED + 120)
+    assert len(host.pushes) == 1                    # settling again first
+    deploy.run_once(host, out=tmp_path, now=SETTLED + 120 + deploy.RESCUE_SETTLE_SECONDS)
+    assert host.pushes[-1] == ("rescue-t2", "deploy-rescue/t1")
+    assert list(host.prs) == [500] and host.prs[500][1] == "rescue-t2"
+    assert any("(`deploy-rescue/t1`, updated)" in note for note in host.notes) and "reset" not in host.calls
+
+
+def test_changes_made_after_a_closed_rescue_get_a_new_pull_request(tmp_path):
+    host = edited_host()
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    deploy.run_once(host, out=tmp_path, now=SETTLED)
+    host.prs[500][0] = "CLOSED"
+    host.tree = "t2"
+    deploy.run_once(host, out=tmp_path, now=SETTLED + 120)
+    deploy.run_once(host, out=tmp_path, now=SETTLED + 120 + deploy.RESCUE_SETTLE_SECONDS)
+    assert "reset" not in host.calls
+    assert sorted(host.prs) == [500, 501] and host.prs[501][1] == "rescue-t2"
+    assert host.prs[501][2] != host.prs[500][2]
+
+
+def test_changes_the_secret_scanner_flags_are_never_pushed(tmp_path, capsys):
+    host = edited_host()
+    host.findings = ["Github"]
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    for minutes in range(0, 20, 2):
+        deploy.run_once(host, out=tmp_path, now=SETTLED + 60 * minutes)
+    assert host.pushes == [] and host.prs == {} and host.calls == []
+    assert host.notes == ["Deploy holds: the checkout's changes made outside a pull request were not pushed: "
+                          "the secret scanner flagged Github; move them by hand."]
+
+
+def test_a_rescue_step_that_cannot_run_waits(tmp_path, capsys):
+    host = edited_host()
+
+    def no_gh(branch: str, title: str, body: str) -> int:
+        raise deploy.GateUnknown("gh pr: not logged in")
+
+    host.open_pr = no_gh
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    assert deploy.run_once(host, out=tmp_path, now=SETTLED) == 0
+    assert host.calls == [] and state(tmp_path)["rescue_pr"] == 0
+    assert "the checkout could not be read: gh pr: not logged in" in capsys.readouterr().out
+
+
+def test_another_branch_checked_out_is_never_rescued(tmp_path):
+    host = FakeHost(branch="feat/x")
+    host.dirty = ["ordo/cli.py"]
+    deploy.run_once(host, out=tmp_path, now=1000.0)
+    deploy.run_once(host, out=tmp_path, now=SETTLED)
+    assert host.saved == 0 and host.pushes == []
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
+
+
+@pytest.fixture
+def repo(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "-b", "main")
+    _git(repo, "config", "user.name", "Test")
+    _git(repo, "config", "user.email", "test@example.invalid")
+    (repo / "plugin.yaml").write_text("pin: old\n", encoding="utf-8")
+    _git(repo, "add", "plugin.yaml")
+    _git(repo, "commit", "--quiet", "-m", "base")
+    return repo
+
+
+def test_saving_local_changes_commits_them_without_touching_the_checkout(repo, tmp_path):
+    host = deploy.RealHost(out=tmp_path / "out", project="ordo", repo=repo)
+    base = host.head()
+    (repo / "plugin.yaml").write_text("pin: new\n", encoding="utf-8")
+    before = _git(repo, "status", "--porcelain")
+    tree = host.local_tree()
+    sha = host.save_local_changes("rescue")
+    assert _git(repo, "status", "--porcelain") == before == "M plugin.yaml"
+    assert host.head() == base                      # main did not move
+    assert _git(repo, "rev-parse", f"{sha}^{{tree}}") == tree
+    assert _git(repo, "show", f"{sha}:plugin.yaml") == "pin: new"
+    assert _git(repo, "rev-parse", f"{sha}^") == base
+    assert "plugin.yaml" in host.describe_local_changes(base)
+
+
+def test_saving_only_local_commits_reuses_the_head(repo, tmp_path):
+    host = deploy.RealHost(out=tmp_path / "out", project="ordo", repo=repo)
+    assert host.save_local_changes("rescue") == host.head()
+
+
+def test_the_rescue_pushes_only_its_own_branches(tmp_path):
+    host = deploy.RealHost(out=tmp_path, project="ordo")
+    with pytest.raises(ValueError, match="deploy-rescue/"):
+        host.push_branch("abc", "main")
+
+
+def test_the_secret_scanner_is_the_release_ci_runs():
+    ci = (Path(deploy.__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    version = deploy.TRUFFLEHOG_IMAGE.split(":")[1].split("@")[0]
+    assert "trufflesecurity/trufflehog@" in ci and f"# v{version}" in ci
+    assert "@sha256:" in deploy.TRUFFLEHOG_IMAGE
