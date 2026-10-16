@@ -399,3 +399,107 @@ def test_a_volume_that_cannot_be_listed_refuses_the_switch(tmp_path):
     code, body = cp.route("POST", "/model-config", {"model": TURBO})
     assert code == 503 and "models volume" in body["error"]
     assert src.read_text() == before
+
+
+# --- /models/download: the Hugging Face CDN, the token, and the streamed response -----------------
+
+def _public_dns(monkeypatch):
+    """Resolve every host to a public address so the allowlist, not DNS, decides the outcome."""
+    import socket
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("18.0.0.1", 443))])
+
+
+@pytest.mark.parametrize("host", ["us.aws.cdn.hf.co", "cdn-lfs-us-1.hf.co", "cas-bridge.xethub.hf.co",
+                                  "cdn-lfs-eu-1.huggingface.co", "huggingface.co"])
+def test_model_download_accepts_hugging_face_cdn_hosts(monkeypatch, host):
+    """Hugging Face redirects LFS downloads to a regional CDN whose host name changes (it was
+    `us.aws.cdn.hf.co` on 2026-10-16 and the exact-host list made every download fail there)."""
+    from ordo.control.comfyui import _validated_redirect_url
+    _public_dns(monkeypatch)
+    assert _validated_redirect_url("https://huggingface.co/org/m/resolve/main/x.safetensors",
+                                   f"https://{host}/repos/x?X-Amz-Signature=1").startswith(f"https://{host}/")
+
+
+@pytest.mark.parametrize("host", ["hf.co.attacker.example", "evilhf.co", "notthe.hf.co.example", "hf.co"])
+def test_model_download_rejects_lookalike_hosts(monkeypatch, host):
+    from ordo.control.comfyui import _validated_redirect_url
+    _public_dns(monkeypatch)
+    with pytest.raises(ValueError, match="not in allowed list"):
+        _validated_redirect_url("https://huggingface.co/org/m/resolve/main/x", f"https://{host}/x")
+
+
+def test_model_download_sends_the_token_to_the_hub_only():
+    """The hub checks the licence gate; the CDN it redirects to gets a pre-signed URL and must not
+    see the token. No token means no Authorization header at all."""
+    from ordo.control.comfyui import _download_headers
+    hub = _download_headers("https://huggingface.co/org/m/resolve/main/x.safetensors", "hf_abc")
+    cdn = _download_headers("https://us.aws.cdn.hf.co/repos/x?X-Amz-Signature=1", "hf_abc")
+    none = _download_headers("https://huggingface.co/org/m/resolve/main/x.safetensors", "")
+    assert hub["Authorization"] == "Bearer hf_abc"
+    assert "Authorization" not in cdn and "Authorization" not in none
+
+
+class _StreamedResponse:
+    """What httpx.Client.send(..., stream=True) returns: NOT a context manager, closed explicitly."""
+
+    def __init__(self, status_code, headers, body=b""):
+        self.status_code, self.headers, self._body, self.closed = status_code, headers, body, False
+
+    def raise_for_status(self):
+        assert self.status_code < 400
+
+    def iter_bytes(self, chunk_size):
+        yield self._body
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeHttpxClient:
+    """A hub that redirects to the CDN, recording the headers each hop received."""
+
+    def __init__(self, *a, **k):
+        self.hops: list[tuple[str, dict]] = []
+        self.responses: list[_StreamedResponse] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def build_request(self, method, url, headers=None):
+        return (url, dict(headers or {}))
+
+    def send(self, request, stream=False):
+        url, headers = request
+        self.hops.append((url, headers))
+        if url.startswith("https://huggingface.co/"):
+            r = _StreamedResponse(302, {"location": "https://us.aws.cdn.hf.co/repos/x?X-Amz-Signature=1"})
+        else:
+            r = _StreamedResponse(200, {"Content-Length": "5"}, b"bytes")
+        self.responses.append(r)
+        return r
+
+
+def test_model_download_streams_through_the_redirect_and_closes_the_response(tmp_path, monkeypatch):
+    """The 2026-10-16 failure: `with response:` on a streamed httpx.Response raised TypeError on
+    every download. The worker must write the file, report success, send the token to the hub hop
+    only, and close the streamed response."""
+    import httpx
+
+    from ordo.control.comfyui import ModelDownloads
+
+    _public_dns(monkeypatch)
+    fake = _FakeHttpxClient()
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: fake)
+    dl = ModelDownloads(lambda: tmp_path, lambda: "hf_abc")
+
+    dl.run("https://huggingface.co/org/m/resolve/main/x.safetensors", "loras", "x.safetensors")
+
+    status = dl.status()
+    assert status["success"] is True and status["done"] is True, status["output"]
+    assert (tmp_path / "loras" / "x.safetensors").read_bytes() == b"bytes"
+    assert [h.get("Authorization") for _, h in fake.hops] == ["Bearer hf_abc", None]
+    assert all(r.closed for r in fake.responses)

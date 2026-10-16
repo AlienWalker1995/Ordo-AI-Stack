@@ -310,8 +310,12 @@ def _ops_controller(project: str, net: str, nvidia_gpu: bool) -> dict[str, Any]:
         s["environment"]["NVIDIA_DRIVER_CAPABILITIES"] = "utility"
     # Its bearer tokens, as files (ordo/control/serve.py reads them with ordo.secret_env): the admin
     # token, and Hermes' scoped one (ordo/control/principals.py; an empty file turns it off).
+    # Plus the Hugging Face token for /models/download: the ComfyUI model store is this service's
+    # RW mount, so gated repos (LTX, SAM) are fetched from here. An empty file = no token, and
+    # ungated downloads keep working (ordo/control/comfyui.py `_download_headers`).
     _add_secret_files(s, [SecretFileRef("OPS_CONTROLLER_TOKEN", "OPS_CONTROLLER_TOKEN_FILE"),
-                          SecretFileRef("OPS_CONTROLLER_TOKEN_HERMES", "OPS_CONTROLLER_TOKEN_HERMES_FILE")])
+                          SecretFileRef("OPS_CONTROLLER_TOKEN_HERMES", "OPS_CONTROLLER_TOKEN_HERMES_FILE"),
+                          SecretFileRef("HF_TOKEN", "HF_TOKEN_FILE")])
     return s
 
 

@@ -35,6 +35,22 @@ _MODEL_DOWNLOAD_ALLOWED_HOSTS = {
     "cdn-lfs-us-1.huggingface.co", "cdn-lfs-eu-1.huggingface.co",
     "civitai.com", "github.com", "objects.githubusercontent.com",
 }
+# Hugging Face serves LFS files by redirecting to a regional CDN whose host names are not stable
+# (`us.aws.cdn.hf.co` on 2026-10-16; `cdn-lfs-us-1.huggingface.co` before). Any subdomain of these
+# two zones is Hugging Face infrastructure; the exact list above stays for the hosts named in docs.
+_MODEL_DOWNLOAD_ALLOWED_SUFFIXES = (".hf.co", ".huggingface.co")
+# The hosts a Hugging Face token may be sent to: the hub itself, which checks the licence gate and
+# answers with a pre-signed CDN URL. The CDN hop never needs the token, so it never gets it.
+_HF_TOKEN_HOSTS = {"huggingface.co", "hf-mirror.com"}
+
+
+def _download_headers(url: str, hf_token: str) -> dict[str, str]:
+    """Request headers for one hop of a model download: the token only when this hop is the hub."""
+    headers = {"User-Agent": "ordo-ai-stack/1.0"}
+    host = (urlparse(url).hostname or "").lower()
+    if hf_token and host in _HF_TOKEN_HOSTS:
+        headers["Authorization"] = f"Bearer {hf_token}"
+    return headers
 
 # One path segment of a ComfyUI custom-node pack. Deliberately narrower than the filesystem
 # allows: the segment is interpolated into a container path that a pip invocation then reads.
@@ -49,7 +65,8 @@ def _validate_download_url(url: str) -> None:
     host = (parsed.hostname or "").lower()
     if not host:
         raise ValueError("Cannot parse hostname from URL")
-    if host not in _MODEL_DOWNLOAD_ALLOWED_HOSTS:
+    allowed = host in _MODEL_DOWNLOAD_ALLOWED_HOSTS or host.endswith(_MODEL_DOWNLOAD_ALLOWED_SUFFIXES)
+    if not allowed:
         raise ValueError(
             f"Host {host!r} not in allowed list. "
             f"Allowed: {', '.join(sorted(_MODEL_DOWNLOAD_ALLOWED_HOSTS))}"
@@ -95,8 +112,11 @@ def _auto_detect_category(url: str, filename: str) -> str:
 class ModelDownloads:
     """At most one model download at a time, its state held in this process (not persisted)."""
 
-    def __init__(self, models_dir: Callable[[], Path]):
+    def __init__(self, models_dir: Callable[[], Path], hf_token: Callable[[], str] = lambda: ""):
         self._models_dir = models_dir
+        # Read at download time, not construction: the token is a file secret that can be rotated
+        # under a running control plane. "" means no token (ungated downloads still work).
+        self._hf_token = hf_token
         self._lock = threading.Lock()
         self._status = {"running": False, "output": "", "done": True, "success": None, "progress": 0,
                         "filename": "", "category": ""}
@@ -157,13 +177,17 @@ class ModelDownloads:
         try:
             import httpx
             start_byte = temp_path.stat().st_size if temp_path.exists() else 0
-            req_headers = {"User-Agent": "ordo-ai-stack/1.0"}
-            if start_byte > 0:
-                req_headers["Range"] = f"bytes={start_byte}-"
+            hf_token = self._hf_token()
             with httpx.Client(timeout=60.0, follow_redirects=False) as client:
                 current_url = url
                 for _ in range(10):
                     _validate_download_url(current_url)
+                    # Headers are rebuilt per hop: the hub gets the token, the CDN it redirects to
+                    # does not (a pre-signed URL needs none, and a token must not travel to a host
+                    # that merely passed the allowlist).
+                    req_headers = _download_headers(current_url, hf_token)
+                    if start_byte > 0:
+                        req_headers["Range"] = f"bytes={start_byte}-"
                     response = client.send(
                         client.build_request("GET", current_url, headers=req_headers),
                         stream=True,
@@ -177,7 +201,9 @@ class ModelDownloads:
                     current_url = _validated_redirect_url(current_url, location)
                 else:
                     raise ValueError("Too many redirects while downloading model")
-                with response:
+                # A streamed httpx.Response is closed explicitly: it is not a context manager
+                # (`with response:` raised TypeError on every download, 2026-10-16).
+                try:
                     r = response
                     r.raise_for_status()
                     total = 0
@@ -200,6 +226,8 @@ class ModelDownloads:
                             with self._lock:
                                 self._status["output"] = msg
                                 self._status["progress"] = pct
+                finally:
+                    response.close()
             temp_path.rename(dest)
             with self._lock:
                 self._status["success"] = True
