@@ -1,6 +1,6 @@
 id: voice
 name: Voice (STT + TTS)
-description: Speech-to-text (faster-whisper) + voice-cloning text-to-speech (Chatterbox Turbo), OpenAI-compatible.
+description: Speech-to-text (faster-whisper) + text-to-speech (Kokoro), OpenAI-compatible.
 requires:
   nvidia: true
   vram_gb: 4
@@ -22,7 +22,7 @@ services:
     image: fedirz/faster-whisper-server@sha256:0b64050ad0b9244745746b652473ee42a8d5454d501877a252c3e65f631ffc99
     gpu_pin: secondary
     # Resident on the SECONDARY device (the Pascal 1070) — the whole point of the pin. Declaring
-    # `device: secondary` keeps it out of the primary card's VRAM budget, so Whisper/Chatterbox never
+    # `device: secondary` keeps it out of the primary card's VRAM budget, so Whisper/Kokoro never
     # contend with a render and a render is never told the 5090 is fuller than it is. Nothing
     # arbitrates the 1070 today: it hosts only these two, they fit together, and the arbiter
     # models one card. `preemptible: false` states that as a decision — voice is not something
@@ -36,7 +36,11 @@ services:
       yield:
         strategy: stop
     env:
-      WHISPER__MODEL: Systran/faster-whisper-small
+      # base.en: on the 1070 (2026-10-16) it transcribed the stack's vocabulary as well as `small`
+      # (only formatting differences: "comfy UI", "14th"), in 0.35 s per clip against 0.59 s (1.07
+      # worst), at about half the VRAM. tiny.en was no faster and misheard numbers ("3.87").
+      # Hermes names the same model in its `stt.openai.model`; a request for another loads it too.
+      WHISPER__MODEL: Systran/faster-whisper-base.en
       WHISPER__INFERENCE_DEVICE: cuda
       WHISPER__COMPUTE_TYPE: int8
       # Keep the model loaded. The server's default unloads it after 300 s idle, so the first voice
@@ -52,35 +56,25 @@ services:
       retries: 5
       start_period: 90s
   - name: tts
-    # Text-to-speech: Chatterbox Turbo behind Chatterbox-TTS-Server (OpenAI-compatible
-    # /v1/audio/speech on :8004). First-party image, built from THIS folder by `ordo build voice`
-    # (Dockerfile + requirements.lock, everything pinned). A request's `voice` names a clip that is
-    # cloned zero-shot: one of the server's bundled voices (Emily.wav is the default), or any 5-30 s
-    # clip the operator drops into data/voice/references (e.g. a voice per agent). Its torch
-    # (2.5.1+cu121) has no Blackwell kernels, which is fine: it must run on the secondary GPU.
-    image: ordo/voice-tts
+    # Text-to-speech: Kokoro-82M behind kokoro-fastapi (OpenAI-compatible /v1/audio/speech on
+    # :8880, raw `pcm` included, which Hermes streams sentence by sentence). The lightest and
+    # fastest engine benchmarked on the 1070 (2026-10-16): ~0.8 GB of VRAM, first audio of a
+    # sentence in 0.15-0.3 s warm, against ~7 GB and 0.9-1.9 s for Chatterbox Turbo, which it
+    # replaces (per-profile cloned voices are not needed). Its weights ship in the image. Its
+    # PyTorch build has no Blackwell kernels, so it must run on the secondary GPU. sha-pinned.
+    image: ghcr.io/remsky/kokoro-fastapi-gpu@sha256:63176e12e476470f020e29dfb3203bac249fa66c8fdf95e44b7482546eb4e974
     gpu_pin: secondary
-    volumes:
-      # The operator's own reference clips, read-only, beside the bundled voices (the server looks
-      # a `voice` up in its bundled folder first, then here).
-      - ${DATA_PATH:?DATA_PATH must be set (non-empty)}/voice/references:/app/reference_audio:ro
-      # Downloaded model weights on a NAMED volume (ext4), not a 9p bind: read at every start.
-      - voice-tts-hf:/app/hf_cache
     gpu_arbitration:
       mode: resident
       enforcement: broker
       device: secondary
-      vram_gb: 2.0
+      vram_gb: 1.0
       preemptible: false
       yield:
         strategy: stop
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request,json,sys; sys.exit(0 if json.load(urllib.request.urlopen('http://localhost:8004/api/model-info',timeout=5)).get('loaded') else 1)\""]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8880/v1/audio/voices',timeout=5).status==200 else 1)\""]
       interval: 30s
       timeout: 10s
       retries: 5
-      # First start downloads the Turbo weights (~1.5 GB) into the named volume.
-      start_period: 300s
-
-backup:
-  voice-tts-hf: skip           # Chatterbox Turbo weights, re-downloadable
+      start_period: 90s

@@ -15,16 +15,16 @@
     },
     {
       "id": "tts",
-      "name": "Text-to-Speech (Chatterbox)",
+      "name": "Text-to-Speech (Kokoro)",
       "order": 110,
-      "port": 8004,
-      "check": "http://tts:8004/api/model-info",
+      "port": 8880,
+      "check": "http://tts:8880/v1/audio/voices",
       "has_gpu": true,
       "plugin": "voice",
       "category": "voice",
       "background": true,
       "ops_service": "tts",
-      "hint": "Chatterbox Turbo voice cloning (OpenAI-compatible): bundled voices or your own clips in data/voice/references. GPU-pinned to the secondary GPU. Opt-in: --profile voice"
+      "hint": "kokoro-fastapi (OpenAI-compatible). GPU-pinned to the 1070. Opt-in: --profile voice"
     }
   ]
 }
