@@ -158,8 +158,9 @@ services:
       - ${BASE_PATH:?BASE_PATH must be set (non-empty)}/scripts/comfyui:/comfyui-scripts:ro
     command:
       # Reconcile the app checkout to COMFYUI_APP_REF, install the Comfy-Org runtime pins
-      # that ref declares, seed repo-owned workflows, install custom-node deps, then exec the
-      # image entrypoint. See scripts/comfyui/boot.sh for the full rationale.
+      # that ref declares, seed repo-owned workflows, reconcile the declared custom
+      # node packs, install custom-node deps, then exec the image entrypoint. See
+      # scripts/comfyui/boot.sh for the full rationale.
       # HF_TOKEN / GITHUB_TOKEN come from the env above (secrets.env).
       - bash
       - /comfyui-scripts/boot.sh

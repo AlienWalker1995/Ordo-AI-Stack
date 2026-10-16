@@ -149,6 +149,74 @@ seed_workflows() {
   log "seeded repo workflows -> user/default/workflows/ordo ($(ls -1 "$dst" | wc -l) file(s))"
 }
 
+# --- 3b. declared custom node packs -----------------------------------------------------
+# The packs the stack depends on are declared with a commit in scripts/comfyui/custom_nodes.json
+# and reconciled here, the same way the app checkout is: a pack that is missing is cloned, a pack
+# at another commit is fetched and detached to the declared one. Declared == running, for the
+# node code too. Packs on the volume that the file does not list are operator-installed state and
+# are left alone (removing them blindly would break whatever installed them); listing a pack is
+# how it becomes reproducible. Offline-safe: a pack already at its ref touches no network.
+#
+# Failure posture — deliberately the SAME as reconcile_app: when a DECLARED pack cannot reach its
+# declared ref (unreadable manifest, unreachable remote, failed fetch or checkout), boot dies
+# rather than start ComfyUI on node code nobody pinned. A crash-looping container is a visible
+# problem; a silently-drifted node pack is not. (The best-effort postures live in seed_workflows
+# and install_custom_node_deps, where the thing being seeded or installed is not itself declared.)
+reconcile_custom_nodes() {
+  local manifest="${COMFYUI_NODE_MANIFEST:-/comfyui-scripts/custom_nodes.json}"
+  [ -f "$manifest" ] || { log "no custom_nodes.json — skipping node pack reconcile"; return 0; }
+  # Parse into a variable FIRST: had the parser run in a process substitution (<(...)), its
+  # failure would be invisible to set -e and every pin below would be silently skipped, and boot
+  # would run whatever packs happen to sit on the volume.
+  local lines
+  lines="$(python3 - "$manifest" <<'PY'
+import json, sys
+for p in json.load(open(sys.argv[1], encoding="utf-8"))["packs"]:
+    print(p["name"], p["url"], p["ref"], sep="\t")
+PY
+  )" || die "custom_nodes.json unreadable: $manifest"
+  local name url ref dir work head
+  while IFS=$'\t' read -r name url ref; do
+    [ -n "$name" ] || continue
+    # The manifest is parsed by python, not validated here — reject names that would resolve the
+    # pack dir outside custom_nodes/ ('.'/'..' reach the ComfyUI root itself, '/' escapes it).
+    case $name in .*|*/*) die "custom_nodes.json: unsafe pack name '$name' (leading dot or slash)";; esac
+    dir="$COMFY_DIR/custom_nodes/$name"
+    if [ ! -d "$dir/.git" ]; then
+      # Missing or unversioned (a zip copy, a hand-installed pack): build the clone in a scratch
+      # dir and swap it in only once the declared commit is checked out, so a failed fetch never
+      # leaves an empty git skeleton where a working pack was.
+      log "node pack $name missing or unversioned — cloning ${ref:0:12}"
+      work="$dir.tmp"
+      rm -rf "$work"
+      mkdir -p "$work" && git -C "$work" init -q && git -C "$work" remote add origin "$url" \
+        || die "could not prepare clone of $name from $url"
+    else
+      work="$dir"
+      # Enforce the declared remote: a pack cloned from a fork (or over SSH) would otherwise
+      # fetch the declared sha from the wrong remote and stay drifted forever.
+      git -C "$work" remote set-url origin "$url" 2>/dev/null || git -C "$work" remote add origin "$url"
+    fi
+    head="$(git -C "$work" rev-parse HEAD 2>/dev/null || true)"
+    if [ "$head" != "$ref" ]; then
+      log "node pack $name drift: ${head:0:12} -> ${ref:0:12}"
+      git -C "$work" fetch -q --depth 1 origin "$ref" \
+        || die "fetch failed for $name; refusing to run undeclared node pack ${head:-<none>}"
+      # Forced: a drifted pack lands exactly on the pinned commit, discarding local edits to
+      # tracked files (that is what listing a pack means); untracked files (downloaded weights)
+      # are left in place. Without -f, a locally-modified tracked file could refuse the checkout.
+      git -C "$work" checkout -q -f --detach FETCH_HEAD \
+        || die "checkout failed for $name; refusing to run undeclared node pack ${head:-<none>}"
+      find "$work" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+    fi
+    if [ "$work" != "$dir" ]; then
+      rm -rf "$dir"
+      mv "$work" "$dir"
+    fi
+    log "node pack $name at $(git -C "$dir" rev-parse --short HEAD)"
+  done <<< "$lines"
+}
+
 # --- 4. custom node deps ----------------------------------------------------------------
 # Deliberately NOT user-site: these land in the image's writable layer and are therefore
 # re-resolved from scratch on every recreate. A custom node that is later removed takes its
@@ -166,6 +234,7 @@ install_custom_node_deps() {
 reconcile_app
 install_runtime_deps
 seed_workflows
+reconcile_custom_nodes
 install_custom_node_deps
 
 log "handing off to the image entrypoint"

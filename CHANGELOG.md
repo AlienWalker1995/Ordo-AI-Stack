@@ -13,6 +13,16 @@ All notable changes to this project are documented here. The format is loosely b
   against 0.59 s.
 
 ### Added
+- **ComfyUI custom node packs are pinned by commit and reconciled on boot.** The packs the stack's
+  graphs import are declared with a full commit SHA in `scripts/comfyui/custom_nodes.json`, and the
+  boot script moves each one back to its pin — cloning a missing pack, fetching and detaching a
+  drifted one — the same way the app checkout is reconciled to `COMFYUI_APP_REF`. A declared pack
+  that cannot reach its ref stops the boot instead of starting ComfyUI on node code nobody pinned:
+  a crash-looping container is a visible problem, a silently-drifted pack is not. When a listed
+  pack has drifted, boot moves it back to its pin and discards local edits to its tracked files
+  (in a pack that is already a git checkout, untracked files such as downloaded weights are left
+  in place); a pack without `.git` is replaced wholesale, so move any weights out of its directory
+  before listing it. Packs the file does not list are left alone.
 - **`ordo deploy` rescues changes made on the deploy checkout outside a pull request.** An agent
   committed a ComfyUI pin bump straight to the checkout's `main`, and every deploy waited on it
   indefinitely. Once such changes stop changing for 30 minutes, the runner replays them onto

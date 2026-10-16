@@ -369,7 +369,7 @@ A catalog model's `backend_image` replaces the image, never the device wiring. N
 
 **ComfyUI `CLI_ARGS`:** Set `COMFYUI_CLI_ARGS` under `site:` in `ordo.yaml` (it flows verbatim into the rendered `.env`) and re-render. Without it, the rendered default is `--cpu --enable-manager`.
 
-**ComfyUI custom-node deps:** The `comfyui` container's startup wrapper auto-installs every `requirements.txt` it finds under `/root/ComfyUI/custom_nodes/*/` before launching ComfyUI. Idempotent (pip skips already-satisfied specifiers). Adding a new custom node? Drop it under `data/comfyui-storage/ComfyUI/custom_nodes/` and, from the repo root, `ordo recreate comfyui` — its deps land automatically. Failures on individual files (e.g. malformed pin) are logged as `[deps] WARN failed` and don't block startup.
+**ComfyUI custom-node deps:** The `comfyui` container's startup wrapper auto-installs every `requirements.txt` it finds under `/root/ComfyUI/custom_nodes/*/` before launching ComfyUI. Idempotent (pip skips already-satisfied specifiers). Adding a new custom node? Drop it under `data/comfyui-storage/ComfyUI/custom_nodes/` and, from the repo root, `ordo recreate comfyui` — its deps land automatically. Failures on individual files (e.g. malformed pin) are logged as `[deps] WARN failed` and don't block startup. Packs the stack depends on are additionally pinned by commit in `scripts/comfyui/custom_nodes.json`; a drifted pack is moved back to its pinned commit on boot ([ComfyUI application version](#comfyui-application-version)). A dropped-in pack keeps its local changes until you list it there; a pack without `.git` is replaced wholesale on the next boot after listing, so move any downloaded weights out of its directory before listing it.
 
 ## Data Persistence Rules
 
@@ -420,6 +420,18 @@ on every start. If the volume has drifted it fetches and checks out the declared
 cannot, it refuses to start rather than serve a version nobody declared. The Comfy-Org runtime
 pins (`comfyui-frontend-package`, `comfy-kitchen`, `comfy-aimdo`, …) are read out of that ref's
 own `requirements.txt`, so the app and its runtime deps cannot drift apart.
+
+The same treatment extends to the **custom node packs** the stack's graphs import: each is
+declared with a full commit SHA in `scripts/comfyui/custom_nodes.json` (bind-mounted read-only at
+`/comfyui-scripts/custom_nodes.json`) and reconciled by the same boot script — a missing pack is
+cloned, a drifted one is fetched and detached to its pinned commit, and a pack that cannot reach
+its ref stops the boot, like an undeclared app. Listing a pack is what makes it reproducible:
+when a listed pack has drifted from its pinned commit, boot moves it back to that commit and
+discards local edits to tracked files (in a pack that is already a git checkout, untracked files
+such as downloaded weights are left in place), so bump the ref deliberately instead of patching
+the pack. A pack with no `.git` (a zip copy or hand install) is replaced wholesale, so move any
+weights out of its directory before listing it. Packs on the volume the file does not list are
+left untouched.
 
 To move ComfyUI versions:
 
