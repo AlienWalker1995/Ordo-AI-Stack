@@ -165,9 +165,9 @@ seed_workflows() {
 reconcile_custom_nodes() {
   local manifest="${COMFYUI_NODE_MANIFEST:-/comfyui-scripts/custom_nodes.json}"
   [ -f "$manifest" ] || { log "no custom_nodes.json — skipping node pack reconcile"; return 0; }
-  # Parse into a variable FIRST: a parser failure inside <(...) is invisible to set -e, so a
-  # malformed manifest must fail loudly here or every pin below is silently skipped and boot
-  # runs whatever packs happen to sit on the volume.
+  # Parse into a variable FIRST: had the parser run in a process substitution (<(...)), its
+  # failure would be invisible to set -e and every pin below would be silently skipped, and boot
+  # would run whatever packs happen to sit on the volume.
   local lines
   lines="$(python3 - "$manifest" <<'PY'
 import json, sys
@@ -202,7 +202,10 @@ PY
       log "node pack $name drift: ${head:0:12} -> ${ref:0:12}"
       git -C "$work" fetch -q --depth 1 origin "$ref" \
         || die "fetch failed for $name; refusing to run undeclared node pack ${head:-<none>}"
-      git -C "$work" checkout -q --detach FETCH_HEAD \
+      # Forced: a drifted pack lands exactly on the pinned commit, discarding local edits to
+      # tracked files (that is what listing a pack means); untracked files (downloaded weights)
+      # are left in place. Without -f, a locally-modified tracked file could refuse the checkout.
+      git -C "$work" checkout -q -f --detach FETCH_HEAD \
         || die "checkout failed for $name; refusing to run undeclared node pack ${head:-<none>}"
       find "$work" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
     fi

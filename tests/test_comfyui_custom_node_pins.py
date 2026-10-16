@@ -2,6 +2,7 @@
 to. A loose entry (branch name, short sha, duplicate name, non-GitHub url) would make the running
 node code unreproducible again, so the file is held to the same bar as COMFYUI_APP_REF."""
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -147,6 +148,25 @@ def test_fetch_failure_dies_and_keeps_the_old_commit(tmp_path):
     r = _run_reconcile(comfy, man, expect_rc=1)
     assert "FATAL" in r.stderr and "fetch failed" in r.stderr
     assert _git(pack, "rev-parse", "HEAD") == shas[0]  # old pack untouched
+
+
+def test_checkout_failure_dies(tmp_path):
+    up, shas = _make_upstream(tmp_path)
+    comfy = tmp_path / "comfy"
+    pack = comfy / "custom_nodes" / "Pack"
+    pack.parent.mkdir(parents=True)
+    _clone(up, pack)
+    _git(pack, "checkout", "-q", shas[0])
+    # Block the forced checkout: a read-only worktree cannot be updated (the fetch still works,
+    # it writes only under .git)
+    os.chmod(pack, 0o555)
+    try:
+        man = tmp_path / "manifest.json"
+        _write_manifest(man, [{"name": "Pack", "url": str(up), "ref": shas[-1]}])
+        r = _run_reconcile(comfy, man, expect_rc=1)
+    finally:
+        os.chmod(pack, 0o755)
+    assert "FATAL" in r.stderr and "checkout failed" in r.stderr
 
 
 def test_unversioned_pack_survives_a_failed_clone(tmp_path):
