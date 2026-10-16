@@ -7,10 +7,12 @@ All notable changes to this project are documented here. The format is loosely b
 ### Added
 - **`ordo deploy` rescues changes made on the deploy checkout outside a pull request.** An agent
   committed a ComfyUI pin bump straight to the checkout's `main`, and every deploy waited on it
-  indefinitely. Once such changes stop changing for 30 minutes, the runner secret-scans them
-  (TruffleHog, the release CI pins), pushes them to a `deploy-rescue/` branch and opens a pull
-  request; deploys hold while it is open, and once it is merged or closed the checkout is reset to
-  `origin/main` and deploying resumes. Nothing is discarded that is not already on GitHub.
+  indefinitely. Once such changes stop changing for 30 minutes, the runner replays them onto
+  `origin/main` as one commit (no local history is published), secret-scans exactly that commit
+  (TruffleHog, the release CI pins), pushes it to a `deploy-rescue/` branch and opens a pull request;
+  deploys hold while it is open, and once it is merged or closed the checkout is reset to
+  `origin/main` and deploying resumes. A local commit a pull request already holds follows that pull
+  request. Nothing is discarded that is not already on GitHub.
 
 ### Fixed
 - **Streamed speech starts with the first sentence again.** Hermes asks the TTS endpoint for raw

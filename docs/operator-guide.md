@@ -148,14 +148,21 @@ deploy, it fast-forwards the checkout, runs `ordo build --all`, then `ordo apply
 
 Changes made on the checkout's `main` outside a pull request (an agent's local commit, or edits to
 tracked files) are never discarded and never deployed as they are. Once they have been unchanged for
-30 minutes, `ordo deploy` scans them for secrets with the TruffleHog release CI runs (any finding,
-verified or not, stops it and is reported), commits them without touching the checkout, pushes the
-commit to a `deploy-rescue/<tree>` branch and opens a pull request, which gets the usual review.
-Deploys hold while it is open; newer edits update it in place. Merge it to keep the changes, or close
-it to drop them (they stay on the pull request). Either way the next pass resets the checkout to
-`origin/main` and deploys, but only when the pull request's head is still the rescued commit and the
-checkout has not changed since. The host's `gh` must be signed in for this; until it is, the deploy
-waits and says why.
+30 minutes, `ordo deploy` replays them onto `origin/main` as one new commit (a three-way merge
+without touching the checkout, so no local history is published), scans exactly that commit for
+secrets with the TruffleHog release CI runs (any finding, verified or not, stops it and is reported
+once), pushes it to a `deploy-rescue/<time>` branch and opens a pull request, which gets the usual
+review. Deploys hold while it is open. Newer edits update it in place, but never over a commit
+someone else pushed to it (a review fix): those edits get a pull request of their own. Merge it to
+keep the changes, or close it to drop them (they stay on the pull request). Either way the next pass
+resets the checkout to `origin/main` and deploys, but only when the pull request's history still
+holds the rescued commit and the checkout has not changed since.
+
+Two cases need no rescue. Changes `origin/main` already holds reset the checkout at once. A local
+commit that a pull request already holds (an agent committed here and opened a PR from it) follows
+that pull request: deploys hold while it is open, and the checkout resets once it is merged or
+closed. Changes that conflict with `origin/main` are reported once and wait for the operator. The
+host's `gh` must be signed in; until it is, the deploy waits and says why.
 
 The gates are read again after the build, right before `ordo apply`, and an `ordo apply` that refuses
 before recreating anything (a lease taken in between) is a wait too, tried again on the next pass. A deploy that waits an hour is
