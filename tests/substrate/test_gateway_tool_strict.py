@@ -134,9 +134,11 @@ def test_the_flag_drops_strict_on_the_gpu_chat_entries_only(tmp_path):
     drops = _drops_by_model(tmp_path, {"GATEWAY_DROP_TOOL_STRICT": "true"})
     assert drops["local-chat"] == DROP_STRICT + DROP_REASONING_EFFORT
     assert drops["ninfer-test"] == DROP_STRICT + DROP_REASONING_EFFORT  # the GPU pin alias, named from the weights
+    assert drops["local-chat-gpu"] == DROP_STRICT + DROP_REASONING_EFFORT  # the stable GPU pin, same backend
     # The CPU fallback runs stock llama.cpp, which accepts (and ignores) strict, so it only drops
     # reasoning_effort; the embedder drops nothing.
-    cpu_chat = {name: value for name, value in drops.items() if name not in ("local-chat", "ninfer-test", "local-embed")}
+    cpu_chat = {name: value for name, value in drops.items()
+                if name not in ("local-chat", "ninfer-test", "local-chat-gpu", "local-embed")}
     assert cpu_chat and all(value == DROP_REASONING_EFFORT for value in cpu_chat.values()), cpu_chat
     assert drops["local-embed"] is None
 

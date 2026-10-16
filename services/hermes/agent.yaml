@@ -26,13 +26,17 @@ consumes:
 # Hermes' own LiteLLM virtual key (LITELLM_KEY_HERMES in secrets.env; provisioned by
 # model-gateway-keys from the rendered keys.json). Chat + embeddings + EVERY enabled MCP server.
 litellm_key:
-  # The CPU deployment is listed so Hermes can be PINNED to it per invocation
-  # (`hermes -z ... -m local-chat-cpu`), not just fall onto it when the GPU is
-  # leased. That makes it addressable as a second worker: it holds no VRAM, so a CPU-pinned run
-  # and a GPU-pinned run execute genuinely in parallel against different containers instead of
-  # queueing on one llama.cpp slot. Without it the key returns 403 and the only way onto that
-  # model is an involuntary failover.
-  models: [local-chat, local-embed, local-chat-cpu]
+  # The stable pins are granted so Hermes can be POINTED at a specific engine, not just land on
+  # one through local-chat's routing: local-chat-gpu is the GPU model with no CPU failover (it
+  # errors while the model is evicted for a render), local-chat-cpu is the always-on CPU
+  # deployment. The CPU pin holds no VRAM, so a CPU-pinned run executes in parallel with a
+  # GPU-pinned one instead of queueing on one llama.cpp slot. Operator decision 2026-10-16:
+  # Hermes runs local-chat-gpu as its primary with local-chat-cpu as its announced first
+  # fallback (brain config), because the gateway's local-chat failover is invisible to the
+  # conversation while Hermes's own fallback chain announces the switch and the recovery.
+  # Without the grants the key returns 403 and the only way onto those models is an involuntary
+  # failover.
+  models: [local-chat, local-chat-gpu, local-embed, local-chat-cpu]
   mcp_servers: all
 
 # ── Runtime wiring (data, mirroring V1's hermes-gateway — see the phase-5.5 parity audit) ──

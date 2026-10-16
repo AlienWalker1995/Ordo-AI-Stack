@@ -64,6 +64,8 @@ model_list:
   # __GPU_MODEL_NAME__ = the GPU chat model; __CPU_MODEL_NAME__ = the always-on CPU
   # fallback (also local-chat's failover target). The CPU one is only reachable when the
   # opt-in `llamacpp-cpu` service is running; otherwise it just sits unavailable (harmless).
+  # The stable aliases local-chat-gpu / local-chat-cpu make the same deployments addressable
+  # across model swaps (see their blocks below).
   - model_name: "__GPU_MODEL_NAME__"
     litellm_params:
       model: "openai/__GPU_WEIGHTS__"
@@ -94,6 +96,45 @@ model_list:
         failover routing — errors when the GPU model is evicted for a render). See
         weights_file for the exact GGUF; supports_vision reflects whether an mmproj is
         loaded on the GPU server.
+      weights_file: __GPU_WEIGHTS__
+      served_by: llamacpp (__GPU_IMAGE__, RTX 5090)
+
+  # A STABLE alias for the same GPU deployment. `__GPU_MODEL_NAME__` above is substituted from the
+  # deployed GGUF filename at container start, so it changes on every model swap and the renderer
+  # deliberately refuses to grant a key access to it (ordo/render/engine.py, litellm_model_names).
+  # This alias makes the GPU pin addressable ON PURPOSE, the way local-chat-cpu does for the CPU
+  # side: callers that want the GPU model specifically name it here instead of riding local-chat's
+  # silent failover. Same upstream, same settings as the block above; only the name is stable.
+  - model_name: "local-chat-gpu"
+    litellm_params:
+      model: "openai/__GPU_WEIGHTS__"
+      api_base: "http://llamacpp:8080/v1"
+      api_key: "local"
+      timeout: 1800
+      stream_timeout: 1800
+      input_cost_per_token: __LOCAL_INPUT_COST_PER_TOKEN__
+      output_cost_per_token: __LOCAL_OUTPUT_COST_PER_TOKEN__
+      # Same backend as local-chat, same drops.
+      additional_drop_params: __GPU_ADDITIONAL_DROP_PARAMS__
+    model_info:
+      # Probes skip the logging callbacks; see the local-chat entry.
+      health_check_params: {"no-log": true}
+      mode: chat
+      max_input_tokens: __CTX_SIZE__
+      max_output_tokens: __N_PREDICT__
+      input_cost_per_token: __LOCAL_INPUT_COST_PER_TOKEN__
+      output_cost_per_token: __LOCAL_OUTPUT_COST_PER_TOKEN__
+      supports_system_messages: true
+      supports_function_calling: true
+      supports_tool_choice: true
+      supports_response_schema: true
+      supports_vision: __GPU_SUPPORTS_VISION__
+      supports_reasoning: true
+      description: >-
+        Stable alias for the GPU deployment, for work deliberately pinned to the GPU: the same
+        model as local-chat with NO CPU failover routing, so it errors while the GPU model is
+        evicted for a render instead of silently moving to the CPU. See weights_file for the
+        exact GGUF; supports_vision reflects whether an mmproj is loaded on the GPU server.
       weights_file: __GPU_WEIGHTS__
       served_by: llamacpp (__GPU_IMAGE__, RTX 5090)
 
@@ -233,6 +274,8 @@ router_settings:
   # Any GPU error (render lease, engine down, bad request, 5xx, mid-stream drop) fails over to
   # the CPU model, so no local-chat workload is ever lost to a GPU failure.
   # gpu_lease_fallback_gate (litellm_settings.callbacks) logs the lease state on each hop.
+  # Only local-chat fails over: the stable pins (local-chat-gpu, local-chat-cpu) are deliberate
+  # and must error when their own backend is down, not silently reroute.
   fallbacks: [{"local-chat": ["__CPU_MODEL_NAME__"]}]
   # Must exceed health_check_interval (the failure counter's TTL) so failures accumulate.
   cooldown_time: 120
