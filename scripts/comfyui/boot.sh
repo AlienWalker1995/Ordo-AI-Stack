@@ -156,34 +156,62 @@ seed_workflows() {
 # node code too. Packs on the volume that the file does not list are operator-installed state and
 # are left alone (removing them blindly would break whatever installed them); listing a pack is
 # how it becomes reproducible. Offline-safe: a pack already at its ref touches no network.
+#
+# Failure posture — deliberately the SAME as reconcile_app: when a DECLARED pack cannot reach its
+# declared ref (unreadable manifest, unreachable remote, failed fetch or checkout), boot dies
+# rather than start ComfyUI on node code nobody pinned. A crash-looping container is a visible
+# problem; a silently-drifted node pack is not. (The best-effort postures live in seed_workflows
+# and install_custom_node_deps, where the thing being seeded or installed is not itself declared.)
 reconcile_custom_nodes() {
-  local manifest=/comfyui-scripts/custom_nodes.json
+  local manifest="${COMFYUI_NODE_MANIFEST:-/comfyui-scripts/custom_nodes.json}"
   [ -f "$manifest" ] || { log "no custom_nodes.json — skipping node pack reconcile"; return 0; }
-  local line name url ref dir head
-  while IFS=$'\t' read -r name url ref; do
-    [ -n "$name" ] || continue
-    dir="$COMFY_DIR/custom_nodes/$name"
-    if [ ! -d "$dir/.git" ]; then
-      log "node pack $name missing or unversioned — cloning ${ref:0:12}"
-      rm -rf "$dir"
-      mkdir -p "$dir" && git -C "$dir" init -q && git -C "$dir" remote add origin "$url"
-    fi
-    head="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
-    if [ "$head" != "$ref" ]; then
-      log "node pack $name drift: ${head:0:12} -> ${ref:0:12}"
-      git -C "$dir" fetch -q --depth 1 origin "$ref" \
-        || { log "WARN fetch failed for $name; leaving ${head:-<none>} in place"; continue; }
-      git -C "$dir" checkout -q --detach FETCH_HEAD \
-        || { log "WARN checkout failed for $name"; continue; }
-      find "$dir" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
-    fi
-    log "node pack $name at $(git -C "$dir" rev-parse --short HEAD)"
-  done < <(python3 - "$manifest" <<'PY'
+  # Parse into a variable FIRST: a parser failure inside <(...) is invisible to set -e, so a
+  # malformed manifest must fail loudly here or every pin below is silently skipped and boot
+  # runs whatever packs happen to sit on the volume.
+  local lines
+  lines="$(python3 - "$manifest" <<'PY'
 import json, sys
 for p in json.load(open(sys.argv[1], encoding="utf-8"))["packs"]:
     print(p["name"], p["url"], p["ref"], sep="\t")
 PY
-)
+  )" || die "custom_nodes.json unreadable: $manifest"
+  local name url ref dir work head
+  while IFS=$'\t' read -r name url ref; do
+    [ -n "$name" ] || continue
+    # The manifest is parsed by python, not validated here — reject names that would resolve the
+    # pack dir outside custom_nodes/ ('.'/'..' reach the ComfyUI root itself, '/' escapes it).
+    case $name in .*|*/*) die "custom_nodes.json: unsafe pack name '$name' (leading dot or slash)";; esac
+    dir="$COMFY_DIR/custom_nodes/$name"
+    if [ ! -d "$dir/.git" ]; then
+      # Missing or unversioned (a zip copy, a hand-installed pack): build the clone in a scratch
+      # dir and swap it in only once the declared commit is checked out, so a failed fetch never
+      # leaves an empty git skeleton where a working pack was.
+      log "node pack $name missing or unversioned — cloning ${ref:0:12}"
+      work="$dir.tmp"
+      rm -rf "$work"
+      mkdir -p "$work" && git -C "$work" init -q && git -C "$work" remote add origin "$url" \
+        || die "could not prepare clone of $name from $url"
+    else
+      work="$dir"
+      # Enforce the declared remote: a pack cloned from a fork (or over SSH) would otherwise
+      # fetch the declared sha from the wrong remote and stay drifted forever.
+      git -C "$work" remote set-url origin "$url" 2>/dev/null || git -C "$work" remote add origin "$url"
+    fi
+    head="$(git -C "$work" rev-parse HEAD 2>/dev/null || true)"
+    if [ "$head" != "$ref" ]; then
+      log "node pack $name drift: ${head:0:12} -> ${ref:0:12}"
+      git -C "$work" fetch -q --depth 1 origin "$ref" \
+        || die "fetch failed for $name; refusing to run undeclared node pack ${head:-<none>}"
+      git -C "$work" checkout -q --detach FETCH_HEAD \
+        || die "checkout failed for $name; refusing to run undeclared node pack ${head:-<none>}"
+      find "$work" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+    fi
+    if [ "$work" != "$dir" ]; then
+      rm -rf "$dir"
+      mv "$work" "$dir"
+    fi
+    log "node pack $name at $(git -C "$dir" rev-parse --short HEAD)"
+  done <<< "$lines"
 }
 
 # --- 4. custom node deps ----------------------------------------------------------------
